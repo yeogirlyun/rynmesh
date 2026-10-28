@@ -1,0 +1,7 @@
+{
+  "permission_mode": "workspace",
+  "model_id": "local/codex-cli/model/gpt-6.1-sol",
+  "enabled": true,
+  "verify_text_responses": false,
+  "verified_in_encrypted_store": true
+}

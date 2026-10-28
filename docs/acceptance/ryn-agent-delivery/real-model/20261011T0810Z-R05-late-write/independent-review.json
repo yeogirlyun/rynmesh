@@ -1,0 +1,81 @@
+{
+  "review_date": "2026-10-11",
+  "reviewer": "cancellation_commit_fix",
+  "scope": "Read-only raw run/operator evidence review; no model calls, remote actions or test reruns by reviewer.",
+  "development_only": true,
+  "physical_hosts": 1,
+  "formal_pass": false,
+  "formal_trials_counted": 0,
+  "tests_rerun": 0,
+  "model_calls_by_reviewer": 0,
+  "kind": "R05-late-write-development-independent-evidence-review",
+  "independence": {
+    "run_operator": false,
+    "operator_review_author": false,
+    "controller_author": false
+  },
+  "source_hashes": {
+    "run.json": "1d7416211aa1be8da23c7cf764198269c4e5e94bcb1ea803b87de3fb0b874728",
+    "operator-review.json": "cc8f20c595d9469cc5dc9c4e731ca488b880a1b431b547c060871e120be09fd9"
+  },
+  "raw_hash_matches_operator_review": true,
+  "scoped_subscenario_pass": true,
+  "whole_R05_pass_established": false,
+  "observed_status": "cancelled",
+  "observed_outcome": "unverified",
+  "checks": [
+    {
+      "check": "real_commit_then_cancel_then_original_response",
+      "result": "pass",
+      "evidence": {
+        "commit_counter_ns": 18457028463100,
+        "cancel_counter_ns": 18457050176900,
+        "release_counter_ns": 18457050209400,
+        "original_status": 201,
+        "original_response_count": 1,
+        "hold_expired": false
+      }
+    },
+    {
+      "check": "exact_approval_and_single_write",
+      "result": "pass",
+      "evidence": "One approved ryn_create_text_file operation, op_4e69a90db80a4599a08679723da8a5e8. Exact preview/content hashes bind LATE_RECEIPT_508; HTTP audit contains one PUT, one effective mutation, original 201, response_dropped=false."
+    },
+    {
+      "check": "retained_receipt_and_cancelled_state",
+      "result": "pass",
+      "evidence": "Original business_acknowledged=true receipt is confirmed after cancellation; cancelled task remains ended with unverified outcome. Final unsettled_operations=0."
+    },
+    {
+      "check": "no_post_cancel_dispatch",
+      "result": "pass",
+      "evidence": "Cancel cursor seq19; only following event seq20 is late tool_result with original receipt. No new model/tool/verification/compaction dispatch."
+    },
+    {
+      "check": "retained_business_artifact",
+      "result": "pass",
+      "evidence": {
+        "path": "C:\\Users\\子陵\\AppData\\Local\\Temp\\ryn-r05-late-dv8h319_\\fixture-documents\\reports\\acceptance\\late-receipt.md",
+        "independently_read": true,
+        "bytes": 16,
+        "content": "LATE_RECEIPT_508",
+        "sha256": "c1675239f46729fcb971d2aa79df112a8f99e61cf3e3243ae15b8819fa8b4213"
+      }
+    }
+  ],
+  "usage": {
+    "requests": 3,
+    "known_input_tokens": 13999,
+    "known_output_tokens": 1145,
+    "known_total_tokens": 15144,
+    "unknown_usage_requests": 0,
+    "currency_cost": null,
+    "cost_status": "unknown",
+    "note": "Captured token usage complete for these three requests; monetary cost remains unknown."
+  },
+  "limits": [
+    "One actual loopback WebDAV development attempt, not physical peer write, desktop flow, whole R05 stream behavior or formal repetitions.",
+    "Both-end external audits remain necessary for independent physical peer stream/egress claims; this local late-response record does not supply that proof.",
+    "Cancellation did not undo the already committed write; retained receipt accurately acknowledges it. No assumption that cancellation stops provider billing."
+  ]
+}

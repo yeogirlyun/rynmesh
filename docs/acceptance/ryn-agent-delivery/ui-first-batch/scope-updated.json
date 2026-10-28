@@ -1,0 +1,73 @@
+{
+  "scope": {
+    "egress_grants": [
+      {
+        "destination": {
+          "catalog_model_id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+          "destination_revision": "legacy-17231844e698e9e23b2f6025e8946614f39dd0674ca9695934a5915f0fa056bd",
+          "provider_peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+          "source_id": "src-1fe50b9c7ce9432b"
+        },
+        "origin_grant_ids": [
+          "77f667f32c3e4ee19f2af9a1064815d4"
+        ]
+      }
+    ],
+    "resource_grants": [
+      {
+        "actions": [
+          "list",
+          "read_ai"
+        ],
+        "allowed_formats": [
+          ".csv",
+          ".json",
+          ".log",
+          ".markdown",
+          ".md",
+          ".pdf",
+          ".tsv",
+          ".txt",
+          ".yaml",
+          ".yml"
+        ],
+        "byte_limit": 262144,
+        "connection_access_generation": "d03f50db332d938adc2ab8b090643bb23f9a401f89739bf4aafa9629ff134142",
+        "connection_id": "76f367d62ab744db88727f5ab8d62ce8",
+        "document_byte_limit": 8388608,
+        "grant_id": "77f667f32c3e4ee19f2af9a1064815d4",
+        "recursive": true,
+        "root_resource_ref": "gAAAAABqyLhohzzUCOGmQwSAZWLokbYk1fPr6-WQkTM7OIEN_PBY44wZUvVh2AFy8wQP2uJy1D6enKollIol9yFW9-mAfS7hLEHscJs5jh0kcMYntdeGgTo3I8AiDj8RT6YlJMnGoCclG2PcJDmXSiBKEmevmgYlk4mmBAsC_q9OFZaxplDANYEmSsU6g8Yp58lKgL8o38zWqIonheCNlJeJets2tNCCpS0boFTBBHdywKs6OWtZ3suh73Svg1NVr6_ZMdxVyJEve9lHLkWAAPmMHl6Q3TotR_G7mqGNNzDyM9l90jZjg-90DvRIk1lsF9hXYvMYVrV_"
+      }
+    ],
+    "revision": 2,
+    "selection": {
+      "allow_model_data": true,
+      "resources": [
+        {
+          "actions": [
+            "list",
+            "read_ai"
+          ],
+          "connection_id": "76f367d62ab744db88727f5ab8d62ce8",
+          "recursive": true,
+          "root_path": "projects/orion/week-41"
+        }
+      ]
+    }
+  },
+  "scope_revision": 2,
+  "control_revision": 3,
+  "model_destination": {
+    "catalog_model_id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+    "destination_revision": "legacy-17231844e698e9e23b2f6025e8946614f39dd0674ca9695934a5915f0fa056bd",
+    "provider_peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+    "source_id": "src-1fe50b9c7ce9432b"
+  },
+  "current_model_destination": {
+    "catalog_model_id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+    "provider_peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+    "source_id": "src-1fe50b9c7ce9432b",
+    "destination_revision": "legacy-17231844e698e9e23b2f6025e8946614f39dd0674ca9695934a5915f0fa056bd"
+  }
+}

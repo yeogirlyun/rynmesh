@@ -1,0 +1,16 @@
+{
+  "kind": "root-default-reselection-source-freeze",
+  "reference": "root-20261011-default-reselection-reviewed",
+  "at": "2026-10-11T13:24:59.970086+00:00",
+  "review": {
+    "path": ".codex-tmp/default-reselection-audit/independent-review.json",
+    "sha256": "2bdb2b8fee8265d9c9caf9f1a2fab6881478a581a49cfb8755732eaf69d4ab3d"
+  },
+  "files": {
+    "webapp/src/screens/ModelPool.tsx": "04b97671a7d83a334f1e3c4407886efeda1ed7ba6859940eb7a7c2ed46fbefd0",
+    "webapp/src/screens/ModelPool.test.tsx": "61f4c0789ea1add470f25fa2cabca8aec952fe4d0ff94cab02798352c2214eb6"
+  },
+  "prior_freeze_unchanged": true,
+  "scope": "Full new Windows build and wheel; no installation until exact hashes released. No new model calls.",
+  "formal_pass": false
+}

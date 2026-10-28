@@ -13,7 +13,9 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-MAX_REQUEST = 1024 * 1024
+# Bounded transport capacity for declared windows up to 2M tokens, including
+# UTF-8 / JSON framing. Model-specific context and output limits still apply.
+MAX_REQUEST = 16 * 1024 * 1024
 MAX_OUTPUT = 8 * 1024 * 1024
 MAX_TEMP = 64 * 1024 * 1024
 MIN_FREE_DISK = 512 * 1024 * 1024
@@ -28,7 +30,14 @@ def private_storage_bytes(root: Path) -> int:
     total = 0
     pending = [root]
     while pending:
-        with os.scandir(pending.pop()) as entries:
+        directory = pending.pop()
+        try:
+            entries = os.scandir(directory)
+        except FileNotFoundError:
+            if directory == root:
+                raise  # Losing the private workspace itself is not ordinary churn.
+            continue  # CLI scratch directories can disappear after enumeration.
+        with entries:
             for entry in entries:
                 try:
                     info = entry.stat(follow_symlinks=False)
@@ -99,7 +108,8 @@ class SharedSlots:
     """Per-service and process-wide admission; callers cannot enlarge either."""
 
     def __init__(self, capacity, path):
-        self.local = threading.BoundedSemaphore(min(capacity, 4))
+        self._global_bounded = capacity <= 4
+        self.local = threading.BoundedSemaphore(capacity if capacity > 4 else min(capacity, 4))
         self.path = path
 
     def acquire(self, blocking=False):
@@ -109,16 +119,18 @@ class SharedSlots:
             return False
         if not pressure_ok():
             return False
-        if not NODE_SLOTS.acquire(blocking=False):
+        if self._global_bounded and not NODE_SLOTS.acquire(blocking=False):
             return False
         if not self.local.acquire(blocking=False):
-            NODE_SLOTS.release()
+            if self._global_bounded:
+                NODE_SLOTS.release()
             return False
         return True
 
     def release(self):
         self.local.release()
-        NODE_SLOTS.release()
+        if self._global_bounded:
+            NODE_SLOTS.release()
 
 
 def check_disk(path: str | Path):

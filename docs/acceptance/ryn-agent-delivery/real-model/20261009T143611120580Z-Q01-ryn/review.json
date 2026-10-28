@@ -1,0 +1,17 @@
+{
+  "classification": "development workflow passed; formal acceptance pending",
+  "formal_case_score": false,
+  "reviewer": "Root coordinator inspected actual saved source classification, frozen Q01 prompt, real model final answer and retained read-only tool receipts. Separate non-author Astra review remains pending.",
+  "real_model_calls": 3,
+  "elapsed_seconds": 86.797,
+  "code_unchanged": true,
+  "owner_source_unchanged": true,
+  "source_configuration_unchanged": true,
+  "finding": "All four actual stable catalog IDs are classified correctly: a chat/Agent/shared, b chat only, c chat/Agent private, d unavailable/private. The answer distinguishes configuration and capability records from current live inference, retains unknown evidence and reports only the observed connection_refused failure. It does not claim credentials/balance were diagnosed. No configuration was changed.",
+  "identity_note": "ryn_list_models adds fixture_identity only; frozen prompt, production facts, IDs, permissions and verification are unchanged. Reference must use the same wrapper.",
+  "limitations": [
+    "One development run with controlled business-model rows and a separate real planner transport.",
+    "No formal same-snapshot repetitions, matched reference, second independent model or two-physical-host evidence.",
+    "Universal audit normalization and independent Astra review remain pending."
+  ]
+}

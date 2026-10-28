@@ -1,0 +1,10 @@
+{
+  "bundle": { "createUpdaterArtifacts": true },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": ["https://github.com/yeogirlyun/rynmesh/releases/latest/download/desktop-latest.json"],
+      "windows": { "installMode": "passive" }
+    }
+  }
+}

@@ -37,6 +37,17 @@ PROTOCOL = "rynmesh-lan-v1"
 log = logging.getLogger(__name__)
 
 
+def _http_probe_opener():
+    # LAN probes are fixed HTTP endpoints. build_opener installs HTTPSHandler
+    # too, which loads Windows' certificate store for every address in a scan.
+    # Keep this tiny client HTTP-only and reject redirects to a different target.
+    opener = urllib.request.OpenerDirector()
+    for handler in (urllib.request.ProxyHandler({}), urllib.request.HTTPHandler(),
+                    urllib.request.HTTPDefaultErrorHandler(), urllib.request.HTTPErrorProcessor()):
+        opener.add_handler(handler)
+    return opener
+
+
 def local_interfaces() -> tuple[ipaddress.IPv4Interface, ...]:
     import ifaddr
 
@@ -148,7 +159,7 @@ class LanDiscovery:
             headers["x-ryn-auth"] = hashlib.sha256(("rynmesh-net-key:" + key).encode()).hexdigest()
         try:
             request = urllib.request.Request(url, headers=headers)
-            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=0.35) as response:
+            with _http_probe_opener().open(request, timeout=0.35) as response:
                 raw = response.read(MAX_PACKET + 1)
             if len(raw) > MAX_PACKET:
                 return None

@@ -193,7 +193,7 @@ def test_smb_listing_keeps_nonstandard_port_and_private_session(monkeypatch):
     assert calls[0]["connection_cache"] is connector.cache
 
 
-def test_disable_waits_for_operation_and_prevents_next(plugin):
+def test_disable_is_immediate_and_withholds_inflight_read(plugin):
     source = add(plugin, writable=True)
     entered, finish = threading.Event(), threading.Event()
 
@@ -208,10 +208,10 @@ def test_disable_waits_for_operation_and_prevents_next(plugin):
         reading = pool.submit(plugin.operate, source, "read", "file")
         assert entered.wait(5)
         disabling = pool.submit(plugin.enable, False)
-        assert not disabling.done()
+        assert disabling.result(timeout=1)["enabled"] is False
         finish.set()
-        assert reading.result() == b"complete"
-        assert disabling.result()["enabled"] is False
+        with pytest.raises(NasError, match="disabled"):
+            reading.result()
     with pytest.raises(NasError, match="disabled"):
         plugin.operate(source, "read", "file")
 
@@ -368,3 +368,94 @@ def test_image_preview_rejects_active_or_broken_content(plugin, raw):
     plugin.enable(False)
     with pytest.raises(NasError, match="disabled"):
         plugin.operate(source, "thumbnail", "fake.png")
+
+
+def test_directory_cache_is_encrypted_bounded_and_survives_restart(plugin, tmp_path):
+    source = add(plugin, writable=True)
+    plugin.operate(source, "write", "private-directory-name.txt", b"not cached body")
+    live = plugin.listing(source)
+    assert live["entries"][0]["name"] == "private-directory-name.txt"
+    plugin.browser_location({"source_id": source, "path": "", "names": {}})
+    raw = (plugin.directory / "directories.enc").read_bytes()
+    assert b"private-directory-name" not in raw and b"not cached body" not in raw
+    restored = NasPlugin(tmp_path)
+    cached = restored.listing(source, cached=True)
+    assert cached == live  # No SMB connection is possible in this restored fixture.
+    assert restored.status()["browser_location"]["source_id"] == source
+    restored.directory_cache.MAX_DIRS = 2
+    with restored.lock:
+        for path in ["one", "two", "three"]:
+            restored.directory_cache.put(source, path, [])
+    assert len(restored.directory_cache.items) == 2
+    restored.remove(source)
+    assert not restored.directory_cache.items
+    assert not NasPlugin(tmp_path).directory_cache.items
+
+
+def test_slow_drive_does_not_block_status_or_other_drive(plugin):
+    a = add(plugin)
+    cfg = config(); cfg["share"] = "other"
+    b = plugin.configure(cfg)["id"]
+    entered, finish = threading.Event(), threading.Event()
+    class Slow(MemoryConnector):
+        def read(self, path, limit):
+            entered.set()
+            assert finish.wait(5)
+            return b"done"
+    plugin.connectors["smb"] = Slow
+    with ThreadPoolExecutor() as pool:
+        reading = pool.submit(plugin.operate, a, "read", "x")
+        assert entered.wait(2)
+        try:
+            assert pool.submit(plugin.status).result(timeout=1)["enabled"]
+            assert pool.submit(plugin.listing, b).result(timeout=1)["entries"] == []
+            assert pool.submit(plugin.listing, a, "", True).result(timeout=1)["entries"] == []
+        finally:
+            finish.set()
+        assert reading.result() == b"done"
+
+
+def test_directory_pages_are_incremental_and_old_scan_cannot_overwrite(plugin):
+    source = add(plugin)
+    class Pages(MemoryConnector):
+        def list_page(self, path, cursor):
+            name = "two" if cursor else "one"
+            return {"entries": [{"name": name, "path": name, "directory": True, "size": 0, "modified": 0}], "next_cursor": "next" if not cursor else ""}
+    plugin.connectors["smb"] = Pages
+    first = plugin.listing(source)
+    assert len(first["entries"]) == 1 and first["next_cursor"]
+    final = plugin.listing(source, cursor=first["next_cursor"], scan=first["scan"])
+    assert len(final["entries"]) == 2 and not final["next_cursor"]
+    assert plugin.listing(source, cursor="next", scan=first["scan"]) == final
+    plugin.listing(source)
+    with pytest.raises(NasError, match="listing_changed"):
+        plugin.listing(source, cursor="next", scan=first["scan"])
+
+
+def test_writes_invalidate_directory_and_connections_are_reused(plugin):
+    source = add(plugin, writable=True)
+    before = MemoryConnector.opened
+    plugin.listing(source)
+    plugin.listing(source)
+    assert MemoryConnector.opened == before + 1
+    plugin.operate(source, "write", "new.txt", b"new")
+    assert plugin.listing(source, cached=True)["entries"] is None
+    assert plugin.listing(source)["entries"][0]["name"] == "new.txt"
+
+
+def test_removed_source_cannot_repopulate_cache(plugin):
+    source = add(plugin)
+    entered, finish = threading.Event(), threading.Event()
+    class Slow(MemoryConnector):
+        def list(self, path):
+            entered.set(); assert finish.wait(5)
+            return []
+    plugin.connectors["smb"] = Slow
+    with ThreadPoolExecutor() as pool:
+        listing = pool.submit(plugin.listing, source)
+        assert entered.wait(2)
+        plugin.remove(source)
+        finish.set()
+        with pytest.raises(NasError, match="not_found"):
+            listing.result()
+    assert not plugin.directory_cache.items and not plugin.sessions

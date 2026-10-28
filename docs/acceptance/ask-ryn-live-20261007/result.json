@@ -1,0 +1,19 @@
+{
+  "date": "2026-10-07",
+  "original_node": "http://127.0.0.1:18796",
+  "original_source_count": 0,
+  "original_cli_configured": false,
+  "original_ui": "service unavailable",
+  "demo_node": "http://127.0.0.1:18980",
+  "isolated": true,
+  "real_model": "qwen35-4b-vlm",
+  "model_endpoint": "http://127.0.0.1:8080/v1",
+  "source_id": "src-f392f26ec8374e99",
+  "conversation_id": "a1804a92-9605-46ad-baef-a891c3953b79",
+  "connection_test": "ready",
+  "real_chat": "completed",
+  "history_after_reload": true,
+  "synthetic_reply": false,
+  "nas_tested_this_run": false,
+  "original_configuration_changed": false
+}

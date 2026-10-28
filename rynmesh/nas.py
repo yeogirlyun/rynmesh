@@ -12,8 +12,9 @@ import json
 import os
 import re
 import threading
+import time
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 from xml.etree import ElementTree
@@ -243,6 +244,8 @@ class NasPlugin:
     def __init__(self, home):
         self.directory = Path(home) / "plugins" / "nas"
         self.lock = threading.RLock()
+        self.source_locks = {}
+        self.sessions = {}
         self.state = {"enabled": False, "sources": []}
         self.connectors = {"smb": SMBConnector, "webdav": WebDAVConnector}
         self.cipher = None
@@ -250,8 +253,27 @@ class NasPlugin:
         if state_path.exists():
             self.cipher = Fernet((self.directory / "key").read_bytes())
             self.state = json.loads(self.cipher.decrypt(state_path.read_bytes()))
+        from .cloud_drives import BaiduConnector, CloudDrives, GoogleConnector
+        from .onedrive import OneDriveConnector
+        self.cloud = CloudDrives(self)
+        self.connectors.update(google=lambda c: GoogleConnector(c, self.save),
+                               baidu=lambda c: BaiduConnector(c, self.save),
+                               onedrive=lambda c: OneDriveConnector(c, self.save))
+        from .drive_cache import DirectoryCache
+        self.directory_cache = DirectoryCache(self)
+
+    @staticmethod
+    def public_source(source):
+        # An allowlist prevents new token fields from leaking through status.
+        allowed = {"id", "name", "system", "protocol", "root", "username", "host",
+                   "share", "port", "url", "writable", "allow_ai", "write_authorized"}
+        return {k: v for k, v in source.items() if k in allowed}
 
     def save(self):
+        with self.lock:
+            self._save()
+
+    def _save(self):
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         if self.cipher is None:
             key = Fernet.generate_key()
@@ -269,17 +291,39 @@ class NasPlugin:
         with self.lock:
             return {
                 "enabled": self.state["enabled"],
-                "systems": SYSTEMS,
+                "systems": SYSTEMS + [
+                    {"id": "google", "name": "Google Drive", "protocols": ["google"], "integration": "Official Drive API"},
+                    {"id": "baidu", "name": "百度网盘", "protocols": ["baidu"], "integration": "Official Netdisk API"},
+                    {"id": "onedrive", "name": "OneDrive", "protocols": ["onedrive"], "integration": "Microsoft Graph"},
+                ],
+                "cloud_providers": self.cloud.configured(),
                 "max_file_bytes": MAX_FILE,
+                "browser_location": self.directory_cache.location if self.state["enabled"] else {},
                 "sources": [
-                    {k: v for k, v in s.items() if k != "password"} for s in self.state["sources"]
+                    self.public_source(s) for s in self.state["sources"]
                 ],
             }
 
     def enable(self, enabled):
         if not isinstance(enabled, bool):
             raise NasError("invalid_enabled")
+        manager = getattr(self, "plugin_manager", None)
+        if manager:
+            from .node_apps.craft_host import CraftError
+
+            try:
+                manager.configure_nas(enabled)
+            except CraftError as exc:
+                raise NasError(str(exc), 409) from None
+            return self.status()
+        return self._enable(enabled)
+
+    def _enable(self, enabled):
+        if not isinstance(enabled, bool):
+            raise NasError("invalid_enabled")
         with self.lock:
+            if self.state["enabled"] != enabled:
+                self.state["access_epoch"] = uuid.uuid4().hex
             self.state["enabled"] = enabled
             self.save()
             return self.status()
@@ -287,6 +331,18 @@ class NasPlugin:
     def require_enabled(self):
         if not self.state["enabled"]:
             raise NasError("nas_plugin_disabled", 409)
+
+    @contextmanager
+    def access(self):
+        """Acquire lifecycle authority before NAS/source locks, never inside them."""
+        from .node_apps.craft_host import CraftError
+
+        manager = getattr(self, "plugin_manager", None)
+        try:
+            with manager.lease("nas") if manager else nullcontext():
+                yield
+        except CraftError as exc:
+            raise NasError(str(exc), 409) from None
 
     def configure(self, body):
         system = next((s for s in SYSTEMS if s["id"] == body.get("system")), None)
@@ -306,6 +362,7 @@ class NasPlugin:
             "password": str(body.get("password", "")),
             "writable": body.get("writable") is True,
             "allow_ai": body.get("allow_ai") is True,
+            "access_generation": uuid.uuid4().hex,
         }
         if not config["username"] or not config["password"]:
             raise NasError("credentials_required")
@@ -351,18 +408,31 @@ class NasPlugin:
             self.require_enabled()
             if len(self.state["sources"]) >= 32:
                 raise NasError("too_many_sources")
-            with self.connection(config) as connector:
-                connector.list("")  # Only save a connection that has passed a real read check.
+        with self.connection(config) as connector:
+            entries = connector.list("")  # Only save a connection that has passed a real read check.
+        with self.lock:
+            self.require_enabled()
+            if len(self.state["sources"]) >= 32:
+                raise NasError("too_many_sources")
             self.state["sources"].append(config)
             self.save()
+            self.directory_cache.put(config["id"], "", entries)
             return {k: v for k, v in config.items() if k != "password"}
 
     @contextmanager
-    def connection(self, config):
+    def connection(self, config, reuse=False):
         connector = None
+        failed = True
         try:
-            connector = self.connectors[config["protocol"]](config)
+            session = self.sessions.get(config["id"]) if reuse else None
+            if session and (session[0] is not config or time.monotonic() - session[2] > 60):
+                self._close_session(config["id"])
+                session = None
+            connector = session[1] if session else self.connectors[config["protocol"]](config)
+            if reuse:
+                self.sessions[config["id"]] = (config, connector, time.monotonic())
             yield connector
+            failed = False
         except NasError:
             raise
         except FileNotFoundError as exc:
@@ -385,11 +455,21 @@ class NasPlugin:
             # Do not expose library exceptions: they may contain URLs or credentials.
             raise NasError("nas_connection_failed", 502) from exc
         finally:
-            if connector:
+            if connector and (not reuse or failed):
+                if reuse:
+                    self.sessions.pop(config["id"], None)
                 try:
                     connector.close()
                 except Exception:
                     pass  # Cleanup must not expose credential-bearing transport errors.
+
+    def _close_session(self, source_id):
+        session = self.sessions.pop(source_id, None)
+        if session:
+            try:
+                session[1].close()
+            except Exception:
+                pass
 
     def source(self, source_id):
         self.require_enabled()
@@ -402,47 +482,163 @@ class NasPlugin:
         with self.lock:
             self.source(source_id)
             self.state["sources"] = [s for s in self.state["sources"] if s["id"] != source_id]
+            self.directory_cache.invalidate(source_id)
             self.save()
+            gate = self.source_locks.pop(source_id, None)
+        if gate is None or gate.acquire(blocking=False):
+            try:
+                self._close_session(source_id)
+            finally:
+                if gate is not None:
+                    gate.release()
 
-    def operate(self, source_id, action, path="", data=b""):
+    def browser_location(self, body):
+        with self.lock:
+            source_id = str(body.get("source_id", ""))
+            self.source(source_id)
+            path = relative_path(body.get("path", ""))
+            names = body.get("names", {})
+            if not isinstance(names, dict) or len(names) > 100 or any(not isinstance(k, str) or not isinstance(v, str) or len(k) > 2100 or len(v) > 512 for k, v in names.items()):
+                raise NasError("invalid_path")
+            self.directory_cache.location = {"source_id": source_id, "path": path, "names": names}
+            self.directory_cache.flush()
+            return {"ok": True}
+
+    def listing(self, source_id, path="", cached=False, cursor="", scan=""):
         path = relative_path(path)
+        if len(cursor) > 4096 or len(scan) > 64:
+            raise NasError("invalid_path")
+        started = time.time()
+        with self.lock:
+            self.source(source_id)
+            if cached:
+                return self.directory_cache.get(source_id, path) or {"entries": None, "updated_at": 0}
+            gate = self.source_locks.setdefault(source_id, threading.RLock())
+        with gate:
+            with self.lock:
+                self.source(source_id)
+                item = self.directory_cache.get(source_id, path)
+                if cursor:
+                    if not item or item.get("scan") != scan:
+                        raise NasError("drive_listing_changed", 409)
+                    if item.get("previous_cursor") == cursor:
+                        return item
+                    if item.get("next_cursor") != cursor:
+                        raise NasError("drive_listing_changed", 409)
+                elif item and item["updated_at"] >= started:
+                    return item
+            page = self.operate(source_id, "list_page", path, cursor)
+            with self.lock:
+                self.source(source_id)
+                entries = (item["entries"] if cursor else []) + page["entries"]
+                entries = list({entry["path"]: entry for entry in entries}.values())
+                if len(entries) > MAX_ENTRIES or page.get("next_cursor") == cursor and cursor:
+                    raise NasError("directory_too_large", 413)
+                return self.directory_cache.put(source_id, path, entries,
+                    next_cursor=page.get("next_cursor", ""), previous_cursor=cursor,
+                    scan=scan if cursor else uuid.uuid4().hex)
+
+    def update_source(self, source_id, body):
         with self.lock:
             source = self.source(source_id)
-            if action in {"write", "mkdir"}:
-                if not source["writable"]:
-                    raise NasError("nas_read_only", 403)
-                if not path:
-                    raise NasError("file_path_required")
-            if len(data) > MAX_FILE:
-                raise NasError("file_too_large", 413)
-            if action == "ai" and not source["allow_ai"]:
-                raise NasError("nas_ai_not_allowed", 403)
-            with self.connection(source) as connector:
-                if action == "list":
-                    return sorted(
-                        connector.list(path),
-                        key=lambda e: (not e["directory"], e["name"].casefold()),
-                    )
-                if action in {"image", "thumbnail"}:
-                    return image_preview(connector.read(path, MAX_IMAGE), action == "thumbnail")
-                if action in {"read", "preview", "ai"}:
-                    raw = connector.read(path, MAX_FILE if action == "read" else MAX_PREVIEW)
-                    if action == "read":
-                        return raw
-                    try:
-                        text = raw.decode("utf-8-sig")
-                    except UnicodeError as exc:
-                        raise NasError("preview_requires_utf8_text", 415) from exc
-                    if "\x00" in text:
-                        raise NasError("preview_requires_utf8_text", 415)
-                    return {"text": text, "name": path.rsplit("/", 1)[-1]}
-                if action == "write":
-                    connector.write(path, data)
-                elif action == "mkdir":
-                    connector.mkdir(path)
-                else:
-                    raise NasError("unsupported_operation")
+            name = str(body.get("name", source["name"])).strip()
+            if not name or len(name) > 80:
+                raise NasError("invalid_name")
+            writable = body.get("writable", source["writable"])
+            allow_ai = body.get("allow_ai", source["allow_ai"])
+            if not isinstance(writable, bool) or not isinstance(allow_ai, bool):
+                raise NasError("invalid_permissions")
+            if writable and source["protocol"] in {"google", "onedrive"} and not source.get("write_authorized"):
+                raise NasError("drive_write_requires_reauthorization", 409)
+            if writable != source["writable"] or allow_ai != source["allow_ai"]:
+                source["access_generation"] = uuid.uuid4().hex
+            source.update(name=name, writable=writable, allow_ai=allow_ai)
+            self.save()
+            return self.public_source(source)
+
+    def operate(self, source_id, action, path="", data=b""):
+        with self.access():
+            return self._operate(source_id, action, path, data)
+
+    def _operate(self, source_id, action, path="", data=b""):
+        path = relative_path(path)
+        with self.lock:
+            self.source(source_id)
+            gate = self.source_locks.setdefault(source_id, threading.RLock())
+        with gate:
+            with self.lock:
+                source = self.source(source_id)
+                if action in {"write", "mkdir"}:
+                    if not source["writable"]:
+                        raise NasError("nas_read_only", 403)
+                    if not path:
+                        raise NasError("file_path_required")
+                if len(data) > MAX_FILE:
+                    raise NasError("file_too_large", 413)
+                if action == "ai" and not source["allow_ai"]:
+                    raise NasError("nas_ai_not_allowed", 403)
+            try:
+                with self.connection(source, reuse=True) as connector:
+                    result = self._perform(connector, action, path, data)
+                with self.lock:
+                    if self.source(source_id) is not source:
+                        raise NasError("nas_not_found", 404)
+                    if action == "list":
+                        self.directory_cache.put(source_id, path, result)
+                    elif action in {"write", "mkdir"}:
+                        self.directory_cache.invalidate(source_id, path.rpartition("/")[0])
+                return result
+            except NasError as exc:
+                if exc.status in {401, 403, 404}:
+                    with self.lock:
+                        self.directory_cache.invalidate(source_id, None if exc.status in {401, 403} else path)
+                raise
+            finally:
+                with self.lock:
+                    active = self.state["enabled"] and any(s is source for s in self.state["sources"])
+                if not active:
+                    self._close_session(source_id)
+
+    @staticmethod
+    def _perform(connector, action, path, data):
+        if action == "list_page":
+            if hasattr(connector, "list_page"):
+                return connector.list_page(path, data)
+            return {"entries": connector.list(path), "next_cursor": ""}
+        if action == "list":
+            return sorted(
+                connector.list(path),
+                key=lambda e: (not e["directory"], e["name"].casefold()),
+            )
+        if action in {"image", "thumbnail"}:
+            return image_preview(connector.read(path, MAX_IMAGE), action == "thumbnail")
+        if action in {"read", "preview", "ai"}:
+            raw = connector.read(path, MAX_FILE if action == "read" else MAX_PREVIEW)
+            if action == "read":
+                return raw
+            try:
+                text = raw.decode("utf-8-sig")
+            except UnicodeError as exc:
+                raise NasError("preview_requires_utf8_text", 415) from exc
+            if "\x00" in text:
+                raise NasError("preview_requires_utf8_text", 415)
+            return {"text": text, "name": path.rsplit("/", 1)[-1]}
+        if action == "write":
+            created = connector.write(path, data)
+        elif action == "mkdir":
+            created = connector.mkdir(path)
+        else:
+            raise NasError("unsupported_operation")
+        if getattr(connector, "config", {}).get("protocol") in {"google", "onedrive"}:
+            if not isinstance(created, dict) or not created.get("id"):
                 return {"ok": True}
+            parent = path.rpartition("/")[0]
+            actual_path = (parent + "/" if parent else "") + created["id"]
+        else:
+            actual_path = path
+        return {"ok": True, "entry": {"name": path.rsplit("/", 1)[-1], "path": actual_path,
+                "directory": action == "mkdir", "size": len(data) if action == "write" else 0, "modified": time.time()}}
+
 
 
 def image_preview(raw, thumbnail=False):
@@ -495,14 +691,38 @@ def mount_nas(app, home, local_control):
     def add(body: dict):
         return run(plugin.configure, body)
 
+    @router.put("/cloud/apps/{provider}")
+    def configure_cloud(provider: str, body: dict):
+        return run(plugin.cloud.configure, provider, body)
+
+    @router.post("/cloud/auth/{provider}")
+    def authorize_cloud(provider: str, body: dict):
+        return run(plugin.cloud.start, provider, body)
+
+    @router.get("/cloud/auth-status/{auth_id}")
+    def cloud_auth_status(auth_id: str):
+        return run(plugin.cloud.poll, auth_id)
+
+    @router.delete("/cloud/auth-status/{auth_id}")
+    def cancel_cloud_auth(auth_id: str):
+        return run(plugin.cloud.cancel, auth_id)
+
+    @router.patch("/sources/{source_id}")
+    def update_source(source_id: str, body: dict):
+        return run(plugin.update_source, source_id, body)
+
     @router.delete("/sources/{source_id}")
     def remove(source_id: str):
         run(plugin.remove, source_id)
         return {"ok": True}
 
+    @router.put("/browser-location")
+    def browser_location(body: dict):
+        return run(plugin.browser_location, body)
+
     @router.get("/sources/{source_id}/files")
-    def listing(source_id: str, path: str = ""):
-        return {"entries": run(plugin.operate, source_id, "list", path)}
+    def listing(source_id: str, path: str = "", cached: bool = False, cursor: str = "", scan: str = ""):
+        return run(plugin.listing, source_id, path, cached, cursor, scan)
 
     @router.get("/sources/{source_id}/content")
     def content(source_id: str, path: str, mode: str = "download"):

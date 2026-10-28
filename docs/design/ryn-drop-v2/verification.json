@@ -1,0 +1,112 @@
+{
+  "checkedAt": "2026-10-13T08:10:56.527Z",
+  "errors": [],
+  "layout": [
+    {
+      "width": 1408,
+      "tab": "devices",
+      "scroll": 1408,
+      "body": 1408,
+      "viewport": 1408
+    },
+    {
+      "width": 1408,
+      "tab": "chat",
+      "scroll": 1408,
+      "body": 1408,
+      "viewport": 1408
+    },
+    {
+      "width": 1408,
+      "tab": "transfers",
+      "scroll": 1408,
+      "body": 1408,
+      "viewport": 1408
+    },
+    {
+      "width": 1024,
+      "tab": "devices",
+      "scroll": 1024,
+      "body": 1024,
+      "viewport": 1024
+    },
+    {
+      "width": 1024,
+      "tab": "chat",
+      "scroll": 1024,
+      "body": 1024,
+      "viewport": 1024
+    },
+    {
+      "width": 1024,
+      "tab": "transfers",
+      "scroll": 1024,
+      "body": 1024,
+      "viewport": 1024
+    },
+    {
+      "width": 736,
+      "tab": "devices",
+      "scroll": 736,
+      "body": 736,
+      "viewport": 736
+    },
+    {
+      "width": 736,
+      "tab": "chat",
+      "scroll": 736,
+      "body": 736,
+      "viewport": 736
+    },
+    {
+      "width": 736,
+      "tab": "transfers",
+      "scroll": 736,
+      "body": 736,
+      "viewport": 736
+    },
+    {
+      "width": 390,
+      "tab": "devices",
+      "scroll": 390,
+      "body": 390,
+      "viewport": 390
+    },
+    {
+      "width": 390,
+      "tab": "chat",
+      "scroll": 390,
+      "body": 390,
+      "viewport": 390
+    },
+    {
+      "width": 390,
+      "tab": "transfers",
+      "scroll": 390,
+      "body": 390,
+      "viewport": 390
+    },
+    {
+      "width": 320,
+      "tab": "devices",
+      "scroll": 320,
+      "body": 320,
+      "viewport": 320
+    },
+    {
+      "width": 320,
+      "tab": "chat",
+      "scroll": 320,
+      "body": 320,
+      "viewport": 320
+    },
+    {
+      "width": 320,
+      "tab": "transfers",
+      "scroll": 320,
+      "body": 320,
+      "viewport": 320
+    }
+  ],
+  "scope": "Interactive mockup only. No production protocol or backend testing."
+}

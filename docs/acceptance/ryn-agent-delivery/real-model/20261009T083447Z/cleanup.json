@@ -1,0 +1,11 @@
+{
+  "at": "2026-10-09T08:44:07.551297+00:00",
+  "actor": "test harness cleanup, not model",
+  "reason": "failed candidate left isolated fixture shared; runtime already shut down",
+  "before_shared_models": [
+    "glm-5.3-flash"
+  ],
+  "after_shared_models": [],
+  "live_owner_configuration_touched": false,
+  "original_run_evidence_unchanged": true
+}

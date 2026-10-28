@@ -1,0 +1,77 @@
+{
+  "kind": "root-native-followup-source-freeze",
+  "reference": "root-20261011-native-timing-feedback-reviewed",
+  "at": "2026-10-11T12:50:26.615384+00:00",
+  "checks": {
+    "independent_timing_review_passed": true,
+    "independent_feedback_review_passed": true,
+    "localization_46_frontend_checks_and_types_passed": true,
+    "changed_python_ruff_passed": true
+  },
+  "review_evidence": [
+    {
+      "path": ".codex-tmp/run-timing-fix-20261011/independent-review.json",
+      "sha256": "fcb9ba240ae6047e0ded4157f0ffe32f06405c1089b8c41c5fb516e636849f8c"
+    },
+    {
+      "path": ".codex-tmp/verification-feedback/independent-review.json",
+      "sha256": "d7d8730bbd4e972f5cacd9557b322576f46ccce24cb0a563c8c19bcf987b66e5"
+    }
+  ],
+  "files": [
+    {
+      "path": "rynmesh/agent_runtime/runtime.py",
+      "sha256": "d2834f1d608d8819f15b1b74bfeca8c292285757fa012719f0bedd50b4eb97f7"
+    },
+    {
+      "path": "rynmesh/agent_runtime/timing.py",
+      "sha256": "5feb40b5768b2e4e6ed8f3d0960a5159e1c560bf90438accac7af7ede37c00f3"
+    },
+    {
+      "path": "rynmesh/agent_runtime/verification.py",
+      "sha256": "88d83cb453072b42f5b5737e33b2df19e855f6b48f1d355cfb396a6514a8f033"
+    },
+    {
+      "path": "webapp/src/domain/rynAgent.ts",
+      "sha256": "ddaeb266093de29bb002d89a0cd149b34d5f03f3ca733a36cc3c0e01a496cc99"
+    },
+    {
+      "path": "webapp/src/screens/RynAgentBudget.tsx",
+      "sha256": "169dce414f40941dcbd73b918a74666b66f44861d8215d965f0687f8f4959ba1"
+    },
+    {
+      "path": "webapp/src/screens/RynAgent.tsx",
+      "sha256": "b0533fbe286907bce8b3d8b168955e08c86e2990b5d30e56db76c9690bea10ad"
+    },
+    {
+      "path": "tests/test_agent_run_timing.py",
+      "sha256": "c20cfc133fba0dfcd09da893cdc8b834c7a1cd1d1505c83305fde5b1f6c3b187"
+    },
+    {
+      "path": "tests/test_agent_verification_feedback.py",
+      "sha256": "87e2128caf0c24dce4b713a340614b090d86e2eca11e59da1c5419dc6a8d04db"
+    },
+    {
+      "path": "webapp/src/screens/RynAgentBudget.test.tsx",
+      "sha256": "7403d9c1c8752761238b9ee10b991e919e5292b4b0bec1f79be1b7179ee4bfcb"
+    },
+    {
+      "path": "webapp/src/screens/RynAgent.test.tsx",
+      "sha256": "e3ab2748a2c3e543bac9fc68cb750b874c27125d40e9aeb1c5c9b9ec7b368beb"
+    }
+  ],
+  "extra_build_metadata": [
+    {
+      "path": "D:/code/rynmesh/LICENSE",
+      "sha256": "5d777f74d3240a525717051782b9e549f356767cba43802f7ab7b96a5a10574c"
+    },
+    {
+      "path": "D:/code/rynmesh/README.md",
+      "sha256": "3f76f1b35730cd99c1d777c9f0a0b2f0dcdda957b98e2d3519a569a5ff664f8f"
+    }
+  ],
+  "test_only_delta": "After timing signature, root moved the same test_agent_runtime import to Ruff-required group. Test content and production sources unchanged; Ruff passed. Historical review hash retained.",
+  "scope": "Full Windows bundle plus wheel; old packages preserved. Build only until root releases exact hashes for82 installation.",
+  "model_calls_authorized_for_build": 0,
+  "formal_pass": false
+}

@@ -1,0 +1,65 @@
+[
+  {
+    "service_id": "antigravity-cli",
+    "cli_model": "claude-opus-5-5-high",
+    "name": "Claude Opus 5.5 (High)",
+    "tool_support": "supported",
+    "seconds": 27.1
+  },
+  {
+    "service_id": "antigravity-cli",
+    "cli_model": "claude-opus-5-5-low",
+    "name": "Claude Opus 5.5 (Low)",
+    "tool_support": "supported",
+    "seconds": 18.9
+  },
+  {
+    "service_id": "antigravity-cli",
+    "cli_model": "claude-opus-5-5-medium",
+    "name": "Claude Opus 5.5 (Medium)",
+    "tool_support": "supported",
+    "seconds": 18.7
+  },
+  {
+    "service_id": "antigravity-cli",
+    "cli_model": "claude-sonnet-5-5-high",
+    "name": "Claude Sonnet 5.5 (High)",
+    "tool_support": "supported",
+    "seconds": 19.3
+  },
+  {
+    "service_id": "antigravity-cli",
+    "cli_model": "claude-sonnet-5-5-low",
+    "name": "Claude Sonnet 5.5 (Low)",
+    "tool_support": "supported",
+    "seconds": 18.4
+  },
+  {
+    "service_id": "antigravity-cli",
+    "cli_model": "claude-sonnet-5-5-medium",
+    "name": "Claude Sonnet 5.5 (Medium)",
+    "tool_support": "supported",
+    "seconds": 16.0
+  },
+  {
+    "service_id": "antigravity-cli",
+    "cli_model": "gpt-oss-120b-medium",
+    "name": "GPT-OSS 120B (Medium)",
+    "tool_support": "supported",
+    "seconds": 13.7
+  },
+  {
+    "service_id": "antigravity-cli",
+    "cli_model": "gemini-3.8-flash-low",
+    "name": "Gemini 3.8 Flash (Low)",
+    "tool_support": "unsupported",
+    "seconds": 7.2
+  },
+  {
+    "service_id": "antigravity-cli",
+    "cli_model": "gemini-3.8-flash-medium",
+    "name": "Gemini 3.8 Flash (Medium)",
+    "tool_support": "supported",
+    "seconds": 24.5
+  }
+]

@@ -1,0 +1,17 @@
+{
+  "classification": "development semantic failure with partial improvement; runtime verified not accepted",
+  "formal_case_score": false,
+  "reviewer": "Root coordinator read the new v2.5 answer and exact source/tool evidence; previous v2.4 failure remains retained.",
+  "real_model_calls": 3,
+  "elapsed_seconds": 108.734,
+  "code_unchanged": true,
+  "owner_source_unchanged": true,
+  "source_configuration_unchanged": true,
+  "improvement": "The answer now explicitly says credential validity is neither confirmed nor excluded and does not assert that quota is healthy. It acknowledges the probe timestamp and says no fresh probe was made.",
+  "remaining_failures": [
+    "The same answer still labels the fault as confined to this source while acknowledging other sources are only configured ready, not currently probed. That exclusive scope claim is unsupported.",
+    "It states no impact on the Agent main flow without evidence for that broad claim; knowing the selected default differs supports only the narrower configured-default fact.",
+    "The semantic checker again returned passed, so the generic instruction change has not established reliable rejection of unsupported exclusions."
+  ],
+  "follow_up": "Do not repeat the unchanged trial to select a pass or declare the prompting change sufficient. Preserve the remaining checker weakness for designated Astra review and the eventual matched-model evaluation; avoid silently replacing the frozen task or its expected uncertainty."
+}

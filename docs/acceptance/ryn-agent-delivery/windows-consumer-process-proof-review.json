@@ -1,0 +1,39 @@
+{
+  "status": "development_process_mechanism_passed",
+  "author": "consumer_process_proof / gpt-6.1-sol high",
+  "reviewer": "root",
+  "root_test_command": ".venv/Scripts/python.exe -m pytest tests/test_agent_consumer_process_proof.py tests/test_agent_sharing_recovery_case.py -q",
+  "root_test_result": {"passed": 6, "seconds": 23.75},
+  "post_test_lint": {
+    "status": "passed",
+    "change": "Ruff removed one extra blank line after imports in test_agent_consumer_process_proof.py; no behavior change.",
+    "test_file_sha256_after_format": "7f78981e83a483d8767de7bc6c284dc916200da71bdad174221db90d85b9ab57"
+  },
+  "run": "evidence-bundles/windows-consumer-handle-proof/run.json",
+  "run_sha256": "e250b78916dcdb5ee8d7522696845d497ae5fdca2b27c5b7e9c44452e2ebe72b",
+  "actual_worker_pid": 18912,
+  "launcher_pid": 23696,
+  "replacement_worker_pid": 6888,
+  "replacement_launcher_pid": 32848,
+  "evidence": [
+    "Verified original worker is a live descendant of the owned launcher, with creation-time checks; retained its Windows process handle before termination.",
+    "WaitForSingleObject returned 0 on that retained worker handle before replacement Popen; the launch-order test checks the handle at the replacement boundary.",
+    "Approval identity and control revision survive; zero writes before approval, one successful write and one actual source replacement afterward.",
+    "Self and unrelated identities are rejected; timeout cleanup handles owned descendants only; cleanup-error injection preserves failure evidence and still closes all retained handles.",
+    "The one preparation catalog read and one post-write service inspection still pass mechanical transition verification; main and checker retain exact owner-approval evidence.",
+    "The recorded code snapshot remained unchanged during this root run."
+  ],
+  "reviewed_sha256": {
+    "real-model/consumer_process_proof.py": "6cd2ebf821f45984fcfd0d9e77bf3936abf936037b57b8b853ba904fa601c901",
+    "real-model/run_sharing_recovery.py": "bb4293731b2da55d88a4152dc25d04d9e4964e95e94c01507fc135b8a2504039",
+    "tests/test_agent_consumer_process_proof.py": "73fdf44fca951056782d03eab0784869e2316394255c9818a9299a6d9b36188d",
+    "tests/test_agent_sharing_recovery_case.py": "a959d143a20961739358a615f92095a38f818bcf55c80b5ab8cfd382a60f919a"
+  },
+  "limitations": [
+    "Deterministic planner and checker, not real GLM quality or formal R02 acceptance.",
+    "One physical Windows host; POSIX branch has not been executed here.",
+    "Replacement worker exits naturally; its PID is taken from its saved record and launcher wait, with no retroactive worker-handle claim.",
+    "Prior real runs remain subject to their original launcher-only evidence limitation."
+  ],
+  "formal_executed_trials": 0
+}

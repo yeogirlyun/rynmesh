@@ -1,0 +1,160 @@
+{
+  "date": "2026-10-13T12:43:10.683Z",
+  "sent": {
+    "transfer_id": "c4efe8e037694257b45b5f73b0a53e82",
+    "offer_id": "e238fe944ead4ed6990153163ef10a18",
+    "peer_id": "fR6oJFpFDez/LqWFSnyxUmOmTEB/f/7teSFY/y/9RSA=",
+    "direction": "out",
+    "kind": "folder",
+    "name": "LAN-folder-proof",
+    "file_count": 3,
+    "total_bytes": 16777302,
+    "confirmed_bytes": 16777302,
+    "status": "completed",
+    "route": "lan",
+    "speed_bps": null,
+    "eta_s": null,
+    "error": null,
+    "note": "",
+    "save_dir": "",
+    "final_path": "",
+    "verification_code": null,
+    "actions": [],
+    "created_at": "2026-10-13T12:43:00.382+00:00",
+    "updated_at": "2026-10-13T12:43:09.476+00:00",
+    "completed_at": "2026-10-13T12:43:09.476+00:00",
+    "version": 10,
+    "files_preview": [
+      {
+        "rel_path": "LAN-folder-proof/empty-file.txt",
+        "size": 0
+      },
+      {
+        "rel_path": "LAN-folder-proof/中文说明.txt",
+        "size": 69
+      },
+      {
+        "rel_path": "LAN-folder-proof/subfolder/random-16MiB.bin",
+        "size": 16777233
+      }
+    ],
+    "files": [
+      {
+        "file_id": "f000000",
+        "rel_path": "LAN-folder-proof/empty-file.txt",
+        "size": 0,
+        "committed": 0,
+        "status": "pending",
+        "final_path": ""
+      },
+      {
+        "file_id": "f000001",
+        "rel_path": "LAN-folder-proof/中文说明.txt",
+        "size": 69,
+        "committed": 0,
+        "status": "pending",
+        "final_path": ""
+      },
+      {
+        "file_id": "f000002",
+        "rel_path": "LAN-folder-proof/subfolder/random-16MiB.bin",
+        "size": 16777233,
+        "committed": 0,
+        "status": "pending",
+        "final_path": ""
+      }
+    ]
+  },
+  "received": {
+    "transfer_id": "c4efe8e037694257b45b5f73b0a53e82",
+    "offer_id": "e238fe944ead4ed6990153163ef10a18",
+    "peer_id": "ppw4BE4zoTTDrlGU/EM2wZ3JW7efSfXeuqrrZmCt9aM=",
+    "direction": "in",
+    "kind": "folder",
+    "name": "LAN-folder-proof",
+    "file_count": 3,
+    "total_bytes": 16777302,
+    "confirmed_bytes": 16777302,
+    "status": "completed",
+    "route": "lan",
+    "speed_bps": null,
+    "eta_s": null,
+    "error": null,
+    "note": "",
+    "save_dir": "C:\\Users\\子陵\\Downloads\\Rynmesh",
+    "final_path": "C:\\Users\\子陵\\Downloads\\Rynmesh\\LAN-folder-proof",
+    "verification_code": null,
+    "actions": [
+      "open",
+      "reveal"
+    ],
+    "created_at": "2026-10-13T12:43:01.210+00:00",
+    "updated_at": "2026-10-13T12:43:10.126+00:00",
+    "completed_at": "2026-10-13T12:43:10.126+00:00",
+    "version": 8,
+    "files_preview": [
+      {
+        "rel_path": "LAN-folder-proof/empty-file.txt",
+        "size": 0
+      },
+      {
+        "rel_path": "LAN-folder-proof/中文说明.txt",
+        "size": 69
+      },
+      {
+        "rel_path": "LAN-folder-proof/subfolder/random-16MiB.bin",
+        "size": 16777233
+      }
+    ],
+    "files": [
+      {
+        "file_id": "f000000",
+        "rel_path": "LAN-folder-proof/empty-file.txt",
+        "size": 0,
+        "committed": 0,
+        "status": "completed",
+        "final_path": "C:\\Users\\子陵\\Downloads\\Rynmesh\\LAN-folder-proof\\empty-file.txt"
+      },
+      {
+        "file_id": "f000001",
+        "rel_path": "LAN-folder-proof/中文说明.txt",
+        "size": 69,
+        "committed": 69,
+        "status": "completed",
+        "final_path": "C:\\Users\\子陵\\Downloads\\Rynmesh\\LAN-folder-proof\\中文说明.txt"
+      },
+      {
+        "file_id": "f000002",
+        "rel_path": "LAN-folder-proof/subfolder/random-16MiB.bin",
+        "size": 16777233,
+        "committed": 16777233,
+        "status": "completed",
+        "final_path": "C:\\Users\\子陵\\Downloads\\Rynmesh\\LAN-folder-proof\\subfolder\\random-16MiB.bin"
+      }
+    ]
+  },
+  "files": [
+    {
+      "relative": "empty-file.txt",
+      "actual": "C:\\Users\\子陵\\Downloads\\Rynmesh\\LAN-folder-proof\\empty-file.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true
+    },
+    {
+      "relative": "中文说明.txt",
+      "actual": "C:\\Users\\子陵\\Downloads\\Rynmesh\\LAN-folder-proof\\中文说明.txt",
+      "bytes": 69,
+      "sha256": "3945e657a7fab0dec69c1cb4fc1d3c94687b50d054f416534b74d790e3006283",
+      "match": true
+    },
+    {
+      "relative": "subfolder\\random-16MiB.bin",
+      "actual": "C:\\Users\\子陵\\Downloads\\Rynmesh\\LAN-folder-proof\\subfolder\\random-16MiB.bin",
+      "bytes": 16777233,
+      "sha256": "5e66534dabe935af93c6bbfde197945dd7868745dd33361aeb666dd714544476",
+      "match": true
+    }
+  ],
+  "all_hashes_match": true
+}

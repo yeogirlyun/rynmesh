@@ -24,7 +24,7 @@ beforeEach(() => {
   state.personal = {
     devices, services: devices.map(device => ({ id: device.id, title: device.own ? "ChatGPT" : "Remote AI",
       deviceId: device.id, kind: "ai", online: true, description: "", href: "/chat" })),
-    loading: false, error: "", demo: false, refresh: vi.fn(),
+    loading: false, error: "", demo: false, refresh: vi.fn(), saveDevice: vi.fn().mockResolvedValue(undefined),
     resolveName: (id: string) => devices.find(device => device.id === id)?.name,
   };
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
@@ -55,12 +55,18 @@ it("translates the screenshot's home content immediately while preserving names 
   expect(screen.getByText("My private note")).toBeInTheDocument();
   expect(screen.getByText("ChatGPT")).toBeInTheDocument();
   expect(screen.queryByText(/My device|Open chat|Current network|From other devices/)).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "编辑 子陵台式" }));
+  fireEvent.click(screen.getAllByRole("button", { name: "编辑 子陵台式" })[0]);
   expect(screen.getByRole("dialog", { name: "编辑设备" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "保存更改" })).toBeInTheDocument();
   await act(async () => { setLanguagePreference("en"); });
   expect(screen.getByRole("button", { name: "Save changes" })).toBeInTheDocument();
   expect(screen.getByText("You are here · 1 device")).toBeInTheDocument();
+  fireEvent.change(screen.getByRole("textbox", { name: /^Device name/ }), { target: { value: "New desktop name" } });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save changes" })); });
+  expect(state.personal.saveDevice).toHaveBeenCalledWith(
+    (state.personal.devices as unknown[])[0], "New desktop name", "My private note", "desktop",
+  );
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
 it("keeps service filters and detail tabs selected when switching languages", async () => {

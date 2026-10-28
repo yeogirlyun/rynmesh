@@ -10,6 +10,7 @@ export async function initializeDesktopConnection(): Promise<void> {
 }
 
 export function nodeControlBaseUrl(): string {
+  if (typeof document !== "undefined" && document.documentElement.dataset.nodeAppsHost === "true") return "/api/local";
   const explicit = import.meta.env.VITE_RYN_NODE_BASE_URL;
   if (explicit) return explicit.replace(/\/$/, "");
   return isTauriDesktop() ? `http://127.0.0.1:${desktopPort}/api/local` : "/api/local";

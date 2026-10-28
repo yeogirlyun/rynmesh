@@ -1,0 +1,21 @@
+{
+  "status": "implementation_constraints_not_acceptance",
+  "basis": "output-policy-design-review.json",
+  "observations": [
+    "AgentRuntime._complete and AgentModelBridge.complete independently cap generation at 4096.",
+    "The query and recovery controllers replace ModelDispatchAdapter.inner only. Its outer chat method also clamps max_tokens to the isolated business fixture policy. A catalog-only planner-policy wrapper is therefore insufficient.",
+    "Any execution-policy mapping must retain fresh source revision, permission binding, quota and concurrency admission. Do not bypass ModelDispatchAdapter to obtain a larger generation allowance.",
+    "Keep business identities and business readback facts distinct from the actual planner policy; record the mapping explicitly for candidate and reference.",
+    "Reserve storage for bounded private continuation before inference. Review both _reserve_output and initial dispatch/reconciliation reservations.",
+    "Raw response overflow currently occurs before extracting usage. Rejections must preserve available sanitized counters without exporting response text or private reasoning.",
+    "Reference documents dispatch currently ignores the worker's requested max_output_tokens. Honor valid lower requests without allowing higher requests to exceed the shared ceiling.",
+    "Source policy provenance must use an explicit credential-free whitelist, not a digest of a secret-bearing source record."
+  ],
+  "baseline": {
+    "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_budget_dispatch.py tests/test_agent_runtime_budget.py tests/test_agent_reference_budget.py -q",
+    "passed": 31,
+    "seconds": 3.57,
+    "real_model_calls": 0
+  },
+  "preserve": ["original owner source", "frozen prompts and task budgets", "thinking and reasoning effort", "prior failed runs", "permission gates", "formal executed_trials=0"]
+}

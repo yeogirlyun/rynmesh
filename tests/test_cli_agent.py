@@ -33,13 +33,112 @@ class FakeProcess:
         return self.output, ""
 
 
+@pytest.mark.parametrize("structured", [False, True])
+def test_antigravity_local_model_discovery_and_order_selection(tmp_path, monkeypatch, structured):
+    import rynmesh.llm_package.routes as routes
+    from rynmesh.llm_package import cli_models
+
+    home = tmp_path / "node"
+    store = RynmeshStore(home=home, network_dir=tmp_path / "network")
+    app = FastAPI()
+    install_llm_routes(app, store=store, home=home,
+                       messaging_key=peer_box.load_or_create_messaging_key(home / "messaging.x25519"),
+                       resolve_endpoint=lambda _: "", resolve_pubkey=lambda _: "")
+    manifest = LLMPackageManifest(package_id="antigravity-cli", mode="antigravity_cli",
+                                  adapter="antigravity_cli", runtime="external",
+                                  public_model_alias="Antigravity", capabilities=["text"])
+    path = home / "llm" / "antigravity-cli" / "manifest.json"
+    save_manifest(manifest, path)
+    monkeypatch.setattr(routes, "connect_cli", lambda **_: {"manifest": str(path)})
+    monkeypatch.setattr(CLIAgentAdapter, "_command_path", lambda _: "fixture-agy")
+    monkeypatch.setattr(cli_models, "list_models", lambda kind, executable: [
+        {"id": "model-a", "name": "Model A", "default": False}])
+    seen = []
+    def answer(*args, **kwargs):
+        seen.append(kwargs.get("model", ""))
+        return {"text": "selected", "message": {"role": "assistant", "content": "selected"},
+                "input_tokens": 4, "output_tokens": 3, "duration_ms": 1, "finish_reason": "stop"}
+    monkeypatch.setattr(CLIAgentAdapter, "infer", answer)
+    monkeypatch.setattr(CLIAgentAdapter, "chat", answer)
+    with TestClient(app) as client:
+        assert client.post("/api/local/llm/cli-services/antigravity_cli/setup").status_code == 200
+        assert client.get("/api/local/llm/cli-services/antigravity_cli/models").json()["models"][0]["id"] == "model-a"
+        assert client.get("/api/local/llm/cli-services/claude_cli/models").status_code == 400
+        payload = {"provider_peer_id": store.peer_id, "service_id": "antigravity-cli",
+                   "cli_model": "model-a", "max_tokens": 32}
+        if structured:
+            payload["chat"] = {"messages": [{"role": "user", "content": "hello"}]}
+        else:
+            payload["prompt"] = "hello"
+        result = client.post("/api/local/llm/orders", json=payload)
+        assert result.status_code == 200, result.text
+        assert result.json()["state"] == "succeeded", result.json()
+        assert seen[-1] == "model-a"
+
+
 def test_codex_desktop_discovery_without_shell_path(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from rynmesh.llm_package import cli_adapter
     binary = tmp_path / "OpenAI" / "Codex" / "bin" / "version" / "codex.exe"
     binary.parent.mkdir(parents=True)
     binary.write_bytes(b"test")
+    monkeypatch.setattr(cli_adapter.sys, "platform", "win32")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "profile")
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setattr("rynmesh.llm_package.cli_adapter.shutil.which", lambda _: None)
     assert CLIAgentAdapter("codex_cli")._command_path() == str(binary)
+
+
+def test_windows_codex_uses_same_profile_binary_with_normal_or_msix_environment(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from rynmesh.llm_package import cli_adapter
+    profile = tmp_path / "profile"
+    actual_local = profile / "AppData" / "Local"
+    virtual_local = tmp_path / "package" / "LocalCache" / "Local"
+    current = actual_local / "OpenAI" / "Codex" / "bin" / "current" / "codex.exe"
+    older = current.parents[1] / "older" / "codex.exe"
+    virtual = virtual_local / "OpenAI" / "Codex" / "bin" / "virtual" / "codex.exe"
+    stale_shim = virtual.parent.parent / "codex.exe"
+    for index, path in enumerate((older, current, virtual, stale_shim), 1):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"fixture")
+        cli_adapter.os.utime(path, ns=(index * 1000000000, index * 1000000000))
+    monkeypatch.setattr(cli_adapter.sys, "platform", "win32")
+    monkeypatch.setattr(Path, "home", lambda: profile)
+    monkeypatch.setattr(cli_adapter.shutil, "which", lambda _: str(stale_shim))
+    monkeypatch.setattr(cli_adapter.subprocess, "run", lambda *args, **kwargs: pytest.fail("discovery must not spawn processes"))
+    for local_root in (actual_local, virtual_local):
+        monkeypatch.setenv("LOCALAPPDATA", str(local_root))
+        assert CLIAgentAdapter("codex_cli")._command_path() == str(current.resolve())
+
+
+def test_windows_codex_preserves_explicit_executable(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from rynmesh.llm_package import cli_adapter
+    profile = tmp_path / "profile"
+    current = profile / "AppData" / "Local" / "OpenAI" / "Codex" / "bin" / "current" / "codex.exe"
+    current.parent.mkdir(parents=True)
+    current.write_bytes(b"fixture")
+    explicit = str(tmp_path / "custom" / "codex.exe")
+    monkeypatch.setattr(cli_adapter.sys, "platform", "win32")
+    monkeypatch.setattr(Path, "home", lambda: profile)
+    monkeypatch.setattr(cli_adapter.shutil, "which", lambda name: explicit if name == explicit else None)
+    assert CLIAgentAdapter("codex_cli", executable=explicit)._command_path() == explicit
+
+
+def test_windows_codex_without_versioned_install_uses_path(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from rynmesh.llm_package import cli_adapter
+    fallback = str(tmp_path / "npm" / "codex.cmd")
+    monkeypatch.setattr(cli_adapter.sys, "platform", "win32")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "profile")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "virtual-local"))
+    monkeypatch.setattr(cli_adapter.shutil, "which", lambda name: fallback if name == "codex" else None)
+    assert CLIAgentAdapter("codex_cli")._command_path() == fallback
 
 
 @pytest.mark.parametrize("location", [
@@ -138,8 +237,12 @@ def test_cli_adapter_rejects_client_tools_before_process_start(monkeypatch):
     adapter = CLIAgentAdapter("claude_cli")
     with pytest.raises(AdapterError, match="tool calls"):
         adapter.chat({"messages": [{"role": "user", "content": "hi"}], "tools": [{"type": "function", "function": {"name": "tool"}}]}, task_id="one", timeout_s=1)
-    with pytest.raises(ValueError, match="text content"):
+    with pytest.raises(ValueError, match="invalid image part"):
         adapter.chat({"messages": [{"role": "user", "content": [{"type": "image_url"}]}]}, task_id="two", timeout_s=1)
+
+    with pytest.raises(AdapterError, match="does not support image input"):
+        adapter.chat({"messages": [{"role": "user", "content": [{"type": "image_url",
+            "image_url": {"url": "data:image/png;base64,YWJj"}}]}]}, task_id="image", timeout_s=1)
 
 
 def test_cli_cancellation_before_start_does_not_spawn_process(monkeypatch):
@@ -171,6 +274,7 @@ def test_cli_is_a_distinct_model_in_local_api_and_rejects_unsupported_features(t
                                     public_model_alias="Codex CLI", runtime="external",
                                     capabilities=["text"], context_window=16000, max_output_tokens=512),
         _slots=threading.BoundedSemaphore(1), _lock=threading.Lock(), _running=0,
+        context_window_for_model=lambda model="": 16000,
     )
     app = FastAPI()
     install_inference_api(app, home=tmp_path, store=SimpleNamespace(peer_id="self"),
@@ -188,6 +292,7 @@ def test_cli_is_a_distinct_model_in_local_api_and_rejects_unsupported_features(t
 
 def test_cli_sharing_requires_personal_space_ai_policy_and_publishes_plural_catalog(tmp_path, monkeypatch):
     import rynmesh.llm_package.routes as routes
+    from rynmesh.llm_package import cli_models
 
     home = tmp_path / "node"
     store = RynmeshStore(home=home, network_dir=tmp_path / "network")
@@ -200,7 +305,9 @@ def test_cli_sharing_requires_personal_space_ai_policy_and_publishes_plural_cata
     path = home / "llm" / "codex-cli" / "manifest.json"
     save_manifest(manifest, path)
     monkeypatch.setattr(routes, "connect_cli", lambda **_: {"manifest": str(path)})
-    monkeypatch.setattr("rynmesh.llm_package.cli_adapter.shutil.which", lambda _: "C:/bin/codex.exe")
+    monkeypatch.setattr(CLIAgentAdapter, "_command_path", lambda _: "C:/bin/codex.exe")
+    monkeypatch.setattr(cli_models, "list_models", lambda *a, **kw: [
+        {"id": "fixture-model", "name": "Fixture", "default": True, "context_window": 16000}])
     monkeypatch.setattr(CLIAgentAdapter, "infer", lambda *_, **__: {
         "text": "local CLI connected", "input_tokens": 4, "output_tokens": 3, "duration_ms": 1})
     with TestClient(app) as client:
@@ -275,3 +382,44 @@ def test_remote_cli_is_exposed_through_laptop_api_with_strict_p2p(tmp_path):
     assert calls[0]["provider_peer_id"] == "home-peer"
     assert calls[0]["service_id"] == "claude-cli"
     assert calls[0]["transport"] == "p2p"
+
+
+@pytest.mark.parametrize("structured", [False, True])
+@pytest.mark.parametrize("model", ["gemini-3.8-flash-medium", "unavailable", ""])
+def test_encrypted_remote_cli_model_is_validated_and_forwarded(tmp_path, monkeypatch, structured, model):
+    from rynmesh.llm_package import cli_models
+    from rynmesh.llm_package.routes import ProviderService, _expires
+    from rynmesh.llm_package.task_balance import TaskBalanceLedger
+    from rynmesh.llm_package.task_protocol import TaskOrderStore, open_task, seal_task
+    consumer = RynmeshStore(home=tmp_path / "consumer", network_dir=tmp_path / "network")
+    provider = RynmeshStore(home=tmp_path / "provider", network_dir=tmp_path / "network")
+    provider.personal_space = SimpleNamespace(enforces_ai=lambda: True, allows_ai=lambda _: True)
+    ck = peer_box.load_or_create_messaging_key(tmp_path / "ck")
+    pk = peer_box.load_or_create_messaging_key(tmp_path / "pk")
+    manifest = LLMPackageManifest(package_id="antigravity-cli", mode="antigravity_cli", adapter="antigravity_cli", public_model_alias="Antigravity")
+    adapter = CLIAgentAdapter("antigravity_cli")
+    monkeypatch.setattr(adapter, "_command_path", lambda: "fixture-agy")
+    monkeypatch.setattr(adapter, "health", lambda: {"ok": True})
+    monkeypatch.setattr(cli_models, "list_models", lambda *_: [{"id": "gemini-3.8-flash-medium", "name": "Gemini 3.8 Flash Medium", "default": False}])
+    calls = []
+    def answer(*args, **kwargs):
+        calls.append(kwargs.get("model", ""))
+        return {"text": "reply", "message": {"role": "assistant", "content": "reply"}, "finish_reason": "stop", "input_tokens": 2, "output_tokens": 2, "duration_ms": 1}
+    monkeypatch.setattr(adapter, "chat", answer)
+    monkeypatch.setattr(adapter, "infer", answer)
+    records = TaskOrderStore(tmp_path / "orders")
+    service = ProviderService(manifest=manifest, adapter=adapter, store=provider, task_store=records, balance=TaskBalanceLedger(tmp_path / "balance.json"), messaging_key=pk)
+    assert service.public_status()["cli_models"][0]["id"] == "gemini-3.8-flash-medium"
+    body = {"task_id": "remote-model", "service_id": manifest.package_id, "max_tokens": 32, "max_amount": 1, "cli_model": model, "reply_messaging_pub": peer_box.public_key_b64(ck)}
+    body.update({"chat": {"messages": [{"role": "user", "content": "hello"}]}} if structured else {"prompt": "hello"})
+    wire = seal_task(body=body, task_id=body["task_id"], kind="llm_request", sender_peer_id=consumer.peer_id, recipient_peer_id=provider.peer_id, sender_signing_key=consumer.private_key_bytes, recipient_messaging_pub=peer_box.public_key_b64(pk), expires_at=_expires(300)).to_dict()
+    result = service.handle(wire)
+    _, response = open_task(result, recipient_peer_id=consumer.peer_id, recipient_messaging_key=ck, expected_kind="llm_response")
+    if model == "unavailable":
+        assert response["state"] == "rejected"
+        assert calls == []
+    else:
+        assert response["state"] == "succeeded"
+        assert calls == [model]
+        assert response.get("cli_model", "") == model
+        assert records.get(body["task_id"])["history"][-1].get("cli_model", "") == model

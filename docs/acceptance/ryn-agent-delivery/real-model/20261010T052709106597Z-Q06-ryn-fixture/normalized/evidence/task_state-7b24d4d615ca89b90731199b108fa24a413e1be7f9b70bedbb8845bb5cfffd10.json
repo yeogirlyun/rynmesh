@@ -1,0 +1,1201 @@
+{
+  "allowed_actions": {
+    "answer": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": true
+    },
+    "approve": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": true
+    },
+    "archive": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "budget": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "cancel": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": false
+    },
+    "delete": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "deny": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": true
+    },
+    "information": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "model": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "pause": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": false
+    },
+    "reconcile": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": true
+    },
+    "restore": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": true
+    },
+    "resume": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": true
+    },
+    "scope": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "source_credential": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "steer": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    }
+  },
+  "allowed_write_tools": [],
+  "archived": false,
+  "budget": {
+    "current_round": {
+      "active_seconds": 1.6259999999892898,
+      "charged_model_calls": 7,
+      "charged_seconds": 1.6259999999892898,
+      "charged_tokens": 0,
+      "charged_tool_calls": 9,
+      "cost": null,
+      "cost_status": "unknown",
+      "input_tokens": 0,
+      "known_input_tokens": 0,
+      "known_output_tokens": 0,
+      "legacy_usage_unknown": false,
+      "model_calls": 7,
+      "output_tokens": 0,
+      "tool_calls": 9,
+      "total_tokens": 0,
+      "unsettled_operations": 0,
+      "usage_complete": true
+    },
+    "lifetime": {
+      "active_seconds": 1.6259999999892898,
+      "charged_model_calls": 7,
+      "charged_seconds": 1.6259999999892898,
+      "charged_tokens": 0,
+      "charged_tool_calls": 9,
+      "cost": null,
+      "cost_status": "unknown",
+      "input_tokens": 0,
+      "known_input_tokens": 0,
+      "known_output_tokens": 0,
+      "legacy_usage_unknown": false,
+      "model_calls": 7,
+      "output_tokens": 0,
+      "tool_calls": 9,
+      "total_tokens": 0,
+      "unsettled_operations": 0,
+      "usage_complete": true
+    },
+    "limits": {
+      "max_total_model_calls": 128,
+      "max_total_seconds": 3600,
+      "max_total_tokens": 2000000,
+      "max_total_tool_calls": 256
+    },
+    "reservation_policy": "Unknown model usage retains the conservative dispatch reservation; cost is unknown without trusted pricing.",
+    "round": 1
+  },
+  "client_request_id": null,
+  "control_revision": 1,
+  "created_at": "2026-10-10T05:27:11.757654+00:00",
+  "criteria": [
+    {
+      "assessment_kind": "semantic",
+      "description": "Satisfy the owner's complete current goal and constraints.",
+      "evidence_refs": [
+        "evidence_6adaa41c6ede4103aa47386a5ab4acbb",
+        "evidence_56a06f5744e34d0c8b02cd27876c1fc8",
+        "evidence_5cd5ca5c500f41e39b90acb5380d1424"
+      ],
+      "goal_revision": 1,
+      "id": "goal-coverage",
+      "kind": "semantic",
+      "required": true,
+      "source": "user",
+      "source_ref": "agent_b630205195b846d59ff1afa3c6521429:owner:0",
+      "status": "unknown",
+      "verifier": null
+    },
+    {
+      "description": "Re-read the current model catalog and compare the reported configuration facts.",
+      "evidence_refs": [
+        "evidence_6adaa41c6ede4103aa47386a5ab4acbb"
+      ],
+      "goal_revision": 1,
+      "id": "criterion_op_d484e71be66e4706a75a64f873c5ddc0",
+      "kind": "mechanical",
+      "required": true,
+      "source": "tool",
+      "source_ref": "receipt_op_d484e71be66e4706a75a64f873c5ddc0",
+      "status": "passed",
+      "verifier": "ryn_list_models_facts"
+    },
+    {
+      "description": "Recheck device presence evidence; unknown connectivity remains unknown.",
+      "evidence_refs": [
+        "evidence_56a06f5744e34d0c8b02cd27876c1fc8"
+      ],
+      "goal_revision": 1,
+      "id": "criterion_op_7fefce46d9bd475dbb7b0a3dbbfefd43",
+      "kind": "mechanical",
+      "required": true,
+      "source": "tool",
+      "source_ref": "receipt_op_7fefce46d9bd475dbb7b0a3dbbfefd43",
+      "status": "passed",
+      "verifier": "ryn_list_devices_facts"
+    },
+    {
+      "description": "Re-read current model service and explicit grant facts.",
+      "evidence_refs": [
+        "evidence_5cd5ca5c500f41e39b90acb5380d1424"
+      ],
+      "goal_revision": 1,
+      "id": "criterion_op_e41052830d4b4e2b9ba4de7e549ba822",
+      "kind": "mechanical",
+      "required": true,
+      "source": "tool",
+      "source_ref": "receipt_op_e41052830d4b4e2b9ba4de7e549ba822",
+      "status": "passed",
+      "verifier": "ryn_inspect_services_facts"
+    }
+  ],
+  "error": null,
+  "event_cursor": 39,
+  "events": [
+    {
+      "at": "2026-10-10T05:27:11.757654+00:00",
+      "context_epoch": 0,
+      "seq": 1,
+      "type": "created"
+    },
+    {
+      "at": "2026-10-10T05:27:11.785657+00:00",
+      "context_epoch": 0,
+      "menu": {
+        "catalog_revision": "829f4b426f23840ead418051f5a8a3f6822785eb9340a4d104d69a8ba21221e5",
+        "context_epoch": 0,
+        "goal_revision": 1,
+        "loaded_names": [],
+        "mode": "full",
+        "revision": 1
+      },
+      "reason": "projection",
+      "seq": 2,
+      "type": "tool_menu_changed"
+    },
+    {
+      "at": "2026-10-10T05:27:11.793655+00:00",
+      "context_epoch": 0,
+      "seq": 3,
+      "step": 1,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-10T05:27:11.803656+00:00",
+      "clamp_reasons": [],
+      "configured_cap": 4096,
+      "context_epoch": 0,
+      "effective_cap": 4096,
+      "estimated_input_tokens": 5728,
+      "policy_sha256": "b16a14e161e7a7d270d8074b53911e6a014403d6d1e5480667c3a31f9b59884a",
+      "seq": 4,
+      "type": "model_output_policy",
+      "version": "configured-output-v1"
+    },
+    {
+      "at": "2026-10-10T05:27:12.038192+00:00",
+      "content": "",
+      "context_epoch": 0,
+      "seq": 5,
+      "tool_count": 1,
+      "type": "assistant"
+    },
+    {
+      "at": "2026-10-10T05:27:12.058192+00:00",
+      "call_id": "fixture-read-0",
+      "context_epoch": 0,
+      "effect": "read",
+      "operation_id": "op_d484e71be66e4706a75a64f873c5ddc0",
+      "seq": 6,
+      "tool": "ryn_list_models",
+      "type": "tool_started"
+    },
+    {
+      "at": "2026-10-10T05:27:12.074191+00:00",
+      "call_id": "fixture-read-0",
+      "context_epoch": 0,
+      "operation_id": "op_d484e71be66e4706a75a64f873c5ddc0",
+      "result": {
+        "models": [
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": true,
+            "available": true,
+            "consumer_peer_id": "jodk24XJufyxSo2GQpHgS9EkkCIq0ZZAerfPZxvB7Is=",
+            "context_window": 32768,
+            "description": "可供本机 Agent 使用；工具在本机执行。",
+            "destination_binding_supported": true,
+            "destination_revision": "989d036abc41ba41ee199896b506ee7565a6a5da6eadb9caafcfa4d613d8356e",
+            "expected_model_binding": {
+              "ai_permission": {
+                "relationship_id": "95fb23b77a0147a7a89c0a8e0a5f48e1",
+                "revision": 1
+              },
+              "consumer_peer_id": "jodk24XJufyxSo2GQpHgS9EkkCIq0ZZAerfPZxvB7Is=",
+              "model_binding": {
+                "model_generation": "d1abe368b08241efa6f77d5b61310ecf",
+                "rule_revision": "3e948409ff0243e0a20152b85197a351",
+                "service_id": "src-d3203557167b45b1-8ed3f6ad685b",
+                "version": "ryn.model-binding.v1"
+              }
+            },
+            "fixture_identity": "model-a",
+            "id": "peer/c971169f317f358d5f8d8a16bf44e0f13392421525bb91e4ea4b3945eb22ab90/src-d3203557167b45b1-8ed3f6ad685b",
+            "model_id": "source-alpha · alpha",
+            "name": "source-alpha · alpha",
+            "peer_id": "SKW3stLvrFtSyWIB0+zp1Janav14EZBXQV97USvQCCg=",
+            "recipient_access": {
+              "ai_permission": {
+                "relationship_id": "95fb23b77a0147a7a89c0a8e0a5f48e1",
+                "revision": 1
+              },
+              "basis": "authenticated_catalog_observation",
+              "catalog_available": true,
+              "consumer_peer_id": "jodk24XJufyxSo2GQpHgS9EkkCIq0ZZAerfPZxvB7Is=",
+              "current_access": "unknown",
+              "invocation_verified": false,
+              "kind": "friend"
+            },
+            "runtime": "external",
+            "service_id": "src-d3203557167b45b1-8ed3f6ad685b",
+            "share_scope": "unknown",
+            "sharing": true,
+            "sharing_basis": "remote_catalog_advertisement",
+            "sharing_configuration_known": false,
+            "source": "peer",
+            "source_id": "",
+            "source_name": "owner-provider",
+            "streaming": true,
+            "tool_support": "supported"
+          }
+        ]
+      },
+      "seq": 7,
+      "tool": "ryn_list_models",
+      "type": "tool_result"
+    },
+    {
+      "at": "2026-10-10T05:27:12.112191+00:00",
+      "context_epoch": 0,
+      "seq": 8,
+      "step": 2,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-10T05:27:12.122191+00:00",
+      "clamp_reasons": [],
+      "configured_cap": 4096,
+      "context_epoch": 0,
+      "effective_cap": 4096,
+      "estimated_input_tokens": 6383,
+      "policy_sha256": "b16a14e161e7a7d270d8074b53911e6a014403d6d1e5480667c3a31f9b59884a",
+      "seq": 9,
+      "type": "model_output_policy",
+      "version": "configured-output-v1"
+    },
+    {
+      "at": "2026-10-10T05:27:12.364701+00:00",
+      "content": "",
+      "context_epoch": 0,
+      "seq": 10,
+      "tool_count": 1,
+      "type": "assistant"
+    },
+    {
+      "at": "2026-10-10T05:27:12.387699+00:00",
+      "call_id": "fixture-read-1",
+      "context_epoch": 0,
+      "effect": "read",
+      "operation_id": "op_7fefce46d9bd475dbb7b0a3dbbfefd43",
+      "seq": 11,
+      "tool": "ryn_list_devices",
+      "type": "tool_started"
+    },
+    {
+      "at": "2026-10-10T05:27:12.414208+00:00",
+      "call_id": "fixture-read-1",
+      "context_epoch": 0,
+      "operation_id": "op_7fefce46d9bd475dbb7b0a3dbbfefd43",
+      "result": {
+        "ai_access": "local",
+        "devices": [
+          {
+            "checked_at": "2026-10-09T08:00:00+00:00",
+            "evidence_source": "unknown",
+            "http_probe_performed": false,
+            "http_reachable": null,
+            "lan_probe_performed": false,
+            "lan_reachable": null,
+            "last_seen": "",
+            "node_name": "owner-provider",
+            "online": null,
+            "peer_id": "SKW3stLvrFtSyWIB0+zp1Janav14EZBXQV97USvQCCg=",
+            "relationship_id": "95fb23b77a0147a7a89c0a8e0a5f48e1",
+            "status": "active"
+          },
+          {
+            "checked_at": "2026-10-09T08:00:00+00:00",
+            "evidence_source": "self",
+            "http_probe_performed": false,
+            "http_reachable": null,
+            "lan_probe_performed": false,
+            "lan_reachable": null,
+            "last_seen": "",
+            "name": "receiver",
+            "online": true,
+            "peer_id": "jodk24XJufyxSo2GQpHgS9EkkCIq0ZZAerfPZxvB7Is="
+          },
+          {
+            "checked_at": "2026-10-09T08:00:00+00:00",
+            "evidence_source": "http",
+            "http_probe_performed": true,
+            "http_reachable": true,
+            "lan_probe_performed": false,
+            "lan_reachable": null,
+            "last_seen": "2026-10-09T08:00:00Z",
+            "name": "node-a",
+            "online": true,
+            "peer_id": "DAFuih5RR8bnXo2HHQbs2hkS4pS54+DxCn+Ro7wCq3Q="
+          },
+          {
+            "checked_at": "2026-10-09T08:00:00+00:00",
+            "evidence_source": "heartbeat_expired",
+            "http_probe_performed": false,
+            "http_reachable": null,
+            "lan_probe_performed": false,
+            "lan_reachable": null,
+            "last_seen": "2026-10-09T07:50:00Z",
+            "name": "node-c",
+            "online": false,
+            "peer_id": "KfXmlYdv7Z9T8bvviBwAdv6yH9w5i4RbA9viG9jLArQ="
+          },
+          {
+            "checked_at": "2026-10-09T08:00:00+00:00",
+            "evidence_source": "unknown",
+            "http_probe_performed": false,
+            "http_reachable": null,
+            "lan_probe_performed": false,
+            "lan_reachable": null,
+            "last_seen": "",
+            "name": "node-d",
+            "online": null,
+            "peer_id": "Eq3+81bnJykIlj7P/4XIZWMgkbcHO12iPs5dRi9/QXk="
+          }
+        ],
+        "evidence_note": "online=null means unknown; membership is not proof of connectivity. evidence_source=self proves only the executing process is alive; no HTTP/LAN probe is performed for self. Reachability=null means untested, not failed. HTTP failure alone does not prove offline.",
+        "friends": [
+          {
+            "node_name": "owner-provider",
+            "peer_id": "SKW3stLvrFtSyWIB0+zp1Janav14EZBXQV97USvQCCg=",
+            "relationship_id": "95fb23b77a0147a7a89c0a8e0a5f48e1",
+            "status": "active"
+          }
+        ],
+        "membership": "none",
+        "self_id": "jodk24XJufyxSo2GQpHgS9EkkCIq0ZZAerfPZxvB7Is="
+      },
+      "seq": 12,
+      "tool": "ryn_list_devices",
+      "type": "tool_result"
+    },
+    {
+      "at": "2026-10-10T05:27:12.460262+00:00",
+      "context_epoch": 0,
+      "seq": 13,
+      "step": 3,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-10T05:27:12.472262+00:00",
+      "clamp_reasons": [],
+      "configured_cap": 4096,
+      "context_epoch": 0,
+      "effective_cap": 4096,
+      "estimated_input_tokens": 7209,
+      "policy_sha256": "b16a14e161e7a7d270d8074b53911e6a014403d6d1e5480667c3a31f9b59884a",
+      "seq": 14,
+      "type": "model_output_policy",
+      "version": "configured-output-v1"
+    },
+    {
+      "at": "2026-10-10T05:27:12.730370+00:00",
+      "content": "",
+      "context_epoch": 0,
+      "seq": 15,
+      "tool_count": 1,
+      "type": "assistant"
+    },
+    {
+      "at": "2026-10-10T05:27:12.756434+00:00",
+      "call_id": "fixture-read-2",
+      "context_epoch": 0,
+      "effect": "read",
+      "operation_id": "op_e41052830d4b4e2b9ba4de7e549ba822",
+      "seq": 16,
+      "tool": "ryn_inspect_services",
+      "type": "tool_started"
+    },
+    {
+      "at": "2026-10-10T05:27:12.775434+00:00",
+      "call_id": "fixture-read-2",
+      "context_epoch": 0,
+      "operation_id": "op_e41052830d4b4e2b9ba4de7e549ba822",
+      "result": {
+        "friend_grants": [],
+        "friend_grants_scope": {
+          "direction": "local_outgoing",
+          "provider_peer_id": "jodk24XJufyxSo2GQpHgS9EkkCIq0ZZAerfPZxvB7Is=",
+          "remote_provider_grants": "unknown"
+        },
+        "models": [
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": true,
+            "available": true,
+            "consumer_peer_id": "jodk24XJufyxSo2GQpHgS9EkkCIq0ZZAerfPZxvB7Is=",
+            "context_window": 32768,
+            "description": "可供本机 Agent 使用；工具在本机执行。",
+            "destination_binding_supported": true,
+            "destination_revision": "989d036abc41ba41ee199896b506ee7565a6a5da6eadb9caafcfa4d613d8356e",
+            "expected_model_binding": {
+              "ai_permission": {
+                "relationship_id": "95fb23b77a0147a7a89c0a8e0a5f48e1",
+                "revision": 1
+              },
+              "consumer_peer_id": "jodk24XJufyxSo2GQpHgS9EkkCIq0ZZAerfPZxvB7Is=",
+              "model_binding": {
+                "model_generation": "d1abe368b08241efa6f77d5b61310ecf",
+                "rule_revision": "3e948409ff0243e0a20152b85197a351",
+                "service_id": "src-d3203557167b45b1-8ed3f6ad685b",
+                "version": "ryn.model-binding.v1"
+              }
+            },
+            "id": "peer/c971169f317f358d5f8d8a16bf44e0f13392421525bb91e4ea4b3945eb22ab90/src-d3203557167b45b1-8ed3f6ad685b",
+            "model_id": "source-alpha · alpha",
+            "name": "source-alpha · alpha",
+            "peer_id": "SKW3stLvrFtSyWIB0+zp1Janav14EZBXQV97USvQCCg=",
+            "recipient_access": {
+              "ai_permission": {
+                "relationship_id": "95fb23b77a0147a7a89c0a8e0a5f48e1",
+                "revision": 1
+              },
+              "basis": "authenticated_catalog_observation",
+              "catalog_available": true,
+              "consumer_peer_id": "jodk24XJufyxSo2GQpHgS9EkkCIq0ZZAerfPZxvB7Is=",
+              "current_access": "unknown",
+              "invocation_verified": false,
+              "kind": "friend"
+            },
+            "runtime": "external",
+            "service_id": "src-d3203557167b45b1-8ed3f6ad685b",
+            "share_scope": "unknown",
+            "sharing": true,
+            "sharing_basis": "remote_catalog_advertisement",
+            "sharing_configuration_known": false,
+            "source": "peer",
+            "source_id": "",
+            "source_name": "owner-provider",
+            "streaming": true,
+            "tool_support": "supported"
+          }
+        ]
+      },
+      "seq": 17,
+      "tool": "ryn_inspect_services",
+      "type": "tool_result"
+    },
+    {
+      "at": "2026-10-10T05:27:12.820440+00:00",
+      "context_epoch": 0,
+      "seq": 18,
+      "step": 4,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-10T05:27:12.831769+00:00",
+      "clamp_reasons": [],
+      "configured_cap": 4096,
+      "context_epoch": 0,
+      "effective_cap": 4096,
+      "estimated_input_tokens": 7917,
+      "policy_sha256": "b16a14e161e7a7d270d8074b53911e6a014403d6d1e5480667c3a31f9b59884a",
+      "seq": 19,
+      "type": "model_output_policy",
+      "version": "configured-output-v1"
+    },
+    {
+      "at": "2026-10-10T05:27:13.091280+00:00",
+      "content": "Collector exercise only. Evidence is in the actual tool receipt; report review remains pending.",
+      "context_epoch": 0,
+      "seq": 20,
+      "tool_count": 0,
+      "type": "assistant"
+    },
+    {
+      "at": "2026-10-10T05:27:13.091280+00:00",
+      "context_epoch": 0,
+      "goal_revision": 1,
+      "seq": 21,
+      "type": "verification_started"
+    },
+    {
+      "at": "2026-10-10T05:27:13.146790+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_d484e71be66e4706a75a64f873c5ddc0",
+      "evidence_id": "evidence_c32bff1f90cb49bb964242d2691a1852",
+      "seq": 22,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-10T05:27:13.207791+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_7fefce46d9bd475dbb7b0a3dbbfefd43",
+      "evidence_id": "evidence_3a41e645363940c48e03e663a4730a5c",
+      "seq": 23,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-10T05:27:13.266790+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_e41052830d4b4e2b9ba4de7e549ba822",
+      "evidence_id": "evidence_1c59a359006446a1ac76c69000d22b47",
+      "seq": 24,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-10T05:27:13.303790+00:00",
+      "context_epoch": 0,
+      "seq": 25,
+      "step": 5,
+      "type": "verification_model_started"
+    },
+    {
+      "at": "2026-10-10T05:27:13.314791+00:00",
+      "clamp_reasons": [],
+      "configured_cap": 4096,
+      "context_epoch": 0,
+      "effective_cap": 4096,
+      "estimated_input_tokens": 6872,
+      "policy_sha256": "b16a14e161e7a7d270d8074b53911e6a014403d6d1e5480667c3a31f9b59884a",
+      "seq": 26,
+      "type": "model_output_policy",
+      "version": "configured-output-v1"
+    },
+    {
+      "at": "2026-10-10T05:27:13.478482+00:00",
+      "context_epoch": 0,
+      "outcome": "unverified",
+      "seq": 27,
+      "type": "verification_finished"
+    },
+    {
+      "at": "2026-10-10T05:27:13.478482+00:00",
+      "context_epoch": 0,
+      "goal_revision": 1,
+      "repair_count": 1,
+      "seq": 28,
+      "type": "verification_retry_scheduled"
+    },
+    {
+      "at": "2026-10-10T05:27:13.533483+00:00",
+      "context_epoch": 0,
+      "seq": 29,
+      "step": 6,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-10T05:27:13.545482+00:00",
+      "clamp_reasons": [],
+      "configured_cap": 4096,
+      "context_epoch": 0,
+      "effective_cap": 4096,
+      "estimated_input_tokens": 8850,
+      "policy_sha256": "b16a14e161e7a7d270d8074b53911e6a014403d6d1e5480667c3a31f9b59884a",
+      "seq": 30,
+      "type": "model_output_policy",
+      "version": "configured-output-v1"
+    },
+    {
+      "at": "2026-10-10T05:27:13.824973+00:00",
+      "content": "Collector exercise only. Evidence is in the actual tool receipt; report review remains pending.",
+      "context_epoch": 0,
+      "seq": 31,
+      "tool_count": 0,
+      "type": "assistant"
+    },
+    {
+      "at": "2026-10-10T05:27:13.824973+00:00",
+      "context_epoch": 0,
+      "goal_revision": 1,
+      "seq": 32,
+      "type": "verification_started"
+    },
+    {
+      "at": "2026-10-10T05:27:13.887264+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_d484e71be66e4706a75a64f873c5ddc0",
+      "evidence_id": "evidence_6adaa41c6ede4103aa47386a5ab4acbb",
+      "seq": 33,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-10T05:27:13.956265+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_7fefce46d9bd475dbb7b0a3dbbfefd43",
+      "evidence_id": "evidence_56a06f5744e34d0c8b02cd27876c1fc8",
+      "seq": 34,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-10T05:27:14.021267+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_e41052830d4b4e2b9ba4de7e549ba822",
+      "evidence_id": "evidence_5cd5ca5c500f41e39b90acb5380d1424",
+      "seq": 35,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-10T05:27:14.063265+00:00",
+      "context_epoch": 0,
+      "seq": 36,
+      "step": 7,
+      "type": "verification_model_started"
+    },
+    {
+      "at": "2026-10-10T05:27:14.074262+00:00",
+      "clamp_reasons": [],
+      "configured_cap": 4096,
+      "context_epoch": 0,
+      "effective_cap": 4096,
+      "estimated_input_tokens": 6929,
+      "policy_sha256": "b16a14e161e7a7d270d8074b53911e6a014403d6d1e5480667c3a31f9b59884a",
+      "seq": 37,
+      "type": "model_output_policy",
+      "version": "configured-output-v1"
+    },
+    {
+      "at": "2026-10-10T05:27:14.222780+00:00",
+      "context_epoch": 0,
+      "outcome": "unverified",
+      "seq": 38,
+      "type": "verification_finished"
+    },
+    {
+      "at": "2026-10-10T05:27:14.222780+00:00",
+      "context_epoch": 0,
+      "seq": 39,
+      "type": "completed"
+    }
+  ],
+  "goal": {
+    "constraints": [
+      {
+        "id": "constraint:agent_b630205195b846d59ff1afa3c6521429:owner:0",
+        "message_id": "agent_b630205195b846d59ff1afa3c6521429:owner:0",
+        "required": true,
+        "source": "user",
+        "text": "说明 model-b 为什么 node-c 不能调用。核对该模型分享与接收授权，不修改规则，也不要把同来源 model-a 的授权当成 model-b 的。"
+      }
+    ],
+    "kind": "unclassified",
+    "original_message_id": "agent_b630205195b846d59ff1afa3c6521429:owner:0",
+    "revision": 1,
+    "text": "说明 model-b 为什么 node-c 不能调用。核对该模型分享与接收授权，不修改规则，也不要把同来源 model-a 的授权当成 model-b 的。"
+  },
+  "id": "agent_b630205195b846d59ff1afa3c6521429",
+  "limits": {
+    "max_context_chars": 100000,
+    "max_output_chars": 20000,
+    "max_seconds": 600,
+    "max_steps": 24
+  },
+  "messages": [
+    {
+      "content": "说明 model-b 为什么 node-c 不能调用。核对该模型分享与接收授权，不修改规则，也不要把同来源 model-a 的授权当成 model-b 的。",
+      "message_id": "agent_b630205195b846d59ff1afa3c6521429:owner:0",
+      "role": "user"
+    },
+    {
+      "content": "",
+      "context_epoch": 0,
+      "role": "assistant",
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{}",
+            "name": "ryn_list_models"
+          },
+          "id": "fixture-read-0",
+          "type": "function"
+        }
+      ]
+    },
+    {
+      "content": "{\"models\":[{\"adapter\":\"openai_compatible\",\"agent_supported\":true,\"available\":true,\"consumer_peer_id\":\"jodk24XJufyxSo2GQpHgS9EkkCIq0ZZAerfPZxvB7Is=\",\"context_window\":32768,\"description\":\"可供本机 Agent 使用；工具在本机执行。\",\"destination_binding_supported\":true,\"destination_revision\":\"989d036abc41ba41ee199896b506ee7565a6a5da6eadb9caafcfa4d613d8356e\",\"expected_model_binding\":{\"ai_permission\":{\"relationship_id\":\"95fb23b77a0147a7a89c0a8e0a5f48e1\",\"revision\":1},\"consumer_peer_id\":\"jodk24XJufyxSo2GQpHgS9EkkCIq0ZZAerfPZxvB7Is=\",\"model_binding\":{\"model_generation\":\"d1abe368b08241efa6f77d5b61310ecf\",\"rule_revision\":\"3e948409ff0243e0a20152b85197a351\",\"service_id\":\"src-d3203557167b45b1-8ed3f6ad685b\",\"version\":\"ryn.model-binding.v1\"}},\"fixture_identity\":\"model-a\",\"id\":\"peer/c971169f317f358d5f8d8a16bf44e0f13392421525bb91e4ea4b3945eb22ab90/src-d3203557167b45b1-8ed3f6ad685b\",\"model_id\":\"source-alpha · alpha\",\"name\":\"source-alpha · alpha\",\"peer_id\":\"SKW3stLvrFtSyWIB0+zp1Janav14EZBXQV97USvQCCg=\",\"recipient_access\":{\"ai_permission\":{\"relationship_id\":\"95fb23b77a0147a7a89c0a8e0a5f48e1\",\"revision\":1},\"basis\":\"authenticated_catalog_observation\",\"catalog_available\":true,\"consumer_peer_id\":\"jodk24XJufyxSo2GQpHgS9EkkCIq0ZZAerfPZxvB7Is=\",\"current_access\":\"unknown\",\"invocation_verified\":false,\"kind\":\"friend\"},\"runtime\":\"external\",\"service_id\":\"src-d3203557167b45b1-8ed3f6ad685b\",\"share_scope\":\"unknown\",\"sharing\":true,\"sharing_basis\":\"remote_catalog_advertisement\",\"sharing_configuration_known\":false,\"source\":\"peer\",\"source_id\":\"\",\"source_name\":\"owner-provider\",\"streaming\":true,\"tool_support\":\"supported\"}]}",
+      "context_epoch": 0,
+      "role": "tool",
+      "tool_call_id": "fixture-read-0"
+    },
+    {
+      "content": "",
+      "context_epoch": 0,
+      "role": "assistant",
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{}",
+            "name": "ryn_list_devices"
+          },
+          "id": "fixture-read-1",
+          "type": "function"
+        }
+      ]
+    },
+    {
+      "content": "{\"ai_access\":\"local\",\"devices\":[{\"checked_at\":\"2026-10-09T08:00:00+00:00\",\"evidence_source\":\"unknown\",\"http_probe_performed\":false,\"http_reachable\":null,\"lan_probe_performed\":false,\"lan_reachable\":null,\"last_seen\":\"\",\"node_name\":\"owner-provider\",\"online\":null,\"peer_id\":\"SKW3stLvrFtSyWIB0+zp1Janav14EZBXQV97USvQCCg=\",\"relationship_id\":\"95fb23b77a0147a7a89c0a8e0a5f48e1\",\"status\":\"active\"},{\"checked_at\":\"2026-10-09T08:00:00+00:00\",\"evidence_source\":\"self\",\"http_probe_performed\":false,\"http_reachable\":null,\"lan_probe_performed\":false,\"lan_reachable\":null,\"last_seen\":\"\",\"name\":\"receiver\",\"online\":true,\"peer_id\":\"jodk24XJufyxSo2GQpHgS9EkkCIq0ZZAerfPZxvB7Is=\"},{\"checked_at\":\"2026-10-09T08:00:00+00:00\",\"evidence_source\":\"http\",\"http_probe_performed\":true,\"http_reachable\":true,\"lan_probe_performed\":false,\"lan_reachable\":null,\"last_seen\":\"2026-10-09T08:00:00Z\",\"name\":\"node-a\",\"online\":true,\"peer_id\":\"DAFuih5RR8bnXo2HHQbs2hkS4pS54+DxCn+Ro7wCq3Q=\"},{\"checked_at\":\"2026-10-09T08:00:00+00:00\",\"evidence_source\":\"heartbeat_expired\",\"http_probe_performed\":false,\"http_reachable\":null,\"lan_probe_performed\":false,\"lan_reachable\":null,\"last_seen\":\"2026-10-09T07:50:00Z\",\"name\":\"node-c\",\"online\":false,\"peer_id\":\"KfXmlYdv7Z9T8bvviBwAdv6yH9w5i4RbA9viG9jLArQ=\"},{\"checked_at\":\"2026-10-09T08:00:00+00:00\",\"evidence_source\":\"unknown\",\"http_probe_performed\":false,\"http_reachable\":null,\"lan_probe_performed\":false,\"lan_reachable\":null,\"last_seen\":\"\",\"name\":\"node-d\",\"online\":null,\"peer_id\":\"Eq3+81bnJykIlj7P/4XIZWMgkbcHO12iPs5dRi9/QXk=\"}],\"evidence_note\":\"online=null means unknown; membership is not proof of connectivity. evidence_source=self proves only the executing process is alive; no HTTP/LAN probe is performed for self. Reachability=null means untested, not failed. HTTP failure alone does not prove offline.\",\"friends\":[{\"node_name\":\"owner-provider\",\"peer_id\":\"SKW3stLvrFtSyWIB0+zp1Janav14EZBXQV97USvQCCg=\",\"relationship_id\":\"95fb23b77a0147a7a89c0a8e0a5f48e1\",\"status\":\"active\"}],\"membership\":\"none\",\"self_id\":\"jodk24XJufyxSo2GQpHgS9EkkCIq0ZZAerfPZxvB7Is=\"}",
+      "context_epoch": 0,
+      "role": "tool",
+      "tool_call_id": "fixture-read-1"
+    },
+    {
+      "content": "",
+      "context_epoch": 0,
+      "role": "assistant",
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{}",
+            "name": "ryn_inspect_services"
+          },
+          "id": "fixture-read-2",
+          "type": "function"
+        }
+      ]
+    },
+    {
+      "content": "{\"friend_grants\":[],\"friend_grants_scope\":{\"direction\":\"local_outgoing\",\"provider_peer_id\":\"jodk24XJufyxSo2GQpHgS9EkkCIq0ZZAerfPZxvB7Is=\",\"remote_provider_grants\":\"unknown\"},\"models\":[{\"adapter\":\"openai_compatible\",\"agent_supported\":true,\"available\":true,\"consumer_peer_id\":\"jodk24XJufyxSo2GQpHgS9EkkCIq0ZZAerfPZxvB7Is=\",\"context_window\":32768,\"description\":\"可供本机 Agent 使用；工具在本机执行。\",\"destination_binding_supported\":true,\"destination_revision\":\"989d036abc41ba41ee199896b506ee7565a6a5da6eadb9caafcfa4d613d8356e\",\"expected_model_binding\":{\"ai_permission\":{\"relationship_id\":\"95fb23b77a0147a7a89c0a8e0a5f48e1\",\"revision\":1},\"consumer_peer_id\":\"jodk24XJufyxSo2GQpHgS9EkkCIq0ZZAerfPZxvB7Is=\",\"model_binding\":{\"model_generation\":\"d1abe368b08241efa6f77d5b61310ecf\",\"rule_revision\":\"3e948409ff0243e0a20152b85197a351\",\"service_id\":\"src-d3203557167b45b1-8ed3f6ad685b\",\"version\":\"ryn.model-binding.v1\"}},\"id\":\"peer/c971169f317f358d5f8d8a16bf44e0f13392421525bb91e4ea4b3945eb22ab90/src-d3203557167b45b1-8ed3f6ad685b\",\"model_id\":\"source-alpha · alpha\",\"name\":\"source-alpha · alpha\",\"peer_id\":\"SKW3stLvrFtSyWIB0+zp1Janav14EZBXQV97USvQCCg=\",\"recipient_access\":{\"ai_permission\":{\"relationship_id\":\"95fb23b77a0147a7a89c0a8e0a5f48e1\",\"revision\":1},\"basis\":\"authenticated_catalog_observation\",\"catalog_available\":true,\"consumer_peer_id\":\"jodk24XJufyxSo2GQpHgS9EkkCIq0ZZAerfPZxvB7Is=\",\"current_access\":\"unknown\",\"invocation_verified\":false,\"kind\":\"friend\"},\"runtime\":\"external\",\"service_id\":\"src-d3203557167b45b1-8ed3f6ad685b\",\"share_scope\":\"unknown\",\"sharing\":true,\"sharing_basis\":\"remote_catalog_advertisement\",\"sharing_configuration_known\":false,\"source\":\"peer\",\"source_id\":\"\",\"source_name\":\"owner-provider\",\"streaming\":true,\"tool_support\":\"supported\"}]}",
+      "context_epoch": 0,
+      "role": "tool",
+      "tool_call_id": "fixture-read-2"
+    },
+    {
+      "content": "Collector exercise only. Evidence is in the actual tool receipt; report review remains pending.",
+      "context_epoch": 0,
+      "role": "assistant"
+    },
+    {
+      "content": "Server verification feedback (read-only evidence): {\"checks\":[{\"assessment_kind\":\"semantic\",\"description\":\"Satisfy the owner's complete current goal and constraints.\",\"evidence_refs\":[\"evidence_c32bff1f90cb49bb964242d2691a1852\",\"evidence_3a41e645363940c48e03e663a4730a5c\",\"evidence_1c59a359006446a1ac76c69000d22b47\"],\"goal_revision\":1,\"id\":\"goal-coverage\",\"kind\":\"semantic\",\"required\":true,\"source\":\"user\",\"source_ref\":\"agent_b630205195b846d59ff1afa3c6521429:owner:0\",\"status\":\"unknown\",\"verifier\":null},{\"description\":\"Re-read the current model catalog and compare the reported configuration facts.\",\"evidence_refs\":[\"evidence_c32bff1f90cb49bb964242d2691a1852\"],\"goal_revision\":1,\"id\":\"criterion_op_d484e71be66e4706a75a64f873c5ddc0\",\"kind\":\"mechanical\",\"required\":true,\"source\":\"tool\",\"source_ref\":\"receipt_op_d484e71be66e4706a75a64f873c5ddc0\",\"status\":\"passed\",\"verifier\":\"ryn_list_models_facts\"},{\"description\":\"Recheck device presence evidence; unknown connectivity remains unknown.\",\"evidence_refs\":[\"evidence_3a41e645363940c48e03e663a4730a5c\"],\"goal_revision\":1,\"id\":\"criterion_op_7fefce46d9bd475dbb7b0a3dbbfefd43\",\"kind\":\"mechanical\",\"required\":true,\"source\":\"tool\",\"source_ref\":\"receipt_op_7fefce46d9bd475dbb7b0a3dbbfefd43\",\"status\":\"passed\",\"verifier\":\"ryn_list_devices_facts\"},{\"description\":\"Re-read current model service and explicit grant facts.\",\"evidence_refs\":[\"evidence_1c59a359006446a1ac76c69000d22b47\"],\"goal_revision\":1,\"id\":\"criterion_op_e41052830d4b4e2b9ba4de7e549ba822\",\"kind\":\"mechanical\",\"required\":true,\"source\":\"tool\",\"source_ref\":\"receipt_op_e41052830d4b4e2b9ba4de7e549ba822\",\"status\":\"passed\",\"verifier\":\"ryn_inspect_services_facts\"}],\"goal_revision\":1,\"note\":\"Independent checks did not establish the whole goal. Inspect missing evidence or correct the result within existing permissions. Do not repeat confirmed changes or denied operations. Ask the owner only if necessary facts are missing. This feedback grants no permission and does not change the goal. This is the single allowed correction continuation.\",\"uncovered_requirements\":[\"independent report review\"]}",
+      "context_epoch": 0,
+      "role": "assistant",
+      "ui": {
+        "kind": "verification_feedback"
+      }
+    },
+    {
+      "content": "Collector exercise only. Evidence is in the actual tool receipt; report review remains pending.",
+      "context_epoch": 0,
+      "role": "assistant"
+    }
+  ],
+  "model_destination": {
+    "catalog_model_id": "peer/c971169f317f358d5f8d8a16bf44e0f13392421525bb91e4ea4b3945eb22ab90/src-d3203557167b45b1-8ed3f6ad685b",
+    "destination_revision": "989d036abc41ba41ee199896b506ee7565a6a5da6eadb9caafcfa4d613d8356e",
+    "provider_peer_id": "SKW3stLvrFtSyWIB0+zp1Janav14EZBXQV97USvQCCg=",
+    "source_id": ""
+  },
+  "model_id": "peer/c971169f317f358d5f8d8a16bf44e0f13392421525bb91e4ea4b3945eb22ab90/src-d3203557167b45b1-8ed3f6ad685b",
+  "outcome": {
+    "coverage_method": "independent_model_assessment",
+    "criteria_results": [
+      {
+        "criterion_id": "goal-coverage",
+        "evidence_refs": [
+          "evidence_6adaa41c6ede4103aa47386a5ab4acbb",
+          "evidence_56a06f5744e34d0c8b02cd27876c1fc8",
+          "evidence_5cd5ca5c500f41e39b90acb5380d1424"
+        ],
+        "kind": "semantic",
+        "status": "unknown"
+      },
+      {
+        "criterion_id": "criterion_op_d484e71be66e4706a75a64f873c5ddc0",
+        "evidence_refs": [
+          "evidence_6adaa41c6ede4103aa47386a5ab4acbb"
+        ],
+        "kind": "mechanical",
+        "status": "passed"
+      },
+      {
+        "criterion_id": "criterion_op_7fefce46d9bd475dbb7b0a3dbbfefd43",
+        "evidence_refs": [
+          "evidence_56a06f5744e34d0c8b02cd27876c1fc8"
+        ],
+        "kind": "mechanical",
+        "status": "passed"
+      },
+      {
+        "criterion_id": "criterion_op_e41052830d4b4e2b9ba4de7e549ba822",
+        "evidence_refs": [
+          "evidence_5cd5ca5c500f41e39b90acb5380d1424"
+        ],
+        "kind": "mechanical",
+        "status": "passed"
+      }
+    ],
+    "evidence_refs": [
+      "evidence_56a06f5744e34d0c8b02cd27876c1fc8",
+      "evidence_5cd5ca5c500f41e39b90acb5380d1424",
+      "evidence_6adaa41c6ede4103aa47386a5ab4acbb"
+    ],
+    "goal_revision": 1,
+    "mechanical_scope": [
+      {
+        "criterion_id": "criterion_op_d484e71be66e4706a75a64f873c5ddc0",
+        "description": "Re-read the current model catalog and compare the reported configuration facts.",
+        "status": "passed"
+      },
+      {
+        "criterion_id": "criterion_op_7fefce46d9bd475dbb7b0a3dbbfefd43",
+        "description": "Recheck device presence evidence; unknown connectivity remains unknown.",
+        "status": "passed"
+      },
+      {
+        "criterion_id": "criterion_op_e41052830d4b4e2b9ba4de7e549ba822",
+        "description": "Re-read current model service and explicit grant facts.",
+        "status": "passed"
+      }
+    ],
+    "semantic_assessment": {
+      "evidence_refs": [
+        "evidence_6adaa41c6ede4103aa47386a5ab4acbb",
+        "evidence_56a06f5744e34d0c8b02cd27876c1fc8",
+        "evidence_5cd5ca5c500f41e39b90acb5380d1424"
+      ],
+      "status": "unknown",
+      "summary": "Fixture collector only; no independent semantic assessment.",
+      "uncovered_requirements": [
+        "independent report review"
+      ]
+    },
+    "status": "unverified",
+    "summary": "Verification did not establish the complete goal.",
+    "uncertainties": [
+      "independent report review",
+      "One or more required conditions lack independent evidence."
+    ]
+  },
+  "pending_approval": null,
+  "pending_input": null,
+  "permission_mode": "read_only",
+  "plan": {
+    "goal_revision": 1,
+    "revision": 0,
+    "steps": []
+  },
+  "result": "Collector exercise only. Evidence is in the actual tool receipt; report review remains pending.",
+  "revision": 39,
+  "run_state": "ended",
+  "schema_version": 2,
+  "scope_revision": 1,
+  "skills": [],
+  "status": "completed",
+  "steps": 7,
+  "title": "说明 model-b 为什么 node-c 不能调用。核对该模型分享与接收授权，不修改规则，也不要把同来源 model-a 的授权当成 model-b 的。",
+  "updated_at": "2026-10-10T05:27:14.222780+00:00",
+  "verification_evidence": [
+    {
+      "checked_at": "2026-10-10T05:27:13.868750+00:00",
+      "criterion_id": "criterion_op_d484e71be66e4706a75a64f873c5ddc0",
+      "evidence": {
+        "checked_facts": {
+          "models": [
+            {
+              "adapter": "openai_compatible",
+              "agent_supported": true,
+              "available": true,
+              "consumer_peer_id": "jodk24XJufyxSo2GQpHgS9EkkCIq0ZZAerfPZxvB7Is=",
+              "context_window": 32768,
+              "description": "可供本机 Agent 使用；工具在本机执行。",
+              "destination_binding_supported": true,
+              "destination_revision": "989d036abc41ba41ee199896b506ee7565a6a5da6eadb9caafcfa4d613d8356e",
+              "expected_model_binding": {
+                "ai_permission": {
+                  "relationship_id": "95fb23b77a0147a7a89c0a8e0a5f48e1",
+                  "revision": 1
+                },
+                "consumer_peer_id": "jodk24XJufyxSo2GQpHgS9EkkCIq0ZZAerfPZxvB7Is=",
+                "model_binding": {
+                  "model_generation": "d1abe368b08241efa6f77d5b61310ecf",
+                  "rule_revision": "3e948409ff0243e0a20152b85197a351",
+                  "service_id": "src-d3203557167b45b1-8ed3f6ad685b",
+                  "version": "ryn.model-binding.v1"
+                }
+              },
+              "fixture_identity": "model-a",
+              "id": "peer/c971169f317f358d5f8d8a16bf44e0f13392421525bb91e4ea4b3945eb22ab90/src-d3203557167b45b1-8ed3f6ad685b",
+              "model_id": "source-alpha · alpha",
+              "name": "source-alpha · alpha",
+              "peer_id": "SKW3stLvrFtSyWIB0+zp1Janav14EZBXQV97USvQCCg=",
+              "recipient_access": {
+                "ai_permission": {
+                  "relationship_id": "95fb23b77a0147a7a89c0a8e0a5f48e1",
+                  "revision": 1
+                },
+                "basis": "authenticated_catalog_observation",
+                "catalog_available": true,
+                "consumer_peer_id": "jodk24XJufyxSo2GQpHgS9EkkCIq0ZZAerfPZxvB7Is=",
+                "current_access": "unknown",
+                "invocation_verified": false,
+                "kind": "friend"
+              },
+              "runtime": "external",
+              "service_id": "src-d3203557167b45b1-8ed3f6ad685b",
+              "share_scope": "unknown",
+              "sharing": true,
+              "sharing_basis": "remote_catalog_advertisement",
+              "sharing_configuration_known": false,
+              "source": "peer",
+              "source_id": "",
+              "source_name": "owner-provider",
+              "streaming": true,
+              "tool_support": "supported"
+            }
+          ]
+        },
+        "coverage": "Current catalog/configuration and explicit grants only; no new inference, throughput, remote host or end-to-end access test.",
+        "current_state_matches": true,
+        "observation_sha256": "e6abc53137298cf7a6384b04bf14605f106140144a0aa19cf470b0b32fe4b0c5",
+        "operation_attribution": "read_only_observation",
+        "uncertainties": []
+      },
+      "goal_revision": 1,
+      "id": "evidence_6adaa41c6ede4103aa47386a5ab4acbb",
+      "kind": "mechanical",
+      "receipt_id": "receipt_op_d484e71be66e4706a75a64f873c5ddc0",
+      "scope_revision": 1,
+      "status": "passed"
+    },
+    {
+      "checked_at": "2026-10-10T05:27:13.930265+00:00",
+      "criterion_id": "criterion_op_7fefce46d9bd475dbb7b0a3dbbfefd43",
+      "evidence": {
+        "checked_facts": {
+          "devices": [
+            {
+              "checked_at": "2026-10-09T08:00:00+00:00",
+              "evidence_source": "unknown",
+              "http_probe_performed": false,
+              "http_reachable": null,
+              "lan_probe_performed": false,
+              "lan_reachable": null,
+              "last_seen": "",
+              "node_name": "owner-provider",
+              "online": null,
+              "peer_id": "SKW3stLvrFtSyWIB0+zp1Janav14EZBXQV97USvQCCg=",
+              "relationship_id": "95fb23b77a0147a7a89c0a8e0a5f48e1",
+              "status": "active"
+            },
+            {
+              "checked_at": "2026-10-09T08:00:00+00:00",
+              "evidence_source": "self",
+              "http_probe_performed": false,
+              "http_reachable": null,
+              "lan_probe_performed": false,
+              "lan_reachable": null,
+              "last_seen": "",
+              "name": "receiver",
+              "online": true,
+              "peer_id": "jodk24XJufyxSo2GQpHgS9EkkCIq0ZZAerfPZxvB7Is="
+            },
+            {
+              "checked_at": "2026-10-09T08:00:00+00:00",
+              "evidence_source": "http",
+              "http_probe_performed": true,
+              "http_reachable": true,
+              "lan_probe_performed": false,
+              "lan_reachable": null,
+              "last_seen": "2026-10-09T08:00:00Z",
+              "name": "node-a",
+              "online": true,
+              "peer_id": "DAFuih5RR8bnXo2HHQbs2hkS4pS54+DxCn+Ro7wCq3Q="
+            },
+            {
+              "checked_at": "2026-10-09T08:00:00+00:00",
+              "evidence_source": "heartbeat_expired",
+              "http_probe_performed": false,
+              "http_reachable": null,
+              "lan_probe_performed": false,
+              "lan_reachable": null,
+              "last_seen": "2026-10-09T07:50:00Z",
+              "name": "node-c",
+              "online": false,
+              "peer_id": "KfXmlYdv7Z9T8bvviBwAdv6yH9w5i4RbA9viG9jLArQ="
+            },
+            {
+              "checked_at": "2026-10-09T08:00:00+00:00",
+              "evidence_source": "unknown",
+              "http_probe_performed": false,
+              "http_reachable": null,
+              "lan_probe_performed": false,
+              "lan_reachable": null,
+              "last_seen": "",
+              "name": "node-d",
+              "online": null,
+              "peer_id": "Eq3+81bnJykIlj7P/4XIZWMgkbcHO12iPs5dRi9/QXk="
+            }
+          ],
+          "membership": "none",
+          "presence_classification_matches": true
+        },
+        "coverage": "online=null means unknown; membership is not proof of connectivity. evidence_source=self proves only the executing process is alive; no HTTP/LAN probe is performed for self. Reachability=null means untested, not failed. HTTP failure alone does not prove offline. A passed check confirms the observed evidence classification, including unknown; it does not prove an unknown device is connected or offline.",
+        "current_state_matches": true,
+        "observation_sha256": "e7987b8fd5f2f7fc6e28512318f01d3e0d3fb22d11dab5806f716df6777a32e7",
+        "operation_attribution": "read_only_observation",
+        "uncertainties": [
+          {
+            "presence_unknown_for": [
+              "SKW3stLvrFtSyWIB0+zp1Janav14EZBXQV97USvQCCg=",
+              "Eq3+81bnJykIlj7P/4XIZWMgkbcHO12iPs5dRi9/QXk="
+            ]
+          },
+          "Self presence proves only this executing process; unperformed HTTP/LAN probes provide no reachability evidence."
+        ]
+      },
+      "goal_revision": 1,
+      "id": "evidence_56a06f5744e34d0c8b02cd27876c1fc8",
+      "kind": "mechanical",
+      "receipt_id": "receipt_op_7fefce46d9bd475dbb7b0a3dbbfefd43",
+      "scope_revision": 1,
+      "status": "passed"
+    },
+    {
+      "checked_at": "2026-10-10T05:27:13.999266+00:00",
+      "criterion_id": "criterion_op_e41052830d4b4e2b9ba4de7e549ba822",
+      "evidence": {
+        "checked_facts": {
+          "friend_grants": [],
+          "friend_grants_scope": {
+            "direction": "local_outgoing",
+            "provider_peer_id": "jodk24XJufyxSo2GQpHgS9EkkCIq0ZZAerfPZxvB7Is=",
+            "remote_provider_grants": "unknown"
+          },
+          "models": [
+            {
+              "adapter": "openai_compatible",
+              "agent_supported": true,
+              "available": true,
+              "consumer_peer_id": "jodk24XJufyxSo2GQpHgS9EkkCIq0ZZAerfPZxvB7Is=",
+              "context_window": 32768,
+              "description": "可供本机 Agent 使用；工具在本机执行。",
+              "destination_binding_supported": true,
+              "destination_revision": "989d036abc41ba41ee199896b506ee7565a6a5da6eadb9caafcfa4d613d8356e",
+              "expected_model_binding": {
+                "ai_permission": {
+                  "relationship_id": "95fb23b77a0147a7a89c0a8e0a5f48e1",
+                  "revision": 1
+                },
+                "consumer_peer_id": "jodk24XJufyxSo2GQpHgS9EkkCIq0ZZAerfPZxvB7Is=",
+                "model_binding": {
+                  "model_generation": "d1abe368b08241efa6f77d5b61310ecf",
+                  "rule_revision": "3e948409ff0243e0a20152b85197a351",
+                  "service_id": "src-d3203557167b45b1-8ed3f6ad685b",
+                  "version": "ryn.model-binding.v1"
+                }
+              },
+              "id": "peer/c971169f317f358d5f8d8a16bf44e0f13392421525bb91e4ea4b3945eb22ab90/src-d3203557167b45b1-8ed3f6ad685b",
+              "model_id": "source-alpha · alpha",
+              "name": "source-alpha · alpha",
+              "peer_id": "SKW3stLvrFtSyWIB0+zp1Janav14EZBXQV97USvQCCg=",
+              "recipient_access": {
+                "ai_permission": {
+                  "relationship_id": "95fb23b77a0147a7a89c0a8e0a5f48e1",
+                  "revision": 1
+                },
+                "basis": "authenticated_catalog_observation",
+                "catalog_available": true,
+                "consumer_peer_id": "jodk24XJufyxSo2GQpHgS9EkkCIq0ZZAerfPZxvB7Is=",
+                "current_access": "unknown",
+                "invocation_verified": false,
+                "kind": "friend"
+              },
+              "runtime": "external",
+              "service_id": "src-d3203557167b45b1-8ed3f6ad685b",
+              "share_scope": "unknown",
+              "sharing": true,
+              "sharing_basis": "remote_catalog_advertisement",
+              "sharing_configuration_known": false,
+              "source": "peer",
+              "source_id": "",
+              "source_name": "owner-provider",
+              "streaming": true,
+              "tool_support": "supported"
+            }
+          ]
+        },
+        "coverage": "Current catalog/configuration and explicit grants only; no new inference, throughput, remote host or end-to-end access test.",
+        "current_state_matches": true,
+        "observation_sha256": "fe31e945d3cf8ee9c595d2185b2a1974ca200db2002ed0cb48757fbf0201fea3",
+        "operation_attribution": "read_only_observation",
+        "uncertainties": []
+      },
+      "goal_revision": 1,
+      "id": "evidence_5cd5ca5c500f41e39b90acb5380d1424",
+      "kind": "mechanical",
+      "receipt_id": "receipt_op_e41052830d4b4e2b9ba4de7e549ba822",
+      "scope_revision": 1,
+      "status": "passed"
+    }
+  ]
+}

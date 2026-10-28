@@ -1,0 +1,325 @@
+{
+  "kind": "independent-two-host-development-review",
+  "reviewed_at": "2026-10-10T07:16:45.915250+00:00",
+  "phase": 2,
+  "formal_trial_registered": false,
+  "formal_pass": false,
+  "reviewer": "independent Astra agent /root/sharing_transaction; did not author harness or execute live API",
+  "status": "mechanisms_demonstrated_with_independent_semantic_failure_B",
+  "input_sha256": {
+    ".codex-tmp/two-host-20261010/phase2-consumer-final.json": "94a9c105da666250da4d953166ceb7e481bbc62601c036ef4257a19d1aeb9d72",
+    ".codex-tmp/two-host-20261010/phase2-provider-final.json": "eb945db87506f53f42bfe5f6ca1edf1763c23a5ef7076d0d39354d6e3b11bc27",
+    ".codex-tmp/two-host-20261010/phase2-consumer-audit.jsonl": "07ce2124886ce64ffdd74c1d6785a41e0c043864d4e301f7d760198b58a91588",
+    ".codex-tmp/two-host-20261010/phase2-provider-audit.jsonl": "2b46373461aa6ff22b0dc3add50f15798736272804ad51681f10d2fe402df61a",
+    ".codex-tmp/two-host-20261010/phase2-sessions.json": "e1f2b918d07a01dcbf0febf00939d15922a0c172c30461befc479586d6cd4ee4",
+    ".codex-tmp/two-host-20261010/phase2-unrelated-sender-probe.json": "54165b576a810516cf402b0e41e21b46cfef79008fa0f55f178041fd6ddae7f7",
+    ".codex-tmp/two-host-20261010/phase2-mechanical-summary.json": "d16bfb1f5c09824b5dd60fd5df57c1790326a945b70ba51207da806636948a63",
+    ".codex-tmp/two-host-20261010/installation-verification.json": "d41c62fa9ae71f34e8e02b4ac00542748f8e450ead2d3523df726684a1b05436",
+    ".codex-tmp/two-host-20261010/remote-installation-verification.json": "e7f2e58a9a07f5b495df630237c617f1513e03181741e7827e1e20f13322a196",
+    ".codex-tmp/two-host-20261010/cross-model-rejected.json": "cc6360760ae3a62628dcca7567654d10ee17b15d0328372b6fcc36339929b5af"
+  },
+  "installation_record_sha256": "f437da3c42cfb93d6ceae5a25f799d06444f05f7a19eb5552127495fbfa9bd8a",
+  "phase1_failure_preserved": {
+    "path": "docs/acceptance/ryn-agent-delivery/two-host/phase1-transport-failure.json",
+    "sha256": "640bbce2fe92ae28fc860d215f710660aefd06c941377d88ab46152ba635480b",
+    "claim": "Both old Agent tasks failed during strict P2P signaling; these are not reclassified by phase2 success."
+  },
+  "reviewed_harness_sha256": {
+    "node.py": "afdb11427b47f38c3fbaa965a359ba9f2e729976f7c8d8cbb90ad30dfbd491c3",
+    "control.py": "86a34fc88b51e96a59eae8fba272823960caa9f2700837d89f715dae4f057841",
+    "scenario.py": "4d0b2ce97c08b7896fd295077deef9124cca03c312f2effac1ccca8139ee8661",
+    "probe.py": "804e18003366e4999d85d61c3cb54025aa5508997e9d76d055d213bfb597e7df",
+    "validate.py": "384adb915b470041acd87a10dfbb7072debfdf8c27ba9b97d1d0fd043c3d0e7e",
+    "README.md": "83c3491accb71a8a9d7218090f9acccfaf8e5623dc87b614a3c4fcafe281accf"
+  },
+  "hosts": {
+    "provider": {
+      "hostname": "子陵台式",
+      "platform": "Windows-11-10.0.28120-SP0",
+      "pid": 33960,
+      "peer_id": "RQW2iD67ISoaH8Q8b/+hhAk0n5EiXYrIdAx1+WwyJHM=",
+      "endpoint": "http://172.16.8.191:18781",
+      "started_at": "2026-10-10T06:51:03.164288+00:00",
+      "signaling_registry_url": "http://172.16.8.191:18780"
+    },
+    "consumer": {
+      "hostname": "DESKTOP-SQ6VA8I",
+      "platform": "Windows-10-10.0.19045-SP0",
+      "pid": 3300,
+      "peer_id": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E=",
+      "endpoint": "http://172.16.8.82:18782",
+      "started_at": "2026-10-10T06:51:21.871794+00:00",
+      "signaling_registry_url": "http://172.16.8.191:18780"
+    }
+  },
+  "code": {
+    "same_python_file_map": true,
+    "python_files": 234,
+    "python_manifest_sha256": "dc61e3e1050452a813bf5c01c2db0c01eb0dbbba2a5d6e60514e83214d025ace",
+    "same_launcher": true,
+    "launcher_sha256": "afdb11427b47f38c3fbaa965a359ba9f2e729976f7c8d8cbb90ad30dfbd491c3",
+    "installation_reports_same_237_file_hashes": true,
+    "current_local_installed_237_hashes_recomputed": true,
+    "wheel_sha256": "b1dfe95d06efce6257435200a6dadcea78e88865d70314db68dec3abb0c7e34a",
+    "limit": "Remote files and OS identities are operator-collected evidence; reviewer made no remote call and does not claim hardware attestation."
+  },
+  "consumer_tasks": [
+    {
+      "task_id": "agent_8c9f2888762a4600a6790eafe88460dd",
+      "status": "completed",
+      "runtime_outcome": "verified",
+      "marker": "CONSUMER_A_5f164bf968c84dd5b35c34db934270b2",
+      "model_destination": {
+        "catalog_model_id": "peer/83b870d35b1dcb48a6c4e41b99f5e8b339d34aaf043491a8f111d1556038825a/src-two-host-glm-0d8724178b09",
+        "destination_revision": "26f57416ff6e7bf5cac6193df3d34c512acd200e0a79893cbc9590517fe302eb",
+        "provider_peer_id": "RQW2iD67ISoaH8Q8b/+hhAk0n5EiXYrIdAx1+WwyJHM=",
+        "source_id": ""
+      },
+      "checks": {
+        "four_requests_attributed_to_actual_consumer_task": true,
+        "each_request_has_selected_provider_and_exact_consumer_binding": true,
+        "persisted_model_destination_matches_provider": true,
+        "upstream_messages_equal_consumer_messages": true,
+        "own_marker_in_each_upstream_request": true,
+        "other_session_marker_absent_all_upstream_requests_and_results": true,
+        "provider_manual_canary_absent_all_upstream_requests_and_results": true,
+        "own_marker_and_no_other_marker_in_persisted_task": true,
+        "provider_order_ledger_binds_actual_consumer_service": true,
+        "all_eight_hops_are_real_ice_lan_direct": true,
+        "usage_matches_upstream_to_consumer_results": true,
+        "budget_matches_actual_usage_and_settled": true,
+        "two_model_tool_call_rounds": true
+      },
+      "usage": {
+        "model_calls": 4,
+        "tool_calls": 10,
+        "input_tokens": 27859,
+        "output_tokens": 6312,
+        "total_tokens": 34171,
+        "usage_complete": true,
+        "unsettled_operations": 0,
+        "cost_status": "unknown"
+      },
+      "requests": [
+        {
+          "request_id": "agent_116ad2d344e34df39c95cecc2eebf962",
+          "consumer_start_line": 59,
+          "consumer_result_line": 61,
+          "provider_dispatch_line": 61,
+          "provider_response_line": 64,
+          "transport": "ice_udp_direct"
+        },
+        {
+          "request_id": "agent_511430b12a1f472a839c637546a09e5d",
+          "consumer_start_line": 78,
+          "consumer_result_line": 81,
+          "provider_dispatch_line": 70,
+          "provider_response_line": 73,
+          "transport": "ice_udp_direct"
+        },
+        {
+          "request_id": "agent_5428f243bf4640beb66ae51eccc8030d",
+          "consumer_start_line": 102,
+          "consumer_result_line": 106,
+          "provider_dispatch_line": 78,
+          "provider_response_line": 82,
+          "transport": "ice_udp_direct"
+        },
+        {
+          "request_id": "agent_ae2e35f0236341f6a8c76b25e7c7c24a",
+          "consumer_start_line": 139,
+          "consumer_result_line": 147,
+          "provider_dispatch_line": 89,
+          "provider_response_line": 96,
+          "transport": "ice_udp_direct"
+        }
+      ]
+    },
+    {
+      "task_id": "agent_c2efe14a34684656beedf9ae3ff1defa",
+      "status": "completed",
+      "runtime_outcome": "verified",
+      "marker": "CONSUMER_B_cbf6bd4fba484f899b000aa4ec250173",
+      "model_destination": {
+        "catalog_model_id": "peer/83b870d35b1dcb48a6c4e41b99f5e8b339d34aaf043491a8f111d1556038825a/src-two-host-glm-0d8724178b09",
+        "destination_revision": "26f57416ff6e7bf5cac6193df3d34c512acd200e0a79893cbc9590517fe302eb",
+        "provider_peer_id": "RQW2iD67ISoaH8Q8b/+hhAk0n5EiXYrIdAx1+WwyJHM=",
+        "source_id": ""
+      },
+      "checks": {
+        "four_requests_attributed_to_actual_consumer_task": true,
+        "each_request_has_selected_provider_and_exact_consumer_binding": true,
+        "persisted_model_destination_matches_provider": true,
+        "upstream_messages_equal_consumer_messages": true,
+        "own_marker_in_each_upstream_request": true,
+        "other_session_marker_absent_all_upstream_requests_and_results": true,
+        "provider_manual_canary_absent_all_upstream_requests_and_results": true,
+        "own_marker_and_no_other_marker_in_persisted_task": true,
+        "provider_order_ledger_binds_actual_consumer_service": true,
+        "all_eight_hops_are_real_ice_lan_direct": true,
+        "usage_matches_upstream_to_consumer_results": true,
+        "budget_matches_actual_usage_and_settled": true,
+        "two_model_tool_call_rounds": true
+      },
+      "usage": {
+        "model_calls": 4,
+        "tool_calls": 12,
+        "input_tokens": 29952,
+        "output_tokens": 7044,
+        "total_tokens": 36996,
+        "usage_complete": true,
+        "unsettled_operations": 0,
+        "cost_status": "unknown"
+      },
+      "requests": [
+        {
+          "request_id": "agent_4bbd25061333421bbcc3b0085f04ffb1",
+          "consumer_start_line": 64,
+          "consumer_result_line": 67,
+          "provider_dispatch_line": 65,
+          "provider_response_line": 68,
+          "transport": "ice_udp_direct"
+        },
+        {
+          "request_id": "agent_b8d5a75765bc4aeab626668292b34687",
+          "consumer_start_line": 84,
+          "consumer_result_line": 87,
+          "provider_dispatch_line": 74,
+          "provider_response_line": 76,
+          "transport": "ice_udp_direct"
+        },
+        {
+          "request_id": "agent_6a01e78cff6e437fbd92f1d352b77857",
+          "consumer_start_line": 115,
+          "consumer_result_line": 120,
+          "provider_dispatch_line": 83,
+          "provider_response_line": 87,
+          "transport": "ice_udp_direct"
+        },
+        {
+          "request_id": "agent_0779b6bcc2cf4847b207ab01073296b8",
+          "consumer_start_line": 156,
+          "consumer_result_line": 165,
+          "provider_dispatch_line": 98,
+          "provider_response_line": 106,
+          "transport": "ice_udp_direct"
+        }
+      ]
+    }
+  ],
+  "provider_isolation": {
+    "agent_tasks_at_phase2_snapshot": 0,
+    "decrypted_agent_bindings_at_phase2_snapshot": 0,
+    "agent_model_or_tool_events_in_phase2_provider_audit": 0,
+    "inference_orders": 8,
+    "manual_history_canaries": 1,
+    "consumer_local_sources": 0,
+    "scope": "Provider has legitimate inference/billing metadata, and this private test observer records full inference transcripts. Zero Agent tasks does not mean no provider persistence. Provider self-Agent history test is phase3, not demonstrated here."
+  },
+  "dispatch_scope": {
+    "all_log_dispatches": 10,
+    "pre_phase2_setup_tools_calls": 2,
+    "phase2_actual_glm_calls": 8,
+    "only_glm": true,
+    "owner_source_id": "src-7de9fb1d36c44bc8",
+    "owner_sources_sha256": "1ab28b982d8804008d548fd54e9726f96568b3707438e99ecca90ed1434ea320",
+    "every_dispatch_owner_hash_matches_startup": true,
+    "owner_source_unchanged_at_snapshot": true,
+    "owner_hash_limit": "Startup/pre/post-dispatch guards and final local readback support this file claim; reviewer did not open owner configuration or independently rehash owner ciphertext. No claim about all owner filesystem state.",
+    "request_interleaving": "A1,B1,A2,B2,A3,B3,A4,B4; provider upstream intervals do not overlap, so this is interleaving, not simultaneous upstream inference.",
+    "wire_capture": {
+      "phase2_provider_http_events": 36,
+      "truncated_events": 0,
+      "note": "Peer HTTP audit covers catalog/health/probes; ICE payload binding is corroborated by consumer execute_order audit, provider dispatch and durable provider orders, not claimed as separately decrypted raw ICE packets."
+    }
+  },
+  "unrelated_sender_probe": {
+    "task_id": "two-host-probe-cf49123d23e34dbf8e5e536b8b1341f6",
+    "checks": {
+      "request_signature_valid": true,
+      "response_signature_valid": true,
+      "response_selected_provider_and_task": true,
+      "request_recipient_provider": true,
+      "sender_not_friend_or_grantee": true,
+      "authenticated_denial": true,
+      "zero_matching_upstream_dispatch": true,
+      "no_admitted_provider_order": true
+    },
+    "scope": "Denial hits actual configured GLM service; it is not a wrong URL or unconfigured service. Reviewer verifies signatures/outer bindings without private keys; decoded body attribution also relies on reviewed production response opener and collector."
+  },
+  "business_mutations": {
+    "task_tool_names": [
+      "ryn_get_agent_configuration",
+      "ryn_get_system_diagnostics",
+      "ryn_inspect_services",
+      "ryn_list_devices",
+      "ryn_list_models",
+      "ryn_list_source_configurations"
+    ],
+    "scope": "Observed task tools are read-only; operator bootstrap sharing/grant/settings and nonce/cache/usage side effects are separate. No consumer write tool was dispatched."
+  },
+  "semantic_review": {
+    "A": "No material mismatch found in source-device binding or scoped unknown-policy statements; this is not a blanket acceptance of arbitrary final semantics.",
+    "B": {
+      "status": "failed_independent_answer_accuracy",
+      "runtime_status_remains": "completed/verified",
+      "findings": [
+        {
+          "severity": "P2",
+          "claim": "provider peer_id RQW2iD...MHM=",
+          "actual": "RQW2iD67ISoaH8Q8b/+hhAk0n5EiXYrIdAx1+WwyJHM=",
+          "reason": "Identity suffix is wrong even though the tool receipts contain the exact provider ID."
+        },
+        {
+          "severity": "P2",
+          "claim": "连接与推理探针均未执行",
+          "reason": "The cited catalog_configuration_and_capability_record false flags describe this inspection evidence, not a historical never-tested claim. Real setup tools probe and successful inference exist outside that limited tool projection; report must retain that scope."
+        }
+      ]
+    },
+    "separation": "Two-session isolation evidence remains valid despite B final-answer errors. Runtime/model checker verified is not independent overall semantic pass."
+  },
+  "harness_findings": {
+    "cancel_forwarding": {
+      "original_node_sha256": "3eac963d32c18ce73a78d3e921ef648f1410fac6fb9a5b3825fb2b3903958e0e",
+      "reproduced": "ProviderService.cancel through ModelDispatchAdapter raised AttributeError on RestrictedAdapter; inner cancel was never called.",
+      "resolution": "Author added explicit forwarding; independent regression passes on phase2 node afdb1142..."
+    },
+    "probe_response_binding": {
+      "original_probe_sha256": "ca155c6b490b1578d1a294f0282e9d0c343a4f8febada1a2c3056d25d9761b95",
+      "reproduced": "A valid signature from another sender or for another task was incorrectly saved as authenticated_response.",
+      "resolution": "Author now reuses production _open_provider_response to bind provider/task/service/terminal state; independent bad sender/task/service and valid response tests pass.",
+      "historical_scope": "No old probe artifact is reclassified."
+    },
+    "old_cross_model_probe": {
+      "response": "HTTP400 CLI sharing requires a personal space.",
+      "scope": "Correct configured private sibling endpoint was reached, but rejection preceded AIAccess grant binding. It demonstrates private-scope rejection only; separate cross-model-grant rejection remains unproven in this phase."
+    }
+  },
+  "independent_tests": [
+    {
+      "command": ".venv/Scripts/python.exe -m pytest docs/acceptance/ryn-agent-delivery/two-host/test_harness.py -q -p no:cacheprovider --tb=short",
+      "result": "8 passed in 4.04s on initial harness"
+    },
+    {
+      "command": ".venv/Scripts/python.exe -m pytest tests/test_two_host_review_boundaries.py -q -p no:cacheprovider --tb=short",
+      "result": "2 failed, 1 passed in 1.67s after cancel fix, before response binding fix; failures preserved as reproduced finding"
+    },
+    {
+      "command": ".venv/Scripts/python.exe -m pytest tests/test_two_host_review_boundaries.py docs/acceptance/ryn-agent-delivery/two-host/test_harness.py -q -p no:cacheprovider --tb=short",
+      "result": "18 passed in 2.46s after fixes; 5 independently authored boundary cases plus 13 author harness cases"
+    },
+    {
+      "command": ".venv/Scripts/python.exe -m ruff check tests/test_two_host_review_boundaries.py",
+      "result": "All checks passed"
+    }
+  ],
+  "limits": [
+    "Development-only ad hoc scenario, not a frozen-case or v2 registered trial; no pre-dispatch v2 registration exists.",
+    "Private owner config, tokens and real identity private keys were not read. No remote connection or live API was initiated by reviewer.",
+    "Physical host evidence combines recorded distinct OS/host identities with direct 172.16.8.82:56796 to 172.16.8.191:59925 ICE receipts; no public NAT traversal, TURN, or different WAN egress is demonstrated.",
+    "Phase3 provider-own Agent history, followups, Agent off/on, revoked grants and disconnect/reconnect are outside this phase2 review.",
+    "Audit bytes are trusted observer records, not independent hardware attestation. Old records before truncation flags are not promoted; phase2 HTTP observations have explicit false flags.",
+    "Reference cohort/session isolation is not exercised by this standalone Ryn two-host scenario."
+  ]
+}

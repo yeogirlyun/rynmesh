@@ -1,0 +1,1523 @@
+{
+  "access_query": {
+    "catalog_authentication": [
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "88oLTCBMKFagPJ3gCH1GAGrFd7P07IxVw35UyiwaWSc="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      }
+    ],
+    "configuration_and_grants_unchanged": true,
+    "current_grants": [
+      {
+        "allowed": true,
+        "effective": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+        "relationship_id": "29ef70f66af64ad3905641442920803e",
+        "revision": 1,
+        "service_id": "src-585ba285b6f248f5-8ed3f6ad685b"
+      }
+    ],
+    "current_models": {
+      "model-a": {
+        "id": "local/src-585ba285b6f248f5-8ed3f6ad685b",
+        "receiver_peer_ids": [
+          "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+        ],
+        "share_scope": "friends",
+        "sharing": true
+      },
+      "model-b": {
+        "id": "local/src-585ba285b6f248f5-f44e64e75f39",
+        "receiver_peer_ids": [],
+        "share_scope": "personal_space",
+        "sharing": false
+      },
+      "model-c": {
+        "id": "local/src-06caf9f8daa641b7-8ed3f6ad685b",
+        "receiver_peer_ids": [],
+        "share_scope": "personal_space",
+        "sharing": false
+      },
+      "model-d": {
+        "id": "local/src-12c4b5a684ae4dfb-8e2c7ac50813",
+        "receiver_peer_ids": [],
+        "share_scope": "personal_space",
+        "sharing": false
+      }
+    },
+    "executed_read_tools": [
+      "ryn_list_models",
+      "ryn_list_devices",
+      "ryn_inspect_services",
+      "ryn_get_system_diagnostics",
+      "ryn_list_devices",
+      "ryn_list_source_configurations",
+      "ryn_list_models",
+      "ryn_list_devices",
+      "ryn_inspect_services",
+      "ryn_get_system_diagnostics",
+      "ryn_list_devices",
+      "ryn_list_source_configurations"
+    ],
+    "grant_changes": [],
+    "hashes_after": {
+      "consumer_grants": null,
+      "consumer_sources": null,
+      "grants": "f0773dc6a7a0a057e0186e787368b592588d54f85ed904a9a8e33823a004f707",
+      "node_b_relationships": "fd4985fe339f016c48848d8eba96557a46dddfcf16b271bcabab45b0a7d5f100",
+      "node_c_relationships": "26b80d3ffcdbedd81d336438dcba2d44f75651f349bc6af12b0c8f68721215f9",
+      "owner_relationships": "9bdd3c2047530025d3984356e379d410ea522f421900a4c5b02782ea747eee4a",
+      "sources": "79091275fe4ae5122b99c6aaf0fdc81b8a6781f7d92ee52422cf645c33b4e063"
+    },
+    "hashes_before": {
+      "consumer_grants": null,
+      "consumer_sources": null,
+      "grants": "f0773dc6a7a0a057e0186e787368b592588d54f85ed904a9a8e33823a004f707",
+      "node_b_relationships": "fd4985fe339f016c48848d8eba96557a46dddfcf16b271bcabab45b0a7d5f100",
+      "node_c_relationships": "26b80d3ffcdbedd81d336438dcba2d44f75651f349bc6af12b0c8f68721215f9",
+      "owner_relationships": "637b5cccc96edd23367e2fca0b94d0831e30f727872f9bba66e7c0aee145f3d3",
+      "sources": "79091275fe4ae5122b99c6aaf0fdc81b8a6781f7d92ee52422cf645c33b4e063"
+    },
+    "http_audit_scope": "Synthetic source only; planner traffic is recorded separately in model_calls.",
+    "initial_grants": [
+      {
+        "allowed": true,
+        "effective": true,
+        "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+        "relationship_id": "29ef70f66af64ad3905641442920803e",
+        "revision": 1,
+        "service_id": "src-585ba285b6f248f5-8ed3f6ad685b"
+      }
+    ],
+    "initial_models": {
+      "model-a": {
+        "id": "local/src-585ba285b6f248f5-8ed3f6ad685b",
+        "receiver_peer_ids": [
+          "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+        ],
+        "share_scope": "friends",
+        "sharing": true
+      },
+      "model-b": {
+        "id": "local/src-585ba285b6f248f5-f44e64e75f39",
+        "receiver_peer_ids": [],
+        "share_scope": "personal_space",
+        "sharing": false
+      },
+      "model-c": {
+        "id": "local/src-06caf9f8daa641b7-8ed3f6ad685b",
+        "receiver_peer_ids": [],
+        "share_scope": "personal_space",
+        "sharing": false
+      },
+      "model-d": {
+        "id": "local/src-12c4b5a684ae4dfb-8e2c7ac50813",
+        "receiver_peer_ids": [],
+        "share_scope": "personal_space",
+        "sharing": false
+      }
+    },
+    "nonce_counts_after": {
+      "node_b_relationships": 0,
+      "node_c_relationships": 0,
+      "owner_relationships": 13
+    },
+    "nonce_counts_before": {
+      "node_b_relationships": 0,
+      "node_c_relationships": 0,
+      "owner_relationships": 2
+    },
+    "nonce_write_scope": "Authenticated catalog anti-replay protocol state only; all other friend state remains compared.",
+    "read_only_boundary_passed": true,
+    "rejected_tools": [],
+    "relationship_business_hashes_after": {
+      "node_b_relationships": "9ce9eae5f49611300b92e6932deba872a05f8fc91c726fdb8009a5767b508887",
+      "node_c_relationships": "4e58f6e1bbf07168e8f02228eec3d9b6bc645f8acd31eb1712431505bdc1cb69",
+      "owner_relationships": "b50fbeb89b5ba71ec3b1f1f97b80db57fa7f69ae74c209d3f61a8ffaa7373367"
+    },
+    "relationship_business_hashes_before": {
+      "node_b_relationships": "9ce9eae5f49611300b92e6932deba872a05f8fc91c726fdb8009a5767b508887",
+      "node_c_relationships": "4e58f6e1bbf07168e8f02228eec3d9b6bc645f8acd31eb1712431505bdc1cb69",
+      "owner_relationships": "b50fbeb89b5ba71ec3b1f1f97b80db57fa7f69ae74c209d3f61a8ffaa7373367"
+    },
+    "relationship_hash_exclusions": [
+      "nonces"
+    ],
+    "setup_admission_probes": [
+      {
+        "copied_other_grant": false,
+        "error_code": null,
+        "model": "model-a",
+        "receiver_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+        "response_authenticated": true,
+        "result": "allowed",
+        "signed_request": true,
+        "state": "succeeded",
+        "upstream_requests": 1
+      },
+      {
+        "copied_other_grant": false,
+        "error_code": "personal_space_access_denied",
+        "model": "model-b",
+        "receiver_peer_id": "88oLTCBMKFagPJ3gCH1GAGrFd7P07IxVw35UyiwaWSc=",
+        "result": "denied",
+        "signed_request": true,
+        "upstream_requests": 0
+      },
+      {
+        "copied_other_grant": true,
+        "error_code": "ai_permission_denied",
+        "model": "model-a",
+        "receiver_peer_id": "88oLTCBMKFagPJ3gCH1GAGrFd7P07IxVw35UyiwaWSc=",
+        "response_authenticated": true,
+        "result": "denied",
+        "signed_request": true,
+        "state": "rejected",
+        "upstream_requests": 0
+      },
+      {
+        "copied_other_grant": true,
+        "error_code": "personal_space_access_denied",
+        "model": "model-b",
+        "receiver_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+        "result": "denied",
+        "signed_request": true,
+        "upstream_requests": 0
+      }
+    ],
+    "setup_fixture_http_audit": [
+      {
+        "authenticated": true,
+        "kind": "chat",
+        "max_tokens": 4096,
+        "model": "alpha",
+        "saved": false,
+        "status": 200,
+        "time": 1791612190.4092724
+      },
+      {
+        "authenticated": true,
+        "kind": "tool_start",
+        "max_tokens": 4096,
+        "model": "alpha",
+        "saved": false,
+        "status": 200,
+        "time": 1791612190.4122727
+      },
+      {
+        "authenticated": true,
+        "kind": "tool_continue",
+        "max_tokens": 4096,
+        "model": "alpha",
+        "saved": false,
+        "status": 200,
+        "time": 1791612190.4162724
+      },
+      {
+        "authenticated": true,
+        "kind": "chat",
+        "max_tokens": 4096,
+        "model": "beta",
+        "saved": false,
+        "status": 200,
+        "time": 1791612190.419272
+      },
+      {
+        "authenticated": true,
+        "kind": "chat",
+        "max_tokens": 4096,
+        "model": "alpha",
+        "saved": false,
+        "status": 200,
+        "time": 1791612190.4275112
+      },
+      {
+        "authenticated": true,
+        "kind": "tool_start",
+        "max_tokens": 4096,
+        "model": "alpha",
+        "saved": false,
+        "status": 200,
+        "time": 1791612190.4425216
+      },
+      {
+        "authenticated": true,
+        "kind": "tool_continue",
+        "max_tokens": 4096,
+        "model": "alpha",
+        "saved": false,
+        "status": 200,
+        "time": 1791612190.4455204
+      },
+      {
+        "authenticated": true,
+        "kind": "chat",
+        "max_tokens": 10,
+        "model": "alpha",
+        "saved": false,
+        "status": 200,
+        "time": 1791612192.808959
+      }
+    ],
+    "setup_receiver_visible_services": {
+      "node-b": [
+        "src-585ba285b6f248f5-8ed3f6ad685b"
+      ],
+      "node-c": []
+    },
+    "source_replacements": [],
+    "task_fixture_http_audit": []
+  },
+  "actual_source_http_audit": [
+    {
+      "authenticated": true,
+      "kind": "chat",
+      "max_tokens": 4096,
+      "model": "alpha",
+      "saved": false,
+      "status": 200,
+      "time": 1791612190.4092724
+    },
+    {
+      "authenticated": true,
+      "kind": "tool_start",
+      "max_tokens": 4096,
+      "model": "alpha",
+      "saved": false,
+      "status": 200,
+      "time": 1791612190.4122727
+    },
+    {
+      "authenticated": true,
+      "kind": "tool_continue",
+      "max_tokens": 4096,
+      "model": "alpha",
+      "saved": false,
+      "status": 200,
+      "time": 1791612190.4162724
+    },
+    {
+      "authenticated": true,
+      "kind": "chat",
+      "max_tokens": 4096,
+      "model": "beta",
+      "saved": false,
+      "status": 200,
+      "time": 1791612190.419272
+    },
+    {
+      "authenticated": true,
+      "kind": "chat",
+      "max_tokens": 4096,
+      "model": "alpha",
+      "saved": false,
+      "status": 200,
+      "time": 1791612190.4275112
+    },
+    {
+      "authenticated": true,
+      "kind": "tool_start",
+      "max_tokens": 4096,
+      "model": "alpha",
+      "saved": false,
+      "status": 200,
+      "time": 1791612190.4425216
+    },
+    {
+      "authenticated": true,
+      "kind": "tool_continue",
+      "max_tokens": 4096,
+      "model": "alpha",
+      "saved": false,
+      "status": 200,
+      "time": 1791612190.4455204
+    },
+    {
+      "authenticated": true,
+      "kind": "chat",
+      "max_tokens": 10,
+      "model": "alpha",
+      "saved": false,
+      "status": 200,
+      "time": 1791612192.808959
+    }
+  ],
+  "agent_state_isolation": {
+    "consumer_message_counts": {
+      "agent_7dd7e154a0654b3eadd2d644940d6cfe": 9
+    },
+    "consumer_store_exists": true,
+    "consumer_task_ids": [
+      "agent_7dd7e154a0654b3eadd2d644940d6cfe"
+    ],
+    "consumer_tool_execution_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+    "provider_persistence_scope": "Provider inference orders, quota counters and transport logs are permitted; these are not Agent tasks or tool execution.",
+    "provider_store_exists": false,
+    "provider_task_ids": [],
+    "task_ids_overlap": []
+  },
+  "audit_note": "Absent security observations stay absent; successful collector checks do not imply an unmeasured universal security audit.",
+  "catalog_refresh_errors": [],
+  "consumer_local_sources": [],
+  "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+  "consumer_role": "node-b_authorized_peer_consumer",
+  "consumer_wire_audit": [
+    {
+      "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+      "error_code": null,
+      "expected_model_binding": {
+        "ai_permission": {
+          "relationship_id": "29ef70f66af64ad3905641442920803e",
+          "revision": 1
+        },
+        "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+        "model_binding": {
+          "model_generation": "4886642f59f64c34987446f46171bf6f",
+          "rule_revision": "15048ba989714d5fa3cf332f22f91367",
+          "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+          "version": "ryn.model-binding.v1"
+        }
+      },
+      "provider_peer_id": "FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=",
+      "response_received": true,
+      "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+      "state": "succeeded",
+      "task_id": "agent_6c98760822584afabfb4cce1d1bc5d2d",
+      "transport": "local_signed_wire_fixture"
+    },
+    {
+      "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+      "error_code": null,
+      "expected_model_binding": {
+        "ai_permission": {
+          "relationship_id": "29ef70f66af64ad3905641442920803e",
+          "revision": 1
+        },
+        "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+        "model_binding": {
+          "model_generation": "4886642f59f64c34987446f46171bf6f",
+          "rule_revision": "15048ba989714d5fa3cf332f22f91367",
+          "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+          "version": "ryn.model-binding.v1"
+        }
+      },
+      "provider_peer_id": "FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=",
+      "response_received": true,
+      "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+      "state": "succeeded",
+      "task_id": "agent_a2a0d98f68d64843b932f671e1e75006",
+      "transport": "local_signed_wire_fixture"
+    },
+    {
+      "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+      "error_code": null,
+      "expected_model_binding": {
+        "ai_permission": {
+          "relationship_id": "29ef70f66af64ad3905641442920803e",
+          "revision": 1
+        },
+        "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+        "model_binding": {
+          "model_generation": "4886642f59f64c34987446f46171bf6f",
+          "rule_revision": "15048ba989714d5fa3cf332f22f91367",
+          "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+          "version": "ryn.model-binding.v1"
+        }
+      },
+      "provider_peer_id": "FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=",
+      "response_received": true,
+      "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+      "state": "succeeded",
+      "task_id": "agent_8094cb1fc2184bdab3d26baa3aedc8f8",
+      "transport": "local_signed_wire_fixture"
+    },
+    {
+      "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+      "error_code": "inference_timeout",
+      "expected_model_binding": {
+        "ai_permission": {
+          "relationship_id": "29ef70f66af64ad3905641442920803e",
+          "revision": 1
+        },
+        "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+        "model_binding": {
+          "model_generation": "4886642f59f64c34987446f46171bf6f",
+          "rule_revision": "15048ba989714d5fa3cf332f22f91367",
+          "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+          "version": "ryn.model-binding.v1"
+        }
+      },
+      "provider_peer_id": "FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=",
+      "response_received": true,
+      "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+      "state": "timed_out",
+      "task_id": "agent_41cef6664c184c45b2a50a779c161338",
+      "transport": "local_signed_wire_fixture"
+    }
+  ],
+  "current_consumer_models": [
+    {
+      "adapter": "openai_compatible",
+      "agent_supported": true,
+      "available": true,
+      "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+      "context_window": 1000000,
+      "description": "可供本机 Agent 使用；工具在本机执行。",
+      "destination_binding_supported": true,
+      "destination_revision": "5c572fb033d43421e76892775502d39be6eaf86dad0e1fcc5af84d7a543a978b",
+      "expected_model_binding": {
+        "ai_permission": {
+          "relationship_id": "29ef70f66af64ad3905641442920803e",
+          "revision": 1
+        },
+        "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+        "model_binding": {
+          "model_generation": "4886642f59f64c34987446f46171bf6f",
+          "rule_revision": "15048ba989714d5fa3cf332f22f91367",
+          "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+          "version": "ryn.model-binding.v1"
+        }
+      },
+      "id": "peer/0ceaa282dccabd880278e49a3984c2b9634eca2231bddafccea9f818091e6204/src-585ba285b6f248f5-8ed3f6ad685b",
+      "max_output_tokens": 128000,
+      "model_id": "source-alpha · alpha",
+      "name": "source-alpha · alpha",
+      "peer_id": "FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=",
+      "recipient_access": {
+        "ai_permission": {
+          "relationship_id": "29ef70f66af64ad3905641442920803e",
+          "revision": 1
+        },
+        "basis": "authenticated_catalog_observation",
+        "catalog_available": true,
+        "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+        "current_access": "unknown",
+        "invocation_verified": false,
+        "kind": "friend"
+      },
+      "runtime": "external",
+      "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+      "share_scope": "unknown",
+      "sharing": true,
+      "sharing_basis": "remote_catalog_advertisement",
+      "sharing_configuration_known": false,
+      "source": "peer",
+      "source_id": "",
+      "source_name": "owner-provider",
+      "streaming": true,
+      "tool_support": "supported"
+    }
+  ],
+  "events": [
+    {
+      "at": "2026-10-10T06:03:12.967470+00:00",
+      "context_epoch": 0,
+      "seq": 1,
+      "type": "created"
+    },
+    {
+      "at": "2026-10-10T06:03:13.000472+00:00",
+      "context_epoch": 0,
+      "menu": {
+        "catalog_revision": "78e9b3f83aff15f7c4fae098ecefec3a385370701bec456794c70f98b1a12e91",
+        "context_epoch": 0,
+        "goal_revision": 1,
+        "loaded_names": [],
+        "mode": "full",
+        "revision": 1
+      },
+      "reason": "projection",
+      "seq": 2,
+      "type": "tool_menu_changed"
+    },
+    {
+      "at": "2026-10-10T06:03:13.011471+00:00",
+      "context_epoch": 0,
+      "seq": 3,
+      "step": 1,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-10T06:03:13.023195+00:00",
+      "clamp_reasons": [],
+      "configured_cap": 128000,
+      "context_epoch": 0,
+      "effective_cap": 128000,
+      "estimated_input_tokens": 5658,
+      "policy_sha256": "4e150b8e67e35207621873fdaf8225561e76fb6d7e32b18f47de77b2d34b1ba6",
+      "seq": 4,
+      "type": "model_output_policy",
+      "version": "configured-output-v1"
+    },
+    {
+      "at": "2026-10-10T06:03:22.722561+00:00",
+      "context_epoch": 0,
+      "seq": 5,
+      "step": 1,
+      "text": "我先",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:03:22.871887+00:00",
+      "context_epoch": 0,
+      "seq": 6,
+      "step": 1,
+      "text": "并行查看模型目录、设备/好友关系、本地共享授权与诊断信息，再核对 model-b 与 node-c 的对应授权。",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:03:22.878887+00:00",
+      "content": "我先并行查看模型目录、设备/好友关系、本地共享授权与诊断信息，再核对 model-b 与 node-c 的对应授权。",
+      "context_epoch": 0,
+      "seq": 7,
+      "tool_count": 4,
+      "type": "assistant"
+    },
+    {
+      "at": "2026-10-10T06:03:22.905887+00:00",
+      "call_id": "call_31d97af9df694ccfb212f366",
+      "context_epoch": 0,
+      "effect": "read",
+      "operation_id": "op_6d82e57bbf504274ae817c444327e826",
+      "seq": 8,
+      "tool": "ryn_list_models",
+      "type": "tool_started"
+    },
+    {
+      "at": "2026-10-10T06:03:22.923887+00:00",
+      "call_id": "call_31d97af9df694ccfb212f366",
+      "context_epoch": 0,
+      "operation_id": "op_6d82e57bbf504274ae817c444327e826",
+      "result": {
+        "models": [
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": true,
+            "available": true,
+            "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+            "context_window": 1000000,
+            "description": "可供本机 Agent 使用；工具在本机执行。",
+            "destination_binding_supported": true,
+            "destination_revision": "5c572fb033d43421e76892775502d39be6eaf86dad0e1fcc5af84d7a543a978b",
+            "expected_model_binding": {
+              "ai_permission": {
+                "relationship_id": "29ef70f66af64ad3905641442920803e",
+                "revision": 1
+              },
+              "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+              "model_binding": {
+                "model_generation": "4886642f59f64c34987446f46171bf6f",
+                "rule_revision": "15048ba989714d5fa3cf332f22f91367",
+                "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+                "version": "ryn.model-binding.v1"
+              }
+            },
+            "fixture_identity": "model-a",
+            "id": "peer/0ceaa282dccabd880278e49a3984c2b9634eca2231bddafccea9f818091e6204/src-585ba285b6f248f5-8ed3f6ad685b",
+            "model_id": "source-alpha · alpha",
+            "name": "source-alpha · alpha",
+            "peer_id": "FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=",
+            "recipient_access": {
+              "ai_permission": {
+                "relationship_id": "29ef70f66af64ad3905641442920803e",
+                "revision": 1
+              },
+              "basis": "authenticated_catalog_observation",
+              "catalog_available": true,
+              "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+              "current_access": "unknown",
+              "invocation_verified": false,
+              "kind": "friend"
+            },
+            "runtime": "external",
+            "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+            "share_scope": "unknown",
+            "sharing": true,
+            "sharing_basis": "remote_catalog_advertisement",
+            "sharing_configuration_known": false,
+            "source": "peer",
+            "source_id": "",
+            "source_name": "owner-provider",
+            "streaming": true,
+            "tool_support": "supported"
+          }
+        ]
+      },
+      "seq": 9,
+      "tool": "ryn_list_models",
+      "type": "tool_result"
+    },
+    {
+      "at": "2026-10-10T06:03:22.951889+00:00",
+      "call_id": "call_2187a0b91cf244bf86572a37",
+      "context_epoch": 0,
+      "effect": "read",
+      "operation_id": "op_db3e4111c623420c885a34adbb3ee92f",
+      "seq": 10,
+      "tool": "ryn_list_devices",
+      "type": "tool_started"
+    },
+    {
+      "at": "2026-10-10T06:03:22.981638+00:00",
+      "call_id": "call_2187a0b91cf244bf86572a37",
+      "context_epoch": 0,
+      "operation_id": "op_db3e4111c623420c885a34adbb3ee92f",
+      "result": {
+        "ai_access": "local",
+        "devices": [
+          {
+            "checked_at": "2026-10-09T08:00:00+00:00",
+            "evidence_source": "unknown",
+            "http_probe_performed": false,
+            "http_reachable": null,
+            "lan_probe_performed": false,
+            "lan_reachable": null,
+            "last_seen": "",
+            "node_name": "owner-provider",
+            "online": null,
+            "peer_id": "FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=",
+            "relationship_id": "29ef70f66af64ad3905641442920803e",
+            "status": "active"
+          },
+          {
+            "checked_at": "2026-10-09T08:00:00+00:00",
+            "evidence_source": "self",
+            "http_probe_performed": false,
+            "http_reachable": null,
+            "lan_probe_performed": false,
+            "lan_reachable": null,
+            "last_seen": "",
+            "name": "receiver",
+            "online": true,
+            "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+          },
+          {
+            "checked_at": "2026-10-09T08:00:00+00:00",
+            "evidence_source": "http",
+            "http_probe_performed": true,
+            "http_reachable": true,
+            "lan_probe_performed": false,
+            "lan_reachable": null,
+            "last_seen": "2026-10-09T08:00:00Z",
+            "name": "node-a",
+            "online": true,
+            "peer_id": "0l39Ut6u8fRKCAn1VcLQWtE2OjsCdayxI0GxDjQEWLE="
+          },
+          {
+            "checked_at": "2026-10-09T08:00:00+00:00",
+            "evidence_source": "heartbeat_expired",
+            "http_probe_performed": false,
+            "http_reachable": null,
+            "lan_probe_performed": false,
+            "lan_reachable": null,
+            "last_seen": "2026-10-09T07:50:00Z",
+            "name": "node-c",
+            "online": false,
+            "peer_id": "88oLTCBMKFagPJ3gCH1GAGrFd7P07IxVw35UyiwaWSc="
+          },
+          {
+            "checked_at": "2026-10-09T08:00:00+00:00",
+            "evidence_source": "unknown",
+            "http_probe_performed": false,
+            "http_reachable": null,
+            "lan_probe_performed": false,
+            "lan_reachable": null,
+            "last_seen": "",
+            "name": "node-d",
+            "online": null,
+            "peer_id": "DLyyuPbYhuJHDcWkc/1zW+9lC3NVLMrueOdxLCzB6go="
+          }
+        ],
+        "evidence_note": "online=null means unknown; membership is not proof of connectivity. evidence_source=self proves only the executing process is alive; no HTTP/LAN probe is performed for self. Reachability=null means untested, not failed. HTTP failure alone does not prove offline.",
+        "friends": [
+          {
+            "node_name": "owner-provider",
+            "peer_id": "FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=",
+            "relationship_id": "29ef70f66af64ad3905641442920803e",
+            "status": "active"
+          }
+        ],
+        "membership": "none",
+        "self_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      "seq": 11,
+      "tool": "ryn_list_devices",
+      "type": "tool_result"
+    },
+    {
+      "at": "2026-10-10T06:03:23.009638+00:00",
+      "call_id": "call_fb5e0bccd493460c83736913",
+      "context_epoch": 0,
+      "effect": "read",
+      "operation_id": "op_1403e4803c054c39bc867ecf59574521",
+      "seq": 12,
+      "tool": "ryn_inspect_services",
+      "type": "tool_started"
+    },
+    {
+      "at": "2026-10-10T06:03:23.031048+00:00",
+      "call_id": "call_fb5e0bccd493460c83736913",
+      "context_epoch": 0,
+      "operation_id": "op_1403e4803c054c39bc867ecf59574521",
+      "result": {
+        "friend_grants": [],
+        "friend_grants_scope": {
+          "direction": "local_outgoing",
+          "provider_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+          "remote_provider_grants": "unknown"
+        },
+        "models": [
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": true,
+            "available": true,
+            "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+            "context_window": 1000000,
+            "description": "可供本机 Agent 使用；工具在本机执行。",
+            "destination_binding_supported": true,
+            "destination_revision": "5c572fb033d43421e76892775502d39be6eaf86dad0e1fcc5af84d7a543a978b",
+            "expected_model_binding": {
+              "ai_permission": {
+                "relationship_id": "29ef70f66af64ad3905641442920803e",
+                "revision": 1
+              },
+              "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+              "model_binding": {
+                "model_generation": "4886642f59f64c34987446f46171bf6f",
+                "rule_revision": "15048ba989714d5fa3cf332f22f91367",
+                "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+                "version": "ryn.model-binding.v1"
+              }
+            },
+            "id": "peer/0ceaa282dccabd880278e49a3984c2b9634eca2231bddafccea9f818091e6204/src-585ba285b6f248f5-8ed3f6ad685b",
+            "model_id": "source-alpha · alpha",
+            "name": "source-alpha · alpha",
+            "peer_id": "FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=",
+            "recipient_access": {
+              "ai_permission": {
+                "relationship_id": "29ef70f66af64ad3905641442920803e",
+                "revision": 1
+              },
+              "basis": "authenticated_catalog_observation",
+              "catalog_available": true,
+              "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+              "current_access": "unknown",
+              "invocation_verified": false,
+              "kind": "friend"
+            },
+            "runtime": "external",
+            "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+            "share_scope": "unknown",
+            "sharing": true,
+            "sharing_basis": "remote_catalog_advertisement",
+            "sharing_configuration_known": false,
+            "source": "peer",
+            "source_id": "",
+            "source_name": "owner-provider",
+            "streaming": true,
+            "tool_support": "supported"
+          }
+        ]
+      },
+      "seq": 13,
+      "tool": "ryn_inspect_services",
+      "type": "tool_result"
+    },
+    {
+      "at": "2026-10-10T06:03:23.060613+00:00",
+      "call_id": "call_d3bf7c7e2274440bb2a717e2",
+      "context_epoch": 0,
+      "effect": "read",
+      "operation_id": "op_4e063d2371c740d9a583f2a1ba0ce168",
+      "seq": 14,
+      "tool": "ryn_get_system_diagnostics",
+      "type": "tool_started"
+    },
+    {
+      "at": "2026-10-10T06:03:23.104439+00:00",
+      "call_id": "call_d3bf7c7e2274440bb2a717e2",
+      "context_epoch": 0,
+      "operation_id": "op_4e063d2371c740d9a583f2a1ba0ce168",
+      "result": {
+        "devices": {
+          "devices": [
+            {
+              "checked_at": "2026-10-09T08:00:00+00:00",
+              "evidence_source": "unknown",
+              "http_probe_performed": false,
+              "http_reachable": null,
+              "lan_probe_performed": false,
+              "lan_reachable": null,
+              "last_seen": "",
+              "node_name": "owner-provider",
+              "online": null,
+              "peer_id": "FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA="
+            },
+            {
+              "checked_at": "2026-10-09T08:00:00+00:00",
+              "evidence_source": "self",
+              "http_probe_performed": false,
+              "http_reachable": null,
+              "lan_probe_performed": false,
+              "lan_reachable": null,
+              "last_seen": "",
+              "name": "receiver",
+              "online": true,
+              "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+            },
+            {
+              "checked_at": "2026-10-09T08:00:00+00:00",
+              "evidence_source": "http",
+              "http_probe_performed": true,
+              "http_reachable": true,
+              "lan_probe_performed": false,
+              "lan_reachable": null,
+              "last_seen": "2026-10-09T08:00:00Z",
+              "name": "node-a",
+              "online": true,
+              "peer_id": "0l39Ut6u8fRKCAn1VcLQWtE2OjsCdayxI0GxDjQEWLE="
+            },
+            {
+              "checked_at": "2026-10-09T08:00:00+00:00",
+              "evidence_source": "heartbeat_expired",
+              "http_probe_performed": false,
+              "http_reachable": null,
+              "lan_probe_performed": false,
+              "lan_reachable": null,
+              "last_seen": "2026-10-09T07:50:00Z",
+              "name": "node-c",
+              "online": false,
+              "peer_id": "88oLTCBMKFagPJ3gCH1GAGrFd7P07IxVw35UyiwaWSc="
+            },
+            {
+              "checked_at": "2026-10-09T08:00:00+00:00",
+              "evidence_source": "unknown",
+              "http_probe_performed": false,
+              "http_reachable": null,
+              "lan_probe_performed": false,
+              "lan_reachable": null,
+              "last_seen": "",
+              "name": "node-d",
+              "online": null,
+              "peer_id": "DLyyuPbYhuJHDcWkc/1zW+9lC3NVLMrueOdxLCzB6go="
+            }
+          ],
+          "note": "Self presence proves the executing process is alive only. Untested reachability is null; membership or a configured endpoint is not connectivity proof.",
+          "status": "available"
+        },
+        "models": [
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": true,
+            "available": true,
+            "destination_revision": "5c572fb033d43421e76892775502d39be6eaf86dad0e1fcc5af84d7a543a978b",
+            "evidence": {
+              "connection_probe_performed": false,
+              "inference_probe_performed": false,
+              "kind": "catalog_configuration_and_capability_record",
+              "probe_checked_at": null
+            },
+            "id": "peer/0ceaa282dccabd880278e49a3984c2b9634eca2231bddafccea9f818091e6204/src-585ba285b6f248f5-8ed3f6ad685b",
+            "model_id": "source-alpha · alpha",
+            "name": "source-alpha · alpha",
+            "peer_id": "FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=",
+            "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+            "source": "peer",
+            "source_id": "",
+            "source_name": "owner-provider",
+            "tool_support": "supported"
+          }
+        ],
+        "note": "Model records do not measure current connection, inference, quotas, or throughput. Diagnostics is read only and grants no permissions."
+      },
+      "seq": 15,
+      "tool": "ryn_get_system_diagnostics",
+      "type": "tool_result"
+    },
+    {
+      "at": "2026-10-10T06:03:23.163025+00:00",
+      "context_epoch": 0,
+      "seq": 16,
+      "step": 2,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-10T06:03:23.175534+00:00",
+      "clamp_reasons": [],
+      "configured_cap": 128000,
+      "context_epoch": 0,
+      "effective_cap": 128000,
+      "estimated_input_tokens": 9235,
+      "policy_sha256": "4e150b8e67e35207621873fdaf8225561e76fb6d7e32b18f47de77b2d34b1ba6",
+      "seq": 17,
+      "type": "model_output_policy",
+      "version": "configured-output-v1"
+    },
+    {
+      "at": "2026-10-10T06:05:38.574599+00:00",
+      "context_epoch": 0,
+      "seq": 18,
+      "step": 2,
+      "text": "四",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:38.758031+00:00",
+      "context_epoch": 0,
+      "seq": 19,
+      "step": 2,
+      "text": "项检查已完成。为了确认 model-b 不存在于本机任何本地来源（而只可能来自对端 owner-provider），我再核对一次本机的来源配置：",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:38.766031+00:00",
+      "content": "四项检查已完成。为了确认 model-b 不存在于本机任何本地来源（而只可能来自对端 owner-provider），我再核对一次本机的来源配置：",
+      "context_epoch": 0,
+      "seq": 20,
+      "tool_count": 1,
+      "type": "assistant"
+    },
+    {
+      "at": "2026-10-10T06:05:38.803276+00:00",
+      "call_id": "call_7fca80faf50f4710b108fa8b",
+      "context_epoch": 0,
+      "effect": "read",
+      "operation_id": "op_26a319b551554e8e89c34b4ae530be5f",
+      "seq": 21,
+      "tool": "ryn_list_source_configurations",
+      "type": "tool_started"
+    },
+    {
+      "at": "2026-10-10T06:05:38.824486+00:00",
+      "call_id": "call_7fca80faf50f4710b108fa8b",
+      "context_epoch": 0,
+      "operation_id": "op_26a319b551554e8e89c34b4ae530be5f",
+      "result": {
+        "sources": []
+      },
+      "seq": 22,
+      "tool": "ryn_list_source_configurations",
+      "type": "tool_result"
+    },
+    {
+      "at": "2026-10-10T06:05:38.886476+00:00",
+      "context_epoch": 0,
+      "seq": 23,
+      "step": 3,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-10T06:05:38.900468+00:00",
+      "clamp_reasons": [],
+      "configured_cap": 128000,
+      "context_epoch": 0,
+      "effective_cap": 128000,
+      "estimated_input_tokens": 18768,
+      "policy_sha256": "4e150b8e67e35207621873fdaf8225561e76fb6d7e32b18f47de77b2d34b1ba6",
+      "seq": 24,
+      "type": "model_output_policy",
+      "version": "configured-output-v1"
+    },
+    {
+      "at": "2026-10-10T06:05:47.068388+00:00",
+      "context_epoch": 0,
+      "seq": 25,
+      "step": 3,
+      "text": "核对",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:47.312901+00:00",
+      "context_epoch": 0,
+      "seq": 26,
+      "step": 3,
+      "text": "完成，未做任何修改（全程只读）。以下是结论与证据。\n\n## 结论\n\n在本节点可核实的全部数据里，**不存在任何 model-b 的分享记录或接收授权**。node-c 调不到 model-b 的直接原因是授权链上没有 model-b 的条目；",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:48.467684+00:00",
+      "context_epoch": 0,
+      "seq": 27,
+      "step": 3,
+      "text": "model",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:48.716856+00:00",
+      "context_epoch": 0,
+      "seq": 28,
+      "step": 3,
+      "text": "-a 的授权按规则不能、也没有延续到 model-b。\n\n## 核对过程与证据\n\n**1. 模型目录中只有 model-a，没有 model-b**\n- `ryn_list_models` 仅返回一条记录：`source-alpha · alpha`（`fixture_identity: \"model-a\"`），来自对端来源",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:49.731753+00:00",
+      "context_epoch": 0,
+      "seq": 29,
+      "step": 3,
+      "text": " `owner-provider`（peer `FXSackkm…`），",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:49.984773+00:00",
+      "context_epoch": 0,
+      "seq": 30,
+      "step": 3,
+      "text": "服务 `src-585ba285b6f248f5-8ed3f6ad685b`。\n- 目录中**没有任何 model-b 的行**，因此也没有可附加接收授权的分享条目。\n\n**2. 唯一的 friend 授权是",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:50.897381+00:00",
+      "context_epoch": 0,
+      "seq": 31,
+      "step": 3,
+      "text": " model-a 的，且授予对象不是 node-c**\n- model-a 的 `recipient_access`：`kind",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:51.138906+00:00",
+      "context_epoch": 0,
+      "seq": 32,
+      "step": 3,
+      "text": ": \"friend\"`，`relationship_id: 29ef70f66af64ad3905641442920803e`，消费者是本节点自身（`consumer_peer_id: VL6DB3FF…`）。\n- `ryn_list_devices",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:52.349471+00:00",
+      "context_epoch": 0,
+      "seq": 33,
+      "step": 3,
+      "text": "` 显示 `29ef70f6…` 是本节点与 **owner-provider** 的好友关系；node-c 的 peer",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:52.592795+00:00",
+      "context_epoch": 0,
+      "seq": 34,
+      "step": 3,
+      "text": " 是 `88oLTCBMKFagPJ3gCH1GAGrFd7P07IxVw35UyiwaWSc=`，**没有出现在任何好友关系或授权记录里**——它甚至不是本节点的好友（好友列表里只有 owner-provider 一条）。\n-",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:53.880589+00:00",
+      "context_epoch": 0,
+      "seq": 35,
+      "step": 3,
+      "text": " 该授权是按模型逐条记录的（绑定里含 model_generation `48866",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:54.123100+00:00",
+      "context_epoch": 0,
+      "seq": 36,
+      "step": 3,
+      "text": "42f…` 和 service_id），只属于 model-a，不能当作 model-b 的授权——这正是需要分开核对的原因。\n\n**3. 本节点作为提供方没有任何对外授权**\n- `ryn_inspect_services`：`friend_grants: []`（本机出向授权为空）。",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:55.454142+00:00",
+      "context_epoch": 0,
+      "seq": 37,
+      "step": 3,
+      "text": "即使分享经由本节点，也没有任何 friend 授权可供 node-c 接收。\n",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:55.702084+00:00",
+      "context_epoch": 0,
+      "seq": 38,
+      "step": 3,
+      "text": "- `ryn_list_source_configurations`：本机 `sources: []`，排除 model-b 挂在本机某个本地来源下的可能。\n\n**4. 附带发现：node-c 的连通性状态（与授权无关的另一因素）**\n- `node-c: online=false`，`evidence_source",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:56.633143+00:00",
+      "context_epoch": 0,
+      "seq": 39,
+      "step": 3,
+      "text": ": heartbeat_expired`，last_seen 07:50Z，**未做过 HTTP/L",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:56.872678+00:00",
+      "context_epoch": 0,
+      "seq": 40,
+      "step": 3,
+      "text": "AN 探测**。心跳过期不等于当前不可达，此处只能说\"当前可达性未经验证\"，不能断言它离线。\n\n## 证据边界（如实说明）\n\n- 对端 owner-provider 对 model-b 的**真实分享配置不可见**：`sharing_configuration_known",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:58.195626+00:00",
+      "context_epoch": 0,
+      "seq": 41,
+      "step": 3,
+      "text": ": false`、`share_scope: \"unknown\"`、`remote_provider_grants: \"unknown\"`",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:58.434190+00:00",
+      "context_epoch": 0,
+      "seq": 42,
+      "step": 3,
+      "text": "。本地目录里没有 model-b，与此一致，但**不构成对远端\"未分享\"的证明**——node-c 侧的目录是另一个视图，本节点无法查看。\n- 即便 model-a，`current_access: \"unknown\"`、`invocation_verified: false`，",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:59.002188+00:00",
+      "context_epoch": 0,
+      "seq": 43,
+      "step": 3,
+      "text": "也只是目录观测，不是实时调用验证。\n\n按您的要求，我未修改任何分享",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:59.181681+00:00",
+      "context_epoch": 0,
+      "seq": 44,
+      "step": 3,
+      "text": "规则或授权。如需确认远端 model-b 的分享状态，需要在 owner-provider 侧（或 node-c 侧的目录）核实。",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:59.190682+00:00",
+      "content": "核对完成，未做任何修改（全程只读）。以下是结论与证据。\n\n## 结论\n\n在本节点可核实的全部数据里，**不存在任何 model-b 的分享记录或接收授权**。node-c 调不到 model-b 的直接原因是授权链上没有 model-b 的条目；model-a 的授权按规则不能、也没有延续到 model-b。\n\n## 核对过程与证据\n\n**1. 模型目录中只有 model-a，没有 model-b**\n- `ryn_list_models` 仅返回一条记录：`source-alpha · alpha`（`fixture_identity: \"model-a\"`），来自对端来源 `owner-provider`（peer `FXSackkm…`），服务 `src-585ba285b6f248f5-8ed3f6ad685b`。\n- 目录中**没有任何 model-b 的行**，因此也没有可附加接收授权的分享条目。\n\n**2. 唯一的 friend 授权是 model-a 的，且授予对象不是 node-c**\n- model-a 的 `recipient_access`：`kind: \"friend\"`，`relationship_id: 29ef70f66af64ad3905641442920803e`，消费者是本节点自身（`consumer_peer_id: VL6DB3FF…`）。\n- `ryn_list_devices` 显示 `29ef70f6…` 是本节点与 **owner-provider** 的好友关系；node-c 的 peer 是 `88oLTCBMKFagPJ3gCH1GAGrFd7P07IxVw35UyiwaWSc=`，**没有出现在任何好友关系或授权记录里**——它甚至不是本节点的好友（好友列表里只有 owner-provider 一条）。\n- 该授权是按模型逐条记录的（绑定里含 model_generation `4886642f…` 和 service_id），只属于 model-a，不能当作 model-b 的授权——这正是需要分开核对的原因。\n\n**3. 本节点作为提供方没有任何对外授权**\n- `ryn_inspect_services`：`friend_grants: []`（本机出向授权为空）。即使分享经由本节点，也没有任何 friend 授权可供 node-c 接收。\n- `ryn_list_source_configurations`：本机 `sources: []`，排除 model-b 挂在本机某个本地来源下的可能。\n\n**4. 附带发现：node-c 的连通性状态（与授权无关的另一因素）**\n- `node-c: online=false`，`evidence_source: heartbeat_expired`，last_seen 07:50Z，**未做过 HTTP/LAN 探测**。心跳过期不等于当前不可达，此处只能说\"当前可达性未经验证\"，不能断言它离线。\n\n## 证据边界（如实说明）\n\n- 对端 owner-provider 对 model-b 的**真实分享配置不可见**：`sharing_configuration_known: false`、`share_scope: \"unknown\"`、`remote_provider_grants: \"unknown\"`。本地目录里没有 model-b，与此一致，但**不构成对远端\"未分享\"的证明**——node-c 侧的目录是另一个视图，本节点无法查看。\n- 即便 model-a，`current_access: \"unknown\"`、`invocation_verified: false`，也只是目录观测，不是实时调用验证。\n\n按您的要求，我未修改任何分享规则或授权。如需确认远端 model-b 的分享状态，需要在 owner-provider 侧（或 node-c 侧的目录）核实。",
+      "context_epoch": 0,
+      "seq": 45,
+      "tool_count": 0,
+      "type": "assistant"
+    },
+    {
+      "at": "2026-10-10T06:05:59.190682+00:00",
+      "context_epoch": 0,
+      "goal_revision": 1,
+      "seq": 46,
+      "type": "verification_started"
+    },
+    {
+      "at": "2026-10-10T06:05:59.272193+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_6d82e57bbf504274ae817c444327e826",
+      "evidence_id": "evidence_029f759fec8a4f8f8ddbf1109772fbbe",
+      "seq": 47,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-10T06:05:59.369376+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_db3e4111c623420c885a34adbb3ee92f",
+      "evidence_id": "evidence_2adf5dbaaed540a4a12ff301d3837c56",
+      "seq": 48,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-10T06:05:59.451885+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_1403e4803c054c39bc867ecf59574521",
+      "evidence_id": "evidence_b9d37920cac7453295f1068fafacb188",
+      "seq": 49,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-10T06:05:59.552346+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_4e063d2371c740d9a583f2a1ba0ce168",
+      "evidence_id": "evidence_1a6e290cc1d2430f9df50ed56cdcf8e4",
+      "seq": 50,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-10T06:05:59.629532+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_26a319b551554e8e89c34b4ae530be5f",
+      "evidence_id": "evidence_aaf3bcf3772d4b6486422ac773b927b9",
+      "seq": 51,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-10T06:05:59.685781+00:00",
+      "context_epoch": 0,
+      "seq": 52,
+      "step": 4,
+      "type": "verification_model_started"
+    },
+    {
+      "at": "2026-10-10T06:05:59.702779+00:00",
+      "clamp_reasons": [],
+      "configured_cap": 128000,
+      "context_epoch": 0,
+      "effective_cap": 128000,
+      "estimated_input_tokens": 12434,
+      "policy_sha256": "4e150b8e67e35207621873fdaf8225561e76fb6d7e32b18f47de77b2d34b1ba6",
+      "seq": 53,
+      "type": "model_output_policy",
+      "version": "configured-output-v1"
+    },
+    {
+      "at": "2026-10-10T06:09:00.181289+00:00",
+      "context_epoch": 0,
+      "error": "agent_inference_failed",
+      "outcome": "unverified",
+      "seq": 54,
+      "type": "verification_finished"
+    }
+  ],
+  "http_health_audit": [
+    {
+      "path": "/health",
+      "status": 200
+    },
+    {
+      "path": "/health",
+      "status": 200
+    },
+    {
+      "path": "/health",
+      "status": 200
+    },
+    {
+      "path": "/health",
+      "status": 200
+    }
+  ],
+  "identity_mapping_policy": "ryn_list_models adds fixture_identity only; frozen prompt, production facts, IDs, permissions and verification are unchanged. Reference must use the same wrapper.",
+  "initial_consumer_models": [
+    {
+      "adapter": "openai_compatible",
+      "agent_supported": true,
+      "available": true,
+      "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+      "context_window": 1000000,
+      "description": "可供本机 Agent 使用；工具在本机执行。",
+      "destination_binding_supported": true,
+      "destination_revision": "5c572fb033d43421e76892775502d39be6eaf86dad0e1fcc5af84d7a543a978b",
+      "expected_model_binding": {
+        "ai_permission": {
+          "relationship_id": "29ef70f66af64ad3905641442920803e",
+          "revision": 1
+        },
+        "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+        "model_binding": {
+          "model_generation": "4886642f59f64c34987446f46171bf6f",
+          "rule_revision": "15048ba989714d5fa3cf332f22f91367",
+          "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+          "version": "ryn.model-binding.v1"
+        }
+      },
+      "id": "peer/0ceaa282dccabd880278e49a3984c2b9634eca2231bddafccea9f818091e6204/src-585ba285b6f248f5-8ed3f6ad685b",
+      "max_output_tokens": 128000,
+      "model_id": "source-alpha · alpha",
+      "name": "source-alpha · alpha",
+      "peer_id": "FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=",
+      "recipient_access": {
+        "ai_permission": {
+          "relationship_id": "29ef70f66af64ad3905641442920803e",
+          "revision": 1
+        },
+        "basis": "authenticated_catalog_observation",
+        "catalog_available": true,
+        "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+        "current_access": "unknown",
+        "invocation_verified": false,
+        "kind": "friend"
+      },
+      "runtime": "external",
+      "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+      "share_scope": "unknown",
+      "sharing": true,
+      "sharing_basis": "remote_catalog_advertisement",
+      "sharing_configuration_known": false,
+      "source": "peer",
+      "source_id": "",
+      "source_name": "owner-provider",
+      "streaming": true,
+      "tool_support": "supported"
+    }
+  ],
+  "metrics": {
+    "tool_started_writes": 0,
+    "writes": 0
+  },
+  "normalizer_status": "pending integration",
+  "physical_hosts": 1,
+  "primary_model": "peer/0ceaa282dccabd880278e49a3984c2b9634eca2231bddafccea9f818091e6204/src-585ba285b6f248f5-8ed3f6ad685b",
+  "provider_peer_id": "FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=",
+  "security": {},
+  "setup_probes": [
+    {
+      "chat": "passed",
+      "source": "source-alpha",
+      "tools": {
+        "alpha": "supported",
+        "beta": "unsupported"
+      }
+    },
+    {
+      "chat": "passed",
+      "source": "source-other",
+      "tools": {
+        "alpha": "supported"
+      }
+    },
+    {
+      "cause_types": [
+        "AdapterError",
+        "URLError",
+        "ConnectionRefusedError"
+      ],
+      "error_code": "connection_refused",
+      "source": "source-broken"
+    }
+  ],
+  "source_configuration_unchanged": true,
+  "source_readback_scope": "Provider business truth for collector review only; not consumer tool observations.",
+  "transport_binding_note": "The fixed model-a business identity dispatches to the separately recorded planner_model; sibling model rows are controlled fixtures, not additional real model providers.",
+  "transport_scope": "Production signed consumer/provider protocol over a local fixture wire; no ICE or physical-node claim.",
+  "two_physical_nodes": "pending",
+  "unchanged_checks": {},
+  "write_counting_scope": "Task interval only, after fixture initialization and signed setup probes; source replacements plus changed grant mutations."
+}

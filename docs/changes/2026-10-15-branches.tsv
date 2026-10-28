@@ -1,0 +1,46 @@
+﻿branch	tip	already_ancestor	commits_not_in_HEAD	recommendation
+claude/goofy-germain-b7a05f	5ab71ab	True	0	Already included; no merge needed
+claude/silly-hellman-177fbe	5ab71ab	True	0	Already included; no merge needed
+codex/clawpad-node-apps	4971a2b	True	0	Already included; no merge needed
+codex/device-erasure-design-v070	1c38af8	True	0	Already included; no merge needed
+codex/device-sync-followups-v070	a76bef6	True	0	Already included; no merge needed
+codex/device-sync-health-v070	e3d7072	True	0	Already included; no merge needed
+codex/friend-ai-sharing-implementation	89f6f19	False	5	Candidate for separate integration; overlaps current routes/UI/desktop packaging
+codex/friend-ai-sharing-plan	1cc8352	False	1	Review functionality and dependencies separately; do not bulk merge
+codex/friend-for-you-v070	d8398f1	True	0	Already included; no merge needed
+codex/friend-mesh-diagnostics-v070	f385195	True	0	Already included; no merge needed
+codex/friend-offline-ask-v070	de79e87	True	0	Already included; no merge needed
+codex/friend-weekly-recap-v070	258acef	True	0	Already included; no merge needed
+codex/issue-23-streaming-v070	2bc88d6	True	0	Already included; no merge needed
+codex/issue-28-acceptance-isolated	7571756	False	3	Review functionality and dependencies separately; do not bulk merge
+codex/issue-30-invite-reach-v070	c3a80c4	True	0	Already included; no merge needed
+codex/issue-41-invite-deep-links-v070	e0313c6	False	2	Candidate for separate integration; overlaps current routes/UI/desktop packaging
+codex/local-inference-api-p2p	7009670	True	0	Already included; no merge needed
+codex/nas-plugin	af2738f	True	0	Already included; no merge needed
+codex/personal-ai-snapshot-20261005	0dab711	True	0	Already included; no merge needed
+codex/personal-ai-upstream-integration	e9cde6c	True	0	Already included; no merge needed
+codex/service-experience-framework-v070	f07617f	True	0	Already included; no merge needed
+codex/services-chat-ui	fe3dbdc	True	0	Already included; no merge needed
+codex/shared-reading-lists-v070	2f5bf69	True	0	Already included; no merge needed
+codex/unified-ai-workspace	278e647	True	0	Already included; no merge needed
+codex/user-product-development	e800fe6	True	0	Already included; no merge needed
+codex/v070-followup-integration	397ad18	False	19	Review functionality and dependencies separately; do not bulk merge
+development/personal-first-implementation	af2738f	True	0	Already included; no merge needed
+development/personal-first-ui	7009670	True	0	Already included; no merge needed
+feature/issue-20-linux-desktop	6c8ef4b	False	4	Review functionality and dependencies separately; do not bulk merge
+feature/issue-23-private-ai-streaming	ac9676f	False	6	Review functionality and dependencies separately; do not bulk merge
+feature/issue-24-provider-switching	ad7b23c	False	4	Review functionality and dependencies separately; do not bulk merge
+feature/issue-25-ask-about-item	307ce16	False	7	Review functionality and dependencies separately; do not bulk merge
+feature/issue-27-background-worker-registry	ac31cbc	True	0	Already included; no merge needed
+feature/issue-28-transport-post	bf36072	True	0	Already included; no merge needed
+feature/issue-30-friend-mesh	dc74e28	False	17	Review functionality and dependencies separately; do not bulk merge
+feature/issue-30-friend-mesh-core	06872d5	False	4	Review functionality and dependencies separately; do not bulk merge
+feature/issue-30-friend-mesh-ui	cf4a430	False	3	Review functionality and dependencies separately; do not bulk merge
+feature/local-llm-dual-node	0bd6d56	True	0	Already included; no merge needed
+feature/p2p-peer-transit	c6d15f9	True	0	Already included; no merge needed
+feature/personal-ai-workspace	6d8ba18	True	0	Already included; no merge needed
+feature/ryn-integrated-workspace	d880bcc	True	0	Current development branch
+feature/user-requirements-suite	96a7c97	False	19	Review functionality and dependencies separately; do not bulk merge
+integration/issues-20-23-24-25-30	df1fbc4	False	42	Review functionality and dependencies separately; do not bulk merge
+main	5ab71ab	True	0	Already included; no merge needed
+test/issue-15-for-you	95d5bac	True	0	Already included; no merge needed

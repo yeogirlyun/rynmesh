@@ -1,0 +1,64 @@
+{
+  "review_kind": "independent-v2-draft-grader-code-review",
+  "reviewer": "non-author Astra sharing_review",
+  "reviewed_at": "2026-10-10T06:45:30.445170+00:00",
+  "verdict": "no_open_material_findings_in_final_frozen_scope",
+  "formal_acceptance": false,
+  "reviewed_files_sha256": {
+    "tests/fixtures/agent_acceptance/role_grade_v2.py": "9d954d9a49a8b1538132b115574fff0e2d4785f4070783ba692221ecd0055146",
+    "docs/acceptance/ryn-agent-delivery/role-run-v2.schema.json": "e091bac1b261de155c5834c9d51c5f0312aa57adabf16df33bb631f92404b48a",
+    "tests/test_agent_role_grade_v2.py": "e68ab74de8f5be45ca46f52ca6015b564ea5346d84cc9f91774f1ff8bf705866"
+  },
+  "file_hashes_matched_before_and_after_independent_test": true,
+  "tests": [
+    {
+      "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_role_grade_v2.py -q -p no:cacheprovider --tb=short",
+      "passed": 72,
+      "failed": 0,
+      "elapsed_seconds": 80.6,
+      "exit_code": 0,
+      "scope": "Synthetic offline grader tests, including all 180 cohort/case/trial envelopes and fixed threshold arithmetic. No live model/API, no physical-host exercise."
+    }
+  ],
+  "review_fix_chain": [
+    {
+      "id": "V2G-1",
+      "severity": "P2",
+      "discovery": "Pre-freeze independent static review; no executable red run or immutable initial hash was captured. Author confirmed and fixed before final freeze.",
+      "problem": "A wrong dependency evidence kind was a common-grade failure but absent from the integrity marker set; it could count as an ordinary optional business failure within the 58/72 tolerance.",
+      "resolution": "Final grade explicitly classifies invalid dependency evidence kind as evidence_integrity_failed; aggregate rejects this globally.",
+      "final_code_lines": "role_grade_v2.py:572-576,605-606",
+      "regression": "test_wrong_dependency_evidence_kind_is_global_integrity_failure",
+      "status": "closed_by_final_code_and_independent_test"
+    },
+    {
+      "id": "V2G-2",
+      "severity": "P2",
+      "discovery": "Pre-freeze independent static review; author confirmed and fixed before final freeze.",
+      "problem": "A known business failure plus missing sampling/dependency/native evidence was collapsed to failed and counted as completed, allowing missing evidence to disappear behind a tolerable failure.",
+      "resolution": "grade records evidence_complete before the unconditional draft pending item. aggregate counts incomplete evidence as pending while retaining original failures for security, role, permission and mandatory-case hard gates.",
+      "final_code_lines": "role_grade_v2.py:585-586,622-635",
+      "regression": "test_known_business_failure_does_not_complete_missing_sampling_evidence",
+      "status": "closed_by_final_code_and_independent_test"
+    }
+  ],
+  "confirmed_design": {
+    "suite_hash_semantics": "_SuiteToken has no filesystem protocol. Only the exact internal token gets the effective suite digest; all actual Paths, including real cases-v1.json evidence, retain their byte SHA256.",
+    "v1_engine_isolation": "Pinned unmodified grade/template/aggregate function code runs with independently copied globals and explicit suite/digest/DOCS overrides. Imported original globals are not patched; effective dataset version is never rewritten to v1.",
+    "scope_and_integrity": "Only the fixed development suite is accepted. Contract/schema/code pins, original evidence bytes, duplicate identity/nonce/trial, malformed versions and overlays are checked; aggregate reopens original run paths instead of accepting supplied verdicts.",
+    "registration": "Role proof binding includes run/nonce/version/case/cohort/trial/effective-case/overlay; source documents and original model/tool dispatch audit bind task ID, registration file byte hash and timezone-aware chronology. Missing collection-time provenance stays pending; header metadata alone cannot retrospectively register an old sample.",
+    "runtime_identity": "Actual runtime owner/node/tool-store declarations, independently sourced authenticated runtime observations, AgentStore path/key/decrypted task readback, exact source ownership deployment and authorized connector/history deployment are required within the trusted collector/reviewer boundary. These are not remote attestation.",
+    "reference": "Queued accounting task/store is separately labeled. Reference also requires an independently read native-session artifact and native request IDs matching original model request IDs exactly; existence/hash/boolean alone is insufficient.",
+    "physical_hosts": "Cases requiring two hosts require distinct observed host identities with collector probes bound to run nonce and node identities. Logical nodes alone cannot complete this gate.",
+    "thresholds": "Pinned common assertion/aggregation code preserves 72 candidate business trials, 18 permission trials, mandatory three-repeat gates, absolute 58/72 and 80% of complete reference business results. Security/role/integrity failures remain hard failures. Missing reference data never establishes the relative gate.",
+    "draft": "Schema rejects formal registration and non-draft status. grade and aggregate always formal_pass=false; fully evidenced synthetic diagnostic success remains status pending. No formal activation, normalization of real samples, or old-run regrading as fresh samples is implemented by this review."
+  },
+  "limitations": [
+    "No held-out data, generator/build_cases, live model, remote host or production/controller edits accessed or performed.",
+    "Synthetic test documents deliberately fabricate collector facts and do not constitute actual model execution, identity, native-session or two-host acceptance evidence.",
+    "Trusted collectors and independent reviewers still establish observation authenticity and completeness. Hashes/bindings detect inconsistency and drift; they cannot make fabricated but internally consistent evidence true.",
+    "Only the final grader/schema/tests snapshot was executed independently. Intermediate static findings are retained without inventing a red-test execution or an unavailable pre-fix hash.",
+    "Existing raw development runs that lack new original dispatch provenance must remain pending; do not backfill missing original evidence from final metadata.",
+    "No formal score, 80% performance conclusion or business-task success claim follows from these 72 passing software tests."
+  ]
+}

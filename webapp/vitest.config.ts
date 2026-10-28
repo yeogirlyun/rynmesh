@@ -7,6 +7,7 @@ export default defineConfig({
     "import.meta.env.VITE_RYN_NODE_BASE_URL": JSON.stringify("http://localhost/api/local"),
   },
   test: {
+    include: ["src/**/*.{test,spec}.{ts,tsx,js,jsx}"],
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
     clearMocks: true,

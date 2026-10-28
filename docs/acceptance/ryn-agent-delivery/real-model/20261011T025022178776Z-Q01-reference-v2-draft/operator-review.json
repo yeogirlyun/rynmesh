@@ -1,0 +1,35 @@
+{
+  "kind": "operator-development-review-not-independent",
+  "at": "2026-10-11T06:26:45.769507+00:00",
+  "formal_pass": false,
+  "eligible_for_formal_score": false,
+  "collection_verdict": "partial_interfered_with_nested_read",
+  "semantic_verdict": "not_accepted",
+  "findings": [
+    {
+      "id": "COLLECTOR-NESTED-READ",
+      "error": "draft_native_tool_context_mismatch",
+      "reason": "The actual diagnostic tool calls its device read through the same gateway. The collector treated this as a mismatched native top-level RPC, generating a false agent_diagnostics_devices_unavailable. Do not count as a clean reference sample."
+    },
+    {
+      "id": "Q01-REFERENCE-SCOPE",
+      "quote": "能聊天对前三个模型来说是基于配置就绪",
+      "reason": "The first three rows include the failed offline model; this caveat conflicts with the displayed classifications. Raw final answer is retained. No independent semantic verdict or formal normalization performed."
+    }
+  ],
+  "calls": 4,
+  "seconds": 137.625,
+  "owner_source_unchanged": true,
+  "code_unchanged": true,
+  "independent_review": "pending_Astra_usage_limit",
+  "raw_sha256": {
+    "dispatch-audit.json": "75d24b93676d92edfd847a76c26b1b20e3e5e856424871b9ef924f565bd8a87b",
+    "dispatch-events.jsonl": "d836a9f1e81053d809e5fa05a1aea00b5083c0740d3e1eb84f49d17a990bdbb3",
+    "effective-input.json": "63bd75d7bb8232a306fc72b34641b20a74e74de98bd66020120515c9667add01",
+    "model-requests.json": "448e55389b98e75a8c7274f2f471a29a22e36034ca8d5165e86ebc9ed8c1c86b",
+    "native-rpc-events.jsonl": "6d1519187ac47c0e013783c5654f34efcdc096f7f125bf7c8ca14bf792d28139",
+    "registration.json": "1703a3d0da044194acd8fae64dcccaf05a45998ae4da5ab99f43747f3c7a6eeb",
+    "run.json": "92d1d60021e6069ed682f6f19129fdfadca38431de8fc778d2eb95ecf675999b",
+    "task-binding.json": "d5488019c55af0e8ea82f9606a26ea1060dbc78e9666cc76b6d4f927fed60af2"
+  }
+}

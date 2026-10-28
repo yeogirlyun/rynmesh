@@ -1,0 +1,106 @@
+{
+  "kind": "independent-review-of-R05-stream-development-evidence",
+  "date": "2026-10-11",
+  "reviewer": {
+    "agent": "pending_independent_review",
+    "relationship": "Independent of this live execution and its operator report. This reviewer authored the R05 controller earlier; this is not an independent review of that controller implementation."
+  },
+  "scope": "The named operator report and its explicitly referenced local evidence files only. No model invocation, remote operation, production edit or raw evidence modification.",
+  "conclusion": "The recorded stream_controls sequence is supported at the runtime boundary. Three runtime model reservations must not be described as three supplier calls. This evidence does not establish the complete R05 case or a formal pass.",
+  "formal_pass": false,
+  "formal_trials_executed": 0,
+  "findings": [],
+  "task_id": "agent_c4c4f7b506ff41f594cbf2cd87160d16",
+  "verified_control_sequence": {
+    "nonempty_text_delta_sequences": [5, 6, 20, 21, 22, 23, 24, 25, 26, 27],
+    "delta_count": 10,
+    "delta_distribution": {"model_step_1": 2, "model_step_2": 8},
+    "pre_pause_control_revision": 1,
+    "revision_basis": "Every retained observation containing these deltas has control_revision=1; the tenth is observed while running.",
+    "pause": {"event_seq": 28, "control_revision": 2, "receipt_run_state": "pausing"},
+    "safe_checkpoint": {"event_cursor": 29, "run_state": "paused", "resume_enabled": true, "unsettled_operations": 0},
+    "late_paused_response": {"event_seq": 29, "type": "model_response_rejected", "error": "agent_cancelled"},
+    "resume": {"event_seq": 30, "control_revision": 3, "receipt_run_state": "queued"},
+    "next_dispatch": {"event_seq": 31, "type": "model_started", "step": 3, "active_observation_cursor": 32, "active_run_state": "running"},
+    "cancel": {"event_seq": 33, "control_revision": 4, "status": "cancelled"},
+    "late_cancelled_response": {"event_seq": 34, "type": "model_response_rejected", "error": "agent_cancelled"},
+    "later_runtime_dispatch_count": 0,
+    "later_automatic_resume_count": 0,
+    "last_independent_snapshot_at_consumer_clock": "2026-10-11T08:09:42.410611+00:00",
+    "snapshot_matches_controller_final_event_sequence": true
+  },
+  "verified_order_linkage": [
+    {
+      "inference_task_id": "agent_57e06fc9d1f34aca9e36a64d1337a7cf",
+      "consumer_state": "succeeded",
+      "provider_state": "succeeded",
+      "upstream_dispatches": 1,
+      "upstream_responses": 1,
+      "consumer_provider_messages_equal": true,
+      "consumer_and_provider_stream_flags": true,
+      "reported_usage": {"input_tokens": 4038, "output_tokens": 841}
+    },
+    {
+      "inference_task_id": "agent_2e94b674dec04caf9c912114be6ba9ff",
+      "consumer_state": "cancelled",
+      "consumer_reason": "consumer_cancelled",
+      "provider_state": "failed",
+      "provider_error": "inference_failed",
+      "upstream_dispatches": 1,
+      "upstream_responses": 0,
+      "consumer_provider_messages_equal": true,
+      "consumer_and_provider_stream_flags": true,
+      "reported_usage": null
+    },
+    {
+      "inference_task_id": "agent_c4a256ae509247c8bc3b88b4da669839",
+      "consumer_state": "cancelled",
+      "consumer_reason": "consumer_cancelled",
+      "provider_order_present": false,
+      "upstream_dispatches": 0,
+      "upstream_responses": 0,
+      "upstream_cancel_callback_present": true,
+      "reported_usage": null,
+      "timing_boundary": "Consumer order-start callback at 08:09:28.494441 precedes runtime cancellation at 08:09:28.496440 on the same host. Order creation at 08:09:28.565523 follows cancellation while that already-started operation settles. This is not a new runtime dispatch after cancellation and is not evidence of supplier inference."
+    }
+  ],
+  "usage_disposition": {
+    "runtime_model_reservations": 3,
+    "captured_supplier_upstream_dispatches": 2,
+    "captured_supplier_responses": 1,
+    "known_input_tokens": 4038,
+    "known_output_tokens": 841,
+    "known_total_tokens": 4879,
+    "runtime_records_with_unknown_usage": 2,
+    "supplier_requests_without_final_usage": 1,
+    "total_actual_tokens": null,
+    "supplier_currency_cost": null,
+    "basis": "Runtime rejection events 29 and 34 retain input/output null and finish_reason=unknown. Final lifetime totals retain input/output/total null and usage_complete=false. The 322491 charged-token value is conservative reservation accounting, not observed supplier consumption. DEV_TASK_BALANCE settlement is not trusted supplier currency cost."
+  },
+  "additional_checks": {
+    "all_17_operator_referenced_file_hashes_match": true,
+    "one_new_consumer_task": true,
+    "preexisting_consumer_tasks_unchanged": true,
+    "provider_agent_tasks_unchanged": true,
+    "both_agent_settings_unchanged": true,
+    "provider_capacity_snapshot": {"running": 0, "available": 1}
+  },
+  "confirmed_limits": [
+    "Ten runtime deltas span two inference steps, not ten deltas from one request; the frozen trigger is task-level and no control revision changes before pause.",
+    "Exactly one next runtime operation was active before cancel, but that operation never has a captured supplier dispatch. Runtime operation cancellation and supplier compute cancellation are different claims.",
+    "The paused inference retains consumer cancelled versus provider failed/inference_failed. No relabelling of the provider terminal state is justified.",
+    "Absence of the third provider order/dispatch is established only within the retained capture and snapshot interval. Cross-host wall clocks are not synchronized; correlation uses IDs and consumer-local sequence.",
+    "The controller observed three seconds after cancellation; the later local snapshot still has the same events. This does not establish indefinite absence of future work or vendor billing cessation.",
+    "Existing P04 homes were reused. The separate late_write_receipt scenario, fresh formal repetitions, complete R05 pass and raw UDP packet capture are outside this evidence.",
+    "No new test or model execution was needed; validation consisted of local JSON/JSONL comparisons and hashes."
+  ],
+  "source_hashes": {
+    "r05-stream-development-review-20261011.json": "452941837864b60aafa8ef3c9976117a37a4dd79a36325efbf4842be8dca6258",
+    "controller-run/run.json": "6cea06acdf314119154eb0440348ba540a5bf03e6c8366cec48f868d75b29c20",
+    "consumer-after.json": "3ceb897d54706385be57cc45194d195b59b97aef30537b1f770b31d3b8ce3202",
+    "consumer-audit-after.jsonl": "4bcdc0c87ee57c24f5a5b51cbf217fe1f928c0be0de1c001b122850adcb33090",
+    "provider-after.json": "beb68ea23b9999aeaa92ac672390df87c332c0653f3433dce19beb6d54140214",
+    "provider-audit-after.jsonl": "9d790484234de1adcea4d79037a197f8cbecd07a5f06a8bc1d21fae5cf17f0c1"
+  },
+  "source_location_map": "Absolute source paths are preserved in the reviewed operator report's evidence_files array."
+}
