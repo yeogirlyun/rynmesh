@@ -17,6 +17,7 @@ use std::sync::{Mutex, atomic::{AtomicBool, Ordering}};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, RunEvent, WindowEvent};
+use tauri_plugin_deep_link::DeepLinkExt;
 
 pub(crate) fn focus_main(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
@@ -55,6 +56,7 @@ pub fn run() {
             if !argv.iter().any(|arg| arg == "--background") { focus_main(app); }
         }))
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(|invoke| {
             if !craft_browser::allows_native_commands(invoke.message.webview_ref().label()) {
@@ -79,6 +81,11 @@ pub fn run() {
         .manage(updates::UpdateState::default())
         .manage(NodeState { child: Mutex::new(None), port, stopping: AtomicBool::new(false), lifecycle: Mutex::new(()) })
         .setup(move |app| {
+            let handle = app.handle().clone();
+            app.deep_link().on_open_url(move |_event| {
+                // The frontend reviews the payload. Never log the URL or argv.
+                focus_main(&handle);
+            });
             localization::initialize(app.handle());
             let prefs = preferences::load(app.handle());
             let silent = prefs.silent_start && std::env::args().any(|arg| arg == "--background");

@@ -4,6 +4,7 @@ import { Activity, UserPlus } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAppContext } from "../appContext";
+import { useInviteDeepLink } from "../components/InviteDeepLinks";
 import { runThenReload } from "../domain/actThenReload";
 import type { FriendContentCard, FriendInvitePreview, FriendInviteResult, FriendRecord, AIJoinOperation } from "../domain/friendTypes";
 import { extractInvite, friendsApi, invitationText, installationLink, aiJoinExplanation } from "../domain/friendsClient";
@@ -22,6 +23,7 @@ type FriendTab = "msgs" | "cards" | "ai" | "conn";
 
 export default function Friends() {
   useUILanguage();
+  const deepLink = useInviteDeepLink();
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const { confirm } = useAppContext();
@@ -159,6 +161,7 @@ export default function Friends() {
     risk: "high", confirmLabel: tr("Remove friend"), onConfirm: () => actThenReload(() => friendsApi.revoke(friend.relationship_id)) });
 
   return <div className="rf rd-friends">
+    {deepLink.pending && <div role="status">An invitation is ready to review. <button onClick={() => { revision.current += 1; setPaste(deepLink.pending); setReview(null); setAddOpen(true); setInviteTab("use"); deepLink.clear(); }}>Load opened invitation</button><button onClick={deepLink.clear}>Dismiss opened invitation</button></div>}
     <header className="rq-head">
       <div className="rq-head-text">
         <h1>{tr("Friends")}</h1>

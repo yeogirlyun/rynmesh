@@ -1,4 +1,5 @@
 import { nodeControlUrl } from "./nodeUrl";
+import { normalizeInviteLink } from "./inviteDeepLinks";
 import type { AIJoinOperation, FriendContentCard, FriendInvitePreview, FriendInviteResult, FriendMessage, FriendRecord } from "./friendTypes";
 
 const explanations: Record<string, string> = {
@@ -116,7 +117,8 @@ export interface FriendDiagnostics {
 export function extractInvite(text: string): string {
   const link = text.trim().match(/^https?:\/\/[^\s]+\/invite#([^\s]+)$/);
   if (link) return decodeURIComponent(link[1]);
-  return text.match(/rynmesh:\/\/[^\s]+/)?.[0] ?? text.trim();
+  const uri = text.match(/(?:ryn|rynmesh):\/\/[^\s]+/)?.[0] ?? text.trim();
+  return normalizeInviteLink(uri) ?? uri;
 }
 
 export function friendDeliveryExplanation(message: Pick<FriendMessage, "delivery_state" | "error">): string {
