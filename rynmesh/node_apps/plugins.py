@@ -53,21 +53,34 @@ def installer_selection():
     return None
 
 
-def package_root(peer_id):
-    node = hashlib.sha256(peer_id.encode()).hexdigest()[:24]
+def _platform_cache_base():
     if sys.platform == "win32":
-        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData/Local")
-    elif sys.platform == "darwin":
-        base = Path.home() / "Library/Application Support"
-    else:
-        base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
-    return base / "Ryn/plugins" / node
+        return Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData/Local") / "Ryn/plugins"
+    if sys.platform == "darwin":
+        return Path.home() / "Library/Application Support/Ryn/plugins"
+    return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share") / "Ryn/plugins"
+
+
+def package_root(peer_id, home=None):
+    node = hashlib.sha256(peer_id.encode()).hexdigest()[:24]
+    if custom := os.environ.get("RYNMESH_PLUGIN_CACHE", "").strip():
+        return Path(custom) / node
+    platform_dir = _platform_cache_base() / node
+    if home is not None:
+        try:
+            resolved_home = Path(home).expanduser().resolve()
+            default_home = (Path.home() / ".rynmesh").expanduser().resolve()
+            if resolved_home != default_home and not platform_dir.exists():
+                return resolved_home / "plugins" / node
+        except OSError:
+            pass
+    return platform_dir
 
 
 class PluginManager:
     def __init__(self, home, peer_id, *, cache=None, download=None, nas=None):
         self.peer_id = peer_id
-        self.cache = Path(cache) if cache is not None else package_root(peer_id)
+        self.cache = Path(cache) if cache is not None else package_root(peer_id, home=home)
         self.cache = self.cache.expanduser().resolve()
         self.state_path = Path(home) / "craft-plugins.json"
         self.lock_path = Path(home) / "craft-plugins.lock"
@@ -76,10 +89,13 @@ class PluginManager:
         self.servers = {}
         self.active = {}
         self.mutating = set()
+        self.progress_state = {}
         self.tickets = {}
         self.closed = False
         self.nas = nas
         self.migration_error = None
+        if cache is None and self.state_path.exists():
+            self._reconcile_cache_locations(home)
         from .plugin_updates import PluginUpdates
         self.updates = PluginUpdates(self)
         if self.state_path.exists():
@@ -88,21 +104,68 @@ class PluginManager:
             except (craft_host.CraftError, OSError):
                 self.updates.load_error = "update_recovery_failed"
 
+    def _reconcile_cache_locations(self, home):
+        """Ensure registered plugins are not stranded across home/platform/MSIX cache paths."""
+        try:
+            state = self._read()
+            registered = state.get("plugins") or {}
+            if not registered:
+                return
+            node = hashlib.sha256(self.peer_id.encode()).hexdigest()[:24]
+            candidates = [
+                Path(home).expanduser().resolve() / "plugins" / node,
+                _platform_cache_base().expanduser().resolve() / node,
+            ]
+            if sys.platform == "win32":
+                candidates.append((Path.home() / "AppData/Local/Ryn/plugins" / node).resolve())
+            for alt in dict.fromkeys(candidates):
+                if alt == self.cache or not alt.is_dir() or alt.is_symlink():
+                    continue
+                for slug in registered:
+                    src_plugin = alt / slug
+                    if not src_plugin.is_dir() or src_plugin.is_symlink():
+                        continue
+                    dst_plugin = self.cache / slug
+                    if not dst_plugin.exists():
+                        self.cache.mkdir(parents=True, exist_ok=True, mode=0o700)
+                        shutil.copytree(src_plugin, dst_plugin)
+                    elif dst_plugin.is_dir() and not dst_plugin.is_symlink():
+                        for ver_dir in src_plugin.iterdir():
+                            if not ver_dir.is_dir() or ver_dir.is_symlink():
+                                continue
+                            dst_ver = dst_plugin / ver_dir.name
+                            if not dst_ver.exists():
+                                shutil.copytree(ver_dir, dst_ver)
+                            elif dst_ver.is_dir() and not dst_ver.is_symlink():
+                                for sub in ver_dir.iterdir():
+                                    dst_sub = dst_ver / sub.name
+                                    if not dst_sub.exists() and not sub.is_symlink():
+                                        if sub.is_dir():
+                                            shutil.copytree(sub, dst_sub)
+                                        elif sub.is_file():
+                                            shutil.copy2(sub, dst_sub)
+        except Exception:
+            pass
+
     def specification(self, slug):
-        if slug not in builtin.BUILTINS:
+        slug = builtin.normalize_slug(slug)
+        if slug not in builtin.ALL_BUILTINS:
             override = self.update_spec(slug)
             if override:
                 return override
-        return builtin.manifest(slug) if slug in builtin.BUILTINS else craft_host.specification(slug)
+        return builtin.manifest(slug) if slug in builtin.ALL_BUILTINS else craft_host.specification(slug)
 
     def update_spec(self, slug, *, compatible=False):
+        slug = builtin.normalize_slug(slug)
         return self.updates.active_spec(slug, self._read()["plugins"].get(slug, {}), compatible=compatible)
 
     def version(self, slug):
-        return builtin.VERSION if slug in builtin.BUILTINS else self.specification(slug)["tag"]
+        slug = builtin.normalize_slug(slug)
+        return builtin.VERSION if slug in builtin.ALL_BUILTINS else self.specification(slug)["tag"]
 
     def verify(self, slug):
-        if slug in builtin.BUILTINS:
+        slug = builtin.normalize_slug(slug)
+        if slug in builtin.ALL_BUILTINS:
             return builtin.verify(self.cache, slug)
         return craft_host.installed(self.cache, slug, spec=self.update_spec(slug, compatible=True))
 
@@ -148,13 +211,14 @@ class PluginManager:
             self._write(state)
 
     def generation(self, slug):
+        slug = builtin.normalize_slug(slug)
         with self.lock:
             row = self._row(slug)
             if self.closed or slug in self.mutating or not row.get("enabled"):
                 raise craft_host.CraftError("plugin_disabled")
             if row.get("version") != self.version(slug):
                 raise craft_host.CraftError("plugin_not_installed")
-            if slug in builtin.BUILTINS:
+            if slug in builtin.ALL_BUILTINS:
                 builtin.verify(self.cache, slug)
             if slug == "nas" and (not self.nas or not self.nas.state["enabled"]):
                 raise craft_host.CraftError("plugin_disabled")
@@ -177,8 +241,36 @@ class PluginManager:
         atomic_write_json(self.state_path, state, max_bytes=65536)
 
     def _row(self, slug):
+        slug = builtin.normalize_slug(slug)
         self.specification(slug)
         return self._read()["plugins"].get(slug, {})
+
+    def _builtin_catalog_item(self, slug, state):
+        row = state["plugins"].get(slug, {})
+        present = False
+        if row.get("version") == builtin.VERSION:
+            try:
+                builtin.verify(self.cache, slug)
+                present = True
+            except craft_host.CraftError:
+                pass
+        available = slug != "nas" or self.nas is not None
+        enabled = bool(present and available and row.get("enabled") and (slug != "nas" or self.nas.state["enabled"]))
+        launch_path = "/nas" if slug == "nas" else f"/apps/workspaces?app={slug}"
+        name = CRAFT.get(slug, {}).get("name", slug.title() if slug != "nas" else "NAS")
+        item = {
+            "id": slug, "name": name,
+            "version": builtin.VERSION, "web": False, "kind": "builtin_adapter",
+            "installable": available, "group": "storage" if slug == "nas" else "workflow",
+            "formats": [], "sha256": builtin.checksum(slug),
+            "source_url": "https://github.com/yeogirlyun/rynmesh",
+            "installed": present, "enabled": enabled, "running": False,
+            "busy": slug in self.mutating or bool(self.active.get(slug)),
+            "agent_tools": builtin.manifest(slug)["operations"] if enabled else [],
+            "editing_supported": False,
+            "warning": None, "launch_path": launch_path,
+        }
+        return item
 
     def catalog(self):
         with self.lock, file_transaction(self.lock_path):
@@ -210,28 +302,7 @@ class PluginManager:
                     "kind": "web_editor", "installable": spec["web"], "launch_path": None,
                 })
             for slug in builtin.BUILTINS:
-                row = state["plugins"].get(slug, {})
-                present = False
-                if row.get("version") == builtin.VERSION:
-                    try:
-                        builtin.verify(self.cache, slug)
-                        present = True
-                    except craft_host.CraftError:
-                        pass
-                available = slug != "nas" or self.nas is not None
-                enabled = bool(present and available and row.get("enabled") and (slug != "nas" or self.nas.state["enabled"]))
-                items.append({
-                    "id": slug, "name": CRAFT.get(slug, {}).get("name", slug.title() if slug != "nas" else "NAS"),
-                    "version": builtin.VERSION, "web": False, "kind": "builtin_adapter",
-                    "installable": available, "group": "storage" if slug == "nas" else "workflow",
-                    "formats": [], "sha256": builtin.checksum(slug),
-                    "source_url": "https://github.com/yeogirlyun/rynmesh",
-                    "installed": present, "enabled": enabled, "running": False,
-                    "busy": slug in self.mutating or bool(self.active.get(slug)),
-                    "agent_tools": builtin.manifest(slug)["operations"] if enabled else [],
-                    "editing_supported": False,
-                    "warning": None, "launch_path": "/nas" if slug == "nas" else f"/apps/workspaces?app={slug}",
-                })
+                items.append(self._builtin_catalog_item(slug, state))
             items.sort(key=lambda item: DEFAULT_PLUGINS.index(item["id"]) if item["id"] in DEFAULT_PLUGINS else len(DEFAULT_PLUGINS))
             return {"node_id": self.peer_id, "plugins": items,
                     "setup_completed": bool(state.get("setup_completed")),
@@ -242,6 +313,7 @@ class PluginManager:
 
     @contextmanager
     def _mutation(self, slug):
+        slug = builtin.normalize_slug(slug)
         self.specification(slug)
         with self.lock:
             if self.closed or slug in self.mutating or self.active.get(slug):
@@ -253,22 +325,84 @@ class PluginManager:
             with self.lock:
                 self.mutating.discard(slug)
 
+    def _set_progress(self, slug, *, kind="plugin", **fields):
+        with self.lock:
+            current = self.progress_state.get(slug, {})
+            self.progress_state[slug] = {
+                "app": slug,
+                "kind": kind,
+                "phase": fields.get("phase", current.get("phase", "downloading")),
+                "downloaded_bytes": fields.get("downloaded_bytes", current.get("downloaded_bytes", 0)),
+                "total_bytes": fields.get("total_bytes", current.get("total_bytes")),
+                "percent": fields.get("percent", current.get("percent")),
+                "installed_files": fields.get("installed_files", current.get("installed_files")),
+                "total_files": fields.get("total_files", current.get("total_files")),
+            }
+
+    def progress(self, slug=None):
+        with self.lock:
+            if slug is not None:
+                slug = builtin.normalize_slug(slug)
+                row = self.progress_state.get(slug)
+                return {"active": {slug: dict(row)} if row else {}}
+            return {"active": {k: dict(v) for k, v in self.progress_state.items()}}
+
     def install(self, slug):
+        slug = builtin.normalize_slug(slug)
         with self._mutation(slug):
-            if slug in builtin.BUILTINS:
-                if slug == "nas" and not self.nas:
-                    raise craft_host.CraftError("plugin_unavailable")
-                builtin.install(self.cache, slug)
-            else:
-                kwargs = {"download": self.download} if self.download else {}
-                craft_host.install(self.cache, slug, spec=self.update_spec(slug), **kwargs)
-            with self.lock, file_transaction(self.lock_path):
-                state = self._read()
-                state["plugins"][slug] = {**state["plugins"].get(slug, {}), "version": self.version(slug), "enabled": True, "generation": secrets.token_hex(16)}
-                if slug == "nas":
-                    self.nas._enable(True)
-                self._write(state)
+            try:
+                if slug in builtin.ALL_BUILTINS:
+                    if slug == "nas" and not self.nas:
+                        raise craft_host.CraftError("plugin_unavailable")
+                    self._set_progress(slug, kind="plugin", phase="registering", downloaded_bytes=0, total_bytes=0, percent=100)
+                    builtin.install(self.cache, slug)
+                else:
+                    self._set_progress(slug, kind="plugin", phase="downloading", downloaded_bytes=0, total_bytes=None, percent=0)
+                    kwargs = {"download": self.download} if self.download else {}
+                    with craft_host.track_progress(lambda fields: self._set_progress(slug, kind="plugin", **fields)):
+                        craft_host.install(self.cache, slug, spec=self.update_spec(slug), **kwargs)
+                with self.lock, file_transaction(self.lock_path):
+                    state = self._read()
+                    state["plugins"][slug] = {**state["plugins"].get(slug, {}), "version": self.version(slug), "enabled": True, "generation": secrets.token_hex(16)}
+                    if slug == "nas":
+                        self.nas._enable(True)
+                    self._write(state)
+            finally:
+                with self.lock:
+                    self.progress_state.pop(slug, None)
         return self.catalog()
+
+    def configure(self, slug, config):
+        slug = builtin.normalize_slug(slug)
+        if not isinstance(config, dict):
+            raise craft_host.CraftError("plugin_invalid_request")
+        safe_config = {
+            k: v
+            for k, v in config.items()
+            if not any(s in str(k).lower() for s in ("secret", "password", "token", "private_key"))
+        }
+        with self._mutation(slug), self.lock, file_transaction(self.lock_path):
+            state = self._read()
+            prefs = state.setdefault("preferences", {})
+            existing_safe = {
+                k: v
+                for k, v in prefs.get(slug, {}).items()
+                if not any(s in str(k).lower() for s in ("secret", "password", "token", "private_key"))
+            }
+            prefs[slug] = {**existing_safe, **safe_config}
+            self._write(state)
+        return self.catalog()
+
+    def get_configuration(self, slug):
+        slug = builtin.normalize_slug(slug)
+        with self.lock:
+            state = self._read()
+            raw = dict(state.get("preferences", {}).get(slug, {}))
+            return {
+                k: v
+                for k, v in raw.items()
+                if not any(s in str(k).lower() for s in ("secret", "password", "token", "private_key"))
+            }
 
     def finish_setup(self):
         with self.lock, file_transaction(self.lock_path):
@@ -282,18 +416,24 @@ class PluginManager:
         if slug not in DEFAULT_PLUGINS:
             raise craft_host.CraftError("craft_agent_runtime_unsupported")
         with self._mutation(slug):
-            with self.lock, file_transaction(self.lock_path):
-                row = self._row(slug)
-                if row.get("version") != self.version(slug):
-                    raise craft_host.CraftError("plugin_not_installed")
-                if not row.get("enabled"):
-                    raise craft_host.CraftError("plugin_disabled")
-                self.verify(slug)
-                status = craft_native.runtime_status(self.cache, slug)
-                if not status.get("supported") or not status.get("platform_supported"):
-                    raise craft_host.CraftError("craft_agent_runtime_unsupported")
-            kwargs = {"download": self.download} if self.download else {}
-            craft_native.install_runtime(self.cache, slug, **kwargs)
+            try:
+                with self.lock, file_transaction(self.lock_path):
+                    row = self._row(slug)
+                    if row.get("version") != self.version(slug):
+                        raise craft_host.CraftError("plugin_not_installed")
+                    if not row.get("enabled"):
+                        raise craft_host.CraftError("plugin_disabled")
+                    self.verify(slug)
+                    status = craft_native.runtime_status(self.cache, slug)
+                    if not status.get("supported") or not status.get("platform_supported"):
+                        raise craft_host.CraftError("craft_agent_runtime_unsupported")
+                self._set_progress(slug, kind="automation", phase="downloading", downloaded_bytes=0, total_bytes=None, percent=0)
+                kwargs = {"download": self.download} if self.download else {}
+                with craft_host.track_progress(lambda fields: self._set_progress(slug, kind="automation", **fields)):
+                    craft_native.install_runtime(self.cache, slug, **kwargs)
+            finally:
+                with self.lock:
+                    self.progress_state.pop(slug, None)
         return self.catalog()
 
     def configure_nas(self, enabled):
@@ -322,6 +462,7 @@ class PluginManager:
         self.tickets = {key: value for key, value in self.tickets.items() if value[0] != slug}
 
     def set_enabled(self, slug, enabled):
+        slug = builtin.normalize_slug(slug)
         if not isinstance(enabled, bool):
             raise craft_host.CraftError("plugin_invalid_request")
         with self._mutation(slug), self.lock, file_transaction(self.lock_path):
@@ -342,6 +483,7 @@ class PluginManager:
         return self.catalog()
 
     def uninstall(self, slug, clear_preferences=False):
+        slug = builtin.normalize_slug(slug)
         with self._mutation(slug), self.lock, file_transaction(self.lock_path):
             state = self._read()
             self._stop(slug)
@@ -363,6 +505,7 @@ class PluginManager:
 
     @contextmanager
     def lease(self, slug):
+        slug = builtin.normalize_slug(slug)
         with self.lock:
             row = self._row(slug)
             if self.closed or slug in self.mutating:
@@ -387,7 +530,8 @@ class PluginManager:
         return 8920 + sorted(CRAFT).index(slug)
 
     def preview_launch(self, slug):
-        if slug in builtin.BUILTINS:
+        slug = builtin.normalize_slug(slug)
+        if slug in builtin.ALL_BUILTINS:
             raise craft_host.CraftError("plugin_internal_entry")
         with self.lease(slug), self.lock:
             self.tickets = {key: value for key, value in self.tickets.items() if value[1] > time.monotonic()}
@@ -399,7 +543,8 @@ class PluginManager:
                     "url": f"http://127.0.0.1:{self.port(slug)}/", "ticket": ticket}
 
     def launch(self, slug, ticket):
-        if slug in builtin.BUILTINS:
+        slug = builtin.normalize_slug(slug)
+        if slug in builtin.ALL_BUILTINS:
             raise craft_host.CraftError("plugin_internal_entry")
         with self.lease(slug), self.lock:
             approved = self.tickets.pop(ticket, None)
@@ -482,6 +627,11 @@ def install_plugin_routes(app, *, home, peer_id, local_control):
     async def catalog(request: Request):
         return await run(request, manager.catalog)
 
+    @app.get("/api/local/plugins/progress")
+    @app.get("/api/local/craft-plugins/progress")
+    async def plugin_progress(request: Request, app: str | None = None):
+        return await run(request, manager.progress, app)
+
     @app.post("/api/local/plugins/setup")
     @app.post("/api/local/craft-plugins/setup")
     async def setup(request: Request):
@@ -528,7 +678,9 @@ def install_plugin_routes(app, *, home, peer_id, local_control):
     @app.post("/api/local/craft-plugins/{slug}/{action}")
     async def change(request: Request, slug: str, action: str):
         local_control(request)
-        value = await body(request, 2048)
+        value = await body(request, 4096 if action == "configure" else 2048)
+        if action == "configure":
+            return await run(request, manager.configure, slug, value)
         methods = {
             "install": (manager.install, set(), []),
             "install-automation": (manager.install_automation, set(), []),

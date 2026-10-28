@@ -7,6 +7,7 @@ import math
 import re
 
 from .store import AgentError, AgentToolRejected, encoded
+from .subagents import SUBAGENT_TOOL_NAMES
 
 NAME = "ryn_discover_tools"
 # Loads accumulate only with at least this much schema space; smaller windows
@@ -116,12 +117,16 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
     they fit, so ordinary file/shell work never spends a model step on
     discovery. They are recomputed each projection and never count as loads.
     """
-    internal = [spec for spec in internal_specs if spec["function"]["name"] != NAME]
+    internal = [
+        spec for spec in internal_specs
+        if spec["function"]["name"] != NAME
+        and (max_context_bytes >= ADDITIVE_CAPACITY or spec["function"]["name"] not in SUBAGENT_TOOL_NAMES)
+    ]
     all_specs = [*business_specs, *internal]
     full_specs = (
         [
             s for s in all_specs
-            if s["function"]["name"] not in {"ryn_automation_update", "ryn_memory_search", "ryn_memory_propose"}
+            if s["function"]["name"] not in {"ryn_automation_update", "ryn_memory_search", "ryn_memory_propose", *SUBAGENT_TOOL_NAMES}
         ]
         if max_context_bytes <= 16000
         else all_specs
@@ -171,9 +176,11 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
         for name in requested_pins
     )
     has_resource_pins = "ryn_list_resource_roots" in requested_pins
+    has_subagent_internal = any(s["function"]["name"] in SUBAGENT_TOOL_NAMES for s in internal)
+    subagent_Allowance = 3600 if has_subagent_internal else 0
     pinned = []
-    seed_cap = (26000 if has_browser_pins and max_context_bytes >= ADDITIVE_CAPACITY else 17000) + (2500 if has_resource_pins else 0)
-    pin_floor = (24000 if has_browser_pins else 15000) + (2500 if has_resource_pins else 0)
+    seed_cap = (26000 if has_browser_pins and max_context_bytes >= ADDITIVE_CAPACITY else 17000) + (2500 if has_resource_pins else 0) + subagent_Allowance
+    pin_floor = (24000 if has_browser_pins else 15000) + (2500 if has_resource_pins else 0) + subagent_Allowance
     seed_limit = min(limit, max(target, min(seed_cap, max_context_bytes // 3)))
     if has_browser_pins and max_context_bytes >= ADDITIVE_CAPACITY:
         seed_limit = min(limit, max(seed_limit, pin_floor))
@@ -229,7 +236,16 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
 
 def discover(business_specs, internal_specs, metadata, state, args, *, capacity_bytes):
     """Paged catalog, BM25 query search, and exact load/replace, charged as an ordinary internal tool."""
-    internal = [spec for spec in internal_specs if spec["function"]["name"] != NAME]
+    all_internal = [spec for spec in internal_specs if spec["function"]["name"] != NAME]
+    no_subagent_internal = [spec for spec in all_internal if spec["function"]["name"] not in SUBAGENT_TOOL_NAMES]
+    if state.get("lazy_controls"):
+        internal = (
+            all_internal
+            if state.get("catalog_revision") == catalog_revision([*business_specs, *all_internal])
+            else no_subagent_internal
+        )
+    else:
+        internal = all_internal if capacity_bytes >= ADDITIVE_CAPACITY // 2 else no_subagent_internal
     catalog = [*business_specs, *internal] if state.get("lazy_controls") else business_specs
     if state.get("mode") != "directory" or state.get("catalog_revision") != catalog_revision(catalog):
         raise AgentToolRejected("agent_tool_definition_changed")
@@ -302,10 +318,18 @@ def discover(business_specs, internal_specs, metadata, state, args, *, capacity_
               "catalog_revision": next_state["catalog_revision"], "menu_revision": next_state["revision"],
               "permission_granted": False}
     if pinned:
-        result["always_available"] = pinned
+        result["always_available"] = list(pinned)
     if has_query:
+        internal_subagent_map = {s["function"]["name"]: s for s in internal if s["function"]["name"] in SUBAGENT_TOOL_NAMES}
+        matched_internal = _bm25_rank(internal_subagent_map, metadata, query_text, limit=6) if internal_subagent_map else []
+        if matched_internal:
+            avail = list(result.get("always_available") or [])
+            for m_name in matched_internal:
+                if m_name not in avail:
+                    avail.append(m_name)
+            result["always_available"] = avail
         result["query"] = query_text.strip()
-        result["matches"] = matched_names
+        result["matches"] = matched_names or matched_internal
     if has_query and not browse:
         page_limit = max(256, capacity_bytes // 12)
         for name in matched_names:

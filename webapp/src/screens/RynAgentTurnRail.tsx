@@ -19,13 +19,36 @@ export default function RynAgentTurnRail({
   const [activeTurn, setActiveTurn] = useState(() => Math.max(0, turns.length - 1));
   const [hoveredTurn, setHoveredTurn] = useState<number | null>(null);
 
+  const [overflowing, setOverflowing] = useState(false);
+  const turnKey = turns.map(item => item.turnIndex).join(",");
+
   useEffect(() => {
-    setActiveTurn(Math.max(0, turns.length - 1));
-  }, [turns.length]);
+    setHoveredTurn(null);
+    if (turns.length < 2) {
+      setOverflowing(false);
+      return;
+    }
+    const container = scrollRef.current;
+    if (!container) return;
+    const measure = () => setOverflowing(container.scrollHeight > container.clientHeight + 24);
+    measure();
+    const resize = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+      resize?. observe(container);
+    const observeContent = () => {
+      resize?.disconnect();
+        resize?. observe(container);
+      for (const child of container.children) resize?.observe(child);
+      measure();
+    };
+    observeContent();
+    const mutations = new MutationObserver(observeContent);
+    mutations.observe(container, { childList: true, subtree: true, characterData: true });
+    return () => { resize?.disconnect(); mutations.disconnect(); };
+  }, [scrollRef, turnKey]);
 
   useEffect(() => {
     const container = scrollRef.current;
-    if (!container || !turns.length) return;
+    if (!container || turns.length < 2) return;
     const onScroll = () => {
       const nodes = Array.from(container.querySelectorAll<HTMLElement>("[data-turn-user]"));
       if (!nodes.length) return;
@@ -45,9 +68,9 @@ export default function RynAgentTurnRail({
     onScroll();
     container.addEventListener("scroll", onScroll, { passive: true });
     return () => container.removeEventListener("scroll", onScroll);
-  }, [scrollRef, turns.length]);
+  }, [scrollRef, turnKey]);
 
-  if (!turns.length) return null;
+  if (turns.length < 2 || !overflowing) return null;
 
   const jumpToTurn = (turnIndex: number) => {
     const container = scrollRef.current;
@@ -55,7 +78,7 @@ export default function RynAgentTurnRail({
     const target = container.querySelector<HTMLElement>(`[data-turn-user="${turnIndex}"]`);
     if (!target) return;
     setActiveTurn(turnIndex);
-    target.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    target.scrollIntoView?.({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" });
     target.classList.remove("ra-turn-highlight");
     void target.offsetWidth;
     target.classList.add("ra-turn-highlight");
@@ -66,24 +89,27 @@ export default function RynAgentTurnRail({
   return (
     <div
       className="ra-turn-rail"
-      aria-hidden="true"
+      role="navigation"
+      aria-label={zh ? "对话导航" : "Conversation navigation"}
       onMouseLeave={() => setHoveredTurn(null)}
     >
       <div className="ra-turn-rail-ticks">
-        {turns.map((item, idx) => {
+        {turns.map(item => {
           const isCurrent = item.turnIndex === activeTurn;
-          const dist = hoveredTurn !== null ? Math.abs(idx - turns.findIndex(t => t.turnIndex === hoveredTurn)) : 99;
-          const waveClass =
-            dist === 0 ? " is-wave-0" : dist === 1 ? " is-wave-1" : dist === 2 ? " is-wave-2" : "";
           return (
-            <div
+            <button
+              type="button"
               key={item.turnIndex}
-              className={`ra-turn-rail-tick${isCurrent ? " is-active" : ""}${waveClass}`}
+              aria-label={item.preview || (zh ? "查看消息" : "View message")}
+              aria-current={isCurrent ? "location" : undefined}
+              className={`ra-turn-rail-tick${isCurrent ? " is-active" : ""}`}
+              onFocus={() => setHoveredTurn(item.turnIndex)}
+              onBlur={() => setHoveredTurn(null)}
               onMouseEnter={() => setHoveredTurn(item.turnIndex)}
               onClick={() => jumpToTurn(item.turnIndex)}
             >
               <span className="ra-turn-rail-line" />
-            </div>
+            </button>
           );
         })}
       </div>
@@ -92,13 +118,6 @@ export default function RynAgentTurnRail({
           className="ra-turn-rail-tooltip"
           onClick={() => jumpToTurn(hoveredItem.turnIndex)}
         >
-          <div className="ra-turn-rail-tooltip-head">
-            <span>
-              {zh
-                ? `第 ${hoveredItem.turnIndex + 1} / ${turns.length} 轮`
-                : `Turn ${hoveredItem.turnIndex + 1} of ${turns.length}`}
-            </span>
-          </div>
           <p className="ra-turn-rail-tooltip-text">{hoveredItem.preview}</p>
         </div>
       )}

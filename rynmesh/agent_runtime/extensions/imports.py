@@ -34,9 +34,11 @@ from .store import (
     _slugify,
     compute_directory_manifest,
     normalize_mcp_auth,
+    validate_identity_group,
     validate_peer_provider,
 )
 from .views import normalize_views
+from .web_app import validate_web_app
 
 try:
     import tomllib  # type: ignore[import-not-found]
@@ -554,7 +556,9 @@ class ExtensionImportManager:
                         "source_format": p["source_format"],
                         "skill_ids": p["skill_ids"],
                         "mcp_server_ids": p["mcp_server_ids"],
+                        "identity_group": copy.deepcopy(p.get("identity_group")),
                         "peer_provider": copy.deepcopy(p.get("peer_provider")),
+                        "web_app": copy.deepcopy(p.get("web_app")),
                         "data_policy": normalize_policy(p.get("data_policy")),
                         "views": copy.deepcopy(p.get("views", [])),
                     }
@@ -1319,7 +1323,9 @@ class ExtensionImportManager:
         ryn = raw_manifest.get("ryn", {})
         if not isinstance(ryn, dict):
             raise AgentError("agent_invalid_plugin_package")
+        identity_group = validate_identity_group(ryn.get("identity_group")) if "identity_group" in ryn else None
         peer_provider = validate_peer_provider(ryn["peerProvider"]) if "peerProvider" in ryn else None
+        web_app = validate_web_app(ryn.get("webApp"))
         data_policy = normalize_policy(ryn.get("dataPolicy"))
 
         warnings: list[str] = []
@@ -1493,7 +1499,7 @@ class ExtensionImportManager:
         views = normalize_views(ryn.get("views", []), {srv["import_key"]: srv["id"] for srv in mcp_servers})
         if "sse" in unsupported:
             can_import = False
-        if not skills and not mcp_servers and peer_provider is None:
+        if not skills and not mcp_servers and peer_provider is None and web_app is None:
             can_import = False
             if not warnings:
                 warnings.append("Plugin package contains no importable skills or MCP servers.")
@@ -1509,7 +1515,9 @@ class ExtensionImportManager:
             "manifest_sha256": manifest_info["manifest_sha256"],
             "skill_ids": [s["id"] for s in skills],
             "mcp_server_ids": [m["id"] for m in mcp_servers],
+            "identity_group": identity_group,
             "peer_provider": peer_provider,
+            "web_app": web_app,
             "data_policy": data_policy,
             "views": views,
             "unsupported_components": sorted(set(unsupported)),

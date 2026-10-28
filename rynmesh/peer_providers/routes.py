@@ -61,7 +61,18 @@ def install_peer_provider_routes(app, service, local_control):
     @app.get("/api/local/peer-providers/{plugin_id}/catalog")
     @app.post("/api/local/peer-providers/{plugin_id}/refresh")
     async def catalog(plugin_id: str, request: Request):
-        return await run(request, lambda: service.directory(plugin_id))
+        async def action():
+            try:
+                await service.auto_sync(plugin_id)
+            except Exception:
+                pass
+            return await service.directory(plugin_id)
+        return await run(request, action)
+
+    @app.get("/api/local/peer-providers/{plugin_id}/workspace")
+    @app.post("/api/local/peer-providers/{plugin_id}/auto-sync")
+    async def workspace(plugin_id: str, request: Request):
+        return await run(request, lambda: service.workspace(plugin_id))
 
     @app.get("/api/local/peer-providers/{plugin_id}/models")
     async def models(plugin_id: str, request: Request):

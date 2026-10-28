@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Download } from "lucide-react";
+import { Download, Folder, MessageSquare, ShieldAlert } from "lucide-react";
 import { Modal } from "../components";
 import { useDrop } from "../dropStore";
 import { canPickPaths, chooseDropDir } from "../../domain/dropDesktop";
 import { formatBytes, type Transfer } from "../../domain/dropClient";
-import { TransferIcon } from "./TransferCard";
+import { DeviceGlyph, FileTile, Tile, deviceHue, fileKindOf } from "./FamilyParts";
+import { CodeDigits } from "./DropFamilyParts";
 import { relationshipLabel, routeLabel } from "./dropModel";
 import { useDropDevices } from "./useDropDevices";
 
@@ -44,9 +45,10 @@ export function IncomingTransferDialog() {
   if (!open) return null;
   const close = () => drop.setIncomingOpen(false);
   if (!transfer) {
-    return <Modal title={t("drop.incomingRequests")} onClose={close}>
-      <p className="pf-muted">{t("drop.noIncoming")}</p>
-      <footer className="pf-dialog-actions"><button type="button" className="pf-button" onClick={close}>{t("drop.close")}</button></footer>
+    return <Modal title={t("drop.incomingRequests")} onClose={close} className="rf rf-dlg rf-dlg-incoming">
+      <span className="rf-mark"><Download size={21} strokeWidth={1.8} aria-hidden="true" /></span>
+      <p className="rf-sub">{t("drop.noIncoming")}</p>
+      <footer className="rf-foot rf-foot-end"><button type="button" className="rf-btn" onClick={close}>{t("drop.close")}</button></footer>
     </Modal>;
   }
   const device = byId.get(transfer.peer_id);
@@ -74,45 +76,51 @@ export function IncomingTransferDialog() {
       after();
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   };
-  return <Modal title={title} onClose={close} className="pf-drop-incoming">
-    <span className="pf-drop-mark" aria-hidden="true"><Download size={22} /></span>
-    <p className="pf-drop-sheet-sub">{[name, device ? relationshipLabel(t, device) : "", transfer.route ? routeLabel(t, transfer.route) : ""].filter(Boolean).join(" · ")}</p>
-    <div className="pf-drop-fileline">
-      <span className="pf-drop-fileicon"><TransferIcon transfer={transfer} /></span>
-      <div className="pf-drop-grow">
-        <div className="pf-drop-filename">{transfer.name}</div>
-        <small className="pf-drop-num">{t("drop.incomingSummary", { size: formatBytes(transfer.total_bytes), count: transfer.file_count })}</small>
+  const hue = needsCode || device?.relationship === "other" ? "amber" : deviceHue(transfer.peer_id, { self: false, online: device?.online });
+  return <Modal title={title} onClose={close} className={`rf rf-dlg rf-dlg-incoming rf-dlg-hue rf-h-${hue}`}>
+    <Tile hue={hue} size="lg" className="rf-mark">{(px) => <><DeviceGlyph kind={device?.kind ?? "desktop"} size={px} /><span className="rf-mark-badge"><Download size={12} strokeWidth={2.4} aria-hidden="true" /></span></>}</Tile>
+    <p className="rf-sub">{[name, device ? relationshipLabel(t, device) : "", transfer.route ? routeLabel(t, transfer.route) : ""].filter(Boolean).join(" · ")}</p>
+    <div className="rf-body">
+      <div className="rf-list rf-fileblock">
+        <div className="rf-file">
+          <FileTile kind={fileKindOf(transfer.name, transfer.kind)} />
+          <div className="rf-file-text">
+            <b className="rf-ell">{transfer.name}</b>
+            <small className="pf-drop-num">{t("drop.incomingSummary", { size: formatBytes(transfer.total_bytes), count: transfer.file_count })}</small>
+          </div>
+        </div>
+        {transfer.note && <blockquote className="rf-quote"><MessageSquare size={15} strokeWidth={1.7} aria-hidden="true" /><span><b>{t("drop.incomingNote")}</b> · {transfer.note}</span></blockquote>}
       </div>
+      <label className="rf-field">
+        <span>{t("drop.saveTo")}</span>
+        <span className="rf-savedir">
+          <span className="rf-inp rf-pathbox"><Folder size={15} strokeWidth={1.7} aria-hidden="true" />
+            <input className="rf-mono" value={saveDir} readOnly={canPickPaths()} onChange={event => setSaveDir(event.target.value)} /></span>
+          {canPickPaths() && <button type="button" className="rf-btn" onClick={async () => {
+            const dir = await chooseDropDir().catch(() => null);
+            if (dir) setSaveDir(dir);
+          }}>{t("drop.chooseFolder")}</button>}
+        </span>
+        <small className="rf-hint pf-drop-num">{[free !== null && free !== undefined ? t("drop.freeSpace", { size: formatBytes(free) }) : "", t("drop.autoVerify")].filter(Boolean).join(" · ")}</small>
+      </label>
+      {transfer.status === "insufficient_space" && transfer.error?.need_bytes !== undefined && transfer.error?.free_bytes !== undefined &&
+        <p className="rf-callout rf-callout-err" role="alert"><ShieldAlert size={16} aria-hidden="true" /><span>{t("drop.st_insufficient_space", { need: formatBytes(transfer.error.need_bytes), free: formatBytes(transfer.error.free_bytes) })}</span></p>}
+      {needsCode && <div className="rf-verify rf-t-warn">
+        <p className="rf-verify-lead"><ShieldAlert size={16} strokeWidth={1.7} aria-hidden="true" /><span>{t("drop.verifyRequired")}</span></p>
+        <CodeDigits code={transfer.verification_code || ""} label={t("drop.verificationCode")} />
+        <label className="rf-check rf-check-card"><input type="checkbox" checked={verified} onChange={event => setVerified(event.target.checked)} />{t("drop.verifyConfirm")}</label>
+      </div>}
+      <label className="rf-check rf-check-top">
+        <input type="checkbox" checked={autoAccept} onChange={event => setAutoAccept(event.target.checked)} />
+        <span className="rf-opt-stack"><b>{t("drop.autoAccept")}</b><small>{t("drop.autoAcceptHint")}</small></span>
+      </label>
+      {error && <p className="rf-callout rf-callout-err" role="alert"><ShieldAlert size={16} aria-hidden="true" /><span>{error}</span></p>}
     </div>
-    {transfer.note && <p className="pf-drop-note-text"><strong>{t("drop.incomingNote")}</strong> {transfer.note}</p>}
-    <label className="pf-drop-field">
-      <span>{t("drop.saveTo")}</span>
-      <span className="pf-drop-savedir">
-        <input value={saveDir} readOnly={canPickPaths()} onChange={event => setSaveDir(event.target.value)} />
-        {canPickPaths() && <button type="button" className="pf-button" onClick={async () => {
-          const dir = await chooseDropDir().catch(() => null);
-          if (dir) setSaveDir(dir);
-        }}>{t("drop.chooseFolder")}</button>}
-      </span>
-    </label>
-    <small className="pf-drop-num">{[free !== null && free !== undefined ? t("drop.freeSpace", { size: formatBytes(free) }) : "", t("drop.autoVerify")].filter(Boolean).join(" · ")}</small>
-    {transfer.status === "insufficient_space" && transfer.error?.need_bytes !== undefined && transfer.error?.free_bytes !== undefined &&
-      <p className="pf-error" role="alert">{t("drop.st_insufficient_space", { need: formatBytes(transfer.error.need_bytes), free: formatBytes(transfer.error.free_bytes) })}</p>}
-    {needsCode && <div className="pf-drop-verify">
-      <span>{t("drop.verifyRequired")}</span>
-      <strong className="pf-drop-code">{transfer.verification_code}</strong>
-      <label className="pf-drop-check"><input type="checkbox" checked={verified} onChange={event => setVerified(event.target.checked)} />{t("drop.verifyConfirm")}</label>
-    </div>}
-    <label className="pf-drop-check">
-      <input type="checkbox" checked={autoAccept} onChange={event => setAutoAccept(event.target.checked)} />
-      <span>{t("drop.autoAccept")}<small>{t("drop.autoAcceptHint")}</small></span>
-    </label>
-    {error && <p className="pf-error" role="alert">{error}</p>}
-    <footer className="pf-dialog-actions">
-      {remaining > 0 && <small className="pf-drop-grow">{t("drop.queueMore", { count: remaining })}</small>}
-      {transfer.actions.includes("reject") && <button type="button" className="pf-button" disabled={drop.isPending(rejectKey)} onClick={() => void reject()}>{t("drop.reject")}</button>}
-      <button type="button" className="pf-button primary" disabled={!transfer.actions.includes("accept") || drop.isPending(acceptKey) || (needsCode && !verified)}
-        onClick={() => void accept()}><Download size={16} aria-hidden="true" />{t("drop.accept")}</button>
+    <footer className="rf-foot">
+      {remaining > 0 ? <small className="rf-foot-note">{t("drop.queueMore", { count: remaining })}</small> : <span className="rf-foot-note" />}
+      {transfer.actions.includes("reject") && <button type="button" className="rf-btn" disabled={drop.isPending(rejectKey)} onClick={() => void reject()}>{t("drop.reject")}</button>}
+      <button type="button" className="rf-btn rf-btn-p" disabled={!transfer.actions.includes("accept") || drop.isPending(acceptKey) || (needsCode && !verified)}
+        onClick={() => void accept()}><Download size={15} strokeWidth={1.9} aria-hidden="true" />{t("drop.accept")}</button>
     </footer>
   </Modal>;
 }

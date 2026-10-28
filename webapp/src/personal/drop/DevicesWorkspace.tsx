@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Info, Plus } from "lucide-react";
+import { CircleAlert, Info, Lock, Plus, RefreshCw, Search } from "lucide-react";
 import { PageHeading } from "../components";
 import { PairDevice } from "../Dialogs";
 import { type MapAnchor } from "../DeviceTopology";
@@ -19,6 +19,7 @@ import { filesFromDataTransfer, pickBrowserFiles } from "./fileCollect";
 import { canSendTo, type DropDevice } from "./dropModel";
 import { useDropDevices } from "./useDropDevices";
 import { DeviceOverview } from "./DeviceOverview";
+import { Callout, DevicesBand, Seg } from "./DevicesParts";
 import "./drop.css";
 
 type Tab = "network" | "conversations" | "transfers";
@@ -26,13 +27,14 @@ const TABS: Tab[] = ["network", "conversations", "transfers"];
 
 export function DevicesWorkspace() {
   const { t } = useTranslation();
-  const { error, refresh, demo } = usePersonal();
+  const { error, refresh, demo, loading } = usePersonal();
   const drop = useDrop();
   const { list, byId } = useDropDevices();
   const [params, setParams] = useSearchParams();
   const tab: Tab = TABS.includes(params.get("tab") as Tab) ? (params.get("tab") as Tab) : "network";
   const requested = params.get("device") || "";
   const [filter, setFilter] = useState<"own" | "discovered">("own");
+  const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState(requested);
   const [transferFilter, setTransferFilter] = useState<TransferFilter>("all");
   const [mobileChat, setMobileChat] = useState(Boolean(params.get("peer")));
@@ -60,8 +62,16 @@ export function DevicesWorkspace() {
     setFilter(requestedDevice.relationship === "own" ? "own" : "discovered");
   }, [requestedDevice, tab]);
 
-  const filtered = list.filter(device => filter === "own" ? device.relationship === "own" : device.relationship !== "own");
-  const selected = filtered.find(device => device.id === selectedId) || filtered[0];
+  // Self first, then reachable devices, offline ones last; the sort is stable so equal devices keep their order.
+  const ordered = useMemo(() => {
+    const rank = (device: DropDevice) => device.self ? 0 : device.online === true ? 1 : device.online === null ? 2 : 3;
+    return [...list].sort((a, b) => rank(a) - rank(b));
+  }, [list]);
+  const ownCount = ordered.filter(device => device.relationship === "own").length;
+  const q = query.trim().toLowerCase();
+  const filtered = ordered.filter(device => (filter === "own" ? device.relationship === "own" : device.relationship !== "own") && (!q || device.name.toLowerCase().includes(q)));
+  // With nothing chosen, open the first other device: this device has no actions to offer.
+  const selected = filtered.find(device => device.id === selectedId) || filtered.find(device => !device.self) || filtered[0];
   const activeForSelected = selected ? drop.transfers.find(transfer => transfer.peer_id === selected.id && isActiveTransfer(transfer)) : undefined;
   const unreadTotal = Object.values(drop.data.peers).reduce((sum, peer) => sum + (peer.unread || 0), 0);
   const activeCount = drop.transfers.filter(isActiveTransfer).length;
@@ -130,36 +140,42 @@ export function DevicesWorkspace() {
   const sendDevice = send ? byId.get(send.deviceId) : undefined;
   const detailsDevice = details ? byId.get(details) : undefined;
 
-  return <div className={`pf-page pf-drop-page pf-drop-workspace${tab === "conversations" ? " messaging" : ""}`}>
-    <div className="pf-drop-workspace-toolbar">
-      <PageHeading title={t("nav.devices")} description={tab === "conversations" ? "" : t("drop.deviceWorkspaceSubtitle")}>
-        <Link className="pf-drop-textbutton pf-drop-sync-link" to={personalHref("/devices/sync", demo)}>{t("drop.deviceSync")}</Link>
-        <button className="pf-button dark" onClick={() => setPair(true)}><Plus size={17} />{t("personal.addDevice")}</button>
-      </PageHeading>
-    <div className="pf-drop-tabs" role="tablist" aria-label={t("drop.workspace")}>
+  return <div className="pf-page pf-drop-page rd-devices">
+    <PageHeading title={t("nav.devices")} description={tab === "conversations" ? t("drop.deviceConversationHint") : t("drop.deviceWorkspaceSubtitle")}>
+      <div className="rd-head-actions">
+        <Link className="rd-btn" to={personalHref("/devices/sync", demo)}><RefreshCw size={15} strokeWidth={1.6} aria-hidden="true" />{t("drop.deviceSync")}</Link>
+        <button type="button" className="rd-btn primary" onClick={() => setPair(true)}><Plus size={15} strokeWidth={1.8} aria-hidden="true" />{t("personal.addDevice")}</button>
+      </div>
+    </PageHeading>
+    <div className="rd-tabs" role="tablist" aria-label={t("drop.workspace")}>
       {TABS.map(value => <button key={value} type="button" role="tab" id={`drop-tab-${value}`} aria-selected={tab === value} aria-controls={`drop-panel-${value}`}
         className={tab === value ? "active" : ""} onClick={() => setParam({ tab: value === "network" ? null : value })}>
-        {tabLabel(value)}{tabCount(value) > 0 && <span className="pf-drop-count">{tabCount(value)}</span>}
+        {tabLabel(value)}{tabCount(value) > 0 && <span className={`rd-count${value === "conversations" ? " hot" : ""}`}>{tabCount(value)}</span>}
       </button>)}
     </div>
-    </div>
-    {error && <div className="pf-callout">{error}<button className="pf-link" onClick={() => void refresh()}>{t("personal.retry")}</button></div>}
-    {drop.status === "unavailable" && <p className="pf-drop-hint" role="status"><Info size={14} aria-hidden="true" />{t("drop.unavailable")}</p>}
-    {demo && <p className="pf-drop-hint" role="status"><Info size={14} aria-hidden="true" />{t("drop.demoEmpty")}</p>}
+    {error && <Callout tone="err" role="alert" icon={<CircleAlert size={15} strokeWidth={1.8} />}
+      action={<button type="button" className="rd-link" onClick={() => void refresh()}>{t("personal.retry")}</button>}>{error}</Callout>}
+    {drop.status === "unavailable" && <Callout tone="warn" role="status" icon={<Info size={15} strokeWidth={1.7} />}>{t("drop.unavailable")}</Callout>}
+    {demo && <Callout role="status" icon={<Info size={15} strokeWidth={1.7} />}>{t("drop.demoEmpty")}</Callout>}
 
-    {tab === "network" && <section id="drop-panel-network" role="tabpanel" aria-labelledby="drop-tab-network">
-      <div className="pf-drop-filterbar" role="group" aria-label={t("personal.filter")}>
-        <div className="pf-tabs">
-          {(["own", "discovered"] as const).map(value => <button key={value} type="button"
-            className={filter === value ? "selected" : ""} aria-pressed={filter === value} onClick={() => { setFilter(value); setParam({ device: null }); }}>
-            {value === "own" ? t("drop.filterOwn") : t("drop.filterDiscovered")}
-          </button>)}
-        </div>
+    {tab === "network" && <section id="drop-panel-network" role="tabpanel" aria-labelledby="drop-tab-network" className="rd-panel">
+      {list.length > 0 && <DevicesBand devices={list} activeCount={activeCount} unread={unreadTotal} />}
+      <div className="rd-bar">
+        <Seg label={t("personal.filter")} value={filter} onChange={value => { setFilter(value); setParam({ device: null }); }}
+          options={[{ value: "own", label: t("drop.filterOwn"), count: ownCount }, { value: "discovered", label: t("drop.filterDiscovered"), count: ordered.length - ownCount }]} />
+        <label className="rd-field">
+          <Search size={15} strokeWidth={1.6} aria-hidden="true" />
+          <input aria-label={t("drop.searchDevices")} placeholder={t("drop.searchDevices")} value={query} onChange={event => setQuery(event.target.value)} />
+        </label>
       </div>
       <DeviceOverview devices={filtered} selected={selected} onSelect={id => { setSelectedId(id); setParam({ device: id }); }} onMenu={menu.open}
         onSend={device => void startSend(device, "files")} onMessage={openConversation} onDetails={setDetails}
         dropTargetId={nativeTarget} transfer={activeForSelected} handlers={handlers}
-        onDropFiles={onDropFiles} />
+        onDropFiles={onDropFiles} onAdd={() => setPair(true)} loading={loading} searching={q.length > 0} />
+      <div className="rd-foot">
+        <span><Lock size={13} strokeWidth={1.8} aria-hidden="true" />{t("drop.e2eNote")}</span>
+        <span>{t("drop.recordsLocal")}</span>
+      </div>
     </section>}
 
     {tab === "conversations" && <section id="drop-panel-conversations" role="tabpanel" aria-labelledby="drop-tab-conversations">

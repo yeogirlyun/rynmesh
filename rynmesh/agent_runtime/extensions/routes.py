@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from ..diagnostic_log import failure
 from ..store import AgentError
 from .adapter import ExtensionToolAdapter
-from .views import query_view
+from .views import query_plugin_tool, query_view
 
 
 def _error_status(code: str) -> int:
@@ -272,6 +272,13 @@ def install_extension_routes(
             extensions.store, extensions.manager, plugin_id, view_id, payload))
         return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
+    @app.post("/api/local/agent/extensions/plugins/{plugin_id}/tool-query")
+    async def run_plugin_tool_query(plugin_id: str, request: Request):
+        payload = await _body(request, 32 * 1024)
+        result = await _run("query_plugin_tool", lambda: query_plugin_tool(
+            extensions.store, extensions.manager, plugin_id, payload))
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
     @app.patch("/api/local/agent/extensions/plugins/{plugin_id}")
     async def update_plugin(plugin_id: str, request: Request):
         payload = await _body(request)
@@ -312,6 +319,7 @@ def install_extension_routes(
             return result
 
         return await _run("delete_plugin", _op)
+
 
     @app.get("/api/local/agent/extensions/skills/recommended")
     async def list_recommended_skills(request: Request):

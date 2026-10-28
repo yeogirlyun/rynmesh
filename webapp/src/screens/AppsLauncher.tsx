@@ -44,11 +44,12 @@ export default function AppsLauncher({ catalog, extensionOverview, busy, filter,
   const summary = (app: CraftPlugin) => text(`descriptions.${app.id}`, { defaultValue: app.name });
   // Why an app cannot be started or installed here, shown as a label rather than replacing its description.
   const limit = (app: CraftPlugin) => (canInstall(app) ? "" : text(isBuiltin(app) ? "unavailable" : "native"));
-  const visible = catalog.plugins.filter((app) => filter === "all" || app.group === filter);
+  const craftCatalogPlugins = catalog.plugins;
+  const visible = craftCatalogPlugins.filter((app) => filter === "all" || app.group === filter);
   const installed = visible.filter((app) => app.installed);
   const notInstalled = visible.filter((app) => !app.installed);
-  const count = (id: AppsFilter) => catalog.plugins.filter((app) => id === "all" || app.group === id).length;
-  const installedTotal = catalog.plugins.filter((app) => app.installed).length;
+  const count = (id: AppsFilter) => craftCatalogPlugins.filter((app) => id === "all" || app.group === id).length;
+  const installedTotal = craftCatalogPlugins.filter((app) => app.installed).length;
   // Office apps have their own Agent note when this build carries it; otherwise the general one.
   const info =
     (filter === "all" || filter === "office") && i18n.exists("craft.officeAgentInfo") ? "officeAgentInfo" : "enableInfo";
@@ -63,7 +64,7 @@ export default function AppsLauncher({ catalog, extensionOverview, busy, filter,
               <Check size={13} aria-hidden="true" />
               {tr("{{count}} installed", { count: installedTotal })}
             </span>
-            <span className="ra-chip info">{tr("{{count}} not installed", { count: catalog.plugins.length - installedTotal })}</span>
+            <span className="ra-chip info">{tr("{{count}} not installed", { count: craftCatalogPlugins.length - installedTotal })}</span>
           </div>
         </div>
         <Link className="ra-btn" to="/settings/plugins">
@@ -87,15 +88,10 @@ export default function AppsLauncher({ catalog, extensionOverview, busy, filter,
           <div className="ra-grid4">
             {showExtensionPlugins &&
               extensionPlugins.map((plugin) => {
-                const servers =
-                  plugin.mcp_servers && plugin.mcp_servers.length > 0
-                    ? plugin.mcp_servers
-                    : (extensionOverview?.mcp_servers ?? []).filter(
-                        (m) => m.plugin_id === plugin.id || plugin.mcp_server_ids.includes(m.id),
-                      );
-                const isLoggedIn = servers.some((s) => s.oauth?.state === "logged_in");
-                const hasOauth = servers.some((s) => Boolean(s.oauth));
-                const appPath = pluginWorkspacePath(plugin.id);
+                const servers = plugin.mcp_servers?.length ? plugin.mcp_servers : (extensionOverview?.mcp_servers ?? []).filter(m => m.plugin_id === plugin.id || plugin.mcp_server_ids.includes(m.id));
+                const isLoggedIn = servers.some(s => s.oauth?.state === "logged_in");
+                const hasOauth = servers.some(s => Boolean(s.oauth));
+                const appPath = plugin.web_app ? `/apps/extensions/${encodeURIComponent(plugin.id)}` : pluginWorkspacePath(plugin.id);
                 return (
                   <article
                     key={`ext-${plugin.id}`}
@@ -149,6 +145,17 @@ export default function AppsLauncher({ catalog, extensionOverview, busy, filter,
                         {tx("成员与模型", "Members & models")}
                         <ArrowRight size={14} aria-hidden="true" />
                       </button>}
+                      <button
+                        type="button"
+                        className="ra-btn ghost sm"
+                        disabled={!plugin.enabled}
+                        onClick={() =>
+                          navigate("/agent")
+                        }
+                      >
+                        {tx("打开 Agent", "Open Agent")}
+                        <ArrowRight size={14} aria-hidden="true" />
+                      </button>
                     </div>
                   </article>
                 );

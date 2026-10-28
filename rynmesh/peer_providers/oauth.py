@@ -140,6 +140,17 @@ class OAuthClient:
         response = await self.call("POST", pending["token_endpoint"], data={"grant_type": "authorization_code", "client_id": pending["client_id"], "code": params["code"], "code_verifier": pending["verifier"], "redirect_uri": pending["redirect_uri"], "resource": pending["resource"]})
         return self.tokens(response, pending)
 
+    async def exchange_companion(self, config, subject_token):
+        metadata = await self.discover(config["url"])
+        pending = {**metadata, "resource": config["url"], "client_id": config["oauth"]["clientId"], "scopes": config["oauth"]["scopes"]}
+        response = await self.call("POST", pending["token_endpoint"], data={
+            "grant_type": "urn:ryn:params:oauth:grant-type:peer-session",
+            "client_id": pending["client_id"],
+            "subject_token": subject_token,
+            "resource": pending["resource"],
+        })
+        return self.tokens(response, pending)
+
     async def refresh(self, session):
         response = await self.call("POST", session["token_endpoint"], data={"grant_type": "refresh_token", "client_id": session["client_id"], "refresh_token": session["refresh_token"], "resource": session["resource"]})
         return self.tokens(response, session, session)

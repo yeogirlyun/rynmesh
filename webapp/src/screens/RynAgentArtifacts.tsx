@@ -1,3 +1,5 @@
+import { createPortal } from "react-dom";
+import { invoke } from "@tauri-apps/api/core";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, ChevronDown, Copy, Download, ExternalLink, FileText, FolderOpen, Image as ImageIcon, File as FileIcon, RefreshCw, Sheet, TriangleAlert } from "lucide-react";
@@ -62,6 +64,38 @@ function FileCard({ task, file, onOpen }: { task: AgentTask; file: AgentFileArti
   const [saveError, setSaveError] = useState(false);
   const [copied, setCopied] = useState(false);
   const menu = useRef<HTMLDetailsElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0, maxHeight: 320 });
+  const positionMenu = useCallback(() => {
+    const anchor = menu.current?.getBoundingClientRect();
+    if (!anchor) return;
+    let bottom = window.innerHeight - 8;
+    let top = 8;
+    for (let parent = menu.current?.parentElement; parent; parent = parent.parentElement) {
+      if (/(auto|scroll|hidden)/.test(getComputedStyle(parent).overflowY)) {
+        const rect = parent.getBoundingClientRect();
+        bottom = Math.min(bottom, rect.bottom - 8);
+        top = Math.max(top, rect.top + 8);
+      }
+    }
+    const below = Math.max(0, bottom - anchor.bottom - 6);
+    const above = Math.max(0, anchor.top - top - 6);
+    const height = panel.current?.scrollHeight || 300;
+    const up = below < height && above > below;
+    const maxHeight = Math.max(0, up ? above : below);
+    setMenuPosition({ top: up ? anchor.top - Math.min(height, maxHeight) - 6 : anchor.bottom + 6,
+      left: Math.max(8, Math.min(anchor.right - 230, window.innerWidth - 238)), maxHeight });
+  }, []);
+  useEffect(() => {
+    if (!menuOpen) return;
+    positionMenu();
+    window.addEventListener("resize", positionMenu);
+    window.addEventListener("scroll", positionMenu, true);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(positionMenu);
+    if (panel.current) observer?.observe(panel.current);
+    return () => { observer?.disconnect(); window.removeEventListener("resize", positionMenu); window.removeEventListener("scroll", positionMenu, true); };
+  }, [menuOpen, positionMenu]);
   const openable = fileAvailable(file);
   const onDisk = file.status !== "missing";
   const extension = file.name.split(".").pop()?.toLowerCase();
@@ -69,7 +103,7 @@ function FileCard({ task, file, onOpen }: { task: AgentTask; file: AgentFileArti
   const Icon = format === "Excel" ? Sheet : file.preview === "image" ? ImageIcon : file.preview === "text" || format === "Word" ? FileText : FileIcon;
   const path = file.absolute_path || file.path;
   useEffect(() => {
-    const close = (event: Event) => { if (event.type === "keydown" ? (event as KeyboardEvent).key === "Escape" : !menu.current?.contains(event.target as Node)) menu.current?.removeAttribute("open"); };
+    const close = (event: Event) => { if (event.type === "keydown" ? (event as KeyboardEvent).key === "Escape" : !menu.current?.contains(event.target as Node) && !panel.current?.contains(event.target as Node)) menu.current?.removeAttribute("open"); };
     document.addEventListener("pointerdown", close); document.addEventListener("keydown", close);
     return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", close); };
   }, []);
@@ -77,7 +111,12 @@ function FileCard({ task, file, onOpen }: { task: AgentTask; file: AgentFileArti
     menu.current?.removeAttribute("open"); setSaveError(false);
     try { await run(); } catch { setSaveError(true); }
   }
-  return <div className="ra-file-card" data-role={file.role} data-status={file.status}>
+  return <div className="ra-file-card" draggable={isTauriDesktop() && onDisk && Boolean(file.absolute_path)}
+    onDragStart={event => {
+      event.preventDefault();
+      if ((event.target as HTMLElement).closest(".ra-file-actions")) return;
+      if (file.absolute_path) void action(() => invoke("drag_local_file", { path: file.absolute_path }));
+    }} data-role={file.role} data-status={file.status}>
     <span className="ra-file-icon" data-format={format}><Icon size={20} strokeWidth={1.7} /></span>
     <div className="ra-file-meta">
       <button className="ra-file-name" title={path} aria-label={t("openArtifact", { name: file.name })} disabled={!openable} onClick={() => onOpen(file)}>{file.name}</button>
@@ -92,11 +131,11 @@ function FileCard({ task, file, onOpen }: { task: AgentTask; file: AgentFileArti
     </div>
     <div className="ra-file-actions">
       <details className="ra-file-open-menu" ref={menu} onToggle={event => {
-        const element = event.currentTarget;
-        element.dataset.placement = window.innerHeight - element.getBoundingClientRect().bottom < 240 ? "up" : "down";
+        setMenuOpen(event.currentTarget.open);
+        if (event.currentTarget.open) positionMenu();
       }}>
         <summary aria-label={t("openWaysNamed", { name: file.name })}>{t("openWays")}<ChevronDown size={13} /></summary>
-        <div className="ra-file-open-options">
+        {menuOpen && createPortal(<div ref={panel} className="ra-file-open-options ra-file-open-floating" style={menuPosition}>
           <button disabled={!openable} onClick={() => { menu.current?.removeAttribute("open"); onOpen(file); }}><FileText size={15} />{t("previewFile")}</button>
           {isTauriDesktop() ? <><button disabled={!onDisk} onClick={() => void action(() => rynAgent.openFile(task.id, file.id, "open"))}><ExternalLink size={15} />{t("openDefaultApp")}</button>
             <button disabled={!onDisk} onClick={() => void action(() => rynAgent.openFile(task.id, file.id, "reveal"))}><FolderOpen size={15} />{t("revealFile")}</button></>
@@ -105,7 +144,7 @@ function FileCard({ task, file, onOpen }: { task: AgentTask; file: AgentFileArti
           <button onClick={() => void action(async () => { await navigator.clipboard.writeText(path); setCopied(true); })}><Copy size={15} />{t("copyFilePath")}</button>
           <details className="ra-file-info"><summary>{t("fileDetails")}</summary><span>{path}</span><span>{file.bytes !== undefined ? size(file.bytes) : ""}</span>
             {file.preview === "image" && <span>{t(file.render_inspected ? "renderChecked" : "renderNotChecked")}</span>}</details>
-        </div>
+        </div>, document.body)}
       </details>
     </div>
   </div>;
@@ -235,7 +274,10 @@ export function TaskArtifacts({ task, maxTurnIndex = 0, children }: { task: Agen
       !deliverableNames.has(item.name.trim().toLowerCase()),
     ),
   ), [currentTurnFiles, deliverableNames]);
-  const showResultFiles = deliverables.length > 0 || supporting.length > 0;
+  // A file on disk is still work in progress until the turn and its background
+  // file producers have settled. Keep the listing available for process previews.
+  const showCurrentFiles = finished && !listing?.pending_files;
+  const showResultFiles = showCurrentFiles && (deliverables.length > 0 || supporting.length > 0);
   const partial = ["failed", "cancelled", "interrupted", "paused"].includes(agentTaskState(task));
   const availableCount = deliverables.filter(file => file.status !== "missing").length || supporting.filter(file => file.status !== "missing").length;
   useEffect(() => {
@@ -260,7 +302,7 @@ export function TaskArtifacts({ task, maxTurnIndex = 0, children }: { task: Agen
         loadImage={file.preview === "image" ? loadFile : undefined} readText={file.preview === "text" ? readFileText : undefined}
         loadPdf={/\.pdf$/i.test(file.name) ? loadFile : undefined}
         loadDocument={isOfficePreview(file.name) ? readDocument : undefined} /></div>}
-    {(items.length > 0 || (error && !showResultFiles)) && <section className="ra-files ra-artifacts" aria-label={t("artifacts")}>
+    {showCurrentFiles && (items.length > 0 || (error && !showResultFiles)) && <section className="ra-files ra-artifacts" aria-label={t("artifacts")}>
       {error && <p role="alert">{t("artifactListError")} <button onClick={() => setReload(n => n + 1)}>{t("retry")}</button></p>}
       {items.length > 0 && partial && <div className="ra-files-head" role="status"><Check size={15} />{t("filesSavedPartial", { count: items.length })}</div>}
       {items.map(item => <div className="ra-file-card" key={item.id}><span className="ra-file-icon"><FileText size={20} strokeWidth={1.7} /></span>

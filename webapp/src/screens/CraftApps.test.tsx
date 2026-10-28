@@ -361,7 +361,7 @@ it("rejects forged built-in launch routes and explains NAS resource permissions"
   expect(craftPlugins.launch).not.toHaveBeenCalled();
 });
 
-it("opens an installed manifest-driven workspace and exposes its declared peer provider", async () => {
+it("displays the sample-reports extension plugin as a uniform card inside the Installed grid on the Apps page", async () => {
   present();
   setLanguagePreference("zh-CN");
   vi.mocked(agentExtensions.overview).mockResolvedValue({
@@ -370,20 +370,19 @@ it("opens an installed manifest-driven workspace and exposes its declared peer p
     windows_supported: true,
     plugins: [
       normalizePlugin({
-        id: "sample-notes",
-        title: "研究资料",
+        id: "sample-reports",
+        title: "示例报表",
         version: "1.1.0",
-        description: "已安装插件提供的资料页面和成员目录。",
+        description: "示例报表只读查询。",
         enabled: true,
         component_enabled: true,
-        mcp_server_ids: ["sample-notes-reader"],
-        peer_provider: { url: "https://provider.example/connect", oauth: { clientId: "desktop", scopes: ["peer.connect"] } },
+        mcp_server_ids: ["sample-reports-mcp"],
         views: [
           {
-            id: "notes",
-            title: "资料",
-            mcpServer: "sample-notes-reader",
-            tool: "read_notes",
+            id: "journal",
+            title: "日记账",
+            mcpServer: "sample-reports-mcp",
+            tool: "tool_journal",
             inputs: [],
             columns: [],
             rowsPath: "data.rows",
@@ -395,8 +394,8 @@ it("opens an installed manifest-driven workspace and exposes its declared peer p
     skills: [],
     mcp_servers: [
       normalizeMcpServer({
-        id: "sample-notes-reader",
-        plugin_id: "sample-notes",
+        id: "sample-reports-mcp",
+        plugin_id: "sample-reports",
         enabled: true,
         transport: "streamable_http",
         oauth: { state: "logged_out" },
@@ -405,13 +404,46 @@ it("opens an installed manifest-driven workspace and exposes its declared peer p
     ],
   });
   mount();
-  const heading = await screen.findByRole("heading", { name: "研究资料" });
+  const heading = await screen.findByRole("heading", { name: "示例报表" });
   const card = heading.closest("article")!;
-  expect(card).toHaveAttribute("data-extension-plugin", "sample-notes");
-  expect(within(card).getByText("已安装插件提供的资料页面和成员目录。")).toBeInTheDocument();
-  expect(within(card).getByText("需要登录")).toBeInTheDocument();
+  expect(card).toHaveAttribute("data-extension-plugin", "sample-reports");
+  expect(within(card).getByText("示例报表只读查询。")).toBeInTheDocument();
+  expect(within(card).getByText("待登录")).toBeInTheDocument();
   expect(within(card).getByRole("button", { name: "打开" })).toBeEnabled();
-  expect(within(card).getByRole("button", { name: "成员与模型" })).toBeEnabled();
-  await userEvent.setup().click(within(card).getByRole("button", { name: "打开" }));
-  expect(screen.getByTestId("location")).toHaveTextContent("/apps/plugins/sample-notes");
+});
+
+it("renders download, verification and installation progress during plugin setup", async () => {
+  setLanguagePreference("zh-CN");
+  let finishInstall!: (value: CraftCatalog) => void;
+  vi.spyOn(craftPlugins, "progress").mockResolvedValue({
+    active: {
+      pdfcraft: {
+        app: "pdfcraft",
+        kind: "plugin",
+        phase: "downloading",
+        downloaded_bytes: 5 * 1024 * 1024,
+        total_bytes: 10 * 1024 * 1024,
+        percent: 50,
+      },
+    },
+  });
+  vi.mocked(craftPlugins.install).mockImplementationOnce(
+    () => new Promise<CraftCatalog>(resolve => { finishInstall = resolve; }),
+  );
+  const user = userEvent.setup();
+  mount();
+  await user.click(await screen.findByRole("button", { name: "安装并下载" }));
+  expect(await screen.findByRole("progressbar")).toBeInTheDocument();
+  expect(screen.getByText("正在下载 PDF…")).toBeInTheDocument();
+  expect(screen.getByText(/1\. 下载程序包/)).toBeInTheDocument();
+  expect(screen.getByText("2. 校验完整性")).toBeInTheDocument();
+  expect(screen.getByText("3. 解压与安装")).toBeInTheDocument();
+  expect(screen.getByText("第 1 / 4 个")).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByText(/50% · 5\.0 MB \/ 10\.0 MB/)).toBeInTheDocument());
+  const p = state.plugins.find(item => item.id === "pdfcraft")!;
+  p.installed = true;
+  p.enabled = true;
+  p.agent_tools = ["editor_info"];
+  finishInstall(clone());
+  await screen.findByRole("heading", { name: "应用" });
 });

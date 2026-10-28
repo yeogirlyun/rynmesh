@@ -9,6 +9,7 @@ import hashlib
 import io
 import re
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
@@ -236,6 +237,7 @@ class ExtensionToolAdapter:
         self._lock = threading.RLock()
         self._op_guard = threading.Lock()
         self._op_locks: dict[str, list[Any]] = {}
+        self._active_mcp_tools_cache: tuple[tuple[Any, ...], dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]]] | None = None
 
     def _resolve_owner(self) -> Any:
         return (
@@ -388,11 +390,54 @@ class ExtensionToolAdapter:
     def handles(self, name: str) -> bool:
         return isinstance(name, str) and (name == READ_SKILL_FILE_TOOL or name.startswith("mcp__"))
 
+    def _mcp_tools_cache_key(self) -> tuple[Any, ...] | None:
+        store = self.store
+        oauth = getattr(self.manager, "oauth", None)
+        try:
+            ext_st = store.path.stat() if store.path.exists() else None
+            ext_stamp = (ext_st.st_mtime_ns, ext_st.st_size) if ext_st is not None else None
+        except OSError:
+            return None
+        if oauth is not None:
+            creds = getattr(oauth, "credentials", None)
+            cred_path = getattr(creds, "path", None)
+            if not isinstance(cred_path, Path):
+                return None
+            try:
+                ost = cred_path.stat() if cred_path.exists() else None
+                oauth_stamp = (ost.st_mtime_ns, ost.st_size) if ost is not None else None
+            except OSError:
+                return None
+            clock_fn = getattr(oauth, "clock", time.time)
+            try:
+                clock_sec = int(clock_fn())
+            except Exception:
+                return None
+            return (
+                id(store),
+                ext_stamp,
+                id(getattr(store, "_cached_state", None)),
+                id(oauth),
+                oauth_stamp,
+                id(getattr(creds, "_cached_value", None)),
+                clock_sec,
+            )
+        return (
+            id(store),
+            ext_stamp,
+            id(getattr(store, "_cached_state", None)),
+        )
+
     def _active_mcp_tools(self) -> dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]]:
         """Return mapping of model_tool_name -> (server, tool, extension_binding) for enabled tools."""
+        cache_key = self._mcp_tools_cache_key()
+        if cache_key is not None:
+            cached = self._active_mcp_tools_cache
+            if cached is not None and cached[0] == cache_key:
+                return cached[1]
         out: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] = {}
+        oauth = getattr(self.manager, "oauth", None)
         for server in self.store.list_enabled_mcp_servers_internal():
-            oauth = getattr(self.manager, "oauth", None)
             if oauth is not None and oauth.public_status(str(server.get("instance_id") or "")).get("state") in {"logged_out", "pending", "error"}:
                 continue
             enabled_tools = server.get("enabled_tools")
@@ -438,6 +483,9 @@ class ExtensionToolAdapter:
                     "computer_access": bool(server.get("computer_access", False)),
                 }
                 out[model_name] = (server, tool, binding)
+        refreshed_key = self._mcp_tools_cache_key()
+        if refreshed_key is not None:
+            self._active_mcp_tools_cache = (refreshed_key, out)
         return out
 
     def specs(self, context: dict[str, Any] | None = None) -> list[dict[str, Any]]:

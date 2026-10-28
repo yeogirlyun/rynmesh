@@ -1,32 +1,40 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button, Panel } from "./ui";
+import { RefreshCw } from "lucide-react";
 import { runThenReload } from "../domain/actThenReload";
 import { deviceSyncApi } from "../domain/deviceSync";
 import type { DevicePair, ReadingConflict } from "../domain/deviceSync";
+import { FileTile } from "../personal/drop/FamilyParts";
+import "../screens/device-sync-refresh.css";
 
 function Choice({ issue, localActor, devices, busy, resolve }: { issue: ReadingConflict; localActor: string; devices: DevicePair[];
   busy: boolean; resolve: (issue: ReadingConflict, choice: string) => void }) {
   const [selected, setSelected] = useState("");
-  return <article style={{ borderTop: "1px solid var(--line)", padding: "16px 0", overflowWrap: "anywhere" }}>
-    <h3>{issue.item?.title || "Reading item"}</h3><p>{issue.item?.source_title || "Source unavailable"}</p>
-    <fieldset disabled={busy} style={{ display: "grid", gap: 12, border: 0, padding: 0 }}>
-      <legend>{issue.scope === "reading" ? "Choose a reading position" : "Choose whether to keep this saved"}</legend>
-      {issue.candidates.map((candidate) => {
+  return <article className="rf-conf-item">
+    <div className="rf-conf-who"><FileTile kind={issue.scope === "reading" ? "doc" : "files"} size="sm" />
+      <div><h3>{issue.item?.title || "Reading item"}</h3><p>{issue.item?.source_title || "Source unavailable"}</p></div></div>
+    <fieldset disabled={busy} className="rf-conf-set">
+      <legend className="rf-legend">{issue.scope === "reading" ? "Choose a reading position" : "Choose whether to keep this saved"}</legend>
+      <div className="rf-conf-opts">{issue.candidates.map((candidate) => {
         const actor = candidate.choice_id.split(":")[0];
         const name = actor === localActor ? "This device" : devices.find((pair) => pair.device.actor === actor)?.device.name || "Another device";
         const value = candidate.value;
         const description = issue.scope === "bookmarks" ? value?.bookmarked ? "Saved" : "Not saved"
           : value === null ? "Remove synced reading position" : `${Math.round((value.progress ?? 0) * 100)}% read${value.completed ? " · completed" : ""}`;
-        return <label key={candidate.choice_id} style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-          <input type="radio" name={`choice-${issue.scope}-${issue.id}`} value={candidate.choice_id} checked={selected === candidate.choice_id}
-            onChange={() => setSelected(candidate.choice_id)} style={{ width: 18, height: 18, flex: "0 0 18px", padding: 0 }} />
-          <span>{description} · {name} · {actor.slice(0, 12)}
-            {issue.scope === "reading" && value ? <small style={{ display: "block" }}>Content version: {value.content_version || "unknown"}</small> : null}</span>
+        const pct = issue.scope === "reading" && value ? Math.max(0, Math.min(100, Math.round((value.progress ?? 0) * 100))) : null;
+        return <label key={candidate.choice_id} className="rf-opt rf-conf-opt">
+          <span className="rf-conf-r"><input type="radio" name={`choice-${issue.scope}-${issue.id}`} value={candidate.choice_id} checked={selected === candidate.choice_id}
+            onChange={() => setSelected(candidate.choice_id)} /><b>{name}</b></span>
+          <span className="rf-conf-what">{description}</span>
+          {pct !== null ? <span className="rf-prog" aria-hidden="true"><i style={{ width: `${pct}%` }} /></span> : null}
+          <span className="rf-conf-meta"><small className="rf-mono">{actor.slice(0, 12)}</small>
+            {issue.scope === "reading" && value ? <small>Content version: {value.content_version || "unknown"}</small> : null}</span>
         </label>;
-      })}
+      })}</div>
     </fieldset>
-    <p>Choosing updates this device now. The choice can reach other paired devices when this category is allowed. Article text is not copied.</p>
-    <Button disabled={busy || !selected} onClick={() => resolve(issue, selected)}>Use this choice</Button>
+    <div className="rf-conf-foot">
+      <p>Choosing updates this device now. The choice can reach other paired devices when this category is allowed. Article text is not copied.</p>
+      <button type="button" className="rf-btn rf-btn-p rf-btn-sm" disabled={busy || !selected} onClick={() => resolve(issue, selected)}>Use this choice</button>
+    </div>
   </article>;
 }
 
@@ -73,12 +81,15 @@ export default function ReadingSyncConflicts({ devices, onResolved }: { devices:
     );
     if (active.current) setBusy(false);
   };
-  return <Panel><h2 id="reading-sync-conflicts">Review reading changes</h2>
-    <p>Different devices may keep different positions or saved choices. Review the candidates; a larger percentage or a newer computer clock does not decide for you.</p>
-    {error ? <p role="alert">{error}</p> : null}{notice ? <p role="status">{notice}</p> : null}
-    <Button disabled={busy} onClick={() => { setError(""); void load().catch(() => setError("Reading changes could not be loaded. Refresh to retry.")); }}>Refresh reading changes</Button>
-    {!loaded ? <p>Loading reading changes…</p> : issues.length === 0 ? <p>No reading conflicts to resolve.</p> : issues.map((issue) =>
+  return <section className="rf-card rd-conf" aria-labelledby="reading-sync-conflicts">
+    <div className="rd-conf-head">
+      <div className="rd-conf-title"><h2 id="reading-sync-conflicts">Review reading changes{issues.length ? <span className="rf-count rf-t-warn">{issues.length}</span> : null}</h2>
+        <p>Different devices may keep different positions or saved choices. Review the candidates; a larger percentage or a newer computer clock does not decide for you.</p></div>
+      <button type="button" className="rf-btn rf-btn-sm" disabled={busy} onClick={() => { setError(""); void load().catch(() => setError("Reading changes could not be loaded. Refresh to retry.")); }}><RefreshCw size={14} strokeWidth={1.7} aria-hidden="true" />Refresh reading changes</button>
+    </div>
+    {error ? <p role="alert" className="rf-callout rf-callout-err rd-conf-msg">{error}</p> : null}{notice ? <p role="status" className="rf-callout rf-callout-ok rd-conf-msg">{notice}</p> : null}
+    {!loaded ? <p className="rd-conf-empty">Loading reading changes…</p> : issues.length === 0 ? <p className="rd-conf-empty">No reading conflicts to resolve.</p> : issues.map((issue) =>
       <Choice key={`${issue.scope}:${issue.id}:${issue.revision}`} issue={issue} localActor={actor} devices={devices} busy={busy}
         resolve={(value, choice) => void resolve(value, choice)} />)}
-  </Panel>;
+  </section>;
 }

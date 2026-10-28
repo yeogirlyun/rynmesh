@@ -364,3 +364,15 @@ def test_paused_followup_turn_does_not_leak_previous_turn_final_text_or_unbacked
     assert listed["unbacked_mentions"] == []
     assert [f["name"] for f in listed["files"]] == ["qa_budget.xlsx"]
     assert listed["files"][0]["turn_index"] == 0
+
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Explorer command-line parsing")
+def test_reveal_quotes_only_the_path_with_spaces_commas_and_unicode(tmp_path, monkeypatch):
+    target = tmp_path / "中文 report, final.pdf"
+    target.write_bytes(b"pdf")
+    monkeypatch.setattr(workspace_artifacts, "location", lambda row, file_id: target)
+    calls = []
+    monkeypatch.setattr("subprocess.Popen", lambda args, **kwargs: calls.append((args, kwargs)))
+    workspace_artifacts.open_file({}, "bound-file", "reveal")
+    assert calls == [(f'explorer.exe /select,"{target}"', {"creationflags": 0x08000000})]

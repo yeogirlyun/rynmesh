@@ -72,8 +72,141 @@ function directory(raw: Record<string, unknown>): PeerProviderDirectory {
   };
 }
 
+export interface PeerProviderCurrentMember {
+  id: string;
+  name: string;
+  alias: string;
+  department: string;
+  position: string;
+  role: string;
+  can_publish_models: boolean;
+}
+
+export interface PeerProviderDepartmentEntry {
+  id: string;
+  name: string;
+  parent_id: string;
+  team?: string;
+  order?: number;
+  kind?: string;
+}
+
+export interface PeerProviderColleagueEntry {
+  id: string;
+  name: string;
+  alias: string;
+  department: string;
+  department_ids?: string[];
+  department_names?: string[];
+  is_leader?: boolean;
+  location?: string;
+  badge?: string;
+  position: string;
+  role: string;
+  online: boolean;
+  devices: PeerProviderMemberDevice[];
+}
+
+export interface PeerProviderWorkspace {
+  status: "signed_out" | "pending" | "connected";
+  bound: boolean;
+  local_node_id?: string;
+  selected_service_ids: string[];
+  current_member: PeerProviderCurrentMember | null;
+  colleagues: PeerProviderColleagueEntry[];
+  departments?: PeerProviderDepartmentEntry[];
+  models: PeerProviderSharedModelEntry[];
+}
+
+function workspace(raw: Record<string, unknown>): PeerProviderWorkspace {
+  const cmRaw = raw.current_member && typeof raw.current_member === "object" ? (raw.current_member as Record<string, unknown>) : null;
+  const current_member: PeerProviderCurrentMember | null = cmRaw
+    ? {
+        id: String(cmRaw.id || ""),
+        name: String(cmRaw.name || cmRaw.alias || cmRaw.id || ""),
+        alias: String(cmRaw.alias || ""),
+        department: String(cmRaw.department || ""),
+        position: String(cmRaw.position || ""),
+        role: String(cmRaw.role || "member"),
+        can_publish_models: Boolean(cmRaw.can_publish_models),
+      }
+    : null;
+  const rawColleagues = Array.isArray(raw.colleagues) ? raw.colleagues : [];
+  const colleagues: PeerProviderColleagueEntry[] = rawColleagues
+    .filter((c): c is Record<string, unknown> => !!c && typeof c === "object")
+    .map((c) => {
+      const devices = (Array.isArray(c.devices) ? c.devices : [])
+        .filter((d): d is Record<string, unknown> => !!d && typeof d === "object" && typeof d.peer_id === "string")
+        .map((d) => ({ peer_id: String(d.peer_id), name: String(d.name || d.peer_id) }));
+      const department_ids = Array.isArray(c.department_ids)
+        ? c.department_ids.map((x) => String(x || "").trim()).filter(Boolean)
+        : undefined;
+      const department_names = Array.isArray(c.department_names)
+        ? c.department_names.map((x) => String(x || "").trim()).filter(Boolean)
+        : undefined;
+      return {
+        id: String(c.id || ""),
+        name: String(c.name || c.alias || c.id || ""),
+        alias: String(c.alias || ""),
+        department: String(c.department || ""),
+        department_ids,
+        department_names,
+        is_leader: typeof c.is_leader === "boolean" ? c.is_leader : undefined,
+        location: typeof c.location === "string" ? c.location : undefined,
+        badge: typeof c.badge === "string" ? c.badge : undefined,
+        position: String(c.position || ""),
+        role: String(c.role || "member"),
+        online: Boolean(c.online ?? devices.length > 0),
+        devices,
+      };
+    })
+    .filter((c) => Boolean(c.id));
+  const rawDepts = Array.isArray(raw.departments) ? raw.departments : [];
+  const departments: PeerProviderDepartmentEntry[] = rawDepts
+    .filter((d): d is Record<string, unknown> => !!d && typeof d === "object")
+    .map((d, idx) => ({
+      id: String(d.id || d.departmentId || ""),
+      name: String(d.name || ""),
+      parent_id: String(d.parent_id ?? d.parentId ?? "1"),
+      team: typeof d.team === "string" ? d.team : undefined,
+      order: typeof d.order === "number" ? d.order : idx,
+      kind: typeof d.kind === "string" ? d.kind : undefined,
+    }))
+    .filter((d) => Boolean(d.id && d.name));
+  const rawModels = Array.isArray(raw.models) ? raw.models : [];
+  const models: PeerProviderSharedModelEntry[] = rawModels
+    .filter((row): row is Record<string, unknown> => !!row && typeof row === "object")
+    .map((row) => {
+      const svc = (row.service && typeof row.service === "object" ? row.service : row) as Record<string, unknown>;
+      const name = String(svc.model_alias || svc.name || svc.package_id || "");
+      return {
+        service_id: String(svc.service_id || svc.package_id || name),
+        name,
+        peer_id: String(row.peer_id || svc.peer_id || ""),
+      };
+    })
+    .filter((m) => Boolean(m.name));
+  const state = ["signed_out", "pending", "connected"].includes(String(raw.status))
+    ? (raw.status as PeerProviderWorkspace["status"])
+    : "signed_out";
+  return {
+    status: state,
+    bound: Boolean(raw.bound),
+    local_node_id: typeof raw.local_node_id === "string" ? raw.local_node_id : undefined,
+    selected_service_ids: Array.isArray(raw.selected_service_ids)
+      ? raw.selected_service_ids.filter((x): x is string => typeof x === "string")
+      : [],
+    current_member,
+    colleagues,
+    departments,
+    models,
+  };
+}
+
 export const peerProviders = {
   status: async (id: string, signal?: AbortSignal) => status(await request(id, "status", "GET", undefined, signal), id),
+  workspace: async (id: string, signal?: AbortSignal) => workspace(await request(id, "workspace", "GET", undefined, signal)),
+  autoSync: async (id: string) => request(id, "auto-sync", "POST", {}),
   login: async (id: string) => {
     const raw = await request(id, "login/start", "POST", {});
     const url = new URL(String(raw.browser_url || ""));

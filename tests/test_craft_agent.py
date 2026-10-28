@@ -447,3 +447,4 @@ def test_craft_tools_discovery_includes_compact_schema_and_normalizes_alias_keys
         craft.tools.preview(ACTION, _args("type_text", {"unknown_field": 123}), context=context)
     assert set(exc_info.value.details.get("properties") or []) == {"paragraphs", "text"}
     assert exc_info.value.correction
+

@@ -599,6 +599,18 @@ function mergeReconciledOverview(
   };
 }
 
+function WebAppAccessSummary({ app }: { app: { url: string; permissions: string[] } }) {
+  const tx = useExtText();
+  const labels: Record<string,string> = {
+    tools: tx('查询插件工具', 'Query plugin tools'),
+    agent: tx('在助手中打开草稿', 'Open a draft in the assistant'),
+    messages: tx('读取和发送消息', 'Read and send messages'),
+    models: tx('查看模型和修改共享设置', 'View models and change sharing'),
+    peer_provider: tx('连接成员设备和共享模型', 'Connect member devices and share models'),
+  };
+  return <p>{tx('外部应用', 'External app')}: {app.url}<br />{tx('启用后可使用', 'Access when enabled')}: {app.permissions.map(p => labels[p] || p).join(' · ') || tx('无设备权限', 'No device permissions')}</p>;
+}
+
 export default function AgentExtensions() {
   const tx = useExtText();
   const params = useParams<{ section?: string }>();
@@ -2443,6 +2455,14 @@ function PluginDetailsModal({
       }
     >
       <p style={{ margin: 0, lineHeight: 1.5 }}>{plugin.description}</p>
+      {plugin.web_app ? <WebAppAccessSummary app={plugin.web_app} /> : null}
+
+      <PluginViews plugin={plugin} servers={bundledServers} initialViewId={initialViewId} onOpenServer={onOpenServer} onRefresh={onRefresh} />
+
+      <details className="ae-plugin-settings" open={!plugin.enabled || !plugin.views?.length ? true : undefined}>
+        <summary>{tx("插件设置与连接", "Plugin settings & connections")}</summary>
+
+      {plugin.peer_provider ? <PeerProviderSettings key={`${plugin.id}:${plugin.instance_id}`} plugin={plugin} /> : null}
 
       <PluginViews plugin={plugin} servers={bundledServers} initialViewId={initialViewId} onOpenServer={onOpenServer} onRefresh={onRefresh} />
 
@@ -4795,6 +4815,7 @@ function ExtensionImportModal({
                 {preview.plugins.map(p => (
                   <li key={p.id}>
                     <strong>{p.title}</strong> (<code>{p.id}</code> · v{p.version}) — {p.description}
+                    {p.web_app ? <WebAppAccessSummary app={p.web_app} /> : null}
                   </li>
                 ))}
               </ul>

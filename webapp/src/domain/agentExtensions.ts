@@ -257,9 +257,17 @@ export const queryPluginView = (plugin: ExtensionPlugin, viewId: string, args: R
     { arguments: args, page, expected_instance_id: plugin.instance_id, expected_revision: plugin.revision }, signal,
   );
 
+export const queryPluginTool = (plugin: ExtensionPlugin, toolName: string, args: Record<string, unknown>, signal?: AbortSignal) =>
+  extensionRequest<{ tool: string; result: Record<string, unknown> }>(
+    `/plugins/${encodeURIComponent(plugin.id)}/tool-query`, "POST",
+    { tool: toolName, arguments: args, expected_instance_id: plugin.instance_id, expected_revision: plugin.revision }, signal,
+  );
+
 export interface ExtensionPlugin {
+  web_app?: { url: string; permissions: string[] } | null;
   views?: ExtensionPluginView[];
   data_policy?: ExtensionDataPolicy;
+  identity_group?: { id: string; name: string; origin?: string } | null;
   peer_provider?: { url: string; oauth: { clientId: string; scopes: string[] } } | null;
   id: string;
   instance_id?: string;
@@ -383,6 +391,7 @@ export interface ExtensionImportPreview {
   version: string;
   source_format: ExtensionSourceFormat;
   plugins: Array<{
+    web_app?: { url: string; permissions: string[] } | null;
     data_policy?: ExtensionDataPolicy;
     id: string;
     name: string;
@@ -935,8 +944,19 @@ export function normalizePlugin(raw: Record<string, unknown>): ExtensionPlugin {
   const mcpServers = Array.isArray(raw.mcp_servers)
     ? raw.mcp_servers.filter((m): m is Record<string, unknown> => Boolean(m && typeof m === "object")).map(normalizeMcpServer)
     : undefined;
+  const rawIdentityGroup = raw.identity_group && typeof raw.identity_group === "object" ? (raw.identity_group as Record<string, unknown>) : null;
+  const identity_group =
+    rawIdentityGroup && typeof rawIdentityGroup.id === "string" && rawIdentityGroup.id
+      ? {
+          id: rawIdentityGroup.id,
+          name: typeof rawIdentityGroup.name === "string" && rawIdentityGroup.name ? rawIdentityGroup.name : rawIdentityGroup.id,
+          ...(typeof rawIdentityGroup.origin === "string" && rawIdentityGroup.origin ? { origin: rawIdentityGroup.origin } : {}),
+        }
+      : null;
   return {
     id,
+    identity_group,
+    web_app: raw.web_app && typeof raw.web_app === "object" && typeof (raw.web_app as any).url === "string" ? raw.web_app as { url: string; permissions: string[] } : null,
     peer_provider: normalizePeerProvider(raw.peer_provider),
     views: normalizePluginViews(raw.views),
     data_policy: raw.data_policy && typeof raw.data_policy === "object" ? raw.data_policy as ExtensionDataPolicy : undefined,
@@ -1037,6 +1057,8 @@ async function extensionRequest<T>(path: string, method = "GET", body?: unknown,
 }
 
 export const agentExtensions = {
+  queryPluginView,
+  queryPluginTool,
   overview: async (signal?: AbortSignal): Promise<ExtensionOverview> =>
     normalizeOverview(await extensionRequest<Record<string, unknown>>("", "GET", undefined, signal)),
 
@@ -1171,4 +1193,5 @@ export const agentExtensions = {
       raw.overview && typeof raw.overview === "object" ? (raw.overview as Record<string, unknown>) : raw;
     return normalizeOverview(overviewPayload);
   },
+
 };

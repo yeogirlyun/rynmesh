@@ -70,7 +70,7 @@ pub fn run() {
             mcp_auth_browser::open_mcp_auth_browser,
             craft_browser::open_craft_browser, system_apps::sync_system_apps, system_apps::system_app_info,
             system_apps::choose_default_system_app,
-            drop::choose_drop_paths, drop::choose_drop_dir, drop::drop_open_path];
+            drop::choose_drop_paths, drop::choose_drop_dir, drop::drop_open_path, drop::drag_local_file];
             handler(invoke)
         })
         .manage(preferences::DesktopState::default())

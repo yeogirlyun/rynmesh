@@ -5,6 +5,7 @@ startup downloads or background workers. One editor per origin/port.
 """
 
 import argparse
+import contextvars
 import hashlib
 import json
 import mimetypes
@@ -15,6 +16,7 @@ import stat
 import tempfile
 import urllib.request
 import zipfile
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
 import certifi
@@ -37,6 +39,27 @@ REDIRECT_HOSTS = {
 
 class CraftError(ValueError):
     pass
+
+
+_PROGRESS_CALLBACK = contextvars.ContextVar("craft_progress_callback", default=None)
+
+
+@contextmanager
+def track_progress(callback):
+    token = _PROGRESS_CALLBACK.set(callback)
+    try:
+        yield
+    finally:
+        _PROGRESS_CALLBACK.reset(token)
+
+
+def report_progress(**fields):
+    callback = _PROGRESS_CALLBACK.get()
+    if callback is not None:
+        try:
+            callback(fields)
+        except Exception:
+            pass
 
 
 def specification(slug):
@@ -76,14 +99,29 @@ def download_to(url, path):
     )
     request = urllib.request.Request(url, headers={"User-Agent": "Rynmesh-Craft/1.0"})
     with opener.open(request, timeout=60) as response, Path(path).open("xb") as out:
-        if int(response.headers.get("Content-Length") or 0) > MAX_ARCHIVE:
+        total = int(response.headers.get("Content-Length") or 0)
+        if total > MAX_ARCHIVE:
             raise CraftError("craft_archive_limit")
+        total_bytes = total if total > 0 else None
+        report_progress(
+            phase="downloading",
+            downloaded_bytes=0,
+            total_bytes=total_bytes,
+            percent=0 if total_bytes else None,
+        )
         size = 0
-        while chunk := response.read(256 * 1024):
+        while chunk := response.read(64 * 1024):
             size += len(chunk)
             if size > MAX_ARCHIVE:
                 raise CraftError("craft_archive_limit")
             out.write(chunk)
+            percent = min(99, int(size * 100 // total_bytes)) if total_bytes else None
+            report_progress(
+                phase="downloading",
+                downloaded_bytes=size,
+                total_bytes=total_bytes,
+                percent=percent,
+            )
 
 
 def extract(archive_path, destination):
@@ -194,16 +232,44 @@ def install(cache, slug, *, download=download_to, spec=None):
         try:
             archive = stage / "release.zip"
             url = spec.get("download_url") or f"https://github.com/storytold/{slug}/releases/download/{spec['tag']}/{spec['web_asset']}"
+            report_progress(phase="downloading", downloaded_bytes=0, total_bytes=None, percent=0)
             download(url, archive)
-            if archive.stat().st_size > MAX_ARCHIVE or digest(archive) != spec["web_sha256"]:
+            archive_size = archive.stat().st_size
+            report_progress(phase="verifying", downloaded_bytes=archive_size, total_bytes=archive_size, percent=100)
+            if archive_size > MAX_ARCHIVE or digest(archive) != spec["web_sha256"]:
                 raise CraftError("craft_checksum_mismatch")
             payload = stage / "payload"
+            report_progress(
+                phase="installing",
+                downloaded_bytes=archive_size,
+                total_bytes=archive_size,
+                percent=100,
+                installed_files=0,
+                total_files=None,
+            )
             web = extract(archive, payload)
-            files = {
-                p.relative_to(payload).as_posix(): digest(p)
-                for p in payload.rglob("*")
-                if p.is_file()
-            }
+            payload_files = [p for p in payload.rglob("*") if p.is_file()]
+            total_files = len(payload_files)
+            report_progress(
+                phase="installing",
+                downloaded_bytes=archive_size,
+                total_bytes=archive_size,
+                percent=100,
+                installed_files=0,
+                total_files=total_files,
+            )
+            files = {}
+            for index, p in enumerate(payload_files, 1):
+                files[p.relative_to(payload).as_posix()] = digest(p)
+                if index == total_files or index % 20 == 0:
+                    report_progress(
+                        phase="installing",
+                        downloaded_bytes=archive_size,
+                        total_bytes=archive_size,
+                        percent=100,
+                        installed_files=index,
+                        total_files=total_files,
+                    )
             receipt = {
                 "app": slug,
                 "version": spec["tag"],

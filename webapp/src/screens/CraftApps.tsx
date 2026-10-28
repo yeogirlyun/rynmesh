@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { ArrowRight, ArrowUpRight, Bot, CheckCircle2, Download, FileUser, FolderCheck, HardDrive, Headset, UsersRound } from "lucide-react";
 import { Modal } from "../personal/components";
 import { agentExtensions, type ExtensionOverview } from "../domain/agentExtensions";
-import { craftPlugins, openCraftWindow, verifiedCraftUrl, verifiedPluginPath, type CraftCatalog, type CraftPlugin } from "../domain/craftPlugins";
+import { craftPlugins, openCraftWindow, verifiedCraftUrl, verifiedPluginPath, type CraftCatalog, type CraftInstallProgress, type CraftPlugin } from "../domain/craftPlugins";
 import { nasChanged, setNasHandoff } from "../domain/nas";
 import CraftPluginLibrary from "./CraftPluginLibrary";
 import AppsLauncher, { type AppsFilter } from "./AppsLauncher";
@@ -16,6 +16,11 @@ import "./craftApps.css";
 const short: Record<string, string> = { pdfcraft: "PDF", wordcraft: "W", gridcraft: "X", deckcraft: "P", resume: "R", recruit: "H", desk: "D", nas: "N" };
 const isBuiltin = (app: CraftPlugin) => app.kind === "builtin_adapter";
 const canInstall = (app: CraftPlugin) => app.installable ?? app.web;
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 function Mark({ app }: { app: CraftPlugin }) {
   return <CraftPluginIcon app={app} />;
 }
@@ -45,6 +50,8 @@ export default function CraftApps({ manage = false }: { manage?: boolean }) {
   const [setup, setSetup] = useState<"initial" | "add" | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [installing, setInstalling] = useState("");
+  const [installQueue, setInstallQueue] = useState<string[]>([]);
+  const [installProgress, setInstallProgress] = useState<CraftInstallProgress | null>(null);
   const [installedBatch, setInstalledBatch] = useState<string[]>([]);
   const [modal, setModal] = useState<{ kind: "disable" | "uninstall" | "detail" | "agent"; app: CraftPlugin } | null>(null);
   const [ready, setReady] = useState<{ app: CraftPlugin; url: string } | null>(null);
@@ -87,22 +94,56 @@ export default function CraftApps({ manage = false }: { manage?: boolean }) {
     try { await fn(); } catch (e) { if (mounted.current) failure(e); }
     finally { operation.current = false; if (mounted.current) setBusy(false); }
   };
-  const add = (ids: string[] = []) => { setSetup("add"); setSelected(ids); setInstalledBatch([]); setNotice(""); setError(""); };
+  const withProgressPolling = async <T,>(appId: string, initial: CraftInstallProgress, task: () => Promise<T>): Promise<T> => {
+    setInstallProgress(initial);
+    let active = true;
+    const poll = async () => {
+      if (!active || !mounted.current || typeof craftPlugins.progress !== "function") return;
+      try {
+        const snap = await craftPlugins.progress(appId);
+        const item = snap?.active?.[appId];
+        if (active && mounted.current && item) setInstallProgress(item);
+      } catch {
+        /* Progress polling is best-effort and never interrupts installation. */
+      }
+    };
+    const timer = window.setInterval(() => { void poll(); }, 180);
+    try {
+      return await task();
+    } finally {
+      active = false;
+      window.clearInterval(timer);
+    }
+  };
+  const add = (ids: string[] = []) => { setSetup("add"); setSelected(ids); setInstalledBatch([]); setInstallQueue([]); setInstallProgress(null); setNotice(""); setError(""); };
   const install = () => run(async () => {
     let latest = catalog!;
-    for (const id of selected) {
-      if (latest.plugins.find(p => p.id === id)?.installed) continue;
-      setInstalling(id);
-      try { latest = await craftPlugins.install(id); }
-      catch (e) { setNotice(text("installFailed", { name: text(id) })); throw e; }
-      if (mounted.current) { setCatalog(latest); setInstalledBatch(current => [...current, id]); if (id === "nas") nasChanged(); }
+    const queue = selected.filter(id => !latest.plugins.find(p => p.id === id)?.installed);
+    setInstallQueue(queue);
+    try {
+      for (const id of selected) {
+        if (latest.plugins.find(p => p.id === id)?.installed) continue;
+        const target = latest.plugins.find(p => p.id === id);
+        const isWeb = Boolean(target?.web);
+        setInstalling(id);
+        try {
+          latest = await withProgressPolling(
+            id,
+            { app: id, kind: "plugin", phase: isWeb ? "downloading" : "registering", downloaded_bytes: 0, total_bytes: null, percent: isWeb ? 0 : 100 },
+            () => craftPlugins.install(id),
+          );
+        } catch (e) { setNotice(text("installFailed", { name: text(id) })); throw e; }
+        if (mounted.current) { setCatalog(latest); setInstalledBatch(current => [...current, id]); if (id === "nas") nasChanged(); }
+      }
+      if (setup === "initial") latest = await craftPlugins.setup();
+      if (mounted.current) { setCatalog(latest); setInstalling(""); setInstallProgress(null); setInstallQueue([]); setSetup(null); setNotice(text("installSuccess")); }
+    } finally {
+      if (mounted.current) { setInstalling(""); setInstallProgress(null); setInstallQueue([]); }
     }
-    if (setup === "initial") latest = await craftPlugins.setup();
-    if (mounted.current) { setCatalog(latest); setInstalling(""); setSetup(null); setNotice(text("installSuccess")); }
   });
   const dismissSetup = () => run(async () => {
     if (setup === "initial") setCatalog(await craftPlugins.setup());
-    setSetup(null); setInstalling("");
+    setSetup(null); setInstalling(""); setInstallProgress(null); setInstallQueue([]);
   });
   const open = (app: CraftPlugin) => run(async () => {
     if (isBuiltin(app)) { navigate(verifiedPluginPath(app)); return; }
@@ -125,17 +166,102 @@ export default function CraftApps({ manage = false }: { manage?: boolean }) {
   const installAutomation = () => run(async () => {
     if (!modal || modal.kind !== "agent") return;
     const id = modal.app.id;
-    const value = await craftPlugins.installAutomation(id);
-    if (mounted.current) {
-      setCatalog(value);
-      setModal(current => current?.app.id === id ? { ...current, app: value.plugins.find(app => app.id === id) || current.app } : current);
-      setNotice(text("automationInstalled"));
+    setInstalling(id);
+    try {
+      const value = await withProgressPolling(
+        id,
+        { app: id, kind: "automation", phase: "downloading", downloaded_bytes: 0, total_bytes: null, percent: 0 },
+        () => craftPlugins.installAutomation(id),
+      );
+      if (mounted.current) {
+        setCatalog(value);
+        setModal(current => current?.app.id === id ? { ...current, app: value.plugins.find(app => app.id === id) || current.app } : current);
+        setNotice(text("automationInstalled"));
+      }
+    } finally {
+      if (mounted.current) { setInstalling(""); setInstallProgress(null); }
     }
   });
-  const choose = (app: CraftPlugin) => <label className="craft-choice" key={app.id} data-tool={app.id}>
-    <Mark app={app} /><span><strong>{name(app)}</strong><small>{app.installed ? text("installed") : !canInstall(app) ? text(isBuiltin(app) ? "unavailable" : "native") : isBuiltin(app) ? text("builtinType") : text(`descriptions.${app.id}`, { defaultValue: app.name })}</small>{app.warning && <small>{warningShortText(app)}</small>}</span>
-    <input type="checkbox" checked={selected.includes(app.id) || app.installed} disabled={busy || !canInstall(app) || app.installed} onChange={e => setSelected(current => e.target.checked ? [...current, app.id] : current.filter(id => id !== app.id))} />
-  </label>;
+  const renderProgress = (targetId: string, isDownload: boolean) => {
+    const current = installProgress?.app === targetId ? installProgress : null;
+    const phase = current?.phase ?? (isDownload ? "downloading" : "registering");
+    const labelKey = !isDownload || phase === "registering"
+      ? "registering"
+      : phase === "verifying"
+        ? "verifyingPhase"
+        : phase === "installing"
+          ? "installingPhase"
+          : "downloadingPhase";
+    const dlPercent = current?.percent != null ? Math.max(0, Math.min(100, current.percent)) : null;
+    const visualPercent = !isDownload || phase === "registering"
+      ? 100
+      : phase === "downloading"
+        ? (dlPercent != null && dlPercent > 0 ? Math.max(8, Math.round(dlPercent * 0.72)) : null)
+        : phase === "verifying"
+          ? 82
+          : current?.total_files && current.total_files > 0
+            ? Math.min(99, 86 + Math.round(((current.installed_files ?? 0) / current.total_files) * 13))
+            : 94;
+    const detailParts: string[] = [];
+    if (installQueue.length > 1 && current?.kind !== "automation") {
+      const index = Math.min(installQueue.length, Math.max(1, installQueue.indexOf(targetId) + 1 || installedBatch.length + 1));
+      detailParts.push(text("progressBatch", { current: index, total: installQueue.length }));
+    }
+    if (phase === "downloading" && current) {
+      if (current.total_bytes && current.total_bytes > 0) {
+        detailParts.push(`${dlPercent ?? 0}% · ${formatBytes(current.downloaded_bytes)} / ${formatBytes(current.total_bytes)}`);
+      } else if (current.downloaded_bytes > 0) {
+        detailParts.push(formatBytes(current.downloaded_bytes));
+      }
+    } else if (phase === "installing" && current?.total_files && current.total_files > 0) {
+      detailParts.push(text("progressFiles", { installed: current.installed_files ?? 0, total: current.total_files }));
+    }
+    return (
+      <div className="craft-progress-card" role="status" aria-live="polite">
+        <div className="craft-progress-head">
+          <span className="craft-download"><Download size={16} />{text(labelKey, { name: text(targetId) })}</span>
+          {detailParts.length > 0 && <span className="craft-progress-meta">{detailParts.join(" · ")}</span>}
+        </div>
+        <div
+          className={`craft-progress-track${visualPercent == null ? " is-indeterminate" : ""}`}
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={visualPercent ?? undefined}
+        >
+          <div className="craft-progress-fill" style={visualPercent != null ? { width: `${visualPercent}%` } : undefined} />
+        </div>
+        {isDownload && (
+          <div className="craft-progress-steps">
+            <span className={phase === "downloading" ? "is-active" : "is-done"}>{text("progressStepDownload")}{phase === "downloading" && dlPercent != null && dlPercent > 0 ? ` (${dlPercent}%)` : ""}</span>
+            <span className={phase === "verifying" ? "is-active" : phase === "installing" ? "is-done" : ""}>{text("progressStepVerify")}</span>
+            <span className={phase === "installing" ? "is-active" : ""}>{text("progressStepInstall")}</span>
+          </div>
+        )}
+      </div>
+    );
+  };
+  const choose = (app: CraftPlugin) => {
+    const isCurrent = busy && installing === app.id && installProgress?.kind !== "automation";
+    const isQueued = busy && installQueue.includes(app.id) && !app.installed && !isCurrent;
+    const currentPhase = isCurrent ? (installProgress?.app === app.id ? installProgress.phase : (app.web ? "downloading" : "registering")) : null;
+    const badgeText = isCurrent
+      ? currentPhase === "verifying"
+        ? text("progressVerifyingShort")
+        : currentPhase === "installing"
+          ? text("progressInstallingShort")
+          : currentPhase === "registering"
+            ? text("progressRegisteringShort")
+            : `${text("progressDownloadingShort")}${installProgress?.app === app.id && installProgress.percent != null && installProgress.percent > 0 ? ` ${installProgress.percent}%` : ""}`
+      : isQueued
+        ? text("progressWaiting")
+        : "";
+    return <label className={`craft-choice${isCurrent ? " is-installing" : isQueued ? " is-queued" : ""}`} key={app.id} data-tool={app.id}>
+      <Mark app={app} /><span><strong>{name(app)}</strong><small>{app.installed ? text("installed") : !canInstall(app) ? text(isBuiltin(app) ? "unavailable" : "native") : isBuiltin(app) ? text("builtinType") : text(`descriptions.${app.id}`, { defaultValue: app.name })}</small>{app.warning && <small>{warningShortText(app)}</small>}</span>
+      {badgeText && <span className={`craft-choice-status${isCurrent ? " is-active" : ""}`}>{badgeText}</span>}
+      <input type="checkbox" checked={selected.includes(app.id) || app.installed} disabled={busy || !canInstall(app) || app.installed} onChange={e => setSelected(current => e.target.checked ? [...current, app.id] : current.filter(id => id !== app.id))} />
+    </label>;
+  };
   const hasDownloads = selected.some(id => catalog?.plugins.some(app => app.id === id && app.web && !app.installed));
   return <section className={`craft-center${manage ? " craft-manager" : " craft-apps-v2"}`} aria-busy={busy}>
     {error && <div className="craft-error" role="alert"><span>{error}</span>{!catalog && <button onClick={() => void load()}>{text("retry")}</button>}</div>}
@@ -147,7 +273,7 @@ export default function CraftApps({ manage = false }: { manage?: boolean }) {
         <div className="craft-choices">{catalog.plugins.filter(app => app.group === "office").map(choose)}</div>
         <details className="craft-other"><summary>{text("otherTools")}</summary>{["workflow", "design", "media", "storage"].map(category => { const entries = catalog.plugins.filter(app => app.group === category); return entries.length ? <section className="craft-choice-group" key={category}><h3>{text(category)}</h3><div className="craft-extra">{entries.map(choose)}</div></section> : null; })}</details>
         <p className="craft-note"><Bot size={16} />{text("enableInfo")}</p>
-        {busy && installing && <p className="craft-download" role="status"><Download size={16} />{text(catalog.plugins.find(app => app.id === installing)?.web ? "downloading" : "registering", { name: text(installing) })}</p>}
+        {busy && installing && renderProgress(installing, Boolean(catalog.plugins.find(app => app.id === installing)?.web))}
         {installedBatch.length > 0 && <p className="craft-muted">{installedBatch.map(id => text(id)).join(" · ")} — {text("installed")}</p>}
         <footer><div>{text("selected", { count: selected.filter(id => !catalog.plugins.find(p => p.id === id)?.installed).length })}<small>{text(hasDownloads ? "downloadHelp" : "registrationHelp")}</small></div><div className="craft-actions"><button className="craft-button quiet" disabled={busy} onClick={() => void dismissSetup()}>{text(setup === "initial" ? "later" : "back")}</button><button className="craft-button primary" disabled={busy || (setup === "add" && !selected.some(id => !catalog.plugins.find(p => p.id === id)?.installed))} onClick={() => void install()}>{text(busy ? "busy" : selected.length ? hasDownloads ? "download" : "installBuiltin" : "finish")}</button></div></footer>
       </div>
@@ -162,6 +288,7 @@ export default function CraftApps({ manage = false }: { manage?: boolean }) {
     {modal && <Modal title={modal.kind === "detail" ? name(modal.app) : modal.kind === "agent" ? `${name(modal.app)} · Agent` : text(`${modal.kind}Title`, { name: name(modal.app) })} onClose={() => { if (!busy) setModal(null); }} className="craft-dialog">
       {modal.kind === "disable" ? <p>{text("disableHelp")}</p> : modal.kind === "uninstall" ? <><p>{text(isBuiltin(modal.app) ? "builtinUninstallHelp" : "uninstallHelp")}</p><div className="craft-dialog-note"><FolderCheck size={17} />{text("uninstallKeep")}</div><label className="craft-clear"><input type="checkbox" disabled={busy} checked={clearPreferences} onChange={e => setClearPreferences(e.target.checked)} />{text("clearPreferences")}</label></> : modal.kind === "agent" ? <><p>{text("enableInfo")}</p><div className="craft-dialog-note"><Bot size={17} />{text(isBuiltin(modal.app) ? modal.app.id === "nas" ? "nasAgentInfo" : "businessAgentInfo" : modal.app.editing_supported ? "automationAgentInfo" : "agentInfo", { count: modal.app.agent_tools.length })}</div>
         {!isBuiltin(modal.app) && (modal.app.editing_supported ? <><p>{text(`automationCapabilities.${modal.app.id}`)}</p><p>{text("automationFileFlow")}</p><p>{text("automationUnsaved")}</p></> : modal.app.automation_supported ? <p>{text("automationSetupInfo")}</p> : modal.app.group === "office" ? <p>{text("automationUnavailable")}</p> : null)}
+        {busy && installing === modal.app.id && installProgress?.kind === "automation" && renderProgress(modal.app.id, true)}
         {modal.app.automation_error && <p role="alert">{text(`errors.${modal.app.automation_error}`, { defaultValue: text("errors.craft_agent_runtime_not_verified") })}</p>}
       </> : <><dl><div><dt>{text("version")}</dt><dd>{modal.app.name} {modal.app.version}</dd></div><div><dt>{text("source")}</dt><dd>{modal.app.source_url}</dd></div><div><dt>{text("checksum")}</dt><dd><code>{modal.app.sha256}</code></dd></div>{modal.app.formats.length > 0 && <div><dt>{text("formats")}</dt><dd>{modal.app.formats.join(", ")}</dd></div>}<div><dt>{text("tools")}</dt><dd>{modal.app.enabled ? text(isBuiltin(modal.app) ? "builtinCapabilities" : modal.app.editing_supported ? "documentTools" : "infoTool", { count: modal.app.agent_tools.length }) : text("disabled")}</dd></div></dl><CraftSystemApp app={modal.app} text={text} /><p>{text(isBuiltin(modal.app) ? "builtinHelp" : modal.app.editing_supported ? `automationCapabilities.${modal.app.id}` : "formatsHelp")}</p><p>{text(isBuiltin(modal.app) ? "builtinLicense" : "license")}</p>{modal.app.warning && <p>{warningText(modal.app)}</p>}</>}
       {error && <p role="alert" className="craft-error">{error}</p>}

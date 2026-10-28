@@ -252,6 +252,31 @@ def real_oauth(host):
     return manager
 
 
+def test_explicit_identity_group_sso_is_resource_client_and_scope_bound(host, tmp_path):
+    from rynmesh.agent_runtime.extensions import ExtensionImportManager
+    manager=real_oauth(host)
+    def install(pid, client_id='desktop', scopes=None):
+        package=tmp_path/pid;package.mkdir()
+        (package/'plugin.json').write_text(json.dumps({'id':pid,'name':pid,'ryn':{'identity_group':{'id':'example-suite','name':'Example'}}}))
+        (package/'mcp.json').write_text(json.dumps({'mcpServers':{'reader':{'type':'http','url':'https://mcp.example.test/tools','oauth':{'clientId':client_id,'scopes':scopes or ['tools.read']}}}}))
+        importer=ExtensionImportManager(host.store);preview=importer.preview({'kind':'plugin','path':str(package)})
+        assert preview['can_import'];importer.commit(preview['preview_id'],expected_revision=preview['expected_revision'])
+        plugin=next(p for p in host.store.overview()['plugins'] if p['id']==pid)
+        host.store.set_plugin_enabled(pid,True,expected_revision=plugin['revision'])
+        return host.store.get_mcp_server_internal(pid+'-reader')
+    source=install('example-one');same=install('example-two')
+    other_client=install('example-three','another-client');other_scope=install('example-four',scopes=['admin.write'])
+    manager.public_status(source['instance_id'])
+    with manager.credentials.transaction() as rows:
+        rows[source['instance_id']].update(tokens={'access_token':CANARY,'refresh_token':CANARY,'expires_at':9999999999},issuer='https://mcp.example.test',granted_scopes=['tools.read'])
+    assert manager._propagate_identity_group_tokens(source)==[same['id']]
+    assert manager.public_status(same['instance_id'])['state']=='logged_in'
+    assert manager.public_status(other_client['instance_id'])['state']=='logged_out'
+    assert manager.public_status(other_scope['instance_id'])['state']=='logged_out'
+    manager.logout(same['id'],same['revision'])
+    assert manager.public_status(source['instance_id'])['state']=='logged_out'
+
+
 @pytest.mark.parametrize("mode,expected", [("auto", "not_required"), ("oauth", "logged_out"), ("none", "not_required")])
 def test_real_manager_public_status_respects_auth_mode(host, mode, expected):
     manager = real_oauth(host)
@@ -362,3 +387,4 @@ def test_real_privacy_json_and_all_scope_zip_exports_exclude_local_oauth_file(tm
         app.state.agent_runtime.tools.extensions.close()
         app.state.peer_providers.close()
         app.state.llm_shutdown()
+

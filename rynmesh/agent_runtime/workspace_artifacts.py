@@ -435,7 +435,8 @@ def open_file(row, file_id, action) -> dict:
             if action == "open":
                 os.startfile(str(path))
             else:
-                subprocess.Popen(["explorer.exe", f'/select,{path}'], creationflags=0x08000000)
+                # Explorer requires the path quoted separately from /select.
+                subprocess.Popen(f'explorer.exe /select,"{path}"', creationflags=0x08000000)
         elif sys.platform == "darwin":
             subprocess.Popen(["open", *(["-R"] if action == "reveal" else []), str(path)])
         else:

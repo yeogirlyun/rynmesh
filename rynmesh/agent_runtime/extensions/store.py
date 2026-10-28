@@ -28,6 +28,7 @@ from ..data_policy import normalize_policy
 from ..knowledge import SKILLS as BUILTIN_SKILLS
 from ..store import AgentError, AgentToolRejected, encoded
 from .views import normalize_views
+from .web_app import validate_web_app
 
 EXTENSIONS_VERSION = "ryn.agent.extensions.v1"
 EXTENSIONS_CHANNEL = b"rynmesh-agent-extensions-v1"
@@ -82,6 +83,24 @@ def validate_peer_provider(value: Any) -> dict[str, Any]:
             or len(set(scopes)) != len(scopes)):
         raise AgentError(invalid)
     return {"url": resource, "oauth": {"clientId": oauth["clientId"], "scopes": list(scopes)}}
+
+
+def validate_identity_group(value: Any) -> dict[str, str] | None:
+    """Validate optional identity_group grouping metadata for multi-plugin identity_group SSO."""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or not value.get("id"):
+        raise AgentError("agent_invalid_plugin_package")
+    raw_id = str(value.get("id") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", raw_id):
+        raise AgentError("agent_invalid_plugin_package")
+    raw_name = str(value.get("name") or raw_id).strip()[:160]
+    if not raw_name:
+        raise AgentError("agent_invalid_plugin_package")
+    out: dict[str, str] = {"id": raw_id, "name": raw_name}
+    if isinstance(value.get("origin"), str) and value["origin"].strip():
+        out["origin"] = value["origin"].strip()[:512]
+    return out
 
 EXTENSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
@@ -586,6 +605,7 @@ class ExtensionStore:
                 srv["config_sha256"] = _mcp_config_fingerprint(srv)
         for plugin in plugins.values():
             plugin["data_policy"] = normalize_policy(plugin.get("data_policy"))
+
         return state
 
     def _write(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -648,6 +668,21 @@ class ExtensionStore:
     # Public View Formatting (Masking secrets & enriching metadata)
     # ------------------------------------------------------------------
 
+    def _resolve_plugin_identity_group(
+        self,
+        plugin: dict[str, Any],
+        state: dict[str, Any],
+    ) -> dict[str, str] | None:
+        if plugin.get("id") == COMPUTER_USE_PLUGIN_ID or plugin.get("builtin"):
+            return None
+        explicit = plugin.get("identity_group")
+        if isinstance(explicit, dict) and explicit.get("id"):
+            try:
+                return validate_identity_group(explicit)
+            except AgentError:
+                pass
+        return None
+
     def _public_plugin(
         self,
         plugin: dict[str, Any],
@@ -695,6 +730,8 @@ class ExtensionStore:
             "computer_access": bool(plugin.get("computer_access", False)),
             "skill_ids": list(plugin.get("skill_ids", [])),
             "mcp_server_ids": list(plugin.get("mcp_server_ids", [])),
+            "identity_group": self._resolve_plugin_identity_group(plugin, state),
+            "web_app": validate_web_app(plugin.get("web_app")),
             "peer_provider": copy.deepcopy(plugin.get("peer_provider")),
             "data_policy": normalize_policy(plugin.get("data_policy")),
             "views": copy.deepcopy(plugin.get("views", [])),
@@ -992,7 +1029,13 @@ class ExtensionStore:
                 self._public_plugin(plugin, state, desktop_access=desktop_access)
                 for plugin in state["plugins"].values()
             ]
-            plugins.sort(key=lambda item: (not item["builtin"], item["title"].lower(), item["id"]))
+            plugins.sort(
+                key=lambda item: (
+                    not item["builtin"],
+                    item["title"].lower(),
+                    item["id"],
+                )
+            )
 
             builtin_enabled = state.get("builtin_skills_enabled", {})
             builtin_revs = state.get("builtin_skills_revisions", {})
@@ -1285,6 +1328,39 @@ class ExtensionStore:
                 "view": view, "server": {key: server[key] for key in ("id", "instance_id", "revision", "config_generation", "discovery_revision")},
                 "tool": {key: tool[key] for key in ("name", "input_schema", "schema_sha256", "annotations")}})
 
+    def get_plugin_tool_internal(self, plugin_id: str, tool_name: str) -> dict[str, Any]:
+        """Read one live read-only MCP tool belonging to a plugin atomically."""
+        with file_transaction(self.lock):
+            state = self._read()
+            plugin = state["plugins"].get(plugin_id)
+            if not plugin:
+                raise AgentError("agent_plugin_not_found")
+            if not plugin.get("enabled"):
+                raise AgentError("agent_plugin_disabled")
+            server_ids = plugin.get("mcp_server_ids") or []
+            if not server_ids:
+                raise AgentError("agent_mcp_server_not_found")
+            server = state["mcp_servers"].get(server_ids[0])
+            if not server or server.get("plugin_id") != plugin_id:
+                raise AgentError("agent_mcp_server_not_found")
+            if server.get("computer_access") is True:
+                raise AgentError("agent_plugin_view_unsupported_server")
+            if not self._is_server_effectively_enabled(server, state):
+                raise AgentError("agent_mcp_server_disabled")
+            if tool_name in (server.get("disabled_tools") or []) or (server.get("enabled_tools") is not None and tool_name not in server["enabled_tools"]):
+                raise AgentError("agent_mcp_tool_disabled")
+            matches = [item for item in server.get("discovered_tools", []) if item.get("name") == tool_name]
+            if len(matches) != 1 or matches[0].get("enabled", True) is not True:
+                raise AgentError("agent_mcp_tool_disabled")
+            tool = matches[0]
+            if (tool.get("annotations") or {}).get("readOnlyHint") is not True:
+                raise AgentError("agent_plugin_view_not_read_only")
+            if not isinstance(tool.get("input_schema"), dict) or _canon_sha256(tool["input_schema"]) != tool.get("schema_sha256"):
+                raise AgentError("agent_stale_revision")
+            return copy.deepcopy({"plugin_instance_id": plugin["instance_id"], "plugin_revision": plugin["revision"],
+                "server": {key: server[key] for key in ("id", "instance_id", "revision", "config_generation", "discovery_revision")},
+                "tool": {key: tool[key] for key in ("name", "input_schema", "schema_sha256", "annotations")}})
+
     def get_mcp_server_internal(
         self,
         server_id: str,
@@ -1321,6 +1397,12 @@ class ExtensionStore:
                 if pid and pid in state["plugins"]
                 else None
             )
+            comp = (
+                self._resolve_plugin_identity_group(state["plugins"][pid], state)
+                if pid and pid in state["plugins"]
+                else None
+            )
+            out["identity_group_id"] = comp["id"] if comp else None
             return out
 
     def list_mcp_servers_internal(self) -> list[dict[str, Any]]:
@@ -1334,6 +1416,12 @@ class ExtensionStore:
                 item["effective_enabled"] = self._is_server_effectively_enabled(server, state)
                 item["parent_enabled"] = self._is_parent_plugin_enabled(pid, state)
                 item["plugin_revision"] = int(state["plugins"][pid].get("revision", 1)) if pid and pid in state["plugins"] else None
+                comp = (
+                    self._resolve_plugin_identity_group(state["plugins"][pid], state)
+                    if pid and pid in state["plugins"]
+                    else None
+                )
+                item["identity_group_id"] = comp["id"] if comp else None
                 result.append(item)
             return result
 
@@ -1353,6 +1441,12 @@ class ExtensionStore:
                         if pid and pid in state["plugins"]
                         else None
                     )
+                    comp = (
+                        self._resolve_plugin_identity_group(state["plugins"][pid], state)
+                        if pid and pid in state["plugins"]
+                        else None
+                    )
+                    item["identity_group_id"] = comp["id"] if comp else None
                     result.append(item)
             return result
 
@@ -2606,6 +2700,8 @@ class ExtensionStore:
                     "id": pid,
                     "instance_id": uuid.uuid4().hex,
                     "name": plugin.get("name") or pid,
+                    "identity_group": validate_identity_group(plugin.get("identity_group")) if plugin.get("identity_group") is not None else None,
+                    "web_app": validate_web_app(plugin.get("web_app")),
                     "peer_provider": validate_peer_provider(plugin["peer_provider"]) if plugin.get("peer_provider") is not None else None,
                     "data_policy": normalize_policy(plugin.get("data_policy")),
                     "views": views,
@@ -2641,6 +2737,7 @@ class ExtensionStore:
                 },
                 "overview": view,
             }
+
 
     def allocate_package_dir(self, category: str, item_id: str) -> Path:
         safe_cat = _slugify(category, "pkg")

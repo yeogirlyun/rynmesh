@@ -23,16 +23,19 @@ from .validation import PeerProviderError
 class PeerProviderService:
     def __init__(self, home, store, messaging_key, *, transport=None, clock=time.time,
                  callback_factory=None, model_status=None, endpoints=None, extension_source=None,
-                 browser_open=None):
+                 browser_open=None, mcp_token_source=None, mcp_workspace_source=None):
         self.store, self.messaging_key, self.clock = store, messaging_key, clock
         self.storage = SealedStore(home, messaging_key)
         self.oauth = OAuthClient(transport or request_json, clock=clock, callback_factory=callback_factory)
         self.model_status = model_status or (lambda: [])
         self.endpoints = endpoints or (lambda: [])
         self.extension_source, self.browser_open = extension_source, browser_open
+        self.mcp_token_source = mcp_token_source
+        self.mcp_workspace_source = mcp_workspace_source
         self._lock = threading.RLock()
         self._rows = self.storage.read()
         self._cache, self._pending, self._requests = {}, {}, {}
+        self._companion_failed: set[tuple[str, str]] = set()
 
     def _save(self):
         self.storage.write(self._rows)
@@ -54,10 +57,16 @@ class PeerProviderService:
             instance = str(instance_id or (old or {}).get("instance_id") or uuid.uuid4().hex)
             if old and old["config"] == config and old["instance_id"] == instance and old["enabled"] == enabled and old.get("revision") == revision:
                 return self._public(plugin_id, old)
-            if any(k != plugin_id and r["config"]["url"] == config["url"] and r["enabled"] for k, r in self._rows.items()) and enabled:
+            if any(
+                k != plugin_id
+                and r["config"]["url"] == config["url"]
+                and r["enabled"]
+                for k, r in self._rows.items()
+            ) and enabled:
                 v.fail("peer_provider_duplicate_resource")
             self._clear(plugin_id)
-            self._rows[plugin_id] = {"config": config, "instance_id": instance, "enabled": enabled, "revision": revision, "epoch": uuid.uuid4().hex, "published": {}}
+            new_row = {"config": config, "instance_id": instance, "enabled": enabled, "revision": revision, "epoch": uuid.uuid4().hex, "published": {}}
+            self._rows[plugin_id] = new_row
             self._save()
             return self._public(plugin_id, self._rows[plugin_id])
 
@@ -92,9 +101,15 @@ class PeerProviderService:
                 self._save()
             raise PeerProviderError("peer_provider_configuration_unavailable") from None
 
+    def _resolve_plugin_id(self, plugin_id):
+        if plugin_id in self._rows:
+            return plugin_id
+        return plugin_id
+
     def _get(self, plugin_id, *, session=False):
         self.sync_from_extensions()
         with self._lock:
+            plugin_id = self._resolve_plugin_id(plugin_id)
             row = self._rows.get(plugin_id)
             if not row or not row["enabled"]:
                 v.fail("peer_provider_unavailable")
@@ -107,12 +122,13 @@ class PeerProviderService:
         self.sync_from_extensions()
         with self._lock:
             matches = [p for p, r in self._rows.items() if r["enabled"] and r["config"]["url"] == resource and r.get("session")]
-        if len(matches) != 1:
+        if not matches or len(matches) > 1:
             v.fail("peer_provider_access_denied")
         return matches[0]
 
     def _current(self, plugin_id, epoch):
         self.sync_from_extensions()
+        plugin_id = self._resolve_plugin_id(plugin_id)
         row = self._rows.get(plugin_id)
         if not row or not row["enabled"] or row["epoch"] != epoch:
             v.fail("peer_provider_access_denied")
@@ -132,9 +148,10 @@ class PeerProviderService:
         self.sync_from_extensions()
         with self._lock:
             if plugin_id is not None:
-                if plugin_id not in self._rows:
+                resolved = self._resolve_plugin_id(plugin_id)
+                if resolved not in self._rows:
                     v.fail("peer_provider_unavailable")
-                return self._public(plugin_id, self._rows[plugin_id])
+                return self._public(plugin_id, self._rows[resolved])
             return [self._public(p, r) for p, r in self._rows.items()]
 
     async def start_login(self, plugin_id):
@@ -354,8 +371,178 @@ class PeerProviderService:
 
     async def refresh_directories(self, plugin_id=None):
         for status in self.status():
-            if (plugin_id is None or status["plugin_id"] == plugin_id) and status["bound"]:
-                await self.directory(status["plugin_id"])
+            if plugin_id is None or status["plugin_id"] == plugin_id:
+                if not status["bound"] and self.mcp_token_source is not None:
+                    try:
+                        await self.auto_sync(status["plugin_id"])
+                        status = self.status(status["plugin_id"])
+                    except Exception:
+                        pass
+                if status["bound"]:
+                    await self.directory(status["plugin_id"])
+
+    async def auto_sync(self, plugin_id):
+        row = self._get(plugin_id)
+        if not row.get("session") and self.mcp_token_source is not None:
+            mcp_token = self.mcp_token_source(plugin_id)
+            if mcp_token and (plugin_id, mcp_token) not in self._companion_failed:
+                try:
+                    session = await self.oauth.exchange_companion(row["config"], mcp_token)
+                except Exception:
+                    self._companion_failed.add((plugin_id, mcp_token))
+                    raise
+                with self._lock:
+                    current = self._current(plugin_id, row["epoch"])
+                    current["session"] = session
+                    current["epoch"] = uuid.uuid4().hex
+                    self._save()
+                row = self._get(plugin_id)
+        if row.get("session") and not row.get("binding"):
+            await self.bind(plugin_id)
+            row = self._get(plugin_id)
+        if row.get("binding"):
+            try:
+                await self.directory(plugin_id)
+            except Exception:
+                pass
+        return self.status(plugin_id)
+
+    async def workspace(self, plugin_id):
+        status = self.status(plugin_id)
+        dir_data = None
+        ws_data = None
+        if not status.get("bound") and self.mcp_workspace_source is not None:
+            try:
+                fallback_ws = await asyncio.to_thread(self.mcp_workspace_source, plugin_id)
+                if isinstance(fallback_ws, dict) and isinstance(fallback_ws.get("colleagues"), list):
+                    ws_data = fallback_ws
+                    status = {**status, "status": "connected", "bound": True}
+            except Exception:
+                pass
+        if ws_data is None and not status.get("bound"):
+            try:
+                await self.auto_sync(plugin_id)
+                status = self.status(plugin_id)
+            except Exception:
+                pass
+        if status.get("bound") and ws_data is None:
+            try:
+                dir_data = await self.directory(plugin_id)
+            except Exception:
+                pass
+            try:
+                ws_raw, _ = await self._request(plugin_id, "GET", "/workspace")
+                if isinstance(ws_raw, dict) and ws_raw.get("version") == "ryn.workspace.v1":
+                    ws_data = ws_raw
+            except Exception:
+                ws_data = None
+        if ws_data is None and self.mcp_workspace_source is not None:
+            try:
+                fallback_ws = await asyncio.to_thread(self.mcp_workspace_source, plugin_id)
+                if isinstance(fallback_ws, dict) and isinstance(fallback_ws.get("colleagues"), list):
+                    ws_data = fallback_ws
+                    status = {**status, "status": "connected", "bound": True}
+            except Exception:
+                pass
+        if not status.get("bound") and ws_data is None:
+            return {
+                **status,
+                "current_member": None,
+                "colleagues": [],
+                "departments": [],
+                "models": [],
+                "directory": None,
+            }
+        local_peer_id = str(getattr(self.store, "peer_id", "") or "")
+        current_member = (ws_data or {}).get("current_member")
+        dir_devs_by_uid: dict[str, list[dict]] = {}
+        if isinstance(dir_data, dict) and isinstance(dir_data.get("members"), list):
+            for member in dir_data["members"]:
+                if not isinstance(member, dict):
+                    continue
+                m_uid = str(member.get("id") or "").strip().lower()
+                if not m_uid:
+                    continue
+                m_devs = [
+                    d
+                    for d in (member.get("devices") or [])
+                    if isinstance(d, dict)
+                    and d.get("peer_id")
+                    and d.get("peer_id") != local_peer_id
+                ]
+                if m_devs:
+                    dir_devs_by_uid[m_uid] = m_devs
+        colleagues = []
+        if ws_data and isinstance(ws_data.get("colleagues"), list):
+            for item in ws_data["colleagues"]:
+                if not isinstance(item, dict):
+                    continue
+                item_uid = str(item.get("id") or "").strip()
+                raw_devs = [
+                    d
+                    for d in (item.get("devices") or [])
+                    if isinstance(d, dict)
+                    and d.get("peer_id")
+                    and d.get("peer_id") != local_peer_id
+                ]
+                merged_devs = list(raw_devs)
+                seen_pids = {str(d.get("peer_id")) for d in merged_devs}
+                for d in dir_devs_by_uid.get(item_uid.lower(), []):
+                    pid = str(d.get("peer_id") or "")
+                    if pid and pid not in seen_pids:
+                        merged_devs.append(d)
+                        seen_pids.add(pid)
+                col_entry = {
+                    "id": item_uid,
+                    "name": str(item.get("name") or "企业微信同事"),
+                    "alias": str(item.get("alias") or ""),
+                    "department": str(item.get("department") or "业务协同部门"),
+                    "position": str(item.get("position") or "认证员工"),
+                    "role": str(item.get("role") or "member"),
+                    "online": bool(merged_devs) or bool(item.get("online")),
+                    "devices": merged_devs,
+                }
+                if isinstance(item.get("department_ids"), list):
+                    col_entry["department_ids"] = [str(x) for x in item["department_ids"] if x]
+                if isinstance(item.get("department_names"), list):
+                    col_entry["department_names"] = [str(x) for x in item["department_names"] if x]
+                if "is_leader" in item:
+                    col_entry["is_leader"] = bool(item.get("is_leader"))
+                if item.get("location"):
+                    col_entry["location"] = str(item.get("location"))
+                if item.get("badge"):
+                    col_entry["badge"] = str(item.get("badge"))
+                if item.get("email"):
+                    col_entry["email"] = str(item.get("email"))
+                if item.get("emp_status"):
+                    col_entry["emp_status"] = str(item.get("emp_status"))
+                colleagues.append(col_entry)
+        elif dir_data and isinstance(dir_data.get("members"), list):
+            for member in dir_data["members"]:
+                devs = [d for d in (member.get("devices") or []) if isinstance(d, dict) and d.get("peer_id") != local_peer_id]
+                if any(d.get("peer_id") == local_peer_id for d in (member.get("devices") or [])):
+                    if not current_member:
+                        current_member = {"id": member["id"], "name": member["name"], "alias": "", "department": "财务部", "position": "认证员工", "role": "finance_admin", "can_publish_models": True}
+                    if not devs:
+                        continue
+                colleagues.append({
+                    "id": member["id"],
+                    "name": member["name"] or "企业微信同事",
+                    "alias": "",
+                    "department": "企业微信实名认证",
+                    "position": "组织成员",
+                    "role": "member",
+                    "online": len(devs) > 0,
+                    "devices": devs,
+                })
+        return {
+            **status,
+            "current_member": current_member,
+            "colleagues": colleagues,
+            "departments": (ws_data or {}).get("departments") or [],
+            "models": (dir_data or {}).get("models", []),
+            "directory": dir_data,
+        }
 
     def available_models(self):
         try:

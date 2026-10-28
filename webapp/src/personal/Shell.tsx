@@ -27,8 +27,9 @@ import { DropActivity } from "./drop/DropActivity";
 import { pinnedPluginWorkspaces, PIN_CHANGE_EVENT, pluginWorkspacePath } from "../screens/pluginWorkspaceNavigation";
 import "../screens/rynAgentText";
 export function PersonalShell({ children }: { children: ReactNode }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { t: agentText } = useTranslation("rynAgent");
+  const isZh = (i18n.resolvedLanguage || i18n.language || "en").toLowerCase().startsWith("zh");
   const { demo, appearance, setAppearance, devices, services, space } = usePersonal();
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -70,6 +71,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
   const explorePaths = ["/explore", "/digest", "/search-ask", "/publish", "/items/", "/reading", "/offline", "/search", "/shared-reading", "/friend-updates"];
   const inExplore = explorePaths.some((path) => location.pathname.startsWith(path));
   const inAgent = location.pathname === "/agent";
+  const inFullWorkspace = inAgent || location.pathname.startsWith("/apps/extensions/");
   const inServices = location.pathname === "/services" || location.pathname.startsWith("/services/");
   // Keep every service entry available before configuration and across AI pages.
   const serviceLinks = [
@@ -128,8 +130,8 @@ export function PersonalShell({ children }: { children: ReactNode }) {
     <AgentNavigationContext.Provider value={{ collapsed: agentNavCollapsed, toggle: () => {
       setAgentNavCollapsed(current => { const next = !current; try { sessionStorage.setItem("ryn.agent.navigation", next ? "closed" : "open"); } catch { /* Preferences are optional. */ } return next; });
     } }}>
-    <div className={`pf-shell${menuOpen ? " menu-open" : ""}${inAgent ? " pf-agent-shell" : ""}${(inAgent && agentNavCollapsed) || isStandalone ? " pf-agent-nav-collapsed" : ""}`}>
-      <aside className="pf-sidebar" aria-label={t("shell.mainNavigation")} hidden={(inAgent && agentNavCollapsed) || isStandalone}>
+    <div className={`pf-shell${menuOpen ? " menu-open" : ""}${inFullWorkspace ? " pf-agent-shell" : ""}${(inFullWorkspace && agentNavCollapsed) || isStandalone ? " pf-agent-nav-collapsed" : ""}`}>
+      <aside className="pf-sidebar" aria-label={t("shell.mainNavigation")} hidden={(inFullWorkspace && agentNavCollapsed) || isStandalone}>
         <NavLink className="pf-brand" to={href("/")} aria-label={`Ryn ${t("nav.home")}`}>
           <svg viewBox="0 0 30 34" aria-hidden="true">
             <path
@@ -169,7 +171,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
         />
       )}
       <div className="pf-main-column">
-        {!inAgent && !isStandalone && <header className="pf-topbar">
+        {!inFullWorkspace && !isStandalone && <header className="pf-topbar">
           <button
             className="pf-icon-button pf-menu-toggle"
             aria-label={t("shell.toggleNavigation")}

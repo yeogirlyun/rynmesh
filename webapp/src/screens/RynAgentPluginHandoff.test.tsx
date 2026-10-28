@@ -124,6 +124,15 @@ it("keeps an earlier edited plugin draft and ignores any extra route instruction
   expect(backend.creates).not.toHaveBeenCalled();
 });
 
+it('opens an external app question as an editable draft without sending or granting access', async () => {
+  const backend=api();
+  open({externalAppDraft:{id:'reports',prompt:'Explain this synthetic report'},permissions:'full-access'});
+  await waitFor(() => expect(screen.getByRole('textbox')).toHaveValue('Explain this synthetic report'));
+  expect(backend.creates).not.toHaveBeenCalled();
+  expect(backend.messages).not.toHaveBeenCalled();
+  expect(savedDrafts()).toMatchObject({new:'Existing general draft',[oldTask.id]:'Existing conversation draft'});
+});
+
 it("creates the Chinese plugin question from trusted translations, ignoring supplied prompt text", async () => {
   const backend = api();
   await i18n.changeLanguage("zh-CN");

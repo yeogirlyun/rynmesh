@@ -2820,6 +2820,18 @@ def create_app(store: RynmeshStore | None = None):
     )
     peer_providers.extension_source = lambda: app.state.agent_runtime.tools.extensions.store.list_peer_providers_internal()
 
+    def _mcp_token_for_plugin(plugin_id: str):
+        ext = app.state.agent_runtime.tools.extensions
+        for server in ext.store.list_mcp_servers_internal():
+            if server.get("plugin_id") == plugin_id and server.get("effective_enabled", False):
+                try:
+                    return ext.manager.oauth.access_token(server)
+                except Exception:
+                    continue
+        return None
+
+    peer_providers.mcp_token_source = _mcp_token_for_plugin
+
     def refresh_peer_providers():
         import asyncio
         asyncio.run(peer_providers.refresh_directories())

@@ -22,11 +22,14 @@ interface Props {
   project?: AgentProject;
   workspace?: string;
   value: string;
+  placeholder?: string;
   inputRef: RefObject<HTMLTextAreaElement | null>;
   inputDisabled: boolean;
   busy: boolean;
   onChange(value: string): void;
   onSend(): void;
+  onAlternateSend?(): void;
+  topSlot?: ReactNode;
   onProject(): void;
   onSettings(): void;
   settingsDisabled: boolean;
@@ -148,6 +151,7 @@ export default function RynAgentComposer(props: Props) {
       <span className="ra-context-device"><Monitor size={15} />{t("thisComputer")}</span>
       <button type="button" className="ra-context-settings" aria-label={t("conversationSettings")} title={t("settings")} disabled={props.settingsDisabled} onClick={props.onSettings}><Settings size={14} /></button>
     </div>
+    {props.topSlot}
     <div className="ra-composer">
       {props.onAttachmentsChange && <input ref={picker} className="ra-attachment-picker" type="file" multiple tabIndex={-1} aria-label={t("addAttachments")} disabled={props.inputDisabled || preparingFiles} onChange={event => { void addFiles(Array.from(event.target.files || [])); event.target.value = ""; }} />}
       {attachments.length > 0 && <div className="ra-composer-attachments" aria-label={t("attachments")}>
@@ -156,12 +160,17 @@ export default function RynAgentComposer(props: Props) {
           <span>{file.name}</span><button type="button" aria-label={t("removeAttachment", { name: file.name })} disabled={props.inputDisabled || preparingFiles} onClick={() => props.onAttachmentsChange?.(attachments.filter(item => item.id !== file.id))}><X size={13} /></button>
         </div>)}
       </div>}
-      <textarea ref={props.inputRef} rows={1} aria-label={t("input")} placeholder={t("placeholder")} value={props.value} disabled={props.inputDisabled} onChange={event => props.onChange(event.target.value)} onPaste={event => {
+      <textarea ref={props.inputRef} rows={1} aria-label={t("input")} placeholder={props.placeholder || t("placeholder")} value={props.value} disabled={props.inputDisabled} onChange={event => props.onChange(event.target.value)} onPaste={event => {
         const files = Array.from(event.clipboardData.files);
         if (props.onAttachmentsChange && files.length && !props.inputDisabled) { event.preventDefault(); void addFiles(files); }
       }} onKeyDown={event => {
         if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-        if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); if (!preparingFiles) props.onSend(); }
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          if (preparingFiles) return;
+          if ((event.metaKey || event.ctrlKey) && props.onAlternateSend) props.onAlternateSend();
+          else props.onSend();
+        }
       }} />
       <div className="ra-composer-controls">
         <div className="ra-composer-left">

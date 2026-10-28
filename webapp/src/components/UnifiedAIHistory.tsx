@@ -48,25 +48,25 @@ export default function UnifiedAIHistory({ selectedId, storage, rows, onNew, act
   entries.push(...rows.map(row => ({ row, storage })));
   entries.sort((a, b) => b.row.updatedAt.localeCompare(a.row.updatedAt));
   const visible = entries.filter(({ row }) => `${row.title} ${row.serviceName}`.toLowerCase().includes(query.toLowerCase()));
-  return <aside className={styles.history} aria-label={tr("AI conversations")}>
-    <button className={styles.newButton} type="button" onClick={onNew}><MessageSquarePlus size={17} />{tr("新建对话")}</button>
-    <label className={styles.historySearch}><Search size={16} /><input aria-label={tr("Search conversations")} placeholder={tr("搜索对话…")} value={query} onChange={event => setQuery(event.target.value)} /></label>
-    <div className={styles.historyScroll}>
-      <section className={styles.historyGroup}><h2>{tr("All conversations")}</h2>
-        {visible.map(({ row, storage: place }) => <div key={`${place}:${row.id}`} className={`${styles.conversationRow}${place === storage && row.id === selectedId ? ` ${styles.conversationRowSelected}` : ""}`}>
-          <button type="button" className={styles.conversationButton} onClick={() => navigate(personalHref(workspaceConversationUrl(row, place), client.mode === "fixture"))}>
+  return <aside className={`${styles.history} sv-ws-history`} aria-label={tr("AI conversations")}>
+    <button className={`${styles.newButton} sv-ws-newButton`} type="button" onClick={onNew}><MessageSquarePlus size={17} />{tr("新建对话")}</button>
+    <label className={`${styles.historySearch} sv-ws-historySearch`}><Search size={16} /><input aria-label={tr("Search conversations")} placeholder={tr("搜索对话…")} value={query} onChange={event => setQuery(event.target.value)} /></label>
+    <div className={`${styles.historyScroll} sv-ws-historyScroll`}>
+      <section className={`${styles.historyGroup} sv-ws-historyGroup`}><h2>{tr("All conversations")}</h2>
+        {visible.map(({ row, storage: place }) => <div key={`${place}:${row.id}`} className={`${styles.conversationRow} sv-ws-conversationRow${place === storage && row.id === selectedId ? ` ${styles.conversationRowSelected} sv-ws-conversationRowSelected` : ""}`}>
+          <button type="button" className={`${styles.conversationButton} sv-ws-conversationButton`} onClick={() => navigate(personalHref(workspaceConversationUrl(row, place), client.mode === "fixture"))}>
             <strong>{row.title === "New conversation" ? tr("新对话") : row.title}</strong>
             <small>{tr(place === "node" ? "Saved on node" : "Saved in browser")} · {new Date(row.updatedAt).toLocaleDateString(uiLocale())}</small>
             <small>{row.serviceName}</small>
           </button>
         </div>)}
       </section>
-      {!visible.length ? <p className={styles.historyEmpty} role="status">{tr(loading ? "Loading conversations…" : "No matching conversations")}</p> : null}
+      {!visible.length ? <p className={`${styles.historyEmpty} sv-ws-historyEmpty`} role="status">{tr(loading ? "Loading conversations…" : "No matching conversations")}</p> : null}
       {errors.map(error => <p role="alert" key={error}>{error}</p>)}
-      {errors.length ? <button type="button" className={styles.clearButton} onClick={() => setRetry(value => value + 1)}><RefreshCw size={14} />{tr("Retry history")}</button> : null}
+      {errors.length ? <button type="button" className={`${styles.clearButton} sv-ws-clearButton`} onClick={() => setRetry(value => value + 1)}><RefreshCw size={14} />{tr("Retry history")}</button> : null}
     </div>
     {actions}
-    <button className={styles.clearButton} type="button" onClick={() => navigate(personalHref("/ask/history", client.mode === "fixture"))}><Archive size={14} />{tr("Manage node history")}</button>
+    <button className={`${styles.clearButton} sv-ws-clearButton`} type="button" onClick={() => navigate(personalHref("/ask/history", client.mode === "fixture"))}><Archive size={14} />{tr("Manage node history")}</button>
     <small className="ai-history-location">{tr("Original histories keep their storage location. Import and sync require a separate choice.")}</small>
   </aside>;
 }

@@ -265,3 +265,50 @@ def query_view(store, manager, plugin_id: str, view_id: str, payload: Any):
     except Exception as exc:
         code = str(exc) if isinstance(exc, AgentError) and str(exc) in _SAFE_ERRORS else "agent_plugin_view_query_failed"
         raise AgentError(code) from None
+
+
+def query_plugin_tool(store, manager, plugin_id: str, payload: Any):
+    """Execute a declared read-only MCP tool belonging to the plugin."""
+    try:
+        if not isinstance(payload, dict) or set(payload) - {"tool", "arguments", "expected_instance_id", "expected_revision"} or "tool" not in payload:
+            _fail("agent_invalid_request")
+        tool_name = _name(payload["tool"])
+        call_arguments = payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {}
+        initial = store.get_plugin_tool_internal(plugin_id, tool_name)
+        server, tool = initial["server"], initial["tool"]
+        if "expected_instance_id" in payload and payload["expected_instance_id"] != initial["plugin_instance_id"]:
+            _fail("agent_stale_revision")
+        if "expected_revision" in payload and payload["expected_revision"] != initial["plugin_revision"]:
+            _fail("agent_stale_revision")
+        _validate_arguments(tool["input_schema"], call_arguments)
+
+        def session_generation():
+            with manager._lock:
+                return manager._manager_generation, manager._server_generations.get(server["id"], 0)
+
+        generation = session_generation()
+
+        def recheck():
+            if store.get_plugin_tool_internal(plugin_id, tool_name) != initial or session_generation() != generation:
+                _fail("agent_stale_revision")
+            if manager.oauth.public_status(server["instance_id"])["state"] not in ("logged_in", "not_required"):
+                _fail("agent_mcp_auth_required")
+
+        def cancelled():
+            try:
+                recheck()
+                return False
+            except AgentError:
+                return True
+
+        recheck()
+        raw = manager.call_tool(server["id"], tool_name, call_arguments,
+            expected_revision=server["revision"], expected_config_generation=server["config_generation"],
+            expected_instance_id=server["instance_id"], expected_schema_hash=tool["schema_sha256"],
+            before_dispatch=recheck, cancelled=cancelled)
+        result = _result(raw)
+        recheck()
+        return {"tool": tool_name, "result": result}
+    except Exception as exc:
+        code = str(exc) if isinstance(exc, AgentError) and str(exc) in _SAFE_ERRORS else "agent_plugin_view_query_failed"
+        raise AgentError(code) from None

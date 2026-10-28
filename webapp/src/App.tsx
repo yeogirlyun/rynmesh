@@ -54,6 +54,7 @@ import AskRyn from "./screens/AskRyn";
 import AIWorkspace from "./screens/AIWorkspace";
 import RynAgent from "./screens/RynAgent";
 import NodeApps from "./screens/NodeApps";
+import ExtensionWebApp from "./screens/ExtensionWebApp";
 import CraftApps from "./screens/CraftApps";
 import PluginWorkspace from "./screens/PluginWorkspace";
 import { craftPlugins } from "./domain/craftPlugins";
@@ -404,7 +405,7 @@ export function AppRoutes() {
           <Route path="agent/extensions" element={<AgentExtensions />} />
           <Route path="agent/extensions/:section" element={<AgentExtensions />} />
           <Route path="apps" element={<CraftApps />} />
-          <Route path="apps/plugins/:pluginId" element={<PluginWorkspace />} />
+          <Route path="apps/extensions/:pluginId" element={<ExtensionWebApp />} />
           <Route path="apps/workspaces" element={<NodeApps />} />
           <Route path="ask" element={<LegacyAgentRedirect />} />
           <Route path="ask/history" element={<AskRyn />} />

@@ -280,3 +280,4 @@ def test_peer_shared_model_and_cli_model_usage_and_quota(node, monkeypatch):
     assert len(parent_usage["daily"]) == 1
     assert parent_usage["daily"][0]["tokens"] == 200
     assert parent_usage["daily"][0]["total_tokens"] == 200
+

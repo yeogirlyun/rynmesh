@@ -19,13 +19,15 @@ export default function CraftPluginLibrary({ catalog, extensionOverview, busy, o
   const { t, i18n } = useTranslation();
   const isZh = (i18n.resolvedLanguage || i18n.language || "en").toLowerCase().startsWith("zh");
   const tx = (zh: string, en: string) => (isZh ? zh : en);
-  const extPlugins = (extensionOverview?.plugins ?? []).filter(p => !p.builtin || (p.views?.length ?? 0) > 0);
+  const rawExtPlugins = extensionOverview?.plugins ?? [];
+  const extPlugins = rawExtPlugins.filter(p => !p.builtin || (p.views?.length ?? 0) > 0);
   const text = (key: string, options?: Record<string, unknown>) => String(t(`craft.${key}`, options));
   const [view, setView] = useState<"installed" | "discover">("installed");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("all");
-  const installed = catalog.plugins.filter(app => app.installed);
-  const available = catalog.plugins.filter(app => !app.installed);
+  const craftCatalogPlugins = catalog.plugins;
+  const installed = craftCatalogPlugins.filter(app => app.installed);
+  const available = craftCatalogPlugins.filter(app => !app.installed);
   const search = query.trim().toLocaleLowerCase();
   const filtered = (view === "installed" ? installed : available).filter(app =>
     (view !== "discover" || category === "all" || app.group === category) &&
@@ -39,7 +41,7 @@ export default function CraftPluginLibrary({ catalog, extensionOverview, busy, o
     </header>
 
     {extPlugins.length > 0 && (
-      <section className="craft-library-ext-banner" aria-label={tx("公司与 Agent 扩展插件", "Company & Agent extension plugins")}>
+      <section className="craft-library-ext-banner" aria-label={tx("Agent 扩展插件", "Agent extension plugins")}>
         {extPlugins.map(plugin => (
           <div key={plugin.id} className="craft-library-ext-row">
             <div>
@@ -47,11 +49,11 @@ export default function CraftPluginLibrary({ catalog, extensionOverview, busy, o
               <p>{plugin.description}</p>
             </div>
             <div className="craft-library-ext-actions">
-              <Link className="craft-library-open" to="/apps">
+              <Link className="craft-library-open" to={plugin.web_app ? `/apps/extensions/${encodeURIComponent(plugin.id)}` : "/apps"}>
                 {tx("在应用中打开报表", "Open in Apps")}<ArrowUpRight size={15} />
               </Link>
               <Link className="craft-library-open" to={`/settings/extensions/plugins?plugin=${encodeURIComponent(plugin.id)}`}>
-                {tx("管理公司插件与连接", "Manage plugin & connection")}<ArrowRight size={15} />
+                {tx("管理插件与连接", "Manage plugin & connection")}<ArrowRight size={15} />
               </Link>
             </div>
           </div>

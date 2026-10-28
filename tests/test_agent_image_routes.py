@@ -1202,3 +1202,4 @@ def test_inspect_image_auto_downscales_oversized_pixel_image_and_retries_transie
         assert len(bridge.calls) == 2
     finally:
         tools.close()
+

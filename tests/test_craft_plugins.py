@@ -240,3 +240,59 @@ def test_installer_choices_are_bounded_preferences_not_download_authority(monkey
     assert installer_selection() is None
     value[0] = "filmcraft"
     assert installer_selection() is None
+
+
+def test_install_progress_reports_download_verify_and_install_phases(manager):
+    seen = []
+    original_download = manager.download
+
+    def tracked_download(url, path):
+        craft_host.report_progress(phase="downloading", downloaded_bytes=512, total_bytes=1024, percent=50)
+        seen.append(manager.progress("wordcraft")["active"]["wordcraft"])
+        original_download(url, path)
+
+    manager.download = tracked_download
+    orig_extract = craft_host.extract
+
+    def tracked_extract(archive_path, destination):
+        seen.append(manager.progress("wordcraft")["active"]["wordcraft"])
+        return orig_extract(archive_path, destination)
+
+    craft_host.extract = tracked_extract
+    try:
+        manager.install("wordcraft")
+    finally:
+        craft_host.extract = orig_extract
+    assert [row["phase"] for row in seen] == ["downloading", "installing"]
+    assert seen[0]["percent"] == 50 and seen[0]["downloaded_bytes"] == 512 and seen[0]["total_bytes"] == 1024
+    assert manager.progress() == {"active": {}}
+
+
+def test_desktop_rynmesh_home_preserves_platform_cache_and_reconciles_stranded_packages(monkeypatch, tmp_path):
+    fake_user_home = tmp_path / "user"
+    default_ryn_home = fake_user_home / ".rynmesh"
+    local_appdata = fake_user_home / "AppData/Local"
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_user_home))
+    monkeypatch.setenv("LOCALAPPDATA", str(local_appdata))
+    monkeypatch.setenv("RYNMESH_HOME", str(default_ryn_home))
+    monkeypatch.delenv("RYNMESH_PLUGIN_CACHE", raising=False)
+
+    peer_id = "desktop-owner-node"
+    root = package_root(peer_id, home=default_ryn_home)
+    assert root.parent == (local_appdata / "Ryn/plugins") or root.parent == (fake_user_home / "Library/Application Support/Ryn/plugins") or root.parent.name == "plugins"
+    assert ".rynmesh" not in root.parts
+
+    # Install a builtin plugin into the alternate home/plugins/<node> path and verify reconciliation into the canonical cache
+    node_hash = hashlib.sha256(peer_id.encode()).hexdigest()[:24]
+    alt_cache = default_ryn_home / "plugins" / node_hash
+    m1 = PluginManager(default_ryn_home, peer_id, cache=alt_cache)
+    m1.install("resume")
+    m1.install("desk")
+    m1.close()
+
+    m2 = PluginManager(default_ryn_home, peer_id)
+    try:
+        installed_ids = {p["id"] for p in m2.catalog()["plugins"] if p["installed"]}
+        assert {"resume", "desk"} <= installed_ids
+    finally:
+        m2.close()

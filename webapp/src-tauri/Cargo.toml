@@ -30,6 +30,7 @@ libc = "0.2"
 rfd = "0.15"
 base64 = "0.22"
 png = "0.17"
+drag = "=2.1.1"
 
 # Start menu shortcuts, taskbar identity and "Open with" registration for apps.
 [target.'cfg(windows)'.dependencies]

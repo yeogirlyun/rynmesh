@@ -1,11 +1,12 @@
 import { useTranslation } from "react-i18next";
-import { Archive, Check, ChevronRight, File, Files, Folder, Globe2, Pause, Play, Wifi, Waypoints } from "lucide-react";
+import { Archive, ArrowDownLeft, ArrowUpRight, Check, ChevronRight, File, Files, Folder, Globe, Pause, Play, TriangleAlert, Wifi, Waypoints } from "lucide-react";
 import {
   formatBytes, formatProgressBytes, formatSpeed, progressPercent,
   type Route, type Transfer, type TransferAction,
 } from "../../domain/dropClient";
 import { useDrop } from "../dropStore";
 import { formatClock, formatEta, routeLabel, transferActionButtons, transferIconKind, transferStatusText } from "./dropModel";
+import { FileTile, fileHue } from "./DevicesParts";
 import { useDropDevices } from "./useDropDevices";
 
 export function TransferIcon({ transfer, size = 19 }: { transfer: Pick<Transfer, "kind" | "name">; size?: number }) {
@@ -16,8 +17,15 @@ export function TransferIcon({ transfer, size = 19 }: { transfer: Pick<Transfer,
 
 export function RouteChip({ route, muted }: { route: Route | null; muted?: boolean }) {
   const { t } = useTranslation();
-  const Icon = route === "lan" ? Wifi : route === "relay" ? Waypoints : Globe2;
+  const Icon = route === "lan" ? Wifi : route === "relay" ? Waypoints : Globe;
   return <span className={`pf-drop-chip${muted ? " muted" : ""}`}><Icon size={12} aria-hidden="true" />{routeLabel(t, route)}</span>;
+}
+
+/** The route a transfer takes, as a tinted label (LAN green, public direct blue, relay amber). */
+function RouteBadge({ route }: { route: Route | null }) {
+  const { t } = useTranslation();
+  const Icon = route === "lan" ? Wifi : route === "relay" ? Waypoints : Globe;
+  return <span className={`rd-route rd-k-${route === "lan" || route === "public" || route === "relay" ? route : "unknown"}`}><Icon size={13} strokeWidth={2} aria-hidden="true" />{routeLabel(t, route)}</span>;
 }
 
 export type TransferHandlers = {
@@ -52,7 +60,8 @@ export function useTransferActions(handlers: TransferHandlers = {}) {
 function Progress({ transfer }: { transfer: Transfer }) {
   const { t } = useTranslation();
   const percent = progressPercent(transfer.confirmed_bytes, transfer.total_bytes);
-  return <div className="pf-drop-progress" role="progressbar" aria-label={t("drop.progressLabel", { name: transfer.name })}
+  const muted = transfer.status === "paused" || ["waiting_online", "failed", "verify_failed", "insufficient_space", "reconnecting", "source_changed", "relay_confirmation"].includes(transfer.status);
+  return <div className={`rd-prog${muted ? " muted" : ""}`} role="progressbar" aria-label={t("drop.progressLabel", { name: transfer.name })}
     aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(percent * 10) / 10}>
     <span style={{ width: `${percent}%` }} />
   </div>;
@@ -62,24 +71,25 @@ const showsProgress = (transfer: Transfer) =>
   ["transferring", "paused", "reconnecting", "verifying", "waiting_online", "failed", "verify_failed", "relay_confirmation"].includes(transfer.status)
   || (transfer.status === "completed");
 
-/** Compact strip under the network map. */
+const speedEta = (t: Parameters<typeof formatEta>[0], transfer: Transfer) => [formatSpeed(transfer.speed_bps), formatEta(t, transfer.eta_s)].filter(Boolean).join(" · ");
+
+/** Compact strip under the device details. */
 export function TransferStrip({ transfer, handlers }: { transfer: Transfer; handlers?: TransferHandlers }) {
   const { t } = useTranslation();
   const { perform, isPending } = useTransferActions(handlers);
   const toggle = transfer.actions.includes("pause") ? "pause" : transfer.actions.includes("resume") ? "resume" : null;
-  const right = transfer.status === "transferring"
-    ? [formatSpeed(transfer.speed_bps), formatEta(t, transfer.eta_s)].filter(Boolean).join(" · ")
-    : transferStatusText(t, transfer);
-  return <div className="pf-drop-strip">
-    <span className="pf-drop-fileicon"><TransferIcon transfer={transfer} /></span>
-    <div className="pf-drop-grow">
-      <div className="pf-drop-between"><strong className="pf-drop-filename">{transfer.name}</strong>{transfer.route && <RouteChip route={transfer.route} />}</div>
+  const percent = progressPercent(transfer.confirmed_bytes, transfer.total_bytes);
+  const right = transfer.status === "transferring" ? speedEta(t, transfer) : transferStatusText(t, transfer);
+  return <div className={`rd-mini rd-h-${fileHue(transfer)}`}>
+    <FileTile transfer={transfer} size={36} />
+    <div className="rd-mini-main">
+      <div className="rd-mini-top"><strong>{transfer.name}</strong><span className="rd-num">{Math.round(percent)}%</span></div>
       <Progress transfer={transfer} />
-      <div className="pf-drop-meta pf-drop-num"><span>{formatProgressBytes(transfer.confirmed_bytes, transfer.total_bytes)}</span><span>{right}</span></div>
+      <div className="rd-mini-meta rd-num"><span>{formatProgressBytes(transfer.confirmed_bytes, transfer.total_bytes)}</span><span>{right}</span></div>
     </div>
-    {toggle && <button type="button" className="pf-icon-button" disabled={isPending(transfer, toggle)}
+    {toggle && <button type="button" className="rd-ib" disabled={isPending(transfer, toggle)}
       aria-label={t(`drop.act_${toggle}`)} onClick={() => void perform(transfer, toggle)}>
-      {toggle === "pause" ? <Pause size={17} /> : <Play size={17} />}
+      {toggle === "pause" ? <Pause size={16} strokeWidth={1.8} /> : <Play size={16} strokeWidth={1.8} />}
     </button>}
   </div>;
 }
@@ -93,26 +103,29 @@ export function TransferCard({ transfer, handlers }: { transfer: Transfer; handl
   const target = transfer.direction === "out"
     ? `${formatBytes(transfer.total_bytes)} · ${nameOf(transfer.peer_id)}`
     : `${formatBytes(transfer.total_bytes)} · ${t("drop.fromDevice", { name: nameOf(transfer.peer_id) })}`;
-  return <div className="pf-drop-filecard">
-    <div className="pf-drop-row">
-      <span className="pf-drop-fileicon"><TransferIcon transfer={transfer} /></span>
-      <div className="pf-drop-grow"><div className="pf-drop-filename">{transfer.name}</div><small>{target}</small></div>
+  const done = transfer.status === "completed";
+  const warn = ["insufficient_space", "source_changed", "verify_failed", "failed", "relay_confirmation", "reconnecting", "waiting_online"].includes(transfer.status);
+  return <div className={`rd-fcard rd-h-${fileHue(transfer)}`}>
+    <div className="rd-fcard-top">
+      <FileTile transfer={transfer} size={40} />
+      <div className="rd-fcard-text"><div className="rd-fcard-name">{transfer.name}</div><small>{target}</small></div>
+      {done && <span className="rd-doneline"><Check size={14} strokeWidth={2.2} aria-hidden="true" />{transfer.direction === "in" ? t("drop.received") : t("drop.delivered")}</span>}
     </div>
-    {showsProgress(transfer) && transfer.status !== "completed" && <Progress transfer={transfer} />}
-    <div className="pf-drop-meta pf-drop-num">
+    {showsProgress(transfer) && !done && <Progress transfer={transfer} />}
+    <div className={`rd-fcard-meta rd-num${warn ? " warn" : ""}`}>
       <span>{transfer.status === "transferring" ? formatProgressBytes(transfer.confirmed_bytes, transfer.total_bytes) : transferStatusText(t, transfer)}</span>
-      {transfer.status === "transferring" && <span>{[formatSpeed(transfer.speed_bps), formatEta(t, transfer.eta_s)].filter(Boolean).join(" · ")}</span>}
+      {transfer.status === "transferring" && <span>{speedEta(t, transfer)}</span>}
     </div>
-    {transfer.note && <p className="pf-drop-note-text">{transfer.note}</p>}
-    <div className="pf-drop-card-actions">
-      {transfer.route ? <button type="button" className="pf-drop-link" onClick={() => handlers?.onDetails?.(transfer.peer_id)}>
-        <RouteChip route={transfer.route} muted /><ChevronRight size={14} aria-hidden="true" />
+    {transfer.note && <p className="rd-note-text">{transfer.note}</p>}
+    <div className="rd-fcard-foot">
+      {transfer.route ? <button type="button" className="rd-routebtn" aria-label={t("drop.connectionDetails")} onClick={() => handlers?.onDetails?.(transfer.peer_id)}>
+        <RouteBadge route={transfer.route} /><ChevronRight size={13} strokeWidth={1.8} aria-hidden="true" />
       </button> : <span />}
-      <span className="pf-drop-actions-inline">
-        {buttons.map(button => <button key={button.action} type="button" className="pf-drop-textbutton"
+      <span className="rd-fcard-actions">
+        {buttons.map(button => <button key={button.action} type="button" className={`rd-btn sm${button.action === "accept" || button.action === "open" ? " primary" : ""}`}
           disabled={isPending(transfer, button.action)} onClick={() => void perform(transfer, button.action)}>
-          {button.action === "pause" && <Pause size={15} aria-hidden="true" />}
-          {button.action === "resume" && <Play size={15} aria-hidden="true" />}
+          {button.action === "pause" && <Pause size={14} aria-hidden="true" />}
+          {button.action === "resume" && <Play size={14} aria-hidden="true" />}
           {button.label}
         </button>)}
       </span>
@@ -120,7 +133,7 @@ export function TransferCard({ transfer, handlers }: { transfer: Transfer; handl
   </div>;
 }
 
-/** Divider row in the transfers tab. */
+/** One row of the transfers tab. */
 export function TransferRow({ transfer, handlers }: { transfer: Transfer; handlers?: TransferHandlers }) {
   const { t, i18n } = useTranslation();
   const { nameOf, self } = useDropDevices();
@@ -131,37 +144,43 @@ export function TransferRow({ transfer, handlers }: { transfer: Transfer; handle
   const buttons = transferActionButtons(t, transfer);
   const done = transfer.status === "completed";
   const warn = ["insufficient_space", "source_changed", "verify_failed", "failed", "relay_confirmation", "reconnecting", "waiting_online"].includes(transfer.status);
+  const out = transfer.direction === "out";
+  // A folder or several files say how many they hold, next to the size.
+  const size = transfer.kind === "folder" ? `${t("drop.folderCount", { count: transfer.file_count })} · ${formatBytes(transfer.total_bytes)}`
+    : transfer.kind === "files" ? t("drop.folderSummary", { count: transfer.file_count, size: formatBytes(transfer.total_bytes) })
+      : formatBytes(transfer.total_bytes);
   const left = transfer.status === "transferring"
-    ? `${t(transfer.direction === "out" ? "drop.sendingPrefix" : "drop.receivingPrefix")} · ${formatProgressBytes(transfer.confirmed_bytes, transfer.total_bytes)}`
+    ? [`${t(out ? "drop.sendingPrefix" : "drop.receivingPrefix")} · ${formatProgressBytes(transfer.confirmed_bytes, transfer.total_bytes)}`, speedEta(t, transfer)].filter(Boolean).join(" · ")
     : done ? [formatClock(transfer.completed_at || transfer.updated_at, i18n.language), transfer.route ? routeLabel(t, transfer.route) : "", transferStatusText(t, transfer)].filter(Boolean).join(" · ")
       : transferStatusText(t, transfer);
-  return <article className="pf-drop-transfer">
-    <div className="pf-drop-between">
-      <div className="pf-drop-row">
-        <span className="pf-drop-fileicon"><TransferIcon transfer={transfer} /></span>
-        <div className="pf-drop-grow">
-          <h3 className="pf-drop-filename">{transfer.name}</h3>
-          <small>{t("drop.directionLine", { from, to, size: formatBytes(transfer.total_bytes) })}</small>
-        </div>
+  const percent = Math.round(progressPercent(transfer.confirmed_bytes, transfer.total_bytes));
+  return <article className={`rd-tr rd-h-${fileHue(transfer)}`} aria-label={transfer.name}>
+    <div className="rd-tr-top">
+      <FileTile transfer={transfer} size={42}
+        badge={<span className={`rd-dir ${out ? "out" : "in"}`} aria-hidden="true">{out ? <ArrowUpRight size={10} strokeWidth={3} /> : <ArrowDownLeft size={10} strokeWidth={3} />}</span>} />
+      <div className="rd-tr-text">
+        <h3>{transfer.name}</h3>
+        <small>{t("drop.directionLine", { from, to, size })}</small>
       </div>
-      {done ? <span className="pf-drop-good"><Check size={15} aria-hidden="true" />{transfer.direction === "in" ? t("drop.received") : t("drop.delivered")}</span>
-        : transfer.route && <RouteChip route={transfer.route} />}
+      {done ? <span className="rd-doneline pill"><Check size={14} strokeWidth={2.2} aria-hidden="true" />{transfer.direction === "in" ? t("drop.received") : t("drop.delivered")}</span>
+        : transfer.route && <RouteBadge route={transfer.route} />}
     </div>
-    {!done && showsProgress(transfer) && <Progress transfer={transfer} />}
-    <div className={`pf-drop-meta pf-drop-num${warn ? " warn" : ""}`}>
-      <span>{left}</span>
-      {transfer.status === "transferring" && <span>{[formatSpeed(transfer.speed_bps), formatEta(t, transfer.eta_s)].filter(Boolean).join(" · ")}</span>}
-    </div>
-    <div className="pf-drop-row-actions">
-      {buttons.map(button => <button key={button.action} type="button"
-        className={button.primary ? "pf-button" : "pf-drop-textbutton"}
-        disabled={isPending(transfer, button.action)} onClick={() => void perform(transfer, button.action)}>
-        {button.action === "pause" && <Pause size={15} aria-hidden="true" />}
-        {button.action === "resume" && <Play size={15} aria-hidden="true" />}
-        {button.label}
-      </button>)}
-      {handlers?.onOpenConversation && <button type="button" className="pf-drop-textbutton" onClick={() => handlers.onOpenConversation?.(transfer.peer_id)}>{t("drop.openConversation")}</button>}
-      {handlers?.onDetails && <button type="button" className="pf-drop-textbutton" onClick={() => handlers.onDetails?.(transfer.peer_id)}>{t("drop.connectionDetails")}</button>}
+    {!done && showsProgress(transfer) && <div className="rd-tr-prog">
+      <Progress transfer={transfer} /><span className="rd-pct rd-num">{percent}%</span>
+    </div>}
+    <div className="rd-tr-foot">
+      <span className={`rd-tr-status rd-num${warn ? " warn" : done ? " quiet" : ""}`}>{warn && <TriangleAlert size={14} strokeWidth={1.9} aria-hidden="true" />}{left}</span>
+      <span className="rd-tr-actions">
+        {buttons.map(button => <button key={button.action} type="button"
+          className={button.action === "accept" ? "rd-btn sm primary" : button.primary ? "rd-btn sm" : "rd-tb"}
+          disabled={isPending(transfer, button.action)} onClick={() => void perform(transfer, button.action)}>
+          {button.action === "pause" && <Pause size={14} aria-hidden="true" />}
+          {button.action === "resume" && <Play size={14} aria-hidden="true" />}
+          {button.label}
+        </button>)}
+        {handlers?.onOpenConversation && <button type="button" className="rd-tb" onClick={() => handlers.onOpenConversation?.(transfer.peer_id)}>{t("drop.openConversation")}</button>}
+        {handlers?.onDetails && <button type="button" className="rd-tb" onClick={() => handlers.onDetails?.(transfer.peer_id)}>{t("drop.connectionDetails")}</button>}
+      </span>
     </div>
   </article>;
 }

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import type { AgentMessage, AgentTask } from "../domain/rynAgent";
 import { agentTurnTiming } from "./rynAgentTiming";
 import { AgentFileContext, fileAvailable, findAgentFile } from "./RynAgentFileContext";
+import { extractSubagentCallBatchesFromMessages, isSubagentToolName, SubagentInlineGroup } from "./RynAgentSubagents";
 import "./RynAgentProgress.css";
 
 type TranscriptEntry = ({ kind: "message"; message: AgentMessage } | { kind: "progress"; messages: AgentMessage[] }) & { turnIndex: number };
@@ -121,10 +122,27 @@ export function RynAgentTurnDuration({ task, turnIndex }: { task: AgentTask; tur
   </div>;
 }
 
-export default function RynAgentProgress({ messages, task }: { messages: AgentMessage[]; task?: AgentTask }) {
+export default function RynAgentProgress({
+  messages,
+  task,
+  onSelectSubagent,
+}: {
+  messages: AgentMessage[];
+  task?: AgentTask;
+  onSelectSubagent?: (subagentId: string) => void;
+}) {
   const { t, i18n } = useTranslation("rynAgent");
   const zh = i18n.language.startsWith("zh");
   const fileContext = useContext(AgentFileContext);
+  const subagentBatches = useMemo(
+    () => extractSubagentCallBatchesFromMessages(messages, task?.events || [], task?.subagents || []),
+    [messages, task?.events, task?.subagents],
+  );
+  const nonSubagentCount = messages.reduce(
+    (total, message) =>
+      total + (message.tool_calls?.filter(tc => !isSubagentToolName(tc.function.name)).length || 0),
+    0,
+  );
   const calls = new Set(messages.flatMap(message => message.tool_calls?.map(call => call.id) || []));
   const operations = new Set(task?.events.filter(event => typeof event.call_id === "string" && calls.has(event.call_id)).map(event => event.operation_id));
   const observations = fileContext?.files.filter(file =>
@@ -159,17 +177,31 @@ export default function RynAgentProgress({ messages, task }: { messages: AgentMe
         })}
       </div>
     )}
-    <details className="ra-process-details">
-      <summary><ChevronRight size={13} /><span>{t("processDetails")}</span><small>{t("processCount", { count })}</small></summary>
-      <div className="ra-process-entries">{messages.map((message, index) => <div className="ra-process-entry" key={index}>
-        <div className="ra-process-tools">{message.tool_calls?.map(call => {
-          const detail = summarizeCallTarget(call.function.arguments);
-          return <span key={call.id} className="ra-process-tool-chip">{t(`tool_${call.function.name}`, { defaultValue: call.function.name })}{detail && <em className="ra-process-tool-arg" aria-hidden="true">{detail}</em>}</span>;
-        })}</div>
-      </div>)}{observations.length > 0 && <div className="ra-process-observations">{observations.map((file, index) =>
-        <button key={file.id} onClick={() => fileContext?.open(file)} disabled={file.status === "missing"}>
-          {t("computerObservation", { count: index + 1 })}
-        </button>)}</div>}</div>
-    </details>
+    {subagentBatches.map((batch, bIdx) => (
+      <SubagentInlineGroup
+        key={batch[0]?.callId || `subagent-batch-${bIdx}`}
+        calls={batch}
+        subagents={task?.subagents || []}
+        onSelectSubagent={onSelectSubagent}
+      />
+    ))}
+    {(nonSubagentCount > 0 || subagentBatches.length === 0) && (
+      <details className="ra-process-details">
+        <summary><ChevronRight size={13} /><span>{t("processDetails")}</span><small>{t("processCount", { count: nonSubagentCount > 0 ? nonSubagentCount : count })}</small></summary>
+        <div className="ra-process-entries">{messages.map((message, index) => {
+          const filteredCalls = message.tool_calls?.filter(call => !isSubagentToolName(call.function.name)) || [];
+          if (!filteredCalls.length) return null;
+          return <div className="ra-process-entry" key={index}>
+            <div className="ra-process-tools">{filteredCalls.map(call => {
+              const detail = summarizeCallTarget(call.function.arguments);
+              return <span key={call.id} className="ra-process-tool-chip">{t(`tool_${call.function.name}`, { defaultValue: call.function.name })}{detail && <em className="ra-process-tool-arg" aria-hidden="true">{detail}</em>}</span>;
+            })}</div>
+          </div>;
+        })}{observations.length > 0 && <div className="ra-process-observations">{observations.map((file, index) =>
+          <button key={file.id} onClick={() => fileContext?.open(file)} disabled={file.status === "missing"}>
+            {t("computerObservation", { count: index + 1 })}
+          </button>)}</div>}</div>
+      </details>
+    )}
   </div>;
 }

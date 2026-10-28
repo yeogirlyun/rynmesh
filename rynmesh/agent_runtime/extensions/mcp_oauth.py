@@ -154,15 +154,25 @@ class McpOAuthStore:
     def __init__(self, store):
         self.path, self.lock = store.root / "mcp_oauth.json", store.root / ".mcp_oauth.lock"
         self.key, self.pub = store.key, store.pub
+        self._cached_stamp = None
+        self._cached_value = None
 
     def _read(self):
         if not self.path.exists():
+            self._cached_stamp = None
+            self._cached_value = None
             return {"version": VERSION, "servers": {}}
         try:
+            st = self.path.stat()
+            stamp = (st.st_mtime_ns, st.st_size)
+            if self._cached_stamp == stamp and self._cached_value is not None:
+                return copy.deepcopy(self._cached_value)
             envelope = read_json(self.path, max_bytes=MAX_STORAGE)
             value = json.loads(peer_box.open_sealed(self.key, self.pub, envelope["nonce"], envelope["ciphertext"], info=CHANNEL))
             if value.get("version") != VERSION or not isinstance(value.get("servers"), dict):
                 raise ValueError
+            self._cached_stamp = stamp
+            self._cached_value = copy.deepcopy(value)
             return value
         except Exception:
             raise McpOAuthError("agent_mcp_oauth_storage_unavailable") from None
@@ -174,6 +184,13 @@ class McpOAuthStore:
                 raise ValueError
             nonce, ciphertext = peer_box.seal(self.key, self.pub, raw, info=CHANNEL)
             atomic_write_json(self.path, {"version": VERSION, "nonce": nonce, "ciphertext": ciphertext}, max_bytes=MAX_STORAGE)
+            try:
+                st = self.path.stat()
+                self._cached_stamp = (st.st_mtime_ns, st.st_size)
+                self._cached_value = copy.deepcopy(value)
+            except OSError:
+                self._cached_stamp = None
+                self._cached_value = None
         except Exception:
             raise McpOAuthError("agent_mcp_oauth_storage_unavailable") from None
 
@@ -266,12 +283,65 @@ class McpOAuthManager:
             fail("agent_mcp_oauth_configuration_changed")
         return current
 
+    def _identity_group_siblings(self, server):
+        identity_group_id = server.get("identity_group_id")
+        if not identity_group_id or not server.get("url"):
+            return []
+        try:
+            target_res = canonical_url(server["url"])
+        except Exception:
+            return []
+        siblings = []
+        for other in self.store.list_mcp_servers_internal():
+            if (other["instance_id"] != server["instance_id"]
+                    and other.get("identity_group_id") == identity_group_id
+                    and other.get("effective_enabled", other.get("enabled", False))
+                    and other.get("transport") == "streamable_http"
+                    and not has_static_authorization(other)
+                    and (other.get("auth") or {}).get("mode") != "none"):
+                try:
+                    source_auth, target_auth = server.get('auth') or {}, other.get('auth') or {}
+                    compatible = (source_auth.get('client_id') == target_auth.get('client_id')
+                                  and set(source_auth.get('scopes') or []) == set(target_auth.get('scopes') or []))
+                    if compatible and canonical_url(other["url"]) == target_res:
+                        siblings.append(other)
+                except Exception:
+                    pass
+        return siblings
+
+    def _propagate_identity_group_tokens(self, server):
+        siblings = self._identity_group_siblings(server)
+        if not siblings:
+            return []
+        propagated_ids = []
+        with file_transaction(self.store.lock):
+            with self.credentials.transaction() as rows:
+                src = rows.get(server["instance_id"])
+                if not src or not src.get("tokens"):
+                    return []
+                for sib in siblings:
+                    sib_binding = self._binding(sib)
+                    sib_row = rows.get(sib["instance_id"])
+                    if not sib_row or sib_row.get("binding") != sib_binding:
+                        sib_row = {"binding": sib_binding, "resource": sib_binding["resource"], "epoch": secrets.token_hex(16), "granted_scopes": []}
+                        rows[sib["instance_id"]] = sib_row
+                    for k in ("tokens", "granted_scopes", "client", "metadata", "issuer"):
+                        if k in src:
+                            sib_row[k] = copy.deepcopy(src[k])
+                    sib_row.pop("pending", None)
+                    sib_row.pop("error", None)
+                    sib_row.pop("challenge", None)
+                    sib_row["updated_at"] = self.clock()
+                    propagated_ids.append(sib["id"])
+        return propagated_ids
+
     def _row(self, server):
         # The extension lock precedes the credential lock everywhere. This
         # makes identity rechecking and credential writes one local transaction.
         with file_transaction(self.store.lock):
-            self._current(server)
+            current = self._current(server)
             binding = self._binding(server)
+            siblings = self._identity_group_siblings(current) if current.get("identity_group_id") else []
             with self.credentials.transaction() as rows:
                 row = rows.get(server["instance_id"])
                 if not row or row.get("binding") != binding:
@@ -279,6 +349,27 @@ class McpOAuthManager:
                     rows[server["instance_id"]] = row
                 if row.get("pending") and row.get("pending_expires_at", 0) <= self.clock():
                     row.pop("pending", None)
+                row_tok = row.get("tokens") or {}
+                row_valid = bool(row_tok and not row.get("error") and row_tok.get("expires_at", 0) > self.clock() + 60)
+                if not row_valid and not row.get("pending") and current.get("identity_group_id"):
+                    for sib in siblings:
+                        sib_row = rows.get(sib["instance_id"])
+                        sib_tok = (sib_row or {}).get("tokens") or {}
+                        if (
+                            sib_row
+                            and sib_row.get("binding") == self._binding(sib)
+                            and sib_tok
+                            and not sib_row.get("error")
+                            and sib_tok.get("expires_at", 0) > self.clock() + 60
+                        ):
+                            for k in ("tokens", "granted_scopes", "client", "metadata", "issuer"):
+                                if k in sib_row:
+                                    row[k] = copy.deepcopy(sib_row[k])
+                            row.pop("error", None)
+                            row.pop("challenge", None)
+                            row["updated_at"] = self.clock()
+                            row_valid = True
+                            break
                 return copy.deepcopy(row)
 
     def _update(self, server, epoch, change):
@@ -505,7 +596,7 @@ class McpOAuthManager:
             fail()
         refresh = result.get("refresh_token", (previous or {}).get("refresh_token"))
         return {"access_token": _text(result.get("access_token")), "refresh_token": _text(refresh) if refresh else None,
-                "expires_at": self.clock() + expires, "scope": " ".join(granted), "token_type": "Bearer"}
+                "expires_at": self.clock() + expires, "refreshed_at": self.clock(), "scope": " ".join(granted), "token_type": "Bearer"}
 
     def complete_login(self, auth_id, params):
         with self._lock:
@@ -540,12 +631,18 @@ class McpOAuthManager:
                 row.pop("challenge", None)
             with self._lock:
                 self._update(flow["server"], flow["epoch"], save)
+                sibling_ids = self._propagate_identity_group_tokens(flow["server"])
                 flow["state"] = "connected"
                 flow["discovery_pending"] = self.on_connected is not None
             if self.on_connected:
                 def notify():
                     try:
                         self.on_connected(flow["server"]["id"])
+                        for sib_id in sibling_ids:
+                            try:
+                                self.on_connected(sib_id)
+                            except Exception:
+                                pass
                     except Exception:
                         pass
                     finally:
@@ -642,13 +739,14 @@ class McpOAuthManager:
             return tokens["access_token"]
         if refresh_state and refresh_state[0]:
             fail("agent_mcp_auth_required")
-        lock = self.store.root / (".mcp-oauth-refresh-" + hashlib.sha256(server["instance_id"].encode()).hexdigest() + ".lock")
+        lock_key = f"{server.get('identity_group_id')}:{row.get('resource')}" if server.get("identity_group_id") else server["instance_id"]
+        lock = self.store.root / (".mcp-oauth-refresh-" + hashlib.sha256(lock_key.encode()).hexdigest() + ".lock")
         with file_transaction(lock):
             current = self._row(server)
             if current["epoch"] != row["epoch"] or current.get("pending"):
                 fail("agent_mcp_auth_required")
             latest = current.get("tokens")
-            if latest and latest != tokens and latest["expires_at"] > self.clock() + 60:
+            if latest and latest["expires_at"] > self.clock() + 60 and (latest != tokens or (not force_refresh and latest.get("refreshed_at", 0) > self.clock() - 30)):
                 return latest["access_token"]
             if not latest or not latest.get("refresh_token"):
                 self._update(server, row["epoch"], lambda r: (r.pop("tokens", None), r.update(error="agent_mcp_auth_required")))
@@ -670,6 +768,7 @@ class McpOAuthManager:
                     value.update(tokens=refreshed, granted_scopes=_scopes(refreshed["scope"]))
                     value.pop("error", None)
                 self._update(server, row["epoch"], save)
+                self._propagate_identity_group_tokens(server)
             except AgentError:
                 self._revoke({**current, "tokens": refreshed})
                 raise
@@ -688,11 +787,24 @@ class McpOAuthManager:
     def logout(self, server_id, expected_revision=None):
         server = self.store.get_mcp_server_internal(server_id, require_enabled=False, expected_revision=expected_revision)
         previous = self.credentials.read()["servers"].get(server["instance_id"])
+        siblings = self._identity_group_siblings(server) if server.get("identity_group_id") else []
+        sibling_instances = {s["instance_id"] for s in siblings}
         for ident, flow in list(self._flows.items()):
-            if flow["server"]["instance_id"] == server["instance_id"]:
-                self.cancel_login(server_id, ident)
+            if flow["server"]["instance_id"] == server["instance_id"] or flow["server"]["instance_id"] in sibling_instances:
+                self.cancel_login(flow["server"]["id"], ident)
         row = self._row(server)
         self._update(server, row["epoch"], lambda r: (r.pop("tokens", None), r.pop("pending", None), r.pop("error", None), r.update(epoch=secrets.token_hex(16))))
+        if siblings:
+            with file_transaction(self.store.lock):
+                with self.credentials.transaction() as rows:
+                    for sib in siblings:
+                        sib_row = rows.get(sib["instance_id"])
+                        if sib_row:
+                            sib_row.pop("tokens", None)
+                            sib_row.pop("pending", None)
+                            sib_row.pop("error", None)
+                            sib_row["epoch"] = secrets.token_hex(16)
+                            sib_row["updated_at"] = self.clock()
         self._revoke(previous or row)
         return self.public_status(server["instance_id"])
 
@@ -700,9 +812,18 @@ class McpOAuthManager:
         for ident, flow in list(self._flows.items()):
             if flow["server"]["instance_id"] == instance_id:
                 self.cancel_login(flow["server"]["id"], ident)
+        shared_elsewhere = False
         with self.credentials.transaction() as rows:
             row = rows.pop(instance_id, None)
-        if row:
+            if row and row.get("tokens"):
+                tok = (row["tokens"].get("refresh_token") or row["tokens"].get("access_token"))
+                if tok:
+                    shared_elsewhere = any(
+                        (other.get("tokens") or {}).get("refresh_token") == tok
+                        or (other.get("tokens") or {}).get("access_token") == tok
+                        for other in rows.values()
+                    )
+        if row and not shared_elsewhere:
             self._revoke(row)
 
     def public_status(self, instance_id):
