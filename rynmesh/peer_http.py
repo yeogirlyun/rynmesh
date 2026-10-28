@@ -6,6 +6,7 @@ manifests and content hashes locally before storing content bytes.
 """
 
 from __future__ import annotations
+from .transport import stamp_network_key
 
 import codecs
 import hashlib
@@ -270,7 +271,6 @@ class HttpPeerClient:
 
     def post_json(
         self, path: str, payload: dict[str, Any], *, max_bytes: int = MAX_JSON_BYTES,
-        headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """POST one JSON object through the configured bounded Transport."""
         post = getattr(self.transport, "post_bytes", None)
@@ -285,21 +285,32 @@ class HttpPeerClient:
                 body,
                 timeout_s=self.timeout_s,
                 max_bytes=max_bytes,
-                headers={**(headers or {}), "Content-Type": "application/json"},
+                # Stamped here as well as in the transport, so a third-party
+                # transport that forgets the credential still authenticates.
+                headers=stamp_network_key({"Content-Type": "application/json"}),
             )
         except TransportError as exc:
             if exc.reason == "too_large":
-                raise PeerTransportError("peer_response_too_large") from exc
+                raise PeerTransportError("peer_response_too_large") from None
             # Keep plugin exception text out of the public error surface: a
             # third-party transport may include request/response bytes there.
-            raise PeerTransportError(f"peer_http_error:{exc.reason}") from None
+            # The HTTP status is metadata, not body — carry it so a keyed
+            # peer's 404 (key mismatch) is distinguishable from network loss.
+            detail = f"http_{exc.status}" if exc.status else exc.reason
+            raise PeerTransportError(f"peer_http_error:{detail}") from None
+        if not raw.strip():
+            # A 2xx with no body is a middlebox or a broken peer, never a
+            # valid answer: treating it as {} once recorded settlements as
+            # delivered and suppressed the relay fallback for tasks.
+            raise PeerTransportError("peer_empty_response")
         try:
-            value = json.loads(raw.decode("utf-8") or "{}")
+            value = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise PeerTransportError("peer_invalid_json") from exc
+            raise PeerTransportError("peer_invalid_json") from None
         if not isinstance(value, dict):
             raise PeerTransportError("peer_response_not_object")
         return value
+
 
     def iter_post_ndjson(
         self,

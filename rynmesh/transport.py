@@ -25,6 +25,7 @@ Profiles are selected with `RYNMESH_TRANSPORT` (default: `camouflage`).
 
 from __future__ import annotations
 
+import http.client
 import hashlib
 import os
 import ssl
@@ -55,11 +56,19 @@ NETWORK_KEY_HEADER = "X-Ryn-Auth"
 
 
 class TransportError(RuntimeError):
-    """Transport-layer failure. ``reason`` lets callers map to domain errors."""
+    """Transport-layer failure. ``reason`` lets callers map to domain errors.
 
-    def __init__(self, message: str, *, reason: str = "http_error") -> None:
+    ``status`` carries the HTTP status code when the failure was an HTTP
+    response, so a keyed peer's 404 (network-key mismatch) is distinguishable
+    from network loss without leaking anything from the response body.
+    """
+
+    def __init__(self, message: str, *, reason: str = "http_error",
+                 status: int | None = None) -> None:
         super().__init__(message)
         self.reason = reason
+        self.status = status
+
 
 
 @dataclass(frozen=True)
@@ -263,37 +272,58 @@ class StdlibHttpsTransport:
         if extra:
             merged.update(extra)
         # Caller-supplied headers must not suppress mesh authentication.
-        merged.update(network_key_header())
-        return merged
+        return stamp_network_key(merged)
+
+    def _request(self, method: str, url: str, *, body: bytes | None, timeout_s: float,
+                 max_bytes: int, headers: dict[str, str] | None) -> bytes:
+        req = urllib.request.Request(url, data=body, method=method, headers=self._headers(headers))
+        try:
+            with self._opener.open(req, timeout=timeout_s) as resp:
+                return read_bounded(resp, max_bytes)
+        except HTTPError as exc:
+            raise TransportError(f"http status {exc.code}", reason="http_error",
+                                 status=exc.code) from exc
+        except (URLError, TimeoutError, ssl.SSLError, OSError) as exc:
+            raise TransportError("http request failed", reason="http_error") from None
 
     def get_bytes(
         self, url: str, *, timeout_s: float, max_bytes: int, headers: dict[str, str] | None = None
     ) -> bytes:
-        req = urllib.request.Request(url, method="GET", headers=self._headers(headers))
-        try:
-            with self._opener.open(req, timeout=timeout_s) as resp:
-                data = resp.read(max_bytes + 1)
-        except (HTTPError, URLError, TimeoutError, ssl.SSLError, OSError) as exc:
-            raise TransportError(f"http error: {exc}", reason="http_error") from exc
-        if len(data) > max_bytes:
-            raise TransportError("response too large", reason="too_large")
-        return data
+        return self._request("GET", url, body=None, timeout_s=timeout_s,
+                             max_bytes=max_bytes, headers=headers)
 
     def post_bytes(
         self, url: str, body: bytes, *, timeout_s: float, max_bytes: int,
         headers: dict[str, str] | None = None,
     ) -> bytes:
-        req = urllib.request.Request(
-            url, data=body, method="POST", headers=self._headers(headers),
-        )
+        return self._request("POST", url, body=body, timeout_s=timeout_s,
+                             max_bytes=max_bytes, headers=headers)
+
+    def download(
+        self, url: str, dest: Path, *, timeout_s: float, max_bytes: int,
+        headers: dict[str, str] | None = None,
+    ) -> Path:
+        dest = Path(dest).expanduser()
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        req = urllib.request.Request(url, method="GET", headers=self._headers(headers))
         try:
-            with self._opener.open(req, timeout=timeout_s) as resp:
-                data = resp.read(max_bytes + 1)
+            with self._opener.open(req, timeout=timeout_s) as resp, dest.open("wb") as handle:
+                total = 0
+                while True:
+                    chunk = resp.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise TransportError("media too large", reason="too_large")
+                    handle.write(chunk)
+        except TransportError:
+            dest.unlink(missing_ok=True)
+            raise
         except (HTTPError, URLError, TimeoutError, ssl.SSLError, OSError) as exc:
-            raise TransportError(f"http error: {exc}", reason="http_error") from exc
-        if len(data) > max_bytes:
-            raise TransportError("response too large", reason="too_large")
-        return data
+            dest.unlink(missing_ok=True)
+            raise TransportError("http request failed", reason="http_error") from None
+        return dest
 
     def iter_post_bytes(
         self, url: str, body: bytes, *, timeout_s: float, max_chunk_bytes: int,
@@ -332,31 +362,6 @@ class StdlibHttpsTransport:
         except (HTTPError, URLError, TimeoutError, ssl.SSLError, OSError) as exc:
             raise TransportError("stream request failed", reason="http_error") from exc
 
-    def download(
-        self, url: str, dest: Path, *, timeout_s: float, max_bytes: int,
-        headers: dict[str, str] | None = None,
-    ) -> Path:
-        dest = Path(dest).expanduser()
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        req = urllib.request.Request(url, method="GET", headers=self._headers(headers))
-        try:
-            with self._opener.open(req, timeout=timeout_s) as resp, dest.open("wb") as handle:
-                total = 0
-                while True:
-                    chunk = resp.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    total += len(chunk)
-                    if total > max_bytes:
-                        raise TransportError("media too large", reason="too_large")
-                    handle.write(chunk)
-        except TransportError:
-            dest.unlink(missing_ok=True)
-            raise
-        except (HTTPError, URLError, TimeoutError, ssl.SSLError, OSError) as exc:
-            dest.unlink(missing_ok=True)
-            raise TransportError(f"http error: {exc}", reason="http_error") from exc
-        return dest
 
 
 class FrontedHttpsTransport:
@@ -391,7 +396,7 @@ class FrontedHttpsTransport:
         # to another virtual host or keep the one-shot socket alive.
         merged["Host"] = host_header  # real backend; routed by CDN/origin
         merged["Connection"] = "close"  # one socket per request
-        merged.update(network_key_header())
+        merged = stamp_network_key(merged)
         return merged
 
     def _open(
@@ -417,7 +422,7 @@ class FrontedHttpsTransport:
         try:
             raw = socket.create_connection((connect_host, port), timeout=timeout_s)
         except OSError as exc:
-            raise TransportError(f"http error: {exc}", reason="http_error") from exc
+            raise TransportError("http request failed", reason="http_error") from None
         try:
             if scheme == "https":
                 raw = self._ctx.wrap_socket(raw, server_hostname=sni)
@@ -433,42 +438,62 @@ class FrontedHttpsTransport:
                 raw.close()
             except OSError:
                 pass
-            raise TransportError(f"http error: {exc}", reason="http_error") from exc
-        if not 200 <= resp.status < 300:
+            raise TransportError("http request failed", reason="http_error") from None
+        if (method == "POST" and not 200 <= resp.status < 300) or resp.status >= 400:
             conn.close()
-            raise TransportError(f"http status {resp.status}", reason="http_error")
+            raise TransportError(f"http status {resp.status}", reason="http_error", status=resp.status)
         return conn, resp
+
+    def _request(self, method: str, url: str, *, body: bytes | None, timeout_s: float,
+                 max_bytes: int, headers: dict[str, str] | None) -> bytes:
+        conn, resp = self._open(url, timeout_s, headers, method=method, body=body)
+        try:
+            return read_bounded(resp, max_bytes)
+        except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
+            raise TransportError("http request failed", reason="http_error") from None
+        finally:
+            conn.close()
 
     def get_bytes(
         self, url: str, *, timeout_s: float, max_bytes: int, headers: dict[str, str] | None = None
     ) -> bytes:
-        conn, resp = self._open(url, timeout_s, headers)
-        try:
-            data = resp.read(max_bytes + 1)
-        except (OSError, ssl.SSLError) as exc:
-            raise TransportError(f"http error: {exc}", reason="http_error") from exc
-        finally:
-            conn.close()
-        if len(data) > max_bytes:
-            raise TransportError("response too large", reason="too_large")
-        return data
+        return self._request("GET", url, body=None, timeout_s=timeout_s,
+                             max_bytes=max_bytes, headers=headers)
 
     def post_bytes(
         self, url: str, body: bytes, *, timeout_s: float, max_bytes: int,
         headers: dict[str, str] | None = None,
     ) -> bytes:
-        import http.client
+        return self._request("POST", url, body=body, timeout_s=timeout_s,
+                             max_bytes=max_bytes, headers=headers)
 
-        conn, resp = self._open(url, timeout_s, headers, method="POST", body=body)
+    def download(
+        self, url: str, dest: Path, *, timeout_s: float, max_bytes: int,
+        headers: dict[str, str] | None = None,
+    ) -> Path:
+        dest = Path(dest).expanduser()
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        conn, resp = self._open(url, timeout_s, headers)
         try:
-            data = resp.read(max_bytes + 1)
+            with dest.open("wb") as handle:
+                total = 0
+                while True:
+                    chunk = resp.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise TransportError("media too large", reason="too_large")
+                    handle.write(chunk)
+        except TransportError:
+            dest.unlink(missing_ok=True)
+            raise
         except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
-            raise TransportError(f"http error: {exc}", reason="http_error") from exc
+            dest.unlink(missing_ok=True)
+            raise TransportError("http request failed", reason="http_error") from None
         finally:
             conn.close()
-        if len(data) > max_bytes:
-            raise TransportError("response too large", reason="too_large")
-        return data
+        return dest
 
     def iter_post_bytes(
         self, url: str, body: bytes, *, timeout_s: float, max_chunk_bytes: int,
@@ -498,33 +523,6 @@ class FrontedHttpsTransport:
         finally:
             conn.close()
 
-    def download(
-        self, url: str, dest: Path, *, timeout_s: float, max_bytes: int,
-        headers: dict[str, str] | None = None,
-    ) -> Path:
-        dest = Path(dest).expanduser()
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        conn, resp = self._open(url, timeout_s, headers)
-        try:
-            with dest.open("wb") as handle:
-                total = 0
-                while True:
-                    chunk = resp.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    total += len(chunk)
-                    if total > max_bytes:
-                        raise TransportError("media too large", reason="too_large")
-                    handle.write(chunk)
-        except TransportError:
-            dest.unlink(missing_ok=True)
-            raise
-        except (OSError, ssl.SSLError) as exc:
-            dest.unlink(missing_ok=True)
-            raise TransportError(f"http error: {exc}", reason="http_error") from exc
-        finally:
-            conn.close()
-        return dest
 
 
 def get_pinned_transport(url: str, connect_ip: str) -> FrontedHttpsTransport:
@@ -760,7 +758,7 @@ class CdnWebSocketTransport:
             return self._do_request(url, timeout_s, max_bytes, headers)
         except TransportError:
             raise
-        except (OSError, ssl.SSLError) as exc:
+        except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
             raise TransportError(f"cdn-ws error: {exc}", reason="http_error") from exc
 
     def post_bytes(
@@ -773,7 +771,7 @@ class CdnWebSocketTransport:
             )
         except TransportError:
             raise
-        except (OSError, ssl.SSLError) as exc:
+        except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
             raise TransportError(f"cdn-ws error: {exc}", reason="http_error") from exc
 
     def download(
@@ -835,3 +833,35 @@ def get_transport(profile: TransportProfile | None = None) -> Transport:
 def reset_transport_cache() -> None:
     """Drop cached transports (tests after env changes)."""
     _CACHE.clear()
+
+def stamp_network_key(headers: dict[str, str]) -> dict[str, str]:
+    """Return ``headers`` with the mesh credential enforced, case-insensitively.
+
+    HTTP header names are case-insensitive; a plain ``dict.update`` with the
+    canonical casing would let a caller-supplied ``x-ryn-auth`` ride along as a
+    duplicate line, and whichever the receiving stack reads first would win.
+    Every caller-supplied spelling is stripped before the real value is set.
+    """
+    cleaned = {k: v for k, v in headers.items() if k.lower() != NETWORK_KEY_HEADER.lower()}
+    cleaned.update(network_key_header())
+    return cleaned
+
+
+def read_bounded(resp, max_bytes: int) -> bytes:
+    """Read at most ``max_bytes`` from a response, refusing anything larger."""
+    data = resp.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise TransportError("response too large", reason="too_large")
+    return data
+
+
+def check_status(status: int, *, strict: bool) -> None:
+    """Reject failure responses.
+
+    POST paths are ``strict`` (2xx only — a redirect of a signed task is never
+    right). GET/download keep the pre-existing ``>= 400`` contract so peers
+    behind redirecting CDN edges do not flip from readable to hard-failed.
+    """
+    if (strict and not 200 <= status < 300) or (not strict and status >= 400):
+        raise TransportError(f"http status {status}", reason="http_error", status=status)
+

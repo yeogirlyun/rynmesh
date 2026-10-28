@@ -679,40 +679,16 @@ def test_llm_cancellation_uses_peer_post_transport(monkeypatch, tmp_path) -> Non
     assert calls[0][3] == 5
 
 
-def test_meek_post_uses_versioned_inner_request_envelope(monkeypatch) -> None:
-    import base64
-    import json
-
+def test_meek_post_refuses_without_a_negotiated_bridge_protocol(monkeypatch):
     from rynmesh.transport_plugins import MeekTransport
-
     monkeypatch.setenv("RYNMESH_MEEK_URL", "https://meek.example/bridge")
-    monkeypatch.setenv("RYNMESH_NETWORK_KEY", "required-key")
     transport = MeekTransport(TransportProfile(name="meek"))
-    captured: dict[str, object] = {}
-
-    def bridge(payload, timeout_s, max_bytes):
-        captured.update(payload=payload, timeout_s=timeout_s, max_bytes=max_bytes)
-        return b'{"ok":true}'
-
-    monkeypatch.setattr(transport, "_post_to_bridge", bridge)
-    result = transport.post_bytes(
-        "https://provider.example/api/peer/llm/tasks", b"ciphertext",
-        timeout_s=9, max_bytes=99,
-        headers={
-            "Content-Type": "application/json",
-            NETWORK_KEY_HEADER: "attacker-override",
-        },
-    )
-    envelope = json.loads(captured["payload"])
-    assert result == b'{"ok":true}'
-    assert envelope["kind"] == "rynmesh.transport.request.v1"
-    assert envelope["method"] == "POST"
-    assert envelope["url"].endswith("/api/peer/llm/tasks")
-    assert envelope["headers"]["Content-Type"] == "application/json"
-    assert envelope["headers"][NETWORK_KEY_HEADER] == hashlib.sha256(
-        b"rynmesh-net-key:required-key",
-    ).hexdigest()
-    assert base64.b64decode(envelope["body_b64"]) == b"ciphertext"
+    def unexpected(*args, **kwargs):
+        raise AssertionError("must not send an unsupported request")
+    monkeypatch.setattr(transport, "_post_to_bridge", unexpected)
+    with pytest.raises(TransportError) as error:
+        transport.post_bytes("https://peer.example/task", b"ciphertext", timeout_s=1, max_bytes=99)
+    assert error.value.reason == "unsupported"
 
 
 def test_reality_post_streams_bounded_response_and_preserves_auth(monkeypatch) -> None:
@@ -735,11 +711,14 @@ def test_reality_post_streams_bounded_response_and_preserves_auth(monkeypatch) -
             self.closed = True
 
     class Session:
+        def close(self):
+            pass
+
         def __init__(self, response):
             self.response = response
             self.calls = []
 
-        def post(self, url, **kwargs):
+        def request(self, method, url, **kwargs):
             self.calls.append((url, kwargs))
             return self.response
 
