@@ -1,3 +1,4 @@
+import { tr } from "../uiI18n";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { useNavigate } from "react-router-dom";
@@ -32,7 +33,7 @@ export default function InviteDeepLinks({ children }: { children: ReactNode }) {
     return () => { active = false; stop?.(); };
   }, []);
   return <InviteContext.Provider value={{ pending, clear: () => { pendingRef.current = ""; setPending(""); setNotice(""); } }}>
-    {notice ? <div role="status">{notice} <button onClick={() => setNotice("")}>Dismiss notice</button></div> : null}
+    {notice ? <div role="status">{notice} <button onClick={() => setNotice("")}>{tr("Dismiss notice")}</button></div> : null}
     {children}
   </InviteContext.Provider>;
 }

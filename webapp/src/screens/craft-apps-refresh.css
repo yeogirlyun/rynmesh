@@ -140,7 +140,7 @@
 .craft-apps-v2 .ra-row p { min-height: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .craft-apps-v2 .ra-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--ra-warn-ink); }
 
-/* ---- extension / company plugins ---- */
+/* ---- extension plugins ---- */
 .craft-apps-v2 .ra-ext-list { display: flex; flex-direction: column; gap: 16px; }
 .craft-apps-v2 .ra-ext-card { padding: 18px 20px; gap: 14px; }
 .craft-apps-v2 .ra-ext-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }

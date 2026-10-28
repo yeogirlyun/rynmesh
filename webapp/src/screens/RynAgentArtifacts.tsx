@@ -277,6 +277,7 @@ export function TaskArtifacts({ task, maxTurnIndex = 0, children }: { task: Agen
   // A file on disk is still work in progress until the turn and its background
   // file producers have settled. Keep the listing available for process previews.
   const showCurrentFiles = finished && !listing?.pending_files;
+  const showLegacyArtifacts = !listing?.pending_files && (finished || !listing?.files?.length);
   const showResultFiles = showCurrentFiles && (deliverables.length > 0 || supporting.length > 0);
   const partial = ["failed", "cancelled", "interrupted", "paused"].includes(agentTaskState(task));
   const availableCount = deliverables.filter(file => file.status !== "missing").length || supporting.filter(file => file.status !== "missing").length;
@@ -302,7 +303,7 @@ export function TaskArtifacts({ task, maxTurnIndex = 0, children }: { task: Agen
         loadImage={file.preview === "image" ? loadFile : undefined} readText={file.preview === "text" ? readFileText : undefined}
         loadPdf={/\.pdf$/i.test(file.name) ? loadFile : undefined}
         loadDocument={isOfficePreview(file.name) ? readDocument : undefined} /></div>}
-    {showCurrentFiles && (items.length > 0 || (error && !showResultFiles)) && <section className="ra-files ra-artifacts" aria-label={t("artifacts")}>
+    {showLegacyArtifacts && (items.length > 0 || (error && !showResultFiles)) && <section className="ra-files ra-artifacts" aria-label={t("artifacts")}>
       {error && <p role="alert">{t("artifactListError")} <button onClick={() => setReload(n => n + 1)}>{t("retry")}</button></p>}
       {items.length > 0 && partial && <div className="ra-files-head" role="status"><Check size={15} />{t("filesSavedPartial", { count: items.length })}</div>}
       {items.map(item => <div className="ra-file-card" key={item.id}><span className="ra-file-icon"><FileText size={20} strokeWidth={1.7} /></span>

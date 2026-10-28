@@ -82,7 +82,7 @@ export default function FriendAI({ friends, friend: only, onAllowed }: { friends
       <p className="rq-help">{tr("Being friends does not grant AI access. Choose who can use each service; your friend's device sees the questions sent to their model.")}</p>
       <button type="button" className="rf-ib rf-ib-sm" aria-label={tr("Refresh AI permissions")} title={tr("Refresh AI permissions")} disabled={busy} onClick={() => void load()}><RefreshCw size={14} strokeWidth={1.7} aria-hidden="true" /></button>
     </div>
-    {loaded && serviceChanged ? <p role="alert">The selected service changed. Open the current model before sharing.</p> : null}{error ? <p className="rq-banner rq-banner-bad" role="alert">{error}</p> : null}{notice ? <p className="rq-banner rq-banner-ok" role="status">{notice}</p> : null}
+    {loaded && serviceChanged ? <p role="alert">{tr("The selected service changed. Open the current model before sharing.")}</p> : null}{error ? <p className="rq-banner rq-banner-bad" role="alert">{error}</p> : null}{notice ? <p className="rq-banner rq-banner-ok" role="status">{notice}</p> : null}
     {!loaded ? <p className="rq-loading">{tr("Loading AI permissions…")}</p> : <>
       <section className="rq-ai-sec" aria-labelledby="rq-ai-mine">
         <h3 ref={heading} tabIndex={-1} id="rq-ai-mine">{tr("Your AI")}</h3>

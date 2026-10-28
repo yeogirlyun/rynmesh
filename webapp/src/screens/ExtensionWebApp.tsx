@@ -1,3 +1,4 @@
+import { tr } from "../uiI18n";
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAppContext } from '../appContext';
@@ -70,8 +71,8 @@ export default function ExtensionWebApp() {
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
   }, [plugin, pluginId, client, navigate]);
-  if (error) return <p role="alert">{error} · <Link to="/settings/extensions/plugins">Manage plugins</Link></p>;
-  if (!plugin?.web_app) return <p>Loading…</p>;
-  const url = new URL(plugin.web_app.url); if (url.origin === window.location.origin) return <p role="alert">Plugin app must use a separate origin</p>; url.searchParams.set('host_origin', window.location.origin);
+  if (error) return <p role="alert">{error} · <Link to="/settings/extensions/plugins">{tr("Manage plugins")}</Link></p>;
+  if (!plugin?.web_app) return <p>{tr("Loading…")}</p>;
+  const url = new URL(plugin.web_app.url); if (url.origin === window.location.origin) return <p role="alert">{tr("Plugin app must use a separate origin")}</p>; url.searchParams.set('host_origin', window.location.origin);
   return <iframe ref={frame} title={plugin.title} src={url.href} sandbox="allow-scripts allow-forms allow-same-origin allow-popups" referrerPolicy="no-referrer" style={{ border: 0, width: '100%', height: 'calc(100vh - 48px)' }} />;
 }

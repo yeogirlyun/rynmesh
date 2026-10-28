@@ -408,7 +408,7 @@ it("displays the sample-reports extension plugin as a uniform card inside the In
   const card = heading.closest("article")!;
   expect(card).toHaveAttribute("data-extension-plugin", "sample-reports");
   expect(within(card).getByText("示例报表只读查询。")).toBeInTheDocument();
-  expect(within(card).getByText("待登录")).toBeInTheDocument();
+  expect(within(card).getByText("需要登录")).toBeInTheDocument();
   expect(within(card).getByRole("button", { name: "打开" })).toBeEnabled();
 });
 

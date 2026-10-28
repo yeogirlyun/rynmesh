@@ -109,7 +109,7 @@ export function PluginUpdatesPanel() {
   }
   return <div className="ryn-update-panel">
     <h3>{tx("插件自动更新", "Plugin updates")}</h3>
-    <p>{tx("公共插件订阅 Git Release，公司插件订阅公司后台 HTTPS 地址。内置业务插件随 Ryn 更新。", "Public plugins use Git Releases; company plugins use company HTTPS endpoints. Built-in adapters update with Ryn.")}</p>
+    <p>{tx("公共插件订阅 Git Release，私有插件使用配置的 HTTPS 更新地址。内置适配器随 Ryn 更新。", "Public plugins use Git Releases; private plugins use their configured HTTPS update endpoints. Built-in adapters update with Ryn.")}</p>
     {!plugins.length && <p>{tx("安装可独立更新的插件后，可在这里配置订阅。", "Install a downloadable plugin to configure its update source here.")}</p>}
     {status.plugins.map(row => <div key={row.id} className="ryn-update-row">
       <strong>{plugins.find(p => p.id === row.id)?.name || row.id}</strong>

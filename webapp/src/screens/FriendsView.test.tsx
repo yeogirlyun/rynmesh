@@ -25,6 +25,7 @@ beforeEach(() => {
   mocks.client.getLLMServiceStatus.mockResolvedValue({ online: true, ready: true, publication_enabled: true, service: { package_id: "model-x", model_alias: "Local model" } });
   vi.spyOn(friendsApi, "list").mockResolvedValue({ friends: [alice, bob] });
   vi.spyOn(friendsApi, "invites").mockResolvedValue({ invites: [] });
+  vi.spyOn(friendsApi, "aiJoins").mockResolvedValue({ operations: [] });
   vi.spyOn(friendsApi, "invitationContext").mockResolvedValue({ endpoint: "192.168.1.2:8791", address_category: "LAN private" });
   vi.spyOn(friendsApi, "cards").mockResolvedValue({ cards: [] });
   vi.spyOn(friendsApi, "history").mockResolvedValue({ messages: [] });

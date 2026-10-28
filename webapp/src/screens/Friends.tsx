@@ -161,7 +161,7 @@ export default function Friends() {
     risk: "high", confirmLabel: tr("Remove friend"), onConfirm: () => actThenReload(() => friendsApi.revoke(friend.relationship_id)) });
 
   return <div className="rf rd-friends">
-    {deepLink.pending && <div role="status">An invitation is ready to review. <button onClick={() => { revision.current += 1; setPaste(deepLink.pending); setReview(null); setAddOpen(true); setInviteTab("use"); deepLink.clear(); }}>Load opened invitation</button><button onClick={deepLink.clear}>Dismiss opened invitation</button></div>}
+    {deepLink.pending && <div role="status">{tr("An invitation is ready to review.")} <button onClick={() => { revision.current += 1; setPaste(deepLink.pending); setReview(null); setAddOpen(true); setInviteTab("use"); deepLink.clear(); }}>{tr("Load opened invitation")}</button><button onClick={deepLink.clear}>{tr("Dismiss opened invitation")}</button></div>}
     <header className="rq-head">
       <div className="rq-head-text">
         <h1>{tr("Friends")}</h1>
@@ -244,15 +244,15 @@ export default function Friends() {
       {showEmpty ? <EmptyFriends onAdd={() => setAddOpen(true)} /> : null}
     </div>
 
-    {operations.length ? <Panel><h2>AI invitation progress</h2><p>Unfinished operations survive restart. Continue the original operation; permission is checked before opening chat.</p>
+    {operations.length ? <Panel><h2>{tr("AI invitation progress")}</h2><p>{tr("Unfinished operations survive restart. Continue the original operation; permission is checked before opening chat.")}</p>
       {operations.map((operation) => <section key={operation.operation_id} aria-label={`AI invitation from ${operation.node_name}`}>
         <h3>{operation.node_name} · {operation.service_id}</h3>
-        <p>Operation {operation.operation_id} · {operation.stage === "joining" ? "Friendship / authorization unfinished" : operation.stage === "discovering" ? "Service confirmation unfinished" : operation.stage === "complete" ? "Previously accepted; recheck to open" : "Stopped locally"}</p>
+        <p>{tr("Operation")} {operation.operation_id} · {operation.stage === "joining" ? "Friendship / authorization unfinished" : operation.stage === "discovering" ? "Service confirmation unfinished" : operation.stage === "complete" ? "Previously accepted; recheck to open" : "Stopped locally"}</p>
         {operation.error ? <p>{aiJoinExplanation(operation.error)}</p> : null}
         {operation.stage !== "cancelled" ? <>
           <Button disabled={busy} onClick={() => void act(async () => finishAI(await friendsApi.resumeAIJoin(operation.operation_id)))}>{operation.stage === "complete" ? "Open this friend's AI" : "Continue original operation"}</Button>
-          {operation.stage === "joining" || operation.stage === "discovering" ? <Button disabled={busy} onClick={() => void act(async () => setReview({ uri: "", operationId: operation.operation_id, preview: await friendsApi.reviewAIJoin(operation.operation_id) }))}>Review current AI details</Button> : null}
-          <Button disabled={busy} onClick={() => confirm({ title: "Stop continuing this invitation?", body: "Clears its saved invitation on this device. Any friendship or AI permission already saved by the provider remains; ask them to revoke it if needed.", risk: "medium", confirmLabel: "Stop and clear invitation", onConfirm: () => act(async () => { await friendsApi.abandonAIJoin(operation.operation_id); await load(); }) })}>Stop continuing</Button>
+          {operation.stage === "joining" || operation.stage === "discovering" ? <Button disabled={busy} onClick={() => void act(async () => setReview({ uri: "", operationId: operation.operation_id, preview: await friendsApi.reviewAIJoin(operation.operation_id) }))}>{tr("Review current AI details")}</Button> : null}
+          <Button disabled={busy} onClick={() => confirm({ title: "Stop continuing this invitation?", body: "Clears its saved invitation on this device. Any friendship or AI permission already saved by the provider remains; ask them to revoke it if needed.", risk: "medium", confirmLabel: "Stop and clear invitation", onConfirm: () => act(async () => { await friendsApi.abandonAIJoin(operation.operation_id); await load(); }) })}>{tr("Stop continuing")}</Button>
         </> : null}
       </section>)}
     </Panel> : null}

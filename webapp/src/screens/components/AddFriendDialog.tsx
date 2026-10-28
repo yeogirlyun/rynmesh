@@ -101,13 +101,13 @@ export default function AddFriendDialog(props: AddFriendProps) {
             <div><dt>{tr("Allows")}</dt><dd>{tr("Messages, attachments up to 5 MiB, content cards")}</dd></div>
             <div><dt>{tr("Stays off")}</dt><dd>{review.preview.purpose === "ai" ? "Other AI services, VPN, access to your files and credits" : tr("AI, VPN, access to your files and credits")}</dd></div>
           </dl>
-          {review.preview.ai && <section aria-label="AI invitation details">
-            <p>Model: {review.preview.ai.service.model_alias} · {review.preview.ai.ready ? "Model ready" : "Model not ready"} · {review.preview.ai.sharing ? "Sharing enabled" : "Sharing paused"}</p>
-            <p>Your questions go to {review.preview.node_name}'s device. No model download or API key is needed here.</p>
+          {review.preview.ai && <section aria-label={tr("AI invitation details")}>
+            <p>{tr("Model:")} {review.preview.ai.service.model_alias} · {review.preview.ai.ready ? "Model ready" : "Model not ready"} · {review.preview.ai.sharing ? "Sharing enabled" : "Sharing paused"}</p>
+            <p>{tr("Your questions go to")} {review.preview.node_name}{tr("'s device. No model download or API key is needed here.")}</p>
             <p>{review.preview.ai.service.pricing ? `Development Task Balance: input ${review.preview.ai.service.pricing.input_per_1k}/1k tokens, output ${review.preview.ai.service.pricing.output_per_1k}/1k, minimum ${review.preview.ai.service.pricing.minimum}, maximum per task ${review.preview.ai.service.pricing.maximum_per_task}. This is not RMB billing.` : "Price unknown. Do not send a question until the actual price is confirmed."}</p>
-            {review.preview.changed && <p role="status">The model or price differs from the original invitation. Review these current details before accepting.</p>}
+            {review.preview.changed && <p role="status">{tr("The model or price differs from the original invitation. Review these current details before accepting.")}</p>}
           </section>}
-          {props.reconnecting && <p>Verify this device at its new address. Keep the original relationship, AI permissions and history. This does not restore revoked access.</p>}
+          {props.reconnecting && <p>{tr("Verify this device at its new address. Keep the original relationship, AI permissions and history. This does not restore revoked access.")}</p>}
           <p className="rq-help">{tr(invitationReach(review.preview.address_category))} {tr("Ryn does not open router ports for this invite. Reachability has not been tested.")}</p>
         </div>}
       </div>
@@ -115,7 +115,7 @@ export default function AddFriendDialog(props: AddFriendProps) {
     <footer className="rf-foot">
       <small className="rf-foot-note">{tab === "create" ? tr("Your friend pastes this on their device.") : tr("Nothing is sent until you add this friend.")}</small>
       <button type="button" className="rf-btn" onClick={onClose}>{tab === "create" ? tr("Done") : tr("Cancel")}</button>
-      {tab === "use" && review ? <button type="button" className="rf-btn" disabled={busy} onClick={props.onCancelReview}>Cancel review</button> : null}
+      {tab === "use" && review ? <button type="button" className="rf-btn" disabled={busy} onClick={props.onCancelReview}>{tr("Cancel review")}</button> : null}
       {tab === "use" && review ? <button type="button" className="rf-btn rf-btn-p" disabled={busy} onClick={props.onJoin}>{review.preview.purpose === "ai" ? "Accept and start chatting" : props.reconnecting ? "Update this friend's address" : tr("Add this friend")}</button> : null}
     </footer>
   </Modal>;

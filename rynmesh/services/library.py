@@ -71,6 +71,8 @@ class LibraryService:
             item["_search"] = " ".join([item["title"], item["source"]["title"], *item["tags"]]).lower()
             items.append(item)
         for record in self.imports.list():
+            if record.get("state") == "unavailable":
+                continue
             library_id = f"import:{record['import_id']}"
             overlay = metadata.get(library_id, {})
             try:

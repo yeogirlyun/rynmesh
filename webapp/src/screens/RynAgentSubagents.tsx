@@ -1,3 +1,4 @@
+import { tr } from "../uiI18n";
 import React, { useEffect, useMemo, useState } from "react";
 import type {
   AgentEvent,
@@ -238,7 +239,7 @@ export function SubagentHeaderPill({
       type="button"
       className={`ra-subagent-header-pill${isOpen ? " is-open" : ""}${activeCount > 0 ? " is-active" : ""}`}
       onClick={onToggle}
-      title="查看并管理当前会话的子智能体 (Subagents)"
+      title={tr("查看并管理当前会话的子智能体 (Subagents)")}
     >
       <span className="ra-subagent-avatar-stack">
         {previewAgents.map(agent => (
@@ -247,24 +248,22 @@ export function SubagentHeaderPill({
           </span>
         ))}
       </span>
-      <span className="ra-subagent-header-pill-label">
-        子智能体
-        {activeCount > 0 ? (
+      <span className="ra-subagent-header-pill-label"> {tr("子智能体")} {activeCount > 0 ? (
           <>
             {" · "}
-            <strong className="is-running">{activeCount} 个运行中</strong>
+            <strong className="is-running">{activeCount} {tr("个运行中")}</strong>
           </>
         ) : null}
         {completedCount > 0 ? (
           <>
             {" · "}
-            <span>{completedCount} 完成</span>
+            <span>{completedCount} {tr("完成")}</span>
           </>
         ) : null}
         {activeCount === 0 && completedCount === 0 ? (
           <>
             {" · "}
-            <span>{subagents.length} 个</span>
+            <span>{subagents.length} {tr("个")}</span>
           </>
         ) : null}
       </span>
@@ -479,7 +478,7 @@ export function SubagentInlineGroup({
                 if (item.toolName === "ryn_spawn_agent") {
                   return (
                     <>
-                      <span className="ra-subagent-inline-action-verb">已使用以下指令创建 </span>
+                      <span className="ra-subagent-inline-action-verb">{tr("已使用以下指令创建")} </span>
                       <strong className="ra-subagent-inline-nick">{nickname}</strong>
                       <span className="ra-subagent-inline-role-tag">({roleLabel(role)})：</span>
                     </>
@@ -488,25 +487,25 @@ export function SubagentInlineGroup({
                 if (item.toolName === "ryn_send_message") {
                   return (
                     <>
-                      <span className="ra-subagent-inline-action-verb">已向 </span>
+                      <span className="ra-subagent-inline-action-verb">{tr("已向")} </span>
                       <strong className="ra-subagent-inline-nick">{nickname}</strong>
-                      <span className="ra-subagent-inline-action-verb"> 发送补充消息：</span>
+                      <span className="ra-subagent-inline-action-verb"> {tr("发送补充消息：")}</span>
                     </>
                   );
                 }
                 if (item.toolName === "ryn_followup_task") {
                   return (
                     <>
-                      <span className="ra-subagent-inline-action-verb">已向 </span>
+                      <span className="ra-subagent-inline-action-verb">{tr("已向")} </span>
                       <strong className="ra-subagent-inline-nick">{nickname}</strong>
-                      <span className="ra-subagent-inline-action-verb"> 委派后续任务：</span>
+                      <span className="ra-subagent-inline-action-verb"> {tr("委派后续任务：")}</span>
                     </>
                   );
                 }
                 if (item.toolName === "ryn_interrupt_agent") {
                   return (
                     <>
-                      <span className="ra-subagent-inline-action-verb">已中断子智能体 </span>
+                      <span className="ra-subagent-inline-action-verb">{tr("已中断子智能体")} </span>
                       <strong className="ra-subagent-inline-nick">{nickname}</strong>
                     </>
                   );
@@ -514,7 +513,7 @@ export function SubagentInlineGroup({
                 if (item.toolName === "ryn_close_agent") {
                   return (
                     <>
-                      <span className="ra-subagent-inline-action-verb">已关闭子智能体 </span>
+                      <span className="ra-subagent-inline-action-verb">{tr("已关闭子智能体")} </span>
                       <strong className="ra-subagent-inline-nick">{nickname}</strong>
                     </>
                   );
@@ -522,15 +521,15 @@ export function SubagentInlineGroup({
                 if (item.toolName === "ryn_resume_agent") {
                   return (
                     <>
-                      <span className="ra-subagent-inline-action-verb">已恢复子智能体 </span>
+                      <span className="ra-subagent-inline-action-verb">{tr("已恢复子智能体")} </span>
                       <strong className="ra-subagent-inline-nick">{nickname}</strong>
                     </>
                   );
                 }
                 if (item.toolName === "ryn_list_agents") {
-                  return <span className="ra-subagent-inline-action-verb">已列出当前线程树的子智能体</span>;
+                  return <span className="ra-subagent-inline-action-verb">{tr("已列出当前线程树的子智能体")}</span>;
                 }
-                return <span className="ra-subagent-inline-action-verb">等待子智能体完成并收集 &lt;subagent_notification&gt;</span>;
+                return <span className="ra-subagent-inline-action-verb">{tr("等待子智能体完成并收集 &lt;subagent_notification&gt;")}</span>;
               };
 
               const running = sub ? isSubagentRunning(sub) : false;
@@ -571,20 +570,19 @@ export function SubagentInlineGroup({
                       {running ? (
                         <>
                           <span className="ra-subagent-dot is-running" />
-                          <span>
-                            正在运行 · {sub?.current_step_text || "执行中..."}
+                          <span> {tr("正在运行 ·")} {sub?.current_step_text || "执行中..."}
                             {hasDiff && sub ? ` (+${sub.diff_stats.added} -${sub.diff_stats.removed})` : ""}
                           </span>
                         </>
                       ) : waiting ? (
                         <>
                           <span className="ra-subagent-dot is-waiting" />
-                          <span>正在等待指示 · {sub?.current_step_text || "等待中"}</span>
+                          <span>{tr("正在等待指示 ·")} {sub?.current_step_text || "等待中"}</span>
                         </>
                       ) : completed ? (
                         <>
                           <span className="ra-subagent-dot is-completed" />
-                          <span>已完成 ({formatDurationShort(sub?.elapsed_seconds || 1)})</span>
+                          <span>{tr("已完成 (")}{formatDurationShort(sub?.elapsed_seconds || 1)})</span>
                         </>
                       ) : (
                         <span>
@@ -603,10 +601,9 @@ export function SubagentInlineGroup({
                   {isExpanded && instructions && (
                     <div className="ra-subagent-inline-expanded">
                       <div className="ra-subagent-inline-expanded-meta">
-                        <span>Agent Path: <code>{sub?.agent_path || `/root/${nickname.toLowerCase()}`}</code></span>
+                        <span>{tr("Agent Path:")} <code>{sub?.agent_path || `/root/${nickname.toLowerCase()}`}</code></span>
                         {sub?.write_scope?.length ? (
-                          <span>
-                            负责范围: {sub.write_scope.map(s => <code key={s} className="ra-subagent-scope-code">{s}</code>)}
+                          <span> {tr("负责范围:")} {sub.write_scope.map(s => <code key={s} className="ra-subagent-scope-code">{s}</code>)}
                           </span>
                         ) : null}
                       </div>
@@ -642,7 +639,7 @@ export function SubagentInlineGroup({
           <span className="ra-subagent-inline-summary-text">
             {allSettled ? `${formattedNames} 已完成` : `${formattedNames} 开始工作`}
           </span>
-          <span className="ra-subagent-inline-summary-link">查看详情 →</span>
+          <span className="ra-subagent-inline-summary-link">{tr("查看详情 →")}</span>
         </div>
       )}
     </div>
@@ -691,9 +688,8 @@ export function SubagentComposerBar({
         >
           <span className="ra-subagent-inline-chevron">{expanded ? "▼" : "▶"}</span>
           <span className="ra-subagent-composer-bar-title">
-            {displayList.length} 个后台智能体
-          </span>
-          <span className="ra-subagent-composer-bar-hint">（使用 @ 标记智能体）</span>
+            {displayList.length} {tr("个后台智能体")} </span>
+          <span className="ra-subagent-composer-bar-hint">{tr("（使用 @ 标记智能体）")}</span>
         </button>
 
         <div className="ra-subagent-composer-bar-actions">
@@ -708,10 +704,8 @@ export function SubagentComposerBar({
               type="button"
               className="ra-subagent-stop-all-btn"
               onClick={onStopAll}
-              title="停止所有正在运行的子智能体"
-            >
-              ■ 全部停止
-            </button>
+              title={tr("停止所有正在运行的子智能体")}
+            > {tr("■ 全部停止")} </button>
           )}
         </div>
       </div>
@@ -769,8 +763,7 @@ export function SubagentComposerBar({
                     @{sub.nickname}
                   </button>
                   {sub.model_id && (
-                    <span className="ra-subagent-composer-model">
-                      使用 {sub.model_id.split("/").pop()}
+                    <span className="ra-subagent-composer-model"> {tr("使用")} {sub.model_id.split("/").pop()}
                     </span>
                   )}
                   <span className={`ra-subagent-diff-stat${zeroDiff ? " is-zero" : ""}`}>
@@ -859,7 +852,7 @@ export function SubagentRightDrawer({
     const liveElapsed = (selected.elapsed_seconds || 0) + (running ? liveTickSec : 0);
 
     return (
-      <aside className="ra-subagent-drawer" aria-label="子智能体详情面板">
+      <aside className="ra-subagent-drawer" aria-label={tr("子智能体详情面板")}>
         {/* Compact Stitch Top Navigation & Identity Bar */}
         <div className="ra-subagent-drilldown-identity">
           <div className="ra-subagent-drilldown-identity-left">
@@ -867,10 +860,8 @@ export function SubagentRightDrawer({
               type="button"
               className="ra-subagent-back-btn"
               onClick={() => onSelectSubagent(null)}
-              title="返回子代理总览列表"
-            >
-              ← 子代理
-            </button>
+              title={tr("返回子代理总览列表")}
+            > {tr("← 子代理")} </button>
             <span className="ra-subagent-drilldown-sep" aria-hidden="true">/</span>
             <SubagentPixelAvatar nickname={selected.nickname} size={22} />
             <div className="ra-subagent-drilldown-titles">
@@ -911,7 +902,7 @@ export function SubagentRightDrawer({
               type="button"
               className="ra-subagent-close-btn"
               onClick={onClose}
-              aria-label="关闭子智能体面板"
+              aria-label={tr("关闭子智能体面板")}
             >
               ×
             </button>
@@ -933,17 +924,14 @@ export function SubagentRightDrawer({
             </div>
             <div className="ra-subagent-scope-row">
               {isExplorer ? (
-                <span className="ra-subagent-scope-pill is-readonly">
-                  READ-ONLY · 只读探索沙盒
-                </span>
+                <span className="ra-subagent-scope-pill is-readonly"> {tr("READ-ONLY · 只读探索沙盒")} </span>
               ) : selected.write_scope?.length ? (
                 selected.write_scope.map(scopePath => (
-                  <span key={scopePath} className="ra-subagent-scope-pill">
-                    &lt;&gt; 负责：{scopePath}
+                  <span key={scopePath} className="ra-subagent-scope-pill"> {tr("&lt;&gt; 负责：")}{scopePath}
                   </span>
                 ))
               ) : (
-                <span className="ra-subagent-scope-pill">WORKSPACE · 工作区写入权限</span>
+                <span className="ra-subagent-scope-pill">{tr("WORKSPACE · 工作区写入权限")}</span>
               )}
             </div>
             <div className="ra-subagent-instructions-box">{selected.instructions}</div>
@@ -952,7 +940,7 @@ export function SubagentRightDrawer({
           {/* Section 2: Real-time Execution Timeline & Inline Unified Diff */}
           <div className="ra-subagent-detail-section">
             <div className="ra-subagent-detail-section-header">
-              <span>内部执行轨迹 (Real-time Timeline)</span>
+              <span>{tr("内部执行轨迹 (Real-time Timeline)")}</span>
               <div className="ra-subagent-timeline-header-right">
                 <span className="ra-subagent-timeline-step-badge">
                   {running
@@ -989,9 +977,7 @@ export function SubagentRightDrawer({
                             }
                           >
                             <span>{isOpen ? "▼" : "▶"}</span>
-                            <span className="ra-subagent-read-toggle-title">
-                              用时 {formatDurationShort(selected.elapsed_seconds)} · 执行了 {item.count} 次只读搜索与文件读取
-                            </span>
+                            <span className="ra-subagent-read-toggle-title"> {tr("用时")} {formatDurationShort(selected.elapsed_seconds)} {tr("· 执行了")} {item.count} {tr("次只读搜索与文件读取")} </span>
                             <span className="ra-subagent-read-toggle-action">
                               {isOpen ? "点击收起" : "点击展开"}
                             </span>
@@ -1014,8 +1000,7 @@ export function SubagentRightDrawer({
                                       {rStep.line_range ? ` (${rStep.line_range})` : ""}
                                     </span>
                                     <span className="ra-subagent-step-dur">
-                                      {rStep.duration_seconds || 1}s
-                                    </span>
+                                      {rStep.duration_seconds || 1}{tr("s")} </span>
                                   </div>
                                 );
                               })}
@@ -1032,15 +1017,14 @@ export function SubagentRightDrawer({
                         <span className="ra-subagent-node-check" aria-hidden="true">✓</span>
                         <div className="ra-subagent-timeline-diff-card">
                           <div className="ra-subagent-timeline-diff-header">
-                            <span className="ra-subagent-diff-path">已编辑 {item.path}</span>
+                            <span className="ra-subagent-diff-path">{tr("已编辑")} {item.path}</span>
                             <div className="ra-subagent-diff-header-right">
                               <span className="ra-subagent-diff-stat">
                                 <span className="is-add">+{item.added}</span>
                                 <span className="is-del">-{item.removed}</span>
                               </span>
                               <span className="ra-subagent-step-dur">
-                                {item.duration_seconds || 2}s
-                              </span>
+                                {item.duration_seconds || 2}{tr("s")} </span>
                             </div>
                           </div>
                           {item.diff_lines?.length > 0 && (
@@ -1087,7 +1071,7 @@ export function SubagentRightDrawer({
                       <div className="ra-subagent-timeline-tool">
                         <span className="ra-subagent-tool-bullet">⚙</span>
                         <span className="ra-subagent-tool-text">{item.summary}</span>
-                        <span className="ra-subagent-step-dur">{item.duration_seconds || 1}s</span>
+                        <span className="ra-subagent-step-dur">{item.duration_seconds || 1}{tr("s")}</span>
                       </div>
                     </div>
                   );
@@ -1102,7 +1086,7 @@ export function SubagentRightDrawer({
                   <div className="ra-subagent-timeline-live">
                     <div className="ra-subagent-timeline-live-top">
                       <span>{selected.current_step_text || "正在执行中..."}</span>
-                      <span className="ra-subagent-live-pill">进行中</span>
+                      <span className="ra-subagent-live-pill">{tr("进行中")}</span>
                     </div>
                   </div>
                 </div>
@@ -1114,8 +1098,8 @@ export function SubagentRightDrawer({
           {(selected.final_reply || selected.notification_payload) && (
             <div className="ra-subagent-detail-section is-final-reply">
               <div className="ra-subagent-detail-section-header">
-                <span>✓ 最终回复 · 已自动注入主智能体上下文</span>
-                <code>&lt;subagent_notification&gt;</code>
+                <span>{tr("✓ 最终回复 · 已自动注入主智能体上下文")}</span>
+                <code>{tr("&lt;subagent_notification&gt;")}</code>
               </div>
               {selected.final_reply && (
                 <div className="ra-subagent-final-reply-prose">
@@ -1124,7 +1108,7 @@ export function SubagentRightDrawer({
               )}
               {selected.notification_payload && (
                 <details className="ra-subagent-notif-details">
-                  <summary>查看原始 &lt;subagent_notification&gt; 结构化载荷</summary>
+                  <summary>{tr("查看原始 &lt;subagent_notification&gt; 结构化载荷")}</summary>
                   <pre className="ra-subagent-notif-pre">
                     {`<subagent_notification>\n${JSON.stringify(
                       selected.notification_payload,
@@ -1144,29 +1128,26 @@ export function SubagentRightDrawer({
             <>
               <div className="ra-subagent-footer-status">
                 <span className="ra-subagent-dot is-running" />
-                <span>主智能体正在后台监听此子智能体</span>
+                <span>{tr("主智能体正在后台监听此子智能体")}</span>
               </div>
               <div className="ra-subagent-footer-actions">
                 <button
                   type="button"
                   className="ra-subagent-footer-btn is-danger"
                   onClick={() => onInterruptSubagent(selected.id)}
-                >
-                  中断当前轮次
-                </button>
+                > {tr("中断当前轮次")} </button>
                 <button
                   type="button"
                   className="ra-subagent-footer-btn is-primary"
                   onClick={() => onMentionSubagent(selected.nickname)}
-                >
-                  在主对话中 @{selected.nickname}
+                > {tr("在主对话中 @")}{selected.nickname}
                 </button>
               </div>
             </>
           ) : (
             <>
               <div className="ra-subagent-footer-status">
-                <span>📦 调查产物已归档至主会话记忆库</span>
+                <span>{tr("📦 调查产物已归档至主会话记忆库")}</span>
               </div>
               <div className="ra-subagent-footer-actions">
                 <button
@@ -1189,9 +1170,7 @@ export function SubagentRightDrawer({
                   onClick={() =>
                     onMentionSubagent(selected.nickname, selected.final_reply || undefined)
                   }
-                >
-                  在主会话中引用
-                </button>
+                > {tr("在主会话中引用")} </button>
               </div>
             </>
           )}
@@ -1201,19 +1180,17 @@ export function SubagentRightDrawer({
   }
 
   return (
-    <aside className="ra-subagent-drawer" aria-label="子智能体总览面板">
+    <aside className="ra-subagent-drawer" aria-label={tr("子智能体总览面板")}>
       <div className="ra-subagent-drawer-header">
         <div>
-          <h3 className="ra-subagent-drawer-title">子智能体</h3>
-          <p className="ra-subagent-drawer-subtitle">
-            共 {subagents.length} 个子智能体 · 实时追踪任务分工与历史记录
-          </p>
+          <h3 className="ra-subagent-drawer-title">{tr("子智能体")}</h3>
+          <p className="ra-subagent-drawer-subtitle"> {tr("共")} {subagents.length} {tr("个子智能体 · 实时追踪任务分工与历史记录")} </p>
         </div>
         <button
           type="button"
           className="ra-subagent-close-btn"
           onClick={onClose}
-          aria-label="关闭子智能体面板"
+          aria-label={tr("关闭子智能体面板")}
         >
           ×
         </button>
@@ -1224,16 +1201,15 @@ export function SubagentRightDrawer({
         <div className="ra-subagent-list-group">
           <div className="ra-subagent-list-group-header">
             <span className="ra-subagent-group-label">
-              <span className="ra-subagent-dot is-running" />
-              已开启 · {activeList.length}
+              <span className="ra-subagent-dot is-running" /> {tr("已开启 ·")} {activeList.length}
             </span>
             {waitingCount > 0 && (
-              <span className="ra-subagent-waiting-badge">{waitingCount} 个等待中</span>
+              <span className="ra-subagent-waiting-badge">{waitingCount} {tr("个等待中")}</span>
             )}
           </div>
 
           {activeList.length === 0 ? (
-            <div className="ra-subagent-empty-card">当前没有正在运行的子智能体</div>
+            <div className="ra-subagent-empty-card">{tr("当前没有正在运行的子智能体")}</div>
           ) : (
             activeList.map(sub => {
               const running = isSubagentRunning(sub);
@@ -1267,7 +1243,7 @@ export function SubagentRightDrawer({
                     </div>
                     <div className="ra-subagent-card-metrics">
                       {sub.is_waiting && (
-                        <span className="ra-subagent-waiting-pill">等待中</span>
+                        <span className="ra-subagent-waiting-pill">{tr("等待中")}</span>
                       )}
                       <span className="ra-subagent-card-timer">
                         {formatDurationClock((sub.elapsed_seconds || 0) + (running ? liveTickSec : 0))}
@@ -1309,11 +1285,10 @@ export function SubagentRightDrawer({
           <div className="ra-subagent-list-group">
             <div className="ra-subagent-list-group-header">
               <span className="ra-subagent-group-label">
-                <span className="ra-subagent-dot is-completed" />
-                完成 · {completedList.length}
+                <span className="ra-subagent-dot is-completed" /> {tr("完成 ·")} {completedList.length}
               </span>
               {avgCompletedSec > 0 && (
-                <span className="ra-subagent-avg-time">耗时均值 {avgCompletedSec}s</span>
+                <span className="ra-subagent-avg-time">{tr("耗时均值")} {avgCompletedSec}{tr("s")}</span>
               )}
             </div>
 
@@ -1352,7 +1327,7 @@ export function SubagentRightDrawer({
                     </div>
                     <div className="ra-subagent-card-metrics">
                       <span className={`ra-subagent-completed-time${isCompletedOk ? "" : " is-muted"}`}>
-                        {statusLabel} · 用时 {formatDurationShort(sub.elapsed_seconds)} · {formatRelativeCompletedTime(sub.completed_at_ms)}
+                        {statusLabel} {tr("· 用时")} {formatDurationShort(sub.elapsed_seconds)} · {formatRelativeCompletedTime(sub.completed_at_ms)}
                       </span>
                       {(sub.diff_stats?.added > 0 || sub.diff_stats?.removed > 0) && (
                         <span className="ra-subagent-diff-stat">

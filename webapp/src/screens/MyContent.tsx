@@ -1,3 +1,4 @@
+import { tr } from "../uiI18n";
 import { Archive, CheckCircle2, Eye, FileUp, FolderOpen, Pause, Play, RotateCcw, Search, ShieldCheck, Sparkles, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -164,53 +165,53 @@ export default function MyContent() {
 
   return (
     <div className={styles.workspace}>
-      <PageHeader eyebrow="Private library" title="My Content"
-        context="Saved items, reading progress, local files, and sources—owned and managed on this device."
-        actions={<><Chip tone="ok" icon={ShieldCheck}>private by default</Chip><Button icon={FileUp} onClick={() => fileInput.current?.click()}>Import file</Button></>} />
+      <PageHeader eyebrow={tr("Private library")} title={tr("My Content")}
+        context={tr("Saved items, reading progress, local files, and sources—owned and managed on this device.")}
+        actions={<><Chip tone="ok" icon={ShieldCheck}>{tr("private by default")}</Chip><Button icon={FileUp} onClick={() => fileInput.current?.click()}>{tr("Import file")}</Button></>} />
       <input ref={fileInput} hidden type="file" accept=".txt,.md,.markdown,.pdf,text/plain,text/markdown,application/pdf"
         onChange={(event) => void importFile(event.target.files?.[0])} />
-      <nav className={styles.tabs} aria-label="My Content views">
+      <nav className={styles.tabs} aria-label={tr("My Content views")}>
         {tabs.map((tab) => <button type="button" key={tab.view} className={view === tab.view ? styles.active : ""}
           onClick={() => switchView(tab.view)}>{tab.label}</button>)}
       </nav>
 
       {view !== "sources" ? <>
         <div className={styles.toolbar}>
-          <label><span className="sr-only">Search My Content</span><input type="search" aria-label="Search My Content" value={query}
-            onChange={(event) => setQuery(event.target.value)} placeholder="Search title, source, tags, or private file text" /></label>
-          <select aria-label="Filter content kind" value={kind} onChange={(event) => setKind(event.target.value)}>
-            <option value="">All formats</option>{kinds.map((value) => <option key={value}>{value}</option>)}
+          <label><span className="sr-only">{tr("Search My Content")}</span><input type="search" aria-label={tr("Search My Content")} value={query}
+            onChange={(event) => setQuery(event.target.value)} placeholder={tr("Search title, source, tags, or private file text")} /></label>
+          <select aria-label={tr("Filter content kind")} value={kind} onChange={(event) => setKind(event.target.value)}>
+            <option value="">{tr("All formats")}</option>{kinds.map((value) => <option key={value}>{value}</option>)}
           </select>
-          <span className={styles.privacy}><Search size={14} /> Search runs only on this node</span>
+          <span className={styles.privacy}><Search size={14} /> {tr("Search runs only on this node")}</span>
         </div>
         {selected.length ? <div className={styles.selection} role="status">
-          <span><b>{selected.length}</b> selected · maximum 8 for Ask Ryn</span>
-          <Button icon={Sparkles} variant="primary" onClick={askSelected}>Ask Ryn</Button>
+          <span><b>{selected.length}</b> {tr("selected · maximum 8 for Ask Ryn")}</span>
+          <Button icon={Sparkles} variant="primary" onClick={askSelected}>{tr("Ask Ryn")}</Button>
           <Button icon={Archive} onClick={() => void action(view === "archived" ? "unarchive" : "archive")}>{view === "archived" ? "Restore" : "Archive"}</Button>
-          <Button icon={CheckCircle2} onClick={() => void action("mark_completed")}>Complete</Button>
+          <Button icon={CheckCircle2} onClick={() => void action("mark_completed")}>{tr("Complete")}</Button>
         </div> : null}
-        {error ? <div className={styles.empty} role="alert"><h3>Could not load My Content</h3><p>{error}</p><Button onClick={() => void load()}>Retry</Button></div> : null}
-        {!error && !loading && !items.length ? <div className={styles.empty}><FolderOpen size={30} /><h3>Nothing in this view yet</h3><p>Save an item or import a private TXT, Markdown, or PDF file.</p></div> : null}
+        {error ? <div className={styles.empty} role="alert"><h3>{tr("Could not load My Content")}</h3><p>{error}</p><Button onClick={() => void load()}>{tr("Retry")}</Button></div> : null}
+        {!error && !loading && !items.length ? <div className={styles.empty}><FolderOpen size={30} /><h3>{tr("Nothing in this view yet")}</h3><p>{tr("Save an item or import a private TXT, Markdown, or PDF file.")}</p></div> : null}
         <div className={styles.grid} aria-busy={loading}>
           {items.map((item) => <article key={item.library_id} className={`${styles.card} ${selected.includes(item.library_id) ? styles.selected : ""}`}>
             <input type="checkbox" aria-label={`Select ${item.title}`} checked={selected.includes(item.library_id)} onChange={() => choose(item.library_id)} />
             <div className={styles.cardBody}>
               <div className={styles.meta}><Chip tone={item.import_id ? "info" : "neutral"}>{item.kind}</Chip>
-                {item.import_id ? <Chip tone="ok">managed copy</Chip> : null}{item.state.completed ? <Chip tone="ok">completed</Chip> : null}</div>
+                {item.import_id ? <Chip tone="ok">{tr("managed copy")}</Chip> : null}{item.state.completed ? <Chip tone="ok">{tr("completed")}</Chip> : null}</div>
               <h3>{item.title}</h3><p>{item.summary}</p>
-              {item.state.progress > 0 && item.state.progress < 1 ? <><div className={styles.progress}><span style={{ width: `${item.state.progress * 100}%` }} /></div><small>{Math.round(item.state.progress * 100)}% complete</small></> : null}
+              {item.state.progress > 0 && item.state.progress < 1 ? <><div className={styles.progress}><span style={{ width: `${item.state.progress * 100}%` }} /></div><small>{Math.round(item.state.progress * 100)}{tr("% complete")}</small></> : null}
               <div className={styles.tags}>{item.tags.map((tag) => <Chip key={tag}>#{tag}</Chip>)}</div>
               <div className={styles.actions}>
-                {item.import_id ? <button type="button" onClick={() => void openItem(item)}><Eye size={12} /> Preview</button>
-                  : item.source.url ? <a href={item.source.url} target="_blank" rel="noreferrer noopener">Open source</a> : null}
-                {item.state.completed ? <button type="button" onClick={() => void action("restart", [item.library_id])}><RotateCcw size={12} /> Restart</button> : null}
-                {item.state.saved && !item.import_id ? <button type="button" onClick={() => void action("remove_saved", [item.library_id])}>Remove saved</button> : null}
-                {item.import_id ? <button type="button" onClick={() => deleteImport(item)}><Trash2 size={12} /> Delete copy</button> : null}
+                {item.import_id ? <button type="button" onClick={() => void openItem(item)}><Eye size={12} /> {tr("Preview")}</button>
+                  : item.source.url ? <a href={item.source.url} target="_blank" rel="noreferrer noopener">{tr("Open source")}</a> : null}
+                {item.state.completed ? <button type="button" onClick={() => void action("restart", [item.library_id])}><RotateCcw size={12} /> {tr("Restart")}</button> : null}
+                {item.state.saved && !item.import_id ? <button type="button" onClick={() => void action("remove_saved", [item.library_id])}>{tr("Remove saved")}</button> : null}
+                {item.import_id ? <button type="button" onClick={() => deleteImport(item)}><Trash2 size={12} /> {tr("Delete copy")}</button> : null}
               </div>
             </div>
           </article>)}
         </div>
-        {nextCursor ? <div className={styles.load}><Button onClick={() => void load(nextCursor, true)}>Load 50 more</Button></div> : null}
+        {nextCursor ? <div className={styles.load}><Button onClick={() => void load(nextCursor, true)}>{tr("Load 50 more")}</Button></div> : null}
       </> : <SourceManager sources={sources} watchers={watchers} loading={loading}
         onSource={async (id, paused) => { await client.setLibrarySourcePaused(id, paused); await load(); }}
         onWatcher={async (id, paused) => { await client.setLibraryWatcherPaused(id, paused); await load(); }}
@@ -219,8 +220,8 @@ export default function MyContent() {
         onRemoveSource={removeSource} onRemoveWatcher={removeWatcher} />}
 
       {preview ? <aside className={styles.preview} role="dialog" aria-modal="true" aria-label={`Preview ${preview.title}`}>
-        <header><div><b>{preview.title}</b><small> · private managed copy{preview.truncated ? " · preview truncated" : ""}</small></div>
-          <button type="button" aria-label="Close preview" onClick={() => setPreview(null)}><X /></button></header><pre>{preview.text}</pre>
+        <header><div><b>{preview.title}</b><small> {tr("· private managed copy")}{preview.truncated ? " · preview truncated" : ""}</small></div>
+          <button type="button" aria-label={tr("Close preview")} onClick={() => setPreview(null)}><X /></button></header><pre>{preview.text}</pre>
       </aside> : null}
     </div>
   );
@@ -239,23 +240,23 @@ function SourceManager({ sources, watchers, loading, onSource, onWatcher, onAddS
   const [watchUrl, setWatchUrl] = useState("");
   const [watchNote, setWatchNote] = useState("");
   return <div className={styles.sources} aria-busy={loading}>
-    <div><h2>Sources</h2><p className="muted">Pause keeps history and cached items. Resume allows future bounded refreshes.</p></div>
+    <div><h2>{tr("Sources")}</h2><p className="muted">{tr("Pause keeps history and cached items. Resume allows future bounded refreshes.")}</p></div>
     <form className={styles.add} onSubmit={(event) => { event.preventDefault(); if (sourceUrl.trim()) void onAddSource(sourceUrl.trim()).then(() => setSourceUrl("")); }}>
-      <input aria-label="New source URL" value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="RSS, YouTube channel, or subreddit" />
-      <Button type="submit">Add source</Button>
+      <input aria-label={tr("New source URL")} value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder={tr("RSS, YouTube channel, or subreddit")} />
+      <Button type="submit">{tr("Add source")}</Button>
     </form>
     {sources.map((source) => <article className={styles.source} key={source.id}><div><b>{source.title}</b>
-      <p>{source.kind} · {source.health?.item_count ?? 0} cached items · {source.paused ? "paused" : source.health?.ok === false ? "needs attention" : "healthy"}</p></div>
+      <p>{source.kind} · {source.health?.item_count ?? 0} {tr("cached items ·")} {source.paused ? "paused" : source.health?.ok === false ? "needs attention" : "healthy"}</p></div>
       <div className={styles.actions}><Button icon={source.paused ? Play : Pause} onClick={() => void onSource(source.id, !source.paused)}>{source.paused ? "Resume" : "Pause"}</Button>
-        <Button icon={Trash2} variant="danger" onClick={() => onRemoveSource(source)}>Remove</Button></div></article>)}
-    <div><h2>Page monitors</h2><p className="muted">Monitors check only the pages you explicitly added.</p></div>
+        <Button icon={Trash2} variant="danger" onClick={() => onRemoveSource(source)}>{tr("Remove")}</Button></div></article>)}
+    <div><h2>{tr("Page monitors")}</h2><p className="muted">{tr("Monitors check only the pages you explicitly added.")}</p></div>
     <form className={styles.add} onSubmit={(event) => { event.preventDefault(); if (watchUrl.trim()) void onAddWatcher(watchUrl.trim(), watchNote.trim()).then(() => { setWatchUrl(""); setWatchNote(""); }); }}>
-      <input aria-label="Page monitor URL" value={watchUrl} onChange={(event) => setWatchUrl(event.target.value)} placeholder="https://…" />
-      <input aria-label="Page monitor note" value={watchNote} onChange={(event) => setWatchNote(event.target.value)} placeholder="Optional note" />
-      <Button type="submit">Watch page</Button>
+      <input aria-label={tr("Page monitor URL")} value={watchUrl} onChange={(event) => setWatchUrl(event.target.value)} placeholder={tr("https://…")} />
+      <input aria-label={tr("Page monitor note")} value={watchNote} onChange={(event) => setWatchNote(event.target.value)} placeholder={tr("Optional note")} />
+      <Button type="submit">{tr("Watch page")}</Button>
     </form>
     {watchers.map((watcher) => <article className={styles.source} key={watcher.id}><div><b>{watcher.title}</b><p>{watcher.note || watcher.url}</p></div>
       <div className={styles.actions}><Button icon={watcher.paused ? Play : Pause} onClick={() => void onWatcher(watcher.id, !watcher.paused)}>{watcher.paused ? "Resume" : "Pause"}</Button>
-        <Button icon={Trash2} variant="danger" onClick={() => onRemoveWatcher(watcher)}>Remove</Button></div></article>)}
+        <Button icon={Trash2} variant="danger" onClick={() => onRemoveWatcher(watcher)}>{tr("Remove")}</Button></div></article>)}
   </div>;
 }

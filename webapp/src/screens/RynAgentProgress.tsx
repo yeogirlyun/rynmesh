@@ -149,7 +149,11 @@ export default function RynAgentProgress({
     (file.source === "computer_observation" || file.path.replaceAll("\\", "/").startsWith(".ryn/computer/")) &&
     operations.has(file.operation_id || file.path.replaceAll("\\", "/").split("/").at(-2))) || [];
   const count = messages.reduce((total, message) => total + (message.tool_calls?.length || 0), 0);
-  const fileEdits = useMemo(() => extractFileEdits(messages), [messages]);
+  const fileEdits = useMemo(() => extractFileEdits(messages).filter(edit =>
+    task?.events.some(event => event.type === "tool_result" && event.call_id === edit.id &&
+      event.result && typeof event.result === "object" &&
+      ((event.result as Record<string, unknown>).ok === true || (event.result as Record<string, unknown>).success === true))),
+    [messages, task?.events]);
   return <div className="ra-process">
     {fileEdits.length > 0 && (
       <div className="ra-edit-diff-list" aria-hidden="true">
