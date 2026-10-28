@@ -8,6 +8,8 @@ import { newSource, sourcePresets, sourceRequest, type AISource, type APIProtoco
 import type { CLIServicesStatus, CLIServiceStatus, LLMServiceRecord } from "../domain/nodeClient";
 import WorkspaceSelect from "./WorkspaceSelect";
 import "./AISources.css";
+import "../personal/drop/family.css";
+import "./models-refresh.css";
 import NativeModelPanel from "./components/NativeModelPanel";
 import ModelPool from "./ModelPool";
 import { nativeModelRequest, type NativeModelStatus } from "../domain/nativeModel";
@@ -103,9 +105,9 @@ export default function AISources() {
   const isEmpty = !loading && !error && !sources.length && !hasNative && !cli?.services.some(s => s.configured) && !peers.length;
   const href = (path: string) => personalHref(path, client.mode === "fixture");
   const openCLI = () => { setKind("codex_cli"); setMessage(""); setModal("cli"); };
-  const addSourceButton = <button className="ais-primary" onClick={() => { setMessage(""); setModal("choose"); }}><Plus size={17} /> {tr("添加模型")}</button>;
-  return <div className="ais-page">
-    <header className="ais-header"><div><h1>{tr("模型")}</h1><p>{tr("接入一次，自己使用，也可以分享给其他设备。")}</p></div><div className="ais-header-actions"><button className="ais-secondary" onClick={() => setModal("manage")}>{tr("管理来源")}</button>{!isEmpty && addSourceButton}</div></header>
+  const addSourceButton = <button className="rf-btn rf-btn-p" onClick={() => { setMessage(""); setModal("choose"); }}><Plus size={17} /> {tr("添加模型")}</button>;
+  return <div className="ais-page rf rd-svc rd-models">
+    <header className="sv-head ais-header"><div className="sv-head-text"><h1 className="sv-title">{tr("Models")}</h1><p className="sv-lead">{tr("接入一次，自己使用，也可以分享给其他设备。")}</p></div><div className="sv-head-actions ais-header-actions"><button className="rf-btn" onClick={() => setModal("manage")}>{tr("管理来源")}</button>{!isEmpty && addSourceButton}</div></header>
     {isEmpty && <section className="ais-onboarding" aria-labelledby="ais-connect-title">
       <div className="ais-onboarding-heading"><div>
       <h2 id="ais-connect-title">{tr("连接你的第一个 AI 来源")}</h2>
@@ -120,8 +122,8 @@ export default function AISources() {
     <ModelPool sources={sources} cli={cli} native={native} peers={peers} loading={loading} error={error} onRefresh={refresh}
       onEditSource={edit} onCLI={value => { setKind(value); setMessage(""); setModal("cli"); }} onNative={() => setModal("native")} />
     <footer className="ais-links"><Link to={href("/services/api")}>{tr("查看 API 接入")}</Link><Link to={href("/services/agent-sharing")}><Share2 size={14} /> {tr("管理共享")}</Link><Link to={href("/services/model-mapping")}>{tr("模型映射")}</Link>{isEmpty && <button className="ais-refresh-empty" onClick={() => void refresh()}><RefreshCw size={14} />{tr("刷新来源")}</button>}</footer>
-    {modal && <Modal title={modal === "native" ? tr("本地模型") : modal === "manage" ? tr("管理来源") : modal === "choose" ? tr("添加模型") : modal === "cli" ? tr("连接本地 CLI") : draft.id === "new" ? tr("添加来源") : tr("编辑来源")} onClose={close}>
-      <div className="ais-modal">
+    {modal && (() => { const [hue, glyph] = modal === "cli" ? ["slate", <Terminal size={19} aria-hidden="true" />] : modal === "native" ? ["teal", <Server size={19} aria-hidden="true" />] : modal === "manage" ? ["indigo", <Settings2 size={19} aria-hidden="true" />] : modal === "choose" ? ["indigo", <Plus size={19} aria-hidden="true" />] : ["sky", <Cloud size={19} aria-hidden="true" />] as [string, React.ReactNode]; return <Modal className={`rf rf-dlg rf-dlg-hue rf-h-${hue} sv-mdlg`} title={modal === "native" ? tr("本地模型") : modal === "manage" ? tr("管理来源") : modal === "choose" ? tr("添加模型") : modal === "cli" ? tr("连接本地 CLI") : draft.id === "new" ? tr("添加来源") : tr("编辑来源")} onClose={close}>
+      <span className="rf-mark rf-tile" aria-hidden="true">{glyph}</span><div className="ais-modal">
       {modal === "manage" && <><p className="ais-muted">{tr("一个来源可以提供多个模型，模型分享单独设置。")}</p><div className="ais-source-manager">{sources.map(source => <button key={source.id} onClick={() => edit(source)}><span><strong>{source.name}</strong><small>{source.models.length} {tr("个模型")} · {statusLabel(source)}</small></span><Settings2 size={16} /></button>)}</div><button className="ais-primary" onClick={() => setModal("choose")}><Plus size={16} />{tr("添加来源")}</button></>}
       {modal === "choose" && <>{sources.length > 0 && <div className="ais-source-manager"><h3>{tr("从已有来源添加模型")}</h3>{sources.map(source => <button key={source.id} onClick={() => edit(source)}><span><strong>{source.name}</strong><small>{tr("修改模型列表或读取可用模型")}</small></span><Plus size={16} /></button>)}</div>}<p className="ais-muted">{tr("选择一种接入方式")}</p><div className="ais-choices">
         <button onClick={() => edit(newSource())}><Cloud /><span><strong>{tr("厂商 API")}</strong><small>{tr("预设厂商，或填写自定义地址")}</small></span><ChevronRight /></button>
@@ -179,6 +181,6 @@ export default function AISources() {
         {modal === "source" ? <><button className="ais-secondary" disabled={busy || !sourceLimitsValid} onClick={() => void save(true)}>{busy ? tr("处理中…") : tr("保存并测试")}</button><div className="ais-footer-right">{draft.id !== "new" && <button className="ais-icon" aria-label={tr("删除来源")} disabled={busy} onClick={() => confirm({ title: tr("删除这个 AI 来源？"), body: tr("将删除当前节点上的配置与密钥，不影响厂商账号。"), risk: "high", confirmLabel: tr("删除来源"), onConfirm: async () => { await sourceRequest(`/${draft.id}`, undefined, "DELETE"); setModal(null); setParams({}); await refresh(); } })}><Trash2 size={17} /></button>}<button className="ais-primary" disabled={busy || !draft.name.trim() || !sourceLimitsValid} onClick={() => void save()}>{tr("保存")}</button></div></> : <><button className="ais-secondary" disabled={busy} onClick={close}>{tr("关闭")}</button><button className="ais-primary" disabled={busy || !currentCLI?.installed} onClick={() => void perform(async () => { const result = await client.setupCLIService(kind); await refresh(); setMessage(tr(result.agent_usable ? "连接已完成，可直接聊天或用于助手。" : "连接已完成，此接入支持聊天，不支持助手工具。")); })}>{busy ? tr("正在接入…") : currentCLI?.configured ? tr("重新接入") : tr("配置接入")}</button></>}
       </div>}
       </div>
-    </Modal>}
+    </Modal>; })()}
   </div>;
 }

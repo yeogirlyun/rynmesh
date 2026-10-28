@@ -2,8 +2,8 @@ import { modelSelectableCLI } from "../domain/cliModels";
 import {
   FileText,
   ArrowUp,
+  Code2,
   Paperclip,
-  Sparkles,
   Check,
   ChevronDown,
   Copy,
@@ -15,7 +15,6 @@ import {
 } from "lucide-react";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { tr, uiLocale, useUILanguage } from "../uiI18n";
-import { DeviceArt, ServiceArt } from "../personal/components";
 import { PersonalContext, personalHref } from "../personal/model";
 import WorkspaceSelect from "./WorkspaceSelect";
 import ChatMarkdown from "./ChatMarkdown";
@@ -39,7 +38,10 @@ import { askHistory, AskRequestError, conversationRepository, type AskPreview, t
 import AskMaterials, { AskAnswerSources } from "../components/AskMaterials";
 import type { LLMOrderResult, LLMServiceRecord } from "../domain/nodeClient";
 import { useLLMStream } from "../domain/useLLMStream";
+import { Tile, DeviceGlyph, deviceHue } from "../personal/drop/FamilyParts";
+import { SparkGlyph } from "./ServiceParts";
 import styles from "./PrivateAIChat.module.css";
+import "./workspace-refresh.css";
 
 const TERMINAL_STATES = LLM_TERMINAL_STATES;
 const SUGGESTIONS = ["Summarize a document", "Draft a professional email", "Explain a difficult topic"];
@@ -590,65 +592,67 @@ export default function PrivateAIChat() {
   const services = discovery.data ?? [];
   const blocked = isSending || reviewing || Boolean(unconfirmed) || materialBusy || savingModel;
   const selectedStorage = client.mode === "live" ? "node" : "browser";
-  const toolbar = <header className={styles.pageHeading}>
-    <div className={styles.modelLockup}><ServiceArt kind="ai" /><div><h1>{tr("AI 工作台")}</h1><p>{tr("连接你的设备，与熟悉的 AI 一起工作。")}</p></div></div>
-    <details className={styles.details}><summary className={styles.detailsButton}><ShieldCheck size={15} />{tr("会话详情")}<ChevronDown size={14} /></summary><div className={styles.detailsPanel}>
+  const detailsPanel = <details className={`${styles.details} sv-ws-details`}><summary className={`${styles.detailsButton} sv-ws-detailsButton`}><ShieldCheck size={15} />{tr("会话详情")}<ChevronDown size={14} /></summary><div className={`${styles.detailsPanel} sv-ws-detailsPanel`}>
       <strong>{providerName}</strong><p>{tr("Requests go to the selected service. Node history and browser originals keep their separate storage locations.")}</p>
       <Link to={personalHref("/ask/history", client.mode === "fixture")}>{tr("Manage node history")}</Link>
       {selectedConversation ? <button type="button" onClick={() => confirm({ title: "Delete this conversation?", body: `${selectedConversation.sync ? "Approved devices receive synchronized deletions. " : ""}This removes this node's conversation history. Browser originals and retained orders are separate.`, risk: "high", confirmLabel: "Delete conversation", onConfirm: () => removeConversation(selectedConversation.id) })} aria-label={`Delete ${selectedConversation.title}`}><Trash2 size={14} />{tr("Delete conversation")}</button> : null}
-    </div></details>
-  </header>;
+    </div></details>;
+  const toolbar = <div className="sv-sr"><h1>{tr("AI 工作台")}</h1><p>{tr("连接你的设备，与熟悉的 AI 一起工作。")}</p></div>;
 
   if (loading) return <LoadingPanel label={tr("Opening Private AI")} />;
-  if (!selectedService) return <div className={`${styles.page} ai-unified-workspace`}>{toolbar}
+  if (!selectedService) return <div className={`${styles.page} ai-unified-workspace rf rd-workspace`}>{toolbar}
+    <div className={`${styles.sourceBar} sv-ws-bar`}><span className="sv-ws-spacer" />{detailsPanel}</div>
     <UnifiedAIHistory rows={conversations} selectedId={selectedId} storage={selectedStorage} onNew={() => setSearchParams(new URLSearchParams({ network: networkId, new: "1" }))} />
-    <main className={styles.workspace}><div className={styles.messages}>
+    <main className={`${styles.workspace} sv-ws-main`}><div className={`${styles.messages} sv-ws-messages sv-ws-unavailable`}>
+      <span className="rf-tile rf-tile-lg rf-h-slate" aria-hidden="true"><SparkGlyph size={26} /></span>
       <h2>{tr("The selected provider is unavailable")}</h2><p>{tr("Your conversation remains bound to its original provider. Choose another service to start a separate conversation.")}</p>
-      <Link to={personalHref("/services/sources", client.mode === "fixture")}>{tr("AI 来源")}</Link>{selectedConversation?.messages.map(message => <div className={styles.messageBlock} key={message.id}><div className={styles.messageBubble}><ChatMarkdown>{message.content}</ChatMarkdown></div>{message.contextIds?.length ? <AskAnswerSources ids={message.contextIds} byteLimits={message.contextBytes} /> : null}</div>)}
+      <div className="sv-ws-unavailable-actions"><button type="button" className="rf-btn" onClick={() => void discovery.refresh()}>{tr("Retry")}</button><Link className="rf-btn" to={personalHref("/services/catalog", client.mode === "fixture")}>{tr("View services")}</Link><Link className="rf-btn" to={personalHref("/services/sources", client.mode === "fixture")}>{tr("AI 来源")}</Link></div>{selectedConversation?.messages.map(message => <div className={`${styles.messageBlock} sv-ws-messageBlock`} key={message.id}><div className={`${styles.messageBubble} sv-ws-messageBubble`}><ChatMarkdown>{message.content}</ChatMarkdown></div>{message.contextIds?.length ? <AskAnswerSources ids={message.contextIds} byteLimits={message.contextBytes} /> : null}</div>)}
       {error ? <p role="alert">{error}</p> : null}
     </div></main></div>;
 
-  return <div className={`${styles.page} ai-unified-workspace`}>
+  return <div className={`${styles.page} ai-unified-workspace rf rd-workspace`}>
     {toolbar}
-    <div className={styles.sourceBar}>
-      <WorkspaceSelect grow caption={tr("运行设备")} label={tr("Processing device")} value={selectedService.peer_id} disabled={blocked} icon={<DeviceArt kind={personal?.devices.find(device => device.id === selectedService.peer_id)?.kind || "desktop"} small />}
+    <div className={`${styles.sourceBar} sv-ws-bar`}>
+      <WorkspaceSelect grow caption={tr("运行设备")} label={tr("Processing device")} value={selectedService.peer_id} disabled={blocked} icon={<Tile hue={deviceHue(selectedService.peer_id, { self: selectedService.local_only })} size="xs">{(px) => <DeviceGlyph kind={personal?.devices.find(device => device.id === selectedService.peer_id)?.kind === "laptop" ? "laptop" : "desktop"} size={px} />}</Tile>}
         options={[selectedService, ...services].filter((item, index, all) => all.findIndex(other => other.peer_id === item.peer_id) === index).map(item => ({ value: item.peer_id, label: personal?.resolveName(item.peer_id, item.node_name) || item.node_name || item.peer_id, detail: tr(item.access === "friend" ? "Friend AI · authorized" : item.local_only ? "This device" : isServiceUsable(item) ? "Online" : item.availability?.state === "needs_connection" ? "Not connected" : "Offline") }))}
         onChange={value => { const next = services.find(item => item.peer_id === value); if (next) changeService(next); }} />
-      <WorkspaceSelect caption={tr("AI 服务")} label={tr("AI 服务")} value={serviceKey(selectedService)} disabled={blocked} icon={<Sparkles size={23} />}
+      <WorkspaceSelect caption={tr("AI 服务")} label={tr("AI 服务")} value={serviceKey(selectedService)} disabled={blocked} icon={<Tile hue="indigo" size="xs">{() => <SparkGlyph size={17} />}</Tile>}
         options={[selectedService, ...services].filter((item, index, all) => item.peer_id === selectedService.peer_id && all.findIndex(other => serviceKey(other) === serviceKey(item)) === index).map(item => ({ value: serviceKey(item), label: item.service.adapter === "codex_cli" ? "ChatGPT" : item.service.model_alias }))}
         onChange={key => { const next = services.find(item => serviceKey(item) === key); if (next) changeService(next); }} />
       {localModelCLI ? <WorkspaceSelect caption={tr("模型")} label={localModelCLI === "codex_cli" ? tr("Codex 模型") : tr("Antigravity 模型")} value={cliModel} disabled={blocked || !cliModels.length} placeholder={tr("正在读取模型…")} options={cliModels.map(model => ({ value: model.id, label: model.id === "" ? tr("CLI 默认") : model.name }))} onChange={value => { if (!selectedConversation || savingModel) return; setSavingModel(true); void replaceConversation({ ...selectedConversation, cliModel: value }, false).catch((cause: Error) => setError(cause.message)).finally(() => setSavingModel(false)); }} /> : null}
-      <Link className={styles.apiLink} to={personalHref("/services/api", client.mode === "fixture")}>{tr("API 接入")}</Link>
+      <span className="sv-ws-spacer" />
+      <Link className={`${styles.apiLink} rf-btn rf-btn-sm`} to={personalHref("/services/api", client.mode === "fixture")}><Code2 size={14} aria-hidden="true" />{tr("API 接入")}</Link>
+      {detailsPanel}
       {cliModelsError ? <p role="alert">{cliModelsError}</p> : null}
       {localModelCLI && cliModels.length > 0 && !cliModels.some(model => model.id === cliModel) && <p role="alert">{tr("保存的模型已不可用，请重新选择模型。")}</p>}
     </div>
     <UnifiedAIHistory selectedId={selectedConversation?.id} storage={selectedStorage} rows={conversations} serviceScope={{ key: serviceKey(selectedService), network: networkId }} onNew={() => void newConversation().catch((cause: Error) => setError(cause.message))}
-      actions={<button className={styles.clearButton} type="button" onClick={clearHistory}><Trash2 size={14} />{tr("Clear history")}</button>} />
-    <main className={styles.workspace}>
-      <header className={styles.workspaceHeading}><div><span>{tr("当前对话")}</span><strong>{selectedConversation?.title === "New conversation" ? tr("开启一段新对话") : selectedConversation?.title}</strong></div><span className={styles.connectionBadge} data-failed={!isServiceUsable(selectedService)}>{tr(llmServiceAvailability(selectedService))}</span></header>
+      actions={<button className={`${styles.clearButton} sv-ws-clearButton`} type="button" onClick={clearHistory}><Trash2 size={14} />{tr("Clear history")}</button>} />
+    <main className={`${styles.workspace} sv-ws-main`}>
+      <header className={`${styles.workspaceHeading} sv-ws-workspaceHeading`}><div><span>{tr("当前对话")}</span><strong>{selectedConversation?.title === "New conversation" ? tr("开启一段新对话") : selectedConversation?.title}</strong></div><span className={`${styles.connectionBadge} sv-ws-connectionBadge`} data-failed={!isServiceUsable(selectedService)}>{tr(llmServiceAvailability(selectedService))}</span></header>
       {selectedConversation?.sync && (selectedConversation.sync.conflict || selectedConversation.sync.deferred) ? <p role="status">{tr("Other-device changes are saved for review.")} <Link to={`/ask/history?${new URLSearchParams({ conversation: selectedConversation.id, network: selectedConversation.networkId })}`}>{tr("Review conversation branches")}</Link></p> : null}
-      <div className={styles.messages} ref={messageScrollRef}>
-        {!selectedConversation?.messages.length ? <div className={styles.welcome}><h2>{tr("今天，想一起做些什么？")}</h2><p>{tr("想法、问题，或一段需要打磨的文字，都可以从这里开始。")}</p><div className={styles.suggestions}>{SUGGESTIONS.map(suggestion => <button type="button" key={suggestion} onClick={() => setInput(tr(suggestion))}>{tr(suggestion)}</button>)}</div></div> : selectedConversation.messages.map(message => <div className={`${styles.messageRow}${message.role === "user" ? ` ${styles.messageRowUser}` : ""}`} key={message.id}>
-          {message.role === "assistant" ? <span className={styles.assistantAvatar}><ServiceArt kind="ai" small /></span> : null}
-          <div className={styles.messageBlock}><div className={`${styles.messageBubble}${message.status === "failed" ? ` ${styles.messageFailed}` : ""}`}>{message.role === "assistant" ? <ChatMarkdown>{message.taskId === nodeTask && stream.text ? stream.text : message.content}</ChatMarkdown> : message.content}</div>
-            {message.role === "assistant" && message.taskId === nodeTask && stream.text ? <span className={styles.messageMeta} role="status">{stream.interrupted ? "Live updates paused. This is a partial answer; checking the original task." : "Generating · partial answer"}</span> : null}
-            <span className={styles.messageMeta}>{formatTime(message.createdAt)}{message.cost !== undefined ? ` · ${message.cost} credits` : ""}</span>
-            {message.role === "assistant" ? <div className={styles.messageActions}><button type="button" onClick={() => void navigator.clipboard?.writeText(message.taskId === nodeTask && stream.text ? stream.text : message.content)}><Copy size={12} />{tr("Copy")}</button><button type="button" onClick={() => setHelpfulMessages(current => new Set(current).add(message.id))}>{helpfulMessages.has(message.id) ? <Check size={12} /> : <ThumbsUp size={12} />}{tr(helpfulMessages.has(message.id) ? "Helpful" : "Good response")}</button>{message.status !== "complete" ? <button type="button" onClick={() => message.taskId ? void checkOriginal(message.taskId) : retryLast()}><RotateCcw size={12} />{tr("Check original task")}</button> : null}{message.status === "complete" && message.contextIds?.some(id => nasOrigins[id]) ? <button type="button" onClick={() => void saveToNas(message)}>{tr("Save to NAS")}</button> : null}</div> : null}
+      <div className={`${styles.messages} sv-ws-messages`} ref={messageScrollRef}>
+        {!selectedConversation?.messages.length ? <div className={`${styles.welcome} sv-ws-welcome`}><span className="rf-tile rf-tile-xl rf-h-indigo" aria-hidden="true"><SparkGlyph size={30} /></span><h2>{tr("今天，想一起做些什么？")}</h2><p>{tr("想法、问题，或一段需要打磨的文字，都可以从这里开始。")}</p><div className={`${styles.suggestions} sv-ws-suggestions`}>{SUGGESTIONS.map(suggestion => <button type="button" key={suggestion} onClick={() => setInput(tr(suggestion))}>{tr(suggestion)}</button>)}</div></div> : selectedConversation.messages.map(message => <div className={`${styles.messageRow} sv-ws-messageRow${message.role === "user" ? ` ${styles.messageRowUser} sv-ws-messageRowUser` : ""}`} key={message.id}>
+          {message.role === "assistant" ? <span className={`${styles.assistantAvatar} sv-ws-assistantAvatar`}><Tile hue="indigo" size="xs">{() => <SparkGlyph size={15} />}</Tile></span> : null}
+          <div className={`${styles.messageBlock} sv-ws-messageBlock`}><div className={`${styles.messageBubble} sv-ws-messageBubble${message.status === "failed" ? ` ${styles.messageFailed} sv-ws-messageFailed` : ""}`}>{message.role === "assistant" ? <ChatMarkdown>{message.taskId === nodeTask && stream.text ? stream.text : message.content}</ChatMarkdown> : message.content}</div>
+            {message.role === "assistant" && message.taskId === nodeTask && stream.text ? <span className={`${styles.messageMeta} sv-ws-messageMeta`} role="status">{stream.interrupted ? "Live updates paused. This is a partial answer; checking the original task." : "Generating · partial answer"}</span> : null}
+            <span className={`${styles.messageMeta} sv-ws-messageMeta`}>{formatTime(message.createdAt)}{message.cost !== undefined ? ` · ${message.cost} credits` : ""}</span>
+            {message.role === "assistant" ? <div className={`${styles.messageActions} sv-ws-messageActions`}><button type="button" onClick={() => void navigator.clipboard?.writeText(message.taskId === nodeTask && stream.text ? stream.text : message.content)}><Copy size={12} />{tr("Copy")}</button><button type="button" onClick={() => setHelpfulMessages(current => new Set(current).add(message.id))}>{helpfulMessages.has(message.id) ? <Check size={12} /> : <ThumbsUp size={12} />}{tr(helpfulMessages.has(message.id) ? "Helpful" : "Good response")}</button>{message.status !== "complete" ? <button type="button" onClick={() => message.taskId ? void checkOriginal(message.taskId) : retryLast()}><RotateCcw size={12} />{tr("Check original task")}</button> : null}{message.status === "complete" && message.contextIds?.some(id => nasOrigins[id]) ? <button type="button" onClick={() => void saveToNas(message)}>{tr("Save to NAS")}</button> : null}</div> : null}
             {message.contextIds?.length ? <AskAnswerSources ids={message.contextIds} byteLimits={message.contextBytes} /> : null}
           </div>
         </div>)}
-        {sending ? <div className={styles.messageRow}><span className={styles.assistantAvatar}><ServiceArt kind="ai" small /></span><div className={styles.thinking} aria-label="Private AI is thinking"><span /><span /><span /></div></div> : null}
+        {sending ? <div className={`${styles.messageRow} sv-ws-messageRow`}><span className={`${styles.assistantAvatar} sv-ws-assistantAvatar`}><Tile hue="indigo" size="xs">{() => <SparkGlyph size={15} />}</Tile></span><div className={`${styles.thinking} sv-ws-thinking`} aria-label="Private AI is thinking"><span /><span /><span /></div></div> : null}
       </div>
-      <div className={styles.composerWrap}>
+      <div className={`${styles.composerWrap} sv-ws-composerWrap`}>
         {nasHandoff ? <div className="ai-pending-nas"><FileText size={15} /><span>{nasHandoff.sourceName} / {nasHandoff.path}</span><button type="button" disabled={blocked} onClick={reviewNasHandoff}>{tr("Add materials")}</button><button type="button" onClick={() => { updateNasHandoff(null); setNasHandoff(null); }}>{tr("Remove document")}</button></div> : null}
         {selectedConversation?.contextIds?.length ? <AskMaterials ids={selectedConversation.contextIds} onRemove={async id => { if (blocked) throw new Error(tr("Wait for the current task before adding materials.")); await replaceConversation({ ...selectedConversation, contextIds: selectedConversation.contextIds?.filter(value => value !== id) }, false); }} /> : null}
-        {error ? <div className={styles.error} role="alert">{error}</div> : null}
+        {error ? <div className={`${styles.error} sv-ws-error`} role="alert">{error}</div> : null}
         {historyReady && !selectedConversation ? <div role="alert">This conversation is no longer available. Your input has been kept; open its history or create a new conversation.</div> : null}
         {unconfirmed ? <div role="status">The node has not confirmed this reviewed request for conversation {unconfirmed.conversation_id}.<button type="button" disabled={sending} onClick={() => void checkOriginal(unconfirmed.task_id)}>Check original task</button><button type="button" disabled={sending} onClick={() => void submitReviewed(unconfirmed)}>Retry same reviewed request</button></div> : null}
-        <div className={styles.composer}><textarea aria-label={tr("Message Private AI")} value={input} onChange={event => setInput(event.target.value)} placeholder={tr("输入你的问题，让想法继续…")} rows={2} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void reviewAndSend(); } }} />
-          <div className={styles.composerControls}><button className="ai-attach-button" type="button" disabled={blocked || !historyReady || client.mode !== "live"} onClick={() => setMaterialsOpen(true)}><Paperclip size={15} />{tr("Add materials")}</button><span className={styles.composerModel}>{localModelCLI ? (cliModel === "" ? tr("CLI 默认") : cliModels.find(model => model.id === cliModel)?.name) : selectedService.service.model_alias}</span><span className={styles.keyboardHint}>{tr("Enter 发送 · Shift + Enter 换行")}</span>{isSending ? <button className={styles.stopButton} type="button" aria-label={tr("Stop generating")} onClick={() => void stopGeneration()}><Square size={15} /></button> : <button className={styles.sendButton} type="button" aria-label={tr("Send message")} disabled={!input.trim() || !historyReady || blocked || (Boolean(localModelCLI) && !cliModels.some(model => model.id === cliModel))} onClick={() => void reviewAndSend()}><ArrowUp size={19} /></button>}</div>
+        <div className={`${styles.composer} sv-ws-composer`}><textarea aria-label={tr("Message Private AI")} value={input} onChange={event => setInput(event.target.value)} placeholder={tr("输入你的问题，让想法继续…")} rows={2} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void reviewAndSend(); } }} />
+          <div className={`${styles.composerControls} sv-ws-composerControls`}><button className="ai-attach-button" type="button" disabled={blocked || !historyReady || client.mode !== "live"} onClick={() => setMaterialsOpen(true)}><Paperclip size={15} />{tr("Add materials")}</button><span className={`${styles.composerModel} sv-ws-composerModel`}>{localModelCLI ? (cliModel === "" ? tr("CLI 默认") : cliModels.find(model => model.id === cliModel)?.name) : selectedService.service.model_alias}</span><span className={`${styles.keyboardHint} sv-ws-keyboardHint`}>{tr("Enter 发送 · Shift + Enter 换行")}</span>{isSending ? <button className={`${styles.stopButton} sv-ws-stopButton`} type="button" aria-label={tr("Stop generating")} onClick={() => void stopGeneration()}><Square size={15} /></button> : <button className={`${styles.sendButton} sv-ws-sendButton`} type="button" aria-label={tr("Send message")} disabled={!input.trim() || !historyReady || blocked || (Boolean(localModelCLI) && !cliModels.some(model => model.id === cliModel))} onClick={() => void reviewAndSend()}><ArrowUp size={19} /></button>}</div>
         </div>
-        <div className={styles.composerMeta}><span><ShieldCheck size={12} />{tr(storageMode === "node-encrypted" ? "Encrypted history on your node" : storageMode === "encrypted" ? "Encrypted in this browser" : "History kept for this session")}</span><span>{tr("Processed by {{device}}", { device: providerName })}</span></div>
+        <div className={`${styles.composerMeta} sv-ws-composerMeta`}><span><ShieldCheck size={12} />{tr(storageMode === "node-encrypted" ? "Encrypted history on your node" : storageMode === "encrypted" ? "Encrypted in this browser" : "History kept for this session")}</span><span>{tr("Processed by {{device}}", { device: providerName })}</span></div>
       </div>
     </main>
     {materialsOpen ? <AIWorkspaceMaterials onSelect={attachSource} onClose={() => setMaterialsOpen(false)} /> : null}
