@@ -410,6 +410,7 @@ export function AppRoutes() {
           <Route path="agent/extensions" element={<AgentExtensions />} />
           <Route path="agent/extensions/:section" element={<AgentExtensions />} />
           <Route path="apps" element={<CraftApps />} />
+          <Route path="apps/plugins/:pluginId" element={<PluginWorkspace />} />
           <Route path="apps/extensions/:pluginId" element={<ExtensionWebApp />} />
           <Route path="apps/workspaces" element={<NodeApps />} />
           <Route path="ask" element={<LegacyAgentRedirect />} />

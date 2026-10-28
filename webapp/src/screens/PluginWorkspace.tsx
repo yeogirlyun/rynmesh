@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Box, ExternalLink, MessageCircle, Pin, PinOff, RefreshCw, Settings, Table2 } from "lucide-react";
 import { agentExtensions, type ExtensionOverview } from "../domain/agentExtensions";
@@ -56,6 +56,9 @@ function Workspace({ pluginId }: { pluginId: string }) {
     ...(overview?.mcp_servers || []).filter(item => item.plugin_id === plugin.id || plugin.mcp_server_ids.includes(item.id)),
   ].map(item => [item.id, item])).values()];
   const hasPages = Boolean(plugin.views?.length), hasProvider = Boolean(plugin.peer_provider);
+  if (plugin.web_app && query.get("tab") !== "peers" && query.get("mode") !== "declarative") {
+    return <Navigate replace to={`/apps/extensions/${encodeURIComponent(plugin.id)}`} />;
+  }
   const showProvider = hasProvider && (tab === "peers" || !hasPages);
   const path = pluginWorkspacePath(plugin.id);
   const settings = `/settings/extensions/plugins?plugin=${encodeURIComponent(plugin.id)}`;
