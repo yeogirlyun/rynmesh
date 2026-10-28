@@ -171,8 +171,6 @@ def _prepare_tool_arguments(view, schema, arguments):
     return call_args
 
 
-
-
 def _validate_arguments(schema, arguments):
     # An MCP-supplied schema must never cause network retrieval during validation.
     def no_resources(uri):

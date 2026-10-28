@@ -20,3 +20,8 @@ export function nodeControlUrl(path: string): string {
   const suffix = path.startsWith("/") ? path : `/${path}`;
   return `${nodeControlBaseUrl()}${suffix}`;
 }
+
+/** Resolve node API paths against the managed desktop node. */
+export function nodeApiUrl(path: string): string {
+  return `${nodeControlBaseUrl().replace(/\/api\/local$/, "")}${path.startsWith("/") ? path : `/${path}`}`;
+}
