@@ -1,0 +1,30 @@
+.office-preview { display: flex; flex-direction: column; min-width: 0; min-height: 0; border: 1px solid var(--pf-line); border-radius: 10px; overflow: hidden; background: var(--pf-bg); }
+.office-preview-label { padding: 10px 14px; font-size: 11px; color: var(--pf-muted); border-bottom: 1px solid var(--pf-line); }
+.office-preview-notice, .office-layout-note { margin: 0; padding: 10px 14px; color: var(--pf-muted); font-size: 11px; line-height: 1.6; }
+.office-preview-notice { background: var(--pf-subtle); }
+.office-sheet-tabs { display: flex; flex-shrink: 0; gap: 3px; overflow-x: auto; padding: 6px; border-bottom: 1px solid var(--pf-line); }
+.office-sheet-tabs button { border: 0; border-radius: 5px; background: transparent; color: var(--pf-muted); padding: 7px 10px; font-size: 12px; white-space: nowrap; }
+.office-sheet-tabs button[aria-selected="true"] { background: var(--pf-subtle); color: var(--pf-text); font-weight: 600; }
+.office-sheet-size { padding: 6px 12px; font-size: 10px; color: var(--pf-muted); }
+.office-sheet-scroll { overflow: auto; max-height: min(65vh, 700px); }
+.office-sheet { border-collapse: separate; border-spacing: 0; min-width: 100%; color: var(--pf-text); font-size: 11px; }
+.office-sheet th, .office-sheet td { padding: 7px 10px; border-right: 1px solid var(--pf-line); border-bottom: 1px solid var(--pf-line); text-align: left; min-width: 100px; max-width: 340px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.office-sheet th { position: sticky; background: var(--pf-subtle); color: var(--pf-muted); text-align: center; font-weight: 500; z-index: 1; }
+.office-sheet thead th { top: 0; }
+.office-sheet th:first-child { left: 0; min-width: 36px; }
+.office-sheet thead th:first-child { z-index: 2; }
+.office-document { padding: 24px; color: var(--pf-text); font-size: 13px; line-height: 1.9; overflow: auto; max-height: 70vh; overflow-wrap: anywhere; }
+.office-document p { margin: 0 0 12px; white-space: pre-wrap; }
+.office-document .office-document-heading { font-size: 19px; font-weight: 650; line-height: 1.4; margin: 16px 0 12px; }
+.office-document-table { overflow-x: auto; margin: 12px 0; }
+.office-document-table table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.office-document-table td { padding: 8px 10px; border: 1px solid var(--pf-line); min-width: 75px; white-space: pre-wrap; }
+.office-slide-navigation { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 9px; border-bottom: 1px solid var(--pf-line); font-size: 12px; }
+.office-slide-navigation button, .office-preview-error button { display: inline-flex; align-items: center; gap: 6px; justify-content: center; border: 1px solid var(--pf-line); border-radius: 6px; background: var(--pf-panel); color: var(--pf-text); padding: 6px; }
+.office-slide-navigation button:disabled { opacity: .35; }
+.office-slide { margin: 8px 16px 18px; padding: 24px; min-height: 220px; max-height: 65vh; overflow: auto; border: 1px solid var(--pf-line); border-radius: 5px; color: var(--pf-text); background: var(--pf-panel); line-height: 1.7; overflow-wrap: anywhere; }
+.office-slide h3 { font-size: 20px; margin: 0 0 20px; line-height: 1.4; }
+.office-slide p { font-size: 13px; margin: 8px 0; white-space: pre-wrap; }
+.office-embedded-image { display: block; max-width: 100%; height: auto; margin: 12px auto; }
+.office-preview-error { padding: 20px; font-size: 12px; line-height: 1.7; }
+.office-preview-error p { margin-top: 0; }

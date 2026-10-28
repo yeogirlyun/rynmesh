@@ -1,0 +1,96 @@
+Browser tab: 48282180, Title: "Ryn Webapp", URL: "http://127.0.0.1:19600/friends".
+0 AXWebArea Ryn Webapp, URL: 127.0.0.1:19600/friends
+	1 container root
+		2 container
+			3 image Ryn mark
+			4 text Ryn WEBAPP local console -  ryn-node 0.0.0+src daemon registry 0  peers live
+			5 button Open getting started guide
+			6 button Toggle Ask Ryn panel
+		7 container
+			8 text CONSOLE
+			9 link Description: Home, Value: 127.0.0.1:19600/
+			10 link Description: For You, Value: 127.0.0.1:19600/digest
+			11 link Description: My reading, Value: 127.0.0.1:19600/reading
+			12 link Description: Explore, Value: 127.0.0.1:19600/explore
+			13 link Description: Search, Value: 127.0.0.1:19600/search
+			14 link Description: Ask Ryn, Value: 127.0.0.1:19600/ask
+			15 link Description: Publish, Value: 127.0.0.1:19600/publish
+			16 link Description: Peers, Value: 127.0.0.1:19600/peers
+			17 link Description: Friends, Value: 127.0.0.1:19600/friends
+			18 link Description: Friend updates, Value: 127.0.0.1:19600/friend-updates
+			19 link Description: Offline reading, Value: 127.0.0.1:19600/offline
+			20 link Description: Services, Value: 127.0.0.1:19600/services
+			21 link Description: Chat, Value: 127.0.0.1:19600/chat
+			22 link Description: Settings, Value: 127.0.0.1:19600/settings
+			23 text THIS NODE
+			24 image Ryn mark
+			25 text Ryn 11 子陵台式
+			26 button Copy qcpNML8Qxcm2mVQdPkT9/CT5BCruL5pvI+ktv5IB5eE=
+			27 text 0 local 0 fetched
+		28 container
+			29 text PRIVATE SHARING
+			30 heading Friends, Value: 1
+				31 text Friends
+			32 text Invite someone you know, review their identity, then share your first message.
+			33 text Your saved invitation is ready. Review it before accepting.
+			34 heading Invite a friend, Value: 2
+				35 text Invite a friend
+			36 text One use, valid for 15 minutes. Allows messages, small attachments and content cards. AI access stays off.
+			37 button Create invite
+			38 heading Use an invite, Value: 2
+				39 text Use an invite
+			40 text entry area (settable) Description: Friend invite, Value: [invitation omitted]
+			41 button Review invite
+			42 heading AI invitation progress, Value: 2
+				43 text AI invitation progress
+			44 text Unfinished operations survive restart. Continue the original operation; permission is checked before opening chat.
+			45 container AI invitation from FAI-A
+				46 heading FAI-A · local-small, Value: 3
+					47 text FAI-A  ·  local-small
+				48 container
+					49 text Operation  21cfb1905ef64dad8728b8bfecdf4076  ·  Previously accepted; recheck to open
+				50 button Open this friend's AI
+				51 button Stop continuing
+			52 heading Your friends, Value: 2
+				53 text Your friends
+			54 button Refresh friends
+			55 heading FAI-A, Value: 3
+				56 text FAI-A
+			57 text http://10.10.10.187:19041
+			58 button Message FAI-A
+				59 text Message
+				60 text FAI-A
+			61 button Remove
+			62 heading Shared content, Value: 2
+				63 text Shared content
+			64 text Cards show metadata first. Choose Download and read to save a private copy. Removing a friend cannot recall copies already saved.
+			65 button Refresh shared content
+			66 text No shared content yet. Open an article and choose Share with a friend.
+			67 container Card history maintenance
+				68 heading Clear card history, Value: 3
+					69 text Clear card history
+				70 text This clears reviewed sharing-card metadata and matching entries in known legacy files. Saved documents, reading records, messages, friendships and AI permissions remain. Use their own data controls to manage them. Deliveries already in flight or already received by someone else cannot be recalled.
+				71 text Only card identifiers and bounded cleanup receipts are retained to prevent old deliveries or retries from restoring cleared cards. Up to 10,000 deletion identifiers are retained; they are excluded from ordinary exports.
+				72 button Review card history cleanup
+			73 heading AI with friends, Value: 2, ID: share-ai
+				74 text AI with friends
+			75 text Being friends does not grant AI access. Choose who can use each service; your friend's device sees the questions sent to their model.
+			76 text Share my AI: select an existing friend below. Their questions are processed on your device. Keep Ryn online with the model ready.
+			77 button Refresh AI permissions
+			78 container
+				79 text No local AI service configured.
+				80 link Description: Set up local AI, Value: 127.0.0.1:19600/services/manage
+			81 container AI with FAI-A
+				82 heading FAI-A, Value: 3
+					83 text FAI-A
+				84 button Check FAI-A's AI
+					85 text Check
+					86 text FAI-A
+					87 text 's AI
+				88 container
+					89 text Last checked  2026/9/15 01:14:26
+				90 container
+					91 text rynmesh-qwen2.5-0.5b-q4  ·  Ready
+					92 link Description: Ask FAI-A's AI, Value: 127.0.0.1:19600/ask?peer=udJlEtV1rjr7IDlyg4bubFQ6iH0V8%2F5P0OU%2BqtkHFjw%3D&service=local-small&network=rynmesh-main
+
+The focused UI element is 40 text entry area (settable) Description: Friend invite, Value: [invitation omitted]

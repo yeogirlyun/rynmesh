@@ -1,0 +1,43 @@
+{
+  "kind": "R05-development-controller-preparation",
+  "formal_pass": false,
+  "formal_trials_executed": 0,
+  "independent_review": "pending_non_author_review",
+  "production_edits": false,
+  "paid_model_calls": 0,
+  "files": {
+    "docs/acceptance/ryn-agent-delivery/real-model/run_r05.py": "55ad0b8fb1ca7144782821ba94dbb0287d14b5b9d0da022aa4d8a41ac0eeec42",
+    "tests/test_agent_r05_controller.py": "9f923b13ef8c9f9b380b624d2b7aac076bdfd26141833595be001be24148bbb3"
+  },
+  "offline_validation": {
+    "targeted_tests": 4,
+    "passed": 4,
+    "seconds": 3.57,
+    "last_small_followup": "After next-active-operation strictness and live identity capture, state-machine test passed (1.54s); ruff passed.",
+    "trace_followup": "One rejected-usage capture test passed (1.16s), ruff passed; actual request messages/specs and response/usage/finish are captured for each local inference stage without reasoning_content."
+  },
+  "commands": {
+    "stream_controls": ".venv/Scripts/python.exe docs/acceptance/ryn-agent-delivery/real-model/run_r05.py --live --scenario stream_controls --consumer-home ISOLATED_CONSUMER_HOME --port 18782 --model-id AUTHENTICATED_PEER_MODEL_ID --output NEW_R05_STREAM_OUTPUT",
+    "late_write_receipt": ".venv/Scripts/python.exe docs/acceptance/ryn-agent-delivery/real-model/run_r05.py --live --scenario late_write_receipt --owner-home LOCAL_OWNER_HOME --source-id src-7de9fb1d36c44bc8 --output NEW_R05_LATE_OUTPUT"
+  },
+  "execution_prerequisites": [
+    "Wait until P04/other work has stopped on the selected consumer; existing Control token is read only on that host.",
+    "Peer model must be available, agent-supported, destination-bound and advertise streaming. Agent settings must already be enabled and read_only/confirm_changes; runner never flips capability or settings.",
+    "Output directory must not exist. Late-write mode creates a distinct fresh local home, fixture DAV and model session; owner sources remain read-only."
+  ],
+  "confirmed_offline": [
+    "Production peer catalog -> authenticated provider request/chunk -> consumer decrypt -> AgentModelBridge -> AgentRuntime produced 12 text_delta events with stable control revision, without catalog override. Transport and upstream in this test are synthetic.",
+    "Runtime control observer waits >=10 actual runtime text_delta records, pauses with last-seen control revision, resumes only at paused checkpoint, cancels only if first subsequent dispatch is observed while running.",
+    "Actual fixture HTTP PUT commits before original send_response is held; cancellation is durably stored before release. Original 201 yields confirmed business and task receipts, one PUT and zero subsequent dispatches."
+  ],
+  "limitations": [
+    "No live GLM or physical peer R05 has run. Advertised streaming is not proof that the vendor emits SSE or that this frozen prompt produces >=10 runtime deltas. Missing triggers remain recorded, never synthesized.",
+    "Local API Agent catalog has streaming=False; this controller does not change that product boundary.",
+    "Reusing an existing isolated peer consumer is development collection, not a fresh formal repetition or proof that the entire frozen world is mounted.",
+    "Stream post-cancel observation is bounded to 3 seconds; dispatch metrics derive from durable runtime invocation intents, not billing receipts.",
+    "Late-write fixture uses an actual loopback HTTP server on one host; no desktop/physical-two-host write or upstream billing-stop claim.",
+    "Initial timing assertions exposed coarse Windows wall/monotonic resolution; ordering now records high-resolution perf_counter_ns alongside actual Event synchronization."
+  ],
+  "model_call_cap_per_subscenario": 24,
+  "limits_note": "Stream task lifetime model-call cap is 24; existing consumer step/time/context settings remain unchanged. Late task also has lifetime call cap24, step24/time600/context100000."
+}

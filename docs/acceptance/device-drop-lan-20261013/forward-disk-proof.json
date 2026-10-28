@@ -1,0 +1,11 @@
+﻿{
+    "route":  "lan",
+    "path":  "C:\\Users\\ziling\\Downloads\\Rynmesh\\Ryn-LAN-proof-1791895289245.bin",
+    "sha256_method":  "Get-FileHash on receiver physical Windows disk over SSH",
+    "transfer_id":  "62b5d6754feb47f087d8cdf7f0a9a34d",
+    "at":  "2026-10-13T12:42:57.0386474Z",
+    "status":  "completed",
+    "host":  "DESKTOP-SQ6VA8I",
+    "bytes":  134217759,
+    "sha256":  "697E4202FF4DF4A93D8083B2C6D652C293E44158A7A4B4138A0C8DF421A4BF9A"
+}

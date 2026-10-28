@@ -1,0 +1,178 @@
+{
+  "recorded_at": "2026-10-10T06:47:39.606038+00:00",
+  "status": "failed_transport_setup_preserved",
+  "phase": 1,
+  "formal_trial_registered": false,
+  "production_wheel_sha256": "b1dfe95d06efce6257435200a6dadcea78e88865d70314db68dec3abb0c7e34a",
+  "launcher_sha256": "3eac963d32c18ce73a78d3e921ef648f1410fac6fb9a5b3825fb2b3903958e0e",
+  "consumer_tasks": [
+    {
+      "id": "agent_00331fb8632d4cd8ada772877499cd2e",
+      "status": "failed",
+      "error": "agent_inference_failed"
+    },
+    {
+      "id": "agent_48feb549c7c746d0a679c3d69681bfed",
+      "status": "failed",
+      "error": "agent_inference_failed"
+    }
+  ],
+  "orders": {
+    "orders": [
+      {
+        "task_id": "agent_33fd262308e748519bfd572071bf9092",
+        "state": "failed",
+        "created_at": "2026-10-10T06:44:04.242574+00:00",
+        "updated_at": "2026-10-10T06:45:09.308871+00:00",
+        "history": [
+          {
+            "at": "2026-10-10T06:44:04.242574+00:00",
+            "state": "created"
+          },
+          {
+            "at": "2026-10-10T06:44:04.242574+00:00",
+            "network_id": "two-host-development",
+            "provider_peer_id": "RQW2iD67ISoaH8Q8b/+hhAk0n5EiXYrIdAx1+WwyJHM=",
+            "service_id": "src-two-host-glm-0d8724178b09",
+            "state": "accepted"
+          },
+          {
+            "at": "2026-10-10T06:44:04.242574+00:00",
+            "network_id": "two-host-development",
+            "provider_peer_id": "RQW2iD67ISoaH8Q8b/+hhAk0n5EiXYrIdAx1+WwyJHM=",
+            "service_id": "src-two-host-glm-0d8724178b09",
+            "state": "running",
+            "transport": "p2p"
+          },
+          {
+            "at": "2026-10-10T06:44:04.258174+00:00",
+            "checkpoint": true,
+            "connection_attempts": [],
+            "connection_phase": "connecting_p2p",
+            "state": "running"
+          },
+          {
+            "at": "2026-10-10T06:45:09.308871+00:00",
+            "connection_attempts": [
+              {
+                "error_code": "p2p_connection_timed_out",
+                "transport": "p2p"
+              }
+            ],
+            "connection_phase": "failed",
+            "error_code": "p2p_connection_timed_out",
+            "error_stage": "signaling",
+            "provider_peer_id": "RQW2iD67ISoaH8Q8b/+hhAk0n5EiXYrIdAx1+WwyJHM=",
+            "service_id": "src-two-host-glm-0d8724178b09",
+            "state": "failed"
+          }
+        ],
+        "connection_attempts": [
+          {
+            "error_code": "p2p_connection_timed_out",
+            "transport": "p2p"
+          }
+        ],
+        "connection_phase": "failed",
+        "error_code": "p2p_connection_timed_out",
+        "error_stage": "signaling",
+        "provider_peer_id": "RQW2iD67ISoaH8Q8b/+hhAk0n5EiXYrIdAx1+WwyJHM=",
+        "service_id": "src-two-host-glm-0d8724178b09"
+      },
+      {
+        "task_id": "agent_f109106d59e4472b8625ed4f23c2ee50",
+        "state": "failed",
+        "created_at": "2026-10-10T06:42:58.546361+00:00",
+        "updated_at": "2026-10-10T06:44:03.586404+00:00",
+        "history": [
+          {
+            "at": "2026-10-10T06:42:58.546361+00:00",
+            "state": "created"
+          },
+          {
+            "at": "2026-10-10T06:42:58.546361+00:00",
+            "network_id": "two-host-development",
+            "provider_peer_id": "RQW2iD67ISoaH8Q8b/+hhAk0n5EiXYrIdAx1+WwyJHM=",
+            "service_id": "src-two-host-glm-0d8724178b09",
+            "state": "accepted"
+          },
+          {
+            "at": "2026-10-10T06:42:58.546361+00:00",
+            "network_id": "two-host-development",
+            "provider_peer_id": "RQW2iD67ISoaH8Q8b/+hhAk0n5EiXYrIdAx1+WwyJHM=",
+            "service_id": "src-two-host-glm-0d8724178b09",
+            "state": "running",
+            "transport": "p2p"
+          },
+          {
+            "at": "2026-10-10T06:42:58.561991+00:00",
+            "checkpoint": true,
+            "connection_attempts": [],
+            "connection_phase": "connecting_p2p",
+            "state": "running"
+          },
+          {
+            "at": "2026-10-10T06:44:03.586404+00:00",
+            "connection_attempts": [
+              {
+                "error_code": "p2p_connection_timed_out",
+                "transport": "p2p"
+              }
+            ],
+            "connection_phase": "failed",
+            "error_code": "p2p_connection_timed_out",
+            "error_stage": "signaling",
+            "provider_peer_id": "RQW2iD67ISoaH8Q8b/+hhAk0n5EiXYrIdAx1+WwyJHM=",
+            "service_id": "src-two-host-glm-0d8724178b09",
+            "state": "failed"
+          }
+        ],
+        "connection_attempts": [
+          {
+            "error_code": "p2p_connection_timed_out",
+            "transport": "p2p"
+          }
+        ],
+        "connection_phase": "failed",
+        "error_code": "p2p_connection_timed_out",
+        "error_stage": "signaling",
+        "provider_peer_id": "RQW2iD67ISoaH8Q8b/+hhAk0n5EiXYrIdAx1+WwyJHM=",
+        "service_id": "src-two-host-glm-0d8724178b09"
+      }
+    ]
+  },
+  "facts": [
+    "Both physical hosts installed equal237files; bidirectional LAN HTTP health and authenticated FriendService/catalog succeeded.",
+    "Two-turn GLM tools setup probe succeeded; these2 upstream requests are setup, not cross-host Agent inference.",
+    "Both consumer Agent requests failed strict P2P signaling after approximately65seconds; provider received no consumer inference in captured audit.",
+    "Cross-model raw signed request to private canary returned400 CLI sharing requires a personal space before friend grant validation; not proof of ai_permission_denied.",
+    "Isolated registry locations had not been shared across nodes; correct topology needs actual common production signaling registry plus ICE UDP.",
+    "Old tasks and audit logs retained; fresh phase after topology repair will not overwrite this result."
+  ],
+  "raw_artifacts": [
+    {
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\two-host-20261010\\phase1-consumer-final.json",
+      "sha256": "b6d7919c5b45cc40b8a3bd07aab6aa59e6aa1537684d426786d1f4cf35cd7913"
+    },
+    {
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\two-host-20261010\\phase1-consumer-audit.jsonl",
+      "sha256": "83a08e466ab3eec12ef5e7c19255bd8456a383014101cdd8d52fc92b248b5320"
+    },
+    {
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\two-host-20261010\\phase1-provider-final.json",
+      "sha256": "90ef8fe512c1c9060ba5742387304bce9ba04b0832e96ada82b3b51d9d642b27"
+    },
+    {
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\two-host-20261010\\phase1-provider-audit.jsonl",
+      "sha256": "5a670f540476a77d064bd7259e3e3e59b90f886ca3312264d640614f5d7c12d5"
+    },
+    {
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\two-host-20261010\\cross-model-rejected.json",
+      "sha256": "cc6360760ae3a62628dcca7567654d10ee17b15d0328372b6fcc36339929b5af"
+    },
+    {
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\two-host-20261010\\sessions.json",
+      "sha256": "e3cc8a11bcba09f50d6e6b490b4e9d6b63d7ddbfd34e1bd1f5d6b17f0cec14bc"
+    }
+  ]
+}

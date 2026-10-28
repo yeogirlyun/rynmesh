@@ -1,0 +1,81 @@
+{
+  "kind": "windows-development-candidate-build-evidence",
+  "at": "2026-10-11T06:28:06.177824+00:00",
+  "result": {
+    "status": "development_candidate_build_succeeded",
+    "exit_code": 0,
+    "started_utc": "2026-10-11T02:50:56.9424993Z",
+    "finished_utc": "2026-10-11T02:55:41.9449151Z",
+    "source_files_before": 626,
+    "source_files_after": 626,
+    "source_changes": 0,
+    "log": "D:\\code\\rynmesh\\.codex-tmp\\desktop-agent-build-20261011\\20261011T105054830\\build.log",
+    "scope": "Complete existing Windows build script; no installation, desktop launch, publishing or reboot. Not final acceptance."
+  },
+  "formal_pass": false,
+  "installation_performed": false,
+  "upgrade_performed": false,
+  "native_ui_validated": false,
+  "source_count": 626,
+  "before_after_manifests_equal": true,
+  "current_source_differences": [],
+  "outputs": [
+    {
+      "path": "webapp/src-tauri/target/x86_64-pc-windows-msvc/release/Ryn.exe",
+      "sha256": "A5A884C5EA387D62D7021985A7DCE543F05647DEEF711F84BD3C50F1859051B8",
+      "bytes": 10925568,
+      "last_write_utc": "2026-10-11T02:55:41.8887266Z",
+      "current_sha256": "a5a884c5ea387d62d7021985a7dce543f05647deef711f84bd3c50f1859051b8",
+      "matches_build": true
+    },
+    {
+      "path": "webapp/src-tauri/target/x86_64-pc-windows-msvc/release/rynmesh-peer.exe",
+      "sha256": "D2C0F80CB233C1A46DBDF4C1F2E19735DFDD6AB7806128066782714C20691831",
+      "bytes": 36304445,
+      "last_write_utc": "2026-10-11T02:53:02.4936889Z",
+      "current_sha256": "d2c0f80cb233c1a46dbdf4c1f2e19735dfdd6ab7806128066782714c20691831",
+      "matches_build": true
+    },
+    {
+      "path": "webapp/src-tauri/binaries/rynmesh-peer-x86_64-pc-windows-msvc.exe",
+      "sha256": "D2C0F80CB233C1A46DBDF4C1F2E19735DFDD6AB7806128066782714C20691831",
+      "bytes": 36304445,
+      "last_write_utc": "2026-10-11T02:53:02.4936889Z",
+      "current_sha256": "d2c0f80cb233c1a46dbdf4c1f2e19735dfdd6ab7806128066782714c20691831",
+      "matches_build": true
+    },
+    {
+      "path": "webapp/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Ryn_0.7.0_x64-setup.exe",
+      "sha256": "16B3D454F1F189F1E17E4F17DC4280A070B465810F476E39F032974A34000C55",
+      "bytes": 38997739,
+      "last_write_utc": "2026-10-11T02:55:41.8084353Z",
+      "current_sha256": "16b3d454f1f189f1e17e4f17dc4280a070b465810f476e39f032974a34000c55",
+      "matches_build": true
+    },
+    {
+      "path": "release/windows/Ryn-0.7.0-drives-p2p-windows-x64-setup.exe",
+      "sha256": "3F63D862CE1AC4EEA0D70EDBD3B86CB3F29D6D55F16B54C3F8FFCA5F2AD1BFAB",
+      "bytes": 37825046,
+      "last_write_utc": "2026-10-09T05:21:53.5126757Z",
+      "current_sha256": "3f63d862ce1ac4eea0d70edbd3b86cb3f29d6d55f16b54c3f8ffca5f2ad1bfab",
+      "matches_build": true
+    }
+  ],
+  "limitations": [
+    "Only a complete build and source/binary hashes are verified. Installation, upgrade, native UI and task recovery remain untested.",
+    "Release/windows historical package intentionally remains unchanged; current candidate is in target bundle/nsis.",
+    "The first temporary wrapper log-handle failure is retained at .codex-tmp/desktop-agent-build-20261011/20261011T105007309. It did not build the candidate.",
+    "Astra independent production review remains pending usage limits."
+  ],
+  "raw_evidence": {
+    ".codex-tmp/desktop-agent-build-20261011/20261011T105054830/backup-manifest.json": "883791347a83952e8edb3b00d1e5b96aa3e54f45e3119e27b4defb0b37f4badc",
+    ".codex-tmp/desktop-agent-build-20261011/20261011T105054830/build.log": "d91ecc72806c2eb95da3b7865690f1fd29c845ce12fa7dfa3ab3a78e26bccbff",
+    ".codex-tmp/desktop-agent-build-20261011/20261011T105054830/git-status-after.txt": "6e4e97822b44dcd1f4326a763caf04375cec63ca7395b512b555c4584602a3ff",
+    ".codex-tmp/desktop-agent-build-20261011/20261011T105054830/git-status-before.txt": "17061a7db670556605f55135c90b2a4faa093c2bc983857338e4b689c2086053",
+    ".codex-tmp/desktop-agent-build-20261011/20261011T105054830/output-manifest.json": "03e61e8dffa84dae14421d7046a6feb5aa5d05446978b1db2d1e126e2f724003",
+    ".codex-tmp/desktop-agent-build-20261011/20261011T105054830/result.json": "13486d0d49d9fa1ddbce6e07ec7905fad1508691c648c72b300793c1fce68050",
+    ".codex-tmp/desktop-agent-build-20261011/20261011T105054830/source-after.json": "08f0e2cc2c7f3070d6e93b24a2a91e42d87a2dcd49f619f55eaec94676bf7650",
+    ".codex-tmp/desktop-agent-build-20261011/20261011T105054830/source-before.json": "08f0e2cc2c7f3070d6e93b24a2a91e42d87a2dcd49f619f55eaec94676bf7650",
+    ".codex-tmp/desktop-agent-build-20261011/20261011T105054830/source-changes.json": "84b1c14e68260082e3e79edff0a78f4ebf1942cfd6c593246044ec2149cbb87d"
+  }
+}

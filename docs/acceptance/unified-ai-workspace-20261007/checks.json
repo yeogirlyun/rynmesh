@@ -1,0 +1,23 @@
+{
+  "date": "2026-10-07",
+  "serves_production_bundle": true,
+  "no_vite_server": true,
+  "isolated_node": true,
+  "synthetic_answers": true,
+  "real_http_webdav": true,
+  "cold_start": true,
+  "nas_copy_attached_without_inference": true,
+  "send_review_required": true,
+  "archived_answer_and_source_refs": true,
+  "saved_response_byte_equal": true,
+  "node_restart_keeps_history": true,
+  "inference_requests_after_restart": 0,
+  "browser_original_kept_separate": true,
+  "node_conversations_after_browser_send": 1,
+  "saved_response_files": 1,
+  "nas_preview_enters_unified_workspace": true,
+  "nas_handoff_requires_review": true,
+  "nas_handoff_does_not_auto_send": true,
+  "mobile_viewport_width": 390,
+  "mobile_content_width": 390
+}

@@ -1,0 +1,149 @@
+{
+  "scope": "Real Windows installed executable, production HTTP, real CPU model; one host with loopback and LAN-address transport, not cross-network.",
+  "candidate": {
+    "sha256": "86A0E3FFB47FBE62EC972DDC83AD6987B62E926DC473FCFC7FA785A6EF533B7E",
+    "commit": "1686f4e8487e4900c1019c519eca6b17548485f0",
+    "platform": "Windows 10/11 x64",
+    "bytes": 22914892,
+    "signed": false,
+    "tracked_changes": false,
+    "model_included": false
+  },
+  "installer_download_sha256_verified": true,
+  "installer_installed_copy_sha256_verified": true,
+  "installer_silent_exit_code": 0,
+  "consumer_gguf_count": 0,
+  "continuation_cleared": true,
+  "desktop_after_restart": {
+    "instance": "90208b8b8b762ce6102c9172fabeb0f5",
+    "port": 19600
+  },
+  "provider_after_restart": {
+    "ready": true,
+    "online": true,
+    "publication_enabled": true
+  },
+  "grants_after_restart_and_address_repair": [
+    {
+      "service_id": "local-small",
+      "relationship_id": "29537cbabe654bca989c9107021f95f5",
+      "peer_id": "Arw9014k3YgCVSlxkahuGPEMDS3tzE8DB5vrOSsM0BI=",
+      "allowed": false,
+      "revision": 2,
+      "effective": false
+    },
+    {
+      "service_id": "local-small",
+      "relationship_id": "9869a896b7ca4395983812ccba30c60f",
+      "peer_id": "qcpNML8Qxcm2mVQdPkT9/CT5BCruL5pvI+ktv5IB5eE=",
+      "allowed": true,
+      "revision": 1,
+      "effective": true
+    },
+    {
+      "service_id": "local-small",
+      "relationship_id": "b7c69bd1b9e24f2eb37c87a859efb962",
+      "peer_id": "5k4KeYrIv9szJ/rJuGZQk+XYzOa5ukj2f34gKFwNB9c=",
+      "allowed": false,
+      "revision": 2,
+      "effective": false
+    }
+  ],
+  "consumer_relationship": {
+    "created_at": "2026-09-14T17:04:14.816786+00:00",
+    "endpoint": "http://10.10.10.189:19041",
+    "node_name": "FAI-A",
+    "peer_id": "udJlEtV1rjr7IDlyg4bubFQ6iH0V8/5P0OU+qtkHFjw=",
+    "permissions": [
+      "friend.message",
+      "friend.attachment.small",
+      "friend.content-card"
+    ],
+    "relationship_id": "9869a896b7ca4395983812ccba30c60f",
+    "status": "active"
+  },
+  "original_rejected_task_preserved": {
+    "task_id": "task_b6c7f520e43e4a76ac377eebce5303f7",
+    "conversation_id": "2841ee27-17bc-49f0-8531-49a964b05209",
+    "state": "rejected",
+    "cancel_requested": false,
+    "error_code": "service_review_changed"
+  },
+  "conversation": {
+    "id": "2841ee27-17bc-49f0-8531-49a964b05209",
+    "title": "What is 12 plus 8? Answer with only the number.",
+    "serviceKey": "udJlEtV1rjr7IDlyg4bubFQ6iH0V8/5P0OU+qtkHFjw=::local-small",
+    "serviceName": "rynmesh-qwen2.5-0.5b-q4",
+    "providerPeerId": "udJlEtV1rjr7IDlyg4bubFQ6iH0V8/5P0OU+qtkHFjw=",
+    "networkId": "rynmesh-main",
+    "createdAt": "2026-09-14T17:04:17.009Z",
+    "updatedAt": "2026-09-15T06:35:16.588956+00:00",
+    "messages": [
+      {
+        "id": "question_task_b3a4277f6a474e94aa23edc0335a90ba",
+        "role": "user",
+        "content": "What is 12 plus 8? Answer with only the number.",
+        "createdAt": "2026-09-14T17:08:25.235616+00:00",
+        "status": "complete",
+        "taskId": "task_b3a4277f6a474e94aa23edc0335a90ba"
+      },
+      {
+        "id": "answer_task_b3a4277f6a474e94aa23edc0335a90ba",
+        "role": "assistant",
+        "content": "20",
+        "createdAt": "2026-09-14T17:08:25.235616+00:00",
+        "status": "complete",
+        "taskId": "task_b3a4277f6a474e94aa23edc0335a90ba",
+        "inputTokens": 88,
+        "outputTokens": 3,
+        "cost": 0,
+        "contextIds": [],
+        "contextBytes": [],
+        "promptSha256": "04d1a48a78a76156f3fe63f9d2b4471870f878e201e41ecf990da6afe748aab5"
+      },
+      {
+        "id": "question_task_b6c7f520e43e4a76ac377eebce5303f7",
+        "role": "user",
+        "content": "What is 7 plus 8? Reply with only the number.",
+        "createdAt": "2026-09-15T06:29:40.980968+00:00",
+        "status": "complete",
+        "taskId": "task_b6c7f520e43e4a76ac377eebce5303f7"
+      },
+      {
+        "id": "answer_task_b6c7f520e43e4a76ac377eebce5303f7",
+        "role": "assistant",
+        "content": "The model or price changed after your review. Review the current service before sending a new question. This task was not run.",
+        "createdAt": "2026-09-15T06:29:40.980968+00:00",
+        "status": "failed",
+        "taskId": "task_b6c7f520e43e4a76ac377eebce5303f7",
+        "contextIds": [],
+        "contextBytes": [],
+        "promptSha256": "658ae9d8015d21b5f5c968f14416bfa70c1171b7625694c4798c12255356cae7"
+      },
+      {
+        "id": "question_task_e7cbba3ebad8436eaba01f291f6b13bc",
+        "role": "user",
+        "content": "What is 7 plus 8? Reply with only the number.",
+        "createdAt": "2026-09-15T06:35:14.877235+00:00",
+        "status": "complete",
+        "taskId": "task_e7cbba3ebad8436eaba01f291f6b13bc"
+      },
+      {
+        "id": "answer_task_e7cbba3ebad8436eaba01f291f6b13bc",
+        "role": "assistant",
+        "content": "15",
+        "createdAt": "2026-09-15T06:35:14.877235+00:00",
+        "status": "complete",
+        "taskId": "task_e7cbba3ebad8436eaba01f291f6b13bc",
+        "inputTokens": 114,
+        "outputTokens": 3,
+        "cost": 0,
+        "contextIds": [],
+        "contextBytes": [],
+        "promptSha256": "658ae9d8015d21b5f5c968f14416bfa70c1171b7625694c4798c12255356cae7"
+      }
+    ],
+    "revision": 10,
+    "draft": ""
+  }
+}

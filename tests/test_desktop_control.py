@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -19,10 +22,49 @@ def test_desktop_control_requires_local_auth_even_with_network_key(tmp_path, mon
     store = RynmeshStore(home=tmp_path / "node", network_dir=tmp_path / "network")
     with TestClient(create_app(store=store)) as client:
         assert client.get("/api/local/desktop/status").status_code == 403
+        assert client.get("/api/local/desktop/health").status_code == 403
         assert client.post("/api/local/desktop/sharing", json={"enabled": True}).status_code == 403
         response = client.get("/api/local/desktop/status", headers={"x-ryn-local-token": "test-desktop-token"})
         assert response.status_code == 200
         assert response.json() == {"desktop_managed": True, "configured": False, "sharing": False, "active_tasks": 0, "setup_active": False}
+        health = client.get("/api/local/desktop/health", headers={"x-ryn-local-token": "test-desktop-token"})
+        assert health.status_code == 200
+        assert health.json() == {"desktop_managed": True}
+
+
+def test_desktop_health_responds_while_status_waits_for_provider_settings(tmp_path, monkeypatch):
+    monkeypatch.setenv("RYNMESH_DESKTOP_MODE", "1")
+    monkeypatch.delenv("RYNMESH_LLM_SERVICE_MANIFEST", raising=False)
+    home = tmp_path / "node"
+    store = RynmeshStore(home=home, network_dir=tmp_path / "network")
+    app = FastAPI()
+    install_llm_routes(app, store=store, home=home,
+                       messaging_key=peer_box.load_or_create_messaging_key(home / "messaging.x25519"),
+                       resolve_endpoint=lambda _: "", resolve_pubkey=lambda _: "")
+    settings = home / "llm/provider-settings.json"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text("{}", encoding="utf-8")
+    started, release = threading.Event(), threading.Event()
+    original_read = Path.read_text
+
+    def blocked_read(path, *args, **kwargs):
+        if path == settings:
+            started.set()
+            assert release.wait(10), "test did not release the provider settings read"
+        return original_read(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", blocked_read)
+    with TestClient(app) as client, ThreadPoolExecutor(max_workers=2) as requests:
+        status = requests.submit(client.get, "/api/local/desktop/status")
+        try:
+            assert started.wait(2), "metadata request did not enter its provider read"
+            health = requests.submit(client.get, "/api/local/desktop/health").result(timeout=2)
+            assert health.status_code == 200
+            assert health.json() == {"desktop_managed": True}
+            assert not status.done()
+        finally:
+            release.set()
+        assert status.result(timeout=2).status_code == 200
 
 
 def test_desktop_status_does_not_probe_or_restart_external_runtime(tmp_path, monkeypatch):

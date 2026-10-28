@@ -1,0 +1,25 @@
+........................................................................ [ 11%]
+........................................................................ [ 22%]
+........................................................................ [ 33%]
+........................................................................ [ 45%]
+...................................................................F.... [ 56%]
+........................................................................ [ 67%]
+........................................................................ [ 78%]
+........................................................................ [ 90%]
+..........F...................................................           [100%]
+================================== FAILURES ===================================
+________________ test_unknown_history_rule_reaches_main_model _________________
+tests\test_agent_request_deadline.py:179: in test_unknown_history_rule_reaches_main_model
+    assert "Missing/unknown is not no/never" in system
+E   assert 'Missing/unknown is not no/never' in "You are Ryn Agent, this node owner's optional assistant. Inspect relevant models/services/devices before proposing ch...nce_context records route/grants, not proof of resource transfers. API/service and peer upstream locality are unknown."
+___________ test_create_app_registers_the_service_and_node_workers ____________
+tests\test_background_workers.py:405: in test_create_app_registers_the_service_and_node_workers
+    assert names <= _KNOWN_WORKER_NAMES
+E   AssertionError: assert {'ai-access.d...elivery', ...} <= {'ai-access.d...elivery', ...}
+E     
+E     Extra items in the left set:
+E     'llm.space-catalog'
+=========================== short test summary info ===========================
+FAILED tests/test_agent_request_deadline.py::test_unknown_history_rule_reaches_main_model
+FAILED tests/test_background_workers.py::test_create_app_registers_the_service_and_node_workers
+2 failed, 636 passed in 269.47s (0:04:29)

@@ -1,0 +1,105 @@
+.ra-workspace .ra-composer-shell { width: 100%; color: #303030; position: relative; }
+.ra-composer-context { display: flex; align-items: center; gap: 20px; min-height: 36px; margin: 0 16px -1px; padding: 3px 12px 4px 14px; border-radius: 14px 14px 0 0; background: #f5f5f5; font-size: 12px; color: #525252; }
+.ra-workspace .ra-context-project, .ra-workspace .ra-context-settings { display: inline-flex; align-items: center; gap: 6px; border: 0; padding: 4px 0; background: transparent; color: #404040; font-size: 12px; min-width: 0; }
+.ra-workspace .ra-context-project:hover, .ra-workspace .ra-context-settings:hover { background: transparent; color: #0d0d0d; }
+.ra-context-project { max-width: 58%; }
+.ra-context-project > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ra-context-project svg, .ra-context-device svg { flex-shrink: 0; color: #737373; }
+.ra-context-device { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; color: #525252; }
+.ra-workspace .ra-context-settings { margin-left: auto; color: #8c8c8c; padding: 5px; }
+.ra-workspace .ra-composer { padding: 14px 16px 10px; border: 1px solid #e5e5e5; border-radius: 22px; background: #ffffff; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02); color: #0d0d0d; transition: border-color 0.15s, box-shadow 0.15s; }
+.ra-workspace .ra-composer:focus-within { border-color: #d4d4d4; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.03); }
+.ra-workspace .ra-composer textarea, .ra-workspace .ra-composer textarea:focus, .ra-workspace .ra-composer textarea:focus-visible { display: block; min-height: 52px; max-height: 220px; width: 100%; margin: 0; padding: 0 1px; border: 0; border-radius: 0; outline: none; box-shadow: none; background: transparent; color: #0d0d0d; font: 14.5px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; resize: none; }
+.ra-workspace .ra-composer textarea::placeholder { color: #9a9a9a; }
+.ra-workspace .ra-composer-controls { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 8px; }
+.ra-workspace .ra-composer-controls > .ra-composer-left, .ra-workspace .ra-composer-controls > .ra-composer-right { display: flex; align-items: center; flex-wrap: nowrap; flex: 0 1 auto; gap: 8px; min-width: 0; }
+.ra-workspace .ra-composer-controls > .ra-composer-right { margin-left: auto; gap: 8px; }
+.ra-composer-left .ra-composer-options > summary { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border-radius: 7px; color: #525252; list-style: none; transition: background 0.14s, color 0.14s; }
+.ra-composer-left .ra-composer-options > summary:hover { background: #f3f3f3; color: #0d0d0d; }
+.ra-composer-left > .ra-composer-options { order: 0; }
+.ra-composer-options > summary::-webkit-details-marker, .ra-composer-permissions > summary::-webkit-details-marker { display: none; }
+.ra-composer-options-panel { color: var(--pf-text); text-align: left; }
+.ra-composer-permissions { position: relative; font-size: 12.5px; color: #525252; }
+.ra-composer-permissions > summary { display: flex; align-items: center; gap: 5px; height: 28px; padding: 0 6px; border: 0; border-radius: 7px; background: transparent; list-style: none; cursor: pointer; white-space: nowrap; transition: background 0.14s; }
+.ra-composer-permissions > summary:hover { background: #f3f3f3; }
+.ra-composer-permissions > summary.ra-full-access { color: #d96623; font-weight: 500; }
+.ra-composer-permissions > summary > svg:last-child { opacity: .65; }
+.ra-permissions-menu { position: absolute; bottom: calc(100% + 10px); left: 0; z-index: 30; width: 220px; padding: 5px; border: 1px solid #e5e5e5; border-radius: 12px; background: var(--pf-panel); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12); color: var(--pf-text); }
+.ra-workspace .ra-permissions-menu button { display: flex; justify-content: flex-start; width: 100%; border: 0; background: transparent; padding: 8px 10px; border-radius: 8px; font-size: 12.5px; }
+.ra-workspace .ra-permissions-menu button:hover, .ra-workspace .ra-permissions-menu button[aria-checked="true"] { background: var(--pf-subtle); }
+.ra-permissions-menu > small { display: block; padding: 6px 10px; color: var(--pf-muted); font-size: 11px; line-height: 1.5; }
+.ra-workspace .ra-voice { flex-shrink: 0; width: 28px; height: 28px; border: 0; border-radius: 7px; padding: 4px; color: #525252; background: transparent; transition: background 0.14s, color 0.14s; }
+.ra-workspace .ra-voice:hover:not(:disabled) { background: #f3f3f3; color: #0d0d0d; }
+.ra-workspace .ra-voice:disabled { opacity: .38; }
+.ra-workspace .ra-voice.active { color: #e04f3f; background: #fff1ef; }
+.ra-workspace .ra-composer .ra-send { flex-shrink: 0; width: 30px; height: 30px; min-height: 30px; border-radius: 50%; padding: 0; background: #0d0d0d; border-color: #0d0d0d; color: #ffffff; transition: background 0.14s, transform 0.12s; }
+.ra-workspace .ra-composer .ra-send:hover:not(:disabled) { background: #262626; border-color: #262626; }
+.ra-workspace .ra-composer .ra-send:disabled { background: #e5e5e5; border-color: #e5e5e5; color: #a3a3a3; opacity: 1; }
+.ra-voice-error { font-size: 11px; color: var(--pf-muted); margin: 8px 2px 0; }
+.ra-attachment-picker { display: none; }
+.ra-workspace .ra-attach-files { display: flex; align-items: center; gap: 8px; width: 100%; margin-bottom: 8px; padding: 8px; border: 0; background: transparent; color: var(--pf-text); font-size: 13px; text-align: left; }
+.ra-workspace .ra-attach-files:hover { background: var(--pf-subtle); }
+.ra-composer-attachments { display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 10px; }
+.ra-composer-attachment { display: flex; align-items: center; gap: 9px; max-width: 240px; min-width: 0; padding: 6px 8px; border: 1px solid var(--pf-line, #e5e5e5); border-radius: 11px; background: var(--pf-panel, #fff); }
+.ra-composer-attachment > img { width: 42px; height: 42px; border-radius: 7px; object-fit: cover; flex-shrink: 0; }
+.ra-composer-attachment > svg { flex-shrink: 0; color: var(--pf-muted); }
+.ra-composer-attachment > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.ra-workspace .ra-composer-attachment > button { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 20px; height: 20px; padding: 2px; border: 0; border-radius: 50%; color: var(--pf-muted); background: var(--pf-subtle, #f5f5f5); }
+.ra-attachment-status, .ra-attachment-error { display: flex; align-items: center; gap: 6px; margin: 8px 2px 0; color: var(--pf-muted); font-size: 12px; }
+.ra-attachment-error { color: #c44135; }
+.ra-composer-dragging .ra-composer { border-color: #0066cc; }
+.ra-composer-drop-hint { position: absolute; inset: 35px 0 0; z-index: 35; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; border: 2px dashed #0066cc; border-radius: 22px; background: color-mix(in srgb, var(--pf-panel, #fff) 94%, #0066cc); color: #0066cc; pointer-events: none; font-size: 14px; }
+
+/* Codex-Style User Message Attachments & 80x80 Image Tiles */
+.ra-message-attachments { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; padding: 0; margin-bottom: 4px; max-width: min(76%, 540px); }
+.ra-message-attachment { display: inline-flex; align-items: center; gap: 10px; max-width: 280px; min-width: 0; padding: 8px 12px 8px 8px; border: 1px solid #e5e5e5; border-radius: 12px; background: #ffffff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03); transition: background 0.14s, border-color 0.14s, transform 0.14s; text-align: left; }
+.ra-message-attachment.is-openable,
+.ra-message-attachment.is-interactive { cursor: pointer; }
+.ra-message-attachment:hover { background: #fafafa; border-color: #d4d4d4; }
+.ra-message-attachment > img { width: 44px; height: 44px; max-width: 80px; max-height: 80px; border-radius: 8px; object-fit: cover; flex-shrink: 0; display: block; }
+.ra-message-attachment.ra-message-attachment-tile { width: 80px; height: 80px; max-width: 80px; padding: 0; overflow: hidden; border-radius: 12px; border: 1px solid rgba(0, 0, 0, 0.08); background: #f5f5f5; cursor: zoom-in; }
+.ra-message-attachment.ra-message-attachment-tile > img { width: 100%; height: 100%; max-width: none; max-height: none; border-radius: 0; object-fit: cover; transition: transform 0.18s ease; }
+.ra-message-attachment.ra-message-attachment-tile:hover > img { transform: scale(1.03); }
+.ra-message-attachment-badge,
+.ra-attachment-icon { width: 34px; height: 34px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; background: #f3f4f6; color: #52525b; border: 1px solid #e4e4e7; }
+.ra-message-attachment-badge[data-kind="pdf"],
+.ra-attachment-icon[data-kind="pdf"] { background: #fef2f2; color: #dc2626; border-color: #fecaca; }
+.ra-message-attachment-badge[data-kind="sheet"],
+.ra-attachment-icon[data-kind="sheet"] { background: #ecfdf5; color: #059669; border-color: #a7f3d0; }
+.ra-message-attachment-badge[data-kind="doc"],
+.ra-attachment-icon[data-kind="doc"] { background: #eff6ff; color: #2563eb; border-color: #bfdbfe; }
+.ra-message-attachment-meta,
+.ra-attachment-meta { display: flex; flex-direction: column; min-width: 0; line-height: 1.32; }
+.ra-message-attachment-name,
+.ra-attachment-name { font-size: 13px; font-weight: 500; color: #0d0d0d; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ra-message-attachment-sub,
+.ra-attachment-sub { font-size: 11px; color: #737373; white-space: nowrap; }
+.ra-attachment-sub-hover { display: none; }
+.ra-message-attachment.is-openable:hover .ra-attachment-sub-default,
+.ra-message-attachment.is-interactive:hover .ra-attachment-sub-default { display: none; }
+.ra-message-attachment.is-openable:hover .ra-attachment-sub-hover,
+.ra-message-attachment.is-interactive:hover .ra-attachment-sub-hover { display: inline; color: #404040; }
+
+/* Codex-Style Fullscreen Image Lightbox */
+.ra-image-lightbox { position: fixed; inset: 0; z-index: 1400; display: flex; align-items: center; justify-content: center; padding: 28px; background: rgba(0, 0, 0, 0.72); backdrop-filter: blur(4px); animation: ra-lightbox-fade 0.15s ease-out; }
+@keyframes ra-lightbox-fade { from { opacity: 0; } to { opacity: 1; } }
+.ra-image-lightbox-inner { display: flex; flex-direction: column; gap: 10px; max-width: min(88vw, 1120px); max-height: 86vh; }
+.ra-image-lightbox-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: #f5f5f5; font-size: 13px; font-weight: 500; }
+.ra-image-lightbox-bar > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ra-image-lightbox-close { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 999px; background: rgba(255, 255, 255, 0.12); color: #ffffff; cursor: pointer; }
+.ra-image-lightbox-close:hover { background: rgba(255, 255, 255, 0.22); }
+.ra-image-lightbox-inner > img { display: block; max-width: min(88vw, 1120px); max-height: calc(82vh - 40px); width: auto; height: auto; object-fit: contain; border-radius: 12px; box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45); background: #141414; }
+
+[data-theme="dark"] .ra-message-attachment { background: var(--pf-panel); border-color: var(--pf-line); }
+[data-theme="dark"] .ra-message-attachment:hover { background: var(--pf-subtle); }
+[data-theme="dark"] .ra-message-attachment-name, [data-theme="dark"] .ra-attachment-name { color: var(--pf-text); }
+[data-theme="dark"] .ra-message-attachment-sub, [data-theme="dark"] .ra-attachment-sub { color: var(--pf-muted); }
+[data-theme="dark"] .ra-composer-shell { color: var(--pf-text); }
+[data-theme="dark"] .ra-composer-context { background: #29323d; color: var(--pf-muted); }
+[data-theme="dark"] .ra-workspace .ra-context-project, [data-theme="dark"] .ra-context-device, [data-theme="dark"] .ra-composer-permissions > summary, [data-theme="dark"] .ra-workspace .ra-voice { color: var(--pf-text); }
+[data-theme="dark"] .ra-workspace .ra-composer { background: var(--pf-panel); border-color: var(--pf-line); color: var(--pf-text); }
+[data-theme="dark"] .ra-workspace .ra-composer:focus-within { border-color: var(--pf-strong); }
+[data-theme="dark"] .ra-workspace .ra-composer textarea { color: var(--pf-text); }
+[data-theme="dark"] .ra-composer-permissions > summary.ra-full-access { color: #f8aa71; }
+[data-theme="dark"] .ra-workspace .ra-composer .ra-send:not(:disabled) { background: #f5f5f5; border-color: #f5f5f5; color: #0d0d0d; }
+@media (max-width: 760px) { .ra-composer-context { gap: 13px; margin-inline: 10px; padding-left: 9px; font-size: 11px; } .ra-workspace .ra-context-project { font-size: 11px; } .ra-workspace .ra-composer { padding-inline: 12px; } .ra-workspace .ra-composer-controls { gap: 5px; } .ra-workspace .ra-composer-controls > .ra-composer-left { gap: 3px; } .ra-workspace .ra-composer-controls > .ra-composer-right { gap: 4px; } .ra-composer-permissions > summary { font-size: 11px; } .ra-permissions-menu { left: -25px; } }

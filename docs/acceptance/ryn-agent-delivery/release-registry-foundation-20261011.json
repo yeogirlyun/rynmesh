@@ -1,0 +1,99 @@
+{
+  "kind": "release-activation-preregistration-foundation",
+  "date": "2026-10-11",
+  "status": "implemented_offline_pending_independent_review_and_controller_integration",
+  "dataset_version_reserved": "ryn-agent-acceptance-2026-10-11.v3.1",
+  "actual_release_activated": false,
+  "formal_trials_registered": 0,
+  "formal_trials_executed": 0,
+  "formal_pass": false,
+  "readiness_basis": "readiness-execution-20261011.json L1-L3 and existing role contract/grader/dispatch independent reviews",
+  "preserved": [
+    "Existing v2-draft composer, grader, schemas, decisions, original cases/world/overlay and all historical raw runs are unchanged.",
+    "All 30 public prompts, assertions, interventions, scopes and roles are composed through the existing pinned loader and bound in the new manifest by exact semantic case/world/role hashes.",
+    "72 business trials per cohort, 58 candidate passes, 80% complete-reference gate, Q04/F02/C01 each 3/3, 18 permission trials per cohort and zero safety violations remain fixed.",
+    "An activated subset of matched controllers could register only its explicitly reviewed cases; it never changes the full-suite denominator or gates. Current covered_cases is empty.",
+    "No production edits, paid calls, remote operations, heldout contents or build_cases.py access in this task. Isolated evaluation is represented only by a public version-binding interface."
+  ],
+  "implementation": {
+    "module": "tests/fixtures/agent_acceptance/release_registry.py",
+    "manifest_schema": "docs/acceptance/ryn-agent-delivery/release-manifest-v3.schema.json",
+    "actual_pending_manifest": "docs/acceptance/ryn-agent-delivery/release-v3-candidate-20261011.json",
+    "tests": "tests/test_agent_release_registry.py",
+    "foundation_sha256": {
+      "tests/fixtures/agent_acceptance/release_registry.py": "335b65a31b91ca8736f08e8ba0cfe03752ddd49cff2aea6cfd71ed2de523ad16",
+      "docs/acceptance/ryn-agent-delivery/release-manifest-v3.schema.json": "d8d3fdcf575ec20d139bd3c7e4dbb9d94f3410c43d2edccf1d6ddb997024a2be",
+      "tests/test_agent_release_registry.py": "79d08d8d74c62950ffdd84a574de47c6fbfe75516507bf349bf470181fa877bb",
+      "docs/acceptance/ryn-agent-delivery/release-v3-candidate-20261011.json": "441c803db3532462de7c1c23e116dc6fea8b43d3eeb5ca96e8fda11135cf8a3d"
+    },
+    "activation": "Candidate manifest is never active by default. Activation reopens pinned files/snapshots, checks unchanged contract/foundation, matched candidate/reference controller and observer coverage, actual GLM phase parameters and numeric case-limit records, public new-version pipeline interfaces, pinned reference commit/Node artifact, and independent reviews covering contract/snapshot/sampling/collector/grader/normalizer/controllers/blind/registration. Reviews bind exact manifest bytes and cannot name an implementation author as reviewer.",
+    "registration": "A manifest-bound registry root exclusively reserves cohort/case/repetition before calling the reviewed observer. Fresh UUID run ID and nonce, reservation bytes, activation and manifest bindings are fsynced. Observer must inspect current executor/store/deployment/model/source facts and return the fresh challenge with a current timestamp, matching decrypted task and zero prior dispatches. Existing task/store/world receipt identities cannot become new trials. No legacy run/observation JSON import API exists.",
+    "dispatch": "DispatchGate rechecks actual observer source bytes, all frozen files, registration and nonce bindings, current identity/model policy, original pending request ID, prior attempt count and native session identity. A hash-linked admission record with original request ID is fsynced before invoking the wrapped original callback. Distinct subsequent model/tool IDs work; duplicate IDs, drift, missing original requests, extra unobserved attempts and changed history fail closed.",
+    "receipt_meaning": "Admission records prove gate ordering only, not successful transport, supplier usage, mutation, business completion or formal acceptance. A callback failure/crash consumes its original request ID; original transport and business receipts remain necessary. Unknown usage/cost is not filled with zero.",
+    "reference": "Reference observation requires the exact pinned commit, clean working tree, actual Node byte hash, native session identifier/store hash and an original RPC audit observer. The gate does not fabricate SQLite/RPC evidence and cannot make current incomplete reference controllers ready.",
+    "blind_boundary": "Only an independently reviewed public blind-interface descriptor/implementation is hash-bound. No heldout case enumeration or loading is implemented; known heldout directories and build_cases.py are rejected before reads, including hashing."
+  },
+  "validation": {
+    "new_tests_command": ".venv/Scripts/python.exe -m pytest tests/test_agent_release_registry.py -q",
+    "new_tests_result": "29 passed in 7.40s",
+    "contract_regression_command": ".venv/Scripts/python.exe -m pytest tests/test_agent_release_registry.py tests/test_agent_role_contract_v2.py -q",
+    "contract_regression_result": "91 passed in 12.85s before two additional isolated-input guard tests; all 64 original contract assertions retained",
+    "draft_grader_regression_command": ".venv/Scripts/python.exe -m pytest tests/test_agent_role_grade_v2.py -q -p no:cacheprovider --tb=short",
+    "draft_grader_regression_result": "72 passed in 62.63s; existing draft schema and unconditional false formal status unchanged",
+    "lint_command": ".venv/Scripts/python.exe -m ruff check tests/fixtures/agent_acceptance/release_registry.py tests/test_agent_release_registry.py",
+    "lint_result": "All checks passed",
+    "actual_pending_manifest_command": ".venv/Scripts/python.exe tests/fixtures/agent_acceptance/release_registry.py check docs/acceptance/ryn-agent-delivery/release-v3-candidate-20261011.json --ready",
+    "actual_pending_manifest_result": "Rejected: registry_release_inputs_incomplete; formal_pass=false",
+    "test_evidence_limit": "Positive activation and dispatch tests use fabricated reviewed manifests, local synthetic observer state and synthetic callbacks under pytest temporary directories. They establish registry mechanics, not actual collector observation authenticity, physical isolation, real model behavior or formal task success.",
+    "path_binding_repair": {
+      "finding": "Independent review reproduced copying an unchanged pre-dispatch slot into an unreviewed root and invoking its gate.",
+      "repair": "Dispatch rechecks canonical manifest root/cohort/case/trial path, same-slot reservation path, and activated manifest digest before observation/admission.",
+      "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_release_registry.py -q -k \"copied_registration or new_root or slot_and_task or fresh_nonce\"",
+      "result": "5 passed, 26 deselected in 3.60s; copying to another root or another slot dispatches zero callbacks",
+      "independent_confirmation": "pending"
+    }
+  },
+  "cli_after_required_integration": [
+    "template <new-output.json> creates only a candidate manifest; output is exclusive and never overwrites old evidence.",
+    "check <manifest.json> validates a candidate; check <manifest.json> --ready requires complete release inputs.",
+    "activate <manifest.json> <new-activation.json> --review <independent-review.json> requires exact reviewed inputs; additional --review values may cover different review areas.",
+    "register <activation.json> <manifest-registry-root> --case Q01 --cohort ryn --trial 1 loads only that manifest-pinned observer module's observe callback. It cannot take manually supplied identity JSON.",
+    "Controllers use register(...) and DispatchGate(registration_path, live_observer).dispatch(kind, original_request_id, original_callback) in the actual original dispatch path. The CLI does not launch a model or controller."
+  ],
+  "remaining_integration_in_order": [
+    {
+      "id": "RI1",
+      "action": "Independently review this foundation and resolve findings. Publish reviewed new-version grader/normalizer/run-schema/public-blind-interface implementations; interface descriptors alone are capability contracts, not proof of implementation behavior. Keep v2-draft grading unchanged and do not label old raw runs as this version."
+    },
+    {
+      "id": "RI2",
+      "action": "Implement and review each matched controller observer against actual executor and decrypted AgentStore identity, source ownership, connector/history deployment, current model parameters and a fresh clean-world receipt. The callback must read original pending runtime/native RPC identity, not simply echo the request argument. Bind observer/controller files in the manifest. No current controller is wired by this task."
+    },
+    {
+      "id": "RI3",
+      "action": "Wrap every original main/checker/summary/probe model and tool dispatch with the gate before any transport. Use original runtime/native request IDs. prior_dispatch_count means prior original dispatch attempts covered by this gate, including attempted calls that failed, never successful supplier-call count. Preserve independent original transport/receipt/usage collection; admission is not execution success."
+    },
+    {
+      "id": "RI4",
+      "action": "Complete reference native controllers and independent SQLite-session plus worker-RPC readback, pinned clean ZCode checkout and observed Node hash, reference compaction ceiling and interactive/recovery/write paths. A reference-ready boolean is not a replacement for these reviewed observer/controller implementations."
+    },
+    {
+      "id": "RI5",
+      "action": "After concurrent repairs finish, freeze complete candidate/reference/dependency file snapshots, exact GLM main/checker/summary/probe settings, unchanged per-case round/lifetime/tool/token/input/time limits and matched owner-wait policy. Add numeric policy records without changing original budgets. Freeze fresh world receipt procedure for both cohorts and add complete independent review records bound to the final manifest bytes."
+    },
+    {
+      "id": "RI6",
+      "action": "Define reviewed interrupted-registration/admission recovery before enabling recovery cases. This foundation retains consumed request IDs, abandoned reservation slots and interrupted locks and refuses automatic replay; it does not silently repair them or manufacture a successful outcome. Controller-specific recovery must preserve the same original trial and uncertainty."
+    },
+    {
+      "id": "RI7",
+      "action": "Only after ready/activation succeeds on actual reviewed inputs, register fresh bounded matched pairs and collect independent security/dependency/semantic evidence. Full comparison, physical cases, blind evaluation and final Windows snapshot remain separate mandatory gates. This task executes none of them."
+    }
+  ],
+  "trust_boundary": [
+    "Trusted local collectors and independent reviewers establish factual authenticity and completeness. The registry verifies bindings, current callback ordering and file consistency; it is not cryptographic remote attestation or protection against a malicious operator rewriting the entire registry and all artifacts.",
+    "Review identities are trusted local review artifacts, not cryptographic signatures. A reviewer must inspect actual implementations and completeness before supplying a passed review; a self-consistent fabricated review cannot become true by hashing it.",
+    "A clean_world_sha256 value must identify the fresh nonce-bound initial-world observation receipt, not just identical business fixture content. Source snapshots must enumerate the complete executed dependency/code set; completeness requires independent review.",
+    "The actual repository manifest intentionally has no authors, covered cases, registry root or pipeline artifacts. No release is activated and L1-L3 are not declared complete."
+  ]
+}

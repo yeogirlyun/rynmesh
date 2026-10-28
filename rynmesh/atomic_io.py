@@ -43,6 +43,19 @@ class AtomicIOError(OSError):
     """A record could not be written or read safely."""
 
 
+def _fs_path(path: Path) -> Path:
+    if sys.platform != "win32":
+        return path
+    raw = os.path.abspath(os.fspath(path))
+    if raw.startswith("\\\\?\\"):
+        return Path(raw)
+    if len(raw) >= 220:
+        if raw.startswith("\\\\"):
+            return Path("\\\\?\\UNC\\" + raw.lstrip("\\"))
+        return Path("\\\\?\\" + raw)
+    return path
+
+
 def atomic_write_bytes(
     path: str | Path,
     data: bytes,
@@ -59,7 +72,7 @@ def atomic_write_bytes(
     file and never leaves a partially written destination.
     """
 
-    path = Path(path)
+    path = _fs_path(Path(path))
     if len(data) > max_bytes:
         raise AtomicIOError("record exceeds max_bytes")
     tmp: Path | None = None
@@ -70,7 +83,7 @@ def atomic_write_bytes(
             os.chmod(parent, dir_mode)
         except OSError:
             pass  # a shared parent directory may not be ours to chmod
-        tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        tmp = path.with_name(f".{path.name[:24]}.{uuid.uuid4().hex[:12]}.tmp")
         fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
         with os.fdopen(fd, "wb") as handle:
             if sys.platform == "win32" and mode == FILE_MODE:
@@ -150,7 +163,7 @@ def read_json(path: str | Path, *, default: Any = _REQUIRED, max_bytes: int = MA
     was given, and raises `AtomicIOError` otherwise.
     """
 
-    path = Path(path)
+    path = _fs_path(Path(path))
     try:
         size = path.stat().st_size
     except OSError as exc:

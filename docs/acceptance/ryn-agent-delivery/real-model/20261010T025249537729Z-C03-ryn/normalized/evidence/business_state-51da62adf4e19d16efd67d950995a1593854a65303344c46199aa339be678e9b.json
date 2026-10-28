@@ -1,0 +1,20 @@
+{
+  "agent": {
+    "default_model": "model-a",
+    "enabled": true
+  },
+  "models": {
+    "model-a": {
+      "sharing": false
+    },
+    "model-b": {
+      "sharing": true
+    },
+    "model-c": {
+      "sharing": false
+    },
+    "model-d": {
+      "sharing": false
+    }
+  }
+}

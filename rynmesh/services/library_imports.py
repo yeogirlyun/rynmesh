@@ -165,7 +165,7 @@ class LibraryImportStore:
         # Keep attribution attached to its source; equal bytes received from a
         # different friend are not silently assigned the first friend's origin.
         from ..crypto import canonical_json
-        origin = {key: str(value)[:2048] for key, value in (source or {}).items() if key in {"peer_id", "card_id", "title", "source_url", "publisher_peer_id"}}
+        origin = {key: str(value)[:2048] for key, value in (source or {}).items() if key in {"peer_id", "card_id", "title", "source_url", "publisher_peer_id", "nas_source_id", "nas_path", "nas_source_name"}}
         if (source or {}).get('content_truncated') is True:
             origin['content_truncated'] = True
         identity = hashlib.sha256(canonical_json({"sha256": digest, "mime": mime, "suffix": suffix, "source": origin})).hexdigest()

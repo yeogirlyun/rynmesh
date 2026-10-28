@@ -24,7 +24,8 @@ Companion**:
 - optional local Ollama or explicitly enabled Anthropic assistance
 - Search & Ask, signed publication, provenance, safety receipts, peer
   discovery, encrypted messaging, and non-transferable reputation credits
-- self-contained macOS desktop packages for Apple Silicon and Intel
+- self-contained macOS desktop packages for Apple Silicon and Intel, plus an
+  initial Ubuntu 24.04 x86_64 `.deb`
 
 The release is useful but still alpha. The immediate work is reliability,
 explainability, test coverage, content-viewer hardening, and desktop
@@ -91,8 +92,8 @@ Prerequisites:
 - Python 3.10 or newer
 - Node.js 22 and npm
 - Rust stable only when working on the Tauri desktop shell
-- macOS for the currently supported native desktop package; backend and webapp
-  development can also run on Linux
+- macOS for DMG work, or Ubuntu 24.04 x86_64 for the supported Linux `.deb`;
+  backend and webapp development can also run on other Linux systems
 
 Clone the canonical public repository and run the setup script:
 
@@ -280,6 +281,24 @@ cargo check --manifest-path src-tauri/Cargo.toml
 sidecar="$(find src-tauri/binaries -type f -name 'rynmesh-peer-*' -print -quit)"
 ./src-tauri/scripts/verify-sidecar.sh "$sidecar"
 ```
+
+On Windows PowerShell, build and verify the frozen sidecar from the repository
+root before invoking Tauri:
+
+```powershell
+.\webapp\src-tauri\scripts\build-sidecar.ps1 -Python .\.venv\Scripts\python.exe
+.\webapp\src-tauri\scripts\verify-sidecar.ps1 `
+  -Sidecar .\webapp\src-tauri\binaries\rynmesh-peer-x86_64-pc-windows-msvc.exe
+cd webapp
+npm run tauri build -- --bundles nsis
+```
+
+The Windows desktop lifecycle must be tested with a clean `RYNMESH_HOME`. It
+uses `%LOCALAPPDATA%\Rynmesh\Logs` by default, finds `rynmesh-peer.exe` beside
+the packaged app, and stops the managed child when the tray app exits. Machines
+whose user profile contains non-ASCII characters may need an ASCII-only
+process-local `TEMP`/`TMP` while compiling with the GNU Rust target; do not
+change the user's system-wide environment for this workaround.
 
 Confirm startup, health, UI serving, restart, clean shutdown, and architecture
 matching. Native package behavior must ultimately pass the public CI runners;

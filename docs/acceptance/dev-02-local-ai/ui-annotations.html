@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DEV-02 UI 验收标注</title>
+  <style>
+    :root{color-scheme:dark;font-family:Inter,"Segoe UI",sans-serif;background:#071019;color:#eff8f4}*{box-sizing:border-box}
+    body{margin:0;padding:42px;background:radial-gradient(circle at 10% 0%,#12332d,#071019 34%)}
+    header,figure{max-width:1360px;margin-left:auto;margin-right:auto}header{margin-bottom:28px}h1{margin:0 0 8px;font-size:34px}header p{margin:0;color:#a9bbb4}
+    figure{margin-top:0;margin-bottom:32px;padding:18px;border:1px solid #284139;border-radius:20px;background:#0b151e}.frame{display:grid;grid-template-columns:minmax(0,1fr) 290px;gap:18px;align-items:start}.shot{position:relative;overflow:hidden;border-radius:12px;border:1px solid #24353f}.shot img{display:block;width:100%;height:auto}.pin{position:absolute;display:grid;place-items:center;width:32px;height:32px;border:3px solid #fff;border-radius:50%;background:#00d084;color:#06100d;font-weight:900;box-shadow:0 4px 20px #000}.notes{display:grid;gap:12px}.note{padding:14px;border-left:4px solid #00d084;border-radius:8px;background:#101f27;color:#bcd0c8;line-height:1.45}.note b{display:inline-grid;place-items:center;width:24px;height:24px;margin-right:7px;border-radius:50%;background:#00d084;color:#06100d}figcaption{margin:14px 2px 0;font-weight:700}
+  </style>
+</head>
+<body>
+  <header><h1>DEV-02 · 一键启用本地 AI</h1><p>截图来自本地 fixture UI 契约验收；Windows 原生运行时另有物理自检记录。</p></header>
+  <figure><div class="frame"><div class="shot"><img src="screenshots/01-recommendation.png" alt="设备检测与推荐"><span class="pin" style="left:48%;top:22%">1</span><span class="pin" style="left:35%;top:55%">2</span><span class="pin" style="left:37%;top:81%">3</span></div><div class="notes"><div class="note"><b>1</b>先显示保守内存、磁盘与受管运行时支持状态。</div><div class="note"><b>2</b>默认只突出一个已审核 light 档位；未发布档位不可误选。</div><div class="note"><b>3</b>许可证与空间确认前安装按钮保持禁用。</div></div></div><figcaption>状态 A：设备检测 → 推荐 → 明确同意。</figcaption></figure>
+  <figure><div class="frame"><div class="shot"><img src="screenshots/02-progress.png" alt="可恢复安装进度"><span class="pin" style="left:50%;top:48%">1</span><span class="pin" style="left:41%;top:66%">2</span></div><div class="notes"><div class="note"><b>1</b>展示 backend 的真实 stage、百分比和字节进度，不使用假动画。</div><div class="note"><b>2</b>仅在 `cancelable=true` 时允许安全取消；失败后提供 retry/resume。</div></div></div><figcaption>状态 B：版本化安装任务与恢复控制。</figcaption></figure>
+  <figure><div class="frame"><div class="shot"><img src="screenshots/03-first-answer.png" alt="本地 AI 首次回答"><span class="pin" style="left:31%;top:48%">1</span><span class="pin" style="left:39%;top:69%">2</span></div><div class="notes"><div class="note"><b>1</b>只有摘要校验、loopback 启动、health 和真实推理自检全部成功才显示 ready。</div><div class="note"><b>2</b>用户可直接取得第一次回答；固定测试问题不进入会话或推荐画像。</div></div></div><figcaption>状态 C：真实 readiness 与第一次回答。</figcaption></figure>
+</body></html>

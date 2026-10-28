@@ -25,12 +25,13 @@ Profiles are selected with `RYNMESH_TRANSPORT` (default: `camouflage`).
 
 from __future__ import annotations
 
+import http.client
 import hashlib
 import os
 import ssl
 import urllib.request
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Protocol
 from urllib.error import HTTPError, URLError
@@ -55,11 +56,19 @@ NETWORK_KEY_HEADER = "X-Ryn-Auth"
 
 
 class TransportError(RuntimeError):
-    """Transport-layer failure. ``reason`` lets callers map to domain errors."""
+    """Transport-layer failure. ``reason`` lets callers map to domain errors.
 
-    def __init__(self, message: str, *, reason: str = "http_error") -> None:
+    ``status`` carries the HTTP status code when the failure was an HTTP
+    response, so a keyed peer's 404 (network-key mismatch) is distinguishable
+    from network loss without leaking anything from the response body.
+    """
+
+    def __init__(self, message: str, *, reason: str = "http_error",
+                 status: int | None = None) -> None:
         super().__init__(message)
         self.reason = reason
+        self.status = status
+
 
 
 @dataclass(frozen=True)
@@ -263,69 +272,32 @@ class StdlibHttpsTransport:
         if extra:
             merged.update(extra)
         # Caller-supplied headers must not suppress mesh authentication.
-        merged.update(network_key_header())
-        return merged
+        return stamp_network_key(merged)
+
+    def _request(self, method: str, url: str, *, body: bytes | None, timeout_s: float,
+                 max_bytes: int, headers: dict[str, str] | None) -> bytes:
+        req = urllib.request.Request(url, data=body, method=method, headers=self._headers(headers))
+        try:
+            with self._opener.open(req, timeout=timeout_s) as resp:
+                return read_bounded(resp, max_bytes)
+        except HTTPError as exc:
+            raise TransportError(f"http status {exc.code}", reason="http_error",
+                                 status=exc.code) from exc
+        except (URLError, TimeoutError, ssl.SSLError, OSError) as exc:
+            raise TransportError("http request failed", reason="http_error") from None
 
     def get_bytes(
         self, url: str, *, timeout_s: float, max_bytes: int, headers: dict[str, str] | None = None
     ) -> bytes:
-        req = urllib.request.Request(url, method="GET", headers=self._headers(headers))
-        try:
-            with self._opener.open(req, timeout=timeout_s) as resp:
-                data = resp.read(max_bytes + 1)
-        except (HTTPError, URLError, TimeoutError, ssl.SSLError, OSError) as exc:
-            raise TransportError(f"http error: {exc}", reason="http_error") from exc
-        if len(data) > max_bytes:
-            raise TransportError("response too large", reason="too_large")
-        return data
+        return self._request("GET", url, body=None, timeout_s=timeout_s,
+                             max_bytes=max_bytes, headers=headers)
 
     def post_bytes(
         self, url: str, body: bytes, *, timeout_s: float, max_bytes: int,
         headers: dict[str, str] | None = None,
     ) -> bytes:
-        req = urllib.request.Request(
-            url, data=body, method="POST", headers=self._headers(headers),
-        )
-        try:
-            with self._opener.open(req, timeout=timeout_s) as resp:
-                data = resp.read(max_bytes + 1)
-        except (HTTPError, URLError, TimeoutError, ssl.SSLError, OSError) as exc:
-            raise TransportError(f"http error: {exc}", reason="http_error") from exc
-        if len(data) > max_bytes:
-            raise TransportError("response too large", reason="too_large")
-        return data
-
-    def iter_post_bytes(
-        self, url: str, body: bytes, *, timeout_s: float, max_chunk_bytes: int,
-        max_total_bytes: int, headers: dict[str, str] | None = None,
-    ) -> Iterator[bytes]:
-        """Yield a bounded POST response without buffering it in memory.
-
-        The response object is owned by the iterator and is closed even when a
-        caller cancels iteration.  Error text is deliberately stable so a
-        remote response body can never be copied into logs by exception
-        formatting.
-        """
-        if max_chunk_bytes < 1 or max_total_bytes < 1:
-            raise TransportError("invalid stream limit", reason="invalid_limit")
-        req = urllib.request.Request(
-            url, data=body, method="POST", headers=self._headers(headers),
-        )
-        try:
-            with self._opener.open(req, timeout=timeout_s) as resp:
-                total = 0
-                while True:
-                    chunk = getattr(resp, "read1", resp.read)(max_chunk_bytes)
-                    if not chunk:
-                        break
-                    total += len(chunk)
-                    if total > max_total_bytes:
-                        raise TransportError("stream response too large", reason="too_large")
-                    yield chunk
-        except TransportError:
-            raise
-        except (HTTPError, URLError, TimeoutError, ssl.SSLError, OSError) as exc:
-            raise TransportError("stream request failed", reason="http_error") from exc
+        return self._request("POST", url, body=body, timeout_s=timeout_s,
+                             max_bytes=max_bytes, headers=headers)
 
     def download(
         self, url: str, dest: Path, *, timeout_s: float, max_bytes: int,
@@ -350,8 +322,46 @@ class StdlibHttpsTransport:
             raise
         except (HTTPError, URLError, TimeoutError, ssl.SSLError, OSError) as exc:
             dest.unlink(missing_ok=True)
-            raise TransportError(f"http error: {exc}", reason="http_error") from exc
+            raise TransportError("http request failed", reason="http_error") from None
         return dest
+
+    def iter_post_bytes(
+        self, url: str, body: bytes, *, timeout_s: float, max_chunk_bytes: int,
+        max_total_bytes: int, headers: dict[str, str] | None = None,
+    ) -> Iterator[bytes]:
+        """Yield a bounded POST response without buffering it in memory.
+
+        The response object is owned by the iterator and is closed even when a
+        caller cancels iteration.  Error text is deliberately stable so a
+        remote response body can never be copied into logs by exception
+        formatting.
+        """
+        if max_chunk_bytes < 1 or max_total_bytes < 1:
+            raise TransportError("invalid stream limit", reason="invalid_limit")
+        req = urllib.request.Request(
+            url, data=body, method="POST", headers=self._headers(headers),
+        )
+        try:
+            with self._opener.open(req, timeout=timeout_s) as resp:
+                total = 0
+                read_chunk = getattr(resp, "read1", resp.read)
+                while True:
+                    # HTTPResponse.read(n) may wait for n bytes or EOF, which
+                    # turns a small NDJSON/SSE stream back into a buffered
+                    # complete response. read1(n) returns currently available
+                    # bytes while preserving the same upper bound.
+                    chunk = read_chunk(max_chunk_bytes)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > max_total_bytes:
+                        raise TransportError("stream response too large", reason="too_large")
+                    yield chunk
+        except TransportError:
+            raise
+        except (HTTPError, URLError, TimeoutError, ssl.SSLError, OSError) as exc:
+            raise TransportError("stream request failed", reason="http_error") from exc
+
 
 
 class FrontedHttpsTransport:
@@ -379,11 +389,14 @@ class FrontedHttpsTransport:
 
     def _headers(self, host_header: str, extra: dict[str, str] | None) -> dict[str, str]:
         merged = _profile_headers(self.profile)
-        merged["Host"] = host_header  # real backend; routed by CDN/origin
-        merged["Connection"] = "close"  # one socket per request
         if extra:
             merged.update(extra)
-        merged.update(network_key_header())
+        # These fields define the fronting split and connection lifecycle; a
+        # generic caller header must not be able to redirect the inner request
+        # to another virtual host or keep the one-shot socket alive.
+        merged["Host"] = host_header  # real backend; routed by CDN/origin
+        merged["Connection"] = "close"  # one socket per request
+        merged = stamp_network_key(merged)
         return merged
 
     def _open(
@@ -406,7 +419,10 @@ class FrontedHttpsTransport:
         is_default_port = port == (443 if scheme == "https" else 80)
         host_header = host if is_default_port else f"{host}:{port}"
 
-        raw = socket.create_connection((connect_host, port), timeout=timeout_s)
+        try:
+            raw = socket.create_connection((connect_host, port), timeout=timeout_s)
+        except OSError as exc:
+            raise TransportError("http request failed", reason="http_error") from None
         try:
             if scheme == "https":
                 raw = self._ctx.wrap_socket(raw, server_hostname=sni)
@@ -422,67 +438,34 @@ class FrontedHttpsTransport:
                 raw.close()
             except OSError:
                 pass
-            raise TransportError(f"http error: {exc}", reason="http_error") from exc
-        if not 200 <= resp.status < 300:
+            raise TransportError("http request failed", reason="http_error") from None
+        if (method == "POST" and not 200 <= resp.status < 300) or resp.status >= 400:
             conn.close()
-            raise TransportError(f"http status {resp.status}", reason="http_error")
+            raise TransportError(f"http status {resp.status}", reason="http_error", status=resp.status)
         return conn, resp
+
+    def _request(self, method: str, url: str, *, body: bytes | None, timeout_s: float,
+                 max_bytes: int, headers: dict[str, str] | None) -> bytes:
+        conn, resp = self._open(url, timeout_s, headers, method=method, body=body)
+        try:
+            return read_bounded(resp, max_bytes)
+        except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
+            raise TransportError("http request failed", reason="http_error") from None
+        finally:
+            conn.close()
 
     def get_bytes(
         self, url: str, *, timeout_s: float, max_bytes: int, headers: dict[str, str] | None = None
     ) -> bytes:
-        conn, resp = self._open(url, timeout_s, headers)
-        try:
-            data = resp.read(max_bytes + 1)
-        except (OSError, ssl.SSLError) as exc:
-            raise TransportError(f"http error: {exc}", reason="http_error") from exc
-        finally:
-            conn.close()
-        if len(data) > max_bytes:
-            raise TransportError("response too large", reason="too_large")
-        return data
+        return self._request("GET", url, body=None, timeout_s=timeout_s,
+                             max_bytes=max_bytes, headers=headers)
 
     def post_bytes(
         self, url: str, body: bytes, *, timeout_s: float, max_bytes: int,
         headers: dict[str, str] | None = None,
     ) -> bytes:
-        conn, resp = self._open(url, timeout_s, headers, method="POST", body=body)
-        try:
-            data = resp.read(max_bytes + 1)
-        except (OSError, ssl.SSLError) as exc:
-            raise TransportError(f"http error: {exc}", reason="http_error") from exc
-        finally:
-            conn.close()
-        if len(data) > max_bytes:
-            raise TransportError("response too large", reason="too_large")
-        return data
-
-    def iter_post_bytes(
-        self, url: str, body: bytes, *, timeout_s: float, max_chunk_bytes: int,
-        max_total_bytes: int, headers: dict[str, str] | None = None,
-    ) -> Iterator[bytes]:
-        """Yield a bounded response over the connect-host/SNI split socket."""
-        import http.client
-
-        if max_chunk_bytes < 1 or max_total_bytes < 1:
-            raise TransportError("invalid stream limit", reason="invalid_limit")
-        conn, resp = self._open(url, timeout_s, headers, method="POST", body=body)
-        try:
-            total = 0
-            while True:
-                chunk = getattr(resp, "read1", resp.read)(max_chunk_bytes)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > max_total_bytes:
-                    raise TransportError("stream response too large", reason="too_large")
-                yield chunk
-        except TransportError:
-            raise
-        except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
-            raise TransportError("stream request failed", reason="http_error") from exc
-        finally:
-            conn.close()
+        return self._request("POST", url, body=body, timeout_s=timeout_s,
+                             max_bytes=max_bytes, headers=headers)
 
     def download(
         self, url: str, dest: Path, *, timeout_s: float, max_bytes: int,
@@ -505,12 +488,71 @@ class FrontedHttpsTransport:
         except TransportError:
             dest.unlink(missing_ok=True)
             raise
-        except (OSError, ssl.SSLError) as exc:
+        except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
             dest.unlink(missing_ok=True)
-            raise TransportError(f"http error: {exc}", reason="http_error") from exc
+            raise TransportError("http request failed", reason="http_error") from None
         finally:
             conn.close()
         return dest
+
+    def iter_post_bytes(
+        self, url: str, body: bytes, *, timeout_s: float, max_chunk_bytes: int,
+        max_total_bytes: int, headers: dict[str, str] | None = None,
+    ) -> Iterator[bytes]:
+        """Yield a bounded response over the connect-host/SNI split socket."""
+        import http.client
+
+        if max_chunk_bytes < 1 or max_total_bytes < 1:
+            raise TransportError("invalid stream limit", reason="invalid_limit")
+        conn, resp = self._open(url, timeout_s, headers, method="POST", body=body)
+        try:
+            total = 0
+            read_chunk = getattr(resp, "read1", resp.read)
+            while True:
+                chunk = read_chunk(max_chunk_bytes)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_total_bytes:
+                    raise TransportError("stream response too large", reason="too_large")
+                yield chunk
+        except TransportError:
+            raise
+        except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
+            raise TransportError("stream request failed", reason="http_error") from exc
+        finally:
+            conn.close()
+
+
+
+def get_pinned_transport(url: str, connect_ip: str) -> FrontedHttpsTransport:
+    """Connect to one validated IP while preserving URL Host/SNI verification.
+
+    Friend invitation endpoints are attacker-controlled. Resolving them before
+    policy checks is insufficient if the socket later resolves the hostname a
+    second time. This transport dials the already-validated address directly,
+    while TLS certificate validation and HTTP routing remain bound to the URL
+    hostname. Explicit outbound proxies are rejected because they own DNS and
+    cannot provide this pinning guarantee through the current seam.
+    """
+
+    import ipaddress
+
+    parts = urlparse(url)
+    host = parts.hostname or ""
+    if parts.scheme not in {"http", "https"} or not host:
+        raise TransportError("pinned endpoint invalid", reason="endpoint_invalid")
+    try:
+        ipaddress.ip_address(connect_ip)
+    except ValueError as exc:
+        raise TransportError("pinned address invalid", reason="endpoint_invalid") from exc
+    profile = resolve_profile()
+    if profile.proxies:
+        raise TransportError(
+            "pinned transport does not support an outbound proxy",
+            reason="pinned_proxy_unsupported",
+        )
+    return FrontedHttpsTransport(replace(profile, connect_host=connect_ip, sni=host))
 
 
 class CdnWebSocketTransport:
@@ -716,7 +758,7 @@ class CdnWebSocketTransport:
             return self._do_request(url, timeout_s, max_bytes, headers)
         except TransportError:
             raise
-        except (OSError, ssl.SSLError) as exc:
+        except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
             raise TransportError(f"cdn-ws error: {exc}", reason="http_error") from exc
 
     def post_bytes(
@@ -729,7 +771,7 @@ class CdnWebSocketTransport:
             )
         except TransportError:
             raise
-        except (OSError, ssl.SSLError) as exc:
+        except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
             raise TransportError(f"cdn-ws error: {exc}", reason="http_error") from exc
 
     def download(
@@ -791,3 +833,35 @@ def get_transport(profile: TransportProfile | None = None) -> Transport:
 def reset_transport_cache() -> None:
     """Drop cached transports (tests after env changes)."""
     _CACHE.clear()
+
+def stamp_network_key(headers: dict[str, str]) -> dict[str, str]:
+    """Return ``headers`` with the mesh credential enforced, case-insensitively.
+
+    HTTP header names are case-insensitive; a plain ``dict.update`` with the
+    canonical casing would let a caller-supplied ``x-ryn-auth`` ride along as a
+    duplicate line, and whichever the receiving stack reads first would win.
+    Every caller-supplied spelling is stripped before the real value is set.
+    """
+    cleaned = {k: v for k, v in headers.items() if k.lower() != NETWORK_KEY_HEADER.lower()}
+    cleaned.update(network_key_header())
+    return cleaned
+
+
+def read_bounded(resp, max_bytes: int) -> bytes:
+    """Read at most ``max_bytes`` from a response, refusing anything larger."""
+    data = resp.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise TransportError("response too large", reason="too_large")
+    return data
+
+
+def check_status(status: int, *, strict: bool) -> None:
+    """Reject failure responses.
+
+    POST paths are ``strict`` (2xx only — a redirect of a signed task is never
+    right). GET/download keep the pre-existing ``>= 400`` contract so peers
+    behind redirecting CDN edges do not flip from readable to hard-failed.
+    """
+    if (strict and not 200 <= status < 300) or (not strict and status >= 400):
+        raise TransportError(f"http status {status}", reason="http_error", status=status)
+

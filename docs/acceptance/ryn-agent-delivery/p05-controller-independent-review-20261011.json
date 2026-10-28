@@ -1,0 +1,64 @@
+{
+  "kind": "independent-controller-review",
+  "date": "2026-10-11",
+  "reviewer": "pending_independent_review; not the P05 controller author",
+  "scope": ["real-model/run_p05.py", "tests/test_agent_p05_controller.py", "targeted production resource, bridge and two-host audit paths"],
+  "conclusion": "No blocking P1/P2 implementation finding in the reviewed development bootstrap and collector. Ready for a separately authorized development execution, not a P05 business or formal pass.",
+  "findings": [],
+  "verified": [
+    "Exact file grant is root_kind=file, recursive=false, actions=[read_ai], with explicit model-data consent and authenticated selected peer/service destination revision. Production ResourceTools rejects forged sibling and parent references.",
+    "Both fixture connectors are read-only. NAS setup bypasses Control.request body logging; the synthetic credential is encrypted in state.enc, is absent from that raw file and the tested control receipts, and is not placed in a task prompt.",
+    "Other-session marker is saved and read back through the normal manual-conversation API without inference; it is not copied into the P05 task.",
+    "Consumer scans select each order by Agent task ID, hash and scan the complete captured request object, including reasoning_content. Provider scans select corresponding order IDs and scan the complete upstream body. No reasoning field is stripped before scanning.",
+    "Unexpected consumer peer/service and unexpected provider model are flagged. Response absence retains an empty usage observation, not invented zero tokens.",
+    "Missing provider order capture makes all_orders_captured_once false; every mode keeps formal_pass=false and independent semantic review pending. No absent provider evidence is promoted to a pass."
+  ],
+  "confirmed_limits": [
+    "security_clean and consumer_security_clean mean only the scanned subset contains none of the named markers or destination mismatches. They are not completeness or business verdicts; require all_orders_captured_once plus separate semantic review.",
+    "Canary scans do not prove that arbitrary unmarked data is authorized. Independent review must inspect the actual per-request contents against the selected-file/current-task-protocol boundary.",
+    "The credential assertion covers this setup/control logging path and the tested encrypted NAS store, not every possible OS or third-party log.",
+    "The runner uses an existing isolated consumer. Fresh formal repetitions, two physical hosts and desktop consent are not established; stdout destination display is explicitly labelled as such.",
+    "Raw captures remain in the referenced host audit files. JSON hashes identify captured in-memory request objects; they are not byte-for-byte HTTP wire hashes. Provider collection and authenticated host provenance remain external prerequisites.",
+    "No real GLM invocation, remote operation, production modification or held-out access occurred during this review."
+  ],
+  "minimum_validation": {
+    "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_p05_controller.py -q",
+    "result": "7 passed in 2.28s",
+    "paid_model_calls": 0
+  },
+  "reviewed_sha256": {
+    "docs/acceptance/ryn-agent-delivery/real-model/run_p05.py": "9a3b6a24b92a158850906cce90e542cc242f7835b78bc9df1ac34ba724cd252d",
+    "tests/test_agent_p05_controller.py": "d2f34e94f5e4e22bcce20071834c63a7ba06979f05ec879fdc6b8845dd1f7088"
+  },
+  "exact_model_gate_revision_review": {
+    "reviewed_at": "2026-10-11T08:18:10Z",
+    "reason": "The actual peer catalog model_id is a display alias, not the upstream model ID. The earlier literal comparison rejected the intended peer before inference.",
+    "conclusion": "Approved for the already-authorized unique P05 development execution with the exact reviewed binding below. No GLM gate bypass or broad alias matching was introduced.",
+    "findings": [],
+    "checks": [
+      "Live mode now requires a binding file and its exact reviewed SHA256; hash mismatch rejects before setup.",
+      "Current GET models must exactly match all six consumer fields: id, peer_id, service_id, model_id display alias, destination_revision and the complete expected_model_binding.",
+      "Provider peer/service/alias and model_binding must match that consumer destination, and provider upstream model plus historical upstream model remain exactly glm-5.3-flash.",
+      "The historical upstream task is linked to the same provider identity and service by the retained provider-order capture, and its owner_sources_sha256 matches the fresh provider mapping.",
+      "Consumer/provider capture ages are bounded to at most 1800 seconds and no more than 60 seconds in the future. The reviewed captures are fresh at review time; expiration remains a live gate.",
+      "Independently matched all four provenance hashes to local original files, the selected fresh consumer record, provider service package_id/model_alias/model_binding/health.model, provider identity mapping, and historical upstream/order correlation.",
+      "The actual reviewed binding passes selected_peer against the locally retained current consumer snapshot without invoking any model or remote API."
+    ],
+    "validation": {
+      "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_p05_controller.py -k 'reviewed_exact_alias or each_model_proof' -q",
+      "result": "21 passed, 7 deselected in 0.80s",
+      "new_model_calls": 0,
+      "remote_operations": 0
+    },
+    "revised_sha256": {
+      "docs/acceptance/ryn-agent-delivery/real-model/run_p05.py": "24ef9c975da5e5a822a984df20a5ae1d689dac9e169a7404b1f683a6d1c074f3",
+      "tests/test_agent_p05_controller.py": "78e6cc8bd4e0a5e653f026a6b9bb3f44483a57da0d5c791fcb269aec5c154600",
+      ".codex-tmp/p05-two-host-20261011/exact-model-binding.json": "9d00e3334bee0d53d1391adfa036c19b0ee37c0756a1ad53f66105f33223388b"
+    },
+    "limits": [
+      "The minimal binding is reviewed controller evidence, not a cryptographic signature by itself. The runtime validates the current destination binding; this review separately verifies the retained authenticated local-control captures and exact approved binding hash.",
+      "Historical upstream dispatch is only mapping evidence. This P05 execution still needs its own provider request captures and full egress/semantic review; no business pass is granted here.",
+      "Original capture files and earlier rejected attempt remain unchanged. No production changes or new inference were performed for this revision review."
+    ]
+  }
+}

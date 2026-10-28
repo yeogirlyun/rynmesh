@@ -1,0 +1,74 @@
+{
+  "kind": "P04-R05-P05-owned-two-host-cleanup-sidecar",
+  "at": "2026-10-11T08:30:24.510213+00:00",
+  "operator_review_path": "D:\\code\\rynmesh\\docs\\acceptance\\ryn-agent-delivery\\p05-development-review-20261011.json",
+  "operator_review_sha256": "05e9c29a2d752106bdacbf5c3087d2b396277139b0b3a04cc69491e1939f9ba8",
+  "operator_review_unchanged": true,
+  "cleanup_completed": true,
+  "local_stopped_pids": [
+    32868,
+    35896,
+    31564,
+    10764
+  ],
+  "remote_stopped_pids": [
+    5052,
+    11472
+  ],
+  "ownership_basis": "Exact PID, executable path, full home/role command line and original creation timestamp verified before stopping. No process-name-wide stop.",
+  "deleted_firewall_rule_names": [
+    "Ryn-P04-20261011-Consumer-TCP",
+    "Ryn-P04-20261011-Consumer-UDP"
+  ],
+  "firewall_ownership": "Verified program=test venv Python, local172.16.8.82, remote172.16.8.191, TCP18782 / dynamicUDP before deletion. No local rule had been created; disabled local profiles and AccessDenied original condition unchanged.",
+  "remaining_owned_processes": [],
+  "remaining_remote_owned_rules": [],
+  "remote_18782_listeners": [],
+  "local_endpoint_acceptance": {
+    "127.0.0.1:18781": "not_accepting",
+    "172.16.8.191:18781": "not_accepting",
+    "172.16.8.191:18780": "not_accepting"
+  },
+  "local_listener_observation": "Immediate post-stop Get-NetTCPConnection briefly retained a 18781 entry with OwningProcess=0. Subsequent direct socket checks on loopback/LAN18781 and registry18780 all failed to connect; all four owned PIDs were absent.",
+  "preserved": [
+    "Both isolated node homes",
+    "Registry home",
+    "Both test venvs and installed wheel",
+    "All frozen evidence, raw captures and control receipts",
+    "Local desktop default home and Ryn processes",
+    "WSL production services and configuration"
+  ],
+  "wsl_services": {
+    "personal-api": "active",
+    "mysql": "active",
+    "docker": "active",
+    "frpc-personal": "active",
+    "apache2": "active"
+  },
+  "new_paid_calls_during_cleanup": 0,
+  "recursive_deletions": 0,
+  "system_execution_policy_changes": false,
+  "system_permission_changes": false,
+  "cleanup_pre_execution_incidents": [
+    "Remote encoded command exceeded Windows cmd length, then file invocation was rejected by existing PowerShell execution policy; both before any cleanup action. A short inline invocation ran the already saved cleanup script without changing policy.",
+    "Ownership check initially rejected because PowerShell JSON arrays/date conversion changed the comparison representation. After normalization, exact metadata checks succeeded; no process was stopped while a check failed."
+  ],
+  "evidence_files": [
+    {
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\p05-two-host-20261011\\cleanup-local.json",
+      "sha256": "709e91f7d1201ea23934b649076882253d1b3146173e1d911306f61eae5822c4"
+    },
+    {
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\p05-two-host-20261011\\cleanup-remote.json",
+      "sha256": "e906cf57d9c33597465ab9497d601e8c9a3024ec2c9f18422a983b78b52aeacd"
+    },
+    {
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\p05-two-host-20261011\\cleanup-local-ports.json",
+      "sha256": "6548277ddc88f4f745c90d3eb3b296571d746e4c06c4be2e2473cbbcd4a042e4"
+    },
+    {
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\p05-two-host-20261011\\cleanup-wsl-health.json",
+      "sha256": "ade2fcc0c3f2fdd232fc4f78e4350a6270bef066d7f10f236e1c2f454a9be7b9"
+    }
+  ]
+}

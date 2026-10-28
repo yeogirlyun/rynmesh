@@ -1,0 +1,404 @@
+/* Devices family redesign (device sync, connection details, device dialogs and the actions menu).
+   Every selector hangs off `.rf` (the family root, put on each page root, dialog and menu layer), a page root (`.rd-sync`,
+   `.rd-peers`) or a dialog modifier (`dialog.rf-dlg`), media queries included, so nothing else on the shell changes.
+   Class names use the `rf-` prefix on purpose: dialogs opened from /devices are DOM descendants of `.rd-devices`, and its
+   `.rd-*` rules must not reach them. `.rf.rf` doubles the specificity where it has to beat the shell's `.pf-shell p` /
+   `.pf-dialog small` element rules. Palette as in devices-refresh.css: porcelain neutrals, one indigo brand colour, jewel
+   hues only for device / file identity, ok / warn / off / bad for state. */
+.rf {
+  --bg: #f4f5f9; --surface: #ffffff; --surface2: #f9fafd; --hair: #e8eaf2; --hair2: #d9dde9;
+  --ink: #141a33; --ink2: #4d5670; --ink3: #687189;
+  --brand: #3b57e0; --brand2: #6580f6; --brand-deep: #2b43c2; --on-brand: #ffffff;
+  --ok: #10a58f; --warn: #ee9d1f; --off: #7d869d; --bad: #d4365a; --sky: #2a94e8;
+  --wash1: #5568f0; --wash2: #10a58f; --tint: 11%; --shadow-c: rgba(20, 26, 51, 0.1);
+  --font: "Segoe UI", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--ink);
+  font-feature-settings: "tnum" 1;
+  -webkit-font-smoothing: antialiased;
+}
+[data-theme="dark"] .rf {
+  --bg: #0c1120; --surface: #141a2c; --surface2: #10162a; --hair: #212a42; --hair2: #2e3856;
+  --ink: #eaeef8; --ink2: #aab3c9; --ink3: #8892aa;
+  --brand: #8aa2ff; --brand2: #a9bbff; --brand-deep: #b8c6ff; --on-brand: #0b1230;
+  --ok: #3fd0b4; --warn: #f2b655; --off: #7e89a1; --bad: #ff7d96; --sky: #5cb8fb;
+  --wash1: #7d8dff; --wash2: #3fd0b4; --tint: 20%; --shadow-c: rgba(0, 0, 0, 0.5);
+}
+.rf, .rf * { box-sizing: border-box; }
+.rf.rf :where(h1, h2, h3, p, dl, dd, dt, ul, ol, fieldset, blockquote) { margin: 0; }
+.rf.rf :where(p) { color: inherit; }
+.rf.rf :where(small) { color: var(--ink3); font-size: 12px; line-height: 1.5; }
+.rf.rf :where(h1, h2, h3) { color: var(--ink); font-family: inherit; letter-spacing: normal; }
+.rf ul, .rf ol { padding: 0; list-style: none; }
+.rf fieldset { border: 0; padding: 0; min-width: 0; }
+.rf legend { padding: 0; }
+.rf button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+.rf button:disabled { cursor: not-allowed; opacity: 0.5; }
+.rf input, .rf textarea, .rf select { font: inherit; }
+.rf input[type="checkbox"], .rf input[type="radio"] { accent-color: var(--brand); width: 16px; height: 16px; margin: 0; flex-shrink: 0; }
+.rf :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 8px; }
+.rf a { color: inherit; text-decoration: none; }
+.rf .rf-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.rf .rf-mono { font-family: ui-monospace, Consolas, monospace; }
+.rf .rf-ell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rf .rf-ico { flex-shrink: 0; }
+
+/* hues: base, light end of the gradient, deep end for details */
+.rf.rf-h-indigo, .rf .rf-h-indigo { --h: #5568f0; --h2: #8493fb; --hd: #3a49c8; }
+.rf.rf-h-violet, .rf .rf-h-violet { --h: #7c5cf0; --h2: #a58bfb; --hd: #5a3fcb; }
+.rf.rf-h-teal, .rf .rf-h-teal { --h: #10a58f; --h2: #3fd0b4; --hd: #0a7867; }
+.rf.rf-h-sky, .rf .rf-h-sky { --h: #2a94e8; --h2: #5cb8fb; --hd: #1b6db4; }
+.rf.rf-h-rose, .rf .rf-h-rose { --h: #e8567f; --h2: #f58aa6; --hd: #b83259; }
+.rf.rf-h-amber, .rf .rf-h-amber { --h: #ee9d1f; --h2: #f8c260; --hd: #965a00; }
+.rf.rf-h-slate, .rf .rf-h-slate { --h: #66708a; --h2: #909ab3; --hd: #475068; }
+.rf[class*="rf-h-"], .rf [class*="rf-h-"] { --hc: var(--hd); }
+[data-theme="dark"] .rf[class*="rf-h-"], [data-theme="dark"] .rf [class*="rf-h-"] { --hc: color-mix(in srgb, var(--h2) 58%, var(--ink)); }
+.rf .rd-deep { fill: var(--hd); }
+/* tones: dot / fill colour and readable ink */
+.rf .rf-t-ok { --p: var(--ok); --pi: color-mix(in srgb, var(--ok) 64%, var(--ink)); }
+.rf .rf-t-off { --p: var(--off); --pi: color-mix(in srgb, var(--off) 70%, var(--ink)); }
+.rf .rf-t-warn { --p: var(--warn); --pi: color-mix(in srgb, var(--warn) 50%, var(--ink)); }
+.rf .rf-t-self { --p: var(--brand); --pi: var(--brand-deep); }
+.rf .rf-t-sky { --p: var(--sky); --pi: color-mix(in srgb, var(--sky) 62%, var(--ink)); }
+.rf .rf-t-bad { --p: var(--bad); --pi: color-mix(in srgb, var(--bad) 72%, var(--ink)); }
+
+/* ---- buttons ---- */
+.rf .rf-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 36px; padding: 0 15px; border: 1px solid var(--hair2); border-radius: 10px; background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 650; white-space: nowrap; text-decoration: none; box-shadow: 0 1px 2px var(--shadow-c); }
+.rf .rf-btn:hover:not(:disabled) { background: var(--surface2); }
+.rf .rf-btn-p { border-color: transparent; color: var(--on-brand); background: linear-gradient(180deg, var(--brand2), var(--brand)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 1px 2px rgba(43, 67, 194, 0.4), 0 8px 16px -8px var(--brand); }
+.rf .rf-btn-p:hover:not(:disabled) { background: linear-gradient(180deg, var(--brand2), var(--brand)); filter: brightness(1.05); }
+.rf .rf-btn-d { color: color-mix(in srgb, var(--bad) 78%, var(--ink)); border-color: color-mix(in srgb, var(--bad) 32%, var(--hair2)); }
+.rf .rf-btn-d:hover:not(:disabled) { background: color-mix(in srgb, var(--bad) 7%, var(--surface)); }
+.rf .rf-btn-sm { height: 30px; padding: 0 12px; border-radius: 9px; font-size: 12.5px; }
+.rf .rf-btn-lg { height: 40px; border-radius: 11px; font-size: 13.5px; font-weight: 700; }
+.rf .rf-btn-block { display: flex; width: 100%; }
+.rf .rf-btn:disabled { box-shadow: none; }
+.rf .rf-ib { display: inline-grid; place-items: center; flex-shrink: 0; width: 32px; height: 32px; border-radius: 9px; color: var(--ink2); }
+.rf .rf-ib:hover:not(:disabled) { background: var(--surface2); color: var(--ink); box-shadow: 0 0 0 1px var(--hair); }
+.rf .rf-ib-sm { width: 26px; height: 26px; border-radius: 7px; }
+.rf .rf-lnk { display: inline-flex; align-items: center; gap: 6px; color: var(--brand-deep); font-size: 13px; font-weight: 650; }
+.rf .rf-lnk:hover { text-decoration: underline; text-underline-offset: 3px; }
+.rf .rf-lnk-sm { font-size: 12px; }
+
+/* ---- pills, tags, counts ---- */
+.rf .rf-pill { display: inline-flex; align-items: center; gap: 7px; height: 24px; padding: 0 10px 0 9px; border-radius: 12px; background: color-mix(in srgb, var(--p) var(--tint), var(--surface)); color: var(--pi); font-size: 12px; font-weight: 650; white-space: nowrap; }
+.rf .rf-pill > i { width: 7px; height: 7px; border-radius: 50%; background: var(--p); box-shadow: 0 0 0 3px color-mix(in srgb, var(--p) 22%, transparent); }
+.rf .rf-pill-sm { height: 22px; padding: 0 9px 0 8px; border-radius: 11px; font-size: 11.5px; gap: 6px; }
+.rf .rf-pill-sm > i { width: 6px; height: 6px; box-shadow: none; }
+.rf .rf-pill-line { background: transparent; border: 1px solid color-mix(in srgb, var(--p) 35%, var(--hair)); padding: 0 9px; }
+.rf .rf-tag { display: inline-flex; align-items: center; gap: 5px; height: 19px; padding: 0 7px; border-radius: 6px; background: color-mix(in srgb, var(--hair) 70%, var(--surface)); color: var(--ink2); font-size: 11px; font-weight: 650; }
+.rf .rf-tag-tone { height: 22px; padding: 0 8px; border-radius: 7px; background: color-mix(in srgb, var(--p) var(--tint), var(--surface)); color: var(--pi); font-size: 11.5px; font-weight: 700; }
+.rf .rf-count { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: color-mix(in srgb, var(--p) 18%, var(--surface)); color: var(--pi); font-size: 11.5px; font-weight: 700; }
+
+/* ---- tiles (device / file identity) ---- */
+.rf .rf-tile { position: relative; display: grid; place-items: center; flex-shrink: 0; width: 44px; height: 44px; border-radius: 13px; background: linear-gradient(155deg, var(--h2), var(--h)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 -1px 0 rgba(0, 0, 0, 0.08), 0 8px 14px -8px var(--h); }
+.rf .rf-tile::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: linear-gradient(165deg, rgba(255, 255, 255, 0.28), transparent 48%); }
+.rf .rf-tile > svg { position: relative; z-index: 1; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.16)); }
+.rf .rf-tile-sm { width: 36px; height: 36px; border-radius: 11px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 6px 12px -8px var(--h); }
+.rf .rf-tile-xs { width: 32px; height: 32px; border-radius: 10px; box-shadow: none; }
+.rf .rf-tile-lg { width: 52px; height: 52px; border-radius: 15px; }
+.rf .rf-tile-xl { width: 56px; height: 56px; border-radius: 16px; }
+.rf [data-off="true"] > .rf-tile, .rf .rf-tile.off { filter: grayscale(0.85); opacity: 0.6; }
+.rf .rf-chipicon { display: inline-grid; place-items: center; flex-shrink: 0; width: 34px; height: 34px; border-radius: 10px; color: var(--hc); background: color-mix(in srgb, var(--h) 13%, var(--surface)); }
+.rf .rf-avatar { display: inline-grid; place-items: center; flex-shrink: 0; width: 30px; height: 30px; border-radius: 50%; color: #fff; font-size: 11px; font-weight: 800; background: linear-gradient(150deg, var(--h2), var(--h)); }
+
+/* ---- segmented control ---- */
+.rf .rf-seg { display: inline-flex; max-width: 100%; padding: 3px; gap: 2px; border-radius: 11px; background: color-mix(in srgb, var(--hair) 75%, var(--bg)); overflow-x: auto; }
+.rf .rf-seg > a, .rf .rf-seg > button { display: inline-flex; align-items: center; justify-content: center; height: 30px; padding: 0 14px; border-radius: 8px; color: var(--ink2); font-size: 13px; font-weight: 600; white-space: nowrap; }
+.rf .rf-seg > a:hover, .rf .rf-seg > button:hover { color: var(--ink); }
+.rf .rf-seg [aria-pressed="true"], .rf .rf-seg [aria-current="page"] { background: var(--surface); color: var(--ink); font-weight: 700; box-shadow: 0 1px 2px var(--shadow-c), 0 0 0 1px var(--hair); }
+.rf .rf-seg em { font-style: normal; margin-left: 7px; color: var(--ink3); font-size: 11.5px; font-weight: 600; }
+.rf .rf-seg [aria-pressed="true"] em { color: var(--brand); }
+.rf .rf-seg-fill { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+/* ---- form pieces ---- */
+.rf .rf-inp, .rf input.rf-inp:not([type="checkbox"]):not([type="radio"]) { width: 100%; border: 1px solid var(--hair2); border-radius: 10px; background: var(--surface); color: var(--ink); }
+.rf .rf-inp:focus, .rf input.rf-inp:not([type="checkbox"]):not([type="radio"]):focus { outline: 0; border-color: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 18%, transparent); }
+.rf .rf-inp::placeholder { color: var(--ink3); }
+.rf .rf-inp:disabled { opacity: 0.6; }
+.rf .rf-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; color: var(--ink); }
+.rf .rf-field > span, .rf .rf-label { display: flex; justify-content: space-between; gap: 8px; color: var(--ink2); font-size: 12.5px; font-weight: 650; }
+.rf .rf-field > span small { color: var(--ink3); font-weight: 600; }
+.rf .rf-hint { color: var(--ink3); font-size: 12px; }
+.rf .rf-opt { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--hair); border-radius: 11px; background: var(--surface); font-size: 13px; font-weight: 600; cursor: pointer; }
+.rf .rf-opt:hover { background: var(--surface2); }
+.rf .rf-opt:has(input:checked) { border-color: color-mix(in srgb, var(--brand) 50%, var(--hair)); background: color-mix(in srgb, var(--brand) 6%, var(--surface)); }
+.rf .rf-opt:has(input:disabled) { opacity: 0.55; cursor: not-allowed; }
+.rf .rf-opt-stack { display: flex; flex-direction: column; min-width: 0; }
+.rf .rf-opt-stack small { color: var(--ink3); font-size: 12px; font-weight: 500; }
+.rf .rf-legend { display: block; margin-bottom: 8px; color: var(--ink2); font-size: 12.5px; font-weight: 650; }
+.rf .rf-chip { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px 0 10px; border: 1px solid var(--hair2); border-radius: 15px; background: var(--surface); color: var(--ink2); font-size: 12.5px; font-weight: 650; white-space: nowrap; cursor: pointer; }
+.rf .rf-chip:hover { background: var(--surface2); color: var(--ink); }
+.rf .rf-chip:has(input:checked) { border-color: color-mix(in srgb, var(--brand) 40%, var(--hair2)); background: color-mix(in srgb, var(--brand) 10%, var(--surface)); color: var(--brand-deep); }
+.rf .rf-chip:has(input:disabled) { opacity: 0.5; cursor: not-allowed; }
+.rf .rf-chip:has(input:focus-visible) { outline: 2px solid var(--brand); outline-offset: 2px; }
+.rf .rf-chip input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.rf .rf-chip .rf-on { display: none; }
+.rf .rf-chip:has(input:checked) .rf-on { display: inline; }
+.rf .rf-chip:has(input:checked) .rf-plus { display: none; }
+.rf input[type="checkbox"].rf-sw { appearance: none; -webkit-appearance: none; width: 38px; height: 22px; margin: 0; border-radius: 11px; background: var(--hair2); position: relative; cursor: pointer; flex-shrink: 0; }
+.rf input.rf-sw::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); }
+.rf input.rf-sw:checked { background: var(--brand); }
+.rf input.rf-sw:checked::after { transform: translateX(16px); }
+.rf input.rf-sw:disabled { opacity: 0.5; cursor: not-allowed; }
+@media (prefers-reduced-motion: no-preference) {
+  .rf .rf-btn, .rf .rf-ib, .rf .rf-chip, .rf .rf-opt { transition: background-color 0.15s, color 0.15s, box-shadow 0.15s, border-color 0.15s; }
+  .rf input.rf-sw, .rf input.rf-sw::after { transition: background-color 0.15s, transform 0.15s; }
+}
+
+/* ---- callouts and cards ---- */
+.rf .rf-callout { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border: 1px solid var(--hair); border-radius: 12px; background: var(--surface2); color: var(--ink2); font-size: 13px; }
+.rf .rf-callout > svg { margin-top: 2px; color: var(--ink3); }
+.rf .rf-callout > div, .rf .rf-callout > span, .rf .rf-callout > p { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.rf .rf-callout-warn { background: color-mix(in srgb, var(--warn) 9%, var(--surface)); border-color: color-mix(in srgb, var(--warn) 30%, var(--hair)); }
+.rf .rf-callout-warn > svg { color: color-mix(in srgb, var(--warn) 70%, var(--ink)); }
+.rf .rf-callout-err { background: color-mix(in srgb, var(--bad) 8%, var(--surface)); border-color: color-mix(in srgb, var(--bad) 28%, var(--hair)); color: var(--ink); }
+.rf .rf-callout-err > svg { color: color-mix(in srgb, var(--bad) 80%, var(--ink)); }
+.rf .rf-callout-ok > svg { color: var(--ok); }
+.rf .rf-callout-brand { background: color-mix(in srgb, var(--brand) 5%, var(--surface)); }
+.rf .rf-callout-brand > svg { color: var(--brand-deep); }
+.rf .rf-note { display: flex; align-items: flex-start; gap: 8px; color: var(--ink3); font-size: 12.5px; }
+.rf .rf-note > svg { margin-top: 2px; }
+.rf .rf-card { border: 1px solid var(--hair); border-radius: 16px; background: var(--surface); box-shadow: 0 1px 2px var(--shadow-c), 0 12px 28px -22px var(--shadow-c); overflow: hidden; }
+.rf .rf-prog { display: block; height: 5px; border-radius: 3px; background: var(--hair); overflow: hidden; }
+.rf .rf-prog > i { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--brand), var(--brand2)); }
+.rf .rf-dl-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--hair); font-size: 13px; }
+.rf .rf-dl-row:last-child { border-bottom: 0; }
+.rf .rf-dl-row dt { flex-shrink: 0; color: var(--ink3); }
+.rf .rf-dl-row dd { min-width: 0; font-weight: 650; text-align: right; overflow-wrap: anywhere; }
+.rf .rf-code-chip { padding: 1px 6px; border: 1px solid var(--hair); border-radius: 5px; background: var(--surface2); color: var(--ink2); font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+.rf .rf-digits { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 0; }
+.rf .rf-digit { display: grid; place-items: center; width: 40px; height: 50px; border: 1px solid var(--hair2); border-radius: 10px; background: var(--surface); box-shadow: 0 1px 2px var(--shadow-c); font-family: ui-monospace, Consolas, monospace; font-size: 26px; font-weight: 800; }
+.rf .rf-digits-gap { width: 14px; }
+
+/* ================= dialogs ================= */
+dialog.rf-dlg {
+  --hv: var(--brand);
+  --mark: 42px;
+  position: fixed;
+  width: min(560px, calc(100vw - 24px));
+  max-width: none;
+  max-height: calc(100dvh - 40px);
+  padding: 0;
+  overflow: auto;
+  border: 1px solid var(--hair);
+  border-radius: 20px;
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.5;
+  background: linear-gradient(160deg, color-mix(in srgb, var(--hv) 9%, var(--surface)), var(--surface) 75%) top / 100% 112px no-repeat, var(--surface);
+  box-shadow: 0 28px 70px -18px rgba(8, 12, 28, 0.5), 0 2px 6px rgba(8, 12, 28, 0.12);
+}
+dialog.rf-dlg::backdrop { background: rgba(20, 26, 51, 0.46); backdrop-filter: blur(3px); }
+[data-theme="dark"] dialog.rf-dlg::backdrop { background: rgba(2, 4, 10, 0.62); }
+dialog.rf-dlg.rf-dlg-send, dialog.rf-dlg.rf-dlg-add { width: min(600px, calc(100vw - 24px)); }
+dialog.rf-dlg.rf-dlg-edit { width: min(520px, calc(100vw - 24px)); }
+dialog.rf-dlg .pf-dialog-heading { position: relative; align-items: flex-start; gap: 12px; margin: 0; padding: 22px 18px 0 calc(38px + var(--mark)); min-height: 24px; }
+dialog.rf-dlg .pf-dialog-heading h2 { flex: 1; min-width: 0; margin: 0; padding-top: 0; color: var(--ink); font-size: 18px; line-height: 1.35; font-weight: 750; letter-spacing: -0.02em; overflow-wrap: anywhere; text-wrap: balance; }
+dialog.rf-dlg .pf-dialog-heading .pf-icon-button { position: absolute; top: 18px; right: 16px; width: 32px; height: 32px; border-radius: 9px; color: var(--ink2); }
+dialog.rf-dlg .pf-dialog-heading .pf-icon-button:hover { background: var(--surface2); color: var(--ink); box-shadow: 0 0 0 1px var(--hair); }
+dialog.rf-dlg .pf-dialog-heading h2 { padding-right: 38px; }
+dialog.rf-dlg .rf-mark { position: absolute; left: 24px; top: 22px; z-index: 1; display: grid; place-items: center; width: var(--mark); height: var(--mark); border-radius: 12px; color: var(--on-brand); background: linear-gradient(155deg, var(--brand2), var(--brand)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 8px 16px -8px var(--brand); }
+dialog.rf-dlg .rf-mark.rf-tile { width: var(--mark); height: var(--mark); border-radius: calc(var(--mark) * 0.28); color: inherit; background: linear-gradient(155deg, var(--h2), var(--h)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 8px 14px -8px var(--h); }
+dialog.rf-dlg .rf-mark-badge { position: absolute; right: -6px; bottom: -6px; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; color: var(--on-brand); background: linear-gradient(155deg, var(--brand2), var(--brand)); box-shadow: 0 0 0 2.5px var(--surface); }
+dialog.rf-dlg .rf-sub { margin: 2px 24px 0 calc(38px + var(--mark)); padding: 0 0 18px; color: var(--ink2); font-size: 13px; }
+dialog.rf-dlg .rf-sub-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+dialog.rf-dlg .rf-body { display: flex; flex-direction: column; gap: 18px; padding: 4px 24px 22px; }
+dialog.rf-dlg .rf-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 14px 24px; border-top: 1px solid var(--hair); background: var(--surface2); }
+dialog.rf-dlg .rf-foot > small, dialog.rf-dlg .rf-foot > .rf-foot-note { flex: 1; min-width: 0; color: var(--ink3); font-size: 12px; }
+dialog.rf-dlg .rf-foot-end { justify-content: flex-end; }
+dialog.rf-dlg .rf-btn { height: 38px; padding: 0 16px; }
+dialog.rf-dlg .rf-btn-p { padding: 0 18px; font-size: 13.5px; font-weight: 700; }
+dialog.rf-dlg .rf-h3 { font-size: 15px; font-weight: 750; color: var(--ink); }
+dialog.rf-dlg .rf-eyebrow { font-size: 11.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink3); }
+dialog.rf-dlg .rf-sec { display: flex; flex-direction: column; gap: 10px; }
+dialog.rf-dlg .rf-sec-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+dialog.rf-dlg .rf-sec-head small { color: var(--ink3); font-size: 12.5px; font-weight: 600; }
+dialog.rf-dlg .rf-box { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid color-mix(in srgb, var(--brand) 35%, var(--hair)); border-radius: 14px; background: color-mix(in srgb, var(--brand) 5%, var(--surface)); }
+dialog.rf-dlg .rf-box-plain { border-color: var(--hair); background: var(--surface2); }
+dialog.rf-dlg .rf-list { border: 1px solid var(--hair); border-radius: 14px; overflow: hidden; }
+dialog.rf-dlg .rf-list > li { border-bottom: 1px solid var(--hair); }
+dialog.rf-dlg .rf-list > li:last-child { border-bottom: 0; }
+dialog.rf-dlg .rf-steps > li { display: flex; align-items: center; gap: 12px; padding: 11px 14px; font-size: 13px; }
+dialog.rf-dlg .rf-steps > li > b { display: grid; place-items: center; flex-shrink: 0; width: 24px; height: 24px; border-radius: 50%; background: color-mix(in srgb, var(--brand) 12%, var(--surface)); color: var(--brand-deep); font-size: 12px; font-weight: 800; }
+dialog.rf-dlg .rf-err { padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--bad) 28%, var(--hair)); border-radius: 11px; background: color-mix(in srgb, var(--bad) 8%, var(--surface)); color: color-mix(in srgb, var(--bad) 72%, var(--ink)); font-size: 13px; font-weight: 600; }
+dialog.rf-dlg .rf-row-actions { display: flex; gap: 8px; }
+dialog.rf-dlg .rf-row-actions > .rf-btn { flex: 1; }
+@media (max-width: 520px) {
+  dialog.rf-dlg .pf-dialog-heading { padding-left: calc(34px + var(--mark)); }
+  dialog.rf-dlg .rf-body { padding: 4px 18px 20px; }
+  dialog.rf-dlg .rf-foot { padding: 12px 18px; }
+  dialog.rf-dlg .rf-sub { margin-left: calc(34px + var(--mark)); margin-right: 18px; }
+  dialog.rf-dlg .rf-mark { left: 18px; }
+  dialog.rf-dlg .rf-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  dialog.rf-dlg .rf-pick-grid, dialog.rf-dlg .rf-icon-grid { grid-template-columns: minmax(0, 1fr); }
+  dialog.rf-dlg .rf-strip { flex-wrap: wrap; }
+  dialog.rf-dlg .rf-digit { width: 34px; height: 44px; font-size: 22px; }
+}
+
+/* ================= device actions menu (portalled to body) ================= */
+.rf-menu-layer.rf { color: var(--ink); position: fixed; inset: 0; z-index: 150; pointer-events: none; font-family: var(--font); font-size: 13px; line-height: 1.5; }
+.rf-menu-layer .rf-menu { position: fixed; width: 230px; max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); overflow-y: auto; padding: 6px; border: 1px solid var(--hair); border-radius: 14px; background: var(--surface); box-shadow: 0 18px 44px -12px rgba(8, 12, 28, 0.35), 0 2px 6px rgba(8, 12, 28, 0.1); pointer-events: auto; }
+.rf-menu-layer .rf-menu-title { padding: 6px 10px 6px; color: var(--ink3); font-size: 11.5px; font-weight: 700; letter-spacing: 0.04em; overflow-wrap: anywhere; }
+.rf-menu-layer .rf-menu button[role="menuitem"] { display: flex; align-items: center; gap: 10px; width: 100%; height: 36px; padding: 0 10px; border: 0; border-radius: 9px; background: none; color: var(--ink); font: inherit; font-size: 13px; font-weight: 600; text-align: left; cursor: pointer; }
+.rf-menu-layer .rf-menu button[role="menuitem"] > svg { color: var(--ink3); }
+.rf-menu-layer .rf-menu button[role="menuitem"]:hover:not(:disabled), .rf-menu-layer .rf-menu button[role="menuitem"]:focus-visible { background: var(--surface2); outline: 0; box-shadow: inset 0 0 0 1px var(--hair); }
+.rf-menu-layer .rf-menu button[role="menuitem"]:disabled { opacity: 0.4; cursor: not-allowed; }
+.rf-menu-layer .rf-menu hr { height: 1px; margin: 5px 6px; border: 0; background: var(--hair); }
+.rf-menu-layer .rf-menu-backdrop { position: fixed; inset: 0; border: 0; background: rgba(20, 26, 51, 0.4); pointer-events: auto; }
+.rf-menu-layer .rf-menu.sheet { left: 8px; right: 8px; bottom: max(8px, env(safe-area-inset-bottom)); width: auto; max-width: none; padding: 10px; border-radius: 18px; }
+.rf-menu-layer .rf-menu.sheet button[role="menuitem"] { height: 46px; }
+[data-theme="dark"] .rf-menu-layer .rf-menu-backdrop { background: rgba(2, 4, 10, 0.62); }
+
+/* ================= shell sub-nav on the device pages =================
+   Shell.tsx renders `<nav class="pf-subnav">` as the first child of `.pf-main`. While a device-family page is mounted
+   (`:has()` on the main element), that nav becomes the segmented control. Services and settings keep their own sub-nav.
+   Kept apart from the token rule above so a browser without :has() only loses this restyle. */
+.pf-main:has(.rd-sync, .rd-peers) {
+  --bg: #f4f5f9; --surface: #ffffff; --surface2: #f9fafd; --hair: #e8eaf2; --hair2: #d9dde9;
+  --ink: #141a33; --ink2: #4d5670; --ink3: #687189; --brand: #3b57e0; --brand-deep: #2b43c2;
+  --wash1: #5568f0; --wash2: #10a58f; --shadow-c: rgba(20, 26, 51, 0.1);
+  background: radial-gradient(720px 280px at 14% 0, color-mix(in srgb, var(--wash1) 11%, transparent), transparent 72%), radial-gradient(640px 260px at 92% 10px, color-mix(in srgb, var(--wash2) 9%, transparent), transparent 72%);
+}
+[data-theme="dark"] .pf-main:has(.rd-sync, .rd-peers) {
+  --bg: #0c1120; --surface: #141a2c; --surface2: #10162a; --hair: #212a42; --hair2: #2e3856;
+  --ink: #eaeef8; --ink2: #aab3c9; --ink3: #8892aa; --brand: #8aa2ff; --brand-deep: #b8c6ff;
+  --wash1: #7d8dff; --wash2: #3fd0b4; --shadow-c: rgba(0, 0, 0, 0.5);
+}
+.pf-main:has(.rd-sync, .rd-peers) > .pf-subnav { display: flex; width: fit-content; max-width: 100%; flex-wrap: nowrap; gap: 2px; margin: 0 0 22px; padding: 3px; border: 0; border-radius: 11px; overflow-x: auto; background: color-mix(in srgb, var(--hair) 75%, var(--bg)); }
+.pf-main:has(.rd-sync, .rd-peers) > .pf-subnav a { display: inline-flex; align-items: center; justify-content: center; height: 30px; padding: 0 14px; border: 0; border-radius: 8px; background: transparent; color: var(--ink2); font-size: 13px; font-weight: 600; white-space: nowrap; }
+.pf-main:has(.rd-sync, .rd-peers) > .pf-subnav a:hover { color: var(--ink); }
+.pf-main:has(.rd-sync, .rd-peers) > .pf-subnav a.active { background: var(--surface); color: var(--ink); font-weight: 700; box-shadow: 0 1px 2px var(--shadow-c), 0 0 0 1px var(--hair); }
+.pf-main:has(.rd-sync, .rd-peers) > .pf-subnav a:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+/* ================= dialog pieces ================= */
+dialog.rf-dlg.rf-dlg-conn, dialog.rf-dlg.rf-dlg-incoming { --mark: 46px; }
+dialog.rf-dlg.rf-dlg-edit { --mark: 52px; }
+dialog.rf-dlg.rf-dlg-hue { --hv: var(--h); }
+dialog.rf-dlg .rf-sub-row b { color: var(--ink); font-size: 13px; font-weight: 650; }
+dialog.rf-dlg .rf-label { display: block; color: var(--ink2); font-size: 12.5px; font-weight: 650; }
+dialog.rf-dlg .rf-lead { color: var(--ink2); font-size: 13px; }
+dialog.rf-dlg .rf-stack { display: flex; flex-direction: column; border: 1px solid var(--hair); border-radius: 14px; overflow: hidden; }
+dialog.rf-dlg .rf-stack > .rf-callout { border: 0; border-radius: 0; }
+dialog.rf-dlg .rf-stack > .rf-callout + .rf-callout { border-top: 1px solid var(--hair); }
+dialog.rf-dlg .rf-inp-s, dialog.rf-dlg input.rf-inp-s:not([type="checkbox"]):not([type="radio"]) { height: 36px; padding: 0 11px; font-size: 13px; }
+dialog.rf-dlg textarea.rf-inp-s { height: auto; padding: 8px 11px; font-size: 12.5px; resize: none; }
+dialog.rf-dlg .rf-inp-m, dialog.rf-dlg input.rf-inp-m:not([type="checkbox"]):not([type="radio"]) { height: 40px; padding: 0 12px; font-size: 13.5px; }
+dialog.rf-dlg textarea.rf-inp-m { height: auto; padding: 10px 12px; resize: vertical; }
+dialog.rf-dlg .rf-inp-l, dialog.rf-dlg input.rf-inp-l:not([type="checkbox"]):not([type="radio"]) { height: 42px; padding: 0 12px; font-size: 14px; font-weight: 600; }
+dialog.rf-dlg .rf-invite-text { padding: 10px 12px; resize: none; color: var(--ink2); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+dialog.rf-dlg .rf-field > span { margin: 0; }
+dialog.rf-dlg .rf-hint { color: var(--ink3); font-size: 12px; }
+dialog.rf-dlg .rf-check { display: flex; align-items: center; gap: 10px; font-size: 13px; cursor: pointer; }
+dialog.rf-dlg .rf-check-top { align-items: flex-start; }
+dialog.rf-dlg .rf-check-top input { margin-top: 2px; }
+dialog.rf-dlg .rf-check-card { padding: 10px 12px; border: 1px solid var(--hair); border-radius: 10px; background: var(--surface); font-weight: 650; }
+dialog.rf-dlg .rf-opt-stack b { font-size: 13px; font-weight: 650; color: var(--ink); }
+dialog.rf-dlg .rf-opt-stack small { color: var(--ink3); font-size: 12px; font-weight: 500; }
+dialog.rf-dlg .rf-note > span, dialog.rf-dlg .rf-callout > span { flex: 1; min-width: 0; }
+dialog.rf-dlg .rf-callout small { display: block; color: var(--ink2); }
+dialog.rf-dlg .rf-callout b { color: var(--ink); font-weight: 650; }
+dialog.rf-dlg .rf-callout-err { color: var(--ink); align-items: center; }
+dialog.rf-dlg .rf-callout-err small { color: var(--ink2); font-size: 12px; font-weight: 500; }
+dialog.rf-dlg .rf-dot { display: inline-block; flex-shrink: 0; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: var(--off); }
+dialog.rf-dlg .rf-dot.on { background: var(--ok); }
+dialog.rf-dlg .rf-dot.off { background: var(--warn); }
+dialog.rf-dlg .rf-route { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 13px; background: color-mix(in srgb, var(--p) var(--tint), var(--surface)); color: var(--pi); font-size: 12px; font-weight: 700; white-space: nowrap; }
+dialog.rf-dlg .rf-code-plain { padding: 8px 12px; border: 1px solid var(--hair2); border-radius: 10px; background: var(--surface); font-size: 18px; letter-spacing: 0.1em; text-align: center; overflow-wrap: anywhere; }
+
+/* send sheet */
+dialog.rf-dlg .rf-recip { display: flex; align-items: center; gap: 14px; padding: 14px; border: 1px solid var(--hair); border-radius: 14px; background: linear-gradient(160deg, color-mix(in srgb, var(--h) 9%, var(--surface)), var(--surface2) 80%); }
+dialog.rf-dlg .rf-recip-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+dialog.rf-dlg .rf-recip-text strong { font-size: 15px; font-weight: 750; letter-spacing: -0.01em; }
+dialog.rf-dlg .rf-recip-cap { color: var(--ink3); font-size: 11.5px; font-weight: 650; }
+dialog.rf-dlg .rf-files > li { border-bottom: 1px solid var(--hair); }
+dialog.rf-dlg .rf-file { display: flex; align-items: center; gap: 12px; padding: 11px 10px 11px 14px; }
+dialog.rf-dlg .rf-file-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+dialog.rf-dlg .rf-file-text b { font-size: 13.5px; font-weight: 700; }
+dialog.rf-dlg .rf-file-text small { color: var(--ink3); font-size: 12px; }
+dialog.rf-dlg .rf-ib-sm { width: 30px; height: 30px; border-radius: 8px; }
+dialog.rf-dlg .rf-subfiles { margin: 0 14px 10px 62px; padding: 4px 0; border-left: 2px solid var(--hair); }
+dialog.rf-dlg .rf-subfiles > li { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0 4px 12px; border: 0; color: var(--ink2); font-size: 12.5px; }
+dialog.rf-dlg .rf-subfiles small { white-space: nowrap; }
+dialog.rf-dlg .rf-drop { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px 18px; padding: 14px; border: 1.5px dashed var(--hair2); border-radius: 14px; background: var(--surface2); color: var(--ink3); font-size: 13px; }
+dialog.rf-dlg .rf-drop.dragging { border-color: var(--brand); background: color-mix(in srgb, var(--brand) 7%, var(--surface)); }
+dialog.rf-dlg .rf-stack-box { display: flex; flex-direction: column; border: 1px solid var(--hair); border-radius: 14px; overflow: hidden; }
+dialog.rf-dlg .rf-notice { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--hair); background: color-mix(in srgb, var(--p) 6%, var(--surface)); }
+dialog.rf-dlg .rf-notice-ico { display: grid; place-items: center; flex-shrink: 0; width: 30px; height: 30px; border-radius: 9px; background: color-mix(in srgb, var(--p) 15%, var(--surface)); color: var(--pi); }
+dialog.rf-dlg .rf-notice b { display: block; font-size: 13px; font-weight: 700; }
+dialog.rf-dlg .rf-notice small { display: block; color: var(--ink2); font-size: 12px; }
+dialog.rf-dlg .rf-capacity { display: flex; align-items: center; gap: 12px; padding: 12px 14px; color: var(--ink2); font-size: 13px; }
+dialog.rf-dlg .rf-capacity > span:first-child { flex: 1; }
+dialog.rf-dlg .rf-capacity .rf-prog { flex: 0 0 120px; height: 6px; }
+dialog.rf-dlg .rf-verify { display: flex; flex-direction: column; align-items: stretch; gap: 10px; padding: 14px 16px; border: 1px solid color-mix(in srgb, var(--p) 32%, var(--hair)); border-radius: 14px; background: color-mix(in srgb, var(--p) 9%, var(--surface)); }
+dialog.rf-dlg .rf-verify-cap { color: var(--pi); font-size: 12px; font-weight: 700; text-align: center; }
+dialog.rf-dlg .rf-verify > small { color: var(--ink2); text-align: center; }
+dialog.rf-dlg .rf-verify-lead { display: flex; align-items: flex-start; gap: 10px; color: var(--ink2); font-size: 13px; }
+dialog.rf-dlg .rf-verify-lead > svg { margin-top: 2px; flex-shrink: 0; color: var(--pi); }
+
+/* incoming */
+dialog.rf-dlg .rf-fileblock { display: flex; flex-direction: column; }
+dialog.rf-dlg .rf-fileblock .rf-file { padding: 13px 14px; }
+dialog.rf-dlg .rf-quote { display: flex; gap: 10px; padding: 11px 14px; border-top: 1px solid var(--hair); background: var(--surface2); color: var(--ink2); font-size: 13px; }
+dialog.rf-dlg .rf-quote > svg { margin-top: 2px; flex-shrink: 0; color: var(--ink3); }
+dialog.rf-dlg .rf-quote b { color: var(--ink); font-weight: 650; }
+dialog.rf-dlg .rf-savedir { display: flex; gap: 8px; }
+dialog.rf-dlg .rf-pathbox { flex: 1; min-width: 0; display: flex; align-items: center; gap: 9px; height: 40px; padding: 0 12px; background: var(--surface2); color: var(--ink3); }
+dialog.rf-dlg .rf-pathbox input:not([type="checkbox"]):not([type="radio"]) { flex: 1; min-width: 0; padding: 0; border: 0; outline: 0; background: none; color: var(--ink); font-size: 13.5px; }
+dialog.rf-dlg .rf-savedir > .rf-btn { height: 40px; }
+
+/* connection details */
+dialog.rf-dlg .rf-strip { display: flex; align-items: center; gap: 10px; padding: 14px; border: 1px solid var(--hair); border-radius: 14px; background: var(--surface2); }
+dialog.rf-dlg .rf-strip-end { display: flex; align-items: center; gap: 9px; min-width: 0; }
+dialog.rf-dlg .rf-strip-end .rf-chipicon { width: 32px; height: 32px; border-radius: 9px; }
+dialog.rf-dlg .rf-strip-end b { display: block; font-size: 12.5px; font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
+dialog.rf-dlg .rf-strip-end small { display: block; color: var(--ink3); font-size: 11px; line-height: 1.2; }
+dialog.rf-dlg .rf-strip-line { position: relative; flex: 1; min-width: 48px; height: 26px; display: grid; place-items: center; }
+dialog.rf-dlg .rf-strip-rule { position: absolute; left: 0; right: 0; top: 12px; height: 2px; border-radius: 2px; background: var(--p); }
+dialog.rf-dlg .rf-strip-line .rf-route { position: relative; height: 22px; padding: 0 8px; font-size: 11px; background: var(--surface2); box-shadow: 0 0 0 3px var(--surface2); color: var(--pi); }
+dialog.rf-dlg .rf-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--hair); border-radius: 14px; overflow: hidden; }
+dialog.rf-dlg .rf-grid > div { min-width: 0; padding: 11px 14px; border-right: 1px solid var(--hair); border-bottom: 1px solid var(--hair); }
+dialog.rf-dlg .rf-grid > div:nth-child(3n) { border-right: 0; }
+dialog.rf-dlg .rf-grid > div:nth-last-child(-n + 3) { border-bottom: 0; }
+dialog.rf-dlg .rf-grid dt { color: var(--ink3); font-size: 11.5px; }
+dialog.rf-dlg .rf-grid dd { display: flex; align-items: center; font-size: 13.5px; font-weight: 700; }
+dialog.rf-dlg .rf-grid dd.rf-wrap { font-size: 12.5px; font-weight: 650; overflow-wrap: anywhere; }
+dialog.rf-dlg .rf-rows { display: flex; flex-direction: column; padding: 0 14px; }
+dialog.rf-dlg .rf-rows .rf-dl-row { padding: 9px 0; }
+dialog.rf-dlg .rf-idline { display: flex; align-items: center; gap: 6px; }
+dialog.rf-dlg .rf-copied { color: color-mix(in srgb, var(--ok) 64%, var(--ink)); font-size: 12px; font-weight: 650; }
+dialog.rf-dlg .rf-switch-row { display: flex; align-items: center; gap: 14px; padding: 13px 14px; border: 1px solid var(--hair); border-radius: 14px; background: color-mix(in srgb, var(--brand) 4%, var(--surface)); cursor: pointer; }
+dialog.rf-dlg .rf-switch-row > .rf-opt-stack { flex: 1; }
+dialog.rf-dlg .rf-switch-row b { font-size: 13.5px; font-weight: 700; }
+dialog.rf-dlg .rf-foot-links { gap: 8px; }
+dialog.rf-dlg .rf-foot-links .rf-btn { height: 36px; padding: 0 14px; font-size: 13px; }
+dialog.rf-dlg .rf-lnk-end { margin-left: auto; }
+
+/* edit device */
+dialog.rf-dlg .rf-icon-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+dialog.rf-dlg .rf-opt-icon { gap: 12px; padding: 12px 14px; border-radius: 13px; }
+dialog.rf-dlg .rf-opt-icon b { font-size: 13.5px; font-weight: 650; }
+dialog.rf-dlg .rf-opt:has(input:checked) { box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand) 40%, transparent); }
+
+/* share services */
+dialog.rf-dlg .rf-step { display: flex; align-items: center; gap: 10px; width: 100%; padding: 0; margin-bottom: 10px; }
+dialog.rf-dlg .rf-step > b { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: color-mix(in srgb, var(--brand) 12%, var(--surface)); color: var(--brand-deep); font-size: 11.5px; font-weight: 800; }
+dialog.rf-dlg .rf-pick-list { display: flex; flex-direction: column; gap: 8px; }
+dialog.rf-dlg .rf-pick-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+dialog.rf-dlg .rf-opt-row { gap: 11px; padding: 11px 14px; border-radius: 13px; }
+dialog.rf-dlg .rf-opt-row .rf-opt-stack { flex: 1; }
+dialog.rf-dlg .rf-pick-grid .rf-opt-row { padding: 11px 12px; }
+
+/* add device */
+dialog.rf-dlg .rf-add { gap: 20px; }
+dialog.rf-dlg .rf-member { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--hair); border-radius: 14px; background: var(--surface2); }
+dialog.rf-dlg .rf-member .rf-chipicon { width: 36px; height: 36px; border-radius: 11px; }
+dialog.rf-dlg .rf-member-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+dialog.rf-dlg .rf-member-text b { font-size: 13.5px; font-weight: 700; }
+dialog.rf-dlg .rf-member-text small { color: var(--ink3); font-size: 12px; }
+dialog.rf-dlg .rf-expiry { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+dialog.rf-dlg .rf-add .rf-sec { gap: 14px; }
+dialog.rf-dlg .rf-add form.rf-box { gap: 10px; }
+dialog.rf-dlg .rf-add-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; }
+dialog.rf-dlg .rf-box .rf-h3 { font-size: 13.5px; font-weight: 750; }
+dialog.rf-dlg .rf-box .rf-h3 > svg { vertical-align: -2px; color: var(--brand-deep); }

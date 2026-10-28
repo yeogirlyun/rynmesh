@@ -1,0 +1,2 @@
+Error: Task exceeded 300-second observation window
+    at D:\code\rynmesh\.codex-tmp\glm-lan-svg-proof.cjs:55:18

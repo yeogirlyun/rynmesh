@@ -1,0 +1,37 @@
+{
+  "http_readbacks": [
+    {
+      "body_sha256": "552fa556e7caf36e128dc4930ba1b974e7fcef4fca05c0f21b6ecc63031e93a0",
+      "bytes": 1419,
+      "connection": "docs-alpha",
+      "id": "38258f8d70ec494aad100cad8aff8530",
+      "method": "GET",
+      "mutation": false,
+      "path": "reports/acceptance/week-41.md",
+      "response_dropped": false,
+      "status": 200
+    },
+    {
+      "body_sha256": "552fa556e7caf36e128dc4930ba1b974e7fcef4fca05c0f21b6ecc63031e93a0",
+      "bytes": 1419,
+      "connection": "docs-alpha",
+      "id": "ff09d15166b742a5bb8f551a7c2dd6b9",
+      "method": "GET",
+      "mutation": false,
+      "path": "reports/acceptance/week-41.md",
+      "response_dropped": false,
+      "status": 200
+    },
+    {
+      "body_sha256": "552fa556e7caf36e128dc4930ba1b974e7fcef4fca05c0f21b6ecc63031e93a0",
+      "bytes": 1419,
+      "connection": "docs-alpha",
+      "id": "2acd2adb50614367bfb31d09e70ecdab",
+      "method": "GET",
+      "mutation": false,
+      "path": "reports/acceptance/week-41.md",
+      "response_dropped": false,
+      "status": 200
+    }
+  ]
+}

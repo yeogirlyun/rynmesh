@@ -1,0 +1,42 @@
+{
+  "registered_at": "2026-10-15T02:34:56.839106+00:00",
+  "registration_kind": "draft_development_collection_only",
+  "sampling_kind": "new_v2_draft_sampling",
+  "first_dispatch_not_started": true,
+  "formal_trial_registered": false,
+  "collector_profile": "owner-admin-query-v2-draft.1",
+  "run_id": "5c985639034a4d3e81c813b28c5bab18",
+  "run_nonce": "3ce52cf11edc48f5a4e0b202f4cc62c5",
+  "dataset_version": "ryn-agent-acceptance-2026-10-10.v2-draft.1",
+  "case_id": "Q06",
+  "cohort": "ryn",
+  "trial": 1,
+  "effective_case_sha256": "66acd085e14f3d8d7a338b7c3fa97e75bde762680243d69ffe502cb29869016e",
+  "overlay_sha256": "a90280553577ec075e6fe7e131a07c4ca830d4e60ea2600a2ae2c28b93e407e5",
+  "effective_input_sha256": "7f47f9b1bfb7e94f5cf8d50572105e55ca9daf1ca2c76dd502f479bcc60736c3",
+  "base_cases_sha256": "27a50f909a09a6972fc7b11df55f7798412ec415b8ef87ccadef8ddc85bd06b5",
+  "base_world_sha256": "fbeb1e3466870df1d65685ed11835a4cdf078817a3b922e912a83453be09ba82",
+  "collector_contract_hashes": {
+    "tests/fixtures/agent_acceptance/role_grade_v2.py": "0cc73ead5da23bd57d3d2cc3137039d1ab350db6a7f306b0014502aefde5733c",
+    "docs/acceptance/ryn-agent-delivery/role-run-v2.schema.json": "e091bac1b261de155c5834c9d51c5f0312aa57adabf16df33bb631f92404b48a",
+    "docs/acceptance/ryn-agent-delivery/role-contract-v2-decision.json": "d80ba913f728ff6404f556c1211cf25de3ab764aab438cf999c4e74181c87273"
+  },
+  "role_proof": {
+    "kind": "registration",
+    "binding": {
+      "run_id": "5c985639034a4d3e81c813b28c5bab18",
+      "run_nonce": "3ce52cf11edc48f5a4e0b202f4cc62c5",
+      "dataset_version": "ryn-agent-acceptance-2026-10-10.v2-draft.1",
+      "case_id": "Q06",
+      "cohort": "ryn",
+      "trial": 1,
+      "effective_case_sha256": "66acd085e14f3d8d7a338b7c3fa97e75bde762680243d69ffe502cb29869016e",
+      "overlay_sha256": "a90280553577ec075e6fe7e131a07c4ca830d4e60ea2600a2ae2c28b93e407e5"
+    },
+    "observations": {
+      "registered_at": "2026-10-15T02:34:56.839106+00:00",
+      "sampling_kind": "new_v2_draft_sampling",
+      "first_dispatch_not_started": true
+    }
+  }
+}

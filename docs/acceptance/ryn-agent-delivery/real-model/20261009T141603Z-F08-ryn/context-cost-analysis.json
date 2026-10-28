@@ -1,0 +1,220 @@
+{
+  "source_run": "run.json",
+  "max_context_utf8_bytes": 12000,
+  "method": "Canonical UTF-8 JSON sizes from retained public requests and actual tool schemas; private provider continuation is redacted, so message sizes are a lower bound, not an exact total upstream request size.",
+  "formal_score": false,
+  "measurements": [
+    {
+      "call": 1,
+      "public_messages_utf8_bytes": 2181,
+      "tools_utf8_bytes": 3484,
+      "tool_schemas": [
+        {
+          "name": "ryn_update_plan",
+          "bytes": 1119
+        },
+        {
+          "name": "ryn_request_input",
+          "bytes": 1214
+        },
+        {
+          "name": "ryn_read_result",
+          "bytes": 393
+        },
+        {
+          "name": "ryn_discover_tools",
+          "bytes": 753
+        }
+      ]
+    },
+    {
+      "call": 2,
+      "public_messages_utf8_bytes": 5097,
+      "tools_utf8_bytes": 3484,
+      "tool_schemas": [
+        {
+          "name": "ryn_update_plan",
+          "bytes": 1119
+        },
+        {
+          "name": "ryn_request_input",
+          "bytes": 1214
+        },
+        {
+          "name": "ryn_read_result",
+          "bytes": 393
+        },
+        {
+          "name": "ryn_discover_tools",
+          "bytes": 753
+        }
+      ]
+    },
+    {
+      "call": 4,
+      "public_messages_utf8_bytes": 3894,
+      "tools_utf8_bytes": 6516,
+      "tool_schemas": [
+        {
+          "name": "ryn_update_plan",
+          "bytes": 1119
+        },
+        {
+          "name": "ryn_request_input",
+          "bytes": 1214
+        },
+        {
+          "name": "ryn_read_result",
+          "bytes": 393
+        },
+        {
+          "name": "ryn_discover_tools",
+          "bytes": 753
+        },
+        {
+          "name": "ryn_list_resource_roots",
+          "bytes": 282
+        },
+        {
+          "name": "ryn_list_resources",
+          "bytes": 433
+        },
+        {
+          "name": "ryn_read_resource",
+          "bytes": 533
+        },
+        {
+          "name": "ryn_search_resource",
+          "bytes": 789
+        },
+        {
+          "name": "ryn_create_directory",
+          "bytes": 437
+        },
+        {
+          "name": "ryn_create_text_file",
+          "bytes": 552
+        }
+      ]
+    },
+    {
+      "call": 6,
+      "public_messages_utf8_bytes": 4636,
+      "tools_utf8_bytes": 6516,
+      "tool_schemas": [
+        {
+          "name": "ryn_update_plan",
+          "bytes": 1119
+        },
+        {
+          "name": "ryn_request_input",
+          "bytes": 1214
+        },
+        {
+          "name": "ryn_read_result",
+          "bytes": 393
+        },
+        {
+          "name": "ryn_discover_tools",
+          "bytes": 753
+        },
+        {
+          "name": "ryn_list_resource_roots",
+          "bytes": 282
+        },
+        {
+          "name": "ryn_list_resources",
+          "bytes": 433
+        },
+        {
+          "name": "ryn_read_resource",
+          "bytes": 533
+        },
+        {
+          "name": "ryn_search_resource",
+          "bytes": 789
+        },
+        {
+          "name": "ryn_create_directory",
+          "bytes": 437
+        },
+        {
+          "name": "ryn_create_text_file",
+          "bytes": 552
+        }
+      ]
+    },
+    {
+      "call": 8,
+      "public_messages_utf8_bytes": 4532,
+      "tools_utf8_bytes": 6516,
+      "tool_schemas": [
+        {
+          "name": "ryn_update_plan",
+          "bytes": 1119
+        },
+        {
+          "name": "ryn_request_input",
+          "bytes": 1214
+        },
+        {
+          "name": "ryn_read_result",
+          "bytes": 393
+        },
+        {
+          "name": "ryn_discover_tools",
+          "bytes": 753
+        },
+        {
+          "name": "ryn_list_resource_roots",
+          "bytes": 282
+        },
+        {
+          "name": "ryn_list_resources",
+          "bytes": 433
+        },
+        {
+          "name": "ryn_read_resource",
+          "bytes": 533
+        },
+        {
+          "name": "ryn_search_resource",
+          "bytes": 789
+        },
+        {
+          "name": "ryn_create_directory",
+          "bytes": 437
+        },
+        {
+          "name": "ryn_create_text_file",
+          "bytes": 552
+        }
+      ]
+    },
+    {
+      "call": 10,
+      "public_messages_utf8_bytes": 6439,
+      "tools_utf8_bytes": 3484,
+      "tool_schemas": [
+        {
+          "name": "ryn_update_plan",
+          "bytes": 1119
+        },
+        {
+          "name": "ryn_request_input",
+          "bytes": 1214
+        },
+        {
+          "name": "ryn_read_result",
+          "bytes": 393
+        },
+        {
+          "name": "ryn_discover_tools",
+          "bytes": 753
+        }
+      ]
+    }
+  ],
+  "finding": "Loaded schemas used 6516 bytes; base internal+discovery used 3484. The schema contribution alone is material. Exact reference retention does not remove repeated discovery/compaction cost.",
+  "required_follow_up": "Design and independently review a generic bounded tool exposure/history policy with all capabilities reachable and unchanged permission checks; same presentation must apply to reference. Do not tune frozen tasks or widen their context budgets."
+}

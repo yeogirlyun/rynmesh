@@ -1,0 +1,1 @@
+{"ok": true, "mode": "installed-source-and-imports", "hostname": "DESKTOP-SQ6VA8I", "package_root": "C:\\Users\\ziling\\rynmesh-desktop-acceptance-20261011\\final-candidate\\test-venv\\Lib\\site-packages\\rynmesh", "expected_python_files": 237, "actual_python_files": 237, "missing": [], "extra": [], "changed": []}

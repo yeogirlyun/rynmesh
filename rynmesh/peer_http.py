@@ -6,6 +6,7 @@ manifests and content hashes locally before storing content bytes.
 """
 
 from __future__ import annotations
+from .transport import stamp_network_key
 
 import codecs
 import hashlib
@@ -285,21 +286,32 @@ class HttpPeerClient:
                 body,
                 timeout_s=self.timeout_s,
                 max_bytes=max_bytes,
-                headers={**(headers or {}), "Content-Type": "application/json"},
+                # Stamped here as well as in the transport, so a third-party
+                # transport that forgets the credential still authenticates.
+                headers=stamp_network_key({**(headers or {}), "Content-Type": "application/json"}),
             )
         except TransportError as exc:
             if exc.reason == "too_large":
-                raise PeerTransportError("peer_response_too_large") from exc
+                raise PeerTransportError("peer_response_too_large") from None
             # Keep plugin exception text out of the public error surface: a
             # third-party transport may include request/response bytes there.
-            raise PeerTransportError(f"peer_http_error:{exc.reason}") from exc
+            # The HTTP status is metadata, not body — carry it so a keyed
+            # peer's 404 (key mismatch) is distinguishable from network loss.
+            detail = f"http_{exc.status}" if exc.status else exc.reason
+            raise PeerTransportError(f"peer_http_error:{detail}") from None
+        if not raw.strip():
+            # A 2xx with no body is a middlebox or a broken peer, never a
+            # valid answer: treating it as {} once recorded settlements as
+            # delivered and suppressed the relay fallback for tasks.
+            raise PeerTransportError("peer_empty_response")
         try:
-            value = json.loads(raw.decode("utf-8") or "{}")
+            value = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise PeerTransportError("peer_invalid_json") from exc
+            raise PeerTransportError("peer_invalid_json") from None
         if not isinstance(value, dict):
             raise PeerTransportError("peer_response_not_object")
         return value
+
 
     def iter_post_ndjson(
         self,
@@ -388,6 +400,7 @@ def create_app(store: RynmeshStore | None = None):
     except ImportError as exc:  # pragma: no cover
         raise ImportError("Rynmesh peer HTTP server requires `fastapi`") from exc
     globals()["FastAPIRequest"] = FastAPIRequest
+    globals()["Response"] = Response
 
     active_store = store or RynmeshStore()
     from .personal_space import PersonalSpace
@@ -648,6 +661,10 @@ def create_app(store: RynmeshStore | None = None):
             policy=BackoffPolicy.fixed(2.0),
         ), replace=True)
         await registry.start()
+        drop_engine = getattr(lifespan_app.state, "drop_engine", None)
+        if drop_engine is not None:
+            drop_engine.attach_loop(_asyncio.get_running_loop())
+            await _asyncio.to_thread(drop_engine.start)
         tasks = (
             _asyncio.create_task(_confirm_after_grace()),
             _asyncio.create_task(_discover()),
@@ -655,6 +672,8 @@ def create_app(store: RynmeshStore | None = None):
         try:
             yield
         finally:
+            if drop_engine is not None:
+                await _asyncio.to_thread(drop_engine.stop)
             await registry.stop()
             for task in tasks:
                 task.cancel()
@@ -882,16 +901,44 @@ def create_app(store: RynmeshStore | None = None):
             "isSelf": is_self,
         }
 
+    from .peer_directory import FreshnessPolicy, add_advertised_providers, build_snapshot
+
+    # One freshness policy for devices and for the services they advertise.
+    freshness = FreshnessPolicy.from_environment()
+    advertised_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+
+    def advertised_capacities(network_id: str, *, cache_only: bool) -> list[dict[str, Any]]:
+        """Providers that published capacity. They are devices even without a peer record."""
+        hit = advertised_cache.get(network_id)
+        if hit and (cache_only or time.monotonic() - hit[0] < 10):
+            return hit[1]
+        if cache_only:
+            return []
+        try:
+            rows = active_store.list_job_capacities(
+                network_id=network_id,
+                max_age_hours=freshness.advertisement_max_age_hours,
+            ).get("capacities", [])
+        except Exception:
+            return hit[1] if hit else []
+        advertised_cache[network_id] = (time.monotonic(), rows)
+        return rows
+
     def discover_peer_items(network_id: str, *, include_self: bool = True,
                             cache_only: bool = False) -> list[dict[str, Any]]:
         discovered = active_store.discover_peers(
             network_id=network_id,
             include_self=include_self,
-            max_age_hours=float(os.environ.get("RYNMESH_DISCOVERY_MAX_AGE_HOURS", "24") or 24),
+            max_age_hours=freshness.peer_record_max_age_hours,
             use_cache_on_error=True,
             cache_only=cache_only,
         )
-        records = list(discovered.get("peers", []))
+        records = add_advertised_providers(
+            list(discovered.get("peers", [])),
+            advertised_capacities(network_id, cache_only=cache_only),
+            self_id=active_store.peer_id,
+            network_id=network_id,
+        )
         if include_self and not any(
             item.get("peer_id") == active_store.peer_id for item in records
         ):
@@ -1414,16 +1461,15 @@ def create_app(store: RynmeshStore | None = None):
         body = await request.json()
         return egress_controller.disconnect(region=str(body.get("region") or "CN"))
 
-    from .services.peer_health import PeerHealthProbe
+    from .services.peer_health import PeerHealthProbe, PeerPresenceCache
 
     peer_health_probe = PeerHealthProbe()
+    # One observation of each device, read by both the device list and the AI services view.
+    peer_presence = PeerPresenceCache()
+    app.state.peer_presence = peer_presence
 
-    @app.post("/api/local/peers/health")
-    async def local_peers_health(request: FastAPIRequest) -> list[dict[str, Any]]:
-        local_control(request)
-        # Registry I/O and unreachable peers must not block the event loop that
-        # polls ICE signaling and serves the desktop's status requests.
-        items = await _asyncio.to_thread(discover_peer_items, control_network_id(), include_self=True)
+    def probe_peers(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """The one place a device is probed; the result is shared via ``peer_presence``."""
         peers = [
             {
                 "id": it["id"],
@@ -1435,7 +1481,17 @@ def create_app(store: RynmeshStore | None = None):
             }
             for it in items
         ]
-        return await _asyncio.to_thread(peer_health_probe.check, peers)
+        results = peer_health_probe.check(peers)
+        peer_presence.update(results)
+        return results
+
+    @app.post("/api/local/peers/health")
+    async def local_peers_health(request: FastAPIRequest) -> list[dict[str, Any]]:
+        local_control(request)
+        # Registry I/O and unreachable peers must not block the event loop that
+        # polls ICE signaling and serves the desktop's status requests.
+        items = await _asyncio.to_thread(discover_peer_items, control_network_id(), include_self=True)
+        return await _asyncio.to_thread(probe_peers, items)
 
     @app.post("/api/local/peers/discover")
     async def local_discover_peers(request: FastAPIRequest) -> list[dict[str, Any]]:
@@ -1454,6 +1510,51 @@ def create_app(store: RynmeshStore | None = None):
         quick = request.query_params.get("quick", "").lower() in {"1", "true"}
         return filtered_peers(discover_peer_items(control_network_id(), include_self=True,
                                                  cache_only=quick), request)
+
+    @app.get("/api/local/directory")
+    async def local_directory(request: FastAPIRequest) -> dict[str, Any]:
+        """Devices and their services as one snapshot (docs/PEER_DIRECTORY_REDESIGN.md, P2)."""
+        local_control(request)
+        from datetime import datetime, timezone
+
+        network_id = control_network_id()
+        quick = request.query_params.get("quick", "").lower() in {"1", "true"}
+        items = await _asyncio.to_thread(discover_peer_items, network_id, include_self=True, cache_only=quick)
+        if not quick:
+            # Probe before judging services, so a device and its services are decided
+            # against the same fresh observation (no separate /peers/health poll needed).
+            try:
+                await _asyncio.to_thread(probe_peers, items)
+            except Exception:
+                pass  # Presence stays "unconfirmed" rather than failing the whole directory.
+        services: list[dict[str, Any]] = []
+        discover_services = getattr(app.state, "llm_discover", None)
+        if discover_services is not None:
+            try:
+                services = await _asyncio.to_thread(
+                    lambda: discover_services(network_id, cache_registry=True))
+            except Exception:
+                services = []  # Devices stay listed when the service catalog is unavailable.
+        members: list[str] = []
+        try:
+            status = active_store.personal_space.status()
+            if status.get("membership") == "active":
+                members = [m["peer_id"] for m in status.get("members", []) if not m.get("removed")]
+        except Exception:
+            members = []
+        friend_ids: list[str] = []
+        try:
+            friends_state = getattr(app.state, "friends", None)
+            if friends_state is not None:
+                friend_ids = [str(row.get("peer_id")) for row in friends_state.service.store.list_relationships()
+                              if row.get("peer_id")]
+        except Exception:
+            friend_ids = []
+        return build_snapshot(
+            items, services, self_id=active_store.peer_id, network_id=network_id,
+            members=members, friend_ids=friend_ids, probe_for=peer_presence.get,
+            policy=freshness, now=datetime.now(timezone.utc),
+        )
 
     @app.get("/api/local/content")
     def local_content(request: FastAPIRequest) -> list[dict[str, Any]]:
@@ -2540,6 +2641,30 @@ def create_app(store: RynmeshStore | None = None):
         local_control=local_control, messaging_key=_msg_priv,
     )
 
+    from .drop.integration import install_device_drop
+    from .peer_providers import PeerProviderService, install_peer_provider_routes
+
+    def provider_endpoints():
+        from .peer_providers.validation import PeerProviderError, endpoints
+        value = str(active_store.node_info().get("peer_endpoint") or "")
+        try:
+            return endpoints([value]) if value else []
+        except PeerProviderError:
+            return []
+
+    async def open_provider_login(url):
+        import asyncio
+        import webbrowser
+        await asyncio.to_thread(webbrowser.open, url, new=2)
+
+    peer_providers = PeerProviderService(active_store.home, active_store, _msg_priv,
+                                        endpoints=provider_endpoints, browser_open=open_provider_login)
+    active_store.peer_providers = peer_providers
+    install_peer_provider_routes(app, peer_providers, local_control)
+
+    install_device_drop(app, store=active_store, messaging_key=_msg_priv, personal_space=personal_space,
+                        network_id=control_network_id, local_control=local_control, peer_providers=peer_providers)
+
     from .exchange.routes import install_exchange
 
     install_exchange(app, store=active_store, messaging_key=_msg_priv, local_control=local_control)
@@ -2694,10 +2819,59 @@ def create_app(store: RynmeshStore | None = None):
         resolve_pubkey=_resolve_pubkey,
     )
 
+    from .node_apps.routes import install_node_apps
+    install_node_apps(app, home=active_store.home, messaging_key=_msg_priv, peer_id=active_store.peer_id,
+                      friends=lambda: app.state.friends.service, local_control=local_control)
+
+    # Agent sessions belong to this consumer node; model sharing stays stateless.
+    from .agent_runtime.routes import install_agent
+    install_agent(
+        app, store=active_store, home=active_store.home,
+        workers=app.state.background_workers, local_control=local_control,
+        messaging_key=_msg_priv,
+    )
+    peer_providers.extension_source = lambda: app.state.agent_runtime.tools.extensions.store.list_peer_providers_internal()
+
+    def _mcp_token_for_plugin(plugin_id: str):
+        ext = app.state.agent_runtime.tools.extensions
+        for server in ext.store.list_mcp_servers_internal():
+            if server.get("plugin_id") == plugin_id and server.get("effective_enabled", False):
+                try:
+                    return ext.manager.oauth.access_token(server)
+                except Exception:
+                    continue
+        return None
+
+    peer_providers.mcp_token_source = _mcp_token_for_plugin
+
+    def refresh_peer_providers():
+        import asyncio
+        asyncio.run(peer_providers.refresh_directories())
+        return False
+
+    app.state.background_workers.register(BackgroundWorkerSpec(
+        name="peer-provider-directory", run_once=refresh_peer_providers,
+        initial_delay_s=1.0, policy=BackoffPolicy.fixed(30.0)), replace=True)
+    provider_lifespan = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def close_peer_providers(instance):
+        try:
+            async with provider_lifespan(instance) as state:
+                yield state
+        finally:
+            peer_providers.close()
+
+    app.router.lifespan_context = close_peer_providers
+
     # ---- bundled web UI -------------------------------------------------
     # A packaged install serves the built webapp from the node itself, so the
     # whole product is one process on one port — no dev server, no npm.
     # Mounted LAST so every /api route above wins.
+    from .services.library_routes import install_library
+    install_library(app, home=active_store.home, imports=app.state.friends.content.imports,
+        consumption=app.state.consumption_store, digest=_digest_service, local_control=local_control)
+
     _mount_webui(app)
 
     return app

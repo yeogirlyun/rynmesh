@@ -1,0 +1,18 @@
+{
+  "checked_at": "2026-10-09T14:19:11.633413+00:00",
+  "server": "existing Compshare Qwen test deployment",
+  "read_only": true,
+  "authenticated": false,
+  "configuration_changed": false,
+  "checks": [
+    {
+      "check": "unauthenticated_models",
+      "http_status": 404
+    },
+    {
+      "check": "ssh_tcp_connect",
+      "reachable": false,
+      "error_type": "ConnectionRefusedError"
+    }
+  ]
+}

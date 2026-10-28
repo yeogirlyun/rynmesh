@@ -58,6 +58,7 @@ def template_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for message in cleaned:
         # Qwen's conversation history uses final answers, without old reasoning.
         message.pop("reasoning_content", None)
+        message.pop("provider_state", None)
         # OpenAI uses null for tool-only assistant messages; Qwen's Jinja
         # template performs string membership checks and requires empty text.
         message["content"] = message.get("content") or ""

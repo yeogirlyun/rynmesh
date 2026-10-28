@@ -1,0 +1,17 @@
+.pdf-preview { min-width: 0; border: 1px solid var(--pf-line); border-radius: 10px; overflow: hidden; background: var(--pf-bg); }
+.pdf-preview-controls { display: flex; align-items: center; justify-content: center; gap: 5px; padding: 8px; border-bottom: 1px solid var(--pf-line); font-size: 12px; }
+.pdf-preview-controls button, .pdf-preview-error button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid var(--pf-line); border-radius: 6px; background: var(--pf-panel); color: var(--pf-text); padding: 6px; }
+.pdf-preview-controls button:disabled { opacity: .4; }
+.pdf-preview-controls span { min-width: 42px; text-align: center; font-variant-numeric: tabular-nums; }
+.pdf-preview-controls .pdf-fit { min-width: 72px; font-size: 11px; }
+.pdf-preview-scroll { overflow: auto; padding: 12px; max-height: calc(100vh - 240px); background: var(--pf-subtle); }
+.pdf-preview-page { position: relative; margin: 0 auto; background: white; box-shadow: 0 1px 5px #0002; }
+.pdf-preview-page canvas { display: block; }
+.pdf-preview-error { padding: 18px; font-size: 12px; line-height: 1.7; }
+/* TextLayer layout adapted from PDF.js, Copyright Mozilla Foundation, Apache-2.0.
+   Its licence is included with the bundled PDF assets. Scoped to this preview. */
+.pdf-text-layer { position: absolute; inset: 0; overflow: clip; line-height: 1; text-align: initial; letter-spacing: normal; word-spacing: normal; text-size-adjust: none; forced-color-adjust: none; transform-origin: 0 0; --min-font-size: 1; --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size)); --min-font-size-inv: calc(1 / var(--min-font-size)); }
+.pdf-text-layer :is(span, br) { color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0 0; user-select: text; }
+.pdf-text-layer > :not(.markedContent), .pdf-text-layer .markedContent span:not(.markedContent) { --font-height: 0; --scale-x: 1; --rotate: 0deg; font-size: calc(var(--text-scale-factor) * var(--font-height)); transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv)); }
+.pdf-text-layer .markedContent { display: contents; }
+.pdf-text-layer ::selection { background: #0060df55; color: transparent; }

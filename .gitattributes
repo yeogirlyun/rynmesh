@@ -7,3 +7,11 @@ scripts/setup_rynnode_mac.zsh export-ignore
 # macOS codesign rejects CRLF in entitlement XML; shell entry points also need LF.
 webapp/src-tauri/sidecar/*.plist text eol=lf
 webapp/src-tauri/scripts/*.sh text eol=lf
+
+# Frozen fixtures retain their original bytes, including intentional CRLF.
+tests/fixtures/agent_acceptance/** -text whitespace=cr-at-eol
+docs/acceptance/ryn-agent-delivery/** -text whitespace=cr-at-eol
+docs/acceptance/integrated-workspace-20261012/** text eol=lf
+# Reviewed patch blank context lines are a single space; retain the pinned bytes.
+docs/acceptance/gridcraft-cjk-20261018/gridcraft-v0.6.1-cjk.patch -text whitespace=-blank-at-eol
+*.pdf binary

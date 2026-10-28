@@ -1,0 +1,21 @@
+{
+  "scope": "Real identities, sealed requests and provider HTTP. No inference should run for these denials.",
+  "checks": [
+    {
+      "sender": "revoked_B",
+      "task_id": "task_745a60a5fc984d4ab88111b42f9671d3",
+      "state": "rejected",
+      "error_code": "ai_permission_denied"
+    },
+    {
+      "sender": "never_authorized_C",
+      "task_id": "task_4abb2e993f5647029b16afb0ef67d09e",
+      "state": "rejected",
+      "error_code": "ai_permission_denied"
+    }
+  ],
+  "resume_after_revocation": {
+    "stage": "discovering",
+    "error": "ai_invite_revoked"
+  }
+}

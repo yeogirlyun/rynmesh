@@ -1,0 +1,25 @@
+{
+  "author": "consumer_process_proof / gpt-6.1-sol high",
+  "reviewer": "sharing_review / gpt-6-astra high",
+  "status": "reviewed_no_material_findings",
+  "scope": "Model visibility metadata and tool descriptions, with existing admission unchanged.",
+  "changes": [
+    "Remote share_scope is unknown; authenticated receiver directory observations remain distinct from full provider configuration and current authorization.",
+    "current_access remains unknown and invocation_verified false; static recipient metadata survives bounded_result.",
+    "Local SourceStore rows expose known configuration; own discovered local services remain advertisements with configuration unknown.",
+    "friend_grants retains its data and gains local_outgoing scope; strict receipt comparison includes new fields."
+  ],
+  "tests": {
+    "author_passed": 17,
+    "author_seconds": 4.86,
+    "independent_passed": 53,
+    "independent_seconds": 14.03,
+    "independent_scope": "visibility, read_verification, observation_transitions, peer_binding"
+  },
+  "sha256": {
+    "rynmesh/agent_runtime/models.py": "4efd69901c1d162d73f0bc554e947d4a7b649b6bf6c0075d30001087ffb339b4",
+    "rynmesh/agent_runtime/tools.py": "505368f9c7a10d461942c4ce522c3176ce1d4074519717cf9993955c69803668",
+    "tests/test_agent_model_visibility.py": "284efc746e203c1ac312f6adfc5d2e2233816ba82d3fc090d661c753ff408249"
+  },
+  "formal_executed_trials": 0
+}

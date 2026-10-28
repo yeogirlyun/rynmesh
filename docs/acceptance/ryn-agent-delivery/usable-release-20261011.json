@@ -1,0 +1,609 @@
+{
+  "kind": "usable-release-delivery-checklist",
+  "date": "2026-10-11",
+  "scope": "用户优先交付可安装、可实际使用的版本；本文件记录已有证据和最小补验，不替代原功能清单或正式评分。",
+  "priority_change": {
+    "source": "用户在当前会话明确调整交付优先级，root 下达保存本清单的任务。",
+    "first": "可安装版本的实际资料生成、审批、保存、打开、重启恢复及必要隐私/跨机边界补验。",
+    "deferred": [
+      "12000 字节人为窗口压力场景",
+      "完整同快照评分及参考比较",
+      "原 private 6 题各 3 次、共 18 个候选槽位"
+    ],
+    "original_function_list_retained": true,
+    "original_cases_and_thresholds_changed": false,
+    "historical_failures_reclassified": false,
+    "deferred_items_passed": false,
+    "formal_trials_pass_claimed": false
+  },
+  "candidate": {
+    "build_evidence": "../../../.codex-tmp/usable-candidate-build-20261011T205125081/result.json",
+    "freeze_evidence": "native-followup-freeze-20261011.json",
+    "installer": {
+      "path": "D:/code/rynmesh/.codex-tmp/usable-candidate-build-20261011T205125081/artifacts/webapp/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Ryn_0.7.0_x64-setup.exe",
+      "sha256": "1cfbf1b8b1b2fb50e089de9263696bd7823f4ed53913e58998431ede0c9b2c87",
+      "bytes": 39018580
+    },
+    "built_desktop": {
+      "path": "D:/code/rynmesh/.codex-tmp/usable-candidate-build-20261011T205125081/artifacts/webapp/src-tauri/target/x86_64-pc-windows-msvc/release/Ryn.exe",
+      "sha256": "0df4ff7e4b0a0defd5db2faffdfd4aec95323cdcc8a6c413c250e664ffae2cbe",
+      "bytes": 10925056
+    },
+    "bundled_sidecar": {
+      "path": "D:/code/rynmesh/.codex-tmp/usable-candidate-build-20261011T205125081/artifacts/webapp/src-tauri/target/x86_64-pc-windows-msvc/release/rynmesh-peer.exe",
+      "sha256": "76157e2e2ee4718369925965864fcfb935cd93525d42cdc801c112a129750b28",
+      "bytes": 36328551
+    },
+    "wheel": {
+      "path": "D:/code/rynmesh/.codex-tmp/usable-candidate-build-20261011T205125081/wheels/rynmesh-0.7.0-py3-none-any.whl",
+      "sha256": "77515e062acb956736d1379208f57d10088ad8de0a15318cf5f11655eb878d3e",
+      "bytes": 855942
+    },
+    "installed_observation": {
+      "host": "DESKTOP-SQ6VA8I / 172.16.8.82",
+      "status": "installed_and_no_model_smoke_verified",
+      "evidence": "../../../.codex-tmp/installed-82-usable-upgrade-20261011T125736716702/summary.json",
+      "installed_desktop_sha256": "31ba4d6b1ca61cd2a52297779459886540b247b40e6ddac218446e13766e571d",
+      "installed_sidecar_sha256": "76157e2e2ee4718369925965864fcfb935cd93525d42cdc801c112a129750b28",
+      "identity_preserved": true,
+      "openapi_actual_status": 200,
+      "model_calls": 0
+    },
+    "scope": "当前新包已在82安装及无模型smoke通过；本机实际EXE及自带sidecar完成一次真实GLM资料任务，API创建和精确审批后completed/verified。原生打开成果、中文核验提示、计时显示、正常退出重启及再打开成果通过；旧失败保持。此前两机GLM及来源表单证据保留原包版本边界。",
+    "source_changes": 0,
+    "formal_pass": false
+  },
+  "actual_glm_read_only_inventory": {
+    "source_id": "src-7de9fb1d36c44bc8",
+    "model_id": "glm-5.3-flash",
+    "method": "既有 owner 来源经 SourceStore(..., migrate=False) 只读读取，仅输出白名单参数，没有调用模型。",
+    "enabled": true,
+    "source_status": "ready",
+    "effective": {
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "request_defaults": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "reasoning_effort": "max"
+      },
+      "max_concurrent": 1,
+      "share_scope": "personal_space"
+    },
+    "owner_sources_sha256_before_and_after": "1ab28b982d8804008d548fd54e9726f96568b3707438e99ecca90ed1434ea320",
+    "owner_source_unchanged": true,
+    "parameter_effect": "逐模型 effective policy 经目录/provider manifest、bridge 输出策略和 ModelDispatchAdapter 到真实 adapter；实际输出还受请求上限、剩余上下文、transport 上限和生命周期预算约束。Agent 的字符窗口与上游 token 上限分别生效。",
+    "capability_limit": "旧 owner 来源没有持久 tool_support；ready 不能替代实际两轮工具能力探测。隔离启动不导入旧探测结论。"
+  },
+  "existing_real_business_evidence": [
+    {
+      "path": "状态查询",
+      "verified_scope": "Q01 有真实目录读取和模型分类证据。",
+      "remaining": "最新 Q01 计数措辞错误及 Q03 编造成员状态的旧失败保留；读取回执与最终报告质量分开判断。",
+      "evidence": [
+        "business-coverage-20261011.json",
+        "real-model/20261011T062636487681Z-Q01-ryn-v2-draft/operator-review.json",
+        "real-model/20261009T144613567533Z-Q03-ryn/review.json"
+      ]
+    },
+    {
+      "path": "资料生成和保存",
+      "verified_scope": "F02 真实 GLM 生成报告、一次 PUT、独立内容回读正确且来源未改；F03 有文本 PDF 摘要开发成功样本。",
+      "remaining": "原生审批、成果打开及重启恢复已有独立证据；资料写入任务本身最终failed/unverified，不能称完整任务通过。",
+      "evidence": [
+        "real-model/20261009T142526Z-F02-ryn/review.json",
+        "real-model/20261011T065121Z-F03-ryn/operator-review.json"
+      ]
+    },
+    {
+      "path": "来源配置审批",
+      "verified_scope": "C01 真实 GLM planner 完成安全表单、精确保存审批、私有保存和前后复测。",
+      "remaining": "被配置业务来源是 synthetic loopback，不能当成第二独立真实厂商；填充原生安全表单流程尚待补验。C02 原失败保留。",
+      "evidence": [
+        "real-model/20261009T121052Z-C01-ryn/review.json",
+        "business-coverage-20261011.json"
+      ]
+    },
+    {
+      "path": "逐模型分享",
+      "verified_scope": "C03 默认/逐模型/精确接收方配置回读通过；物理两机真实 GLM 分享、撤权拒绝、重授和重启状态有实证。",
+      "remaining": "C03 接收方为合成 HTTP；填充模型池原生共享控件尚未实际验收。",
+      "evidence": [
+        "real-model/20261010T025929599645Z-C03-ryn/review.json",
+        "two-host/phase3-independent-review.json",
+        "two-host/phase4-5-independent-review.json"
+      ]
+    },
+    {
+      "path": "跨机会话与 Agent 可选性",
+      "verified_scope": "phase3 独立复核 14 个 consumer 请求与 provider messages 逐条匹配且无 foreign marker；两端任务/加密存储互斥；双方 Agent off 时真实 manual GLM 经 LAN ICE 成功。phase6 取消后下一次 manual 调用成功。",
+      "remaining": "新版 P04 完整流程的 checker/capacity 失败及未执行 provider-off 阶段保留；既有隔离机制观察不等于新版全流程通过。",
+      "evidence": [
+        "two-host/phase3-independent-review.json",
+        "two-host/phase4-5-independent-review.json",
+        "two-host/phase6-cancellation-operator-review.json",
+        "p04-development-review-20261011.json"
+      ]
+    }
+  ],
+  "existing_native_ui_evidence": {
+    "observed": [
+      "实际已安装 Tauri 页面可打开独立助手和模型配置入口。",
+      "全局侧栏与任务列表可分别折叠，Agent 关闭和空模型池状态可见。",
+      "来源表单显示实际配置设备为本机及逐模型共享区域；未保存凭据或配置。",
+      "较早候选有正常托盘退出和重启、身份保留证据。"
+    ],
+    "evidence": [
+      "windows-native-20261011/operator-observation.json",
+      "windows-native-restart-20261011/operator-review.json",
+      "../../../.codex-tmp/native-ui-82-20261011/observation.json"
+    ],
+    "limit": "空模型/关闭 Agent 的界面观察不能代替填充任务、审批、成果和恢复验收；较早重启证据不能自动追认为当前候选同快照证据。",
+    "prior_candidate_round": {
+      "evidence": "../../../.codex-tmp/usable-desktop-20261011-v2/observation.json",
+      "candidate_exe_sha256": "92121fc5bc435408534695c9f2f5b181d503489a11d851fc612648975609edce",
+      "backend": "当前 EXE 自带 bundled sidecar",
+      "verified_observations": [
+        "GLM 启用/默认，本机模型池与逐模型分享页面分别显示；有效参数 1M/128k。",
+        "原生展开精确审批并确认；唯一 PUT 保存 453 字节报告，独立五项文件检查全部 true。",
+        "通过网盘 output 原生预览正确报告。",
+        "两次原生设置退出均 exit 0；同 EXE/home/18911/55185 重启，身份、源、输入、输出、任务状态全部保持，原任务历史及报告再次打开。"
+      ],
+      "task_submit": "API 创建；不是原生提交。",
+      "terminal": "failed / agent_time_limit；outcome unverified，mechanical 5 passed。",
+      "usage": "任务 18 calls + 两轮工具探针 2 calls；初始 9 calls 的缺 list 来自 harness 配置错误，产品正确拒绝。",
+      "checker_boundary": "原写后核对输入声明无依据；checker 后模型自主补列/补读 input，纠正路径有效，但预算到期仍未再次 verified。",
+      "sidecar_final_cleanup": "root 检查 owned GUI/sidecar 无剩余进程，helper exit 0，18911/55185 loopback 不可达；OwningProcess 0 的异常 TCP 残留记录保留，不能视为 live listener。",
+      "formal_pass": false
+    },
+    "artifact_entry_round": {
+      "evidence": "../../../.codex-tmp/usable-desktop-20261011-v2/upgraded-candidate/operator-observation.json",
+      "candidate_exe_sha256": "c0aa2e539965d9b8d3dce7cada20c6de0170868314a4c560d4d663818b0c8618",
+      "backend": "新 EXE 自带 bundled sidecar",
+      "verified_observations": [
+        "进入原有失败任务，实际点击打开 project-summary.md，在 Agent 内看到正确的 453 字节报告。",
+        "实际文件 GET 仅一次，零写入、零新增模型请求。",
+        "正常退出；身份、加密来源、输入、输出、任务历史保持，原 failed/unverified 未改判。"
+      ],
+      "formal_pass": false,
+      "limit": "本次核验新包打开旧真实成果；不替代原任务完整完成或跨机 Agent 验收。"
+    },
+    "candidate_relationship": "原生UI成果打开记录对应193156751包；新旧全部前端源码相同，仅adapter、P2P、peer_http三处后端变化。既有UI观察复用，不冒充新包完整业务终态验收。"
+  },
+  "current_minimum_supplement": [
+    {
+      "id": "native_document_workflow",
+      "owner": "root",
+      "status": "packaged_backend_completed_verified_native_open_and_restart_passed",
+      "execution": "当前包实际EXE启动相邻bundled sidecar；隔离home使用已有GLM。创建、范围授权、精确单次文件审批均通过local-owner API；不得称本轮原生点击。",
+      "checks": [
+        "指定资料范围并显示实际模型/数据去向。",
+        "一次真实资料生成，精确审批后保存。",
+        "在实际界面打开成果，并独立回读内容和路径。",
+        "正常退出、重启后核对任务历史、成果与节点身份。"
+      ],
+      "evidence_rule": "源码 runner 或外接 wheel backend 的成功可作补充，但不能冒充 bundled sidecar 承载的原生业务结果。",
+      "evidence": "../../../.codex-tmp/usable-desktop-20261011-v2/native-followup-document/operator-review.json",
+      "remaining": [
+        "本轮创建及写入审批为API，不冒充原生点击；前一包有原生只读提交和历史文档审批单独证据。",
+        "单次可用性任务成功不替代完整正式评分，历史失败保持。"
+      ],
+      "new_packaged_artifact_entry": "../../../.codex-tmp/usable-desktop-20261011-v2/upgraded-candidate/operator-observation.json",
+      "native_submission": {
+        "evidence": "../../../.codex-tmp/usable-desktop-20261011-v2/native-submission/operator-observation.json",
+        "task_id": "agent_925f0d7fe98d4da49e829b67e9907029",
+        "status": "completed",
+        "outcome": "verified",
+        "model_calls": 3,
+        "old_failed_task_unchanged": true,
+        "formal_pass": false,
+        "candidate_build": "usable-candidate-build-20261011T200949686"
+      },
+      "historical_failed_task_evidence": "../../../.codex-tmp/usable-desktop-20261011-v2/observation.json",
+      "native_followup_evidence": "../../../.codex-tmp/usable-desktop-20261011-v2/native-followup-document/native-observation.json"
+    },
+    {
+      "id": "privacy_and_two_host_isolation",
+      "owner": "inference_facts",
+      "status": "single_real_two_host_agent_task_completed_verified_independently_reviewed",
+      "new_model_calls_max": 48,
+      "physical_hosts": 2,
+      "checks": [
+        "P05 修后真实模型报告符合已观察到的数据去向和实际执行事实。",
+        "逐请求核对实际模型目的地、授权文件与 forbidden canary。",
+        "双物理机任务/会话隔离，保留失败、未知 usage 和真实回执。"
+      ],
+      "historical_result": "旧 P05 canary/destination 扫描干净，但报告错误且 checker 超时；旧结果保持失败/未核验。",
+      "latest_observation": "ACK修复后仅执行一次P05任务，4次真实GLM请求完整成功，任务completed/verified。实际报告与授权文件一致并明确数据进入共享模型。4次请求的messages/tools与提供端完全一致；禁止标记扫描干净；提供端Agent始终关闭且0任务。",
+      "evidence": "../../../.codex-tmp/usable-two-host-20261011/networkrepair-usability-result.json",
+      "actual_calls": {
+        "cumulative": 10,
+        "latest_batch": 4,
+        "latest_tasks": 1,
+        "original_ceiling": 48
+      },
+      "cleanup": "两端所属测试进程、TCP/UDP端口及82临时规则已清理。owner加密来源文件哈希未变；未把API key复制到82。",
+      "diagnostic_evidence": "../../../.codex-tmp/usable-two-host-20261011/diagnostic-usability-result.json",
+      "prior_repair_evidence": "../../../.codex-tmp/usable-two-host-20261011/repair-usability-result.json",
+      "independent_review": "../../../.codex-tmp/usable-two-host-20261011/networkrepair-root-review.json",
+      "runtime": "两台实际Windows机器运行前一包 usable-candidate-build-20261011T200949686 同源wheel，238个生产Python文件一致；不是当前T205125081同快照复测，也不冒充82原生GUI任务。"
+    },
+    {
+      "id": "populated_model_pool_and_source_form",
+      "owner": "root",
+      "status": "existing_source_edit_and_model_parameters_native_passed_secure_agent_and_sharing_paths_pending",
+      "checks": [
+        "填充模型池显示实际聊天/工具探测状态和逐模型分享状态。",
+        "按已授权范围观察共享/撤销后的精确对象与回读。",
+        "若交付声称原生来源配置闭环可用，补安全输入、精确审批和保存回读。"
+      ],
+      "scope_limit": "未测体验是证据缺口，不据此断言功能损坏；已有真实业务机制证据继续复用。",
+      "evidence": "../../../.codex-tmp/usable-desktop-20261011-v2/observation.json",
+      "observed": [
+        "本机模型池与逐模型分享分别显示。",
+        "GLM 有效参数 1M context / 128k output，工具探针通过。",
+        "前一包T200949686原生编辑现有隔离GLM来源，改名保存/池显示/重开回读/恢复原名/保存并测试成功；仅版本及连接探测证据更新，参数/分享/owner来源/任务/文件保持。",
+        "T205125081 原生逐模型输出改为 65536、保存重开、两轮工具探测通过，恢复继承 128000 后再次探测通过并正常退出；正式 owner 配置、任务、资料、分享及助手设置不变。"
+      ],
+      "native_existing_source_edit_evidence": "../../../.codex-tmp/usable-desktop-20261011-v2/native-source-form/operator-observation.json",
+      "remaining": [
+        "新增真实来源时安全输入新密钥的流程仍未验。",
+        "Agent 安全输入→草稿测试→精确审批→保存及后测仍需实际补验。",
+        "逐模型分享控件保存/重开回读，以及默认重选修复新包原生点击仍待补验。"
+      ],
+      "candidate_build": "mixed_version_evidence_explicitly_bound_per_observation",
+      "native_model_parameters_evidence": "../../../.codex-tmp/usable-desktop-20261011-v2/native-followup-model-parameters/operator-observation.json"
+    }
+  ],
+  "remaining_risks": {
+    "safety_and_misleading_claim_blockers": [
+      {
+        "item": "P05 数据去向错误报告",
+        "status": "repaired_current_single_real_case_passed_prior_failures_retained",
+        "effect": "本次真实报告正确说明模型收到请求和工具结果；逐请求及私密标记核对通过。仅覆盖这一次实际任务，不外推所有任务。",
+        "evidence": [
+          "p05-development-review-20261011.json",
+          "inference-facts-repair-20261011.json",
+          "../../../.codex-tmp/usable-two-host-20261011/networkrepair-usability-result.json",
+          "../../../.codex-tmp/usable-two-host-20261011/networkrepair-root-review.json"
+        ]
+      },
+      {
+        "item": "verified/completed 与业务事实或报告不一致",
+        "status": "historical_failures_retained_repair_effect_scope_pending",
+        "effect": "分别读取实际回执、成果与最终报告；未知、超时、未执行不描述为完成。",
+        "evidence": [
+          "business-coverage-20261011.json",
+          "product-repair-independent-review-20261011.json"
+        ]
+      },
+      {
+        "item": "把源码/模拟/空 UI/旧快照结果当成当前包完整验收",
+        "status": "evidence_binding_required",
+        "effect": "每个新结果标明真实模型、实际 backend、candidate hash 和观察范围。"
+      },
+      {
+        "item": "历史原生资料任务保存报告后failed/unverified，记录保持",
+        "status": "historical_native_document_task_failure_retained",
+        "effect": "独立文件回读、原生打开及重启成功单独成立；不得将 mechanical 5 passed 改写为完整任务通过。初始缺 list 为 harness 错误，原写后核对声明仍无依据，补读之后无再次 verified。",
+        "evidence": [
+          "../../../.codex-tmp/usable-desktop-20261011-v2/observation.json"
+        ],
+        "new_followup": "../../../.codex-tmp/usable-desktop-20261011-v2/native-followup-document/operator-review.json"
+      }
+    ],
+    "experience_not_yet_verified": [
+      "原生新增来源、Agent安全输入及完整逐模型参数/分享操作仍待补验；前一包现有来源编辑保存和真实GLM连接探针已通过。",
+      "当前资料任务API创建/审批、真实GLM执行、原生成果打开和退出重启通过；尚不能称同一任务全程由原生点击完成。",
+      "本轮一次通过，未实际触发后验反馈repair；该分支已有独审和定向测试证据。"
+    ],
+    "not_inferred": "未测不等于功能坏；历史模型措辞错误也不自动证明底层业务配置失败。"
+  },
+  "deferred_acceptance": {
+    "status": "deferred_not_passed",
+    "items": [
+      "F08/R06 12000 字节人为上下文压力及完整核验，原 failed/unverified 不改判。",
+      "原完整公开开发/正式业务同快照重复、参考比较和全部阈值。",
+      "原 private 18 个候选槽位，未读内容、未执行、未通过。"
+    ],
+    "original_inventory": [
+      "business-coverage-20261011.json",
+      "convergence-plan-20261011.json",
+      "README.md"
+    ],
+    "original_requirements_retained": true
+  },
+  "inventory_actions": {
+    "new_model_calls": 0,
+    "remote_operations": 0,
+    "production_code_changes": 0,
+    "owner_configuration_changes": 0,
+    "private_case_contents_read": false,
+    "build_cases_read": false,
+    "tests_added_or_run_for_this_checklist": false
+  },
+  "release_statement": "当前新包已在82安装并保持身份，启动和接口检查通过。本机实际bundled sidecar用GLM完成资料生成、API精确确认、一次保存和独立核验（7次模型调用、237/600秒）；原生打开成果、中文提示、计时展示与正常退出重启通过，原文件及旧报告不变。前一包原生只读提交、现有来源编辑和两机GLM成功各保留原版本证据。原生新增来源/Agent安全输入/逐模型参数与分享完整操作及正式重复/私有/参考评分仍未全部验收，未宣称达到Claude/Codex八成。",
+  "previous_candidates": [
+    {
+      "installer": {
+        "path": "D:/code/rynmesh/webapp/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Ryn_0.7.0_x64-setup.exe",
+        "sha256": "f33692522216638a2d57222a29479abc3967d451b2f1c5feaad1612fc6a4c189",
+        "bytes": 39007264,
+        "build_finished_utc": "2026-10-11T09:31:09.5580526Z"
+      },
+      "built_desktop": {
+        "path": "D:/code/rynmesh/webapp/src-tauri/target/x86_64-pc-windows-msvc/release/Ryn.exe",
+        "sha256": "92121fc5bc435408534695c9f2f5b181d503489a11d851fc612648975609edce"
+      },
+      "bundled_sidecar": {
+        "path": "D:/code/rynmesh/webapp/src-tauri/target/x86_64-pc-windows-msvc/release/rynmesh-peer.exe",
+        "sha256": "f61dbc0513db7ca9dfb3fa5769ad7220070652e3baeb82ebfe193316ba64817b"
+      },
+      "installed_observation": {
+        "host": "DESKTOP-SQ6VA8I / 172.16.8.82",
+        "installer_exit_code": 0,
+        "installed_desktop_path": "C:/Users/ziling/AppData/Local/Ryn/Ryn.exe",
+        "installed_desktop_sha256": "009ae4d7818bbd10cde5f9fab1294c95d09fca073afd1cc0f1ad23bf3189ec2e",
+        "installed_sidecar_path": "C:/Users/ziling/AppData/Local/Ryn/rynmesh-peer.exe",
+        "installed_sidecar_sha256": "f61dbc0513db7ca9dfb3fa5769ad7220070652e3baeb82ebfe193316ba64817b",
+        "identity_preserved": true,
+        "agent_routes_available": true,
+        "evidence": [
+          "final-candidate-20261011T171558154/verification-summary.json",
+          "final-candidate-20261011T171558154/upgrade-observation.json",
+          "final-candidate-20261011T171558154/sidecar-observation.json",
+          "final-candidate-20261011T171558154/installed-package-comparison.json"
+        ],
+        "limit": "安装、接口和包身份证据不等于已完成真实模型桌面业务验收。"
+      },
+      "installed_python": {
+        "local_python": "D:/code/rynmesh/.codex-tmp/final-two-host-20261011/local-test-venv/Scripts/python.exe",
+        "recorded_python_files": 237,
+        "read_only_inventory_current_vs_installed_python_changes": 0,
+        "evidence": [
+          "final-candidate-20261011T171558154/local-installed-verification.json",
+          "final-candidate-20261011T171558154/two-host-wheel-installation.json"
+        ],
+        "limit": "本次盘点时的只读比对；后续源码变化应重新绑定包身份。wheel 运行和 bundled sidecar 运行分别记录。"
+      }
+    },
+    {
+      "build_evidence": "../../../.codex-tmp/usable-candidate-build-20261011T193156751/result.json",
+      "installer": {
+        "path": "D:/code/rynmesh/.codex-tmp/usable-candidate-build-20261011T193156751/artifacts/webapp/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Ryn_0.7.0_x64-setup.exe",
+        "sha256": "d1386f012ea9609df167daa32c87076cfba70ceb6d99314cbc36ce98bede2ffd",
+        "bytes": 39012141
+      },
+      "built_desktop": {
+        "path": "D:/code/rynmesh/.codex-tmp/usable-candidate-build-20261011T193156751/artifacts/webapp/src-tauri/target/x86_64-pc-windows-msvc/release/Ryn.exe",
+        "sha256": "c0aa2e539965d9b8d3dce7cada20c6de0170868314a4c560d4d663818b0c8618",
+        "bytes": 10924544
+      },
+      "bundled_sidecar": {
+        "path": "D:/code/rynmesh/.codex-tmp/usable-candidate-build-20261011T193156751/artifacts/webapp/src-tauri/target/x86_64-pc-windows-msvc/release/rynmesh-peer.exe",
+        "sha256": "a82b41d85ce58e2c980112b1bccbc7304b2de69eb940b438cd2777e45b539f71",
+        "bytes": 36318864
+      },
+      "wheel": {
+        "path": "D:/code/rynmesh/.codex-tmp/usable-candidate-build-20261011T193156751/wheels/rynmesh-0.7.0-py3-none-any.whl",
+        "sha256": "68b1567784a610ca61862203bba6ad9c3599140beff9b33102054fce6f4f0952",
+        "bytes": 852726
+      },
+      "installed_observation": {
+        "kind": "usable-installed-82-upgrade-summary",
+        "host": "DESKTOP-SQ6VA8I",
+        "candidate_build": "../usable-candidate-build-20261011T193156751",
+        "status": "installed_identity_preserved_sidecar_route_smoke_verified",
+        "installer_sha256": "d1386f012ea9609df167daa32c87076cfba70ceb6d99314cbc36ce98bede2ffd",
+        "installed_desktop_sha256": "d9b4e4f016c59490745be3679ca7f9e91306c3c6d3ff847c03b0aa41437ded15",
+        "installed_sidecar_sha256": "a82b41d85ce58e2c980112b1bccbc7304b2de69eb940b438cd2777e45b539f71",
+        "exact_desktop_nsis_marker_comparison": true,
+        "default_identity_preserved": true,
+        "isolated_identity_preserved": true,
+        "old_binaries_preserved": "C:/Users/ziling/rynmesh-desktop-acceptance-20261011/usable-candidate-20261011T193156751/previous-installed",
+        "installation_mode": "NSIS /S /UPDATE; no GUI launch",
+        "model_calls": 0,
+        "native_ui_observed": false,
+        "formal_pass": false,
+        "unresolved_observations": [
+          {
+            "item": "Optional /openapi.json returned500 on first installed-sidecar smoke",
+            "evidence": "sidecar-observation.json",
+            "resolution": "Not repaired; second probe independently identified both artifact routes by exact agent_task_not_found domain error."
+          }
+        ],
+        "scope_limits": [
+          "Isolated existing home had zero tasks. Routes exist; no real artifact body/UI read on82 was tested.",
+          "Root separately verifies old failed task artifact opening in native UI on local18911.",
+          "No inference_facts18780/81/82 home/process touched; shared interpreter read-only, no venv install."
+        ],
+        "execution_notes": [
+          "Remote .ps1 launch denied by current Restricted policy before backups or install.",
+          "Used skill EncodedCommand with audited script text on stdin to avoid Windows command-length limit; no ExecutionPolicy/security changes."
+        ],
+        "evidence": [
+          "preflight.json",
+          "upgrade-observation.json",
+          "installed-package-comparison.json",
+          "sidecar-observation.json",
+          "sidecar-routes-observation.json",
+          "cleanup.json"
+        ]
+      },
+      "scope": "新包已在82安装；本机原生 Agent 成果打开已验；跨机 Agent 请求仍失败，未完成可用验收。",
+      "installed_python": {
+        "production_python_count": 238,
+        "both_hosts_verified": true,
+        "evidence": "../../../.codex-tmp/usable-two-host-20261011/repair-usability-result.json"
+      }
+    },
+    {
+      "build_evidence": "../../../.codex-tmp/usable-candidate-build-20261011T195352505/result.json",
+      "installer": {
+        "path": "D:/code/rynmesh/.codex-tmp/usable-candidate-build-20261011T195352505/artifacts/webapp/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Ryn_0.7.0_x64-setup.exe",
+        "sha256": "59db9879e6d771b1de0dee9f17b0fd695b87410d7e775553abc6afabb4d4af8b",
+        "bytes": 39012817
+      },
+      "built_desktop": {
+        "path": "D:/code/rynmesh/.codex-tmp/usable-candidate-build-20261011T195352505/artifacts/webapp/src-tauri/target/x86_64-pc-windows-msvc/release/Ryn.exe",
+        "sha256": "72b726ca3a65b3153d7197ee206bb018924f9ed7c9dc043996a73ccae58d0fe2",
+        "bytes": 10924544
+      },
+      "bundled_sidecar": {
+        "path": "D:/code/rynmesh/.codex-tmp/usable-candidate-build-20261011T195352505/artifacts/webapp/src-tauri/target/x86_64-pc-windows-msvc/release/rynmesh-peer.exe",
+        "sha256": "1dcaec825ba70ff779a9842be52629466ddde1fef233a3835370d909cc5671ea",
+        "bytes": 36321312
+      },
+      "wheel": {
+        "path": "D:/code/rynmesh/.codex-tmp/usable-candidate-build-20261011T195352505/wheels/rynmesh-0.7.0-py3-none-any.whl",
+        "sha256": "5b77b33327220c75aa6a51b7f5a19b4c4e571c5486ef7b2569ae8998ea516ee9",
+        "bytes": 853022
+      },
+      "installed_observation": {
+        "host": "DESKTOP-SQ6VA8I / 172.16.8.82",
+        "status": "installed_and_no_model_smoke_verified",
+        "evidence": "../../../.codex-tmp/installed-82-usable-upgrade-20261011T115758381447/summary.json",
+        "installed_desktop_sha256": "ce154ac08654d75dfcccd8c2579ff60670ad141074c7676738c6468a542a3a19",
+        "installed_sidecar_sha256": "1dcaec825ba70ff779a9842be52629466ddde1fef233a3835370d909cc5671ea",
+        "identity_preserved": true,
+        "openapi_actual_status": 200,
+        "model_calls": 0
+      },
+      "source_delta": "../../../.codex-tmp/usable-candidate-build-20261011T195352505/previous-candidate-source-comparison.json",
+      "scope": "仅adapter错误分类和OpenAPI类型绑定变化；两机真实诊断待结果。"
+    },
+    {
+      "build_evidence": "../../../.codex-tmp/usable-candidate-build-20261011T200949686/result.json",
+      "installer": {
+        "path": "D:/code/rynmesh/.codex-tmp/usable-candidate-build-20261011T200949686/artifacts/webapp/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Ryn_0.7.0_x64-setup.exe",
+        "sha256": "64a06988bf95960b8d87bbf3572390c6e386c6e4a8ee991d1ecdd41b2f17a903",
+        "bytes": 39016120
+      },
+      "built_desktop": {
+        "path": "D:/code/rynmesh/.codex-tmp/usable-candidate-build-20261011T200949686/artifacts/webapp/src-tauri/target/x86_64-pc-windows-msvc/release/Ryn.exe",
+        "sha256": "7763842ec00d1a83f0e01ea708753c412b2963936f6566f8d3ba783be7de9d09",
+        "bytes": 10924544
+      },
+      "bundled_sidecar": {
+        "path": "D:/code/rynmesh/.codex-tmp/usable-candidate-build-20261011T200949686/artifacts/webapp/src-tauri/target/x86_64-pc-windows-msvc/release/rynmesh-peer.exe",
+        "sha256": "abbd544cef28f826ddec4fc8a289e7f54cb69a9a202d1ad0e82cbf07b3331408",
+        "bytes": 36322028
+      },
+      "wheel": {
+        "path": "D:/code/rynmesh/.codex-tmp/usable-candidate-build-20261011T200949686/wheels/rynmesh-0.7.0-py3-none-any.whl",
+        "sha256": "af9d29b024b1b893643b98cbb13f690e1415c47076e0950d032ecbd0761cdc25",
+        "bytes": 853125
+      },
+      "installed_observation": {
+        "host": "DESKTOP-SQ6VA8I / 172.16.8.82",
+        "status": "installed_and_no_model_smoke_verified",
+        "evidence": "../../../.codex-tmp/installed-82-usable-upgrade-20261011T121400549855/summary.json",
+        "installed_desktop_sha256": "de1814e7ee18831d7c51b8da7e54c9e5d4742a2c1d6df5402935001d84dd2dc0",
+        "installed_sidecar_sha256": "abbd544cef28f826ddec4fc8a289e7f54cb69a9a202d1ad0e82cbf07b3331408",
+        "identity_preserved": true,
+        "openapi_actual_status": 200,
+        "model_calls": 0
+      },
+      "source_delta": "../../../.codex-tmp/usable-candidate-build-20261011T200949686/native-observed-candidate-source-comparison.json",
+      "scope": "当前安装包已在82安装；同源wheel在两台物理机完成真实GLM共享模型Agent任务；当前EXE及自带sidecar完成原生界面提交只读任务。完整正式验收未通过。",
+      "installed_python": {
+        "production_python_count": 238,
+        "both_hosts_verified": true,
+        "evidence": "../../../.codex-tmp/usable-two-host-20261011/networkrepair-usability-result.json"
+      },
+      "native_submission_evidence": "../../../.codex-tmp/usable-desktop-20261011-v2/native-submission/operator-observation.json"
+    }
+  ],
+  "packaged_followup_fixes": {
+    "agent_direct_result_entry": "已独立审查、打包并在实际原生 Agent 页面打开真实成果。",
+    "udp_cleanup": "已独立审查、打包；异常后UDP清理及连续连接通过。后续ACK放大修复后真实两机Agent任务完成。",
+    "independent_review": "../../../.codex-tmp/usable-desktop-20261011-v2/independent-repair-review.json",
+    "error_classification": "已独立审查18项定向测试通过，打包并安装82；原P05具体cause仍未知，不改判。",
+    "openapi": "Response类型绑定修复已打包；82实际OpenAPI200、272条路径。原500记录保留。",
+    "classification_review": "../../../.codex-tmp/usable-two-host-20261011/stage-errors-independent-review.json",
+    "legacy_ack_amplification": {
+      "status": "packaged_installed_82_network_and_single_real_agent_task_passed",
+      "source_sha256": "9da123b8a0608ed35e7437bd12842eb3d5a58499cd30b764b6f34319309582c8",
+      "evidence": [
+        "../../../.codex-tmp/usable-two-host-20261011/p2p-ack-amplification-repair.json",
+        "../../../.codex-tmp/usable-two-host-20261011/p2p_ack_soak.json",
+        "../../../.codex-tmp/usable-two-host-20261011/ack-two-host-provider.json",
+        "../../../.codex-tmp/usable-two-host-20261011/ack-two-host-consumer.json",
+        "../../../.codex-tmp/usable-two-host-20261011/networkrepair-usability-result.json",
+        "../../../.codex-tmp/usable-two-host-20261011/networkrepair-root-review.json"
+      ],
+      "limit": "确定修复旧ACK触发重复DATA发送；本次实际任务成功。历史故障缺少consent日志，不倒推所有历史失败同一根因。",
+      "independent_review": "../../../.codex-tmp/usable-two-host-20261011/ack-repair-independent-review.json"
+    }
+  },
+  "updated_at": "2026-10-11T13:26:18.043687+00:00",
+  "native_submission_round": {
+    "evidence": "../../../.codex-tmp/usable-desktop-20261011-v2/native-submission/operator-observation.json",
+    "task_id": "agent_925f0d7fe98d4da49e829b67e9907029",
+    "status": "completed",
+    "outcome": "verified",
+    "model_calls": 3,
+    "old_failed_task_unchanged": true,
+    "formal_pass": false
+  },
+  "native_source_form_round": {
+    "evidence": "../../../.codex-tmp/usable-desktop-20261011-v2/native-source-form/operator-observation.json",
+    "current_package_verified": false,
+    "scope": "现有来源编辑与单次真实GLM连接探针",
+    "formal_pass": false,
+    "candidate_build": "usable-candidate-build-20261011T200949686",
+    "version_scope": "历史包原生操作；不将其改称后续候选同快照验收。"
+  },
+  "source_changes_after_current_package": {
+    "default_reselection": {
+      "status": "independently_reviewed_build_in_progress",
+      "audit": "../../../.codex-tmp/default-reselection-audit/result.json",
+      "independent_review": "../../../.codex-tmp/default-reselection-audit/independent-review.json",
+      "freeze": "default-reselection-freeze-20261011.json"
+    }
+  },
+  "native_followup_packaged_fixes": {
+    "status": "independently_reviewed_built_installed82",
+    "localization": "native-followup-localization-20261011.json",
+    "run_timing": "../../../.codex-tmp/run-timing-fix-20261011/independent-review.json",
+    "verification_feedback": "../../../.codex-tmp/verification-feedback/independent-review.json",
+    "checker_budget_and_stopping_rules_unchanged": true
+  },
+  "native_document_followup_round": {
+    "evidence": "../../../.codex-tmp/usable-desktop-20261011-v2/native-followup-document",
+    "task_id": "agent_52607e3e02db4e5cbea3fd6263b06311",
+    "status": "completed_verified_native_artifact_open_normal_restart_passed",
+    "creation_and_approval_surface": "local_owner_API",
+    "native_ui_status": "recovered_and_observed",
+    "original_goal_changed_only_output_filename": true,
+    "initial_scope_includes_list": true,
+    "max_seconds": 600,
+    "max_steps": 24,
+    "old_failed_task_and_report_preserved": true,
+    "formal_pass": false,
+    "outcome": "verified",
+    "model_calls": 7,
+    "tool_calls_including_verification": 10,
+    "elapsed_seconds": 237.42300000000978,
+    "total_tokens": 56216,
+    "successful_puts": 1,
+    "bytes": 469,
+    "artifact_sha256": "405fe258fc1ce2c342ae9a312d1419ea292af8db92368f19376015ba9a8d93ed",
+    "artifact_owner_api_http200": true,
+    "operator_review": "../../../.codex-tmp/usable-desktop-20261011-v2/native-followup-document/operator-review.json",
+    "feedback_repair_exercised": false,
+    "task_reruns": 0,
+    "budget_changes": 0,
+    "native_observation": "../../../.codex-tmp/usable-desktop-20261011-v2/native-followup-document/native-observation.json",
+    "independent_review": "../../../.codex-tmp/usable-desktop-20261011-v2/native-followup-document/independent-review.json",
+    "normal_exit_restart": true
+  },
+  "native_model_parameters_round": {
+    "status": "passed",
+    "evidence": "../../../.codex-tmp/usable-desktop-20261011-v2/native-followup-model-parameters/operator-observation.json",
+    "candidate_desktop_sha256": "0df4ff7e4b0a0defd5db2faffdfd4aec95323cdcc8a6c413c250e664ffae2cbe",
+    "scope": "原生逐模型输出覆盖/重开/GLM工具验证/恢复继承/再次验证/正常退出",
+    "formal_pass": false
+  }
+}

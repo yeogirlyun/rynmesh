@@ -1,25 +1,24 @@
 import { tr, useUILanguage, uiLocale } from "../uiI18n";
 import {
   ArrowRight,
-  Bot,
-  Film,
+  Clock,
   LockKeyhole,
   Search,
   Settings2,
-  ShieldCheck,
-  Sparkles,
+  TriangleAlert,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { ServiceArt } from "../personal/components";
 import { personalHref } from "../personal/model";
 import { useAppContext } from "../appContext";
 import { LoadingPanel } from "../components/ui";
 import type { JobCapacity } from "../domain/types";
 import type { LLMServiceRecord } from "../domain/nodeClient";
+import { isServiceUsable } from "../domain/llmOrders";
 import { useProviderDiscovery, useServiceOrder } from "../domain/serviceExperience";
 import { providerIdentity, serviceDescriptors } from "../domain/serviceDescriptors";
-import styles from "./ServicesCatalog.module.css";
+import { ChatGlyph, GlyphTile, ShieldGlyph, VideoGlyph, type ServiceHue } from "./ServiceParts";
+import "./service-pages-refresh.css";
 
 type ServiceCategory = "all" | "ai" | "creative" | "network";
 
@@ -32,7 +31,8 @@ interface CatalogService {
   price: string;
   action: string;
   available: boolean;
-  icon: typeof Bot;
+  hue: ServiceHue;
+  glyph: (size: number) => ReactNode;
   href: string;
 }
 
@@ -101,7 +101,7 @@ export default function ServicesCatalog() {
   const [recent, setRecent] = useState<RecentService[]>(loadRecentServices);
 
   const services = useMemo<CatalogService[]>(() => {
-    const llm = llmServices.find((service) => service.online) ?? llmServices[0];
+    const llm = llmServices.find(isServiceUsable) ?? llmServices[0];
     const video = findVideoCapacity(capacities);
     const llmPrice = llm?.service.pricing.minimum ?? 0;
     const llmCurrency = llm?.service.pricing.currency === "DEV_TASK_BALANCE" ? "credits" : llm?.service.pricing.currency;
@@ -116,8 +116,9 @@ export default function ServicesCatalog() {
         experience: "Chat",
         price: llm ? tr("From {{v0}} {{v1}}", { v0: llmPrice, v1: tr(llmCurrency || "credits") }) : tr("No provider online"),
         action: tr("Open chat"),
-        available: Boolean(llm?.online),
-        icon: Bot,
+        available: Boolean(llm && isServiceUsable(llm)),
+        hue: "indigo",
+        glyph: (size) => <ChatGlyph size={size} />,
         href: llm ? llmHref(llm, networkId, client.mode) : "/services/manage#private-ai",
       },
       {
@@ -129,7 +130,8 @@ export default function ServicesCatalog() {
         price: video ? tr("{{count}} credits", { count: videoPrice }) : tr("No provider online"),
         action: tr("Create video"),
         available: Boolean(video),
-        icon: Film,
+        hue: "rose",
+        glyph: (size) => <VideoGlyph size={size} />,
         href: `/services/video-rendering${client.mode === "fixture" ? "?client=fixture" : ""}`,
       },
       {
@@ -141,7 +143,8 @@ export default function ServicesCatalog() {
         price: tr("Price shown before connecting"),
         action: tr("Connect"),
         available: true,
-        icon: ShieldCheck,
+        hue: "teal",
+        glyph: (size) => <ShieldGlyph size={size} />,
         href: `/services/secure-web-access${client.mode === "fixture" ? "?client=fixture" : ""}`,
       },
     ];
@@ -172,17 +175,23 @@ export default function ServicesCatalog() {
 
   if (loading) return <LoadingPanel label={tr("Finding available services")} />;
 
-  return (
-    <div className={styles.page}>
-      <header className={styles.hero}>
-        <div>
+  const counts: Record<ServiceCategory, number> = {
+    all: services.length,
+    ai: services.filter((service) => service.category === "ai").length,
+    creative: services.filter((service) => service.category === "creative").length,
+    network: services.filter((service) => service.category === "network").length,
+  };
 
-          <h1>{tr("Browse services")}</h1>
-          <p>{tr("Tools available across your connected devices.")}</p>
+  return (
+    <div className="rf rd-svc rd-catalog">
+      <header className="sv-head">
+        <div className="sv-head-text">
+          <h1 className="sv-title">{tr("Browse services")}</h1>
+          <p className="sv-lead">{tr("Tools available across your connected devices.")}</p>
         </div>
-        <div className={styles.heroTools}>
-          <label className={styles.search}>
-            <Search size={17} />
+        <div className="sv-head-actions">
+          <label className="sv-search">
+            <Search size={15} aria-hidden="true" />
             <input
               aria-label={tr("Search services")}
               value={query}
@@ -190,59 +199,56 @@ export default function ServicesCatalog() {
               placeholder={tr("Search services")}
             />
           </label>
-          <button className={styles.manageButton} type="button" onClick={() => navigate(personalHref("/services/manage", client.mode === "fixture"))}>
-            <Settings2 size={16} /> {tr("Manage")}
+          <button className="rf-btn" type="button" onClick={() => navigate(personalHref("/services/manage", client.mode === "fixture"))}>
+            <Settings2 size={15} aria-hidden="true" /> {tr("Manage")}
           </button>
         </div>
       </header>
 
-      {llm.error || video.error ? <p role="alert">Some services could not be refreshed. Previously discovered services may be out of date. <button type="button" onClick={() => { void llm.refresh(); void video.refresh(); }}>Retry discovery</button></p> : null}
+      {llm.error || video.error ? (
+        <div className="sv-alert" role="alert">
+          <TriangleAlert size={18} aria-hidden="true" />
+          <p>{tr("Some services could not be refreshed. Previously discovered services may be out of date.")}</p>
+          <button type="button" className="rf-btn rf-btn-sm" onClick={() => { void llm.refresh(); void video.refresh(); }}>{tr("Retry discovery")}</button>
+        </div>
+      ) : null}
 
-      <div className={styles.filters} aria-label={tr("Service categories")}>
-        {filters.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            className={`${styles.filter}${filter === item.id ? ` ${styles.filterActive}` : ""}`}
-            aria-pressed={filter === item.id}
-            onClick={() => setFilter(item.id)}
-          >
-            {item.label}
-          </button>
-        ))}
+      <div className="sv-filters">
+        <div className="rf-seg" role="group" aria-label={tr("Service categories")}>
+          {filters.map((item) => (
+            <button key={item.id} type="button" aria-pressed={filter === item.id} onClick={() => setFilter(item.id)}>
+              {item.label}<em aria-hidden="true">{counts[item.id]}</em>
+            </button>
+          ))}
+        </div>
+        <span className="sv-count">{tr("{{count}} services", { count: visible.length })}</span>
       </div>
 
-      <section>
-        <div className={styles.sectionHeading}>
-          <h2>{tr("Available now")}</h2>
-          <span>{tr("{{count}} services", { count: visible.length })}</span>
-        </div>
-        <div className={styles.grid}>
-          {visible.map((service) => {
-
-            return (
-              <article className={styles.card} key={service.id}>
-                <div className={styles.cardTop}>
-                  <ServiceArt kind={service.id === "private-ai" ? "ai" : service.id === "video-rendering" ? "video" : "network"} />
-                  <div className={styles.cardTitle}>
-                    <span className={styles.type}>{tr(service.experience)}</span>
-                    <h3>{service.title}</h3>
-                  </div>
+      <section className="sv-sec" aria-labelledby="sv-available">
+        <h2 id="sv-available">{tr("Available now")}</h2>
+        <div className="sv-grid">
+          {visible.map((service) => (
+            <article className={`sv-svc rf-h-${service.hue}`} key={service.id}>
+              <div className="sv-svc-top">
+                <GlyphTile hue={service.hue} size="lg">{service.glyph}</GlyphTile>
+                <div>
+                  <span className="sv-svc-type">{tr(service.experience)}</span>
+                  <h3>{service.title}</h3>
                 </div>
-                <p className={styles.description}>{service.description}</p>
-                <div className={styles.meta}>
-                  <span className={service.available ? styles.ready : styles.unavailable}>{service.available ? tr("Ready") : tr("Unavailable")}</span>
-                  <span>{service.price}</span>
-                </div>
-                <button className={styles.cardAction} disabled={!service.available && service.id !== "private-ai"} type="button" onClick={() => openService(service)}>
-                  {service.action} <ArrowRight size={16} />
-                </button>
-              </article>
-            );
-          })}
+              </div>
+              <p className="sv-svc-desc">{service.description}</p>
+              <div className="sv-svc-meta">
+                <span className={`rf-pill rf-pill-sm rf-t-${service.available ? "ok" : "off"}`}><i aria-hidden="true" />{service.available ? tr("Ready") : tr("Unavailable")}</span>
+                <span>{service.price}</span>
+              </div>
+              <button className={`rf-btn rf-btn-block${service.available ? " rf-btn-p" : ""}`} disabled={!service.available && service.id !== "private-ai"} type="button" onClick={() => openService(service)}>
+                {service.action} <ArrowRight size={15} aria-hidden="true" />
+              </button>
+            </article>
+          ))}
           {!visible.length ? (
-            <div className={styles.empty}>
-              <Sparkles size={24} />
+            <div className="sv-empty">
+              <Search size={28} strokeWidth={1.5} aria-hidden="true" />
               <h3>{tr("No matching services")}</h3>
               <p>{tr("Try a different search or category.")}</p>
             </div>
@@ -251,29 +257,24 @@ export default function ServicesCatalog() {
       </section>
 
       {recentServices.length ? (
-        <section className={styles.recentSection} aria-label={tr("Recently used services")}>
-          <div className={styles.sectionHeading}>
-            <h2>{tr("Recently used")}</h2>
-          </div>
-          <div className={styles.recentList}>
-            {recentServices.map(({ item, service }) => {
-              const Icon = service.icon;
-              return (
-                <button type="button" key={service.id} className={styles.recentRow} onClick={() => openService(service)}>
-                  <span className={styles.recentIcon}><Icon size={17} /></span>
-                  <span className={styles.recentTitle}>{service.title}</span>
-                  <span className={styles.recentTime}>{new Date(item.openedAt).toLocaleDateString(uiLocale(), { month: "short", day: "numeric" })}</span>
-                  <ArrowRight size={15} />
-                </button>
-              );
-            })}
+        <section className="sv-sec" aria-label={tr("Recently used services")}>
+          <h2>{tr("Recently used")}</h2>
+          <div className="sv-recent">
+            {recentServices.map(({ item, service }) => (
+              <button type="button" key={service.id} className={`sv-recent-row rf-h-${service.hue}`} onClick={() => openService(service)}>
+                <span className="rf-chipicon" aria-hidden="true"><Clock size={16} /></span>
+                <b>{service.title}</b>
+                <small>{new Date(item.openedAt).toLocaleDateString(uiLocale(), { month: "short", day: "numeric" })}</small>
+                <ArrowRight size={15} aria-hidden="true" />
+              </button>
+            ))}
           </div>
         </section>
       ) : null}
 
-      <footer className={styles.footer}>
-        <LockKeyhole size={14} /> {tr("Providers and routes are selected automatically")}
-      </footer>
+      <p className="sv-foot">
+        <LockKeyhole size={13} aria-hidden="true" /> {tr("Providers and routes are selected automatically")}
+      </p>
     </div>
   );
 }

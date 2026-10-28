@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { tr } from "../uiI18n";
 import {
   Box,
+  Building2,
   CheckSquare,
   ChevronDown,
   Compass,
@@ -21,54 +22,79 @@ import {
 } from "lucide-react";
 import { DeviceArt, Empty, Modal, ServiceArt } from "./components";
 import { personalHref, usePersonal } from "./model";
-import { useNasStatus } from "../domain/nas";
+import { AgentNavigationContext } from "./agentNavigation";
+import { DropActivity } from "./drop/DropActivity";
+import { pinnedPluginWorkspaces, PIN_CHANGE_EVENT, pluginWorkspacePath } from "../screens/pluginWorkspaceNavigation";
+import "../screens/rynAgentText";
 export function PersonalShell({ children }: { children: ReactNode }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const { t: agentText } = useTranslation("rynAgent");
+  const isZh = (i18n.resolvedLanguage || i18n.language || "en").toLowerCase().startsWith("zh");
   const { demo, appearance, setAppearance, devices, services, space } = usePersonal();
-  const { status: nas } = useNasStatus(demo);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [pinnedPlugins, setPinnedPlugins] = useState(pinnedPluginWorkspaces);
+  const [agentNavCollapsed, setAgentNavCollapsed] = useState(() => {
+    try { return sessionStorage.getItem("ryn.agent.navigation") === "closed" || (window.innerWidth <= 760 && sessionStorage.getItem("ryn.agent.navigation") !== "open"); }
+    catch { return window.innerWidth <= 760; }
+  });
   const navigate = useNavigate();
   const location = useLocation();
+  const isStandalone = new URLSearchParams(location.search).get("standalone") === "1";
   const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const syncPin = () => setPinnedPlugins(pinnedPluginWorkspaces());
+    window.addEventListener(PIN_CHANGE_EVENT, syncPin);
+    window.addEventListener("storage", syncPin);
+    return () => {
+      window.removeEventListener(PIN_CHANGE_EVENT, syncPin);
+      window.removeEventListener("storage", syncPin);
+    };
+  }, []);
   const primary = [
     { to: "/", label: t("nav.home"), icon: Home },
     { to: "/services", label: t("nav.services"), icon: Box },
+    { to: "/agent", label: agentText("title"), icon: MessageCircle },
+    { to: "/apps", label: tr("Apps"), icon: Box },
+    ...pinnedPlugins.map(plugin => ({ to: pluginWorkspacePath(plugin.id), label: plugin.title, icon: Building2 })),
     { to: "/devices", label: t("nav.devices"), icon: Network },
     { to: "/tasks", label: t("nav.tasks"), icon: CheckSquare },
-    ...(nas?.enabled ? [{ to: "/nas", label: t("nav.nas"), icon: HardDrive }] : []),
+    { to: "/drives", label: t("drive.title"), icon: HardDrive },
   ];
   const more = [
     { to: "/explore", label: t("nav.explore"), icon: Compass },
     { to: "/chat", label: t("nav.messages"), icon: MessageCircle },
-    { to: "/ask", label: tr("Ask Ryn"), icon: MessageCircle },
     { to: "/friends", label: tr("Friends"), icon: UserRound },
     { to: "/exchange", label: tr("Exchange"), icon: Box },
   ];
-  const explorePaths = ["/explore", "/digest", "/search-ask", "/publish", "/items/", "/reading", "/offline", "/search", "/shared-reading", "/friend-updates"];
+  const explorePaths = ["/library", "/explore", "/digest", "/search-ask", "/publish", "/items/", "/reading", "/offline", "/search", "/shared-reading", "/friend-updates"];
   const inExplore = explorePaths.some((path) => location.pathname.startsWith(path));
+  const inAgent = location.pathname === "/agent";
+  const inFullWorkspace = inAgent || location.pathname.startsWith("/apps/extensions/");
   const inServices = location.pathname === "/services" || location.pathname.startsWith("/services/");
   // Keep every service entry available before configuration and across AI pages.
   const serviceLinks = [
     ["/services", t("nav.myServices")],
     ["/services/catalog", t("nav.browseServices")],
     ["/services/private-ai/chat", t("personal.aiWorkspace")],
-    ["/services/sources", t("personal.aiSources")],
+    ["/services/sources", agentText("models")],
     ["/services/api", t("nav.apiAccess")],
     ["/services/manage", t("nav.serviceSetup")],
   ];
   const sublinks = inExplore
-    ? [["/explore", t("nav.library")], ["/digest", t("nav.forYou")], ["/reading", tr("My reading")], ["/offline", tr("Offline reading")], ["/search", tr("Search")], ["/shared-reading", tr("Shared lists")], ["/friend-updates", tr("Friend updates")], ["/publish", t("nav.publish")]]
+    ? [["/explore", t("nav.library")], ["/library", tr("My Content")], ["/digest", t("nav.forYou")], ["/reading", tr("My reading")], ["/offline", tr("Offline reading")], ["/search", tr("Search")], ["/shared-reading", tr("Shared lists")], ["/friend-updates", tr("Friend updates")], ["/publish", t("nav.publish")]]
     : inServices
       ? serviceLinks
-      : (location.pathname === "/peers" || location.pathname.startsWith("/devices"))
+      : (location.pathname === "/peers" || location.pathname.startsWith("/devices/"))
         ? [["/devices", t("nav.myDevices")], ["/devices/sync", tr("Device sync")], ["/peers", t("nav.connectionDetails")]]
         : location.pathname.startsWith("/settings")
-          ? [["/settings", t("nav.preferences")], ["/settings/desktop", t("nav.desktop")], ["/settings/space", t("nav.personalSpace")], ["/settings/plugins", t("nav.plugins")], ["/settings/advanced", t("nav.advancedSettings")]]
+          ? [["/settings", t("nav.preferences")], ["/settings/desktop", t("nav.desktop")], ["/settings/space", t("nav.personalSpace")], ["/settings/plugins", t("nav.plugins")], ["/settings/extensions", t("nav.agentExtensions")], ["/settings/advanced", t("nav.advancedSettings")]]
           : [];
   const title =
-    (inExplore ? t("nav.explore") : location.pathname === "/peers" ? t("nav.devices") : [...primary, ...more, { to: "/settings", label: t("nav.settings") }].find(
+    (location.pathname.startsWith("/apps/plugins/")
+      ? pinnedPlugins.find(plugin => location.pathname === pluginWorkspacePath(plugin.id))?.title || tr("Apps")
+      : inServices ? t("nav.services") : inExplore ? t("nav.explore") : location.pathname === "/peers" ? t("nav.devices") : [...primary, ...more, { to: "/settings", label: t("nav.settings") }].find(
       (item) => item.to !== "/" && location.pathname.startsWith(item.to),
     )?.label) || t("nav.home");
   const href = (path: string) => personalHref(path, demo);
@@ -91,7 +117,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
   }, [searchOpen]);
   const link = (item: (typeof primary)[number]) => (
     <NavLink
-      end={item.to === "/"}
+      end={item.to === "/" || item.to === "/apps"}
       key={item.to}
       to={href(item.to)}
       className={({ isActive }) => (isActive || (item.to === "/explore" && inExplore) || (item.to === "/devices" && location.pathname === "/peers") ? "active" : "")}
@@ -101,8 +127,11 @@ export function PersonalShell({ children }: { children: ReactNode }) {
     </NavLink>
   );
   return (
-    <div className={`pf-shell${menuOpen ? " menu-open" : ""}`}>
-      <aside className="pf-sidebar" aria-label={t("shell.mainNavigation")}>
+    <AgentNavigationContext.Provider value={{ collapsed: agentNavCollapsed, toggle: () => {
+      setAgentNavCollapsed(current => { const next = !current; try { sessionStorage.setItem("ryn.agent.navigation", next ? "closed" : "open"); } catch { /* Preferences are optional. */ } return next; });
+    } }}>
+    <div className={`pf-shell${menuOpen ? " menu-open" : ""}${inFullWorkspace ? " pf-agent-shell" : ""}${(inFullWorkspace && agentNavCollapsed) || isStandalone ? " pf-agent-nav-collapsed" : ""}`}>
+      <aside className="pf-sidebar" aria-label={t("shell.mainNavigation")} hidden={(inFullWorkspace && agentNavCollapsed) || isStandalone}>
         <NavLink className="pf-brand" to={href("/")} aria-label={`Ryn ${t("nav.home")}`}>
           <svg viewBox="0 0 30 34" aria-hidden="true">
             <path
@@ -118,9 +147,11 @@ export function PersonalShell({ children }: { children: ReactNode }) {
           <span>{space?.space?.name || t("shell.personal")}</span>
           <ChevronDown size={15} />
         </button>
-        <nav aria-label={t("shell.primary")}>{primary.map(link)}</nav>
-        <div className="pf-more-label">{t("nav.more")}</div>
-        <nav aria-label={t("nav.more")}>{more.map(link)}</nav>
+        <div className="pf-sidebar-content">
+          <nav aria-label={t("shell.primary")}>{primary.map(link)}</nav>
+          <div className="pf-more-label">{t("nav.more")}</div>
+          <nav aria-label={t("nav.more")}>{more.map(link)}</nav>
+        </div>
         <div className="pf-sidebar-bottom">
           {demo && (
             <span className="pf-preview-label">
@@ -140,7 +171,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
         />
       )}
       <div className="pf-main-column">
-        <header className="pf-topbar">
+        {!inFullWorkspace && !isStandalone && <header className="pf-topbar">
           <button
             className="pf-icon-button pf-menu-toggle"
             aria-label={t("shell.toggleNavigation")}
@@ -155,7 +186,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
             {inServices && location.pathname !== "/services" && (
               <>
                 <span>/</span>
-                <span>{serviceLinks.find(([path]) => path === location.pathname)?.[1]
+                <span>{(location.pathname === "/ask" ? t("personal.aiWorkspace") : serviceLinks.find(([path]) => path === location.pathname)?.[1])
                   || (location.pathname === "/services/model-mapping" ? tr("模型映射")
                     : location.pathname === "/services/agent-sharing" ? tr("管理共享")
                     : location.pathname === "/services/video-rendering" ? tr("Video rendering")
@@ -165,6 +196,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
             )}
           </div>
           <div className="pf-top-tools">
+            <DropActivity />
             <button
               className="pf-search-trigger"
               aria-label={t("shell.search")}
@@ -194,10 +226,10 @@ export function PersonalShell({ children }: { children: ReactNode }) {
               )}
             </button>
           </div>
-        </header>
+        </header>}
         <main className="pf-main" id="main-content">
           {sublinks.length > 0 && <nav className={`pf-subnav${inServices ? " pf-service-nav" : ""}`} aria-label={title}>
-            {sublinks.map(([path, label]) => <NavLink key={path} end to={href(path)} className={path === "/services/manage" ? "pf-service-settings" : undefined}>
+            {sublinks.map(([path, label]) => <NavLink key={path} end={path !== "/settings/extensions"} to={href(path)} className={path === "/services/manage" ? "pf-service-settings" : path === "/services/private-ai/chat" && location.pathname === "/ask" ? "active" : undefined}>
               {inServices && path === "/services/manage" && <Settings size={17} aria-hidden="true" />}{label}
             </NavLink>)}
           </nav>}
@@ -280,5 +312,6 @@ export function PersonalShell({ children }: { children: ReactNode }) {
         </Modal>
       )}
     </div>
+    </AgentNavigationContext.Provider>
   );
 }

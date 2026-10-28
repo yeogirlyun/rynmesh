@@ -1,0 +1,33 @@
+{
+  "reviewer": "sharing_review / gpt-6-astra high",
+  "status": "P2_closed_no_new_material_findings_within_scope",
+  "prior_finding": "request-deadline-independent-review.json",
+  "implementation": "request-deadline-usage-followup.json",
+  "tests": {
+    "command": ".venv/Scripts/python.exe -m pytest -q -p no:cacheprovider tests/test_agent_adapter_rejected_usage.py tests/test_agent_request_deadline.py tests/test_agent_reference_output_policy.py tests/test_agent_integrations.py tests/test_agent_output_policy.py tests/test_agent_runtime_budget.py tests/test_agent_reference_budget.py tests/test_agent_runtime.py tests/test_agent_sharing_recovery_case.py",
+    "passed": 196,
+    "skipped": 0,
+    "seconds": 73.59
+  },
+  "additional_checks": [
+    "Original _json response7/3 pluscancel fails while retaining sanitizedusage/stop, no content.",
+    "Independent SSE valid7/3 then invalidbool/negative usage then truncation retains valid7/3 without PRIVATE_RAW."
+  ],
+  "coverage": [
+    "JSON/SSE/stream request returningJSON late failures",
+    "Valid zero retained; bool/negative/string and malicious finish sanitized",
+    "Unknown usage conservative",
+    "Actual source gate→bridge→candidate/reference ledger",
+    "Late tools not executed;sourceunchanged"
+  ],
+  "sha256": {
+    "rynmesh/llm_package/adapters.py": "0cc5b59a390a919ba5088fc05575679ee4753da8d713cb341194710aa7c4b097",
+    "rynmesh/agent_runtime/bridge.py": "a7b2d1798e3fc645f7b77dd9b734e262f1a5e252117d1ebd7ca95ed6a479d6e4",
+    "tests/test_agent_adapter_rejected_usage.py": "621cbe13579aca668f2787ef3368eedd176c9d751b63f5359ddfdccbe1caf0fa"
+  },
+  "limitations": [
+    "Closes only received-usage P2; no infer/infer_stream or legacycontroller review.",
+    "No live model calls,heldoutaccess,orformal acceptance."
+  ],
+  "formal_executed_trials": 0
+}

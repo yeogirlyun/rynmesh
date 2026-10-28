@@ -1,0 +1,42 @@
+{
+  "kind": "operator-development-business-review",
+  "case": "F07",
+  "formal_pass": false,
+  "independent_review": false,
+  "business_verdict": "failed_retry_limit_outcome_and_permission_claim",
+  "calls": 9,
+  "elapsed_seconds": 328.42199999999866,
+  "usage": {
+    "input_tokens": 91921,
+    "output_tokens": 16788,
+    "unknown_calls": 0
+  },
+  "findings": [
+    "A real partial.md was created once after exact approval; its independent local hash and HTTP readback match. Sources unchanged, required report literals present, and unread supplement/unsupported diagram were explicitly disclosed.",
+    "The same offline resource received four read tool attempts, exceeding the frozen maximum of three. Actual HTTP attempts are counted separately, not inferred from prose.",
+    "Frozen expected outcome partial differs from runtime verified. No contract change or retroactive relabeling of runtime outcome.",
+    "The artifact and final answer again label absent decisions.txt unauthorized despite recursive source-directory read scope; no permission rejection supports that statement. This is the same retained report-grounding defect as F05/F06."
+  ],
+  "artifact_path": "reports/acceptance/partial.md",
+  "artifact_sha256": "50a29d7f8c779ad379394f79591f64b2ee933b025c70469fbcc7bb155658f930",
+  "checks": {
+    "local_artifact_hash_matches": true,
+    "single_exact_write": true,
+    "http_readback_hash_matches": true,
+    "missing_required_artifact_literals": [],
+    "read_tool_attempt_counts_per_ref": [
+      4,
+      1,
+      1
+    ],
+    "offline_http_get_count": 4
+  },
+  "code_unchanged": true,
+  "owner_source_unchanged": true,
+  "raw_sha256": "5f11a4b563d57f2b6d33c3ad74e8a06fb67869a1368c7e77ad8e3ee30ac63506",
+  "limitations": [
+    "One development sample; no formal or independent Astra pass.",
+    "Global security coverage is limited to recorded fixture accesses and in-memory canary scan.",
+    "No paid rerun or prompt/contract adjustment is performed for this failure."
+  ]
+}

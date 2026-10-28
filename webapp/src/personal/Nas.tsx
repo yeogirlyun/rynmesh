@@ -6,6 +6,7 @@ import {
   Folder,
   FileText,
   HardDrive,
+  Cloud,
   Plus,
   RefreshCw,
   ArrowUp,
@@ -27,6 +28,12 @@ import { Modal, PageHeading } from "./components";
 import { usePersonal } from "./model";
 import {
   nasChanged,
+  nasEvent,
+  acquireNasListing,
+  addNasCachedEntry,
+  rememberNasLocation,
+  cachedNasDirectory,
+  forgetNasDirectory,
   nasJson,
   nasRequest,
   setNasHandoff,
@@ -165,14 +172,17 @@ export function NasPage() {
   return <NasBrowser status={status} />;
 }
 
-function NasBrowser({ status }: { status: NasStatus }) {
+export function NasBrowser({ status, onAdd, onSettings }: { status: NasStatus; onAdd?: () => void; onSettings?: (source: NasSource) => void }) {
   const { t, i18n } = useTranslation();
   const { notify, confirm } = useAppContext();
   const navigate = useNavigate();
-  const [selected, setSelected] = useState(status.sources[0]?.id || "");
+  const [selected, setSelected] = useState(status.sources.some(s => s.id === status.browser_location?.source_id) ? status.browser_location!.source_id! : status.sources[0]?.id || "");
   const source = status.sources.find((s) => s.id === selected);
-  const [path, setPath] = useState("");
-  const [entries, setEntries] = useState<NasEntry[]>([]);
+  const [path, setPath] = useState(status.browser_location?.source_id === selected ? status.browser_location.path || "" : "");
+  const [entries, setEntries] = useState<NasEntry[]>(() => cachedNasDirectory(selected, path)?.entries || []);
+  const [refreshing, setRefreshing] = useState(false);
+  const [updatedAt, setUpdatedAt] = useState(0);
+  const [hasSnapshot, setHasSnapshot] = useState(false);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState("name");
   const [error, setError] = useState("");
@@ -181,6 +191,8 @@ function NasBrowser({ status }: { status: NasStatus }) {
   const [folder, setFolder] = useState<string | null>(null);
   const [preview, setPreview] = useState<NasEntry | null>(null);
   const [revision, setRevision] = useState(0);
+  const [folderNames, setFolderNames] = useState<Record<string, string>>(status.browser_location?.names || {});
+  const lastRevision = useRef(0);
   const upload = useRef<HTMLInputElement>(null);
   const generation = useRef(0);
   useEffect(() => {
@@ -190,28 +202,73 @@ function NasBrowser({ status }: { status: NasStatus }) {
     }
   }, [status, selected]);
   useEffect(() => {
+    const refresh = () => setRevision(r => r + 1);
+    window.addEventListener(nasEvent, refresh);
+    return () => window.removeEventListener(nasEvent, refresh);
+  }, []);
+  useEffect(() => {
     const id = ++generation.current;
-    setEntries([]);
+    let release: (() => void) | undefined;
+    const current = () => id === generation.current;
+    const force = revision !== lastRevision.current;
+    lastRevision.current = revision;
     setError("");
     setPreview(null);
+    const cached = source ? cachedNasDirectory(source.id, path) : undefined;
+    setEntries(cached?.entries || []);
+    setUpdatedAt(cached?.updated_at || 0);
+    setHasSnapshot(cached?.entries != null);
+    setRefreshing(!!source);
     if (!source) return;
-    setBusy(true);
-    void nasJson<{ entries: NasEntry[] }>(
-      `/sources/${source.id}/files?path=${encodeURIComponent(path)}`,
-    )
-      .then((data) => {
-        if (id === generation.current) setEntries(data.entries);
-      })
-      .catch((e) => {
-        if (id === generation.current) setError(e.message);
-      })
-      .finally(() => {
-        if (id === generation.current) setBusy(false);
-      });
-    return () => {
-      generation.current++;
+    const show = (value: { entries: NasEntry[] | null; updated_at?: number }) => {
+      if (current() && value.entries) {
+        setEntries(value.entries);
+        setUpdatedAt(value.updated_at || 0);
+        setHasSnapshot(true);
+        setFolderNames(names => ({ ...names, ...Object.fromEntries(value.entries!.filter(e => e.directory).map(e => [`${source.id}:${e.path}`, e.name])) }));
+      }
     };
+    void (async () => {
+      let snapshot = cached;
+      if (!snapshot && !force) {
+        const request = acquireNasListing(source.id, path, true);
+        release = request.release;
+        try { snapshot = await request.promise; show(snapshot); }
+        catch (e) { if ((e as Error).name === "AbortError") throw e; }
+        finally { request.release(); release = undefined; }
+      }
+      if (!current()) return;
+      if (!force && snapshot?.entries && !snapshot.next_cursor && Date.now() / 1000 - (snapshot.updated_at || 0) < 30) return;
+      let cursor = "", scan = "";
+      do {
+        const request = acquireNasListing(source.id, path, false, cursor, scan);
+        release = request.release;
+        try {
+          const value = await request.promise;
+          show(value);
+          cursor = value.next_cursor || "";
+          scan = value.scan || "";
+        } finally { request.release(); release = undefined; }
+      } while (cursor && current());
+    })().catch(e => {
+      if (current() && e.name !== "AbortError") {
+        setError(e.message);
+        if ([401, 403, 404, 409].includes(e.status)) {
+          forgetNasDirectory(source.id, path);
+          setEntries([]); setHasSnapshot(false); setUpdatedAt(0);
+        }
+      }
+    }).finally(() => { if (current()) setRefreshing(false); });
+    return () => { generation.current++; release?.(); };
   }, [source?.id, path, revision]);
+  useEffect(() => {
+    if (!source) return;
+    const timer = setTimeout(() => {
+      const names = Object.fromEntries(Object.entries(folderNames).filter(([key]) => key.startsWith(source.id + ":")).slice(-100));
+      void rememberNasLocation({ source_id: source.id, path, names }).catch(() => {});
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [source?.id, path, folderNames]);
   async function action(fn: () => Promise<void>) {
     setBusy(true);
     setError("");
@@ -276,8 +333,8 @@ function NasBrowser({ status }: { status: NasStatus }) {
     if (!source) return;
     confirm({
       risk: "medium",
-      title: t("personal.removeNASConnection"),
-      body: t("personal.removeNameFromRynFilesOnTheNASStayInPlace", { name: source.name }),
+      title: onAdd ? t("drive.disconnect") : t("personal.removeNASConnection"),
+      body: onAdd ? t("drive.disconnectHelp", { name: source.name }) : t("personal.removeNameFromRynFilesOnTheNASStayInPlace", { name: source.name }),
       confirmLabel: t("personal.remove"),
       onConfirm: async () => {
         await action(async () => {
@@ -292,12 +349,12 @@ function NasBrowser({ status }: { status: NasStatus }) {
     <div className="nas-page">
       <header className="nas-heading">
         <div>
-          <h1>NAS</h1>
+          <h1>{onAdd ? t("drive.title") : "NAS"}</h1>
           <p>{t("personal.browseFilesAcrossYourConnectedStorage")}</p>
         </div>
-        <button className="pf-button nas-add" onClick={() => setAdding(true)}>
+        <button className="pf-button nas-add" onClick={() => onAdd ? onAdd() : setAdding(true)}>
           <Plus size={16} />
-          {t("personal.addNAS")}
+          {onAdd ? t("drive.add") : t("personal.addNAS")}
         </button>
       </header>
       {!status.sources.length ? (
@@ -307,11 +364,11 @@ function NasBrowser({ status }: { status: NasStatus }) {
           </span>
           <h2>{t("personal.yourStorageConnected")}</h2>
           <p>
-            {t("personal.bringFoldersFromFeiniuSynologyAndOtherNASSystemsIntoRyn")}
+            {onAdd ? t("drive.liveIntro") : t("personal.bringFoldersFromFeiniuSynologyAndOtherNASSystemsIntoRyn")}
           </p>
-          <button className="pf-button primary" onClick={() => setAdding(true)}>
+          <button className="pf-button primary" onClick={() => onAdd ? onAdd() : setAdding(true)}>
             <Plus size={16} />
-            {t("personal.addNAS")}
+            {onAdd ? t("drive.add") : t("personal.addNAS")}
           </button>
         </section>
       ) : (
@@ -322,6 +379,7 @@ function NasBrowser({ status }: { status: NasStatus }) {
                 key={s.id}
                 disabled={busy}
                 aria-pressed={selected === s.id}
+                data-provider={s.protocol}
                 className={`nas-source ${selected === s.id ? "active" : ""}`}
                 onClick={() => {
                   setSelected(s.id);
@@ -329,7 +387,7 @@ function NasBrowser({ status }: { status: NasStatus }) {
                 }}
               >
                 <span className="nas-source-icon">
-                  <HardDrive size={21} strokeWidth={1.5} />
+                  {["google", "baidu", "onedrive"].includes(s.protocol) ? <Cloud size={23} strokeWidth={1.5} /> : <HardDrive size={21} strokeWidth={1.5} />}
                 </span>
                 <span className="nas-source-label">
                   <strong>{s.name}</strong>
@@ -390,7 +448,7 @@ function NasBrowser({ status }: { status: NasStatus }) {
                               )
                             }
                           >
-                            {part}
+                            {folderNames[`${source.id}:${parts.slice(0, index + 1).join("/")}`] || part}
                           </button>
                         </span>
                       ))}
@@ -453,7 +511,7 @@ function NasBrowser({ status }: { status: NasStatus }) {
                     className={`nas-connection-status ${error ? "attention" : ""}`}
                   >
                     <i />
-                    {busy ? t("personal.working") : error ? t("personal.needsAttention") : t("personal.ready")}
+                    {busy ? t("personal.working") : refreshing ? t("drive.refreshingCache") : error ? t(hasSnapshot ? "drive.cachedOffline" : "personal.needsAttention") : t("personal.ready")}
                   </span>
                   <button
                     className="nas-icon-button"
@@ -464,7 +522,7 @@ function NasBrowser({ status }: { status: NasStatus }) {
                   >
                     <RefreshCw
                       size={17}
-                      className={busy ? "nas-spinning" : ""}
+                      className={refreshing ? "nas-spinning" : ""}
                     />
                   </button>
                   <details className="nas-connection-menu">
@@ -475,6 +533,7 @@ function NasBrowser({ status }: { status: NasStatus }) {
                       <MoreHorizontal size={20} />
                     </summary>
                     <div className="nas-menu-panel">
+                      {onSettings && <button className="pf-button" onClick={() => onSettings(source)}>{t("drive.connectionSettings")}</button>}
                       <span className="nas-eyebrow">{t("personal.connection")}</span>
                       <strong>{source.name}</strong>
                       <dl>
@@ -507,7 +566,7 @@ function NasBrowser({ status }: { status: NasStatus }) {
                         </div>
                       </dl>
                       <p>
-                        {t("personal.connectedThroughThisDeviceFilesStayOnYourNAS")}
+                        {onAdd ? t("drive.stayInPlace") : t("personal.connectedThroughThisDeviceFilesStayOnYourNAS")}
                       </p>
                       <button
                         className="nas-remove"
@@ -534,11 +593,13 @@ function NasBrowser({ status }: { status: NasStatus }) {
                       throw new Error(
                         t("personal.filesMustBe64MiBOrSmallerInThisRelease"),
                       );
-                    await nasRequest(
+                    const response = await nasRequest(
                       `/sources/${source.id}/content?path=${encodeURIComponent((path ? path + "/" : "") + file.name)}`,
                       { method: "PUT", body: file },
                     );
-                    notify("ok", t("personal.fileSavedToNAS"));
+                    const result = await response.json() as { entry?: NasEntry };
+                    if (result.entry) setEntries(addNasCachedEntry(source.id, path, result.entry));
+                    notify("ok", t(onAdd ? "drive.fileSaved" : "personal.fileSavedToNAS"));
                     setRevision((r) => r + 1);
                   });
                 }}
@@ -552,7 +613,7 @@ function NasBrowser({ status }: { status: NasStatus }) {
               <div
                 className={`nas-browser-body ${preview ? "has-preview" : ""}`}
               >
-                <div className="nas-file-area" aria-busy={busy}>
+                <div className="nas-file-area" aria-busy={refreshing}>
                   <table className="nas-table" aria-label={t("personal.nasFiles")}>
                     <thead>
                       <tr>
@@ -585,7 +646,7 @@ function NasBrowser({ status }: { status: NasStatus }) {
                               disabled={busy}
                               onClick={() =>
                                 entry.directory
-                                  ? navigateFolder(entry.path)
+                                  ? (setFolderNames(names => ({ ...names, [`${source.id}:${entry.path}`]: entry.name })), navigateFolder(entry.path))
                                   : void content(entry, "preview")
                               }
                             >
@@ -656,13 +717,13 @@ function NasBrowser({ status }: { status: NasStatus }) {
                       ))}
                     </tbody>
                   </table>
-                  {busy && !entries.length && (
+                  {refreshing && !hasSnapshot && (
                     <div className="nas-loading" role="status">
                       <RefreshCw size={20} className="nas-spinning" />
                       <span>{t("personal.openingYourFiles")}</span>
                     </div>
                   )}
-                  {!busy && !error && visibleEntries.length === 0 && (
+                  {!refreshing && !error && visibleEntries.length === 0 && (
                     <div className="nas-empty">
                       <span className="nas-empty-icon">
                         {query ? (
@@ -704,13 +765,12 @@ function NasBrowser({ status }: { status: NasStatus }) {
               </div>
               <footer className="nas-footer">
                 <span>
-                  {busy
-                    ? t("personal.updating")
-                    : t(query ? "personal.filteredItemsCount" : "personal.itemsCount", { count: visibleEntries.length, total: entries.length })}
+                  {t(query ? "personal.filteredItemsCount" : "personal.itemsCount", { count: visibleEntries.length, total: entries.length })}
+                  {updatedAt > 0 && <> · {t("drive.lastUpdated", { time: new Date(updatedAt * 1000).toLocaleString(i18n.language) })}</>}
                 </span>
                 <div>
                   <ShieldCheck size={14} />
-                  <span>{t("personal.storedOnYourNAS")}</span>
+                  <span>{onAdd ? t("drive.stayInPlace") : t("personal.storedOnYourNAS")}</span>
                   <details className="nas-limits">
                     <summary aria-label={t("personal.fileLimits")} title={t("personal.fileLimits")}>
                       <Info size={14} />
@@ -744,9 +804,10 @@ function NasBrowser({ status }: { status: NasStatus }) {
             onSubmit={(e) => {
               e.preventDefault();
               void action(async () => {
-                await nasJson(`/sources/${source.id}/folders`, {
+                const result = await nasJson<{ entry?: NasEntry }>(`/sources/${source.id}/folders`, {
                   path: (path ? path + "/" : "") + folder,
                 });
+                if (result.entry) setEntries(addNasCachedEntry(source.id, path, result.entry));
                 setFolder(null);
                 setRevision((r) => r + 1);
               });
@@ -787,7 +848,7 @@ function NasBrowser({ status }: { status: NasStatus }) {
   );
 }
 
-function AddNas({
+export function AddNas({
   status,
   onClose,
   onAdded,
@@ -834,7 +895,7 @@ function AddNas({
               setProtocol("smb");
             }}
           >
-            {status.systems.map((s) => (
+            {status.systems.filter(s => !["google", "baidu", "onedrive"].includes(s.id)).map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}
               </option>

@@ -28,24 +28,24 @@ export default function WorkspaceSelect({ label, caption, value, options, disabl
     document.addEventListener("pointerdown", outside);
     return () => document.removeEventListener("pointerdown", outside);
   }, [open]);
-  return <div ref={root} className={`${styles.picker} ${grow ? styles.devicePicker : ""}`}
+  return <div ref={root} className={`${styles.picker} sv-ws-picker ${grow ? styles.devicePicker : ""}`}
     onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setOpen(false); }}
     onKeyDown={event => {
       if (event.key === "Escape") { event.preventDefault(); setOpen(false); trigger.current?.focus(); }
     }}>
-    <button ref={trigger} type="button" className={styles.pickerTrigger} aria-label={label}
+    <button ref={trigger} type="button" className={`${styles.pickerTrigger} sv-ws-pickerTrigger`} aria-label={label}
       aria-haspopup="listbox" aria-expanded={open} aria-controls={open ? id : undefined} disabled={disabled}
       onClick={() => setOpen(!open)} onKeyDown={event => {
         if (["ArrowDown", "ArrowUp"].includes(event.key)) { event.preventDefault(); setOpen(true); }
       }}>
-      {icon && <span className={styles.pickerIcon}>{icon}</span>}
-      <span className={styles.pickerText}><span className={styles.fieldCaption}>{caption}</span><span>{selected?.label || placeholder || tr("请选择")}</span></span>
-      <ChevronDown size={15} className={styles.pickerChevron} aria-hidden="true" />
+      {icon && <span className={`${styles.pickerIcon} sv-ws-pickerIcon`}>{icon}</span>}
+      <span className={`${styles.pickerText} sv-ws-pickerText`}><span className={`${styles.fieldCaption} sv-ws-fieldCaption`}>{caption}</span><span>{selected?.label || placeholder || tr("请选择")}</span></span>
+      <ChevronDown size={15} className={`${styles.pickerChevron} sv-ws-pickerChevron`} aria-hidden="true" />
     </button>
-    {open && <div id={id} className={styles.pickerMenu} role="listbox" aria-label={label}>
+    {open && <div id={id} className={`${styles.pickerMenu} sv-ws-pickerMenu`} role="listbox" aria-label={label}>
       {options.map((option, index) => <button key={option.value} ref={element => { choices.current[index] = element; }}
         type="button" role="option" aria-selected={option.value === value} tabIndex={-1}
-        className={styles.pickerOption} onClick={() => { onChange(option.value); setOpen(false); trigger.current?.focus(); }}
+        className={`${styles.pickerOption} sv-ws-pickerOption`} onClick={() => { onChange(option.value); setOpen(false); trigger.current?.focus(); }}
         onKeyDown={event => {
           let next = index;
           if (event.key === "ArrowDown") next = (index + 1) % options.length;
@@ -55,8 +55,8 @@ export default function WorkspaceSelect({ label, caption, value, options, disabl
           else return;
           event.preventDefault(); choices.current[next]?.focus();
         }}>
-        {option.icon && <span className={styles.optionIcon}>{option.icon}</span>}
-        <span className={styles.optionText}>{option.label}{option.detail && <small>{option.detail}</small>}</span>
+        {option.icon && <span className={`${styles.optionIcon} sv-ws-optionIcon`}>{option.icon}</span>}
+        <span className={`${styles.optionText} sv-ws-optionText`}>{option.label}{option.detail && <small>{option.detail}</small>}</span>
         {option.value === value && <Check size={15} aria-hidden="true" />}
       </button>)}
     </div>}

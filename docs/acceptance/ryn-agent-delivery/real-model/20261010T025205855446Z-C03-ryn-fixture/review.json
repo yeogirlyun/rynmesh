@@ -1,0 +1,25 @@
+{
+  "kind": "root_controller_review",
+  "formal_case_score": false,
+  "real_model": false,
+  "run_sha256": "4bc4fdb07742f3e2d2ffe8760be4080621b72b480fb6db7c477d7780f96081c4",
+  "checks": {
+    "initial_private": true,
+    "default_selected": true,
+    "only_b_visible": true,
+    "exact_receiver_probe": true,
+    "other_receiver_empty": true,
+    "siblings_and_source_unchanged": true,
+    "other_settings_unchanged": true,
+    "code_unchanged": true
+  },
+  "model_calls": 13,
+  "write_dispatches": 4,
+  "runtime_outcome": "unverified",
+  "limitations": [
+    "One physical host, signed catalog exchange through in-memory mesh; actual loopback HTTP synthetic inference.",
+    "Scripted planner/checker is not Agent effectiveness evidence; no external model credentials used.",
+    "Four real business write dispatches; cannot stand in for R02 single-effective-write acceptance.",
+    "Initial run lacked post-mutation scripted readbacks; later script added them, production verifier was not weakened."
+  ]
+}

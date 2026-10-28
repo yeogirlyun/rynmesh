@@ -1,0 +1,119 @@
+{
+  "kind": "native-document-failure-readonly-audit",
+  "date": "2026-10-11",
+  "task_id": "agent_38afad02ea41468f9f96281f26e32170",
+  "formal": false,
+  "historical_outcome_unchanged": {
+    "status": "failed",
+    "run_state": "ended",
+    "error": "agent_time_limit",
+    "outcome_status": "unverified"
+  },
+  "evidence": [
+    ".codex-tmp/usable-desktop-20261011-v2/observation.json",
+    ".codex-tmp/usable-desktop-20261011-v2/tasks-current.json",
+    ".codex-tmp/usable-desktop-20261011-v2/independent-file-check.json",
+    ".codex-tmp/usable-desktop-20261011-v2/task-request.json"
+  ],
+  "timeline_utc": [
+    {
+      "at": "2026-10-11T11:02:01.873167+00:00",
+      "event": "task_created",
+      "finding": "Harness omitted list from both directory scopes. input had read_ai; output had read_ai/create_file. Product correctly denied directory listing."
+    },
+    {
+      "at": "2026-10-11T11:08:04.430529+00:00",
+      "event": "scope_revision_2",
+      "finding": "Normal scope update added list to the same task after 9 model calls. Prior execution time remained charged."
+    },
+    {
+      "at": "2026-10-11T11:13:53.734212+00:00",
+      "event": "file_created",
+      "finding": "Following native approval, one PUT returned 201 for output/project-summary.md: 453 bytes, approved content matched, no overwrite."
+    },
+    {
+      "at": "2026-10-11T11:14:38.445882+00:00",
+      "event": "candidate_final",
+      "finding": "The model claimed input/progress.md remained 212 bytes in its directory verification. At this time its post-write tool trace had listed output only. This temporal/procedural claim lacked evidence."
+    },
+    {
+      "at": "2026-10-11T11:14:43.983405+00:00",
+      "event": "mechanical_input_directory_recheck",
+      "finding": "The server verifier independently re-listed the input directory and passed the original observation comparison. This occurred AFTER the candidate final."
+    },
+    {
+      "at": "2026-10-11T11:14:46.779299+00:00",
+      "event": "mechanical_input_fragment_recheck",
+      "finding": "The server verifier re-read the input fragment and passed version/range/content comparison. All five mechanical checks ultimately passed; this does not retroactively establish what the model had checked before its candidate final."
+    },
+    {
+      "at": "2026-10-11T11:14:59.580641+00:00",
+      "event": "semantic_checker_started",
+      "finding": "Separate checker inference began."
+    },
+    {
+      "at": "2026-10-11T11:16:58.871814+00:00",
+      "event": "semantic_checker_unknown",
+      "finding": "Checker reported the unsupported post-write input directory claim. Its statement that input was not re-observed must be interpreted relative to the original candidate final, since the later server mechanical recheck did occur. One bounded correction continuation was scheduled."
+    },
+    {
+      "at": "2026-10-11T11:17:32.309823+00:00",
+      "event": "model_correction_input_listing",
+      "finding": "Model performed a fresh input listing showing 212 bytes."
+    },
+    {
+      "at": "2026-10-11T11:17:33.079732+00:00",
+      "event": "model_correction_input_read",
+      "finding": "Model re-read input; content version matched the original."
+    },
+    {
+      "at": "2026-10-11T11:17:39.980795+00:00",
+      "event": "model_call_18_started",
+      "finding": "A final correction inference began, but no subsequent verification completed."
+    },
+    {
+      "at": "2026-10-11T11:17:50.309188+00:00",
+      "event": "failed",
+      "finding": "The 600-second runtime deadline stopped execution with agent_time_limit. This was not an 18-call allowance exhaustion."
+    }
+  ],
+  "saved_deliverable": {
+    "path": "output/project-summary.md",
+    "bytes": 453,
+    "sha256": "825c18e4b3d31152c8b0140b3140e00b6d25a0e37ef50b67a8a59ed46a01c949",
+    "business_write_count": 1,
+    "approved_content_matches": true,
+    "input_unchanged_independent_check": true,
+    "correct_core_facts": true,
+    "native_open_observed": true,
+    "limitation": "Saved/opened artifact success cannot replace task-level failed/unverified."
+  },
+  "limits_and_usage": {
+    "triggered_limit": "limits.max_seconds = 600",
+    "max_steps": 24,
+    "model_calls": 18,
+    "tool_calls": 21,
+    "lifetime_max_model_calls": 128,
+    "lifetime_max_seconds": 3600,
+    "public_call_active_seconds": 398.1750000000138,
+    "explanation": "Runtime elapsed_seconds counts the whole claimed worker tick, including preparation/validation; budget active_seconds sums narrower model/tool dispatch intervals. The public archived task omitted runtime elapsed_seconds, so its exact historical value and detailed overhead breakdown cannot be reconstructed from the available public evidence. Neither the 128-call lifetime limit nor the 3600-second lifetime limit triggered this failure."
+  },
+  "attribution": {
+    "harness": "Initial missing list permission caused the initial resource-access blockage. No product authorization bypass or grant defect established.",
+    "model_behavior": "Repeated unproductive probes and an unsupported temporal verification statement were observed GLM choices. Checker inference took approximately 119 seconds. A different future model trajectory is not guaranteed by deterministic product fixes.",
+    "confirmed_product_usability_gap": "The UI showed narrower call time as execution time while omitting the actual per-run deadline counter and limit. The run_timing change exposes these separately without modifying admission, budgets, stopping behavior or historical verdicts.",
+    "repair_feedback_projection_gap": "At audit time repair feedback contained check statuses and evidence IDs but omitted the corresponding mechanical checked_at/facts/coverage. Supplying bounded current-cycle evidence could support a truthful correction; it must not turn post-final evidence into proof that the original statement was justified. This is a separate implementation/review workstream, not part of the timing fix."
+  },
+  "boundaries": {
+    "historical_verdict_rewritten": false,
+    "budget_increased": false,
+    "case_specific_hardcoding": false,
+    "audit_model_calls": 0,
+    "audit_service_launches": 0,
+    "private_or_heldout_read": false,
+    "build_cases_read": false,
+    "formal_full_scoring_or_12k_stress_resumed": false,
+    "other_verified_readonly_or_two_host_tasks_substituted": false,
+    "required_future_evidence": "A fresh authorized native file-generation task must independently complete its write, openable artifact and verified task outcome. Deterministic timing tests and unrelated verified tasks do not establish that end-to-end success."
+  }
+}

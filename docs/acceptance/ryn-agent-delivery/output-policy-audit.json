@@ -1,0 +1,36 @@
+{
+  "kind": "output_policy_configuration_audit",
+  "status": "open_design_issue_not_changed",
+  "source_id": "src-7de9fb1d36c44bc8",
+  "model": "glm-5.3-flash",
+  "read_only_source_observation": {
+    "enabled": true,
+    "status": "ready",
+    "context_window": 1000000,
+    "max_output_tokens": 128000,
+    "request_defaults": {
+      "thinking": {
+        "type": "enabled"
+      },
+      "reasoning_effort": "max"
+    }
+  },
+  "observed_code_policy": {
+    "runtime": "_complete caps each reservation at min(4096, model max_output_tokens).",
+    "bridge": "complete independently caps outgoing maximum at4096, model configuration and context remainder.",
+    "query_fixture": "isolated primary source uses prepare defaults; configured owner transport replaced in memory, model-row output policy remains fixture default.",
+    "reference": "documents.py and zcode-adapter.mjs also cap4096."
+  },
+  "evidence": [
+    "real-model/20261010T032227845919Z-R02-ryn/run.json calls5,7,8 returned empty length with4096 output tokens."
+  ],
+  "interpretation": "Configured source reasoning=max plus a4096 generation ceiling may contribute to empty completions. Correlation is not proof of all failures; no source setting, reasoning mode, frozen input, budget or ceiling changed by this audit.",
+  "next_review": "Determine intended per-request Agent output policy versus source/user configuration and total task budgets. Any change must apply fairly to reference and candidate, retain prior failed runs and explicit policy version; never silently raise one cohort cap or change owner source.",
+  "code_sha256": {
+    "rynmesh/agent_runtime/runtime.py": "914bc655116936ad3b5f3ae9a5dff6d2bd162caee194d9ffccb7d664aa498195",
+    "rynmesh/agent_runtime/bridge.py": "713389d44d705988aad5f4b49f5ccdd600e835dd0e92e8fcb5d42333e298c861",
+    "docs/acceptance/ryn-agent-delivery/real-model/query_cases.py": "743d5310916cdad57e6696c46e72ae68f69fbd8c59345234b72b37c78c7a48be",
+    "docs/acceptance/ryn-agent-delivery/reference/documents.py": "d44c5b77bc087dfb1842c9b685778f456b7f29a7c1e19c85abc9cbca49e40e7b",
+    "docs/acceptance/ryn-agent-delivery/reference/zcode-adapter.mjs": "333d4d0beb772e7dfb2098fe050878c84c17922cbb9b5b6ee1b919e35c66199c"
+  }
+}

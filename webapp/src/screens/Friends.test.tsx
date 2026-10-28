@@ -2,11 +2,12 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RELOAD_FAILURE_NOTICE } from "../domain/actThenReload";
-import { friendsApi, invitationText, extractInvite } from "../domain/friendsClient";
+import { friendsApi, invitationText, extractInvite, installationLink } from "../domain/friendsClient";
 import type { FriendInvitePreview, FriendRecord } from "../domain/friendTypes";
 import Friends from "./Friends";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import FriendConversation from "./components/FriendConversation";
+import * as deepLinks from "../components/InviteDeepLinks";
 
 const mocks = vi.hoisted(() => ({ confirm: vi.fn() }));
 vi.mock("../appContext", () => ({ useAppContext: () => ({ confirm: mocks.confirm }) }));
@@ -18,12 +19,116 @@ const preview: FriendInvitePreview = { ...friend, invite_id: "i1", expires_at: "
 beforeEach(() => {
   mocks.confirm.mockReset();
   vi.spyOn(friendsApi, "invitationContext").mockResolvedValue({ endpoint: friend.endpoint, address_category: "LAN private" });
+  vi.spyOn(friendsApi, "continuation").mockResolvedValue({});
+  vi.spyOn(friendsApi, "saveContinuation").mockResolvedValue({ id: "saved-invitation" });
+  vi.spyOn(friendsApi, "clearContinuation").mockResolvedValue({ cleared: true });
+  vi.spyOn(friendsApi, "aiJoins").mockResolvedValue({ operations: [] });
   vi.spyOn(friendsApi, "list").mockResolvedValue({ friends: [] });
   vi.spyOn(friendsApi, "invites").mockResolvedValue({ invites: [] });
   vi.spyOn(friendsApi, "cards").mockResolvedValue({ cards: [] });
   vi.spyOn(friendsApi, "history").mockResolvedValue({ messages: [] });
+  vi.spyOn(friendsApi, "diagnostics").mockResolvedValue({ from_peer_id: "me", scope: "outbound_direct", running: false, links: [] });
+  HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
+  HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
 });
+// The invite flows live in the Add a friend dialog.
+const openAddFriend = async () => { await userEvent.click(screen.getAllByRole("button", { name: "Add a friend" })[0]); return screen.findByRole("dialog", { name: "Add a friend" }); };
+const useInviteTab = () => userEvent.click(screen.getByRole("button", { name: "Use an invite" }));
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+it("uses a reviewed invitation to repair an existing friend's address without joining or granting", async () => {
+  vi.mocked(friendsApi.list).mockResolvedValue({ friends: [friend] });
+  vi.spyOn(friendsApi, "inspect").mockResolvedValue({ ...preview, endpoint: "http://192.168.1.9:8791" });
+  const reconnect = vi.spyOn(friendsApi, "reconnect").mockResolvedValue({ ...friend, endpoint: "http://192.168.1.9:8791" });
+  const join = vi.spyOn(friendsApi, "join");
+  const user = userEvent.setup();
+  render(<MemoryRouter initialEntries={["/friends"]}><Friends /></MemoryRouter>);
+  await openAddFriend(); await useInviteTab();
+  await user.type(screen.getByLabelText("Friend invite"), "rynmesh://join/new-address");
+  await user.click(screen.getByRole("button", { name: "Review invite" }));
+  expect(await screen.findByText(/Keep the original relationship, AI permissions and history/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Update this friend's address" }));
+  await screen.findByText(/Friend address verified and updated/);
+  expect(reconnect).toHaveBeenCalledWith("rynmesh://join/new-address");
+  expect(join).not.toHaveBeenCalled();
+});
+
+it("restores an installed-app invitation for review without accepting it", async () => {
+  vi.mocked(friendsApi.continuation).mockResolvedValue({ id: "restored-id", invite_uri: "rynmesh://join/restored" });
+  const inspect = vi.spyOn(friendsApi, "inspect").mockResolvedValue(preview);
+  const join = vi.spyOn(friendsApi, "join");
+  const user = userEvent.setup();
+  render(<MemoryRouter initialEntries={["/friends"]}><Friends /></MemoryRouter>);
+  await waitFor(() => expect(screen.getByLabelText("Friend invite")).toHaveValue("rynmesh://join/restored"));
+  expect(screen.getByLabelText("Friend invite")).toHaveFocus();
+  expect(inspect).not.toHaveBeenCalled();
+  expect(join).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Review invite" }));
+  await user.click(await screen.findByRole("button", { name: "Cancel review" }));
+  expect(friendsApi.clearContinuation).toHaveBeenCalledWith("saved-invitation");
+  expect(screen.getByLabelText("Friend invite")).toHaveValue("");
+  expect(join).not.toHaveBeenCalled();
+});
+
+it("keeps invitation capability in a URL fragment and supports paste-link fallback", () => {
+  const result = { invite: preview, invite_uri: "rynmesh://join/signed-data" };
+  const link = installationLink(result);
+  expect(new URL(link).search).toBe("");
+  expect(new URL(link).pathname).toBe("/invite");
+  expect(extractInvite(link)).toBe(result.invite_uri);
+  expect(extractInvite(invitationText(result))).toBe(result.invite_uri);
+});
+
+function LocationProbe() { const location = useLocation(); return <output aria-label="Current route">{location.pathname}{location.search}</output>; }
+const aiPreview: FriendInvitePreview = { ...preview, purpose: "ai", review_token: "review-1", ai: {
+  network_id: "friends-net", ready: true, sharing: true, busy: false, service: {
+    package_id: "friend-model", model_alias: "Friend Qwen", capabilities: [], context_window: 4096, max_output_tokens: 256,
+    pricing: { currency: "DEV_TASK_BALANCE", input_per_1k: 0, output_per_1k: 0, minimum: 0, maximum_per_task: 1 }, privacy: {},
+  },
+} };
+
+it("reviews the actual AI and navigates only after durable authorization and discovery", async () => {
+  vi.spyOn(friendsApi, "inspect").mockResolvedValue(aiPreview);
+  vi.spyOn(friendsApi, "beginAIJoin").mockResolvedValue({ operation_id: "i1", peer_id: "alice", node_name: "Alice", service_id: "friend-model", network_id: "friends-net", stage: "complete" });
+  const ordinary = vi.spyOn(friendsApi, "join");
+  const user = userEvent.setup();
+  render(<MemoryRouter initialEntries={["/friends"]}><Friends /><LocationProbe /></MemoryRouter>);
+  await openAddFriend(); await useInviteTab();
+  await user.type(screen.getByLabelText("Friend invite"), "rynmesh://join/ai");
+  await user.click(screen.getByRole("button", { name: "Review invite" }));
+  expect(await screen.findByRole("heading", { name: "Review this friend's AI" })).toHaveFocus();
+  expect(screen.getByText(/This is not RMB billing/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Accept and start chatting" }));
+  await waitFor(() => expect(screen.getByLabelText("Current route")).toHaveTextContent("/ask?peer=alice&service=friend-model&network=friends-net"));
+  expect(friendsApi.beginAIJoin).toHaveBeenCalledWith("rynmesh://join/ai", "review-1");
+  expect(ordinary).not.toHaveBeenCalled();
+});
+
+it("keeps partial authorization out of Ask and focuses its recovery error", async () => {
+  vi.spyOn(friendsApi, "inspect").mockResolvedValue(aiPreview);
+  vi.spyOn(friendsApi, "beginAIJoin").mockResolvedValue({ operation_id: "i1", peer_id: "alice", node_name: "Alice", service_id: "friend-model", network_id: "friends-net", stage: "joining", error: "ai_grant_pending" });
+  const user = userEvent.setup();
+  render(<MemoryRouter initialEntries={["/friends"]}><Friends /><LocationProbe /></MemoryRouter>);
+  await openAddFriend(); await useInviteTab();
+  await user.type(screen.getByLabelText("Friend invite"), "rynmesh://join/ai");
+  await user.click(screen.getByRole("button", { name: "Review invite" }));
+  await user.click(await screen.findByRole("button", { name: "Accept and start chatting" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("AI authorization is unfinished");
+  expect(screen.getByRole("alert")).toHaveFocus();
+  expect(screen.getByLabelText("Current route")).toHaveTextContent("/friends");
+});
+
+it("resumes a saved operation after remount without creating another acceptance", async () => {
+  const operation = { operation_id: "original-op", peer_id: "alice", node_name: "Alice", service_id: "friend-model", network_id: "friends-net", stage: "discovering" as const, error: "could_not_join_friend" };
+  vi.mocked(friendsApi.aiJoins).mockResolvedValue({ operations: [operation] });
+  const resume = vi.spyOn(friendsApi, "resumeAIJoin").mockResolvedValue({ ...operation, stage: "complete", error: "" });
+  const begin = vi.spyOn(friendsApi, "beginAIJoin");
+  render(<MemoryRouter initialEntries={["/friends"]}><Friends /><LocationProbe /></MemoryRouter>);
+  await userEvent.setup().click(await screen.findByRole("button", { name: "Continue original operation" }));
+  expect(resume).toHaveBeenCalledWith("original-op");
+  expect(begin).not.toHaveBeenCalled();
+  await waitFor(() => expect(screen.getByLabelText("Current route")).toHaveTextContent("/ask?peer=alice"));
+});
 
 it("clears stale friend and card load warnings when background polling recovers", async () => {
   vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
@@ -60,9 +165,14 @@ describe("Friend pairing recovery", () => {
     const create = vi.spyOn(friendsApi, "createInvite").mockResolvedValue({ invite_uri: "rynmesh://join/test", invite: preview });
     const inspect = vi.spyOn(friendsApi, "inspect");
     const join = vi.spyOn(friendsApi, "join");
+    let release!: (value: { endpoint: string; address_category: string }) => void;
+    vi.mocked(friendsApi.invitationContext).mockImplementationOnce(() => new Promise((done) => { release = done; }));
     render(<MemoryRouter><Friends /></MemoryRouter>);
+    await openAddFriend();
     expect(screen.getByRole("button", { name: "Create invite" })).toBeDisabled();
-    expect(await screen.findByText(/Sharing address:.*192.168.1.2/)).toHaveTextContent("same local network");
+    await act(async () => release({ endpoint: friend.endpoint, address_category: "LAN private" }));
+    expect(await screen.findByText(/192.168.1.2/)).toHaveTextContent("LAN private");
+    expect(screen.getByText(/same local network/)).toBeInTheDocument();
     expect(create).not.toHaveBeenCalled();
     expect(inspect).not.toHaveBeenCalled();
     expect(join).not.toHaveBeenCalled();
@@ -73,6 +183,7 @@ describe("Friend pairing recovery", () => {
   it("keeps creation disabled after address load failure and recovers after retry", async () => {
     vi.mocked(friendsApi.invitationContext).mockRejectedValueOnce(new Error("offline"));
     render(<MemoryRouter><Friends /></MemoryRouter>);
+    await openAddFriend();
     expect(await screen.findByText(/Could not load your sharing address/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create invite" })).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: "Refresh sharing address" }));
@@ -83,6 +194,7 @@ describe("Friend pairing recovery", () => {
     vi.spyOn(friendsApi, "inspect").mockResolvedValue({ ...preview, address_category: "loopback" });
     const join = vi.spyOn(friendsApi, "join");
     render(<MemoryRouter><Friends /></MemoryRouter>);
+    await openAddFriend(); await useInviteTab();
     fireEvent.change(screen.getByLabelText("Friend invite"), { target: { value: "rynmesh://join/test" } });
     await userEvent.click(screen.getByRole("button", { name: "Review invite" }));
     expect(await screen.findByText(/This address works only on this computer/)).toHaveTextContent("Reachability has not been tested");
@@ -96,6 +208,7 @@ describe("Friend pairing recovery", () => {
     const join = vi.spyOn(friendsApi, "join").mockResolvedValue(friend);
     const user = userEvent.setup();
     render(<MemoryRouter><Friends /></MemoryRouter>);
+    await openAddFriend(); await useInviteTab();
     await user.type(screen.getByLabelText("Friend invite"), "rynmesh://join/alice");
     await user.click(screen.getByRole("button", { name: "Review invite" }));
     fireEvent.change(screen.getByLabelText("Friend invite"), { target: { value: "rynmesh://join/bob" } });
@@ -115,6 +228,8 @@ describe("Friend pairing recovery", () => {
     const user = userEvent.setup();
     vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(new Error("Clipboard unavailable. Select and copy the invitation text."));
     render(<MemoryRouter><Friends /></MemoryRouter>);
+    await openAddFriend();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Create invite" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Create invite" }));
     await user.click(await screen.findByRole("button", { name: "Copy invitation" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Clipboard unavailable");
@@ -128,6 +243,8 @@ describe("Friend pairing recovery", () => {
     const cancel = vi.spyOn(friendsApi, "cancel").mockResolvedValue({});
     const user = userEvent.setup();
     render(<MemoryRouter><Friends /></MemoryRouter>);
+    await openAddFriend();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Create invite" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Create invite" }));
     await screen.findByRole("button", { name: "Cancel invite" });
     expect(cancel).not.toHaveBeenCalled();
@@ -207,14 +324,15 @@ describe("Friend removal", () => {
     });
     const user = userEvent.setup();
     render(<MemoryRouter><Friends /></MemoryRouter>);
-    await user.click(await screen.findByRole("button", { name: "Remove" }));
+    await user.click(await screen.findByRole("button", { name: "Connection" }));
+    await user.click(await screen.findByRole("button", { name: "Remove friend" }));
     expect(revoke).not.toHaveBeenCalled();
     const request = mocks.confirm.mock.calls[0][0];
     expect(request.title).toBe("Remove Alice?");
     expect(request.body).toContain("Copies they already saved cannot be recalled");
     await act(() => request.onConfirm());
     expect(revoke).toHaveBeenCalledWith(friend.relationship_id);
-    expect(await screen.findByText("No friends yet. Create or paste an invite above.")).toBeInTheDocument();
+    expect(await screen.findByText("No friends yet")).toBeInTheDocument();
     expect(screen.queryByText("Alice")).not.toBeInTheDocument();
   });
 
@@ -223,7 +341,7 @@ describe("Friend removal", () => {
     const revoke = vi.spyOn(friendsApi, "revoke").mockResolvedValue({});
     render(<MemoryRouter><Friends /></MemoryRouter>);
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: "Remove" }));
+    await user.click(await screen.findByRole("button", { name: "Remove friend" }));
     vi.mocked(friendsApi.list).mockRejectedValueOnce(new Error("list down"));
     await act(() => mocks.confirm.mock.calls[0][0].onConfirm());
     expect(revoke).toHaveBeenCalledWith(friend.relationship_id);
@@ -325,3 +443,22 @@ describe("Friend attachments", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not download this attachment. Access may have been removed.");
   });
 });
+
+  it("loads an opened invitation only on request and still requires review before joining", async () => {
+    const clear = vi.fn();
+    vi.spyOn(deepLinks, "useInviteDeepLink").mockReturnValue({ pending: "rynmesh://join/OPENED_MARKER", clear });
+    const inspect = vi.spyOn(friendsApi, "inspect").mockResolvedValue(preview);
+    const join = vi.spyOn(friendsApi, "join").mockResolvedValue(friend);
+    render(<MemoryRouter><Friends /></MemoryRouter>);
+    await openAddFriend(); await useInviteTab();
+    fireEvent.change(screen.getByLabelText("Friend invite"), { target: { value: "previous paste" } });
+    expect(inspect).not.toHaveBeenCalled();
+    expect(join).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Load opened invitation" }));
+    expect(screen.getByLabelText("Friend invite")).toHaveValue("rynmesh://join/OPENED_MARKER");
+    expect(clear).toHaveBeenCalledTimes(1);
+    expect(inspect).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Review invite" }));
+    expect(await screen.findByRole("button", { name: "Add this friend" })).toBeInTheDocument();
+    expect(join).not.toHaveBeenCalled();
+  });

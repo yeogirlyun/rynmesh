@@ -1,0 +1,25 @@
+{
+  "checked_at": "2026-10-13T12:29:00.747769+00:00",
+  "runtime": "existing desktop source launcher after restart",
+  "startup_failure": "ModuleNotFoundError: No module named 'rynmesh.drop.integration'",
+  "api": {
+    "/health": {
+      "status": 200,
+      "count": null
+    },
+    "/api/local/agent/settings": {
+      "status": 200,
+      "count": null,
+      "enabled": true,
+      "has_selected_model": true
+    },
+    "/api/local/agent/models": {
+      "status": 200,
+      "count": 20
+    },
+    "/api/local/agent/tasks": {
+      "status": 200,
+      "count": 5
+    }
+  }
+}

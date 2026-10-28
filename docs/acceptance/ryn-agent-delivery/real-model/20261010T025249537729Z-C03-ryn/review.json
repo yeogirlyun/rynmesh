@@ -1,0 +1,38 @@
+{
+  "kind": "root_development_review",
+  "case_id": "C03",
+  "formal_case_score": false,
+  "verdict": "development_failed_required_verified_outcome",
+  "run_sha256": "2f824ee397d5622bf3d4e5e6758467a23d5a61dd46f5a78a906946a604ced4dd",
+  "checks": {
+    "initial_private": true,
+    "default_selected": true,
+    "only_b_visible": true,
+    "exact_receiver_probe": true,
+    "other_receiver_empty": true,
+    "siblings_and_source_unchanged": true,
+    "other_settings_unchanged": true,
+    "code_unchanged": true,
+    "owner_source_unchanged": true,
+    "all_mechanical_passed": true
+  },
+  "model_calls": 7,
+  "elapsed_seconds": 200.06200000000536,
+  "business_tool_dispatches": 11,
+  "write_dispatches": 4,
+  "runtime_outcome": "unverified",
+  "failure": {
+    "stage": "verification_model",
+    "finish_reason": "length",
+    "input_tokens": 21921,
+    "output_tokens": 4096,
+    "observation": "Bridge rejected the empty length-exhausted response before JSON parsing; existing JSON-format retry was not reached."
+  },
+  "report_review": "Main configuration facts and unchanged settings agree with actual tool results. Candidate distinguishes saved permissions/readiness from untested receiver reachability and explicit inference probes. The phrase agent_supported=false (tool calls unverified) is imprecise: setup actually attempted and failed the capability probe; not counted as evidence that testing never happened. The overall opening completion claim cannot substitute for required independent semantic verification.",
+  "limitations": [
+    "One host, authenticated in-memory peer/catalog exchange, actual synthetic loopback inference; not two physical nodes or two model providers.",
+    "Frozen C03 outcome=verified gate failed; do not treat successful business state as a complete pass.",
+    "Root review is not designated non-author Astra review.",
+    "No unchanged resampling; this failed run is retained before checker-repair implementation."
+  ]
+}

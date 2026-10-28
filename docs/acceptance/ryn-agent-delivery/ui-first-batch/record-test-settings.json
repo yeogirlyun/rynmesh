@@ -1,0 +1,10 @@
+{
+  "enabled": true,
+  "model_id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+  "permission_mode": "confirm_changes",
+  "allowed_write_tools": [],
+  "max_steps": 16,
+  "max_seconds": 180,
+  "max_context_chars": 60000,
+  "max_output_chars": 20000
+}

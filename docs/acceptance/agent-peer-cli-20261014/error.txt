@@ -1,0 +1,5 @@
+locator.waitFor: Timeout 30000ms exceeded.
+Call log:
+[2m  - waiting for getByRole('button', { name: '发送', exact: true }) to be visible[22m
+
+    at D:\code\rynmesh\.codex-tmp\agent-peer-ui-proof.cjs:25:56

@@ -1,0 +1,61 @@
+{
+  "kind": "deterministic-upstream-goal-continuation",
+  "formal_case_score": false,
+  "trials": [
+    {
+      "first_verification_passed": true,
+      "verifications": [
+        true
+      ],
+      "result": {
+        "response": "Synthetic explanation complete.",
+        "turn_id": "turn_2ac3149c-7f91-4f51-a78d-31a123fa217f",
+        "registered_tools": [
+          "ryn_fixture_read"
+        ],
+        "event_count": 12,
+        "persistent_session": true,
+        "upstream_target_verification": true,
+        "target_status": "complete",
+        "extra_host_tools": false,
+        "real_model": false
+      },
+      "dispatch_counts": {
+        "model": 2,
+        "tool": 0,
+        "approval": 0
+      },
+      "elapsed_seconds": 3.9840000000003783,
+      "stderr_bytes": 0,
+      "upstream_commit": "29628c9acdb81b703bbd4080c207a0e7ce5e276e"
+    },
+    {
+      "first_verification_passed": false,
+      "verifications": [
+        false,
+        true
+      ],
+      "result": {
+        "response": "Synthetic explanation complete.",
+        "turn_id": "turn_c0edc44f-bb1d-4677-8c4d-3cfcbdd694c5",
+        "registered_tools": [
+          "ryn_fixture_read"
+        ],
+        "event_count": 22,
+        "persistent_session": true,
+        "upstream_target_verification": true,
+        "target_status": "complete",
+        "extra_host_tools": false,
+        "real_model": false
+      },
+      "dispatch_counts": {
+        "model": 4,
+        "tool": 0,
+        "approval": 0
+      },
+      "elapsed_seconds": 4.562999999998283,
+      "stderr_bytes": 0,
+      "upstream_commit": "29628c9acdb81b703bbd4080c207a0e7ce5e276e"
+    }
+  ]
+}

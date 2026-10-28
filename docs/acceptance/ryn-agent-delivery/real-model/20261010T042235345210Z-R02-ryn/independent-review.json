@@ -1,0 +1,29 @@
+{
+  "reviewer": "sharing_review / gpt-6-astra high",
+  "verdict": "development_failed_mechanical_checks_passed",
+  "task_status": "completed",
+  "goal_outcome": "unverified",
+  "real_model": "glm-5.3-flash",
+  "model_calls": 5,
+  "elapsed_seconds": 234.875,
+  "failures": [
+    "Checker timed out after120.391 seconds; goal-coverage remained unknown. Exit0 and null parent error are not acceptance success.",
+    "Main report says the model itself was not actually probed, using unknown evidence fields to support a historical negative. Setup audit contains beta chat HTTP200 and unsupported tools result. The supported statement is that this task did not add a probe and the current catalog lacks usable probe evidence."
+  ],
+  "verified_mechanisms": [
+    "Original worker49544 and launcher51592 are separately recorded; original worker handle retained before termination and signaled with wait_status0 before replacement worker35364.",
+    "Exact approval identity preserved across restart; approved04:23:19.808084Z before sole write04:23:19.874370Z. Zero preapproval writes, one business write and one source-file replacement.",
+    "model-b is shared under friends scope with only node-b effective grant; model-a/c/d projections and execution model unchanged. Original owner source and frozen code unchanged.",
+    "No post-write list_models call. Its historical observation check uses the verified sharing receipt to explain only sharing/share_scope/rule_revision/model_settings changes; original required criteria retained.",
+    "Five calls use effective cap128000 with thinking enabled and reasoning max. Four known calls consume41244 tokens; timeout retains185513 reserved tokens. Charged total226757, usage_complete=false.",
+    "Recorded signed node-b probe allowed with one upstream request; ungranted peer denied with zero. Five captured request credential scans report no egress."
+  ],
+  "report_supported_scope": "Sharing configuration, exact approval, sole recipient and unverified receiver connectivity/propagation were supported. Later collector probes were not facts known to the main model at report time.",
+  "limitations": ["single physical Windows host", "isolated fixture and controller approval path", "explicit generation metadata mapping", "not a formal trial"],
+  "evidence_sha256": {
+    "run.json": "ea4455b68f415534eaa38f5ba75acd76dd2f63190494b89483d122a099520d07",
+    "start-worker.json": "dce1644fa62b5a57fbb42e4272403fe70f3804f080f6960029f962c8ed2d8955",
+    "recover-worker.json": "1d0bd851ef3f6364fdba6aa0032ff4e47b53d8a8c7906617714a992a01c4662c",
+    "approval-ready.json": "dda29abb64845f03ed23b1c33fef5d35642b6b430c17853c0229f3fd107ddbd5"
+  }
+}

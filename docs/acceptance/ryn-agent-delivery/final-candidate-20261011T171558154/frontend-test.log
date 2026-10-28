@@ -1,0 +1,42 @@
+
+> @rynmesh/webapp@0.7.0 test
+> vitest run --maxWorkers=4
+
+
+ RUN  v4.1.11 D:/code/rynmesh/webapp
+
+ ❯ src/Localization.test.tsx (6 tests | 1 failed) 2399ms
+   × keeps new UI copy translated without regressing inherited upstream English copy 599ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/Localization.test.tsx > keeps new UI copy translated without regressing inherited upstream English copy
+AssertionError: expected [ …(4) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "./screens/RynAgentBudget.tsx:61 hardcoded copy: Token ·",
++   "./screens/RynAgentCredential.tsx:61 hardcoded copy: API Key",
++   "./screens/RynAgentGuidance.tsx:20 hardcoded copy: · v",
++   "./screens/RynAgentGuidance.tsx:37 hardcoded copy: v",
++ ]
+
+ ❯ src/Localization.test.tsx:61:22
+     59|     visit(ast);
+     60|   }
+     61|   expect(violations).toEqual([]);
+       |                      ^
+     62| });
+     63|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 98 passed (99)
+      Tests  1 failed | 643 passed (644)
+   Start at  17:21:53
+   Duration  171.05s (transform 11.71s, setup 94.63s, import 53.05s, tests 152.20s, environment 348.07s)
+
