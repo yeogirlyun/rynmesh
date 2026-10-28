@@ -1,6 +1,6 @@
 # Issue #28 work plan: route LLM peer POSTs through Transport
 
-Status: implemented and formally accepted, 2026-09-02
+Status: implemented; acceptance hardening validated locally; exact-commit CI pending
 Issue: https://github.com/yeogirlyun/rynmesh/issues/28
 Recommended order: complete before Private AI streaming work (#23)
 
@@ -333,6 +333,9 @@ Formal execution evidence and the sign-off decision are maintained in
 `docs/acceptance/issue-28/ACCEPTANCE_REPORT.md`. This plan intentionally remains
 the implementation design; the acceptance report is the authoritative record
 of what was actually run.
+
+The independent test matrix and pass/fail rules are maintained in
+`docs/testing/ISSUE_28_TRANSPORT_POST_TEST_PLAN.md`.
 
 ## 8. Suggested commits
 

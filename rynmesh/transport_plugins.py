@@ -504,7 +504,7 @@ class EchTransport:
             data = resp.read(max_bytes + 1)
         except TransportError:
             raise
-        except (OSError, ssl.SSLError) as exc:
+        except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
             raise TransportError(f"ech: {exc}", reason="http_error") from exc
         finally:
             try:

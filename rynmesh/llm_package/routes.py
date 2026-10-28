@@ -107,6 +107,7 @@ from .stream_protocol import (
     seal_stream_delta,
 )
 from .streaming import events, peer_stream
+from .context_safety import context_request_fits
 from .task_balance import TaskBalanceError, TaskBalanceLedger
 from .task_protocol import (
     TERMINAL_STATES,
@@ -516,7 +517,7 @@ class ProviderService:
         max_tokens = min(int(body.get("max_tokens") or 64), self.manifest.max_output_tokens)
         if max_tokens < 1:
             raise TaskProtocolError("max_tokens is invalid")
-        if _estimate_input_tokens(prompt) + max_tokens > self.context_window_for_model(body.get("cli_model", "")):
+        if not context_request_fits(prompt, output_tokens=max_tokens, context_window=self.context_window_for_model(body.get("cli_model", ""))):
             raise TaskProtocolError("estimated context window exceeded")
         reply_pub = str(body.get("reply_messaging_pub") or "")
         _validate_messaging_pub(reply_pub)
@@ -3053,7 +3054,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         task_id = str(body.get("task_id") or ("task_" + uuid.uuid4().hex))
         service_id = current.manifest.package_id
         max_tokens = min(max_tokens, current.manifest.max_output_tokens)
-        if _estimate_input_tokens(prompt) + max_tokens > current.context_window_for_model(body.get("cli_model", "")):
+        if not context_request_fits(prompt, output_tokens=max_tokens, context_window=current.context_window_for_model(body.get("cli_model", ""))):
             raise HTTPException(400, "estimated context window exceeded")
         bindings = {"provider_peer_id": store.peer_id, "service_id": service_id,
                     "idempotency_key": str(body.get("idempotency_key") or task_id),
@@ -3292,7 +3293,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 detail="provider discovery record is missing required manifest fields",
             ) from exc
         max_tokens = min(max_tokens, manifest.max_output_tokens)
-        if _estimate_input_tokens(prompt) + max_tokens > manifest.context_window:
+        if not context_request_fits(prompt, output_tokens=max_tokens, context_window=manifest.context_window):
             raise HTTPException(
                 status_code=400,
                 detail="estimated prompt and output exceed the Provider context window",

@@ -19,6 +19,25 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, RunEvent, WindowEvent};
 use tauri_plugin_deep_link::DeepLinkExt;
 
+#[cfg(target_os = "linux")]
+static TERMINATION_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_os = "linux")]
+extern "C" fn request_termination(_signal: libc::c_int) {
+    TERMINATION_REQUESTED.store(true, Ordering::SeqCst);
+}
+
+#[cfg(target_os = "linux")]
+fn install_termination_handler() {
+    unsafe {
+        let _ = libc::signal(
+            libc::SIGTERM,
+            request_termination as libc::sighandler_t,
+        );
+        let _ = libc::signal(libc::SIGINT, request_termination as libc::sighandler_t);
+    }
+}
+
 pub(crate) fn focus_main(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show(); let _ = w.unminimize(); let _ = w.set_focus();
@@ -81,6 +100,19 @@ pub fn run() {
         .manage(updates::UpdateState::default())
         .manage(NodeState { child: Mutex::new(None), port, stopping: AtomicBool::new(false), lifecycle: Mutex::new(()) })
         .setup(move |app| {
+            #[cfg(target_os = "linux")]
+            {
+                install_termination_handler();
+                let handle = app.handle().clone();
+                std::thread::spawn(move || loop {
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                    if TERMINATION_REQUESTED.swap(false, Ordering::SeqCst) {
+                        node::stop(&handle.state::<NodeState>());
+                        handle.exit(0);
+                        break;
+                    }
+                });
+            }
             let handle = app.handle().clone();
             app.deep_link().on_open_url(move |_event| {
                 // The frontend reviews the payload. Never log the URL or argv.

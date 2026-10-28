@@ -30,7 +30,7 @@ import os
 import ssl
 import urllib.request
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Protocol
 from urllib.error import HTTPError, URLError
@@ -314,8 +314,13 @@ class StdlibHttpsTransport:
         try:
             with self._opener.open(req, timeout=timeout_s) as resp:
                 total = 0
+                read_chunk = getattr(resp, "read1", resp.read)
                 while True:
-                    chunk = getattr(resp, "read1", resp.read)(max_chunk_bytes)
+                    # HTTPResponse.read(n) may wait for n bytes or EOF, which
+                    # turns a small NDJSON/SSE stream back into a buffered
+                    # complete response. read1(n) returns currently available
+                    # bytes while preserving the same upper bound.
+                    chunk = read_chunk(max_chunk_bytes)
                     if not chunk:
                         break
                     total += len(chunk)
@@ -379,10 +384,13 @@ class FrontedHttpsTransport:
 
     def _headers(self, host_header: str, extra: dict[str, str] | None) -> dict[str, str]:
         merged = _profile_headers(self.profile)
-        merged["Host"] = host_header  # real backend; routed by CDN/origin
-        merged["Connection"] = "close"  # one socket per request
         if extra:
             merged.update(extra)
+        # These fields define the fronting split and connection lifecycle; a
+        # generic caller header must not be able to redirect the inner request
+        # to another virtual host or keep the one-shot socket alive.
+        merged["Host"] = host_header  # real backend; routed by CDN/origin
+        merged["Connection"] = "close"  # one socket per request
         merged.update(network_key_header())
         return merged
 
@@ -406,7 +414,10 @@ class FrontedHttpsTransport:
         is_default_port = port == (443 if scheme == "https" else 80)
         host_header = host if is_default_port else f"{host}:{port}"
 
-        raw = socket.create_connection((connect_host, port), timeout=timeout_s)
+        try:
+            raw = socket.create_connection((connect_host, port), timeout=timeout_s)
+        except OSError as exc:
+            raise TransportError(f"http error: {exc}", reason="http_error") from exc
         try:
             if scheme == "https":
                 raw = self._ctx.wrap_socket(raw, server_hostname=sni)
@@ -446,10 +457,12 @@ class FrontedHttpsTransport:
         self, url: str, body: bytes, *, timeout_s: float, max_bytes: int,
         headers: dict[str, str] | None = None,
     ) -> bytes:
+        import http.client
+
         conn, resp = self._open(url, timeout_s, headers, method="POST", body=body)
         try:
             data = resp.read(max_bytes + 1)
-        except (OSError, ssl.SSLError) as exc:
+        except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
             raise TransportError(f"http error: {exc}", reason="http_error") from exc
         finally:
             conn.close()
@@ -469,8 +482,9 @@ class FrontedHttpsTransport:
         conn, resp = self._open(url, timeout_s, headers, method="POST", body=body)
         try:
             total = 0
+            read_chunk = getattr(resp, "read1", resp.read)
             while True:
-                chunk = getattr(resp, "read1", resp.read)(max_chunk_bytes)
+                chunk = read_chunk(max_chunk_bytes)
                 if not chunk:
                     break
                 total += len(chunk)
@@ -511,6 +525,36 @@ class FrontedHttpsTransport:
         finally:
             conn.close()
         return dest
+
+
+def get_pinned_transport(url: str, connect_ip: str) -> FrontedHttpsTransport:
+    """Connect to one validated IP while preserving URL Host/SNI verification.
+
+    Friend invitation endpoints are attacker-controlled. Resolving them before
+    policy checks is insufficient if the socket later resolves the hostname a
+    second time. This transport dials the already-validated address directly,
+    while TLS certificate validation and HTTP routing remain bound to the URL
+    hostname. Explicit outbound proxies are rejected because they own DNS and
+    cannot provide this pinning guarantee through the current seam.
+    """
+
+    import ipaddress
+
+    parts = urlparse(url)
+    host = parts.hostname or ""
+    if parts.scheme not in {"http", "https"} or not host:
+        raise TransportError("pinned endpoint invalid", reason="endpoint_invalid")
+    try:
+        ipaddress.ip_address(connect_ip)
+    except ValueError as exc:
+        raise TransportError("pinned address invalid", reason="endpoint_invalid") from exc
+    profile = resolve_profile()
+    if profile.proxies:
+        raise TransportError(
+            "pinned transport does not support an outbound proxy",
+            reason="pinned_proxy_unsupported",
+        )
+    return FrontedHttpsTransport(replace(profile, connect_host=connect_ip, sni=host))
 
 
 class CdnWebSocketTransport:

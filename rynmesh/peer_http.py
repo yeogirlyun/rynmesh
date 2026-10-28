@@ -292,7 +292,7 @@ class HttpPeerClient:
                 raise PeerTransportError("peer_response_too_large") from exc
             # Keep plugin exception text out of the public error surface: a
             # third-party transport may include request/response bytes there.
-            raise PeerTransportError(f"peer_http_error:{exc.reason}") from exc
+            raise PeerTransportError(f"peer_http_error:{exc.reason}") from None
         try:
             value = json.loads(raw.decode("utf-8") or "{}")
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
