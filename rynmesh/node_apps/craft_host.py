@@ -14,6 +14,7 @@ import shutil
 import ssl
 import stat
 import tempfile
+import time
 import urllib.request
 import zipfile
 from contextlib import contextmanager
@@ -285,7 +286,8 @@ def install(cache, slug, *, download=download_to, spec=None):
                     stage.rename(root)
                     break
                 except OSError as exc:
-                    if getattr(exc, "winerror", None) not in {5, 32, 33} or attempt == 7:
+                    transient_lock = os.name == "nt" and (isinstance(exc, PermissionError) or getattr(exc, "winerror", None) in {5, 32, 33})
+                    if not transient_lock or attempt == 7:
                         raise
                     import time
                     time.sleep(min(0.01 * 2 ** attempt, 0.1))

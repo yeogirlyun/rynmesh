@@ -218,3 +218,27 @@ def test_corrupt_update_settings_do_not_prevent_plugin_manager_startup(installed
     assert "old editor" in (again.verify("wordcraft") / "index.html").read_text()
     assert again.updates.path.read_text() == "broken json"
     again.close()
+
+
+def test_windows_install_retries_transient_rename(installed, monkeypatch):
+    from pathlib import Path
+
+    from rynmesh.node_apps import craft_host
+
+    if craft_host.os.name != "nt":
+        pytest.skip("Windows sharing violation")
+    original = Path.rename
+    attempts = []
+
+    def rename(path, target):
+        if path.name.startswith(".install-"):
+            attempts.append(path)
+            if len(attempts) == 1:
+                raise PermissionError("scanner sharing violation")
+        return original(path, target)
+
+    monkeypatch.setattr(Path, "rename", rename)
+    installed.manager.updates.check("wordcraft")
+    installed.manager.updates.apply("wordcraft")
+    assert len(attempts) >= 2
+    assert installed.manager.version("wordcraft") == "0.8.0"
