@@ -1,5 +1,9 @@
 # Rynmesh
 
+Personal and corporate integrations use the same [node, service, plugin and
+app definitions](docs/NODE_SERVICE_PLUGIN_STANDARD.md). Company business code
+lives in its operator's separate repository; the public host remains generic.
+
 > Development branch `feature/personal-ai-workspace`: the September 20–24 personal-device, AI workspace, local-model, NAS and desktop redesign is documented in the [requirements, implementation and acceptance report](docs/PERSONAL_AI_WORKSPACE_20260920_20260924.md). This is a development snapshot, not a new public release; older release notes below do not describe every feature in this branch.
 
 [![CI](https://github.com/yeogirlyun/rynmesh/actions/workflows/ci.yml/badge.svg)](https://github.com/yeogirlyun/rynmesh/actions/workflows/ci.yml)
