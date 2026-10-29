@@ -71,7 +71,7 @@ def _resolve_node_binary() -> str:
 NAME = "ryn_code_exec"
 MAX_CODE_CHARS = 65536
 MAX_CHILD_CALLS = 16
-DEFAULT_YIELD_TIME_MS = 10000
+DEFAULT_YIELD_TIME_MS = 30000
 MAX_YIELD_TIME_MS = 60000
 DEFAULT_MAX_OUTPUT_TOKENS = 4000
 MAX_STORED_STATE_BYTES = 256 * 1024
@@ -810,6 +810,69 @@ async function setupBrowserRuntimeWrapper(options = {}) {
     }
   }
 
+  const decorateBrowser = (browser) => {
+    if (!browser || typeof browser !== 'object' || browser._rynBrowserWrapped) return browser;
+    browser._rynBrowserWrapped = true;
+    try {
+      if (browser.user && typeof browser.user.claimTab === 'function' && !browser.user.claimTab._rynWrapped) {
+        const origClaimTab = browser.user.claimTab.bind(browser.user);
+        const wrappedClaimTab = async (tabOrId) => {
+          let targetObj = tabOrId;
+          if (typeof tabOrId === 'string' || typeof tabOrId === 'number') {
+            try {
+              const openList = await browser.user.openTabs();
+              if (Array.isArray(openList)) {
+                targetObj = openList.find((t) => String(t && t.id) === String(tabOrId)) || tabOrId;
+              }
+            } catch (_) {}
+          }
+          const claimed = await origClaimTab(targetObj);
+          if (claimed && typeof claimed === 'object') {
+            if (targetObj && typeof targetObj === 'object') {
+              if (targetObj.url && !claimed.url) claimed.url = targetObj.url;
+              if (targetObj.title && !claimed.title) claimed.title = targetObj.title;
+            }
+            if (claimed.id !== undefined) storedValues.__ryn_last_tab_id = String(claimed.id);
+            if (sandbox) sandbox.__tab = claimed;
+          }
+          return claimed;
+        };
+        wrappedClaimTab._rynWrapped = true;
+        browser.user.claimTab = wrappedClaimTab;
+      }
+      if (browser.tabs && typeof browser.tabs.get === 'function' && !browser.tabs.get._rynWrapped) {
+        const origTabsGet = browser.tabs.get.bind(browser.tabs);
+        const wrappedTabsGet = async (tabId) => {
+          try {
+            const tab = await origTabsGet(tabId);
+            if (tab && tab.id !== undefined) storedValues.__ryn_last_tab_id = String(tab.id);
+            if (sandbox && tab && !sandbox.__tab) sandbox.__tab = tab;
+            return tab;
+          } catch (err) {
+            if (browser.user && typeof browser.user.openTabs === 'function' && typeof browser.user.claimTab === 'function') {
+              const openList = await browser.user.openTabs();
+              const match = Array.isArray(openList) ? openList.find((t) => String(t && t.id) === String(tabId)) : null;
+              if (match) return await browser.user.claimTab(match);
+            }
+            throw err;
+          }
+        };
+        wrappedTabsGet._rynWrapped = true;
+        browser.tabs.get = wrappedTabsGet;
+      }
+    } catch (_) {}
+    return browser;
+  };
+
+  try {
+    if (rawAgent && rawAgent.browsers && typeof rawAgent.browsers.get === 'function' && !rawAgent.browsers.get._rynWrapped) {
+      const origBrowsersGet = rawAgent.browsers.get.bind(rawAgent.browsers);
+      const wrappedBrowsersGet = async (...args) => decorateBrowser(await origBrowsersGet(...args));
+      wrappedBrowsersGet._rynWrapped = true;
+      rawAgent.browsers.get = wrappedBrowsersGet;
+    }
+  } catch (_) {}
+
   const helperObj = Object.freeze({
     read: async (name) => await rawAgent.documentation.get(name),
     list: async () => ['accessibility', 'playwright', 'dom-cua', 'cua', 'content', 'clipboard', 'dev', 'screenshots'],
@@ -984,6 +1047,18 @@ async function executeCell(msg) {
 
   const rawCode = String(msg.code || '');
   const rewrittenCode = rawCode.replace(/(?<![.$A-Za-z0-9_])import\s*\(/g, '__ryn_import(');
+  if (!sandbox.agent && /\bagent\b/.test(rewrittenCode)) {
+    try {
+      await setupBrowserRuntimeWrapper();
+    } catch (_) {}
+  }
+  if (!sandbox.__tab && /\b__tab\b/.test(rewrittenCode) && storedValues.__ryn_last_tab_id) {
+    try {
+      const ag = sandbox.agent || (await setupBrowserRuntimeWrapper());
+      const ch = await ag.browsers.get('chrome');
+      sandbox.__tab = await ch.tabs.get(storedValues.__ryn_last_tab_id);
+    } catch (_) {}
+  }
   const declaredNames = extractTopLevelDeclaredNames(rewrittenCode);
   const syncLines = declaredNames
     .map((ident) => `try { globalThis[${JSON.stringify(ident)}] = ${ident}; } catch (_) {}`)

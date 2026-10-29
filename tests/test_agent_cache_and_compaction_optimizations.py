@@ -485,3 +485,49 @@ def test_code_mode_tab_ax_decorator_and_output_dedup(tmp_path):
     assert rv["dragRes"] == {"from": [1, 2], "to": [3, 4]}
     assert res["output"] == "Hello once"
     assert res["content_items"] == []
+
+
+def test_retryable_transport_failure_does_not_burn_393k_output_reservation_and_heals_legacy(tmp_path):
+    row = {
+        "limits": {"max_seconds": 30},
+        "steps": 0,
+        "elapsed_seconds": 0,
+        "model_id": "local/src-fc320104c4ec4113-7d963f65d1ed",
+    }
+    res1 = budget.reserve(row, "model", "main", input_bound=28000, output_bound=393216)
+    budget.settle(row, res1["id"], usage=None, elapsed_seconds=10.0, retryable_failure=True)
+    pub = budget.public(row)
+    assert pub["lifetime"]["charged_tokens"] == 64
+
+    # Also verify initialize() heals existing settled records that had output_reservation > 32768 with None usage
+    legacy_row = {
+        "limits": {"max_seconds": 30},
+        "steps": 1,
+        "elapsed_seconds": 10,
+        "budget": {
+            "limits": dict(budget.DEFAULT_LIMITS),
+            "round": 2,
+            "legacy_usage_unknown": False,
+            "legacy_model_calls": 0,
+            "legacy_tool_calls": 0,
+            "legacy_seconds": 0.0,
+            "records": [
+                {
+                    "id": "usage_1",
+                    "kind": "model",
+                    "stage": "main",
+                    "round": 1,
+                    "status": "settled",
+                    "input_tokens": None,
+                    "output_tokens": None,
+                    "charged_tokens": 421216,
+                    "charged_seconds": 10.0,
+                    "elapsed_seconds": 10.0,
+                    "input_reservation": 28000,
+                    "output_reservation": 393216,
+                }
+            ],
+        },
+    }
+    healed = budget.public(legacy_row)
+    assert healed["lifetime"]["charged_tokens"] == 64

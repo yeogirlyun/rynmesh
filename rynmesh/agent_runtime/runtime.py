@@ -30,6 +30,7 @@ from . import (
     output_policy,
     projects,
     reasoning,
+    retry_policy,
     results,
     subagents,
     timing,
@@ -81,7 +82,7 @@ RETRYABLE_MODEL_ERRORS = {"agent_inference_timeout", "agent_model_connection_fai
                           "agent_model_upstream_failed",
                           "agent_invalid_model_response", "agent_compaction_size_limit", "agent_compaction_incomplete"}
 PUBLIC_FIELDS = ("id", "client_request_id", "title", "model_id", "reasoning_effort", "status", "revision", "created_at", "updated_at",
-                 "messages", "pending_user_messages", "events", "pending_approval", "steps", "result", "error", "limits", "permission_mode", "allowed_write_tools",
+                 "messages", "pending_user_messages", "events", "pending_approval", "steps", "result", "error", "connection_recovery", "limits", "permission_mode", "allowed_write_tools",
                  "model_destination", "local_execution", "project", "verification_evidence", "reconciliation", "archived", "result_refs", "file_artifact_revision",
                  "conversation_revision", "conversation_event_cursor", "source", "automation_id", "automation_run_id", "automation_kind",
                  "latest_turn_is_silent_heartbeat", "automation_notification", "parent_task_id", "subagent_ids", *PUBLIC_STATE_FIELDS)
@@ -753,6 +754,7 @@ class AgentRuntime(AgentLoop):
         reservation = self.store.transaction(admit)
         started = time.monotonic()
         response = None
+        retryable_failure = False
         try:
             response = invoke(reservation["output_reservation"])
             return response
@@ -771,6 +773,10 @@ class AgentRuntime(AgentLoop):
                         row["rejected_response_note"] = detail
             self.store.transaction(rejected)
             raise
+        except AgentError as exc:
+            if str(exc) in RETRYABLE_MODEL_ERRORS:
+                retryable_failure = True
+            raise
         finally:
             usage = response.get("reported_usage", response.get("usage")) if isinstance(response, dict) else None
             if isinstance(usage, dict) and isinstance(response, dict):
@@ -778,14 +784,15 @@ class AgentRuntime(AgentLoop):
                 if type(cached) is int and cached >= 0:
                     usage = {**usage, "cached_tokens": cached}
             self._settle_usage(selected["id"], reservation["id"], usage=usage, elapsed=0 if nested else time.monotonic() - started,
-                               cached_input_weight=self._cached_input_weight(selected))
+                               cached_input_weight=self._cached_input_weight(selected),
+                               retryable_failure=retryable_failure)
 
-    def _settle_usage(self, task_id, reservation_id, *, usage=None, elapsed=None, cached_input_weight=None):
+    def _settle_usage(self, task_id, reservation_id, *, usage=None, elapsed=None, cached_input_weight=None, retryable_failure=False):
         def finish(data):
             row = data["tasks"].get(task_id)
             if row is not None:
                 weight = cached_input_weight if cached_input_weight is not None else self._cached_input_weight(row)
-                budget.settle(row, reservation_id, usage=usage, elapsed_seconds=elapsed, cached_input_weight=weight)
+                budget.settle(row, reservation_id, usage=usage, elapsed_seconds=elapsed, cached_input_weight=weight, retryable_failure=retryable_failure)
         self.store.transaction(finish)
 
     def _settle_usage_batch(self, task_id, reservation_ids, *, usage=None, elapsed=None, cached_input_weight=None):
@@ -1695,9 +1702,9 @@ class AgentRuntime(AgentLoop):
                 b_limits = row["budget"]["limits"]
                 b_life = b_state["lifetime"]
                 auto_extended = {}
-                tok_threshold = min(250000, max(1000, b_limits["max_total_tokens"] // 8))
+                tok_threshold = min(500000, max(1000, b_limits["max_total_tokens"] // 4))
                 wrap_reason = (row.get("outcome") or {}).get("budget_wrap_up_reason")
-                if b_limits["max_total_tokens"] - b_life["charged_tokens"] <= tok_threshold or wrap_reason == "token_budget_low":
+                if b_limits["max_total_tokens"] - b_life["charged_tokens"] <= tok_threshold or wrap_reason == "token_budget_low" or row.get("error") == "agent_token_budget_exhausted":
                     new_tok = min(
                         budget.RANGES["max_total_tokens"][1],
                         max(b_limits["max_total_tokens"], b_life["charged_tokens"]) + budget.DEFAULT_LIMITS["max_total_tokens"],
@@ -1856,6 +1863,7 @@ class AgentRuntime(AgentLoop):
                 remember_request(row, value)
                 return public_task(row, settings=data["settings"], data=data)
             elif action == "cancel":
+                retry_policy.stop(row)
                 if row["status"] not in {"completed", "failed", "cancelled"}:
                     row.update(status="cancelled", pending_approval=None, approved=None, pending_input=None, pending_control={"kind": "cancel"})
                     event(row, "cancelled", operation_in_flight=bool(row["in_flight"]))
@@ -1864,6 +1872,7 @@ class AgentRuntime(AgentLoop):
                     subagents.on_subagent_settled_in_tx(data, row)
                     subagents.cascade_stop_subagents_in_tx(data, row, reason="owner_cancel", close=True)
             elif action == "stop":
+                retry_policy.stop(row)
                 if ambiguous(row):
                     row["pending_control"] = {"kind": "stop"}
                     event(row, "paused", operation_in_flight=True, reason="owner_stopped")
@@ -1882,6 +1891,7 @@ class AgentRuntime(AgentLoop):
                     subagents.on_subagent_settled_in_tx(data, row)
                     subagents.cascade_stop_subagents_in_tx(data, row, reason="owner_stop", close=False)
             elif action == "pause":
+                retry_policy.stop(row)
                 row.pop("turn_stopped", None)
                 if ambiguous(row):
                     # Stop intent survives reconciliation, even while the write's
@@ -1925,6 +1935,7 @@ class AgentRuntime(AgentLoop):
                     row.update(steps=0, elapsed_seconds=0.0, model_retry_count=0)
                     row.pop("model_retry_authority", None)
                     budget.new_round(row)
+                retry_policy.resume(row)
                 row["status"] = "waiting_input" if row["pending_input"] else "waiting_approval" if row["pending_approval"] else "queued"
                 row["error"] = None
                 event(row, "resumed")
@@ -2532,10 +2543,13 @@ class AgentRuntime(AgentLoop):
                     row.pop("pending_control", None)
                     return True  # Pause/cancel/disable wins over late failure.
                 authority = model_retry_authority(data["settings"])
+                network = code in retry_policy.NETWORK_ERRORS
+                maximum = retry_policy.limit(code, safe_diag)
+                count = row.get("model_retry_count", 0)
                 error = ("agent_permission_denied" if authority != selected.get("_model_retry_authority") else
                          "agent_time_limit" if row["elapsed_seconds"] >= row["limits"]["max_seconds"] else
                          "agent_step_limit" if row["steps"] >= row["limits"]["max_steps"] else
-                         code if row.get("model_retry_count", 0) >= 1 else None)
+                         code if not network and count >= maximum else None)
                 row.pop("pending_control", None)
                 extra_event = {
                     "step": row["steps"],
@@ -2549,8 +2563,30 @@ class AgentRuntime(AgentLoop):
                     event(row, "failed", error=error, **extra_event)
                     subagents.on_subagent_settled_in_tx(data, row)
                     return True
-                row.update(status="queued", error=None, model_retry_count=1, model_retry_authority=authority)
-                event(row, "model_retry_scheduled", error=code, retry_count=1, **extra_event)
+                if network:
+                    recovery = {"state": "retrying", "retry_count": count, "max_retries": maximum,
+                                "error_code": code, "diagnostics": safe_diag}
+                    row["connection_recovery"] = recovery
+                    if count >= maximum:
+                        recovery["state"] = "disconnected"
+                        row.update(status="paused", error=None)
+                        event(row, "connection_paused", error=code, retry_count=count, **extra_event)
+                        subagents.on_subagent_settled_in_tx(data, row)
+                        return True
+                    wait = retry_policy.delay(count + 1, safe_diag)
+                    remaining = min(row["limits"]["max_seconds"] - row["elapsed_seconds"], budget.time_remaining(row))
+                    if wait >= remaining:
+                        # Honor long Retry-After without exceeding time budgets or retrying early.
+                        recovery["state"] = "disconnected"
+                        recovery["reason"] = "retry_wait_exceeds_budget"
+                        row.update(status="paused", error=None)
+                        event(row, "connection_paused", error=code, retry_count=count, **extra_event)
+                        subagents.on_subagent_settled_in_tx(data, row)
+                        return True
+                    recovery.update(retry_count=count + 1, wait_started_at=retry_policy.now(),
+                                    next_retry_at=retry_policy.now() + wait)
+                row.update(status="queued", error=None, model_retry_count=count + 1, model_retry_authority=authority)
+                event(row, "model_retry_scheduled", error=code, retry_count=count + 1, **extra_event)
                 return True
             if self.store.transaction(retry_model):
                 return
@@ -2747,7 +2783,7 @@ class AgentRuntime(AgentLoop):
                     "pending_control": bool(row.get("pending_control")),
                     "kind": (row.get("in_flight") or {}).get("kind")}
                     for key, row in data["tasks"].items()},
-                "queued": any(row["status"] == "queued" for row in data["tasks"].values()),
+                "queued": any(row["status"] == "queued" and retry_policy.ready(row) for row in data["tasks"].values()),
                 "waiting": any(row["status"] == "waiting_approval" and row.get("queue") for row in data["tasks"].values()),
                 "unresolved": next((row["id"] for row in data["tasks"].values()
                                     if ambiguous(row) and row.get("reconciliation", {}).get("state") == "pending"), None)})
@@ -2759,7 +2795,7 @@ class AgentRuntime(AgentLoop):
                 if peek["waiting"]:
                     self._refresh_waiting_reads(self._waiting_policy_snapshot())
                     # A released dialog is claimable in this same tick.
-                    peek["queued"] = self.store.inspect(lambda data: any(row["status"] == "queued" for row in data["tasks"].values()))
+                    peek["queued"] = self.store.inspect(lambda data: any(row["status"] == "queued" and retry_policy.ready(row) for row in data["tasks"].values()))
                 unresolved = task(self.store.read(), peek["unresolved"]) if peek["unresolved"] else None
                 if unresolved:
                     self._run_lock.release()
@@ -2771,8 +2807,9 @@ class AgentRuntime(AgentLoop):
                     return None
                 rows = sorted(data["tasks"].values(), key=lambda row: row["updated_at"])
                 for row in rows:
-                    if row["status"] != "queued":
+                    if row["status"] != "queued" or not retry_policy.ready(row):
                         continue
+                    retry_policy.charge_wait(row)
                     if budget.time_remaining(row) <= 0:
                         row.update(status="failed", error="agent_time_budget_exhausted")
                         event(row, "failed", error=row["error"])

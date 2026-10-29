@@ -80,6 +80,19 @@ def initialize(row):
                          "round": 1, "records": [], "legacy_usage_unknown": legacy,
                          "legacy_model_calls": legacy_models if legacy else 0, "legacy_tool_calls": legacy_tools,
                          "legacy_seconds": row.get("elapsed_seconds", 0.0) if legacy else 0.0}
+    else:
+        for rec in row["budget"].get("records", []):
+            if (
+                isinstance(rec, dict)
+                and rec.get("kind") == "model"
+                and rec.get("status") == "settled"
+                and rec.get("input_tokens") is None
+                and rec.get("output_tokens") is None
+                and int(rec.get("output_reservation") or 0) > 32768
+                and int(rec.get("charged_tokens") or 0) > 64
+            ):
+                rec["charged_tokens"] = max(1, min(int(rec.get("input_reservation") or 64), 64))
+                rec["charge_basis"] = "retryable_transport_failure"
     return row["budget"]
 
 
@@ -88,6 +101,8 @@ def new_round(row):
 
 
 def _totals(state, records, *, lifetime):
+    waits = state.get("retry_wait_by_round", {})
+    retry_wait = sum(waits.values()) if lifetime else waits.get(str(state["round"]), 0)
     models = [record for record in records if record["kind"] == "model"]
     unknown = any(record.get("input_tokens") is None or record.get("output_tokens") is None for record in models)
     legacy = state["legacy_usage_unknown"] and (lifetime or state["round"] == 1)
@@ -107,7 +122,7 @@ def _totals(state, records, *, lifetime):
             "output_tokens": None if legacy or any(record.get("output_tokens") is None for record in models) else known_output,
             "total_tokens": None if unknown or legacy else known_input + known_output,
             "charged_tokens": sum(record["charged_tokens"] for record in records),
-            "charged_seconds": sum(record["charged_seconds"] for record in records) + (state["legacy_seconds"] if lifetime else 0),
+            "charged_seconds": sum(record["charged_seconds"] for record in records) + (state["legacy_seconds"] if lifetime else 0) + retry_wait,
             "active_seconds": None if legacy or any(record.get("elapsed_seconds") is None for record in records) else sum(record["elapsed_seconds"] for record in records),
             "cost": None, "cost_status": "unknown", "usage_complete": not unknown and not legacy,
             "legacy_usage_unknown": legacy,
@@ -147,7 +162,7 @@ def reserve(row, kind, stage, *, input_bound=0, output_bound=0, seconds_bound=No
     return copy.deepcopy(record)
 
 
-def settle(row, reservation_id, *, usage=None, elapsed_seconds=None, cached_input_weight=None):
+def settle(row, reservation_id, *, usage=None, elapsed_seconds=None, cached_input_weight=None, retryable_failure=False):
     state = initialize(row)
     record = next((item for item in state["records"] if item["id"] == reservation_id), None)
     if record is None or record["status"] != "reserved":
@@ -172,7 +187,11 @@ def settle(row, reservation_id, *, usage=None, elapsed_seconds=None, cached_inpu
         inp = record["input_tokens"]
         out = record["output_tokens"] if record["output_tokens"] is not None else record["output_reservation"]
         cached = record.get("cached_input_tokens")
-        if inp is not None and type(cached) is int and 0 < cached <= inp and weight < 1.0:
+        if inp is None and record["output_tokens"] is None and (retryable_failure or int(record.get("output_reservation") or 0) > 32768):
+            record["charged_tokens"] = max(1, min(int(record.get("input_reservation") or 64), 64))
+            record["charge_basis"] = "retryable_transport_failure"
+            record["cached_input_weight"] = weight
+        elif inp is not None and type(cached) is int and 0 < cached <= inp and weight < 1.0:
             effective_input = (inp - cached) + math.ceil(cached * weight)
             record["charged_tokens"] = effective_input + out
             record["charge_basis"] = "cached_discounted"
@@ -197,7 +216,7 @@ def time_remaining(row):
     state = initialize(row)
     # The current flight's time is checked by its own monotonic callback.
     used = sum(record["charged_seconds"] for record in state["records"] if record["status"] != "reserved") + state["legacy_seconds"]
-    return max(0.0, state["limits"]["max_total_seconds"] - used)
+    return max(0.0, state["limits"]["max_total_seconds"] - used - row.get("retry_wait_seconds", 0))
 
 
 def notice(row: dict) -> str | None:
