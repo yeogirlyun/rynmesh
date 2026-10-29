@@ -150,7 +150,17 @@ export interface AgentEvent {
   result?: unknown;
   [key: string]: unknown;
 }
+export interface AgentConnectionRecovery {
+  state: "retrying" | "disconnected" | "stopped" | "recovered";
+  retry_count: number;
+  max_retries: number;
+  next_retry_at?: number;
+  recovered_at?: number;
+  error_code?: string;
+  diagnostics?: { network_reason?: string; network_phase?: string; http_status?: number; retry_after_seconds?: number };
+}
 export interface AgentTaskSummary {
+  connection_recovery?: AgentConnectionRecovery;
   conversation_revision?: number;
   conversation_event_cursor?: number;
   reasoning_effort?: string;

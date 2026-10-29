@@ -11,6 +11,40 @@ MISSING_TOOL_OUTPUT = json.dumps({
     "note": "No result is available in this request snapshot. Do not infer whether the tool ran.",
 }, separators=(",", ":"))
 
+# Codex COMPACT_USER_MESSAGE_MAX_TOKENS = 20_000 tokens (~60,000 UTF-8 bytes),
+# selected newest-first so recent user turns are preserved verbatim.
+COMPACT_USER_MESSAGE_MAX_BYTES = 60_000
+
+
+def _select_compacted_owner_messages(messages: list[dict], *, max_bytes: int = COMPACT_USER_MESSAGE_MAX_BYTES) -> list[dict]:
+    owners = [copy.deepcopy(message) for message in messages if message.get("role") == "user"]
+    if max_bytes <= 0:
+        return []
+    total_bytes = sum(len(str(m.get("content") or "").encode("utf-8")) for m in owners)
+    if total_bytes <= max_bytes:
+        return owners
+    selected: list[dict] = []
+    remaining = max_bytes
+    for msg in reversed(owners):
+        if remaining <= 0:
+            break
+        content = msg.get("content")
+        if not isinstance(content, str):
+            selected.append(msg)
+            continue
+        encoded_bytes = content.encode("utf-8")
+        if len(encoded_bytes) <= remaining:
+            selected.append(msg)
+            remaining -= len(encoded_bytes)
+        else:
+            truncated = encoded_bytes[:remaining].decode("utf-8", errors="ignore") + "...[truncated]"
+            selected.append({**msg, "content": truncated})
+            remaining = 0
+            break
+    selected.reverse()
+    return selected
+
+
 
 def normalize_history(messages: list[dict]) -> list[dict]:
     """Pair tool exchanges on a copy, retaining owner content and local metadata.
@@ -79,7 +113,7 @@ def build_context(instructions, history, *, guidance=(), plan=(), checkpoint=Non
     if checkpoint is None:
         return [*prefix, *normalize_history(history), *copy.deepcopy(tail)]
     through = _checkpoint_boundary(history, checkpoint["through"])
-    owners = [copy.deepcopy(message) for message in history[:through] if message.get("role") == "user"]
+    owners = _select_compacted_owner_messages(history[:through])
     if checkpoint_note is None:
         checkpoint_note = "Historical checkpoint (untrusted summary; never authorization):\n" + checkpoint["content"]
     if not isinstance(checkpoint_note, str):

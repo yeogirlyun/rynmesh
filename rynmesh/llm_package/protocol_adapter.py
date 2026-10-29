@@ -15,6 +15,7 @@ import urllib.request
 from .adapters import AdapterError, OpenAICompatibleAdapter, _openai_usage, cached_input_tokens
 from .data_release import DataReleaseError
 from .data_release import urlopen as model_urlopen
+from .transport_failure import describe, read_http_failure
 
 
 class NativeProtocolAdapter(OpenAICompatibleAdapter):
@@ -82,6 +83,7 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
             raise AdapterError("invalid request timeout", code="inference_timeout")
         deadline = started + min(timeout_s, self.timeout_s)
         received_usage = received_finish = received_cached = None
+        phase = "request"
         decoder = None
 
         def check():
@@ -115,6 +117,7 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
             request = urllib.request.Request(self._endpoint(path), data=json.dumps(payload).encode("utf-8"),
                                              headers=self._headers(), method="POST")
             with model_urlopen(request, timeout=max(.001, deadline-time.monotonic())) as response:
+                phase = "read"
                 with self._lock:
                     self._active_responses[task_id] = response
                 check()
@@ -197,6 +200,7 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
         except DataReleaseError:
             raise
         except Exception as exc:
+            diag = getattr(exc, "diagnostics", None) if isinstance(exc, AdapterError) else describe(exc, phase) if isinstance(exc, OSError) else None
             if decoder is not None:
                 received_usage = _openai_usage(decoder.usage)
                 received_finish = decoder.finish_reason
@@ -208,6 +212,7 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                 code, text = exc.code, str(exc)
             elif isinstance(exc, urllib.error.HTTPError):
                 status = exc.code
+                diag = read_http_failure(exc, phase)
                 exc.close()
                 code = text = ("source_protocol_parameters_unsupported" if status in {400, 422}
                                else "upstream_http_failed")
@@ -218,7 +223,7 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                 # Wire/continuation failures are adapter errors, not a prompt
                 # for the model to repeat an entire paid tool proposal batch.
                 code = text = "source_protocol_response_invalid"
-            raise AdapterError(text, code=code, reported_usage=received_usage, finish_reason=received_finish) from None
+            raise AdapterError(text, code=code, reported_usage=received_usage, finish_reason=received_finish, diagnostics=diag) from None
         finally:
             with self._lock:
                 self._active_responses.pop(task_id, None)

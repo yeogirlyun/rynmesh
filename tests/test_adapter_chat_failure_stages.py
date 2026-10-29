@@ -25,6 +25,8 @@ def upstream():
             self.rfile.read(int(self.headers["Content-Length"]))
             mode = state["mode"]
             self.send_response(503 if mode == "http_error" else 200)
+            if mode == "http_error":
+                self.send_header("Retry-After", "5")
             self.send_header("Content-Type", "text/event-stream" if mode in {"sse", "timeout"} else "application/json")
             self.end_headers()
             if mode == "timeout":
@@ -155,5 +157,9 @@ def test_upstream_failures_have_safe_distinct_codes(upstream, mode, streaming, c
     with pytest.raises(AdapterError) as caught:
         chat(adapter, streaming=streaming, timeout=.04 if mode == "timeout" else 1)
     assert caught.value.code == code
+    if mode == "http_error":
+        assert caught.value.diagnostics == {"network_reason": "http", "network_phase": "request", "http_status": 503, "retry_after_seconds": 5}
+    if mode == "timeout":
+        assert caught.value.diagnostics == {"network_reason": "timeout", "network_phase": "read"}
     assert PRIVATE not in str(caught.value) + json.dumps(vars(caught.value))
     assert state["calls"] == 1

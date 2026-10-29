@@ -120,7 +120,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
       end={item.to === "/" || item.to === "/apps"}
       key={item.to}
       to={href(item.to)}
-      className={({ isActive }) => (isActive || (item.to === "/explore" && inExplore) || (item.to === "/devices" && location.pathname === "/peers") ? "active" : "")}
+      className={({ isActive }) => (isActive || (item.to.startsWith("/apps/plugins/") && location.pathname === item.to.replace("/apps/plugins/", "/apps/extensions/")) || (item.to === "/explore" && inExplore) || (item.to === "/devices" && location.pathname === "/peers") ? "active" : "")}
     >
       <item.icon size={21} strokeWidth={1.6} />
       <span>{item.label}</span>

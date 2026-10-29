@@ -1,7 +1,7 @@
 import { agentTaskState, type AgentEvent, type AgentTask } from "../domain/rynAgent";
 
 const turnEvents = new Set(["created", "message_added", "goal_changed", "information_added", "input_answered"]);
-const stopEvents = new Set(["completed", "failed", "cancelled", "interrupted", "paused", "approval_requested", "input_requested", "run_settled"]);
+const stopEvents = new Set(["completed", "failed", "cancelled", "interrupted", "paused", "connection_paused", "approval_requested", "input_requested", "run_settled"]);
 const startEvents = new Set(["model_started", "verification_model_started", "tool_started", "context_compaction_started", "reconciliation_started"]);
 const endEvents = new Set(["assistant", "verification_finished", "tool_result", "context_compacted", "reconciliation_finished"]);
 

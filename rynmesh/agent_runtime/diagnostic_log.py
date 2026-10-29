@@ -57,6 +57,17 @@ def safe_diagnostics(raw) -> dict:
     alive = raw.get("process_alive")
     if isinstance(alive, bool):
         out["process_alive"] = alive
+    from ..llm_package.transport_failure import REASONS
+    if isinstance(raw.get("network_reason"), str) and raw["network_reason"] in REASONS:
+        out["network_reason"] = raw["network_reason"]
+    if isinstance(raw.get("network_phase"), str) and raw["network_phase"] in {"request", "read"}:
+        out["network_phase"] = raw["network_phase"]
+    status = raw.get("http_status")
+    if type(status) is int and 100 <= status <= 599:
+        out["http_status"] = status
+    retry_after = raw.get("retry_after_seconds")
+    if type(retry_after) in (int, float) and 0 <= retry_after <= 86400:
+        out["retry_after_seconds"] = float(retry_after)
     return out
 
 

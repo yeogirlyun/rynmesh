@@ -6,9 +6,15 @@ from types import SimpleNamespace
 import pytest
 from test_agent_runtime import Catalog, advance, approve, assistant, make_runtime
 
-from rynmesh.agent_runtime import runtime as runtime_module
+from rynmesh.agent_runtime import runtime as runtime_module, retry_policy
 from rynmesh.agent_runtime.runtime import AgentRuntime
 from rynmesh.agent_runtime.store import AgentError, AgentStore
+
+
+@pytest.fixture(autouse=True)
+def immediate_retry(monkeypatch):
+    # This module tests retry safety; durable timing has dedicated clock-driven tests.
+    monkeypatch.setattr(retry_policy, "delay", lambda *_: 0)
 
 
 def failing_model(model, *outcomes):
@@ -56,7 +62,7 @@ def test_one_model_retry_is_persisted_and_succeeds(tmp_path, code):
     assert len(model.calls) == 2 and tools.calls == []
 
 
-def test_second_consecutive_model_failure_is_terminal_even_after_restart(tmp_path):
+def test_second_timeout_pauses_connection_even_after_restart(tmp_path):
     runtime, model, tools, key = make_runtime(tmp_path)
     failing_model(model, AgentError("agent_model_busy"), AgentError("agent_inference_timeout"))
     row = runtime.create({"message": "Inspect"})
@@ -65,7 +71,8 @@ def test_second_consecutive_model_failure_is_terminal_even_after_restart(tmp_pat
     restarted.reconcile()
     advance(restarted, 3)
     done = restarted.get(row["id"])
-    assert done["status"] == "failed" and done["error"] == "agent_inference_timeout"
+    assert done["status"] == "paused" and done["error"] is None
+    assert done["connection_recovery"]["state"] == "disconnected"
     assert done["steps"] == len(model.calls) == 2
     assert len([e for e in done["events"] if e["type"] == "model_retry_scheduled"]) == 1
 

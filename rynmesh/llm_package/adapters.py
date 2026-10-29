@@ -16,6 +16,7 @@ from typing import Any, Callable, Protocol
 from urllib.parse import urlparse
 
 from .data_release import urlopen as model_urlopen
+from .transport_failure import describe, read_http_failure
 
 
 def actual_usage(result: Any) -> dict[str, int | None]:
@@ -55,9 +56,10 @@ def cached_input_tokens(payload: Any) -> int | None:
 
 
 class AdapterError(RuntimeError):
-    def __init__(self, message: str, *, code: str = "inference_failed", reported_usage=None, finish_reason=None) -> None:
+    def __init__(self, message: str, *, code: str = "inference_failed", reported_usage=None, finish_reason=None, diagnostics=None) -> None:
         super().__init__(message)
         self.code = code if code in RUNTIME_ERROR_CODES else "inference_failed"
+        self.diagnostics = diagnostics or {}
         self.reported_usage = ({name: reported_usage.get(name) if type(reported_usage.get(name)) is int and reported_usage[name] >= 0 else None
                                 for name in ("input_tokens", "output_tokens")} if isinstance(reported_usage, dict) else None)
         self.finish_reason = (finish_reason if isinstance(finish_reason, str) and
@@ -177,8 +179,10 @@ class OpenAICompatibleAdapter:
             data=json.dumps(payload).encode("utf-8") if payload is not None else None,
             headers=self._headers(), method="POST" if payload is not None else "GET",
         )
+        phase = "request"
         try:
             with model_urlopen(request, timeout=timeout_s) as response:
+                phase = "read"
                 if task_id:
                     with self._lock:
                         self._active_responses[task_id] = response
@@ -190,6 +194,7 @@ class OpenAICompatibleAdapter:
                             self._active_responses.pop(task_id, None)
         except urllib.error.HTTPError as exc:
             code = "upstream_http_failed" if classify_errors else "inference_failed"
+            value = None
             # Read only a bounded error envelope. Never expose runtime body text,
             # which can contain prompts, paths, or credentials.
             try:
@@ -202,11 +207,11 @@ class OpenAICompatibleAdapter:
                 pass
             finally:
                 exc.close()
-            raise AdapterError(f"local API request failed: {code}", code=code) from None
+            raise AdapterError(f"local API request failed: {code}", code=code, diagnostics=describe(exc, phase, value)) from None
         except OSError as exc:
             timed_out = isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)
             code = "inference_timeout" if timed_out else "runtime_connection_failed"
-            raise AdapterError(f"local API request failed: {code}", code=code) from None
+            raise AdapterError(f"local API request failed: {code}", code=code, diagnostics=describe(exc, phase)) from None
         if len(raw) > 4 * 1024 * 1024:
             raise AdapterError("local API response exceeded 4 MiB")
         try:
@@ -348,12 +353,13 @@ class OpenAICompatibleAdapter:
             # are never evidence for durable accounting after a failed request.
             return _openai_usage(usage)
 
-        def failure(code):
+        def failure(code, diagnostics=None):
             cancelled = task_id in self._cancelled
             return AdapterError("task_cancelled" if cancelled else code,
                                 code="inference_failed" if cancelled else code,
-                                reported_usage=received_usage, finish_reason=received_finish)
+                                reported_usage=received_usage, finish_reason=received_finish, diagnostics=diagnostics)
 
+        phase = "request"
         try:
             if not streaming:
                 raw = self._json("/v1/chat/completions", body, timeout_s, task_id=task_id, classify_errors=True)
@@ -367,6 +373,7 @@ class OpenAICompatibleAdapter:
                                                  data=json.dumps(body).encode(), headers=self._headers())
                 accumulator = ChatAccumulator()
                 with model_urlopen(request, timeout=timeout_s) as response:
+                    phase = "read"
                     is_sse = "text/event-stream" in response.headers.get("content-type", "")
                     with self._lock:
                         self._active_responses[task_id] = response
@@ -451,11 +458,12 @@ class OpenAICompatibleAdapter:
                                    finish_reason=exc.finish_reason) from None
             raise
         except urllib.error.HTTPError as exc:
+            diagnostics = read_http_failure(exc, phase)
             exc.close()
-            raise failure("upstream_http_failed") from None
+            raise failure("upstream_http_failed", diagnostics) from None
         except OSError as exc:
             timed_out = isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)
-            raise failure("inference_timeout" if timed_out else "runtime_connection_failed") from None
+            raise failure("inference_timeout" if timed_out else "runtime_connection_failed", describe(exc, phase)) from None
         except (ValueError, KeyError, IndexError, TypeError, AttributeError):
             raise failure("upstream_response_invalid") from None
         finally:
@@ -626,7 +634,7 @@ class OpenAICompatibleAdapter:
                     exc.close()
             elif isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError):
                 code = "inference_timeout"
-            raise AdapterError("local API streaming request failed", code=code) from None
+            raise AdapterError("local API streaming request failed", code=code, diagnostics=describe(exc)) from None
         finally:
             with self._lock:
                 self._active_responses.pop(task_id, None)

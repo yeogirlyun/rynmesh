@@ -1,0 +1,51 @@
+Ryn 模型连接恢复：实现与测试记录
+日期：2026-10-29
+
+实现
+- 按确认的 UI，重连使用蓝色行内状态；没有独立“连接详情”区。
+- 自动重试用尽后使用淡色连接提示，保留进度，仅提供“重试并继续”。
+- 用户停止后显示“已停止重连”，不会自行恢复。
+- 真正的执行错误继续使用原有错误展示；网络恢复状态不占用 task.error。
+- 普通连接失败及可恢复 HTTP 错误最多额外重试 3 次，等待约 2 / 5 / 10 秒，含 10% 抖动。
+- 超时最多额外重试 1 次。urllib 无法可靠区分连接阶段与等待响应头超时，采用保守策略。
+- 401/403、无效地址解析、TLS 校验、已识别的额度不足等不自动重试。
+- 尊重 Retry-After；等待超过剩余预算时暂停，不提前请求或延长预算。
+- 重试计划保存在加密任务存储，等待不占用工作线程。等待时间计入轮次及累计时间预算。
+- 停止、取消和权限控制优先于迟到响应。手动继续复用上下文，不重放已完成工具操作。
+- 成功以实际接受模型回复为准，短暂显示“连接已恢复”。
+- 仅保留安全的诊断枚举、阶段、HTTP 状态和 Retry-After，不保存原始异常信息、URL 或错误响应正文。
+
+验证（最终相关测试）
+1. Python：140 passed
+   tests/test_agent_connection_recovery.py
+   tests/test_agent_runtime_retry.py
+   tests/test_adapter_chat_failure_stages.py
+   tests/test_agent_adapter_rejected_usage.py
+   tests/test_native_protocol_transport.py
+   tests/test_native_protocol_retry.py
+   tests/test_agent_read_retry_limit.py
+2. Python：24 passed
+   tests/test_agent_runtime_budget.py
+   tests/test_agent_budget_dispatch.py
+   tests/test_agent_streamed_reads.py
+3. Vitest：36 passed
+   src/screens/RynAgentConnection.test.tsx
+   src/screens/RynAgentTaskIndicator.test.tsx
+   src/screens/RynAgentProgress.test.tsx
+4. npm run build：通过（包含 TypeScript 编译）。已有大包及静态/动态 import 混用警告。
+5. git diff --check：通过。
+6. 浏览器检查实际 React 组件：重连、停止、继续、耗尽、浅色/深色、320px 容器布局。
+   disconnected.png 和 narrow.png 为实际组件在临时隔离测试页中的截图。
+   临时测试页和开发服务器已清理，不包含在应用入口中。
+
+扩大回归中发现的已有失败
+- tests/test_agent_runtime_diagnostics.py::test_actual_failed_read_operation_is_projected_without_rerunning_it
+  工具定义变更导致 agent_tool_definition_changed，operations 为空。
+- tests/test_agent_runtime.py::test_followup_uses_compacted_projection_instead_of_archived_transcript_size
+  上下文压缩返回 agent_compaction_size_limit，后续追加消息得到 agent_task_busy。
+两项均在独立临时目录中用 git archive HEAD 的改动前源码运行并复现，本次未修改这些行为。
+
+测试边界
+- 使用真实运行时、故障注入、可控时钟和本地 HTTP 模拟服务；未向真实 DeepSeek 发送付费验证请求。
+- 已完成源码改动和前端构建，未重启 Ryn 服务或发布安装包。
+- 工作区原有 Shell.tsx、AppsLauncher.tsx 改动及 Codex REA 报告未被覆盖。

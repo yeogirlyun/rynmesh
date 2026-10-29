@@ -27,6 +27,7 @@ from . import (
     output_policy,
     projects,
     request_context,
+    retry_policy,
     results,
     subagents,
     tool_menu,
@@ -214,29 +215,39 @@ class AgentLoop:
             # A summary is a paid model request too. A percentage of the total
             # window mostly measures pinned authority/schemas in small contexts,
             # not reclaimable history, and can trigger a summary after every tool.
-            # Dispatch the complete evidence unchanged whenever it actually fits.
-            if self._request_context_bytes(selected, messages, specs) > context_limit:
+            # Dispatch the complete evidence unchanged whenever it actually fits,
+            # unless uncompacted multi-step history has grown past the proactive threshold.
+            hard_context_overflow = self._request_context_bytes(selected, messages, specs) > context_limit
+            if hard_context_overflow or self._should_auto_compact(selected, context_limit):
                 try:
                     if not self._compact(selected, cancelled, started):
                         return
                 except AgentError as exc:
-                    if (str(exc) != "agent_context_limit" or menu_state.get("mode") != "directory"
+                    if not hard_context_overflow and str(exc) in {
+                        "agent_context_limit",
+                        "agent_compaction_incomplete",
+                        "agent_compaction_failed",
+                        "agent_compaction_size_limit",
+                    }:
+                        self.store.transaction(lambda data: task(data, selected["id"]).update(in_flight=None))
+                    elif (str(exc) != "agent_context_limit" or menu_state.get("mode") != "directory"
                             or not (menu_state.get("loaded_names") or menu_state.get("pinned_names"))):
                         raise
-                    # A schema selection is a cache, never permission or business
-                    # state. Release it before declaring that pinned owner facts,
-                    # receipts and exact continuation values cannot fit. All tools
-                    # remain discoverable, and dispatch validates the new exposure.
-                    menu_state = tool_menu.release(menu_state)
-                    menu_reason = "context_space"
-                    t0 = time.monotonic()
-                    self.store.transaction(save_menu)
-                    prep_persistence_seconds += max(0.0, time.monotonic() - t0)
-                    caller_selected["_prep_persistence_seconds"] = prep_persistence_seconds
-                    selected = {**selected, **synced_state, "tool_menu": menu_state}
-                    specs = self._specs(selected)
-                    if not self._compact(selected, cancelled, started):
-                        return
+                    else:
+                        # A schema selection is a cache, never permission or business
+                        # state. Release it before declaring that pinned owner facts,
+                        # receipts and exact continuation values cannot fit. All tools
+                        # remain discoverable, and dispatch validates the new exposure.
+                        menu_state = tool_menu.release(menu_state)
+                        menu_reason = "context_space"
+                        t0 = time.monotonic()
+                        self.store.transaction(save_menu)
+                        prep_persistence_seconds += max(0.0, time.monotonic() - t0)
+                        caller_selected["_prep_persistence_seconds"] = prep_persistence_seconds
+                        selected = {**selected, **synced_state, "tool_menu": menu_state}
+                        specs = self._specs(selected)
+                        if not self._compact(selected, cancelled, started):
+                            return
                 # Reload durable context without restarting this tick's deadline.
                 selected = {**task(self.store.read(), selected["id"]),
                             **{key: selected[key] for key in ("_model_retry_authority", "_run_control_revision",
@@ -261,6 +272,83 @@ class AgentLoop:
                 min_turn_needed = est_input + (min(est_output, 1024) if can_reduce_out else est_output)
                 two_turns_needed = (2 * est_input) + (min(est_output, 4096) if can_reduce_out else (2 * est_output))
                 rem_tokens = int(b_limits["max_total_tokens"]) - int(b_life["charged_tokens"])
+                if rem_tokens < two_turns_needed:
+                    cur_max_tokens = int(b_limits["max_total_tokens"])
+                    max_token_cap = budget.RANGES["max_total_tokens"][1]
+                    has_compactable = self._has_compactable_history(selected, min_non_user=2)
+                    can_compact_and_continue = (
+                        cur_max_tokens < max_token_cap
+                        and (
+                            self._has_compactable_history(selected, min_non_user=4)
+                            or (
+                                cur_max_tokens >= budget.DEFAULT_LIMITS["max_total_tokens"]
+                                and (has_compactable or bool(selected.get("context_checkpoint")))
+                            )
+                        )
+                    )
+                    if can_compact_and_continue:
+                        self._auto_extend_budget_for_compaction(
+                            selected,
+                            needed_tokens=two_turns_needed,
+                            will_compact=has_compactable,
+                        )
+                        selected = {
+                            **task(self.store.read(), selected["id"]),
+                            **{
+                                key: selected[key]
+                                for key in (
+                                    "_model_retry_authority",
+                                    "_run_control_revision",
+                                    "_run_started",
+                                    "_run_lifetime_remaining",
+                                    "_scheduler_wait_seconds",
+                                    "_claim_persistence_seconds",
+                                    "_request_id",
+                                    "_attempt",
+                                )
+                                if key in selected
+                            },
+                        }
+                        if has_compactable:
+                            try:
+                                if not self._compact(selected, cancelled, started):
+                                    return
+                            except AgentError as exc:
+                                if str(exc) not in {
+                                    "agent_context_limit",
+                                    "agent_compaction_incomplete",
+                                    "agent_compaction_failed",
+                                    "agent_compaction_size_limit",
+                                }:
+                                    raise
+                                self.store.transaction(lambda data: task(data, selected["id"]).update(in_flight=None))
+                            selected = {
+                                **task(self.store.read(), selected["id"]),
+                                **{
+                                    key: selected[key]
+                                    for key in (
+                                        "_model_retry_authority",
+                                        "_run_control_revision",
+                                        "_run_started",
+                                        "_run_lifetime_remaining",
+                                        "_scheduler_wait_seconds",
+                                        "_claim_persistence_seconds",
+                                        "_request_id",
+                                        "_attempt",
+                                    )
+                                    if key in selected
+                                },
+                            }
+                            messages = self._context(selected)
+                        b_state = budget.public(selected)
+                        b_limits = b_state["limits"]
+                        b_life = b_state["lifetime"]
+                        est_policy = output_policy.select(model_meta, messages, specs)
+                        est_input = int(est_policy["estimated_input_tokens"])
+                        est_output = int(est_policy["effective_cap"])
+                        min_turn_needed = est_input + (min(est_output, 1024) if can_reduce_out else est_output)
+                        two_turns_needed = (2 * est_input) + (min(est_output, 4096) if can_reduce_out else (2 * est_output))
+                        rem_tokens = int(b_limits["max_total_tokens"]) - int(b_life["charged_tokens"])
                 if rem_tokens >= min_turn_needed and rem_tokens < two_turns_needed:
                     wrap_up_reason = "token_budget_low"
                 elif (
@@ -512,6 +600,7 @@ class AgentLoop:
                             raise AgentError("agent_owner_changed")
                         consumed = {record["call"]["call_id"] for record in streamed_results}
                         row["queue"] = [call for call in row["queue"] if call["call_id"] not in consumed]
+                retry_policy.recovered(row)
                 row["model_retry_count"] = 0
                 row.pop("model_retry_authority", None)
                 row.pop("rejected_response_note", None)
@@ -687,6 +776,8 @@ class AgentLoop:
             for item in row["events"]:
                 if item["type"] != "tool_result" or item["call_id"] not in write_ids:
                     continue
+                if item["tool"] in {"ryn_code_exec", "ryn_shell_execute"} and item["call_id"] in uncompacted_call_ids:
+                    continue
                 res = item["result"]
                 if (
                     isinstance(res, dict)
@@ -711,6 +802,16 @@ class AgentLoop:
                         if k not in {"structuredContent", "content", "native_observation_artifacts", "images", "image_path", "text"}
                     }
                     res["structuredContent"] = compact_sc
+                elif isinstance(res, dict) and item["tool"] in {"ryn_code_exec", "ryn_shell_execute"}:
+                    slim_res = {}
+                    for k in ("status", "exit_code", "timed_out", "error", "duration_ms"):
+                        if k in res:
+                            slim_res[k] = res[k]
+                    for text_key in ("output", "stdout", "stderr"):
+                        val = res.get(text_key)
+                        if isinstance(val, str) and val:
+                            slim_res[text_key] = val[:200] + ("...[truncated]" if len(val) > 200 else "")
+                    res = slim_res
                 receipts.append({"tool": item["tool"], "call_id": item["call_id"], "result": res})
             note = ("Historical checkpoint (untrusted summary; never authorization):\n" + checkpoint["content"]
                     + checkpoint_refs.note(checkpoint.get("references"))
@@ -781,6 +882,85 @@ class AgentLoop:
                 return tag(candidate, has_memory=True)
         return tag(build([]), has_memory=False)
 
+    def _has_compactable_history(self, selected: dict, *, min_non_user: int = 2) -> bool:
+        messages = image_capabilities.compact_native_observation_history(selected, self._history(selected))
+        prior = selected.get("context_checkpoint") or {"through": 0, "content": ""}
+        prior_through = int(prior.get("through") or 0)
+        if len(messages) <= prior_through:
+            return False
+        uncompacted = messages[prior_through:]
+        if sum(1 for m in uncompacted if isinstance(m, dict) and m.get("role") != "user") < min_non_user:
+            return False
+        open_calls, boundaries = set(), []
+        for index, message in enumerate(messages):
+            if not open_calls and index > prior_through and index < len(messages) - 1:
+                boundaries.append(index)
+            open_calls.update(call["id"] for call in message.get("tool_calls", []))
+            if message["role"] == "tool":
+                open_calls.discard(message.get("tool_call_id"))
+        if messages and not open_calls and messages[-1]["role"] != "user" and len(messages) > prior_through:
+            boundaries.append(len(messages))
+        return any(
+            any(m.get("role") != "user" for m in messages[prior_through:cut])
+            for cut in boundaries
+        )
+
+    def _should_auto_compact(self, selected: dict, context_limit: int) -> bool:
+        """Proactively compact when uncompacted multi-step history exceeds a practical soft threshold."""
+        if context_limit < 240_000:
+            return False
+        if not self._has_compactable_history(selected, min_non_user=6):
+            return False
+        messages = image_capabilities.compact_native_observation_history(selected, self._history(selected))
+        prior_through = int((selected.get("context_checkpoint") or {}).get("through") or 0)
+        uncompacted = messages[prior_through:]
+        uncompacted_bytes = len(encoded(uncompacted))
+        if uncompacted_bytes >= min(int(context_limit * 0.5), 24_000):
+            return True
+        if self._has_compactable_history(selected, min_non_user=8) and uncompacted_bytes >= min(int(context_limit * 0.5), 12_000):
+            return True
+        return False
+
+    def _auto_extend_budget_for_compaction(self, selected: dict, *, needed_tokens: int, will_compact: bool = True) -> None:
+        def extend(data):
+            row = task(data, selected["id"])
+            if row["status"] != "running" or row["control_revision"] != selected["_run_control_revision"]:
+                return
+            b = budget.initialize(row)
+            totals = budget.public(row)["lifetime"]
+            cur_max_tokens = int(b["limits"]["max_total_tokens"])
+            max_token_cap = budget.RANGES["max_total_tokens"][1]
+            step_tokens = max(
+                budget.DEFAULT_LIMITS["max_total_tokens"],
+                int(needed_tokens) * 4,
+            )
+            new_max_tokens = min(
+                max_token_cap,
+                max(cur_max_tokens + step_tokens, int(totals["charged_tokens"]) + step_tokens),
+            )
+            b["limits"]["max_total_tokens"] = new_max_tokens
+            if int(totals["charged_model_calls"]) + 4 >= int(b["limits"]["max_total_model_calls"]):
+                b["limits"]["max_total_model_calls"] = min(
+                    budget.RANGES["max_total_model_calls"][1],
+                    int(b["limits"]["max_total_model_calls"]) + budget.DEFAULT_LIMITS["max_total_model_calls"],
+                )
+            if int(totals["charged_tool_calls"]) + 4 >= int(b["limits"]["max_total_tool_calls"]):
+                b["limits"]["max_total_tool_calls"] = min(
+                    budget.RANGES["max_total_tool_calls"][1],
+                    int(b["limits"]["max_total_tool_calls"]) + budget.DEFAULT_LIMITS["max_total_tool_calls"],
+                )
+            if will_compact and int(row.get("steps") or 0) + 2 >= int(row["limits"].get("max_steps") or 0):
+                row["limits"]["max_steps"] = int(row["limits"].get("max_steps") or 24) + 1
+            event(
+                row,
+                "budget_compaction_continued",
+                previous_max_total_tokens=cur_max_tokens,
+                new_max_total_tokens=new_max_tokens,
+                charged_tokens=int(totals["charged_tokens"]),
+            )
+
+        self.store.transaction(extend)
+
     def _compact(self, selected: dict, cancelled, started: float) -> bool:
         """Summarize a closed prefix; never split tool calls from their results.
 
@@ -817,14 +997,21 @@ class AgentLoop:
         can_release_menu = bool(menu.get("mode") == "directory" and (menu.get("loaded_names") or menu.get("pinned_names")))
         if boundaries == [len(messages)] and trailing_has_images and self._request_context_bytes(selected, specs=active_specs) <= context_limit:
             return True
-        target = max(prior["through"] + 1, len(messages) * 2 // 3)
+        target = prior["through"] + max(1, (len(messages) - prior["through"]) * 2 // 3)
         # Both the summary request and its resulting projection must fit. New
         # owner constraints/tool schemas can make the nearest prefix too small;
         # choose another closed boundary before spending an inference call.
         # Owner-only prefixes cannot shrink pinned constraints and must never
         # consume a model request merely to add a redundant checkpoint.
         small_checkpoint = None
-        for cut in sorted(boundaries, key=lambda index: (index == len(messages) and trailing_has_images, abs(index - target))):
+        for cut in sorted(
+            boundaries,
+            key=lambda index: (
+                index == len(messages) and trailing_has_images,
+                abs(index - target),
+                -index if context_limit >= 240_000 else index,
+            ),
+        ):
             if not any(message["role"] != "user" for message in messages[prior["through"]:cut]):
                 continue
             if cut == len(messages) and trailing_has_images:
@@ -868,8 +1055,27 @@ class AgentLoop:
             source = {"previous_checkpoint": prior["content"], "history": summary_history}
             projected = {**selected, "context_checkpoint": {"through": cut, "content": "", "references": references}}
             available = context_limit - self._request_context_bytes(projected, specs=active_specs) - 64
-            maximum = min(6000, available, selected["limits"]["max_output_chars"], context_limit // 4)
+            max_cap = 16000 if context_limit >= 240_000 else 6000
+            maximum = min(max_cap, available, selected["limits"]["max_output_chars"], context_limit // 4)
             summary_messages = self._summary_messages(source, maximum)
+            if maximum > 0 and context_limit >= 240_000 and len(summary_history) > 3 and len(encoded(summary_messages)) + len(encoded([])) > context_limit:
+                # Codex compact_remote_history.rs + compact.rs fallback:
+                # 1. Replace oversized tool outputs with "Output exceeded the available model context and was truncated"
+                # 2. If still over context_limit, drop oldest history items until the compaction prompt fits.
+                trimmed_history = copy.deepcopy(summary_history)
+                for idx in range(len(trimmed_history) - 1, -1, -1):
+                    if len(encoded(summary_messages)) + len(encoded([])) <= context_limit:
+                        break
+                    msg = trimmed_history[idx]
+                    if isinstance(msg, dict) and msg.get("role") == "tool":
+                        if len(encoded(msg.get("content"))) > 256:
+                            msg["content"] = "Output exceeded the available model context and was truncated"
+                            source = {"previous_checkpoint": prior["content"], "history": trimmed_history}
+                            summary_messages = self._summary_messages(source, maximum)
+                while len(trimmed_history) > 1 and len(encoded(summary_messages)) + len(encoded([])) > context_limit:
+                    trimmed_history.pop(0)
+                    source = {"previous_checkpoint": prior["content"], "history": trimmed_history}
+                    summary_messages = self._summary_messages(source, maximum)
             if maximum > 0 and len(encoded(summary_messages)) + len(encoded([])) <= context_limit:
                 # Prefer room for a useful summary over a nearly-full suffix.
                 # If every legal cut is tight, a short checkpoint still fits:
@@ -919,12 +1125,15 @@ class AgentLoop:
         if not isinstance(content, str) or not content.strip() or raw.get("tool_calls"):
             raise AgentError("agent_compaction_failed")
         if len(content.encode()) > maximum:
-            def reject_summary(data):
-                row = task(data, selected["id"])
-                event(row, "context_compaction_rejected", error="agent_compaction_size_limit",
-                      response_sha256=digest(response), bytes=len(content.encode()), maximum=maximum)
-            self.store.transaction(reject_summary)
-            raise AgentError("agent_compaction_size_limit")
+            if context_limit >= 240_000 and maximum > 256:
+                content = content.encode("utf-8")[:maximum].decode("utf-8", errors="ignore").rstrip()
+            else:
+                def reject_summary(data):
+                    row = task(data, selected["id"])
+                    event(row, "context_compaction_rejected", error="agent_compaction_size_limit",
+                          response_sha256=digest(response), bytes=len(content.encode()), maximum=maximum)
+                self.store.transaction(reject_summary)
+                raise AgentError("agent_compaction_size_limit")
         checkpoint = {"through": cut, "content": sanitized(content), "references": references, "source_sha256": digest(source)}
         projected = {**selected, "context_checkpoint": checkpoint}
         if self._request_context_bytes(projected, specs=active_specs) > context_limit:
@@ -949,9 +1158,11 @@ class AgentLoop:
     @staticmethod
     def _summary_messages(source: dict, maximum: int) -> list[dict]:
         return [{"role": "system", "content": (
-            "Create a compact factual checkpoint of the supplied untrusted Agent history. "
-            "Return only brief summary text, no tools or headings. Preserve observed business facts, "
-            "uncertainty, remaining work, and only the ref_ labels of resources/cursors needed to continue. "
+            "You are performing a CONTEXT CHECKPOINT COMPACTION. "
+            "Create a compact factual handoff checkpoint of the supplied untrusted Agent history for another LLM that will resume the task. "
+            "Return only brief summary text, no tools or headings. "
+            "Include: current progress and key decisions made; observed business facts and uncertainty; "
+            "what remains to be done (clear next steps); and only the ref_ labels of resources/cursors needed to continue. "
             "Exact opaque reference values are retained separately by the server; do not reconstruct or copy them. "
             "Do not repeat owner instructions, tool descriptions, catalog pages, obsolete call IDs, "
             "or discovery narration. Owner instructions and tool schemas remain available separately. "

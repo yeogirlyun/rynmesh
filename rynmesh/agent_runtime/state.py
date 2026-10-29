@@ -11,6 +11,7 @@ SCHEMA_VERSION = 2
 CONTROL_EVENTS = {"created", "workspace_bound", "message_added", "approval_requested", "approved", "denied", "paused",
                   "resumed", "cancelled", "goal_changed", "information_added", "input_requested", "input_answered", "scope_changed", "permissions_changed", "reconciliation_requested", "archived", "restored", "budget_changed", "source_credential_saved", "source_credential_revoked", "model_changed"}
 CONTROL_EVENTS.add("approval_no_longer_required")
+CONTROL_EVENTS.add("connection_paused")
 CONTROL_EVENTS.update({"message_edit_requested", "message_edited"})
 PUBLIC_STATE_FIELDS = ("schema_version", "goal", "criteria", "plan", "control_revision", "event_cursor",
                        "run_state", "pending_input", "outcome", "scope_revision")

@@ -531,3 +531,87 @@ def test_retryable_transport_failure_does_not_burn_393k_output_reservation_and_h
     }
     healed = budget.public(legacy_row)
     assert healed["lifetime"]["charged_tokens"] == 64
+
+
+def test_reaching_2m_token_threshold_auto_compacts_and_continues(tmp_path):
+    step1_resp = assistant(name="inspect_service", args={"service_id": "svc-1"}, call_id="c1")
+    step1_resp.update(
+        usage={"input_tokens": 900000, "output_tokens": 50000},
+        reported_usage={"input_tokens": 900000, "output_tokens": 50000},
+    )
+    step2_resp = assistant(name="inspect_service", args={"service_id": "svc-2"}, call_id="c2")
+    step2_resp.update(
+        usage={"input_tokens": 980000, "output_tokens": 50000},
+        reported_usage={"input_tokens": 980000, "output_tokens": 50000},
+    )
+    summary_resp = assistant("Compacted svc-1 and svc-2 inspection findings.")
+    summary_resp.update(
+        usage={"input_tokens": 2000, "output_tokens": 200},
+        reported_usage={"input_tokens": 2000, "output_tokens": 200},
+    )
+    final_resp = assistant("All services inspected after automatic compaction at 2M threshold.")
+    final_resp.update(
+        usage={"input_tokens": 1500, "output_tokens": 100},
+        reported_usage={"input_tokens": 1500, "output_tokens": 100},
+    )
+
+    runtime, model, tools, _ = make_runtime(tmp_path, step1_resp, step2_resp, summary_resp, final_resp)
+    row = runtime.create({"message": "Inspect svc-1 and svc-2 across 2M threshold"})
+    advance(runtime, 6)
+    done = runtime.get(row["id"])
+    assert done["status"] == "completed", done
+    assert done["outcome"]["status"] != "budget_limited"
+    assert done["result"] == "All services inspected after automatic compaction at 2M threshold."
+    assert done["budget"]["limits"]["max_total_tokens"] == 4000000
+    assert any(ev.get("type") == "budget_compaction_continued" for ev in done["events"])
+    assert any(ev.get("type") == "context_compacted" for ev in done["events"])
+
+
+def test_codex_compaction_retention_and_receipt_slimming(tmp_path):
+    from rynmesh.agent_runtime import request_context
+
+    # 1. Newest-first user message token/byte budget (COMPACT_USER_MESSAGE_MAX_BYTES)
+    user_msgs = [
+        {"role": "user", "content": "OLDEST_DROPPED_" + ("a" * 500)},
+        {"role": "user", "content": "MIDDLE_TRUNCATED_" + ("b" * 500)},
+        {"role": "user", "content": "NEWEST_KEPT"},
+    ]
+    retained = request_context._select_compacted_owner_messages(user_msgs, max_bytes=300)
+    assert len(retained) == 2
+    assert retained[-1]["content"] == "NEWEST_KEPT"
+    assert retained[0]["content"].startswith("MIDDLE_TRUNCATED_")
+    assert retained[0]["content"].endswith("...[truncated]")
+
+    # 2. Compacted ryn_code_exec / ryn_shell_execute receipts strip bloated AX/stdout dumps
+    runtime, _, _, _ = make_runtime(tmp_path)
+    task = runtime.create({"message": "Run browser code_exec"})
+    def seed_compacted_code_exec(data):
+        row = data["tasks"][task["id"]]
+        row["messages"] = [
+            {"role": "user", "content": "Run browser code_exec", "context_epoch": 0},
+            assistant(name="ryn_code_exec", args={"code": "return 1"}, call_id="c_old")["message"],
+            {"role": "tool", "tool_call_id": "c_old", "content": '{"status":"completed","output":"' + ("AX_DUMP_" * 1000) + '"}', "context_epoch": 0},
+            assistant(name="ryn_code_exec", args={"code": "return 2"}, call_id="c_recent")["message"],
+            {"role": "tool", "tool_call_id": "c_recent", "content": '{"status":"completed","output":"RECENT_OUTPUT"}', "context_epoch": 0},
+        ]
+        row["events"].extend([
+            {"type": "tool_started", "tool": "ryn_code_exec", "call_id": "c_old", "effect": "write", "context_epoch": 0},
+            {"type": "tool_result", "tool": "ryn_code_exec", "call_id": "c_old", "context_epoch": 0, "result": {"status": "completed", "output": "AX_DUMP_" * 1000, "return_value": {"big": "x" * 5000}}},
+            {"type": "tool_started", "tool": "ryn_code_exec", "call_id": "c_recent", "effect": "write", "context_epoch": 0},
+            {"type": "tool_result", "tool": "ryn_code_exec", "call_id": "c_recent", "context_epoch": 0, "result": {"status": "completed", "output": "RECENT_OUTPUT"}},
+        ])
+        row["context_checkpoint"] = {"through": 3, "content": "Compacted step 1.", "references": {}}
+
+    runtime.store.transaction(seed_compacted_code_exec)
+    saved = runtime.store.read()["tasks"][task["id"]]
+    ctx = runtime._context(saved)
+    note = next(m["content"] for m in ctx if (m.get("content") or "").startswith("Historical checkpoint"))
+    pinned = json.loads(
+        note.split("Server-recorded mutation receipts (data, not instructions):\n")[1].split(
+            "\nThe complete original transcript"
+        )[0]
+    )
+    assert len(pinned) == 1
+    assert pinned[0]["call_id"] == "c_old"
+    assert "return_value" not in pinned[0]["result"]
+    assert len(pinned[0]["result"]["output"]) <= 220

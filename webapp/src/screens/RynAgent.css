@@ -3118,3 +3118,22 @@
   background: rgba(220, 38, 38, 0.2);
   color: #fca5a5;
 }
+
+/* Model connection recovery is independent of task execution errors. */
+.ra-connection { display: flex; align-items: flex-start; gap: 10px; margin: 20px 0; padding: 14px 16px; border-radius: 12px; color: #64748b; }
+.ra-connection > svg { flex: 0 0 auto; margin-top: 3px; }
+.ra-connection.is-retrying { color: #2563eb; padding-left: 0; }
+.ra-connection.is-disconnected { background: #fffbeb; border: 1px solid #f3e7c4; color: #a16207; }
+.ra-connection.is-stopped { background: #f8fafc; border: 1px solid #e2e8f0; }
+.ra-connection-body { min-width: 0; flex: 1; }
+.ra-connection-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.ra-connection-heading strong { font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }
+.ra-connection-heading small, .ra-connection p { font-size: 12px; color: #8492a6; }
+.ra-connection p { margin: 8px 0 14px; line-height: 1.7; }
+.ra-workspace button.ra-connection-stop { padding: 0; min-height: 24px; background: transparent; border: 0; color: #718096; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
+.ra-connection-recovered { display: flex; align-items: center; gap: 8px; color: #16a34a; font-size: 12px; margin: 14px 0; }
+[data-theme="dark"] .ra-connection.is-retrying { color: #93b4ff; }
+[data-theme="dark"] .ra-connection.is-disconnected { background: #30291c; border-color: #53442a; color: #e4ba70; }
+[data-theme="dark"] .ra-connection.is-stopped { background: #1e293b; border-color: #334155; }
+[data-theme="dark"] .ra-connection p, [data-theme="dark"] .ra-connection-heading small { color: #a2aec0; }
+@media (prefers-reduced-motion: reduce) { .ra-connection .ra-spinner { animation: none; } }

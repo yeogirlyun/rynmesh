@@ -116,6 +116,9 @@ def close_queue(row, emit, reason, *, keep_flight=True):
 def settle(row, emit, data=None):
     """Called after an old operation has a known response and clears its flight."""
     control = row.get("pending_control")
+    if control and control["kind"] in {"pause", "stop", "cancel"}:
+        from . import retry_policy
+        retry_policy.stop(row)
     if not control or row.get("in_flight"):
         return
     if control["kind"] != "pause":
@@ -134,8 +137,8 @@ def settle(row, emit, data=None):
     if control["kind"] in {"steer", "scope", "permissions"}:
         row["status"] = "paused" if control.get("remain_paused") else "queued"
         row["error"] = None
-        row["model_retry_count"] = 0
-        row.pop("model_retry_authority", None)
+        from . import retry_policy
+        retry_policy.reset(row)
     if control["kind"] in {"pause", "stop", "cancel"}:
         stop_type = "paused" if control["kind"] in {"pause", "stop"} else "cancelled"
         stopped = next((item for item in reversed(row["events"]) if item["type"] == stop_type), {})

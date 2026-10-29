@@ -174,3 +174,74 @@
   color: var(--pf-blue);
   text-decoration: underline;
 }
+
+/* Codex $C + xg + ew Activity Item Row for Context Compaction */
+.ra-codex-compaction-row {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  margin: 6px 0;
+}
+
+.ra-codex-compaction-header {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  align-self: flex-start;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  text-align: start;
+}
+
+.ra-codex-compaction-inner {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 1.45;
+  color: color-mix(in oklab, var(--pf-ink, #0d0d0d) 60%, transparent);
+}
+
+.ra-codex-compaction-icon-wrap {
+  display: contents;
+  color: color-mix(in oklab, var(--pf-ink, #0d0d0d) 60%, transparent);
+}
+
+.ra-codex-compaction-icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.ra-codex-compaction-summary {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.ra-codex-compaction-summary.is-shimmer {
+  background: linear-gradient(90deg, #525252 0%, #0d0d0d 50%, #525252 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: ra-shimmer-text 2.2s linear infinite;
+}
+
+[data-theme="dark"] .ra-codex-compaction-summary.is-shimmer {
+  background: linear-gradient(90deg, #9ca3af 0%, #f3f4f6 50%, #9ca3af 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}

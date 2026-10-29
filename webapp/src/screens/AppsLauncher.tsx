@@ -1,11 +1,12 @@
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowRight, ArrowUpRight, Bot, Building2, Check, Info, Plus } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Bot, Building2, Check, Info, Pin, PinOff, Plus } from "lucide-react";
 import type { ExtensionOverview } from "../domain/agentExtensions";
 import type { CraftCatalog, CraftPlugin } from "../domain/craftPlugins";
 import { tr } from "../uiI18n";
 import AppIcon, { appTone } from "./appIcons";
-import { pluginWorkspacePath } from "./pluginWorkspaceNavigation";
+import { pinnedPluginWorkspaces, PIN_CHANGE_EVENT, pluginWorkspacePath, setPluginWorkspacePinned } from "./pluginWorkspaceNavigation";
 import "./craft-apps-refresh.css";
 
 const groups = ["office", "workflow", "design", "media", "storage"] as const;
@@ -32,6 +33,16 @@ type Props = {
 export default function AppsLauncher({ catalog, extensionOverview, busy, filter, onFilterChange, text, onOpen, onInstall, onAgent }: Props) {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
+  const [pinnedPlugins, setPinnedPlugins] = useState(pinnedPluginWorkspaces);
+  useEffect(() => {
+    const sync = () => setPinnedPlugins(pinnedPluginWorkspaces());
+    window.addEventListener(PIN_CHANGE_EVENT, sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener(PIN_CHANGE_EVENT, sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, []);
   const isZh = (i18n.resolvedLanguage || i18n.language || "en").toLowerCase().startsWith("zh");
   const tx = (zh: string, en: string) => (isZh ? zh : en);
   const extensionPlugins = (extensionOverview?.plugins ?? []).filter(
@@ -92,6 +103,7 @@ export default function AppsLauncher({ catalog, extensionOverview, busy, filter,
                 const isLoggedIn = servers.some(s => s.oauth?.state === "logged_in");
                 const hasOauth = servers.some(s => Boolean(s.oauth));
                 const appPath = plugin.web_app ? `/apps/extensions/${encodeURIComponent(plugin.id)}` : pluginWorkspacePath(plugin.id);
+                const pinned = pinnedPlugins.some(item => item.id === plugin.id);
                 return (
                   <article
                     key={`ext-${plugin.id}`}
@@ -109,6 +121,12 @@ export default function AppsLauncher({ catalog, extensionOverview, busy, filter,
                         <Building2 size={22} color="#fff" />
                       </button>
                       {!plugin.enabled && <span className="ra-chip">{text("disabled")}</span>}
+                      <button type="button" className="ra-btn ghost sm" aria-pressed={pinned}
+                        title={pinned ? tx("取消固定", "Unpin") : tx("固定到侧栏", "Pin to sidebar")}
+                        aria-label={`${pinned ? tx("取消固定", "Unpin") : tx("固定到侧栏", "Pin to sidebar")} ${plugin.title}`}
+                        onClick={() => setPluginWorkspacePinned({ id: plugin.id, title: plugin.title }, !pinned)}>
+                        {pinned ? <PinOff size={16} aria-hidden="true" /> : <Pin size={16} aria-hidden="true" />}
+                      </button>
                     </div>
                     <div>
                       <h3>{plugin.title}</h3>
