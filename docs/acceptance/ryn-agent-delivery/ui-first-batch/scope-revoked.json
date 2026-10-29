@@ -1,0 +1,286 @@
+{
+  "outcome": {
+    "coverage_method": "independent_model_assessment",
+    "criteria_results": [
+      {
+        "criterion_id": "goal-coverage",
+        "evidence_refs": [],
+        "kind": "semantic",
+        "status": "unknown"
+      }
+    ],
+    "evidence_refs": [],
+    "goal_revision": 1,
+    "mechanical_scope": [],
+    "semantic_assessment": null,
+    "status": "unverified",
+    "summary": "Verification did not establish the complete goal.",
+    "uncertainties": [
+      "agent_invalid_verification_response",
+      "Only a semantic assessment is available; no registered mechanical goal check established completion.",
+      "One or more required conditions lack independent evidence."
+    ]
+  },
+  "events": [
+    {
+      "at": "2026-10-09T17:45:52.781816+08:00",
+      "context_epoch": 0,
+      "seq": 1,
+      "type": "created"
+    },
+    {
+      "at": "2026-10-09T17:45:53.059648+08:00",
+      "context_epoch": 0,
+      "seq": 2,
+      "step": 1,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-09T17:45:53.203722+08:00",
+      "content": "我先检查模型配置。",
+      "context_epoch": 0,
+      "seq": 3,
+      "tool_count": 1,
+      "type": "assistant"
+    },
+    {
+      "at": "2026-10-09T17:45:53.727999+08:00",
+      "call_id": "inspect",
+      "context_epoch": 0,
+      "effect": "read",
+      "operation_id": "op_a0ea58f2235348e7a0fb646a76d45cd1",
+      "seq": 4,
+      "tool": "ryn_list_models",
+      "type": "tool_started"
+    },
+    {
+      "at": "2026-10-09T17:45:53.743549+08:00",
+      "call_id": "inspect",
+      "context_epoch": 0,
+      "operation_id": "op_a0ea58f2235348e7a0fb646a76d45cd1",
+      "result": {
+        "models": [
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": true,
+            "available": true,
+            "context_window": 32768,
+            "description": "可供本机 Agent 使用；工具在本机执行。",
+            "destination_revision": "legacy-17231844e698e9e23b2f6025e8946614f39dd0674ca9695934a5915f0fa056bd",
+            "id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+            "model_id": "acceptance-model",
+            "name": "验收用本机模型 · acceptance-model",
+            "peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+            "service_id": "src-1fe50b9c7ce9432b-a3cfb2a53f09",
+            "share_scope": "personal_space",
+            "sharing": false,
+            "source": "local_api",
+            "source_id": "src-1fe50b9c7ce9432b",
+            "source_name": "验收用本机模型",
+            "streaming": false,
+            "tool_support": "supported"
+          },
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": false,
+            "available": true,
+            "context_window": 32768,
+            "description": "尚未验证结构化工具调用，请先验证此模型。",
+            "destination_revision": "legacy-17231844e698e9e23b2f6025e8946614f39dd0674ca9695934a5915f0fa056bd",
+            "id": "local/src-1fe50b9c7ce9432b-fcda1814c7c9",
+            "model_id": "second-model",
+            "name": "验收用本机模型 · second-model",
+            "peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+            "service_id": "src-1fe50b9c7ce9432b-fcda1814c7c9",
+            "share_scope": "personal_space",
+            "sharing": false,
+            "source": "local_api",
+            "source_id": "src-1fe50b9c7ce9432b",
+            "source_name": "验收用本机模型",
+            "streaming": false,
+            "tool_support": "unknown"
+          }
+        ]
+      },
+      "seq": 5,
+      "tool": "ryn_list_models",
+      "type": "tool_result"
+    },
+    {
+      "at": "2026-10-09T17:45:54.270385+08:00",
+      "context_epoch": 0,
+      "seq": 6,
+      "step": 2,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-09T17:45:54.356707+08:00",
+      "content": "准备仅分享 acceptance-model，另一个模型保持私有。",
+      "context_epoch": 0,
+      "seq": 7,
+      "tool_count": 1,
+      "type": "assistant"
+    },
+    {
+      "approval_id": "approval_282b70d1263d4547a3f1157e0645da0e",
+      "at": "2026-10-09T17:45:54.886684+08:00",
+      "context_epoch": 0,
+      "seq": 8,
+      "tool": "ryn_set_model_sharing",
+      "type": "approval_requested"
+    },
+    {
+      "at": "2026-10-09T17:48:24.108721+08:00",
+      "context_epoch": 1,
+      "scope_revision": 2,
+      "seq": 9,
+      "type": "scope_changed"
+    },
+    {
+      "at": "2026-10-09T17:48:24.108721+08:00",
+      "call_id": "share",
+      "context_epoch": 0,
+      "internal": false,
+      "operation_id": "op_5f7264abb4c64b72955f340f43afbe57",
+      "result": {
+        "error": "agent_scope_changed",
+        "no_mutation": true,
+        "not_executed": true
+      },
+      "seq": 10,
+      "tool": "ryn_set_model_sharing",
+      "type": "tool_result"
+    },
+    {
+      "at": "2026-10-09T17:48:24.560882+08:00",
+      "context_epoch": 1,
+      "seq": 11,
+      "step": 3,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-09T17:48:24.738896+08:00",
+      "context_epoch": 1,
+      "error": "agent_invalid_tool_call",
+      "seq": 12,
+      "type": "failed"
+    },
+    {
+      "at": "2026-10-09T17:51:09.224737+08:00",
+      "context_epoch": 2,
+      "scope_revision": 3,
+      "seq": 13,
+      "type": "scope_changed"
+    },
+    {
+      "at": "2026-10-09T17:51:33.178879+08:00",
+      "context_epoch": 2,
+      "seq": 14,
+      "type": "resumed"
+    },
+    {
+      "at": "2026-10-09T17:51:33.652251+08:00",
+      "context_epoch": 2,
+      "seq": 15,
+      "step": 4,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-09T17:51:33.890005+08:00",
+      "content": "只读取本任务授权的合成资料。",
+      "context_epoch": 2,
+      "seq": 16,
+      "tool_count": 1,
+      "type": "assistant"
+    },
+    {
+      "at": "2026-10-09T17:51:34.416486+08:00",
+      "call_id": "scope-roots-e9cee8d2399141cf9cba6c04d9d08dde",
+      "context_epoch": 2,
+      "effect": "read",
+      "operation_id": "op_1bfd012dcd2c421988652863a2868ff4",
+      "seq": 17,
+      "tool": "ryn_list_resource_roots",
+      "type": "tool_started"
+    },
+    {
+      "at": "2026-10-09T17:51:34.42851+08:00",
+      "call_id": "scope-roots-e9cee8d2399141cf9cba6c04d9d08dde",
+      "context_epoch": 2,
+      "operation_id": "op_1bfd012dcd2c421988652863a2868ff4",
+      "result": {
+        "roots": [],
+        "scope_revision": 3,
+        "untrusted_data": true
+      },
+      "seq": 18,
+      "tool": "ryn_list_resource_roots",
+      "type": "tool_result"
+    },
+    {
+      "at": "2026-10-09T17:51:34.940051+08:00",
+      "context_epoch": 2,
+      "seq": 19,
+      "step": 5,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-09T17:51:35.014706+08:00",
+      "content": "当前任务没有资料目录授权，本轮未读取目录内容。",
+      "context_epoch": 2,
+      "seq": 20,
+      "tool_count": 0,
+      "type": "assistant"
+    },
+    {
+      "at": "2026-10-09T17:51:35.014706+08:00",
+      "context_epoch": 2,
+      "goal_revision": 1,
+      "seq": 21,
+      "type": "verification_started"
+    },
+    {
+      "at": "2026-10-09T17:51:35.554906+08:00",
+      "context_epoch": 2,
+      "seq": 22,
+      "step": 6,
+      "type": "verification_model_started"
+    },
+    {
+      "at": "2026-10-09T17:51:35.573443+08:00",
+      "context_epoch": 2,
+      "error": "agent_invalid_verification_response",
+      "outcome": "unverified",
+      "seq": 23,
+      "type": "verification_finished"
+    }
+  ],
+  "task_id": "agent_49e0b8a313114d48bf4572a7bfe5f05a",
+  "scope": {
+    "scope": {
+      "egress_grants": [],
+      "resource_grants": [],
+      "revision": 3,
+      "selection": {
+        "allow_model_data": false,
+        "resources": []
+      }
+    },
+    "scope_revision": 3,
+    "control_revision": 5,
+    "model_destination": {
+      "catalog_model_id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+      "destination_revision": "legacy-17231844e698e9e23b2f6025e8946614f39dd0674ca9695934a5915f0fa056bd",
+      "provider_peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+      "source_id": "src-1fe50b9c7ce9432b"
+    },
+    "current_model_destination": {
+      "catalog_model_id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+      "provider_peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+      "source_id": "src-1fe50b9c7ce9432b",
+      "destination_revision": "legacy-17231844e698e9e23b2f6025e8946614f39dd0674ca9695934a5915f0fa056bd"
+    }
+  },
+  "error": null,
+  "status": "completed"
+}

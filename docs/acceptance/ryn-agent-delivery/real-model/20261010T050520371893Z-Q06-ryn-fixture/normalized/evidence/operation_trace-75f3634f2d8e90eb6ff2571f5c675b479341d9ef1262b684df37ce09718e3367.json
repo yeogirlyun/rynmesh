@@ -1,0 +1,1416 @@
+{
+  "access_query": {
+    "catalog_authentication": [
+      {
+        "authenticated": true,
+        "peer_id": "497oUtDZtITa5I35sFkv4K9hK7YSi9c33WdvAPpuBD0="
+      },
+      {
+        "authenticated": true,
+        "peer_id": "uRIb3QF3OmAd54js0GrSAHt7S2tiNfo0QK1CHTHxt5w="
+      }
+    ],
+    "configuration_and_grants_unchanged": true,
+    "current_grants": [
+      {
+        "allowed": true,
+        "effective": true,
+        "peer_id": "497oUtDZtITa5I35sFkv4K9hK7YSi9c33WdvAPpuBD0=",
+        "relationship_id": "21a87b0e67e547faa1113b9c8de42849",
+        "revision": 1,
+        "service_id": "src-a2e1ff873433448c-8ed3f6ad685b"
+      }
+    ],
+    "current_models": {
+      "model-a": {
+        "id": "local/src-a2e1ff873433448c-8ed3f6ad685b",
+        "receiver_peer_ids": [
+          "497oUtDZtITa5I35sFkv4K9hK7YSi9c33WdvAPpuBD0="
+        ],
+        "share_scope": "friends",
+        "sharing": true
+      },
+      "model-b": {
+        "id": "local/src-a2e1ff873433448c-f44e64e75f39",
+        "receiver_peer_ids": [],
+        "share_scope": "personal_space",
+        "sharing": false
+      },
+      "model-c": {
+        "id": "local/src-9ea238b896bf4c4f-8ed3f6ad685b",
+        "receiver_peer_ids": [],
+        "share_scope": "personal_space",
+        "sharing": false
+      },
+      "model-d": {
+        "id": "local/src-ad524eaf63a34354-8e2c7ac50813",
+        "receiver_peer_ids": [],
+        "share_scope": "personal_space",
+        "sharing": false
+      }
+    },
+    "executed_read_tools": [
+      "ryn_list_models",
+      "ryn_list_devices",
+      "ryn_inspect_services",
+      "ryn_list_models",
+      "ryn_list_devices",
+      "ryn_inspect_services",
+      "ryn_list_models",
+      "ryn_list_devices",
+      "ryn_inspect_services"
+    ],
+    "grant_changes": [],
+    "hashes_after": {
+      "grants": "bbe4215d3e2ac557ae379beb97097245c10666664ae8bb046f0b00e886e51ba5",
+      "node_b_relationships": "2bc6e2074a43920d4045293e35dc21975ebbc6fb365d48719fa34248fa62b0f4",
+      "node_c_relationships": "3b44396ff79ce8f823277138f3bb9efc90798daba1bd5991e3992991536a563f",
+      "owner_relationships": "b5f621b34f325b0805bbf63aca2a41b31c329e433dd6194b1014d0e953421c53",
+      "sources": "c3a642f44a343002dbba5d953f193295cca19ccac0ebc33e7aa9fae6ebd59859"
+    },
+    "hashes_before": {
+      "grants": "bbe4215d3e2ac557ae379beb97097245c10666664ae8bb046f0b00e886e51ba5",
+      "node_b_relationships": "2bc6e2074a43920d4045293e35dc21975ebbc6fb365d48719fa34248fa62b0f4",
+      "node_c_relationships": "3b44396ff79ce8f823277138f3bb9efc90798daba1bd5991e3992991536a563f",
+      "owner_relationships": "b5f621b34f325b0805bbf63aca2a41b31c329e433dd6194b1014d0e953421c53",
+      "sources": "c3a642f44a343002dbba5d953f193295cca19ccac0ebc33e7aa9fae6ebd59859"
+    },
+    "http_audit_scope": "Synthetic source only; planner traffic is recorded separately in model_calls.",
+    "initial_grants": [
+      {
+        "allowed": true,
+        "effective": true,
+        "peer_id": "497oUtDZtITa5I35sFkv4K9hK7YSi9c33WdvAPpuBD0=",
+        "relationship_id": "21a87b0e67e547faa1113b9c8de42849",
+        "revision": 1,
+        "service_id": "src-a2e1ff873433448c-8ed3f6ad685b"
+      }
+    ],
+    "initial_models": {
+      "model-a": {
+        "id": "local/src-a2e1ff873433448c-8ed3f6ad685b",
+        "receiver_peer_ids": [
+          "497oUtDZtITa5I35sFkv4K9hK7YSi9c33WdvAPpuBD0="
+        ],
+        "share_scope": "friends",
+        "sharing": true
+      },
+      "model-b": {
+        "id": "local/src-a2e1ff873433448c-f44e64e75f39",
+        "receiver_peer_ids": [],
+        "share_scope": "personal_space",
+        "sharing": false
+      },
+      "model-c": {
+        "id": "local/src-9ea238b896bf4c4f-8ed3f6ad685b",
+        "receiver_peer_ids": [],
+        "share_scope": "personal_space",
+        "sharing": false
+      },
+      "model-d": {
+        "id": "local/src-ad524eaf63a34354-8e2c7ac50813",
+        "receiver_peer_ids": [],
+        "share_scope": "personal_space",
+        "sharing": false
+      }
+    },
+    "read_only_boundary_passed": true,
+    "rejected_tools": [],
+    "setup_admission_probes": [
+      {
+        "copied_other_grant": false,
+        "error_code": null,
+        "model": "model-a",
+        "receiver_peer_id": "497oUtDZtITa5I35sFkv4K9hK7YSi9c33WdvAPpuBD0=",
+        "response_authenticated": true,
+        "result": "allowed",
+        "signed_request": true,
+        "state": "succeeded",
+        "upstream_requests": 1
+      },
+      {
+        "copied_other_grant": false,
+        "error_code": "personal_space_access_denied",
+        "model": "model-b",
+        "receiver_peer_id": "uRIb3QF3OmAd54js0GrSAHt7S2tiNfo0QK1CHTHxt5w=",
+        "result": "denied",
+        "signed_request": true,
+        "upstream_requests": 0
+      },
+      {
+        "copied_other_grant": true,
+        "error_code": "ai_permission_denied",
+        "model": "model-a",
+        "receiver_peer_id": "uRIb3QF3OmAd54js0GrSAHt7S2tiNfo0QK1CHTHxt5w=",
+        "response_authenticated": true,
+        "result": "denied",
+        "signed_request": true,
+        "state": "rejected",
+        "upstream_requests": 0
+      },
+      {
+        "copied_other_grant": true,
+        "error_code": "personal_space_access_denied",
+        "model": "model-b",
+        "receiver_peer_id": "497oUtDZtITa5I35sFkv4K9hK7YSi9c33WdvAPpuBD0=",
+        "result": "denied",
+        "signed_request": true,
+        "upstream_requests": 0
+      }
+    ],
+    "setup_fixture_http_audit": [
+      {
+        "authenticated": true,
+        "kind": "chat",
+        "max_tokens": 4096,
+        "model": "alpha",
+        "saved": false,
+        "status": 200,
+        "time": 1791608720.63089
+      },
+      {
+        "authenticated": true,
+        "kind": "tool_start",
+        "max_tokens": 4096,
+        "model": "alpha",
+        "saved": false,
+        "status": 200,
+        "time": 1791608720.6338906
+      },
+      {
+        "authenticated": true,
+        "kind": "tool_continue",
+        "max_tokens": 4096,
+        "model": "alpha",
+        "saved": false,
+        "status": 200,
+        "time": 1791608720.6369152
+      },
+      {
+        "authenticated": true,
+        "kind": "chat",
+        "max_tokens": 4096,
+        "model": "beta",
+        "saved": false,
+        "status": 200,
+        "time": 1791608720.6399274
+      },
+      {
+        "authenticated": true,
+        "kind": "chat",
+        "max_tokens": 4096,
+        "model": "alpha",
+        "saved": false,
+        "status": 200,
+        "time": 1791608720.6468887
+      },
+      {
+        "authenticated": true,
+        "kind": "tool_start",
+        "max_tokens": 4096,
+        "model": "alpha",
+        "saved": false,
+        "status": 200,
+        "time": 1791608720.64989
+      },
+      {
+        "authenticated": true,
+        "kind": "tool_continue",
+        "max_tokens": 4096,
+        "model": "alpha",
+        "saved": false,
+        "status": 200,
+        "time": 1791608720.652889
+      },
+      {
+        "authenticated": true,
+        "kind": "chat",
+        "max_tokens": 10,
+        "model": "alpha",
+        "saved": false,
+        "status": 200,
+        "time": 1791608722.9555876
+      }
+    ],
+    "setup_receiver_visible_services": {
+      "node-b": [
+        "src-a2e1ff873433448c-8ed3f6ad685b"
+      ],
+      "node-c": []
+    },
+    "source_replacements": [],
+    "task_fixture_http_audit": []
+  },
+  "actual_source_http_audit": [
+    {
+      "authenticated": true,
+      "kind": "chat",
+      "max_tokens": 4096,
+      "model": "alpha",
+      "saved": false,
+      "status": 200,
+      "time": 1791608720.63089
+    },
+    {
+      "authenticated": true,
+      "kind": "tool_start",
+      "max_tokens": 4096,
+      "model": "alpha",
+      "saved": false,
+      "status": 200,
+      "time": 1791608720.6338906
+    },
+    {
+      "authenticated": true,
+      "kind": "tool_continue",
+      "max_tokens": 4096,
+      "model": "alpha",
+      "saved": false,
+      "status": 200,
+      "time": 1791608720.6369152
+    },
+    {
+      "authenticated": true,
+      "kind": "chat",
+      "max_tokens": 4096,
+      "model": "beta",
+      "saved": false,
+      "status": 200,
+      "time": 1791608720.6399274
+    },
+    {
+      "authenticated": true,
+      "kind": "chat",
+      "max_tokens": 4096,
+      "model": "alpha",
+      "saved": false,
+      "status": 200,
+      "time": 1791608720.6468887
+    },
+    {
+      "authenticated": true,
+      "kind": "tool_start",
+      "max_tokens": 4096,
+      "model": "alpha",
+      "saved": false,
+      "status": 200,
+      "time": 1791608720.64989
+    },
+    {
+      "authenticated": true,
+      "kind": "tool_continue",
+      "max_tokens": 4096,
+      "model": "alpha",
+      "saved": false,
+      "status": 200,
+      "time": 1791608720.652889
+    },
+    {
+      "authenticated": true,
+      "kind": "chat",
+      "max_tokens": 10,
+      "model": "alpha",
+      "saved": false,
+      "status": 200,
+      "time": 1791608722.9555876
+    }
+  ],
+  "audit_note": "Absent security observations stay absent; successful collector checks do not imply an unmeasured universal security audit.",
+  "consumer_peer_id": "pYc3mOWLQXJoaiMJmdTiLTmpyq7cVoWFV+Yd1KCZ39I=",
+  "events": [
+    {
+      "at": "2026-10-10T05:05:23.015550+00:00",
+      "context_epoch": 0,
+      "seq": 1,
+      "type": "created"
+    },
+    {
+      "at": "2026-10-10T05:05:23.046580+00:00",
+      "context_epoch": 0,
+      "menu": {
+        "catalog_revision": "0d5f6db938da412e8de4dc134194538ed14ce581e2983a1b2c01bde252f15dce",
+        "context_epoch": 0,
+        "goal_revision": 1,
+        "loaded_names": [],
+        "mode": "full",
+        "revision": 1
+      },
+      "reason": "projection",
+      "seq": 2,
+      "type": "tool_menu_changed"
+    },
+    {
+      "at": "2026-10-10T05:05:23.060548+00:00",
+      "context_epoch": 0,
+      "seq": 3,
+      "step": 1,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-10T05:05:23.074581+00:00",
+      "clamp_reasons": [],
+      "configured_cap": 4096,
+      "context_epoch": 0,
+      "effective_cap": 4096,
+      "estimated_input_tokens": 5538,
+      "policy_sha256": "b16a14e161e7a7d270d8074b53911e6a014403d6d1e5480667c3a31f9b59884a",
+      "seq": 4,
+      "type": "model_output_policy",
+      "version": "configured-output-v1"
+    },
+    {
+      "at": "2026-10-10T05:05:23.088549+00:00",
+      "content": "",
+      "context_epoch": 0,
+      "seq": 5,
+      "tool_count": 1,
+      "type": "assistant"
+    },
+    {
+      "at": "2026-10-10T05:05:23.109150+00:00",
+      "call_id": "fixture-read-0",
+      "context_epoch": 0,
+      "effect": "read",
+      "operation_id": "op_2038223e39f8463a91290d49cc49a4be",
+      "seq": 6,
+      "tool": "ryn_list_models",
+      "type": "tool_started"
+    },
+    {
+      "at": "2026-10-10T05:05:23.131124+00:00",
+      "call_id": "fixture-read-0",
+      "context_epoch": 0,
+      "operation_id": "op_2038223e39f8463a91290d49cc49a4be",
+      "result": {
+        "models": [
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": true,
+            "availability_basis": "configured_source_readiness_not_live_probe",
+            "available": true,
+            "context_window": 32768,
+            "description": "可供本机 Agent 使用；工具在本机执行。",
+            "destination_binding_supported": true,
+            "destination_revision": "12026c04d1004ba995a0324b5f4830c6",
+            "evidence": {
+              "connection": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "model_exists": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "tools": {
+                "checked_at": null,
+                "status": "unknown"
+              }
+            },
+            "fixture_identity": "model-a",
+            "id": "local/src-a2e1ff873433448c-8ed3f6ad685b",
+            "model_id": "alpha",
+            "model_settings": {
+              "destination_revision": "12026c04d1004ba995a0324b5f4830c6",
+              "effective": {
+                "context_window": 32768,
+                "max_concurrent": 1,
+                "request_defaults": {},
+                "requests_per_day": null,
+                "share_scope": "friends"
+              },
+              "evidence": {
+                "connection": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "inherited_fields": [
+                "context_window",
+                "max_concurrent",
+                "max_output_tokens",
+                "request_defaults",
+                "requests_per_day"
+              ],
+              "overrides": {
+                "share_scope": "friends"
+              },
+              "rule_revision": "83268b4b4b2646a9b27c41637455a699"
+            },
+            "name": "source-alpha · alpha",
+            "peer_id": "pYc3mOWLQXJoaiMJmdTiLTmpyq7cVoWFV+Yd1KCZ39I=",
+            "rule_revision": "83268b4b4b2646a9b27c41637455a699",
+            "runtime": "external",
+            "service_id": "src-a2e1ff873433448c-8ed3f6ad685b",
+            "share_scope": "friends",
+            "sharing": true,
+            "source": "local_api",
+            "source_id": "src-a2e1ff873433448c",
+            "source_name": "source-alpha",
+            "streaming": false,
+            "tool_support": "supported"
+          },
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": false,
+            "availability_basis": "configured_source_readiness_not_live_probe",
+            "available": true,
+            "context_window": 32768,
+            "description": "尚未通过工具调用验证，可重试；暂不能用于助手。",
+            "destination_binding_supported": true,
+            "destination_revision": "28dff9aaf54444d6b1b908424b76bc50",
+            "evidence": {
+              "connection": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "model_exists": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "tools": {
+                "checked_at": null,
+                "status": "unknown"
+              }
+            },
+            "fixture_identity": "model-b",
+            "id": "local/src-a2e1ff873433448c-f44e64e75f39",
+            "model_id": "beta",
+            "model_settings": {
+              "destination_revision": "28dff9aaf54444d6b1b908424b76bc50",
+              "effective": {
+                "context_window": 32768,
+                "max_concurrent": 1,
+                "request_defaults": {},
+                "requests_per_day": null,
+                "share_scope": "personal_space"
+              },
+              "evidence": {
+                "connection": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "inherited_fields": [
+                "context_window",
+                "max_concurrent",
+                "max_output_tokens",
+                "request_defaults",
+                "requests_per_day",
+                "share_scope"
+              ],
+              "overrides": {},
+              "rule_revision": "0b7e7946bda044d3ae727dc6bc18ab84"
+            },
+            "name": "source-alpha · beta",
+            "peer_id": "pYc3mOWLQXJoaiMJmdTiLTmpyq7cVoWFV+Yd1KCZ39I=",
+            "rule_revision": "0b7e7946bda044d3ae727dc6bc18ab84",
+            "runtime": "external",
+            "service_id": "src-a2e1ff873433448c-f44e64e75f39",
+            "share_scope": "personal_space",
+            "sharing": false,
+            "source": "local_api",
+            "source_id": "src-a2e1ff873433448c",
+            "source_name": "source-alpha",
+            "streaming": false,
+            "tool_support": "unsupported"
+          },
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": false,
+            "availability_basis": "configured_source_readiness_not_live_probe",
+            "available": false,
+            "context_window": 32768,
+            "description": "模型当前不可用，请检查来源连接。",
+            "destination_binding_supported": true,
+            "destination_revision": "89a8a80d6690478bb8df83d4fdbdeeaf",
+            "evidence": {
+              "connection": {
+                "checked_at": "2026-10-09T08:00:00Z",
+                "error_code": "connection_refused",
+                "method": "actual_loopback_socket_probe",
+                "status": "failed"
+              },
+              "model_exists": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "tools": {
+                "checked_at": null,
+                "status": "unknown"
+              }
+            },
+            "fixture_identity": "model-d",
+            "id": "local/src-ad524eaf63a34354-8e2c7ac50813",
+            "model_id": "offline",
+            "model_settings": {
+              "destination_revision": "89a8a80d6690478bb8df83d4fdbdeeaf",
+              "effective": {
+                "context_window": 32768,
+                "max_concurrent": 1,
+                "request_defaults": {},
+                "requests_per_day": null,
+                "share_scope": "personal_space"
+              },
+              "evidence": {
+                "connection": {
+                  "checked_at": "2026-10-09T08:00:00Z",
+                  "error_code": "connection_refused",
+                  "method": "actual_loopback_socket_probe",
+                  "status": "failed"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "inherited_fields": [
+                "context_window",
+                "max_concurrent",
+                "max_output_tokens",
+                "request_defaults",
+                "requests_per_day",
+                "share_scope"
+              ],
+              "overrides": {},
+              "rule_revision": "cb2fee095e6742899b4adef45bf10bf3"
+            },
+            "name": "source-broken · offline",
+            "peer_id": "pYc3mOWLQXJoaiMJmdTiLTmpyq7cVoWFV+Yd1KCZ39I=",
+            "rule_revision": "cb2fee095e6742899b4adef45bf10bf3",
+            "service_id": "src-ad524eaf63a34354-8e2c7ac50813",
+            "share_scope": "personal_space",
+            "sharing": false,
+            "source": "local_api",
+            "source_id": "src-ad524eaf63a34354",
+            "source_name": "source-broken",
+            "streaming": false,
+            "tool_support": "unknown"
+          },
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": true,
+            "availability_basis": "configured_source_readiness_not_live_probe",
+            "available": true,
+            "context_window": 32768,
+            "description": "可供本机 Agent 使用；工具在本机执行。",
+            "destination_binding_supported": true,
+            "destination_revision": "bd24ab8eb4a640df9dfd456432762a85",
+            "evidence": {
+              "connection": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "model_exists": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "tools": {
+                "checked_at": null,
+                "status": "unknown"
+              }
+            },
+            "fixture_identity": "model-c",
+            "id": "local/src-9ea238b896bf4c4f-8ed3f6ad685b",
+            "model_id": "alpha",
+            "model_settings": {
+              "destination_revision": "bd24ab8eb4a640df9dfd456432762a85",
+              "effective": {
+                "context_window": 32768,
+                "max_concurrent": 1,
+                "request_defaults": {},
+                "requests_per_day": null,
+                "share_scope": "personal_space"
+              },
+              "evidence": {
+                "connection": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "inherited_fields": [
+                "context_window",
+                "max_concurrent",
+                "max_output_tokens",
+                "request_defaults",
+                "requests_per_day",
+                "share_scope"
+              ],
+              "overrides": {},
+              "rule_revision": "fc7703534ce7453483e2911758326482"
+            },
+            "name": "source-other · alpha",
+            "peer_id": "pYc3mOWLQXJoaiMJmdTiLTmpyq7cVoWFV+Yd1KCZ39I=",
+            "rule_revision": "fc7703534ce7453483e2911758326482",
+            "runtime": "external",
+            "service_id": "src-9ea238b896bf4c4f-8ed3f6ad685b",
+            "share_scope": "personal_space",
+            "sharing": false,
+            "source": "local_api",
+            "source_id": "src-9ea238b896bf4c4f",
+            "source_name": "source-other",
+            "streaming": false,
+            "tool_support": "supported"
+          }
+        ]
+      },
+      "seq": 7,
+      "tool": "ryn_list_models",
+      "type": "tool_result"
+    },
+    {
+      "at": "2026-10-10T05:05:23.185121+00:00",
+      "context_epoch": 0,
+      "seq": 8,
+      "step": 2,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-10T05:05:23.200121+00:00",
+      "clamp_reasons": [],
+      "configured_cap": 4096,
+      "context_epoch": 0,
+      "effective_cap": 4096,
+      "estimated_input_tokens": 7920,
+      "policy_sha256": "b16a14e161e7a7d270d8074b53911e6a014403d6d1e5480667c3a31f9b59884a",
+      "seq": 9,
+      "type": "model_output_policy",
+      "version": "configured-output-v1"
+    },
+    {
+      "at": "2026-10-10T05:05:23.214123+00:00",
+      "content": "",
+      "context_epoch": 0,
+      "seq": 10,
+      "tool_count": 1,
+      "type": "assistant"
+    },
+    {
+      "at": "2026-10-10T05:05:23.242151+00:00",
+      "call_id": "fixture-read-1",
+      "context_epoch": 0,
+      "effect": "read",
+      "operation_id": "op_ef83d227394948978d7a5efe9550ef70",
+      "seq": 11,
+      "tool": "ryn_list_devices",
+      "type": "tool_started"
+    },
+    {
+      "at": "2026-10-10T05:05:23.291122+00:00",
+      "call_id": "fixture-read-1",
+      "context_epoch": 0,
+      "operation_id": "op_ef83d227394948978d7a5efe9550ef70",
+      "result": {
+        "ai_access": "space",
+        "devices": [
+          {
+            "checked_at": "2026-10-09T08:00:00+00:00",
+            "evidence_source": "self",
+            "http_probe_performed": false,
+            "http_reachable": null,
+            "lan_probe_performed": false,
+            "lan_reachable": null,
+            "last_seen": "",
+            "name": "ryn-query-development-uufmpa01",
+            "online": true,
+            "peer_id": "pYc3mOWLQXJoaiMJmdTiLTmpyq7cVoWFV+Yd1KCZ39I=",
+            "removed": false,
+            "role": "manager"
+          },
+          {
+            "checked_at": "2026-10-09T08:00:00+00:00",
+            "evidence_source": "heartbeat_expired",
+            "http_probe_performed": false,
+            "http_reachable": null,
+            "lan_probe_performed": false,
+            "lan_reachable": null,
+            "last_seen": "2026-10-09T07:50:00Z",
+            "node_name": "node-c",
+            "online": false,
+            "peer_id": "uRIb3QF3OmAd54js0GrSAHt7S2tiNfo0QK1CHTHxt5w=",
+            "relationship_id": "1f3607dd29274a199f7c7957017fc24c",
+            "status": "active"
+          },
+          {
+            "checked_at": "2026-10-09T08:00:00+00:00",
+            "evidence_source": "unknown",
+            "http_probe_performed": false,
+            "http_reachable": null,
+            "lan_probe_performed": false,
+            "lan_reachable": null,
+            "last_seen": "",
+            "node_name": "node-b",
+            "online": null,
+            "peer_id": "497oUtDZtITa5I35sFkv4K9hK7YSi9c33WdvAPpuBD0=",
+            "relationship_id": "21a87b0e67e547faa1113b9c8de42849",
+            "status": "active"
+          },
+          {
+            "checked_at": "2026-10-09T08:00:00+00:00",
+            "evidence_source": "http",
+            "http_probe_performed": true,
+            "http_reachable": true,
+            "lan_probe_performed": false,
+            "lan_reachable": null,
+            "last_seen": "2026-10-09T08:00:00Z",
+            "name": "node-a",
+            "online": true,
+            "peer_id": "TbqCVjgMc9oqwSRwFwA53HtSiE/acS61LvkBp3FYbq4="
+          },
+          {
+            "checked_at": "2026-10-09T08:00:00+00:00",
+            "evidence_source": "unknown",
+            "http_probe_performed": false,
+            "http_reachable": null,
+            "lan_probe_performed": false,
+            "lan_reachable": null,
+            "last_seen": "",
+            "name": "node-d",
+            "online": null,
+            "peer_id": "XoZibmfF00f9PD9jonWkfKZsSnBcVGLyVnMlizz6wtU="
+          }
+        ],
+        "evidence_note": "online=null means unknown; membership is not proof of connectivity. evidence_source=self proves only the executing process is alive; no HTTP/LAN probe is performed for self. Reachability=null means untested, not failed. HTTP failure alone does not prove offline.",
+        "friends": [
+          {
+            "node_name": "node-c",
+            "peer_id": "uRIb3QF3OmAd54js0GrSAHt7S2tiNfo0QK1CHTHxt5w=",
+            "relationship_id": "1f3607dd29274a199f7c7957017fc24c",
+            "status": "active"
+          },
+          {
+            "node_name": "node-b",
+            "peer_id": "497oUtDZtITa5I35sFkv4K9hK7YSi9c33WdvAPpuBD0=",
+            "relationship_id": "21a87b0e67e547faa1113b9c8de42849",
+            "status": "active"
+          }
+        ],
+        "membership": "active",
+        "self_id": "pYc3mOWLQXJoaiMJmdTiLTmpyq7cVoWFV+Yd1KCZ39I="
+      },
+      "seq": 12,
+      "tool": "ryn_list_devices",
+      "type": "tool_result"
+    },
+    {
+      "at": "2026-10-10T05:05:23.350291+00:00",
+      "context_epoch": 0,
+      "seq": 13,
+      "step": 3,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-10T05:05:23.367287+00:00",
+      "clamp_reasons": [],
+      "configured_cap": 4096,
+      "context_epoch": 0,
+      "effective_cap": 4096,
+      "estimated_input_tokens": 8845,
+      "policy_sha256": "b16a14e161e7a7d270d8074b53911e6a014403d6d1e5480667c3a31f9b59884a",
+      "seq": 14,
+      "type": "model_output_policy",
+      "version": "configured-output-v1"
+    },
+    {
+      "at": "2026-10-10T05:05:23.386286+00:00",
+      "content": "",
+      "context_epoch": 0,
+      "seq": 15,
+      "tool_count": 1,
+      "type": "assistant"
+    },
+    {
+      "at": "2026-10-10T05:05:23.416288+00:00",
+      "call_id": "fixture-read-2",
+      "context_epoch": 0,
+      "effect": "read",
+      "operation_id": "op_0d6b341fbf894009b78d161aa8685984",
+      "seq": 16,
+      "tool": "ryn_inspect_services",
+      "type": "tool_started"
+    },
+    {
+      "at": "2026-10-10T05:05:23.448289+00:00",
+      "call_id": "fixture-read-2",
+      "context_epoch": 0,
+      "operation_id": "op_0d6b341fbf894009b78d161aa8685984",
+      "result": {
+        "friend_grants": [
+          {
+            "allowed": true,
+            "effective": true,
+            "peer_id": "497oUtDZtITa5I35sFkv4K9hK7YSi9c33WdvAPpuBD0=",
+            "relationship_id": "21a87b0e67e547faa1113b9c8de42849",
+            "revision": 1,
+            "service_id": "src-a2e1ff873433448c-8ed3f6ad685b"
+          }
+        ],
+        "models": [
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": true,
+            "availability_basis": "configured_source_readiness_not_live_probe",
+            "available": true,
+            "context_window": 32768,
+            "description": "可供本机 Agent 使用；工具在本机执行。",
+            "destination_binding_supported": true,
+            "destination_revision": "12026c04d1004ba995a0324b5f4830c6",
+            "evidence": {
+              "connection": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "model_exists": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "tools": {
+                "checked_at": null,
+                "status": "unknown"
+              }
+            },
+            "id": "local/src-a2e1ff873433448c-8ed3f6ad685b",
+            "model_id": "alpha",
+            "model_settings": {
+              "destination_revision": "12026c04d1004ba995a0324b5f4830c6",
+              "effective": {
+                "context_window": 32768,
+                "max_concurrent": 1,
+                "request_defaults": {},
+                "requests_per_day": null,
+                "share_scope": "friends"
+              },
+              "evidence": {
+                "connection": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "inherited_fields": [
+                "context_window",
+                "max_concurrent",
+                "max_output_tokens",
+                "request_defaults",
+                "requests_per_day"
+              ],
+              "overrides": {
+                "share_scope": "friends"
+              },
+              "rule_revision": "83268b4b4b2646a9b27c41637455a699"
+            },
+            "name": "source-alpha · alpha",
+            "peer_id": "pYc3mOWLQXJoaiMJmdTiLTmpyq7cVoWFV+Yd1KCZ39I=",
+            "rule_revision": "83268b4b4b2646a9b27c41637455a699",
+            "runtime": "external",
+            "service_id": "src-a2e1ff873433448c-8ed3f6ad685b",
+            "share_scope": "friends",
+            "sharing": true,
+            "source": "local_api",
+            "source_id": "src-a2e1ff873433448c",
+            "source_name": "source-alpha",
+            "streaming": false,
+            "tool_support": "supported"
+          },
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": false,
+            "availability_basis": "configured_source_readiness_not_live_probe",
+            "available": true,
+            "context_window": 32768,
+            "description": "尚未通过工具调用验证，可重试；暂不能用于助手。",
+            "destination_binding_supported": true,
+            "destination_revision": "28dff9aaf54444d6b1b908424b76bc50",
+            "evidence": {
+              "connection": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "model_exists": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "tools": {
+                "checked_at": null,
+                "status": "unknown"
+              }
+            },
+            "id": "local/src-a2e1ff873433448c-f44e64e75f39",
+            "model_id": "beta",
+            "model_settings": {
+              "destination_revision": "28dff9aaf54444d6b1b908424b76bc50",
+              "effective": {
+                "context_window": 32768,
+                "max_concurrent": 1,
+                "request_defaults": {},
+                "requests_per_day": null,
+                "share_scope": "personal_space"
+              },
+              "evidence": {
+                "connection": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "inherited_fields": [
+                "context_window",
+                "max_concurrent",
+                "max_output_tokens",
+                "request_defaults",
+                "requests_per_day",
+                "share_scope"
+              ],
+              "overrides": {},
+              "rule_revision": "0b7e7946bda044d3ae727dc6bc18ab84"
+            },
+            "name": "source-alpha · beta",
+            "peer_id": "pYc3mOWLQXJoaiMJmdTiLTmpyq7cVoWFV+Yd1KCZ39I=",
+            "rule_revision": "0b7e7946bda044d3ae727dc6bc18ab84",
+            "runtime": "external",
+            "service_id": "src-a2e1ff873433448c-f44e64e75f39",
+            "share_scope": "personal_space",
+            "sharing": false,
+            "source": "local_api",
+            "source_id": "src-a2e1ff873433448c",
+            "source_name": "source-alpha",
+            "streaming": false,
+            "tool_support": "unsupported"
+          },
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": false,
+            "availability_basis": "configured_source_readiness_not_live_probe",
+            "available": false,
+            "context_window": 32768,
+            "description": "模型当前不可用，请检查来源连接。",
+            "destination_binding_supported": true,
+            "destination_revision": "89a8a80d6690478bb8df83d4fdbdeeaf",
+            "evidence": {
+              "connection": {
+                "checked_at": "2026-10-09T08:00:00Z",
+                "error_code": "connection_refused",
+                "method": "actual_loopback_socket_probe",
+                "status": "failed"
+              },
+              "model_exists": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "tools": {
+                "checked_at": null,
+                "status": "unknown"
+              }
+            },
+            "id": "local/src-ad524eaf63a34354-8e2c7ac50813",
+            "model_id": "offline",
+            "model_settings": {
+              "destination_revision": "89a8a80d6690478bb8df83d4fdbdeeaf",
+              "effective": {
+                "context_window": 32768,
+                "max_concurrent": 1,
+                "request_defaults": {},
+                "requests_per_day": null,
+                "share_scope": "personal_space"
+              },
+              "evidence": {
+                "connection": {
+                  "checked_at": "2026-10-09T08:00:00Z",
+                  "error_code": "connection_refused",
+                  "method": "actual_loopback_socket_probe",
+                  "status": "failed"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "inherited_fields": [
+                "context_window",
+                "max_concurrent",
+                "max_output_tokens",
+                "request_defaults",
+                "requests_per_day",
+                "share_scope"
+              ],
+              "overrides": {},
+              "rule_revision": "cb2fee095e6742899b4adef45bf10bf3"
+            },
+            "name": "source-broken · offline",
+            "peer_id": "pYc3mOWLQXJoaiMJmdTiLTmpyq7cVoWFV+Yd1KCZ39I=",
+            "rule_revision": "cb2fee095e6742899b4adef45bf10bf3",
+            "service_id": "src-ad524eaf63a34354-8e2c7ac50813",
+            "share_scope": "personal_space",
+            "sharing": false,
+            "source": "local_api",
+            "source_id": "src-ad524eaf63a34354",
+            "source_name": "source-broken",
+            "streaming": false,
+            "tool_support": "unknown"
+          },
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": true,
+            "availability_basis": "configured_source_readiness_not_live_probe",
+            "available": true,
+            "context_window": 32768,
+            "description": "可供本机 Agent 使用；工具在本机执行。",
+            "destination_binding_supported": true,
+            "destination_revision": "bd24ab8eb4a640df9dfd456432762a85",
+            "evidence": {
+              "connection": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "model_exists": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "tools": {
+                "checked_at": null,
+                "status": "unknown"
+              }
+            },
+            "id": "local/src-9ea238b896bf4c4f-8ed3f6ad685b",
+            "model_id": "alpha",
+            "model_settings": {
+              "destination_revision": "bd24ab8eb4a640df9dfd456432762a85",
+              "effective": {
+                "context_window": 32768,
+                "max_concurrent": 1,
+                "request_defaults": {},
+                "requests_per_day": null,
+                "share_scope": "personal_space"
+              },
+              "evidence": {
+                "connection": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "inherited_fields": [
+                "context_window",
+                "max_concurrent",
+                "max_output_tokens",
+                "request_defaults",
+                "requests_per_day",
+                "share_scope"
+              ],
+              "overrides": {},
+              "rule_revision": "fc7703534ce7453483e2911758326482"
+            },
+            "name": "source-other · alpha",
+            "peer_id": "pYc3mOWLQXJoaiMJmdTiLTmpyq7cVoWFV+Yd1KCZ39I=",
+            "rule_revision": "fc7703534ce7453483e2911758326482",
+            "runtime": "external",
+            "service_id": "src-9ea238b896bf4c4f-8ed3f6ad685b",
+            "share_scope": "personal_space",
+            "sharing": false,
+            "source": "local_api",
+            "source_id": "src-9ea238b896bf4c4f",
+            "source_name": "source-other",
+            "streaming": false,
+            "tool_support": "supported"
+          }
+        ]
+      },
+      "seq": 17,
+      "tool": "ryn_inspect_services",
+      "type": "tool_result"
+    },
+    {
+      "at": "2026-10-10T05:05:23.511287+00:00",
+      "context_epoch": 0,
+      "seq": 18,
+      "step": 4,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-10T05:05:23.530869+00:00",
+      "clamp_reasons": [],
+      "configured_cap": 4096,
+      "context_epoch": 0,
+      "effective_cap": 4096,
+      "estimated_input_tokens": 11266,
+      "policy_sha256": "b16a14e161e7a7d270d8074b53911e6a014403d6d1e5480667c3a31f9b59884a",
+      "seq": 19,
+      "type": "model_output_policy",
+      "version": "configured-output-v1"
+    },
+    {
+      "at": "2026-10-10T05:05:23.548507+00:00",
+      "content": "Collector exercise only. Evidence is in the actual tool receipt; report review remains pending.",
+      "context_epoch": 0,
+      "seq": 20,
+      "tool_count": 0,
+      "type": "assistant"
+    },
+    {
+      "at": "2026-10-10T05:05:23.548507+00:00",
+      "context_epoch": 0,
+      "goal_revision": 1,
+      "seq": 21,
+      "type": "verification_started"
+    },
+    {
+      "at": "2026-10-10T05:05:23.621535+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_2038223e39f8463a91290d49cc49a4be",
+      "evidence_id": "evidence_f6d70414a9eb4ee6b2259262b609cf7d",
+      "seq": 22,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-10T05:05:23.706537+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_ef83d227394948978d7a5efe9550ef70",
+      "evidence_id": "evidence_86fecc245ce549b7810e6b7d9fa536a9",
+      "seq": 23,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-10T05:05:23.781544+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_0d6b341fbf894009b78d161aa8685984",
+      "evidence_id": "evidence_39fe26f4a93a403598669c2c065c15e7",
+      "seq": 24,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-10T05:05:23.835312+00:00",
+      "context_epoch": 0,
+      "seq": 25,
+      "step": 5,
+      "type": "verification_model_started"
+    },
+    {
+      "at": "2026-10-10T05:05:23.852851+00:00",
+      "clamp_reasons": [],
+      "configured_cap": 4096,
+      "context_epoch": 0,
+      "effective_cap": 4096,
+      "estimated_input_tokens": 13895,
+      "policy_sha256": "b16a14e161e7a7d270d8074b53911e6a014403d6d1e5480667c3a31f9b59884a",
+      "seq": 26,
+      "type": "model_output_policy",
+      "version": "configured-output-v1"
+    },
+    {
+      "at": "2026-10-10T05:05:23.873853+00:00",
+      "context_epoch": 0,
+      "outcome": "unverified",
+      "seq": 27,
+      "type": "verification_finished"
+    },
+    {
+      "at": "2026-10-10T05:05:23.873853+00:00",
+      "context_epoch": 0,
+      "goal_revision": 1,
+      "repair_count": 1,
+      "seq": 28,
+      "type": "verification_retry_scheduled"
+    },
+    {
+      "at": "2026-10-10T05:05:23.941851+00:00",
+      "context_epoch": 0,
+      "seq": 29,
+      "step": 6,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-10T05:05:23.963851+00:00",
+      "clamp_reasons": [],
+      "configured_cap": 4096,
+      "context_epoch": 0,
+      "effective_cap": 4096,
+      "estimated_input_tokens": 12199,
+      "policy_sha256": "b16a14e161e7a7d270d8074b53911e6a014403d6d1e5480667c3a31f9b59884a",
+      "seq": 30,
+      "type": "model_output_policy",
+      "version": "configured-output-v1"
+    },
+    {
+      "at": "2026-10-10T05:05:23.988881+00:00",
+      "content": "Collector exercise only. Evidence is in the actual tool receipt; report review remains pending.",
+      "context_epoch": 0,
+      "seq": 31,
+      "tool_count": 0,
+      "type": "assistant"
+    },
+    {
+      "at": "2026-10-10T05:05:23.989882+00:00",
+      "context_epoch": 0,
+      "goal_revision": 1,
+      "seq": 32,
+      "type": "verification_started"
+    },
+    {
+      "at": "2026-10-10T05:05:24.066852+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_2038223e39f8463a91290d49cc49a4be",
+      "evidence_id": "evidence_dced456bf7b946a5a4a142b50223c5b1",
+      "seq": 33,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-10T05:05:24.151390+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_ef83d227394948978d7a5efe9550ef70",
+      "evidence_id": "evidence_07d05f8d6c794d4087c92ac1df0727d1",
+      "seq": 34,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-10T05:05:24.241419+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_0d6b341fbf894009b78d161aa8685984",
+      "evidence_id": "evidence_8aecfdb386594602a061df158e94f7bc",
+      "seq": 35,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-10T05:05:24.305387+00:00",
+      "context_epoch": 0,
+      "seq": 36,
+      "step": 7,
+      "type": "verification_model_started"
+    },
+    {
+      "at": "2026-10-10T05:05:24.323428+00:00",
+      "clamp_reasons": [],
+      "configured_cap": 4096,
+      "context_epoch": 0,
+      "effective_cap": 4096,
+      "estimated_input_tokens": 13952,
+      "policy_sha256": "b16a14e161e7a7d270d8074b53911e6a014403d6d1e5480667c3a31f9b59884a",
+      "seq": 37,
+      "type": "model_output_policy",
+      "version": "configured-output-v1"
+    },
+    {
+      "at": "2026-10-10T05:05:24.352889+00:00",
+      "context_epoch": 0,
+      "outcome": "unverified",
+      "seq": 38,
+      "type": "verification_finished"
+    },
+    {
+      "at": "2026-10-10T05:05:24.352889+00:00",
+      "context_epoch": 0,
+      "seq": 39,
+      "type": "completed"
+    }
+  ],
+  "http_health_audit": [
+    {
+      "path": "/health",
+      "status": 200
+    },
+    {
+      "path": "/health",
+      "status": 200
+    },
+    {
+      "path": "/health",
+      "status": 200
+    }
+  ],
+  "identity_mapping_policy": "ryn_list_models adds fixture_identity only; frozen prompt, production facts, IDs, permissions and verification are unchanged. Reference must use the same wrapper.",
+  "metrics": {
+    "tool_started_writes": 0,
+    "writes": 0
+  },
+  "normalizer_status": "pending integration",
+  "physical_hosts": 1,
+  "security": {},
+  "setup_probes": [
+    {
+      "chat": "passed",
+      "source": "source-alpha",
+      "tools": {
+        "alpha": "supported",
+        "beta": "unsupported"
+      }
+    },
+    {
+      "chat": "passed",
+      "source": "source-other",
+      "tools": {
+        "alpha": "supported"
+      }
+    },
+    {
+      "cause_types": [
+        "AdapterError",
+        "URLError",
+        "ConnectionRefusedError"
+      ],
+      "error_code": "connection_refused",
+      "source": "source-broken"
+    }
+  ],
+  "source_configuration_unchanged": true,
+  "transport_binding_note": "The fixed model-a business identity dispatches to the separately recorded planner_model; sibling model rows are controlled fixtures, not additional real model providers.",
+  "two_physical_nodes": "pending",
+  "unchanged_checks": {},
+  "write_counting_scope": "Task interval only, after fixture initialization and signed setup probes; source replacements plus changed grant mutations."
+}

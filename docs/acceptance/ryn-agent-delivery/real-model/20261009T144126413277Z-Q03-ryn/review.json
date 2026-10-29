@@ -1,0 +1,17 @@
+{
+  "classification": "development semantic failure despite correct main classification and runtime verified",
+  "formal_case_score": false,
+  "reviewer": "Root coordinator read the frozen Q03 prompt, actual device evidence and final answer.",
+  "real_model_calls": 3,
+  "elapsed_seconds": 81.5,
+  "code_unchanged": true,
+  "owner_source_unchanged": true,
+  "source_configuration_unchanged": true,
+  "supported": "The main classification is correct: node-a HTTP reachable, node-c expired registry heartbeat with reachability untested, node-d unknown. Check time and raw last_seen timestamps are present.",
+  "failures": [
+    "The answer describes 07:50 as 晚于 08:00 by ten minutes; the actual ordering is earlier.",
+    "An empty last_seen record is elevated to 从未有过心跳记录, which the supplied current snapshot cannot establish historically.",
+    "The answer calls two tool views independent cross-validation without independent origin evidence; both expose the same node evidence provider."
+  ],
+  "follow_up": "Generic truthful reporting and verification must check negative/exclusive claims, shared evidence provenance and timestamp ordering. Original trial remains failed; any new validation must be a separate run without prompt coaching. Independent Astra review remains pending."
+}

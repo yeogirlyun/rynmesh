@@ -1,0 +1,163 @@
+[
+  {
+    "task_id": "task_8bdc29d02a7448138eb2023be16579d2",
+    "consumer": {
+      "transport": "peer_http_direct",
+      "connection_phase": "connecting_direct",
+      "connection_attempts": [],
+      "transport_evidence": {
+        "discovery_source": "lan",
+        "relay_used": false,
+        "route": "lan",
+        "stream_protocol": "",
+        "transport": "peer_http_direct"
+      },
+      "task_id": "task_8bdc29d02a7448138eb2023be16579d2",
+      "state": "failed",
+      "error_code": "inference_failed",
+      "provider_peer_id": "fR6oJFpFDez/LqWFSnyxUmOmTEB/f/7teSFY/y/9RSA=",
+      "response_expires_at": "",
+      "service_id": "antigravity-cli"
+    },
+    "provider_history": [
+      {
+        "at": "2026-10-13T14:31:07.389702+00:00",
+        "state": "created"
+      },
+      {
+        "at": "2026-10-13T14:31:07.616180+00:00",
+        "cli_model": "gemini-3.8-flash-medium",
+        "consumer_peer_id": "ppw4BE4zoTTDrlGU/EM2wZ3JW7efSfXeuqrrZmCt9aM=",
+        "request_hash": "sha256:7767e42c50eaef3e059be25d2065d89d2371ad4ba3ddbcf2fbcb787f5899e1cb",
+        "service_id": "antigravity-cli",
+        "state": "accepted"
+      },
+      {
+        "at": "2026-10-13T14:31:07.620640+00:00",
+        "cli_model": "gemini-3.8-flash-medium",
+        "consumer_peer_id": "ppw4BE4zoTTDrlGU/EM2wZ3JW7efSfXeuqrrZmCt9aM=",
+        "request_hash": "sha256:7767e42c50eaef3e059be25d2065d89d2371ad4ba3ddbcf2fbcb787f5899e1cb",
+        "service_id": "antigravity-cli",
+        "state": "running"
+      },
+      {
+        "at": "2026-10-13T14:31:17.790256+00:00",
+        "consumer_peer_id": "ppw4BE4zoTTDrlGU/EM2wZ3JW7efSfXeuqrrZmCt9aM=",
+        "error_code": "inference_failed",
+        "service_id": "antigravity-cli",
+        "state": "failed"
+      }
+    ]
+  },
+  {
+    "task_id": "task_cee51ee0701644888218e28545e8ed54",
+    "consumer": {
+      "transport": "peer_http_direct",
+      "connection_phase": "connected",
+      "connection_attempts": [],
+      "transport_evidence": {
+        "discovery_source": "lan",
+        "relay_used": false,
+        "route": "lan",
+        "stream_protocol": "",
+        "transport": "peer_http_direct"
+      },
+      "task_id": "task_cee51ee0701644888218e28545e8ed54",
+      "state": "succeeded",
+      "amount": 0.001,
+      "duration_ms": 10015,
+      "input_tokens": 12195,
+      "network_id": "rynmesh-main",
+      "output_tokens": 856,
+      "provider_peer_id": "fR6oJFpFDez/LqWFSnyxUmOmTEB/f/7teSFY/y/9RSA=",
+      "relay_used": false,
+      "response_expires_at": "",
+      "service_id": "antigravity-cli",
+      "settlement_dispatched": true
+    },
+    "provider_history": [
+      {
+        "at": "2026-10-13T14:36:53.893921+00:00",
+        "state": "created"
+      },
+      {
+        "at": "2026-10-13T14:36:53.996169+00:00",
+        "cli_model": "gemini-3.8-flash-medium",
+        "consumer_peer_id": "ppw4BE4zoTTDrlGU/EM2wZ3JW7efSfXeuqrrZmCt9aM=",
+        "request_hash": "sha256:5b129bea5c09d82cbf592dcd0218ed2f0d51058cc4ee0afac4599ac9cd7657e7",
+        "service_id": "antigravity-cli",
+        "state": "accepted"
+      },
+      {
+        "at": "2026-10-13T14:36:54.000616+00:00",
+        "cli_model": "gemini-3.8-flash-medium",
+        "consumer_peer_id": "ppw4BE4zoTTDrlGU/EM2wZ3JW7efSfXeuqrrZmCt9aM=",
+        "request_hash": "sha256:5b129bea5c09d82cbf592dcd0218ed2f0d51058cc4ee0afac4599ac9cd7657e7",
+        "service_id": "antigravity-cli",
+        "state": "running"
+      },
+      {
+        "amount": 0.001,
+        "at": "2026-10-13T14:37:04.071600+00:00",
+        "cli_model": "gemini-3.8-flash-medium",
+        "consumer_peer_id": "ppw4BE4zoTTDrlGU/EM2wZ3JW7efSfXeuqrrZmCt9aM=",
+        "duration_ms": 10015,
+        "input_tokens": 12195,
+        "output_tokens": 856,
+        "request_hash": "sha256:5b129bea5c09d82cbf592dcd0218ed2f0d51058cc4ee0afac4599ac9cd7657e7",
+        "service_id": "antigravity-cli",
+        "state": "succeeded"
+      }
+    ]
+  },
+  {
+    "task_id": "task_a6f22ea65efe4fdd92c6c7c57591ec21",
+    "consumer": {
+      "transport": "peer_http_direct",
+      "connection_phase": "connecting_direct",
+      "connection_attempts": [],
+      "transport_evidence": {
+        "discovery_source": "lan",
+        "relay_used": false,
+        "route": "lan",
+        "stream_protocol": "",
+        "transport": "peer_http_direct"
+      },
+      "task_id": "task_a6f22ea65efe4fdd92c6c7c57591ec21",
+      "state": "failed",
+      "error_code": "inference_failed",
+      "provider_peer_id": "fR6oJFpFDez/LqWFSnyxUmOmTEB/f/7teSFY/y/9RSA=",
+      "response_expires_at": "",
+      "service_id": "antigravity-cli"
+    },
+    "provider_history": [
+      {
+        "at": "2026-10-13T14:37:14.599461+00:00",
+        "state": "created"
+      },
+      {
+        "at": "2026-10-13T14:37:14.693346+00:00",
+        "cli_model": "gemini-3.8-flash-medium",
+        "consumer_peer_id": "ppw4BE4zoTTDrlGU/EM2wZ3JW7efSfXeuqrrZmCt9aM=",
+        "request_hash": "sha256:5590e42fc4f8fd6534602812f74dbb37ae07e75933c73cf0d48d4384ecc80cfd",
+        "service_id": "antigravity-cli",
+        "state": "accepted"
+      },
+      {
+        "at": "2026-10-13T14:37:14.697759+00:00",
+        "cli_model": "gemini-3.8-flash-medium",
+        "consumer_peer_id": "ppw4BE4zoTTDrlGU/EM2wZ3JW7efSfXeuqrrZmCt9aM=",
+        "request_hash": "sha256:5590e42fc4f8fd6534602812f74dbb37ae07e75933c73cf0d48d4384ecc80cfd",
+        "service_id": "antigravity-cli",
+        "state": "running"
+      },
+      {
+        "at": "2026-10-13T14:37:23.783280+00:00",
+        "consumer_peer_id": "ppw4BE4zoTTDrlGU/EM2wZ3JW7efSfXeuqrrZmCt9aM=",
+        "error_code": "inference_failed",
+        "service_id": "antigravity-cli",
+        "state": "failed"
+      }
+    ]
+  }
+]

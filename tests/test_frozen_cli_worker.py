@@ -4,6 +4,26 @@ import pytest
 from rynmesh.llm_package import process_guard
 
 
+def test_private_storage_tolerates_scratch_directory_removed_before_scan(tmp_path, monkeypatch):
+    from rynmesh.llm_package import safety
+    workspace = tmp_path / "private"
+    workspace.mkdir()
+    scratch = workspace / "scratch"
+    scratch.mkdir()
+    (workspace / "payload").write_bytes(b"data")
+    original = safety.os.scandir
+
+    def racing_scan(path):
+        if path == scratch:
+            scratch.rmdir()
+        return original(path)
+
+    monkeypatch.setattr(safety.os, "scandir", racing_scan)
+    assert safety.private_storage_bytes(workspace) == 4
+    with pytest.raises(FileNotFoundError):
+        safety.private_storage_bytes(tmp_path / "missing-workspace")
+
+
 def test_private_storage_counts_files_but_not_external_symlink_targets(tmp_path):
     from rynmesh.llm_package.safety import private_storage_bytes
     workspace = tmp_path / "private"

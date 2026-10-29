@@ -46,8 +46,40 @@ def setup(tmp_path):
     orders = Orders()
     runs = AskRunService(history, lambda: context, lambda: orders)
     preview = context.preview(row, "中文秘密问题")
-    request = {"task_id": "task_" + "a" * 32, "conversation_id": row["id"], "expected_revision": row["revision"], "question": "中文秘密问题", "prompt_sha256": preview["prompt_sha256"]}
+    request = {"task_id": "task_" + "a" * 32, "conversation_id": row["id"], "expected_revision": row["revision"], "question": "中文秘密问题", "prompt_sha256": preview["prompt_sha256"], "service_review_token": preview["service_review"]["token"]}
     return history, runs, orders, request
+
+
+@pytest.mark.parametrize("field,value", [("pricing", {"minimum": 1}), ("model_fingerprint", "changed-model")])
+def test_price_or_model_change_rejects_old_review_without_dispatch_or_losing_draft(tmp_path, field, value):
+    history, runs, orders, request = setup(tmp_path)
+    original_catalog = runs.context().catalog
+    changed = copy.deepcopy(original_catalog("network"))
+    changed[0]["service"][field] = value
+    runs.context().catalog = lambda _: changed
+    before = history.get("conversation")
+    with pytest.raises(ConversationError, match="ask_preview_changed"):
+        runs.begin(request)
+    assert history.get("conversation") == before
+    assert orders.sent == []
+    request["service_review_token"] = runs.context().preview(before, request["question"])["service_review"]["token"]
+    runs.begin(request)
+    runs.run_once()
+    assert orders.sent[0]["service_review_token"] == request["service_review_token"]
+
+
+@pytest.mark.parametrize('code', ['service_review_changed', 'ai_permission_denied'])
+def test_rejected_provider_response_finishes_original_run_without_retry(tmp_path, code):
+    history, runs, orders, request = setup(tmp_path)
+    runs.begin(request)
+    runs.run_once()
+    orders.results[request['task_id']] = {'state': 'rejected', 'error_code': code}
+    restarted = AskRunService(ConversationStore(history.root, history.key), runs.context, lambda: orders)
+    restarted.run_once()
+    assert restarted.get(request['task_id'])['state'] == 'rejected'
+    assert history.get('conversation')['messages'][-1]['status'] == 'failed'
+    restarted.run_once()
+    assert len(orders.sent) == 1 and orders.acknowledged == [request['task_id']]
 
 
 @pytest.mark.parametrize('code,reason,action', [
@@ -373,7 +405,7 @@ def test_three_active_runs_are_each_ticked_exactly_once_in_last_checked_order(tm
         preview = context.preview(row, f"question {index}")
         task_id = "task_" + chr(ord("a") + index) * 32
         runs.begin({"task_id": task_id, "conversation_id": conversation_id, "expected_revision": row["revision"],
-                    "question": f"question {index}", "prompt_sha256": preview["prompt_sha256"]})
+                    "question": f"question {index}", "prompt_sha256": preview["prompt_sha256"], "service_review_token": preview["service_review"]["token"]})
         task_ids.append(task_id)
 
     runs.run_once()
@@ -415,3 +447,35 @@ def test_owner_http_and_reinstalled_worker_use_current_node(tmp_path):
     result = client.get(f"/api/local/ask/runs/{request['task_id']}", headers={"x-owner": "yes"}).json()
     assert result["state"] == "running" and "prompt" not in str(result)
     assert len(current.conversations.get("conversation")["messages"]) == 2
+
+
+@pytest.mark.parametrize("adapter", ["codex_cli", "antigravity_cli"])
+def test_reviewed_cli_model_survives_restart_and_cannot_cross_provider(tmp_path, adapter):
+    history, runs, orders, request = setup(tmp_path)
+    context = runs.context()
+    context.catalog = lambda _: [{"peer_id": "provider", "local_only": True,
+        "service": {"package_id": "model", "adapter": adapter, "context_window": 4096, "max_output_tokens": 256}}]
+    row = history.get("conversation")
+    row = history.save({**row, "cliModel": "gpt-test-review"}, expected_revision=row["revision"])
+    request.update(expected_revision=row["revision"], prompt_sha256=context.preview(row, request["question"])["prompt_sha256"])
+    runs.begin(request)
+    restarted = AskRunService(ConversationStore(history.root, history.key), runs.context, lambda: orders)
+    restarted.run_once()
+    assert orders.sent[0]["cli_model"] == "gpt-test-review"
+    assert restarted.history.get("conversation")["cliModel"] == "gpt-test-review"
+    context.catalog = lambda _: [{"peer_id": "provider", "service": {"package_id": "model", "adapter": "openai_compatible", "context_window": 4096, "max_output_tokens": 256}}]
+    with pytest.raises(ConversationError, match="ask_cli_model_unavailable"):
+        context.preview(row, request["question"])
+    with pytest.raises(ConversationError, match="ask_invalid_conversation"):
+        history.save({**history.get("conversation"), "cliModel": "bad --shell-flag"}, expected_revision=history.get("conversation")["revision"])
+
+
+def test_antigravity_cli_default_survives_save_and_omits_upstream_model(tmp_path):
+    history, runs, orders, request = setup(tmp_path)
+    context = runs.context()
+    context.catalog = lambda _: [{"peer_id": "provider", "local_only": True,
+        "service": {"package_id": "model", "adapter": "antigravity_cli", "context_window": 4096, "max_output_tokens": 256}}]
+    row = history.get("conversation")
+    row = history.save({**row, "cliModel": ""}, expected_revision=row["revision"])
+    assert history.get("conversation")["cliModel"] == ""
+    assert "cli_model" not in context.preview(row, request["question"])

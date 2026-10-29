@@ -62,6 +62,12 @@ def _amount(value: float) -> float:
     return number
 
 
+def _token_count(value: Any) -> int | None:
+    if value is None or type(value) is int and value >= 0:
+        return value
+    raise TaskBalanceError("token count must be a non-negative integer or unknown")
+
+
 class TaskBalanceLedger:
     """A local simulated balance. Not money, a deposit, or a payment system."""
 
@@ -118,13 +124,13 @@ class TaskBalanceLedger:
             self._write(state)
             return record
 
-    def settle(self, *, task_id: str, amount: float, input_tokens: int, output_tokens: int,
+    def settle(self, *, task_id: str, amount: float, input_tokens: int | None, output_tokens: int | None,
                duration_ms: int, service_id: str, provider_peer_id: str) -> dict[str, Any]:
         with self._lock:
             state = self._read()
             record = self._apply_settle(
-                state, task_id=task_id, amount=_amount(amount), input_tokens=int(input_tokens),
-                output_tokens=int(output_tokens), duration_ms=int(duration_ms),
+                state, task_id=task_id, amount=_amount(amount), input_tokens=_token_count(input_tokens),
+                output_tokens=_token_count(output_tokens), duration_ms=int(duration_ms),
                 service_id=service_id, provider_peer_id=provider_peer_id, replay=False,
             )
             self._write(state)
@@ -137,13 +143,13 @@ class TaskBalanceLedger:
             self._write(state)
             return record
 
-    def earn(self, *, task_id: str, amount: float, input_tokens: int, output_tokens: int,
+    def earn(self, *, task_id: str, amount: float, input_tokens: int | None, output_tokens: int | None,
              duration_ms: int, service_id: str, consumer_peer_id: str) -> dict[str, Any]:
         with self._lock:
             state = self._read()
             event = self._apply_earning(
-                state, task_id=task_id, amount=_amount(amount), input_tokens=int(input_tokens),
-                output_tokens=int(output_tokens), duration_ms=int(duration_ms),
+                state, task_id=task_id, amount=_amount(amount), input_tokens=_token_count(input_tokens),
+                output_tokens=_token_count(output_tokens), duration_ms=int(duration_ms),
                 service_id=service_id, consumer_peer_id=consumer_peer_id, replay=False,
             )
             self._write(state)
@@ -222,10 +228,12 @@ class TaskBalanceLedger:
         state["available"] = _amount(float(state["available"]) + refund)
         hold.update({"state": "settled", "settled_amount": amount, "refund": refund,
                      "input_tokens": input_tokens, "output_tokens": output_tokens,
+                     "usage_complete": input_tokens is not None and output_tokens is not None,
                      "duration_ms": duration_ms, "settled_at": created_at or _now()})
         billing = {"task_id": task_id, "service_id": service_id,
                    "provider_peer_id": provider_peer_id, "input_tokens": input_tokens,
                    "output_tokens": output_tokens, "duration_ms": duration_ms,
+                   "usage_complete": input_tokens is not None and output_tokens is not None,
                    "amount": amount, "currency": CURRENCY}
         self._event(state, "settle", billing, replay=replay, dedupe=f"settle:{task_id}",
                     metadata={k: billing[k] for k in ("service_id", "provider_peer_id",
@@ -259,6 +267,7 @@ class TaskBalanceLedger:
         event = {"event_id": key, "kind": "earning", "task_id": task_id,
                  "service_id": service_id, "consumer_peer_id": consumer_peer_id,
                  "input_tokens": input_tokens, "output_tokens": output_tokens,
+                 "usage_complete": input_tokens is not None and output_tokens is not None,
                  "duration_ms": duration_ms, "amount": amount,
                  "currency": CURRENCY, "created_at": created_at or _now()}
         state["earnings"][key] = event
@@ -387,8 +396,8 @@ class TaskBalanceLedger:
                 elif kind == "task_settle":
                     self._apply_settle(
                         state, task_id=task_id, amount=amount,
-                        input_tokens=int(meta.get("input_tokens") or 0),
-                        output_tokens=int(meta.get("output_tokens") or 0),
+                        input_tokens=_token_count(meta.get("input_tokens")),
+                        output_tokens=_token_count(meta.get("output_tokens")),
                         duration_ms=int(meta.get("duration_ms") or 0),
                         service_id=str(meta.get("service_id") or ""),
                         provider_peer_id=str(meta.get("provider_peer_id") or ""),
@@ -401,8 +410,8 @@ class TaskBalanceLedger:
                 elif kind == "task_earning":
                     self._apply_earning(
                         state, task_id=task_id, amount=amount,
-                        input_tokens=int(meta.get("input_tokens") or 0),
-                        output_tokens=int(meta.get("output_tokens") or 0),
+                        input_tokens=_token_count(meta.get("input_tokens")),
+                        output_tokens=_token_count(meta.get("output_tokens")),
                         duration_ms=int(meta.get("duration_ms") or 0),
                         service_id=str(meta.get("service_id") or ""),
                         consumer_peer_id=str(meta.get("consumer_peer_id") or ""),

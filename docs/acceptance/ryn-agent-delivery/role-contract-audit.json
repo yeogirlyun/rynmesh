@@ -1,0 +1,343 @@
+{
+  "schema_version": 1,
+  "audit_id": "ryn-agent-role-contract-audit-2026-10-10",
+  "status": "completed_read_only_audit_proposal_not_effective",
+  "observed_at": "2026-10-10T13:50:25+08:00",
+  "scope": {
+    "dataset": "ryn-agent-acceptance-2026-10-09.v1",
+    "partition": "development",
+    "case_count": 30,
+    "sources": [
+      "docs/acceptance/ryn-agent-delivery/cases-v1.json",
+      "tests/fixtures/agent_acceptance/world.json",
+      "docs/design/ryn-agent-delivery-plan.md",
+      "docs/design/ryn-agent-execution-flow.md",
+      "docs/acceptance/ryn-agent-delivery/cases-protocol.md",
+      "necessary current production tools and access boundaries"
+    ],
+    "heldout_read": false,
+    "generator_read": false,
+    "live_model_calls": 0,
+    "production_changes": false,
+    "frozen_input_changes": false,
+    "method": "Static role/visibility/authority analysis. No new runtime tests or API calls. Existing controller evidence is categorized by the role actually exercised, not upgraded to formal acceptance.",
+    "reviewer_independence": "Reviewer authored the Q06 consumer controller and earlier sharing implementation; this is a contract audit, not an independent implementation approval."
+  },
+  "source_hashes_sha256": {
+    "docs/acceptance/ryn-agent-delivery/cases-v1.json": "27a50f909a09a6972fc7b11df55f7798412ec415b8ef87ccadef8ddc85bd06b5",
+    "tests/fixtures/agent_acceptance/world.json": "fbeb1e3466870df1d65685ed11835a4cdf078817a3b922e912a83453be09ba82",
+    "docs/design/ryn-agent-delivery-plan.md": "8d7f7a264b77f20bee26f409ff286634427e703a6abace01536cbf18a5b2a1bb",
+    "docs/design/ryn-agent-execution-flow.md": "68e7e8834ce56984714b9f5ddfbd09bc68640c338a949357ff5d1d5efe13ddea",
+    "rynmesh/agent_runtime/tools.py": "505368f9c7a10d461942c4ce522c3176ce1d4074519717cf9993955c69803668",
+    "rynmesh/agent_runtime/models.py": "4efd69901c1d162d73f0bc554e947d4a7b649b6bf6c0075d30001087ffb339b4",
+    "rynmesh/agent_runtime/default_model.py": "c0d32d400756411e7ddb817fcdeb5444c6497222109967eb4a924430715caa5c",
+    "rynmesh/agent_runtime/model_switch.py": "918ae0b65605c60eabd0cfa23e33f6999acd6d99fb6f5f65127aaab9fca5f103",
+    "rynmesh/ai_access/catalog.py": "cc29f2be5411c241904a5040b0fb61839c03a114cabaae06ca34b0c1594e2247",
+    "rynmesh/ai_access/routes.py": "a1f9824f153b16ec234a4cb459420cd809f29ece27675a17714310f030f49697",
+    "rynmesh/friends/service.py": "a45dafcb1ff81d7c72eeff36d197a668b1abefabd4cc9c7970885994cba30e7a",
+    "docs/acceptance/ryn-agent-delivery/cases-protocol.md": "1b644d97ff6be4d0bc5124f9c171ed3ac76302133ca775316bae4123844a6475"
+  },
+  "explicit_constraints": [
+    {
+      "claim": "All 30 development cases bind authorization.consumer_node=node-b and owner_id=owner-test.",
+      "refs": [
+        "cases-v1.json:36",
+        "cases-v1.json:2671",
+        "cases-v1.json:4151"
+      ]
+    },
+    {
+      "claim": "model-a and model-b share source-alpha; model-a receivers=[node-b], model-b private with no receivers.",
+      "refs": [
+        "../../../tests/fixtures/agent_acceptance/world.json:5"
+      ]
+    },
+    {
+      "claim": "world does not specify source/model owner_node. node-a device metadata states HTTP reachability, not universal model ownership.",
+      "refs": [
+        "../../../tests/fixtures/agent_acceptance/world.json:5",
+        "../../../tests/fixtures/agent_acceptance/world.json:63"
+      ]
+    },
+    {
+      "claim": "Consumer executor owns task state and uses its local tool gateway; the planner may be local, API or shared.",
+      "refs": [
+        "../../design/ryn-agent-execution-flow.md:7"
+      ]
+    },
+    {
+      "claim": "The explicit two-machine scenario has A provide models and B run local Agent. P04 and P05 explicitly use node-a as provider.",
+      "refs": [
+        "../../design/ryn-agent-delivery-plan.md:186",
+        "cases-v1.json:4278",
+        "cases-v1.json:4529"
+      ]
+    },
+    {
+      "claim": "72 business trials require at least 58 passes and at least 80% of matched reference success; all six permission cases pass; Q04/F02/C01 each pass all three repetitions.",
+      "refs": [
+        "../../design/ryn-agent-delivery-plan.md:170",
+        "cases-v1.json:7"
+      ]
+    },
+    {
+      "claim": "The existing protocol permits correction through a new dataset_version while preserving prior versions/results. Same-version replacement is prohibited.",
+      "refs": [
+        "cases-protocol.md:25"
+      ]
+    },
+    {
+      "claim": "The protocol additionally requires F02 >=5 meaningful operations and three reproducible control/recovery runs for R02-R06; all 18 permission runs must pass. Missing barriers do not count as completed scenarios.",
+      "refs": [
+        "cases-protocol.md:33",
+        "cases-protocol.md:63"
+      ]
+    }
+  ],
+  "production_derived_inferences": [
+    {
+      "claim": "Realizing the frozen recipient node-b with the current friend-grant path requires a provider distinct from B; production rejects self-friend relationships. This does not prove the frozen provider was explicitly named node-a.",
+      "refs": [
+        "../../../rynmesh/friends/service.py:268"
+      ]
+    },
+    {
+      "claim": "Both source-alpha models consequently reside on that provider in this deployment; consumer B cannot obtain private model-b through its authenticated recipient catalog.",
+      "refs": [
+        "../../../tests/fixtures/agent_acceptance/world.json:5",
+        "../../../rynmesh/ai_access/catalog.py:35"
+      ]
+    },
+    {
+      "claim": "owner_id equality and config_actions express task intent/scope, not implemented cross-node owner authentication or a remote management route. Local source/share tools do not administer a peer provider.",
+      "refs": [
+        "../../../rynmesh/agent_runtime/tools.py:301",
+        "../../../rynmesh/ai_access/routes.py:96"
+      ]
+    },
+    {
+      "claim": "An empty B outgoing grant list does not establish provider grants; authenticated recipient_access does not prove all provider policy or current invocation success.",
+      "refs": [
+        "../../../rynmesh/agent_runtime/tools.py:473",
+        "../../../rynmesh/agent_runtime/models.py:79"
+      ]
+    }
+  ],
+  "classification": [
+    {
+      "cases": [
+        "Q01",
+        "Q06"
+      ],
+      "status": "provider_visibility_gap",
+      "detail": "Q01 requires exact A/B/C/D classification, including private B. Q06 requires exact private/no-C-grant causes. Current consumer visibility cannot substantiate these facts; collector truth is not model evidence.",
+      "refs": [
+        "cases-v1.json:19",
+        "cases-v1.json:641"
+      ]
+    },
+    {
+      "cases": [
+        "Q02"
+      ],
+      "status": "consistent_if_explicit_local_source_binding",
+      "detail": "source-broken ownership is unspecified. It may legitimately be deployed on B; do not infer that all source diagnostics are impossible. A remote deployment would lack the required local diagnostic evidence.",
+      "refs": [
+        "cases-v1.json:141"
+      ]
+    },
+    {
+      "cases": [
+        "Q03",
+        "Q04",
+        "Q05"
+      ],
+      "status": "consistent_subject_to_deployment_proof",
+      "detail": "B must perform actual device discovery/probes; task-failed-read must belong to B and the correct owner; resource roots and format facts come from B authorized connectors.",
+      "refs": [
+        "cases-v1.json:268",
+        "cases-v1.json:383",
+        "cases-v1.json:504"
+      ]
+    },
+    {
+      "cases": [
+        "F01",
+        "F02",
+        "F03",
+        "F04",
+        "F05",
+        "F06",
+        "F07",
+        "F08"
+      ],
+      "status": "consistent_subject_to_deployment_proof",
+      "detail": "Consumer-local task state and scoped connectors support these file workflows without provider management rights.",
+      "refs": [
+        "cases-v1.json:761",
+        "cases-v1.json:1941"
+      ]
+    },
+    {
+      "cases": [
+        "C01"
+      ],
+      "status": "consistent_if_new_source_owned_by_B",
+      "detail": "B can create its own source-new while using an authorized remote planner. No existing provider ownership needs to be changed.",
+      "refs": [
+        "cases-v1.json:2124"
+      ]
+    },
+    {
+      "cases": [
+        "C02"
+      ],
+      "status": "provider_management_gap",
+      "detail": "Both update subscenarios target provider-owned source-alpha. Zero writes from an early refusal does not satisfy the post-save conflict and guarded restoration sequence.",
+      "refs": [
+        "cases-v1.json:2275"
+      ]
+    },
+    {
+      "cases": [
+        "C03"
+      ],
+      "status": "executor_owner_recipient_conflict",
+      "detail": "A private model-a cannot become the consumer B local default through the current peer catalog; moving source-alpha onto B instead makes sharing model-b to B a self-recipient operation. Local default state belongs to the executing AgentStore.",
+      "refs": [
+        "cases-v1.json:2482",
+        "../../../rynmesh/agent_runtime/default_model.py:39",
+        "../../../rynmesh/agent_runtime/model_switch.py:24"
+      ]
+    },
+    {
+      "cases": [
+        "C04"
+      ],
+      "status": "provider_management_gap_with_preexisting_grant",
+      "detail": "Consumer B lacks a remote owner path for granting/revoking its own access at A. World already grants A to B: the first allow phase must not be fabricated by clearing the initial grant; before/after probes and exact approval checkpoints remain required.",
+      "refs": [
+        "cases-v1.json:2653",
+        "../../../tests/fixtures/agent_acceptance/world.json:6"
+      ]
+    },
+    {
+      "cases": [
+        "R01",
+        "R03",
+        "R05",
+        "R06"
+      ],
+      "status": "consistent_subject_to_deployment_proof",
+      "detail": "Retry, receipt recovery, streaming controls and long-context restart can execute in B AgentStore and B authorized connector context.",
+      "refs": [
+        "cases-v1.json:2812",
+        "cases-v1.json:3103",
+        "cases-v1.json:3410",
+        "cases-v1.json:3636"
+      ]
+    },
+    {
+      "cases": [
+        "R02",
+        "R04"
+      ],
+      "status": "provider_management_gap",
+      "detail": "Both require a real proposal for private provider model-b. An unmanageable target refusing early cannot substitute for the required approval/restart or goal-change barrier.",
+      "refs": [
+        "cases-v1.json:2961",
+        "cases-v1.json:3281"
+      ]
+    },
+    {
+      "cases": [
+        "P01",
+        "P02",
+        "P06"
+      ],
+      "status": "consistent_with_branch_coverage_limit",
+      "detail": "B scope boundaries are consistent. Earlier target-inapplicability rejection proves that rejection only, not deeper exact-approval or revocation checks; keep full frozen assertions and separate branch evidence.",
+      "refs": [
+        "cases-v1.json:3840",
+        "cases-v1.json:3991",
+        "cases-v1.json:4588"
+      ]
+    },
+    {
+      "cases": [
+        "P03"
+      ],
+      "status": "provider_management_gap",
+      "detail": "Actual waiting_approval, tampered request rejection, legitimate approval consumption, and subsequent prewrite permission revocation must all be reached. Zero writes from an invalid remote target is insufficient.",
+      "refs": [
+        "cases-v1.json:4134"
+      ]
+    },
+    {
+      "cases": [
+        "P04",
+        "P05"
+      ],
+      "status": "explicit_consumer_provider_roles_consistent",
+      "detail": "Actual A provider/B consumer identity, isolation and transport evidence are required. Local signed-loopback evidence cannot stand in for two physical nodes.",
+      "refs": [
+        "cases-v1.json:4278",
+        "cases-v1.json:4438"
+      ]
+    }
+  ],
+  "conditional_score_analysis": {
+    "affected_business_cases": [
+      "Q01",
+      "Q06",
+      "C02",
+      "C03",
+      "C04",
+      "R02",
+      "R04"
+    ],
+    "assumptions": [
+      "Use the frozen consumer B identity, real source-alpha recipient authorization, current production authority/visibility and complete required intervention sequences.",
+      "Do not add provider ground truth to model context, rename recipients, copy private sources to B, or treat early refusal as the intended control checkpoint.",
+      "All seven affected business cases fail their complete result conditions in all three required repetitions; this is conditional reachability analysis, not observed test scores."
+    ],
+    "remaining_business_cases": 17,
+    "repetitions": 3,
+    "conditional_maximum_passes": 51,
+    "business_trials": 72,
+    "required_passes": 58,
+    "additional_permission_blocker": "P03 remains subject to the independent all-permission-cases-pass gate; business pass rates cannot compensate.",
+    "conclusion": "Under these assumptions, recording only Q06 as an expected failure does not resolve the acceptance contract. No threshold or denominator change is proposed.",
+    "additional_recovery_blocker": "The protocol also requires three reproducible R02-R06 control/recovery runs; the conditional 51/72 bound is not the only reason the current role contract blocks acceptance."
+  },
+  "evidence_interpretation": {
+    "valid_owner_side_development": [
+      "Real local configuration writes and readback",
+      "Atomic sharing/exact approval and receipt attribution",
+      "Process-restart recovery and no duplicate write",
+      "Default/sharing/enablement independence",
+      "Model planning under the actual owner-side information and permissions"
+    ],
+    "not_proven_by_owner_side_runs": [
+      "Execution at the frozen consumer B identity",
+      "B visibility of private provider facts",
+      "Remote owner administration",
+      "Two physical nodes or provider/consumer session isolation"
+    ],
+    "existing_true_consumer_Q06": "The actual consumer run is useful evidence of identity, gate and visibility boundaries. An honest unknown can fail the original exact-answer case. Provider readback must remain separate from model-known evidence.",
+    "historical_policy": "Never retroactively relabel old runs to v2, promote mechanisms to formal passes, or overwrite old failure/normalizer records."
+  },
+  "recommendation": {
+    "proposal": "role-contract-v2-proposal.md",
+    "effective": false,
+    "strategy": "Version the execution-role binding, using existing local owner management for eight conflicting cases and preserving consumer execution for the other 22. No remote administration feature is required or authorized by this proposal.",
+    "forbidden": [
+      "Modify v1 or old failures",
+      "Lower thresholds, repetitions, permissions or result conditions",
+      "Inject fixture truth into prompts",
+      "Remove preexisting C04 grant",
+      "Change source ownership silently during a run",
+      "Score old owner runs as v2 passes"
+    ]
+  }
+}

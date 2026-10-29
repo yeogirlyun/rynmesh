@@ -21,7 +21,7 @@ from rynmesh.llm_package.cli_adapter import CLIAgentAdapter
 from rynmesh.llm_package.manifest import LLMPackageManifest
 from rynmesh.llm_package.process_guard import communicate_bounded, spawn, terminate
 from rynmesh.llm_package.routes import ProviderService, _expires
-from rynmesh.llm_package.safety import InferenceBodyLimit, SharedSlots
+from rynmesh.llm_package.safety import MAX_REQUEST, InferenceBodyLimit, SharedSlots
 from rynmesh.llm_package.task_balance import TaskBalanceLedger
 from rynmesh.llm_package.task_protocol import TaskOrderStore, open_task, seal_task
 from rynmesh.services import peer_box
@@ -49,14 +49,43 @@ def fake_rpc(monkeypatch, tmp_path):
         def initialize(self):
             pass
 
+        def diagnostics(self):
+            return {"rpc_stage": getattr(self, "stage", "init")}
+
+        def _raise_with_diagnostics(self, message, *, code=None):
+            err = AdapterError(message, code=code) if code is not None else AdapterError(message)
+            err.diagnostics = self.diagnostics()
+            raise err
+
         def call(self, method, params):
             self.calls.append((method, copy.deepcopy(params)))
+            if method == "model/list":
+                if self in instances:
+                    instances.remove(self)
+                return {"data": [{"model": "mock", "displayName": "Mock", "isDefault": True}], "nextCursor": None}
             if method == "thread/start":
                 return {"thread": {"id": "ephemeral"}, "model": "mock"}
             assert method == "turn/start"
-            history = json.loads(params["input"][0]["text"])["messages"]
+            prompt = params["input"][0]["text"]
+            if params.get("outputSchema") and prompt.startswith("Respond to the supplied conversation."):
+                # Current structured turns send their trusted framing directly;
+                # older turns wrapped that same framing in a user message.
+                supplied = json.loads(prompt.split("\n", 1)[1])
+                history = supplied["messages"]
+            else:
+                history = json.loads(prompt)["messages"]
+                supplied = json.loads(history[0]["content"].split("\n", 1)[1]) if params.get("outputSchema") else None
             if self.attack:
                 self.pending.append(self.attack)
+            elif params.get("outputSchema"):
+                continued = supplied["messages"][-1]["role"] == "tool"
+                value = {"content": "origin result received" if continued else "", "tool_calls": [] if continued else [
+                    {"name": "run_command", "arguments": '{"command":"echo origin-only"}'}]}
+                self.pending.extend([
+                    {"method": "item/completed", "params": {"threadId": "ephemeral", "turnId": "turn",
+                      "item": {"type": "agentMessage", "text": json.dumps(value)}}},
+                    {"method": "turn/completed", "params": {"threadId": "ephemeral",
+                      "turn": {"id": "turn", "status": "completed"}}}])
             elif history[-1]["role"] != "tool":
                 self.pending.append({"id": 88, "method": "item/tool/call", "params": {
                     "threadId": "ephemeral", "turnId": "turn", "tool": "ryn_client_0",
@@ -75,6 +104,15 @@ def fake_rpc(monkeypatch, tmp_path):
         def reject(self, value):
             self.rejections.append(value)
 
+        def alive(self):
+            return not self.closed
+
+        def settle(self):
+            return True
+
+        def cpu_seconds(self, estimate):
+            return None
+
         def close(self):
             self.closed = True
 
@@ -83,7 +121,7 @@ def fake_rpc(monkeypatch, tmp_path):
     return RPC, instances
 
 
-def test_codex_tools_return_to_origin_and_next_turn_uses_client_history(fake_rpc):
+def test_codex_tools_return_to_origin_and_next_turn_sends_only_the_origin_result(fake_rpc):
     _, instances = fake_rpc
     adapter = CLIAgentAdapter("codex_cli")
     body = {"messages": [{"role": "user", "content": "run a test"}], "tools": TOOLS, "max_tokens": 64}
@@ -96,12 +134,19 @@ def test_codex_tools_return_to_origin_and_next_turn_uses_client_history(fake_rpc
     final = adapter.chat(body, task_id="two", timeout_s=2)
     assert final["text"] == "origin result received"
     assert adapter._running == {}
-    for instance in instances:
-        assert instance.closed
-        assert [method for method, _ in instance.calls] == ["thread/start", "turn/start"]
-        assert instance.calls[0][1]["ephemeral"] is True
-        assert instance.calls[0][1]["environments"] == instance.calls[1][1]["environments"] == []
-        assert not instance.rejections
+    # The tool loop continues the same ephemeral thread; a final answer closes it.
+    assert len(instances) == 1
+    instance = instances[0]
+    assert instance.closed
+    assert [method for method, _ in instance.calls] == ["thread/start", "turn/start", "turn/start"]
+    assert instance.calls[0][1]["ephemeral"] is True
+    assert instance.calls[0][1]["dynamicTools"] == []
+    for _, params in instance.calls[1:]:
+        assert params["environments"] == [] and "outputSchema" in params
+    continued = json.loads(instance.calls[2][1]["input"][0]["text"].split("\n", 1)[1])
+    assert continued["messages"] == [{"role": "tool", "tool_call_id": call["id"], "content": "ran at zcode"}]
+    assert "run a test" not in instance.calls[2][1]["input"][0]["text"]
+    assert not instance.rejections
 
 
 @pytest.mark.parametrize("attack", [
@@ -167,11 +212,15 @@ def test_zcode_api_a_encrypted_b_codex_tool_response(fake_rpc, tmp_path, protoco
                         tools=[{"name": "run_command", "input_schema": TOOLS[0]["function"]["parameters"]}])
             path = "/v1/messages"
         else:
-            body.update(messages=[{"role": "user", "content": "run origin tool"}], tools=TOOLS, max_tokens=64)
+            body.update(messages=[{"role": "user", "content": "run origin tool"}], tools=TOOLS, max_tokens=64,
+                        reasoning_effort="high")
             path = "/v1/chat/completions"
         response = client.post(path, json=body, headers={"Authorization": "Bearer " + key})
         assert response.status_code == 200, response.text
         assert "run_command" in response.text and "origin-only" in response.text
+        if protocol == "chat":
+            assert requests[-1]["chat"]["reasoning_effort"] == "high"
+            assert fake_rpc[1][-1].calls[-1][1]["effort"] == "high"
         call_id = re.search(r"call_[0-9a-f]{32}", response.text).group()
         arguments = '{"command":"echo origin-only"}'
         if protocol == "responses":
@@ -243,7 +292,7 @@ def test_http_chunked_body_limit_and_no_store():
     app = FastAPI()
     app.add_middleware(InferenceBodyLimit)
     with TestClient(app) as client:
-        response = client.post("/v1/chat/completions", content=iter([b"a" * 600000, b"b" * 600000]))
+        response = client.post("/v1/chat/completions", content=iter([b"a" * (MAX_REQUEST // 2 + 100000), b"b" * (MAX_REQUEST // 2 + 100000)]))
         assert response.status_code == 413
         assert response.headers["cache-control"] == "no-store"
 
@@ -307,6 +356,6 @@ def test_wrong_tool_arguments_are_not_forwarded(fake_rpc):
     rpc, instances = fake_rpc
     rpc.attack = {"id": 7, "method": "item/tool/call", "params": {
         "threadId": "ephemeral", "turnId": "turn", "tool": "ryn_client_0", "arguments": {"command": 123}}}
-    with pytest.raises(ValueError, match="schema"):
+    with pytest.raises(AdapterError, match="unregistered client tool"):
         CLIAgentAdapter("codex_cli").chat({"messages": [{"role": "user", "content": "hi"}], "tools": TOOLS}, task_id="bad-args", timeout_s=1)
     assert instances[0].closed

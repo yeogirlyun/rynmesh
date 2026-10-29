@@ -26,11 +26,15 @@ pub struct RuntimeState {
 }
 
 #[derive(Default)]
-pub struct Recovery { pub attempts: u8, failures: u8, healthy_ticks: u8, next: Option<Instant> }
+pub struct Recovery { pub attempts: u8, failures: u8, healthy_ticks: u8, next: Option<Instant>, failed_since: Option<Instant> }
 impl Recovery {
     pub fn check(&mut self, healthy: bool, enabled: bool, now: Instant) -> bool {
+        self.check_with_grace(healthy, enabled, now, Duration::ZERO)
+    }
+    pub fn check_with_grace(&mut self, healthy: bool, enabled: bool, now: Instant, grace: Duration) -> bool {
         if healthy {
             self.failures = 0;
+            self.failed_since = None;
             self.healthy_ticks = self.healthy_ticks.saturating_add(1);
             // A brief successful boot must not reset a crash loop's retry budget.
             if self.healthy_ticks >= 20 { *self = Self::default(); }
@@ -38,7 +42,9 @@ impl Recovery {
         }
         self.healthy_ticks = 0;
         self.failures = self.failures.saturating_add(1);
-        if !enabled || self.failures < 3 || self.attempts >= 3 || self.next.is_some_and(|t| now < t) { return false; }
+        let failed_since = *self.failed_since.get_or_insert(now);
+        if !enabled || self.failures < 3 || now.saturating_duration_since(failed_since) < grace
+            || self.attempts >= 3 || self.next.is_some_and(|t| now < t) { return false; }
         self.attempts += 1;
         self.next = Some(now + Duration::from_secs(15 * 2_u64.pow(self.attempts as u32 - 1)));
         true
@@ -51,6 +57,20 @@ pub fn read_status(port: u16) -> Result<RuntimeStatus, String> {
     let mut status: RuntimeStatus = serde_json::from_value(value).map_err(|_| "invalid_response")?;
     status.node_online = true;
     Ok(status)
+}
+
+fn watchdog_status(previous: RuntimeStatus, current: Result<RuntimeStatus, String>,
+                   is_alive: impl FnOnce() -> bool) -> RuntimeStatus {
+    match current {
+        Ok(status) => status,
+        Err(error) => {
+            if is_alive() {
+                RuntimeStatus { node_online: true, last_error: Some("node_status_unavailable".into()), ..previous }
+            } else {
+                RuntimeStatus { last_error: Some(error), ..Default::default() }
+            }
+        },
+    }
 }
 #[tauri::command]
 pub fn desktop_status(state: tauri::State<RuntimeState>) -> RuntimeStatus { state.status.lock().unwrap().clone() }
@@ -140,23 +160,28 @@ pub async fn desktop_action(app: tauri::AppHandle, action: String) -> Result<Str
 pub fn tray_status_key(status: &RuntimeStatus) -> &'static str {
     if !status.node_online { "Ryn - Node unavailable" } else if !status.configured { "Ryn - Node running" } else if status.sharing { "Ryn - AI sharing enabled" } else { "Ryn - AI sharing paused" }
 }
+const STARTUP_GRACE: Duration = Duration::from_secs(120);
+
 pub fn watchdog(app: tauri::AppHandle, status_item: tauri::menu::MenuItem<tauri::Wry>, share_item: tauri::menu::MenuItem<tauri::Wry>) {
     std::thread::spawn(move || {
         let mut recovery = Recovery::default();
         // Allow the one-file sidecar to extract and start before counting failures.
-        let boot_deadline = Instant::now() + Duration::from_secs(45);
+        let mut boot_deadline = Instant::now() + STARTUP_GRACE;
         loop {
             let node = app.state::<node::NodeState>();
             if node.stopping.load(Ordering::SeqCst) { break; }
             let prefs = app.state::<DesktopState>().prefs.lock().unwrap().clone();
             let runtime = app.state::<RuntimeState>();
             if runtime.reset_recovery.swap(false, Ordering::SeqCst) { recovery = Recovery::default(); }
-            let mut status = match read_status(node.port) {
-                Ok(status) => status,
-                Err(error) => RuntimeStatus { last_error: Some(error), ..Default::default() },
-            };
+            let previous = runtime.status.lock().unwrap().clone();
+            let mut status = watchdog_status(previous, read_status(node.port), || node::health_ok(node.port));
             status.awake_active = awake(prefs.keep_awake && status.node_online && (status.sharing || status.active_tasks > 0 || status.setup_active));
-            let should_restart = Instant::now() >= boot_deadline && recovery.check(status.node_online, prefs.auto_recover && !runtime.action_busy.load(Ordering::SeqCst), Instant::now());
+            // A slow metadata/CLI refresh is not proof that the live node died.
+            // Give a running child time to answer before interrupting its tasks;
+            // exited children retain the ordinary three-failure crash recovery.
+            let grace = if node::owned_child_running(node.inner()) { Duration::from_secs(90) } else { Duration::ZERO };
+            let should_restart = Instant::now() >= boot_deadline && recovery.check_with_grace(status.node_online,
+                prefs.auto_recover && !runtime.action_busy.load(Ordering::SeqCst), Instant::now(), grace);
             status.recovery_attempts = recovery.attempts;
             status.recovery = if status.node_online { "healthy" } else if Instant::now() < boot_deadline { "starting" } else if !prefs.auto_recover { "disabled" } else if should_restart { "restarting" } else if recovery.attempts >= 3 { "needs_attention" } else { "waiting" }.into();
             let text = tr(tray_status_key(&status));
@@ -166,7 +191,11 @@ pub fn watchdog(app: tauri::AppHandle, status_item: tauri::menu::MenuItem<tauri:
             if let Some(tray) = app.tray_by_id("main") { let _ = tray.set_tooltip(Some(&text)); }
             *runtime.status.lock().unwrap() = status;
             if should_restart && !runtime.action_busy.swap(true, Ordering::SeqCst) {
-                if let Err(error) = node::restart(node.inner()) { log::error!("node recovery failed: {error}"); }
+                if let Err(error) = node::restart(node.inner()) {
+                    log::error!("node recovery failed: {error}");
+                } else {
+                    boot_deadline = Instant::now() + STARTUP_GRACE;
+                }
                 let _ = node::wait_healthy(node.port);
                 runtime.action_busy.store(false, Ordering::SeqCst);
             }
@@ -178,6 +207,57 @@ pub fn watchdog(app: tauri::AppHandle, status_item: tauri::menu::MenuItem<tauri:
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn live_child_transient_timeout_does_not_interrupt_tasks() {
+        let start = Instant::now();
+        let mut recovery = Recovery::default();
+        let grace = Duration::from_secs(90);
+        for seconds in [0, 10, 20, 40, 80] {
+            assert!(!recovery.check_with_grace(false, true, start + Duration::from_secs(seconds), grace));
+        }
+        assert_eq!(recovery.attempts, 0);
+        assert!(!recovery.check_with_grace(true, true, start + Duration::from_secs(85), grace));
+        assert!(!recovery.check_with_grace(false, true, start + Duration::from_secs(100), grace));
+        assert!(!recovery.check_with_grace(false, true, start + Duration::from_secs(110), grace));
+        assert!(!recovery.check_with_grace(false, true, start + Duration::from_secs(120), grace));
+        assert!(recovery.check_with_grace(false, true, start + Duration::from_secs(190), grace));
+        assert_eq!(recovery.attempts, 1);
+    }
+    #[test]
+    fn unavailable_metadata_keeps_a_live_node_online_without_recovery() {
+        let previous = RuntimeStatus { node_online: true, configured: true, sharing: true,
+            active_tasks: 2, setup_active: true, ..Default::default() };
+        let now = Instant::now();
+        let mut recovery = Recovery::default();
+        for _ in 0..5 {
+            let status = watchdog_status(previous.clone(), Err("node_unavailable".into()), || true);
+            assert!(status.node_online && status.configured && status.sharing && status.setup_active);
+            assert_eq!(status.active_tasks, 2);
+            assert_eq!(status.last_error.as_deref(), Some("node_status_unavailable"));
+            assert!(!recovery.check(status.node_online, true, now));
+        }
+        assert_eq!(recovery.attempts, 0);
+    }
+
+    #[test]
+    fn failed_liveness_still_uses_the_existing_three_failure_budget() {
+        let mut recovery = Recovery::default();
+        let now = Instant::now();
+        for expected in [false, false, true] {
+            let status = watchdog_status(RuntimeStatus::default(), Err("node_unavailable".into()), || false);
+            assert!(!status.node_online);
+            assert_eq!(recovery.check(status.node_online, true, now), expected);
+        }
+    }
+
+    #[test]
+    fn successful_metadata_does_not_probe_liveness_again() {
+        let current = RuntimeStatus { node_online: true, active_tasks: 3, ..Default::default() };
+        let status = watchdog_status(RuntimeStatus::default(), Ok(current), || panic!("unneeded health probe"));
+        assert!(status.node_online);
+        assert_eq!(status.active_tasks, 3);
+        assert!(status.last_error.is_none());
+    }
     #[test]
     fn backoff_is_bounded_and_short_success_does_not_reset_it() {
         let now = Instant::now(); let mut r = Recovery::default();

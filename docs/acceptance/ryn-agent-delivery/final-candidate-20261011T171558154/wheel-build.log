@@ -1,0 +1,9 @@
+Processing .\.
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Building wheels for collected packages: rynmesh
+  Building wheel for rynmesh (pyproject.toml): started
+  Building wheel for rynmesh (pyproject.toml): finished with status 'done'
+  Created wheel for rynmesh: filename=rynmesh-0.7.0-py3-none-any.whl size=850433 sha256=e43ce8df13e1ea22b61d0f4f80292947777c062d565815b47d769781215580ac
+  Stored in directory: C:\Users\子陵\AppData\Local\Temp\pip-ephem-wheel-cache-htxsute0\wheels\22\1c\d0\77a2f815919b05abcf762a79c490ab47a93cbe296fc087a29d
+Successfully built rynmesh

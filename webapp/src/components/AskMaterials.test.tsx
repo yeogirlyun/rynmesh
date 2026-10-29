@@ -16,6 +16,7 @@ it("loads and shows each material's source, then removes it on request", async (
   render(<AskMaterials ids={[source.library_id]} onRemove={onRemove} />);
   expect(screen.getByText("Reading local article copy…")).toBeInTheDocument();
   expect(await screen.findByText("Article title", { exact: false })).toBeInTheDocument();
+  await userEvent.setup().click(screen.getByText("Source details"));
   expect(screen.getByRole("link", { name: source.source_url })).toHaveAttribute("href", source.source_url);
   expect(screen.getByText("The model receives only the material shown in the send review.")).toBeInTheDocument();
   const user = userEvent.setup();

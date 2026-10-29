@@ -18,6 +18,7 @@ fn translate(message: &str, chinese: bool) -> String {
 pub fn tr(message: &str) -> String { translate(message, CHINESE.load(Ordering::SeqCst)) }
 
 fn language_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    if let Some(path) = crate::deployment::desktop_config_dir() { return Ok(path.join("language.json")); }
     app.path().app_config_dir().map(|path| path.join("language.json")).map_err(|e| e.to_string())
 }
 

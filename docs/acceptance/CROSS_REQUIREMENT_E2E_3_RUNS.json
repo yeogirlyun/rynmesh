@@ -1,0 +1,87 @@
+{
+  "version": "ryn.five-user-requirements-journey-evidence.v1",
+  "date": "2026-09-04",
+  "platform": "windows-x86_64",
+  "clean_independent_runs": 3,
+  "result": "passed",
+  "runs": [
+    {
+      "run": 1,
+      "result": "passed",
+      "duration_seconds": 603.4,
+      "steps_passed": 12,
+      "steps_total": 12,
+      "item_count": 30,
+      "healthy_sources": 13,
+      "reading_progress": 0.42,
+      "model_alias": "rynmesh-qwen2.5-0.5b-q4",
+      "runtime": "native_llama_cpp",
+      "answer_sha256": "02ec9537c5dbad39eaa66a01e520e84d01551ab9df9e9ed99da552b16179f93f",
+      "assistant_output_sha256": "202df729358490e1bbca4750db46ec640546a62a16c3c4b1a7b693d0f28455bd",
+      "assistant_citations": 1,
+      "library_citations": 1,
+      "friend_payloads_delivered": 3,
+      "content_sha256_verified": true,
+      "content_import_idempotent": true,
+      "post_revoke_request": "denied",
+      "secret_free_export_sha256": [
+        "f86b34837575f0530dd1ed390f53a99fa510582e7cb3b3f0aed94abec8e103bc",
+        "d62027b60ba8e59a6ca193553dfc78bf51f4e415322a00950e6956e533241c82"
+      ]
+    },
+    {
+      "run": 2,
+      "result": "passed",
+      "duration_seconds": 590.4,
+      "steps_passed": 12,
+      "steps_total": 12,
+      "item_count": 30,
+      "healthy_sources": 11,
+      "reading_progress": 0.42,
+      "model_alias": "rynmesh-qwen2.5-0.5b-q4",
+      "runtime": "native_llama_cpp",
+      "answer_sha256": "4362cde1d8932e93bdaf405913dfc476ffb6c54f6f1d95eeb0ef33757dfc0a86",
+      "assistant_output_sha256": "ab2a4dded807ca2e073a18aef5e3f751d5433f13be9a678fcff21499e6debdc4",
+      "assistant_citations": 1,
+      "library_citations": 1,
+      "friend_payloads_delivered": 3,
+      "content_sha256_verified": true,
+      "content_import_idempotent": true,
+      "post_revoke_request": "denied",
+      "secret_free_export_sha256": [
+        "9c7c349b6a1e97fa14ebc33eb4d5c9c779f73ac1fe69884184d795b7fa811991",
+        "6dcf00bf951f74b7e86b1b69aea948dce5630b9ce8c393d30ac4edbfe0831a82"
+      ]
+    },
+    {
+      "run": 3,
+      "result": "passed",
+      "duration_seconds": 539.5,
+      "steps_passed": 12,
+      "steps_total": 12,
+      "item_count": 30,
+      "healthy_sources": 11,
+      "reading_progress": 0.42,
+      "model_alias": "rynmesh-qwen2.5-0.5b-q4",
+      "runtime": "native_llama_cpp",
+      "answer_sha256": "fe03bc9def00a8203d2c59feab45d42f2fd0bdd765335f980a2ce369f0936d0c",
+      "assistant_output_sha256": "79bbb5ae99653de6b6294cffa010ef05a9aec1ea65afa3d96a22e700b6081b67",
+      "assistant_citations": 1,
+      "library_citations": 1,
+      "friend_payloads_delivered": 3,
+      "content_sha256_verified": true,
+      "content_import_idempotent": true,
+      "post_revoke_request": "denied",
+      "secret_free_export_sha256": [
+        "befaa18076811f9daa20ec292438422441ece5f4acdc7f5eb30491d0f8bcd87a",
+        "1b89469a6d162bc09953f6caf565125dd6d0b8058d273a9d30b57c262388b5ab"
+      ]
+    }
+  ],
+  "redaction": {
+    "contains_absolute_paths": false,
+    "contains_prompt_or_answer_text": false,
+    "contains_content_bodies": false,
+    "contains_tokens_or_relationship_secrets": false
+  }
+}

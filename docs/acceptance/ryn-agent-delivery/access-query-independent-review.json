@@ -1,0 +1,37 @@
+{
+  "reviewer": "sharing_transaction / gpt-6-astra high",
+  "status": "q06_helper_reviewed_shared_live_controller_p2_open",
+  "scope": "Independent local development review; not formal Q06 acceptance.",
+  "findings": [
+    {
+      "priority": "P2",
+      "component": "real-model/run_queries.py provider_for",
+      "description": "The live dispatch path checks fixture mapping but not the original owner source hash before dispatch. Synthetic independent reproduction changed the owner snapshot and still observed one inner.chat call through the preserved ModelDispatchAdapter.",
+      "status": "assigned_to_consumer_process_proof"
+    }
+  ],
+  "verified": [
+    "Actual signed setup facts and task read-only boundary match the implemented owner-side development fixture.",
+    "Candidate and pinned reference use the same fixture and effective planner generation policy.",
+    "Setup and task HTTP audit segments and write counts are separate."
+  ],
+  "limitations": [
+    "Runtime consumer_node_id equals the provider-owner store peer_id. The separate receiver.node-b home is not the Agent execution home; frozen consumer_node=node-b deployment remains unimplemented.",
+    "Private model-b can be rejected before cross-model grant binding. Wire rejection with zero upstream does not independently prove that deeper branch; direct AIAccessStore.authorize tests are separate evidence.",
+    "One physical host and synthetic business responses; no live model calls or formal trials."
+  ],
+  "tests": {
+    "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_access_query.py tests/test_agent_query_cases.py tests/test_agent_planner_policy.py -q",
+    "passed": 19,
+    "seconds": 79.85,
+    "lint": "Five reviewed files passed Ruff."
+  },
+  "reviewed_sha256": {
+    "docs/acceptance/ryn-agent-delivery/real-model/access_query.py": "71c463735209ddcec087b8e9be091ab13a422965e1a75dcf13d993f04dee8be9",
+    "docs/acceptance/ryn-agent-delivery/real-model/query_cases.py": "4695abfd6924a85d608539550229b72c5bf123bd668e2c9b6dd9067e4d98cf30",
+    "docs/acceptance/ryn-agent-delivery/real-model/run_queries.py": "700a96cb775d4c6c85a4db9dc3eb88810571074fd3db683b698fea4f61a3fe47",
+    "tests/test_agent_access_query.py": "2faf9d734146e44e197a22925182a1e026edf1df5d1e919d1918828e095575e9",
+    "tests/test_agent_query_cases.py": "4fbaeed2793e7f7d0f45f8c291586edb58cce36330e7f55a4071a78dcc0a9421"
+  },
+  "formal_executed_trials": 0
+}

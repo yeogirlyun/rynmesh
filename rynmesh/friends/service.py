@@ -95,12 +95,13 @@ class FriendService:
         self.verify_import: Callable | None = None
         self.store = FriendStore(home)
         self.messages = MessagingStore(home)
+        self.ai_sharing = None
 
     def invitation_context(self) -> dict[str, str]:
         endpoint = validate_endpoint(self.endpoint, allow_loopback=self.allow_loopback)
         return {"endpoint": endpoint, "address_category": endpoint_category(endpoint)}
 
-    def create_invite(self, *, ttl_minutes: int = 15, reviewed_endpoint: str | None = None) -> dict[str, Any]:
+    def create_invite(self, *, ttl_minutes: int = 15, reviewed_endpoint: str | None = None, ai: dict | None = None) -> dict[str, Any]:
         ttl = max(1, min(int(ttl_minutes), 24 * 60))
         endpoint = validate_endpoint(self.endpoint, allow_loopback=self.allow_loopback)
         if reviewed_endpoint is not None and reviewed_endpoint != endpoint:
@@ -123,14 +124,23 @@ class FriendService:
             "secret_hash": secret_hash(secret),
         }
         signed = sign_payload(payload, private_key_bytes=self.identity_private)
+        if ai is not None:
+            payload.update(purpose='ai', ai=ai)
+            signed = sign_payload(payload, private_key_bytes=self.identity_private)
         self.store.put_invite(
             invite_id,
-            {**{k: v for k, v in payload.items() if k != "messaging_pub"}, "status": "active"},
+            {**{k: v for k, v in payload.items() if k != "messaging_pub"}, "status": "active",
+             **({'ai_stage': 'waiting'} if ai is not None else {})},
         )
         return {"invite_uri": invite_uri(signed, secret), "invite": self._public_invite(payload)}
 
     def inspect_invite(self, uri: str) -> dict[str, Any]:
-        signed, _ = parse_invite(uri, now=self.clock(), allow_loopback=self.allow_loopback)
+        signed, _ = parse_invite(uri, now=self.clock(), allow_loopback=self.allow_loopback, allow_expired=True)
+        if signed.payload.get('purpose') == 'ai':
+            if not self.ai_sharing:
+                raise FriendError('ai_review_required')
+            return self.ai_sharing.inspect(uri)
+        parse_invite(uri, now=self.clock(), allow_loopback=self.allow_loopback)
         validate_endpoint(str(signed.payload["endpoint"]), allow_loopback=self.allow_loopback)
         return self._public_invite(signed.payload)
 
@@ -143,14 +153,28 @@ class FriendService:
             # invite. Project it on reads without rewriting persisted history.
             if public.get("status") == "active" and str(public.get("expires_at", "")) <= now_iso:
                 public["status"] = "expired"
+            if public.get('purpose') == 'ai' and public.get('relationship_id') and self.ai_sharing:
+                grant = self.ai_sharing.grants().grant(public['ai']['service']['package_id'], public['relationship_id'])
+                if grant:
+                    public['ai_stage'] = 'authorized' if grant['effective'] else 'revoked'
             result.append(public)
         return result
 
     def cancel_invite(self, invite_id: str) -> dict[str, Any]:
-        record = self.store.cancel_invite(invite_id, self.clock().isoformat())
-        if not record:
-            raise FriendError("invite_not_found")
-        return {key: value for key, value in record.items() if key != "secret_hash"}
+        from .ai_sharing import sharing_lock
+        with file_transaction(sharing_lock(self.home)):
+            record = self.store.state()['invites'].get(invite_id)
+            if not record:
+                raise FriendError("invite_not_found")
+            if record.get('purpose') == 'ai' and record.get('relationship_id') and self.ai_sharing:
+                grants = self.ai_sharing.grants()
+                sid, rid = record['ai']['service']['package_id'], record['relationship_id']
+                grant = grants.grant(sid, rid)
+                grants.set(sid, rid, allowed=False, expected_revision=(grant or {}).get('revision', 0))
+            # Write the revocation fence first. If cancelling the invite then
+            # fails or the node crashes, its original operation cannot regrant.
+            record = self.store.cancel_invite(invite_id, self.clock().isoformat())
+            return {key: value for key, value in record.items() if key != "secret_hash"}
 
     @staticmethod
     def _public_invite(payload: dict[str, Any]) -> dict[str, Any]:
@@ -159,16 +183,22 @@ class FriendService:
         public["network_id"] = str(payload.get("network_id") or "rynmesh-main")
         public["address_category"] = endpoint_category(str(payload["endpoint"]))
         public["fingerprint"] = str(payload["peer_id"])[:12] + "…" + str(payload["peer_id"])[-8:]
+        if payload.get('purpose') == 'ai':
+            public.update(purpose='ai', ai=payload['ai'])
         return public
 
-    def join(self, uri: str) -> dict[str, Any]:
+    def join(self, uri: str, *, ai_review: str = '') -> dict[str, Any]:
         signed, secret = parse_invite(uri, now=self.clock(), allow_loopback=self.allow_loopback,
                                      allow_expired=True)
+        is_ai = signed.payload.get('purpose') == 'ai'
+        if is_ai and not ai_review:
+            raise FriendError('ai_review_required')
         for prior in self.store.list_relationships():
             if prior.get("invite_id") == signed.payload["invite_id"] and prior.get("peer_id") == signed.payload["peer_id"]:
                 if prior.get("status") != "active":
                     raise FriendError("friend_revoked")
-                return self.public_relationship(prior)
+                if not is_ai:
+                    return self.public_relationship(prior)
         endpoint = validate_endpoint(str(signed.payload["endpoint"]), allow_loopback=self.allow_loopback)
         try:
             secret_nonce, secret_ciphertext = peer_box.seal(
@@ -193,6 +223,7 @@ class FriendService:
             "timestamp": int(self.clock().timestamp()),
             "nonce": uuid.uuid4().hex,
             "permissions": list(PERMISSIONS),
+            **({'ai_review': ai_review} if is_ai else {}),
         }
         join_payload["proof"] = sign_payload(join_payload, private_key_bytes=self.identity_private).to_dict()
         try:
@@ -206,7 +237,8 @@ class FriendService:
                 raise FriendError("friend_acceptance_invalid")
             if response.get("error"):
                 code = response["error"]
-                if code not in {"invite_expired", "invite_used", "invite_cancelled", "invite_not_found", "friend_revoked", "invalid_join", "friend_capacity_exhausted"}:
+                from .ai_sharing import ERRORS
+                if code not in ERRORS | {"invite_expired", "invite_used", "invite_cancelled", "invite_not_found", "friend_revoked", "invalid_join", "friend_capacity_exhausted"}:
                     raise FriendError("friend_acceptance_invalid")
                 raise FriendError(code)
             inviter_pub = str(response["messaging_pub"])
@@ -236,9 +268,14 @@ class FriendService:
             "created_at": self.clock().isoformat(),
         }
         self.store.put_relationship(record, relationship_secret)
-        return self.public_relationship(record)
+        return {**self.public_relationship(record), **({'ai_operation': response.get('ai_operation')} if is_ai else {})}
 
     def accept(self, body: dict[str, Any]) -> dict[str, Any]:
+        from .ai_sharing import sharing_lock
+        with file_transaction(sharing_lock(self.home)):
+            return self._accept(body)
+
+    def _accept(self, body: dict[str, Any]) -> dict[str, Any]:
         try:
             signed_invite = SignedPayload.from_dict(body["invite"])
             verify_signed_payload(signed_invite)
@@ -274,6 +311,10 @@ class FriendService:
             now_iso = self.clock().isoformat()
         except Exception as exc:
             raise FriendError("invalid_join") from exc
+        if payload.get('purpose') == 'ai':
+            if not self.ai_sharing:
+                raise FriendError('ai_review_required')
+            self.ai_sharing.before_accept(payload, body)
         relationship_id = uuid.uuid4().hex
         relationship_secret = os.urandom(32)
         record = {
@@ -293,8 +334,10 @@ class FriendService:
             )
         except ValueError as exc:
             raise FriendError(str(exc)) from None
+        ai_result = self.ai_sharing.finish_accept(payload, record) if self.ai_sharing else {}
         nonce, ciphertext = peer_box.seal(self.messaging_private, record["messaging_pub"], relationship_secret)
         response = {
+            **ai_result,
             "relationship_id": record["relationship_id"],
             "invite_id": str(payload["invite_id"]),
             "receiver": str(body["peer_id"]),

@@ -1,0 +1,26 @@
+{
+  "classification": "development model failure before the required business fault boundary",
+  "formal_case_score": false,
+  "reviewer": "Root compared actual runtime events, model calls and independent source readback.",
+  "real_model_calls": 4,
+  "elapsed_seconds": 218.5,
+  "code_unchanged": true,
+  "owner_source_unchanged": true,
+  "runtime_status": "failed",
+  "runtime_outcome": "unverified",
+  "finding": "Two initial calls inspected configuration/system state. The third and its single permitted retry produced no usable response. Runtime events 22 and 25 each record finish_reason length, input_tokens 9170 and output_tokens 4096. Task stopped with agent_invalid_model_response. No credential form, candidate probe, save or owner conflict intervention occurred.",
+  "observed_state": {
+    "source_version": 7,
+    "original_unchanged": true,
+    "candidate_probe_count": 0,
+    "agent_config_saves": 0,
+    "owner_intervention_count": 0,
+    "sharing_changed": false
+  },
+  "limitations": [
+    "The post-save failure and concurrent version-9 owner update were not reached in this real-model trial.",
+    "Separate deterministic real-HTTP tests reach those boundaries but do not establish real-model effectiveness.",
+    "No claim about private model reasoning, no threshold change, and no unchanged resampling.",
+    "Full C02, designated non-author Astra review, common normalization and final matched repetitions remain pending."
+  ]
+}

@@ -13,8 +13,12 @@ def spawn(args: list[str], *, cwd: str, env: dict[str, str], timeout: float):
     options = {"cwd": cwd, "env": env, "stdin": subprocess.PIPE, "stdout": subprocess.PIPE,
                "stderr": subprocess.DEVNULL}
     if os.name == "nt":
+        startup = subprocess.STARTUPINFO()
+        startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startup.wShowWindow = subprocess.SW_HIDE
         # Assign before the first instruction executes, including child processes.
-        process = subprocess.Popen(args, creationflags=0x4 | 0x08000000, **options)
+        process = subprocess.Popen(args, creationflags=0x4 | subprocess.CREATE_NO_WINDOW,
+                                   startupinfo=startup, **options)
         try:
             process._ryn_job = _windows_job(process)
         except BaseException:
@@ -110,7 +114,14 @@ def communicate_bounded(process, data: bytes, *, timeout: float, root):
         process.stdout.close()
 
 
-def _windows_job(process, *, memory_limit=2 * 1024**3, cpu_rate=2500):
+def _windows_job(
+    process,
+    *,
+    memory_limit=2 * 1024**3,
+    cpu_rate=2500,
+    process_limit=16,
+    before_resume=None,
+):
     import ctypes as c
     from ctypes import wintypes as w
 
@@ -142,8 +153,8 @@ def _windows_job(process, *, memory_limit=2 * 1024**3, cpu_rate=2500):
         raise OSError("CLI resource isolation unavailable")
     try:
         limits = Extended()
-        limits.basic.flags = 0x2000 | 0x8 | (0x200 if memory_limit else 0)
-        limits.basic.processes = 16
+        limits.basic.flags = 0x2000 | (0x8 if process_limit else 0) | (0x200 if memory_limit else 0)
+        limits.basic.processes = process_limit
         limits.job_memory = memory_limit
         cpu = CPU(0x1 | 0x4, cpu_rate)  # CLI defaults retain their resource ceiling
         if not kernel.SetInformationJobObject(job, 9, c.byref(limits), c.sizeof(limits)):
@@ -152,6 +163,8 @@ def _windows_job(process, *, memory_limit=2 * 1024**3, cpu_rate=2500):
             raise OSError("CLI CPU isolation unavailable")
         if not kernel.AssignProcessToJobObject(job, w.HANDLE(process._handle)):
             raise OSError("CLI process isolation unavailable")
+        if before_resume is not None:
+            before_resume(process, w.HANDLE(job))
         resume = c.WinDLL("ntdll").NtResumeProcess
         resume.argtypes = [w.HANDLE]
         if resume(w.HANDLE(process._handle)) != 0:

@@ -1,0 +1,91 @@
+{
+  "task_id": "agent_ae8420e4f58c41c7ab68dabd36b448f4",
+  "status": "completed",
+  "outcome": "unverified",
+  "scope": {
+    "scope": {
+      "egress_grants": [
+        {
+          "destination": {
+            "catalog_model_id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+            "destination_revision": "aabd71b4a4ef49dfb9c7654726d28d1d",
+            "provider_peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+            "source_id": "src-1fe50b9c7ce9432b"
+          },
+          "origin_grant_ids": [
+            "420afd1f67d94eb191dcf5f4b2f16899"
+          ]
+        }
+      ],
+      "resource_grants": [
+        {
+          "actions": [
+            "read_ai"
+          ],
+          "allowed_formats": [
+            ".csv",
+            ".json",
+            ".log",
+            ".markdown",
+            ".md",
+            ".pdf",
+            ".tsv",
+            ".txt",
+            ".yaml",
+            ".yml"
+          ],
+          "byte_limit": 262144,
+          "connection_access_generation": "d03f50db332d938adc2ab8b090643bb23f9a401f89739bf4aafa9629ff134142",
+          "connection_id": "76f367d62ab744db88727f5ab8d62ce8",
+          "document_byte_limit": 8388608,
+          "grant_id": "420afd1f67d94eb191dcf5f4b2f16899",
+          "recursive": false,
+          "root_kind": "file",
+          "root_resource_ref": "gAAAAABqyOhHwkH88_832h4lsdNkUe4Ou_X6V-mFWGLkUGIYHbXiBoPt-D94bpv5COrycF3WcXihJK-X_3u0-QtoHS7J9Hv6CVULFFdfdNapAhbjeFqbag2IoCQEbqb_W6VsQ9mEd6cV98d3KdCM5RAjDx9E5TcnT0RcogLcsxazVQYV6rbza6XJj-Pvs1xldcZDifFvMF7KYOCPYdBCozjfnxVsXlOBXV2J19JhCff5sIcaUikjoPIbRRp_dYeYP_jtYG7KgFNSxznK_3xH3HMfGGfx0lEkZ1Bolc5Ori77pRU7qnDNb-2NlTVexo0uK5yB855G3X8S0MWeA7axCtTD02swXsRELivf3BrWXFpod62SJGI1LTe2Itwh7D-QRLSL3NZ17sg_xg5ZCRIcjHHzKmpLh8anVgov-Eth1_a-BZlwQeHR0hA9GZqsLwRSs7oXJRNgQshc"
+        }
+      ],
+      "revision": 1,
+      "selection": {
+        "allow_model_data": true,
+        "resources": [
+          {
+            "actions": [
+              "read_ai"
+            ],
+            "connection_id": "76f367d62ab744db88727f5ab8d62ce8",
+            "recursive": false,
+            "root_kind": "file",
+            "root_path": "projects/orion/week-41/progress.md"
+          }
+        ]
+      }
+    },
+    "scope_revision": 1,
+    "control_revision": 1,
+    "model_destination": {
+      "catalog_model_id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+      "destination_revision": "aabd71b4a4ef49dfb9c7654726d28d1d",
+      "provider_peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+      "source_id": "src-1fe50b9c7ce9432b"
+    },
+    "current_model_destination": {
+      "catalog_model_id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+      "provider_peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+      "source_id": "src-1fe50b9c7ce9432b",
+      "destination_revision": "aabd71b4a4ef49dfb9c7654726d28d1d"
+    }
+  },
+  "checks": {
+    "one_exact_file": true,
+    "only_read": true,
+    "not_recursive": true,
+    "consent_saved": true,
+    "one_grant": true,
+    "no_write_events": true
+  },
+  "business_tool_calls": [
+    "ryn_list_models"
+  ],
+  "formal_case_score": false,
+  "limitation": "Deterministic UI model; proves saved authorization, not successful document reading or goal completion."
+}

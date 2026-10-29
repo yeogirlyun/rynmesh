@@ -1,19 +1,16 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
   ArrowDownToLine,
   Check,
   ChevronRight,
   Copy,
-  ExternalLink,
   Globe2,
-  Link2,
   Moon,
   Pencil,
   Plus,
   Search,
-  Share2,
   X,
 } from "lucide-react";
 import { useAppContext } from "../appContext";
@@ -32,133 +29,69 @@ import {
 } from "./components";
 import { EditDevice, PairDevice, ShareServices } from "./Dialogs";
 import { DeviceTopology } from "./DeviceTopology";
+import { DevicesWorkspace } from "./drop/DevicesWorkspace";
 import { LanguageSelect } from "./LanguageSelect";
 import { nativeModelRequest, nativeBusy } from "../domain/nativeModel";
 import { tr } from "../uiI18n";
 import { personalHref, usePersonal, type Device, type Service } from "./model";
+import { groupHomeDevices, readHomeView, writeHomeView, type HomeView } from "./homeModel";
+import { DeviceHero, DeviceRail, HomeServices, HomeStats, NearbyPanel, ViewSwitch } from "./HomeParts";
+import { SegTabs, ServiceDetail, ServiceTable, ServicesBand } from "./ServicesParts";
 
 function useLinks() {
   const { demo } = usePersonal();
   return (path: string) => personalHref(path, demo);
 }
-function serviceUrl(service: Service) {
-  if (service.href) return service.href;
-  const params = new URLSearchParams({
-    peer: service.record?.peer_id || service.deviceId,
-    service: service.record?.service.package_id || "",
-  });
-  return `/services/private-ai/chat?${params}`;
-}
-function ServiceRow({
-  service,
-  onSelect,
-  selected,
-  compact = false,
-}: {
-  service: Service;
-  onSelect?: () => void;
-  selected?: boolean;
-  compact?: boolean;
-}) {
-  const { t } = useTranslation();
-  const { resolveName, devices, demo } = usePersonal();
-  const href = useLinks();
-  const [preview, setPreview] = useState(false);
-  const navigate = useNavigate();
-  return (
-    <article
-      className={`pf-service-row${selected ? " selected" : ""}${compact ? " compact" : ""}`}
-    >
-      <button
-        className="pf-service-select"
-        onClick={
-          onSelect ||
-          (() =>
-            service.preview
-              ? setPreview(true)
-              : navigate(href(serviceUrl(service))))
-        }
-      >
-        <ServiceArt kind={service.kind} brand={service.brand} />
-        <div>
-          <h3 className="pf-service-title">{service.title}{service.accessLabel && <span className="pf-access-label">{service.accessLabel}</span>}</h3>
-          <p>
-            {resolveName(service.deviceId)} ·{" "}
-            {devices.find((device) => device.id === service.deviceId)?.own
-              ? t("personal.myDevice")
-              : demo
-                ? t("personal.sharedWithMe")
-                : t("personal.discoveredDevice")}
-          </p>
-          {!compact && <small>{service.description}</small>}
-        </div>
-      </button>
-      {!compact && (
-        <Status
-          online={service.online}
-          label={service.online ? "Ready" : "Offline"}
-        />
-      )}
-      <button
-        className={`pf-button${service.kind === "ai" ? " primary" : ""}`}
-        disabled={!service.online}
-        onClick={() =>
-          service.preview
-            ? setPreview(true)
-            : navigate(href(serviceUrl(service)))
-        }
-      >
-        {service.kind === "ai" ? t("personal.openChat") : t("personal.open")}
-      </button>
-      {onSelect && (
-        <button
-          className="pf-icon-button"
-          aria-label={t("personal.viewNameDetails", { name: service.title })}
-          onClick={onSelect}
-        >
-          <Arrow />
-        </button>
-      )}
-      {preview && (
-        <Modal title={service.title} onClose={() => setPreview(false)}>
-          <ServiceArt kind={service.kind} />
-          <p>
-            {t("personal.thisServiceIsShownAsSampleDataInTheDesignPreviewItIsNotInstalledOrRunning")}
-          </p>
-          <footer className="pf-dialog-actions">
-            <button className="pf-button" onClick={() => setPreview(false)}>
-              {t("personal.close")}
-            </button>
-          </footer>
-        </Modal>
-      )}
-    </article>
-  );
-}
 export function PersonalHome() {
   const { t } = useTranslation();
   const { devices, services, loading, error, refresh, demo } = usePersonal();
   const [selectedId, setSelectedId] = useState("");
+  const [view, setView] = useState<HomeView>(readHomeView);
   const [pair, setPair] = useState(false);
   const [edit, setEdit] = useState<Device | null>(null);
   const [share, setShare] = useState(false);
-  const href = useLinks();
   const owned = devices.filter((device) => device.own);
+  // Seen on the network (peer record or service advertisement) but not owned: shown here
+  // so a device whose services appear in Services is never invisible on Home.
+  const nearby = demo ? [] : devices.filter((device) => !device.own && !device.self);
   const selected = owned.find((device) => device.id === selectedId) || owned[0];
-  const offered = services.filter(
-    (service) => service.deviceId === selected?.id,
+  const offered = services.filter((service) => service.deviceId === selected?.id);
+  const groups = groupHomeDevices(owned);
+  const tone = groups.find((group) => group.devices.some((device) => device.id === selected?.id))?.tone ?? "blue";
+  const changeView = (next: HomeView) => {
+    setView(next);
+    writeHomeView(next);
+  };
+  const workspace = (columns: 2 | 3) => (
+    <>
+      <NearbyPanel nearby={nearby} services={services} />
+      {selected && (
+        <>
+          <DeviceHero
+            device={selected}
+            tone={tone}
+            serviceTotal={offered.length}
+            serviceReady={offered.filter((service) => service.online).length}
+            onEdit={() => setEdit(selected)}
+            onShare={() => setShare(true)}
+          />
+          <HomeServices device={selected} offered={offered} loading={loading} columns={columns} />
+        </>
+      )}
+    </>
   );
   return (
-    <div className="pf-page">
+    <div className="pf-page rh-home">
       <PageHeading
         title={t("nav.home")}
         description={t("pages.homeSubtitle")}
       >
-        <button className="pf-button dark" onClick={() => setPair(true)}>
+        <button className="rh-btn primary" onClick={() => setPair(true)}>
           <Plus size={19} />
           {t("personal.addDevice")}
         </button>
       </PageHeading>
+      <HomeStats owned={owned} services={services} />
       {error && (
         <div className="pf-callout">
           {error}
@@ -167,56 +100,40 @@ export function PersonalHome() {
           </button>
         </div>
       )}
-      <DeviceTopology
-        devices={owned}
-        selected={selected}
-        loading={loading}
-        demo={demo}
-        onSelect={setSelectedId}
-        onEdit={setEdit}
-        onShare={() => setShare(true)}
-      />
-      {selected && (
-        <div className="pf-home-services">
-          <section>
-            <div className="pf-section-heading">
-              <div>
-                <h2>{t("personal.servicesOnName", { name: selected.name })}</h2>
-                <p>{t("personal.fromYourName", { name: selected.name })}</p>
-              </div>
-            </div>
-            <div className="pf-panel pf-service-stack">
-              {offered.map((service) => (
-                <ServiceRow service={service} compact key={service.id} />
-              ))}
-              {!offered.length && (
-                <Empty
-                  title={
-                    loading ? t("personal.findingServices") : t("personal.noServicesOnThisDevice")
-                  }
-                >
-                  {loading ? (
-                    t("personal.checkingYourConnectedDevices")
-                  ) : (
-                    <Link to={href("/services/manage")}>
-                      {t("personal.setUpAServiceOnThisDevice")}
-                    </Link>
-                  )}
-                </Empty>
-              )}
-              <Link className="pf-browse-row" to={href("/services")}>
-                <Share2 size={29} strokeWidth={1.4} />
-                <div>
-                  <h3>{t("personal.fromOtherDevices")}</h3>
-                  <small>{t("personal.browseServicesFromYourOtherDevices")}</small>
-                </div>
-                <span>
-                  {t("personal.browseServices")} <Arrow />
-                </span>
-              </Link>
-            </div>
-          </section>
+      <div className="rh-head2">
+        <h2>
+          {t("personal.myDevices")} <span>({owned.length})</span>
+        </h2>
+        <ViewSwitch view={view} onChange={changeView} />
+      </div>
+      {view === "list" ? (
+        <div className="rh-bench">
+          <DeviceRail
+            groups={groups}
+            selectedId={selected?.id}
+            loading={loading}
+            onSelect={setSelectedId}
+            onShowMap={() => changeView("map")}
+          />
+          <div className="rh-work">{workspace(2)}</div>
         </div>
+      ) : (
+        <>
+          <div className="rh-map">
+            <DeviceTopology
+              devices={owned}
+              selected={selected}
+              loading={loading}
+              demo={demo}
+              hideHeading
+              hideDetail
+              onSelect={setSelectedId}
+              onEdit={setEdit}
+              onShare={() => setShare(true)}
+            />
+          </div>
+          <div className="rh-work wide">{workspace(3)}</div>
+        </>
       )}
       {pair && <PairDevice onClose={() => setPair(false)} />}{" "}
       {edit && <EditDevice device={edit} onClose={() => setEdit(null)} />}{" "}
@@ -242,44 +159,54 @@ export function PersonalServices() {
       setQuery("");
     }
   }, [params]);
-  const [tab, setTab] = useState("Overview");
+  const [tab, setTab] = useState<"Overview" | "API access">("Overview");
   const [share, setShare] = useState(false);
   const href = useLinks();
+  // Usable services first, then known-but-offline, then those that need a connection.
+  const rank = (service: Service) =>
+    service.availability === "needs_connection" ? 2 : service.online ? 0 : 1;
+  const isOwn = (service: Service) =>
+    devices.find((device) => device.id === service.deviceId)?.own;
+  const otherFilter = demo ? "Shared with me" : "Discovered";
+  const counts: Record<string, number> = {
+    All: services.length,
+    "My devices": services.filter((service) => isOwn(service)).length,
+    [otherFilter]: services.filter((service) => !isOwn(service)).length,
+  };
   const visible = services.filter((service) => {
-    const own = devices.find((device) => device.id === service.deviceId)?.own;
+    const own = isOwn(service);
     return (
       (filter === "All" || (filter === "My devices" ? own : !own)) &&
       `${service.title} ${resolveName(service.deviceId)}`
         .toLowerCase()
         .includes(query.toLowerCase())
     );
-  });
+  }).sort((a, b) => rank(a) - rank(b));
   const selected =
     visible.find((service) => service.id === selectedId) || visible[0];
   const owner = devices.find((device) => device.id === selected?.deviceId);
   return (
-    <div className="pf-page">
+    <div className="pf-page rs-services">
       <PageHeading
         title={t("nav.services")}
         description={t("pages.servicesSubtitle")}
       >
-        <Link className="pf-button primary" to={href("/services/manage")}>
-          <Plus size={19} />
+        <Link className="rs-btn primary" to={href("/services/manage")}>
+          <Plus size={16} aria-hidden="true" />
           {t("personal.addService")}
         </Link>
       </PageHeading>
-      <div className="pf-filter-row">
-        <Tabs
-          options={[
-            "All",
-            "My devices",
-            demo ? "Shared with me" : "Discovered",
-          ]}
+      {services.length > 0 && <ServicesBand services={services} />}
+      <div className="rs-bar">
+        <SegTabs
+          options={["All", "My devices", otherFilter]}
           value={filter}
           onChange={setFilter}
+          counts={counts}
+          label={t("personal.filter")}
         />
-        <label className="pf-search">
-          <Search size={18} />
+        <label className="rs-field">
+          <Search size={16} aria-hidden="true" />
           <input
             aria-label={t("personal.searchServices")}
             placeholder={t("personal.searchServices")}
@@ -296,323 +223,47 @@ export function PersonalServices() {
           </button>
         </Note>
       )}
-      <div className="pf-service-layout">
-        <div className="pf-service-list">
-          {visible.map((service) => (
-            <ServiceRow
-              key={service.id}
-              service={service}
-              selected={selected?.id === service.id}
-              onSelect={() => setSelectedId(service.id)}
-            />
-          ))}
-          {!visible.length && (
+      <div className="rs-cols">
+        <ServiceTable
+          services={visible}
+          selectedId={selected?.id}
+          onSelect={setSelectedId}
+          empty={
             <Empty
               title={loading ? t("personal.findingServices") : t("personal.noMatchingServices")}
             >
               {t("personal.addAServiceOnThisDeviceOrTryAnotherFilter")}
             </Empty>
-          )}
-        </div>
+          }
+        />
         {selected && (
-          <aside className="pf-panel pf-service-detail">
-            <div className="pf-detail-lockup">
-              <ServiceArt kind={selected.kind} brand={selected.brand} />
-              <div>
-                <h2>{selected.title}</h2>
-                <p>{t("personal.onName", { name: resolveName(selected.deviceId) })}</p>
-              </div>
-            </div>
-            <Tabs
-              options={["Overview", "API access"]}
-              value={tab}
-              onChange={setTab}
-            />
-            {tab === "Overview" ? (
-              <>
-                <p className="pf-description">
-                  {selected.description}
-                  {selected.accessLabel && <><br />{t("personal.accessMethodMethod", { method: selected.accessLabel })}</>}
-                </p>
-                <h3>{t("personal.access")}</h3>
-                <p>
-                  {demo
-                    ? owner?.own
-                      ? t("personal.onlyMyDevices")
-                      : t("personal.sharedWithMe")
-                    : t("personal.controlledByTheServiceProvider")}
-                </p>
-                <div className="pf-button-row">
-                  <button
-                    className="pf-button"
-                    onClick={() => setTab("API access")}
-                  >
-                    <Link2 size={15} />
-                    {t("personal.apiAccess")}
-                  </button>
-                  {owner?.own && (
-                    <button
-                      className="pf-button"
-                      onClick={() => setShare(true)}
-                    >
-                      <Share2 size={15} />
-                      {t("personal.manageAccess")}
-                    </button>
-                  )}
-                </div>
-                <hr />
-                <h3>{t("personal.manageOnName", { name: resolveName(selected.deviceId) })}</h3>
-                <p>{t("personal.serviceSetupIsManagedOnTheDeviceRunningIt")}</p>
-                <Link
-                  className="pf-link"
-                  to={href(
-                    `/devices?device=${encodeURIComponent(selected.deviceId)}`,
-                  )}
-                >
-                  {t("personal.viewDevice")} <ExternalLink size={14} />
-                </Link>
-              </>
-            ) : (
-              <>
-                <p className="pf-description">
-                  {t("personal.connectYourAppsAndAgentsThroughTheLocalInferenceAPI")}
-                </p>
-                {selected.kind === "ai" ? (
-                  <Link
-                    className="pf-button"
-                    to={href("/services/api")}
-                  >
-                    <Link2 size={16} />
-                    {t("personal.configureAPIAccess")}
-                  </Link>
-                ) : (
-                  <Note>
-                    {selected.preview
-                      ? t("personal.thisSampleServiceDoesNotProvideAWorkingAPI")
-                      : t("personal.apiDetailsAreProvidedByTheServiceOwner")}
-                  </Note>
-                )}
-              </>
-            )}
-          </aside>
+          <ServiceDetail
+            service={selected}
+            tab={tab}
+            onTab={setTab}
+            onManage={() => setShare(true)}
+          />
         )}
       </div>
-      <Link
-        className="pf-link"
-        style={{ marginTop: 22 }}
-        to={href("/services/catalog")}
-      >
-        {t("personal.moreServiceTools")} <Arrow />
-      </Link>
-      <Note>
-        {demo
-          ? t("personal.requestAccessBeforeUsingAServiceThatIsNotSharedWithYou")
-          : t("personal.discoveredServicesAreNotProofOfOwnershipOrGrantedAccessTheProviderChecksEveryRequest")}
-      </Note>
+      <div className="rs-foot">
+        <Link className="rs-link" to={href("/services/catalog")}>
+          {t("personal.moreServiceTools")} <Arrow />
+        </Link>
+        <span>
+          {demo
+            ? t("personal.requestAccessBeforeUsingAServiceThatIsNotSharedWithYou")
+            : t("personal.discoveredServicesAreNotProofOfOwnershipOrGrantedAccessTheProviderChecksEveryRequest")}
+        </span>
+      </div>
       {share && owner && (
         <ShareServices device={owner} onClose={() => setShare(false)} />
       )}
     </div>
   );
 }
+// The devices route is the device workspace: network map, conversations and transfers.
 export function PersonalDevices() {
-  const { t } = useTranslation();
-  const { devices, services, demo } = usePersonal();
-  const { notify } = useAppContext();
-  const [params] = useSearchParams();
-  const requested = devices.find(
-    (device) => device.id === params.get("device"),
-  );
-  const [filter, setFilter] = useState(
-    requested && !requested.own
-      ? demo
-        ? "Shared with me"
-        : "Discovered"
-      : "My devices",
-  );
-  const [id, setId] = useState(requested?.id || "");
-  const requestedId = requested?.id;
-  const requestedOwn = requested?.own;
-  useEffect(() => {
-    if (requestedId) {
-      setId(requestedId);
-      setFilter(
-        requestedOwn ? "My devices" : demo ? "Shared with me" : "Discovered",
-      );
-    }
-  }, [requestedId, requestedOwn, demo]);
-  const [pair, setPair] = useState(false);
-  const [edit, setEdit] = useState(false);
-  const [share, setShare] = useState(false);
-  const href = useLinks();
-  const visible = devices.filter((device) =>
-    filter === "My devices" ? device.own : !device.own,
-  );
-  const selected = visible.find((device) => device.id === id) || visible[0];
-  const offered = services.filter(
-    (service) => service.deviceId === selected?.id,
-  );
-  return (
-    <div className="pf-page">
-      <PageHeading
-        title={t("nav.devices")}
-        description={t("pages.devicesSubtitle")}
-      >
-        <button className="pf-button dark" onClick={() => setPair(true)}>
-          <Plus size={19} />
-          {t("personal.addDevice")}
-        </button>
-      </PageHeading>
-      <Tabs
-        options={["My devices", demo ? "Shared with me" : "Discovered"]}
-        value={filter}
-        onChange={setFilter}
-      />
-      <div className="pf-devices-layout">
-        <div className="pf-device-list">
-          {visible.map((device) => (
-            <button
-              key={device.id}
-              className={`pf-device-list-item${selected?.id === device.id ? " selected" : ""}`}
-              onClick={() => setId(device.id)}
-            >
-              <DeviceArt kind={device.kind} small />
-              <div>
-                <div>
-                  <strong>{device.name}</strong>
-                  <Status online={device.online} self={device.self} />
-                </div>
-                <small>{device.own ? t("personal.yourDevice") : t("personal.remoteDevice")}</small>
-                <small className="pf-ellipsis">
-                  {t("personal.privateNote")} {device.note || t("personal.notSet")}
-                </small>
-              </div>
-              <Arrow />
-            </button>
-          ))}
-          {!visible.length && (
-            <Empty title={t("personal.noDevicesHereYet")}>
-              {t("personal.addADeviceToGetStarted")}
-            </Empty>
-          )}
-        </div>
-        {selected && (
-          <div>
-            <section className="pf-panel pf-device-detail">
-              <div className="pf-detail-lockup">
-                <DeviceArt kind={selected.kind} />
-                <div>
-                  <div className="pf-inline">
-                    <h2>{selected.name}</h2>
-                    <Status online={selected.online} self={selected.self} />
-                  </div>
-                  <p>{selected.own ? t("personal.yourDevice") : t("personal.remoteDevice")}</p>
-                  <div className="pf-device-id">
-                    {t("personal.deviceID")}{" "}
-                    <code title={selected.id}>
-                      {selected.id.length > 20
-                        ? `${selected.id.slice(0, 9)}…${selected.id.slice(-5)}`
-                        : selected.id}
-                    </code>
-                    <button
-                      className="pf-icon-button"
-                      aria-label={t("personal.copyDeviceID")}
-                      onClick={async () => {
-                        try {
-                          await navigator.clipboard.writeText(selected.id);
-                          notify("ok", t("personal.deviceIDCopied"));
-                        } catch {
-                          notify("warn", t("personal.couldNotCopyTheDeviceID"));
-                        }
-                      }}
-                    >
-                      <Copy size={14} />
-                    </button>
-                  </div>
-                </div>
-              </div>
-              <dl className="pf-properties">
-                <div>
-                  <dt>{selected.own ? t("personal.deviceName") : t("personal.nickname")}</dt>
-                  <dd>{selected.name}</dd>
-                </div>
-                <div>
-                  <dt>{t("personal.privateNoteLabel")}</dt>
-                  <dd>{selected.note || t("personal.notSet")}</dd>
-                </div>
-              </dl>
-              <button className="pf-button" onClick={() => setEdit(true)}>
-                <Pencil size={15} />
-                {t("personal.editDetails")}
-              </button>
-              <Note>
-                {t("personal.onlyYouCanSeePrivateNotes")}
-                {!selected.own
-                  ? t("personal.theOwnersDeviceNameStaysUnchanged")
-                  : ""}
-              </Note>
-            </section>
-            <div className="pf-section-heading">
-              <h2>{t("personal.access")}</h2>
-            </div>
-            <div className="pf-panel pf-access-list">
-              {offered.map((service) => (
-                <div className="pf-access-row" key={service.id}>
-                  <ServiceArt kind={service.kind} brand={service.brand} small />
-                  <div>
-                    <h3>{service.title}</h3>
-                    <small>
-                      {selected.own
-                        ? t("personal.providedByThisDevice")
-                        : demo
-                          ? t("personal.sharedWithMe")
-                          : t("personal.advertisedByThisDevice")}
-                    </small>
-                  </div>
-                  <Status
-                    online={service.online}
-                    label={
-                      service.online
-                        ? demo
-                          ? "Access granted"
-                          : "Available"
-                        : "Offline"
-                    }
-                  />
-                </div>
-              ))}
-              {!offered.length && (
-                <Note>{t("personal.noServicesAdvertisedOnThisDevice")}</Note>
-              )}
-              <Link className="pf-browse-row" to={href("/services")}>
-                {t("personal.viewServices")} <Arrow />
-              </Link>
-            </div>
-            <div className="pf-device-actions">
-              {selected.own ? (
-                <button className="pf-button" onClick={() => setShare(true)}>
-                  <Share2 size={16} />
-                  {t("personal.shareServices")}
-                </button>
-              ) : (
-                <Note>{t("personal.serviceAccessIsManagedByTheDeviceOwner")}</Note>
-              )}
-              <Link className="pf-link" to={href("/peers")}>
-                {t("personal.connectionDetails")} <Arrow />
-              </Link>
-            </div>
-          </div>
-        )}
-      </div>
-      {pair && <PairDevice onClose={() => setPair(false)} />}{" "}
-      {edit && selected && (
-        <EditDevice device={selected} onClose={() => setEdit(false)} />
-      )}{" "}
-      {share && selected && (
-        <ShareServices device={selected} onClose={() => setShare(false)} />
-      )}
-    </div>
-  );
+  return <DevicesWorkspace />;
 }
 
 type Task = {
@@ -1031,6 +682,7 @@ export function PersonalSettings() {
         </div>
       </section>
       <section className="pf-setting-row"><div><h2>{t("nav.desktop")}</h2><p>{t("settings.desktopHelp")}</p></div><Link className="pf-button" to={href("/settings/desktop")}>{t("settings.desktopSettings")} <ChevronRight size={16} /></Link></section>
+      <section className="pf-setting-row"><div><h2>{t("nav.agentExtensions")}</h2><p>{t("settings.agentExtensionsHelp")}</p></div><Link className="pf-button" to={href("/settings/extensions")}>{t("settings.manageAgentExtensions")} <ChevronRight size={16} /></Link></section>
       <section>
         <div className="pf-setting-row">
           <div>

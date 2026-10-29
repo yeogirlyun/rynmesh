@@ -1,0 +1,35 @@
+{
+  "author": "consumer_process_proof / gpt-6.1-sol high",
+  "reviewer": "sharing_review / gpt-6-astra high",
+  "status": "normalization_reviewed_no_material_findings",
+  "scope": "Q06 candidate evidence normalization only; not model effectiveness or formal Q06 acceptance.",
+  "author_tests": [
+    {
+      "passed": 15,
+      "seconds": 1.78,
+      "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_diagnostic_normalization.py -q"
+    },
+    {
+      "passed": 28,
+      "seconds": 58.53,
+      "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_diagnostic_normalization.py tests/test_agent_access_query.py tests/test_agent_query_cases.py -q"
+    }
+  ],
+  "independent_tests": {
+    "passed": 15,
+    "seconds": 2.1,
+    "command": ".venv/Scripts/python.exe -m pytest -q -p no:cacheprovider tests/test_agent_diagnostic_normalization.py"
+  },
+  "independent_checks": [
+    "Original sample bytes and all derived evidence hashes matched.",
+    "Existing output directory, frozen-prompt mismatch, wrong cohort and collector kind rejected without replacing evidence.",
+    "Original unverified outcome retained: grade failed with goal_outcome assertion false.",
+    "No fabricated independent review, dependency or security pass; provider-owner execution limitation retained."
+  ],
+  "sha256": {
+    "docs/acceptance/ryn-agent-delivery/real-model/normalize_diagnostic.py": "352b906768eea826ed1466e459292b419d028e842ddb35c4b5109be4e690ddd4",
+    "tests/test_agent_diagnostic_normalization.py": "a32cd7de341ca7d44319f717f5ab69b5b56d39277e47fd9afac426d5a161b23f",
+    "docs/acceptance/ryn-agent-delivery/real-model/20261010T050520371893Z-Q06-ryn-fixture/run.json": "9158b51b55ee5715bb97128c89ca9c1151f731777f661699dabb70b7473de410"
+  },
+  "formal_executed_trials": 0
+}

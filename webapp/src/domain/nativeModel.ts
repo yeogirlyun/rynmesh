@@ -1,11 +1,26 @@
 import { nodeControlUrl } from "./nodeUrl";
 import { tr } from "../uiI18n";
+import type { ModelTokenUsage } from "./aiSources";
 
 export interface NativeModelStatus {
   id: string; name: string; file_name: string; size_bytes: number; peer_id: string;
   state: "not_installed" | "installing" | "starting" | "running" | "stopping" | "stopped" | "error";
   stage: string; progress: number | null; error: string; backend: string;
   installed: boolean; supported: boolean; autostart: boolean; sharing: boolean; active_requests: number;
+  usage?: ModelTokenUsage;
+  model_settings?: {
+    configuration: {
+      max_output_tokens: number;
+      max_concurrent: number;
+      requests_per_day: number | null;
+      tokens_per_day?: number | null;
+      shared_tokens_per_day?: number | null;
+    };
+    context_window?: number;
+    rule_revision: string;
+    enforcement: { output_tokens: string; concurrency: string; quota: string };
+    usage?: ModelTokenUsage;
+  } | null;
 }
 export interface LocalModelFile { name: string; file_name: string; size_bytes: number; architecture?: string }
 export async function inspectNativeModel(source: string): Promise<LocalModelFile> {

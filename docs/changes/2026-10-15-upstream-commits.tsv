@@ -1,0 +1,17 @@
+﻿sha	authored_at	author	subject
+1b62b2f8b9cc3fa8237af014599939b2fdedc79a	2026-10-07T10:39:55+08:00	yyeogirl	feat: unify AI workspace, node history and source materials
+278e6474547618ab23bf1c83a514a054c67e8db1	2026-10-08T09:34:46+08:00	yyeogirl	fix: align desktop notification packages for Windows build
+255274e2aefeff7f30cdebee2eae6716e17b9245	2026-10-12T11:23:21+08:00	yyeogirl	feat: integrate Ryn agent, model pool and cloud drive workspace
+0b18008a55383248971e06a9f7b7599f2d143408	2026-10-12T11:24:04+08:00	yyeogirl	docs: normalize public evidence and update drive setup
+8a0ea2cb5bf22c221568ca37cf9745a4bceef13c	2026-10-12T11:24:53+08:00	yyeogirl	docs: hash canonical public test logs
+ad4b4c6f9fa61f0f626de63d62443da32cb156f3	2026-10-12T11:29:15+08:00	yyeogirl	fix: preserve frozen test fixture bytes across checkouts
+9a5c3dfa998546e058a73d29c97dc356716db5cc	2026-10-12T11:29:55+08:00	yyeogirl	test: include frozen acceptance protocol dependency
+24217d91c25010182ed031c643f8c79f6b44d84d	2026-10-12T11:33:42+08:00	yyeogirl	test: include pinned role and payload review fixtures
+c55b9df3dd0a361e2c7a4444a86ba49cac3e47ef	2026-10-12T12:00:06+08:00	yyeogirl	test: isolate optional reference runtime and catalog nonce state
+a4ae97f94db70989a12c8fe818aa6724f6e58781	2026-10-12T03:38:46-04:00	Yeogirl Yun	fix(cli): preserve unknown Antigravity usage through budget settlement
+916724512c02994453b807a36eb0b5cd192fcea0	2026-10-12T03:38:46-04:00	Yeogirl Yun	feat(apps): migrate Resume Recruit and Desk with reviewed private node hosting
+4971a2b307a7f1586ffd8788b6dfea71fcfa0528	2026-10-12T04:03:01-04:00	Yeogirl Yun	docs(apps): record physical pilot acceptance and local handoff
+946b35d25224b6e5c2c6317dda018883ef2679cf	2026-10-13T21:53:37-04:00	Yeogirl Yun	feat(apps): add pinned Craft suite catalog and isolated editor hosting
+a8c101fabf7fcd781948cdef333ca3e28c356782	2026-10-13T21:54:58-04:00	Yeogirl Yun	docs(apps): hand Craft user delivery to Ziling with local acceptance evidence
+d880bcc61376febdfe451c1c27feaeaf86912e8e	2026-10-13T21:55:20-04:00	Yeogirl Yun	docs(apps): normalize acceptance log whitespace
+63f9b97b48ba7ad045e54af1a77498a3f8d85f55	2026-10-15T20:32:01+08:00	yyeogirl	chore: save integrated workspace development and change review

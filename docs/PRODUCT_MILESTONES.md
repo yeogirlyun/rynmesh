@@ -23,6 +23,36 @@ paid by the involved parties for the resolution work. The proposed
 
 ## Current baseline: P1 Ryn Companion and P2 Friend Mesh
 
+### Owner priority update — 2026-10-29
+
+The next milestone is a reliable invited-user productivity pilot: receive a
+friend's AI invitation, install/open, obtain a real answer, create a useful
+artifact, save/share it, and return later. Prioritize infrastructure, connection
+recovery, performance/efficiency, useful outputs, convenience and invitations.
+Keep sign-in/session handling lightweight; preserve caller identity and basic
+logout/revocation without adding broad identity-system work or repeated prompts.
+
+The current integration candidate incorporates the model pool, assistant,
+connection recovery, friend AI sharing, app lifecycle and four office-tool
+adapters from `feature/ryn-integrated-workspace@9128434`. This is implementation
+scope, not acceptance of every platform, a newly published installer or measured
+traction. A self-contained browser adapter, editor/Agent document consistency
+and corporate-session revision are separate contributor proposals.
+
+Use one infrastructure vocabulary for corporate and personal nodes; see
+[node/service/plugin standard](NODE_SERVICE_PLUGIN_STANDARD.md). Company-specific
+applications and business rules remain in the operator's private repository.
+Do not create separate personal/corporate protocols or mix company accounting
+with Ryncoin.
+
+Suggested first cohort: three providers and six to ten invited users. Proposed
+targets, not achieved metrics: eight of ten reach a useful result without terminal
+or API-key setup; six complete/reopen an artifact; five return within seven days.
+Prefer Word/PDF first, then dependable Grid/Deck. Collect voluntary feedback/local
+records; no telemetry, outreach, recurring monitoring or service deployment is
+created by this roadmap. Extend the configured internal earn/spend pilot only
+after the user workflow works; fiat and public reward expansion remain later.
+
 ### Released in v0.7.0
 
 - Self-contained macOS desktop app for Apple Silicon and Intel; the bundled

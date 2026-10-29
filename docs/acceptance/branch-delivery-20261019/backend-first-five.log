@@ -1,0 +1,7 @@
+Completed files from the interrupted core batch; partial browser results excluded.
+tests/test_actual_usage_adapters.py: 65 passed
+tests/test_actual_usage_boundaries.py: 34 passed
+tests/test_agent_app_uncertain_response.py: 4 passed
+tests/test_agent_apply_patch.py: 25 passed
+tests/test_agent_approval_contract.py: 2 passed
+Total: 130 passed (complete files only).

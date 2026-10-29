@@ -1,0 +1,9 @@
+# Publish review reports; retain machine-specific harnesses and raw state locally.
+*
+!*/
+!*.md
+!.gitignore
+tmp*/
+test-temp/
+node_modules/
+__pycache__/

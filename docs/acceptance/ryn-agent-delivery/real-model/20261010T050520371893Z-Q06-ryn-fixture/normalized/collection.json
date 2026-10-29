@@ -1,0 +1,10 @@
+{
+  "formal_trial_registered": false,
+  "implementation_limitations": [
+    "This controller currently executes the consumer task in the isolated provider-owner home. Deployment of the frozen consumer_node=node-b has not been verified. Node-b signed friend admission probes are setup observations, not evidence of consumer task deployment."
+  ],
+  "normalizer_sha256": "352b906768eea826ed1466e459292b419d028e842ddb35c4b5109be4e690ddd4",
+  "note": "Development review bundle only. No reviewer verdict, dependency verification or absent security audit is synthesized.",
+  "source": "D:\\code\\rynmesh\\docs\\acceptance\\ryn-agent-delivery\\real-model\\20261010T050520371893Z-Q06-ryn-fixture\\run.json",
+  "source_sha256": "9158b51b55ee5715bb97128c89ca9c1151f731777f661699dabb70b7473de410"
+}

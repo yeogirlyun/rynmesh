@@ -1,0 +1,11 @@
+{
+  "desktop_updated": true,
+  "desktop_sha256": "984A2385FC2911AF2FA3839198792A5E8FE7240256169D9F8BDA5F081062181E",
+  "backend_sha256": "57D22D2E01BA5324491A24DC313BD83FDB765D1FCEDE565D559F30EE0D00ADCB",
+  "backend_binary_unchanged": true,
+  "node_identity_unchanged": true,
+  "installed_and_enabled": 16,
+  "defaults_unchanged": true,
+  "gui_process_id": 29776,
+  "rollback_binary": "C:\\Users\\子陵\\AppData\\Local\\Ryn\\Ryn.before-local-editors-20261015.exe"
+}

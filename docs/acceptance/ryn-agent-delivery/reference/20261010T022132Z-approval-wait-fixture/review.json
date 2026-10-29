@@ -1,0 +1,7 @@
+{
+  "classification": "failed deterministic timing fixture before first admitted model request",
+  "formal_case_score": false,
+  "real_model": false,
+  "finding": "The original harness created the budget deadline before starting the upstream worker. AgentError occurred before any model/tool reservation or approval. The record did not retain its safe error code, so this run alone does not establish the exact exception cause. Subsequent work deferred budget activation until its first guard; a dedicated fake-clock test proves interpreter bootstrap is excluded without extending active execution.",
+  "preserved": true
+}

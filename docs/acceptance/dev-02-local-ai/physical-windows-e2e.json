@@ -1,0 +1,49 @@
+{
+  "version": "ryn.acceptance.local-ai.v1",
+  "date": "2026-09-04",
+  "platform": {
+    "os": "Windows 11 Pro Insider Preview",
+    "version": "10.0.28120",
+    "architecture": "x86_64",
+    "cpu": "Intel Core i7-9700K",
+    "logical_cpus": 8,
+    "ollama_required": false,
+    "docker_required": false
+  },
+  "artifacts": {
+    "model": {
+      "id": "Qwen2.5-0.5B-Instruct-Q4_K_M",
+      "revision": "872f8a96064a1242ac3a3359cad77c3042548405",
+      "bytes": 491400032,
+      "sha256": "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db",
+      "verified": true
+    },
+    "runtime_archive": {
+      "project": "llama.cpp",
+      "release": "b10516",
+      "bytes": 18506923,
+      "sha256": "fbbbc55e0eb2e1b07f9dcb9488616c98ed47d9003b90e15e7c8c7812c4307cd3",
+      "verified": true
+    }
+  },
+  "runtime": {
+    "bind": "127.0.0.1",
+    "port": 18091,
+    "web_ui": false,
+    "health": true,
+    "cross_process_status": true,
+    "cross_process_stop": true,
+    "remaining_test_processes": 0
+  },
+  "self_test": {
+    "ok": true,
+    "output_sha256": "f095e157e275d1e11b9db2458041a32a3ff0ce96ab89b25bfa45166b6b7f8bb9",
+    "output_preview": "RYNMESH SELF TEST OK",
+    "model": "rynmesh-qwen2.5-0.5b-q4",
+    "input_tokens": 40,
+    "output_tokens": 8,
+    "duration_ms": 202
+  },
+  "result": "passed"
+}
+

@@ -1,0 +1,20 @@
+{
+  "scope": "Builder and packaging checks; real WASM compilation and browser rendering are performed by the parent task",
+  "upstream_commit": "fc45b7f6d8ab79ef20f74e3c8347a2fd731e6af5",
+  "patch_sha256": "12817a0632aede415363dbd5c07b823dcd74e11d54e291fd2520b615ffce7d09",
+  "original_web_archive_sha256": "86048ba175689ff852c141d6115e5491f0856f891300c3e1f91274b9c2709a42",
+  "checks": {
+    "python_syntax": "passed",
+    "ruff": "passed",
+    "upstream_git_diff_whitespace": "passed",
+    "source_patch_exact_and_idempotent": "passed",
+    "font_and_license_pins": "passed",
+    "deterministic_archive_across_two_output_directories": "passed with synthetic distribution fixture",
+    "payload_manifest_digest_contract": "passed with synthetic distribution fixture",
+    "required_notices_and_provenance_in_zip": "passed with synthetic distribution fixture",
+    "duplicate_index_html_rejected": "passed",
+    "wasm_without_pinned_font_bytes_rejected": "passed",
+    "original_upstream_bootstrap_preserved": "passed",
+    "only_stale_js_and_wasm_link_integrity_removed": "passed"
+  }
+}

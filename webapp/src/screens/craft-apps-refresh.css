@@ -1,0 +1,180 @@
+/* Apps page redesign. Everything hangs off .craft-apps-v2, which CraftApps only sets outside
+   plugin management, so /settings/plugins and the shared dialogs keep their current look. */
+.craft-apps-v2 {
+  --ra-card: #fff;
+  --ra-line: #e3e9f5;
+  --ra-pg: #f2f5fb;
+  --ra-ink: #13203c;
+  --ra-ink2: #46567a;
+  --ra-ink3: #617090;
+  --ra-brand: #3556d3;
+  --ra-brand2: #5379ec;
+  --ra-on-brand: #fff;
+  --ra-brand-soft: #e8eefe;
+  --ra-brand-ink: #2b49b8;
+  --ra-ok: #0e9384;
+  --ra-ok-soft: #dcf5f0;
+  --ra-ok-ink: #0b7466;
+  --ra-warn-soft: #fff0d2;
+  --ra-warn-ink: #865000;
+  --ra-shadow: 0 1px 2px rgba(19, 32, 60, 0.05), 0 12px 28px -18px rgba(19, 32, 60, 0.26);
+  --ra-shadow-sm: 0 1px 2px rgba(19, 32, 60, 0.07);
+  --ra-glow1: rgba(53, 86, 211, 0.12);
+  --ra-glow2: rgba(14, 147, 132, 0.1);
+  position: relative;
+  isolation: isolate;
+  color: var(--ra-ink);
+}
+[data-theme="dark"] .craft-apps-v2 {
+  --ra-card: #172238;
+  --ra-line: #26365a;
+  --ra-pg: #101829;
+  --ra-ink: #eef3fd;
+  --ra-ink2: #b4c3df;
+  --ra-ink3: #8d9ec1;
+  --ra-brand: #7d9bff;
+  --ra-brand2: #a3b8ff;
+  --ra-on-brand: #0b1633;
+  --ra-brand-soft: #1f2d52;
+  --ra-brand-ink: #b5c7ff;
+  --ra-ok: #4fd1b8;
+  --ra-ok-soft: #153a3a;
+  --ra-ok-ink: #7fe3cf;
+  --ra-warn-soft: #3b3220;
+  --ra-warn-ink: #f2c877;
+  --ra-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 14px 30px -18px rgba(0, 0, 0, 0.7);
+  --ra-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --ra-glow1: rgba(125, 155, 255, 0.13);
+  --ra-glow2: rgba(79, 209, 184, 0.08);
+}
+/* Soft colour wash that reaches the edges of the content area (follows .pf-main's padding). */
+.craft-apps-v2::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  inset: -29px -32px auto -32px;
+  height: 440px;
+  background:
+    radial-gradient(900px 340px at 10% 0, var(--ra-glow1), transparent 70%),
+    radial-gradient(760px 300px at 96% 20px, var(--ra-glow2), transparent 70%);
+}
+@media (min-width: 1600px) { .craft-apps-v2::before { inset: -38px -48px auto -48px; } }
+@media (max-width: 1180px) { .craft-apps-v2::before { inset: -25px -23px auto -23px; } }
+@media (max-width: 620px) { .craft-apps-v2::before { inset: -23px -16px auto -16px; } }
+
+/* colour tones: --c1/--c2 gradient, --cs soft fill, --ci ink on soft */
+.craft-apps-v2 .ra-t-blue { --c1: #3556d3; --c2: #5f84f2; --cs: #e8eefe; --ci: #2b49b8; }
+.craft-apps-v2 .ra-t-teal { --c1: #0e9384; --c2: #30c9b0; --cs: #dcf5f0; --ci: #0b7466; }
+.craft-apps-v2 .ra-t-violet { --c1: #6a45e4; --c2: #9a7cff; --cs: #ede8ff; --ci: #5a37cf; }
+.craft-apps-v2 .ra-t-slate { --c1: #4a5c80; --c2: #7a8fb4; --cs: #e8edf5; --ci: #3a4a69; }
+.craft-apps-v2 .ra-t-rose { --c1: #df3f69; --c2: #f47d9b; --cs: #ffe6ed; --ci: #ad2349; }
+.craft-apps-v2 .ra-t-red { --c1: #dc3d44; --c2: #f47f72; --cs: #ffe7e4; --ci: #ad2a30; }
+.craft-apps-v2 .ra-t-green { --c1: #139350; --c2: #41c47c; --cs: #ddf5e7; --ci: #0d7439; }
+.craft-apps-v2 .ra-t-orange { --c1: #e86d18; --c2: #fb9d4f; --cs: #ffe9d6; --ci: #a64807; }
+.craft-apps-v2 .ra-t-amber { --c1: #e08a00; --c2: #f7b840; --cs: #fff0d2; --ci: #865000; }
+.craft-apps-v2 .ra-t-cyan { --c1: #0a8dbd; --c2: #3ec3e8; --cs: #d9f3fb; --ci: #066b90; }
+.craft-apps-v2 .ra-t-indigo { --c1: #4741cb; --c2: #7a77f2; --cs: #e6e6ff; --ci: #3633a8; }
+.craft-apps-v2 .ra-t-fuchsia { --c1: #b631c8; --c2: #de6eeb; --cs: #f9e3fc; --ci: #8a1f99; }
+
+/* ---- heading, stats, filters ---- */
+.craft-apps-v2 .ra-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 26px; }
+.craft-apps-v2 .ra-head h1 { margin: 0; font-size: 30px; line-height: 1.15; font-weight: 700; letter-spacing: -0.03em; color: var(--ra-ink); }
+.craft-apps-v2 .ra-head p { margin: 6px 0 0; font-size: 14px; color: var(--ra-ink2); }
+.craft-apps-v2 .ra-stats { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.craft-apps-v2 .ra-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border: 1px solid var(--ra-line); border-radius: 12px; background: var(--ra-card); color: var(--ra-ink2); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.craft-apps-v2 .ra-chip.ok { background: var(--ra-ok-soft); color: var(--ra-ok-ink); border-color: transparent; }
+.craft-apps-v2 .ra-chip.info { background: var(--ra-brand-soft); color: var(--ra-brand-ink); border-color: transparent; }
+.craft-apps-v2 .ra-chip.warn { background: var(--ra-warn-soft); color: var(--ra-warn-ink); border-color: transparent; }
+.craft-apps-v2 .ra-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 38px; padding: 0 16px; border: 1px solid var(--ra-line); border-radius: 10px; background: var(--ra-card); color: var(--ra-ink); font-size: 13px; font-weight: 600; line-height: 1; white-space: nowrap; text-decoration: none; box-shadow: var(--ra-shadow-sm); }
+.craft-apps-v2 .ra-btn.primary { border-color: transparent; color: var(--ra-on-brand); background: linear-gradient(180deg, var(--ra-brand2), var(--ra-brand)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24), 0 8px 16px -8px var(--ra-brand); }
+.craft-apps-v2 .ra-btn.ghost { background: transparent; border-color: transparent; box-shadow: none; color: var(--ra-ink2); }
+.craft-apps-v2 .ra-btn.sm { height: 32px; padding: 0 12px; font-size: 12px; border-radius: 9px; }
+.craft-apps-v2 .ra-btn:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
+.craft-apps-v2 .ra-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 26px; }
+.craft-apps-v2 .ra-filters button { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 15px; border: 1px solid var(--ra-line); border-radius: 18px; background: var(--ra-card); color: var(--ra-ink2); font-size: 13px; font-weight: 650; box-shadow: var(--ra-shadow-sm); }
+.craft-apps-v2 .ra-filters button em { font-style: normal; font-size: 12px; opacity: 0.75; }
+.craft-apps-v2 .ra-filters button.on { border-color: transparent; color: var(--ra-on-brand); background: linear-gradient(180deg, var(--ra-brand2), var(--ra-brand)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24), 0 8px 16px -8px var(--ra-brand); }
+
+/* ---- sections and grids ---- */
+.craft-apps-v2 .ra-section { display: flex; flex-direction: column; gap: 14px; margin-bottom: 28px; }
+.craft-apps-v2 .ra-section h2 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -0.015em; color: var(--ra-ink); }
+.craft-apps-v2 .ra-section h2 span { color: var(--ra-ink3); font-weight: 500; }
+.craft-apps-v2 .ra-grid4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; }
+.craft-apps-v2 .ra-grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+
+/* ---- installed app cards ---- */
+.craft-apps-v2 .ra-card { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 16px; border-radius: 18px; box-shadow: var(--ra-shadow);
+  border: 1px solid color-mix(in srgb, var(--c1) 18%, var(--ra-line));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--c1) 9%, var(--ra-card)), var(--ra-card) 110px); }
+.craft-apps-v2 .ra-card.off { background: var(--ra-pg); border-style: dashed; box-shadow: none; }
+.craft-apps-v2 .ra-card.off .ra-glyph { filter: grayscale(1); opacity: 0.5; box-shadow: none; }
+.craft-apps-v2 .ra-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.craft-apps-v2 .ra-card h3, .craft-apps-v2 .ra-row h3 { margin: 0; font-size: 16px; font-weight: 700; letter-spacing: -0.01em; color: var(--ra-ink); }
+.craft-apps-v2 .ra-card p, .craft-apps-v2 .ra-row p { margin: 2px 0 0; min-height: 20px; font-size: 13px; line-height: 1.5; color: var(--ra-ink2); }
+.craft-apps-v2 .ra-slot { display: flex; align-items: center; min-height: 26px; }
+.craft-apps-v2 .ra-slot .ra-chip { align-items: flex-start; height: auto; min-height: 24px; max-width: 100%; padding-block: 3px; white-space: normal; line-height: 1.35; text-align: left; }
+.craft-apps-v2 .ra-slot .ra-chip svg { margin-top: 2px; }
+.craft-apps-v2 .ra-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; padding-top: 4px; }
+
+/* ---- the drawn app icon ---- */
+.craft-apps-v2 .ra-glyph { position: relative; display: block; flex-shrink: 0; overflow: hidden; width: 48px; height: 48px; padding: 0; border: 0; border-radius: 14px; cursor: pointer;
+  background: linear-gradient(145deg, var(--c1), var(--c2)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32), 0 12px 20px -10px var(--c1); }
+.craft-apps-v2 .ra-glyph::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(160deg, rgba(255, 255, 255, 0.3), transparent 46%); }
+.craft-apps-v2 .ra-glyph:disabled { cursor: default; }
+.craft-apps-v2 .ra-glyph:not(:disabled):hover { transform: translateY(-1px); }
+@media (prefers-reduced-motion: no-preference) { .craft-apps-v2 .ra-glyph { transition: transform 160ms ease; } }
+.craft-apps-v2 .ra-gl { display: block; width: 100%; height: 100%; padding: 3px; filter: drop-shadow(0 1.5px 1.5px rgba(10, 20, 50, 0.22)); }
+.craft-apps-v2 .ra-g-back { fill: #fff; opacity: 0.4; stroke: #fff; stroke-width: 1.5; stroke-linejoin: round; }
+.craft-apps-v2 .ra-g-main { fill: #fff; stroke: #fff; stroke-width: 1.5; stroke-linejoin: round; }
+.craft-apps-v2 .ra-g-mark { fill: var(--c1); opacity: 0.9; }
+.craft-apps-v2 .ra-g-line { fill: none; stroke: var(--c1); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; opacity: 0.55; }
+.craft-apps-v2 .ra-g-glyph { fill: none; stroke: #fff; stroke-width: 3.4; stroke-linecap: round; stroke-linejoin: round; }
+.craft-apps-v2 .ra-g-text { fill: var(--c1); font-family: "Segoe UI", system-ui, sans-serif; font-weight: 800; letter-spacing: -0.02em; }
+
+/* ---- apps that can be installed ---- */
+.craft-apps-v2 .ra-row { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 12px 14px; border: 1px solid var(--ra-line); border-radius: 14px; background: var(--ra-card); box-shadow: var(--ra-shadow-sm); }
+.craft-apps-v2 .ra-row .ra-glyph { width: 44px; height: 44px; border-radius: 13px; }
+.craft-apps-v2 .ra-row-text { flex: 1; min-width: 0; }
+.craft-apps-v2 .ra-row h3 { font-size: 14px; }
+.craft-apps-v2 .ra-row p { min-height: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.craft-apps-v2 .ra-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--ra-warn-ink); }
+
+/* ---- extension plugins ---- */
+.craft-apps-v2 .ra-ext-list { display: flex; flex-direction: column; gap: 16px; }
+.craft-apps-v2 .ra-ext-card { padding: 18px 20px; gap: 14px; }
+.craft-apps-v2 .ra-ext-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.craft-apps-v2 .ra-ext-identity { display: flex; align-items: flex-start; gap: 14px; min-width: 0; flex: 1; }
+.craft-apps-v2 .ra-ext-glyph { display: grid; place-items: center; cursor: default; }
+.craft-apps-v2 .ra-ext-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.craft-apps-v2 .ra-ext-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.craft-apps-v2 .ra-ext-view-pills { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 4px; }
+.craft-apps-v2 .ra-ext-workbench .plugin-views { margin: 4px 0 0; background: var(--ra-card); }
+
+/* ---- footer note ---- */
+.craft-apps-v2 .ra-info { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; padding: 16px 20px; border: 1px solid var(--ra-line); border-radius: 16px; color: var(--ra-ink2); font-size: 13px;
+  background: linear-gradient(115deg, color-mix(in srgb, var(--ra-brand) 8%, var(--ra-card)), color-mix(in srgb, #7a55f0 7%, var(--ra-card))); }
+.craft-apps-v2 .ra-info > div { flex: 1; min-width: 0; }
+.craft-apps-v2 .ra-info p { margin: 0; line-height: 1.55; }
+.craft-apps-v2 .ra-info p.lead { color: var(--ra-ink); font-weight: 600; }
+.craft-apps-v2 .ra-info-icon { display: grid; place-items: center; flex-shrink: 0; width: 40px; height: 40px; border-radius: 12px; background: color-mix(in srgb, #7a55f0 16%, var(--ra-card)); color: #5b38d6; }
+[data-theme="dark"] .craft-apps-v2 .ra-info-icon { color: #c3b2ff; }
+.craft-apps-v2 .ra-link { display: inline-flex; align-items: center; gap: 6px; color: var(--ra-brand); font-size: 13px; font-weight: 650; text-decoration: none; white-space: nowrap; }
+[data-theme="dark"] .craft-apps-v2 .ra-link { color: var(--ra-brand2); }
+
+/* ---- narrower windows ---- */
+@media (max-width: 1100px) {
+  .craft-apps-v2 .ra-grid4, .craft-apps-v2 .ra-grid3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 700px) {
+  .craft-apps-v2 .ra-grid3 { grid-template-columns: minmax(0, 1fr); }
+  /* icon + text on one row; the link takes its own row instead of squeezing the text word by word */
+  .craft-apps-v2 .ra-info { display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: start; gap: 12px 14px; }
+  .craft-apps-v2 .ra-info .ra-link { grid-column: 1 / -1; white-space: normal; }
+}
+@media (max-width: 560px) {
+  .craft-apps-v2 .ra-grid4 { grid-template-columns: minmax(0, 1fr); }
+}
+@media (pointer: coarse) {
+  .craft-apps-v2 .ra-btn, .craft-apps-v2 .ra-filters button { min-height: 44px; }
+}

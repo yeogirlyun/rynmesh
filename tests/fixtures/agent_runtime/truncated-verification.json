@@ -1,0 +1,13 @@
+{
+  "source_report": "docs/acceptance/ryn-agent-delivery/real-model/20261009T100457Z-F02-ryn/run.json",
+  "response": {
+    "message": {
+      "content": "```json\n{\n  \"status\": \"passed\",\n  \"summary\": \"已核实候选答案满足业主完整目标。授权根事实（evidence_ccf02a40cd774838bd9d824421cd80b0）确认 week-41 目录仅授予 list/read_ai（只读），acceptance 目录授予 create_file，即任务",
+      "role": "assistant"
+    },
+    "usage": {
+      "input_tokens": 14210,
+      "output_tokens": 4096
+    }
+  }
+}

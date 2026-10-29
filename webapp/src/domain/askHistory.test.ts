@@ -12,7 +12,7 @@ it("times out a hung request after 30 seconds so the caller can recover", async 
   }));
   vi.stubGlobal("fetch", fetch);
   const pending = expect(askHistory.beginRun({
-    task_id: "task_1", conversation_id: "conversation", expected_revision: 1, question: "Question", prompt_sha256: "sha",
+    task_id: "task_1", conversation_id: "conversation", expected_revision: 1, question: "Question", prompt_sha256: "sha", service_review_token: "review",
   })).rejects.toMatchObject({
     status: 0, code: "ask_request_timeout",
     message: "The node did not confirm this request within 30 seconds. Check the original task before retrying the same reviewed request.",

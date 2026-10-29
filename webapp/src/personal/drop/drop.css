@@ -1,0 +1,366 @@
+/* Device Drop: open workspaces, measured network lines and one shared task surface. */
+.pf-drop-page { --drop-warning: #a36024; }
+[data-theme="dark"] .pf-drop-page { --drop-warning: #ebba7f; }
+.pf-drop-page h3, .pf-drop-filecard p { margin: 0; }
+.pf-drop-grow { flex: 1; min-width: 0; }
+.pf-drop-row, .pf-drop-between, .pf-drop-actions-inline, .pf-drop-activity { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.pf-drop-between { justify-content: space-between; }
+.pf-drop-row > .pf-drop-grow { min-width: 0; }
+.pf-drop-num { font-variant-numeric: tabular-nums; }
+.pf-drop-tabs { display: flex; gap: 26px; border-bottom: 1px solid var(--pf-line); }
+.pf-drop-tabs button { display: flex; align-items: center; gap: 7px; padding: 14px 0; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--pf-muted); cursor: pointer; }
+.pf-drop-tabs button.active { color: var(--pf-blue); border-bottom-color: var(--pf-blue); font-weight: 600; }
+.pf-drop-count { display: inline-flex; justify-content: center; min-width: 18px; padding: 0 4px; border-radius: 4px; background: var(--pf-selection); color: var(--pf-blue); font-size: 11px; }
+.pf-drop-filterbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 20px 0 10px; }
+.pf-drop-filter { padding: 7px 11px; border: 0; border-radius: 5px; background: none; color: var(--pf-muted); cursor: pointer; }
+.pf-drop-filter.active { background: var(--pf-selection); color: var(--pf-text); }
+.pf-drop-visibility { margin-left: auto; color: var(--pf-muted); font-size: 12px; }
+.pf-drop-filterchip { display: flex; align-items: center; gap: 6px; padding: 4px 8px; background: var(--pf-subtle); font-size: 12px; }
+.pf-drop-filterchip button { display: flex; border: 0; background: none; color: inherit; cursor: pointer; }
+.pf-drop-network-top { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 14px 0; font-size: 12px; color: var(--pf-muted); }
+.pf-drop-legend, .pf-drop-legend > span { display: flex; align-items: center; gap: 12px; }
+.pf-drop-legend > span { gap: 5px; }
+.pf-drop-legend i { width: 20px; border-top: 1.5px solid var(--pf-blue); }
+.pf-drop-legend i.public { border-top-style: dashed; }
+.pf-drop-legend i.relay { border-top-style: dotted; }
+.pf-drop-legend i.unknown { border-color: var(--pf-strong); border-top-style: dashed; }
+.pf-netmap { position: relative; display: grid; grid-template-columns: minmax(100px, 1fr) minmax(110px, 1fr) 80px minmax(110px, 1fr); column-gap: 36px; min-height: 290px; padding: 24px 16px 32px; }
+.pf-netmap.no-remote { grid-template-columns: minmax(100px, 1fr) minmax(110px, 1fr); padding-right: 20%; }
+.pf-netmap.no-remote .pf-netmap-remote { display: none; }
+.pf-netmap-column { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 26px; min-width: 0; }
+.pf-netmap-self { grid-column: 1; grid-row: 1; }
+.pf-netmap-lan { grid-column: 2; grid-row: 1; }
+.pf-netmap-hub { grid-column: 3; grid-row: 1; gap: 8px; color: var(--pf-muted); }
+.pf-netmap-remote { grid-column: 4; grid-row: 1; }
+.pf-netmap-wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.pf-netmap-wires path { fill: none; stroke: var(--pf-selected-line); stroke-width: 1.25; opacity: .6; }
+.pf-netmap-wires path.public { stroke-dasharray: 6 5; }
+.pf-netmap-wires path.relay { stroke-dasharray: 2 4; }
+.pf-netmap-wires path.unknown { stroke: var(--pf-strong); stroke-dasharray: 3 5; }
+.pf-netmap-wires path.selected { stroke: var(--pf-blue); stroke-width: 1.8; opacity: 1; }
+.pf-netmap-node { position: relative; width: 100%; max-width: 180px; text-align: center; z-index: 1; }
+.pf-netmap-select { display: flex; width: 100%; min-height: 110px; align-items: center; flex-direction: column; padding: 10px 4px; border: 0; background: transparent; color: var(--pf-text); cursor: pointer; }
+.pf-netmap-visual { display: flex; align-items: center; justify-content: center; width: 54px; height: 50px; margin: 0 auto 7px; background: var(--pf-bg); color: var(--pf-blue); border-radius: 9px; }
+.pf-netmap-node.selected .pf-netmap-visual { background: var(--pf-selection); outline: 1px solid var(--pf-selected-line); }
+.pf-netmap-name { display: block; max-width: 100%; overflow-wrap: anywhere; font-weight: 600; font-size: 13px; }
+.pf-netmap-detail { display: block; margin-top: 4px; font-size: 11px; color: var(--pf-muted); background: var(--pf-bg); }
+.pf-netmap-dot { display: inline-block; width: 5px; height: 5px; margin-right: 3px; vertical-align: middle; border-radius: 50%; background: var(--pf-muted); }
+.pf-netmap-dot.online { background: var(--pf-green); }
+.pf-netmap-dot.unknown { background: transparent; outline: 1px solid var(--pf-muted); }
+.pf-netmap-more { position: absolute; top: 9px; right: 0; opacity: 0; }
+.pf-netmap-node:hover .pf-netmap-more, .pf-netmap-node:focus-within .pf-netmap-more, .pf-netmap-node.selected .pf-netmap-more { opacity: 1; }
+.pf-netmap-hub-icon { display: flex; padding: 10px; background: var(--pf-bg); border-radius: 50%; z-index: 1; }
+.pf-netmap-hub small { z-index: 1; background: var(--pf-bg); }
+.pf-netmap-node.drop-target { background: var(--pf-selection); outline: 1px dashed var(--pf-blue); }
+.pf-netmap-drophint { display: block; font-size: 11px; color: var(--pf-blue); }
+.pf-drop-selected { display: flex; align-items: center; gap: 14px; padding: 20px 0; border-top: 1px solid var(--pf-line); border-bottom: 1px solid var(--pf-line); }
+.pf-drop-selected > svg { flex-shrink: 0; color: var(--pf-blue); }
+.pf-drop-selected p { margin: 4px 0 0; font-size: 12px; color: var(--pf-muted); overflow-wrap: anywhere; }
+.pf-drop-selection-actions { display: flex; align-items: center; gap: 18px; }
+.pf-drop-link, .pf-drop-textbutton { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 4px 0; border: 0; background: none; color: var(--pf-blue); text-decoration: none; cursor: pointer; }
+.pf-drop-textbutton { padding: 5px 7px; }
+.pf-drop-link:hover, .pf-drop-textbutton:hover { color: var(--pf-text); }
+.pf-drop-link:disabled, .pf-drop-textbutton:disabled { cursor: not-allowed; opacity: .45; }
+.pf-drop-offline { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 22px; padding: 16px 0; color: var(--pf-muted); font-size: 12px; }
+.pf-drop-offline-device { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.pf-drop-offline-name { display: inline-flex; align-items: center; gap: 6px; padding: 4px 0; border: 0; background: none; color: inherit; cursor: pointer; overflow-wrap: anywhere; }
+.pf-drop-offline-device.selected { color: var(--pf-text); }
+.pf-drop-active { margin-top: 24px; }
+.pf-drop-strip { display: flex; align-items: center; gap: 16px; padding: 18px 0; }
+.pf-drop-fileicon { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; color: var(--pf-blue); }
+.pf-drop-filename { overflow-wrap: anywhere; font-size: 14px; font-weight: 500; }
+.pf-drop-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 6px; border-radius: 4px; background: var(--pf-subtle); color: var(--pf-muted); font-size: 11px; white-space: nowrap; }
+.pf-drop-chip.muted { background: transparent; padding-left: 0; }
+.pf-drop-progress { height: 3px; margin: 13px 0 8px; overflow: hidden; background: var(--pf-line); border-radius: 2px; }
+.pf-drop-progress > span { display: block; height: 100%; background: var(--pf-blue); transition: width .15s linear; }
+.pf-drop-meta { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; color: var(--pf-muted); font-size: 11px; }
+.pf-drop-meta.warn, .pf-drop-msgmeta.warn { color: var(--drop-warning, var(--pf-muted)); }
+.pf-drop-transfer { padding: 24px 0; border-bottom: 1px solid var(--pf-line); }
+.pf-drop-transfer > .pf-drop-between > .pf-drop-row { flex: 1; }
+.pf-drop-transfer .pf-drop-meta { margin-top: 12px; }
+.pf-drop-row-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 14px; margin-top: 15px; }
+.pf-drop-good { display: flex; align-items: center; gap: 5px; color: var(--pf-green); font-size: 12px; white-space: nowrap; }
+.pf-drop-empty { padding: 55px 18px; text-align: center; color: var(--pf-muted); }
+.pf-drop-empty h3 { font-weight: 500; color: var(--pf-text); }
+.pf-drop-empty p { max-width: 370px; margin: 8px auto; font-size: 12px; }
+.pf-drop-hint, .pf-drop-status { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; color: var(--pf-muted); font-size: 12px; margin: 16px 0; }
+.pf-drop-hint > svg { flex-shrink: 0; }
+/* Conversations have one divider, with no surrounding rounded panel. */
+.pf-drop-conversation { display: grid; grid-template-columns: 218px minmax(0, 1fr); min-height: 450px; height: max(450px, calc(100dvh - 365px)); margin-top: 18px; }
+.pf-drop-threads { border-right: 1px solid var(--pf-line); padding: 6px 12px 6px 0; overflow-y: auto; }
+.pf-drop-thread { position: relative; margin-bottom: 5px; }
+.pf-drop-thread-select { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 66px; padding: 12px 24px 12px 10px; border: 0; border-radius: 5px; background: none; color: var(--pf-text); text-align: left; cursor: pointer; }
+.pf-drop-thread.active .pf-drop-thread-select { background: var(--pf-selection); }
+.pf-drop-thread strong { display: block; font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-drop-thread small { display: block; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--pf-muted); }
+.pf-drop-thread-more { position: absolute; right: 0; top: 17px; opacity: 0; }
+.pf-drop-thread:hover .pf-drop-thread-more, .pf-drop-thread:focus-within .pf-drop-thread-more { opacity: 1; }
+.pf-drop-avatar { display: inline-flex; align-items: center; flex-shrink: 0; color: var(--pf-blue); }
+.pf-drop-chat { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding-left: 22px; }
+.pf-drop-chathead { display: flex; align-items: center; gap: 12px; padding: 12px 0 17px; border-bottom: 1px solid var(--pf-line); }
+.pf-drop-chathead h3 { overflow-wrap: anywhere; font-size: 14px; }
+.pf-drop-chathead small { font-size: 11px; }
+.pf-drop-page .pf-drop-back { display: none; }
+.pf-drop-chatbody { flex: 1; min-height: 150px; overflow-y: auto; padding: 16px 2px; scrollbar-gutter: stable; }
+.pf-drop-date, .pf-drop-system { text-align: center; color: var(--pf-muted); font-size: 11px; margin: 4px 0 22px; }
+.pf-drop-message { display: flex; align-items: flex-start; flex-direction: column; margin: 0 0 22px; }
+.pf-drop-message.mine { align-items: flex-end; }
+.pf-drop-bubble { max-width: 85%; padding: 10px 13px; background: var(--pf-subtle); border-radius: 7px; color: var(--pf-text); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mine .pf-drop-bubble { background: var(--pf-selection); }
+.pf-drop-bubble a, .pf-drop-system a { text-decoration: underline; color: var(--pf-blue); }
+.pf-drop-msgmeta { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-top: 5px; color: var(--pf-muted); font-size: 10px; }
+.pf-drop-filecard { width: min(400px, 100%); background: var(--pf-subtle); padding: 16px; border-radius: 6px; }
+.mine .pf-drop-filecard { background: var(--pf-selection); }
+.pf-drop-filecard small { font-size: 11px; color: var(--pf-muted); }
+.pf-drop-filecard .pf-drop-progress { background: var(--pf-strong); }
+.pf-drop-card-actions { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-top: 10px; font-size: 12px; }
+.pf-drop-actions-inline { gap: 4px; flex-wrap: wrap; }
+.pf-drop-chatnote { display: flex; justify-content: center; align-items: center; gap: 5px; margin: 28px 0 2px; color: var(--pf-muted); font-size: 11px; }
+.pf-drop-composer { padding: 14px 0 6px; border-top: 1px solid var(--pf-line); }
+.pf-drop-composer textarea { display: block; width: 100%; min-height: 55px; max-height: 160px; resize: vertical; padding: 4px 0; border: 0; background: transparent; color: var(--pf-text); font: inherit; font-size: 13px; }
+.pf-drop-composer textarea::placeholder { color: var(--pf-muted); }
+.pf-drop-composer-bottom { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding-top: 9px; }
+.pf-drop-composer-tip { font-size: 10px; color: var(--pf-muted); }
+.pf-drop-readonly { padding: 12px; }
+/* Genuine floating menus and dialogs retain a single surface. */
+.pf-device-menu-layer { position: fixed; inset: 0; z-index: 150; pointer-events: none; color: var(--pf-text); font: 13px/1.5 "Segoe UI", sans-serif; }
+.pf-device-menu { position: fixed; width: 224px; max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); overflow-y: auto; padding: 7px; border: 1px solid var(--pf-line); border-radius: 10px; background: var(--pf-panel); box-shadow: 0 12px 40px #10284a24; pointer-events: auto; }
+.pf-device-menu-title { padding: 6px 10px 8px; color: var(--pf-muted); font-size: 11px; overflow-wrap: anywhere; }
+.pf-device-menu button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 7px 10px; border: 0; border-radius: 5px; background: none; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.pf-device-menu button:hover, .pf-device-menu button:focus-visible { background: var(--pf-selection); outline: 0; }
+.pf-device-menu button:disabled { opacity: .4; cursor: not-allowed; }
+.pf-device-menu hr { border: 0; border-top: 1px solid var(--pf-line); margin: 6px 4px; }
+.pf-device-menu-backdrop { position: fixed; inset: 0; background: #0d172e50; border: 0; pointer-events: auto; }
+.pf-device-menu.sheet { left: 8px; right: 8px; bottom: max(8px, env(safe-area-inset-bottom)); width: auto; max-width: none; padding: 12px; }
+.pf-device-menu.sheet button { min-height: 46px; }
+.pf-drop-sheet, .pf-drop-incoming, .pf-drop-details { width: min(570px, calc(100vw - 32px)); }
+.pf-drop-sheet-sub { margin: 5px 0 24px; color: var(--pf-muted); font-size: 12px; }
+.pf-drop-recipient { display: flex; align-items: center; gap: 14px; border-bottom: 1px solid var(--pf-line); padding: 0 0 20px; }
+.pf-drop-recipient small { display: block; margin-top: 4px; }
+.pf-drop-listhead { margin: 22px 0 10px; }
+.pf-drop-listhead h3 { font-size: 13px; font-weight: 500; }
+.pf-drop-filelist, .pf-drop-subfiles { list-style: none; margin: 0; padding: 0; }
+.pf-drop-filelist > li { border-bottom: 1px solid var(--pf-line); }
+.pf-drop-fileline { display: flex; align-items: center; gap: 12px; padding: 14px 0; }
+.pf-drop-fileline small { display: block; margin-top: 4px; }
+.pf-drop-subfiles { padding: 0 0 12px 30px; font-size: 12px; }
+.pf-drop-subfiles li { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; overflow-wrap: anywhere; }
+.pf-drop-droparea { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 18px 0; color: var(--pf-muted); font-size: 12px; }
+.pf-drop-droparea.dragging { background: var(--pf-selection); outline: 1px dashed var(--pf-blue); }
+.pf-drop-field { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; font-size: 12px; }
+.pf-drop-field input { width: 100%; min-width: 0; border: 0; border-bottom: 1px solid var(--pf-line); padding: 10px 0; background: transparent; color: var(--pf-text); font: inherit; }
+.pf-drop-notice { display: flex; gap: 9px; margin-top: 24px; color: var(--pf-blue); }
+.pf-drop-notice svg { flex-shrink: 0; margin-top: 3px; }
+.pf-drop-notice strong { font-size: 12px; font-weight: 500; }
+.pf-drop-notice span { display: block; margin-top: 3px; color: var(--pf-muted); font-size: 11px; }
+.pf-drop-capacity { margin: 10px 0; color: var(--pf-muted); font-size: 11px; }
+.pf-drop-sheet-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-top: 1px solid var(--pf-line); padding-top: 18px; margin-top: 24px; }
+.pf-drop-check { display: flex; align-items: flex-start; gap: 8px; margin: 18px 0; font-size: 12px; }
+.pf-drop-check input { margin: 3px 0 0; accent-color: var(--pf-blue); }
+.pf-drop-check small { display: block; margin-top: 3px; }
+.pf-drop-verify { padding: 18px 0; border-top: 1px solid var(--pf-line); border-bottom: 1px solid var(--pf-line); margin: 18px 0; }
+.pf-drop-verify > span, .pf-drop-verify > small { display: block; font-size: 12px; }
+.pf-drop-code { display: block; font-size: 26px; letter-spacing: .18em; font-variant-numeric: tabular-nums; padding: 12px 0; color: var(--pf-blue); }
+.pf-drop-savedir { display: flex; gap: 12px; }
+.pf-drop-mark { color: var(--pf-blue); }
+.pf-drop-note-text { overflow-wrap: anywhere; font-size: 12px; color: var(--pf-muted); margin-top: 12px; white-space: pre-wrap; }
+.pf-drop-kv { display: grid; grid-template-columns: 110px minmax(0, 1fr); font-size: 13px; margin: 20px 0; }
+.pf-drop-kv dt, .pf-drop-kv dd { margin: 0; padding: 10px 0; border-bottom: 1px solid var(--pf-line); overflow-wrap: anywhere; }
+.pf-drop-kv dt { color: var(--pf-muted); }
+.pf-drop-idline, .pf-drop-details-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.pf-drop-details-actions { margin-top: 20px; }
+@media (max-width: 1100px) {
+  .pf-netmap { column-gap: 12px; grid-template-columns: minmax(85px, 1fr) minmax(100px, 1fr) 55px minmax(100px, 1fr); padding-inline: 0; }
+  .pf-drop-conversation { grid-template-columns: 185px minmax(0, 1fr); }
+  .pf-drop-composer-tip { display: none; }
+}
+@media (max-width: 736px) {
+  .pf-drop-incoming-label { display: none; }
+  .pf-drop-tabs { gap: 24px; }
+  .pf-netmap, .pf-netmap.no-remote { grid-template-columns: minmax(80px, .8fr) minmax(130px, 1.2fr); column-gap: 22px; row-gap: 32px; padding: 20px 0; }
+  .pf-netmap-self { grid-column: 1; grid-row: 1; }
+  .pf-netmap-lan { grid-column: 2; grid-row: 1; }
+  .pf-netmap-hub { grid-column: 1; grid-row: 2; }
+  .pf-netmap-remote { grid-column: 2; grid-row: 2; }
+  .pf-netmap-more, .pf-drop-thread-more { opacity: 1; }
+  .pf-netmap-node { max-width: 160px; }
+  .pf-netmap-more { right: -5px; }
+  .pf-drop-network-top { font-size: 11px; }
+  .pf-drop-legend { gap: 8px; flex-wrap: wrap; }
+  .pf-drop-selected { flex-wrap: wrap; }
+  .pf-drop-selected > .pf-drop-grow { flex-basis: 60%; }
+  .pf-drop-selection-actions { flex: 1; justify-content: flex-end; gap: 14px; }
+  .pf-drop-conversation { display: block; height: max(450px, calc(100dvh - 230px)); min-height: 450px; margin-top: 10px; }
+  .pf-drop-threads { height: 100%; border: 0; padding: 0; }
+  .pf-drop-chat { display: none; height: 100%; padding-left: 0; }
+  .pf-drop-conversation.show-chat .pf-drop-threads { display: none; }
+  .pf-drop-conversation.show-chat .pf-drop-chat { display: flex; }
+  .pf-drop-page .pf-drop-back { display: inline-flex; }
+  .pf-drop-chathead { gap: 8px; flex-wrap: wrap; }
+  .pf-drop-chathead .pf-drop-grow { flex-basis: 45%; }
+  .pf-drop-chathead .pf-drop-chip { margin-left: auto; }
+  .pf-drop-composer { padding-bottom: env(safe-area-inset-bottom, 8px); }
+  .pf-drop-page .pf-icon-button, .pf-drop-page .pf-drop-textbutton, .pf-drop-page .pf-drop-filter { min-height: 44px; }
+  .pf-drop-page .pf-icon-button { min-width: 44px; }
+  .pf-drop-bubble { max-width: 94%; }
+  .pf-drop-filecard { padding: 12px; }
+  .pf-drop-transfer > .pf-drop-between { flex-wrap: wrap; }
+  .pf-drop-transfer > .pf-drop-between > .pf-drop-row { flex-basis: 80%; }
+  .pf-drop-strip { gap: 10px; }
+  .pf-drop-strip .pf-drop-between { flex-wrap: wrap; gap: 4px; }
+  .pf-drop-sheet { width: 100%; max-width: none; height: 100dvh; max-height: 100dvh; margin: 0; border-radius: 0; padding-bottom: max(20px, env(safe-area-inset-bottom)); }
+  .pf-drop-sheet-footer { flex-wrap: wrap; }
+  .pf-drop-sheet-footer .pf-button { margin-left: auto; }
+  .pf-drop-savedir { flex-wrap: wrap; }
+  .pf-drop-kv { grid-template-columns: 90px minmax(0, 1fr); }
+  .pf-drop-visibility { width: 100%; margin: 5px 0 0; }
+}
+@media (prefers-reduced-motion: reduce) { .pf-drop-progress > span { transition: none; } }
+
+/* Owner-approved revision: retain the original device manager; Home owns the graph. */
+.pf-drop-overview { margin-top: 12px; }
+.pf-drop-device-item { position: relative; min-width: 0; }
+.pf-drop-device-item .pf-device-list-item { width: 100%; padding-right: 44px; }
+.pf-drop-device-item .pf-device-list-item > .pf-drop-grow > div { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+.pf-drop-device-item .pf-device-list-item > .pf-drop-grow { text-align: left; }
+.pf-drop-device-item .pf-device-list-item strong { overflow-wrap: anywhere; }
+.pf-drop-device-item .pf-device-list-item > svg:last-child { display: none; }
+.pf-drop-device-more { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); }
+.pf-drop-device-item.drop-target .pf-device-list-item { background: var(--pf-selection); outline: 2px dashed var(--pf-blue); }
+.pf-drop-device-details { min-width: 0; }
+.pf-drop-detail-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.pf-drop-device-details .pf-detail-lockup { align-items: flex-start; }
+.pf-drop-device-details .pf-inline { flex-wrap: wrap; }
+.pf-drop-device-details h2, .pf-drop-device-details dd { overflow-wrap: anywhere; }
+.pf-drop-device-details .pf-device-id { flex-wrap: wrap; }
+.pf-drop-device-details .pf-properties > div { gap: 16px; }
+.pf-drop-device-details .pf-properties dd { text-align: right; }
+.pf-drop-device-details .pf-drop-active h3 { font-size: 12px; font-weight: 500; }
+@media (max-width: 736px) {
+  .pf-drop-overview { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .pf-drop-device-details .pf-detail-lockup > .pf-device-art { width: 62px; flex-shrink: 0; }
+  .pf-drop-device-details .pf-detail-lockup { gap: 10px; }
+  .pf-drop-device-details .pf-device-detail { padding: 16px; }
+  .pf-drop-device-details .pf-device-actions { flex-wrap: wrap; }
+}
+
+/* Messaging gives the viewport to the conversation, with one compact context bar. */
+.pf-drop-workspace { --drop-ink: #203958; --drop-mine: #29486c; }
+.pf-drop-workspace .pf-heading { align-items: center; margin-bottom: 18px; gap: 18px; }
+.pf-drop-workspace .pf-heading > div { flex: 1; }
+.pf-drop-workspace .pf-heading h1 { font-size: 27px; letter-spacing: -.7px; }
+.pf-drop-workspace .pf-heading p { margin-top: 7px; font-size: 13px; }
+.pf-drop-workspace .pf-drop-tabs { gap: 26px; }
+.pf-drop-workspace .pf-drop-tabs button { font-size: 13px; padding: 13px 1px; }
+.pf-drop-workspace .pf-drop-tabs button.active { color: var(--pf-text); border-bottom-color: var(--pf-text); }
+.pf-main:has(> .pf-drop-workspace.messaging) { height: calc(100dvh - 69px); min-height: 380px; padding: 0 24px 16px; }
+.pf-drop-workspace.messaging { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.messaging .pf-drop-workspace-toolbar { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 24px; min-height: 62px; border-bottom: 1px solid var(--pf-line); flex-shrink: 0; }
+.messaging .pf-heading { display: contents; }
+.messaging .pf-heading > div { grid-column: 1; grid-row: 1; }
+.messaging .pf-heading h1 { margin: 0; font-size: 19px; letter-spacing: -.4px; }
+.messaging .pf-heading p { display: none; }
+.messaging .pf-drop-sync-link { grid-column: 3; grid-row: 1; font-size: 12px; }
+.messaging .pf-heading > .pf-button { grid-column: 4; grid-row: 1; margin: 0; padding: 7px 11px; font-size: 12px; }
+.messaging .pf-drop-tabs { grid-column: 2; grid-row: 1; height: 100%; border: 0; }
+.messaging > #drop-panel-conversations { flex: 1; min-height: 0; }
+.pf-drop-workspace .pf-drop-conversation { grid-template-columns: 232px minmax(0, 1fr); height: 100%; min-height: 0; margin-top: 0; }
+.pf-drop-workspace .pf-drop-threads { padding: 0 14px 12px 0; }
+.pf-drop-rail-self { display: flex; align-items: center; gap: 10px; min-height: 72px; padding: 10px 10px; border-bottom: 1px solid var(--pf-line); }
+.pf-drop-rail-self small, .pf-drop-rail-self strong { display: block; }
+.pf-drop-rail-self small { color: var(--pf-muted); font-size: 10px; margin-bottom: 3px; }
+.pf-drop-rail-self strong { font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.pf-drop-rail-heading { display: flex; justify-content: space-between; color: var(--pf-muted); font-size: 10px; padding: 16px 10px 9px; }
+.pf-drop-workspace .pf-drop-thread { margin-bottom: 4px; }
+.pf-drop-workspace .pf-drop-thread-select { padding: 11px 23px 11px 10px; gap: 10px; border-radius: 7px; min-height: 76px; }
+.pf-drop-workspace .pf-drop-thread.active .pf-drop-thread-select { box-shadow: inset 2px 0 var(--pf-blue); }
+.pf-drop-workspace .pf-drop-thread strong { font-size: 13px; font-weight: 600; }
+.pf-drop-workspace .pf-drop-thread small { font-size: 11px; line-height: 1.4; margin-top: 3px; }
+.pf-drop-thread-device { position: relative; flex-shrink: 0; }
+.pf-drop-thread-device > i { position: absolute; right: -1px; bottom: 0; border: 2px solid var(--pf-bg); width: 8px; height: 8px; }
+.pf-drop-thread-device .pf-device-art, .pf-drop-rail-self .pf-device-art, .pf-drop-chathead-device .pf-device-art { width: 30px; min-width: 30px; height: 32px; }
+.pf-drop-workspace .pf-drop-thread-more { top: 8px; right: 0; }
+.pf-drop-workspace .pf-drop-chat { padding-left: 20px; }
+.pf-drop-workspace .pf-drop-chathead { min-height: 72px; padding: 12px 0; gap: 10px; flex-shrink: 0; border-bottom: 1px solid var(--pf-line); }
+.pf-drop-chathead-device { display: flex; flex-shrink: 0; }
+.pf-drop-workspace .pf-drop-chathead h3 { font-size: 14px; line-height: 1.4; font-weight: 650; letter-spacing: -.2px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.pf-drop-header-send { font-size: 12px; padding: 6px 10px; }
+.pf-drop-connection { display: flex; align-items: center; gap: 7px; max-width: 100%; margin-top: 5px; padding: 0; border: 0; background: none; color: var(--pf-muted); font: inherit; font-size: 11px; line-height: 1.4; cursor: pointer; }
+.pf-drop-connection:hover { color: var(--pf-text); }
+.pf-drop-connection-origin { min-width: 0; max-width: 170px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.pf-drop-connection-route, .pf-drop-connection-security { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; }
+.pf-drop-connection > svg { flex-shrink: 0; }
+.pf-drop-connection-security { margin-left: 2px; padding-left: 8px; border-left: 1px solid var(--pf-line); }
+.pf-drop-workspace .pf-drop-chatbody { padding: 20px 12px 0 4px; min-height: 0; overscroll-behavior: contain; }
+.pf-drop-workspace .pf-drop-date { font-size: 10px; margin: 0 0 20px; }
+.pf-drop-sender { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; color: var(--pf-muted); font-size: 10px; margin-bottom: 5px; }
+.pf-drop-sender strong { color: var(--pf-text); font-size: 11px; font-weight: 500; }
+.pf-drop-workspace .pf-drop-message { margin-bottom: 18px; }
+.pf-drop-workspace .pf-drop-bubble { font-size: 14px; line-height: 1.65; padding: 10px 14px; border-radius: 3px 12px 12px 12px; background: var(--pf-subtle); }
+.pf-drop-workspace .mine .pf-drop-bubble { background: var(--drop-mine); color: #fff; border-radius: 12px 3px 12px 12px; }
+.pf-drop-workspace .mine .pf-drop-bubble a { color: #e0efff; }
+.pf-drop-workspace .pf-drop-msgmeta { font-size: 10px; margin-top: 5px; }
+.pf-drop-workspace .pf-drop-filecard { width: min(390px, 100%); border: 1px solid var(--pf-line); background: var(--pf-bg); border-radius: 3px 12px 12px 12px; padding: 15px; }
+.pf-drop-workspace .mine .pf-drop-filecard { border-radius: 12px 3px 12px 12px; background: var(--pf-subtle); }
+.pf-drop-workspace .pf-drop-filecard .pf-drop-meta { margin-top: 12px; }
+.pf-drop-workspace .pf-drop-filecard .pf-drop-filename { font-size: 13px; font-weight: 600; }
+.pf-drop-workspace .pf-drop-composer { margin-top: 8px; padding: 10px 12px 8px; border: 1px solid var(--pf-line-strong, #c9d5e5); border-radius: 10px; background: var(--pf-panel); flex-shrink: 0; transition: border-color .15s; }
+.pf-drop-workspace .pf-drop-composer:focus-within { border-color: var(--pf-blue); }
+.pf-drop-workspace .pf-drop-composer textarea { font-size: 13px; height: 44px; min-height: 44px; padding: 2px 0 4px; line-height: 1.6; resize: none; }
+.pf-drop-workspace .pf-drop-composer textarea:focus { outline: none; }
+.pf-drop-workspace .pf-drop-composer-bottom { padding-top: 4px; }
+.pf-drop-workspace .pf-drop-composer-tip { display: inline; font-size: 10px; }
+.pf-drop-workspace .pf-drop-composer-bottom .primary { border-radius: 6px; min-width: 70px; padding: 6px 10px; font-size: 12px; background: var(--drop-mine); border-color: var(--drop-mine); color: white; }
+.pf-drop-workspace .pf-drop-composer-bottom .primary:disabled { opacity: .4; }
+.pf-drop-workspace .pf-drop-overview { gap: 28px; grid-template-columns: 285px minmax(0, 1fr); }
+.pf-drop-workspace .pf-drop-device-details .pf-device-detail { border: 0; border-radius: 0; padding: 8px 0 24px; border-bottom: 1px solid var(--pf-line); }
+.pf-drop-workspace .pf-drop-overview > .pf-device-list { border-right: 1px solid var(--pf-line); padding-right: 18px; }
+.pf-drop-workspace .pf-drop-device-item .pf-device-list-item { border-color: transparent; background: transparent; min-height: 99px; border-radius: 9px; }
+.pf-drop-workspace .pf-drop-device-item.selected .pf-device-list-item { background: var(--pf-selection); box-shadow: inset 3px 0 var(--pf-blue); }
+.pf-drop-workspace .pf-drop-detail-actions { padding-top: 7px; }
+[data-theme="dark"] .pf-drop-workspace { --drop-mine: #355d87; }
+[data-theme="dark"] .pf-drop-workspace .pf-drop-composer { border-color: var(--pf-line); }
+[data-theme="dark"] .pf-drop-workspace .pf-drop-composer:focus-within { border-color: var(--pf-blue); }
+.pf-drop-workspace .pf-drop-composer.drop-target { border-color: var(--pf-blue); border-style: dashed; background: var(--pf-selection); }
+@media (max-width: 1100px) and (min-width: 737px) {
+  .pf-drop-workspace .pf-drop-conversation { grid-template-columns: 200px minmax(0, 1fr); }
+  .pf-drop-workspace .pf-drop-chat { padding-left: 16px; }
+  .messaging .pf-drop-workspace-toolbar { gap: 18px; }
+  .pf-drop-workspace .pf-drop-overview { grid-template-columns: 225px minmax(0, 1fr); gap: 22px; }
+}
+@media (max-width: 736px) {
+  .pf-drop-workspace .pf-heading { flex-wrap: wrap; gap: 12px; }
+  .pf-drop-workspace .pf-heading > div { flex-basis: 100%; }
+  .pf-drop-workspace .pf-heading h1 { font-size: 25px; }
+  .pf-drop-workspace .pf-drop-sync-link { margin-right: auto; }
+  .pf-main:has(> .pf-drop-workspace.messaging) { height: calc(100dvh - 58px); padding: 0 14px 12px; }
+  .messaging .pf-drop-workspace-toolbar { grid-template-columns: 1fr auto auto; gap: 0 16px; min-height: 88px; }
+  .messaging .pf-heading h1 { font-size: 17px; }
+  .messaging .pf-heading > div { grid-column: 1; }
+  .messaging .pf-drop-sync-link { grid-column: 2; }
+  .messaging .pf-heading > .pf-button { grid-column: 3; padding: 6px 9px; }
+  .messaging .pf-drop-tabs { grid-row: 2; grid-column: 1 / -1; gap: 26px; }
+  .messaging .pf-drop-tabs button { padding: 10px 0; }
+  .pf-drop-workspace .pf-drop-conversation { display: block; height: 100%; min-height: 0; }
+  .pf-drop-workspace .pf-drop-threads { padding: 0; }
+  .pf-drop-workspace .pf-drop-chat { padding-left: 0; }
+  .pf-drop-workspace .pf-drop-chathead { min-height: 72px; padding: 10px 0; gap: 6px; flex-wrap: nowrap; }
+  .pf-drop-workspace .pf-drop-chathead .pf-drop-grow { flex-basis: 0; }
+  .pf-drop-workspace .pf-drop-chathead h3 { font-size: 14px; }
+  .pf-drop-chathead-device, .pf-drop-workspace .pf-drop-header-send { display: none; }
+  .pf-drop-connection-origin { max-width: 105px; }
+  .pf-drop-workspace .pf-drop-chatbody { padding: 16px 4px 0 0; }
+  .pf-drop-workspace .pf-drop-composer { padding: 9px 10px 6px; }
+  .pf-drop-workspace .pf-drop-composer-tip { display: none; }
+  .pf-drop-workspace .pf-drop-overview { grid-template-columns: minmax(0, 1fr); }
+  .pf-drop-workspace .pf-drop-overview > .pf-device-list { border: 0; padding: 0; }
+}
+
+/* Request / received cards: above the app toast, reachable from every page. */
+.pf-drop-notices { position: fixed; right: 18px; bottom: 72px; z-index: 59; display: flex; flex-direction: column; gap: 10px; width: min(360px, calc(100vw - 32px)); }
+.pf-drop-notice { display: flex; align-items: flex-start; gap: 12px; padding: 12px 10px 12px 14px; border: 1px solid var(--pf-line); border-radius: 8px; background: var(--pf-panel, var(--pf-bg)); color: var(--pf-text); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14); }
+.pf-drop-notice strong { display: block; font-size: 13px; }
+.pf-drop-notice-text { margin: 2px 0 10px; color: var(--pf-muted); font-size: 13px; overflow-wrap: anywhere; }
+.pf-drop-notice .pf-drop-mark { margin-top: 1px; }
+.pf-drop-mark.done { color: var(--pf-green); }
+@media (max-width: 600px) { .pf-drop-notices { right: 16px; left: 16px; width: auto; bottom: 64px; } }

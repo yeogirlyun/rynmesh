@@ -1,0 +1,62 @@
+{
+  "model": "gpt-6.1-sol",
+  "reasoning_effort": "low",
+  "fixture_only": true,
+  "measured_at": "2026-10-16T01:55:38.632030+00:00",
+  "task_state": {
+    "status": "completed",
+    "error": null,
+    "steps": 3,
+    "elapsed_seconds": 15.876,
+    "in_flight": false
+  },
+  "tool_names": [
+    "ryn_shell_execute",
+    "ryn_file_search"
+  ],
+  "tool_errors": [
+    "agent_ripgrep_unavailable_use_file_search"
+  ],
+  "model_calls": [
+    {
+      "step": 1,
+      "tool_names": [
+        "ryn_shell_execute"
+      ],
+      "input_tokens": 11136,
+      "output_tokens": 55,
+      "provider_ms": 8296,
+      "finish_reason": "tool_calls",
+      "wall_ms": 8969,
+      "deadline_cancelled": false
+    },
+    {
+      "step": 2,
+      "tool_names": [
+        "ryn_file_search"
+      ],
+      "input_tokens": 11951,
+      "output_tokens": 54,
+      "provider_ms": 3546,
+      "finish_reason": "tool_calls",
+      "wall_ms": 3610,
+      "deadline_cancelled": false
+    },
+    {
+      "step": 3,
+      "tool_names": [],
+      "input_tokens": 12431,
+      "output_tokens": 46,
+      "provider_ms": 2905,
+      "finish_reason": "stop",
+      "wall_ms": 2937,
+      "deadline_cancelled": false
+    }
+  ],
+  "phase_timings": [],
+  "result_has_fixture_amount": true,
+  "recovered": true,
+  "passed": true,
+  "approval_events": 0,
+  "wall_ms": 16140
+}

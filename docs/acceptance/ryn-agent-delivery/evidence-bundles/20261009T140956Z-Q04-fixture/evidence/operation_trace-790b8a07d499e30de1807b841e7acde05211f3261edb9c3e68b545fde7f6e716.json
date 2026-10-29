@@ -1,0 +1,215 @@
+{
+  "audit_note": "Absent security observations stay absent; successful collector checks do not imply an unmeasured universal security audit.",
+  "events": [
+    {
+      "at": "2026-10-09T14:09:57.323203+00:00",
+      "context_epoch": 0,
+      "seq": 1,
+      "type": "created"
+    },
+    {
+      "at": "2026-10-09T14:09:57.349233+00:00",
+      "context_epoch": 0,
+      "menu": {
+        "catalog_revision": "45a6e19951454cd0ccb320d22744cdad09cfeebfe58bf6d9a3a9b82dc1f3b2a8",
+        "context_epoch": 0,
+        "goal_revision": 1,
+        "loaded_names": [],
+        "mode": "full",
+        "revision": 1
+      },
+      "seq": 2,
+      "type": "tool_menu_changed"
+    },
+    {
+      "at": "2026-10-09T14:09:57.358202+00:00",
+      "context_epoch": 0,
+      "seq": 3,
+      "step": 1,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-09T14:09:57.380233+00:00",
+      "content": "Read the existing task's safe metadata.",
+      "context_epoch": 0,
+      "seq": 4,
+      "tool_count": 1,
+      "type": "assistant"
+    },
+    {
+      "at": "2026-10-09T14:09:57.401201+00:00",
+      "call_id": "diagnosis-call",
+      "context_epoch": 0,
+      "effect": "read",
+      "operation_id": "op_c8808e0dff6f4ba297c91514dd71c56a",
+      "seq": 5,
+      "tool": "ryn_diagnose_task",
+      "type": "tool_started"
+    },
+    {
+      "at": "2026-10-09T14:09:57.418201+00:00",
+      "call_id": "diagnosis-call",
+      "context_epoch": 0,
+      "operation_id": "op_c8808e0dff6f4ba297c91514dd71c56a",
+      "result": {
+        "elapsed_seconds": null,
+        "error": "resource_read_timeout",
+        "evidence": {
+          "kind": "owner_node_task_metadata_projection",
+          "other_task_contents_read": false,
+          "other_tasks_read": true,
+          "target_task_metadata_read": true
+        },
+        "note": "All states and counters describe task_id only, not the diagnosing task. Error codes classify observed failures, not every underlying cause. Missing time/usage stays null. A finished turn is not proof of goal completion.",
+        "operation_evidence_note": "Dispatch describes runtime invocation attempts, not proof that a business mutation occurred. Only stored event metadata is projected; no task data permissions are granted.",
+        "operations": [
+          {
+            "dispatched": true,
+            "effect": "read",
+            "error": null,
+            "not_executed": null,
+            "tool": "ryn_list_resource_roots"
+          },
+          {
+            "dispatched": true,
+            "effect": "read",
+            "error": null,
+            "not_executed": null,
+            "tool": "ryn_list_resources"
+          },
+          {
+            "connection_id": "435f4ab6da174d518ee2064b49f8f2eb",
+            "connection_name": "docs-offline",
+            "dispatched": true,
+            "effect": "read",
+            "error": "resource_read_timeout",
+            "not_executed": false,
+            "suggestion": {
+              "executed": false,
+              "id": "review_resource_connection",
+              "instruction": "The authorized resource read timed out. Check the named connection using the owner Drives interface; do not modify it or rerun the task automatically. This does not establish a credential or quota problem.",
+              "owner_path": "/drives"
+            },
+            "tool": "ryn_read_resource"
+          }
+        ],
+        "operations_truncated": false,
+        "outcome_status": "unverified",
+        "read_dispatch_count": 3,
+        "read_dispatched": true,
+        "run_state": "ended",
+        "status": "failed",
+        "steps": 3,
+        "suggestions": [
+          {
+            "executed": false,
+            "id": "review_resource_connection",
+            "instruction": "The authorized resource read timed out. Check the named connection using the owner Drives interface; do not modify it or rerun the task automatically. This does not establish a credential or quota problem.",
+            "owner_path": "/drives"
+          }
+        ],
+        "task_id": "task-failed-read",
+        "usage": {},
+        "write_dispatch_count": 0,
+        "write_dispatched": false
+      },
+      "seq": 6,
+      "tool": "ryn_diagnose_task",
+      "type": "tool_result"
+    },
+    {
+      "at": "2026-10-09T14:09:57.453778+00:00",
+      "context_epoch": 0,
+      "seq": 7,
+      "step": 2,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-09T14:09:57.475777+00:00",
+      "content": "Fixture diagnosis: task-failed-read recorded resource_read_timeout on docs-offline. The stored operation is a read, and no write was dispatched. Inspect that connection in Drives manually; the record does not establish a credential or quota issue. I did not modify the connection or rerun the task.",
+      "context_epoch": 0,
+      "seq": 8,
+      "tool_count": 0,
+      "type": "assistant"
+    },
+    {
+      "at": "2026-10-09T14:09:57.475777+00:00",
+      "context_epoch": 0,
+      "goal_revision": 1,
+      "seq": 9,
+      "type": "verification_started"
+    },
+    {
+      "at": "2026-10-09T14:09:57.524085+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_c8808e0dff6f4ba297c91514dd71c56a",
+      "evidence_id": "evidence_d8e4a728823a4559b620661734b14095",
+      "seq": 10,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-09T14:09:57.553596+00:00",
+      "context_epoch": 0,
+      "seq": 11,
+      "step": 3,
+      "type": "verification_model_started"
+    },
+    {
+      "at": "2026-10-09T14:09:57.576624+00:00",
+      "context_epoch": 0,
+      "outcome": "verified",
+      "seq": 12,
+      "type": "verification_finished"
+    },
+    {
+      "at": "2026-10-09T14:09:57.576624+00:00",
+      "context_epoch": 0,
+      "seq": 13,
+      "type": "completed"
+    }
+  ],
+  "http_audit_includes_setup": [
+    {
+      "body_sha256": "90a651e6ab28d1b2b81db4d0c8105b5e535f0d0af609ae5323b7748d5d60d16e",
+      "bytes": 560,
+      "id": "4171da88f1884fc6b31229302f307024",
+      "method": "PROPFIND",
+      "mutation": false,
+      "path": "",
+      "response_dropped": false,
+      "status": 207
+    },
+    {
+      "body_sha256": "90a651e6ab28d1b2b81db4d0c8105b5e535f0d0af609ae5323b7748d5d60d16e",
+      "bytes": 560,
+      "id": "cae819e658a74d81b332257cb2cceebf",
+      "method": "PROPFIND",
+      "mutation": false,
+      "path": "",
+      "response_dropped": false,
+      "status": 207
+    },
+    {
+      "body_sha256": "7cb939d19b5e77c7bce4384b435e927606423fc937c2cb05a590678f959b638c",
+      "bytes": 27,
+      "id": "56396075f95d4684ab543fca8e40fd05",
+      "method": "GET",
+      "mutation": false,
+      "path": "failure.md",
+      "response_dropped": false,
+      "status": 200
+    }
+  ],
+  "metrics": {
+    "writes": 0
+  },
+  "security": {},
+  "unchanged_checks": {
+    "connection_configuration_unchanged": true,
+    "no_business_writes": true,
+    "no_new_resource_requests": true,
+    "source_configuration_unchanged": true,
+    "target_task_unchanged": true
+  }
+}

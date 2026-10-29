@@ -9,8 +9,14 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { personalLabelKeys } from "./labels";
-import type { NodeClient, LLMServiceRecord } from "../domain/nodeClient";
-import type { NodeStatus, Peer } from "../domain/types";
+import type { NodeClient, LLMServiceRecord, ServiceAvailability } from "../domain/nodeClient";
+import type { NodeStatus, Peer, PeerHealth } from "../domain/types";
+import {
+  directoryFromLegacy,
+  directoryServices,
+  presenceOnline,
+  type DirectorySnapshot,
+} from "../domain/directory";
 import type { SpaceStatus } from "../domain/space";
 import { networkFromPeer, type DeviceNetwork } from "./deviceNetwork";
 
@@ -26,6 +32,7 @@ export type Device = {
   hardware?: string;
   network?: DeviceNetwork;
 };
+export type { ServiceAvailability };
 export type Service = {
   id: string;
   title: string;
@@ -34,11 +41,32 @@ export type Service = {
   accessLabel?: string;
   deviceId: string;
   kind: "ai" | "document" | "audio" | "network" | "video";
+  // True only when availability is "ready", so consumers never treat an advertisement as usable.
   online: boolean;
+  availability?: ServiceAvailability;
   record?: LLMServiceRecord;
   preview?: boolean;
   href?: string;
 };
+/**
+ * A registry advertisement only locates a provider; it grants nothing. The local node
+ * already derives the answer (relationship + observed presence + entitlement), so a record
+ * that carries `availability` is used as is. The rule below is only the fallback for
+ * records without it (older nodes, cached snapshots, fixtures): usable when it is this
+ * node's own, the device is owned (signed Personal Space membership), or the provider's
+ * authenticated catalog already bound it; liveness prefers this node's probe over the
+ * provider's self-reported flag.
+ */
+export function serviceAvailability(
+  record: LLMServiceRecord,
+  context: { selfId: string; own: boolean; probed?: boolean | null },
+): ServiceAvailability {
+  if (record.availability) return record.availability.state;
+  const local = record.peer_id === context.selfId || record.local_only === true || record.access === "self";
+  const verified = local || context.own || record.binding_verified === true || record.access === "friend";
+  if (!verified) return "needs_connection";
+  return record.online && context.probed !== false ? "ready" : "offline";
+}
 type Metadata = Record<
   string,
   { name?: string; note?: string; kind?: Device["kind"] }
@@ -153,34 +181,65 @@ export function PersonalProvider({
   const demo = client.mode === "fixture";
   const key = metadataKey(client.mode, node.peer_id);
   const [metadata, setMetadata] = useState<Metadata>(() => loadMetadata(key));
+  // Preferred source: the node's own snapshot of devices and their services. The two below
+  // only feed the fallback for a node (or the fixture client) that has no /directory.
+  const [directory, setDirectory] = useState<DirectorySnapshot | null>(null);
   const [records, setRecords] = useState<LLMServiceRecord[]>([]);
-  const [health, setHealth] = useState<Record<string, boolean | null>>({});
-  const [lanReachable, setLanReachable] = useState<Record<string, boolean>>({});
+  const [health, setHealth] = useState<PeerHealth[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [space, setSpace] = useState<SpaceStatus | null>(null);
   const refresh = useCallback(async () => {
-    const results = await Promise.allSettled([
-      client.listLLMServices(),
-      client.peersHealth(),
-      client.spaceStatus(),
-    ]);
-    if (results[0].status === "fulfilled") setRecords(results[0].value);
-    if (results[2].status === "fulfilled") setSpace(results[2].value);
-    else setSpace(null);
-    if (results[1].status === "fulfilled")
-      {
-        setHealth(Object.fromEntries(results[1].value.map((item) => [item.peerId, item.online])));
-        setLanReachable(Object.fromEntries(results[1].value.map((item) => [item.peerId, Boolean(item.lanReachable)])));
+    // One request answers "which devices, what presence, which services". Only a node without
+    // /directory (or a failed call) falls back to the separate lists.
+    const loadDirectory = async () => {
+      if (client.directory) {
+        try {
+          return { snapshot: await client.directory(), degraded: false };
+        } catch {
+          /* fall back to the separate lists below */
+        }
       }
-    else { setHealth({}); setLanReachable({}); }
+      const [services, healthRows] = await Promise.allSettled([
+        client.listLLMServices(),
+        client.peersHealth(),
+      ]);
+      if (services.status === "fulfilled") setRecords(services.value);
+      setHealth(healthRows.status === "fulfilled" ? healthRows.value : []);
+      return {
+        snapshot: null,
+        degraded: services.status === "rejected" || healthRows.status === "rejected",
+      };
+    };
+    const [directoryResult, spaceResult] = await Promise.allSettled([loadDirectory(), client.spaceStatus()]);
+    if (directoryResult.status === "fulfilled") setDirectory(directoryResult.value.snapshot);
+    // A fresh object each refresh so everything derived from membership is recomputed,
+    // even when the node (or a test double) hands back the same instance it mutated.
+    if (spaceResult.status === "fulfilled") setSpace({ ...spaceResult.value });
+    else setSpace(null);
     setError(
-      results.some((result) => result.status === "rejected")
+      directoryResult.status === "rejected" || spaceResult.status === "rejected" ||
+        (directoryResult.status === "fulfilled" && directoryResult.value.degraded)
         ? "Some device or service information could not be refreshed."
         : "",
     );
     setLoading(false);
   }, [client]);
+  // The one view every screen derives from: the node's snapshot when it has one, otherwise the
+  // same shape rebuilt from the separate lists. Shell peers it does not list are kept.
+  const view = useMemo<DirectorySnapshot>(() => {
+    if (!directory) return directoryFromLegacy({ selfId: node.peer_id, peers, records, health });
+    const known = new Set(directory.peers.map((entry) => entry.id));
+    const extra = peers.filter((peer) => !known.has(peer.id));
+    if (!extra.length) return directory;
+    const added = directoryFromLegacy({ selfId: node.peer_id, peers: extra, records: [], health: [] });
+    return { ...directory, peers: [...directory.peers, ...added.peers] };
+  }, [directory, peers, records, health, node.peer_id]);
+  const viewRecords = useMemo(() => directoryServices(view), [view]);
+  const presenceById = useMemo(
+    () => new Map(view.peers.map((entry) => [entry.id, presenceOnline(entry)] as const)),
+    [view],
+  );
   const spaceAction = async (action: string, body?: Record<string, unknown>) => {
     try {
       const status = await client.spaceAction(action, body);
@@ -272,26 +331,18 @@ export function PersonalProvider({
         network: { id: "local", label: "Current network", scope: "local", route: "local" },
       },
     ];
-    for (const peer of peers)
-      if (!peer.isSelf && peer.id !== node.peer_id)
+    // Every device the node knows, including providers that only advertised a service:
+    // the snapshot already made them devices, so nothing is synthesized here.
+    for (const entry of view.peers)
+      if (!entry.isSelf && entry.id !== node.peer_id)
         result.push({
-          id: peer.id,
-          name: peer.name,
+          id: entry.id,
+          name: entry.name,
           note: "",
           kind: "desktop",
           own: false,
-          online: health[peer.id] ?? null,
-          network: networkFromPeer(peer.endpoint, peer.lanEndpoints, lanReachable[peer.id]),
-        });
-    for (const record of records)
-      if (!result.some((device) => device.id === record.peer_id))
-        result.push({
-          id: record.peer_id,
-          name: record.node_name || record.peer_id,
-          note: "",
-          kind: "desktop",
-          own: false,
-          online: record.online,
+          online: presenceOnline(entry),
+          network: networkFromPeer(entry.endpoint, entry.lanEndpoints, entry.reachability?.lan ?? undefined),
         });
     // Only signed, current membership from the local node grants ownership.
     for (const member of space?.members || []) {
@@ -299,20 +350,21 @@ export function PersonalProvider({
       const existing = result.find((device) => device.id === member.peer_id);
       if (existing) existing.own = space?.membership === "active";
       else result.push({ id: member.peer_id, name: member.name, note: "", kind: "desktop",
-        own: space?.membership === "active", online: health[member.peer_id] ?? null });
+        own: space?.membership === "active", online: presenceById.get(member.peer_id) ?? null });
     }
     return result;
-  }, [demo, node, peers, health, lanReachable, records, space]);
+  }, [demo, node, view, presenceById, space]);
   const devices = baseDevices.map((device) => ({
     ...device,
     name: metadata[device.id]?.name || device.name,
     note: metadata[device.id]?.note ?? device.note,
     kind: metadata[device.id]?.kind ?? device.kind,
   }));
-  const services: Service[] = records.map((record) => {
+  const services: Service[] = viewRecords.map((record) => {
     const { adapter, model_alias, package_id } = record.service;
     const codex = adapter === "codex_cli";
     const claude = adapter === "claude_cli";
+    const antigravity = adapter === "antigravity_cli";
     const parts = model_alias.split(" · ");
     const configuredSource = package_id.startsWith("src-") && parts.length > 1;
     const model = configuredSource ? parts.pop() : undefined;
@@ -322,15 +374,21 @@ export function PersonalProvider({
       /deepseek/i.test(model_alias) ? "deepseek" : /qwen/i.test(model_alias) ? "qwen" :
       /openai|chatgpt/i.test(model_alias) ? "openai" : /ollama/i.test(model_alias) ? "ollama" :
       /lm studio/i.test(model_alias) ? "lmstudio" : /openrouter/i.test(model_alias) ? "openrouter" : undefined;
+    const availability = serviceAvailability(record, {
+      selfId: node.peer_id,
+      own: Boolean(devices.find((device) => device.id === record.peer_id)?.own),
+      probed: presenceById.get(record.peer_id),
+    });
     return {
       id: `${record.peer_id}/${record.service.package_id}`,
       title: title || t("personal.aiService"),
-      description: codex ? t("personal.codexCLIChooseAModelInChat") : claude ? t("personal.claudeCodeUsesTheAccountSignedInOnTheDevice") : model ? t("personal.modelModel", { model }) : model_alias,
+      description: codex || antigravity ? t("personal.codexCLIChooseAModelInChat") : claude ? t("personal.claudeCodeUsesTheAccountSignedInOnTheDevice") : model ? t("personal.modelModel", { model }) : model_alias,
       brand,
-      accessLabel: codex || claude ? t("personal.localCLI") : adapter === "ollama" || adapter === "llama_cpp" || record.service.runtime === "native_llama_cpp" ? t("personal.localModel") : "API",
+      accessLabel: codex || claude || antigravity ? t("personal.localCLI") : adapter === "ollama" || adapter === "llama_cpp" || record.service.runtime === "native_llama_cpp" ? t("personal.localModel") : "API",
       kind: "ai",
       deviceId: record.peer_id,
-      online: record.online,
+      online: availability === "ready",
+      availability,
       record,
     };
   });
