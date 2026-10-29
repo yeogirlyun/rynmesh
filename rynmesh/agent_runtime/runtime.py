@@ -1085,14 +1085,17 @@ class AgentRuntime(AgentLoop):
         data = self.store.inspect(lambda state: {key: state[key] for key in
             ("settings", "settings_revision", "settings_context_budget_provenance") if key in state})
         settings = {**DEFAULT_SETTINGS, **data["settings"]}
+        policy = self._settings_context_policy(settings, data.get("settings_context_budget_provenance"),
+                                               display_only=display_only)
+        return {"settings": settings, "settings_revision": data.get("settings_revision", 0), "context_budget_policy": policy}
+
+    def _settings_context_policy(self, settings, provenance, *, display_only=False):
         display_model = getattr(self.catalog, "display_model", None)
         if display_only and callable(display_model):
-            policy = output_policy.context_budget(display_model(settings["model_id"]) or {},
-                settings.get("max_context_chars"), provenance=data.get("settings_context_budget_provenance"))
-        else:
-            policy = self._context_policy({"model_id": settings["model_id"], "limits": settings,
-                                           "context_budget_provenance": data.get("settings_context_budget_provenance")})
-        return {"settings": settings, "settings_revision": data.get("settings_revision", 0), "context_budget_policy": policy}
+            return output_policy.context_budget(display_model(settings["model_id"]) or {},
+                settings.get("max_context_chars"), provenance=provenance)
+        return self._context_policy({"model_id": settings["model_id"], "limits": settings,
+                                     "context_budget_provenance": provenance})
 
     def update_settings(self, values: dict) -> dict:
         if not isinstance(values, dict) or set(values) - set(DEFAULT_SETTINGS):
@@ -1169,10 +1172,13 @@ class AgentRuntime(AgentLoop):
                         row["pending_control"] = {"kind": "pause"}
                         event(row, "paused", reason="agent_disabled")
                         memory_integration.settle_in_tx(data, row, event)
-            return {**data["settings"], "context_budget_policy": self._context_policy({
-                "model_id": data["settings"].get("model_id", ""), "limits": {**DEFAULT_SETTINGS, **data["settings"]},
-                "context_budget_provenance": data.get("settings_context_budget_provenance")})}
-        return self.store.transaction(update)
+            return {"settings": data["settings"], "provenance": data.get("settings_context_budget_provenance")}
+        saved = self.store.transaction(update)
+        # Display metadata must not hold the encrypted state lock or refresh
+        # providers. Task admission still resolves its current model separately.
+        settings = saved["settings"]
+        policy = self._settings_context_policy({**DEFAULT_SETTINGS, **settings}, saved["provenance"], display_only=True)
+        return {**settings, "context_budget_policy": policy}
 
     def models(self) -> list[dict]:
         return sanitized(getattr(self.catalog, "display_models", self.catalog.list_models)())

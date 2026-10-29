@@ -19,6 +19,18 @@ Source: feature/ryn-integrated-workspace at 9128434. This integration retains th
 - A broad backend run was deliberately stopped after 6m26s to scope substantial contributor repairs: 1,465 passed, 85 failed, 89 skipped. It is incomplete and predates final lint/budget-import corrections; those counts are not final-head acceptance.
 - No installed desktop release, live model provider, production account/DB or physical WAN acceptance is claimed here.
 
+## Small follow-up: settings display efficiency
+
+`codex/settings-projection-efficiency-20261029` moves model context-budget display
+projection after the settings transaction commits and releases the encrypted
+state lock. It uses the catalogue's display-only metadata path; explicit model
+selection validation and task admission still resolve current model metadata.
+The settings response shape, persisted limits and permission transitions remain
+compatible. The two new regression tests failed before the fix: a concurrent
+state reader was blocked by display work, and saving a limit refreshed discovery.
+After the fix, eight focused Agent suites pass (82 tests); changed Python files
+also pass Ruff. This does not supersede the broader failure inventory below.
+
 ## Larger revisions requested from Ziling
 
 The stopped broad run identified failures across synthetic query/controller fixtures, native/image geometry and Windows fixture assumptions, compact-context/schema projection, streaming/retry timing and pinned JavaScript resource/runtime tests. Several are platform/fixture mismatches; they are not all demonstrated production bugs. Use the named failure inventory below to reproduce and classify them before changing behavior. Preserve useful compatibility, budget and no-duplicate-execution checks.
