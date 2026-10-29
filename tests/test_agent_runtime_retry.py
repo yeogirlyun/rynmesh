@@ -6,7 +6,8 @@ from types import SimpleNamespace
 import pytest
 from test_agent_runtime import Catalog, advance, approve, assistant, make_runtime
 
-from rynmesh.agent_runtime import runtime as runtime_module, retry_policy
+from rynmesh.agent_runtime import retry_policy
+from rynmesh.agent_runtime import runtime as runtime_module
 from rynmesh.agent_runtime.runtime import AgentRuntime
 from rynmesh.agent_runtime.store import AgentError, AgentStore
 
@@ -115,7 +116,8 @@ def test_retry_accumulates_active_time_and_stops_at_limit(tmp_path, monkeypatch)
     advance(runtime, 3)
     stored = runtime.store.read()["tasks"][row["id"]]
     assert stored["status"] == "failed" and stored["error"] == "agent_time_limit"
-    assert stored["elapsed_seconds"] == 11 and stored["steps"] == 2
+    assert stored["elapsed_seconds"] == pytest.approx(11, abs=0.001)
+    assert stored["steps"] == 2
 
 
 @pytest.mark.parametrize("control", ["pause", "cancel", "disable", "read_only", "revoke_allowlist"])

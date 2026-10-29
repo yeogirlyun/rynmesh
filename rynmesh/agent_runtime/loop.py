@@ -27,8 +27,8 @@ from . import (
     output_policy,
     projects,
     request_context,
-    retry_policy,
     results,
+    retry_policy,
     subagents,
     tool_menu,
     verification,
@@ -376,9 +376,9 @@ class AgentLoop:
                             if isinstance(parsed_tool, dict):
                                 existing_note = parsed_tool.get("server_note")
                                 parsed_tool["server_note"] = f"{existing_note}\n{wrap_up_note}" if existing_note else wrap_up_note
-                                Candidate_msgs = [*messages[:idx], {**msg, "content": encoded(parsed_tool).decode()}, *messages[idx + 1:]]
-                                if self._request_context_bytes(selected, Candidate_msgs, specs) <= context_limit:
-                                    messages = Candidate_msgs
+                                candidate_msgs = [*messages[:idx], {**msg, "content": encoded(parsed_tool).decode()}, *messages[idx + 1:]]
+                                if self._request_context_bytes(selected, candidate_msgs, specs) <= context_limit:
+                                    messages = candidate_msgs
                                     injected = True
                                 break
                         except Exception:

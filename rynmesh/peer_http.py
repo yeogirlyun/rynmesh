@@ -6,7 +6,6 @@ manifests and content hashes locally before storing content bytes.
 """
 
 from __future__ import annotations
-from .transport import stamp_network_key
 
 import codecs
 import hashlib
@@ -32,7 +31,7 @@ from .crypto import SignedPayload
 from .recommendation_profile import RecommendationProfileStore
 from .registry import RegistryError
 from .store import RynmeshStore, StoreError
-from .transport import Transport, TransportError, get_transport
+from .transport import Transport, TransportError, get_transport, stamp_network_key
 from .types import RYNMESH_VERSION
 
 
@@ -306,7 +305,7 @@ class HttpPeerClient:
             raise PeerTransportError("peer_empty_response")
         try:
             value = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        except (UnicodeDecodeError, json.JSONDecodeError):
             raise PeerTransportError("peer_invalid_json") from None
         if not isinstance(value, dict):
             raise PeerTransportError("peer_response_not_object")

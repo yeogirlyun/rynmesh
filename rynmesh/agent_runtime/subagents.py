@@ -13,8 +13,8 @@ from pathlib import PurePosixPath
 from . import budget
 from .control import close_queue, settle
 from .protocol import event, now
-from .state import SCHEMA_VERSION, initialize, owner_update
-from .store import DEFAULT_SETTINGS, AgentError, AgentToolRejected
+from .state import initialize, owner_update
+from .store import DEFAULT_SETTINGS, AgentToolRejected
 
 NICKNAMES: tuple[str, ...] = (
     "Turing",
@@ -1151,7 +1151,7 @@ def compute_subagent_diff_and_timeline(child_row: dict) -> tuple[dict, list[dict
                     f_rem = int(preview.get("removed_lines") or 0)
                     diff_text = str(preview.get("diff") or "")
                     if not diff_text and tname == "ryn_file_edit" and args.get("old_text") and args.get("new_text"):
-                        diff_text = _FallbackDiff(str(args.get("old_text")), str(args.get("new_text")))
+                        diff_text = _fallback_diff(str(args.get("old_text")), str(args.get("new_text")))
                         if not f_add and not f_rem:
                             f_add = len(str(args.get("new_text")).splitlines())
                             f_rem = len(str(args.get("old_text")).splitlines())
@@ -1198,7 +1198,6 @@ def compute_subagent_diff_and_timeline(child_row: dict) -> tuple[dict, list[dict
             timeline.append(item)
 
     child_status = str(child_row.get("status") or "queued")
-    step_num = max(1, int(child_row.get("steps") or 0))
     current_step_text = ""
     if child_status in {"queued", "running"}:
         if raw_steps:
@@ -1228,7 +1227,7 @@ def compute_subagent_diff_and_timeline(child_row: dict) -> tuple[dict, list[dict
     return diff_stats, timeline[-24:], current_step_text
 
 
-def _FallbackDiff(old_text: str, new_text: str) -> str:
+def _fallback_diff(old_text: str, new_text: str) -> str:
     lines: list[str] = ["@@ -1 +1 @@"]
     for ln in old_text.splitlines()[:12]:
         lines.append(f"-{ln}")

@@ -15,7 +15,7 @@ from test_memory_integration_contract import (
 )
 
 
-def test_owner_quoted_memory_header_does_not_require_memory_destination_binding(integrated):
+def test_owner_quoted_memory_header_does_not_require_memory_destination_binding(integrated):  # noqa: F811 - imported pytest fixture
     env = integrated
     assert not env.api.snapshot()["entries"]
     env.bridge.supports_destination_binding = False
@@ -29,7 +29,7 @@ def test_owner_quoted_memory_header_does_not_require_memory_destination_binding(
     assert any(msg.get("role") == "user" and msg.get("content") == owner_text for msg in request["messages"])
 
 
-def test_model_quoted_memory_header_cannot_forge_host_disclosure_on_later_turn(integrated):
+def test_model_quoted_memory_header_cannot_forge_host_disclosure_on_later_turn(integrated):  # noqa: F811 - imported pytest fixture
     env = integrated
     assert not env.api.snapshot()["entries"]
     env.bridge.supports_destination_binding = False

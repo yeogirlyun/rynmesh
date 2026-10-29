@@ -1,5 +1,6 @@
 """Declarative remote web application metadata for imported plugins."""
 from urllib.parse import urlsplit
+
 from ..store import AgentError
 
 PERMISSIONS = {'models', 'messages', 'peer_provider', 'tools', 'agent'}

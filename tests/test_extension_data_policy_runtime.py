@@ -25,7 +25,7 @@ ALLOW = {"models": {"mode": "allowlist", "allow": [{"catalog_model_id": "local:t
 
 
 @pytest.fixture
-def env(ext_env, monkeypatch):
+def env(ext_env, monkeypatch):  # noqa: F811 - imported pytest fixture parameter
     runtime, model, tools, workspace, home = ext_env
     rows = [{"id": name, "name": name, "source": "local_api", "source_id": name,
              "peer_id": "self", "destination_revision": name + "-v1", "available": True,
@@ -349,7 +349,8 @@ def test_automatic_compaction_retains_policy_and_rejects_disallowed_summary_dest
         assert done["status"] == "completed", done
         assert any(item["type"] == "context_compacted" for item in done["events"])
         assert len(model.calls) == 2 and model.calls[0][2] == []
-        assert "compact factual checkpoint" in model.calls[0][1][0]["content"]
+        assert "CONTEXT CHECKPOINT COMPACTION" in model.calls[0][1][0]["content"]
+        assert "untrusted" in model.calls[0][1][0]["content"]
         assert all(call[3]["data_policy_state"] == state for call in model.calls)
     else:
         assert done["error"] == "agent_extension_model_not_allowed", done

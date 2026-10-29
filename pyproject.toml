@@ -117,7 +117,7 @@ include = ["rynmesh*"]
 
 [tool.setuptools.package-data]
 "rynmesh.services" = ["rynmesh-vpn"]
-"rynmesh.agent_runtime.chrome_runtime" = ["assets/*", "docs/**/*", "extension-host/**/*", "scripts/*", "skills/**/*", "package.json", "package-lock.json", "node_modules/**/*"]
+"rynmesh.agent_runtime.chrome_runtime" = ["README.md", "scripts/cdp-pipe-server.mjs"]
 # Built webapp, folded in by scripts/build_release.zsh so the node serves its
 # own UI. Absent in a source checkout — the daemon simply skips the mount.
 "rynmesh" = ["webui/**/*", "locales/*.json", "bin/*"]

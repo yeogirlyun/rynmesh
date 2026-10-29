@@ -111,7 +111,7 @@ class Backend:
 
 
 @pytest.fixture
-def craft(tmp_path, node, manager, monkeypatch):
+def craft(tmp_path, node, manager, monkeypatch):  # noqa: F811 - imported pytest fixture parameter
     app, store = node
     backend = Backend()
     workspace = tmp_path / "workspace"

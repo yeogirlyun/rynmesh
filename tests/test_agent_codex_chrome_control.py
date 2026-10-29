@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import http.server
+import os
 import socketserver
 import threading
 from pathlib import Path
@@ -12,6 +13,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
 from rynmesh.agent_runtime import code_mode, local_browser
+from rynmesh.agent_runtime.chrome_runtime import external_runtime_available
 from rynmesh.agent_runtime.code_mode import SPEC as CODE_MODE_SPEC
 from rynmesh.agent_runtime.local_specs import SPECS as LOCAL_SPECS
 from rynmesh.agent_runtime.local_tools import LocalTools
@@ -75,7 +77,7 @@ def test_find_browser_prioritizes_chrome_over_edge(monkeypatch: pytest.MonkeyPat
     chrome_exe.write_bytes(b"MZ")
 
     monkeypatch.setattr(local_browser.shutil, "which", lambda _name: None)
-    monkeypatch.setattr(local_browser.os, "name", "nt", raising=False)
+    monkeypatch.setattr(local_browser, "os", SimpleNamespace(name="nt", environ=os.environ))
     monkeypatch.setenv("PROGRAMFILES(X86)", str(pf_x86))
     monkeypatch.setenv("PROGRAMFILES", str(pf))
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
@@ -112,6 +114,8 @@ def test_code_exec_browser_runtime_requires_desktop_access(tmp_path: Path):
         host.runner.close()
 
 
+@pytest.mark.skipif(os.environ.get("RYNMESH_TEST_EXTERNAL_BROWSER_RUNTIME") != "1" or not external_runtime_available(),
+                    reason="requires explicit external-adapter/browser acceptance")
 def test_codex_chrome_control_multi_turn_workflow_via_cdp_pipe_bridge(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -257,6 +261,8 @@ return {
             httpd.shutdown()
 
 
+@pytest.mark.skipif(os.environ.get("RYNMESH_TEST_EXTERNAL_BROWSER_RUNTIME") != "1" or not external_runtime_available(),
+                    reason="requires explicit external-adapter/browser acceptance")
 def test_codex_chrome_control_live_extension_or_auto_fallback_discovery(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -301,5 +307,23 @@ return {
         assert res["return_value"]["family"] == "chrome"
         assert res["return_value"]["type"] in {"extension", "cdp"}
         assert res["return_value"]["tabCount"] >= 1
+    finally:
+        host.runner.close()
+
+
+def test_missing_external_browser_adapter_preserves_code_and_tools(monkeypatch, tmp_path):
+    monkeypatch.delenv("RYN_CHROME_RUNTIME_DIR", raising=False)
+    host, ws = _make_host_tools(tmp_path)
+    ctx = {"task_id": "optional-adapter", "context_epoch": 0, "scope_revision": 1,
+           "local_execution": {"workspace_root": str(ws), "desktop_access": True}}
+    try:
+        with pytest.raises(AgentToolRejected, match="agent_browser_adapter_unavailable"):
+            host.execute("ryn_code_exec", {"code": "await setupBrowserRuntime();"},
+                         operation_id="missing-adapter", cancelled=lambda: False, context=ctx)
+        result = host.execute("ryn_code_exec", {"code": "return {answer: 2 + 3, tools: ALL_TOOLS.length};"},
+                              operation_id="normal-code", cancelled=lambda: False, context=ctx)
+        assert result["status"] == "completed"
+        assert result["return_value"]["answer"] == 5
+        assert result["return_value"]["tools"] > 0
     finally:
         host.runner.close()

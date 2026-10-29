@@ -163,7 +163,7 @@ def test_read_reports_lines_pages_on_line_boundaries_and_addresses_by_line(local
     (call("ryn_file_read", "{not json", "bad"), "agent_tool_arguments_invalid", "Tool arguments must be a valid JSON object."),
     (call("ryn_does_not_exist", "{}", "bad"), "agent_unknown_tool", "Choose a tool from the tools offered in this request."),
 ])
-def test_invalid_tool_call_is_explained_on_the_retry_instead_of_repeated_blind(node, monkeypatch, tmp_path, bad_call, expected_error, expected_message):
+def test_invalid_tool_call_is_explained_on_the_retry_instead_of_repeated_blind(node, monkeypatch, tmp_path, bad_call, expected_error, expected_message):  # noqa: F811 - imported pytest fixture
     app, owner_store = node
     _, model_id = add_source(app)
     bridge, tools, catalog = build_agent_integrations(app, owner_store, owner_store.home)
@@ -208,7 +208,7 @@ def test_invalid_tool_call_is_explained_on_the_retry_instead_of_repeated_blind(n
     assert json.loads(good_tool["content"])["text"] == "alpha\n"
 
 
-def test_mixed_valid_and_invalid_tool_calls_execute_valid_sibling_once_and_pair_rejection(node, monkeypatch, tmp_path):
+def test_mixed_valid_and_invalid_tool_calls_execute_valid_sibling_once_and_pair_rejection(node, monkeypatch, tmp_path):  # noqa: F811 - imported pytest fixture
     app, owner_store = node
     _, model_id = add_source(app)
     bridge, tools, catalog = build_agent_integrations(app, owner_store, owner_store.home)
@@ -271,7 +271,7 @@ def test_search_ranks_matching_files_so_a_broad_term_can_be_narrowed(local):
         ("many.txt", 3, 1), ("one.txt", 1, 1)]
 
 
-def test_budget_notice_reaches_the_model_once_and_is_not_written_to_the_receipt(node, monkeypatch, tmp_path):
+def test_budget_notice_reaches_the_model_once_and_is_not_written_to_the_receipt(node, monkeypatch, tmp_path):  # noqa: F811 - imported pytest fixture
     from rynmesh.agent_runtime.streamed_reads import _publish, _stamp
 
     app, owner_store = node
@@ -638,7 +638,7 @@ def test_real_browser_dom_fill_click_upload_and_screenshot(local):
     assert tools._browser.evaluate(page_id, "task", "document.querySelector('#upload').files[0].name") == "upload.txt"
 
 
-def test_runtime_discovers_local_tools_requires_approval_then_verifies(node, monkeypatch, tmp_path):
+def test_runtime_discovers_local_tools_requires_approval_then_verifies(node, monkeypatch, tmp_path):  # noqa: F811 - imported pytest fixture
     app, owner_store = node
     _, model_id = add_source(app)
     bridge, tools, catalog = build_agent_integrations(app, owner_store, owner_store.home)
@@ -670,7 +670,7 @@ def test_runtime_discovers_local_tools_requires_approval_then_verifies(node, mon
 
 
 @pytest.mark.parametrize("rule_enabled", [True, False])
-def test_attempts_rejected_before_execution_do_not_downgrade_a_correct_outcome(node, monkeypatch, tmp_path, rule_enabled):
+def test_attempts_rejected_before_execution_do_not_downgrade_a_correct_outcome(node, monkeypatch, tmp_path, rule_enabled):  # noqa: F811 - imported pytest fixture
     from rynmesh.agent_runtime import verification
     if not rule_enabled:
         monkeypatch.setattr(verification, "_rejected_before_execution", lambda receipt: False)
@@ -736,7 +736,7 @@ def test_change_review_reports_net_changes_against_the_originals(local):
     assert tools.change_review("task", str(workspace))["files"] == []
 
 
-def test_model_reviews_and_repairs_its_changes_in_the_same_conversation(node, monkeypatch, tmp_path):
+def test_model_reviews_and_repairs_its_changes_in_the_same_conversation(node, monkeypatch, tmp_path):  # noqa: F811 - imported pytest fixture
     app, owner_store = node
     _, model_id = add_source(app)
     bridge, tools, catalog = build_agent_integrations(app, owner_store, owner_store.home)

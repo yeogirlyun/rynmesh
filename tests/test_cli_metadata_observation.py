@@ -14,7 +14,7 @@ from rynmesh.llm_package.cli_adapter import CLIAgentAdapter
 from rynmesh.llm_package.cli_binding import CLIModelDispatchAdapter
 
 
-def test_metadata_only_capacity_observation_is_durable_across_restart_without_binding_reads(cli_metadata_catalog):
+def test_metadata_only_capacity_observation_is_durable_across_restart_without_binding_reads(cli_metadata_catalog):  # noqa: F811 - imported pytest fixture
     fixture = cli_metadata_catalog
     fixture.models.append({"id": "model-b", "name": "B", "context_window": 128000})
     adapter = fixture.manager.adapter
@@ -33,7 +33,7 @@ def test_metadata_only_capacity_observation_is_durable_across_restart_without_bi
     assert restarted.binding_for_model("model-b") == before["model-b"]
 
 
-def test_successful_listing_disappearance_persists_tombstone_before_reappearance(cli_metadata_catalog):
+def test_successful_listing_disappearance_persists_tombstone_before_reappearance(cli_metadata_catalog):  # noqa: F811 - imported pytest fixture
     fixture = cli_metadata_catalog
     fixture.models.append({"id": "model-b", "name": "B", "context_window": 128000})
     adapter = fixture.manager.adapter
@@ -53,7 +53,7 @@ def test_successful_listing_disappearance_persists_tombstone_before_reappearance
     assert restarted.binding_for_model("model-b") == before["model-b"]
 
 
-def test_default_selection_observation_aba_changes_only_default_generation(cli_metadata_catalog):
+def test_default_selection_observation_aba_changes_only_default_generation(cli_metadata_catalog):  # noqa: F811 - imported pytest fixture
     fixture = cli_metadata_catalog
     fixture.models.append({"id": "model-b", "name": "B", "context_window": 400000})
     adapter = fixture.manager.adapter
@@ -68,7 +68,7 @@ def test_default_selection_observation_aba_changes_only_default_generation(cli_m
         assert adapter.binding_for_model(model) == before[model]
 
 
-def test_one_atomic_observation_write_for_whole_snapshot_and_none_for_unchanged_reads(cli_metadata_catalog, monkeypatch):
+def test_one_atomic_observation_write_for_whole_snapshot_and_none_for_unchanged_reads(cli_metadata_catalog, monkeypatch):  # noqa: F811 - imported pytest fixture
     import rynmesh.llm_package.cli_binding as binding_module
     fixture = cli_metadata_catalog
     adapter = fixture.manager.adapter
@@ -92,7 +92,7 @@ def test_one_atomic_observation_write_for_whole_snapshot_and_none_for_unchanged_
     assert len(writes) == 1
 
 
-def test_failed_observation_storage_does_not_publish_changed_metadata(cli_metadata_catalog, monkeypatch):
+def test_failed_observation_storage_does_not_publish_changed_metadata(cli_metadata_catalog, monkeypatch):  # noqa: F811 - imported pytest fixture
     import rynmesh.llm_package.cli_binding as binding_module
     fixture = cli_metadata_catalog
     adapter = fixture.manager.adapter
@@ -108,7 +108,7 @@ def test_failed_observation_storage_does_not_publish_changed_metadata(cli_metada
     assert adapter.path.read_bytes() == before
 
 
-def test_configured_cli_models_http_listing_records_observed_capacity_aba(cli_pair, monkeypatch):
+def test_configured_cli_models_http_listing_records_observed_capacity_aba(cli_pair, monkeypatch):  # noqa: F811 - imported pytest fixture
     from rynmesh.llm_package import cli_models
     fixture = cli_pair
     selected = "gemini-3.8-flash-medium"

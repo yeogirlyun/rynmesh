@@ -25,7 +25,7 @@ from rynmesh.node_apps.store import AppStore
 
 
 @pytest.fixture
-def apps(tmp_path, node):
+def apps(tmp_path, node):  # noqa: F811 - imported pytest fixture parameter
     app, store = node
     key = X25519PrivateKey.generate()
     nas = NasPlugin(tmp_path / "nas")

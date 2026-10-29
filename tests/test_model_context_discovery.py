@@ -84,7 +84,7 @@ def test_manual_legacy_32k_and_per_model_overrides_are_never_silently_replaced(t
     assert public["model_settings"]["large"]["context_window_basis"] == "model_override"
 
 
-def test_real_source_api_listing_then_save_and_model_listing_refresh_reach_agent_catalog(node, monkeypatch):
+def test_real_source_api_listing_then_save_and_model_listing_refresh_reach_agent_catalog(node, monkeypatch):  # noqa: F811 - imported pytest fixture
     app, owner = node
     window = [400000]
     monkeypatch.setattr(SourceAdapter, "models", lambda _: [{"id": "large", "context_window": window[0]}, {"id": "unknown"}])
@@ -108,7 +108,7 @@ def test_real_source_api_listing_then_save_and_model_listing_refresh_reach_agent
         assert catalog.get_model(identifier)["context_window"] == 1050000
 
 
-def test_cli_default_and_child_both_use_selected_installed_metadata(cli_metadata_catalog):
+def test_cli_default_and_child_both_use_selected_installed_metadata(cli_metadata_catalog):  # noqa: F811 - imported pytest fixture
     fixture = cli_metadata_catalog
     rows = {row["id"]: row for row in fixture.catalog.list_models()}
     for identifier in ("local/codex-cli", "local/codex-cli/model/model-a"):
@@ -126,7 +126,7 @@ def test_invalid_cli_capacity_cannot_inflate_an_unrelated_model(value):
     assert context_metadata(rows, "missing")["context_window_known"] is False
 
 
-def test_signed_cli_provider_uses_selected_window_not_32k_or_caller_capacity(cli_pair, monkeypatch):
+def test_signed_cli_provider_uses_selected_window_not_32k_or_caller_capacity(cli_pair, monkeypatch):  # noqa: F811 - imported pytest fixture
     p = cli_pair
     models = [{"id": "gemini-3.8-flash-medium", "name": "Large", "default": True, "context_window": 262144},
               {"id": "unverified", "name": "Unknown", "context_window": 10**20}]

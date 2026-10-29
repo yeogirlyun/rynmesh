@@ -61,7 +61,7 @@ def prepare_delayed_provider(env, monkeypatch, elapsed, action=None):
 
 
 @pytest.mark.parametrize("elapsed", [25.0, 75.0])
-def test_slow_bounded_provider_commits_candidate_with_a_live_real_lease(integrated, monkeypatch, elapsed):
+def test_slow_bounded_provider_commits_candidate_with_a_live_real_lease(integrated, monkeypatch, elapsed):  # noqa: F811 - imported pytest fixture
     env = integrated
     observations = prepare_delayed_provider(env, monkeypatch, elapsed)
     tick_memory_workers(env)
@@ -74,7 +74,7 @@ def test_slow_bounded_provider_commits_candidate_with_a_live_real_lease(integrat
     assert state["daily_usage"]["extraction_calls"] == 1
 
 
-def test_capture_off_cancels_a_slow_actual_extraction_without_candidate(integrated, monkeypatch):
+def test_capture_off_cancels_a_slow_actual_extraction_without_candidate(integrated, monkeypatch):  # noqa: F811 - imported pytest fixture
     env = integrated
     observations = prepare_delayed_provider(env, monkeypatch, 25.0, action="capture_off")
     tick_memory_workers(env)
@@ -86,7 +86,7 @@ def test_capture_off_cancels_a_slow_actual_extraction_without_candidate(integrat
     assert all(job["state"] == "stale" for job in env.runtime.store.read()["memory"]["jobs"].values())
 
 
-def test_a_provider_past_the_bounded_deadline_still_cannot_commit(integrated, monkeypatch):
+def test_a_provider_past_the_bounded_deadline_still_cannot_commit(integrated, monkeypatch):  # noqa: F811 - imported pytest fixture
     env = integrated
     worker = importlib.import_module("rynmesh.agent_runtime.memory_worker")
     elapsed = worker.DEFAULT_EXTRACTION_TIMEOUT_SECONDS + 1.0

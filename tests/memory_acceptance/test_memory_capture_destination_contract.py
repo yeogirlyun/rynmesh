@@ -6,7 +6,7 @@ from test_memory_integration_contract import integrated as integrated
 from test_memory_integration_contract import prohibit_network as prohibit_network
 
 
-def test_reenabling_capture_requires_destination_in_this_owner_write(integrated):
+def test_reenabling_capture_requires_destination_in_this_owner_write(integrated):  # noqa: F811 - imported pytest fixture
     env = integrated
     destination = env.catalog.destination(env.catalog.row)
     enabled = env.api.write("PUT", "/settings", {

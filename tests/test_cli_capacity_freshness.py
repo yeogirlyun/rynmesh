@@ -17,7 +17,7 @@ from rynmesh.llm_package.cli_binding import CLIModelDispatchAdapter
 from rynmesh.llm_package.sources import SourceAdapter, SourceStore
 
 
-def test_capacity_change_rotates_only_affected_model_and_default_and_never_resurrects(cli_metadata_catalog):
+def test_capacity_change_rotates_only_affected_model_and_default_and_never_resurrects(cli_metadata_catalog):  # noqa: F811 - imported pytest fixture
     fixture = cli_metadata_catalog
     fixture.models.append({"id": "model-b", "name": "B", "context_window": 128000})
     adapter = fixture.manager.adapter
@@ -36,7 +36,7 @@ def test_capacity_change_rotates_only_affected_model_and_default_and_never_resur
     assert adapter.binding_for_model("model-b") == before["model-b"]
 
 
-def test_default_model_selection_is_bound_without_rotating_unchanged_children(cli_metadata_catalog):
+def test_default_model_selection_is_bound_without_rotating_unchanged_children(cli_metadata_catalog):  # noqa: F811 - imported pytest fixture
     fixture = cli_metadata_catalog
     fixture.models.append({"id": "model-b", "name": "B", "context_window": 16000})
     adapter = fixture.manager.adapter
@@ -49,7 +49,7 @@ def test_default_model_selection_is_bound_without_rotating_unchanged_children(cl
         assert adapter.binding_for_model(model) == before[model]
 
 
-def test_expired_discovery_failure_revokes_selected_and_default_authority(cli_metadata_catalog, monkeypatch):
+def test_expired_discovery_failure_revokes_selected_and_default_authority(cli_metadata_catalog, monkeypatch):  # noqa: F811 - imported pytest fixture
     from rynmesh.llm_package import codex_session
     fixture = cli_metadata_catalog
     model = "local/codex-cli/model/model-a"
@@ -66,7 +66,7 @@ def test_expired_discovery_failure_revokes_selected_and_default_authority(cli_me
         fixture.manager.adapter.binding_for_model("model-a")
 
 
-def test_passive_binding_never_discovers_or_reuses_expired_capacity(cli_metadata_catalog, monkeypatch):
+def test_passive_binding_never_discovers_or_reuses_expired_capacity(cli_metadata_catalog, monkeypatch):  # noqa: F811 - imported pytest fixture
     from rynmesh.llm_package import codex_session
     fixture = cli_metadata_catalog
     adapter = fixture.manager.adapter
@@ -79,7 +79,7 @@ def test_passive_binding_never_discovers_or_reuses_expired_capacity(cli_metadata
     assert adapter.cached_binding_for_model("model-a") is None
 
 
-def test_empty_refreshed_listing_closes_default_dispatch_without_reusing_old_binding(cli_metadata_catalog, monkeypatch):
+def test_empty_refreshed_listing_closes_default_dispatch_without_reusing_old_binding(cli_metadata_catalog, monkeypatch):  # noqa: F811 - imported pytest fixture
     fixture = cli_metadata_catalog
     adapter = fixture.manager.adapter
     before = adapter.binding_for_model()
@@ -95,7 +95,7 @@ def test_empty_refreshed_listing_closes_default_dispatch_without_reusing_old_bin
     assert calls == []
 
 
-def test_old_binding_and_new_small_window_both_stop_local_dispatch(cli_metadata_catalog, monkeypatch):
+def test_old_binding_and_new_small_window_both_stop_local_dispatch(cli_metadata_catalog, monkeypatch):  # noqa: F811 - imported pytest fixture
     fixture = cli_metadata_catalog
     identifier = "local/codex-cli/model/model-a"
     old = fixture.catalog.get_model(identifier)
@@ -117,7 +117,7 @@ def test_old_binding_and_new_small_window_both_stop_local_dispatch(cli_metadata_
 
 
 @pytest.mark.parametrize("window", [None, True, "2000000", 10**20])
-def test_invalid_capacity_replaces_prior_known_window_with_unknown(cli_metadata_catalog, window):
+def test_invalid_capacity_replaces_prior_known_window_with_unknown(cli_metadata_catalog, window):  # noqa: F811 - imported pytest fixture
     fixture = cli_metadata_catalog
     old = fixture.manager.adapter.binding_for_model("model-a")
     fixture.models[0]["context_window"] = window
@@ -156,7 +156,7 @@ def test_auto_output_validates_every_effective_model_and_unknown_fallback(tmp_pa
     assert legacy["context_window"] == 65536 and legacy["max_output_tokens"] == 8192
 
 
-def test_public_api_rechecks_cli_capacity_and_does_not_dispatch_old_large_window(cli_metadata_catalog, monkeypatch, tmp_path):
+def test_public_api_rechecks_cli_capacity_and_does_not_dispatch_old_large_window(cli_metadata_catalog, monkeypatch, tmp_path):  # noqa: F811 - imported pytest fixture
     fixture = cli_metadata_catalog
     manager = fixture.manager
     manager._slots, manager._lock, manager._running = threading.BoundedSemaphore(1), threading.Lock(), 0

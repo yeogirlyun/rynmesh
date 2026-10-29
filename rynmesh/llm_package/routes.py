@@ -48,7 +48,7 @@ from .chat import reported_token_count, validate_chat
 from .chat_prompt import CHAT_FORMAT, decode_chat_prompt
 from .consumer_cancellation import ConsumerOrderCancelled, cancellable_exchange
 from .consumer_commands import ConsumerCommands
-from .model_usage import ModelUsageStore, normalize_model_key, usage_caller_scope
+from .context_safety import context_request_fits
 from .lifecycle import (
     LifecycleError,
     connect_cli,
@@ -89,9 +89,9 @@ from .p2p import (
     signal_poll_idle_max_s,
     warm_stun_choice,
 )
+from .review import service_review
 from .safety import MAX_OUTPUT, MAX_REQUEST, SharedSlots, install_body_limit
 from .service_view import annotate_services
-from .review import service_review
 from .setup_recovery import (
     RECOVERY_FAILED,
     SetupRecovery,
@@ -107,7 +107,6 @@ from .stream_protocol import (
     seal_stream_delta,
 )
 from .streaming import events, peer_stream
-from .context_safety import context_request_fits
 from .task_balance import TaskBalanceError, TaskBalanceLedger
 from .task_protocol import (
     TERMINAL_STATES,

@@ -20,7 +20,7 @@ from rynmesh.agent_runtime.store import AgentError, AgentStore, AgentToolRejecte
 from rynmesh.services import peer_box
 
 
-def test_foreground_shell_does_not_block_an_independent_file_operation(local, monkeypatch):
+def test_foreground_shell_does_not_block_an_independent_file_operation(local, monkeypatch):  # noqa: F811 - imported pytest fixture
     tools, context, workspace, _ = local
     waiting = threading.Event()
     original = tools.processes.wait
@@ -45,7 +45,7 @@ def test_foreground_shell_does_not_block_an_independent_file_operation(local, mo
         shell.result(timeout=5)
 
 
-def test_concurrent_delivery_of_same_operation_executes_exactly_once(local):
+def test_concurrent_delivery_of_same_operation_executes_exactly_once(local):  # noqa: F811 - imported pytest fixture
     tools, context, workspace, _ = local
     command = ("Add-Content counter.txt x; Start-Sleep -Milliseconds 100" if os.name == "nt"
                else "echo x >>counter.txt; sleep 0.1")
@@ -58,7 +58,7 @@ def test_concurrent_delivery_of_same_operation_executes_exactly_once(local):
     assert not tools._operation_locks
 
 
-def test_missing_rg_is_recoverable_before_dispatch_and_does_not_snapshot(local, monkeypatch):
+def test_missing_rg_is_recoverable_before_dispatch_and_does_not_snapshot(local, monkeypatch):  # noqa: F811 - imported pytest fixture
     from rynmesh.agent_runtime import local_processes, workspace_artifacts
     tools, context, _, _ = local
     real_which = local_processes.shutil.which
@@ -70,7 +70,7 @@ def test_missing_rg_is_recoverable_before_dispatch_and_does_not_snapshot(local, 
     assert not tools.processes.items
 
 
-def test_agent_continues_with_native_search_after_rg_is_missing(node, monkeypatch, tmp_path):
+def test_agent_continues_with_native_search_after_rg_is_missing(node, monkeypatch, tmp_path):  # noqa: F811 - imported pytest fixture
     from rynmesh.agent_runtime import local_processes
     app, owner_store = node
     _, model_id = add_source(app)
@@ -102,7 +102,7 @@ def test_agent_continues_with_native_search_after_rg_is_missing(node, monkeypatc
     assert not any(event["type"] == "interrupted" for event in current["events"])
 
 
-def test_process_start_rejection_is_durably_not_executed(local, monkeypatch):
+def test_process_start_rejection_is_durably_not_executed(local, monkeypatch):  # noqa: F811 - imported pytest fixture
     tools, context, _, _ = local
 
     def fail_start(*_args, **_kwargs):
@@ -121,7 +121,7 @@ def test_process_start_rejection_is_durably_not_executed(local, monkeypatch):
         execute(tools, context, "ryn_shell_execute", {"command": "echo hello"}, "no-start")
 
 
-def test_error_after_start_remains_unknown_and_is_never_replayed(local, monkeypatch):
+def test_error_after_start_remains_unknown_and_is_never_replayed(local, monkeypatch):  # noqa: F811 - imported pytest fixture
     tools, context, _, _ = local
     calls = []
 
@@ -138,7 +138,7 @@ def test_error_after_start_remains_unknown_and_is_never_replayed(local, monkeypa
     assert calls == [1]
 
 
-def test_watch_authority_uses_small_projection_and_sees_revocation(local, monkeypatch):
+def test_watch_authority_uses_small_projection_and_sees_revocation(local, monkeypatch):  # noqa: F811 - imported pytest fixture
     tools, context, _, state = local
     # A background process must retain cancellation authority without reading
     # any complete transcript, even after its original dispatch is confirmed.
@@ -169,7 +169,7 @@ def test_failure_diagnostics_keep_cause_and_errno_without_private_exception_text
     assert "errno" in caplog.text
 
 
-def _make_node_runtime(node, tmp_path, store_name="stage01-agent"):
+def _make_node_runtime(node, tmp_path, store_name="stage01-agent"):  # noqa: F811 - imported pytest fixture parameter
     app, owner_store = node
     _, model_id = add_source(app)
     bridge, tools, catalog = build_agent_integrations(app, owner_store, owner_store.home)
@@ -180,7 +180,7 @@ def _make_node_runtime(node, tmp_path, store_name="stage01-agent"):
     return runtime, store, bridge, tools, catalog, model_id
 
 
-def test_normal_read_only_shell_records_verified_classification_and_confirms(node, monkeypatch, tmp_path):
+def test_normal_read_only_shell_records_verified_classification_and_confirms(node, monkeypatch, tmp_path):  # noqa: F811 - imported pytest fixture
     from rynmesh.agent_runtime.execution_policy import verified_read_classification
 
     runtime, store, _, tools, _, _ = _make_node_runtime(node, tmp_path, "normal-read-shell")
@@ -218,7 +218,7 @@ def test_normal_read_only_shell_records_verified_classification_and_confirms(nod
     assert ledger_row["operation_classification"] == receipt["operation_classification"]
 
 
-def test_read_only_shell_exception_and_timeout_produce_error_receipt_and_continue(node, monkeypatch, tmp_path):
+def test_read_only_shell_exception_and_timeout_produce_error_receipt_and_continue(node, monkeypatch, tmp_path):  # noqa: F811 - imported pytest fixture
     runtime, store, _, tools, _, _ = _make_node_runtime(node, tmp_path, "exc-timeout-read-shell")
     (tmp_path / "balance.txt").write_text("balance=42\n", encoding="utf-8")
     read_cmd_1 = "Get-Location" if os.name == "nt" else "pwd"
@@ -273,7 +273,7 @@ def test_read_only_shell_exception_and_timeout_produce_error_receipt_and_continu
     assert any("agent_shell_timeout" in str(m.get("content", "")) for m in requests[2]["messages"])
 
 
-def test_restart_during_read_only_shell_settles_error_receipt_and_continues(node, monkeypatch, tmp_path):
+def test_restart_during_read_only_shell_settles_error_receipt_and_continues(node, monkeypatch, tmp_path):  # noqa: F811 - imported pytest fixture
     runtime, store, bridge, tools, catalog, _ = _make_node_runtime(node, tmp_path, "restart-read-shell")
     (tmp_path / "info.txt").write_text("ok=1\n", encoding="utf-8")
     read_cmd = "Get-Location" if os.name == "nt" else "pwd"
@@ -365,7 +365,7 @@ def test_restart_during_read_only_shell_settles_error_receipt_and_continues(node
     assert any("agent_node_restarted" in str(m.get("content", "")) for m in requests[1]["messages"])
 
 
-def test_restart_recovery_preserves_cancel_pause_permission_budget_and_revision_constraints(node, tmp_path):
+def test_restart_recovery_preserves_cancel_pause_permission_budget_and_revision_constraints(node, tmp_path):  # noqa: F811 - imported pytest fixture
     from rynmesh.agent_runtime import verification
     from rynmesh.agent_runtime.execution_policy import classify_operation
     from rynmesh.agent_runtime.protocol import model_retry_authority, now
@@ -444,7 +444,7 @@ def test_restart_recovery_preserves_cancel_pause_permission_budget_and_revision_
         assert tool_msgs and tool_msgs[0] == {"error": "agent_node_restarted", "not_executed": False, "no_mutation": True}
 
 
-def test_recovery_checks_old_process_and_prevents_duplicate_running_operation(local):
+def test_recovery_checks_old_process_and_prevents_duplicate_running_operation(local):  # noqa: F811 - imported pytest fixture
     from rynmesh.agent_runtime.local_processes import prepare_shell_command
 
     tools, context, workspace, _ = local
@@ -482,7 +482,7 @@ def test_recovery_checks_old_process_and_prevents_duplicate_running_operation(lo
         tools.processes.close()
 
 
-def test_genuine_write_shell_unknown_outcome_still_enters_reconciliation(node, monkeypatch, tmp_path):
+def test_genuine_write_shell_unknown_outcome_still_enters_reconciliation(node, monkeypatch, tmp_path):  # noqa: F811 - imported pytest fixture
     runtime, store, bridge, tools, catalog, _ = _make_node_runtime(node, tmp_path, "write-shell-unknown")
     runtime.update_settings({"permission_mode": "automatic", "allowed_write_tools": ["ryn_shell_execute"]})
     write_cmd = "Add-Content out.txt hi" if os.name == "nt" else "echo hi >> out.txt"
@@ -513,7 +513,7 @@ def test_genuine_write_shell_unknown_outcome_still_enters_reconciliation(node, m
         runtime.action(created["id"], {"action": "resume", "expected_revision": interrupted["revision"]})
 
 
-def test_forged_or_stale_read_classification_cannot_bypass_write_protection(local):
+def test_forged_or_stale_read_classification_cannot_bypass_write_protection(local):  # noqa: F811 - imported pytest fixture
     from rynmesh.agent_runtime.execution_policy import (
         classify_operation,
         shell_read,
@@ -584,7 +584,7 @@ def test_forged_or_stale_read_classification_cannot_bypass_write_protection(loca
         )
 
 
-def test_missing_read_classification_in_historical_record_stays_conservative(node, tmp_path):
+def test_missing_read_classification_in_historical_record_stays_conservative(node, tmp_path):  # noqa: F811 - imported pytest fixture
     from rynmesh.agent_runtime import verification
     from rynmesh.agent_runtime.protocol import model_retry_authority, now
 
@@ -624,7 +624,7 @@ def test_missing_read_classification_in_historical_record_stays_conservative(nod
     assert legacy_after["error"] == "agent_write_outcome_unknown"
 
 
-def test_legacy_migrated_task_read_shell_restart_recovery(node, tmp_path):
+def test_legacy_migrated_task_read_shell_restart_recovery(node, tmp_path):  # noqa: F811 - imported pytest fixture
     from rynmesh.agent_runtime import budget, verification
     from rynmesh.agent_runtime.execution_policy import classify_operation
     from rynmesh.agent_runtime.protocol import digest, event, model_retry_authority, now
@@ -707,7 +707,7 @@ def test_legacy_migrated_task_read_shell_restart_recovery(node, tmp_path):
     assert "receipt_reserve" not in settled_ledger
 
 
-def test_read_recovery_rejects_still_running_or_cleanup_exception_and_retains_reserve(node, monkeypatch, tmp_path):
+def test_read_recovery_rejects_still_running_or_cleanup_exception_and_retains_reserve(node, monkeypatch, tmp_path):  # noqa: F811 - imported pytest fixture
     from rynmesh.agent_runtime import verification
     from rynmesh.agent_runtime.execution_policy import classify_operation
     from rynmesh.agent_runtime.protocol import digest, model_retry_authority, now
@@ -982,7 +982,7 @@ Path({str(marker_file)!r}).write_text(json.dumps({{"task_id": task_id, "operatio
             return [{"id": "local:test", "name": "Test", "source": "local_api", "available": True, "agent_supported": True}]
 
     class NewTools:
-        def __init__(self, local):
+        def __init__(self, local):  # noqa: F811 - imported pytest fixture parameter
             self.local = local
 
         def specs(self):
@@ -1009,7 +1009,7 @@ Path({str(marker_file)!r}).write_text(json.dumps({{"task_id": task_id, "operatio
         new_local_tools.processes.close()
 
 
-def test_restart_reuses_confirmed_and_not_executed_ledger_receipts_without_rerun(monkeypatch, node, tmp_path):
+def test_restart_reuses_confirmed_and_not_executed_ledger_receipts_without_rerun(monkeypatch, node, tmp_path):  # noqa: F811 - imported pytest fixture
     from rynmesh.agent_runtime import verification
     from rynmesh.agent_runtime.execution_policy import classify_operation
     from rynmesh.agent_runtime.protocol import digest, model_retry_authority, now
@@ -1181,7 +1181,7 @@ def test_restart_reuses_confirmed_and_not_executed_ledger_receipts_without_rerun
     assert store.read()["tasks"][t_bad]["in_flight"] is not None
 
 
-def test_temporary_cleanup_failure_allows_later_resume_or_reconcile_after_process_exits(monkeypatch, node, tmp_path):
+def test_temporary_cleanup_failure_allows_later_resume_or_reconcile_after_process_exits(monkeypatch, node, tmp_path):  # noqa: F811 - imported pytest fixture
     from rynmesh.agent_runtime import verification
     from rynmesh.agent_runtime.execution_policy import classify_operation
     from rynmesh.agent_runtime.protocol import digest, model_retry_authority, now
@@ -1473,7 +1473,7 @@ os._exit(9)
             return [{"id": "local:test", "name": "Test", "source": "local_api", "available": True, "agent_supported": True}]
 
     class NewTools:
-        def __init__(self, local):
+        def __init__(self, local):  # noqa: F811 - imported pytest fixture parameter
             self.local = local
 
         def specs(self):

@@ -425,6 +425,10 @@ def test_app_agent_requires_approval_even_in_automatic_mode(tmp_path, app_id, ac
         }
     )
     created = runtime.create({"message": "Create a ticket"})
+    # The synthetic model calls this operation directly rather than discovering
+    # it; expose its schema without granting execution or approval authority.
+    from agent_tool_fixtures import expose
+    expose(runtime, created["id"], [ACTION])
     runtime.run_once()
     runtime.run_once()
     task = runtime.get(created["id"])

@@ -5,9 +5,9 @@ import ssl
 from urllib.error import HTTPError, URLError
 
 import pytest
-
 from test_agent_runtime import Catalog, advance, approve, assistant, make_runtime
 from test_agent_runtime_retry import failing_model
+
 from rynmesh.agent_runtime import retry_policy
 from rynmesh.agent_runtime.diagnostic_log import safe_diagnostics
 from rynmesh.agent_runtime.runtime import AgentRuntime
@@ -215,6 +215,7 @@ def test_http_diagnostics_do_not_retain_url_or_body():
 def test_adapter_retains_quota_reason_without_provider_message(monkeypatch, protocol):
     import io
     import json
+
     from rynmesh.llm_package.adapters import AdapterError, OpenAICompatibleAdapter
     from rynmesh.llm_package.protocol_adapter import NativeProtocolAdapter
     def reject(*args, **kwargs):

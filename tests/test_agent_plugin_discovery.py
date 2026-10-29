@@ -13,7 +13,7 @@ from rynmesh.agent_runtime.store import encoded
 from rynmesh.node_apps.plugin_agent import ALL_INFO, ALL_LIST
 
 
-def plugin_runtime(tmp_path, node, manager, *responses, context_limit=120000):
+def plugin_runtime(tmp_path, node, manager, *responses, context_limit=120000):  # noqa: F811 - imported pytest fixture parameter
     app, store = node
     app.state.craft_plugins = manager
     _, tools, _ = build_agent_integrations(app, store, store.home)
@@ -29,7 +29,7 @@ def tool_data(call, call_id):
 
 
 @pytest.mark.parametrize("context_limit", [12000, 120000])
-def test_current_apps_first_menu_and_discovered_info_use_live_read_only_tools(tmp_path, node, manager, context_limit):
+def test_current_apps_first_menu_and_discovered_info_use_live_read_only_tools(tmp_path, node, manager, context_limit):  # noqa: F811 - imported pytest fixture
     manager.install("wordcraft")
     runtime, model, _ = plugin_runtime(tmp_path, node, manager,
         assistant(name=ALL_LIST, call_id="plugins"),
@@ -65,7 +65,7 @@ def test_current_apps_first_menu_and_discovered_info_use_live_read_only_tools(tm
     assert all(len(encoded(call[1])) + len(encoded(call[2])) <= context_limit for call in model.calls)
 
 
-def test_runtime_plugin_catalog_tracks_disable_and_reenable_without_desktop_access(tmp_path, node, manager):
+def test_runtime_plugin_catalog_tracks_disable_and_reenable_without_desktop_access(tmp_path, node, manager):  # noqa: F811 - imported pytest fixture
     manager.install("wordcraft")
     runtime, model, tools = plugin_runtime(tmp_path, node, manager,
         assistant(name=ALL_LIST, call_id="enabled"), assistant("已启用 Word 文档。"),

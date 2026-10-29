@@ -20,7 +20,7 @@ from rynmesh.node_apps.service import NodeApps, fingerprint
 from rynmesh.node_apps.store import AppStore
 
 
-def setup_runtime(apps, tmp_path, model=None):
+def setup_runtime(apps, tmp_path, model=None):  # noqa: F811 - imported pytest fixture parameter
     apps.manager.install("desk")
     model = model or BusinessModel("desk", "create_ticket")
     runtime = AgentRuntime(AgentStore(tmp_path / "agent", apps.key), model, apps.tools, Catalog(),
@@ -38,7 +38,7 @@ def tool_result(messages, call_id):
 
 
 @pytest.mark.parametrize("error", ["apps_response_unconfirmed", "apps_response_invalid", "apps_store_unavailable"])
-def test_postcommit_app_response_error_preserves_unknown_and_recovers_original_receipt_once(apps, tmp_path, monkeypatch, error):
+def test_postcommit_app_response_error_preserves_unknown_and_recovers_original_receipt_once(apps, tmp_path, monkeypatch, error):  # noqa: F811 - imported pytest fixture
     runtime, model, task_id = setup_runtime(apps, tmp_path)
     original_call = apps.service.call
     operations, committed = [], []
@@ -153,7 +153,7 @@ class CorrectedPreconditionModel(BusinessModel):
         return assistant("The corrected reviewed creation completed once.")
 
 
-def test_known_review_precondition_rejection_is_not_executed_and_can_be_corrected(apps, tmp_path, monkeypatch):
+def test_known_review_precondition_rejection_is_not_executed_and_can_be_corrected(apps, tmp_path, monkeypatch):  # noqa: F811 - imported pytest fixture
     runtime, model, task_id = setup_runtime(apps, tmp_path, CorrectedPreconditionModel("desk", "create_ticket"))
     original_call, changed = apps.service.call, []
 

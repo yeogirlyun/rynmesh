@@ -12,7 +12,7 @@ from test_memory_integration_contract import (
 )
 
 
-def test_automatic_worker_waits_for_genuine_completion_before_extracting(integrated):
+def test_automatic_worker_waits_for_genuine_completion_before_extracting(integrated):  # noqa: F811 - imported pytest fixture
     env = integrated
     env.api.write("PUT", "/settings", {
         "capture_enabled": True,

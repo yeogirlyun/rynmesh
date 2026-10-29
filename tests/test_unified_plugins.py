@@ -24,7 +24,7 @@ from rynmesh.node_apps.plugins import DEFAULT_PLUGINS, PluginManager, install_pl
 
 
 @pytest.fixture
-def unified(mesh, tmp_path):
+def unified(mesh, tmp_path):  # noqa: F811 - imported pytest fixture parameter
     nas = NasPlugin(tmp_path / "nas-home")
     nas.connectors["smb"] = MemoryConnector
     manager = PluginManager(mesh.friends[0].home, mesh.provider.peer_id,
@@ -85,7 +85,7 @@ def test_real_business_adapter_lifecycle_preserves_data_and_historical_receipts(
 
 
 def test_friend_authority_cannot_bypass_plugin_lifecycle(unified):
-    manager, mesh = unified.manager, unified.mesh
+    manager, mesh = unified.manager, unified.mesh  # noqa: F811 - imported pytest fixture parameter
     manager.install("desk")
     allow(mesh, mesh.buyer, "desk")
     peer = mesh.provider.peer_id
@@ -104,7 +104,7 @@ def test_friend_authority_cannot_bypass_plugin_lifecycle(unified):
     assert mesh.other.call(peer, "catalog", {})["apps"] == []  # Installing never grants another friend access.
 
 
-def test_legacy_migration_uses_prior_activity_and_grants_once(mesh, tmp_path):
+def test_legacy_migration_uses_prior_activity_and_grants_once(mesh, tmp_path):  # noqa: F811 - imported pytest fixture
     invoke(mesh.provider, "", "resume", "create_resume", {"name": "Existing resume"})
     allow(mesh, mesh.buyer, "recruit")
     before = mesh.provider.store.path.read_bytes()
@@ -133,7 +133,7 @@ def test_builtin_tampering_and_active_execution_fail_closed(unified):
     assert unified.service.call("", "catalog", {})["apps"] == []
 
 
-def test_migration_cache_failure_keeps_node_startable_and_legacy_data_intact(mesh, tmp_path):
+def test_migration_cache_failure_keeps_node_startable_and_legacy_data_intact(mesh, tmp_path):  # noqa: F811 - imported pytest fixture
     invoke(mesh.provider, "", "resume", "create_resume", {"name": "Keep existing"})
     before = mesh.provider.store.path.read_bytes()
     manager = PluginManager(mesh.friends[0].home, mesh.provider.peer_id, cache=tmp_path / "packages")
@@ -174,7 +174,7 @@ def test_nas_old_toggle_sync_retains_credentials_files_and_ai_permissions(unifie
     assert not next(p for p in manager.catalog()["plugins"] if p["id"] == "nas")["enabled"]
 
 
-def test_legacy_nas_configuration_migrates_without_enabling_it(mesh, tmp_path):
+def test_legacy_nas_configuration_migrates_without_enabling_it(mesh, tmp_path):  # noqa: F811 - imported pytest fixture
     nas = NasPlugin(tmp_path / "old-nas")
     nas.connectors["smb"] = MemoryConnector
     nas.enable(True)
@@ -189,7 +189,7 @@ def test_legacy_nas_configuration_migrates_without_enabling_it(mesh, tmp_path):
     manager.close()
 
 
-def test_agent_capabilities_default_available_keep_exact_business_approval(unified, node):
+def test_agent_capabilities_default_available_keep_exact_business_approval(unified, node):  # noqa: F811 - imported pytest fixture
     from rynmesh.agent_runtime.bridge import build_agent_integrations
 
     app, store = node
@@ -219,7 +219,7 @@ def test_agent_capabilities_default_available_keep_exact_business_approval(unifi
         tools.execute(ALL_INFO, {"app": "resume"}, operation_id="stale", cancelled=lambda: False)
 
 
-def test_agent_nas_grants_do_not_survive_disable_reenable(resources, tmp_path):
+def test_agent_nas_grants_do_not_survive_disable_reenable(resources, tmp_path):  # noqa: F811 - imported pytest fixture
     tools, nas, context, _ = resources
     manager = PluginManager(tmp_path / "owner", "owner", cache=tmp_path / "packages", nas=nas)
     nas.plugin_manager = manager
