@@ -10,15 +10,14 @@ import os
 import platform
 import re
 import shutil
-import stat
 import threading
 import time
+import uuid
 from collections import deque
 from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..atomic_io import atomic_write_bytes
 from .diagnostic_log import failure
 from .local_processes import (
     AgentProcessStartRejected,
@@ -595,22 +594,38 @@ class LocalTools:
 
     def forget_baselines(self, task_id):
         directory = self._baseline_dir(task_id)
-        if directory is not None and directory.is_dir():
-            for item in directory.iterdir():
-                try:
-                    item.unlink()
-                except OSError:
-                    pass
-            try:
-                directory.rmdir()
-            except OSError:
-                pass
+        from ..file_transactions import file_transaction
+        if directory is not None:
+            with file_transaction(directory.parent / ".review.lock"):
+                if directory is not None and directory.is_dir():
+                    for item in directory.iterdir():
+                        try:
+                            item.unlink()
+                        except OSError:
+                            pass
+                    try:
+                        directory.rmdir()
+                    except OSError:
+                        pass
         if getattr(self, "native_computer", None) is not None:
             self.native_computer.forget_task(task_id)
         if getattr(self, "_web_search", None) is not None:
             self._web_search.forget_task(task_id)
 
+    def file_review(self, task_id, workspace_root):
+        from .file_review import FileReview
+        return FileReview(self, task_id, workspace_root)
+
     def change_review(self, task_id, workspace_root=""):
+        review = self.file_review(task_id, workspace_root)
+        if review.manifest.exists():
+            return review.review()
+        legacy = self._legacy_change_review(task_id, workspace_root)
+        for item in legacy["files"]:
+            item.update(can_undo=False, source="legacy_baseline", problem="no_confirmed_after_snapshot")
+        return legacy
+
+    def _legacy_change_review(self, task_id, workspace_root=""):
         """Net change of every file this task changed through file tools, against the original.
 
         Server-computed evidence for the completion review. Changes made by shell commands,
@@ -625,8 +640,13 @@ class LocalTools:
             root = None
         for meta_path in sorted(directory.glob("*.json")) if directory is not None and directory.is_dir() else []:
             try:
+                if meta_path.name == "review-v2.json":
+                    continue
                 meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                path = Path(meta["path"])
+                from .file_review import safe_path
+                if root is None:
+                    continue
+                path = safe_path(root, meta["path"])
                 exists = path.is_file()
                 current = self.raw(path) if exists else None
             except (OSError, ValueError, KeyError, AgentToolRejected):
@@ -860,6 +880,10 @@ class LocalTools:
         from . import local_patch
         plan, seen = [], set()
         for operation in local_patch.parse(args["patch"]):
+            from .file_review import safe_path
+            safe_path(policy["workspace_root"], operation["path"])
+            if operation.get("move_to"):
+                safe_path(policy["workspace_root"], operation["move_to"])
             path = self.path(operation["path"], context, policy)
             destination = self.path(operation["move_to"], context, policy) if operation.get("move_to") else None
             for target in (path, destination):
@@ -1721,28 +1745,19 @@ class LocalTools:
         if name == "ryn_apply_patch":
             policy = self.policy(context)
             plan = self._patch_plan(args, context, policy)
+            changes = []
             for item in plan:
-                self.baseline(task_id, item["path"])
-                if item["destination"] is not None:
-                    self.baseline(task_id, item["destination"])
+                path, destination = item["path"], item["destination"]
+                group = uuid.uuid4().hex if destination is not None else None
+                if destination is not None:
+                    changes.extend([(destination, None, item["after"], group), (path, item["before"], None, group)])
+                else:
+                    changes.append((path, item["before"], item["after"], None))
+            self.file_review(task_id, policy["workspace_root"]).apply(changes, operation_id=operation_id)
             files = []
-            observed_updates: dict[Path, str | None] = {}
+            observed_updates = {path: sha(after) if after is not None else None for path, _, after, _ in changes}
             for item in plan:
                 path, target = item["path"], item["destination"] or item["path"]
-                if item["action"] == "deleted":
-                    path.unlink()
-                    observed_updates[path] = None
-                else:
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    if target.exists():
-                        atomic_write_bytes(target, item["after"], mode=stat.S_IMODE(target.stat().st_mode))
-                    else:
-                        with target.open("xb") as out:
-                            out.write(item["after"])
-                    if item["destination"] is not None:
-                        path.unlink()
-                        observed_updates[path] = None
-                    observed_updates[target] = sha(item["after"])
                 files.append({"path": str(target), "action": item["action"],
                               **({"from": str(path)} if item["destination"] is not None else {}),
                               **({"sha256": sha(item["after"]), "bytes": len(item["after"])} if item["after"] is not None else {}),
@@ -1751,6 +1766,11 @@ class LocalTools:
             self._record_observed_files(context, observed_updates)
             return {"applied": True, "files": files}
         if name in {"ryn_file_write", "ryn_file_edit", "ryn_file_manage"}:
+            from .file_review import safe_path
+            root = self.policy(context)["workspace_root"]
+            safe_path(root, args["path"], allow_directory=name == "ryn_file_manage")
+            if args.get("destination"):
+                safe_path(root, args["destination"])
             path = self.path(args["path"], context)
             preview_before_sha = approved_preview.get("before_sha256") if isinstance(approved_preview, dict) else None
             if name in {"ryn_file_write", "ryn_file_edit"}:
@@ -1777,19 +1797,11 @@ class LocalTools:
                         correction=f"File '{args['path']}' on disk does not match expected_sha256 (or changed since last read in this task). Call ryn_file_read on '{args['path']}' first.",
                         details={"path": str(path), "expected_sha256": expected_sha, "actual_sha256": sha(before_bytes), "field_path": "expected_sha256"},
                     )
-            if name in {"ryn_file_write", "ryn_file_edit"} or args["action"] in {"delete", "move", "copy"}:
-                self.baseline(task_id, path)
-            if name == "ryn_file_manage" and args["action"] in {"move", "copy"}:
-                self.baseline(task_id, self.path(args["destination"], context))
             if name in {"ryn_file_write", "ryn_file_edit"}:
                 previous = self.text(path)[1] if path.exists() else ""
                 content = args["content"] if name == "ryn_file_write" else apply_edit(previous, args, path=args["path"])
                 raw = content.encode("utf-8")
-                if path.exists():
-                    atomic_write_bytes(path, raw, mode=stat.S_IMODE(path.stat().st_mode))
-                else:
-                    with path.open("xb") as out:
-                        out.write(raw)
+                self.file_review(task_id, root).apply([(path, before_bytes, raw, None)], operation_id=operation_id)
                 new_sha = sha(raw)
                 self._record_observed_files(context, {path: new_sha})
                 return {"path": str(path), "sha256": new_sha, "bytes": len(raw), "written": True,
@@ -1800,15 +1812,19 @@ class LocalTools:
                 return {"path": str(path), "directory_created": True}
             if action == "delete":
                 was_file = path.is_file()
-                path.rmdir() if path.is_dir() else path.unlink()
+                if was_file:
+                    self.file_review(task_id, root).apply([(path, before_bytes, None, None)], operation_id=operation_id)
+                else:
+                    path.rmdir()
                 if was_file:
                     self._record_observed_files(context, {path: None})
                 return {"path": str(path), "deleted": True}
             destination = self.path(args["destination"], context)
-            with destination.open("xb") as out, path.open("rb") as source:
-                shutil.copyfileobj(source, out)
+            group = uuid.uuid4().hex if action == "move" else None
+            changes = [(destination, None, before_bytes, group)]
             if action == "move":
-                path.unlink()
+                changes.append((path, before_bytes, None, group))
+            self.file_review(task_id, root).apply(changes, operation_id=operation_id)
             dest_sha = sha(self.raw(destination))
             self._record_observed_files(context, {destination: dest_sha, **({path: None} if action == "move" else {})})
             return {"path": str(path), "destination": str(destination), "sha256": dest_sha, "action": action}

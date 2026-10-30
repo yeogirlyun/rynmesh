@@ -1,3 +1,4 @@
+import RynAgentFileChanges from "./RynAgentFileChanges";
 import RynAgentConnection, { hasConnectionRecovery } from "./RynAgentConnection";
 import { agentTaskCache, readAgentWorkspace, writeAgentWorkspace } from "../domain/agentWorkspaceCache";
 import RynAgentProgress, { groupAgentMessages, RynAgentTurnDuration } from "./RynAgentProgress";
@@ -1060,6 +1061,7 @@ export default function RynAgent() {
             {!hasConnectionRecovery(task) && task.status === "paused" && canResumeAgentTask(task) && (task.allowed_actions || enabled) && <div className="ra-banner ra-paused-banner"><span>{t("pausedBannerHelp")}</span><button type="button" className="ra-primary ra-banner-resume" disabled={busy || controlUncertain} onClick={() => void action("resume")}><Play size={14} />{t("continueConversation")}</button></div>}
             {task.status === "cancelled" && <p className="ra-turn-evidence">{t("cancelHelp")}</p>}
             {task.result && <section className="ra-result"><strong>{t("result")}</strong><ChatMarkdown fileLinks>{task.result}</ChatMarkdown></section>}
+            <RynAgentFileChanges key={`changes/${task.id}`} taskId={task.id} revision={task.revision} />
             <TaskResultFiles key={`results/${task.id}`} task={task} />
             </TaskArtifacts>
               <RynAgentConnection task={task} modelName={selectedModel?.source_name || selectedModel?.name || task.model_id} busy={busy || controlUncertain || !settingsReady} enabled={Boolean(enabled)} onAction={kind => void action(kind)} />
