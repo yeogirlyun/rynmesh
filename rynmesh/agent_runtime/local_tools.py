@@ -1015,7 +1015,7 @@ class LocalTools:
             if not cwd.is_dir():
                 raise AgentToolRejected("agent_local_cwd_not_directory")
             shell = args.get("shell", "powershell" if os.name == "nt" else "sh")
-            shell_command(shell, args["command"])
+            shell_command(shell, args["command"], tty=args.get("tty", False))
             preview.update(cwd=str(cwd), shell=shell, execution_scope="user_account_not_sandboxed")
         elif name in {"ryn_process_stop", "ryn_process_write"}:
             self.processes.get(args["process_id"], context["task_id"])
@@ -1043,7 +1043,7 @@ class LocalTools:
             classify_operation,
             verified_read_classification,
         )
-        if name == "ryn_shell_execute" and (not isinstance(args, dict) or set(args) - SHELL_ARGUMENT_KEYS):
+        if name == "ryn_shell_execute" and (not isinstance(args, dict) or set(args) - (SHELL_ARGUMENT_KEYS | {"tty", "rows", "cols"})):
             raise AgentToolRejected("agent_invalid_operation_classification")
         host_classification = classify_operation(
             name,
@@ -1832,6 +1832,7 @@ class LocalTools:
                 self.allowed(context),
                 cancelled,
                 operation_id=operation_id or context.get("operation_id"),
+                tty=args.get("tty", False), rows=args.get("rows", 24), cols=args.get("cols", 80),
             )
             item = self.processes.get(ident, task_id)
             if before is not None:
@@ -1859,7 +1860,8 @@ class LocalTools:
         if name == "ryn_process_stop":
             return self._command_artifacts(self.processes.stop(args["process_id"], task_id), task_id)
         if name == "ryn_process_write":
-            return self.processes.write(args["process_id"], task_id, args["text"], args.get("eof", False))
+            return self.processes.write(args["process_id"], task_id, args["text"], args.get("eof", False),
+                                        control=args.get("control"), rows=args.get("rows"), cols=args.get("cols"))
         if name.startswith("ryn_browser_"):
             allowed = self.allowed(context)
             def browser_allowed():

@@ -12,7 +12,9 @@ import time
 import uuid
 from pathlib import Path
 
-from ..llm_package.process_guard import _windows_job, terminate
+from ..llm_package.process_guard import _windows_job
+from .local_pty import COMPLETED, ConPtyProcess, check_pty_support, validate_size
+from .local_pty import terminate_session as terminate
 from .store import AgentToolRejected
 
 MAX_OUTPUT = 512 * 1024
@@ -86,13 +88,21 @@ class Processes:
 
     def close(self):
         with self.lock:
-            for item in self.items.values():
-                if item["process"].poll() is None:
-                    terminate(item["process"])
+            items = list(self.items.values())
+        for item in items:
+            if item["process"].poll() is None or item.get("tty"):
+                terminate(item["process"])
+            if item.get("cleanup_done"):
+                item["cleanup_done"].wait(5)
 
-    def start(self, args, cwd, task_id, timeout, allowed, cancelled, *, operation_id=None):
+    def start(self, args, cwd, task_id, timeout, allowed, cancelled, *, operation_id=None, tty=False, rows=24, cols=80):
         # Task-state callbacks can acquire the Agent store lock; never call one
         # while holding the process-table lock (preview takes them in reverse).
+        if type(tty) is not bool:
+            raise AgentProcessStartRejected("agent_invalid_terminal_mode")
+        if tty:
+            validate_size(rows, cols)
+            check_pty_support()
         if cancelled():
             raise AgentProcessStartRejected("agent_cancelled")
         with self.lock:
@@ -111,14 +121,18 @@ class Processes:
                     self.items.pop(key)
             flags = 0x4 | 0x08000000 if os.name == "nt" else 0
             try:
-                process = subprocess.Popen(args, cwd=str(cwd), stdin=subprocess.PIPE,
+                process = ConPtyProcess(args, cwd, child_environment(), rows, cols) if tty else subprocess.Popen(args, cwd=str(cwd), stdin=subprocess.PIPE,
                                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=child_environment(),
                                            creationflags=flags, start_new_session=os.name != "nt")
             except OSError:
+                if tty:
+                    # The host may have started the command before IPC failed.
+                    from .store import AgentError
+                    raise AgentError("agent_conpty_start_unconfirmed") from None
                 # Popen did not return a child: there is no operation to replay.
                 # Failures after this boundary must retain uncertain-write handling.
                 raise AgentProcessStartRejected("agent_process_start_failed") from None
-            if os.name == "nt":
+            if os.name == "nt" and not tty:
                 try:
                     # Workstation builds/tests need normal OS resources. Retain
                     # kill-on-close ownership without inheriting model CLI limits.
@@ -130,21 +144,26 @@ class Processes:
             ident = "process_" + uuid.uuid4().hex
             item = {"process": process, "task_id": task_id, "operation_id": operation_id, "output": bytearray(),
                     "truncated": False, "reason": None, "reader_done": threading.Event(),
-                    "last_empty_offset": None, "empty_poll_count": 0}
+                    "last_empty_offset": None, "empty_poll_count": 0, "tty": tty,
+                    "input_lock": None if tty else threading.Lock(), "stdin_closed": False, "cleanup_done": threading.Event()}
             self.items[ident] = item
 
         def read():
             try:
-                while chunk := os.read(process.stdout.fileno(), 8192):
+                while chunk := (process.read_output() if tty else os.read(process.stdout.fileno(), 8192)):
                     with self.changed:
                         room = max(0, MAX_OUTPUT - len(item["output"]))
                         item["output"].extend(chunk[:room])
                         item["truncated"] |= len(chunk) > room
                         self.changed.notify_all()
             finally:
-                process.stdout.close()
+                if not tty:
+                    process.stdout.close()
+                elif item["cleanup_done"].wait(5):
+                    process.release_buffers()
                 with self.changed:
                     item["reader_done"].set()
+                    item["reader_done"] = COMPLETED
                     self.changed.notify_all()
 
         def watch():
@@ -152,7 +171,7 @@ class Processes:
             try:
                 while process.poll() is None:
                     now_mono = time.monotonic()
-                    if now_mono >= deadline or not allowed():
+                    if now_mono >= deadline or cancelled() or not allowed():
                         item["reason"] = "timeout" if now_mono >= deadline else "permission_or_task_stopped"
                         terminate(process)
                         break
@@ -160,7 +179,12 @@ class Processes:
             finally:
                 # Closing a Windows job also cleans descendants after the shell exits.
                 terminate(process)
-                process.stdin.close()
+                if not tty:
+                    process.stdin.close()
+                item["cleanup_done"].set()
+                item["cleanup_done"] = COMPLETED
+                with self.changed:
+                    self.changed.notify_all()
 
         threading.Thread(target=read, daemon=True, name="ryn-shell-output").start()
         threading.Thread(target=watch, daemon=True, name="ryn-shell-lifetime").start()
@@ -283,6 +307,15 @@ class Processes:
                                "next_offset": end if end < len(output) else None, "output_length": len(output),
                                "truncated": item["truncated"], "stop_reason": stop_reason,
                                "empty_poll_count": int(item.get("empty_poll_count", 0))}
+                    if item.get("tty"):
+                        payload.update(tty=True, terminal_backend=item["process"].backend,
+                                       rows=item["process"].rows, cols=item["process"].cols,
+                                       terminal_closed=item["process"]._closed.is_set(),
+                                       cleanup_complete=item["cleanup_done"].is_set(),
+                                       output_complete=item["reader_done"].is_set())
+                        if item["process"].error:
+                            payload["terminal_error"] = item["process"].error
+                            payload["stop_reason"] = item["reason"] or "terminal_transport_error"
                     if payload["empty_poll_count"] >= 2 and running:
                         payload["poll_notice"] = (
                             "No new output at this offset yet; pass a larger wait_seconds (e.g. 10-20) "
@@ -296,20 +329,59 @@ class Processes:
         item["reason"] = "owner_or_agent_stopped"
         terminate(item["process"])
         item["reader_done"].wait(2)
+        if item.get("tty"):
+            item["cleanup_done"].wait(5)
         return self.read(ident, task_id, wait_seconds=0)
 
-    def write(self, ident, task_id, text, eof=False):
+    def write(self, ident, task_id, text, eof=False, *, control=None, rows=None, cols=None):
         item = self.get(ident, task_id)
-        if item["process"].poll() is not None:
+        process = item["process"]
+        if control not in {None, "interrupt", "eof", "close_terminal"}:
+            raise AgentToolRejected("agent_invalid_terminal_control")
+        terminal_action = control is not None or rows is not None or cols is not None
+        if terminal_action and not item.get("tty"):
+            raise AgentToolRejected("agent_process_not_a_terminal")
+        if item.get("tty"):
+            # A PTY has no independent write half to close. EOF is a terminal
+            # keystroke interpreted by the program, never a transport close.
+            if eof:
+                raise AgentToolRejected("agent_pty_eof_use_control")
+            if rows is not None or cols is not None:
+                validate_size(rows, cols)
+            if control is not None and (text or rows is not None or cols is not None):
+                raise AgentToolRejected("agent_terminal_control_requires_empty_text")
+            if control == "close_terminal":
+                item["reason"] = "terminal_closed"
+                terminate(process)
+                item["reader_done"].wait(2)
+                return self.read(ident, task_id, wait_seconds=0)
+            if process.poll() is not None:
+                raise AgentToolRejected("agent_process_not_running")
+            if rows is not None:
+                if text:
+                    raise AgentToolRejected("agent_terminal_resize_requires_empty_text")
+                process.resize(rows, cols)
+            else:
+                # Windows console EOF is Ctrl+Z followed by Enter (application
+                # dependent). Ctrl+D may still be sent explicitly in text.
+                process.write_input({"interrupt": "\x03", "eof": "\x1a\r"}.get(control, text))
+            return {"process_id": ident, "input_delivered": True, "eof": False,
+                    "control": control, "rows": process.rows, "cols": process.cols}
+        if process.poll() is not None:
             raise AgentToolRejected("agent_process_not_running")
+        if item.get("stdin_closed"):
+            raise AgentToolRejected("agent_process_stdin_closed")
         errors = []
+
         def send():
             try:
-                item["process"].stdin.write(text.encode("utf-8"))
-                item["process"].stdin.flush()
-                if eof:
-                    item["process"].stdin.close()
-            except OSError:
+                with item["input_lock"]:
+                    process.stdin.write(text.encode("utf-8"))
+                    process.stdin.flush()
+                    if eof:
+                        process.stdin.close()
+                        item["stdin_closed"] = True
+            except (OSError, ValueError):
                 errors.append(True)
         sender = threading.Thread(target=send, daemon=True)
         sender.start()
@@ -331,16 +403,18 @@ class Processes:
                 return self.read(ident, task_id, wait_seconds=0)
             time.sleep(0.05)
         item["reader_done"].wait(2)
+        if item.get("tty"):
+            item["cleanup_done"].wait(5)
         return self.read(ident, task_id, wait_seconds=0)
 
 
-def shell_command(shell, command):
+def shell_command(shell, command, *, tty=False):
     if os.name == "nt":
         if shell == "powershell":
             executable = shutil.which("pwsh") or shutil.which("powershell")
             if executable:
                 prefix = "[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new(); $OutputEncoding=[Console]::OutputEncoding; "
-                return [executable, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", prefix + command]
+                return [executable, "-NoLogo", "-NoProfile", *([] if tty else ["-NonInteractive"]), "-Command", prefix + command]
         elif shell == "cmd":
             return [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/s", "/c", "chcp 65001 >nul & " + command]
     elif shell == "sh":
@@ -432,6 +506,11 @@ def _contains_unavailable_rg_segment(command: str) -> bool:
 
 def prepare_shell_command(arguments):
     """Resolve the actual executable before recording a durable dispatch intent."""
+    if arguments.get("tty"):
+        check_pty_support()
+        validate_size(arguments.get("rows", 24), arguments.get("cols", 80))
+    elif "rows" in arguments or "cols" in arguments:
+        raise AgentToolRejected("agent_terminal_size_requires_tty")
     literal = literal_read_command(arguments)
     if literal is not None:
         return literal
@@ -439,4 +518,4 @@ def prepare_shell_command(arguments):
     if not resolve_rg_executable() and _contains_unavailable_rg_segment(command):
         raise AgentToolRejected("agent_ripgrep_unavailable_use_file_search")
     return shell_command(
-        arguments.get("shell", "powershell" if os.name == "nt" else "sh"), command)
+        arguments.get("shell", "powershell" if os.name == "nt" else "sh"), command, tty=arguments.get("tty", False))
