@@ -138,3 +138,25 @@ reject `tty=true`; they were not tested here. The packaged/frozen desktop build
 was not rebuilt or tested. Its existing `multiprocessing.freeze_support()` entry
 is reused, so no shared entrypoint modification is included. Alternate Windows
 versions, ARM, and full-screen TUI rendering remain unverified.
+
+## Integration review correction
+
+The initial implementation retained the launch dispatch's `cancelled()` callback
+in the process watchdog. In the actual Agent runtime that callback becomes true
+when a normal tool step hands control back to the scheduler (`running` to
+`queued`). This killed background and yielded sessions, including PIPE sessions,
+even though the task still authorized them. The original direct-tool tests used
+an always-false callback and did not cover this handoff.
+
+The lifetime watchdog now uses the durable task/permission callback, as PIPE did
+before the PTY change. Dispatch cancellation still guards startup and foreground
+waiting; task cancellation and permission withdrawal still terminate the session.
+`test_agent_pty_runtime_handoff.py` reproduces the original failure through the
+actual Agent runtime with a deterministic model, then verifies continued input
+and explicit task cancellation for both PIPE/ConPTY and background/yield starts.
+
+Independent review after this correction: **107 passed, 1 skipped** in 219.41
+seconds on Windows, running the five suites above plus
+`tests/test_agent_pty_runtime_handoff.py`. Ruff and `git diff --check` passed.
+An explicit isolated pytest base directory was used because this host's shared
+pytest temporary-directory cleanup encounters an unrelated Windows access error.

@@ -119,7 +119,8 @@ def test_real_conpty_tree_cleanup(sessions, tmp_path, action):
     cancelled, revoked = threading.Event(), threading.Event()
     ident = start(sessions, tmp_path, "orphan" if action == "orphan" else "tree",
                   timeout=2 if action == "timeout" else 20,
-                  cancelled=cancelled.is_set, allowed=lambda: not revoked.is_set())
+                  cancelled=cancelled.is_set,
+                  allowed=lambda: not cancelled.is_set() and not revoked.is_set())
     result = until(sessions, ident, '"event": "child"')
     child_pid = int(re.search(r'"event": "child", "pid": (\d+)', result["output"])[1])
     proc = sessions.get(ident, "task")["process"]

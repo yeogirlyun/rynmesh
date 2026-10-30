@@ -171,7 +171,11 @@ class Processes:
             try:
                 while process.poll() is None:
                     now_mono = time.monotonic()
-                    if now_mono >= deadline or cancelled() or not allowed():
+                    # cancelled() belongs to the launch dispatch and becomes
+                    # true at an ordinary running -> queued scheduler handoff.
+                    # Session lifetime follows durable task permissions instead;
+                    # allowed() also observes owner cancellation and revocation.
+                    if now_mono >= deadline or not allowed():
                         item["reason"] = "timeout" if now_mono >= deadline else "permission_or_task_stopped"
                         terminate(process)
                         break
