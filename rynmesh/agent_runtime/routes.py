@@ -127,6 +127,9 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
         except (TypeError, ValueError):
             raise HTTPException(400, detail="agent_invalid_request") from None
 
+    from .task_forks import install_fork_routes
+    install_fork_routes(app, runtime, local_control, body)
+
     from .file_review_routes import install_file_review_routes
     install_file_review_routes(app, runtime, local_control, body)
 

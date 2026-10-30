@@ -88,6 +88,9 @@ def allowed_actions(row, settings):
     possible["source_credential"] = enabled and not flight and not uncertain and status in {"queued", "waiting_input", "paused", "completed", "failed"}
     possible["model"] = not flight and not uncertain and not row.get("pending_control") and status in {"paused", "completed", "failed", "waiting_input", "waiting_approval", "interrupted"}
     possible["edit_message"] = enabled and not uncertain and status != "interrupted" and not row.get("pending_user_messages")
+    if (row.get("fork") or {}).get("awaiting_instruction"):
+        possible["resume"] = False
+        possible["edit_message"] = False
     if row.get("archived"):
         possible = {action: allowed if action in {"rename", "restore", "delete"} else False for action, allowed in possible.items()}
     return {action: {"enabled": bool(allowed), "requires_control_revision": action not in {"pause", "stop", "cancel"},

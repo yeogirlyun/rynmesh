@@ -1,0 +1,24 @@
+{
+  "parent_id": "agent_7a5c16cef88e4986ae12d352c23f871f",
+  "child_id": "agent_7f7a0a24f0ad541899a6366b2a337420",
+  "source_message_count": 6,
+  "parent_record_unchanged_after_fork_child_run_and_restart": true,
+  "parent_message_count": 6,
+  "child_message_count": 18,
+  "child_status": "completed",
+  "model_calls": 9,
+  "files": {
+    "child-only.txt": {
+      "content": "child independent artifact\n",
+      "sha256": "b91913087d3e37b02f68378075cd58b027c75e960f7550ffb0612cd121afd91d"
+    },
+    "parent-only.txt": {
+      "content": "parent independent artifact\n",
+      "sha256": "0e182f1029039b93b9702083ddd9506396648d81c13441cd683297cc51dba2fa"
+    },
+    "shared.txt": {
+      "content": "child result\n",
+      "sha256": "60b02de432ace7ebe4110cae5c66d1dfe8a11759cb2b11a4e2fe9c91783941a9"
+    }
+  }
+}

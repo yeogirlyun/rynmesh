@@ -132,6 +132,7 @@ export interface AgentApproval {
   preview?: unknown;
 }
 export interface AgentMessage {
+  inherited_from?: { task_id: string; message_index: number };
   attachments?: AgentMessageAttachment[];
   message_id?: string;
   original_context_epoch?: number;
@@ -160,6 +161,7 @@ export interface AgentConnectionRecovery {
   diagnostics?: { network_reason?: string; network_phase?: string; http_status?: number; retry_after_seconds?: number };
 }
 export interface AgentTaskSummary {
+  fork?: { source_task_id: string; source_title: string; message_count: number; shared_workspace: boolean; awaiting_instruction: boolean };
   connection_recovery?: AgentConnectionRecovery;
   conversation_revision?: number;
   conversation_event_cursor?: number;
