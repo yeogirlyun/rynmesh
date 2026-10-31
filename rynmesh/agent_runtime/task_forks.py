@@ -13,6 +13,7 @@ import os
 import re
 import uuid
 from pathlib import Path
+
 from fastapi import Request
 
 from ..atomic_io import atomic_write_bytes
@@ -21,7 +22,7 @@ from .file_review import safe_path
 from .input_attachments import MAX_FILE_BYTES
 from .protocol import digest, event, now
 from .state import initialize
-from .store import AgentError, AgentToolRejected, DEFAULT_SETTINGS, encoded
+from .store import DEFAULT_SETTINGS, AgentError, AgentToolRejected, encoded
 
 MAX_REFERENCE_BYTES = 40 * 1024 * 1024
 MAX_REFERENCES = 256
@@ -97,6 +98,43 @@ def _check_portable(value, runtime):
             _check_portable(item, runtime)
 
 
+def _result_ids(value):
+    """Read structured reference fields, never IDs mentioned in prose/code."""
+    found = set()
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in {"result_ref", "result_id"}:
+                identifier = item.get("id") if isinstance(item, dict) else item
+                if isinstance(identifier, str) and RESULT_ID.fullmatch(identifier):
+                    found.add(identifier)
+            found.update(_result_ids(item))
+    elif isinstance(value, list):
+        for item in value:
+            found.update(_result_ids(item))
+    return found
+
+
+def _history_payloads(message):
+    """Decode only protocol JSON slots; conversation text remains opaque."""
+    yield message
+    if message.get("role") == "tool" and isinstance(message.get("content"), str):
+        try:
+            yield json.loads(message["content"])
+        except ValueError:
+            pass  # Legacy textual tool output is historical prose.
+    for call in message.get("tool_calls") or []:
+        arguments = (call.get("function") or {}).get("arguments", {})
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except ValueError:
+                # Cannot attest that undecodable arguments contain no capability.
+                raise AgentError("agent_fork_invalid_tool_arguments") from None
+        if not isinstance(arguments, dict):
+            raise AgentError("agent_fork_invalid_tool_arguments")
+        yield arguments
+
+
 def _write_copy(store, target, raw, boundary, plaintext_hash=None):
     """Publish immutable references without overwriting a file created meanwhile."""
     safe_path(boundary, str(target))
@@ -136,15 +174,12 @@ def _copy_references(runtime, source, child):
     store = runtime.store
     root = Path(child["local_execution"]["workspace_root"])
     paths, total, writes = {}, 0, []
+    todo = set()
     # Only explicit attachment metadata is read; never follow arbitrary paths in prose.
     for message in child["messages"]:
-        _check_portable(message, runtime)
-        if message.get("role") == "tool" and isinstance(message.get("content"), str):
-            try:
-                content = json.loads(message["content"])
-            except ValueError:
-                content = None
-            _check_portable(content, runtime)
+        for payload in _history_payloads(message):
+            _check_portable(payload, runtime)
+            todo.update(_result_ids(payload))
         for attachment in message.get("attachments", []):
             old = str(attachment.get("path", ""))
             if old in paths:
@@ -170,7 +205,8 @@ def _copy_references(runtime, source, child):
         child["context_checkpoint"] = _replace_paths(child["context_checkpoint"], paths)
     # Result IDs are scoped to task storage. Keep IDs so nested references stay valid,
     # but authenticate and copy every reachable blob into the child's namespace.
-    todo = set(RESULT_ID.findall(encoded([child["messages"], child.get("context_checkpoint")]).decode()))
+    _check_portable(child.get("context_checkpoint"), runtime)
+    todo.update(_result_ids(child.get("context_checkpoint")))
     copied = set()
     child["result_refs"] = []
     while todo:
@@ -184,7 +220,7 @@ def _copy_references(runtime, source, child):
         total += len(raw_value)
         if total > MAX_REFERENCE_BYTES or len(writes) >= MAX_REFERENCES:
             raise AgentError("agent_fork_reference_limit")
-        todo.update(set(RESULT_ID.findall(raw_value.decode())) - copied - {result_id})
+        todo.update(_result_ids(value) - copied - {result_id})
         # Re-seal if an envelope contains copied attachment paths.
         value = _replace_paths(value, paths)
         raw_value = encoded(value)
@@ -203,7 +239,7 @@ def _copy_references(runtime, source, child):
 
 
 def create(runtime, source_id, value):
-    from .runtime import public_task, TERMINAL
+    from .runtime import TERMINAL, public_task
     if set(value) != {"client_request_id", "title", "message_count", "token", "shared_workspace_confirmed"}:
         raise AgentError("agent_invalid_fork_request")
     try:
@@ -307,6 +343,7 @@ def create(runtime, source_id, value):
 
 def install_fork_routes(app, runtime, local_control, body):
     import asyncio
+
     from fastapi import HTTPException
 
     @app.get("/api/local/agent/tasks/{task_id}/fork-boundaries")
