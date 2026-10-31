@@ -15,10 +15,7 @@ SERVER="llama-server"
 
 TRIPLE="${1:-}"
 if [ -z "$TRIPLE" ]; then
-  RUSTC="$HOME/.cargo/bin/rustc"
-  [ -x "$RUSTC" ] || RUSTC="$(command -v rustc || true)"
-  [ -n "$RUSTC" ] && [ -x "$RUSTC" ] || { echo "rustc not found; pass a target triple" >&2; exit 1; }
-  TRIPLE="$("$RUSTC" -Vv | sed -n 's/^host: //p')"
+  TRIPLE="$("$SRC_TAURI/scripts/rust-host-triple.sh")"
 fi
 [ -n "$TRIPLE" ] || { echo "could not resolve rust host triple" >&2; exit 1; }
 

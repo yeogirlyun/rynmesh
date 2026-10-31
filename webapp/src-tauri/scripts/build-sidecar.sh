@@ -9,8 +9,7 @@ OUT="$SRC_TAURI/binaries"
 BUILD="$(mktemp -d)"
 trap 'rm -rf "$BUILD"' EXIT
 
-TRIPLE="$("$HOME/.cargo/bin/rustc" -Vv | sed -n 's/^host: //p')"
-[ -n "$TRIPLE" ] || { echo "could not resolve rust host triple" >&2; exit 1; }
+TRIPLE="$("$SRC_TAURI/scripts/rust-host-triple.sh")"
 
 "${RYNMESH_BUILD_PYTHON:-python3}" -m venv "$BUILD/venv"
 . "$BUILD/venv/bin/activate"
