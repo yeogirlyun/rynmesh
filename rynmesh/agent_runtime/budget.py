@@ -50,7 +50,7 @@ def set_owner_limits(row, limits):
     state = initialize(row)
     validate_limits(limits)
     state["limits"].update(limits)
-    sources = state.setdefault("limit_sources", {key: "legacy_unknown" for key in DEFAULT_LIMITS})
+    sources = state.setdefault("limit_sources", dict.fromkeys(DEFAULT_LIMITS, "legacy_unknown"))
     for key in limits:
         sources[key] = "owner"
 
@@ -424,18 +424,34 @@ def _segment_successes(row, since_seq):
     return count
 
 
+def _segment_text_progress(row, since_seq):
+    """Count new partial answer chunks, not empty or repeated continuation output."""
+    seen, pending, count = set(), None, 0
+    for item in row.get("events", []):
+        if item.get("type") == "assistant":
+            text = item.get("content")
+            pending = text.strip() if isinstance(text, str) and not item.get("tool_count") else None
+        elif item.get("type") == "response_continuation_requested" and pending:
+            if pending not in seen and item.get("seq", 0) > since_seq:
+                count += 1
+            seen.add(pending)
+            pending = None
+    return count
+
+
 def continue_segment(row, reason):
     """Checkpoint a default segment and start the next one in the same task.
 
     Returns NO_PROGRESS_CODE instead when continuing would only repeat failing
-    work: a full step segment with no successful tool result, or two segments
+    work: a full step segment with no tool or continued-text progress, or two segments
     in a row (for example slow ones that ended on time) without one.
     """
     from .protocol import event
     segment = row.setdefault("execution_segment", {"index": 1, "started_seq": 0})
     successes = _segment_successes(row, segment.get("started_seq", 0))
+    text_progress = _segment_text_progress(row, segment.get("started_seq", 0))
     steps, elapsed = row.get("steps", 0), row.get("elapsed_seconds", 0.0)
-    idle = successes == 0 and steps > 0
+    idle = successes == 0 and text_progress == 0 and steps > 0
     segment["no_progress"] = int(segment.get("no_progress", 0)) + 1 if idle else 0
     if idle and (reason == "max_steps" or segment["no_progress"] >= 2):
         return NO_PROGRESS_CODE
@@ -446,7 +462,8 @@ def continue_segment(row, reason):
         row["elapsed_seconds"] = 0.0
     segment["index"] = int(segment.get("index", 1)) + 1
     event(row, "execution_segment_continued", segment=segment["index"], reason=reason,
-          previous_steps=steps, previous_elapsed_seconds=elapsed, successful_tool_results=successes)
+          previous_steps=steps, previous_elapsed_seconds=elapsed, successful_tool_results=successes,
+          continued_text_chunks=text_progress)
     segment["started_seq"] = row["event_cursor"]
     return None
 
@@ -462,7 +479,7 @@ def stop_for_no_progress(row):
     row.update(status="failed", error=NO_PROGRESS_CODE, approved=None, pending_approval=None)
     outcome = row.setdefault("outcome", {})
     outcome.update(status="unverified", assessment_requested=False, summary=progress_summary(row),
-                   uncertainties=["A full execution segment produced no successful tool result; "
+                   uncertainties=["A full execution segment produced no successful tool result or new continued text; "
                                   "the host stopped instead of repeating failing work."])
     event(row, "no_progress_stopped", error=NO_PROGRESS_CODE, steps=row.get("steps", 0))
 

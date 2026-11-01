@@ -313,6 +313,9 @@ def create(runtime, source_id, value):
         row["local_execution"]["desktop_access"] = bool(row["local_execution"].get("desktop_access") and settings.get("desktop_access"))
         row["verify_text_responses"] = settings.get("verify_text_responses", False)
         budget.initialize(row)
+        # A fork is a new task using current settings, not a migrated legacy task.
+        row["limits_source"] = {key: (data.get("settings_limit_sources") or {}).get(key, "default")
+                                for key in budget.SEGMENT_LIMITS}
         checkpoint = source.get("context_checkpoint")
         active_count = len(runtime._history(row))
         if checkpoint and 0 < checkpoint.get("through", 0) <= active_count:
