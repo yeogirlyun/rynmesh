@@ -1,0 +1,102 @@
+{
+  "id": "src-44516966ec61409c",
+  "kind": "local",
+  "name": "来源配置 UI 验收",
+  "provider": "custom",
+  "base_url": "http://127.0.0.1:19004/v1",
+  "models": [
+    "alpha",
+    "beta"
+  ],
+  "context_window": 32768,
+  "max_output_tokens": 4096,
+  "request_defaults": {},
+  "sharing": true,
+  "shared_models": [
+    "alpha",
+    "beta"
+  ],
+  "enabled": true,
+  "status": "ready",
+  "tool_support": {
+    "alpha": "supported",
+    "beta": "supported"
+  },
+  "model_settings": {
+    "alpha": {
+      "overrides": {
+        "share_scope": "friends"
+      },
+      "rule_revision": "2b714603c9c841049ac2ff84ea351b39",
+      "destination_revision": "5a5e9b9389ee4ca99850befb32e7a3da",
+      "evidence": {
+        "connection": {
+          "status": "unknown",
+          "checked_at": null
+        },
+        "model_exists": {
+          "status": "unknown",
+          "checked_at": null
+        },
+        "tools": {
+          "status": "unknown",
+          "checked_at": null
+        }
+      },
+      "effective": {
+        "context_window": 32768,
+        "max_output_tokens": 4096,
+        "request_defaults": {},
+        "max_concurrent": 1,
+        "requests_per_day": null,
+        "share_scope": "friends"
+      },
+      "inherited_fields": [
+        "context_window",
+        "max_concurrent",
+        "max_output_tokens",
+        "request_defaults",
+        "requests_per_day"
+      ]
+    },
+    "beta": {
+      "overrides": {},
+      "rule_revision": "53c6fa8c58c54ff49f002fb756829474",
+      "destination_revision": "3a9e2a064e194690aee86d3f6a1f8da1",
+      "evidence": {
+        "connection": {
+          "status": "unknown",
+          "checked_at": null
+        },
+        "model_exists": {
+          "status": "unknown",
+          "checked_at": null
+        },
+        "tools": {
+          "status": "unknown",
+          "checked_at": null
+        }
+      },
+      "effective": {
+        "context_window": 32768,
+        "max_output_tokens": 4096,
+        "request_defaults": {},
+        "max_concurrent": 1,
+        "requests_per_day": null,
+        "share_scope": "personal_space"
+      },
+      "inherited_fields": [
+        "context_window",
+        "max_concurrent",
+        "max_output_tokens",
+        "request_defaults",
+        "requests_per_day",
+        "share_scope"
+      ]
+    }
+  },
+  "destination_revision": "da8d3dad5088402388f5e6b736241373",
+  "source_revision": "5572124f2332473883d9ce7f30362d11",
+  "has_key": true,
+  "publication": "published"
+}

@@ -1,0 +1,34 @@
+{
+  "kind": "R05-controller-limited-independent-review",
+  "reviewer": "cancellation_commit_fix (not R05 author)",
+  "date": "2026-10-11",
+  "verdict": "suitable_for_one_bounded_development_execution_with_capture_prerequisites",
+  "formal_pass": false,
+  "paid_model_calls": 0,
+  "production_changes": false,
+  "files": {
+    "docs/acceptance/ryn-agent-delivery/real-model/run_r05.py": "55ad0b8fb1ca7144782821ba94dbb0287d14b5b9d0da022aa4d8a41ac0eeec42",
+    "tests/test_agent_r05_controller.py": "9f923b13ef8c9f9b380b624d2b7aac076bdfd26141833595be001be24148bbb3"
+  },
+  "validation": {
+    "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_r05_controller.py -q",
+    "passed": 5,
+    "seconds": 3.50,
+    "checks": [
+      "Production peer catalog and authenticated provider envelopes produce actual runtime text_delta records with stable control revision; offline transport/upstream are explicitly synthetic.",
+      "Observer requires at least ten actual text_delta records, pauses using observed control revision, resumes at paused safe checkpoint, then cancels the first observed subsequent active operation.",
+      "Nonstreaming local model fails preflight without dispatch; peer streaming capability is not fabricated.",
+      "Local trace captures request/specs and rejected response usage/finish_reason while excluding reasoning_content and raw exceptions.",
+      "Real loopback HTTP PUT commits and is audited before original 201 is held; cancellation persists before release, with one exact approved write, original receipt retained, and zero later dispatches."
+    ]
+  },
+  "execution_prerequisites_and_limits": [
+    "Select the existing authenticated GLM-only restricted provider. The stream controller checks peer/binding/stream capabilities, not a GLM allowlist for arbitrary peer IDs.",
+    "Stop other work on the selected isolated consumer before running. Existing-home reuse is development evidence, not a fresh formal repetition.",
+    "Each subscenario has a runtime lifetime cap of 24 model calls; do not describe a --scenario both invocation as a shared 24-call budget.",
+    "The orchestrator must collect and retain both consumer and provider two-host-audit.jsonl/captures externally, correlated to the new Agent task/order IDs, plus usage receipts. Stream run.json itself only stores before/after identity, events, and task state, not the complete two-host payload capture.",
+    "The late-write scenario captures local inference requests and usage. The stream scenario depends on external two-host audit collection for equivalent complete evidence.",
+    "No real vendor SSE, physical-host R05 completion, independent business pass, supplier compute stop, or billing stop has been established. Post-cancel observation is bounded to three seconds.",
+    "Review was limited to the new R05 controller/tests and directly relevant frozen input, fixture response barrier, and existing capture entry points; unchanged framework was not re-reviewed."
+  ]
+}

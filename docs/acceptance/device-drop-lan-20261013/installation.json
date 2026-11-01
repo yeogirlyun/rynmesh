@@ -1,0 +1,12 @@
+﻿{
+    "ui_mode":  "Bundled production sidecar; same-build web UI through SSH loopback tunnel. No interactive Windows login.",
+    "app_sha256":  "FEBF5EB72A046069EEF020F0A12DA8CB6FC6B1DFE5D47D5E685028262354216E",
+    "node_home":  "C:\\Users\\ziling\\.rynmesh",
+    "installer_sha256":  "077110D352A63A87A983C550B7058F1A63A389217EC01A3A06FB45DE680B51C1",
+    "node_pid":  6216,
+    "sidecar_sha256":  "9A944E9B1B778967BC4FB093CC67BC77AF350CC87C070A209F5A4501CA910DB0",
+    "host":  "DESKTOP-SQ6VA8I",
+    "installed_at":  "2026-10-13T12:34:08.3503130Z",
+    "identity_after":  "A0DBDE819C970F6F9B0CD7545FB2ED022C7D895715E8D1719F674E2AA5789E75",
+    "installer_exit_code":  0
+}

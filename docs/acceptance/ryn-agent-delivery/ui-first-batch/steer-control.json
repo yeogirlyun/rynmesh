@@ -1,0 +1,70 @@
+{
+  "kind": "synthetic-model-real-ui-control",
+  "task_id": "agent_1eb7777ac43f47459bc1d9afb4e1336f",
+  "goal_revision": 2,
+  "status": "completed",
+  "outcome": "unverified",
+  "pending_approval": null,
+  "default_model": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+  "shared_models": {
+    "src-1fe50b9c7ce9432b": []
+  },
+  "write_dispatches": [],
+  "tool_results": [
+    {
+      "tool": "ryn_list_models",
+      "result": {
+        "models": [
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": true,
+            "available": true,
+            "context_window": 32768,
+            "description": "可供本机 Agent 使用；工具在本机执行。",
+            "destination_revision": "legacy-17231844e698e9e23b2f6025e8946614f39dd0674ca9695934a5915f0fa056bd",
+            "id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+            "model_id": "acceptance-model",
+            "name": "验收用本机模型 · acceptance-model",
+            "peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+            "service_id": "src-1fe50b9c7ce9432b-a3cfb2a53f09",
+            "share_scope": "personal_space",
+            "sharing": false,
+            "source": "local_api",
+            "source_id": "src-1fe50b9c7ce9432b",
+            "source_name": "验收用本机模型",
+            "streaming": false,
+            "tool_support": "supported"
+          },
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": false,
+            "available": true,
+            "context_window": 32768,
+            "description": "尚未验证结构化工具调用，请先验证此模型。",
+            "destination_revision": "legacy-17231844e698e9e23b2f6025e8946614f39dd0674ca9695934a5915f0fa056bd",
+            "id": "local/src-1fe50b9c7ce9432b-fcda1814c7c9",
+            "model_id": "second-model",
+            "name": "验收用本机模型 · second-model",
+            "peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+            "service_id": "src-1fe50b9c7ce9432b-fcda1814c7c9",
+            "share_scope": "personal_space",
+            "sharing": false,
+            "source": "local_api",
+            "source_id": "src-1fe50b9c7ce9432b",
+            "source_name": "验收用本机模型",
+            "streaming": false,
+            "tool_support": "unknown"
+          }
+        ]
+      }
+    },
+    {
+      "tool": "ryn_set_model_sharing",
+      "result": {
+        "error": "agent_owner_changed",
+        "no_mutation": true,
+        "not_executed": true
+      }
+    }
+  ]
+}

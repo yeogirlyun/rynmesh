@@ -44,10 +44,18 @@ it("keeps unknown membership honest and preserves selection/edit/share actions",
   expect(screen.getByText("Status unknown · route unconfirmed")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Office PC, Status unknown" }));
   expect(onSelect).toHaveBeenCalledWith("remote");
-  fireEvent.click(screen.getByRole("button", { name: "Edit Office PC" }));
+  fireEvent.click(screen.getAllByRole("button", { name: "Edit Office PC" })[1]);
   expect(onEdit).toHaveBeenCalledWith(remote);
   fireEvent.click(screen.getByRole("button", { name: "Share service" }));
   expect(onShare).toHaveBeenCalledOnce();
+});
+
+it("opens the editor directly from a device name and selects that device", () => {
+  const onSelect = vi.fn(), onEdit = vi.fn();
+  render(<DeviceTopology devices={[self, remote]} selected={self} onSelect={onSelect} onEdit={onEdit} onShare={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: "Edit Office PC" }));
+  expect(onSelect).toHaveBeenCalledWith(remote.id);
+  expect(onEdit).toHaveBeenCalledWith(remote);
 });
 
 it("never claims an offline device currently has a direct connection", () => {

@@ -1,0 +1,105 @@
+.na-page {
+  max-width: 1100px;
+  margin: auto;
+  padding: 28px;
+  color: var(--text-primary, inherit);
+}
+.na-page header {
+  margin-bottom: 24px;
+}
+.na-page h1 {
+  font-size: 2rem;
+}
+.na-eyebrow {
+  font-size: 0.8rem;
+  letter-spacing: 0.16em;
+  color: var(--accent, #28a87b);
+}
+.na-toolbar,
+.na-page nav {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  margin: 18px 0;
+  flex-wrap: wrap;
+}
+.na-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+.na-page section,
+.na-page aside {
+  padding: 20px;
+  border: 1px solid var(--border-color, #727d8540);
+  border-radius: 14px;
+  margin: 16px 0;
+}
+.na-page label {
+  display: block;
+  margin: 12px 0;
+}
+.na-page select,
+.na-page textarea {
+  display: block;
+  width: 100%;
+  padding: 9px;
+  border: 1px solid var(--border-color, #727d8560);
+  border-radius: 8px;
+  background: var(--surface, transparent);
+  color: inherit;
+}
+.na-page textarea {
+  min-height: 54px;
+  max-height: 320px;
+}
+.na-page button {
+  padding: 8px 14px;
+  margin: 4px;
+  border: 1px solid var(--border-color, #727d8560);
+  border-radius: 8px;
+  color: inherit;
+  background: var(--surface, transparent);
+  cursor: pointer;
+}
+.na-page button[aria-pressed="true"] {
+  background: #23a17a24;
+  border-color: #23a17a;
+}
+.na-page button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.na-page article {
+  border-bottom: 1px solid var(--border-color, #727d8540);
+  padding: 12px 0;
+}
+.na-page pre,
+.na-page dd {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.na-page [role="dialog"] {
+  position: fixed;
+  inset: 12% 18%;
+  overflow: auto;
+  background: var(--surface, #17232a);
+  box-shadow: 0 0 0 100vmax #0008;
+  z-index: 100;
+}
+.na-page fieldset {
+  border: 1px solid #727d8540;
+  border-radius: 8px;
+  padding: 12px;
+}
+@media (max-width: 720px) {
+  .na-columns {
+    grid-template-columns: 1fr;
+  }
+  .na-page [role="dialog"] {
+    inset: 6% 5%;
+  }
+  .na-page {
+    padding: 14px;
+  }
+}

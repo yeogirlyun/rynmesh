@@ -1,0 +1,64 @@
+{
+  "at": "2026-10-13T12:49:08.408Z",
+  "space": "1d49828372304f77b87197e2848fac60",
+  "nodes": [
+    {
+      "node": "local",
+      "peer": "fR6oJFpFDez/LqWFSnyxUmOmTEB/f/7teSFY/y/9RSA=",
+      "transfers": [
+        {
+          "id": "c4efe8e037694257b45b5f73b0a53e82",
+          "direction": "in",
+          "status": "completed",
+          "route": "lan",
+          "bytes": 16777302
+        },
+        {
+          "id": "62b5d6754feb47f087d8cdf7f0a9a34d",
+          "direction": "out",
+          "status": "completed",
+          "route": "lan",
+          "bytes": 134217759
+        }
+      ],
+      "conversationItems": 6
+    },
+    {
+      "node": "remote",
+      "peer": "ppw4BE4zoTTDrlGU/EM2wZ3JW7efSfXeuqrrZmCt9aM=",
+      "transfers": [
+        {
+          "id": "c4efe8e037694257b45b5f73b0a53e82",
+          "direction": "out",
+          "status": "completed",
+          "route": "lan",
+          "bytes": 16777302
+        },
+        {
+          "id": "62b5d6754feb47f087d8cdf7f0a9a34d",
+          "direction": "in",
+          "status": "completed",
+          "route": "lan",
+          "bytes": 134217759
+        }
+      ],
+      "conversationItems": 6
+    }
+  ],
+  "translationKeysVisible": false,
+  "assistant": {
+    "settings": {
+      "http": 200,
+      "enabled": true,
+      "hasModel": true
+    },
+    "models": {
+      "http": 200,
+      "count": 20
+    },
+    "tasks": {
+      "http": 200,
+      "count": 5
+    }
+  }
+}

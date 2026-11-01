@@ -1,0 +1,67 @@
+{
+  "kind": "pinned-reference-approval-wait-fixture",
+  "formal_case_score": false,
+  "real_model": false,
+  "isolated_home": "C:\\Users\\子陵\\AppData\\Local\\Temp\\ryn-reference-owner-wait-7oji9nq8",
+  "code_snapshot": {
+    "docs\\acceptance\\ryn-agent-delivery\\reference\\approval_wait_smoke.py": "11398b1ec81368fa0a194f6d0c468326ec56eba399cbea98f1db2f94497eb9f5",
+    "docs\\acceptance\\ryn-agent-delivery\\reference\\budget_host.py": "bad2b4f93a6ee5176888907e2c4f356c92f50cd0a30ba3e6f7c29c09f3a4db00",
+    "docs\\acceptance\\ryn-agent-delivery\\reference\\worker_host.py": "3f9457fc84bbdb46bf3f9b107c6b0bdcbc5f987abc48447df2c42908f3f8e6db",
+    "docs\\acceptance\\ryn-agent-delivery\\reference\\tool_host.py": "4d44c1c709cad82f6d95395f22bccc2349350d0123d5c00621e423c7d95d5a17",
+    "docs\\acceptance\\ryn-agent-delivery\\reference\\zcode-adapter.mjs": "275bff07ea7bd85a47cf518d78c8bd90578ea6862033c821fdc636aa8c1f8d85",
+    "docs\\acceptance\\ryn-agent-delivery\\reference\\zcode-worker.mjs": "74bc30763298ee5015f4febb968a71f20ef2bf47077c5203b6b2eda5cff56b99"
+  },
+  "checks_passed": false,
+  "error_type": "AgentError",
+  "budget": {
+    "limits": {
+      "max_total_model_calls": 128,
+      "max_total_seconds": 3600,
+      "max_total_tokens": 2000000,
+      "max_total_tool_calls": 256
+    },
+    "round": 1,
+    "lifetime": {
+      "model_calls": 0,
+      "tool_calls": 0,
+      "charged_model_calls": 0,
+      "charged_tool_calls": 0,
+      "known_input_tokens": 0,
+      "known_output_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "total_tokens": 0,
+      "charged_tokens": 0,
+      "charged_seconds": 0.0,
+      "active_seconds": 0,
+      "cost": null,
+      "cost_status": "unknown",
+      "usage_complete": true,
+      "legacy_usage_unknown": false,
+      "unsettled_operations": 0
+    },
+    "current_round": {
+      "model_calls": 0,
+      "tool_calls": 0,
+      "charged_model_calls": 0,
+      "charged_tool_calls": 0,
+      "known_input_tokens": 0,
+      "known_output_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "total_tokens": 0,
+      "charged_tokens": 0,
+      "charged_seconds": 0,
+      "active_seconds": 0,
+      "cost": null,
+      "cost_status": "unknown",
+      "usage_complete": true,
+      "legacy_usage_unknown": false,
+      "unsettled_operations": 0
+    },
+    "reservation_policy": "Unknown model usage retains the conservative dispatch reservation; cost is unknown without trusted pricing."
+  },
+  "waits": [],
+  "events": [],
+  "code_unchanged": true
+}

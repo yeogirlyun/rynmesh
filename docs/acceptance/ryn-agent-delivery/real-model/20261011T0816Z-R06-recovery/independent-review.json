@@ -1,0 +1,295 @@
+{
+  "kind": "R06-development-independent-evidence-review",
+  "reviewed_at": "2026-10-11T08:20:30.805975+00:00",
+  "reviewer": "cancellation_commit_fix",
+  "independence": {
+    "controller_author": false,
+    "run_operator": false,
+    "operator_review_author": false,
+    "scope": "Read-only captured run evidence and retained fixture inspection; no model calls, remote actions, tests or rerun."
+  },
+  "development_only": true,
+  "physical_hosts": 1,
+  "formal_pass": false,
+  "formal_trials_counted": 0,
+  "business_success_seen": false,
+  "full_case_pass": false,
+  "source_hashes": {
+    "run.json": "105df4c823971119a21faa991b629dd6ad69c26788f1478ce4be27e3d71d64ae",
+    "model-before.json": "2ed9a4b5287583d35511e9a3b192781c064d4c727d3b80f662d9c4e913a0c25c",
+    "model-after.json": "f7975ba265d905921cebac8ca1ec4c1521e44f01cbd8f36bb329698d60f37157",
+    "restart-readback.json": "0fe9479ac24a4dc4ee267c01cfef786a010d9ad2c95864d4500d533165e7cc95",
+    "result-after.json": "6ab6d648306f5b538777133b88b972a29ec3420eb1a12adff4002702bff12123",
+    "operator-review.json": "fcc95a3de8495f546803c17f48950efc084c02b737b7885dbdcbf53070a389fd"
+  },
+  "raw_hash_matches_operator_review": true,
+  "checks": [
+    {
+      "check": "real_compaction_then_safe_corrected_checkpoint",
+      "result": "pass",
+      "evidence": "Real second model call is compaction; committed event seq10 precedes goal correction seq11. Safe checkpoint is queued, control_revision2, zero unsettled operations; correction is retained verbatim in each subsequent normal model request."
+    },
+    {
+      "check": "actual_process_exit_and_same_home_recovery",
+      "result": "pass",
+      "evidence": {
+        "worker_pids": [
+          34608,
+          34188
+        ],
+        "exit_proof": "Both captured proofs use retained Windows process handles, opened before termination, wait_status0 and confirmed_terminal=true; launcher and worker identities are distinguished.",
+        "same_home": true,
+        "same_identity": true,
+        "checkpoint_equal_before_parent_and_both_restart_reads": true,
+        "checkpoint_sha256": "b21f2051574a05dd5b5ee29ee8b8d9af5a4ff9859d9b7e3c83bd82d0b431ab47"
+      }
+    },
+    {
+      "check": "budget_update_requires_explicit_continue",
+      "result": "pass",
+      "evidence": {
+        "first_stop": "seq22 failed agent_model_call_budget_exhausted at lifetime4",
+        "budget_change": "seq23 max_total_model_calls4->12, control_revision2->3; task remains failed/ended",
+        "dispatches_between_budget_update_and_continue": 0,
+        "explicit_continue": "seq24 owner message; control_revision3->4, goal_revision3, queued; next captured dispatch follows continue",
+        "additional_calls": 8,
+        "final_status": "failed",
+        "final_error": "agent_model_call_budget_exhausted",
+        "final_lifetime_calls": 12
+      }
+    },
+    {
+      "check": "business_completion",
+      "result": "fail",
+      "evidence": {
+        "artifact_path": "C:\\Users\\子陵\\AppData\\Local\\Temp\\ryn-r06-loc5dgu_\\fixture-documents\\reports\\acceptance\\resumed.md",
+        "independent_filesystem_exists": false,
+        "final_result": "",
+        "final_outcome": "unverified",
+        "http_methods": [
+          "PROPFIND",
+          "PROPFIND"
+        ],
+        "http_gets": 0,
+        "http_mutations": 0,
+        "read_resource_calls": 0,
+        "write_tool_calls": 0
+      }
+    },
+    {
+      "check": "hash_and_usage_integrity",
+      "result": "pass_with_limits",
+      "evidence": {
+        "result_after_matches_run_after": true,
+        "snapshot_files_checked": 88,
+        "changed_snapshot_files": [],
+        "code_snapshot_matches_current_at_review": true,
+        "snapshot_limit": "Raw run contains an initial code_snapshot, not a separately captured end snapshot. Operator end comparison and this review comparison agree; they do not establish absence of transient edits during the run.",
+        "source_unchanged": true,
+        "source_retained_sha256": "e4748a43b4da7199f80a16409770c51c313ed7765fd1ef13eb04958f8fb38649",
+        "source_matches_frozen_fixture": true,
+        "owner_source_before_after_equal": true
+      }
+    }
+  ],
+  "usage": {
+    "requests": 12,
+    "before_process_requests": 2,
+    "after_process_requests": 10,
+    "known_input_tokens": 20147,
+    "known_output_tokens": 23243,
+    "known_total_tokens": 43390,
+    "unknown_usage_requests": 0,
+    "currency_cost": null,
+    "cost_status": "unknown",
+    "final_unsettled_operations": 0,
+    "groups": {
+      "normal": {
+        "requests": 6,
+        "input_tokens": 15590,
+        "output_tokens": 5706
+      },
+      "compaction": {
+        "requests": 6,
+        "input_tokens": 4557,
+        "output_tokens": 17537
+      }
+    },
+    "call_breakdown": [
+      {
+        "lifetime_call": 1,
+        "phase": "before",
+        "at": "2026-10-11T08:11:05.321740+00:00",
+        "category": "normal",
+        "tool_names": [
+          "ryn_discover_tools"
+        ],
+        "usage": {
+          "input_tokens": 1611,
+          "output_tokens": 446
+        },
+        "finish_reason": "tool_calls"
+      },
+      {
+        "lifetime_call": 2,
+        "phase": "before",
+        "at": "2026-10-11T08:11:18.229551+00:00",
+        "category": "compaction",
+        "tool_names": [],
+        "usage": {
+          "input_tokens": 237,
+          "output_tokens": 1604
+        },
+        "finish_reason": "stop"
+      },
+      {
+        "lifetime_call": 3,
+        "phase": "after",
+        "at": "2026-10-11T08:11:46.364523+00:00",
+        "category": "normal",
+        "tool_names": [
+          "ryn_discover_tools"
+        ],
+        "usage": {
+          "input_tokens": 2774,
+          "output_tokens": 869
+        },
+        "finish_reason": "tool_calls"
+      },
+      {
+        "lifetime_call": 4,
+        "phase": "after",
+        "at": "2026-10-11T08:12:07.499401+00:00",
+        "category": "compaction",
+        "tool_names": [],
+        "usage": {
+          "input_tokens": 1153,
+          "output_tokens": 3266
+        },
+        "finish_reason": "stop"
+      },
+      {
+        "lifetime_call": 5,
+        "phase": "after",
+        "at": "2026-10-11T08:13:02.334448+00:00",
+        "category": "normal",
+        "tool_names": [
+          "ryn_discover_tools"
+        ],
+        "usage": {
+          "input_tokens": 1922,
+          "output_tokens": 1247
+        },
+        "finish_reason": "tool_calls"
+      },
+      {
+        "lifetime_call": 6,
+        "phase": "after",
+        "at": "2026-10-11T08:13:33.805681+00:00",
+        "category": "compaction",
+        "tool_names": [],
+        "usage": {
+          "input_tokens": 648,
+          "output_tokens": 1732
+        },
+        "finish_reason": "stop"
+      },
+      {
+        "lifetime_call": 7,
+        "phase": "after",
+        "at": "2026-10-11T08:14:05.679461+00:00",
+        "category": "normal",
+        "tool_names": [
+          "ryn_update_plan",
+          "ryn_list_resource_roots"
+        ],
+        "usage": {
+          "input_tokens": 2612,
+          "output_tokens": 1409
+        },
+        "finish_reason": "tool_calls"
+      },
+      {
+        "lifetime_call": 8,
+        "phase": "after",
+        "at": "2026-10-11T08:14:34.670045+00:00",
+        "category": "compaction",
+        "tool_names": [],
+        "usage": {
+          "input_tokens": 941,
+          "output_tokens": 4341
+        },
+        "finish_reason": "stop"
+      },
+      {
+        "lifetime_call": 9,
+        "phase": "after",
+        "at": "2026-10-11T08:15:45.391208+00:00",
+        "category": "normal",
+        "tool_names": [
+          "ryn_list_resources",
+          "ryn_list_resource_roots"
+        ],
+        "usage": {
+          "input_tokens": 3343,
+          "output_tokens": 848
+        },
+        "finish_reason": "tool_calls"
+      },
+      {
+        "lifetime_call": 10,
+        "phase": "after",
+        "at": "2026-10-11T08:16:06.792070+00:00",
+        "category": "compaction",
+        "tool_names": [],
+        "usage": {
+          "input_tokens": 701,
+          "output_tokens": 2271
+        },
+        "finish_reason": "stop"
+      },
+      {
+        "lifetime_call": 11,
+        "phase": "after",
+        "at": "2026-10-11T08:16:41.051210+00:00",
+        "category": "normal",
+        "tool_names": [
+          "ryn_list_resources",
+          "ryn_list_resource_roots"
+        ],
+        "usage": {
+          "input_tokens": 3328,
+          "output_tokens": 887
+        },
+        "finish_reason": "tool_calls"
+      },
+      {
+        "lifetime_call": 12,
+        "phase": "after",
+        "at": "2026-10-11T08:16:59.321868+00:00",
+        "category": "compaction",
+        "tool_names": [],
+        "usage": {
+          "input_tokens": 877,
+          "output_tokens": 4323
+        },
+        "finish_reason": "stop"
+      }
+    ]
+  },
+  "bounded_failure_attribution": {
+    "direct_stop": "Persisted lifetime max_total_model_calls=12 exhausted; no further dispatch admitted.",
+    "observed_work_distribution": "Half of model requests were real compaction calls. The other six produced three discover/load calls, one plan update, three roots listings and two directory listings. No file-body read or write was attempted.",
+    "resource_reference_recovery": "Normal lifetime call9 supplied ref_7ec8d4bc4eea972707208026 directly as resource_ref; seq48 rejected it with agent_resource_reference_invalid. Call11 used the retained opaque reference and seq58 successfully listed long-notes.txt. The final compaction then consumed call12 before a body read.",
+    "context_configuration": "Captured task max_context_chars=12000. Actual trace compacts after each of the six normal model calls, including tool discovery. This is observed overhead under this development configuration, not proof of a general production root cause.",
+    "no_overclaim": "No artifact means the twelve-checkpoint calculation and anonymization requirements were not verified. Recovery succeeded mechanically; business completion did not. No additional paid attempt, prompt repair or production change was made."
+  },
+  "limits": [
+    "One local development attempt, not physical two-host, desktop UX or formal repeated acceptance.",
+    "Worker termination conclusions use captured owned-process/retained-handle evidence; reviewer did not observe or re-run the live termination.",
+    "All twelve captured responses contain token usage; monetary cost and external provider billing remain unknown.",
+    "The trial reached neither input body reading nor artifact creation, so it does not assess correctness of checkpoint arithmetic or anonymization."
+  ],
+  "tests_rerun": 0,
+  "model_calls_by_reviewer": 0
+}

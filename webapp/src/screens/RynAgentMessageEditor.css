@@ -1,0 +1,92 @@
+.ra-message-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  padding-inline: 4px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.ra-message.ra-user:hover .ra-message-actions,
+.ra-message.ra-user:focus-within .ra-message-actions {
+  opacity: 1;
+}
+@media (hover: none) {
+  .ra-message-actions {
+    opacity: 1;
+  }
+}
+.ra-workspace .ra-message-actions .ra-edit-message,
+.ra-workspace .ra-message-actions .ra-copy-message {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  background: transparent;
+  color: #8e8e8e;
+  padding: 4px;
+  border-radius: 6px;
+}
+.ra-workspace .ra-message-actions .ra-edit-message:hover,
+.ra-workspace .ra-message-actions .ra-copy-message:hover {
+  color: #0d0d0d;
+  background: rgba(13, 13, 13, 0.06);
+}
+[data-theme="dark"] .ra-workspace .ra-message-actions .ra-edit-message:hover,
+[data-theme="dark"] .ra-workspace .ra-message-actions .ra-copy-message:hover {
+  color: var(--pf-text);
+  background: var(--pf-subtle);
+}
+.ra-message-editor {
+  display: grid;
+  gap: 10px;
+  width: min(100%, 620px);
+  padding: 12px 14px;
+  border-radius: 20px;
+  background: #f4f4f4;
+  border: 1px solid rgba(13, 13, 13, 0.1);
+}
+[data-theme="dark"] .ra-message-editor {
+  background: var(--pf-subtle);
+  border-color: var(--pf-line);
+}
+.ra-message-editor textarea {
+  width: 100%;
+  min-height: 76px;
+  max-height: 360px;
+  resize: vertical;
+  padding: 4px 2px;
+  border: 0;
+  background: transparent;
+  color: #0d0d0d;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.65;
+  outline: none;
+}
+[data-theme="dark"] .ra-message-editor textarea {
+  color: var(--pf-text);
+}
+.ra-message-editor-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.ra-message-editor small {
+  color: var(--pf-muted);
+  font-size: 12px;
+}
+.ra-message-editor-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
+}
+.ra-message-editor button {
+  padding: 6px 14px;
+  border-radius: 999px;
+}

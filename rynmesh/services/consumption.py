@@ -17,7 +17,7 @@ from ..file_transactions import file_transaction
 
 __all__ = ["MAX_HISTORY_BYTES", "ConsumptionError", "ConsumptionStore"]
 
-_ACTIONS = {"opened", "bookmark", "unbookmark", "progress", "completed"}
+_ACTIONS = {"opened", "bookmark", "unbookmark", "progress", "completed", "restart"}
 # This store writes its whole history as one JSON record, so its own bound
 # (max_items, below) and its own per-field caps (_ITEM_FIELDS' 4000-char
 # string fields, tags/reasons at 64 entries of 160 chars) must stay under
@@ -157,6 +157,9 @@ class ConsumptionStore:
         elif action == "completed":
             record["progress"] = 1.0
             record["completed"] = True
+        elif action == "restart":
+            record["progress"] = 0.0
+            record["completed"] = False
         scope = "bookmarks" if action in {"bookmark", "unbookmark"} else "reading"
         if sync:
             # Opening an existing position is a local history event, not a new

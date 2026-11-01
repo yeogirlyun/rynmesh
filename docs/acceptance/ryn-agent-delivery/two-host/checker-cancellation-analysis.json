@@ -1,0 +1,101 @@
+{
+  "kind": "two-host-checker-cancellation-analysis",
+  "created_at": "2026-10-10T07:25:12.267919+00:00",
+  "status": "confirmed_reason_mapping_bug_before_fix",
+  "read_only_analysis": true,
+  "real_api_calls": 0,
+  "formal_acceptance": false,
+  "input_sha256": {
+    ".codex-tmp\\two-host-20261010\\phase3-consumer-terminal3.json": "3717ad6a3fba75ca4079cf89f292842fe7f78b4a55d93c5617f3a2736a08e1c1",
+    ".codex-tmp\\two-host-20261010\\phase4-consumer-terminal.json": "09baee47996865eb809305b95c74e78a063a329f5fd67f3fe50a27bfef3eb1d1",
+    ".codex-tmp\\two-host-20261010\\phase5-consumer-audit.jsonl": "ec75999b8821fcc861c0f04dc121eebb832bf938b70fbd129df7497cd5bbc484",
+    ".codex-tmp\\two-host-20261010\\phase5-provider-audit.jsonl": "59e9ac2379761a878e3359ceed8f9207b0155cabd0d368fd14782cf283c0d454",
+    ".codex-tmp\\two-host-20261010\\phase5-provider-terminal.json": "9da99a980c975fb4dcdf764e7a137ab398e46e21a4235a266325bd785765c740"
+  },
+  "reviewed_code_sha256": {
+    "rynmesh/agent_runtime/bridge.py": "a7b2d1798e3fc645f7b77dd9b734e262f1a5e252117d1ebd7ca95ed6a479d6e4",
+    "rynmesh/agent_runtime/runtime.py": "af0bf85149cd5afd8262a295476a32196d746b99e13f2b3de20bce82f47a0612",
+    "rynmesh/llm_package/routes.py": "1ca077341fffbe8e5cdc40fc6019983a6c1d2aac7c9a97530cac1d0e0955ae8c",
+    "rynmesh/llm_package/adapters.py": "0cc5b59a390a919ba5088fc05575679ee4753da8d713cb341194710aa7c4b097",
+    "docs/acceptance/ryn-agent-delivery/two-host/node.py": "afdb11427b47f38c3fbaa965a359ba9f2e729976f7c8d8cbb90ad30dfbd491c3"
+  },
+  "snapshot_note": "Four production files match python_files hashes recorded in phase4 consumer identity. Any subsequent fix is a new snapshot, not tested by these frozen physical runs.",
+  "finding": {
+    "severity": "P2",
+    "title": "Structured model cancellation loses the runtime stop reason",
+    "code_chain": [
+      "runtime.py:1152-1171 computes cancelled.reason, including agent_time_limit for cumulative active round time >= max_seconds and agent_time_budget_exhausted for lifetime.",
+      "runtime.py:325-326 passes remaining round/lifetime monotonic deadline.",
+      "bridge.py:149-153 requests transport cancellation when callback true or deadline expired.",
+      "bridge.py:206-209 throws AgentModelResponseError(agent_cancelled) whenever callback true, ignoring cancelled.reason; HTTPException/AdapterError branches have the same collapse.",
+      "runtime.py:362-370 records that collapsed code before rethrow; run_once AgentError branch1187-1190 forwards unchanged, unlike ValueError1203-1204 and tool1183-1184.",
+      "runtime.py:1016-1034 finishes verification unverified with supplied error."
+    ],
+    "minimal_reproduction": {
+      "method": "In-memory AgentModelBridge with synthetic peer execute_order; callback initially false, synthetic order sets stop=true and returns cancelled/consumer_cancelled; callback.reason=agent_time_limit. No filesystem mutation or API.",
+      "observed_exception": "agent_cancelled",
+      "original_callback_reason": "agent_time_limit",
+      "exception_type": "AgentModelResponseError",
+      "reported_usage": {
+        "input_tokens": null,
+        "output_tokens": null
+      }
+    }
+  },
+  "timelines": [
+    {
+      "task_id": "agent_c2efe14a34684656beedf9ae3ff1defa",
+      "label": "B task",
+      "order_id": "agent_12aacd57cd704c7882dc7f4a08f81d2c",
+      "checker_started": "2026-10-10T07:05:39.698341+00:00",
+      "consumer_order_created": "2026-10-10T07:05:39.808955+00:00",
+      "provider_upstream_dispatch": "2026-10-10T07:05:40.180069+00:00",
+      "provider_cancel_received": "2026-10-10T07:08:15.648819+00:00",
+      "consumer_order_cancelled": "2026-10-10T07:08:15.940349+00:00",
+      "consumer_result_returned": "2026-10-10T07:08:39.215717+00:00",
+      "model_response_rejected": "2026-10-10T07:08:39.262544+00:00",
+      "same_consumer_clock_dispatch_to_cancel_seconds": 156.131394,
+      "same_consumer_clock_cancel_to_return_seconds": 23.275368,
+      "transport_total_ms": 179375,
+      "round_active_seconds_final": 202.642,
+      "lifetime_active_seconds_final": 343.426
+    },
+    {
+      "task_id": "agent_8c9f2888762a4600a6790eafe88460dd",
+      "label": "A task (also executing on consumer host, not provider-host Agent)",
+      "order_id": "agent_691138891bc347f1942a4796841c2ed0",
+      "checker_started": "2026-10-10T07:14:12.356005+00:00",
+      "consumer_order_created": "2026-10-10T07:14:12.449760+00:00",
+      "provider_upstream_dispatch": "2026-10-10T07:14:12.439705+00:00",
+      "provider_cancel_received": "2026-10-10T07:14:54.701257+00:00",
+      "consumer_order_cancelled": "2026-10-10T07:14:54.974883+00:00",
+      "consumer_result_returned": "2026-10-10T07:17:07.726146+00:00",
+      "model_response_rejected": "2026-10-10T07:17:07.741753+00:00",
+      "same_consumer_clock_dispatch_to_cancel_seconds": 42.525123,
+      "same_consumer_clock_cancel_to_return_seconds": 132.751263,
+      "transport_total_ms": 175235,
+      "round_active_seconds_final": 311.969,
+      "lifetime_active_seconds_final": 516.436
+    }
+  ],
+  "interpretation": {
+    "confirmed": "Both orders were actively cancelled before final return; authenticated provider terminal states and returned error_code are consumer_cancelled. No task-level owner cancel event occurs in these target task histories. Both tasks have round max_seconds180, lifetime3600; no lifetime exhaustion. Final durations are not timestamps of initial cancellation.",
+    "round_budget_cause": "Strongly supported by code and timing: after subtracting post-cancel waiting, final active round charges are near180. A had already used approximately137 seconds in that round including an earlier checker and repair; B approximately24. Exact pre-request ledger records and callback.reason were not exported, so this is a code+timing attribution rather than directly logged callback value.",
+    "not_proven": "No upstream exception audit exists: RestrictedAdapter logs dispatch/response/cancel but not rejected exception (node.py122-135). Cannot distinguish vendor timeout, late successful response discarded after cancel, or network error. Do not claim GLM timed out merely from approximately180-second final interval.",
+    "delayed_stop": "bridge awaits execute_order synchronously after best-effort cancellation. routes3493-3531 marks and signs cancel; provider routes822-826 calls adapter cancel; adapters557-565 records flag and closes response only if already available. Blocking urlopen before headers has no registered response; cancellation cannot guarantee immediate remote/provider computation stop. Provider routes643-653 maps prior cancelled state to consumer_cancelled, obscuring original later exception by design.",
+    "streaming": "Checker has no tools; bridge.py92 enables streaming only when on_event AND tool_specs AND target streaming. These calls were non-streaming and transport evidence has stream_events0. Absence of reasoning chunks is not proof of no upstream computation.",
+    "budget": "Unknown usage remains conservative reservation (both final tasks usage_complete=false); final active time includes wait beyond stop request. No late response/tool execution success was published."
+  },
+  "recommended_fix_boundary": [
+    "Preserve a closed trusted callback reason for structured bridge rejection and meter event, including actual round/lifetime exhaustion and owner/security revocations. Do not turn unknown arbitrary callback strings into public error text. User cancel must remain agent_cancelled.",
+    "Test actual runtime round/lifetime expiry through bridge and budget ledger: terminal cause correct, unknown usage conservative, late response/tool not published; also explicit owner cancel and malicious reason.",
+    "Do not change round180/lifetime3600/source180/retry policy in this fix. Future tuning requires separately chosen workload budget, not bypassing the gate.",
+    "Separate future transport improvement: interruptible cancellation/deadline propagation and safe original exception metadata, with ownership/reconciliation and late-use tests. No claim that this fix stops remote compute sooner."
+  ],
+  "limits": [
+    "No API calls or remote access. Pure in-memory reproduction only.",
+    "Two-host clocks differ slightly; delays stated with consumer same-clock timestamps where possible.",
+    "No inference of formal success, semantic coverage or reference80%.",
+    "Reasoning and model message text omitted."
+  ]
+}

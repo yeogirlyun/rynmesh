@@ -1,0 +1,21 @@
+﻿{
+    "host":  "DESKTOP-SQ6VA8I",
+    "files":  [
+                  {
+                      "sha256":  "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+                      "bytes":  0,
+                      "rel":  "empty-file.txt"
+                  },
+                  {
+                      "sha256":  "3945E657A7FAB0DEC69C1CB4FC1D3C94687B50D054F416534B74D790E3006283",
+                      "bytes":  69,
+                      "rel":  "中文说明.txt"
+                  },
+                  {
+                      "sha256":  "5E66534DABE935AF93C6BBFDE197945DD7868745DD33361AEB666DD714544476",
+                      "bytes":  16777233,
+                      "rel":  "subfolder\\random-16MiB.bin"
+                  }
+              ],
+    "source":  "C:\\Users\\ziling\\rynmesh-drop-lan-20261013\\LAN-folder-proof"
+}

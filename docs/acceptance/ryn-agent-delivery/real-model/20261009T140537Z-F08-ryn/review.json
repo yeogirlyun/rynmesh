@@ -1,0 +1,17 @@
+{
+  "classification": "development failure; not formal score",
+  "formal_case_score": false,
+  "reviewer": "Root coordinator, inspecting retained model calls, search receipt, state and independent DAV audit; separate Astra review remains pending.",
+  "real_model_calls": 9,
+  "elapsed_seconds": 218.265,
+  "code_unchanged": true,
+  "owner_source_unchanged": true,
+  "finding": "Three checkpoints succeeded with exact reference values retained by the runtime outside generated prose. One summary still exhausted completion length, then its bounded retry succeeded. The planner reached a real search of long-notes.txt and received six excerpts. Adding the plan, search cursor and pinned references left insufficient context alongside six loaded business schemas, so the task stopped with agent_context_limit before another model request. No artifact was written.",
+  "metric_interpretation": "The old resource_read_tool_attempts metric counts ryn_read_resource only and is zero here. There was one ryn_search_resource dispatch and one actual HTTP GET; zero must not be described as no document access.",
+  "mechanical_checks": {
+    "exact_artifact_paths": false,
+    "source_files_unchanged": true,
+    "no_unexpected_writes": true
+  },
+  "follow_up": "When compaction cannot fit exact retained state, release reloadable business schemas and keep the discovery entry. Preserve owner constraints, references, receipts, dispatch exposure checks and all budgets. The reference host receives the same schema-release capability; no underlying tool permission is changed. Real validation of that follow-up is separate."
+}

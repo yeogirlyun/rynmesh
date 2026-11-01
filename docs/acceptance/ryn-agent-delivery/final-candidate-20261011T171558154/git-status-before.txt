@@ -1,0 +1,214 @@
+﻿ M pyproject.toml
+ M rynmesh/ai_access/catalog.py
+ M rynmesh/ai_access/routes.py
+ M rynmesh/ai_access/store.py
+ M rynmesh/llm_package/adapters.py
+ M rynmesh/llm_package/native_model.py
+ M rynmesh/llm_package/p2p.py
+ M rynmesh/llm_package/routes.py
+ M rynmesh/llm_package/sources.py
+ M rynmesh/nas.py
+ M rynmesh/peer_http.py
+ M rynmesh/personal_space.py
+ M rynmesh/services/document_extract.py
+ M rynmesh/services/document_extract_child.py
+ M tests/test_background_workers.py
+ M tests/test_llm_auto_connect.py
+ M tests/test_nas.py
+ M webapp/src-tauri/scripts/build-sidecar.sh
+ M webapp/src-tauri/scripts/build-windows.ps1
+ M webapp/src-tauri/sidecar/rynmesh_peer_entry.py
+ M webapp/src-tauri/src/lib.rs
+ M webapp/src/App.tsx
+ M webapp/src/domain/aiSources.ts
+ M webapp/src/domain/nas.ts
+ M webapp/src/domain/nativeModel.ts
+ M webapp/src/i18n.ts
+ M webapp/src/locales/ui.en.json
+ M webapp/src/locales/ui.zh-CN.json
+ M webapp/src/personal/Nas.test.tsx
+ M webapp/src/personal/Nas.tsx
+ M webapp/src/personal/NasPreview.tsx
+ M webapp/src/personal/ServiceNavigation.test.tsx
+ M webapp/src/personal/Shell.tsx
+ M webapp/src/personal/personal.css
+ M webapp/src/screens/AISources.test.tsx
+ M webapp/src/screens/AISources.tsx
+ M webapp/src/screens/PrivateAIChat.test.tsx
+ M webapp/src/screens/Services.tsx
+ M webapp/src/screens/components/NativeModelPanel.css
+ M webapp/src/screens/components/NativeModelPanel.test.tsx
+ M webapp/src/screens/components/NativeModelPanel.tsx
+?? .codex-tmp/
+?? "Rynmesh\351\241\271\347\233\256\350\247\204\345\210\222\344\270\216\346\234\215\345\212\241\347\275\221\347\273\234-P2P\350\212\202\347\202\271\345\225\206\344\270\232\347\211\210.pptx"
+?? "Rynmesh\351\241\271\347\233\256\350\247\204\345\210\222\344\270\216\346\234\215\345\212\241\347\275\221\347\273\234-P2P\350\212\202\347\202\271\345\225\206\344\270\232\347\211\210.pptx.inspect.ndjson"
+?? "Rynmesh\351\241\271\347\233\256\350\247\204\345\210\222\344\270\216\346\234\215\345\212\241\347\275\221\347\273\234.pptx"
+?? "Rynmesh\351\241\271\347\233\256\350\247\204\345\210\222\344\270\216\346\234\215\345\212\241\347\275\221\347\273\234.pptx.inspect.ndjson"
+?? "Rynmesh\351\241\271\347\233\256\350\247\204\345\210\222\344\270\216\346\234\215\345\212\241\347\275\221\347\273\234/"
+?? docs/acceptance/ask-ryn-live-20261007/
+?? docs/acceptance/drives-p2p-20261008.md
+?? docs/acceptance/ryn-agent-20261009/
+?? docs/acceptance/ryn-agent-delivery/
+?? docs/acceptance/windows-unified-20261008/
+?? docs/design/model-pool-t09-contract.md
+?? docs/design/peer-model-binding-t15-contract.md
+?? docs/design/ryn-agent-api-contract.md
+?? docs/design/ryn-agent-delivery-plan.md
+?? docs/design/ryn-agent-execution-flow.md
+?? docs/design/ryn-agent-implementation.md
+?? docs/design/ryn-integrated-agent-v4.md
+?? docs/design/ryn-intelligent-assistant-proposal.md
+?? docs/design/ryn-model-pool-agent-v3.md
+?? docs/design/ryn-system-agent-v2.md
+?? docs/design/scope-integrations-contract.md
+?? docs/drive-and-p2p-setup.md
+?? rynmesh/agent_runtime/
+?? rynmesh/cloud_drives.py
+?? rynmesh/drive_cache.py
+?? rynmesh/llm_package/consumer_cancellation.py
+?? rynmesh/llm_package/model_dispatch.py
+?? rynmesh/llm_package/model_settings.py
+?? rynmesh/llm_package/native_policy.py
+?? rynmesh/llm_package/p2p_session.py
+?? rynmesh/llm_package/peer_binding.py
+?? rynmesh/llm_package/space_catalog.py
+?? rynmesh/llm_package/tool_capabilities.py
+?? rynmesh/locales/
+?? rynmesh/onedrive.py
+?? tests/fixtures/
+?? tests/test_agent_access_query.py
+?? tests/test_agent_adapter_rejected_usage.py
+?? tests/test_agent_approval_contract.py
+?? tests/test_agent_atomic_sharing.py
+?? tests/test_agent_baseline_evidence.py
+?? tests/test_agent_budget_dispatch.py
+?? tests/test_agent_business_verification.py
+?? tests/test_agent_c04_development_controller.py
+?? tests/test_agent_cancellation_reason.py
+?? tests/test_agent_checker_empty_retry.py
+?? tests/test_agent_checker_references.py
+?? tests/test_agent_checkpoint_refs.py
+?? tests/test_agent_cloud_resources.py
+?? tests/test_agent_compact_efficiency.py
+?? tests/test_agent_consumer_process_proof.py
+?? tests/test_agent_context_serialization.py
+?? tests/test_agent_default_model.py
+?? tests/test_agent_diagnostic_fixture.py
+?? tests/test_agent_diagnostic_normalization.py
+?? tests/test_agent_diagnostics_integration.py
+?? tests/test_agent_dispatch_nested_read.py
+?? tests/test_agent_document_cases.py
+?? tests/test_agent_evidence_semantics.py
+?? tests/test_agent_file_scope.py
+?? tests/test_agent_inference_context.py
+?? tests/test_agent_integrations.py
+?? tests/test_agent_legacy_planner_policy.py
+?? tests/test_agent_long_resource_context.py
+?? tests/test_agent_model_visibility.py
+?? tests/test_agent_native_scope.py
+?? tests/test_agent_observation_transitions.py
+?? tests/test_agent_operation_permissions.py
+?? tests/test_agent_output_policy.py
+?? tests/test_agent_owner_contracts_http.py
+?? tests/test_agent_p03_controller.py
+?? tests/test_agent_p05_controller.py
+?? tests/test_agent_peer_binding.py
+?? tests/test_agent_peer_scope.py
+?? tests/test_agent_peer_task_binding.py
+?? tests/test_agent_planner_policy.py
+?? tests/test_agent_process_recovery.py
+?? tests/test_agent_query_cases.py
+?? tests/test_agent_query_planner_guard.py
+?? tests/test_agent_r04_controller.py
+?? tests/test_agent_r05_controller.py
+?? tests/test_agent_r06_controller.py
+?? tests/test_agent_read_retry_limit.py
+?? tests/test_agent_read_verification.py
+?? tests/test_agent_reference_admission.py
+?? tests/test_agent_reference_budget.py
+?? tests/test_agent_reference_host.py
+?? tests/test_agent_reference_output_policy.py
+?? tests/test_agent_reference_sources.py
+?? tests/test_agent_release_registry.py
+?? tests/test_agent_request_deadline.py
+?? tests/test_agent_resource_search.py
+?? tests/test_agent_resource_writes.py
+?? tests/test_agent_resources.py
+?? tests/test_agent_resources_http.py
+?? tests/test_agent_role_contract_v2.py
+?? tests/test_agent_role_dispatch_capture.py
+?? tests/test_agent_role_dispatch_review.py
+?? tests/test_agent_role_grade_v2.py
+?? tests/test_agent_role_query_world.py
+?? tests/test_agent_runtime.py
+?? tests/test_agent_runtime_budget.py
+?? tests/test_agent_runtime_capacity.py
+?? tests/test_agent_runtime_control.py
+?? tests/test_agent_runtime_credentials.py
+?? tests/test_agent_runtime_diagnostics.py
+?? tests/test_agent_runtime_knowledge.py
+?? tests/test_agent_runtime_lifecycle.py
+?? tests/test_agent_runtime_model_switch.py
+?? tests/test_agent_runtime_results.py
+?? tests/test_agent_runtime_retry.py
+?? tests/test_agent_runtime_state.py
+?? tests/test_agent_runtime_verification.py
+?? tests/test_agent_sharing_case.py
+?? tests/test_agent_sharing_receiver.py
+?? tests/test_agent_sharing_recovery_case.py
+?? tests/test_agent_sharing_scope.py
+?? tests/test_agent_sharing_verification.py
+?? tests/test_agent_source_drafts.py
+?? tests/test_agent_source_fixture.py
+?? tests/test_agent_source_update_fixture.py
+?? tests/test_agent_space_binding.py
+?? tests/test_agent_tool_menu.py
+?? tests/test_agent_webdav_fixture.py
+?? tests/test_ai_p2p_sessions.py
+?? tests/test_cloud_drives.py
+?? tests/test_consumer_cancellation.py
+?? tests/test_document_sidecar.py
+?? tests/test_model_pool_policies.py
+?? tests/test_native_model_policy.py
+?? tests/test_onedrive.py
+?? tests/test_two_host_review_boundaries.py
+?? webapp/src-tauri/src/drive_browser.rs
+?? webapp/src/App.agentRoutes.test.tsx
+?? webapp/src/domain/driveBrowser.test.ts
+?? webapp/src/domain/driveBrowser.ts
+?? webapp/src/domain/nasLocalization.test.ts
+?? webapp/src/domain/rynAgent.test.ts
+?? webapp/src/domain/rynAgent.ts
+?? webapp/src/locales/drives.en.json
+?? webapp/src/locales/drives.zh-CN.json
+?? webapp/src/personal/DriveCache.test.tsx
+?? webapp/src/personal/DrivePreview.tsx
+?? webapp/src/personal/Drives.test.tsx
+?? webapp/src/personal/Drives.tsx
+?? webapp/src/personal/agentNavigation.ts
+?? webapp/src/personal/drives.css
+?? webapp/src/screens/ModelPool.css
+?? webapp/src/screens/ModelPool.test.tsx
+?? webapp/src/screens/ModelPool.tsx
+?? webapp/src/screens/ModelPoolSettings.test.tsx
+?? webapp/src/screens/ModelPoolSettings.tsx
+?? webapp/src/screens/ModelPoolSharing.test.tsx
+?? webapp/src/screens/ModelPoolSharing.tsx
+?? webapp/src/screens/RynAgent.css
+?? webapp/src/screens/RynAgent.test.tsx
+?? webapp/src/screens/RynAgent.tsx
+?? webapp/src/screens/RynAgentBudget.test.tsx
+?? webapp/src/screens/RynAgentBudget.tsx
+?? webapp/src/screens/RynAgentCredential.test.tsx
+?? webapp/src/screens/RynAgentCredential.tsx
+?? webapp/src/screens/RynAgentGuidance.test.tsx
+?? webapp/src/screens/RynAgentGuidance.tsx
+?? webapp/src/screens/RynAgentModel.test.tsx
+?? webapp/src/screens/RynAgentModel.tsx
+?? webapp/src/screens/RynAgentRecords.test.tsx
+?? webapp/src/screens/RynAgentRecords.tsx
+?? webapp/src/screens/RynAgentScope.test.tsx
+?? webapp/src/screens/RynAgentScope.tsx
+?? webapp/src/screens/RynAgentVerification.tsx
+?? webapp/src/screens/components/NativeModelParameters.tsx
+?? webapp/src/screens/rynAgentText.ts

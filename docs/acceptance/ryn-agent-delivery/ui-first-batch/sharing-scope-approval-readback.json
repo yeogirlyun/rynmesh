@@ -1,0 +1,72 @@
+{
+  "kind": "synthetic_ui_only",
+  "formal_case_score": false,
+  "checks": {
+    "waiting_without_write": true,
+    "exact_scope_transition": true,
+    "both_saved_grants_present": true,
+    "inactive_saved_grant_included": true,
+    "not_published_before_approval": true
+  },
+  "task_id": "agent_2bfd89ee410c4c87b9d793b599f7458c",
+  "pending_approval": {
+    "arguments": {
+      "enabled": true,
+      "model_id": "local/src-723eb0a63db746eb-a3cfb2a53f09",
+      "scope": "friends"
+    },
+    "arguments_sha256": "d14f4df893999bf0957841ad001b66f4041a6ac6bdd816ddf59708a81fcaa541",
+    "call_id": "share",
+    "control_revision": 2,
+    "goal_revision": 1,
+    "id": "approval_3bf0bd48e2ea441c8496a2d87f1eb0df",
+    "preview": {
+      "after": {
+        "scope": "friends",
+        "sharing": true
+      },
+      "allowed_friend_grants": [
+        {
+          "allowed": true,
+          "effective": true,
+          "peer_id": "synthetic-node-a",
+          "relationship_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "revision": 1,
+          "service_id": "src-723eb0a63db746eb-a3cfb2a53f09"
+        },
+        {
+          "allowed": true,
+          "effective": false,
+          "peer_id": "synthetic-node-b",
+          "relationship_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "revision": 1,
+          "service_id": "src-723eb0a63db746eb-a3cfb2a53f09"
+        }
+      ],
+      "before": {
+        "scope": "personal_space",
+        "sharing": false
+      },
+      "configuration_revision": "8c42f621da6c167fa8c9ba7134e60e06538f56154ecc8bb66826db029c18eaae",
+      "model": "验收用本机模型 · acceptance-model",
+      "model_id": "local/src-723eb0a63db746eb-a3cfb2a53f09",
+      "scope": "friends",
+      "space": {
+        "id": "62ce91042c574e99866f1cfff6ae3c25",
+        "name": "隔离验收空间",
+        "revision": 1
+      },
+      "title": "Change model sharing"
+    },
+    "preview_sha256": "49c34ecb5f359c5a011ee1e19906b0548b3e1263bb5c4c930a50e958e9a5e9c8",
+    "scope_revision": 1,
+    "title": "Set sharing and optionally scope for one owned model. Scope friends requires separate exact friend grants; this tool never changes grants or proves receiver connectivity. To prepare private sharing, set enabled=false and scope=friends, then manage grants before enabling. Approval lists all allowed friend grants.",
+    "tool": "ryn_set_model_sharing"
+  },
+  "screenshot_sha256": "f0798f534e039823d7c89e4a015f112c8296453e1995d4994d9856d59ffa7812",
+  "limitations": [
+    "Synthetic relationship metadata for approval display; no real receiver in this UI run.",
+    "Approval deliberately not submitted; signed receiver execution is tested separately.",
+    "At 1280x720 the approval card requires scrolling; screenshot shows object/scope/recipients."
+  ]
+}

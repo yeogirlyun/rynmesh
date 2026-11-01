@@ -1,0 +1,56 @@
+
+> @rynmesh/webapp@0.7.0 test
+> npm run test:native && vitest run src/domain/agentFilePreview.test.ts --pool=threads --maxWorkers=1
+
+
+> @rynmesh/webapp@0.7.0 test:native
+> node --test src-tauri/tests/*.test.mjs
+
+TAP version 13
+# Subtest: an early PDF canvas waits for the late real drop listener and imports exactly once
+ok 1 - an early PDF canvas waits for the late real drop listener and imports exactly once
+  ---
+  duration_ms: 5.7349
+  type: 'test'
+  ...
+# Subtest: dragover cancellation alone cannot acknowledge file import
+ok 2 - dragover cancellation alone cannot acknowledge file import
+  ---
+  duration_ms: 1.5238
+  type: 'test'
+  ...
+# Subtest: loading Word and Grid canvases receive no drop until their loading notice disappears
+ok 3 - loading Word and Grid canvases receive no drop until their loading notice disappears
+  ---
+  duration_ms: 2.59
+  type: 'test'
+  ...
+# Subtest: an unacknowledged canvas stops at sixty seconds and shows one visible fallback
+ok 4 - an unacknowledged canvas stops at sixty seconds and shows one visible fallback
+  ---
+  duration_ms: 6.2092
+  type: 'test'
+  ...
+# Subtest: a page with no canvas never receives the file and also stops at the deadline
+ok 5 - a page with no canvas never receives the file and also stops at the deadline
+  ---
+  duration_ms: 1.6659
+  type: 'test'
+  ...
+1..5
+# tests 5
+# suites 0
+# pass 5
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 178.7341
+
+ RUN  v4.1.11 <repo>/webapp
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  09:47:27
+   Duration  7.62s (transform 350ms, setup 1.64s, import 49ms, tests 12ms, environment 5.39s)

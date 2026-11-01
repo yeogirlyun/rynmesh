@@ -1,0 +1,22 @@
+{
+  "kind": "deterministic-reference-pipe-smoke",
+  "real_model": false,
+  "result": {
+    "response": "Fixture confirmed.",
+    "turn_id": "turn_1dc6a2e7-e1e5-4feb-a4dc-edf2c678f0c6",
+    "registered_tools": [
+      "ryn_fixture_read"
+    ],
+    "event_count": 15,
+    "extra_host_tools": false,
+    "real_model": false
+  },
+  "dispatch_counts": {
+    "model": 2,
+    "tool": 1,
+    "approval": 0
+  },
+  "elapsed_seconds": 3.375,
+  "stderr_bytes": 0,
+  "upstream_commit": "29628c9acdb81b703bbd4080c207a0e7ce5e276e"
+}

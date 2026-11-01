@@ -1,0 +1,42 @@
+{
+  "status": "implemented_author_tested_independent_review_pending",
+  "policy_version": "configured-output-v1",
+  "author": "sharing_transaction / gpt-6-astra high",
+  "basis": ["output-policy-audit.json", "output-policy-design-review.json", "output-policy-integration-notes.json"],
+  "production": [
+    "Generation ceiling is the minimum configured per-model output, transport131072, remaining model context, and explicit request limit; durable remaining task tokens can reduce it further.",
+    "Existing input estimate, total task budget, call/time/retry limits and permission gates remain in effect. Policy and effective reservation are recorded before dispatch.",
+    "Visible assistant content and tool calls retain the configured byte limit; private reasoning continuation is separately bounded by the raw256KiB response limit, encrypted and excluded from public task views.",
+    "Storage reservation adds capacity for one bounded raw continuation before dispatch and reconciliation.",
+    "Bridge structural/size rejection retains sanitized usage and finish metadata; malformed finish metadata normalizes to unknown without losing reported counters."
+  ],
+  "acceptance_mapping": {
+    "planner_source_id": "src-7de9fb1d36c44bc8",
+    "planner_model": "glm-5.3-flash",
+    "owner_access": "SourceStore(migrate=False), read only",
+    "generation_fields": ["context_window", "max_output_tokens", "request_defaults"],
+    "method": "Map actual effective planner generation fields onto isolated model-a before its first business snapshot; explicitly record before/after metadata and credential-free policy hash. This changes fixture generation metadata, not frozen identities, sharing or grants.",
+    "admission": "Production ModelDispatchAdapter unchanged; source revision, bound permission, quota and concurrency gates remain installed.",
+    "migrated": ["Query candidate", "Query reference", "C03 candidate", "R02 parent and both worker phases"],
+    "reference": "Shared policy plus native configured maxOutputTokens; honor valid lower per-request limits. No upstream runtime or prompts edited."
+  },
+  "author_validation": [
+    {"group": "combined runtime, budget, capacity, checker, reference, query, R02", "passed": 189, "seconds": 68.09},
+    {"group": "C03", "passed": 2, "seconds": 10.44},
+    {"group": "actual pinned synthetic worker,512 and128000 caps", "passed": 2, "seconds": 30.74},
+    {"group": "final query/R02 collectors", "passed": 5, "seconds": 19.66}
+  ],
+  "validation_note": "Groups overlap; do not sum. New focused tests total34. Ruff passed. No live provider requests in this implementation batch.",
+  "limitations": [
+    "Other controllers run_baseline/run_documents/run_default_model/run_diagnostics/run_recovery/run_sources still use their previous fixture policies; migrate before a matched new-policy real run.",
+    "Pre-bridge HTTP parse or4MiB transport-limit failures still have unknown usage and conservatively retain reservations.",
+    "Higher generation allowance does not prove GLM success. Prior failed live runs retain their original4096 policy and evidence.",
+    "No formal trials or80percent comparison established."
+  ],
+  "reviewed_production_hashes_expected": {
+    "rynmesh/agent_runtime/output_policy.py": "fda6319d3e5fa1aeae3f1b4b6840f3a0ab61d14db02b94328dc260b6dfa1620c",
+    "rynmesh/agent_runtime/bridge.py": "f509e07142251a71893959adf60beaef2c4fc6449488e1d49098c02b03636b57",
+    "rynmesh/agent_runtime/runtime.py": "aba1404545bf8225af2ff0154686afad66ad7a6d472dab6a27b50228f4eeb9d8",
+    "rynmesh/agent_runtime/store.py": "77968d51d12309db2965c78ee50382e4294fa7f980c80fda31c6972ab72f81c6"
+  }
+}

@@ -1,0 +1,248 @@
+{
+  "consumer": [
+    {
+      "task_id": "agent_dffbc366bf194db794fd8be6df0a50ea",
+      "state": "succeeded",
+      "created_at": "2026-10-13T19:39:00.373123+00:00",
+      "updated_at": "2026-10-13T19:39:06.357925+00:00",
+      "provider_peer_id": "fR6oJFpFDez/LqWFSnyxUmOmTEB/f/7teSFY/y/9RSA=",
+      "service_id": "src-7de9fb1d36c44bc8-0d8724178b09",
+      "duration_ms": 5094,
+      "input_tokens": 11879,
+      "output_tokens": 214,
+      "transport": "peer_http_direct",
+      "transport_evidence": {
+        "discovery_source": "lan",
+        "relay_used": false,
+        "route": "lan",
+        "stream_protocol": "",
+        "transport": "peer_http_direct"
+      }
+    },
+    {
+      "task_id": "agent_b5ddb4d67b0e40e2b4c5b783a7df7e04",
+      "state": "succeeded",
+      "created_at": "2026-10-13T19:38:41.154812+00:00",
+      "updated_at": "2026-10-13T19:38:52.607833+00:00",
+      "provider_peer_id": "fR6oJFpFDez/LqWFSnyxUmOmTEB/f/7teSFY/y/9RSA=",
+      "service_id": "src-7de9fb1d36c44bc8-0d8724178b09",
+      "duration_ms": 10812,
+      "input_tokens": 12987,
+      "output_tokens": 294,
+      "transport": "peer_http_direct",
+      "transport_evidence": {
+        "discovery_source": "lan",
+        "relay_used": false,
+        "route": "lan",
+        "stream_protocol": "",
+        "transport": "peer_http_direct"
+      }
+    },
+    {
+      "task_id": "agent_7860c3044f804ff98f62e7d945c42cac",
+      "state": "succeeded",
+      "created_at": "2026-10-13T19:38:26.623332+00:00",
+      "updated_at": "2026-10-13T19:38:32.857643+00:00",
+      "provider_peer_id": "fR6oJFpFDez/LqWFSnyxUmOmTEB/f/7teSFY/y/9RSA=",
+      "service_id": "src-7de9fb1d36c44bc8-0d8724178b09",
+      "duration_ms": 5733,
+      "input_tokens": 7777,
+      "output_tokens": 57,
+      "transport": "peer_http_direct",
+      "transport_evidence": {
+        "discovery_source": "lan",
+        "relay_used": false,
+        "route": "lan",
+        "stream_protocol": "",
+        "transport": "peer_http_direct"
+      }
+    },
+    {
+      "task_id": "agent_8c6e0219b7234c58a3e4dff9b332c253",
+      "state": "succeeded",
+      "created_at": "2026-10-13T19:38:15.123162+00:00",
+      "updated_at": "2026-10-13T19:38:20.873214+00:00",
+      "provider_peer_id": "fR6oJFpFDez/LqWFSnyxUmOmTEB/f/7teSFY/y/9RSA=",
+      "service_id": "src-7de9fb1d36c44bc8-0d8724178b09",
+      "duration_ms": 5327,
+      "input_tokens": 7471,
+      "output_tokens": 34,
+      "transport": "peer_http_direct",
+      "transport_evidence": {
+        "discovery_source": "lan",
+        "relay_used": false,
+        "route": "lan",
+        "stream_protocol": "",
+        "transport": "peer_http_direct"
+      }
+    },
+    {
+      "task_id": "agent_3dba831cd5b64ea8a2e34dc6529c2c40",
+      "state": "succeeded",
+      "created_at": "2026-10-13T19:38:06.654600+00:00",
+      "updated_at": "2026-10-13T19:38:13.170081+00:00",
+      "provider_peer_id": "fR6oJFpFDez/LqWFSnyxUmOmTEB/f/7teSFY/y/9RSA=",
+      "service_id": "src-7de9fb1d36c44bc8-0d8724178b09",
+      "duration_ms": 5718,
+      "input_tokens": 5791,
+      "output_tokens": 97,
+      "transport": "peer_http_direct",
+      "transport_evidence": {
+        "discovery_source": "lan",
+        "relay_used": false,
+        "route": "lan",
+        "stream_protocol": "",
+        "transport": "peer_http_direct"
+      }
+    },
+    {
+      "task_id": "agent_8d18fbfc76f8410bbb796787538c9c8f",
+      "state": "succeeded",
+      "created_at": "2026-10-13T19:37:42.920162+00:00",
+      "updated_at": "2026-10-13T19:38:01.279385+00:00",
+      "provider_peer_id": "fR6oJFpFDez/LqWFSnyxUmOmTEB/f/7teSFY/y/9RSA=",
+      "service_id": "src-7de9fb1d36c44bc8-0d8724178b09",
+      "duration_ms": 18000,
+      "input_tokens": 2546,
+      "output_tokens": 1344,
+      "transport": "peer_http_direct",
+      "transport_evidence": {
+        "discovery_source": "lan",
+        "relay_used": false,
+        "route": "lan",
+        "stream_protocol": "",
+        "transport": "peer_http_direct"
+      }
+    },
+    {
+      "task_id": "agent_d8f624cbe73b463c8ef9deb3d9166947",
+      "state": "succeeded",
+      "created_at": "2026-10-13T19:37:33.935726+00:00",
+      "updated_at": "2026-10-13T19:37:39.609071+00:00",
+      "provider_peer_id": "fR6oJFpFDez/LqWFSnyxUmOmTEB/f/7teSFY/y/9RSA=",
+      "service_id": "src-7de9fb1d36c44bc8-0d8724178b09",
+      "duration_ms": 5250,
+      "input_tokens": 2298,
+      "output_tokens": 26,
+      "transport": "peer_http_direct",
+      "transport_evidence": {
+        "discovery_source": "lan",
+        "relay_used": false,
+        "route": "lan",
+        "stream_protocol": "",
+        "transport": "peer_http_direct"
+      }
+    }
+  ],
+  "consumer_catalog_worker": {
+    "name": "llm.space-catalog",
+    "running": true,
+    "last_success_at": "2026-10-13T19:38:56.623184+00:00",
+    "last_failure_at": "2026-10-13T19:39:23.982818+00:00",
+    "last_started_monotonic": 184777.203,
+    "next_run_monotonic": 184819.546,
+    "consecutive_failures": 1,
+    "error": "TaskProtocolError: background worker invocation failed",
+    "restarts": 0,
+    "crash_class": ""
+  },
+  "provider": [
+    {
+      "task_id": "agent_3dba831cd5b64ea8a2e34dc6529c2c40",
+      "state": "succeeded",
+      "created_at": "2026-10-13T19:38:06.912106+00:00",
+      "updated_at": "2026-10-13T19:38:12.772562+00:00",
+      "bindings": {
+        "consumer_peer_id": "ppw4BE4zoTTDrlGU/EM2wZ3JW7efSfXeuqrrZmCt9aM=",
+        "idempotency_key": "agent_3dba831cd5b64ea8a2e34dc6529c2c40",
+        "request_fingerprint": "hmac-sha256:25864366c1b07555b7023baa5e0bdda258dd9b5dd0c4d6c073ad52eb4a74883f",
+        "service_id": "src-7de9fb1d36c44bc8-0d8724178b09"
+      }
+    },
+    {
+      "task_id": "agent_7860c3044f804ff98f62e7d945c42cac",
+      "state": "succeeded",
+      "created_at": "2026-10-13T19:38:26.879513+00:00",
+      "updated_at": "2026-10-13T19:38:32.745749+00:00",
+      "bindings": {
+        "consumer_peer_id": "ppw4BE4zoTTDrlGU/EM2wZ3JW7efSfXeuqrrZmCt9aM=",
+        "idempotency_key": "agent_7860c3044f804ff98f62e7d945c42cac",
+        "request_fingerprint": "hmac-sha256:238ad79b1629d69dff423e5d012d55b6f7335bbc486ae66694176209f58b517c",
+        "service_id": "src-7de9fb1d36c44bc8-0d8724178b09"
+      }
+    },
+    {
+      "task_id": "agent_8c6e0219b7234c58a3e4dff9b332c253",
+      "state": "succeeded",
+      "created_at": "2026-10-13T19:38:15.378248+00:00",
+      "updated_at": "2026-10-13T19:38:20.883588+00:00",
+      "bindings": {
+        "consumer_peer_id": "ppw4BE4zoTTDrlGU/EM2wZ3JW7efSfXeuqrrZmCt9aM=",
+        "idempotency_key": "agent_8c6e0219b7234c58a3e4dff9b332c253",
+        "request_fingerprint": "hmac-sha256:ae6bade532771e55ae2679c7e6d686596e7b536546d0b6e5614229817adb6fc9",
+        "service_id": "src-7de9fb1d36c44bc8-0d8724178b09"
+      }
+    },
+    {
+      "task_id": "agent_8d18fbfc76f8410bbb796787538c9c8f",
+      "state": "succeeded",
+      "created_at": "2026-10-13T19:37:43.162970+00:00",
+      "updated_at": "2026-10-13T19:38:01.292964+00:00",
+      "bindings": {
+        "consumer_peer_id": "ppw4BE4zoTTDrlGU/EM2wZ3JW7efSfXeuqrrZmCt9aM=",
+        "idempotency_key": "agent_8d18fbfc76f8410bbb796787538c9c8f",
+        "request_fingerprint": "hmac-sha256:1524e50cfedf69dde56601834cf6bc36bd0fc0c95ce0ab5cce6512ef9275702c",
+        "service_id": "src-7de9fb1d36c44bc8-0d8724178b09"
+      }
+    },
+    {
+      "task_id": "agent_b5ddb4d67b0e40e2b4c5b783a7df7e04",
+      "state": "succeeded",
+      "created_at": "2026-10-13T19:38:41.397606+00:00",
+      "updated_at": "2026-10-13T19:38:52.346650+00:00",
+      "bindings": {
+        "consumer_peer_id": "ppw4BE4zoTTDrlGU/EM2wZ3JW7efSfXeuqrrZmCt9aM=",
+        "idempotency_key": "agent_b5ddb4d67b0e40e2b4c5b783a7df7e04",
+        "request_fingerprint": "hmac-sha256:99476a29eedcb966abedd1547bc87e9e7aa03c3c59f53650bf25676fa77c39cc",
+        "service_id": "src-7de9fb1d36c44bc8-0d8724178b09"
+      }
+    },
+    {
+      "task_id": "agent_d8f624cbe73b463c8ef9deb3d9166947",
+      "state": "succeeded",
+      "created_at": "2026-10-13T19:37:34.177176+00:00",
+      "updated_at": "2026-10-13T19:37:39.606032+00:00",
+      "bindings": {
+        "consumer_peer_id": "ppw4BE4zoTTDrlGU/EM2wZ3JW7efSfXeuqrrZmCt9aM=",
+        "idempotency_key": "agent_d8f624cbe73b463c8ef9deb3d9166947",
+        "request_fingerprint": "hmac-sha256:bfc57093456ac0568e00d700ffa06ebed29831239fa17f0cadcacd5db96a0d45",
+        "service_id": "src-7de9fb1d36c44bc8-0d8724178b09"
+      }
+    },
+    {
+      "task_id": "agent_dffbc366bf194db794fd8be6df0a50ea",
+      "state": "succeeded",
+      "created_at": "2026-10-13T19:39:01.154630+00:00",
+      "updated_at": "2026-10-13T19:39:06.359868+00:00",
+      "bindings": {
+        "consumer_peer_id": "ppw4BE4zoTTDrlGU/EM2wZ3JW7efSfXeuqrrZmCt9aM=",
+        "idempotency_key": "agent_dffbc366bf194db794fd8be6df0a50ea",
+        "request_fingerprint": "hmac-sha256:d1b68107f122a0ebe22e143b44525b264854e2a275a0463ea11e1f19577f87e4",
+        "service_id": "src-7de9fb1d36c44bc8-0d8724178b09"
+      }
+    }
+  ],
+  "provider_catalog_worker": {
+    "name": "llm.space-catalog",
+    "running": true,
+    "last_success_at": "2026-10-13T19:38:56.669475+00:00",
+    "last_failure_at": "",
+    "last_started_monotonic": 137368.921,
+    "next_run_monotonic": null,
+    "consecutive_failures": 0,
+    "error": "",
+    "restarts": 0,
+    "crash_class": ""
+  },
+  "matched_request_count": 7
+}

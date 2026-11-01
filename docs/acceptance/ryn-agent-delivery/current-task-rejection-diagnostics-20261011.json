@@ -1,0 +1,28 @@
+{
+  "kind": "bounded-product-repair",
+  "failure_evidence": "real-model/20261011T0800Z-P03-ryn-owner-draft/run.json",
+  "diagnosis": "Recoverable permission-denied tool result does not set task.error; current-task diagnostics omitted operation projection entirely while named-task diagnostics included it. The model received null task error and no operation cause context.",
+  "change": "Use existing bounded credential-free operation projection for current-task diagnostics too; whitelist permission_denied guidance and explicitly avoid inferring approval-hash mismatch or never-staged history. Does not assert exact past cause from current settings.",
+  "tests": {
+    "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_runtime_diagnostics.py -q",
+    "passed": 22,
+    "seconds": 1.13,
+    "ruff": "passed"
+  },
+  "hashes": {
+    "rynmesh/agent_runtime/diagnostics.py": "c1e5c9af675039465b092dd9174692064f83b3d5bdf242e38701bab5897b3812",
+    "tests/test_agent_runtime_diagnostics.py": "39e85fec8d7d17b605c89be82475b1defbb639323c9dfb8b908ff58368d98979"
+  },
+  "paid_model_calls": 0,
+  "independent_review": {
+    "reviewer": "inference_facts Astra high,non-author",
+    "verdict": "limited delta reviewed,no actionable finding",
+    "scope": "current-task safe operation projection and new actual persisted rejected write regression",
+    "no_real_model_claim": true
+  },
+  "limits": [
+    "Actual persisted synthetic denied-write runtime test is not proof of GLM reporting correctness.",
+    "No approval or permission guard changed; no task messages/arguments/body copied into diagnostics.",
+    "Historical P03 failure retained; no paid rerun in this repair."
+  ]
+}

@@ -61,6 +61,13 @@ def parse_invite(
         raise FriendCryptoError("invalid_invite")
     if tuple(payload.get("permissions") or ()) != PERMISSIONS:
         raise FriendCryptoError("invalid_invite")
+    if payload.get('purpose') not in {None, 'friend', 'ai'}:
+        raise FriendCryptoError('invalid_invite')
+    if payload.get('purpose') == 'ai':
+        ai = payload.get('ai')
+        if (not isinstance(ai, dict) or not isinstance(ai.get('service'), dict)
+                or not isinstance(ai['service'].get('package_id'), str) or not isinstance(ai.get('network_id'), str)):
+            raise FriendCryptoError('invalid_invite')
     if not hmac.compare_digest(str(payload.get("secret_hash", "")), secret_hash(secret)):
         raise FriendCryptoError("invalid_invite")
     try:

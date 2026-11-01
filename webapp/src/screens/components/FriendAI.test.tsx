@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { aiAccess, type FriendAISnapshot } from "../../domain/aiAccess";
 import type { FriendRecord } from "../../domain/friendTypes";
 import FriendAI from "./FriendAI";
+import { friendsApi } from "../../domain/friendsClient";
 
 const mocks = vi.hoisted(() => ({ confirm: vi.fn(), client: { getLLMServiceStatus: vi.fn(), publishLLMService: vi.fn() } }));
 vi.mock("../../appContext", () => ({ useAppContext: () => mocks }));
@@ -15,6 +16,7 @@ const service = { package_id: "model-x", model_alias: "Local model", capabilitie
 const snapshot = (): FriendAISnapshot => ({ peer_id: friend.peer_id, relationship_id: friend.relationship_id,
   checked_at: Date.now() / 1000, status: "authorized", services: [{ peer_id: friend.peer_id, online: true, service, capacity: { available: 1 } }] });
 beforeEach(() => {
+  vi.spyOn(friendsApi, "invites").mockResolvedValue({ invites: [] });
   mocks.confirm.mockReset();
   mocks.client.getLLMServiceStatus.mockResolvedValue({ online: true, ready: true, publication_enabled: true, service });
   vi.spyOn(aiAccess, "list").mockResolvedValue({ grants: [] });
@@ -22,6 +24,20 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 const open = () => render(<MemoryRouter><FriendAI friends={[friend]} /></MemoryRouter>);
+
+it("keeps a stale share link from authorizing a replacement service", async () => {
+  render(<MemoryRouter initialEntries={["/friends?share=previous-model"]}><FriendAI friends={[friend]} /></MemoryRouter>);
+  expect(await screen.findByRole("alert")).toHaveTextContent("selected service changed");
+  expect(screen.getByRole("button", { name: "Allow AI access" })).toBeDisabled();
+  expect(screen.getByRole("heading", { name: "Your AI" })).toHaveFocus();
+});
+
+it("does not present missing pricing as free", async () => {
+  mocks.client.getLLMServiceStatus.mockResolvedValue({ ready: true, service: { ...service, pricing: undefined } });
+  open();
+  expect(await screen.findByText(/Price unknown/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Allow AI access" })).toBeDisabled();
+});
 
 it("requires confirmation and waits for a committed grant before showing allowed", async () => {
   const set = vi.spyOn(aiAccess, "set").mockResolvedValue({ grant: { service_id: "model-x", relationship_id: friend.relationship_id,

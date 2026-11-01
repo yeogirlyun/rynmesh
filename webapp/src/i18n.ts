@@ -5,6 +5,12 @@ import personalEn from "./locales/personal.en.json";
 import personalZh from "./locales/personal.zh-CN.json";
 import uiEn from "./locales/ui.en.json";
 import uiZh from "./locales/ui.zh-CN.json";
+import drivesEn from "./locales/drives.en.json";
+import drivesZh from "./locales/drives.zh-CN.json";
+import dropEn from "./locales/drop.en.json";
+import dropZh from "./locales/drop.zh-CN.json";
+import craftEn from "./locales/craft.en.json";
+import craftZh from "./locales/craft.zh-CN.json";
 
 export type LanguagePreference = "system" | "zh-CN" | "en";
 const STORAGE_KEY = "ryn.language";
@@ -26,6 +32,9 @@ export function resolveLanguage(preference: LanguagePreference, systemLanguage =
 }
 
 const en = {
+  craft: craftEn,
+  drive: drivesEn,
+  drop: dropEn,
   personal: personalEn,
   nav: {
     home: "Home", services: "Services", devices: "Devices", tasks: "Tasks", nas: "NAS",
@@ -34,7 +43,7 @@ const en = {
     myServices: "My services", browseServices: "Browse services", serviceSetup: "Service setup",
     apiAccess: "API access", myDevices: "My devices", connectionDetails: "Connection details",
     preferences: "Preferences", desktop: "Desktop", personalSpace: "Personal space",
-    plugins: "Plugins", advancedSettings: "Advanced settings", aiChat: "AI chat",
+    plugins: "Plugins", agentExtensions: "Agent extensions", advancedSettings: "Advanced settings", aiChat: "AI chat",
   },
   shell: {
     mainNavigation: "Main navigation", primary: "Primary", manageSpace: "Manage personal space",
@@ -60,6 +69,8 @@ const en = {
     manage: "Manage", thisDevice: "This device", localService: "Local service", running: "Running",
     stopped: "Stopped", discoveryConnection: "Discovery connection", knownDevices: "Known devices",
     checkAgain: "Check again", checkComplete: "Connection check complete",
+    agentExtensionsHelp: "Manage Ryn Agent plugins, skills, and MCP servers.",
+    manageAgentExtensions: "Manage extensions",
   },
   pages: {
     homeSubtitle: "Use your devices. Share what they can do.",
@@ -70,6 +81,9 @@ const en = {
 } as const;
 
 const zh = {
+  craft: craftZh,
+  drive: drivesZh,
+  drop: dropZh,
   personal: personalZh,
   nav: {
     home: "首页", services: "服务", devices: "设备", tasks: "任务", nas: "NAS",
@@ -78,7 +92,7 @@ const zh = {
     myServices: "我的服务", browseServices: "浏览服务", serviceSetup: "服务设置",
     apiAccess: "API 接入", myDevices: "我的设备", connectionDetails: "连接详情",
     preferences: "偏好设置", desktop: "桌面端", personalSpace: "个人空间",
-    plugins: "插件", advancedSettings: "高级设置", aiChat: "AI 对话",
+    plugins: "插件", agentExtensions: "Agent 扩展", advancedSettings: "高级设置", aiChat: "AI 对话",
   },
   shell: {
     mainNavigation: "主导航", primary: "主导航", manageSpace: "管理个人空间",
@@ -104,6 +118,8 @@ const zh = {
     manage: "管理", thisDevice: "此设备", localService: "本地服务", running: "运行中",
     stopped: "已停止", discoveryConnection: "发现服务连接", knownDevices: "已知设备",
     checkAgain: "重新检查", checkComplete: "连接检查完成",
+    agentExtensionsHelp: "管理 Ryn Agent 的插件、技能与 MCP 服务器。",
+    manageAgentExtensions: "管理扩展",
   },
   pages: {
     homeSubtitle: "使用你的设备，分享它们的能力。",

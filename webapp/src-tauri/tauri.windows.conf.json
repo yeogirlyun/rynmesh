@@ -3,6 +3,10 @@
   "mainBinaryName": "Ryn",
   "bundle": {
     "targets": ["nsis"],
+    "externalBin": [
+      "binaries/rynmesh-peer",
+      "binaries/ryn_computer_use"
+    ],
     "resources": [],
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },

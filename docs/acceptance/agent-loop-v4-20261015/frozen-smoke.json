@@ -1,0 +1,8 @@
+{
+  "isolated_home": "D:\\code\\rynmesh\\.codex-tmp\\agent-loop-v4-isolated-smoke\\15e9d000119b49e98c615fdffbefc273",
+  "listen_host": "127.0.0.1",
+  "agent_enabled": false,
+  "permission_mode": "workspace",
+  "tool_count": 47,
+  "passed": true
+}

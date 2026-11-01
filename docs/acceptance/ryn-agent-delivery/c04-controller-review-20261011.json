@@ -1,0 +1,30 @@
+{
+  "kind": "bounded-root-nonauthor-C04-controller-review",
+  "at": "2026-10-11T07:50:42.006501+00:00",
+  "status": "accepted_for_one_owner_draft_development_attempt",
+  "review_scope": [
+    "preexisting model-a/node-b grant; distinct signed node-c binding",
+    "original prompt and exact follow-up; exact approval object/receiver/version; no invented grant",
+    "actual GLM adapter dispatch count includes authorized receiver probe; zero-denied-upstream checked at actual adapter",
+    "one task, one original followup, total24steps/600seconds/24calls; source owner readonly guarded",
+    "known usage on adapter errors; no raw exception/secret/reasoning exports; code hashes before/after"
+  ],
+  "tests": {
+    "author_targeted": 11,
+    "independent_selected": 2,
+    "independent_seconds": 1.03
+  },
+  "formal_trials_executed": 0,
+  "limitations": [
+    "Preexisting grant may yield no first pending-grant barrier: record false, no business/formal auto-pass.",
+    "Single-host signed probes are not physical-host proof.",
+    "Role overlay remains draft.",
+    "Live quality and GLM probe still need observation."
+  ],
+  "evidence": {
+    "real-model/run_access_c04.py": "7251637ca9776a4d4d3c8c334093ff85459c0ad834d24838b24b115e53157b7b",
+    "real-model/c04-controller-fixture-20261011-final/run.json": "b21cc53d3f2b2d1fff9018df496beecb9f56883fe25e1e5210042bb237870351"
+  },
+  "started_development_output": "real-model/20261011T0753Z-C04-ryn-owner-draft",
+  "max_real_calls": 24
+}

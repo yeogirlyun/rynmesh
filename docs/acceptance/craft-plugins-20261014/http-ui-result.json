@@ -1,0 +1,16 @@
+{
+  "realPinnedPackage": true,
+  "readyState": {
+    "wasm": "object",
+    "canvas": {
+      "width": 1280,
+      "height": 900
+    },
+    "loading": null
+  },
+  "disabledStoppedListener": true,
+  "hotReopened": true,
+  "controlErrors": [],
+  "editorErrors": [],
+  "documentRoundTripVerified": false
+}

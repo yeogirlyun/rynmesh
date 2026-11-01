@@ -15,6 +15,7 @@ import {
 import { useAppContext } from "../appContext";
 import { DeviceArt, Modal, Note, PageHeading } from "./components";
 import { personalHref, usePersonal } from "./model";
+import { AddDeviceBody } from "./AddDeviceBody";
 import type { SpaceStatus } from "../domain/space";
 
 export function SpaceControls({ compact = false }: { compact?: boolean }) {
@@ -66,6 +67,56 @@ export function SpaceControls({ compact = false }: { compact?: boolean }) {
       </Note>
     );
   const active = space.membership === "active";
+  const confirmModal = confirmation && (
+    <Modal title={confirmation.title} onClose={() => setConfirmation(null)}>
+      <p>{confirmation.detail}</p>
+      <footer className="pf-dialog-actions">
+        <button className="pf-button" onClick={() => setConfirmation(null)}>
+          {t("personal.cancel")}
+        </button>
+        <button
+          className="pf-button primary"
+          disabled={busy}
+          onClick={async () => {
+            const result = await run(
+              confirmation.action,
+              confirmation.body,
+            );
+            if (result) setConfirmation(null);
+          }}
+        >
+          {t("personal.confirm")}
+        </button>
+      </footer>
+    </Modal>
+  );
+  if (compact)
+    return (
+      <div className="pf-space-content">
+        <AddDeviceBody
+          space={space} demo={demo} busy={busy} disabled={disabled} pending={pending} error={error} copied={copied}
+          name={name} setName={setName} invitation={invitation} setInvitation={setInvitation} deviceName={deviceName}
+          hours={hours} setHours={setHours} run={run}
+          onCopy={async () => {
+            try {
+              await navigator.clipboard.writeText(space.invitation);
+              setCopied(true);
+            } catch {
+              setError(t("personal.couldNotCopySelectTheInvitationAndCopyItManually"));
+            }
+          }}
+          onCancelPending={() =>
+            setConfirmation({
+              title: t("personal.cancelThisRequest"),
+              detail: t("personal.aJoinAlreadyAcceptedByTheCoordinatorMayStillAppearInItsDeviceListAManagerCanRemoveThatDevice"),
+              action: "leave",
+              body: {},
+            })
+          }
+        />
+        {confirmModal}
+      </div>
+    );
   return (
     <div className="pf-space-content">
       {demo && (
@@ -504,29 +555,7 @@ export function SpaceControls({ compact = false }: { compact?: boolean }) {
           </Link>
         )}
       </div>
-      {confirmation && (
-        <Modal title={confirmation.title} onClose={() => setConfirmation(null)}>
-          <p>{confirmation.detail}</p>
-          <footer className="pf-dialog-actions">
-            <button className="pf-button" onClick={() => setConfirmation(null)}>
-              {t("personal.cancel")}
-            </button>
-            <button
-              className="pf-button primary"
-              disabled={busy}
-              onClick={async () => {
-                const result = await run(
-                  confirmation.action,
-                  confirmation.body,
-                );
-                if (result) setConfirmation(null);
-              }}
-            >
-              {t("personal.confirm")}
-            </button>
-          </footer>
-        </Modal>
-      )}
+      {confirmModal}
     </div>
   );
 }

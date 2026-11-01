@@ -1,0 +1,15 @@
+{
+  "reviewer": "root independent transcript and source-state inspection",
+  "classification": "development trial incomplete; failed required completion assertions; not formal score",
+  "observed": {
+    "model_calls": 2,
+    "elapsed_seconds": 110.218,
+    "task_status": "waiting_input",
+    "pending_kind": "information",
+    "saved_sources": 0,
+    "owner_source_unchanged": true,
+    "code_unchanged": true
+  },
+  "cause": "Model asked for endpoint, kind and optional provider in ordinary information fields. The actual secure credential form already collects endpoint/kind; tool instructions did not explain this clearly. The frozen intervention responds only to a credential-reference request, so the collector correctly stopped without extra coaching.",
+  "follow_up": "Clarify the general source-setup secure-form contract in versioned runtime instructions and tool descriptions. Preserve the original case, this failure and the no-extra-coaching controller. Run a new isolated development trial after the change."
+}

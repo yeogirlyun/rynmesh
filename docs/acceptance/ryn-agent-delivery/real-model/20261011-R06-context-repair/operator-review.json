@@ -1,0 +1,32 @@
+{
+  "kind": "R06-development-operator-review",
+  "formal_pass": false,
+  "formal_trials_executed": 0,
+  "business_success_seen": false,
+  "independent_review": false,
+  "raw_sha256": "ed8b2b5a129f625a4a9e27867e51dc97df5c749f647ec2b0a863fe724d65744b",
+  "actual_worker_pids": [
+    29928,
+    28836
+  ],
+  "workers_confirmed_terminal": true,
+  "first_compaction_and_restart_observed": true,
+  "final_status": "failed",
+  "final_error": "agent_context_limit",
+  "artifact_exists": false,
+  "requests": 5,
+  "known_input_tokens": 8102,
+  "known_output_tokens": 12895,
+  "unknown_usage_requests": 0,
+  "currency_cost": null,
+  "code_unchanged": true,
+  "changed_snapshot_files": [],
+  "source_unchanged": true,
+  "owner_source_unchanged": true,
+  "main_calls": 3,
+  "summary_calls": 2,
+  "get_requests": 0,
+  "put_requests": 0,
+  "budget_continuation_observed": true,
+  "conclusion": "Single authorized changed-code retest retained as failure: safe restart and budget continuation observed; five real model calls then context limit before any body read or artifact. No extra paid sample or budget increase. New trace feeds the same finite context defect; original failure remains."
+}

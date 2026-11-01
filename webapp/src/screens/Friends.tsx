@@ -1,19 +1,31 @@
+import { Button, Panel } from "../components/ui";
 import QRCode from "qrcode";
-import { useSearchParams } from "react-router-dom";
+import { Activity, UserPlus } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAppContext } from "../appContext";
-import { Button, PageHeader, Panel } from "../components/ui";
+import { useInviteDeepLink } from "../components/InviteDeepLinks";
 import { runThenReload } from "../domain/actThenReload";
-import type { FriendInvitePreview, FriendInviteResult, FriendRecord } from "../domain/friendTypes";
-import { extractInvite, friendsApi, invitationReach, invitationText } from "../domain/friendsClient";
-import FriendConversation from "./components/FriendConversation";
-import FriendConnectionDiagnostics from "./components/FriendConnectionDiagnostics";
-import FriendCards from "./components/FriendCards";
+import type { FriendContentCard, FriendInvitePreview, FriendInviteResult, FriendRecord, AIJoinOperation } from "../domain/friendTypes";
+import { extractInvite, friendsApi, invitationText, installationLink, aiJoinExplanation } from "../domain/friendsClient";
+import { tr, uiLocale, useUILanguage } from "../uiI18n";
+import AddFriendDialog, { type InviteTab } from "./components/AddFriendDialog";
 import FriendAI from "./components/FriendAI";
-import styles from "./Friends.module.css";
+import FriendCards, { cardBelongsTo } from "./components/FriendCards";
+import FriendConnectionDiagnostics from "./components/FriendConnectionDiagnostics";
+import FriendConversation from "./components/FriendConversation";
+import { Banner, CopyButton, EmptyFriends, FriendAvatar, FriendBand, FriendRow, LinkPill, LinkedText, PageNote, RefreshIcon, SearchField, friendHue, shortPeerId } from "./components/FriendsParts";
+import { errorText, linkInfo } from "./components/friendLinks";
+import { useFriendDiagnostics } from "./components/useFriendDiagnostics";
+import "./friends-refresh.css";
+
+type FriendTab = "msgs" | "cards" | "ai" | "conn";
 
 export default function Friends() {
+  useUILanguage();
+  const deepLink = useInviteDeepLink();
   const [params] = useSearchParams();
+  const navigate = useNavigate();
   const { confirm } = useAppContext();
   const [friends, setFriends] = useState<FriendRecord[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -23,30 +35,70 @@ export default function Friends() {
   const refreshReach = useCallback(async () => {
     setReach(null); setReachError("");
     try { setReach(await friendsApi.invitationContext()); }
-    catch { setReachError("Could not load your sharing address. Check the node's sharing address and retry."); }
+    catch { setReachError(tr("Could not load your sharing address. Check the node's sharing address and retry.")); }
   }, []);
   useEffect(() => { void refreshReach(); }, [refreshReach]);
   const [qr, setQr] = useState("");
   const [paste, setPaste] = useState("");
-  const [review, setReview] = useState<{ uri: string; preview: FriendInvitePreview } | null>(null);
+  const [review, setReview] = useState<{ uri: string; preview: FriendInvitePreview; operationId?: string } | null>(null);
+  const [operations, setOperations] = useState<AIJoinOperation[]>([]);
+  const errorFocus = useRef<HTMLDivElement>(null);
+  const reviewFocus = useRef<HTMLHeadingElement>(null);
+  const continuationId = useRef("");
+  const pasteFocus = useRef<HTMLTextAreaElement>(null);
   const revision = useRef(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [notice, setNotice] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [inviteTab, setInviteTab] = useState<InviteTab>("create");
+  const [tab, setTab] = useState<FriendTab>("msgs");
+  const [query, setQuery] = useState("");
+  const [cards, setCards] = useState<FriendContentCard[]>([]);
+  const [allowed, setAllowed] = useState<string[] | null>(null);
+  const [copied, setCopied] = useState(false);
+  const reconnecting = review?.preview.purpose !== "ai" && friends.some((friend) => friend.status === "active" && friend.peer_id === review?.preview.peer_id);
   const load = useCallback(async () => {
-    const [result, invitations] = await Promise.all([friendsApi.list(), friendsApi.invites()]);
+    const [result, invitations, joins] = await Promise.all([friendsApi.list(), friendsApi.invites(), friendsApi.aiJoins()]);
+    setOperations(joins.operations);
     setFriends(result.friends); setLoaded(true); setLoadError("");
     setInvite((current) => {
       const stored = invitations.invites.find((row) => row.invite_id === current?.invite.invite_id);
       return stored && (stored.status !== "active" || Date.parse(stored.expires_at) <= Date.now()) ? null : current;
     });
   }, []);
+  useEffect(() => { if (error) errorFocus.current?.focus(); }, [error]);
+  useEffect(() => { if (review) reviewFocus.current?.focus(); }, [review]);
+  useEffect(() => {
+    let active = true;
+    const version = revision.current;
+    void friendsApi.continuation().then((saved) => {
+      if (active && saved.invite_uri && version === revision.current) {
+        continuationId.current = saved.id ?? "";
+        setPaste(saved.invite_uri); setAddOpen(true); setInviteTab("use"); setNotice("Your saved invitation is ready. Review it before accepting.");
+        pasteFocus.current?.focus();
+      }
+    }).catch(() => { if (active) setNotice("Saved invitation could not be loaded. Paste your original invitation to continue."); });
+    return () => { active = false; };
+  }, []);
+  const clearContinuation = async () => {
+    if (continuationId.current) await friendsApi.clearContinuation(continuationId.current);
+    continuationId.current = "";
+  };
+  const finishAI = async (operation: AIJoinOperation) => {
+    await load();
+    if (operation.stage !== "complete" || operation.error) {
+      throw new Error(`${aiJoinExplanation(operation.error ?? "ai_grant_pending")} Operation ${operation.operation_id} is saved.`);
+    }
+    await clearContinuation(); setPaste(""); setReview(null);
+    navigate(`/ask?${new URLSearchParams({ peer: operation.peer_id, service: operation.service_id, network: operation.network_id })}`);
+  };
   const act = async (operation: () => Promise<void>) => {
     setBusy(true); setError(""); setNotice("");
     try { await operation(); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "Could not confirm this operation. Retry."); }
+    catch (cause) { setError(errorText(cause, tr("Could not confirm this operation. Retry."))); }
     finally { setBusy(false); }
   };
   // A confirmed removal followed by a failed reload is not a failed removal:
@@ -61,7 +113,7 @@ export default function Friends() {
       if (running) return;
       running = true;
       try { await load(); }
-      catch { if (active) setLoadError("Could not load friends. Retry to restore your list."); }
+      catch { if (active) setLoadError(tr("Could not load friends. Retry to restore your list.")); }
       finally { running = false; }
     };
     void poll();
@@ -71,73 +123,166 @@ export default function Friends() {
   useEffect(() => {
     let active = true;
     setQr("");
-    if (invite) void QRCode.toDataURL(invite.invite_uri, { width: 512, margin: 4 })
+    if (invite) void QRCode.toDataURL(installationLink(invite), { width: 512, margin: 4 })
       .then((value) => { if (active) setQr(value); })
-      .catch(() => { if (active) setNotice("QR code unavailable. Copy the invitation instead."); });
+      .catch(() => { if (active) setNotice(tr("QR code unavailable. Copy the invitation instead.")); });
     return () => { active = false; };
   }, [invite]);
   const activeFriends = friends.filter((friend) => friend.status === "active");
-  const conversation = activeFriends.find((friend) => friend.peer_id === selected);
-  useEffect(() => { setSelected(params.get("peer")); }, [params]);
+  const pendingRemovals = friends.filter((friend) => friend.status === "revoked" && friend.revocation_delivery === "pending");
+  const undeliverable = friends.filter((friend) => friend.status === "revoked" && friend.revocation_delivery === "undeliverable");
+  const diag = useFriendDiagnostics(activeFriends, { loadOnMount: true });
+  const urlPeer = params.get("peer");
+  useEffect(() => {
+    setSelected(params.get("peer"));
+    if (params.get("card")) setTab("cards");
+    else if (params.get("peer") || params.get("message")) setTab("msgs");
+  }, [params]);
+  const picked = activeFriends.find((friend) => friend.peer_id === selected);
+  const current = picked ?? (selected && selected === urlPeer ? undefined : activeFriends[0]);
+  const linkOf = (friend: FriendRecord) => linkInfo(diag.result?.links.find((link) => link.relationship_id === friend.relationship_id)?.state ?? "not_checked");
+  const needle = query.trim().toLowerCase();
+  const rows = needle ? activeFriends.filter((friend) => [friend.node_name, friend.endpoint].some((value) => value.toLowerCase().includes(needle))) : activeFriends;
+  const hasRows = activeFriends.length + pendingRemovals.length + undeliverable.length > 0;
+  const showEmpty = loaded && activeFriends.length === 0;
+  const verified = diag.result ? activeFriends.filter((friend) => linkOf(friend).tone === "ok").length : null;
+  const usingAi = allowed ? activeFriends.filter((friend) => allowed.includes(friend.relationship_id)).length : null;
+  const sharedCount = current ? cards.filter((card) => cardBelongsTo(card, current)).length : 0;
+  const pageError = addOpen ? "" : error || diag.error;
+  const pageNotice = addOpen ? "" : notice || diag.notice;
+  const since = current ? new Date(current.created_at) : null;
 
-  return <div className="screen-stack">
-    <PageHeader eyebrow="Private sharing" title="Friends" context="Invite someone you know, review their identity, then share your first message." />
-    {error || loadError ? <div role="alert">{error || loadError} <Button disabled={busy} onClick={() => void act(load)}>Refresh friends</Button></div> : null}
-    {notice ? <p role="status">{notice}</p> : null}
-    <div className={styles.heroGrid}>
-      <Panel className={styles.actionCard}>
-        <h2>Invite a friend</h2><p>One use, valid for 15 minutes. Allows messages, small attachments and content cards. AI access stays off.</p>
-        <p>Pair on the same local network or through an address your friend can already reach. Ryn does not open router ports for this invite. No connection has been tested.</p>
-        {!invite ? <>
-          {reach ? <p>Sharing address: {reach.endpoint} · {reach.address_category}. {invitationReach(reach.address_category)}</p> : <p role={reachError ? "alert" : "status"}>{reachError || "Loading sharing address…"}</p>}
-          <Button disabled={busy} onClick={() => void act(refreshReach)}>Refresh sharing address</Button>
-          <Button disabled={busy || !reach} onClick={() => void act(async () => {
-            try { setInvite(await friendsApi.createInvite(reach!.endpoint)); }
-            catch (cause) { await refreshReach(); throw cause; }
-          })}>Create invite</Button>
-        </> : <div className={styles.inviteBox}>
-          {qr ? <img className={styles.qr} src={qr} alt="Friend invitation QR code" /> : null}
-          <div><p>Expires {new Date(invite.invite.expires_at).toLocaleString()}</p><p>Sharing address: {invite.invite.endpoint} · {invite.invite.address_category}</p>
-            <textarea aria-label="Invitation and installation instructions" className={styles.paste} readOnly value={invitationText(invite)} />
-            <div className={styles.choiceRow}>
-              <Button disabled={busy} onClick={() => void act(async () => { await navigator.clipboard.writeText(invitationText(invite)); setNotice("Invitation and installation instructions copied."); })}>Copy invitation</Button>
-              <Button disabled={busy} onClick={() => void act(async () => { await friendsApi.cancel(invite.invite.invite_id); setInvite(null); setNotice("Invitation cancelled."); })}>Cancel invite</Button>
-            </div></div>
-        </div>}
-      </Panel>
-      <Panel className={styles.actionCard}>
-        <h2>Use an invite</h2>
-        <textarea className={styles.paste} aria-label="Friend invite" value={paste} onChange={(event) => { revision.current += 1; setPaste(event.target.value); setReview(null); }} placeholder="Paste the invitation here" />
-        {!review ? <Button disabled={busy || !paste.trim()} onClick={() => void act(async () => {
-          const version = revision.current; const uri = extractInvite(paste);
-          const preview = await friendsApi.inspect(uri);
-          if (version === revision.current) setReview({ uri, preview });
-        })}>Review invite</Button> : <div className={styles.review}>
-          <strong>Signature checked locally. Your friend has not been contacted.</strong>
-          <p>{invitationReach(review.preview.address_category)} Ryn does not open router ports for this invite. Reachability has not been tested.</p>
-          <dl><dt>Device</dt><dd>{review.preview.node_name}</dd><dt>Identity</dt><dd>{review.preview.peer_id}</dd><dt>Address</dt><dd>{review.preview.endpoint} · {review.preview.address_category}</dd><dt>Expires</dt><dd>{new Date(review.preview.expires_at).toLocaleString()}</dd><dt>Allows</dt><dd>Messages, attachments up to 5 MiB, content cards</dd><dt>Stays off</dt><dd>AI, VPN, access to your files and credits</dd></dl>
-          <Button disabled={busy} onClick={() => void act(async () => {
-            const version = revision.current;
-            const friend = await friendsApi.join(review.uri);
-            if (version === revision.current) { setPaste(""); setReview(null); }
-            setSelected(friend.peer_id); setNotice("Friend added. Send your first message below."); await load();
-          })}>Add this friend</Button>
-        </div>}
-      </Panel>
+  const create = () => void act(async () => {
+    try { setInvite(await friendsApi.createInvite(reach!.endpoint)); }
+    catch (cause) { await refreshReach(); throw cause; }
+  });
+  const askRemove = (friend: FriendRecord) => confirm({ title: tr("Remove {{name}}?", { name: friend.node_name }),
+    body: tr("New messages and private content requests are blocked immediately on this device. The other device may receive the notice later. Copies they already saved cannot be recalled."),
+    risk: "high", confirmLabel: tr("Remove friend"), onConfirm: () => actThenReload(() => friendsApi.revoke(friend.relationship_id)) });
+
+  return <div className="rf rd-friends">
+    {deepLink.pending && <div role="status">{tr("An invitation is ready to review.")} <button onClick={() => { revision.current += 1; setPaste(deepLink.pending); setReview(null); setAddOpen(true); setInviteTab("use"); deepLink.clear(); }}>{tr("Load opened invitation")}</button><button onClick={deepLink.clear}>{tr("Dismiss opened invitation")}</button></div>}
+    <header className="rq-head">
+      <div className="rq-head-text">
+        <h1>{tr("Friends")}</h1>
+        <p>{tr("Invite someone you know, review their identity, then share your first message.")}</p>
+      </div>
+      <div className="rq-head-actions">
+        <button type="button" className="rf-btn" disabled={busy || diag.busy || !diag.selected.length} onClick={() => { setTab("conn"); void diag.check(diag.selected); }}><Activity size={15} strokeWidth={1.6} aria-hidden="true" />{tr("Check connections")}</button>
+        <button type="button" className="rf-btn rf-btn-p" onClick={() => setAddOpen(true)}><UserPlus size={15} strokeWidth={2} aria-hidden="true" />{tr("Add a friend")}</button>
+      </div>
+    </header>
+    {pageError || loadError ? <div className="rq-banner rq-banner-bad" role="alert"><p>{pageError || loadError}</p><button type="button" className="rf-btn rf-btn-sm" disabled={busy} onClick={() => void act(load)}>{tr("Refresh friends")}</button></div> : null}
+    {pageNotice ? <p className="rq-banner rq-banner-ok" role="status">{pageNotice}</p> : null}
+    {selected && selected === urlPeer && loaded && !picked ? <Banner tone="warn" role="alert"><p>{tr("This friend is unavailable or access was removed.")}</p></Banner> : null}
+
+    <FriendBand friends={activeFriends.length} verified={verified} usingAi={usingAi} />
+
+    <div className="rq-cols">
+      {!loaded || hasRows ? <section className="rq-list rf-card" aria-labelledby="rq-list-title">
+        <div className="rq-list-head">
+          <h2 id="rq-list-title">{tr("Your friends")}</h2>
+          <button type="button" className="rf-ib" aria-label={tr("Refresh friends")} title={tr("Refresh friends")} disabled={busy} onClick={() => void act(load)}><RefreshIcon /></button>
+        </div>
+        <div className="rq-list-search"><SearchField value={query} onChange={setQuery} label={tr("Search friends")} placeholder={tr("Search friends")} /></div>
+        <div className="rq-list-body">
+          {!loaded ? <p className="rq-loading">{tr("Loading friends…")}</p> : null}
+          {rows.map((friend) => <FriendRow key={friend.relationship_id} friend={friend} info={linkOf(friend)} usesAi={allowed?.includes(friend.relationship_id) === true}
+            selected={friend.relationship_id === current?.relationship_id} onSelect={() => setSelected(friend.peer_id)} />)}
+          {loaded && activeFriends.length > 0 && rows.length === 0 ? <p className="rq-none-text">{tr("No friends match this search.")}</p> : null}
+          {pendingRemovals.map((friend) => <div className="rq-removed rf-t-warn" key={friend.relationship_id}>
+            <p>{tr("{{name}}: removed locally; waiting to notify their device.", { name: friend.node_name })}</p>
+            <button type="button" className="rf-btn rf-btn-sm" disabled={busy} onClick={() => void actThenReload(() => friendsApi.retryRevocation(friend.relationship_id))}>{tr("Retry removal notice")}</button>
+          </div>)}
+          {undeliverable.map((friend) => <div className="rq-removed rf-t-off" key={friend.relationship_id}>
+            <p>{tr("{{name}}: Removed on this device. The removal notice could not be sent because this friend's credentials were no longer available; they will see an error on their next request.", { name: friend.node_name })}</p>
+          </div>)}
+        </div>
+      </section> : null}
+
+      <section className={`rq-detail rf-card rf-h-${current ? friendHue(current) : "slate"}`} aria-label={current?.node_name ?? tr("Friend")} hidden={!current}>
+        {current ? <header className="rq-detail-head">
+          <FriendAvatar friend={current} size="lg" />
+          <div className="rq-detail-id">
+            <h2>{current.node_name}</h2>
+            <div className="rq-detail-sub"><LinkPill info={linkOf(current)} />{since && !Number.isNaN(since.getTime()) ? <small>{tr("Friends since {{date}}", { date: since.toLocaleDateString(uiLocale(), { month: "short", day: "numeric" }) })}</small> : null}</div>
+          </div>
+        </header> : null}
+        <div className="rq-tabs">
+          <div className="rf-seg" role="group" aria-label={tr("Friend sections")}>
+            {([["msgs", tr("Messages")], ["cards", tr("Shared content")], ["ai", tr("AI")], ["conn", tr("Connection")]] as const).map(([id, label]) =>
+              <button key={id} type="button" aria-pressed={tab === id} onClick={() => setTab(id)}>{label}{id === "cards" && sharedCount ? <em>{sharedCount}</em> : null}</button>)}
+          </div>
+        </div>
+        <div className="rq-pane" data-on={tab === "msgs"}>
+          {current ? <FriendConversation key={current.relationship_id} friend={current} focusMessage={params.get("message")} /> : null}
+        </div>
+        <div className="rq-pane" data-on={tab === "cards"}>
+          <FriendCards friends={friends} friend={current ?? null} focusCard={params.get("card")} onLoaded={setCards} />
+        </div>
+        <div className="rq-pane" data-on={tab === "ai"}>
+          <FriendAI friends={friends} friend={current ?? null} onAllowed={setAllowed} />
+        </div>
+        <div className="rq-pane rq-pane-conn" data-on={tab === "conn"}>
+          <FriendConnectionDiagnostics friends={activeFriends} focus={current ?? null} diag={diag} />
+          {current ? <>
+            <dl className="rq-facts">
+              <div><dt>{tr("Identity")}</dt><dd><code className="rf-code-chip" title={current.peer_id}>{shortPeerId(current.peer_id)}</code>
+                <CopyButton value={current.peer_id} label={tr("Copy identity")} copied={copied} onCopied={() => { setCopied(true); window.setTimeout(() => setCopied(false), 1600); }} /></dd></div>
+              <div><dt>{tr("Address")}</dt><dd className="rf-mono">{current.endpoint}</dd></div>
+              <div><dt>{tr("Allows")}</dt><dd>{tr("Messages, attachments up to 5 MiB, content cards")}</dd></div>
+              <div><dt>{tr("Stays off")}</dt><dd>{tr("VPN, access to your files and credits. AI only if you allow it.")}</dd></div>
+            </dl>
+            <div className="rq-danger">
+              <div><b>{tr("Remove friend")}</b><small>{tr("New messages and private content requests are blocked immediately on this device. The other device may receive the notice later. Copies they already saved cannot be recalled.")}</small></div>
+              <button type="button" className="rf-btn rf-btn-d rf-btn-sm" disabled={busy} onClick={() => askRemove(current)}>{tr("Remove friend")}</button>
+            </div>
+          </> : null}
+        </div>
+      </section>
+
+      {showEmpty ? <EmptyFriends onAdd={() => setAddOpen(true)} /> : null}
     </div>
-    <Panel><h2>Your friends</h2>
-      <Button disabled={busy} onClick={() => void act(load)}>Refresh friends</Button>
-      {!loaded ? <p>Loading friends…</p> : activeFriends.length === 0 ? <p>No friends yet. Create or paste an invite above.</p> : activeFriends.map((friend) => <div className={styles.friendCard} key={friend.relationship_id}>
-        <div><h3>{friend.node_name}</h3><span className={styles.meta}>{friend.endpoint}</span></div>
-        <div className={styles.choiceRow}><Button onClick={() => setSelected(friend.peer_id)}>Message {friend.node_name}</Button>
-          <Button disabled={busy} onClick={() => confirm({ title: `Remove ${friend.node_name}?`, body: "New messages and private content requests are blocked immediately on this device. The other device may receive the notice later. Copies they already saved cannot be recalled.", risk: "high", confirmLabel: "Remove friend", onConfirm: () => actThenReload(() => friendsApi.revoke(friend.relationship_id)) })}>Remove</Button></div>
-      </div>)}
-      {friends.filter((friend) => friend.status === "revoked" && friend.revocation_delivery === "pending").map((friend) => <div className={styles.friendCard} key={friend.relationship_id}><p>{friend.node_name}: removed locally; waiting to notify their device.</p><Button disabled={busy} onClick={() => void actThenReload(() => friendsApi.retryRevocation(friend.relationship_id))}>Retry removal notice</Button></div>)}
-      {friends.filter((friend) => friend.status === "revoked" && friend.revocation_delivery === "undeliverable").map((friend) => <div className={styles.friendCard} key={friend.relationship_id}><p>{friend.node_name}: Removed on this device. The removal notice could not be sent because this friend's credentials were no longer available; they will see an error on their next request.</p></div>)}
-    </Panel>
-    {conversation ? <FriendConversation key={conversation.relationship_id} friend={conversation} focusMessage={params.get("message")} /> : params.get("peer") && loaded ? <p role="alert">This friend is unavailable or access was removed.</p> : null}
-      <FriendCards friends={friends} focusCard={params.get("card")} />
-    <FriendConnectionDiagnostics friends={activeFriends} />
-    <FriendAI friends={friends} />
+
+    {operations.length ? <Panel><h2>{tr("AI invitation progress")}</h2><p>{tr("Unfinished operations survive restart. Continue the original operation; permission is checked before opening chat.")}</p>
+      {operations.map((operation) => <section key={operation.operation_id} aria-label={`AI invitation from ${operation.node_name}`}>
+        <h3>{operation.node_name} · {operation.service_id}</h3>
+        <p>{tr("Operation")} {operation.operation_id} · {operation.stage === "joining" ? "Friendship / authorization unfinished" : operation.stage === "discovering" ? "Service confirmation unfinished" : operation.stage === "complete" ? "Previously accepted; recheck to open" : "Stopped locally"}</p>
+        {operation.error ? <p>{aiJoinExplanation(operation.error)}</p> : null}
+        {operation.stage !== "cancelled" ? <>
+          <Button disabled={busy} onClick={() => void act(async () => finishAI(await friendsApi.resumeAIJoin(operation.operation_id)))}>{operation.stage === "complete" ? "Open this friend's AI" : "Continue original operation"}</Button>
+          {operation.stage === "joining" || operation.stage === "discovering" ? <Button disabled={busy} onClick={() => void act(async () => setReview({ uri: "", operationId: operation.operation_id, preview: await friendsApi.reviewAIJoin(operation.operation_id) }))}>{tr("Review current AI details")}</Button> : null}
+          <Button disabled={busy} onClick={() => confirm({ title: "Stop continuing this invitation?", body: "Clears its saved invitation on this device. Any friendship or AI permission already saved by the provider remains; ask them to revoke it if needed.", risk: "medium", confirmLabel: "Stop and clear invitation", onConfirm: () => act(async () => { await friendsApi.abandonAIJoin(operation.operation_id); await load(); }) })}>{tr("Stop continuing")}</Button>
+        </> : null}
+      </section>)}
+    </Panel> : null}
+
+    <PageNote><LinkedText text={tr("Messages with your own computers are in [link]Messages[/link].")} to="/chat" /></PageNote>
+
+    {addOpen ? <AddFriendDialog tab={inviteTab} onTab={setInviteTab} onClose={() => setAddOpen(false)} busy={busy} error={error} notice={notice}
+      reach={reach} reachError={reachError} onRefreshReach={() => void act(refreshReach)} invite={invite} qr={qr}
+      onCreate={create}
+      onCopy={() => void act(async () => { await navigator.clipboard.writeText(invitationText(invite!)); setNotice(tr("Invitation and installation instructions copied.")); })}
+      onCancelInvite={() => void act(async () => { await friendsApi.cancel(invite!.invite.invite_id); setInvite(null); setNotice(tr("Invitation cancelled.")); })}
+      paste={paste} onPaste={(value) => { revision.current += 1; setPaste(value); setReview(null); }} review={review} reconnecting={reconnecting}
+      onCancelReview={() => void act(async () => { await clearContinuation(); revision.current += 1; setPaste(""); setReview(null); })}
+      onReview={() => void act(async () => {
+        const version = revision.current; const uri = extractInvite(paste);
+        continuationId.current = (await friendsApi.saveContinuation(uri)).id;
+        const preview = await friendsApi.inspect(uri);
+        if (version === revision.current) setReview({ uri, preview });
+      })}
+      onJoin={() => void act(async () => {
+        const version = revision.current;
+        if (review!.preview.purpose === "ai") {
+          await finishAI(review!.operationId ? await friendsApi.resumeAIJoin(review!.operationId, review!.preview.review_token)
+            : await friendsApi.beginAIJoin(review!.uri, review!.preview.review_token ?? ""));
+          return;
+        }
+        const friend = await (reconnecting ? friendsApi.reconnect(review!.uri) : friendsApi.join(review!.uri));
+        await clearContinuation();
+        if (version === revision.current) { setPaste(""); setReview(null); }
+        setSelected(friend.peer_id); setTab("msgs"); setAddOpen(false); setNotice(reconnecting ? "Friend address verified and updated." : tr("Friend added. Send your first message below.")); await load();
+      })} /> : null}
   </div>;
 }

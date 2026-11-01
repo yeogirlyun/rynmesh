@@ -1,0 +1,94 @@
+{
+  "seconds": 11.71799999999348,
+  "result": {
+    "model_id": "glm-5.3-flash",
+    "tool_support": "supported",
+    "probe": "tools",
+    "evidence": {
+      "status": "passed",
+      "checked_at": "2026-10-13T19:22:18.868920+00:00",
+      "method": "two_turn_client_tool"
+    },
+    "source": {
+      "id": "src-7de9fb1d36c44bc8",
+      "kind": "api",
+      "name": "Z.ai · GLM",
+      "provider": "zai",
+      "base_url": "https://api.z.ai/api/paas/v4",
+      "models": [
+        "glm-5.3-flash"
+      ],
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "request_defaults": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "reasoning_effort": "max"
+      },
+      "sharing": true,
+      "enabled": true,
+      "status": "ready",
+      "model_settings": {
+        "glm-5.3-flash": {
+          "overrides": {
+            "request_defaults": {
+              "thinking": {
+                "type": "enabled"
+              },
+              "reasoning_effort": "low"
+            }
+          },
+          "rule_revision": "3beb040ea88d480cba2f0630f48196b6",
+          "destination_revision": "7eed6f05bc15484a9520590a0cd1e420",
+          "evidence": {
+            "connection": {
+              "status": "passed",
+              "checked_at": "2026-10-13T19:22:18.868920+00:00",
+              "method": "two_turn_client_tool"
+            },
+            "model_exists": {
+              "status": "present",
+              "checked_at": "2026-10-13T19:22:18.868920+00:00",
+              "method": "two_turn_client_tool"
+            },
+            "tools": {
+              "status": "passed",
+              "checked_at": "2026-10-13T19:22:18.868920+00:00",
+              "method": "two_turn_client_tool"
+            }
+          },
+          "effective": {
+            "context_window": 1000000,
+            "max_output_tokens": 128000,
+            "request_defaults": {
+              "thinking": {
+                "type": "enabled"
+              },
+              "reasoning_effort": "low"
+            },
+            "max_concurrent": 1,
+            "requests_per_day": null,
+            "share_scope": "personal_space"
+          },
+          "inherited_fields": [
+            "context_window",
+            "max_concurrent",
+            "max_output_tokens",
+            "requests_per_day",
+            "share_scope"
+          ]
+        }
+      },
+      "tool_support": {
+        "glm-5.3-flash": "supported"
+      },
+      "destination_revision": "0fa2decc77004ddab124f82d3b9ccea1",
+      "source_revision": "29474e80e18c4dac8ad469080d13e2c5",
+      "shared_models": [
+        "glm-5.3-flash"
+      ],
+      "has_key": true
+    }
+  }
+}

@@ -1,0 +1,1187 @@
+[
+  {
+    "path": "rynmesh/__init__.py",
+    "sha256": "1BA3F20B9E2F848DB7D3D407944989413993ECF30F33FF71BB59CB4263B46135",
+    "bytes": 5765
+  },
+  {
+    "path": "rynmesh/agent_runtime/__init__.py",
+    "sha256": "9D7282E519F8CEF46B041C7EF2F960DA40D187FDBE4BA8E0F94A8E53DB74B8DB",
+    "bytes": 83
+  },
+  {
+    "path": "rynmesh/agent_runtime/bridge.py",
+    "sha256": "9AEC8560CB3B9D07C0340CA0D0606EA24669287730404AF956778757F475699E",
+    "bytes": 14193
+  },
+  {
+    "path": "rynmesh/agent_runtime/budget.py",
+    "sha256": "AB63CC42CB4CE1485E14C4ED80AFE0697398A5C92A6F0AB2AF05FFBAC50815B6",
+    "bytes": 8701
+  },
+  {
+    "path": "rynmesh/agent_runtime/checker_references.py",
+    "sha256": "8ED18423A05E200559FB5E21D7F55D8375AA0A94437BB087101BF08DBD44199E",
+    "bytes": 5922
+  },
+  {
+    "path": "rynmesh/agent_runtime/checkpoint_refs.py",
+    "sha256": "DFF738813F221CF8BFA5227CD8985F112DC167DB462C9D9B825DCECFED453981",
+    "bytes": 3429
+  },
+  {
+    "path": "rynmesh/agent_runtime/cloud_resources.py",
+    "sha256": "1272D5FA99D570CEA380D6AD47613B92E5E12EAD0ECDDF41E6C0B9407939D8C7",
+    "bytes": 4546
+  },
+  {
+    "path": "rynmesh/agent_runtime/control.py",
+    "sha256": "7908C9DECC9CB7121FF6EB30E62AC509CD3250C35F5C3BDB80AE40F96E398A3D",
+    "bytes": 6340
+  },
+  {
+    "path": "rynmesh/agent_runtime/credential_control.py",
+    "sha256": "DBF319E3DDB1990BCFFFAA6EB6D04BFF8B9BF84830BF1834C0920A0E6522A7B1",
+    "bytes": 5873
+  },
+  {
+    "path": "rynmesh/agent_runtime/default_model.py",
+    "sha256": "C0D32D400756411E7DDB817FCDEB5444C6497222109967EB4A924430715CAA5C",
+    "bytes": 8497
+  },
+  {
+    "path": "rynmesh/agent_runtime/diagnostics.py",
+    "sha256": "C1E5C9AF675039465B092DD9174692064F83B3D5BDF242E38701BAB5897B3812",
+    "bytes": 17962
+  },
+  {
+    "path": "rynmesh/agent_runtime/evidence_semantics.py",
+    "sha256": "CBB44FCFA0E223CC7C154A1D200D068BD9B9CD2D545768154AF6DA7AEC2E443C",
+    "bytes": 7506
+  },
+  {
+    "path": "rynmesh/agent_runtime/inference_context.py",
+    "sha256": "46F2419D305115C9D337174AC374CEF2F6675F486D3CA34F4376D3602673F370",
+    "bytes": 2211
+  },
+  {
+    "path": "rynmesh/agent_runtime/knowledge.py",
+    "sha256": "9EC1499B441E6B791755F5A85D1CBB81462522C38B135D8054483A561563B534",
+    "bytes": 4826
+  },
+  {
+    "path": "rynmesh/agent_runtime/lifecycle.py",
+    "sha256": "878E0583D8EB0F0BFE2D08204F1AF691030E73D99009849C08485558A7CB3A5C",
+    "bytes": 5354
+  },
+  {
+    "path": "rynmesh/agent_runtime/model_switch.py",
+    "sha256": "918AE0B65605C60EABD0CFA23E33F6999ACD6D99FB6F5F65127AAAB9FCA5F103",
+    "bytes": 7655
+  },
+  {
+    "path": "rynmesh/agent_runtime/models.py",
+    "sha256": "4EFD69901C1D162D73F0BC554E947D4A7B649B6BF6C0075D30001087FFB339B4",
+    "bytes": 8782
+  },
+  {
+    "path": "rynmesh/agent_runtime/observation_transitions.py",
+    "sha256": "880CDF04AE73928A4EEF904295EEFF1165DFDB2B85897C0323008F1B9E231023",
+    "bytes": 6724
+  },
+  {
+    "path": "rynmesh/agent_runtime/operation_ledger.py",
+    "sha256": "43541B405CDD0C109515E486973CF370921C09269C5F3054687269E0CB4133C0",
+    "bytes": 4407
+  },
+  {
+    "path": "rynmesh/agent_runtime/operation_permissions.py",
+    "sha256": "295835E2A7405F06566C7F9F5BCF53366BD3D87A8EBCB8790AF55C99C84A4460",
+    "bytes": 3095
+  },
+  {
+    "path": "rynmesh/agent_runtime/output_policy.py",
+    "sha256": "FDA6319D3E5FA1AEAE3F1B4B6840F3A0AB61D14DB02B94328DC260B6DFA1620C",
+    "bytes": 2361
+  },
+  {
+    "path": "rynmesh/agent_runtime/prompt.py",
+    "sha256": "5C94BABF35ACCB4E5D999474161963B905EDD1EF4C6868A3287DA8371A66964E",
+    "bytes": 5376
+  },
+  {
+    "path": "rynmesh/agent_runtime/read_verification.py",
+    "sha256": "50B357C1509DEAA97AA997F14EEE6769862DF83BFE601925B049CFE874047EB9",
+    "bytes": 8067
+  },
+  {
+    "path": "rynmesh/agent_runtime/resource_documents.py",
+    "sha256": "23A1B4FA5B04C706DAA6106BEE6B97688B312315D536BFCEC835A177B5D9D65C",
+    "bytes": 1612
+  },
+  {
+    "path": "rynmesh/agent_runtime/resource_writes.py",
+    "sha256": "DF558D4BF180962A9E9F8BF9A998E0071BDEA25F7CB705A06D99AC2777F0B452",
+    "bytes": 10319
+  },
+  {
+    "path": "rynmesh/agent_runtime/resources.py",
+    "sha256": "B3F1766259B432645E007502F7C17E960B312FE9CF2313DBD6B9536080D70B95",
+    "bytes": 30427
+  },
+  {
+    "path": "rynmesh/agent_runtime/results.py",
+    "sha256": "1BE1E25BEDF929B77C2212531D88E34EDE498C9D75A41603053584C1F1AFDFD5",
+    "bytes": 3488
+  },
+  {
+    "path": "rynmesh/agent_runtime/routes.py",
+    "sha256": "BC1A1C33983FADDC01741166E336CAE7C8550DBA48DF3B3F13F1BE586DDE618F",
+    "bytes": 7956
+  },
+  {
+    "path": "rynmesh/agent_runtime/runtime.py",
+    "sha256": "361116FB52803AF157FC03BD2394A8AFA011C7C937629636860143DF45B0A759",
+    "bytes": 122353
+  },
+  {
+    "path": "rynmesh/agent_runtime/sharing.py",
+    "sha256": "16169CC3A99544156415CA758634CEF088BF24119D65E3C1DA0AB3DEBF5BC5AD",
+    "bytes": 15335
+  },
+  {
+    "path": "rynmesh/agent_runtime/source_drafts.py",
+    "sha256": "EC073C0ACB2FDB7B2A733C713AF42D09209A709F6021C320B94C75BD529F9B94",
+    "bytes": 30730
+  },
+  {
+    "path": "rynmesh/agent_runtime/state.py",
+    "sha256": "A7DB623A18E4B074D8ACB685D89E5FB8C00B3098E53371B8AB6721D47E5788A6",
+    "bytes": 5742
+  },
+  {
+    "path": "rynmesh/agent_runtime/store.py",
+    "sha256": "321CB6C69427B5D93C1BA990778380BEB8AAE9D2A666DB2D854FE5BA7036A8F8",
+    "bytes": 6484
+  },
+  {
+    "path": "rynmesh/agent_runtime/tool_menu.py",
+    "sha256": "115369F758827C35A5829689E8CC6984A2C2DEFF2695D7C0EB7E367DF3B85D03",
+    "bytes": 6710
+  },
+  {
+    "path": "rynmesh/agent_runtime/tools.py",
+    "sha256": "505368F9C7A10D461942C4CE522C3176CE1D4074519717CF9993955C69803668",
+    "bytes": 41460
+  },
+  {
+    "path": "rynmesh/agent_runtime/verification.py",
+    "sha256": "61454A6A7C7CE7285987795A0A81300580ABF843146AEFC96563DA473BCF7811",
+    "bytes": 17988
+  },
+  {
+    "path": "rynmesh/ai_access/__init__.py",
+    "sha256": "6DE3725EB9F24513FA6D770E5CDEDDF8E49240B96C440B64068D93776A923BB7",
+    "bytes": 68
+  },
+  {
+    "path": "rynmesh/ai_access/catalog.py",
+    "sha256": "CC29F2BE5411C241904A5040B0FB61839C03A114CABAAE06CA34B0C1594E2247",
+    "bytes": 9762
+  },
+  {
+    "path": "rynmesh/ai_access/routes.py",
+    "sha256": "A1F9824F153B16EC234A4CB459420CD809F29ECE27675A17714310F030F49697",
+    "bytes": 6477
+  },
+  {
+    "path": "rynmesh/ai_access/store.py",
+    "sha256": "CA067BE85D368DA812C5A5692E859D188A7DE4841B1179C2B3C69038F3D63637",
+    "bytes": 7279
+  },
+  {
+    "path": "rynmesh/ask_ryn/__init__.py",
+    "sha256": "6FB0B0E4BD74B38B067B9F4EDD66E202CA6CA2B8E93D3BB0D708FD05B30FE152",
+    "bytes": 75
+  },
+  {
+    "path": "rynmesh/ask_ryn/cleanup.py",
+    "sha256": "0316EA530188814FD18C0D618EBBB51A88E04C405F1E5A99C5E2284977F66E8D",
+    "bytes": 18173
+  },
+  {
+    "path": "rynmesh/ask_ryn/cleanup_routes.py",
+    "sha256": "3DA631D2067EF0FCA1420679C39AC5A6E754E9CEEA93A633EA11E32924C68854",
+    "bytes": 5087
+  },
+  {
+    "path": "rynmesh/ask_ryn/context.py",
+    "sha256": "A1BBFA40F17DC3F85C88974F49EDD266B6F2AEE9C267BB22E89E20FF83B92A6D",
+    "bytes": 9008
+  },
+  {
+    "path": "rynmesh/ask_ryn/privacy.py",
+    "sha256": "FCCE454392E1322B6A94BA2AAADC7B964A9276DCC14CE7F6F2D84AB54241E121",
+    "bytes": 7041
+  },
+  {
+    "path": "rynmesh/ask_ryn/routes.py",
+    "sha256": "C3EDE0D6D07C3A698D0B8B2B1454382C27418446707E4AA74532829F3935C731",
+    "bytes": 10464
+  },
+  {
+    "path": "rynmesh/ask_ryn/runs.py",
+    "sha256": "9604BB1CDD65E24F364D41FE2B4E1C1A6722F1242520ED82E3A19AE1B7FB2CBC",
+    "bytes": 16769
+  },
+  {
+    "path": "rynmesh/ask_ryn/store.py",
+    "sha256": "6760632FDE78B6929D5E37BB272CE1C20810C15E6DDE01F056B2A18A49FF3D42",
+    "bytes": 25085
+  },
+  {
+    "path": "rynmesh/atomic_io.py",
+    "sha256": "38BE0221A9CF572A8823837115DCE2C3EED4E987F90246438FD51D16E4C479BA",
+    "bytes": 7628
+  },
+  {
+    "path": "rynmesh/background_workers.py",
+    "sha256": "F502B3E4DF9365A324E9F225946EC9E0C11490D485178F11B5DB95CA8ECAB090",
+    "bytes": 18135
+  },
+  {
+    "path": "rynmesh/cloud_drives.py",
+    "sha256": "2E2B82A0AD82361A6ED3814C638B108AB593308FBFF49BCDC8B8F17CE0381D2C",
+    "bytes": 28609
+  },
+  {
+    "path": "rynmesh/credits.py",
+    "sha256": "1A0194AF3D21FE354B7788D5B103671C99C3728A0221A246BA731754FD42CA92",
+    "bytes": 19979
+  },
+  {
+    "path": "rynmesh/crypto.py",
+    "sha256": "BEB4EA9755368B0065D651D94E2B7498D95DC40C1E2F0833A02559FCBD97D6A8",
+    "bytes": 4701
+  },
+  {
+    "path": "rynmesh/device_erasure/__init__.py",
+    "sha256": "A864651F31631DD2A94EEF3AE713B96EB08AA6BBFCCEFB3FF2CC488C06307B62",
+    "bytes": 70
+  },
+  {
+    "path": "rynmesh/device_erasure/adapters.py",
+    "sha256": "65599A2C8E8B06A12F31E381B6D9096A0A15CCC6388E4AAC3DE3A7DB22CFC3FC",
+    "bytes": 2751
+  },
+  {
+    "path": "rynmesh/device_erasure/routes.py",
+    "sha256": "3D6E04033A5D76ED065C729667DFA035E33FB9F661E43C493DD731F4E82D7E58",
+    "bytes": 3109
+  },
+  {
+    "path": "rynmesh/device_erasure/service.py",
+    "sha256": "1B420A77D02E6276C1F15A2A9C6D73CAA33BDF2F0BD27EAB9BE2559276CE272D",
+    "bytes": 13157
+  },
+  {
+    "path": "rynmesh/device_erasure/store.py",
+    "sha256": "F867FDBC5BAC059AB4EE41AF2B741F195053AD8CA00FBCBC81CB5D8B542BF49F",
+    "bytes": 2392
+  },
+  {
+    "path": "rynmesh/device_sync/__init__.py",
+    "sha256": "67E0E9EE0C2A2BACEFB4C79B86C172B56F785FB1005DD399AE5E22AA2C2CAA65",
+    "bytes": 83
+  },
+  {
+    "path": "rynmesh/device_sync/conversation_bridge.py",
+    "sha256": "683E6CC302CDFBF7655CF08BC6E50C5BC9E64808673A371C60915DE80792A24B",
+    "bytes": 1784
+  },
+  {
+    "path": "rynmesh/device_sync/conversations.py",
+    "sha256": "5E3D21AB77C2CA83C76DC592BBD6B5B43D3F0AB9DE67E076B61F37B065AB12DD",
+    "bytes": 10576
+  },
+  {
+    "path": "rynmesh/device_sync/diagnostic_budget.py",
+    "sha256": "9FAB215CA7F5D05DE0B5E9F0347268B76BA9EEE00CA63D01289D3ABFCCB1E343",
+    "bytes": 2439
+  },
+  {
+    "path": "rynmesh/device_sync/pair_crypto.py",
+    "sha256": "81711E878DA3C23EABB8DA92022464EF86C96736C6EBCDF602C52411B70FD577",
+    "bytes": 5945
+  },
+  {
+    "path": "rynmesh/device_sync/pair_store.py",
+    "sha256": "3D7E7C8752B688B9F8B3806A92DAD31848F9D84A63930BC5C70416AA56263E9D",
+    "bytes": 10514
+  },
+  {
+    "path": "rynmesh/device_sync/pairing.py",
+    "sha256": "90E9314E811C1AF5539A7BAD3A32525369D6D497D0FBBF279AF3C2EA09A7FE7F",
+    "bytes": 27559
+  },
+  {
+    "path": "rynmesh/device_sync/reading.py",
+    "sha256": "77630E193991C6EB1BF15F24A39EB985F0C53D1B4F8C424C966E8B7E7968BEE2",
+    "bytes": 15679
+  },
+  {
+    "path": "rynmesh/device_sync/reading_bridge.py",
+    "sha256": "2E2FCD5677FEE1DCFEC09BC5C934F326663CA18F27AF8220AA1324246E88D2EF",
+    "bytes": 2568
+  },
+  {
+    "path": "rynmesh/device_sync/records.py",
+    "sha256": "84E27CCB9F7A72D86A021B467AA50F944737E1410DB2B7B3659DF281FDFE0B5C",
+    "bytes": 11920
+  },
+  {
+    "path": "rynmesh/device_sync/routes.py",
+    "sha256": "B96E2BE80993EF5B03019417AE2732EBAA61AA1A873903AE115DEC3A5655C8C9",
+    "bytes": 13414
+  },
+  {
+    "path": "rynmesh/device_sync/store.py",
+    "sha256": "1270B331CD7ACD5211D051B72422038A4A3D6B3F520A7FF79D76EBE120BAF5DA",
+    "bytes": 17796
+  },
+  {
+    "path": "rynmesh/device_sync/transfer.py",
+    "sha256": "8CAD3D66DBD24908461D650E6E7624C4963FCF048D3AE21588C8F7DEB57182E7",
+    "bytes": 21418
+  },
+  {
+    "path": "rynmesh/drive_cache.py",
+    "sha256": "69FE08D882C911CAD5D388FFDD01C9E2CE2EBF624852C2C2D18276EEE12C7D72",
+    "bytes": 3180
+  },
+  {
+    "path": "rynmesh/eigentrust.py",
+    "sha256": "B75EDFADA3D1A9F55CB4DD65C89ACAEE84212B3AC81ECADB33240A4225245E9A",
+    "bytes": 6668
+  },
+  {
+    "path": "rynmesh/exchange/__init__.py",
+    "sha256": "D557066BA66F348A7501175D86392F0453306A87ACA3DD4478CE0A0E0F69CF8B",
+    "bytes": 82
+  },
+  {
+    "path": "rynmesh/exchange/cli.py",
+    "sha256": "66E61C2516C606443A91C0602C138333AFB7F38C718862DF4FA5811978D2E99B",
+    "bytes": 4293
+  },
+  {
+    "path": "rynmesh/exchange/ledger.py",
+    "sha256": "39D9C734AD065EC409688355F98E1215C8DC312AB1F59987EAC3E895848462FE",
+    "bytes": 15863
+  },
+  {
+    "path": "rynmesh/exchange/legacy_v1.py",
+    "sha256": "B2FCCEB1FAE92DAAA373E951BB5FBF8B0EFDA31074BB9AF625B4CBA08523E131",
+    "bytes": 24311
+  },
+  {
+    "path": "rynmesh/exchange/protocol.py",
+    "sha256": "9FF4F280C5E6A55D43BE5C92237D70063A3890AEE024F587A822B94A122389D2",
+    "bytes": 31584
+  },
+  {
+    "path": "rynmesh/exchange/routes.py",
+    "sha256": "F7D4857A201A2F3C7DA338E9CED22A01E4DB84E0933322212BCEB43EBEA8B4BA",
+    "bytes": 5592
+  },
+  {
+    "path": "rynmesh/exchange/service.py",
+    "sha256": "2B3DC6F0E0CE9E7856E9721426C46BEEB422237E25169B125C5019EEAEBC194F",
+    "bytes": 39569
+  },
+  {
+    "path": "rynmesh/file_transactions.py",
+    "sha256": "259A3AC620338428FE9F08297C53152974F4089CE70575D6F18A463A4591C915",
+    "bytes": 1615
+  },
+  {
+    "path": "rynmesh/first_run_routes.py",
+    "sha256": "43F307C7F59D4E2EA4D1C0F48A9CFDBC533C3A9F773A64B8ADB88353F6B75EE1",
+    "bytes": 9240
+  },
+  {
+    "path": "rynmesh/friend_feed/__init__.py",
+    "sha256": "658384FDE93972A007BBE46DA58979C1782CFA454ECC5597E0DFEA23D61DF33B",
+    "bytes": 80
+  },
+  {
+    "path": "rynmesh/friend_feed/cleanup.py",
+    "sha256": "D93F06742F2CB0E6C9158C731BD02B76A11ED8FE214AACF0B09549C38947A508",
+    "bytes": 10989
+  },
+  {
+    "path": "rynmesh/friend_feed/routes.py",
+    "sha256": "6CCEDCB0D5F3F76E29EC304E877208132F600A86CE1DF24826A4256488BC24D3",
+    "bytes": 7234
+  },
+  {
+    "path": "rynmesh/friend_feed/service.py",
+    "sha256": "85B8665FF9513522447C97A3F466575BFA15E2B4981854DF8C5FCAF399392D4D",
+    "bytes": 24660
+  },
+  {
+    "path": "rynmesh/friend_feed/store.py",
+    "sha256": "5C04AFA0D935FC82A72EAB10C097C81346008421CFE4DA9C6BFA519E9470D3A6",
+    "bytes": 4445
+  },
+  {
+    "path": "rynmesh/friend_feed/weekly.py",
+    "sha256": "8356A7BB57583E8F0F5DFC12A532F3150B2B8C84A667B6431249F3C595769185",
+    "bytes": 1830
+  },
+  {
+    "path": "rynmesh/friends/__init__.py",
+    "sha256": "2952B9CB769ECAD85C4237C8381EB51F6B08D6F277ABAE6A3196EAE08CF7F207",
+    "bytes": 153
+  },
+  {
+    "path": "rynmesh/friends/card_cleanup.py",
+    "sha256": "0D3DE9D7C35919E218C2437989710DC7D454FF31C0EE8753E0C965546655DA75",
+    "bytes": 7857
+  },
+  {
+    "path": "rynmesh/friends/content.py",
+    "sha256": "02C29EBBD182567209A3C2854C0167B36963FB224151A64DEAA040131B395FC4",
+    "bytes": 8114
+  },
+  {
+    "path": "rynmesh/friends/crypto.py",
+    "sha256": "AE50F00C3BDC392501C536CBE26B517D47A0F98BE79ABF9D82D1DCB15BED943E",
+    "bytes": 6524
+  },
+  {
+    "path": "rynmesh/friends/diagnostics.py",
+    "sha256": "D455426896378E500B0A30AE06CF855CB6B133D9680EC84E2AD0A65D3714D6D1",
+    "bytes": 8164
+  },
+  {
+    "path": "rynmesh/friends/mailbox.py",
+    "sha256": "389B2AADDB1104D086F2EBD75FDC7DCEE619465A4D9E2ADBD9F43D5FDBBD1868",
+    "bytes": 2869
+  },
+  {
+    "path": "rynmesh/friends/routes.py",
+    "sha256": "61F2BCADAFDF41922E3B1BCD3EC280685E8409A66BD4089B293C9EF3BFB0C2C1",
+    "bytes": 20996
+  },
+  {
+    "path": "rynmesh/friends/service.py",
+    "sha256": "A45DAFCB1FF81D7C72EEFF36D197A668B1ABEFABD4CC9C7970885994CBA30E7A",
+    "bytes": 53042
+  },
+  {
+    "path": "rynmesh/friends/store.py",
+    "sha256": "AD555307DD972594C82C9B79E6DBC45F8DAEEA61ECAE55BEC900C77F6D593D04",
+    "bytes": 15678
+  },
+  {
+    "path": "rynmesh/identity.py",
+    "sha256": "AFC5E84F8D9FA1A8043DA736DD6BD1A99F1A3FA9E6DD51AD9FCACBC11E1DF6BF",
+    "bytes": 15475
+  },
+  {
+    "path": "rynmesh/jobs.py",
+    "sha256": "8F29A5760E6325175CCD95CCADD26F7913B82586E52B64964A1ACABEFB1FD1A6",
+    "bytes": 13236
+  },
+  {
+    "path": "rynmesh/lan_discovery.py",
+    "sha256": "8A7809EC8F10B502E969853123E0B141AAF52A72C5580823E4B63A2CE3BECFE3",
+    "bytes": 18731
+  },
+  {
+    "path": "rynmesh/llm_package/__init__.py",
+    "sha256": "5F48FFF57B1B23E343C018790954CC663D85B4071BD005F48FA619176B8EFF7A",
+    "bytes": 351
+  },
+  {
+    "path": "rynmesh/llm_package/adapters.py",
+    "sha256": "0CC5B59A390A919BA5088FC05575679EE4753DA8D713CB341194710AA7C4B097",
+    "bytes": 30325
+  },
+  {
+    "path": "rynmesh/llm_package/api.py",
+    "sha256": "9C8342E83764A33F41B2B676CD2C2BC86E27E5E044076CE3C2F304BE9835543C",
+    "bytes": 19309
+  },
+  {
+    "path": "rynmesh/llm_package/api_formats.py",
+    "sha256": "EF7C3DB7F16FE30CEDFAE36F329E49B21EEF73B3F8E61299DA1C35023FE70A0F",
+    "bytes": 15750
+  },
+  {
+    "path": "rynmesh/llm_package/catalog.py",
+    "sha256": "B99FFCA4E736CDFB1158D377BB36BD8AA2208B81F851DE20084E7A8B54B0023B",
+    "bytes": 4038
+  },
+  {
+    "path": "rynmesh/llm_package/chat.py",
+    "sha256": "1A9B6BED715727555B05BC354A7016C41286F0E7FA72A11AC956404DE5AEBBAB",
+    "bytes": 10048
+  },
+  {
+    "path": "rynmesh/llm_package/chat_prompt.py",
+    "sha256": "F76F1C4A111540A7FA97997862926A6518946F0506651BEA0AA34941C2EFBD5B",
+    "bytes": 1336
+  },
+  {
+    "path": "rynmesh/llm_package/cli.py",
+    "sha256": "BEF2C3B9D31C9EDD2461C7F8FFBFC8FF5204BCF390F9AC5F801446F3E3F103B5",
+    "bytes": 5502
+  },
+  {
+    "path": "rynmesh/llm_package/cli_adapter.py",
+    "sha256": "916CC3AF333DF8B09F1BEFC1149B8D24B51274B063E45D6C40BFBF8860EC5145",
+    "bytes": 13805
+  },
+  {
+    "path": "rynmesh/llm_package/codex_session.py",
+    "sha256": "AEE110117DF3A1E937F19E7483C54163FCC7183ABFB0AD822E413B6833CE9D2F",
+    "bytes": 16399
+  },
+  {
+    "path": "rynmesh/llm_package/connectivity.py",
+    "sha256": "322077D5FC2C8F4D321ADC6B9C01778D8F38F4574900A8695C3BA50AF91E3422",
+    "bytes": 1654
+  },
+  {
+    "path": "rynmesh/llm_package/consumer_cancellation.py",
+    "sha256": "17EFB891F84A6AA6089FCE3F7D78E73375673D8B4F7AF4B39F11C7553ACC64F9",
+    "bytes": 1098
+  },
+  {
+    "path": "rynmesh/llm_package/consumer_commands.py",
+    "sha256": "81AD060B4CB1C7F5E95093C6D5B69738BFA40099AF161E91B1996316254ACD87",
+    "bytes": 448
+  },
+  {
+    "path": "rynmesh/llm_package/errors.py",
+    "sha256": "86E340764FFBD4045AEEBFB7E04E3038A8B1B2B018288EFC04B18FB65469B1C7",
+    "bytes": 282
+  },
+  {
+    "path": "rynmesh/llm_package/gguf_import.py",
+    "sha256": "96F83741203B27B417979A9C0B32523E8D3C06F65E31166082037E5B3E03106A",
+    "bytes": 5754
+  },
+  {
+    "path": "rynmesh/llm_package/hardware.py",
+    "sha256": "BAB06989987D85899F064070A8FA6C3730556E156B7BF1FEEDC21FDAAAA1F835",
+    "bytes": 10619
+  },
+  {
+    "path": "rynmesh/llm_package/https_only.py",
+    "sha256": "1D85983508D518E6517C526BBD3801D1A303C4C37CFA4C360CEB75FF19F31E0B",
+    "bytes": 1312
+  },
+  {
+    "path": "rynmesh/llm_package/lifecycle.py",
+    "sha256": "9CA50D2273846E7DCFC31CFB9A06686B4CDC8B9F8C694D5643F5C628FA7F7536",
+    "bytes": 25945
+  },
+  {
+    "path": "rynmesh/llm_package/manifest.py",
+    "sha256": "C69839B1E745031C3B3C2A5C1EFAEBE429454F0ACC739CF0B66F9B700DF6263E",
+    "bytes": 8127
+  },
+  {
+    "path": "rynmesh/llm_package/model_dispatch.py",
+    "sha256": "69D6817E5C094523B0970745787A249FCA3BBB91515187B8F8540B9C3A2DD8B4",
+    "bytes": 4963
+  },
+  {
+    "path": "rynmesh/llm_package/model_download.py",
+    "sha256": "4F2DC673200673E880E2E015147E36ED6A10277C8194B8D352DC3576DC6199A1",
+    "bytes": 9862
+  },
+  {
+    "path": "rynmesh/llm_package/model_settings.py",
+    "sha256": "09FEDECED91651EDC6B25876D76A286CF6BA1A1BAD9C4D483D8902046F2FF73F",
+    "bytes": 5766
+  },
+  {
+    "path": "rynmesh/llm_package/native_model.py",
+    "sha256": "20573370473EC8C684B18963DE939E2475E78D02675E7196FC338310B3F24CF5",
+    "bytes": 28087
+  },
+  {
+    "path": "rynmesh/llm_package/native_policy.py",
+    "sha256": "C7517D4F38B1B856B54E4A32DB29EA527D641AB48D450638EAF2887647369053",
+    "bytes": 4231
+  },
+  {
+    "path": "rynmesh/llm_package/native_worker.py",
+    "sha256": "A15FE1138C17598EA5D5B70D175605660E923FA6B62DA71C6CF12C585D77EE90",
+    "bytes": 800
+  },
+  {
+    "path": "rynmesh/llm_package/p2p.py",
+    "sha256": "09BCE3FF3445B740C20F9B83546AA580BA1707D92F92616C9137763AEF8E58FA",
+    "bytes": 38595
+  },
+  {
+    "path": "rynmesh/llm_package/p2p_session.py",
+    "sha256": "109384737F448FF4FD832BD4FB95DAFCFFCB7D19885372C06A000DE2BCB792D1",
+    "bytes": 13905
+  },
+  {
+    "path": "rynmesh/llm_package/peer_binding.py",
+    "sha256": "6546519D104D18AE75181320AE05C2EFC3D5AE8F4A62281A45185474A2EA4F66",
+    "bytes": 3121
+  },
+  {
+    "path": "rynmesh/llm_package/privacy.py",
+    "sha256": "DEAB7334961C888CD703C5F199AD876073752FD05EDCDD84C637EF1AC4CD1E5C",
+    "bytes": 1669
+  },
+  {
+    "path": "rynmesh/llm_package/process_guard.py",
+    "sha256": "231D67D98FFA5E177CFB32EB7AD2F281E2A99B85E8793B6760DE5A50543F733E",
+    "bytes": 7284
+  },
+  {
+    "path": "rynmesh/llm_package/routes.py",
+    "sha256": "AC12CAAB2D8131AB642BCCCD4E351E57080F193886A28C2776F997CC725C2FC3",
+    "bytes": 202198
+  },
+  {
+    "path": "rynmesh/llm_package/runtime_docker.py",
+    "sha256": "19AC5555597DA3636FFBEB1B195F22620A4C868058B11A9C11B7628CF5ABFD95",
+    "bytes": 8320
+  },
+  {
+    "path": "rynmesh/llm_package/runtime_native.py",
+    "sha256": "F82CEF8CD994C6595F687BD62A4D652496ABB698CF0567FA7AA60C3D96D7A015",
+    "bytes": 20843
+  },
+  {
+    "path": "rynmesh/llm_package/runtime_native_install.py",
+    "sha256": "EB637A12CE21330C16AE391A46F335B21C85E52FDC962AA64CD048E6E180BC6D",
+    "bytes": 11644
+  },
+  {
+    "path": "rynmesh/llm_package/safety.py",
+    "sha256": "58B32E3BEC845AAF1A43B570B815F9A5BA26A1D25B93EC85612CC412D80F9246",
+    "bytes": 8175
+  },
+  {
+    "path": "rynmesh/llm_package/setup_recovery.py",
+    "sha256": "82AAC75D9E66AF71EDD506AB0D8DAB9FBB35C70B852F112F64D3E33C2EC81A38",
+    "bytes": 6604
+  },
+  {
+    "path": "rynmesh/llm_package/sources.py",
+    "sha256": "01E4F481D93C33E1D54D832FCF4B8CB088A2A514384BCE20275D098086432EFC",
+    "bytes": 14525
+  },
+  {
+    "path": "rynmesh/llm_package/space_catalog.py",
+    "sha256": "95BA0A55AA087722B1CA0722BD8441A1377F1FBF1E4590E90E0688AB20DAEBD5",
+    "bytes": 7787
+  },
+  {
+    "path": "rynmesh/llm_package/stream_protocol.py",
+    "sha256": "39D9FB6AE026381AFEFC4FC6356D8AA890A2F013B353AD66C2691AE07B94F197",
+    "bytes": 10536
+  },
+  {
+    "path": "rynmesh/llm_package/streaming.py",
+    "sha256": "2EBACDFCFF3777CD1AFFECC2F35C76F91F1D57C3428461671786D87E415A18DE",
+    "bytes": 3123
+  },
+  {
+    "path": "rynmesh/llm_package/task_balance.py",
+    "sha256": "169C5036DFEBCE02CF2145E27CC6F9CD75E3CC651557C99ECAAFE6F798422F14",
+    "bytes": 22174
+  },
+  {
+    "path": "rynmesh/llm_package/task_protocol.py",
+    "sha256": "570F6CDD19501372F9C8EDED98C1D8C5FE70F87514B19A1866F15E4FD22BF0FB",
+    "bytes": 17083
+  },
+  {
+    "path": "rynmesh/llm_package/test_adapter.py",
+    "sha256": "CC8F3C93B030F55BEFF3B5E976BDE4EAAB33FEE4D302D0FD98ECC6473CCBDB8A",
+    "bytes": 1674
+  },
+  {
+    "path": "rynmesh/llm_package/tool_capabilities.py",
+    "sha256": "278A2CE30EDDD79145EA2DF6EBD62E817E0D714BDB84D78B292F96AAFDEE332B",
+    "bytes": 2244
+  },
+  {
+    "path": "rynmesh/llm_runtime_server.py",
+    "sha256": "565267D225451219B87835449CBC167E578121D769E23EAA310FE8BAD0AEEC03",
+    "bytes": 22304
+  },
+  {
+    "path": "rynmesh/local_search/__init__.py",
+    "sha256": "222625BEB90BB0414A57D973568068795505860CF3CFFD2E91325F12D7B99992",
+    "bytes": 80
+  },
+  {
+    "path": "rynmesh/local_search/index.py",
+    "sha256": "7F3C809BBCB96543D76687A9E4A2469F8AD7DBDEE53AE8F807E45269CF1C26AD",
+    "bytes": 18560
+  },
+  {
+    "path": "rynmesh/local_search/routes.py",
+    "sha256": "E2791BE92BC5C058003F633FC3F27E8ACDD0F7CBAEC4E4795DDF17D43C19F229",
+    "bytes": 4142
+  },
+  {
+    "path": "rynmesh/local_search/sources.py",
+    "sha256": "B575A7541E6B6D4CF256D2CE980E4589F09EE942BA79EBF52EF4C1FA7A48825B",
+    "bytes": 14570
+  },
+  {
+    "path": "rynmesh/mailbox.py",
+    "sha256": "E5729A52E26B7B4CDD486429BFFE9B87DC7E49D13C975D02063089AF858209DA",
+    "bytes": 15847
+  },
+  {
+    "path": "rynmesh/mailbox_client.py",
+    "sha256": "C4FE5BD996EB2BF48B807B8F9FD5F711C78C7A96AD5120B6CE0F1B9FCE4AB38A",
+    "bytes": 21955
+  },
+  {
+    "path": "rynmesh/mailbox_routes.py",
+    "sha256": "B43D52D4E84338A1FA8690D986E259568982FD7B8297F2513F86EF50E4B76EE4",
+    "bytes": 10386
+  },
+  {
+    "path": "rynmesh/mailbox_store.py",
+    "sha256": "563A48759146A36D74B7B6373A0CDC89FE0742CBC04EAA214EC9AA6006206742",
+    "bytes": 16749
+  },
+  {
+    "path": "rynmesh/manifest.py",
+    "sha256": "865AA78A1550891BB105E4A0BE650030E4F8096781AAB5B31382551C09B19872",
+    "bytes": 9094
+  },
+  {
+    "path": "rynmesh/mcp_server.py",
+    "sha256": "F3EC2012559E21738B32CB4D628417B3B41276083D00A81CE6E4946184F38F14",
+    "bytes": 40276
+  },
+  {
+    "path": "rynmesh/nas.py",
+    "sha256": "740F5F7DD17130566BE012AF399D87B57F6F6D2AE9CDA9F021416DCEA02A61EB",
+    "bytes": 31543
+  },
+  {
+    "path": "rynmesh/node.py",
+    "sha256": "69A536E9FA0ECE7E85604D3EAA0CD627AE79B26B08735FE2A226CF62ECEBFADE",
+    "bytes": 4530
+  },
+  {
+    "path": "rynmesh/node_auth.py",
+    "sha256": "0200D43E28CB6F116127B9A22E24BA7AC741E982917F4F6B1B07FB9801862233",
+    "bytes": 17218
+  },
+  {
+    "path": "rynmesh/offline_reading/__init__.py",
+    "sha256": "5BC5B63FE19361534BFA846360C1D10656F0CB439E00CA826EFA8C8E4463C3DA",
+    "bytes": 84
+  },
+  {
+    "path": "rynmesh/offline_reading/cleanup.py",
+    "sha256": "380682E4445D12C3B0DA0C31EE3810540F3705362D12CDDA3DBD4E3D3548E372",
+    "bytes": 8674
+  },
+  {
+    "path": "rynmesh/offline_reading/fetch.py",
+    "sha256": "11278F684E367F16A8DF4A67F5658D601A5A3B1ECF4E2CAB78AC7D2C7C7B2DE8",
+    "bytes": 9364
+  },
+  {
+    "path": "rynmesh/offline_reading/routes.py",
+    "sha256": "6C7C48B3BDE55CB742928866B3BB72FF6CB8074DDC8EE656B5280247E92601AA",
+    "bytes": 4701
+  },
+  {
+    "path": "rynmesh/offline_reading/service.py",
+    "sha256": "7952725F88B0E7C9F686F06BFFA5A2B2030DCCE20D2E877CAFA4244A8B07BFC6",
+    "bytes": 18993
+  },
+  {
+    "path": "rynmesh/offline_reading/store.py",
+    "sha256": "DD4F14B93E1F0A61CAF9AE2A94611390F1A9866BACA60DAEFA500A4198ECC74B",
+    "bytes": 7673
+  },
+  {
+    "path": "rynmesh/onedrive.py",
+    "sha256": "BF2BACA9B87986AE7727951DA81F1CB049ACBE761BEEF18736B4C15D468FE5F0",
+    "bytes": 8480
+  },
+  {
+    "path": "rynmesh/peer_http.py",
+    "sha256": "468C7BD17609F18D8F3186355BEE0BDA5401BFD9661491D81D99482127F7AB57",
+    "bytes": 123157
+  },
+  {
+    "path": "rynmesh/peer_transit.py",
+    "sha256": "9889F48D5BC48B24C08743F31132B0777B288E0F89A0C67049BD248D3D78ECA0",
+    "bytes": 26049
+  },
+  {
+    "path": "rynmesh/peer_transit_service.py",
+    "sha256": "36B8B230956E0720D71FB7DC34D8A505A6784FDCC1B0708546C6FB7FDB1041F8",
+    "bytes": 74346
+  },
+  {
+    "path": "rynmesh/personal_space.py",
+    "sha256": "BA5BF56A480DFA966AFC83564F86E52D479111C8EA054009C791998801998C2E",
+    "bytes": 33164
+  },
+  {
+    "path": "rynmesh/personal_space_routes.py",
+    "sha256": "EADE5A1808941367A60A364DFF203E2A5E60549687E1DA3BA2A4221347F8C9E0",
+    "bytes": 2709
+  },
+  {
+    "path": "rynmesh/privacy_export/__init__.py",
+    "sha256": "8F7F7A9ECCB0F7795F54DE2401C3BF768CA0169D22D0A8B937EA772AF8D6EE3A",
+    "bytes": 86
+  },
+  {
+    "path": "rynmesh/privacy_export/archive.py",
+    "sha256": "76CECE5E2CAA0298721544A7A90B124AD268E490366665B858615615656255AE",
+    "bytes": 5971
+  },
+  {
+    "path": "rynmesh/privacy_export/routes.py",
+    "sha256": "7B40D18A8BB599FC8E88C1ABD3F22E11F494C1F261EADCB3A8949F89249F6D7D",
+    "bytes": 3767
+  },
+  {
+    "path": "rynmesh/privacy_export/sources.py",
+    "sha256": "44180DD66268518A8A0FA636F4A15CAE744E7678ABB39BAB814D963BAD5769F2",
+    "bytes": 10101
+  },
+  {
+    "path": "rynmesh/private_permissions.py",
+    "sha256": "2042A18460BD9B1527D01BB9773CFA025129BB28F2857706A00740DAD7D89661",
+    "bytes": 4623
+  },
+  {
+    "path": "rynmesh/provenance.py",
+    "sha256": "2094D7B1FB2F688F89A97768B0D34F99EC1564CA1EE8C5F07331BC1DC83EFF09",
+    "bytes": 10317
+  },
+  {
+    "path": "rynmesh/provider_gateway.py",
+    "sha256": "F0923E80202187D6836EAB51DDEA926C58FDB5D93D8D3D2A5A1EEF76108185CD",
+    "bytes": 5108
+  },
+  {
+    "path": "rynmesh/recommendation_evidence.py",
+    "sha256": "F8CB3C5A18A59F75906BE56385F3922E456F7F23D8517BBD5A6D1E588D4544D6",
+    "bytes": 3616
+  },
+  {
+    "path": "rynmesh/recommendation_profile.py",
+    "sha256": "7820CE2B8CAC5F55997BACE90BA0138824B8FE362EE67F66DB4862A03C40CADF",
+    "bytes": 18226
+  },
+  {
+    "path": "rynmesh/recommendation_service.py",
+    "sha256": "AF128E9299FD3F8943BBE538C93553F88EA3C95A5B3F35EEC2D50DD4B4BAF35C",
+    "bytes": 12555
+  },
+  {
+    "path": "rynmesh/recommender.py",
+    "sha256": "59B1630F8B9470822109161F2152CD4AEA5ADE05F09358128E0943FA6E2658B8",
+    "bytes": 9497
+  },
+  {
+    "path": "rynmesh/registry.py",
+    "sha256": "043240D64199182E79E15E73DEE5AF2C2848DF9AB2CBBBDF0D6BE1444C3B88A3",
+    "bytes": 39261
+  },
+  {
+    "path": "rynmesh/registry_http.py",
+    "sha256": "B382FA72A894266066A9760C3DEA6A783D350775657642BF58FEA8726EBA3AE2",
+    "bytes": 16737
+  },
+  {
+    "path": "rynmesh/registry_resilience.py",
+    "sha256": "2DACC72753CF51639957989C38224699B5E69F13071A4E994904A6CD69D98372",
+    "bytes": 12386
+  },
+  {
+    "path": "rynmesh/relay.py",
+    "sha256": "FF5E714845E6783DE2A69C51B7D3D40C92C599DAC4FA28E039345B437393B1CA",
+    "bytes": 30876
+  },
+  {
+    "path": "rynmesh/release.py",
+    "sha256": "2706B5F96CB056E6D39925DCA9C5DF43615CB90FB9FC665704C0CA14C79304A3",
+    "bytes": 2426
+  },
+  {
+    "path": "rynmesh/safety.py",
+    "sha256": "5433CB260A196FB09D97613E212D5C57239FFA76CA34678AB3FFBF772F6BA146",
+    "bytes": 2548
+  },
+  {
+    "path": "rynmesh/services/__init__.py",
+    "sha256": "189EF974B75DB21D5BFC808C65B7022F20DA8CF520D18AB8FAB099441DED011E",
+    "bytes": 487
+  },
+  {
+    "path": "rynmesh/services/_base.py",
+    "sha256": "1E1925A848E498E10C15CDADF81C86372C2D93AC76AE0BF4F9D863614AE05B0B",
+    "bytes": 4300
+  },
+  {
+    "path": "rynmesh/services/ask.py",
+    "sha256": "21351F94063A36437ADCE8046591399552124ED13E2FC828656B5E9290829660",
+    "bytes": 5518
+  },
+  {
+    "path": "rynmesh/services/assistant_audit.py",
+    "sha256": "4A9BC9D226F4595ECB95844DA92AA7025C3611D82D471074839EAB69DC71A408",
+    "bytes": 2674
+  },
+  {
+    "path": "rynmesh/services/client.py",
+    "sha256": "A62FB79164188FAAD7023731FF61219DCA67A63232AE89672108A9D8CCFC4882",
+    "bytes": 5016
+  },
+  {
+    "path": "rynmesh/services/consumption.py",
+    "sha256": "2A5C16A8BD8D342A37DDB9DBAD1B5EDDDA704335E2B32A9A403D03D78F078A45",
+    "bytes": 19726
+  },
+  {
+    "path": "rynmesh/services/digest.py",
+    "sha256": "9390C91FD98D25079EC9EFD0273508BAFA2B4226514E3CEDF43370887DDBF0F3",
+    "bytes": 68419
+  },
+  {
+    "path": "rynmesh/services/document_extract.py",
+    "sha256": "D161484C69AB439BDB5BF88C92A915C93523BAFEF5175B47482023FD343C0CFE",
+    "bytes": 10783
+  },
+  {
+    "path": "rynmesh/services/document_extract_child.py",
+    "sha256": "3189D8303A8C828A17F36FBB032A35D3D3D3B29255CF49A917847AAC8C59B926",
+    "bytes": 8985
+  },
+  {
+    "path": "rynmesh/services/egress_control.py",
+    "sha256": "5B8763C7F8A5EAE46BB1E6066CCB60569A62E68ABB7C66A1B70C6E3DBAC8B3B5",
+    "bytes": 13090
+  },
+  {
+    "path": "rynmesh/services/embeddings.py",
+    "sha256": "54710086B1A39DC02F357DC52ADC6C7554BC2FF5B0428EDEF75B2C83A5EBABB8",
+    "bytes": 2807
+  },
+  {
+    "path": "rynmesh/services/first_success.py",
+    "sha256": "9FCC71EC93D66EAE6E8D79B53365FDB70D7480BDC560A0125CF08EA18F03B2AB",
+    "bytes": 5791
+  },
+  {
+    "path": "rynmesh/services/image.py",
+    "sha256": "FE648BF55268A4E492B15A2D507E1AD1FE0FC0D6D174DDFD53834604AABDCFB8",
+    "bytes": 4225
+  },
+  {
+    "path": "rynmesh/services/library_cleanup.py",
+    "sha256": "35A3337E8214D49956FC8373BA459CE336EFBD56809F0937F74917DC45E9C9F4",
+    "bytes": 11197
+  },
+  {
+    "path": "rynmesh/services/library_cleanup_routes.py",
+    "sha256": "23C8F57E39B7488DADB36467E16EBB30FBF29F983F1826C5033EE6DB8820B145",
+    "bytes": 2421
+  },
+  {
+    "path": "rynmesh/services/library_imports.py",
+    "sha256": "7C80731D0AA7337F41501A65ED3F70881972AD972C7A2536205DF810DA43493D",
+    "bytes": 12061
+  },
+  {
+    "path": "rynmesh/services/llm.py",
+    "sha256": "DCE70ABD95449A90565B50A612C3543696C6286A1B36E9DF6FC2AA3573F974C1",
+    "bytes": 1872
+  },
+  {
+    "path": "rynmesh/services/messaging_store.py",
+    "sha256": "0C9D6C1210F0551CBE8E4E957D2FFB8B0DE3323A666281BEEE3F4FE8B3CAC7D6",
+    "bytes": 4113
+  },
+  {
+    "path": "rynmesh/services/model_provider.py",
+    "sha256": "5EDB49293DCBBE0C73136AD9A08AAEB46FA429FC092E9172CCDE1DF8168ED1D7",
+    "bytes": 9307
+  },
+  {
+    "path": "rynmesh/services/net_egress.py",
+    "sha256": "D451B9CDDA5B12CE35A67443B1E2AC5709633D0C261ECDC5312F33CB97F872D2",
+    "bytes": 9213
+  },
+  {
+    "path": "rynmesh/services/net_egress_client.py",
+    "sha256": "72CCF1AEF21187F159A9C8D57D726AA0FEA22E0B95F36E93C7E1DBD7A3C2D2DD",
+    "bytes": 8912
+  },
+  {
+    "path": "rynmesh/services/peer_box.py",
+    "sha256": "2E55AAAB786B8769EFC41D4DB9BE3CEFAC724CD52213A6286F1F7FE9622644E9",
+    "bytes": 2773
+  },
+  {
+    "path": "rynmesh/services/peer_health.py",
+    "sha256": "DF13150D17CA51633B8B90D50C6C5FB3408A6397D85DB4B8420140F4554DDFC5",
+    "bytes": 5235
+  },
+  {
+    "path": "rynmesh/services/peer_messenger.py",
+    "sha256": "66CC1A00F5E1FF0907CB6B877695C72D0DE92251EF2116BBD7FE97FA67C013E9",
+    "bytes": 11001
+  },
+  {
+    "path": "rynmesh/services/reader.py",
+    "sha256": "0787F1FFCF6D662EA8E33F8A2EDA989976969B9B0546A661ECD6DB0482C251A7",
+    "bytes": 15406
+  },
+  {
+    "path": "rynmesh/services/reading_cleanup.py",
+    "sha256": "7E30DFC3032C63D675CC3072B425AE452B7D988F43CEDB34AC4615B6FB500B43",
+    "bytes": 15680
+  },
+  {
+    "path": "rynmesh/services/reading_cleanup_routes.py",
+    "sha256": "5BDA580F8C8CBDB321964A0E4EE884FC5230BC851ECECA0F2865D854E0918BB0",
+    "bytes": 4498
+  },
+  {
+    "path": "rynmesh/services/reading_privacy.py",
+    "sha256": "148FCA026287019F7D8CDF941FBEA32F57A55CDBDC376ED8963824F1AC16E0B0",
+    "bytes": 9049
+  },
+  {
+    "path": "rynmesh/services/recap.py",
+    "sha256": "8FA9DB66E3F5CE05A6B7CC2712B5A11C920049E3FB9AD59CC6880A652D7910E5",
+    "bytes": 15113
+  },
+  {
+    "path": "rynmesh/services/updater.py",
+    "sha256": "D8374EE94410C975151D3A8F9E50D282F986D3C074A9457DEA4C9A3D62D3ADF9",
+    "bytes": 6125
+  },
+  {
+    "path": "rynmesh/services/vpn_cli.py",
+    "sha256": "1C61551C693E43A52BEF3C5D6C61D0E7BEBEA6ACD412C2D3107FC0561B1940DB",
+    "bytes": 1029
+  },
+  {
+    "path": "rynmesh/settings_store.py",
+    "sha256": "186C3BC6A9F15E380E85F7881A44B77BDC19BFB696EECE6C5179B39FC3A5EB03",
+    "bytes": 4431
+  },
+  {
+    "path": "rynmesh/shared_reading/__init__.py",
+    "sha256": "E74E91E9921CD2499F673D6DFBFDAB20980908656FC3C927B730E163E7EF6352",
+    "bytes": 75
+  },
+  {
+    "path": "rynmesh/shared_reading/routes.py",
+    "sha256": "77D6EA88818FB5301F8EB075D82FD2D292B55ED442C6CCFF65373A36800378A9",
+    "bytes": 3395
+  },
+  {
+    "path": "rynmesh/shared_reading/service.py",
+    "sha256": "83B92418FBA19E97AB777334CEFEFFF956EF49F1C21D2782F474BE0795DA3E74",
+    "bytes": 20350
+  },
+  {
+    "path": "rynmesh/shared_reading/store.py",
+    "sha256": "6AA5B614F09F37249B49484B4D94DFD766F30911B723CFB06A47A289E5E8EEAA",
+    "bytes": 2258
+  },
+  {
+    "path": "rynmesh/signal50_media_ops.py",
+    "sha256": "C04276468D6B67947654FC07EE59E9E7F5965A62BF6BF7183BFEAF66EE85654F",
+    "bytes": 11442
+  },
+  {
+    "path": "rynmesh/signal50_service.py",
+    "sha256": "C77A32106171F91FF9141490782178530F326C9D3F974174BD1C26B79D1D56C2",
+    "bytes": 29651
+  },
+  {
+    "path": "rynmesh/store.py",
+    "sha256": "F3D5BC47854EEB01BAD3D2A47B58E3466A34CECC8591D75AFB2579CDE2F2B054",
+    "bytes": 70832
+  },
+  {
+    "path": "rynmesh/synthetic_content.py",
+    "sha256": "BFCA4C317FEE00694622E7726E45DE9E7AB527C740E139E2B7F8B6B8E9C1AC8D",
+    "bytes": 4471
+  },
+  {
+    "path": "rynmesh/tools/__init__.py",
+    "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+    "bytes": 0
+  },
+  {
+    "path": "rynmesh/tools/publish_release.py",
+    "sha256": "CBB7C16D6CBB8B26A7C068505816E87B5729F12DC173D80224E755DCAEC82C49",
+    "bytes": 3201
+  },
+  {
+    "path": "rynmesh/transport.py",
+    "sha256": "DBC3B13B0E2FA967C84D1977993D8D2D82289CEB8630B8EB253E901A6B864F08",
+    "bytes": 33050
+  },
+  {
+    "path": "rynmesh/transport_plugins.py",
+    "sha256": "3D501036298B3C38B8281F2C2C47E0ABAD1D36DAD7FB271A02C99844F8EE5C36",
+    "bytes": 22679
+  },
+  {
+    "path": "rynmesh/types.py",
+    "sha256": "F736F156F0796185D227BD62EE1A4F300D236E1368C838FE4ECC7788F49F1D22",
+    "bytes": 6720
+  },
+  {
+    "path": "rynmesh/update_state.py",
+    "sha256": "5CE77A7D9FDC713C360F98E59A203401ACC28BD962C33128179C80E5ADFE59A4",
+    "bytes": 1527
+  },
+  {
+    "path": "rynmesh/video_package/__init__.py",
+    "sha256": "3509D26A45AE4E2B543F533EC2790D438EF8080FF8D789CB94E5F8395E6D5EAA",
+    "bytes": 289
+  },
+  {
+    "path": "rynmesh/video_package/backend.py",
+    "sha256": "25F100C9A42D95691701B03CF2F77F3307FBFF05B39699453B1461F7F24AE53D",
+    "bytes": 5624
+  },
+  {
+    "path": "rynmesh/video_package/cli.py",
+    "sha256": "203EB436543D413ABD54F40DEC3034B251BF8702873075DE4A811C086D6E082B",
+    "bytes": 4669
+  },
+  {
+    "path": "rynmesh/video_package/service.py",
+    "sha256": "326930949B72CAA6C5DD6554D038D66F4FA5E49AFF48EA5F06DA771B640D028F",
+    "bytes": 8407
+  }
+]

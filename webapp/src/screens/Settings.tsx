@@ -2,10 +2,12 @@ import { tr, useUILanguage, uiLocale } from "../uiI18n";
 import { Activity, BellRing, Cloud, Download, DownloadCloud, HardDrive, History, Network, Save, ShieldCheck, SlidersHorizontal, Sparkles, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useAppContext } from "../appContext";
 import { Button, Chip, KV, LoadingPanel, PageHeader, Panel } from "../components/ui";
 import type { NodeClient } from "../domain/nodeClient";
+import { isTauriDesktop } from "../domain/nodeUrl";
+import { DesktopUpdatesPanel, PluginUpdatesPanel } from "./UpdatesPanel";
 import { requestDesktopNotificationPermission, sendTestNotification } from "../domain/notifications";
 import AccessPanel from "./components/AccessPanel";
 import LocalModelPicker from "./components/LocalModelPicker";
@@ -33,6 +35,8 @@ export default function Settings() {
   useUILanguage();
   const { client, confirm, notify, refreshShell } = useAppContext();
   const [active, setActive] = useState<(typeof sections)[number]>("Identity & storage");
+  const [searchParams] = useSearchParams();
+  useEffect(() => { if (searchParams.get("section") === "updates") setActive("Software updates"); }, [searchParams]);
   const [settings, setSettings] = useState<NodeSettings | null>(null);
   const [loadError, setLoadError] = useState("");
   const [loadAttempt, setLoadAttempt] = useState(0);
@@ -108,7 +112,7 @@ export default function Settings() {
         ) : null}
         {active === "Ranking & publish" ? <RankingSection settings={settings} onUpdate={update} /> : null}
         {active === "Fetch limits" ? <FetchSection settings={settings} onUpdate={update} /> : null}
-        {active === "Software updates" ? <UpdatesSection client={client} /> : null}
+        {active === "Software updates" ? <>{isTauriDesktop() ? <DesktopUpdatesPanel /> : <UpdatesSection client={client} />}{client.mode === "live" && <PluginUpdatesPanel />}</> : null}
       </Panel>
     </div>
   );

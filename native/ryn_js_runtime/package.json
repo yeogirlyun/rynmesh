@@ -1,0 +1,10 @@
+{
+  "name": "@rynmesh/js-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Isolated QuickJS-WASM guest runtime and Ryn @oai/sky compatibility shim",
+  "type": "module",
+  "dependencies": {
+    "quickjs-emscripten": "0.32.0"
+  }
+}

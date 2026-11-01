@@ -1,0 +1,259 @@
+{
+  "schema_version": 1,
+  "kind": "installed-windows-baseline-to-candidate-upgrade-observation",
+  "target": {
+    "host": "172.16.8.82",
+    "hostname": "DESKTOP-SQ6VA8I",
+    "user": "ziling",
+    "ssh_alias": "personal-windows",
+    "strict_host_key_checking": true
+  },
+  "baseline_installer_sha256": "3f63d862ce1ac4eea0d70edbd3b86cb3f29d6d55f16b54c3f8ffca5f2ad1bfab",
+  "candidate_source_installer": {
+    "path": "D:\\code\\rynmesh\\webapp\\src-tauri\\target\\x86_64-pc-windows-msvc\\release\\bundle\\nsis\\Ryn_0.7.0_x64-setup.exe",
+    "sizeBytes": 38997739,
+    "sha256": "16B3D454F1F189F1E17E4F17DC4280A070B465810F476E39F032974A34000C55"
+  },
+  "candidate_upgrade": {
+    "startedUtc": "2026-10-11T06:40:35.8575333Z",
+    "explicitRynLaunch": false,
+    "sizeBytes": 38997739,
+    "installerProcessId": 13080,
+    "sha256": "16B3D454F1F189F1E17E4F17DC4280A070B465810F476E39F032974A34000C55",
+    "arguments": [
+      "/S",
+      "/UPDATE"
+    ],
+    "exitCode": 0,
+    "finishedUtc": "2026-10-11T06:40:40.7011381Z",
+    "installerPath": "C:\\Users\\ziling\\rynmesh-desktop-acceptance-20261011\\installers\\candidate.exe",
+    "window_style": "Hidden",
+    "installer_repeated": false
+  },
+  "probe": {
+    "local_path": ".codex-tmp/desktop-installed-probe.py",
+    "remote_path": "C:\\Users\\ziling\\rynmesh-desktop-acceptance-20261011\\desktop-installed-probe.py",
+    "sha256": "20773c8e2d64e44f7e74b92481e32625997ccccc80207fb3939df9da97a74c10",
+    "interpreter": "C:\\Users\\ziling\\rynmesh-agent-test-20261010\\venv\\Scripts\\python.exe",
+    "host": "127.0.0.1",
+    "isolated_home": "C:\\Users\\ziling\\rynmesh-desktop-acceptance-20261011\\isolated-node",
+    "registry_disabled": true,
+    "auto_register_disabled": true,
+    "discovery_disabled": true,
+    "model_calls": 0
+  },
+  "stages": {
+    "baseline": {
+      "observation": {
+        "kind": "installed-sidecar-observation",
+        "stage": "baseline",
+        "at": "2026-10-11T06:39:50.130358+00:00",
+        "formal_pass": false,
+        "native_ui_exercised": false,
+        "model_calls": 0,
+        "home": "C:\\Users\\ziling\\rynmesh-desktop-acceptance-20261011\\isolated-node",
+        "executable": "C:\\Users\\ziling\\AppData\\Local\\Ryn\\rynmesh-peer.exe",
+        "binary_sha256": "914502527529e89531e4117b0e1cf36e623cff057462bdef5485c0f3573dc8c5",
+        "port": 51055,
+        "hostname": "DESKTOP-SQ6VA8I",
+        "launcher_pid": 6908,
+        "health": {
+          "status": "ok",
+          "peer_id": "GEK5xW7uMkgo8wEKEpB3cZh0KWsxiQsyx1q/osGB5e0=",
+          "name": null,
+          "version": null
+        },
+        "routes": {
+          "/api/local/agent/settings": {
+            "status_code": 404
+          },
+          "/api/local/agent/tasks": {
+            "status_code": 404
+          },
+          "/api/local/agent/models": {
+            "status_code": 404
+          }
+        },
+        "identity_file_sha256": "0085fdeef117868f888521aae7fb2a251af2d756d1f350779bd65eeb714ec7fc",
+        "default_user_home_created": false,
+        "launcher_exit_code": 0,
+        "listener_remaining": false
+      },
+      "desktopConfigExists": false,
+      "defaultHomeExists": false,
+      "residualProcesses": [],
+      "testPortListeners": []
+    },
+    "candidate": {
+      "observation": {
+        "kind": "installed-sidecar-observation",
+        "stage": "candidate",
+        "at": "2026-10-11T06:41:34.379198+00:00",
+        "formal_pass": false,
+        "native_ui_exercised": false,
+        "model_calls": 0,
+        "home": "C:\\Users\\ziling\\rynmesh-desktop-acceptance-20261011\\isolated-node",
+        "executable": "C:\\Users\\ziling\\AppData\\Local\\Ryn\\rynmesh-peer.exe",
+        "binary_sha256": "d2c0f80cb233c1a46dbdf4c1f2e19735dfdd6ab7806128066782714c20691831",
+        "port": 51321,
+        "hostname": "DESKTOP-SQ6VA8I",
+        "launcher_pid": 15172,
+        "health": {
+          "status": "ok",
+          "peer_id": "GEK5xW7uMkgo8wEKEpB3cZh0KWsxiQsyx1q/osGB5e0=",
+          "name": null,
+          "version": null
+        },
+        "routes": {
+          "/api/local/agent/settings": {
+            "status_code": 200,
+            "response": {
+              "enabled": false,
+              "model_id": "",
+              "permission_mode": "confirm_changes",
+              "allowed_write_tools": [],
+              "max_steps": 16,
+              "max_seconds": 180,
+              "max_context_chars": 60000,
+              "max_output_chars": 20000
+            }
+          },
+          "/api/local/agent/tasks": {
+            "status_code": 200,
+            "response": {
+              "tasks": []
+            }
+          },
+          "/api/local/agent/models": {
+            "status_code": 200,
+            "response": {
+              "models": []
+            }
+          }
+        },
+        "identity_file_sha256": "0085fdeef117868f888521aae7fb2a251af2d756d1f350779bd65eeb714ec7fc",
+        "default_user_home_created": false,
+        "launcher_exit_code": 0,
+        "listener_remaining": false
+      },
+      "desktopConfigExists": false,
+      "defaultHomeExists": false,
+      "residualProcesses": [],
+      "testPortListeners": []
+    }
+  },
+  "identity_preservation": {
+    "same_isolated_home": true,
+    "same_identity_file_sha256": true,
+    "same_public_peer_id": true
+  },
+  "installed_files": [
+    {
+      "path": "C:\\Users\\ziling\\AppData\\Local\\Ryn\\Ryn.exe",
+      "sha256": "C08CD91354E899C3D38024FEEB0340759BFB2EEA78D8FEB291D82ADAA019A521",
+      "modifiedUtc": "2026-10-11T02:55:22.0000000Z",
+      "sizeBytes": 10925568
+    },
+    {
+      "path": "C:\\Users\\ziling\\AppData\\Local\\Ryn\\rynmesh-peer.exe",
+      "sha256": "D2C0F80CB233C1A46DBDF4C1F2E19735DFDD6AB7806128066782714C20691831",
+      "modifiedUtc": "2026-10-11T02:53:02.0000000Z",
+      "sizeBytes": 36304445
+    },
+    {
+      "path": "C:\\Users\\ziling\\AppData\\Local\\Ryn\\uninstall.exe",
+      "sha256": "B86DA491E83EF34A2A2023AE3BA62EC1F8DC49254D6D7EBD450662A099F468E1",
+      "modifiedUtc": "2026-10-11T06:40:39.8261966Z",
+      "sizeBytes": 81335
+    }
+  ],
+  "hkcu_uninstall": [
+    {
+      "PSChildName": "Ryn",
+      "DisplayName": "Ryn",
+      "DisplayVersion": "0.7.0",
+      "InstallLocation": "\"C:\\Users\\ziling\\AppData\\Local\\Ryn\""
+    }
+  ],
+  "desktop_hash_diagnostic": {
+    "raw_build_sha256": "a5a884c5ea387d62d7021985a7dce543f05647deef711f84bd3c50f1859051b8",
+    "installed_sha256": "c08cd91354e899c3d38024feeb0340759bfb2eea78d8feb291d82adaa019a521",
+    "difference_count": 3,
+    "differences": [
+      {
+        "offset": 8399322,
+        "offset_hex": "0x8029da",
+        "local_byte": 85,
+        "installed_byte": 78
+      },
+      {
+        "offset": 8399323,
+        "offset_hex": "0x8029db",
+        "local_byte": 78,
+        "installed_byte": 83
+      },
+      {
+        "offset": 8399324,
+        "offset_hex": "0x8029dc",
+        "local_byte": 75,
+        "installed_byte": 83
+      }
+    ],
+    "local_marker": "__TAURI_BUNDLE_TYPE_VAR_UNK",
+    "installed_marker": "__TAURI_BUNDLE_TYPE_VAR_NSS",
+    "expected_nsis_marker_only": true,
+    "build_with_nsis_marker_sha256": "c08cd91354e899c3d38024feeb0340759bfb2eea78d8feb291d82adaa019a521",
+    "pe_header_fields": {
+      "checksum": {
+        "offset": 336,
+        "offset_hex": "0x150",
+        "local_value": 0,
+        "installed_value": 0
+      },
+      "subsystem": {
+        "offset": 340,
+        "offset_hex": "0x154",
+        "local_value": 2,
+        "installed_value": 2
+      },
+      "dll_characteristics": {
+        "offset": 342,
+        "offset_hex": "0x156",
+        "local_value": 33120,
+        "installed_value": 33120
+      }
+    },
+    "source_evidence": ".codex-tmp/windows-toolchain/cargo/registry/src/rsproxy.cn-e3de039b2554c837/tauri-utils-2.9.3/src/platform.rs:344-360",
+    "generated_nsis_evidence": {
+      "path": "webapp/src-tauri/target/x86_64-pc-windows-msvc/release/nsis/x64/installer.nsi",
+      "main_binary_source_path_line": 45,
+      "file_instruction_line": 638,
+      "main_binary_source_path": "D:\\code\\rynmesh\\webapp\\src-tauri\\target\\x86_64-pc-windows-msvc\\release\\Ryn.exe"
+    },
+    "full_byte_diagnostic": ".codex-tmp/desktop-installed-remote-20261011/pe-byte-difference.json"
+  },
+  "scope": {
+    "model_calls": 0,
+    "native_ui_exercised": false,
+    "formal_acceptance_pass": false,
+    "explicit_desktop_launch": false,
+    "run_argument_passed": false,
+    "default_user_home_modified": false,
+    "read_user_credentials": false,
+    "changed_firewall": false,
+    "created_accounts": false,
+    "changed_production_services": false,
+    "existing_headless_environment_preserved": true,
+    "remote_artifacts_retained": true,
+    "configuration_contents_read": false
+  },
+  "conclusion": {
+    "installer_exit_code_zero": true,
+    "legacy_agent_routes": "All three baseline Agent routes returned 404; baseline Agent functionality is not marked passed.",
+    "candidate_agent_routes": "All three candidate Agent routes returned 200; settings disabled with no selected model, tasks empty, models empty.",
+    "identity_preserved": true,
+    "cleanup_observed": true,
+    "desktop_hash_difference_explained": "Exactly three bytes UNK -> NSS in the Tauri bundle type marker; normalized full file equals installed Ryn.exe.",
+    "graphical_acceptance": "Not performed by this task; separate interactive acceptance remains required."
+  }
+}

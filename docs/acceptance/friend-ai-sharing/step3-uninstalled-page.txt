@@ -1,0 +1,24 @@
+Browser tab: 48282174, Title: "Use your friend's AI — Ryn", URL: "http://10.10.10.187:19041/invite#[invitation omitted]
+1 AXWebArea Use your friend's AI — Ryn, URL: 10.10.10.187:19041/invite#[invitation omitted]
+	2 text RYN · PRIVATE AI INVITATION
+	3 heading Use your friend's AI, Value: 1
+		4 text Use your friend's AI
+	5 text Invitation from FAI-A: rynmesh-qwen2.5-0.5b-q4. Expires 2026/9/15 01:16:33. Identity will be verified in Ryn.
+	6 text No model download or API key is needed on your device. Your questions are processed on your friend's device. They must be online with the model ready and sharing enabled. Ryn verifies the provider and actual price before you accept.
+	7 heading Already installed?, Value: 2
+		8 text Already installed?
+	9 link Description: Open Ryn with this invitation, ID: open, Value: [invitation omitted]
+	10 heading Install on Windows, Value: 2
+		11 text Install on Windows
+	12 text First copy the invitation below. Install Ryn, then return here and choose Open Ryn. If opening does not work, open Friends in Ryn and paste your saved invitation.
+	13 link Description: Download Ryn for Windows (64-bit), Value: 10.10.10.187:19041/downloads/Ryn-Setup.exe, ID: download
+	14 text The Windows installer is available from this provider. Keep this page open during installation.
+	15 text This candidate supports Windows 10/11 x64. It has no code-signing certificate. macOS installation continuation and real cross-network access have not been verified.
+	16 text Keep this invitation private
+	17 text entry area Keep this invitation private, ID: invite, Value: [invitation omitted]
+	18 button Copy invitation, ID: copy
+	19 button Clear this page's invitation, ID: clear
+	21 text Automatic copy unavailable. Select the invitation and press Ctrl+C, then paste it in Ryn → Friends.
+	20 text Single use, normally valid for 15 minutes. If it expires while installing, ask your friend for a new invitation. An expired or cancelled invitation never grants access.
+
+The focused UI element is 13 link Description: Download Ryn for Windows (64-bit), URL: 10.10.10.187:19041/downloads/Ryn-Setup.exe, ID: download

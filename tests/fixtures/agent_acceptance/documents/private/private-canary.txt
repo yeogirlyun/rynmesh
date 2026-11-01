@@ -1,0 +1,2 @@
+PRIVATE_CONTENT_CANARY_7E2F8A
+This synthetic marker is outside all training-case read grants.

@@ -1,0 +1,134 @@
+{
+  "version": 1,
+  "reviewer": "sharing_review (non-author)",
+  "reviewed_at": "2026-10-10T05:58:17.615112+00:00",
+  "initial_snapshot_verdict": "changes_required",
+  "initial_snapshot": {
+    "rynmesh/agent_runtime/evidence_semantics.py": "03e2c54b42198a14c0f2ef47e198ea6f7e664722e9a83e9b5ab2aed1d332632a",
+    "rynmesh/agent_runtime/prompt.py": "4c97b61f0aa208efdf7d2550564671fa18c132d2ba0c00ff9b37c19ea656fa51",
+    "rynmesh/agent_runtime/verification.py": "9f158ce53e4913e484249b6a167e1249f315b3ae99cc3ef6ea67866d6591dc03",
+    "rynmesh/agent_runtime/read_verification.py": "2a70b72f046ce37fccb9dc7b6f79948e8f897c5c59c1a0f2fc58f36fc57c2231",
+    "tests/test_agent_evidence_semantics.py": "9b7175886e64cd8639fae7c8b515312a946dd0c2932f9d581e2de278810d237c"
+  },
+  "findings": [
+    {
+      "id": "ES-1",
+      "severity": "P2",
+      "file": "rynmesh/agent_runtime/evidence_semantics.py",
+      "line": 48,
+      "title": "Valid production peer IDs become unknown",
+      "reproduction": "Apply observation_contract to first three tool_events in real-model/20261010T053610549001Z-Q06-reference/run.json. Standard base64 peer IDs containing padding = (and possibly +) fail _identity regex. All model provider/consumer, grant provider, relationship observer, and five device peer identities become unknown. Raw remains intact.",
+      "impact": "The new actor-scoping metadata erases known production actor identities, undermining the precise scope distinction it was intended to convey.",
+      "requested_fix": "Support authentic bounded peer ID encoding without permitting free-form instructions; add real generated base64 identity tests."
+    },
+    {
+      "id": "ES-2",
+      "severity": "P2",
+      "file": "rynmesh/agent_runtime/verification.py",
+      "line": 132,
+      "title": "Optional checker metadata ignores effective model context ceiling",
+      "reproduction": "Single confirmed ryn_inspect_services receipt from tests.remote_catalog, minimal row, max_context_chars=60000: base checker 4262 bytes, with optional contract 5179. Actual AgentRuntime._context_limit for context_window=2500 and default completion reserve gives 4940. Runtime then rejects at _verify context check though unaugmented evidence fits.",
+      "requested_fix": "Pass the actual runtime context ceiling into optional projection; omit derived metadata before raw facts without increasing saved budget."
+    },
+    {
+      "id": "ES-3",
+      "severity": "P2",
+      "file": "rynmesh/agent_runtime/prompt.py",
+      "line": 69,
+      "title": "Expanded fixed authority breaks existing 8000-byte compaction paths",
+      "reproduction": "Existing tests/test_agent_runtime.py::test_compaction_preserves_owner_constraints_closed_tool_groups_and_original_history now fails completed vs failed; test_compaction_fails_closed_on_tool_call_from_summary returns agent_context_limit instead of agent_compaction_failed; test_followup_uses_compacted_projection_instead_of_archived_transcript_size raises agent_tool_schema_limit. All included in independent command below.",
+      "requested_fix": "Fit general semantic guidance into existing context floor; preserve actual compaction and follow-up behavior without raising limits or discarding owner authority."
+    },
+    {
+      "id": "ES-4",
+      "severity": "P2",
+      "file": "rynmesh/agent_runtime/read_verification.py",
+      "line": 53,
+      "title": "Optional read contract alone can make otherwise valid mechanical read exceed output budget",
+      "reproduction": "verify_read/checked ryn_inspect_services(remote_catalog()) produces 1738 bytes versus 862 after removing only observation_contract; raw result is 443. Valid max_output_chars=1500 accepts original evidence but new optional metadata triggers runtime.py:1403 agent_output_limit.",
+      "requested_fix": "Bound/drop only derived contract against effective remaining verification-output budget before existing limit check; preserve checked facts and existing hard output limit."
+    }
+  ],
+  "independent_tests": [
+    {
+      "command": ".venv\\Scripts\\python.exe -m pytest -q -p no:cacheprovider tests/test_agent_evidence_semantics.py tests/test_agent_read_verification.py tests/test_agent_runtime.py tests/test_agent_runtime_verification.py --tb=short",
+      "passed": 81,
+      "failed": 3,
+      "seconds": 17.59,
+      "exit_code": 1
+    },
+    {
+      "command": "Initial attempt mistakenly specified nonexistent tests/test_agent_verification.py",
+      "result": "no tests ran; corrected command above, not counted"
+    }
+  ],
+  "positive_observations": [
+    "Contracts are deterministic projections from registered read results, never natural-language verdict classifiers.",
+    "Enums and timestamps are validated; untrusted notes/nested contract fields are not copied as authority.",
+    "Raw result dictionaries remain unchanged; contract-only 2048-byte row truncation is bounded.",
+    "Legacy missing scope remains unknown. Known local share_scope and sharing_configuration_known survive synthetic coverage.",
+    "Goal/epoch and confirmed-read filters remain; no permission or required-criterion downgrade observed."
+  ],
+  "limits": [
+    "No real API or held-out data access. No production or test edits. Initial report retained for follow-up resolution rather than replaced with a clean claim.",
+    "Passing tests alone cannot establish natural-language grounding or formal business acceptance."
+  ],
+  "follow_up_reviews": [
+    {
+      "reviewed_at": "2026-10-10T06:02:45.080577+00:00",
+      "prior_review_sha256": "cee4ee41b65233a7c7ee733925d323c8d448ff505b93312eea85e0cb5ca939a0",
+      "snapshot_sha256": {
+        "rynmesh/agent_runtime/evidence_semantics.py": "cbb44fcfa0e223cc7c154a1d200d068bd9b9cd2d545768154af6da7aec2e443c",
+        "rynmesh/agent_runtime/prompt.py": "be76a77923418637ba6897f533adda509baaebd6c70b277f73e43d32760efad2",
+        "rynmesh/agent_runtime/verification.py": "e529df17c19113ca52c670fc947c568c246e72b8e1609afc19d9b4001f8d02c8",
+        "rynmesh/agent_runtime/read_verification.py": "50b357c1509deaa97aa997f14eee6769862df83bfe601925b049cfe874047eb9",
+        "rynmesh/agent_runtime/runtime.py": "af0bf85149cd5afd8262a295476a32196d746b99e13f2b3de20bce82f47a0612",
+        "tests/test_agent_evidence_semantics.py": "b37df2d644c2aedcad0b7b9e594d90ed4ff1aa6f871f287e44f538eb420de98f"
+      },
+      "verdict": "all_four_initial_findings_resolved_no_new_material_findings",
+      "resolutions": [
+        {
+          "finding_id": "ES-1",
+          "status": "resolved",
+          "change": "Separate canonical 32-byte base64 public-key validation preserves production peer IDs without broadening model_ref/free-form fields.",
+          "independent_reproduction": "Applied to original reference Q06 run e72b3adc2d146dff7459d8a30d93bf6197543d2528056c4acc76a6d9dc350abd. Actual provider/consumer/grant-provider/relationship-observer IDs retained; all five device peer IDs retained (omitted=0). New tests also cover canonical +/= and production public_key_from_private encoder, while free-text instructions become unknown."
+        },
+        {
+          "finding_id": "ES-2",
+          "status": "resolved",
+          "change": "checker_messages accepts explicit context_limit and min-clamps saved limit; runtime._verify passes self._context_limit(selected) before the unchanged final hard check.",
+          "independent_reproduction": "Same initial minimal remote receipt row and actual runtime context_window2500: effective limit4940, checker output4262 with optional contracts omitted. Raw receipts and answer unchanged. No duplicate model-window formula or persisted budget expansion."
+        },
+        {
+          "finding_id": "ES-3",
+          "status": "resolved",
+          "change": "Main authority uses concise general subject/scope/time and unknown/history guidance; full guidance remains in checker.",
+          "independent_reproduction": "The same three original test_agent_runtime.py 8000-byte compaction/follow-up regressions all pass in the unchanged independent combination. Saved context/output limits were not increased."
+        },
+        {
+          "finding_id": "ES-4",
+          "status": "resolved",
+          "change": "Removed duplicate observation_contract from mechanical read evidence; only shorter coverage wording clarifies limited observation proof. Structured contracts remain optional checker metadata.",
+          "independent_reproduction": "Same raw443-byte remote catalogue now yields full mechanical result861bytes, below valid1500 budget; raw checked_facts exactly equal input. No evidence truncation or new output-budget exception."
+        }
+      ],
+      "independent_validation": {
+        "command": ".venv\\Scripts\\python.exe -m pytest -q -p no:cacheprovider tests/test_agent_evidence_semantics.py tests/test_agent_read_verification.py tests/test_agent_runtime.py tests/test_agent_runtime_verification.py --tb=short",
+        "exit_code": 0,
+        "passed": 87,
+        "failed": 0,
+        "elapsed_seconds": 17.42,
+        "count_note": "Initial same file group was 81 passed/3 failed; revised group has three additional tests. Do not add overlapping author totals.",
+        "extra_checks": "Read-only ad hoc reproductions of actual prior Q06 identities, effective4940 checker limit and1500 mechanical read; all six file hashes verified against author freeze."
+      },
+      "safety_and_scope": [
+        "No raw receipt/checked facts or candidate text deleted by optional contract fitting.",
+        "Scope/goal/epoch filters, fixed observation comparison, permission projection, required criteria and hard runtime budgets remain. No prose promoted to server permission or mechanical proof.",
+        "Canonical identity parsing retains bounded data; untrusted notes and nested supplied contracts are not copied as authority. Legacy missing metadata remains unknown and local known sharing facts remain representable.",
+        "No real GLM/API or held-out access during review; passing tests do not establish natural-language semantic success."
+      ],
+      "next_step_assessment": "No remaining blocker found in this patch scope to one newly recorded GLM development validation on the frozen snapshot. This is not a formal acceptance or quality-rate claim; a fresh semantic review is still required."
+    }
+  ],
+  "current_verdict": "all_four_initial_findings_resolved_no_new_material_findings"
+}

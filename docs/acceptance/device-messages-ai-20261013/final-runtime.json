@@ -1,0 +1,14 @@
+{
+  "at": "2026-10-13T14:54:23.6769996Z",
+  "localModelCount": 20,
+  "localTaskCount": 5,
+  "localPeer": "fR6oJFpFDez/LqWFSnyxUmOmTEB/f/7teSFY/y/9RSA=",
+  "remotePeer": "ppw4BE4zoTTDrlGU/EM2wZ3JW7efSfXeuqrrZmCt9aM=",
+  "sameSpace": true,
+  "localMembership": "active",
+  "remoteMembership": "active",
+  "localAiAccess": "space",
+  "remoteAiAccess": "space",
+  "sidecarHash": "497DCF759BB1D1FE5C41C2A25AE34321CB64316D5364BC99535B8F4E1C9FD186",
+  "remoteIdentityUnchanged": true
+}

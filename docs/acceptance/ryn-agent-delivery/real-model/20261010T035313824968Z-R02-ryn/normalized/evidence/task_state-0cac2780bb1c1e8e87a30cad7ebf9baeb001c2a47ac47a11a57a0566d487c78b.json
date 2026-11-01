@@ -1,0 +1,2470 @@
+{
+  "allowed_actions": {
+    "answer": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": true
+    },
+    "approve": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": true
+    },
+    "archive": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "budget": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "cancel": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": false
+    },
+    "delete": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "deny": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": true
+    },
+    "information": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "model": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "pause": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": false
+    },
+    "reconcile": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": true
+    },
+    "restore": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": true
+    },
+    "resume": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": true
+    },
+    "scope": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "source_credential": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "steer": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    }
+  },
+  "allowed_write_tools": [],
+  "archived": false,
+  "budget": {
+    "current_round": {
+      "active_seconds": 204.60999999998603,
+      "charged_model_calls": 6,
+      "charged_seconds": 204.60999999998603,
+      "charged_tokens": 74400,
+      "charged_tool_calls": 9,
+      "cost": null,
+      "cost_status": "unknown",
+      "input_tokens": 63668,
+      "known_input_tokens": 63668,
+      "known_output_tokens": 10732,
+      "legacy_usage_unknown": false,
+      "model_calls": 6,
+      "output_tokens": 10732,
+      "tool_calls": 9,
+      "total_tokens": 74400,
+      "unsettled_operations": 0,
+      "usage_complete": true
+    },
+    "lifetime": {
+      "active_seconds": 204.60999999998603,
+      "charged_model_calls": 6,
+      "charged_seconds": 204.60999999998603,
+      "charged_tokens": 74400,
+      "charged_tool_calls": 9,
+      "cost": null,
+      "cost_status": "unknown",
+      "input_tokens": 63668,
+      "known_input_tokens": 63668,
+      "known_output_tokens": 10732,
+      "legacy_usage_unknown": false,
+      "model_calls": 6,
+      "output_tokens": 10732,
+      "tool_calls": 9,
+      "total_tokens": 74400,
+      "unsettled_operations": 0,
+      "usage_complete": true
+    },
+    "limits": {
+      "max_total_model_calls": 128,
+      "max_total_seconds": 3600,
+      "max_total_tokens": 2000000,
+      "max_total_tool_calls": 256
+    },
+    "reservation_policy": "Unknown model usage retains the conservative dispatch reservation; cost is unknown without trusted pricing.",
+    "round": 1
+  },
+  "client_request_id": null,
+  "control_revision": 3,
+  "created_at": "2026-10-10T03:53:17.555978+00:00",
+  "criteria": [
+    {
+      "assessment_kind": "semantic",
+      "description": "Satisfy the owner's complete current goal and constraints.",
+      "evidence_refs": [
+        "evidence_52a94788f8234ccaac5e870da73a18ce",
+        "evidence_810d6ac89d2743338d8355d3bbc18487",
+        "evidence_daf39cba08e9450b8429b9e8eb3a52e0",
+        "evidence_e16e0ea527d14cb79739ca5112492b38"
+      ],
+      "goal_revision": 1,
+      "id": "goal-coverage",
+      "kind": "semantic",
+      "required": true,
+      "source": "user",
+      "source_ref": "agent_9ac40d76d1854684bda7805ddd990315:owner:0",
+      "status": "passed",
+      "verifier": null
+    },
+    {
+      "description": "Re-read the current model catalog and compare the reported configuration facts.",
+      "evidence_refs": [
+        "evidence_52a94788f8234ccaac5e870da73a18ce"
+      ],
+      "goal_revision": 1,
+      "id": "criterion_op_36b02d69b7264f7da7eef8400eea0e4b",
+      "kind": "mechanical",
+      "required": true,
+      "source": "tool",
+      "source_ref": "receipt_op_36b02d69b7264f7da7eef8400eea0e4b",
+      "status": "passed",
+      "verifier": "ryn_list_models_facts"
+    },
+    {
+      "description": "Recheck device presence evidence; unknown connectivity remains unknown.",
+      "evidence_refs": [
+        "evidence_810d6ac89d2743338d8355d3bbc18487"
+      ],
+      "goal_revision": 1,
+      "id": "criterion_op_5e85e04176e84d6aa962cd745ba482ea",
+      "kind": "mechanical",
+      "required": true,
+      "source": "tool",
+      "source_ref": "receipt_op_5e85e04176e84d6aa962cd745ba482ea",
+      "status": "passed",
+      "verifier": "ryn_list_devices_facts"
+    },
+    {
+      "description": "Verify the atomic sharing receipt, friends scope and exact recipient grants; receiver connectivity is separate.",
+      "evidence_refs": [
+        "evidence_daf39cba08e9450b8429b9e8eb3a52e0"
+      ],
+      "goal_revision": 1,
+      "id": "criterion_op_fd1dfa945f9946caa7361b8799d49593",
+      "kind": "mechanical",
+      "required": true,
+      "source": "tool",
+      "source_ref": "receipt_op_fd1dfa945f9946caa7361b8799d49593",
+      "status": "passed",
+      "verifier": "exact_friend_sharing_state"
+    },
+    {
+      "description": "Re-read current model service and explicit grant facts.",
+      "evidence_refs": [
+        "evidence_e16e0ea527d14cb79739ca5112492b38"
+      ],
+      "goal_revision": 1,
+      "id": "criterion_op_6c4d5aa714354f4fba70bcff4350506c",
+      "kind": "mechanical",
+      "required": true,
+      "source": "tool",
+      "source_ref": "receipt_op_6c4d5aa714354f4fba70bcff4350506c",
+      "status": "passed",
+      "verifier": "ryn_inspect_services_facts"
+    }
+  ],
+  "error": null,
+  "event_cursor": 33,
+  "events": [
+    {
+      "at": "2026-10-10T03:53:17.556979+00:00",
+      "context_epoch": 0,
+      "seq": 1,
+      "type": "created"
+    },
+    {
+      "at": "2026-10-10T03:53:17.585552+00:00",
+      "context_epoch": 0,
+      "menu": {
+        "catalog_revision": "0d5f6db938da412e8de4dc134194538ed14ce581e2983a1b2c01bde252f15dce",
+        "context_epoch": 0,
+        "goal_revision": 1,
+        "loaded_names": [],
+        "mode": "full",
+        "revision": 1
+      },
+      "reason": "projection",
+      "seq": 2,
+      "type": "tool_menu_changed"
+    },
+    {
+      "at": "2026-10-10T03:53:17.601066+00:00",
+      "context_epoch": 0,
+      "seq": 3,
+      "step": 1,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-10T03:53:29.755691+00:00",
+      "content": "我先查看可用的模型和当前的好友关系，确认 model-b 的准确标识和 node-b 的关系 ID，然后再准备分享操作。",
+      "context_epoch": 0,
+      "seq": 4,
+      "tool_count": 2,
+      "type": "assistant"
+    },
+    {
+      "at": "2026-10-10T03:53:29.776083+00:00",
+      "call_id": "call_-7184290683346220162",
+      "context_epoch": 0,
+      "effect": "read",
+      "operation_id": "op_9ef3c8379abc46e891a7ffe6025f8291",
+      "seq": 5,
+      "tool": "ryn_list_models",
+      "type": "tool_started"
+    },
+    {
+      "at": "2026-10-10T03:53:29.797124+00:00",
+      "call_id": "call_-7184290683346220162",
+      "context_epoch": 0,
+      "operation_id": "op_9ef3c8379abc46e891a7ffe6025f8291",
+      "result": {
+        "models": [
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": true,
+            "availability_basis": "configured_source_readiness_not_live_probe",
+            "available": true,
+            "context_window": 32768,
+            "description": "可供本机 Agent 使用；工具在本机执行。",
+            "destination_binding_supported": true,
+            "destination_revision": "3f7daf6358e14f1dbb2195ccc439c8b2",
+            "evidence": {
+              "connection": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "model_exists": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "tools": {
+                "checked_at": null,
+                "status": "unknown"
+              }
+            },
+            "fixture_identity": "model-a",
+            "id": "local/src-b8e11fa0c3064ce3-8ed3f6ad685b",
+            "model_id": "alpha",
+            "model_settings": {
+              "destination_revision": "3f7daf6358e14f1dbb2195ccc439c8b2",
+              "effective": {
+                "context_window": 32768,
+                "max_concurrent": 1,
+                "request_defaults": {},
+                "requests_per_day": null,
+                "share_scope": "personal_space"
+              },
+              "evidence": {
+                "connection": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "inherited_fields": [
+                "context_window",
+                "max_concurrent",
+                "max_output_tokens",
+                "request_defaults",
+                "requests_per_day",
+                "share_scope"
+              ],
+              "overrides": {},
+              "rule_revision": "eb4cf9590b3646298dcce82d3e510c6e"
+            },
+            "name": "source-alpha · alpha",
+            "peer_id": "N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=",
+            "rule_revision": "eb4cf9590b3646298dcce82d3e510c6e",
+            "runtime": "external",
+            "service_id": "src-b8e11fa0c3064ce3-8ed3f6ad685b",
+            "share_scope": "personal_space",
+            "sharing": true,
+            "source": "local_api",
+            "source_id": "src-b8e11fa0c3064ce3",
+            "source_name": "source-alpha",
+            "streaming": false,
+            "tool_support": "supported"
+          },
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": false,
+            "availability_basis": "configured_source_readiness_not_live_probe",
+            "available": true,
+            "context_window": 32768,
+            "description": "尚未通过工具调用验证，可重试；暂不能用于助手。",
+            "destination_binding_supported": true,
+            "destination_revision": "b7f64d6c1da846a0b34ad6f431b98b2c",
+            "evidence": {
+              "connection": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "model_exists": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "tools": {
+                "checked_at": null,
+                "status": "unknown"
+              }
+            },
+            "fixture_identity": "model-b",
+            "id": "local/src-b8e11fa0c3064ce3-f44e64e75f39",
+            "model_id": "beta",
+            "model_settings": {
+              "destination_revision": "b7f64d6c1da846a0b34ad6f431b98b2c",
+              "effective": {
+                "context_window": 32768,
+                "max_concurrent": 1,
+                "request_defaults": {},
+                "requests_per_day": null,
+                "share_scope": "personal_space"
+              },
+              "evidence": {
+                "connection": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "inherited_fields": [
+                "context_window",
+                "max_concurrent",
+                "max_output_tokens",
+                "request_defaults",
+                "requests_per_day",
+                "share_scope"
+              ],
+              "overrides": {},
+              "rule_revision": "9abbcfa404e54761b2dd6b8d7a1de0b5"
+            },
+            "name": "source-alpha · beta",
+            "peer_id": "N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=",
+            "rule_revision": "9abbcfa404e54761b2dd6b8d7a1de0b5",
+            "runtime": "external",
+            "service_id": "src-b8e11fa0c3064ce3-f44e64e75f39",
+            "share_scope": "personal_space",
+            "sharing": false,
+            "source": "local_api",
+            "source_id": "src-b8e11fa0c3064ce3",
+            "source_name": "source-alpha",
+            "streaming": false,
+            "tool_support": "unsupported"
+          },
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": false,
+            "availability_basis": "configured_source_readiness_not_live_probe",
+            "available": false,
+            "context_window": 32768,
+            "description": "模型当前不可用，请检查来源连接。",
+            "destination_binding_supported": true,
+            "destination_revision": "4f312c6be80d429683649c0cfa11306e",
+            "evidence": {
+              "connection": {
+                "checked_at": "2026-10-09T08:00:00Z",
+                "error_code": "connection_refused",
+                "method": "actual_loopback_socket_probe",
+                "status": "failed"
+              },
+              "model_exists": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "tools": {
+                "checked_at": null,
+                "status": "unknown"
+              }
+            },
+            "fixture_identity": "model-d",
+            "id": "local/src-040f10ac21b54453-8e2c7ac50813",
+            "model_id": "offline",
+            "model_settings": {
+              "destination_revision": "4f312c6be80d429683649c0cfa11306e",
+              "effective": {
+                "context_window": 32768,
+                "max_concurrent": 1,
+                "request_defaults": {},
+                "requests_per_day": null,
+                "share_scope": "personal_space"
+              },
+              "evidence": {
+                "connection": {
+                  "checked_at": "2026-10-09T08:00:00Z",
+                  "error_code": "connection_refused",
+                  "method": "actual_loopback_socket_probe",
+                  "status": "failed"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "inherited_fields": [
+                "context_window",
+                "max_concurrent",
+                "max_output_tokens",
+                "request_defaults",
+                "requests_per_day",
+                "share_scope"
+              ],
+              "overrides": {},
+              "rule_revision": "cd28840555354255a3c17694ce0629f1"
+            },
+            "name": "source-broken · offline",
+            "peer_id": "N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=",
+            "rule_revision": "cd28840555354255a3c17694ce0629f1",
+            "service_id": "src-040f10ac21b54453-8e2c7ac50813",
+            "share_scope": "personal_space",
+            "sharing": false,
+            "source": "local_api",
+            "source_id": "src-040f10ac21b54453",
+            "source_name": "source-broken",
+            "streaming": false,
+            "tool_support": "unknown"
+          },
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": true,
+            "availability_basis": "configured_source_readiness_not_live_probe",
+            "available": true,
+            "context_window": 32768,
+            "description": "可供本机 Agent 使用；工具在本机执行。",
+            "destination_binding_supported": true,
+            "destination_revision": "77cd9f021ae24e2bb74fbb996e403f63",
+            "evidence": {
+              "connection": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "model_exists": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "tools": {
+                "checked_at": null,
+                "status": "unknown"
+              }
+            },
+            "fixture_identity": "model-c",
+            "id": "local/src-36091d932b2e4b48-8ed3f6ad685b",
+            "model_id": "alpha",
+            "model_settings": {
+              "destination_revision": "77cd9f021ae24e2bb74fbb996e403f63",
+              "effective": {
+                "context_window": 32768,
+                "max_concurrent": 1,
+                "request_defaults": {},
+                "requests_per_day": null,
+                "share_scope": "personal_space"
+              },
+              "evidence": {
+                "connection": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "inherited_fields": [
+                "context_window",
+                "max_concurrent",
+                "max_output_tokens",
+                "request_defaults",
+                "requests_per_day",
+                "share_scope"
+              ],
+              "overrides": {},
+              "rule_revision": "bab58930ea9f4618b8c2439788a360ee"
+            },
+            "name": "source-other · alpha",
+            "peer_id": "N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=",
+            "rule_revision": "bab58930ea9f4618b8c2439788a360ee",
+            "runtime": "external",
+            "service_id": "src-36091d932b2e4b48-8ed3f6ad685b",
+            "share_scope": "personal_space",
+            "sharing": false,
+            "source": "local_api",
+            "source_id": "src-36091d932b2e4b48",
+            "source_name": "source-other",
+            "streaming": false,
+            "tool_support": "supported"
+          }
+        ]
+      },
+      "seq": 6,
+      "tool": "ryn_list_models",
+      "type": "tool_result"
+    },
+    {
+      "at": "2026-10-10T03:53:29.824758+00:00",
+      "call_id": "call_-7184290683346220161",
+      "context_epoch": 0,
+      "effect": "read",
+      "operation_id": "op_5e85e04176e84d6aa962cd745ba482ea",
+      "seq": 7,
+      "tool": "ryn_list_devices",
+      "type": "tool_started"
+    },
+    {
+      "at": "2026-10-10T03:53:29.845401+00:00",
+      "call_id": "call_-7184290683346220161",
+      "context_epoch": 0,
+      "operation_id": "op_5e85e04176e84d6aa962cd745ba482ea",
+      "result": {
+        "ai_access": "space",
+        "devices": [
+          {
+            "checked_at": "2026-10-09T08:00:00+00:00",
+            "evidence_source": "self",
+            "http_probe_performed": false,
+            "http_reachable": null,
+            "lan_probe_performed": false,
+            "lan_reachable": null,
+            "last_seen": "",
+            "name": "ryn-sharing-recovery-2kdqpjvv",
+            "online": true,
+            "peer_id": "N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=",
+            "removed": false,
+            "role": "manager"
+          },
+          {
+            "checked_at": "2026-10-09T08:00:00+00:00",
+            "evidence_source": "unknown",
+            "http_probe_performed": false,
+            "http_reachable": null,
+            "lan_probe_performed": false,
+            "lan_reachable": null,
+            "last_seen": "",
+            "node_name": "ungranted-peer",
+            "online": null,
+            "peer_id": "7JRCQf2OM7k3xTLT0g1WwrwWjZ2aHJHws/HXqkU7k1g=",
+            "relationship_id": "b2be50f6f5c94eaa90cc96f388c661f0",
+            "status": "active"
+          },
+          {
+            "checked_at": "2026-10-09T08:00:00+00:00",
+            "evidence_source": "unknown",
+            "http_probe_performed": false,
+            "http_reachable": null,
+            "lan_probe_performed": false,
+            "lan_reachable": null,
+            "last_seen": "",
+            "node_name": "node-b",
+            "online": null,
+            "peer_id": "3NU9lslB+GUtnbjfMX0Wf+W1LuIsyPxPPZKa0bxn/iw=",
+            "relationship_id": "d87944e0063e48b8a617a645c0b39892",
+            "status": "active"
+          }
+        ],
+        "evidence_note": "online=null means unknown; membership is not proof of connectivity. evidence_source=self proves only the executing process is alive; no HTTP/LAN probe is performed for self. Reachability=null means untested, not failed. HTTP failure alone does not prove offline.",
+        "friends": [
+          {
+            "node_name": "ungranted-peer",
+            "peer_id": "7JRCQf2OM7k3xTLT0g1WwrwWjZ2aHJHws/HXqkU7k1g=",
+            "relationship_id": "b2be50f6f5c94eaa90cc96f388c661f0",
+            "status": "active"
+          },
+          {
+            "node_name": "node-b",
+            "peer_id": "3NU9lslB+GUtnbjfMX0Wf+W1LuIsyPxPPZKa0bxn/iw=",
+            "relationship_id": "d87944e0063e48b8a617a645c0b39892",
+            "status": "active"
+          }
+        ],
+        "membership": "active",
+        "self_id": "N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc="
+      },
+      "seq": 8,
+      "tool": "ryn_list_devices",
+      "type": "tool_result"
+    },
+    {
+      "at": "2026-10-10T03:53:29.898688+00:00",
+      "context_epoch": 0,
+      "seq": 9,
+      "step": 2,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-10T03:53:49.256654+00:00",
+      "content": "已确认两项关键信息：\n\n- **model-b** 的准确标识：`local/src-b8e11fa0c3064ce3-f44e64e75f39`（source-alpha · beta，当前为个人空间、未共享）\n- **node-b** 是活跃好友：`relationship_id: d87944e0063e48b8a617a645c0b39892`\n\n现在我提交分享操作。此调用只会**暂存待批准项（waiting_approval）并生成精确预览**，不会执行任何写入——需要您批准后才会生效：",
+      "context_epoch": 0,
+      "seq": 10,
+      "tool_count": 1,
+      "type": "assistant"
+    },
+    {
+      "approval_id": "approval_dd3aa42abeb449fca78a7138f1fd66bf",
+      "at": "2026-10-10T03:53:49.291042+00:00",
+      "context_epoch": 0,
+      "seq": 11,
+      "tool": "ryn_share_model_with_friend",
+      "type": "approval_requested"
+    },
+    {
+      "approval_id": "approval_dd3aa42abeb449fca78a7138f1fd66bf",
+      "at": "2026-10-10T03:53:50.990454+00:00",
+      "context_epoch": 0,
+      "seq": 12,
+      "tool": "ryn_share_model_with_friend",
+      "type": "approved"
+    },
+    {
+      "at": "2026-10-10T03:53:51.027592+00:00",
+      "call_id": "call_-7184289686913804831",
+      "context_epoch": 0,
+      "effect": "write",
+      "operation_id": "op_fd1dfa945f9946caa7361b8799d49593",
+      "seq": 13,
+      "tool": "ryn_share_model_with_friend",
+      "type": "tool_started"
+    },
+    {
+      "at": "2026-10-10T03:53:51.148691+00:00",
+      "call_id": "call_-7184289686913804831",
+      "context_epoch": 0,
+      "operation_id": "op_fd1dfa945f9946caa7361b8799d49593",
+      "result": {
+        "grant_revisions": {
+          "d87944e0063e48b8a617a645c0b39892": 1
+        },
+        "model_binding": {
+          "model_generation": "b7f64d6c1da846a0b34ad6f431b98b2c",
+          "rule_revision": "3234edcd2d7c420d837cd9acea26a486",
+          "service_id": "src-b8e11fa0c3064ce3-f44e64e75f39",
+          "version": "ryn.model-binding.v1"
+        },
+        "model_id": "local/src-b8e11fa0c3064ce3-f44e64e75f39",
+        "ok": true,
+        "operation_id": "op_fd1dfa945f9946caa7361b8799d49593",
+        "publication": "refresh_requested",
+        "recipients": [
+          {
+            "name": "node-b",
+            "peer_id": "3NU9lslB+GUtnbjfMX0Wf+W1LuIsyPxPPZKa0bxn/iw=",
+            "relationship_id": "d87944e0063e48b8a617a645c0b39892"
+          }
+        ],
+        "scope": "friends",
+        "service_id": "src-b8e11fa0c3064ce3-f44e64e75f39",
+        "sharing": true,
+        "source_revision": "2991842fb91d4126a6539fb1dfae74a3"
+      },
+      "seq": 14,
+      "tool": "ryn_share_model_with_friend",
+      "type": "tool_result"
+    },
+    {
+      "at": "2026-10-10T03:53:51.210505+00:00",
+      "context_epoch": 0,
+      "seq": 15,
+      "step": 3,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-10T03:54:08.102088+00:00",
+      "content": "调用返回 `ok: true`。根据服务器记录，该操作对应的权限 `op_fd1dfa945f9946caa7361b8799d49593` 已有所有者批准记录（approval_id: `approval_dd3aa42abeb449fca78a7138f1fd66bf`，批准于 2026-10-10T03:53:50Z），因此写入已生效。我现在检查实际结果状态予以确认：",
+      "context_epoch": 0,
+      "seq": 16,
+      "tool_count": 2,
+      "type": "assistant"
+    },
+    {
+      "at": "2026-10-10T03:54:08.132367+00:00",
+      "call_id": "call_-7184290511547524355",
+      "context_epoch": 0,
+      "effect": "read",
+      "operation_id": "op_6c4d5aa714354f4fba70bcff4350506c",
+      "seq": 17,
+      "tool": "ryn_inspect_services",
+      "type": "tool_started"
+    },
+    {
+      "at": "2026-10-10T03:54:08.162616+00:00",
+      "call_id": "call_-7184290511547524355",
+      "context_epoch": 0,
+      "operation_id": "op_6c4d5aa714354f4fba70bcff4350506c",
+      "result": {
+        "friend_grants": [
+          {
+            "allowed": true,
+            "effective": true,
+            "peer_id": "3NU9lslB+GUtnbjfMX0Wf+W1LuIsyPxPPZKa0bxn/iw=",
+            "relationship_id": "d87944e0063e48b8a617a645c0b39892",
+            "revision": 1,
+            "service_id": "src-b8e11fa0c3064ce3-f44e64e75f39"
+          }
+        ],
+        "models": [
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": true,
+            "availability_basis": "configured_source_readiness_not_live_probe",
+            "available": true,
+            "context_window": 32768,
+            "description": "可供本机 Agent 使用；工具在本机执行。",
+            "destination_binding_supported": true,
+            "destination_revision": "3f7daf6358e14f1dbb2195ccc439c8b2",
+            "evidence": {
+              "connection": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "model_exists": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "tools": {
+                "checked_at": null,
+                "status": "unknown"
+              }
+            },
+            "id": "local/src-b8e11fa0c3064ce3-8ed3f6ad685b",
+            "model_id": "alpha",
+            "model_settings": {
+              "destination_revision": "3f7daf6358e14f1dbb2195ccc439c8b2",
+              "effective": {
+                "context_window": 32768,
+                "max_concurrent": 1,
+                "request_defaults": {},
+                "requests_per_day": null,
+                "share_scope": "personal_space"
+              },
+              "evidence": {
+                "connection": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "inherited_fields": [
+                "context_window",
+                "max_concurrent",
+                "max_output_tokens",
+                "request_defaults",
+                "requests_per_day",
+                "share_scope"
+              ],
+              "overrides": {},
+              "rule_revision": "eb4cf9590b3646298dcce82d3e510c6e"
+            },
+            "name": "source-alpha · alpha",
+            "peer_id": "N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=",
+            "rule_revision": "eb4cf9590b3646298dcce82d3e510c6e",
+            "runtime": "external",
+            "service_id": "src-b8e11fa0c3064ce3-8ed3f6ad685b",
+            "share_scope": "personal_space",
+            "sharing": true,
+            "source": "local_api",
+            "source_id": "src-b8e11fa0c3064ce3",
+            "source_name": "source-alpha",
+            "streaming": false,
+            "tool_support": "supported"
+          },
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": false,
+            "availability_basis": "configured_source_readiness_not_live_probe",
+            "available": true,
+            "context_window": 32768,
+            "description": "尚未通过工具调用验证，可重试；暂不能用于助手。",
+            "destination_binding_supported": true,
+            "destination_revision": "b7f64d6c1da846a0b34ad6f431b98b2c",
+            "evidence": {
+              "connection": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "model_exists": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "tools": {
+                "checked_at": null,
+                "status": "unknown"
+              }
+            },
+            "id": "local/src-b8e11fa0c3064ce3-f44e64e75f39",
+            "model_id": "beta",
+            "model_settings": {
+              "destination_revision": "b7f64d6c1da846a0b34ad6f431b98b2c",
+              "effective": {
+                "context_window": 32768,
+                "max_concurrent": 1,
+                "request_defaults": {},
+                "requests_per_day": null,
+                "share_scope": "friends"
+              },
+              "evidence": {
+                "connection": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "inherited_fields": [
+                "context_window",
+                "max_concurrent",
+                "max_output_tokens",
+                "request_defaults",
+                "requests_per_day"
+              ],
+              "overrides": {
+                "share_scope": "friends"
+              },
+              "rule_revision": "3234edcd2d7c420d837cd9acea26a486"
+            },
+            "name": "source-alpha · beta",
+            "peer_id": "N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=",
+            "rule_revision": "3234edcd2d7c420d837cd9acea26a486",
+            "runtime": "external",
+            "service_id": "src-b8e11fa0c3064ce3-f44e64e75f39",
+            "share_scope": "friends",
+            "sharing": true,
+            "source": "local_api",
+            "source_id": "src-b8e11fa0c3064ce3",
+            "source_name": "source-alpha",
+            "streaming": false,
+            "tool_support": "unsupported"
+          },
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": false,
+            "availability_basis": "configured_source_readiness_not_live_probe",
+            "available": false,
+            "context_window": 32768,
+            "description": "模型当前不可用，请检查来源连接。",
+            "destination_binding_supported": true,
+            "destination_revision": "4f312c6be80d429683649c0cfa11306e",
+            "evidence": {
+              "connection": {
+                "checked_at": "2026-10-09T08:00:00Z",
+                "error_code": "connection_refused",
+                "method": "actual_loopback_socket_probe",
+                "status": "failed"
+              },
+              "model_exists": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "tools": {
+                "checked_at": null,
+                "status": "unknown"
+              }
+            },
+            "id": "local/src-040f10ac21b54453-8e2c7ac50813",
+            "model_id": "offline",
+            "model_settings": {
+              "destination_revision": "4f312c6be80d429683649c0cfa11306e",
+              "effective": {
+                "context_window": 32768,
+                "max_concurrent": 1,
+                "request_defaults": {},
+                "requests_per_day": null,
+                "share_scope": "personal_space"
+              },
+              "evidence": {
+                "connection": {
+                  "checked_at": "2026-10-09T08:00:00Z",
+                  "error_code": "connection_refused",
+                  "method": "actual_loopback_socket_probe",
+                  "status": "failed"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "inherited_fields": [
+                "context_window",
+                "max_concurrent",
+                "max_output_tokens",
+                "request_defaults",
+                "requests_per_day",
+                "share_scope"
+              ],
+              "overrides": {},
+              "rule_revision": "cd28840555354255a3c17694ce0629f1"
+            },
+            "name": "source-broken · offline",
+            "peer_id": "N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=",
+            "rule_revision": "cd28840555354255a3c17694ce0629f1",
+            "service_id": "src-040f10ac21b54453-8e2c7ac50813",
+            "share_scope": "personal_space",
+            "sharing": false,
+            "source": "local_api",
+            "source_id": "src-040f10ac21b54453",
+            "source_name": "source-broken",
+            "streaming": false,
+            "tool_support": "unknown"
+          },
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": true,
+            "availability_basis": "configured_source_readiness_not_live_probe",
+            "available": true,
+            "context_window": 32768,
+            "description": "可供本机 Agent 使用；工具在本机执行。",
+            "destination_binding_supported": true,
+            "destination_revision": "77cd9f021ae24e2bb74fbb996e403f63",
+            "evidence": {
+              "connection": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "model_exists": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "tools": {
+                "checked_at": null,
+                "status": "unknown"
+              }
+            },
+            "id": "local/src-36091d932b2e4b48-8ed3f6ad685b",
+            "model_id": "alpha",
+            "model_settings": {
+              "destination_revision": "77cd9f021ae24e2bb74fbb996e403f63",
+              "effective": {
+                "context_window": 32768,
+                "max_concurrent": 1,
+                "request_defaults": {},
+                "requests_per_day": null,
+                "share_scope": "personal_space"
+              },
+              "evidence": {
+                "connection": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "inherited_fields": [
+                "context_window",
+                "max_concurrent",
+                "max_output_tokens",
+                "request_defaults",
+                "requests_per_day",
+                "share_scope"
+              ],
+              "overrides": {},
+              "rule_revision": "bab58930ea9f4618b8c2439788a360ee"
+            },
+            "name": "source-other · alpha",
+            "peer_id": "N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=",
+            "rule_revision": "bab58930ea9f4618b8c2439788a360ee",
+            "runtime": "external",
+            "service_id": "src-36091d932b2e4b48-8ed3f6ad685b",
+            "share_scope": "personal_space",
+            "sharing": false,
+            "source": "local_api",
+            "source_id": "src-36091d932b2e4b48",
+            "source_name": "source-other",
+            "streaming": false,
+            "tool_support": "supported"
+          }
+        ]
+      },
+      "seq": 18,
+      "tool": "ryn_inspect_services",
+      "type": "tool_result"
+    },
+    {
+      "at": "2026-10-10T03:54:08.198523+00:00",
+      "call_id": "call_-7184290511547524354",
+      "context_epoch": 0,
+      "effect": "read",
+      "operation_id": "op_36b02d69b7264f7da7eef8400eea0e4b",
+      "seq": 19,
+      "tool": "ryn_list_models",
+      "type": "tool_started"
+    },
+    {
+      "at": "2026-10-10T03:54:08.229614+00:00",
+      "call_id": "call_-7184290511547524354",
+      "context_epoch": 0,
+      "operation_id": "op_36b02d69b7264f7da7eef8400eea0e4b",
+      "result": {
+        "models": [
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": true,
+            "availability_basis": "configured_source_readiness_not_live_probe",
+            "available": true,
+            "context_window": 32768,
+            "description": "可供本机 Agent 使用；工具在本机执行。",
+            "destination_binding_supported": true,
+            "destination_revision": "3f7daf6358e14f1dbb2195ccc439c8b2",
+            "evidence": {
+              "connection": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "model_exists": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "tools": {
+                "checked_at": null,
+                "status": "unknown"
+              }
+            },
+            "fixture_identity": "model-a",
+            "id": "local/src-b8e11fa0c3064ce3-8ed3f6ad685b",
+            "model_id": "alpha",
+            "model_settings": {
+              "destination_revision": "3f7daf6358e14f1dbb2195ccc439c8b2",
+              "effective": {
+                "context_window": 32768,
+                "max_concurrent": 1,
+                "request_defaults": {},
+                "requests_per_day": null,
+                "share_scope": "personal_space"
+              },
+              "evidence": {
+                "connection": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "inherited_fields": [
+                "context_window",
+                "max_concurrent",
+                "max_output_tokens",
+                "request_defaults",
+                "requests_per_day",
+                "share_scope"
+              ],
+              "overrides": {},
+              "rule_revision": "eb4cf9590b3646298dcce82d3e510c6e"
+            },
+            "name": "source-alpha · alpha",
+            "peer_id": "N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=",
+            "rule_revision": "eb4cf9590b3646298dcce82d3e510c6e",
+            "runtime": "external",
+            "service_id": "src-b8e11fa0c3064ce3-8ed3f6ad685b",
+            "share_scope": "personal_space",
+            "sharing": true,
+            "source": "local_api",
+            "source_id": "src-b8e11fa0c3064ce3",
+            "source_name": "source-alpha",
+            "streaming": false,
+            "tool_support": "supported"
+          },
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": false,
+            "availability_basis": "configured_source_readiness_not_live_probe",
+            "available": true,
+            "context_window": 32768,
+            "description": "尚未通过工具调用验证，可重试；暂不能用于助手。",
+            "destination_binding_supported": true,
+            "destination_revision": "b7f64d6c1da846a0b34ad6f431b98b2c",
+            "evidence": {
+              "connection": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "model_exists": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "tools": {
+                "checked_at": null,
+                "status": "unknown"
+              }
+            },
+            "fixture_identity": "model-b",
+            "id": "local/src-b8e11fa0c3064ce3-f44e64e75f39",
+            "model_id": "beta",
+            "model_settings": {
+              "destination_revision": "b7f64d6c1da846a0b34ad6f431b98b2c",
+              "effective": {
+                "context_window": 32768,
+                "max_concurrent": 1,
+                "request_defaults": {},
+                "requests_per_day": null,
+                "share_scope": "friends"
+              },
+              "evidence": {
+                "connection": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "inherited_fields": [
+                "context_window",
+                "max_concurrent",
+                "max_output_tokens",
+                "request_defaults",
+                "requests_per_day"
+              ],
+              "overrides": {
+                "share_scope": "friends"
+              },
+              "rule_revision": "3234edcd2d7c420d837cd9acea26a486"
+            },
+            "name": "source-alpha · beta",
+            "peer_id": "N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=",
+            "rule_revision": "3234edcd2d7c420d837cd9acea26a486",
+            "runtime": "external",
+            "service_id": "src-b8e11fa0c3064ce3-f44e64e75f39",
+            "share_scope": "friends",
+            "sharing": true,
+            "source": "local_api",
+            "source_id": "src-b8e11fa0c3064ce3",
+            "source_name": "source-alpha",
+            "streaming": false,
+            "tool_support": "unsupported"
+          },
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": false,
+            "availability_basis": "configured_source_readiness_not_live_probe",
+            "available": false,
+            "context_window": 32768,
+            "description": "模型当前不可用，请检查来源连接。",
+            "destination_binding_supported": true,
+            "destination_revision": "4f312c6be80d429683649c0cfa11306e",
+            "evidence": {
+              "connection": {
+                "checked_at": "2026-10-09T08:00:00Z",
+                "error_code": "connection_refused",
+                "method": "actual_loopback_socket_probe",
+                "status": "failed"
+              },
+              "model_exists": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "tools": {
+                "checked_at": null,
+                "status": "unknown"
+              }
+            },
+            "fixture_identity": "model-d",
+            "id": "local/src-040f10ac21b54453-8e2c7ac50813",
+            "model_id": "offline",
+            "model_settings": {
+              "destination_revision": "4f312c6be80d429683649c0cfa11306e",
+              "effective": {
+                "context_window": 32768,
+                "max_concurrent": 1,
+                "request_defaults": {},
+                "requests_per_day": null,
+                "share_scope": "personal_space"
+              },
+              "evidence": {
+                "connection": {
+                  "checked_at": "2026-10-09T08:00:00Z",
+                  "error_code": "connection_refused",
+                  "method": "actual_loopback_socket_probe",
+                  "status": "failed"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "inherited_fields": [
+                "context_window",
+                "max_concurrent",
+                "max_output_tokens",
+                "request_defaults",
+                "requests_per_day",
+                "share_scope"
+              ],
+              "overrides": {},
+              "rule_revision": "cd28840555354255a3c17694ce0629f1"
+            },
+            "name": "source-broken · offline",
+            "peer_id": "N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=",
+            "rule_revision": "cd28840555354255a3c17694ce0629f1",
+            "service_id": "src-040f10ac21b54453-8e2c7ac50813",
+            "share_scope": "personal_space",
+            "sharing": false,
+            "source": "local_api",
+            "source_id": "src-040f10ac21b54453",
+            "source_name": "source-broken",
+            "streaming": false,
+            "tool_support": "unknown"
+          },
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": true,
+            "availability_basis": "configured_source_readiness_not_live_probe",
+            "available": true,
+            "context_window": 32768,
+            "description": "可供本机 Agent 使用；工具在本机执行。",
+            "destination_binding_supported": true,
+            "destination_revision": "77cd9f021ae24e2bb74fbb996e403f63",
+            "evidence": {
+              "connection": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "model_exists": {
+                "checked_at": null,
+                "status": "unknown"
+              },
+              "tools": {
+                "checked_at": null,
+                "status": "unknown"
+              }
+            },
+            "fixture_identity": "model-c",
+            "id": "local/src-36091d932b2e4b48-8ed3f6ad685b",
+            "model_id": "alpha",
+            "model_settings": {
+              "destination_revision": "77cd9f021ae24e2bb74fbb996e403f63",
+              "effective": {
+                "context_window": 32768,
+                "max_concurrent": 1,
+                "request_defaults": {},
+                "requests_per_day": null,
+                "share_scope": "personal_space"
+              },
+              "evidence": {
+                "connection": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "inherited_fields": [
+                "context_window",
+                "max_concurrent",
+                "max_output_tokens",
+                "request_defaults",
+                "requests_per_day",
+                "share_scope"
+              ],
+              "overrides": {},
+              "rule_revision": "bab58930ea9f4618b8c2439788a360ee"
+            },
+            "name": "source-other · alpha",
+            "peer_id": "N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=",
+            "rule_revision": "bab58930ea9f4618b8c2439788a360ee",
+            "runtime": "external",
+            "service_id": "src-36091d932b2e4b48-8ed3f6ad685b",
+            "share_scope": "personal_space",
+            "sharing": false,
+            "source": "local_api",
+            "source_id": "src-36091d932b2e4b48",
+            "source_name": "source-other",
+            "streaming": false,
+            "tool_support": "supported"
+          }
+        ]
+      },
+      "seq": 20,
+      "tool": "ryn_list_models",
+      "type": "tool_result"
+    },
+    {
+      "at": "2026-10-10T03:54:08.300935+00:00",
+      "context_epoch": 0,
+      "seq": 21,
+      "step": 4,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-10T03:54:33.369403+00:00",
+      "content": "已完成并验证。以下是执行结果与依据：\n\n## 操作结果：分享已生效\n\n**model-b（source-alpha · beta）→ node-b**\n\n| 项目 | 结果 | 证据 |\n|---|---|---|\n| 分享状态 | `sharing: true`，`share_scope: friends` | `ryn_list_models` 返回 model-b 行（id `local/src-b8e11fa0c3064ce3-f44e64e75f39`），规则修订号由 `9abbcfa4…` 变为 `3234edcd…` |\n| 好友授权 | node-b 已授权且生效 | `ryn_inspect_services` 中 `friend_grants` 恰有一条：`relationship_id d87944e0…`，`allowed: true, effective: true, revision: 1` |\n| 授权范围 | 仅此一位接收者 | 另一位好友 `ungranted-peer` 无任何授权记录 |\n| 分发 | `publication: \"refresh_requested\"` | 写入工具回执，表示已请求刷新传播 |\n\n## 关于\"等我的批准\"\n\n您要求等批准后执行。本次写入调用了 `ryn_share_model_with_friend`，服务器将其与已有的所有者批准记录匹配后执行：操作 ID `op_fd1dfa945f9946caa7361b8799d49593` 对应批准 `approval_dd3aa42abeb449fca78a7138f1fd66bf`（2026-10-10T03:53:50Z，`operation_status: confirmed`）。也就是说，该确切操作的批准已在服务器侧记录，并非仅凭本次对话文字授权。如果您并不认可这份批准，我可以撤销分享（将 model-b 设为不共享，需新的批准）。\n\n## 需要说明的局限\n\n- **接收方连通性未验证**：node-b 的在线状态为 `online: null`（未探测），授权生效不等于 node-b 当前能实际访问该模型，需另行连通性检查。\n- **传播待确认**：回执仅表示\"已请求刷新\"，未确认 node-b 侧已收到分享。\n- model-b 本身标记为 `agent_supported: false`、`tool_support: unsupported`（尚未通过工具调用验证），但这不影响分享本身。",
+      "context_epoch": 0,
+      "seq": 22,
+      "tool_count": 0,
+      "type": "assistant"
+    },
+    {
+      "at": "2026-10-10T03:54:33.369403+00:00",
+      "context_epoch": 0,
+      "goal_revision": 1,
+      "seq": 23,
+      "type": "verification_started"
+    },
+    {
+      "at": "2026-10-10T03:54:33.454609+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_36b02d69b7264f7da7eef8400eea0e4b",
+      "evidence_id": "evidence_52a94788f8234ccaac5e870da73a18ce",
+      "seq": 24,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-10T03:54:33.545528+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_5e85e04176e84d6aa962cd745ba482ea",
+      "evidence_id": "evidence_810d6ac89d2743338d8355d3bbc18487",
+      "seq": 25,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-10T03:54:33.628106+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_fd1dfa945f9946caa7361b8799d49593",
+      "evidence_id": "evidence_daf39cba08e9450b8429b9e8eb3a52e0",
+      "seq": 26,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-10T03:54:33.721588+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_6c4d5aa714354f4fba70bcff4350506c",
+      "evidence_id": "evidence_e16e0ea527d14cb79739ca5112492b38",
+      "seq": 27,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-10T03:54:33.786044+00:00",
+      "context_epoch": 0,
+      "seq": 28,
+      "step": 5,
+      "type": "verification_model_started"
+    },
+    {
+      "at": "2026-10-10T03:55:45.434196+00:00",
+      "context_epoch": 0,
+      "error": "agent_invalid_model_response",
+      "finish_reason": "length",
+      "seq": 29,
+      "stage": "verification_model",
+      "type": "model_response_rejected",
+      "usage": {
+        "input_tokens": 16066,
+        "output_tokens": 4096
+      }
+    },
+    {
+      "at": "2026-10-10T03:55:45.454230+00:00",
+      "context_epoch": 0,
+      "error": "agent_invalid_verification_response",
+      "retry_count": 1,
+      "seq": 30,
+      "type": "verification_format_retry_scheduled"
+    },
+    {
+      "at": "2026-10-10T03:55:45.513146+00:00",
+      "context_epoch": 0,
+      "seq": 31,
+      "step": 6,
+      "type": "verification_model_started"
+    },
+    {
+      "at": "2026-10-10T03:56:44.919227+00:00",
+      "context_epoch": 0,
+      "outcome": "verified",
+      "seq": 32,
+      "type": "verification_finished"
+    },
+    {
+      "at": "2026-10-10T03:56:44.919227+00:00",
+      "context_epoch": 0,
+      "seq": 33,
+      "type": "completed"
+    }
+  ],
+  "goal": {
+    "constraints": [
+      {
+        "id": "constraint:agent_9ac40d76d1854684bda7805ddd990315:owner:0",
+        "message_id": "agent_9ac40d76d1854684bda7805ddd990315:owner:0",
+        "required": true,
+        "source": "user",
+        "text": "分享 model-b 给 node-b，等我的具体批准后执行。"
+      }
+    ],
+    "kind": "unclassified",
+    "original_message_id": "agent_9ac40d76d1854684bda7805ddd990315:owner:0",
+    "revision": 1,
+    "text": "分享 model-b 给 node-b，等我的具体批准后执行。"
+  },
+  "id": "agent_9ac40d76d1854684bda7805ddd990315",
+  "limits": {
+    "max_context_chars": 100000,
+    "max_output_chars": 20000,
+    "max_seconds": 600,
+    "max_steps": 24
+  },
+  "messages": [
+    {
+      "content": "分享 model-b 给 node-b，等我的具体批准后执行。",
+      "message_id": "agent_9ac40d76d1854684bda7805ddd990315:owner:0",
+      "role": "user"
+    },
+    {
+      "content": "我先查看可用的模型和当前的好友关系，确认 model-b 的准确标识和 node-b 的关系 ID，然后再准备分享操作。",
+      "context_epoch": 0,
+      "role": "assistant",
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{}",
+            "name": "ryn_list_models"
+          },
+          "id": "call_-7184290683346220162",
+          "type": "function"
+        },
+        {
+          "function": {
+            "arguments": "{}",
+            "name": "ryn_list_devices"
+          },
+          "id": "call_-7184290683346220161",
+          "type": "function"
+        }
+      ]
+    },
+    {
+      "content": "{\"models\":[{\"adapter\":\"openai_compatible\",\"agent_supported\":true,\"availability_basis\":\"configured_source_readiness_not_live_probe\",\"available\":true,\"context_window\":32768,\"description\":\"可供本机 Agent 使用；工具在本机执行。\",\"destination_binding_supported\":true,\"destination_revision\":\"3f7daf6358e14f1dbb2195ccc439c8b2\",\"evidence\":{\"connection\":{\"checked_at\":null,\"status\":\"unknown\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"fixture_identity\":\"model-a\",\"id\":\"local/src-b8e11fa0c3064ce3-8ed3f6ad685b\",\"model_id\":\"alpha\",\"model_settings\":{\"destination_revision\":\"3f7daf6358e14f1dbb2195ccc439c8b2\",\"effective\":{\"context_window\":32768,\"max_concurrent\":1,\"request_defaults\":{},\"requests_per_day\":null,\"share_scope\":\"personal_space\"},\"evidence\":{\"connection\":{\"checked_at\":null,\"status\":\"unknown\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"inherited_fields\":[\"context_window\",\"max_concurrent\",\"max_output_tokens\",\"request_defaults\",\"requests_per_day\",\"share_scope\"],\"overrides\":{},\"rule_revision\":\"eb4cf9590b3646298dcce82d3e510c6e\"},\"name\":\"source-alpha · alpha\",\"peer_id\":\"N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=\",\"rule_revision\":\"eb4cf9590b3646298dcce82d3e510c6e\",\"runtime\":\"external\",\"service_id\":\"src-b8e11fa0c3064ce3-8ed3f6ad685b\",\"share_scope\":\"personal_space\",\"sharing\":true,\"source\":\"local_api\",\"source_id\":\"src-b8e11fa0c3064ce3\",\"source_name\":\"source-alpha\",\"streaming\":false,\"tool_support\":\"supported\"},{\"adapter\":\"openai_compatible\",\"agent_supported\":false,\"availability_basis\":\"configured_source_readiness_not_live_probe\",\"available\":true,\"context_window\":32768,\"description\":\"尚未通过工具调用验证，可重试；暂不能用于助手。\",\"destination_binding_supported\":true,\"destination_revision\":\"b7f64d6c1da846a0b34ad6f431b98b2c\",\"evidence\":{\"connection\":{\"checked_at\":null,\"status\":\"unknown\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"fixture_identity\":\"model-b\",\"id\":\"local/src-b8e11fa0c3064ce3-f44e64e75f39\",\"model_id\":\"beta\",\"model_settings\":{\"destination_revision\":\"b7f64d6c1da846a0b34ad6f431b98b2c\",\"effective\":{\"context_window\":32768,\"max_concurrent\":1,\"request_defaults\":{},\"requests_per_day\":null,\"share_scope\":\"personal_space\"},\"evidence\":{\"connection\":{\"checked_at\":null,\"status\":\"unknown\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"inherited_fields\":[\"context_window\",\"max_concurrent\",\"max_output_tokens\",\"request_defaults\",\"requests_per_day\",\"share_scope\"],\"overrides\":{},\"rule_revision\":\"9abbcfa404e54761b2dd6b8d7a1de0b5\"},\"name\":\"source-alpha · beta\",\"peer_id\":\"N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=\",\"rule_revision\":\"9abbcfa404e54761b2dd6b8d7a1de0b5\",\"runtime\":\"external\",\"service_id\":\"src-b8e11fa0c3064ce3-f44e64e75f39\",\"share_scope\":\"personal_space\",\"sharing\":false,\"source\":\"local_api\",\"source_id\":\"src-b8e11fa0c3064ce3\",\"source_name\":\"source-alpha\",\"streaming\":false,\"tool_support\":\"unsupported\"},{\"adapter\":\"openai_compatible\",\"agent_supported\":false,\"availability_basis\":\"configured_source_readiness_not_live_probe\",\"available\":false,\"context_window\":32768,\"description\":\"模型当前不可用，请检查来源连接。\",\"destination_binding_supported\":true,\"destination_revision\":\"4f312c6be80d429683649c0cfa11306e\",\"evidence\":{\"connection\":{\"checked_at\":\"2026-10-09T08:00:00Z\",\"error_code\":\"connection_refused\",\"method\":\"actual_loopback_socket_probe\",\"status\":\"failed\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"fixture_identity\":\"model-d\",\"id\":\"local/src-040f10ac21b54453-8e2c7ac50813\",\"model_id\":\"offline\",\"model_settings\":{\"destination_revision\":\"4f312c6be80d429683649c0cfa11306e\",\"effective\":{\"context_window\":32768,\"max_concurrent\":1,\"request_defaults\":{},\"requests_per_day\":null,\"share_scope\":\"personal_space\"},\"evidence\":{\"connection\":{\"checked_at\":\"2026-10-09T08:00:00Z\",\"error_code\":\"connection_refused\",\"method\":\"actual_loopback_socket_probe\",\"status\":\"failed\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"inherited_fields\":[\"context_window\",\"max_concurrent\",\"max_output_tokens\",\"request_defaults\",\"requests_per_day\",\"share_scope\"],\"overrides\":{},\"rule_revision\":\"cd28840555354255a3c17694ce0629f1\"},\"name\":\"source-broken · offline\",\"peer_id\":\"N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=\",\"rule_revision\":\"cd28840555354255a3c17694ce0629f1\",\"service_id\":\"src-040f10ac21b54453-8e2c7ac50813\",\"share_scope\":\"personal_space\",\"sharing\":false,\"source\":\"local_api\",\"source_id\":\"src-040f10ac21b54453\",\"source_name\":\"source-broken\",\"streaming\":false,\"tool_support\":\"unknown\"},{\"adapter\":\"openai_compatible\",\"agent_supported\":true,\"availability_basis\":\"configured_source_readiness_not_live_probe\",\"available\":true,\"context_window\":32768,\"description\":\"可供本机 Agent 使用；工具在本机执行。\",\"destination_binding_supported\":true,\"destination_revision\":\"77cd9f021ae24e2bb74fbb996e403f63\",\"evidence\":{\"connection\":{\"checked_at\":null,\"status\":\"unknown\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"fixture_identity\":\"model-c\",\"id\":\"local/src-36091d932b2e4b48-8ed3f6ad685b\",\"model_id\":\"alpha\",\"model_settings\":{\"destination_revision\":\"77cd9f021ae24e2bb74fbb996e403f63\",\"effective\":{\"context_window\":32768,\"max_concurrent\":1,\"request_defaults\":{},\"requests_per_day\":null,\"share_scope\":\"personal_space\"},\"evidence\":{\"connection\":{\"checked_at\":null,\"status\":\"unknown\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"inherited_fields\":[\"context_window\",\"max_concurrent\",\"max_output_tokens\",\"request_defaults\",\"requests_per_day\",\"share_scope\"],\"overrides\":{},\"rule_revision\":\"bab58930ea9f4618b8c2439788a360ee\"},\"name\":\"source-other · alpha\",\"peer_id\":\"N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=\",\"rule_revision\":\"bab58930ea9f4618b8c2439788a360ee\",\"runtime\":\"external\",\"service_id\":\"src-36091d932b2e4b48-8ed3f6ad685b\",\"share_scope\":\"personal_space\",\"sharing\":false,\"source\":\"local_api\",\"source_id\":\"src-36091d932b2e4b48\",\"source_name\":\"source-other\",\"streaming\":false,\"tool_support\":\"supported\"}]}",
+      "context_epoch": 0,
+      "role": "tool",
+      "tool_call_id": "call_-7184290683346220162"
+    },
+    {
+      "content": "{\"ai_access\":\"space\",\"devices\":[{\"checked_at\":\"2026-10-09T08:00:00+00:00\",\"evidence_source\":\"self\",\"http_probe_performed\":false,\"http_reachable\":null,\"lan_probe_performed\":false,\"lan_reachable\":null,\"last_seen\":\"\",\"name\":\"ryn-sharing-recovery-2kdqpjvv\",\"online\":true,\"peer_id\":\"N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=\",\"removed\":false,\"role\":\"manager\"},{\"checked_at\":\"2026-10-09T08:00:00+00:00\",\"evidence_source\":\"unknown\",\"http_probe_performed\":false,\"http_reachable\":null,\"lan_probe_performed\":false,\"lan_reachable\":null,\"last_seen\":\"\",\"node_name\":\"ungranted-peer\",\"online\":null,\"peer_id\":\"7JRCQf2OM7k3xTLT0g1WwrwWjZ2aHJHws/HXqkU7k1g=\",\"relationship_id\":\"b2be50f6f5c94eaa90cc96f388c661f0\",\"status\":\"active\"},{\"checked_at\":\"2026-10-09T08:00:00+00:00\",\"evidence_source\":\"unknown\",\"http_probe_performed\":false,\"http_reachable\":null,\"lan_probe_performed\":false,\"lan_reachable\":null,\"last_seen\":\"\",\"node_name\":\"node-b\",\"online\":null,\"peer_id\":\"3NU9lslB+GUtnbjfMX0Wf+W1LuIsyPxPPZKa0bxn/iw=\",\"relationship_id\":\"d87944e0063e48b8a617a645c0b39892\",\"status\":\"active\"}],\"evidence_note\":\"online=null means unknown; membership is not proof of connectivity. evidence_source=self proves only the executing process is alive; no HTTP/LAN probe is performed for self. Reachability=null means untested, not failed. HTTP failure alone does not prove offline.\",\"friends\":[{\"node_name\":\"ungranted-peer\",\"peer_id\":\"7JRCQf2OM7k3xTLT0g1WwrwWjZ2aHJHws/HXqkU7k1g=\",\"relationship_id\":\"b2be50f6f5c94eaa90cc96f388c661f0\",\"status\":\"active\"},{\"node_name\":\"node-b\",\"peer_id\":\"3NU9lslB+GUtnbjfMX0Wf+W1LuIsyPxPPZKa0bxn/iw=\",\"relationship_id\":\"d87944e0063e48b8a617a645c0b39892\",\"status\":\"active\"}],\"membership\":\"active\",\"self_id\":\"N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=\"}",
+      "context_epoch": 0,
+      "role": "tool",
+      "tool_call_id": "call_-7184290683346220161"
+    },
+    {
+      "content": "已确认两项关键信息：\n\n- **model-b** 的准确标识：`local/src-b8e11fa0c3064ce3-f44e64e75f39`（source-alpha · beta，当前为个人空间、未共享）\n- **node-b** 是活跃好友：`relationship_id: d87944e0063e48b8a617a645c0b39892`\n\n现在我提交分享操作。此调用只会**暂存待批准项（waiting_approval）并生成精确预览**，不会执行任何写入——需要您批准后才会生效：",
+      "context_epoch": 0,
+      "role": "assistant",
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{\"model_id\":\"local/src-b8e11fa0c3064ce3-f44e64e75f39\",\"relationship_id\":\"d87944e0063e48b8a617a645c0b39892\"}",
+            "name": "ryn_share_model_with_friend"
+          },
+          "id": "call_-7184289686913804831",
+          "type": "function"
+        }
+      ]
+    },
+    {
+      "content": "{\"grant_revisions\":{\"d87944e0063e48b8a617a645c0b39892\":1},\"model_binding\":{\"model_generation\":\"b7f64d6c1da846a0b34ad6f431b98b2c\",\"rule_revision\":\"3234edcd2d7c420d837cd9acea26a486\",\"service_id\":\"src-b8e11fa0c3064ce3-f44e64e75f39\",\"version\":\"ryn.model-binding.v1\"},\"model_id\":\"local/src-b8e11fa0c3064ce3-f44e64e75f39\",\"ok\":true,\"operation_id\":\"op_fd1dfa945f9946caa7361b8799d49593\",\"publication\":\"refresh_requested\",\"recipients\":[{\"name\":\"node-b\",\"peer_id\":\"3NU9lslB+GUtnbjfMX0Wf+W1LuIsyPxPPZKa0bxn/iw=\",\"relationship_id\":\"d87944e0063e48b8a617a645c0b39892\"}],\"scope\":\"friends\",\"service_id\":\"src-b8e11fa0c3064ce3-f44e64e75f39\",\"sharing\":true,\"source_revision\":\"2991842fb91d4126a6539fb1dfae74a3\"}",
+      "context_epoch": 0,
+      "role": "tool",
+      "tool_call_id": "call_-7184289686913804831"
+    },
+    {
+      "content": "调用返回 `ok: true`。根据服务器记录，该操作对应的权限 `op_fd1dfa945f9946caa7361b8799d49593` 已有所有者批准记录（approval_id: `approval_dd3aa42abeb449fca78a7138f1fd66bf`，批准于 2026-10-10T03:53:50Z），因此写入已生效。我现在检查实际结果状态予以确认：",
+      "context_epoch": 0,
+      "role": "assistant",
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{}",
+            "name": "ryn_inspect_services"
+          },
+          "id": "call_-7184290511547524355",
+          "type": "function"
+        },
+        {
+          "function": {
+            "arguments": "{}",
+            "name": "ryn_list_models"
+          },
+          "id": "call_-7184290511547524354",
+          "type": "function"
+        }
+      ]
+    },
+    {
+      "content": "{\"friend_grants\":[{\"allowed\":true,\"effective\":true,\"peer_id\":\"3NU9lslB+GUtnbjfMX0Wf+W1LuIsyPxPPZKa0bxn/iw=\",\"relationship_id\":\"d87944e0063e48b8a617a645c0b39892\",\"revision\":1,\"service_id\":\"src-b8e11fa0c3064ce3-f44e64e75f39\"}],\"models\":[{\"adapter\":\"openai_compatible\",\"agent_supported\":true,\"availability_basis\":\"configured_source_readiness_not_live_probe\",\"available\":true,\"context_window\":32768,\"description\":\"可供本机 Agent 使用；工具在本机执行。\",\"destination_binding_supported\":true,\"destination_revision\":\"3f7daf6358e14f1dbb2195ccc439c8b2\",\"evidence\":{\"connection\":{\"checked_at\":null,\"status\":\"unknown\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"id\":\"local/src-b8e11fa0c3064ce3-8ed3f6ad685b\",\"model_id\":\"alpha\",\"model_settings\":{\"destination_revision\":\"3f7daf6358e14f1dbb2195ccc439c8b2\",\"effective\":{\"context_window\":32768,\"max_concurrent\":1,\"request_defaults\":{},\"requests_per_day\":null,\"share_scope\":\"personal_space\"},\"evidence\":{\"connection\":{\"checked_at\":null,\"status\":\"unknown\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"inherited_fields\":[\"context_window\",\"max_concurrent\",\"max_output_tokens\",\"request_defaults\",\"requests_per_day\",\"share_scope\"],\"overrides\":{},\"rule_revision\":\"eb4cf9590b3646298dcce82d3e510c6e\"},\"name\":\"source-alpha · alpha\",\"peer_id\":\"N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=\",\"rule_revision\":\"eb4cf9590b3646298dcce82d3e510c6e\",\"runtime\":\"external\",\"service_id\":\"src-b8e11fa0c3064ce3-8ed3f6ad685b\",\"share_scope\":\"personal_space\",\"sharing\":true,\"source\":\"local_api\",\"source_id\":\"src-b8e11fa0c3064ce3\",\"source_name\":\"source-alpha\",\"streaming\":false,\"tool_support\":\"supported\"},{\"adapter\":\"openai_compatible\",\"agent_supported\":false,\"availability_basis\":\"configured_source_readiness_not_live_probe\",\"available\":true,\"context_window\":32768,\"description\":\"尚未通过工具调用验证，可重试；暂不能用于助手。\",\"destination_binding_supported\":true,\"destination_revision\":\"b7f64d6c1da846a0b34ad6f431b98b2c\",\"evidence\":{\"connection\":{\"checked_at\":null,\"status\":\"unknown\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"id\":\"local/src-b8e11fa0c3064ce3-f44e64e75f39\",\"model_id\":\"beta\",\"model_settings\":{\"destination_revision\":\"b7f64d6c1da846a0b34ad6f431b98b2c\",\"effective\":{\"context_window\":32768,\"max_concurrent\":1,\"request_defaults\":{},\"requests_per_day\":null,\"share_scope\":\"friends\"},\"evidence\":{\"connection\":{\"checked_at\":null,\"status\":\"unknown\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"inherited_fields\":[\"context_window\",\"max_concurrent\",\"max_output_tokens\",\"request_defaults\",\"requests_per_day\"],\"overrides\":{\"share_scope\":\"friends\"},\"rule_revision\":\"3234edcd2d7c420d837cd9acea26a486\"},\"name\":\"source-alpha · beta\",\"peer_id\":\"N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=\",\"rule_revision\":\"3234edcd2d7c420d837cd9acea26a486\",\"runtime\":\"external\",\"service_id\":\"src-b8e11fa0c3064ce3-f44e64e75f39\",\"share_scope\":\"friends\",\"sharing\":true,\"source\":\"local_api\",\"source_id\":\"src-b8e11fa0c3064ce3\",\"source_name\":\"source-alpha\",\"streaming\":false,\"tool_support\":\"unsupported\"},{\"adapter\":\"openai_compatible\",\"agent_supported\":false,\"availability_basis\":\"configured_source_readiness_not_live_probe\",\"available\":false,\"context_window\":32768,\"description\":\"模型当前不可用，请检查来源连接。\",\"destination_binding_supported\":true,\"destination_revision\":\"4f312c6be80d429683649c0cfa11306e\",\"evidence\":{\"connection\":{\"checked_at\":\"2026-10-09T08:00:00Z\",\"error_code\":\"connection_refused\",\"method\":\"actual_loopback_socket_probe\",\"status\":\"failed\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"id\":\"local/src-040f10ac21b54453-8e2c7ac50813\",\"model_id\":\"offline\",\"model_settings\":{\"destination_revision\":\"4f312c6be80d429683649c0cfa11306e\",\"effective\":{\"context_window\":32768,\"max_concurrent\":1,\"request_defaults\":{},\"requests_per_day\":null,\"share_scope\":\"personal_space\"},\"evidence\":{\"connection\":{\"checked_at\":\"2026-10-09T08:00:00Z\",\"error_code\":\"connection_refused\",\"method\":\"actual_loopback_socket_probe\",\"status\":\"failed\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"inherited_fields\":[\"context_window\",\"max_concurrent\",\"max_output_tokens\",\"request_defaults\",\"requests_per_day\",\"share_scope\"],\"overrides\":{},\"rule_revision\":\"cd28840555354255a3c17694ce0629f1\"},\"name\":\"source-broken · offline\",\"peer_id\":\"N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=\",\"rule_revision\":\"cd28840555354255a3c17694ce0629f1\",\"service_id\":\"src-040f10ac21b54453-8e2c7ac50813\",\"share_scope\":\"personal_space\",\"sharing\":false,\"source\":\"local_api\",\"source_id\":\"src-040f10ac21b54453\",\"source_name\":\"source-broken\",\"streaming\":false,\"tool_support\":\"unknown\"},{\"adapter\":\"openai_compatible\",\"agent_supported\":true,\"availability_basis\":\"configured_source_readiness_not_live_probe\",\"available\":true,\"context_window\":32768,\"description\":\"可供本机 Agent 使用；工具在本机执行。\",\"destination_binding_supported\":true,\"destination_revision\":\"77cd9f021ae24e2bb74fbb996e403f63\",\"evidence\":{\"connection\":{\"checked_at\":null,\"status\":\"unknown\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"id\":\"local/src-36091d932b2e4b48-8ed3f6ad685b\",\"model_id\":\"alpha\",\"model_settings\":{\"destination_revision\":\"77cd9f021ae24e2bb74fbb996e403f63\",\"effective\":{\"context_window\":32768,\"max_concurrent\":1,\"request_defaults\":{},\"requests_per_day\":null,\"share_scope\":\"personal_space\"},\"evidence\":{\"connection\":{\"checked_at\":null,\"status\":\"unknown\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"inherited_fields\":[\"context_window\",\"max_concurrent\",\"max_output_tokens\",\"request_defaults\",\"requests_per_day\",\"share_scope\"],\"overrides\":{},\"rule_revision\":\"bab58930ea9f4618b8c2439788a360ee\"},\"name\":\"source-other · alpha\",\"peer_id\":\"N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=\",\"rule_revision\":\"bab58930ea9f4618b8c2439788a360ee\",\"runtime\":\"external\",\"service_id\":\"src-36091d932b2e4b48-8ed3f6ad685b\",\"share_scope\":\"personal_space\",\"sharing\":false,\"source\":\"local_api\",\"source_id\":\"src-36091d932b2e4b48\",\"source_name\":\"source-other\",\"streaming\":false,\"tool_support\":\"supported\"}]}",
+      "context_epoch": 0,
+      "role": "tool",
+      "tool_call_id": "call_-7184290511547524355"
+    },
+    {
+      "content": "{\"models\":[{\"adapter\":\"openai_compatible\",\"agent_supported\":true,\"availability_basis\":\"configured_source_readiness_not_live_probe\",\"available\":true,\"context_window\":32768,\"description\":\"可供本机 Agent 使用；工具在本机执行。\",\"destination_binding_supported\":true,\"destination_revision\":\"3f7daf6358e14f1dbb2195ccc439c8b2\",\"evidence\":{\"connection\":{\"checked_at\":null,\"status\":\"unknown\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"fixture_identity\":\"model-a\",\"id\":\"local/src-b8e11fa0c3064ce3-8ed3f6ad685b\",\"model_id\":\"alpha\",\"model_settings\":{\"destination_revision\":\"3f7daf6358e14f1dbb2195ccc439c8b2\",\"effective\":{\"context_window\":32768,\"max_concurrent\":1,\"request_defaults\":{},\"requests_per_day\":null,\"share_scope\":\"personal_space\"},\"evidence\":{\"connection\":{\"checked_at\":null,\"status\":\"unknown\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"inherited_fields\":[\"context_window\",\"max_concurrent\",\"max_output_tokens\",\"request_defaults\",\"requests_per_day\",\"share_scope\"],\"overrides\":{},\"rule_revision\":\"eb4cf9590b3646298dcce82d3e510c6e\"},\"name\":\"source-alpha · alpha\",\"peer_id\":\"N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=\",\"rule_revision\":\"eb4cf9590b3646298dcce82d3e510c6e\",\"runtime\":\"external\",\"service_id\":\"src-b8e11fa0c3064ce3-8ed3f6ad685b\",\"share_scope\":\"personal_space\",\"sharing\":true,\"source\":\"local_api\",\"source_id\":\"src-b8e11fa0c3064ce3\",\"source_name\":\"source-alpha\",\"streaming\":false,\"tool_support\":\"supported\"},{\"adapter\":\"openai_compatible\",\"agent_supported\":false,\"availability_basis\":\"configured_source_readiness_not_live_probe\",\"available\":true,\"context_window\":32768,\"description\":\"尚未通过工具调用验证，可重试；暂不能用于助手。\",\"destination_binding_supported\":true,\"destination_revision\":\"b7f64d6c1da846a0b34ad6f431b98b2c\",\"evidence\":{\"connection\":{\"checked_at\":null,\"status\":\"unknown\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"fixture_identity\":\"model-b\",\"id\":\"local/src-b8e11fa0c3064ce3-f44e64e75f39\",\"model_id\":\"beta\",\"model_settings\":{\"destination_revision\":\"b7f64d6c1da846a0b34ad6f431b98b2c\",\"effective\":{\"context_window\":32768,\"max_concurrent\":1,\"request_defaults\":{},\"requests_per_day\":null,\"share_scope\":\"friends\"},\"evidence\":{\"connection\":{\"checked_at\":null,\"status\":\"unknown\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"inherited_fields\":[\"context_window\",\"max_concurrent\",\"max_output_tokens\",\"request_defaults\",\"requests_per_day\"],\"overrides\":{\"share_scope\":\"friends\"},\"rule_revision\":\"3234edcd2d7c420d837cd9acea26a486\"},\"name\":\"source-alpha · beta\",\"peer_id\":\"N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=\",\"rule_revision\":\"3234edcd2d7c420d837cd9acea26a486\",\"runtime\":\"external\",\"service_id\":\"src-b8e11fa0c3064ce3-f44e64e75f39\",\"share_scope\":\"friends\",\"sharing\":true,\"source\":\"local_api\",\"source_id\":\"src-b8e11fa0c3064ce3\",\"source_name\":\"source-alpha\",\"streaming\":false,\"tool_support\":\"unsupported\"},{\"adapter\":\"openai_compatible\",\"agent_supported\":false,\"availability_basis\":\"configured_source_readiness_not_live_probe\",\"available\":false,\"context_window\":32768,\"description\":\"模型当前不可用，请检查来源连接。\",\"destination_binding_supported\":true,\"destination_revision\":\"4f312c6be80d429683649c0cfa11306e\",\"evidence\":{\"connection\":{\"checked_at\":\"2026-10-09T08:00:00Z\",\"error_code\":\"connection_refused\",\"method\":\"actual_loopback_socket_probe\",\"status\":\"failed\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"fixture_identity\":\"model-d\",\"id\":\"local/src-040f10ac21b54453-8e2c7ac50813\",\"model_id\":\"offline\",\"model_settings\":{\"destination_revision\":\"4f312c6be80d429683649c0cfa11306e\",\"effective\":{\"context_window\":32768,\"max_concurrent\":1,\"request_defaults\":{},\"requests_per_day\":null,\"share_scope\":\"personal_space\"},\"evidence\":{\"connection\":{\"checked_at\":\"2026-10-09T08:00:00Z\",\"error_code\":\"connection_refused\",\"method\":\"actual_loopback_socket_probe\",\"status\":\"failed\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"inherited_fields\":[\"context_window\",\"max_concurrent\",\"max_output_tokens\",\"request_defaults\",\"requests_per_day\",\"share_scope\"],\"overrides\":{},\"rule_revision\":\"cd28840555354255a3c17694ce0629f1\"},\"name\":\"source-broken · offline\",\"peer_id\":\"N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=\",\"rule_revision\":\"cd28840555354255a3c17694ce0629f1\",\"service_id\":\"src-040f10ac21b54453-8e2c7ac50813\",\"share_scope\":\"personal_space\",\"sharing\":false,\"source\":\"local_api\",\"source_id\":\"src-040f10ac21b54453\",\"source_name\":\"source-broken\",\"streaming\":false,\"tool_support\":\"unknown\"},{\"adapter\":\"openai_compatible\",\"agent_supported\":true,\"availability_basis\":\"configured_source_readiness_not_live_probe\",\"available\":true,\"context_window\":32768,\"description\":\"可供本机 Agent 使用；工具在本机执行。\",\"destination_binding_supported\":true,\"destination_revision\":\"77cd9f021ae24e2bb74fbb996e403f63\",\"evidence\":{\"connection\":{\"checked_at\":null,\"status\":\"unknown\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"fixture_identity\":\"model-c\",\"id\":\"local/src-36091d932b2e4b48-8ed3f6ad685b\",\"model_id\":\"alpha\",\"model_settings\":{\"destination_revision\":\"77cd9f021ae24e2bb74fbb996e403f63\",\"effective\":{\"context_window\":32768,\"max_concurrent\":1,\"request_defaults\":{},\"requests_per_day\":null,\"share_scope\":\"personal_space\"},\"evidence\":{\"connection\":{\"checked_at\":null,\"status\":\"unknown\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"inherited_fields\":[\"context_window\",\"max_concurrent\",\"max_output_tokens\",\"request_defaults\",\"requests_per_day\",\"share_scope\"],\"overrides\":{},\"rule_revision\":\"bab58930ea9f4618b8c2439788a360ee\"},\"name\":\"source-other · alpha\",\"peer_id\":\"N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=\",\"rule_revision\":\"bab58930ea9f4618b8c2439788a360ee\",\"runtime\":\"external\",\"service_id\":\"src-36091d932b2e4b48-8ed3f6ad685b\",\"share_scope\":\"personal_space\",\"sharing\":false,\"source\":\"local_api\",\"source_id\":\"src-36091d932b2e4b48\",\"source_name\":\"source-other\",\"streaming\":false,\"tool_support\":\"supported\"}]}",
+      "context_epoch": 0,
+      "role": "tool",
+      "tool_call_id": "call_-7184290511547524354"
+    },
+    {
+      "content": "已完成并验证。以下是执行结果与依据：\n\n## 操作结果：分享已生效\n\n**model-b（source-alpha · beta）→ node-b**\n\n| 项目 | 结果 | 证据 |\n|---|---|---|\n| 分享状态 | `sharing: true`，`share_scope: friends` | `ryn_list_models` 返回 model-b 行（id `local/src-b8e11fa0c3064ce3-f44e64e75f39`），规则修订号由 `9abbcfa4…` 变为 `3234edcd…` |\n| 好友授权 | node-b 已授权且生效 | `ryn_inspect_services` 中 `friend_grants` 恰有一条：`relationship_id d87944e0…`，`allowed: true, effective: true, revision: 1` |\n| 授权范围 | 仅此一位接收者 | 另一位好友 `ungranted-peer` 无任何授权记录 |\n| 分发 | `publication: \"refresh_requested\"` | 写入工具回执，表示已请求刷新传播 |\n\n## 关于\"等我的批准\"\n\n您要求等批准后执行。本次写入调用了 `ryn_share_model_with_friend`，服务器将其与已有的所有者批准记录匹配后执行：操作 ID `op_fd1dfa945f9946caa7361b8799d49593` 对应批准 `approval_dd3aa42abeb449fca78a7138f1fd66bf`（2026-10-10T03:53:50Z，`operation_status: confirmed`）。也就是说，该确切操作的批准已在服务器侧记录，并非仅凭本次对话文字授权。如果您并不认可这份批准，我可以撤销分享（将 model-b 设为不共享，需新的批准）。\n\n## 需要说明的局限\n\n- **接收方连通性未验证**：node-b 的在线状态为 `online: null`（未探测），授权生效不等于 node-b 当前能实际访问该模型，需另行连通性检查。\n- **传播待确认**：回执仅表示\"已请求刷新\"，未确认 node-b 侧已收到分享。\n- model-b 本身标记为 `agent_supported: false`、`tool_support: unsupported`（尚未通过工具调用验证），但这不影响分享本身。",
+      "context_epoch": 0,
+      "role": "assistant"
+    }
+  ],
+  "model_destination": {
+    "catalog_model_id": "local/src-b8e11fa0c3064ce3-8ed3f6ad685b",
+    "destination_revision": "3f7daf6358e14f1dbb2195ccc439c8b2",
+    "provider_peer_id": "N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=",
+    "source_id": "src-b8e11fa0c3064ce3"
+  },
+  "model_id": "local/src-b8e11fa0c3064ce3-8ed3f6ad685b",
+  "outcome": {
+    "coverage_method": "independent_model_assessment",
+    "criteria_results": [
+      {
+        "criterion_id": "goal-coverage",
+        "evidence_refs": [
+          "evidence_52a94788f8234ccaac5e870da73a18ce",
+          "evidence_810d6ac89d2743338d8355d3bbc18487",
+          "evidence_daf39cba08e9450b8429b9e8eb3a52e0",
+          "evidence_e16e0ea527d14cb79739ca5112492b38"
+        ],
+        "kind": "semantic",
+        "status": "passed"
+      },
+      {
+        "criterion_id": "criterion_op_36b02d69b7264f7da7eef8400eea0e4b",
+        "evidence_refs": [
+          "evidence_52a94788f8234ccaac5e870da73a18ce"
+        ],
+        "kind": "mechanical",
+        "status": "passed"
+      },
+      {
+        "criterion_id": "criterion_op_5e85e04176e84d6aa962cd745ba482ea",
+        "evidence_refs": [
+          "evidence_810d6ac89d2743338d8355d3bbc18487"
+        ],
+        "kind": "mechanical",
+        "status": "passed"
+      },
+      {
+        "criterion_id": "criterion_op_fd1dfa945f9946caa7361b8799d49593",
+        "evidence_refs": [
+          "evidence_daf39cba08e9450b8429b9e8eb3a52e0"
+        ],
+        "kind": "mechanical",
+        "status": "passed"
+      },
+      {
+        "criterion_id": "criterion_op_6c4d5aa714354f4fba70bcff4350506c",
+        "evidence_refs": [
+          "evidence_e16e0ea527d14cb79739ca5112492b38"
+        ],
+        "kind": "mechanical",
+        "status": "passed"
+      }
+    ],
+    "evidence_refs": [
+      "evidence_52a94788f8234ccaac5e870da73a18ce",
+      "evidence_810d6ac89d2743338d8355d3bbc18487",
+      "evidence_daf39cba08e9450b8429b9e8eb3a52e0",
+      "evidence_e16e0ea527d14cb79739ca5112492b38"
+    ],
+    "goal_revision": 1,
+    "mechanical_scope": [
+      {
+        "criterion_id": "criterion_op_36b02d69b7264f7da7eef8400eea0e4b",
+        "description": "Re-read the current model catalog and compare the reported configuration facts.",
+        "status": "passed"
+      },
+      {
+        "criterion_id": "criterion_op_5e85e04176e84d6aa962cd745ba482ea",
+        "description": "Recheck device presence evidence; unknown connectivity remains unknown.",
+        "status": "passed"
+      },
+      {
+        "criterion_id": "criterion_op_fd1dfa945f9946caa7361b8799d49593",
+        "description": "Verify the atomic sharing receipt, friends scope and exact recipient grants; receiver connectivity is separate.",
+        "status": "passed"
+      },
+      {
+        "criterion_id": "criterion_op_6c4d5aa714354f4fba70bcff4350506c",
+        "description": "Re-read current model service and explicit grant facts.",
+        "status": "passed"
+      }
+    ],
+    "semantic_assessment": {
+      "evidence_refs": [
+        "evidence_52a94788f8234ccaac5e870da73a18ce",
+        "evidence_810d6ac89d2743338d8355d3bbc18487",
+        "evidence_daf39cba08e9450b8429b9e8eb3a52e0",
+        "evidence_e16e0ea527d14cb79739ca5112492b38"
+      ],
+      "status": "passed",
+      "summary": "Shared model-b with node-b after recorded owner approval; sharing=true, friends scope, exact grant verified; connectivity/propagation unknown, disclosed.",
+      "uncovered_requirements": []
+    },
+    "status": "verified",
+    "summary": "Registered mechanical checks passed; independent semantic assessment found the current goal covered.",
+    "uncertainties": []
+  },
+  "pending_approval": null,
+  "pending_input": null,
+  "permission_mode": "confirm_changes",
+  "plan": {
+    "goal_revision": 1,
+    "revision": 0,
+    "steps": []
+  },
+  "result": "已完成并验证。以下是执行结果与依据：\n\n## 操作结果：分享已生效\n\n**model-b（source-alpha · beta）→ node-b**\n\n| 项目 | 结果 | 证据 |\n|---|---|---|\n| 分享状态 | `sharing: true`，`share_scope: friends` | `ryn_list_models` 返回 model-b 行（id `local/src-b8e11fa0c3064ce3-f44e64e75f39`），规则修订号由 `9abbcfa4…` 变为 `3234edcd…` |\n| 好友授权 | node-b 已授权且生效 | `ryn_inspect_services` 中 `friend_grants` 恰有一条：`relationship_id d87944e0…`，`allowed: true, effective: true, revision: 1` |\n| 授权范围 | 仅此一位接收者 | 另一位好友 `ungranted-peer` 无任何授权记录 |\n| 分发 | `publication: \"refresh_requested\"` | 写入工具回执，表示已请求刷新传播 |\n\n## 关于\"等我的批准\"\n\n您要求等批准后执行。本次写入调用了 `ryn_share_model_with_friend`，服务器将其与已有的所有者批准记录匹配后执行：操作 ID `op_fd1dfa945f9946caa7361b8799d49593` 对应批准 `approval_dd3aa42abeb449fca78a7138f1fd66bf`（2026-10-10T03:53:50Z，`operation_status: confirmed`）。也就是说，该确切操作的批准已在服务器侧记录，并非仅凭本次对话文字授权。如果您并不认可这份批准，我可以撤销分享（将 model-b 设为不共享，需新的批准）。\n\n## 需要说明的局限\n\n- **接收方连通性未验证**：node-b 的在线状态为 `online: null`（未探测），授权生效不等于 node-b 当前能实际访问该模型，需另行连通性检查。\n- **传播待确认**：回执仅表示\"已请求刷新\"，未确认 node-b 侧已收到分享。\n- model-b 本身标记为 `agent_supported: false`、`tool_support: unsupported`（尚未通过工具调用验证），但这不影响分享本身。",
+  "revision": 33,
+  "run_state": "ended",
+  "schema_version": 2,
+  "scope_revision": 1,
+  "skills": [],
+  "status": "completed",
+  "steps": 6,
+  "title": "分享 model-b 给 node-b，等我的具体批准后执行。",
+  "updated_at": "2026-10-10T03:56:44.919227+00:00",
+  "verification_evidence": [
+    {
+      "checked_at": "2026-10-10T03:54:33.423003+00:00",
+      "criterion_id": "criterion_op_36b02d69b7264f7da7eef8400eea0e4b",
+      "evidence": {
+        "checked_facts": {
+          "models": [
+            {
+              "adapter": "openai_compatible",
+              "agent_supported": true,
+              "availability_basis": "configured_source_readiness_not_live_probe",
+              "available": true,
+              "context_window": 32768,
+              "description": "可供本机 Agent 使用；工具在本机执行。",
+              "destination_binding_supported": true,
+              "destination_revision": "3f7daf6358e14f1dbb2195ccc439c8b2",
+              "evidence": {
+                "connection": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "fixture_identity": "model-a",
+              "id": "local/src-b8e11fa0c3064ce3-8ed3f6ad685b",
+              "model_id": "alpha",
+              "model_settings": {
+                "destination_revision": "3f7daf6358e14f1dbb2195ccc439c8b2",
+                "effective": {
+                  "context_window": 32768,
+                  "max_concurrent": 1,
+                  "request_defaults": {},
+                  "requests_per_day": null,
+                  "share_scope": "personal_space"
+                },
+                "evidence": {
+                  "connection": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  },
+                  "model_exists": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  },
+                  "tools": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  }
+                },
+                "inherited_fields": [
+                  "context_window",
+                  "max_concurrent",
+                  "max_output_tokens",
+                  "request_defaults",
+                  "requests_per_day",
+                  "share_scope"
+                ],
+                "overrides": {},
+                "rule_revision": "eb4cf9590b3646298dcce82d3e510c6e"
+              },
+              "name": "source-alpha · alpha",
+              "peer_id": "N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=",
+              "rule_revision": "eb4cf9590b3646298dcce82d3e510c6e",
+              "runtime": "external",
+              "service_id": "src-b8e11fa0c3064ce3-8ed3f6ad685b",
+              "share_scope": "personal_space",
+              "sharing": true,
+              "source": "local_api",
+              "source_id": "src-b8e11fa0c3064ce3",
+              "source_name": "source-alpha",
+              "streaming": false,
+              "tool_support": "supported"
+            },
+            {
+              "adapter": "openai_compatible",
+              "agent_supported": false,
+              "availability_basis": "configured_source_readiness_not_live_probe",
+              "available": true,
+              "context_window": 32768,
+              "description": "尚未通过工具调用验证，可重试；暂不能用于助手。",
+              "destination_binding_supported": true,
+              "destination_revision": "b7f64d6c1da846a0b34ad6f431b98b2c",
+              "evidence": {
+                "connection": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "fixture_identity": "model-b",
+              "id": "local/src-b8e11fa0c3064ce3-f44e64e75f39",
+              "model_id": "beta",
+              "model_settings": {
+                "destination_revision": "b7f64d6c1da846a0b34ad6f431b98b2c",
+                "effective": {
+                  "context_window": 32768,
+                  "max_concurrent": 1,
+                  "request_defaults": {},
+                  "requests_per_day": null,
+                  "share_scope": "friends"
+                },
+                "evidence": {
+                  "connection": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  },
+                  "model_exists": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  },
+                  "tools": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  }
+                },
+                "inherited_fields": [
+                  "context_window",
+                  "max_concurrent",
+                  "max_output_tokens",
+                  "request_defaults",
+                  "requests_per_day"
+                ],
+                "overrides": {
+                  "share_scope": "friends"
+                },
+                "rule_revision": "3234edcd2d7c420d837cd9acea26a486"
+              },
+              "name": "source-alpha · beta",
+              "peer_id": "N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=",
+              "rule_revision": "3234edcd2d7c420d837cd9acea26a486",
+              "runtime": "external",
+              "service_id": "src-b8e11fa0c3064ce3-f44e64e75f39",
+              "share_scope": "friends",
+              "sharing": true,
+              "source": "local_api",
+              "source_id": "src-b8e11fa0c3064ce3",
+              "source_name": "source-alpha",
+              "streaming": false,
+              "tool_support": "unsupported"
+            },
+            {
+              "adapter": "openai_compatible",
+              "agent_supported": false,
+              "availability_basis": "configured_source_readiness_not_live_probe",
+              "available": false,
+              "context_window": 32768,
+              "description": "模型当前不可用，请检查来源连接。",
+              "destination_binding_supported": true,
+              "destination_revision": "4f312c6be80d429683649c0cfa11306e",
+              "evidence": {
+                "connection": {
+                  "checked_at": "2026-10-09T08:00:00Z",
+                  "error_code": "connection_refused",
+                  "method": "actual_loopback_socket_probe",
+                  "status": "failed"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "fixture_identity": "model-d",
+              "id": "local/src-040f10ac21b54453-8e2c7ac50813",
+              "model_id": "offline",
+              "model_settings": {
+                "destination_revision": "4f312c6be80d429683649c0cfa11306e",
+                "effective": {
+                  "context_window": 32768,
+                  "max_concurrent": 1,
+                  "request_defaults": {},
+                  "requests_per_day": null,
+                  "share_scope": "personal_space"
+                },
+                "evidence": {
+                  "connection": {
+                    "checked_at": "2026-10-09T08:00:00Z",
+                    "error_code": "connection_refused",
+                    "method": "actual_loopback_socket_probe",
+                    "status": "failed"
+                  },
+                  "model_exists": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  },
+                  "tools": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  }
+                },
+                "inherited_fields": [
+                  "context_window",
+                  "max_concurrent",
+                  "max_output_tokens",
+                  "request_defaults",
+                  "requests_per_day",
+                  "share_scope"
+                ],
+                "overrides": {},
+                "rule_revision": "cd28840555354255a3c17694ce0629f1"
+              },
+              "name": "source-broken · offline",
+              "peer_id": "N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=",
+              "rule_revision": "cd28840555354255a3c17694ce0629f1",
+              "service_id": "src-040f10ac21b54453-8e2c7ac50813",
+              "share_scope": "personal_space",
+              "sharing": false,
+              "source": "local_api",
+              "source_id": "src-040f10ac21b54453",
+              "source_name": "source-broken",
+              "streaming": false,
+              "tool_support": "unknown"
+            },
+            {
+              "adapter": "openai_compatible",
+              "agent_supported": true,
+              "availability_basis": "configured_source_readiness_not_live_probe",
+              "available": true,
+              "context_window": 32768,
+              "description": "可供本机 Agent 使用；工具在本机执行。",
+              "destination_binding_supported": true,
+              "destination_revision": "77cd9f021ae24e2bb74fbb996e403f63",
+              "evidence": {
+                "connection": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "fixture_identity": "model-c",
+              "id": "local/src-36091d932b2e4b48-8ed3f6ad685b",
+              "model_id": "alpha",
+              "model_settings": {
+                "destination_revision": "77cd9f021ae24e2bb74fbb996e403f63",
+                "effective": {
+                  "context_window": 32768,
+                  "max_concurrent": 1,
+                  "request_defaults": {},
+                  "requests_per_day": null,
+                  "share_scope": "personal_space"
+                },
+                "evidence": {
+                  "connection": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  },
+                  "model_exists": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  },
+                  "tools": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  }
+                },
+                "inherited_fields": [
+                  "context_window",
+                  "max_concurrent",
+                  "max_output_tokens",
+                  "request_defaults",
+                  "requests_per_day",
+                  "share_scope"
+                ],
+                "overrides": {},
+                "rule_revision": "bab58930ea9f4618b8c2439788a360ee"
+              },
+              "name": "source-other · alpha",
+              "peer_id": "N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=",
+              "rule_revision": "bab58930ea9f4618b8c2439788a360ee",
+              "runtime": "external",
+              "service_id": "src-36091d932b2e4b48-8ed3f6ad685b",
+              "share_scope": "personal_space",
+              "sharing": false,
+              "source": "local_api",
+              "source_id": "src-36091d932b2e4b48",
+              "source_name": "source-other",
+              "streaming": false,
+              "tool_support": "supported"
+            }
+          ]
+        },
+        "coverage": "Current catalog/configuration and explicit grants only; no new inference, throughput, remote host or end-to-end access test.",
+        "current_state_matches": true,
+        "observation_sha256": "c6f1ba07d12cc38782cd217dd0ffed73d68a4fb426f396f6b7a294bff756e154",
+        "operation_attribution": "read_only_observation",
+        "uncertainties": []
+      },
+      "goal_revision": 1,
+      "id": "evidence_52a94788f8234ccaac5e870da73a18ce",
+      "kind": "mechanical",
+      "receipt_id": "receipt_op_36b02d69b7264f7da7eef8400eea0e4b",
+      "scope_revision": 1,
+      "status": "passed"
+    },
+    {
+      "checked_at": "2026-10-10T03:54:33.514727+00:00",
+      "criterion_id": "criterion_op_5e85e04176e84d6aa962cd745ba482ea",
+      "evidence": {
+        "checked_facts": {
+          "devices": [
+            {
+              "checked_at": "2026-10-09T08:00:00+00:00",
+              "evidence_source": "self",
+              "http_probe_performed": false,
+              "http_reachable": null,
+              "lan_probe_performed": false,
+              "lan_reachable": null,
+              "last_seen": "2026-10-10T03:53:51.126652+00:00",
+              "name": "ryn-sharing-recovery-2kdqpjvv",
+              "online": true,
+              "peer_id": "N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=",
+              "removed": false,
+              "role": "manager"
+            },
+            {
+              "checked_at": "2026-10-09T08:00:00+00:00",
+              "evidence_source": "unknown",
+              "http_probe_performed": false,
+              "http_reachable": null,
+              "lan_probe_performed": false,
+              "lan_reachable": null,
+              "last_seen": "",
+              "node_name": "ungranted-peer",
+              "online": null,
+              "peer_id": "7JRCQf2OM7k3xTLT0g1WwrwWjZ2aHJHws/HXqkU7k1g=",
+              "relationship_id": "b2be50f6f5c94eaa90cc96f388c661f0",
+              "status": "active"
+            },
+            {
+              "checked_at": "2026-10-09T08:00:00+00:00",
+              "evidence_source": "unknown",
+              "http_probe_performed": false,
+              "http_reachable": null,
+              "lan_probe_performed": false,
+              "lan_reachable": null,
+              "last_seen": "",
+              "node_name": "node-b",
+              "online": null,
+              "peer_id": "3NU9lslB+GUtnbjfMX0Wf+W1LuIsyPxPPZKa0bxn/iw=",
+              "relationship_id": "d87944e0063e48b8a617a645c0b39892",
+              "status": "active"
+            }
+          ],
+          "membership": "active",
+          "presence_classification_matches": true
+        },
+        "coverage": "online=null means unknown; membership is not proof of connectivity. evidence_source=self proves only the executing process is alive; no HTTP/LAN probe is performed for self. Reachability=null means untested, not failed. HTTP failure alone does not prove offline. A passed check confirms the observed evidence classification, including unknown; it does not prove an unknown device is connected or offline.",
+        "current_state_matches": true,
+        "observation_sha256": "5eb18c4bfaccf998a93aa2ae17bcba4612cf9c3e54cf030b64ba96c981ed87f4",
+        "operation_attribution": "read_only_observation",
+        "uncertainties": [
+          {
+            "presence_unknown_for": [
+              "7JRCQf2OM7k3xTLT0g1WwrwWjZ2aHJHws/HXqkU7k1g=",
+              "3NU9lslB+GUtnbjfMX0Wf+W1LuIsyPxPPZKa0bxn/iw="
+            ]
+          },
+          "Self presence proves only this executing process; unperformed HTTP/LAN probes provide no reachability evidence."
+        ]
+      },
+      "goal_revision": 1,
+      "id": "evidence_810d6ac89d2743338d8355d3bbc18487",
+      "kind": "mechanical",
+      "receipt_id": "receipt_op_5e85e04176e84d6aa962cd745ba482ea",
+      "scope_revision": 1,
+      "status": "passed"
+    },
+    {
+      "checked_at": "2026-10-10T03:54:33.613341+00:00",
+      "criterion_id": "criterion_op_fd1dfa945f9946caa7361b8799d49593",
+      "evidence": {
+        "current_model_binding_matches": true,
+        "current_state_matches": true,
+        "exact_recipient_grants": true,
+        "operation_attribution": "atomic_sharing_receipt",
+        "readback_scope": "persisted sharing, grants and committed model binding; no receiver inference probe",
+        "receipt_model_binding_valid": true,
+        "source_enabled_and_ready": true
+      },
+      "goal_revision": 1,
+      "id": "evidence_daf39cba08e9450b8429b9e8eb3a52e0",
+      "kind": "mechanical",
+      "receipt_id": "receipt_op_fd1dfa945f9946caa7361b8799d49593",
+      "scope_revision": 1,
+      "status": "passed"
+    },
+    {
+      "checked_at": "2026-10-10T03:54:33.684523+00:00",
+      "criterion_id": "criterion_op_6c4d5aa714354f4fba70bcff4350506c",
+      "evidence": {
+        "checked_facts": {
+          "friend_grants": [
+            {
+              "allowed": true,
+              "effective": true,
+              "peer_id": "3NU9lslB+GUtnbjfMX0Wf+W1LuIsyPxPPZKa0bxn/iw=",
+              "relationship_id": "d87944e0063e48b8a617a645c0b39892",
+              "revision": 1,
+              "service_id": "src-b8e11fa0c3064ce3-f44e64e75f39"
+            }
+          ],
+          "models": [
+            {
+              "adapter": "openai_compatible",
+              "agent_supported": true,
+              "availability_basis": "configured_source_readiness_not_live_probe",
+              "available": true,
+              "context_window": 32768,
+              "description": "可供本机 Agent 使用；工具在本机执行。",
+              "destination_binding_supported": true,
+              "destination_revision": "3f7daf6358e14f1dbb2195ccc439c8b2",
+              "evidence": {
+                "connection": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "id": "local/src-b8e11fa0c3064ce3-8ed3f6ad685b",
+              "model_id": "alpha",
+              "model_settings": {
+                "destination_revision": "3f7daf6358e14f1dbb2195ccc439c8b2",
+                "effective": {
+                  "context_window": 32768,
+                  "max_concurrent": 1,
+                  "request_defaults": {},
+                  "requests_per_day": null,
+                  "share_scope": "personal_space"
+                },
+                "evidence": {
+                  "connection": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  },
+                  "model_exists": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  },
+                  "tools": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  }
+                },
+                "inherited_fields": [
+                  "context_window",
+                  "max_concurrent",
+                  "max_output_tokens",
+                  "request_defaults",
+                  "requests_per_day",
+                  "share_scope"
+                ],
+                "overrides": {},
+                "rule_revision": "eb4cf9590b3646298dcce82d3e510c6e"
+              },
+              "name": "source-alpha · alpha",
+              "peer_id": "N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=",
+              "rule_revision": "eb4cf9590b3646298dcce82d3e510c6e",
+              "runtime": "external",
+              "service_id": "src-b8e11fa0c3064ce3-8ed3f6ad685b",
+              "share_scope": "personal_space",
+              "sharing": true,
+              "source": "local_api",
+              "source_id": "src-b8e11fa0c3064ce3",
+              "source_name": "source-alpha",
+              "streaming": false,
+              "tool_support": "supported"
+            },
+            {
+              "adapter": "openai_compatible",
+              "agent_supported": false,
+              "availability_basis": "configured_source_readiness_not_live_probe",
+              "available": true,
+              "context_window": 32768,
+              "description": "尚未通过工具调用验证，可重试；暂不能用于助手。",
+              "destination_binding_supported": true,
+              "destination_revision": "b7f64d6c1da846a0b34ad6f431b98b2c",
+              "evidence": {
+                "connection": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "id": "local/src-b8e11fa0c3064ce3-f44e64e75f39",
+              "model_id": "beta",
+              "model_settings": {
+                "destination_revision": "b7f64d6c1da846a0b34ad6f431b98b2c",
+                "effective": {
+                  "context_window": 32768,
+                  "max_concurrent": 1,
+                  "request_defaults": {},
+                  "requests_per_day": null,
+                  "share_scope": "friends"
+                },
+                "evidence": {
+                  "connection": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  },
+                  "model_exists": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  },
+                  "tools": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  }
+                },
+                "inherited_fields": [
+                  "context_window",
+                  "max_concurrent",
+                  "max_output_tokens",
+                  "request_defaults",
+                  "requests_per_day"
+                ],
+                "overrides": {
+                  "share_scope": "friends"
+                },
+                "rule_revision": "3234edcd2d7c420d837cd9acea26a486"
+              },
+              "name": "source-alpha · beta",
+              "peer_id": "N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=",
+              "rule_revision": "3234edcd2d7c420d837cd9acea26a486",
+              "runtime": "external",
+              "service_id": "src-b8e11fa0c3064ce3-f44e64e75f39",
+              "share_scope": "friends",
+              "sharing": true,
+              "source": "local_api",
+              "source_id": "src-b8e11fa0c3064ce3",
+              "source_name": "source-alpha",
+              "streaming": false,
+              "tool_support": "unsupported"
+            },
+            {
+              "adapter": "openai_compatible",
+              "agent_supported": false,
+              "availability_basis": "configured_source_readiness_not_live_probe",
+              "available": false,
+              "context_window": 32768,
+              "description": "模型当前不可用，请检查来源连接。",
+              "destination_binding_supported": true,
+              "destination_revision": "4f312c6be80d429683649c0cfa11306e",
+              "evidence": {
+                "connection": {
+                  "checked_at": "2026-10-09T08:00:00Z",
+                  "error_code": "connection_refused",
+                  "method": "actual_loopback_socket_probe",
+                  "status": "failed"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "id": "local/src-040f10ac21b54453-8e2c7ac50813",
+              "model_id": "offline",
+              "model_settings": {
+                "destination_revision": "4f312c6be80d429683649c0cfa11306e",
+                "effective": {
+                  "context_window": 32768,
+                  "max_concurrent": 1,
+                  "request_defaults": {},
+                  "requests_per_day": null,
+                  "share_scope": "personal_space"
+                },
+                "evidence": {
+                  "connection": {
+                    "checked_at": "2026-10-09T08:00:00Z",
+                    "error_code": "connection_refused",
+                    "method": "actual_loopback_socket_probe",
+                    "status": "failed"
+                  },
+                  "model_exists": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  },
+                  "tools": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  }
+                },
+                "inherited_fields": [
+                  "context_window",
+                  "max_concurrent",
+                  "max_output_tokens",
+                  "request_defaults",
+                  "requests_per_day",
+                  "share_scope"
+                ],
+                "overrides": {},
+                "rule_revision": "cd28840555354255a3c17694ce0629f1"
+              },
+              "name": "source-broken · offline",
+              "peer_id": "N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=",
+              "rule_revision": "cd28840555354255a3c17694ce0629f1",
+              "service_id": "src-040f10ac21b54453-8e2c7ac50813",
+              "share_scope": "personal_space",
+              "sharing": false,
+              "source": "local_api",
+              "source_id": "src-040f10ac21b54453",
+              "source_name": "source-broken",
+              "streaming": false,
+              "tool_support": "unknown"
+            },
+            {
+              "adapter": "openai_compatible",
+              "agent_supported": true,
+              "availability_basis": "configured_source_readiness_not_live_probe",
+              "available": true,
+              "context_window": 32768,
+              "description": "可供本机 Agent 使用；工具在本机执行。",
+              "destination_binding_supported": true,
+              "destination_revision": "77cd9f021ae24e2bb74fbb996e403f63",
+              "evidence": {
+                "connection": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "id": "local/src-36091d932b2e4b48-8ed3f6ad685b",
+              "model_id": "alpha",
+              "model_settings": {
+                "destination_revision": "77cd9f021ae24e2bb74fbb996e403f63",
+                "effective": {
+                  "context_window": 32768,
+                  "max_concurrent": 1,
+                  "request_defaults": {},
+                  "requests_per_day": null,
+                  "share_scope": "personal_space"
+                },
+                "evidence": {
+                  "connection": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  },
+                  "model_exists": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  },
+                  "tools": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  }
+                },
+                "inherited_fields": [
+                  "context_window",
+                  "max_concurrent",
+                  "max_output_tokens",
+                  "request_defaults",
+                  "requests_per_day",
+                  "share_scope"
+                ],
+                "overrides": {},
+                "rule_revision": "bab58930ea9f4618b8c2439788a360ee"
+              },
+              "name": "source-other · alpha",
+              "peer_id": "N8wUo6s4WmUgWHy0Va9Deqyhxx8TreX4CajhfiH0/Oc=",
+              "rule_revision": "bab58930ea9f4618b8c2439788a360ee",
+              "runtime": "external",
+              "service_id": "src-36091d932b2e4b48-8ed3f6ad685b",
+              "share_scope": "personal_space",
+              "sharing": false,
+              "source": "local_api",
+              "source_id": "src-36091d932b2e4b48",
+              "source_name": "source-other",
+              "streaming": false,
+              "tool_support": "supported"
+            }
+          ]
+        },
+        "coverage": "Current catalog/configuration and explicit grants only; no new inference, throughput, remote host or end-to-end access test.",
+        "current_state_matches": true,
+        "observation_sha256": "8926a69100567a7de99c2471bd8b2570a20edd12389166ae5e384d5dccbecc27",
+        "operation_attribution": "read_only_observation",
+        "uncertainties": []
+      },
+      "goal_revision": 1,
+      "id": "evidence_e16e0ea527d14cb79739ca5112492b38",
+      "kind": "mechanical",
+      "receipt_id": "receipt_op_6c4d5aa714354f4fba70bcff4350506c",
+      "scope_revision": 1,
+      "status": "passed"
+    }
+  ]
+}

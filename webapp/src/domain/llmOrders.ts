@@ -21,7 +21,25 @@ export function llmServiceRecordKey(service: LLMServiceRecord): string {
   return llmServiceKey(service.peer_id, service.service.package_id);
 }
 
+/**
+ * The one question every screen asks: can this node use the service right now?
+ * Uses the local node's view model (`availability`); the provider's own `online` claim
+ * is only the fallback for records that do not carry it (cached snapshots, older nodes).
+ */
+export function isServiceUsable(service: Pick<LLMServiceRecord, "online" | "availability">): boolean {
+  return service.availability ? service.availability.state === "ready" : service.online;
+}
+
 export function llmServiceAvailability(service: LLMServiceRecord): string {
+  const availability = service.availability;
+  if (availability?.state === "needs_connection") {
+    return availability.reason === "space_ai_access_off"
+      ? "Personal Space AI access is off — turn it on to use this device's models"
+      : "Not connected — connect this device to use its models";
+  }
+  if (availability?.state === "offline" && availability.reason === "peer_unreachable") {
+    return "Device unreachable — check the connection";
+  }
   if (service.access === "self" && (!service.online || service.ready === false)) {
     return "Local model not ready — start it or check model settings";
   }

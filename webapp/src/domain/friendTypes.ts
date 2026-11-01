@@ -11,6 +11,11 @@ export interface FriendRecord {
 }
 
 export interface FriendInvitePreview {
+  purpose?: "ai";
+  ai?: { service: import("./nodeClient").LLMServiceRecord["service"]; network_id: string; ready: boolean; sharing: boolean; busy: boolean };
+  review_token?: string;
+  changed?: boolean;
+  ai_stage?: string;
   invite_id: string;
   peer_id: string;
   node_name: string;
@@ -22,6 +27,16 @@ export interface FriendInvitePreview {
   network_id?: string;
   address_category?: string;
   fingerprint?: string;
+}
+
+export interface AIJoinOperation {
+  operation_id: string;
+  peer_id: string;
+  node_name: string;
+  service_id: string;
+  network_id: string;
+  stage: "joining" | "discovering" | "complete" | "cancelled";
+  error?: string;
 }
 
 export interface FriendInviteResult {

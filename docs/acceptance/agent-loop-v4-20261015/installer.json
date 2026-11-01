@@ -1,0 +1,10 @@
+{
+  "installer": "D:\\code\\rynmesh\\output\\Ryn-0.7.0-agent-loop-v4-20261015-windows-x64-setup.exe",
+  "sha256": "21DF5C7DE0155F5B69FC56B315FEF8C9A65E056E2EA701B880F79D5AE23AF817",
+  "bytes": 41133107,
+  "installed": true,
+  "installed_root": "C:\\Users\\子陵\\AppData\\Local\\Ryn",
+  "installed_verification": "installed-upgrade.json",
+  "default_permission_mode": "workspace",
+  "live_query_verification": "live-balance-result.json"
+}

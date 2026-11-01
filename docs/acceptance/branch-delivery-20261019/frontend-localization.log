@@ -1,0 +1,37 @@
+
+ RUN  v4.1.11 <repo>/webapp
+
+ ❯ src/Localization.test.tsx (6 tests | 1 failed) 3839ms
+   × keeps new UI copy translated without regressing inherited upstream English copy 1344ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/Localization.test.tsx > keeps new UI copy translated without regressing inherited upstream English copy
+AssertionError: expected [ …(4) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "./personal/PdfPreview.tsx:118 hardcoded copy: PDF",
++   "./screens/AISources.tsx:156 missing translation: 自动使用已发现的模型上下文窗口",
++   "./screens/AISources.tsx:157 missing translation: 按模型分别读取",
++   "./screens/AISources.tsx:158 missing translation: 读取模型列表后保存以应用容量。来源未提供容量时按未知处理并保守回退，可取消自动后手动填写。",
++ ]
+
+ ❯ src/Localization.test.tsx:61:22
+     59|     visit(ast);
+     60|   }
+     61|   expect(violations).toEqual([]);
+       |                      ^
+     62| });
+     63|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  1 failed | 10 passed (11)
+   Start at  09:44:14
+   Duration  34.81s (transform 5.54s, setup 5.70s, import 7.06s, tests 5.20s, environment 15.39s)

@@ -1,0 +1,51 @@
+{
+  "kind": "installed-sidecar-observation",
+  "stage": "final-candidate",
+  "at": "2026-10-11T09:31:41.844485+00:00",
+  "formal_pass": false,
+  "native_ui_exercised": false,
+  "model_calls": 0,
+  "home": "C:\\Users\\ziling\\rynmesh-desktop-acceptance-20261011\\isolated-node",
+  "executable": "C:\\Users\\ziling\\AppData\\Local\\Ryn\\rynmesh-peer.exe",
+  "binary_sha256": "f61dbc0513db7ca9dfb3fa5769ad7220070652e3baeb82ebfe193316ba64817b",
+  "port": 59104,
+  "hostname": "DESKTOP-SQ6VA8I",
+  "launcher_pid": 11560,
+  "health": {
+    "status": "ok",
+    "peer_id": "GEK5xW7uMkgo8wEKEpB3cZh0KWsxiQsyx1q/osGB5e0=",
+    "name": null,
+    "version": null
+  },
+  "routes": {
+    "/api/local/agent/settings": {
+      "status_code": 200,
+      "response": {
+        "enabled": false,
+        "model_id": "",
+        "permission_mode": "confirm_changes",
+        "allowed_write_tools": [],
+        "max_steps": 16,
+        "max_seconds": 180,
+        "max_context_chars": 60000,
+        "max_output_chars": 20000
+      }
+    },
+    "/api/local/agent/tasks": {
+      "status_code": 200,
+      "response": {
+        "tasks": []
+      }
+    },
+    "/api/local/agent/models": {
+      "status_code": 200,
+      "response": {
+        "models": []
+      }
+    }
+  },
+  "identity_file_sha256": "0085fdeef117868f888521aae7fb2a251af2d756d1f350779bd65eeb714ec7fc",
+  "default_user_home_created": true,
+  "launcher_exit_code": 0,
+  "listener_remaining": false
+}

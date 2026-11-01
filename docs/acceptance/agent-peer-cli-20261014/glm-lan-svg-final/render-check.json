@@ -1,0 +1,12 @@
+{
+  "source_machine": "172.16.8.82",
+  "source_file": "C:\\Users\\ziling\\.rynmesh\\agent\\files\\pelican-glm-lan-final.svg",
+  "file_sha256": "90c88770bdbbc43f00407d505f85480ec89e309b760c00f746cf01d13b97912e",
+  "bytes": 3463,
+  "animations": 4,
+  "frame_hashes": [
+    "c254e1debe91b01d4683c0b288629cbfab5928bc7f304fc18b1b5bb7b2ce3ce0",
+    "a20d4c8b2640e2f4e88ef52140c688b01cc79169240ae33e9fc694b13c28329b"
+  ],
+  "frames_differ": true
+}

@@ -1,0 +1,92 @@
+{
+  "date": "2026-10-14",
+  "scope": "Agent file delivery, confirmed links, cards, open menu and preview",
+  "source_workspace": "D:/code/rynmesh",
+  "build_workspace": "D:/code/rynmesh/webapp",
+  "build": "npm run build passed in the source workspace and the isolated source/lockfile copy. npm rebuild --ignore-scripts restored shared dependency command links.",
+  "frontend": {
+    "files": [
+      "RynAgent.test.tsx",
+      "RynAgentArtifacts.test.tsx"
+    ],
+    "passed": 59,
+    "artifact_checks": "8 artifact tests passed in the final rerun, including confirmed links, previews, native open/reveal dispatch, scope revocation, version changes and ambiguous paths."
+  },
+  "backend": {
+    "workspace_artifacts_runtime_results_default_workspace": {
+      "passed": 16
+    },
+    "local_tools_file_process_checks": {
+      "passed": 23,
+      "deselected": 9
+    },
+    "lint": "ruff check passed"
+  },
+  "broader_suite": {
+    "earlier_command": "pytest tests/test_agent_workspace_artifacts.py tests/test_agent_local_tools.py -q",
+    "passed": 28,
+    "failed": 9,
+    "failure_areas": [
+      "unoffered tool calls in model fixtures",
+      "budget notice fixture",
+      "outcome fixtures",
+      "completion review fixture",
+      "browser fixture",
+      "Windows accessibility fixture"
+    ],
+    "note": "This record does not claim that the entire Agent suite passes. Native browser/Windows tests were not repeated during focused verification."
+  },
+  "browser": {
+    "url": "http://127.0.0.1:5176/agent-delivery-preview.html",
+    "desktop": "1280 x 720",
+    "mobile": "390 x 844; viewport reset after checking",
+    "checks": [
+      "three bound files listed",
+      "absolute path in link tooltip",
+      "Markdown link opens actual stored bytes",
+      "SVG thumbnail visible and opens image preview",
+      "bottom menu flips upwards",
+      "preview close icon visible",
+      "mobile preview fills viewport"
+    ],
+    "screenshots": [
+      "file-delivery.jpg",
+      "file-menu.jpg",
+      "file-preview.jpg",
+      "image-preview.jpg",
+      "file-delivery-mobile.jpg",
+      "file-preview-mobile.jpg"
+    ],
+    "fixture": "Synthetic UI acceptance files; no user financial workbook was processed. Native open/reveal dispatch is covered by mocks, not a live default-application launch."
+  },
+  "delivery": "Source implemented and local preview provided. Installed desktop package not replaced.",
+  "stability_followup": {
+    "date": "2026-10-14",
+    "failure_conditions": [
+      "A transient artifact-list failure stopped delivery until manual refresh.",
+      "A background command required a subsequent model process read before its files were registered.",
+      "An existing-file reference could disappear when a later answer stopped naming it.",
+      "Files above the preview limit were omitted from command manifests."
+    ],
+    "fixes": [
+      "Retry read failures with backoff; keep polling pending file commands after the model turn ends.",
+      "Publish completed command manifests independently and persist them in encrypted task history.",
+      "Remember delivered references across later replies and compaction.",
+      "List oversized files with explicit preview limitations; native open and reveal remain available.",
+      "Refresh on artifact revisions, page focus and stale-version preview errors; ignore cancelled old-task requests."
+    ],
+    "real_background_generation_rounds": 20,
+    "background_result": "20/20 delivered without a model process-read tool call; stable file id and current bytes, then recovered through a new runtime/process registry.",
+    "independent_task_transient_failure_rounds": 10,
+    "transient_result": "10/10 recovered automatically from an injected initial HTTP 503.",
+    "frontend_suite_passed": 62,
+    "final_artifact_suite_passed": 15,
+    "backend_artifact_runtime_default_suite_passed": 18,
+    "backend_file_process_selection_passed": 15,
+    "browser": "Preview backend returned HTTP 503; the new component recovered to three visible file cards without a manual file refresh.",
+    "bounds": "Tests establish the scenarios recorded here, not universal success for every model/provider, prolonged outage or interruption during unfinished work. Installed desktop package has not been replaced.",
+    "locked_file_test": "A permission/occupancy fault preserves the output card; automatic recheck makes the same file id openable after the lock is released.",
+    "publication_failure_test": "A simulated task-state publication failure recovers through collection and never replays the already-confirmed command.",
+    "build": "Final source workspace production build passed."
+  }
+}

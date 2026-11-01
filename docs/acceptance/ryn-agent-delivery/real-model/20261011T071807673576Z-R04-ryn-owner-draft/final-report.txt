@@ -1,0 +1,39 @@
+核查反馈的两项未覆盖点已处理完毕。以下是**更正后的最终报告**（全部基于本会话内我直接收到的工具原始响应，撤回无法证实的历史性表述）。
+
+## 更正声明
+
+1. **撤回**："无任何好友授权（本次会话中从未变更过）""与检查前一致"——我无法建立任何历史记录，此类表述不成立。下文只按观测时点陈述。
+2. **补充证据来源说明**：核查反馈引用的 `evidence_399a…` / `evidence_543b…` 无法读取（`ryn_read_result` 均返回 `agent_result_not_found`），我手中可引用的原始记录是本会话内工具调用的直接响应。
+
+## 关于分享拒绝的证据（补齐第 1 项）
+
+我直接收到的工具原始响应（`ryn_share_model_with_friend`，调用参数：model_id=`local/src-78e4a55b48874df4-f44e64e75f39`，relationship_id=`bd159f216828447abc305b4ee6746ca0`）：
+
+```json
+{"error":"agent_owner_changed","no_mutation":true,"not_executed":true}
+```
+
+- 这是唯一可引用的原始记录；其本身**声明**未发生变更（`no_mutation=true`、`not_executed=true`），我无法在此基础上进一步独立验证，且按核查要求**不再重试该被拒操作**。
+- 拒绝后的任务诊断（`ryn_diagnose_current_task`）显示 error=null、状态 running，与"未执行写入"一致，但不作为写入层面的证明。
+
+## model-b 当前状态（各观测时点）
+
+| 观测时点 | 工具 | 观测结果 |
+|---|---|---|
+| 会话早期 | `ryn_inspect_services` | `friend_grants` 仅含 model-a（`…-8ed3f6ad685b`）→ node-b（revision 1），**无 model-b 条目** |
+| 分享尝试前后 | `ryn_list_models`（两次） | model-b `sharing=false` |
+| 本轮（拒绝后） | `ryn_inspect_services` | model-b（`…-f44e64e75f39`，source-alpha·beta）：`sharing=false`、`share_scope=personal_space`；`friend_grants` 仍仅含 model-a→node-b 一条（revision 1） |
+
+**最新观测下的 model-b 完整字段**：
+- 可用性：`available=true`，但依据为 `configured_source_readiness_not_live_probe`（**配置就绪，非实测**）；连接/模型存在性/工具三项实测证据均为 `unknown`（checked_at=null）
+- Agent 支持：`agent_supported=false`、`tool_support=unsupported`；上下文 32,768；流式：否
+
+## 未证实事项（明确边界）
+
+- **远程授权**：`friend_grants_scope.remote_provider_grants=unknown`——本地列表仅反映本地外发方向，不证明远端策略全貌。
+- **node-b 连通性**：好友关系活跃（在线状态此前观测为 unknown），从未实测，不推断。
+- **历史**：以上仅为三次观测点的事实；任何未覆盖的时间段均不做断言。
+
+## 合规性
+
+您最新指示为"不分享、仅检查 model-b 状态"。本轮更正过程中只执行了只读调用（`ryn_read_result`×2、`ryn_inspect_services`），此前收尾轮也仅只读（`ryn_diagnose_current_task`、`ryn_list_models`）；**未执行任何写入操作**。

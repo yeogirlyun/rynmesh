@@ -1,0 +1,13 @@
+{
+  "frozen_modules_present": [
+    "rynmesh.agent_runtime.loop",
+    "rynmesh.agent_runtime.execution_policy",
+    "rynmesh.agent_runtime.protocol",
+    "rynmesh.agent_runtime.local_tools",
+    "rynmesh.agent_runtime.local_processes",
+    "rynmesh.agent_runtime.prompt"
+  ],
+  "prompt_version": "ryn-agent-loop-v4",
+  "native_transport_present": true,
+  "executable_bytes": 39067014
+}

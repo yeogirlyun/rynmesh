@@ -1,0 +1,15 @@
+{
+  "started_at": "2026-10-13T19:17:02.312Z",
+  "model": "peer/6e61bf46e2d30890e7f02483b3260781a3eb837a5912e59ba12792ddea8b26b5/src-7de9fb1d36c44bc8-0d8724178b09",
+  "consumer": "172.16.8.82",
+  "provider_peer": "fR6oJFpFDez/LqWFSnyxUmOmTEB/f/7teSFY/y/9RSA=",
+  "id": "agent_8bb30cace1c64109a36883a5a8613e5e",
+  "created_ms": 6221,
+  "status": "completed",
+  "error": null,
+  "elapsed_ms": 225030,
+  "first_response_ms": 114268,
+  "approval_ms": 143617,
+  "file_written_ms": 144682,
+  "outcome": "unverified"
+}

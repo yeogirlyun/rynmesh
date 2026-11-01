@@ -1,0 +1,7 @@
+{
+  "formal_trial_registered": false,
+  "normalizer_sha256": "588123e779dda9fed824e1fd3fa2fe333bd805949641f6b4a7def1febeb13f78",
+  "note": "Development review bundle only. No reviewer verdict, dependency verification or absent security audit is synthesized.",
+  "source": "D:\\code\\rynmesh\\docs\\acceptance\\ryn-agent-delivery\\real-model\\20261009T143340Z-R01-ryn\\run.json",
+  "source_sha256": "356e72f9d86d3f81c0395896179f53958128ffc150fca831fbc3872a9728e3e7"
+}

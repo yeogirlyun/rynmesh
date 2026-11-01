@@ -1,0 +1,16 @@
+撤销完成并已验证。汇总如下：
+
+**1. node-b 对 model-a 的访问 — 已撤销**
+- 执行的写入：`ryn_set_friend_model_access`（service `src-37512d2730964068-8ed3f6ad685b`，relationship `e888bfea5c0547cb9311247961632382`），operation_id `op_e0dce084be34408bae3edac9d0a8153d`，返回 `ok: true`。
+- 撤销后复查（`ryn_inspect_services`）：该授权记录现为 `allowed: false, effective: false, revision: 2`。记录以"已禁用"形式保留（未删除），但已不生效——node-b 不再有权通过本地配置使用 model-a。
+
+**2. 其他好友仍无授权**
+- 授权表中没有 "ungranted-peer"（`1044919486104d72870d1f841bd513c0`）或任何其他关系的记录。此时 model-a 在本地没有任何生效的好友授权。
+
+**3. model-b 未改动**
+- `source-alpha · beta`（id `local/src-37512d2730964068-f44e64e75f39`）仍为 `share_scope: personal_space`、`sharing: false`，规则 revision 未变（`50f90d46…`）。全程未对它执行任何操作。
+- model-a 本身的共享范围（`friends`、sharing=true）也保持原样——我只撤销了这一条好友授权，没有改动模型级配置。
+
+**限制说明（如实告知）**
+- 以上是**本地出站授权**状态的验证；`remote_provider_grants: "unknown"`，远端提供方侧是否存在其他策略无法由本工具证明。
+- 这是配置层面的检查，不是对 node-b 实际发起调用的实时拒绝测试；"无生效授权"是对当前状态的观察，不等于对某次具体调用的实测拒绝。

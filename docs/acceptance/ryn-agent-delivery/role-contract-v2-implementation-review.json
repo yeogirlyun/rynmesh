@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "reviewer": "sharing_review (non-author)",
+  "reviewed_at": "2026-10-10T06:04:42.979326+00:00",
+  "verdict": "no_material_findings_in_disabled_draft_composer_scope",
+  "findings": [],
+  "reviewed_sha256": {
+    "tests/fixtures/agent_acceptance/role_contract_v2.py": "cee82c3574de9dd017b16e21075ee19c5fa7cbdf2fce62aea624bb81b6656c36",
+    "docs/acceptance/ryn-agent-delivery/role-overlay-v2-draft.json": "a90280553577ec075e6fe7e131a07c4ca830d4e60ea2600a2ae2c28b93e407e5",
+    "docs/acceptance/ryn-agent-delivery/role-overlay-v2.schema.json": "e16af76b875957bd0e85ad2537b4580beef909b17b7d1a6faec9a6b52efe353f",
+    "tests/test_agent_role_contract_v2.py": "c8b2b609b92774f50f97b2dbcbc6c658bd23ccb05531f697617defdf5103e2b4"
+  },
+  "independent_validation": {
+    "command": ".venv\\Scripts\\python.exe -m pytest -q -p no:cacheprovider tests/test_agent_role_contract_v2.py --tb=short",
+    "exit_code": 0,
+    "passed": 64,
+    "seconds": 9.22,
+    "additional_read_only_check": "Independently loaded all30 development cases and compared complete effective_case to deep-copied original with only exact eight consumer_node edits. Recomputed each effective canonical digest and checked disabled/formal_ready false. All passed."
+  },
+  "assessments": [
+    {
+      "topic": "Exact case changes",
+      "assessment": "Loader pins original cases/world byte hashes independently of overlay. Whole-case deep copies retain prompts, config/resource/egress authority, expected assertions, setup/subscenarios, faults, interventions, dependencies and repetitions. Only Q01/Q06/C02/C03/C04/R02/R04/P03 authorization.consumer_node changes B to A. Exact role table enforced after schema validation."
+    },
+    {
+      "topic": "Deployment",
+      "assessment": "All30 receive explicit provider/source/recipient/connector/history/default ownership metadata. Only Q02 source-broken becomes B; source-alpha/source-other remain A. C01 new source owner B. C03 default A and sharing false overlay retain original receiver grant arrays; C04 initial model-a sharing and B grant plus all original approval stages preserved. Source movement/setup directives are not executed by loader."
+    },
+    {
+      "topic": "Binding trust",
+      "assessment": "Four logical node IDs must map to distinct nonempty bounded strings; runtime/store consumer declarations and owner must match effective role/case. Caller-provided identity remains labeled declared_bindings_consistent with independent_identity_proof=false and physical_host_proof=false. No process identity, cryptographic authentication or two-host result is inferred."
+    },
+    {
+      "topic": "Hash and input boundaries",
+      "assessment": "Constant development paths, bounded reads, strict duplicate-key/nonfinite rejection, closed schema and canonical output digest bind provenance. Changed source bytes or edited overlay base digests are rejected. Inputs are never mutated and returned nested values are defensive copies. Explicit overlay/schema byte hashes are included."
+    },
+    {
+      "topic": "Disabled and incompatible with v1 scoring",
+      "assessment": "Output is a distinct effective-role-case input envelope, always enabled=false/formal_ready=false/status draft/not_formal_ready with v2 draft version and required future grader. Tests invoke real existing v1 grade for envelope and v1-shaped wrong-version run; both reject. No controllers or grader are activated or migrated."
+    },
+    {
+      "topic": "No lowered scope or evidence claim",
+      "assessment": "All30 classification,72 business repeats,58 pass threshold and original metadata retained. Identity/dataset declarations are not elevated into measured success. No remote owner management capability, actual workflow step or model-visible private evidence added."
+    }
+  ],
+  "limits_and_pending": [
+    "This reviews a disabled deterministic input composer, not a v2 grader, normalizer, controller or formal acceptance package. Explicit activation remains required.",
+    "Caller identity strings are consistency data; actual authenticated runtime/store identity and physical-node evidence must be collected independently before scoring.",
+    "World setup directives are retained rather than executed; future fixture builder must independently prove actual initial source ownership, sharing/grants, C03 defaults and C04 approval barriers.",
+    "Schema and loader are trusted versioned code, not tamper-resistant artifacts against an actor who can rewrite those validators.",
+    "Only development cases/world are loaded; document mounting/content integrity, isolated blind role binding and later v2 aggregate enforcement remain separate dependencies.",
+    "No API/model calls, no held-out/generator reads, no production/controller/frozen/historical evidence modification. Only this new review file was created."
+  ]
+}

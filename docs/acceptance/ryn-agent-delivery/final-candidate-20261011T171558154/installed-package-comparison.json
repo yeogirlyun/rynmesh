@@ -1,0 +1,24 @@
+{
+  "kind": "final-installed-package-comparison",
+  "installed_desktop_matches_nsis_bundle_marker": true,
+  "normalized_desktop_sha256": "009ae4d7818bbd10cde5f9fab1294c95d09fca073afd1cc0f1ad23bf3189ec2e",
+  "installed_sidecar_matches_frozen_build": true,
+  "default_identity_preserved": true,
+  "isolated_identity_preserved": true,
+  "agent_routes": {
+    "/api/local/agent/settings": 200,
+    "/api/local/agent/tasks": 200,
+    "/api/local/agent/models": 200
+  },
+  "post_probe_listener_remaining": false,
+  "wsl_after_upgrade": {
+    "personal-api": "active",
+    "mysql": "active",
+    "docker": "active",
+    "frpc-personal": "active",
+    "apache2": "active"
+  },
+  "native_ui_currently_verified": false,
+  "model_calls": 0,
+  "formal_trials": 0
+}

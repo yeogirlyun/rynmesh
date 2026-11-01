@@ -1,0 +1,39 @@
+{
+  "author": "sharing_review / gpt-6-astra high",
+  "status": "implementation_frozen_independent_review_pending",
+  "scope": "Plain peer Agent task destination binding and compaction request clock continuity; production changes limited to runtime.py.",
+  "changes": [
+    "Create verifies authenticated peer destination and stores model_destination_required as a dispatch constraint, not an approval or resource/egress grant.",
+    "Main/checker/summary share bound-destination validation; legacy peer tasks require verifiable original snapshots and do not rebind on restart.",
+    "Explicit switching retains confirmation; unscoped local/custom adapter compatibility retained.",
+    "Compaction retains original process-local _run_started and _run_lifetime_remaining across durable task reload. It does not reset the deadline or persist monotonic values."
+  ],
+  "red_evidence": "evidence-bundles/q06-consumer-peer-binding-red-20261010/reproduction.json",
+  "intermediate_failures": [
+    "Initial new test file had 7 passed and 3 failed: one real summary-to-main request-deadline loss, and two test assertions incorrectly demanding verified without mechanical evidence; tests were corrected to inspect semantic checks and actual envelopes."
+  ],
+  "tests": [
+    {
+      "command": ".venv/Scripts/python.exe -m pytest -q -p no:cacheprovider tests/test_agent_peer_task_binding.py tests/test_agent_peer_scope.py tests/test_agent_peer_binding.py --tb=short",
+      "passed": 25,
+      "seconds": 10.68
+    },
+    {
+      "command": ".venv/Scripts/python.exe -m pytest -q -p no:cacheprovider tests/test_agent_runtime.py tests/test_agent_runtime_model_switch.py tests/test_agent_runtime_control.py tests/test_agent_runtime_verification.py tests/test_agent_default_model.py tests/test_agent_request_deadline.py tests/test_agent_space_binding.py tests/test_agent_native_scope.py --tb=short",
+      "passed": 156,
+      "seconds": 30.21
+    }
+  ],
+  "lint": "Four files passed Ruff.",
+  "sha256": {
+    "rynmesh/agent_runtime/runtime.py": "472d5552cf79cc48db5b08926f2d2b0bc9f367e98f207f244546aed315c9b7f7",
+    "tests/test_agent_peer_task_binding.py": "6494a56f9b2ec09e56449264f46114fb4da18aa442916f102cc09ab5a39232cf",
+    "tests/test_agent_peer_scope.py": "c5375c8f9ffb6e2e2d823c96dcbaf3583ed4022cccc14272d0d5a6ce4cca26c4",
+    "tests/test_agent_peer_binding.py": "fe5ede76b75eefcfc753b9fa899b174a7ae6808f0b709149571d2fcc48c31532"
+  },
+  "limitations": [
+    "No live API calls; Q06 controller final integration and non-author review are separate.",
+    "Original unrelated Windows PermissionError remains unexplained."
+  ],
+  "formal_executed_trials": 0
+}

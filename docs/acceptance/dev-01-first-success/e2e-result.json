@@ -1,0 +1,14 @@
+{
+  "schema": "ryn.acceptance.v1",
+  "requirement": "DEV-01",
+  "environment": "local-web-fixture",
+  "result": "passed",
+  "steps": [
+    {"state": "ready", "verified": true},
+    {"event": "real_content_opened", "next_state": "awaiting_signal", "verified": true},
+    {"event": "local_preference_saved", "next_state": "completed", "verified": true},
+    {"state": "home_next_step", "verified": true}
+  ],
+  "contains_user_content": false,
+  "physical_desktop_acceptance": false
+}

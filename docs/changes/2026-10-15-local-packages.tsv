@@ -1,0 +1,6 @@
+﻿path	bytes	sha256	git_policy
+output/Ryn-0.7.0-agent-loop-v4-20261015-windows-x64-setup.exe	41133107	21df5c7de0155f5b69fc56b315fef8c9a65e056e2ea701b880f79d5ae23af817	local-only; ignored output/
+output/Ryn-0.7.0-codex-composer-20261015-windows-x64-setup.exe	42560960	3cebaf56b51f6f4be96512a25fcb484b25e6aabfa003d7918590656ab821c43e	local-only; ignored output/
+output/Ryn-0.7.0-general-agent-20261013-windows-x64-setup.exe	39099617	f6271e170af1ae4a8bb514d545c45bfba271e75d7bda72e9f7ed36024a2ef5d1	local-only; ignored output/
+output/Ryn-0.7.0-model-ready-20261015-windows-x64-setup.exe	42560938	0b7c1cde33a8244f33d517f9605053fd58f668330aa8dc5e180b0874c577d70a	local-only; ignored output/
+output/Ryn-0.7.0-projects-send-20261015-windows-x64-setup.exe	42545231	c4c7bf4012a04a54105a634622a8b840d5999e57778227e2d6751f21e4d99076	local-only; ignored output/

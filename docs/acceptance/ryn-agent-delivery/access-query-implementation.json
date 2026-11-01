@@ -1,0 +1,45 @@
+{
+  "author": "sharing_review / gpt-6-astra high",
+  "status": "implementation_frozen_independent_review_in_progress",
+  "scope": "Q06 local development controller and candidate/reference integration;not formal acceptance.",
+  "changes": [
+    "Q06-specific actualFriendService/SourceStore/AIAccessStore setup: A friends→node-b only;Bprivate/nogrant;node-cuses signedregistryidentity.",
+    "Signed setup probes before task freeze: A→node-b allowed,other three requests denied with0upstream.",
+    "Candidate and actual pinnedJS reference share readonly business boundary and planner generation mapping;production scope/egress gates remain.",
+    "Freeze encryptedsource/grant/three relationship filehashes aftersetup;separate task write count and setup/task syntheticHTTPaudits."
+  ],
+  "tests": [
+    {
+      "command": ".venv/Scripts/python.exe -m pytest -q -p no:cacheprovider tests/test_agent_access_query.py tests/test_agent_query_cases.py tests/test_agent_sharing_case.py tests/test_agent_sharing_recovery_case.py tests/test_agent_planner_policy.py tests/test_agent_reference_output_policy.py",
+      "passed": 26,
+      "seconds": 106.28,
+      "note": "Before final audit segmentation field/assertion addition."
+    },
+    {
+      "command": ".venv/Scripts/python.exe -m pytest -q -p no:cacheprovider tests/test_agent_access_query.py",
+      "passed": 9,
+      "seconds": 46.45,
+      "skipped": 0,
+      "note": "Final snapshotQ06 checks;overlapnotadded."
+    }
+  ],
+  "lint": "Fivefiles Ruff passed.",
+  "samples": [
+    "real-model/20261010T050520371893Z-Q06-ryn-fixture/run.json",
+    "real-model/20261010T050526259188Z-Q06-reference-fixture/run.json"
+  ],
+  "limitations": [
+    "Still provider-owner isolatedhome task execution;node-b/node-c are actualfriendidentities. Frozenconsumer_node=node-b complete consumer deployment not implemented.",
+    "One physicalhost,loopbackbusinesssource,no realAPIcalls or modelqualityscore.",
+    "Bprivate denial does not by itself isolate deeper cross-model grant-binding rejection;record actual denial code without changing frozeninitialstate.",
+    "Normalizer integration pending;source syntheticresponses are not independentrealproviders."
+  ],
+  "sha256": {
+    "docs/acceptance/ryn-agent-delivery/real-model/access_query.py": "71c463735209ddcec087b8e9be091ab13a422965e1a75dcf13d993f04dee8be9",
+    "docs/acceptance/ryn-agent-delivery/real-model/query_cases.py": "4695abfd6924a85d608539550229b72c5bf123bd668e2c9b6dd9067e4d98cf30",
+    "docs/acceptance/ryn-agent-delivery/real-model/run_queries.py": "700a96cb775d4c6c85a4db9dc3eb88810571074fd3db683b698fea4f61a3fe47",
+    "tests/test_agent_access_query.py": "2faf9d734146e44e197a22925182a1e026edf1df5d1e919d1918828e095575e9",
+    "tests/test_agent_query_cases.py": "4fbaeed2793e7f7d0f45f8c291586edb58cce36330e7f55a4071a78dcc0a9421"
+  },
+  "formal_executed_trials": 0
+}

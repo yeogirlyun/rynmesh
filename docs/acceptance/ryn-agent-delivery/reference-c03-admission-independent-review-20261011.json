@@ -1,0 +1,33 @@
+{
+  "kind": "C03-native-reference-admission-limited-independent-review",
+  "reviewer": "root,non-author",
+  "formal_pass": false,
+  "real_model_calls": 0,
+  "findings": [],
+  "checks": [
+    "Exact native request/preview/owner/node/goal/control/scope/model and permission snapshot bound in durable reference operation.",
+    "Only locally active matching admitted flight relaxes queued budget guard; generic running task cannot bypass admission.",
+    "Production business execute and its own permission guard stay in use; no candidate planning loop substitutes for native ZCode.",
+    "Unknown operation persists unresolved and cannot silently reset to queued/retry; cancellation/revision changes cannot resurrect running state.",
+    "Real pinned native fixture exercises four exact approvals and signed receiver probes; supplied inference synthetic, so not quality score."
+  ],
+  "validation": {
+    "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_reference_admission.py -q",
+    "passed": 12,
+    "seconds": 8.83
+  },
+  "files": {
+    "docs/acceptance/ryn-agent-delivery/reference/operation_host.py": "a31fa833fdc030ee88c0c9c60fc18405f9e20080efbdcfd1cf2d8c77925e007a",
+    "docs/acceptance/ryn-agent-delivery/reference/tool_host.py": "86d72580b2ac091d4167f15e6ac373d4a4f8e88a153bf06f0340bd9cc8ed9ff5",
+    "docs/acceptance/ryn-agent-delivery/reference/budget_host.py": "b878077106e35e7952b5143d9b55c3f4d8f3082360c77681cd1df7ecc9a7015b",
+    "docs/acceptance/ryn-agent-delivery/reference/documents.py": "10c1950609cfcfced9fa3605f7713e16c139821251bcc834efd6f4ce3168c6bb",
+    "docs/acceptance/ryn-agent-delivery/real-model/run_queries.py": "8a3c3b1082ca314a945a5fa248e13e2051cd4f2f59570622df589b3d3d4f76cb",
+    "docs/acceptance/ryn-agent-delivery/real-model/sharing_cases.py": "4c22b24d5b9e30b3aa3ea1754b556cb6ba14755d59452fab63e7e0882d1392b8",
+    "tests/test_agent_reference_admission.py": "d737d5d76a3ab8d1a089b9ca783ddaa071b76f06904f53b53f850d9babe1f7b1"
+  },
+  "limits": [
+    "Single-process reference admission only; recovery/C01/C02/formal version integration remain incomplete.",
+    "Status transitions are business dispatch bookkeeping while bound owner-control revisions remain immutable; actual control drift denies further operations.",
+    "C03 actual GLM/reference semantic result remains untested."
+  ]
+}

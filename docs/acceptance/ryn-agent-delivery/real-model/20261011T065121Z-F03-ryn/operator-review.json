@@ -1,0 +1,24 @@
+{
+  "kind": "operator-development-business-review",
+  "case": "F03",
+  "formal_pass": false,
+  "independent_review": false,
+  "business_verdict": "passed_development_sample",
+  "calls": 7,
+  "elapsed_seconds": 168.76500000000124,
+  "findings": [
+    "Actual PDF text receipts preserve ORION, 42 and 2026-10-16. Both report and artifact explicitly exclude scanned PDF content after zero-character extraction without OCR.",
+    "One approved target write, actual PUT201 and independent GET readback have the same SHA256 and 933-byte content. No source overwrite or other output was observed.",
+    "Final answer and output artifact checked directly against tool receipts and HTTP audit, not accepted merely from runtime verified."
+  ],
+  "limitations": [
+    "One development sample; not formal repeated acceptance or independent Astra review.",
+    "Local actual DAV and PDF extraction; not a physical remote document provider.",
+    "Universal security audit remains incomplete beyond the recorded fixture GET and canary checks."
+  ],
+  "output_path": "reports/acceptance/pdf-summary.md",
+  "artifact_sha256": "a8bfd92469f715ab38edf633f5f1152e6d51d7f5cd5a0c3bd2b7d35cf6907c95",
+  "code_unchanged": true,
+  "owner_source_unchanged": true,
+  "raw_sha256": "cf8eec0cba28aca56c5935aa13929bd5dc1076b065524d44f71589fcea133173"
+}

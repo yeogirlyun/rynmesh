@@ -1,0 +1,30 @@
+[
+  {
+    "path": "webapp/src-tauri/src/craft_browser.rs",
+    "sha256": "a076997c1c7980ee87fbdb994ad77d76aae776b12f9b44c1a3eddf23a8e54e33"
+  },
+  {
+    "path": "webapp/src-tauri/src/lib.rs",
+    "sha256": "4fe593d13a0f2c6a3202533906b7b823f668e40d1a370d2020e55f0c73a4cdda"
+  },
+  {
+    "path": "webapp/src/screens/CraftApps.tsx",
+    "sha256": "0d49532dce24336913e63cc384f39dcb9fc6cfa242228176c3b35086d6bb64bb"
+  },
+  {
+    "path": "webapp/src/screens/CraftPluginLibrary.tsx",
+    "sha256": "62ff33604516fcabbc7ed3ff9b733a3e0dc2b6ffde6fd8def131b471c848afed"
+  },
+  {
+    "path": "webapp/src/locales/craft.en.json",
+    "sha256": "a04b4e88d48d2e1b9703a1cc7e03b5fe451f1385e6c1d6b200de1ef5ae531eb1"
+  },
+  {
+    "path": "webapp/src/locales/craft.zh-CN.json",
+    "sha256": "133703c2bd357ecc8ad1fcac9216e88df547cfc490a5651cd371295e52fb5b03"
+  },
+  {
+    "path": "webapp/src/screens/CraftApps.test.tsx",
+    "sha256": "546ea01a8c186e094cac3b602e1bd6b8dc69580027d2052234fc1e7a7825601e"
+  }
+]

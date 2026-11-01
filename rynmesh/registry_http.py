@@ -6,17 +6,19 @@ accept inbound connections. Content still moves directly between peers when
 both endpoints are reachable.
 """
 
+import asyncio
 import hashlib
 import hmac
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any, Optional
 
 from .crypto import SignedPayload
 from .jobs import JobError
 from .mailbox import MailboxError
-from .registry import FilePeerRegistry, PeerRegistry, RegistryError
+from .registry import MAX_ORDER_WAIT_S, FilePeerRegistry, PeerRegistry, RegistryError
 from .relay import FileRelayStore, RelayError
 
 MAX_REGISTRY_REQUEST_BYTES = 1024 * 1024
@@ -66,6 +68,14 @@ def create_app(
         path = request.url.path
         if _expected_auth and path.startswith("/api/v1"):
             if not hmac.compare_digest(request.headers.get("x-ryn-auth", ""), _expected_auth):
+                # Read (bounded) what the caller sent first: closing a socket
+                # with unread request bytes makes Windows reset the
+                # connection, and the caller sees an abort instead of a 404.
+                drained = 0
+                async for chunk in request.stream():
+                    drained += len(chunk)
+                    if drained > 64 * 1024:
+                        break
                 return JSONResponse({"detail": "Not Found"}, status_code=404)
         return await call_next(request)
 
@@ -134,37 +144,70 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"network_id": network_id, "capacities": capacities}
 
+    # Long-polling providers park here; a submitted order wakes its provider at
+    # once. Another registry process sharing the same storage is still picked
+    # up by the periodic recheck below.
+    order_waiters: dict[tuple[str, str], set[asyncio.Event]] = {}
+
+    def _wake_provider(signed: SignedPayload) -> None:
+        key = (str(signed.payload.get("network_id") or ""), str(signed.payload.get("provider_peer_id") or ""))
+        for event in order_waiters.get(key, ()):
+            event.set()
+
     @app.post("/api/v1/jobs/work-orders")
     async def submit_work_order(request: Request) -> dict[str, Any]:
         signed = await _signed_request(request)
         try:
-            return active_registry.submit_work_order(signed)
+            result = active_registry.submit_work_order(signed)
         except (RegistryError, JobError, KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        _wake_provider(signed)
+        return result
+
+    def _list_orders(**query: Any) -> list[dict[str, Any]]:
+        try:
+            return [signed.to_dict() for signed in active_registry.list_work_orders(**query)]
+        except (RegistryError, JobError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/v1/jobs/work-orders")
-    def list_work_orders(
+    async def list_work_orders(
         network_id: str = "rynmesh-main",
         provider_peer_id: str = "",
         requester_peer_id: str = "",
         capability: str = "",
         status: str = "open",
         max_age_hours: float = 0.0,
+        wait_s: float = 0.0,
     ) -> dict[str, Any]:
+        query = {
+            "network_id": network_id, "provider_peer_id": provider_peer_id,
+            "requester_peer_id": requester_peer_id, "capability": capability, "status": status,
+            "max_age_hours": max_age_hours if max_age_hours > 0 else None,
+        }
+        work_orders = await asyncio.to_thread(_list_orders, **query)
+        wait = max(0.0, min(float(wait_s or 0.0), MAX_ORDER_WAIT_S))
+        # Only a provider's own open queue can be waited on.
+        if work_orders or not wait or status != "open" or not provider_peer_id:
+            return {"network_id": network_id, "work_orders": work_orders}
+        key = (network_id, provider_peer_id)
+        event = asyncio.Event()
+        order_waiters.setdefault(key, set()).add(event)
+        deadline = time.monotonic() + wait
         try:
-            work_orders = [
-                signed.to_dict()
-                for signed in active_registry.list_work_orders(
-                    network_id=network_id,
-                    provider_peer_id=provider_peer_id,
-                    requester_peer_id=requester_peer_id,
-                    capability=capability,
-                    status=status,
-                    max_age_hours=max_age_hours if max_age_hours > 0 else None,
-                )
-            ]
-        except (RegistryError, JobError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            while not work_orders and time.monotonic() < deadline:
+                try:
+                    await asyncio.wait_for(event.wait(), timeout=min(2.0, max(0.01, deadline - time.monotonic())))
+                except asyncio.TimeoutError:
+                    pass
+                event.clear()
+                work_orders = await asyncio.to_thread(_list_orders, **query)
+        finally:
+            waiters = order_waiters.get(key)
+            if waiters is not None:
+                waiters.discard(event)
+                if not waiters:
+                    order_waiters.pop(key, None)
         return {"network_id": network_id, "work_orders": work_orders}
 
     @app.post("/api/v1/jobs/work-results")

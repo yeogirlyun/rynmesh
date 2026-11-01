@@ -1,0 +1,34 @@
+# Task file review, snapshots and undo — 2026-10-30
+
+Implemented on `codex/task-change-review`, based on `62dd94d7` (includes the terminal PTY handoff fix). The original checkout and its uncommitted context-compaction work were not edited. No changes to `loop.py`, model prompts, budgets or terminal implementations.
+
+## What is connected
+
+The existing `LocalTools` file write/edit/manage and apply-patch entry points now persist exact before/after blobs and per-path mutation progress under the existing task `agent/baselines/<task>` directory. Existing `change_review()` and completion-review consumers read that evidence. Old baseline-only tasks remain reviewable but are explicitly not undoable because their after-version ownership cannot be proven. No second workspace scanner or Git reset mechanism was introduced.
+
+The installed owner API exposes GET `tasks/{id}/changes`, POST `changes/preview`, and POST `changes/undo`. The real `RynAgent` screen mounts the independent `RynAgentFileChanges` component. It supports diff, binary type/size, selection, preview, confirmation, conflicts, and durable undo history. Rename endpoints share a selection ID. Existing shell `workspace_files` receipts are shown separately as observations; they never authorize undo.
+
+Undo verifies the complete selected set before writing anything. It compares content SHA-256 plus file identity/size/mtime; an edit after preview is checked again by the backend. Same-content rewrites and intervening edits between this task's own operations are conservatively refused. On Windows, exclusive target handles exclude other writers during the final check/write, and parent directory handles disallow replacement with junctions. Links, reparse points, hard-linked files, workspace escapes and `.git` paths are refused. Snapshot paths are also checked against links/reparse points.
+
+Undo requires owner access, enabled/current workspace authority, a stopped task, non-read-only permissions, a current preview token and explicit confirmation. Request IDs are persisted: a retry returns the prior result without repeating filesystem writes. A process exit or write failure leaves per-file progress; recovery reconciles the disk without automatically resuming a write. A file-tool write interrupted before durable confirmation is not silently promoted to Agent-owned.
+
+## Executed acceptance
+
+- Real temporary Git repositories and files, through `LocalTools.execute()` and the full installed Agent HTTP routes: create, edit, delete, copy/move, patch, untracked originals, binary deletion/restoration, current-content conflicts, cross-task conflicts, same-bytes rewrites, stale preview, repeated undo, reboot-equivalent new runtime, partial failure, snapshot loss/capacity, permissions, `.git`, traversal, symlinks/hardlinks and Windows junctions.
+- A separate Python process performed an actual API undo and exited with `os._exit(73)` after the disk write but before its completion record. Subsequent API access recovered the restored path; retrying the same request after a new user edit left that edit unchanged.
+- `tests/test_agent_file_changes.py` + `tests/test_agent_apply_patch.py`: **43 passed**. The final snapshot/path hardening also received focused regression checks. Existing local-tools regression coverage passed (one existing platform-specific skip); an earlier combined run's sole new-test failure was a fixture that left its shell task paused. That fixture was corrected to run the shell, then pause before undo; the corrected full feature suite passes.
+- `npm run lint`, `npm run build`, Ruff on all changed Python modules, and `git diff --check` passed. The production frontend build has the repository's existing chunk-size/dynamic-import warnings.
+- Development Vite UI was opened in Chrome at `127.0.0.1:15173/agent?client=fixture`, with the real Agent backend at `127.0.0.1:19787`. Only the surrounding node/navigation shell used fixture data. Agent tools, encrypted task storage, snapshots, API and filesystem writes were real; no model was called.
+- In that UI: expanded `safe.txt` diff, previewed and confirmed its undo, then independently checked exact original disk bytes. Wrote later user content to `conflict.txt`, refreshed, requested undo preview, saw the conflict and disabled confirmation. A direct forced POST to the undo API also returned `conflict` with zero completed targets. Restarted the backend with the same home and verified saved undo history, the restored file and unchanged user content again.
+
+See [evidence.json](evidence.json) for disk hashes and API results, and [ui-conflict.png](ui-conflict.png) for the actual UI. These accompany disk/API assertions; the screenshot alone is not the acceptance criterion.
+
+Reproduce the dev UI with `scripts/file_review_dev_acceptance.py --home <disposable-directory> --port 19787`, `VITE_RYN_NODE_BASE_URL=http://127.0.0.1:19787/api/local`, and Vite on port 15173. Reuse the same home to test restart. Never point this fixture at a real project or production node home.
+
+## Limits and merge notes
+
+- File-level net undo, not individual diff-hunk undo or a redo UI. All history for a connected rename is one unit. External/service operations and conversation history are not undone; shell/build changes remain observations only.
+- Capacity: 2 MiB per file, 8 MiB per task, 64 paths, 256 file operations / 256 undo records, 256 MiB across task baselines. Manifest growth is included and progress space is reserved. A capacity error refuses the file operation before mutation; no silent fallback to an undoable-looking missing snapshot. Snapshots are removed with the existing task baseline cleanup, not silently evicted.
+- A multi-file filesystem update is not an atomic OS transaction. Pre-existing conflicts block the whole batch. A failure/race after successful preflight can leave a partial result, which is persisted and reported; no automatic compensating overwrite is attempted. Unknown tool writes remain blocked for manual resolution. Empty directories created by a patch are not recursively removed by file undo.
+- Windows development UI and restart/crash recovery were tested. macOS/Linux and the packaged Tauri desktop installer were **not** tested. Frontend production build success is not packaged desktop acceptance. POSIX uses advisory file locking; it does not promise exclusion of an unrelated process that ignores that lock.
+- Public merge points: `rynmesh/agent_runtime/local_tools.py` (file-operation dispatch and legacy review adapter), `rynmesh/agent_runtime/routes.py` (three-line installer), `webapp/src/screens/RynAgent.tsx` (import and component mount). The rest is independent modules/components/tests. Preserve the other AI's changes when merging `RynAgent.tsx`; do not replace the whole file. This branch is committed separately and not merged automatically.

@@ -1,0 +1,427 @@
+{
+  "reviewed_at_utc": "2026-10-10T05:40:44.184843+00:00",
+  "review_scope": "Read-only mechanical/accounting examination of two real development runs. Reviewer authored the Q06 controller; this is not a non-author controller implementation review. Semantics reviewed separately.",
+  "real_api_calls_by_reviewer": 0,
+  "original_runs_modified": false,
+  "runs": {
+    "20261010T053153877049Z-Q06-ryn": {
+      "run_sha256": "149770f7c6db4d155340d3e6b93b91a82cbcfcff5df9eee8da8fef006bf49902",
+      "code_file_count": 97,
+      "current_code_mismatches": [],
+      "controller_code_unchanged": true,
+      "controller_owner_source_unchanged": true,
+      "elapsed_wall_seconds": 242.26499999999942,
+      "task_state": "completed",
+      "task_elapsed_seconds": 239.26499999998487,
+      "model_calls": 4,
+      "all_budget_records_settled": true,
+      "input_tokens": 33713,
+      "output_tokens": 12936,
+      "charged_tokens": 46649,
+      "model_charged_seconds": 238.59399999999732,
+      "task_limits": {
+        "max_context_chars": 100000,
+        "max_output_chars": 20000,
+        "max_seconds": 600,
+        "max_steps": 24
+      },
+      "lifetime_limits": {
+        "max_total_model_calls": 128,
+        "max_total_seconds": 3600,
+        "max_total_tokens": 2000000,
+        "max_total_tool_calls": 256
+      },
+      "orders": [
+        {
+          "order_id": "agent_e1af22dbb3714ef180167096cb9c6f14",
+          "state": "succeeded",
+          "identity_service_matches": true,
+          "tokens_match_run_and_encrypted_budget": true,
+          "input_tokens": 4059,
+          "output_tokens": 355,
+          "charged_tokens": 4414,
+          "model_seconds": 11.281999999991967,
+          "stage": "model",
+          "request_policy": {
+            "effective_timeout_seconds": 599.9220000000059,
+            "enforcement": "consumer_cancel_watch_remote_transport_limits",
+            "measurement": "pre_admission_upper_bound",
+            "provider_timeout_seconds": null
+          },
+          "output_policy": {
+            "clamp_reasons": [],
+            "configured_cap": 128000,
+            "effective_cap": 128000,
+            "estimated_input_tokens": 5654,
+            "policy_sha256": "4e150b8e67e35207621873fdaf8225561e76fb6d7e32b18f47de77b2d34b1ba6",
+            "version": "configured-output-v1"
+          }
+        },
+        {
+          "order_id": "agent_9c98fd88d60e4ea9a539a8b44020ae6d",
+          "state": "succeeded",
+          "identity_service_matches": true,
+          "tokens_match_run_and_encrypted_budget": true,
+          "input_tokens": 6842,
+          "output_tokens": 3359,
+          "charged_tokens": 10201,
+          "model_seconds": 69.38999999999942,
+          "stage": "model",
+          "request_policy": {
+            "effective_timeout_seconds": 588.4530000000086,
+            "enforcement": "consumer_cancel_watch_remote_transport_limits",
+            "measurement": "pre_admission_upper_bound",
+            "provider_timeout_seconds": null
+          },
+          "output_policy": {
+            "clamp_reasons": [],
+            "configured_cap": 128000,
+            "effective_cap": 128000,
+            "estimated_input_tokens": 8853,
+            "policy_sha256": "4e150b8e67e35207621873fdaf8225561e76fb6d7e32b18f47de77b2d34b1ba6",
+            "version": "configured-output-v1"
+          }
+        },
+        {
+          "order_id": "agent_938665ec8679451fa52231d8194b9f38",
+          "state": "succeeded",
+          "identity_service_matches": true,
+          "tokens_match_run_and_encrypted_budget": true,
+          "input_tokens": 11078,
+          "output_tokens": 989,
+          "charged_tokens": 12067,
+          "model_seconds": 22.0,
+          "stage": "model",
+          "request_policy": {
+            "effective_timeout_seconds": 518.9389999999985,
+            "enforcement": "consumer_cancel_watch_remote_transport_limits",
+            "measurement": "pre_admission_upper_bound",
+            "provider_timeout_seconds": null
+          },
+          "output_policy": {
+            "clamp_reasons": [],
+            "configured_cap": 128000,
+            "effective_cap": 128000,
+            "estimated_input_tokens": 14063,
+            "policy_sha256": "4e150b8e67e35207621873fdaf8225561e76fb6d7e32b18f47de77b2d34b1ba6",
+            "version": "configured-output-v1"
+          }
+        },
+        {
+          "order_id": "agent_c37cd4b170354304aa43e98b2ac45773",
+          "state": "succeeded",
+          "identity_service_matches": true,
+          "tokens_match_run_and_encrypted_budget": true,
+          "input_tokens": 11734,
+          "output_tokens": 8233,
+          "charged_tokens": 19967,
+          "model_seconds": 135.90700000000652,
+          "stage": "verification_model",
+          "request_policy": {
+            "effective_timeout_seconds": 496.64200000002165,
+            "enforcement": "consumer_cancel_watch_remote_transport_limits",
+            "measurement": "pre_admission_upper_bound",
+            "provider_timeout_seconds": null
+          },
+          "output_policy": {
+            "clamp_reasons": [],
+            "configured_cap": 128000,
+            "effective_cap": 128000,
+            "estimated_input_tokens": 11688,
+            "policy_sha256": "4e150b8e67e35207621873fdaf8225561e76fb6d7e32b18f47de77b2d34b1ba6",
+            "version": "configured-output-v1"
+          }
+        }
+      ],
+      "identity_keys_match_record": {
+        "provider": true,
+        "node-b": true,
+        "node-c": true
+      },
+      "all_wire_model_bindings_match_current_source": true,
+      "all_wire_permissions_match_current_grant": true,
+      "actual_file_hashes_match_after": {
+        "sources": true,
+        "grants": true,
+        "consumer_sources": true,
+        "consumer_grants": true,
+        "owner_relationships": true,
+        "node_b_relationships": true,
+        "node_c_relationships": true
+      },
+      "relationship_business_hashes_match_after": true,
+      "relationship_business_before_equals_after": true,
+      "nonce_counts_before": {
+        "owner_relationships": 2,
+        "node_b_relationships": 0,
+        "node_c_relationships": 0
+      },
+      "nonce_counts_after": {
+        "owner_relationships": 13,
+        "node_b_relationships": 0,
+        "node_c_relationships": 0
+      },
+      "nonce_excluded_field": [
+        "nonces"
+      ],
+      "catalog_authenticated_request_count": 25,
+      "catalog_refresh_errors": [],
+      "business_writes": 0,
+      "source_replacements": [],
+      "grant_mutations": [],
+      "consumer_local_sources_absent": true,
+      "consumer_agent_task_ids": [
+        "agent_f2b544f9e3cc4b9dbd09d38a26cc4c65"
+      ],
+      "consumer_agent_message_count": 9,
+      "provider_agent_store_absent": true,
+      "provider_quota_requests": 5,
+      "provider_quota_explanation": "One synthetic setup admission plus four task model requests. Provider inference orders/quota logs are permitted, not Agent state.",
+      "native_reference_session_db_present": false,
+      "consumer_visible_model_count": 1,
+      "hidden_model_b_service_id_absent_from_model_requests": true,
+      "private_reasoning_absent_export": true,
+      "setup_admission_error_codes": [
+        null,
+        "personal_space_access_denied",
+        "ai_permission_denied",
+        "personal_space_access_denied"
+      ],
+      "reference_upstream_commit": null,
+      "selected_owner_secret_absent_export": true
+    },
+    "20261010T053610549001Z-Q06-reference": {
+      "run_sha256": "e72b3adc2d146dff7459d8a30d93bf6197543d2528056c4acc76a6d9dc350abd",
+      "code_file_count": 108,
+      "current_code_mismatches": [],
+      "controller_code_unchanged": true,
+      "controller_owner_source_unchanged": true,
+      "elapsed_wall_seconds": 145.0,
+      "task_state": "queued",
+      "task_elapsed_seconds": 0.0,
+      "model_calls": 4,
+      "all_budget_records_settled": true,
+      "input_tokens": 25067,
+      "output_tokens": 6237,
+      "charged_tokens": 31304,
+      "model_charged_seconds": 137.625,
+      "task_limits": {
+        "max_context_chars": 100000,
+        "max_output_chars": 20000,
+        "max_seconds": 600,
+        "max_steps": 24
+      },
+      "lifetime_limits": {
+        "max_total_model_calls": 128,
+        "max_total_seconds": 3600,
+        "max_total_tokens": 2000000,
+        "max_total_tool_calls": 256
+      },
+      "orders": [
+        {
+          "order_id": "agent_ed69d844abf54390ba6bb3d2b96c0785",
+          "state": "succeeded",
+          "identity_service_matches": true,
+          "tokens_match_run_and_encrypted_budget": true,
+          "input_tokens": 4068,
+          "output_tokens": 173,
+          "charged_tokens": 4241,
+          "model_seconds": 8.656000000002678,
+          "stage": "reference_inference",
+          "request_policy": {
+            "effective_timeout_seconds": 599.9529999999941,
+            "enforcement": "consumer_cancel_watch_remote_transport_limits",
+            "measurement": "pre_admission_upper_bound",
+            "provider_timeout_seconds": null
+          },
+          "output_policy": {
+            "clamp_reasons": [],
+            "configured_cap": 128000,
+            "effective_cap": 128000,
+            "estimated_input_tokens": 6133,
+            "policy_sha256": "4e150b8e67e35207621873fdaf8225561e76fb6d7e32b18f47de77b2d34b1ba6",
+            "version": "configured-output-v1"
+          }
+        },
+        {
+          "order_id": "agent_419dfc57341a4202aa42a379d7a82e70",
+          "state": "succeeded",
+          "identity_service_matches": true,
+          "tokens_match_run_and_encrypted_budget": true,
+          "input_tokens": 6244,
+          "output_tokens": 821,
+          "charged_tokens": 7065,
+          "model_seconds": 16.875,
+          "stage": "reference_inference",
+          "request_policy": {
+            "effective_timeout_seconds": 591.125,
+            "enforcement": "consumer_cancel_watch_remote_transport_limits",
+            "measurement": "pre_admission_upper_bound",
+            "provider_timeout_seconds": null
+          },
+          "output_policy": {
+            "clamp_reasons": [],
+            "configured_cap": 128000,
+            "effective_cap": 128000,
+            "estimated_input_tokens": 8538,
+            "policy_sha256": "4e150b8e67e35207621873fdaf8225561e76fb6d7e32b18f47de77b2d34b1ba6",
+            "version": "configured-output-v1"
+          }
+        },
+        {
+          "order_id": "agent_0bc5c991926f49efbe63ef950bb9bd84",
+          "state": "succeeded",
+          "identity_service_matches": true,
+          "tokens_match_run_and_encrypted_budget": true,
+          "input_tokens": 8390,
+          "output_tokens": 4423,
+          "charged_tokens": 12813,
+          "model_seconds": 94.71899999999732,
+          "stage": "reference_inference",
+          "request_policy": {
+            "effective_timeout_seconds": 574.0939999999973,
+            "enforcement": "consumer_cancel_watch_remote_transport_limits",
+            "measurement": "pre_admission_upper_bound",
+            "provider_timeout_seconds": null
+          },
+          "output_policy": {
+            "clamp_reasons": [],
+            "configured_cap": 128000,
+            "effective_cap": 128000,
+            "estimated_input_tokens": 11160,
+            "policy_sha256": "4e150b8e67e35207621873fdaf8225561e76fb6d7e32b18f47de77b2d34b1ba6",
+            "version": "configured-output-v1"
+          }
+        },
+        {
+          "order_id": "agent_381aff45761d49d5a027166363a84a5b",
+          "state": "succeeded",
+          "identity_service_matches": true,
+          "tokens_match_run_and_encrypted_budget": true,
+          "input_tokens": 6365,
+          "output_tokens": 820,
+          "charged_tokens": 7185,
+          "model_seconds": 17.360000000000582,
+          "stage": "reference_inference",
+          "request_policy": {
+            "effective_timeout_seconds": 479.32799999999406,
+            "enforcement": "consumer_cancel_watch_remote_transport_limits",
+            "measurement": "pre_admission_upper_bound",
+            "provider_timeout_seconds": null
+          },
+          "output_policy": {
+            "clamp_reasons": [],
+            "configured_cap": 128000,
+            "effective_cap": 128000,
+            "estimated_input_tokens": 14020,
+            "policy_sha256": "4e150b8e67e35207621873fdaf8225561e76fb6d7e32b18f47de77b2d34b1ba6",
+            "version": "configured-output-v1"
+          }
+        }
+      ],
+      "identity_keys_match_record": {
+        "provider": true,
+        "node-b": true,
+        "node-c": true
+      },
+      "all_wire_model_bindings_match_current_source": true,
+      "all_wire_permissions_match_current_grant": true,
+      "actual_file_hashes_match_after": {
+        "sources": true,
+        "grants": true,
+        "consumer_sources": true,
+        "consumer_grants": true,
+        "owner_relationships": true,
+        "node_b_relationships": true,
+        "node_c_relationships": true
+      },
+      "relationship_business_hashes_match_after": true,
+      "relationship_business_before_equals_after": true,
+      "nonce_counts_before": {
+        "owner_relationships": 2,
+        "node_b_relationships": 0,
+        "node_c_relationships": 0
+      },
+      "nonce_counts_after": {
+        "owner_relationships": 14,
+        "node_b_relationships": 0,
+        "node_c_relationships": 0
+      },
+      "nonce_excluded_field": [
+        "nonces"
+      ],
+      "catalog_authenticated_request_count": 16,
+      "catalog_refresh_errors": [],
+      "business_writes": 0,
+      "source_replacements": [],
+      "grant_mutations": [],
+      "consumer_local_sources_absent": true,
+      "consumer_agent_task_ids": [
+        "agent_db7b5e109e314fbf81577084cb7c36f4"
+      ],
+      "consumer_agent_message_count": 1,
+      "provider_agent_store_absent": true,
+      "provider_quota_requests": 5,
+      "provider_quota_explanation": "One synthetic setup admission plus four task model requests. Provider inference orders/quota logs are permitted, not Agent state.",
+      "native_reference_session_db_present": true,
+      "consumer_visible_model_count": 1,
+      "hidden_model_b_service_id_absent_from_model_requests": true,
+      "private_reasoning_absent_export": true,
+      "setup_admission_error_codes": [
+        null,
+        "personal_space_access_denied",
+        "ai_permission_denied",
+        "personal_space_access_denied"
+      ],
+      "reference_upstream_commit": "29628c9acdb81b703bbd4080c207a0e7ce5e276e",
+      "selected_owner_secret_absent_export": true
+    }
+  },
+  "comparison": {
+    "common_code_file_count": 97,
+    "common_code_mismatches": [],
+    "same_planner_policy": true,
+    "planner_policy": {
+      "version": "configured-output-v1",
+      "source_id": "src-7de9fb1d36c44bc8",
+      "model_id": "glm-5.3-flash",
+      "generation": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000,
+        "request_defaults": {
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoning_effort": "max"
+        }
+      },
+      "policy_sha256": "79a4485259114557142d10bd4ab88c90dbe5c1e2cfcb3101f3a930d0a80b1754"
+    },
+    "distinct_isolated_homes": true,
+    "distinct_consumer_and_provider_identities": true,
+    "same_frozen_prompt": true,
+    "cost_comparison": "Provider fixture pricing is not a verified vendor bill; only token accounting was checked."
+  },
+  "owner_ciphertext": {
+    "observed_at_review_utc": "2026-10-10T05:40:44.274851+00:00",
+    "sha256_current": "1ab28b982d8804008d548fd54e9726f96568b3707438e99ecca90ed1434ea320",
+    "historical_before_sha256": null,
+    "historical_after_sha256": null,
+    "historical_proof_scope": "Controller checks the original ciphertext hash before each inner-adapter installation and at final collection; run.json retains only the final boolean. No saved pre-run digest exists, so historical equality cannot be independently recomputed or retroactively certified.",
+    "read_used_migrate_false": true,
+    "review_read_preserved_ciphertext": true,
+    "selected_source_id": "src-7de9fb1d36c44bc8",
+    "selected_model_id": "glm-5.3-flash",
+    "selected_model_enabled_ready": true,
+    "generation_matches_both_run_policies": true
+  },
+  "limitations": [
+    "Mechanical/accounting consistency is not a Q06 semantic pass or formal acceptance. Provider private model and third-party grant truth were not treated as consumer knowledge.",
+    "Wire exchange is the signed local fixture, not ICE or two physical machines. Raw signed envelopes are not retained for offline signature replay verification.",
+    "Consumer request_policy provider_timeout_seconds is null with consumer_cancel_watch_remote_transport_limits; its effective timeout is a remaining-task pre-admission bound, not a claimed upstream duration. Frozen provider code caps source adapter requests at 180 seconds; no timeout/cancellation fault was exercised by these successful calls.",
+    "The reference AgentStore remains queued as an accounting host; it is not a completed Ryn task. Its native reference session is separate.",
+    "Distinct homes/identities and absent provider AgentStore are checked; adversarial reference cross-session/history isolation has not been verified.",
+    "Private-model setup requests were rejected by personal-space access checks before a deeper cross-model grant check; those probes establish rejection and zero upstream, not isolated proof of that deeper branch."
+  ],
+  "verdict": "No mechanical/accounting mismatch found; historical owner ciphertext proof is incomplete as documented; semantic outcome excluded."
+}

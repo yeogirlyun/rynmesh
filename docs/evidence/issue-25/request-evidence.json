@@ -1,0 +1,29 @@
+{
+  "captured_at": "2026-09-03",
+  "consumer_origin": "http://127.0.0.1:18795",
+  "browser_flow_runs": 2,
+  "total_consumer_requests_including_cors_and_polling": 215,
+  "article_marker_in_any_request_target": false,
+  "article_marker_body_paths": [
+    "/api/local/llm/orders/async"
+  ],
+  "grounded_orders": [
+    {
+      "method": "POST",
+      "path": "/api/local/llm/orders/async",
+      "body_bytes": 1987,
+      "body_sha256": "8a5e0a2f7cb0e0b4577075f43660dd3190b2ee883ed82d4515ab8b4dcd0ade77",
+      "article_marker_in_body": true,
+      "article_marker_in_target": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/local/llm/orders/async",
+      "body_bytes": 1985,
+      "body_sha256": "bbd99106f86d1a1053d3fd478fc909b7e682fe983ff0f4fa06cafad4398bfbab",
+      "article_marker_in_body": true,
+      "article_marker_in_target": false
+    }
+  ],
+  "privacy_note": "The harness records no request or response bodies."
+}

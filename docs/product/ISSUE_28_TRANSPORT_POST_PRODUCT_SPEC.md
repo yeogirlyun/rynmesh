@@ -1,6 +1,6 @@
 # Product specification: Transport-backed Private AI writes (#28)
 
-Status: implemented and formally accepted
+Status: implemented; final hardening CI pending
 Owner: Rynmesh maintainers
 Last reviewed: 2026-09-02
 
@@ -74,5 +74,6 @@ must not be weakened independently.
 
 - Requirements: `docs/requirements/ISSUE_28_TRANSPORT_POST_REQUIREMENTS.md`
 - Development plan: `docs/ISSUE_28_TRANSPORT_POST_WORK_PLAN.md`
+- Test plan: `docs/testing/ISSUE_28_TRANSPORT_POST_TEST_PLAN.md`
 - Acceptance report: `docs/acceptance/issue-28/ACCEPTANCE_REPORT.md`
 - Transport architecture: `docs/RYNMESH_TRANSPORT_CENSORSHIP.md`

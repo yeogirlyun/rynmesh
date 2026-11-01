@@ -1,0 +1,10 @@
+{
+  "review_scope": "Final report against ordered tool receipts, direct source state and actual device probe semantics.",
+  "runs": [
+    {"index": 1, "passed": true, "business_state_verified": true, "notes": ["Correct operation IDs and ordered share/revoke states; sibling private and default unchanged.", "Explicitly states self is process presence, HTTP/LAN probes were not performed, null is untested."]},
+    {"index": 2, "passed": true, "business_state_verified": true, "notes": ["Share/revoke receipts and subsequent reads agree with direct stored state.", "Reports self evidence and untested HTTP/LAN correctly. The two read tools use the same catalog, not independent upstream sources."]},
+    {"index": 3, "passed": false, "business_state_verified": false, "issues": ["Fourth model request failed with AdapterError after 122.312 seconds. No final report, no revoke or final read occurred.", "Original harness retained error class but not the safe code; exact upstream category cannot be retroactively established. Duration is consistent with the 120-second request limit, not proof of the cause."]}
+  ],
+  "result": "2/3 business-and-report success; batch not passed. Original failure retained. No blind rerun.",
+  "cleanup": "See cleanup.json: harness reset only the isolated fixture after shutdown; this does not count as model recovery."
+}

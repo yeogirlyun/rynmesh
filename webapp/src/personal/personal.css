@@ -131,8 +131,11 @@
 .pf-sidebar {
   position: sticky;
   top: 0;
+  align-self: start;
+  box-sizing: border-box;
   height: 100dvh;
-  padding: 35px 18px 24px;
+  min-height: 0;
+  padding: 26px 18px max(18px, env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   background: linear-gradient(125deg, var(--pf-sidebar), var(--pf-bg));
@@ -140,9 +143,10 @@
 }
 .pf-brand {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 10px;
-  margin: 0 13px 29px;
+  margin: 0 13px 18px;
   color: var(--pf-text);
   font-weight: 650;
   font-size: 27px;
@@ -154,20 +158,32 @@
 }
 .pf-workspace {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 12px;
   border: 1px solid var(--pf-line);
   border-radius: 7px;
   padding: 8px 12px;
-  margin: 0 4px 22px;
+  margin: 0 4px 14px;
   min-height: 40px;
 }
 .pf-workspace span {
   flex: 1;
 }
+.pf-sidebar-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--pf-strong) transparent;
+  /* Leave room for keyboard focus outlines inside the scroll container. */
+  margin: 0 -4px;
+  padding: 4px;
+}
 .pf-sidebar nav {
   display: grid;
-  gap: 6px;
+  gap: 4px;
 }
 .pf-sidebar nav a {
   display: flex;
@@ -175,8 +191,8 @@
   gap: 14px;
   border: 1px solid transparent;
   border-radius: 7px;
-  padding: 11px 15px;
-  min-height: 45px;
+  padding: 8px 15px;
+  min-height: 40px;
   color: var(--pf-text);
   font-weight: 500;
 }
@@ -192,15 +208,15 @@
   color: #b2d4ff;
 }
 .pf-more-label {
-  margin: 27px 13px 12px;
-  padding-top: 21px;
-  border-top: 1px solid var(--pf-line);
+  margin: 18px 13px 10px;
   font-size: 12px;
   color: var(--pf-muted);
 }
 .pf-sidebar-bottom {
-  margin-top: auto;
-  padding-top: 32px;
+  flex-shrink: 0;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--pf-line);
 }
 .pf-preview-label {
   display: block;
@@ -591,6 +607,13 @@
 .pf-service-row small {
   display: block;
 }
+.pf-nearby { margin-top: 18px; padding: 18px; }
+.pf-nearby .pf-section-heading { align-items: flex-start; gap: 12px; margin-bottom: 8px; }
+.pf-nearby-list { list-style: none; margin: 0; padding: 0; }
+.pf-nearby-list li { display: flex; align-items: center; gap: 14px; padding: 12px 0; border-top: 1px solid var(--pf-line); min-width: 0; }
+.pf-nearby-name { flex: 1; min-width: 0; }
+.pf-nearby-name strong, .pf-nearby-name small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-nearby-name small { color: var(--pf-muted); }
 .pf-service-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .pf-access-label { font-size: 10px; font-weight: 500; line-height: 1.5; padding: 2px 7px; border: 1px solid var(--pf-line); border-radius: 5px; color: var(--pf-muted); background: var(--pf-subtle); white-space: nowrap; }
 .pf-service-art.branded { background: var(--pf-subtle); color: var(--pf-text); border: 1px solid var(--pf-line); }
@@ -1662,4 +1685,17 @@
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* Agent owns its compact toolbar and full-height task workspace. */
+.pf-shell.pf-agent-shell { height: 100dvh; min-height: 0; overflow: hidden; }
+.pf-agent-shell .pf-main-column { display: flex; flex-direction: column; min-height: 0; }
+.pf-agent-shell .pf-main { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 0; overflow: hidden; }
+.pf-agent-shell .pf-main > .ra-workspace,
+.pf-agent-shell .pf-main > .cfa-root { flex: 1; min-height: 0; }
+.pf-agent-shell.pf-agent-nav-collapsed { grid-template-columns: minmax(0, 1fr); }
+.pf-agent-shell .pf-sidebar[hidden] { display: none !important; }
+@media (max-width: 760px) {
+  .pf-shell.pf-agent-shell { grid-template-columns: minmax(0, 1fr); }
+  .pf-agent-shell .pf-sidebar:not([hidden]) { display: flex; position: fixed; inset: 56px auto 0 0; width: 224px; height: calc(100dvh - 56px); z-index: 25; box-shadow: 12px 0 35px #0003; }
 }

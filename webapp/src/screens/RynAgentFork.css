@@ -1,0 +1,9 @@
+.ra-fork { margin: 12px 0; overflow-wrap: anywhere; }
+.ra-fork button { padding: 7px 12px; border: 1px solid #8886; border-radius: 7px; background: transparent; color: inherit; cursor: pointer; }
+.ra-fork button:disabled { opacity: .45; cursor: default; }
+.ra-fork [role=note] { padding: 12px; margin-bottom: 12px; border-left: 3px solid #8888; background: #8881; border-radius: 8px; }
+.ra-fork [role=note] p { margin: 4px 0; }
+.ra-fork-dialog { max-height: 85vh; overflow-y: auto; }
+.ra-fork-dialog label { display: grid; gap: 8px; margin: 16px 0; }
+.ra-fork-dialog input, .ra-fork-dialog select { width: 100%; min-width: 0; box-sizing: border-box; padding: 10px; background: var(--surface, #fff); color: inherit; border: 1px solid #8886; border-radius: 7px; }
+.ra-fork-dialog [role=alert] { color: #c95835; }

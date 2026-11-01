@@ -1,0 +1,27 @@
+{
+  "kind": "R06-development-operator-review",
+  "formal_pass": false,
+  "formal_trials_executed": 0,
+  "business_success_seen": false,
+  "independent_review": false,
+  "raw_sha256": "105df4c823971119a21faa991b629dd6ad69c26788f1478ce4be27e3d71d64ae",
+  "actual_worker_pids": [
+    34608,
+    34188
+  ],
+  "workers_confirmed_terminal": true,
+  "first_compaction_and_restart_observed": true,
+  "final_status": "failed",
+  "final_error": "agent_model_call_budget_exhausted",
+  "artifact_exists": false,
+  "requests": 12,
+  "known_input_tokens": 20147,
+  "known_output_tokens": 23243,
+  "unknown_usage_requests": 0,
+  "currency_cost": null,
+  "code_unchanged": true,
+  "changed_snapshot_files": [],
+  "source_unchanged": true,
+  "owner_source_unchanged": true,
+  "conclusion": "Recovery and controlled budget continuation reached; final twelve-call budget exhausted without target file. Retain failure, no extra paid calls or prompt repair."
+}

@@ -1,0 +1,42 @@
+{
+  "date": "2026-10-13",
+  "scope": "First general workstation Agent implementation; basic acceptance and handoff for owner testing.",
+  "prompt_version": "ryn-agent-general-v3.0",
+  "new_tools": 16,
+  "business_tools_total": 40,
+  "features": [
+    "Workspace file listing, UTF-8 reading/searching, creation, version-checked replacement/editing, copy/move/delete and directory creation",
+    "PowerShell/CMD/sh execution, bounded output, background process status/input/stop, timeout and task cancellation",
+    "Task-owned Chromium browser DOM observation, filling/clicking/selecting/keys/scrolling/navigation/upload and PNG screenshots",
+    "Windows window/accessibility observation, text-editor readback, focus/mouse/Unicode typing/hotkeys/scrolling/InvokePattern/ValuePattern and PNG screenshots",
+    "Owner settings for workspace and desktop/browser access; task-captured permissions and durable no-replay operation receipts"
+  ],
+  "validation": {
+    "targeted_existing_and_new_backend_tests": "145 passed, followed by the additional Windows desktop test passing; 146 distinct tests overall",
+    "agent_page_tests": "49 passed",
+    "frontend_build": "TypeScript and Vite passed",
+    "basic_actual_operations": ["File lifecycle and stale-version rejection", "Actual command output/nonzero exit, timeout, background termination and operation replay rejection", "Actual Chromium fill/click/upload and screenshot", "Actual Windows accessibility set-value and SendInput hotkeys/Chinese typing with text readback"],
+    "task_integration": "Real encrypted state + consumer tool registry + approval + actual file creation/readback + verification; model boundary is a deterministic API fixture",
+    "packaged_backend": "Isolated node startup; all 40 business tools registered; new settings saved and read back",
+    "external_model_trials": 0,
+    "full_reference_benchmark": "Not run"
+  },
+  "build": {
+    "record": ".codex-tmp/usable-candidate-build-20261013T114445266/result.json",
+    "source_changes_during_build": 0,
+    "installation_performed_by_agent": false,
+    "installer": "output/Ryn-0.7.0-general-agent-20261013-windows-x64-setup.exe",
+    "packaged_smoke": ".codex-tmp/general-agent-package-smoke-20261013/result.json"
+  },
+  "owner_test_materials": "output/ryn-agent-basic-test-20261013/测试提示词.txt",
+  "limits": [
+    "Model observes DOM/accessibility text; screenshot pixels are saved but not sent as vision input",
+    "Windows desktop only; custom drawn or elevated/secure windows may be inaccessible",
+    "Browser uses a separate profile and does not inherit owner browser logins",
+    "Browser/background process lifetime is bounded to at most 600 seconds; processes and browser sessions are not reconstructed after backend restart",
+    "Workspace path restrictions apply to file tools; shell execution is not an OS sandbox",
+    "UTF-8 file helpers are limited to 1 MiB and bounded text pages; larger/binary data requires command-line tools",
+    "No new MCP/plugin ecosystem, Office skill collection or subagent framework in this first batch",
+    "True model-directed task quality and installed-app usability are pending owner manual testing"
+  ]
+}

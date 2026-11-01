@@ -1,0 +1,35 @@
+{
+  "reviewer": "sharing_review / gpt-6-astra high",
+  "status": "confirmed_visibility_semantics_p2_implementation_pending",
+  "reproduction": {
+    "method": "Real paired FriendService/grant/encrypted catalog fixture, then ModelCatalog; no external API.",
+    "observed": {
+      "catalog_access": "friend",
+      "catalog_access_policy": null,
+      "catalog_binding_verified": true,
+      "model_sharing": true,
+      "model_share_scope": "none",
+      "model_bound": true
+    }
+  },
+  "design": {
+    "remote_share_scope": "unknown",
+    "remote_sharing": "Retain compatibility boolean; add sharing_basis=remote_catalog_advertisement and sharing_configuration_known=false.",
+    "recipient_access": "Separate observed kind friend/personal_space/unknown, consumer identity and basis. Only authenticated valid receiver binding can project precise relationship/permission revisions. Never claim fresh invocation success or full provider permissions.",
+    "local_models": "Preserve actual local sharing configuration; sharing_configuration_known=true.",
+    "inspect_services": "Retain friend_grants array; add friend_grants_scope with provider_peer_id=self, direction=local_outgoing, remote_provider_grants=unknown. Clarify list/inspect tool descriptions.",
+    "verification": "New static fields participate in strict receipt comparisons. Do not ignore drift or retroactively repair old receipts.",
+    "admission": "No grant, binding, destination, dispatch, availability or access-policy changes."
+  },
+  "validation_scope": [
+    "Actual FriendAICatalog to ModelCatalog.",
+    "Personal-space, unverified advertisement, invalid receiver binding and stale observations.",
+    "Empty local outgoing grants with remote received model does not prove absent provider grants.",
+    "Peer binding, catalog, read verification, observation transitions and atomic sharing regressions."
+  ],
+  "sha256": {
+    "rynmesh/agent_runtime/models.py": "dfa532dcb38fb6eb54ed3b4ed36717cd44a6140e432f5e21d503b4b3021c3aa0",
+    "rynmesh/agent_runtime/tools.py": "b1ddfa9627dc1e6c5bfc42cfbfcaea2ebd4db6d94e76b8ee1d7dfc90f3ce5fe7"
+  },
+  "formal_executed_trials": 0
+}

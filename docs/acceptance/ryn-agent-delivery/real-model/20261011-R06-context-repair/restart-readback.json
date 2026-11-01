@@ -1,0 +1,229 @@
+{
+  "before_reconcile": {
+    "task_id": "agent_091507cb79b647108f0bc6dbc4a4dcd5",
+    "status": "queued",
+    "control_revision": 2,
+    "goal": {
+      "constraints": [
+        {
+          "id": "constraint:agent_091507cb79b647108f0bc6dbc4a4dcd5:owner:0",
+          "message_id": "agent_091507cb79b647108f0bc6dbc4a4dcd5:owner:0",
+          "required": true,
+          "source": "user",
+          "text": "检查 long-notes.txt 的 12 个 CHECKPOINT，保留我的最新要求，生成 reports/acceptance/resumed.md。达到预算先停，等我明确追加预算再继续。"
+        },
+        {
+          "id": "constraint:owner_ee2af1fe6e8244c58f3c08074dc96a50",
+          "message_id": "owner_ee2af1fe6e8244c58f3c08074dc96a50",
+          "required": true,
+          "source": "user",
+          "text": "所有客户名称匿名；原始资料不要修改。"
+        }
+      ],
+      "kind": "unclassified",
+      "original_message_id": "agent_091507cb79b647108f0bc6dbc4a4dcd5:owner:0",
+      "revision": 2,
+      "text": "检查 long-notes.txt 的 12 个 CHECKPOINT，保留我的最新要求，生成 reports/acceptance/resumed.md。达到预算先停，等我明确追加预算再继续。"
+    },
+    "budget": {
+      "legacy_model_calls": 0,
+      "legacy_seconds": 0.0,
+      "legacy_tool_calls": 0,
+      "legacy_usage_unknown": false,
+      "limits": {
+        "max_total_model_calls": 4,
+        "max_total_seconds": 3600,
+        "max_total_tokens": 2000000,
+        "max_total_tool_calls": 256
+      },
+      "records": [
+        {
+          "charged_seconds": 23.23399999999674,
+          "charged_tokens": 2470,
+          "elapsed_seconds": 23.23399999999674,
+          "id": "usage_32347add50304b07a6a7ae930427654c",
+          "input_reservation": 6629,
+          "input_tokens": 1648,
+          "kind": "model",
+          "output_policy": {
+            "clamp_reasons": [],
+            "configured_cap": 128000,
+            "effective_cap": 128000,
+            "estimated_input_tokens": 2108,
+            "policy_sha256": "4e150b8e67e35207621873fdaf8225561e76fb6d7e32b18f47de77b2d34b1ba6",
+            "version": "configured-output-v1"
+          },
+          "output_reservation": 128000,
+          "output_tokens": 822,
+          "request_policy": {
+            "effective_timeout_seconds": 179.90700000000288,
+            "enforcement": "adapter_timeout_and_cancel_watch",
+            "measurement": "pre_admission_upper_bound",
+            "provider_timeout_seconds": 180
+          },
+          "round": 1,
+          "stage": "model",
+          "status": "settled"
+        },
+        {
+          "charged_seconds": 32.95300000000134,
+          "charged_tokens": 2780,
+          "elapsed_seconds": 32.95300000000134,
+          "id": "usage_4901fb45fc1d45e2957adb461c31cb06",
+          "input_reservation": 4907,
+          "input_tokens": 884,
+          "kind": "model",
+          "output_policy": {
+            "clamp_reasons": [],
+            "configured_cap": 128000,
+            "effective_cap": 128000,
+            "estimated_input_tokens": 1444,
+            "policy_sha256": "4e150b8e67e35207621873fdaf8225561e76fb6d7e32b18f47de77b2d34b1ba6",
+            "version": "configured-output-v1"
+          },
+          "output_reservation": 128000,
+          "output_tokens": 1896,
+          "request_policy": {
+            "effective_timeout_seconds": 179.90599999999904,
+            "enforcement": "adapter_timeout_and_cancel_watch",
+            "measurement": "pre_admission_upper_bound",
+            "provider_timeout_seconds": 180
+          },
+          "round": 1,
+          "stage": "compaction",
+          "status": "settled"
+        }
+      ],
+      "round": 2
+    },
+    "checkpoint_sha256": "92a81dec81dafdc184f33d163b0d6bb14a8a904dd465fa3d4b73f48d661b8019",
+    "messages_sha256": "9c3866225280e2f66de481b4fb90cb672e46f076a763c54285dc677effd1c0a0",
+    "scope_sha256": "e80920d590208e27f24c0c48b7df4b4ba49de0ee93c56ce0fd3793feda0afe4d",
+    "safe": true,
+    "compactions": [
+      {
+        "at": "2026-10-11T08:53:02.183272+00:00",
+        "context_epoch": 0,
+        "seq": 10,
+        "source_sha256": "0d73ed1e2c4531a6a18e615292315fc5f0adb1de71679cea2162021181b90acf",
+        "through": 3,
+        "type": "context_compacted"
+      }
+    ]
+  },
+  "after_reconcile": {
+    "task_id": "agent_091507cb79b647108f0bc6dbc4a4dcd5",
+    "status": "queued",
+    "control_revision": 2,
+    "goal": {
+      "constraints": [
+        {
+          "id": "constraint:agent_091507cb79b647108f0bc6dbc4a4dcd5:owner:0",
+          "message_id": "agent_091507cb79b647108f0bc6dbc4a4dcd5:owner:0",
+          "required": true,
+          "source": "user",
+          "text": "检查 long-notes.txt 的 12 个 CHECKPOINT，保留我的最新要求，生成 reports/acceptance/resumed.md。达到预算先停，等我明确追加预算再继续。"
+        },
+        {
+          "id": "constraint:owner_ee2af1fe6e8244c58f3c08074dc96a50",
+          "message_id": "owner_ee2af1fe6e8244c58f3c08074dc96a50",
+          "required": true,
+          "source": "user",
+          "text": "所有客户名称匿名；原始资料不要修改。"
+        }
+      ],
+      "kind": "unclassified",
+      "original_message_id": "agent_091507cb79b647108f0bc6dbc4a4dcd5:owner:0",
+      "revision": 2,
+      "text": "检查 long-notes.txt 的 12 个 CHECKPOINT，保留我的最新要求，生成 reports/acceptance/resumed.md。达到预算先停，等我明确追加预算再继续。"
+    },
+    "budget": {
+      "legacy_model_calls": 0,
+      "legacy_seconds": 0.0,
+      "legacy_tool_calls": 0,
+      "legacy_usage_unknown": false,
+      "limits": {
+        "max_total_model_calls": 4,
+        "max_total_seconds": 3600,
+        "max_total_tokens": 2000000,
+        "max_total_tool_calls": 256
+      },
+      "records": [
+        {
+          "charged_seconds": 23.23399999999674,
+          "charged_tokens": 2470,
+          "elapsed_seconds": 23.23399999999674,
+          "id": "usage_32347add50304b07a6a7ae930427654c",
+          "input_reservation": 6629,
+          "input_tokens": 1648,
+          "kind": "model",
+          "output_policy": {
+            "clamp_reasons": [],
+            "configured_cap": 128000,
+            "effective_cap": 128000,
+            "estimated_input_tokens": 2108,
+            "policy_sha256": "4e150b8e67e35207621873fdaf8225561e76fb6d7e32b18f47de77b2d34b1ba6",
+            "version": "configured-output-v1"
+          },
+          "output_reservation": 128000,
+          "output_tokens": 822,
+          "request_policy": {
+            "effective_timeout_seconds": 179.90700000000288,
+            "enforcement": "adapter_timeout_and_cancel_watch",
+            "measurement": "pre_admission_upper_bound",
+            "provider_timeout_seconds": 180
+          },
+          "round": 1,
+          "stage": "model",
+          "status": "settled"
+        },
+        {
+          "charged_seconds": 32.95300000000134,
+          "charged_tokens": 2780,
+          "elapsed_seconds": 32.95300000000134,
+          "id": "usage_4901fb45fc1d45e2957adb461c31cb06",
+          "input_reservation": 4907,
+          "input_tokens": 884,
+          "kind": "model",
+          "output_policy": {
+            "clamp_reasons": [],
+            "configured_cap": 128000,
+            "effective_cap": 128000,
+            "estimated_input_tokens": 1444,
+            "policy_sha256": "4e150b8e67e35207621873fdaf8225561e76fb6d7e32b18f47de77b2d34b1ba6",
+            "version": "configured-output-v1"
+          },
+          "output_reservation": 128000,
+          "output_tokens": 1896,
+          "request_policy": {
+            "effective_timeout_seconds": 179.90599999999904,
+            "enforcement": "adapter_timeout_and_cancel_watch",
+            "measurement": "pre_admission_upper_bound",
+            "provider_timeout_seconds": 180
+          },
+          "round": 1,
+          "stage": "compaction",
+          "status": "settled"
+        }
+      ],
+      "round": 2
+    },
+    "checkpoint_sha256": "92a81dec81dafdc184f33d163b0d6bb14a8a904dd465fa3d4b73f48d661b8019",
+    "messages_sha256": "9c3866225280e2f66de481b4fb90cb672e46f076a763c54285dc677effd1c0a0",
+    "scope_sha256": "e80920d590208e27f24c0c48b7df4b4ba49de0ee93c56ce0fd3793feda0afe4d",
+    "safe": true,
+    "compactions": [
+      {
+        "at": "2026-10-11T08:53:02.183272+00:00",
+        "context_epoch": 0,
+        "seq": 10,
+        "source_sha256": "0d73ed1e2c4531a6a18e615292315fc5f0adb1de71679cea2162021181b90acf",
+        "through": 3,
+        "type": "context_compacted"
+      }
+    ]
+  },
+  "identity": "Cv5ItdnoWbWO9oz9VRjXrN/cLXX+9lZHIPOtNDVTdyQ=",
+  "worker_pid": 28836,
+  "home": "C:\\Users\\子陵\\AppData\\Local\\Temp\\ryn-r06-mzshotx2"
+}

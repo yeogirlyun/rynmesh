@@ -1,0 +1,54 @@
+{
+  "id": "agent_1eb7777ac43f47459bc1d9afb4e1336f",
+  "status": "completed",
+  "steps": 3,
+  "control_revision": 4,
+  "budget": {
+    "limits": {
+      "max_total_model_calls": 140,
+      "max_total_seconds": 3600,
+      "max_total_tokens": 2000000,
+      "max_total_tool_calls": 256
+    },
+    "round": 1,
+    "lifetime": {
+      "model_calls": null,
+      "tool_calls": null,
+      "charged_model_calls": 3,
+      "charged_tool_calls": 0,
+      "known_input_tokens": 0,
+      "known_output_tokens": 0,
+      "input_tokens": null,
+      "output_tokens": null,
+      "total_tokens": null,
+      "charged_tokens": 0,
+      "charged_seconds": 0.4680000000007567,
+      "active_seconds": null,
+      "cost": null,
+      "cost_status": "unknown",
+      "usage_complete": false,
+      "legacy_usage_unknown": true,
+      "unsettled_operations": 0
+    },
+    "current_round": {
+      "model_calls": null,
+      "tool_calls": null,
+      "charged_model_calls": 0,
+      "charged_tool_calls": 0,
+      "known_input_tokens": 0,
+      "known_output_tokens": 0,
+      "input_tokens": null,
+      "output_tokens": null,
+      "total_tokens": null,
+      "charged_tokens": 0,
+      "charged_seconds": 0,
+      "active_seconds": null,
+      "cost": null,
+      "cost_status": "unknown",
+      "usage_complete": false,
+      "legacy_usage_unknown": true,
+      "unsettled_operations": 0
+    },
+    "reservation_policy": "Unknown model usage retains the conservative dispatch reservation; cost is unknown without trusted pricing."
+  }
+}

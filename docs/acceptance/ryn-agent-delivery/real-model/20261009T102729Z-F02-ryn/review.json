@@ -1,0 +1,20 @@
+{
+  "reviewer": "root independent source/artifact inspection",
+  "classification": "development trial passed; not formal score",
+  "checks": {
+    "required_facts_correct": true,
+    "sources_cited": true,
+    "old_date_explicitly_superseded": true,
+    "no_unsupported_business_inference": true,
+    "one_expected_artifact": true,
+    "source_files_unchanged": true,
+    "no_unexpected_writes": true,
+    "owner_source_unchanged": true
+  },
+  "limitations": [
+    "code_unchanged=false; no final-snapshot claim",
+    "Synthetic client translated imprecisely as 综合客户; no effect on required facts",
+    "No format retry occurred in this live run; bounded retry is proven by regression fixtures, not this trial"
+  ],
+  "artifact_sha256": "50a053ef5063b271bd2a0c855a06f1c1e42db48c38a0e4583887cfc2fdfb8714"
+}

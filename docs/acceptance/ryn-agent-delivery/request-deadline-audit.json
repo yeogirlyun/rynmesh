@@ -1,0 +1,28 @@
+{
+  "status": "independent_followup_P2_closed_ready_for_development_GLM_R02",
+  "usage_followup_review": "request-deadline-usage-independent-review.json",
+  "independent_review": "request-deadline-independent-review.json",
+  "implementation": "request-deadline-implementation.json",
+  "trigger": "real-model/20261010T042235345210Z-R02-ryn/review.json",
+  "observed": {
+    "checker_seconds": 120.391,
+    "error": "agent_inference_timeout",
+    "round_max_seconds": 600,
+    "lifetime_max_seconds": 3600,
+    "round_active_seconds_at_end": 226.441,
+    "source_adapter_timeout_seconds": 180,
+    "source_provider_manifest_timeout_seconds": 180,
+    "bridge_extra_cap_seconds": 120
+  },
+  "selected_design": [
+    "Opt-in supports_request_deadline capability. Runtime passes an in-process monotonic deadline calculated from tick start plus the smaller round/lifetime remaining time.",
+    "Immediately before adapter dispatch, use the smaller provider manifest timeout and deadline minus now; reject expired requests without adapter dispatch.",
+    "Keep cancellation watcher and reject late responses; no extra retry or task budget.",
+    "Reference host uses the same remaining-time semantics, excluding actual owner wait. Legacy/fake model signatures remain supported.",
+    "Never persist monotonic timestamps across restart; reconstruct deadlines from durable remaining budget.",
+    "Peer transport cancellation remains best effort under existing remote manifest/transport bounds; local deadline is not proof that remote compute ceased."
+  ],
+  "separate_report_fix": "Main prompt receives the same general missing-record-is-not-negative-history rule already present in checker guidance. No case-specific answer or frozen prompt change.",
+  "author": "sharing_transaction / gpt-6-astra high",
+  "live_retry_authorized_after": "implementation, meaningful local regression and independent review; keep all previous failures"
+}

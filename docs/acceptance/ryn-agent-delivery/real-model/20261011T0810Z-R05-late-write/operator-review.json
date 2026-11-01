@@ -1,0 +1,28 @@
+{
+  "kind": "R05-late-write-development-operator-review",
+  "formal_pass": false,
+  "formal_trials_executed": 0,
+  "independent_review": false,
+  "raw_sha256": "1d7416211aa1be8da23c7cf764198269c4e5e94bcb1ea803b87de3fb0b874728",
+  "subscenario_pass": true,
+  "checks": {
+    "receipt_retained": true,
+    "effective_writes": 1,
+    "put_attempts": 1,
+    "exact_file": true,
+    "new_dispatches_after_cancel": 0,
+    "cancelled": true
+  },
+  "ordering_verified": true,
+  "requests": 3,
+  "known_input_tokens": 13999,
+  "known_output_tokens": 1145,
+  "unknown_usage_requests": 0,
+  "currency_cost": null,
+  "code_unchanged": true,
+  "owner_source_unchanged": true,
+  "limits": [
+    "One real GLM development attempt, actual loopback WebDAV commit and original HTTP201 response barrier.",
+    "Does not establish physical peer write, desktop control, entire R05 or formal 3 repetition success."
+  ]
+}

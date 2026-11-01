@@ -1,0 +1,17 @@
+{
+  "installed_app": {
+    "path": "C:\\Users\\子陵\\AppData\\Local\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\Ryn\\Ryn.exe",
+    "sha256": "2d22935db278dccd237fda276599863e9218507a81e9082d11f620f9caaa9c20"
+  },
+  "installed_sidecar": {
+    "path": "C:\\Users\\子陵\\AppData\\Local\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\Ryn\\rynmesh-peer.exe",
+    "sha256": "497dcf759bb1d1fe5c41c2a25ae34321cb64316d5364bc99535b8f4e1c9fd186"
+  },
+  "installer": {
+    "path": "D:\\code\\rynmesh\\.codex-tmp\\Ryn-device-messages-compact-20261013-setup.exe",
+    "sha256": "ec48bf3a36f183a90bda3cdb621b5311fbeb2fc2b7c23e8b147af117f6f645cb"
+  },
+  "build": "UI-only build, preserved previously verified sidecar",
+  "installer_exit_code": 0,
+  "binary_comparison": "Installed executable matches build except 3-byte Tauri bundle type marker (NSS versus UNK)"
+}

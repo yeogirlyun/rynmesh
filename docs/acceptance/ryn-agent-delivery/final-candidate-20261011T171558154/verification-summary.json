@@ -1,0 +1,101 @@
+{
+  "kind": "final-candidate-build-summary",
+  "recorded_utc": "2026-10-11T09:32:20.6143845Z",
+  "complete_windows_build_succeeded": true,
+  "production_source_files": 535,
+  "production_before_after_hashes_equal": true,
+  "production_source_changes": 0,
+  "test_source_changes": [
+    {
+      "path": "tests/test_agent_request_deadline.py",
+      "before": "5480295942B6CFBD28B770F80BA9C301A734D215610BBF2B192C1174D9887BE6",
+      "after": "9B57B28305ACB41C073B9286F12B25EDCEF2525D64238C72364FFD52A1393EEC"
+    },
+    {
+      "path": "tests/test_background_workers.py",
+      "before": "48956E8D45F79A0529543C386763DDDF15EA901FCFB0F9056716F14A178D42AF",
+      "after": "6BE4B9DC6452DD1EADCBAB177C467D48FFE32B5CB75A1DE44A062867C672381F"
+    },
+    {
+      "path": "webapp/src/Localization.test.tsx",
+      "before": "A6F50085B44F05A60A1E05DF187431E12EFE43668960710745071DA02D0B1853",
+      "after": "F530558C004CADF65E9E7D796D72D03B6EFCB4B0484C57E46CE01B3AE77DAC79"
+    }
+  ],
+  "original_backend": {
+    "failed": 2,
+    "failed_tests": [
+      "tests/test_agent_request_deadline.py::test_unknown_history_rule_reaches_main_model",
+      "tests/test_background_workers.py::test_create_app_registers_the_service_and_node_workers"
+    ],
+    "log": "backend-regression.log",
+    "seconds": 269.47,
+    "passed": 636
+  },
+  "original_frontend": {
+    "failed": 1,
+    "failed_test": "src/Localization.test.tsx::keeps new UI copy translated without regressing inherited upstream English copy",
+    "log": "frontend-test.log",
+    "seconds": 171.05,
+    "passed": 643
+  },
+  "root_test_only_rechecks": {
+    "scope": "Existing unknown/missing prompt rule, llm.space-catalog worker, and protocol/version literal exceptions; production code unchanged",
+    "evidence_type": "Exact tool-output transcript, not redirected process log",
+    "backend": "2 passed in 1.94s; exit0",
+    "evidence": "root-targeted-rechecks.txt",
+    "frontend": "1 passed, 5 skipped in filtered file; duration6.23s; exit0"
+  },
+  "frontend_lint_exit": 0,
+  "frontend_build_exit": 0,
+  "full_windows_build_exit": 0,
+  "full_windows_build_started_utc": "2026-10-11T09:25:20.4836682Z",
+  "full_windows_build_finished_utc": "2026-10-11T09:31:09.5580526Z",
+  "no_skip_sidecar": true,
+  "toolchain": {
+    "node": "v22.22.1",
+    "rust": "1.98.1-x86_64-pc-windows-msvc",
+    "python": "3.12.10",
+    "cargo_home": "D:/code/rynmesh/.codex-tmp/windows-toolchain/cargo",
+    "vs_dev_cmd": "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/Tools/VsDevCmd.bat",
+    "rustup_home": "D:/code/rynmesh/.codex-tmp/windows-toolchain/rustup",
+    "node_path": "C:/nvm4w/nodejs/node.exe"
+  },
+  "outputs": [
+    {
+      "path": "D:\\code\\rynmesh\\webapp\\src-tauri\\target\\x86_64-pc-windows-msvc\\release\\Ryn.exe",
+      "sha256": "92121FC5BC435408534695C9F2F5B181D503489A11D851FC612648975609EDCE",
+      "bytes": 10925568,
+      "last_write_utc": "2026-10-11T09:31:09.5080793Z"
+    },
+    {
+      "path": "D:\\code\\rynmesh\\webapp\\src-tauri\\target\\x86_64-pc-windows-msvc\\release\\rynmesh-peer.exe",
+      "sha256": "F61DBC0513DB7CA9DFB3FA5769AD7220070652E3BAEB82EBFE193316BA64817B",
+      "bytes": 36314790,
+      "last_write_utc": "2026-10-11T09:27:34.1661146Z"
+    },
+    {
+      "path": "D:\\code\\rynmesh\\webapp\\src-tauri\\binaries\\rynmesh-peer-x86_64-pc-windows-msvc.exe",
+      "sha256": "F61DBC0513DB7CA9DFB3FA5769AD7220070652E3BAEB82EBFE193316BA64817B",
+      "bytes": 36314790,
+      "last_write_utc": "2026-10-11T09:27:34.1661146Z"
+    },
+    {
+      "path": "D:\\code\\rynmesh\\webapp\\src-tauri\\target\\x86_64-pc-windows-msvc\\release\\bundle\\nsis\\Ryn_0.7.0_x64-setup.exe",
+      "sha256": "F33692522216638A2D57222A29479ABC3967D451B2F1C5FEAAD1612FC6A4C189",
+      "bytes": 39007264,
+      "last_write_utc": "2026-10-11T09:31:09.4730915Z"
+    }
+  ],
+  "formal_trials": 0,
+  "formal_pass": false,
+  "installation_performed_by_this_task": false,
+  "deployment_performed_by_this_task": false,
+  "native_validation_performed_by_this_task": false,
+  "known_limitations": [
+    "Offline test and package evidence only. No formal business/model acceptance was performed.",
+    "Reference 12000-byte checker ceiling remains unverified.",
+    "Original regression failures retained; only the three failed assertions received targeted rechecks after test-only corrections."
+  ],
+  "source_scope": "Main product/backend/frontend/package configs/build scripts plus selected regression test files. Excludes acceptance/reference controllers, heldout, build_cases.py, generated outputs and credentials. Test files separated by tests/ prefix or .test./.spec. filename."
+}

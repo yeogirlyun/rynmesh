@@ -1,0 +1,97 @@
+{
+  "ok": true,
+  "mode": "installed-source-and-imports",
+  "python": "D:\\code\\rynmesh\\.codex-tmp\\final-two-host-20261011\\local-test-venv\\Scripts\\python.exe",
+  "python_version": "3.12.10",
+  "hostname": "子陵台式",
+  "package_root": "D:\\code\\rynmesh\\.codex-tmp\\final-two-host-20261011\\local-test-venv\\Lib\\site-packages\\rynmesh",
+  "expected_python_files": 237,
+  "actual_python_files": 237,
+  "missing": [],
+  "extra": [],
+  "changed": [],
+  "imports": [
+    {
+      "module": "rynmesh.agent_runtime.runtime",
+      "ok": true,
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\final-two-host-20261011\\local-test-venv\\Lib\\site-packages\\rynmesh\\agent_runtime\\runtime.py"
+    },
+    {
+      "module": "rynmesh.agent_runtime.routes",
+      "ok": true,
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\final-two-host-20261011\\local-test-venv\\Lib\\site-packages\\rynmesh\\agent_runtime\\routes.py"
+    },
+    {
+      "module": "rynmesh.agent_runtime.model_switch",
+      "ok": true,
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\final-two-host-20261011\\local-test-venv\\Lib\\site-packages\\rynmesh\\agent_runtime\\model_switch.py"
+    },
+    {
+      "module": "rynmesh.llm_package.model_dispatch",
+      "ok": true,
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\final-two-host-20261011\\local-test-venv\\Lib\\site-packages\\rynmesh\\llm_package\\model_dispatch.py"
+    },
+    {
+      "module": "rynmesh.llm_package.routes",
+      "ok": true,
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\final-two-host-20261011\\local-test-venv\\Lib\\site-packages\\rynmesh\\llm_package\\routes.py"
+    },
+    {
+      "module": "rynmesh.services.document_extract_child",
+      "ok": true,
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\final-two-host-20261011\\local-test-venv\\Lib\\site-packages\\rynmesh\\services\\document_extract_child.py"
+    },
+    {
+      "module": "fastapi",
+      "ok": true,
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\final-two-host-20261011\\local-test-venv\\Lib\\site-packages\\fastapi\\__init__.py"
+    },
+    {
+      "module": "uvicorn",
+      "ok": true,
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\final-two-host-20261011\\local-test-venv\\Lib\\site-packages\\uvicorn\\__init__.py"
+    },
+    {
+      "module": "httpx",
+      "ok": true,
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\final-two-host-20261011\\local-test-venv\\Lib\\site-packages\\httpx\\__init__.py"
+    },
+    {
+      "module": "jsonschema",
+      "ok": true,
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\final-two-host-20261011\\local-test-venv\\Lib\\site-packages\\jsonschema\\__init__.py"
+    },
+    {
+      "module": "pypdf",
+      "ok": true,
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\final-two-host-20261011\\local-test-venv\\Lib\\site-packages\\pypdf\\__init__.py"
+    },
+    {
+      "module": "cryptography",
+      "ok": true,
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\final-two-host-20261011\\local-test-venv\\Lib\\site-packages\\cryptography\\__init__.py"
+    },
+    {
+      "module": "PIL",
+      "ok": true,
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\final-two-host-20261011\\local-test-venv\\Lib\\site-packages\\PIL\\__init__.py"
+    },
+    {
+      "module": "aioice",
+      "ok": true,
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\final-two-host-20261011\\local-test-venv\\Lib\\site-packages\\aioice\\__init__.py"
+    },
+    {
+      "module": "smbprotocol",
+      "ok": true,
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\final-two-host-20261011\\local-test-venv\\Lib\\site-packages\\smbprotocol\\__init__.py"
+    },
+    {
+      "module": "pytest",
+      "ok": true,
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\final-two-host-20261011\\local-test-venv\\Lib\\site-packages\\pytest\\__init__.py"
+    }
+  ],
+  "services_started": false,
+  "model_calls": 0
+}

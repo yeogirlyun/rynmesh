@@ -2,10 +2,20 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+.pytest-tmp/
+.pytest-peer-provider-*/
+.tmp/
+.tmp_chrome/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
 .ruff_cache/
 .playwright-cli/
 .claude/
 .mypy_cache/
+.codex-tmp/
 .venv/
 dist/
 build/
@@ -20,6 +30,7 @@ deploy/llm-e2e/windows-consumer/frpc.toml
 deploy/llm-e2e/windows-consumer/dist/
 deploy/llm-e2e/windows-consumer/build/
 .rynmesh/
+.rynmesh-*.log
 node_modules/
 webapp/node_modules/
 webapp/.vite/
@@ -32,3 +43,14 @@ deploy/env/*.env
 
 # built webapp folded into the package at release time
 rynmesh/webui/
+
+# Rust build output of the native P2P transport
+native/ryn_transport/target/
+
+# Local delivery packages, source snapshots, caches and runtime identities.
+# Acceptance evidence intended for version control lives in docs/acceptance/.
+/output/
+
+native/ryn_computer_use/target/
+/outputs/
+/work/

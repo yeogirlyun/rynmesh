@@ -12,6 +12,7 @@ import type {
   LLMSetupJob,
 } from "../domain/nodeClient";
 import Services from "./Services";
+import InferenceAccess from "./InferenceAccess";
 
 function renderServices(options: {
   configuredNetwork?: string;
@@ -21,6 +22,8 @@ function renderServices(options: {
   orders?: LLMOrderResult[];
   setupStatuses?: LLMSetupJob[];
   hardware?: LLMHardwareReport;
+  // Service setup links to the API access page instead of embedding InferenceAccess; its own flow is exercised on its own.
+  page?: "inference-access";
 } = {}) {
   const client = makeFixtureNodeClient();
   if (options.hardware) client.getLLMHardware = vi.fn(async () => options.hardware!);
@@ -65,7 +68,7 @@ function renderServices(options: {
     <MemoryRouter>
       <Routes>
         <Route element={<Outlet context={context} />}>
-          <Route index element={<Services />} />
+          <Route index element={options.page === "inference-access" ? <InferenceAccess /> : <Services />} />
         </Route>
       </Routes>
     </MemoryRouter>,
@@ -198,7 +201,7 @@ describe("Services local LLM flow", () => {
   });
 
   it("saves a short model alias and uses it in the agent example", async () => {
-    const { client, user } = renderServices();
+    const { client, user } = renderServices({ page: "inference-access" });
     const target = { id: "peer/0123456789abcdef/qwen3-14b", rynmesh: { source: "peer", model_alias: "Qwen3 14B", max_output_tokens: 512 } };
     const access = { base_url: "http://127.0.0.1:8791/v1", keys: [], models: [target], targets: [target], aliases: {} as Record<string, string> };
     vi.spyOn(client, "getInferenceAccess").mockImplementation(async () => ({ ...access }));
