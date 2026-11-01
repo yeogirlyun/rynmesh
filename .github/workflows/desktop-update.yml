@@ -15,13 +15,30 @@ on:
         required: false
         default: false
         type: boolean
+      upload_only:
+        description: Verify a completed build and upload to an existing draft only
+        required: false
+        default: false
+        type: boolean
+      run_id:
+        description: Build run ID for upload-only mode
+        required: false
+        type: string
+      release_id:
+        description: Existing draft release ID for upload-only mode
+        required: false
+        type: string
+      source_sha:
+        description: Expected build source commit for upload-only mode
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 jobs:
   build:
-    if: github.repository == 'yeogirlyun/rynmesh'
+    if: github.repository == 'yeogirlyun/rynmesh' && !inputs.upload_only
     strategy:
       fail-fast: false
       matrix:
@@ -96,7 +113,7 @@ jobs:
           path: update-assets/*
 
   draft:
-    if: ${{ !inputs.build_only && (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ !inputs.build_only && !inputs.upload_only && (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch') }}
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -126,3 +143,31 @@ jobs:
             gh release create "$RELEASE_TAG" --verify-tag --draft --title "Ryn $RELEASE_TAG" --notes "Signed desktop update. Verify the platform installers before publishing this release as Latest."
           fi
           gh release upload "$RELEASE_TAG" update-assets/*
+
+  upload-existing-draft:
+    if: github.repository == 'yeogirlyun/rynmesh' && inputs.upload_only
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_ID: ${{ inputs.release_id }}
+      SOURCE_RUN_ID: ${{ inputs.run_id }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      RYN_DESKTOP_UPDATE_PUBLIC_KEY: ${{ vars.RYN_DESKTOP_UPDATE_PUBLIC_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+          pattern: update-*
+          merge-multiple: true
+          path: update-assets
+      - run: python -m pip install 'cryptography>=48,<51'
+      - name: Verify signatures, assemble manifest, and upload only to the existing draft
+        run: python scripts/upload_desktop_draft.py
