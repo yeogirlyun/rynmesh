@@ -12,8 +12,10 @@ a production deployment, or completion of the outstanding milestone issues.
 - Includes PR #113 head `e612727be2085f918bdc967a8c0d05b6d80fba67`.
   Its optional-browser packaging boundary and settings-lock fix are preserved.
 - The source checkout and its existing dirty state were not reset or switched.
-- Company backend, Dashboard and Tracker implementation belong in the private
-  `yeogirlyun/gshopper-ryn-node` companion handoff branch, not this repository.
+- The three Ryn company plugins (Gshopper workspace, Dashboard and affiliate)
+  are delivered separately in private `yeogirlyun/gshopper-ryn-node`.
+  The complete chat-backend and Tracker projects remain in their own existing
+  repositories; this handoff does not move them into the company-plugin repository.
 
 ## Delivered implementation
 
