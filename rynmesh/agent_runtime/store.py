@@ -40,6 +40,8 @@ DEFAULT_SETTINGS = {
     # The legacy field name is retained for saved sessions and API compatibility.
     "max_steps": 64, "max_seconds": 900, "max_context_chars": None,
     "max_output_chars": 20000,
+    # Exact catalog model id -> model_profiles profile id (explicit override).
+    "model_profile_overrides": {},
 }
 # An additional conservative byte ceiling for an undeclared model window.
 UNKNOWN_WINDOW_CONTEXT_CHARS = 120000

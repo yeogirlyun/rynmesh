@@ -10,6 +10,7 @@ import math
 import re
 from datetime import datetime
 
+from . import model_profiles
 from .store import AgentError, AgentToolRejected
 
 _TITLES = {
@@ -115,19 +116,32 @@ class DiagnosticTools:
             raise AgentToolRejected("agent_diagnostics_unavailable")
         return runtime
 
+    def _profile_overrides(self):
+        runtime = getattr(getattr(self.app, "state", None), "agent_runtime", None)
+        try:
+            return model_profiles.overrides_from(runtime.store.inspect(
+                lambda data: dict(data.get("settings") or {}))) if runtime else {}
+        except Exception:
+            return {}
+
     def _models(self):
         try:
             rows = self.catalog.list_models()
         except Exception:
             raise AgentToolRejected("agent_diagnostics_catalog_unavailable") from None
+        overrides = self._profile_overrides()
         output = []
         for row in rows[:64]:
             if not isinstance(row, dict) or not isinstance(row.get("id"), str):
                 continue
+            profile = model_profiles.resolve(row, override=overrides.get(row["id"]))
             output.append({**{key: _text(row[key]) for key in _MODEL_FIELDS if key in row},
                 "available": _bool(row.get("available")), "agent_supported": _bool(row.get("agent_supported")),
                 "tool_support": row.get("tool_support") if row.get("tool_support") in {"supported", "unsupported", "unknown"} else "unknown",
-                "evidence": _model_evidence(row)})
+                "evidence": _model_evidence(row),
+                # Which Agent prompt adaptation this model gets and why; never the prompt text.
+                "model_profile": {key: profile[key] for key in ("catalog", "profile", "revision", "basis", "route",
+                                                                "fallback_reason", "override_status", "notes")}})
         return output
 
     def _configuration(self):
