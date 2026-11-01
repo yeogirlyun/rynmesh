@@ -16,10 +16,7 @@ trap 'rm -rf "$BUILD"' EXIT
   exit 1
 }
 
-RUSTC="$(command -v rustc || true)"
-[ -n "$RUSTC" ] || { echo "rustc is not available on PATH" >&2; exit 1; }
-TRIPLE="$("$RUSTC" -Vv | sed -n 's/^host: //p')"
-[ -n "$TRIPLE" ] || { echo "could not resolve rust host triple" >&2; exit 1; }
+TRIPLE="$("$SRC_TAURI/scripts/rust-host-triple.sh")"
 
 "${RYNMESH_BUILD_PYTHON:-python3}" -m venv "$BUILD/venv"
 . "$BUILD/venv/bin/activate"
