@@ -12,7 +12,7 @@ import json
 import re
 
 from ..llm_package.chat import validate_tool_arguments, validate_tool_schema
-from .output_policy import MAX_RAW_RESPONSE_BYTES, MAX_TOOL_CALL_ARGUMENT_BYTES, MAX_TOOL_CALLS
+from .output_policy import MAX_RAW_RESPONSE_BYTES, MAX_TOOL_CALL_ARGUMENT_BYTES
 from .store import AgentError, AgentToolRejected
 
 CALL_ID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
@@ -28,7 +28,6 @@ class ToolCallProtocolError(AgentError):
         self.reason = reason
         self.detail = {
             "invalid_calls": "Tool calls must be a bounded array of call objects.",
-            "too_many_calls": "The response contains too many tool calls.",
             "invalid_call_id": "Each tool call needs a valid, nonempty call id.",
             "duplicate_call_id": "Tool call ids must be unique within this task history.",
             "arguments_too_large": "Tool arguments exceed the per-call byte limit.",
@@ -92,7 +91,7 @@ def _reject(call, code, message):
 
 
 def normalize_tool_calls(calls, specs, *, existing_call_ids=(), metadata=None,
-                         internal_names=(), max_calls=MAX_TOOL_CALLS,
+                         internal_names=(),
                          max_argument_bytes=MAX_TOOL_CALL_ARGUMENT_BYTES):
     """Return request-ordered calls with deep-copied schemas or paired errors.
 
@@ -102,13 +101,10 @@ def normalize_tool_calls(calls, specs, *, existing_call_ids=(), metadata=None,
     Schema validation reuses Ryn's shared validator. Permissions, effects,
     approval, operation ids and result accounting remain the host's authority.
     """
-    if (type(max_calls) is not int or not 1 <= max_calls <= MAX_TOOL_CALLS
-            or type(max_argument_bytes) is not int or not 1 <= max_argument_bytes <= MAX_TOOL_CALL_ARGUMENT_BYTES):
+    if type(max_argument_bytes) is not int or not 1 <= max_argument_bytes <= MAX_TOOL_CALL_ARGUMENT_BYTES:
         raise ValueError("invalid tool-call budget")
     if not isinstance(calls, list):
         raise ToolCallProtocolError("invalid_calls")
-    if len(calls) > max_calls:
-        raise ToolCallProtocolError("too_many_calls")
     try:
         if len(_json(calls).encode()) > MAX_RAW_RESPONSE_BYTES:
             raise ToolCallProtocolError("response_too_large", code="agent_model_output_limit")

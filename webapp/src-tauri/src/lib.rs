@@ -43,6 +43,21 @@ pub(crate) fn focus_main(app: &tauri::AppHandle) {
         let _ = w.show(); let _ = w.unminimize(); let _ = w.set_focus();
     }
 }
+fn invoice_pdf_url(target: &tauri::Url) -> bool {
+    target.scheme() == "https" && target.host_str() == Some("wework.gshopper.cn")
+        && target.port_or_known_default() == Some(443)
+        && target.username().is_empty() && target.password().is_none()
+        && target.path().starts_with("/files/invoices/") && target.path().ends_with(".pdf")
+}
+fn company_detail_url(target: &tauri::Url) -> bool {
+    let mut query = target.query_pairs();
+    target.scheme() == "https" && target.host_str() == Some("wework.gshopper.cn")
+        && target.port_or_known_default() == Some(443)
+        && target.username().is_empty() && target.password().is_none()
+        && target.path() == "/oa/companyDetail.php" && target.fragment().is_none()
+        && matches!(query.next(), Some((key, id)) if key == "id" && !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
+        && query.next().is_none()
+}
 fn open_requested_page(app: &tauri::AppHandle, args: &[String]) {
     if args.iter().any(|arg| arg == "--ai-sources") {
         if let Some(w) = app.get_webview_window("main") {
@@ -100,6 +115,33 @@ pub fn run() {
         .manage(updates::UpdateState::default())
         .manage(NodeState { child: Mutex::new(None), port, stopping: AtomicBool::new(false), lifecycle: Mutex::new(()) })
         .setup(move |app| {
+            // Original legacy document links need a window outside the embedded page.
+            let main = app.config().app.windows.iter().find(|window| window.label == "main")
+                .ok_or("main window configuration missing")?;
+            let document_app = app.handle().clone();
+            tauri::WebviewWindowBuilder::from_config(app, main)?
+                .on_new_window(move |target, _| {
+                    let document: Option<(&str, &str, fn(&tauri::Url) -> bool)> = if invoice_pdf_url(&target) {
+                        Some(("invoice-pdf", "Invoice PDF", invoice_pdf_url))
+                    } else if company_detail_url(&target) {
+                        Some(("company-detail", "Company Details", company_detail_url))
+                    } else {
+                        None
+                    };
+                    if let Some((label, title, allowed_navigation)) = document {
+                        if let Some(window) = document_app.get_webview_window(label) {
+                            let _ = window.navigate(target);
+                            let _ = window.show().and_then(|_| window.set_focus());
+                        } else {
+                            let _ = tauri::WebviewWindowBuilder::new(&document_app, label, tauri::WebviewUrl::External(target))
+                                .title(title).inner_size(960.0, 760.0).devtools(false)
+                                .on_navigation(allowed_navigation)
+                                .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+                                .build();
+                        }
+                    }
+                    tauri::webview::NewWindowResponse::Deny
+                }).build()?;
             #[cfg(target_os = "linux")]
             {
                 install_termination_handler();

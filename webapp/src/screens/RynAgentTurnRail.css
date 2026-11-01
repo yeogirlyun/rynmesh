@@ -19,7 +19,7 @@
   padding: 6px 2px;
 }
 
-.ra-turn-rail-tick {
+.ra-workspace .ra-turn-rail-tick {
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -42,20 +42,24 @@
   transition: width 0.16s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.16s ease, height 0.16s ease;
 }
 
-.ra-turn-rail-tick.is-active .ra-turn-rail-line {
+.ra-workspace .ra-turn-rail-tick.is-active .ra-turn-rail-line {
   width: 5px;
   height: 12px;
   background: var(--pf-accent, #4263a6);
 }
 
-.ra-turn-rail-tick:hover .ra-turn-rail-line,
-.ra-turn-rail-tick:focus-visible .ra-turn-rail-line {
+.ra-workspace .ra-turn-rail-tick:hover .ra-turn-rail-line,
+.ra-workspace .ra-turn-rail-tick:focus-visible .ra-turn-rail-line {
   background: var(--pf-accent, #4263a6);
 }
 
-.ra-turn-rail-tick:focus-visible {
+.ra-workspace .ra-turn-rail-tick:focus-visible {
   outline: 2px solid var(--pf-accent, #4263a6);
   outline-offset: 2px;
+}
+
+.ra-workspace .ra-turn-rail-tick:hover {
+  background: transparent;
 }
 
 .ra-turn-rail-tooltip {

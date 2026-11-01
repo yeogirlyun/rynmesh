@@ -101,7 +101,8 @@ def record(row, call, status, at, *, result=None, flight=None):
         receipts.append(receipt)
     receipt["status"] = status
     if flight:
-        for key in ("authorization", "preview", "permission_record", "operation_classification", "extension_binding"):
+        for key in ("authorization", "preview", "permission_record", "operation_classification", "extension_binding",
+                    "source", "parent_operation_id"):
             if key in flight:
                 receipt[key] = copy.deepcopy(flight[key])
     if result is not None:

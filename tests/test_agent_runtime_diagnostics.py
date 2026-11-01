@@ -253,3 +253,15 @@ def test_target_diagnostics_requires_trusted_owner_and_consumer_node(context):
     with pytest.raises(AgentToolRejected, match="^agent_diagnostics_context_denied$"):
         tools.execute("ryn_diagnose_task", {"task_id": "existing"}, context=context, cancelled=lambda: False)
     runtime.get.assert_not_called()
+
+
+def test_invalid_tool_catalog_name_is_rejected_before_dispatch(tmp_path):
+    runtime, _, _, _ = make_runtime(tmp_path, assistant(name="read:docs-offline"))
+    read = Mock()
+    runtime.tools = SimpleNamespace(
+        specs=lambda: [{"type": "function", "function": {"name": "read:docs-offline", "parameters": {"type": "object", "properties": {}}}}],
+        metadata=lambda name: {"effect": "read"}, execute=read)
+    row = runtime.create({"message": "Inspect", "model_id": "local:test"})
+    advance(runtime)
+    assert runtime.get(row["id"])["error"] == "agent_tool_definition_changed"
+    read.assert_not_called()

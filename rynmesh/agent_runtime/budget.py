@@ -271,7 +271,7 @@ def reserve(row, kind, stage, *, input_bound=0, output_bound=0, seconds_bound=No
     return copy.deepcopy(record)
 
 
-def settle(row, reservation_id, *, usage=None, elapsed_seconds=None, cached_input_weight=None, retryable_failure=False):
+def settle(row, reservation_id, *, usage=None, elapsed_seconds=None, cached_input_weight=None, retryable_failure=False, response_bytes=None):
     state = initialize(row)
     record = next((item for item in state["records"] if item["id"] == reservation_id), None)
     if record is None or record["status"] != "reserved":
@@ -295,6 +295,12 @@ def settle(row, reservation_id, *, usage=None, elapsed_seconds=None, cached_inpu
         )
         inp = record["input_tokens"]
         out = record["output_tokens"] if record["output_tokens"] is not None else record["output_reservation"]
+        if inp is not None and record["output_tokens"] is None and type(response_bytes) is int and response_bytes >= 0:
+            # One token per UTF-8 byte is a conservative observed-response estimate.
+            # Keep reported usage unknown; never present this as provider billing.
+            out = response_bytes
+            record["estimated_output_tokens"] = out
+            record["output_estimate_basis"] = "response_utf8_bytes"
         cached = record.get("cached_input_tokens")
         if inp is None and record["output_tokens"] is None and (retryable_failure or int(record.get("output_reservation") or 0) > 32768):
             record["charged_tokens"] = max(1, min(int(record.get("input_reservation") or 64), 64))

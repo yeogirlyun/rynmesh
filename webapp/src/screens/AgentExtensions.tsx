@@ -607,6 +607,8 @@ function WebAppAccessSummary({ app }: { app: { url: string; permissions: string[
     messages: tx('读取和发送消息', 'Read and send messages'),
     models: tx('查看模型和修改共享设置', 'View models and change sharing'),
     peer_provider: tx('连接成员设备和共享模型', 'Connect member devices and share models'),
+    downloads: tx('下载插件报表和文件', 'Download plugin reports and files'),
+    dialogs: tx('使用确认和输入对话框', 'Use confirmation and input dialogs'),
   };
   return <p>{tx('外部应用', 'External app')}: {app.url}<br />{tx('启用后可使用', 'Access when enabled')}: {app.permissions.map(p => labels[p] || p).join(' · ') || tx('无设备权限', 'No device permissions')}</p>;
 }

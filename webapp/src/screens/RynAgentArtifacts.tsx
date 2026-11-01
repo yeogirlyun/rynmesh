@@ -8,6 +8,7 @@ import { isTauriDesktop } from "../domain/nodeUrl";
 import { NasPreview } from "../personal/NasPreview";
 import { decodeAgentFileText, isOfficePreview, readAgentFilePreview } from "../domain/agentFilePreview";
 import { AgentFileContext, fileAvailable } from "./RynAgentFileContext";
+import RynAgentPreviewSurface, { AgentPreviewHostContext } from "./RynAgentPreviewSurface";
 import "../personal/nas.css";
 
 // Tool results that can add, change or remove a task's workspace files or their render evidence.
@@ -168,6 +169,8 @@ export function TaskArtifacts({ task, maxTurnIndex = 0, children }: { task: Agen
   const [listing, setListing] = useState<AgentArtifactListing | null>(null);
   const [chosen, setChosen] = useState<AgentArtifact | null>(null);
   const [chosenFile, setChosenFile] = useState("");
+  const previewHost = useContext(AgentPreviewHostContext);
+  useEffect(() => { if (previewHost?.hidden) { setChosen(null); setChosenFile(""); } }, [previewHost?.hidden]);
   const [error, setError] = useState(false);
   const [reload, setReload] = useState(0);
   const writes = task.events.filter(e => e.type === "tool_result" && e.tool === "ryn_create_text_file").length;
@@ -223,7 +226,7 @@ export function TaskArtifacts({ task, maxTurnIndex = 0, children }: { task: Agen
   }, [task.id, chosen, t]);
   const files = listing?.files || EMPTY_FILES;
   const file = files.find(item => item.id === chosenFile && fileAvailable(item));
-  const openFile = useCallback((next: AgentFileArtifact) => setChosenFile(next.id), []);
+  const openFile = useCallback((next: AgentFileArtifact) => { setChosen(null); setChosenFile(next.id); }, []);
   const fileContext = useMemo(() => ({ taskID: task.id, files, open: openFile }), [task.id, files, openFile]);
   const loadFile = useCallback((signal: AbortSignal) => {
     if (!file) return Promise.reject(new Error(t("artifactReadError")));
@@ -297,21 +300,21 @@ export function TaskArtifacts({ task, maxTurnIndex = 0, children }: { task: Agen
       {supporting.length > 0 && <details className={`ra-files-supporting${deliverables.length > 0 ? " ra-sr-only" : ""}`}><summary>{t("supportingFiles", { count: supporting.length })}</summary>
         {supporting.map(item => <FileCard key={item.id} task={task} file={item} onOpen={openFile} />)}</details>}
     </section>}
-      {file && <div className="ra-artifact-preview"><NasPreview key={`${task.id}/${file.id}/${file.sha256}`} source={{ id: task.id, name: t("taskFilesSource"), allow_ai: false }}
+      {file && <RynAgentPreviewSurface label={file.name} onClose={() => setChosenFile("")}><NasPreview key={`${task.id}/${file.id}/${file.sha256}`} source={{ id: task.id, name: t("taskFilesSource"), allow_ai: false }}
         entry={{ name: file.name, path: file.path, directory: false, size: file.bytes || 0, modified: file.updated_at || "" }}
         onClose={() => setChosenFile("")} download={() => { void saveCopy(task, file).catch(() => setError(true)); }} askAi={() => {}} busy={false}
         loadImage={file.preview === "image" ? loadFile : undefined} readText={file.preview === "text" ? readFileText : undefined}
         loadPdf={/\.pdf$/i.test(file.name) ? loadFile : undefined}
-        loadDocument={isOfficePreview(file.name) ? readDocument : undefined} /></div>}
+        loadDocument={isOfficePreview(file.name) ? readDocument : undefined} /></RynAgentPreviewSurface>}
     {showLegacyArtifacts && (items.length > 0 || (error && !showResultFiles)) && <section className="ra-files ra-artifacts" aria-label={t("artifacts")}>
       {error && <p role="alert">{t("artifactListError")} <button onClick={() => setReload(n => n + 1)}>{t("retry")}</button></p>}
       {items.length > 0 && partial && <div className="ra-files-head" role="status"><Check size={15} />{t("filesSavedPartial", { count: items.length })}</div>}
       {items.map(item => <div className="ra-file-card" key={item.id}><span className="ra-file-icon"><FileText size={20} strokeWidth={1.7} /></span>
-        <div className="ra-file-meta"><button className="ra-file-name" aria-label={t("openArtifact", { name: item.name })} onClick={() => setChosen(item)}>{item.name}</button><small>{item.name.split(".").pop()?.toUpperCase()}</small></div>
-        <button onClick={() => setChosen(item)}>{t("previewFile")}</button></div>)}
-      {chosen && <div className="ra-artifact-preview"><NasPreview key={`${task.id}/${task.control_revision}/${task.scope_revision}/${chosen.id}`} source={{ id: task.id, name: t("artifacts"), allow_ai: false }}
+        <div className="ra-file-meta"><button className="ra-file-name" aria-label={t("openArtifact", { name: item.name })} onClick={() => { setChosenFile(""); setChosen(item); }}>{item.name}</button><small>{item.name.split(".").pop()?.toUpperCase()}</small></div>
+        <button onClick={() => { setChosenFile(""); setChosen(item); }}>{t("previewFile")}</button></div>)}
+      {chosen && <RynAgentPreviewSurface label={chosen.name} onClose={() => setChosen(null)}><NasPreview key={`${task.id}/${task.control_revision}/${task.scope_revision}/${chosen.id}`} source={{ id: task.id, name: t("artifacts"), allow_ai: false }}
         entry={{ name: chosen.name, path: chosen.name, directory: false, size: chosen.bytes, modified: chosen.created_at || "" }}
-        onClose={() => setChosen(null)} download={() => {}} askAi={() => {}} busy={false} readText={readText} readOnly /></div>}
+        onClose={() => setChosen(null)} download={() => {}} askAi={() => {}} busy={false} readText={readText} readOnly /></RynAgentPreviewSurface>}
     </section>}
   </TaskTurnDeliverablesContext.Provider></AgentFileContext.Provider>;
 }

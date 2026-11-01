@@ -17,6 +17,18 @@ function request(frame: HTMLIFrameElement, overrides = {}) {
   fireEvent(window, new MessageEvent('message', { source: frame.contentWindow, origin: 'https://app.example.test', data: { type: 'ryn.plugin.request', id: 'one', method: 'tools.query', args: ['read_rows', {}] }, ...overrides }));
 }
 describe('remote app capability boundary', () => {
+  it('keeps downloads blocked unless the plugin declares them', async () => {
+    const frame=await mount();
+    expect(frame.getAttribute('sandbox')?.split(' ')).not.toContain('allow-downloads');
+    expect(frame.getAttribute('sandbox')?.split(' ')).not.toContain('allow-modals');
+  });
+  it('permits report downloads for a plugin that explicitly declares downloads', async () => {
+    vi.mocked(agentExtensions.overview).mockResolvedValue({plugins:[{...plugin,web_app:{...plugin.web_app,permissions:['tools','downloads','dialogs']}}]} as any);
+    const frame=await mount();
+    expect(frame.getAttribute('sandbox')?.split(' ')).toContain('allow-downloads');
+    expect(frame.getAttribute('sandbox')?.split(' ')).toContain('allow-modals');
+    expect(frame.getAttribute('sandbox')?.split(' ')).not.toContain('allow-top-navigation');
+  });
   it('calls only tools owned by the current enabled plugin', async () => {
     const frame=await mount(); const reply=vi.spyOn(frame.contentWindow!, 'postMessage'); request(frame);
     await waitFor(() => expect(reply).toHaveBeenCalled());

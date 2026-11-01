@@ -212,6 +212,8 @@ class _ExtensionPolicyAdmitter:
 class AgentRuntime(AgentLoop):
     def __init__(self, store: AgentStore, model: Any, tools: Any, catalog: Any, *, owner_id="local_owner", consumer_node_id=None):
         self.store, self.model, self.tools, self.catalog = store, model, tools, catalog
+        from .tool_dispatch import ToolDispatchGate
+        self._tool_dispatch_gate = ToolDispatchGate()
         if getattr(tools, "local", None) is not None:
             from .native_computer import bind_owner_native_computer
 
@@ -366,7 +368,7 @@ class AgentRuntime(AgentLoop):
         pinned = {**row, "messages": [message for message in row["messages"] if message["role"] == "user"],
                   "context_checkpoint": None, "_exclude_optional_memory": True}
         authority_bytes = len(encoded(self._context(pinned)))
-        max_context_bytes = self._context_limit(row) if max_context_bytes is None else max_context_bytes
+        max_context_bytes = self._effective_capacity(row)[0] if max_context_bytes is None else max_context_bytes
         desktop = tool_menu.BROWSER_TOOLS if (row.get("local_execution") or {}).get("desktop_access") else ()
         if desktop:
             # Expose installed desktop schemas immediately; dispatch still checks
@@ -797,16 +799,23 @@ class AgentRuntime(AgentLoop):
                 cached = response.get("cached_tokens")
                 if type(cached) is int and cached >= 0:
                     usage = {**usage, "cached_tokens": cached}
+            response_bytes = None
+            if isinstance(response, dict) and isinstance(response.get("message"), dict):
+                try:
+                    response_bytes = len(encoded(response["message"]))
+                except (TypeError, ValueError, RecursionError):
+                    pass  # Invalid responses still settle conservatively before validation.
             self._settle_usage(selected["id"], reservation["id"], usage=usage, elapsed=0 if nested else time.monotonic() - started,
                                cached_input_weight=self._cached_input_weight(selected),
-                               retryable_failure=retryable_failure)
+                               retryable_failure=retryable_failure,
+                               response_bytes=response_bytes)
 
-    def _settle_usage(self, task_id, reservation_id, *, usage=None, elapsed=None, cached_input_weight=None, retryable_failure=False):
+    def _settle_usage(self, task_id, reservation_id, *, usage=None, elapsed=None, cached_input_weight=None, retryable_failure=False, response_bytes=None):
         def finish(data):
             row = data["tasks"].get(task_id)
             if row is not None:
                 weight = cached_input_weight if cached_input_weight is not None else self._cached_input_weight(row)
-                budget.settle(row, reservation_id, usage=usage, elapsed_seconds=elapsed, cached_input_weight=weight, retryable_failure=retryable_failure)
+                budget.settle(row, reservation_id, usage=usage, elapsed_seconds=elapsed, cached_input_weight=weight, retryable_failure=retryable_failure, response_bytes=response_bytes)
         self.store.transaction(finish)
 
     def _settle_usage_batch(self, task_id, reservation_ids, *, usage=None, elapsed=None, cached_input_weight=None):
@@ -1170,11 +1179,13 @@ class AgentRuntime(AgentLoop):
                     if desktop_changed and not row.get("archived"):
                         row.setdefault("local_execution", {})["desktop_access"] = bool(data["settings"].get("desktop_access"))
                     if row["status"] not in TERMINAL:
+                        previous_updated_at = row["updated_at"]
+                        preserve_activity = row["status"] in {"paused", "waiting_approval", "waiting_input"}
                         row.update(approved=None, pending_approval=None)
                         if workspace_changed:
                             row["observed_files"] = {}
                         if row["status"] == "waiting_approval":
-                            row["status"] = "queued"
+                            row["status"] = "paused"
                         if row.get("in_flight") and (row.get("pending_control") or {}).get("kind") not in {"pause", "stop", "cancel"}:
                             prior_control = row.get("pending_control") or {}
                             row["pending_control"] = {
@@ -1183,6 +1194,8 @@ class AgentRuntime(AgentLoop):
                                 "remain_paused": bool(prior_control.get("remain_paused")) or row["status"] != "running" or not data["settings"]["enabled"],
                             }
                         event(row, "permissions_changed")
+                        if preserve_activity:
+                            row["updated_at"] = previous_updated_at
                         if row.get("pending_input"):
                             row["pending_input"]["control_revision"] = row["control_revision"]
                         memory_integration.settle_in_tx(data, row, event)

@@ -11,9 +11,10 @@ import pytest
 from fastapi.testclient import TestClient
 from test_agent_file_changes import environment
 from test_agent_local_tools import execute
+from test_agent_resources import resources  # noqa: F401
 from test_agent_runtime import assistant
+
 from rynmesh.agent_runtime import results, task_forks
-from rynmesh.agent_runtime.store import AgentError
 
 
 @pytest.fixture
@@ -387,11 +388,10 @@ def test_safe_boundary_epoch_and_staged_file_conflict(env,monkeypatch):
     r=e.client.post(f'/api/local/agent/tasks/{tid}/fork',json=body)
     assert r.status_code==409 and 'staging_changed' in r.text
     assert staged.read_bytes()==b'user edited staging file'
-from test_agent_resources import resources  # noqa: F401
 
 
-def test_current_resource_revocation_blocks_fork_and_task_bound_refs_fail_closed(env,resources):
-    from test_agent_resources import file_ref,invoke
+def test_current_resource_revocation_blocks_fork_and_task_bound_refs_fail_closed(env,resources):  # noqa: F811
+    from test_agent_resources import file_ref, invoke
     e=env; resource_tools,plugin,context,_=resources
     e.runtime.consumer_node_id=context['consumer_node_id']
     destination=context['model_destination']

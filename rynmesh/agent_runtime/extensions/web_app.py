@@ -3,7 +3,7 @@ from urllib.parse import urlsplit
 
 from ..store import AgentError
 
-PERMISSIONS = {'models', 'messages', 'peer_provider', 'tools', 'agent'}
+PERMISSIONS = {'models', 'messages', 'peer_provider', 'tools', 'agent', 'downloads', 'dialogs'}
 
 def validate_web_app(value):
     if value is None:

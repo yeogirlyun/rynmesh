@@ -12,6 +12,14 @@ from rynmesh.agent_runtime.store import AgentError
 def test_reject_unsafe_app_origins(url):
     with pytest.raises(AgentError):validate_web_app({'url':url})
 
+
+def test_downloads_are_an_explicit_capability():
+    assert validate_web_app({'url':'http://127.0.0.1:18140/apps/company-dashboard','permissions':['downloads']})['permissions']==['downloads']
+    assert validate_web_app({'url':'http://127.0.0.1:18140/apps/company-dashboard','permissions':['dialogs','downloads']})['permissions']==['dialogs','downloads']
+    assert validate_web_app({'url':'http://127.0.0.1:18140/apps/company-dashboard'})['permissions']==[]
+    with pytest.raises(AgentError):
+        validate_web_app({'url':'https://app.example.test','permissions':['allow-top-navigation']})
+
 def test_web_app_import_is_explicit_disabled_and_survives_store_reload(tmp_path):
     package=tmp_path/'package';package.mkdir()
     web={'url':'https://app.example.test/workbench','permissions':['messages']}

@@ -28,7 +28,7 @@ def response_calls(message):
     could repeat other calls in the same response.
     """
     calls = message.get("tool_calls", [])
-    if not isinstance(calls, list) or len(calls) > output_policy.MAX_TOOL_CALLS:
+    if not isinstance(calls, list):
         raise ModelEventError("invalid tool call batch")
     if len(json.dumps(calls).encode()) > output_policy.MAX_RAW_RESPONSE_BYTES:
         raise ModelEventError("tool call batch limit exceeded")
@@ -71,6 +71,8 @@ class ModelEventStream:
         self.text_limit = text_limit
         self.text_chars = 0
         self.calls = {}
+        self.fragment_bytes = 2
+        self.completed_bytes = 2
         self.completed = {}
         self.completed_indices = {}
         self.response_candidates = {}
@@ -91,7 +93,7 @@ class ModelEventStream:
             self._send({"type": "text_delta", "text": text})
 
     def _complete_call(self, index, call, *, provider_index=None):
-        if type(index) is not int or not 0 <= index < output_policy.MAX_TOOL_CALLS:
+        if type(index) is not int or index < 0:
             raise ModelEventError("invalid completed tool index")
         response_calls({"tool_calls": [call]})
         call = copy.deepcopy(call)
@@ -101,8 +103,10 @@ class ModelEventStream:
             if previous != call:
                 raise ModelEventError("tool call changed after completion")
             return
-        if len(self.completed) >= output_policy.MAX_TOOL_CALLS:
+        size = len(json.dumps(call).encode()) + 2
+        if self.completed_bytes + size > output_policy.MAX_RAW_RESPONSE_BYTES:
             raise ModelEventError("tool call batch limit exceeded")
+        self.completed_bytes += size
         self.completed[call_id] = call
         self.completed_indices[call_id] = index
         event = {"type": "tool_call_complete", "index": index, "call": copy.deepcopy(call)}
@@ -187,8 +191,9 @@ class ModelEventStream:
                 if not isinstance(fragment, dict):
                     raise ModelEventError("invalid tool fragment")
                 index = fragment.get("index")
-                if type(index) is not int or not 0 <= index < output_policy.MAX_TOOL_CALLS:
+                if type(index) is not int or index < 0:
                     raise ModelEventError("invalid tool fragment index")
+                previous_bytes = len(json.dumps(self.calls[index]).encode()) + 2 if index in self.calls else 0
                 call = self.calls.setdefault(index, {"id": "", "type": "function",
                                                       "function": {"name": "", "arguments": ""}})
                 if fragment.get("id"):
@@ -205,8 +210,9 @@ class ModelEventStream:
                         if not isinstance(value, str):
                             raise ModelEventError("invalid tool fragment value")
                         call["function"][field] += value
-                if len(json.dumps(call).encode()) > output_policy.MAX_RAW_RESPONSE_BYTES:
-                    raise ModelEventError("tool fragment limit exceeded")
+                self.fragment_bytes += len(json.dumps(call).encode()) + 2 - previous_bytes
+                if self.fragment_bytes > output_policy.MAX_RAW_RESPONSE_BYTES:
+                    raise ModelEventError("tool fragment batch limit exceeded")
             if choice.get("finish_reason") in _SUCCESSFUL_FINISH:
                 calls = [self.calls[index] for index in sorted(self.calls)]
                 response_calls({"tool_calls": calls})
