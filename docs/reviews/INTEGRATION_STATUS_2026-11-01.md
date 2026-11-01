@@ -31,7 +31,8 @@ reservation-derived 4103). Thirteen Q06 cases stop at
 Do not weaken settlement or access assertions merely to obtain a green run.
 
 The native 4K tool-projection failure (`agent_tool_schema_limit`) and the prior
-larger regression inventory also remain to classify and repair. Fresh full CI,+both desktop builds, Windows terminal acceptance and real invited-user journeys
+larger regression inventory also remain to classify and repair. Fresh full CI,
+both desktop builds, Windows terminal acceptance and real invited-user journeys
 are required before merging the full workspace. Browser distribution, coherent
 Apps status, Word/PDF save/share/reopen, unsaved editor handoff and Grid formula
 compatibility remain the priorities in #114–#116.
