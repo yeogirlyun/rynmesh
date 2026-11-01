@@ -4,7 +4,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { server } from "../test/server";
 import type { AgentTask } from "../domain/rynAgent";
-import RynAgentBudget from "./RynAgentBudget";
+import RynAgentBudget, { budgetStopMessage } from "./RynAgentBudget";
 import i18n from "../i18n";
 
 const usage = { model_calls: 3, tool_calls: 4, total_tokens: null, charged_tokens: 2500, charged_seconds: 12, active_seconds: 12, cost: null, usage_complete: false, unsettled_operations: 0 };
@@ -20,7 +20,38 @@ it("edits the actual per-run timeout separately from lifetime allowance", async 
   await user.clear(screen.getByLabelText("Run limit (seconds)"));
   await user.type(screen.getByLabelText("Run limit (seconds)"), "900");
   await user.click(screen.getByRole("button", { name: "Save limits" }));
-  await waitFor(() => expect(received).toHaveBeenCalledWith(expect.objectContaining({ run_max_seconds: 900, limits: task.budget!.limits, expected_control_revision: 4 })));
+  // Untouched lifetime limits are not resubmitted: only changed values become owner limits.
+  await waitFor(() => expect(received).toHaveBeenCalledWith(expect.objectContaining({ run_max_seconds: 900, limits: {}, expected_control_revision: 4 })));
+});
+
+it("sends only the limits the owner changed, so untouched defaults keep growing automatically", async () => {
+  const received = vi.fn(); const user = userEvent.setup();
+  server.use(http.put("*/api/local/agent/tasks/budget-task/budget", async ({ request }) => { received(await request.json()); return HttpResponse.json(task); }));
+  render(<RynAgentBudget task={{ ...task, limits: { max_seconds: 900 } }} busy={false} onChange={vi.fn()} />);
+  await user.click(screen.getByRole("button", { name: "Adjust limits" }));
+  await user.clear(screen.getByLabelText("Token")); await user.type(screen.getByLabelText("Token"), "20000");
+  await user.click(screen.getByRole("button", { name: "Save limits" }));
+  await waitFor(() => expect(received).toHaveBeenCalledTimes(1));
+  expect(received.mock.calls[0][0].limits).toEqual({ max_total_tokens: 20000 });
+  expect(received.mock.calls[0][0]).not.toHaveProperty("run_max_seconds");
+});
+
+it("labels each lifetime limit by source", () => {
+  const sourced = { ...task, budget: { ...task.budget!, limit_sources: { max_total_model_calls: "default" as const, max_total_tool_calls: "default" as const, max_total_tokens: "owner" as const, max_total_seconds: "legacy_unknown" as const }, default_ceilings: { max_total_model_calls: 1024, max_total_tool_calls: 4096 } } };
+  render(<RynAgentBudget task={sourced} busy={false} onChange={vi.fn()} />);
+  expect(screen.getByText("Default, grows with progress (up to 1,024)")).toBeVisible();
+  expect(screen.getByText("Your hard limit")).toBeVisible();
+  expect(screen.getByText("Older task, treated as hard")).toBeVisible();
+});
+
+it("explains limit stops without promising that continue raises a hard limit", () => {
+  const owner = budgetStopMessage({ ...task, outcome: { status: "budget_limited", goal_revision: 1, criteria_results: [], summary: "", evidence_refs: [], uncertainties: [], budget_stop: { code: "agent_token_budget_exhausted", limit: "max_total_tokens", source: "owner" } } }, false)!;
+  expect(owner).toMatch(/Raise the limit in Task Options/);
+  expect(owner).not.toMatch(/automatically/);
+  const ceiling = budgetStopMessage({ ...task, budget: { ...task.budget!, limit_sources: { max_total_tokens: "default" } } }, true)!;
+  expect(ceiling).toMatch(/系统允许的最大累计额度/);
+  expect(budgetStopMessage({ ...task, error: "agent_no_progress" }, false)).toMatch(/no successful tool result/);
+  expect(budgetStopMessage({ ...task, error: "agent_operation_failed" }, false)).toBeNull();
 });
 
 it("shows unknown measured usage separately from conservative charges", () => {
@@ -78,7 +109,7 @@ it("shows the actual run limit separately from narrower call time on timeout", (
   render(<RynAgentBudget task={failed} busy={false} onChange={vi.fn()} />);
   expect(screen.getByRole("status")).toHaveTextContent("The run time limit was reached");
   expect(screen.getByText(/Run time limit \(seconds\):/)).toHaveTextContent("600.2 / 600 · Recorded time");
-  expect(within(screen.getByRole("row", { name: /Model and tool call time/ })).getAllByRole("cell").map(cell => cell.textContent)).toEqual(["398.18", "398.18", "3,600"]);
+  expect(within(screen.getByRole("row", { name: /Model and tool call time/ })).getAllByRole("cell").map(cell => cell.textContent)).toEqual(["398.18", "398.18", "3,600", "Older task, treated as hard"]);
   expect(screen.getByText(/The run limit includes request preparation/)).toHaveTextContent("waiting for approval or input, pauses, and queue time are excluded");
 });
 

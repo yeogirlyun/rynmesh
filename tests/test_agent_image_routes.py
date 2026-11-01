@@ -747,6 +747,8 @@ def test_image_inspect_retains_destination_budget_and_cancellation_guards(tmp_pa
             state = budget.initialize(row)
             original_records = copy.deepcopy(state["records"])
             max_tokens = state["limits"]["max_total_tokens"]
+            # A hard (owner) allowance; a default one would grow instead of refusing.
+            budget.set_owner_limits(row, {"max_total_tokens": max_tokens})
             reservation = budget.reserve(
                 row,
                 "model",

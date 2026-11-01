@@ -741,6 +741,10 @@ def spawn_agent_in_tx(data: dict, parent_row: dict, args: dict) -> dict:
     budget.initialize(child_row)
     if isinstance(parent_row.get("budget"), dict) and isinstance(parent_row["budget"].get("limits"), dict):
         child_row["budget"]["limits"] = copy.deepcopy(parent_row["budget"]["limits"])
+        # A child inherits whether each limit is the owner's (hard) or a default.
+        child_row["budget"]["limit_sources"] = {key: budget.limit_source(parent_row, key) for key in budget.DEFAULT_LIMITS}
+    if isinstance(parent_row.get("limits_source"), dict):
+        child_row["limits_source"] = copy.deepcopy(parent_row["limits_source"])
     if explicit_effort:
         child_row["reasoning_effort"] = explicit_effort
     meta["display_effort"] = effort

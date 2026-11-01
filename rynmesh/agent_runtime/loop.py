@@ -292,7 +292,8 @@ class AgentLoop:
                     max_token_cap = budget.RANGES["max_total_tokens"][1]
                     has_compactable = self._has_compactable_history(selected, min_non_user=2)
                     can_compact_and_continue = (
-                        cur_max_tokens < max_token_cap
+                        not budget.is_hard(selected, "max_total_tokens")
+                        and cur_max_tokens < max_token_cap
                         and (
                             self._has_compactable_history(selected, min_non_user=4)
                             or (
@@ -365,15 +366,20 @@ class AgentLoop:
                         min_turn_needed = est_input + (min(est_output, 1024) if can_reduce_out else est_output)
                         two_turns_needed = (2 * est_input) + (min(est_output, 4096) if can_reduce_out else (2 * est_output))
                         rem_tokens = int(b_limits["max_total_tokens"]) - int(b_life["charged_tokens"])
-                if rem_tokens >= min_turn_needed and rem_tokens < two_turns_needed:
+                # A final no-tool wrap-up fits inside a hard limit. Default limits
+                # extend (cumulative) or continue in a new segment (per run) instead.
+                if (budget.is_hard(selected, "max_total_tokens")
+                        and rem_tokens >= min_turn_needed and rem_tokens < two_turns_needed):
                     wrap_up_reason = "token_budget_low"
                 elif (
-                    int(b_limits["max_total_model_calls"]) >= 32
+                    budget.is_hard(selected, "max_total_model_calls")
+                    and int(b_limits["max_total_model_calls"]) >= 32
                     and int(b_life["charged_model_calls"]) + 1 == int(b_limits["max_total_model_calls"])
                 ):
                     wrap_up_reason = "model_call_budget_low"
                 elif (
-                    int(selected["limits"].get("max_steps") or 0) >= 32
+                    budget.segment_is_hard(selected, "max_steps")
+                    and int(selected["limits"].get("max_steps") or 0) >= 32
                     and int(selected.get("steps") or 0) + 1 == int(selected["limits"]["max_steps"])
                 ):
                     wrap_up_reason = "step_budget_low"
@@ -381,7 +387,7 @@ class AgentLoop:
                 wrap_up_note = (
                     f"Server budget wrap-up notice ({wrap_up_reason}): Remaining task budget is only sufficient for this final response. "
                     "Do NOT call any tools in this turn. Summarize all progress, findings, URLs/paths discovered so far, "
-                    "and clearly list what remains so the user can send a follow-up message to continue."
+                    "and clearly list what remains so the owner can raise the limit and continue."
                 )
                 injected = False
                 for idx in range(len(messages) - 1, -1, -1):
@@ -430,7 +436,7 @@ class AgentLoop:
                     row["elapsed_seconds"] += time.monotonic() - started
                     memory_integration.settle_in_tx(data, row, event)
                     return False
-                if row["steps"] >= row["limits"]["max_steps"]:
+                if row["steps"] >= row["limits"]["max_steps"] and budget.segment_is_hard(row, "max_steps"):
                     raise AgentError("agent_step_limit")
                 row["steps"] += 1
                 row["in_flight"]["dispatched"] = True
@@ -581,9 +587,8 @@ class AgentLoop:
                 if row["status"] != "running" or row["control_revision"] != selected["_run_control_revision"]:
                     memory_integration.settle_in_tx(data, row, event)
                     return  # Never publish a late completion after pause or cancellation.
-                if row["elapsed_seconds"] >= row["limits"]["max_seconds"]:
-                    row.update(status="failed", error="agent_time_limit")
-                    event(row, "failed", error=row["error"], step=step, request_id=request_id, attempt=attempt)
+                if budget.hard_run_limit(row) == "agent_time_limit":
+                    budget.stop_for_limit(row, "agent_time_limit", step=step, request_id=request_id, attempt=attempt)
                     subagents.on_subagent_settled_in_tx(data, row)
                     return
                 message["content"] = sanitized(memory_integration.strip_forged_receipt_and_guard_claims(row, message["content"]))
@@ -654,8 +659,8 @@ class AgentLoop:
                     answer = prefix + message["content"]
                     if wrap_up_reason and not answer.strip():
                         answer = (
-                            "已到达本轮任务预算上限，已自动为你保存当前进度并暂停工具调用。"
-                            "你可以直接发送「继续」自动补充下一轮额度并接着往下执行。"
+                            "已达到任务预算上限，已保存当前进度并停止调用工具。"
+                            "请在「任务预算与用量」中调高上限后继续。"
                         )
                     if wrap_up_reason and pending:
                         row["messages"].append({
@@ -665,26 +670,24 @@ class AgentLoop:
                         })
                     if len(answer.encode()) > row["limits"]["max_output_chars"]:
                         raise AgentError("agent_output_limit")
+                    if wrap_up_reason:
+                        # A budget wrap-up is progress, not completion: stop resumably
+                        # on the hard limit it spent instead of reporting "completed".
+                        row["result"] = answer
+                        budget.stop_for_limit(row, budget.WRAP_UP_CODES[wrap_up_reason], summary=answer,
+                                              wrap_up_reason=wrap_up_reason, step=step)
+                        subagents.on_subagent_settled_in_tx(data, row)
+                        return
                     row.update(status="completed", result=answer)
                     # Independent verification is an explicit optional feature.
                     # Normal turns end here; no hidden reviewer or repair loop.
-                    if not wrap_up_reason and row.get("verify_text_responses") and hasattr(self.tools, "verification_specs") and hasattr(self.tools, "verify"):
+                    if row.get("verify_text_responses") and hasattr(self.tools, "verification_specs") and hasattr(self.tools, "verify"):
                         verification.begin(row, self.tools.verification_specs())
                         row["status"] = "queued"
                         event(row, "verification_started", goal_revision=row["goal"]["revision"])
                     else:
-                        if wrap_up_reason:
-                            row["outcome"].update(
-                                status="budget_limited",
-                                budget_limited=True,
-                                budget_wrap_up_reason=wrap_up_reason,
-                                summary=answer,
-                                assessment_requested=False,
-                                uncertainties=[f"Soft-landing wrap-up triggered ({wrap_up_reason}). Send a follow-up message to continue."],
-                            )
-                        else:
-                            row["outcome"].update(status="unverified", summary=answer, assessment_requested=False,
-                                uncertainties=["No independent goal assessment was requested."])
+                        row["outcome"].update(status="unverified", summary=answer, assessment_requested=False,
+                            uncertainties=["No independent goal assessment was requested."])
                         event(row, "completed")
                         automations.settle_automation_turn_in_tx(self.store, data, row)
                         subagents.on_subagent_settled_in_tx(data, row)
@@ -1050,6 +1053,8 @@ class AgentLoop:
             if row["status"] != "running" or row["control_revision"] != selected["_run_control_revision"]:
                 return
             b = budget.initialize(row)
+            if budget.is_hard(row, "max_total_tokens"):
+                return  # Owner/legacy budgets are never raised by the host.
             totals = budget.public(row)["lifetime"]
             cur_max_tokens = int(b["limits"]["max_total_tokens"])
             max_token_cap = budget.RANGES["max_total_tokens"][1]
@@ -1062,18 +1067,16 @@ class AgentLoop:
                 max(cur_max_tokens + step_tokens, int(totals["charged_tokens"]) + step_tokens),
             )
             b["limits"]["max_total_tokens"] = new_max_tokens
-            if int(totals["charged_model_calls"]) + 4 >= int(b["limits"]["max_total_model_calls"]):
+            if not budget.is_hard(row, "max_total_model_calls") and int(totals["charged_model_calls"]) + 4 >= int(b["limits"]["max_total_model_calls"]):
                 b["limits"]["max_total_model_calls"] = min(
                     budget.RANGES["max_total_model_calls"][1],
                     int(b["limits"]["max_total_model_calls"]) + budget.DEFAULT_LIMITS["max_total_model_calls"],
                 )
-            if int(totals["charged_tool_calls"]) + 4 >= int(b["limits"]["max_total_tool_calls"]):
+            if not budget.is_hard(row, "max_total_tool_calls") and int(totals["charged_tool_calls"]) + 4 >= int(b["limits"]["max_total_tool_calls"]):
                 b["limits"]["max_total_tool_calls"] = min(
                     budget.RANGES["max_total_tool_calls"][1],
                     int(b["limits"]["max_total_tool_calls"]) + budget.DEFAULT_LIMITS["max_total_tool_calls"],
                 )
-            if will_compact and int(row.get("steps") or 0) + 2 >= int(row["limits"].get("max_steps") or 0):
-                row["limits"]["max_steps"] = int(row["limits"].get("max_steps") or 24) + 1
             event(
                 row,
                 "budget_compaction_continued",
@@ -1235,7 +1238,7 @@ class AgentLoop:
                 row["in_flight"] = None
                 memory_integration.settle_in_tx(data, row, event)
                 return False
-            if row["steps"] >= row["limits"]["max_steps"]:
+            if row["steps"] >= row["limits"]["max_steps"] and budget.segment_is_hard(row, "max_steps"):
                 raise AgentError("agent_step_limit")
             row["steps"] += 1
             row["in_flight"] = {"kind": "model", "stage": "compaction", "dispatched": True,
@@ -1282,7 +1285,8 @@ class AgentLoop:
                 row["elapsed_seconds"] += time.monotonic() - started
                 memory_integration.settle_in_tx(data, row, event)
                 return False
-            if selected["elapsed_seconds"] + time.monotonic() - started >= row["limits"]["max_seconds"]:
+            if (budget.segment_is_hard(row, "max_seconds")
+                    and selected["elapsed_seconds"] + time.monotonic() - started >= row["limits"]["max_seconds"]):
                 raise AgentError("agent_time_limit")
             row["context_checkpoint"] = checkpoint
             row["model_retry_count"] = 0

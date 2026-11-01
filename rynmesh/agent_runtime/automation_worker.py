@@ -230,6 +230,8 @@ def trigger_automation_in_tx(
         spawned_row["verify_text_responses"] = False
         spawned_row["response_language"] = "zh-CN"
         budget.initialize(spawned_row)
+        spawned_row["limits_source"] = {key: (data.get("settings_limit_sources") or {}).get(key, "default")
+                                        for key in budget.SEGMENT_LIMITS}
         if destination is not None:
             spawned_row["model_destination"] = copy.deepcopy(destination)
         spawned_row["prompt_version"] = PROMPT_VERSION

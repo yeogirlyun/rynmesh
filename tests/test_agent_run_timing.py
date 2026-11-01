@@ -52,7 +52,9 @@ def test_live_deadline_includes_preparation_and_still_rejects_late_success(tmp_p
     advance(runtime)
     done = runtime.get(row["id"])
     assert done["error"] == "agent_time_limit" and done["status"] == "failed"
-    assert done["outcome"]["status"] == "unverified"
+    # The owner's run limit stopped the task; it is reported as a limit stop, not completion.
+    assert done["outcome"]["status"] == "budget_limited"
+    assert done["outcome"]["budget_stop"] == {"code": "agent_time_limit", "limit": "max_seconds", "source": "owner"}
     assert done["run_timing"] == {"recorded_seconds": 11, "elapsed_seconds": 11, "max_seconds": 10, "measurement": "recorded"}
     assert done["budget"]["current_round"]["active_seconds"] == 8
     assert runtime._active_run is None

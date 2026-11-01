@@ -3,7 +3,7 @@ import copy
 
 from test_agent_runtime import advance, approve, assistant, make_runtime
 
-from rynmesh.agent_runtime import output_policy
+from rynmesh.agent_runtime import budget, output_policy
 from rynmesh.agent_runtime.runtime import AgentRuntime
 from rynmesh.agent_runtime.store import AgentStore
 
@@ -66,7 +66,8 @@ def test_adapter_without_output_limit_cannot_underreserve_its_output(tmp_path):
     # Enough for input plus only 100 output tokens. This model cannot enforce
     # that reduced limit, so reserving 100 then requesting 4096 would overspend.
     def reduce_limit(data):
-        data["tasks"][row["id"]]["budget"]["limits"]["max_total_tokens"] = input_bound + 100
+        # An owner budget: a default allowance would grow instead of refusing.
+        budget.set_owner_limits(data["tasks"][row["id"]], {"max_total_tokens": input_bound + 100})
     runtime.store.transaction(reduce_limit)
     advance(runtime)
     assert model.calls == []

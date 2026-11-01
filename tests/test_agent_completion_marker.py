@@ -132,6 +132,8 @@ def test_verification_claim_limits_mark_answer_completed(tmp_path, limit):
 
     def exhaust(data):
         row = data["tasks"][created["id"]]
+        # An owner-set run limit is hard; a default one would only start a new segment.
+        row["limits_source"] = {"max_steps": "owner", "max_seconds": "owner"}
         if limit == "agent_step_limit":
             row["steps"] = row["limits"]["max_steps"]
         else:

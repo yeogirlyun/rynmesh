@@ -396,10 +396,12 @@ def test_cached_tokens_extraction_across_deepseek_openai_anthropic_and_budget(tm
     assert peer_b["lifetime"]["charged_tokens"] == 1050
 
 
-def test_proactive_soft_landing_wrap_up_and_user_continuation_auto_renewal(tmp_path):
-    # Step 1 calls a tool and uses enough tokens that only 1 turn's worth of token budget remains.
-    # Step 2 should proactively enter soft-landing wrap-up, skip any tool_calls returned by the model,
-    # pair them with not_executed tool results, and complete with outcome status 'budget_limited'.
+def test_proactive_soft_landing_wrap_up_stops_on_owner_budget_without_auto_renewal(tmp_path):
+    # Step 1 calls a tool and uses enough tokens that only 1 turn's worth of the
+    # owner's token budget remains. Step 2 is a no-tool wrap-up inside that budget:
+    # its tool call is paired with a not_executed result, and the run stops on the
+    # owner's limit. A wrap-up is progress, not completion, and an owner turn never
+    # raises an explicit budget.
     step1_resp = assistant(name="inspect_service", args={"service_id": "svc"})
     step1_resp.update(
         usage={"input_tokens": 7000, "output_tokens": 500},
@@ -420,24 +422,29 @@ def test_proactive_soft_landing_wrap_up_and_user_continuation_auto_renewal(tmp_p
     row = runtime.create({"message": "Inspect services", "budget_limits": {"max_total_tokens": 25000}})
     advance(runtime, 4)
     wrapped = runtime.get(row["id"])
-    assert wrapped["status"] == "completed"
+    assert wrapped["status"] == "failed" and wrapped["error"] == "agent_token_budget_exhausted"
     assert wrapped["outcome"]["status"] == "budget_limited"
+    assert wrapped["outcome"]["budget_stop"] == {"code": "agent_token_budget_exhausted",
+                                                  "limit": "max_total_tokens", "source": "owner"}
+    assert wrapped["outcome"]["budget_wrap_up_reason"] == "token_budget_low"
     assert "Here is the progress summary so far." in wrapped["result"]
+    assert wrapped["outcome"]["summary"] == wrapped["result"]
     # Only step 1's tool call was executed; step 2's tool call was skipped during wrap-up!
     assert len(tools.calls) == 1
     assert any(ev.get("type") == "budget_wrap_up" and ev.get("skipped_tool_calls") == 1 for ev in wrapped["events"])
+    assert not any(ev.get("type") == "completed" for ev in wrapped["events"])
 
-    # Now user sends "继续" via add_message -> budget limit is auto-extended without resetting lifetime usage
+    # "继续" starts a new run inside the same owner budget; the limit is not raised.
     resumed = runtime.add_message(row["id"], {"message": "继续", "expected_revision": wrapped["revision"]})
-    assert resumed["budget"]["limits"]["max_total_tokens"] > 25000
+    assert resumed["budget"]["limits"]["max_total_tokens"] == 25000
     assert resumed["budget"]["lifetime"]["charged_tokens"] == 8600
-    assert any(ev.get("type") == "budget_auto_extended" for ev in resumed["events"])
+    assert not any(ev.get("type") == "budget_auto_extended" for ev in resumed["events"])
     advance(runtime, 4)
     final = runtime.get(row["id"])
     assert final["status"] == "completed"
     assert final["result"] == "Completed after user continuation."
     assert final["budget"]["lifetime"]["charged_tokens"] == 9700
-
+    assert final["budget"]["limits"]["max_total_tokens"] == 25000
 
 def test_code_mode_tab_ax_decorator_and_output_dedup(tmp_path):
     from types import SimpleNamespace

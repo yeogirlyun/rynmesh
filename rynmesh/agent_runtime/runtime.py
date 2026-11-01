@@ -85,7 +85,8 @@ PUBLIC_FIELDS = ("id", "client_request_id", "title", "model_id", "reasoning_effo
                  "messages", "pending_user_messages", "events", "pending_approval", "steps", "result", "error", "connection_recovery", "limits", "permission_mode", "allowed_write_tools",
                  "model_destination", "local_execution", "project", "verification_evidence", "reconciliation", "archived", "result_refs", "file_artifact_revision",
                  "conversation_revision", "conversation_event_cursor", "source", "automation_id", "automation_run_id", "automation_kind",
-                 "latest_turn_is_silent_heartbeat", "automation_notification", "parent_task_id", "subagent_ids", *PUBLIC_STATE_FIELDS)
+                 "latest_turn_is_silent_heartbeat", "automation_notification", "parent_task_id", "subagent_ids",
+                 "limits_source", "execution_segment", *PUBLIC_STATE_FIELDS)
 VISUAL_SUFFIXES = (".svg", ".html", ".htm", ".png", ".jpg", ".jpeg", ".gif", ".webp")
 
 
@@ -587,8 +588,7 @@ class AgentRuntime(AgentLoop):
                 raise AgentError("agent_request_deadline_unavailable")
             # Process-local monotonic values never enter durable task state.
             # Preparation and reservation time consume this same active tick.
-            options["deadline"] = row["_run_started"] + min(
-                row["limits"]["max_seconds"] - row["elapsed_seconds"], row["_run_lifetime_remaining"])
+            options["deadline"] = row["_run_started"] + budget.run_seconds_left(row, row["_run_lifetime_remaining"])
             def record_request_policy(policy):
                 self.store.transaction(lambda data: budget.record_request_policy(task(data, row["id"]), policy))
             options["on_request_policy"] = record_request_policy
@@ -742,6 +742,7 @@ class AgentRuntime(AgentLoop):
             if (row["status"] != "running" or row["control_revision"] != selected.get("_run_control_revision", selected["control_revision"])
                     or not data["settings"]["enabled"]):
                 raise AgentToolRejected("agent_cancelled")
+            budget.ensure_default_room(row, "max_total_tokens", input_bound + output_bound)
             state = budget.public(row)
             max_tokens = state["limits"]["max_total_tokens"]
             wrap_up_reserve = min(100000, max_tokens // 15) if nested and max_tokens >= 100000 else 0
@@ -898,8 +899,7 @@ class AgentRuntime(AgentLoop):
             run_started = selected.get("_run_started")
             if run_started is None:
                 raise AgentError("agent_probe_budget_unavailable")
-            deadline = run_started + min(selected["limits"]["max_seconds"] - selected["elapsed_seconds"],
-                                         selected.get("_run_lifetime_remaining", 0))
+            deadline = run_started + budget.run_seconds_left(selected, selected.get("_run_lifetime_remaining", 0))
             def guard():
                 data = self.store.read()
                 current = task(data, selected["id"])
@@ -1081,6 +1081,7 @@ class AgentRuntime(AgentLoop):
             row.update(pending_input=None, approved=None, status="queued", error=None, result="", steps=0, elapsed_seconds=0.0)
             row.pop("verification", None)
             budget.new_round(row)
+            budget.restart_segment_audit(row)
             row["messages"].append({"role": "user", "message_id": "owner_" + uuid.uuid4().hex,
                 "content": "The owner selected this working directory in task settings: " + root
                     + ". Continue the original request. Existing write approvals still apply."})
@@ -1136,6 +1137,11 @@ class AgentRuntime(AgentLoop):
             desktop_changed = "desktop_access" in values and bool(values["desktop_access"]) != bool(data["settings"].get("desktop_access"))
             permission_changed = any(key in values and values[key] != data["settings"].get(key) for key in ("permission_mode", "allowed_write_tools", "workspace_root", "desktop_access"))
             changed = any(data["settings"].get(key) != value for key, value in values.items())
+            for key in budget.SEGMENT_LIMITS:
+                if key in values:
+                    # Stores never recorded who wrote these persisted defaults; only
+                    # an explicit settings update marks a per-run limit as the owner's.
+                    data.setdefault("settings_limit_sources", {})[key] = "owner"
             if "max_context_chars" in values:
                 provenance = "owner_auto" if values["max_context_chars"] is None else "owner_manual"
                 changed = changed or data.get("settings_context_budget_provenance") != provenance
@@ -1372,10 +1378,12 @@ class AgentRuntime(AgentLoop):
             if not allowed_actions(row, data["settings"])["budget"]["enabled"]:
                 raise AgentError("agent_invalid_transition")
             state = budget.initialize(row)
-            state["limits"].update(requested)
+            budget.set_owner_limits(row, requested)
             if run_max is not None:
                 row["limits"]["max_seconds"] = run_max
-            event(row, "budget_changed", limits=state["limits"], run_max_seconds=row["limits"]["max_seconds"])
+                row.setdefault("limits_source", {})["max_seconds"] = "owner"
+            event(row, "budget_changed", limits=state["limits"], run_max_seconds=row["limits"]["max_seconds"],
+                  owner_limits=sorted(requested), limit_sources=budget.public(row)["limit_sources"])
             remember_request(row, value)
             return public_task(row, settings=data["settings"])
         return self.store.transaction(update)
@@ -1539,7 +1547,7 @@ class AgentRuntime(AgentLoop):
         prepared = parse_attachments(value.get("attachments"))
         content = message_text(value.get("message") or ("Please review the attached files." if prepared else ""))
         skills = self._resolve_skills(value.get("skill_ids"), content)
-        budget_limits = budget.validate_limits(value.get("budget_limits", {}))
+        budget.validate_limits(value.get("budget_limits", {}))
         request_id = value.get("client_request_id")
         if request_id is not None:
             try:
@@ -1610,7 +1618,10 @@ class AgentRuntime(AgentLoop):
             row["skills"] = skills
             row["verify_text_responses"] = settings.get("verify_text_responses", False)
             row["response_language"] = value.get("response_language") or "en"
-            budget.initialize(row)["limits"] = budget_limits
+            budget.initialize(row)
+            budget.set_owner_limits(row, value.get("budget_limits", {}))
+            row["limits_source"] = {key: (data.get("settings_limit_sources") or {}).get(key, "default")
+                                    for key in budget.SEGMENT_LIMITS}
             row["model_destination"] = copy.deepcopy(destination)
             if peer_destination or project_destination:
                 # A dispatch constraint, not resource/egress authorization or a
@@ -1713,7 +1724,9 @@ class AgentRuntime(AgentLoop):
                 auto_extended = {}
                 tok_threshold = min(500000, max(1000, b_limits["max_total_tokens"] // 4))
                 wrap_reason = (row.get("outcome") or {}).get("budget_wrap_up_reason")
-                if b_limits["max_total_tokens"] - b_life["charged_tokens"] <= tok_threshold or wrap_reason == "token_budget_low" or row.get("error") == "agent_token_budget_exhausted":
+                # Only default allowances grow on an owner turn. Owner and legacy
+                # limits stay as set; the checks below refuse a turn they cannot fund.
+                if not budget.is_hard(row, "max_total_tokens") and (b_limits["max_total_tokens"] - b_life["charged_tokens"] <= tok_threshold or wrap_reason == "token_budget_low" or row.get("error") == "agent_token_budget_exhausted"):
                     new_tok = min(
                         budget.RANGES["max_total_tokens"][1],
                         max(b_limits["max_total_tokens"], b_life["charged_tokens"]) + budget.DEFAULT_LIMITS["max_total_tokens"],
@@ -1721,7 +1734,7 @@ class AgentRuntime(AgentLoop):
                     if new_tok > b_limits["max_total_tokens"]:
                         b_limits["max_total_tokens"] = new_tok
                         auto_extended["max_total_tokens"] = new_tok
-                if b_limits["max_total_model_calls"] - b_life["charged_model_calls"] <= 0 or wrap_reason == "model_call_budget_low":
+                if not budget.is_hard(row, "max_total_model_calls") and (b_limits["max_total_model_calls"] - b_life["charged_model_calls"] <= 0 or wrap_reason == "model_call_budget_low"):
                     new_mc = min(
                         budget.RANGES["max_total_model_calls"][1],
                         max(b_limits["max_total_model_calls"], b_life["charged_model_calls"]) + budget.DEFAULT_LIMITS["max_total_model_calls"],
@@ -1732,7 +1745,7 @@ class AgentRuntime(AgentLoop):
                 if isinstance(row.get("outcome"), dict):
                     row["outcome"].pop("budget_wrap_up_reason", None)
                     row["outcome"].pop("budget_limited", None)
-                if b_limits["max_total_tool_calls"] - b_life["charged_tool_calls"] <= 0:
+                if not budget.is_hard(row, "max_total_tool_calls") and b_limits["max_total_tool_calls"] - b_life["charged_tool_calls"] <= 0:
                     new_tc = min(
                         budget.RANGES["max_total_tool_calls"][1],
                         max(b_limits["max_total_tool_calls"], b_life["charged_tool_calls"]) + budget.DEFAULT_LIMITS["max_total_tool_calls"],
@@ -1741,7 +1754,7 @@ class AgentRuntime(AgentLoop):
                         b_limits["max_total_tool_calls"] = new_tc
                         auto_extended["max_total_tool_calls"] = new_tc
                 sec_threshold = min(60.0, max(5.0, b_limits["max_total_seconds"] * 0.1))
-                if budget.time_remaining(row) <= sec_threshold:
+                if not budget.is_hard(row, "max_total_seconds") and budget.time_remaining(row) <= sec_threshold:
                     new_sec = min(
                         budget.RANGES["max_total_seconds"][1],
                         int(math.ceil(max(b_limits["max_total_seconds"], b_life["charged_seconds"]))) + budget.DEFAULT_LIMITS["max_total_seconds"],
@@ -1750,13 +1763,18 @@ class AgentRuntime(AgentLoop):
                         b_limits["max_total_seconds"] = new_sec
                         auto_extended["max_total_seconds"] = new_sec
                 if auto_extended:
-                    event(row, "budget_auto_extended", limits=copy.deepcopy(b_limits), extended=auto_extended, round=row["budget"]["round"])
+                    event(row, "budget_auto_extended", limits=copy.deepcopy(b_limits), extended=auto_extended,
+                          round=row["budget"]["round"], reason="default_policy")
                 if b_life["charged_tokens"] >= b_limits["max_total_tokens"]:
                     raise AgentError("agent_token_budget_exhausted")
                 if b_life["charged_model_calls"] >= b_limits["max_total_model_calls"]:
                     raise AgentError("agent_model_call_budget_exhausted")
                 if budget.time_remaining(row) <= 0:
                     raise AgentError("agent_time_budget_exhausted")
+            elif row["status"] == "paused" and not row.get("in_flight"):
+                exhausted = budget.exhausted_hard_limit(row)
+                if exhausted:
+                    raise AgentError(exhausted)  # A new turn never bypasses a hard budget.
             if intent != "information" or ended:
                 owner_update(row, message)
             row.update(approved=None, pending_approval=None, pending_input=None, result="",
@@ -1766,6 +1784,7 @@ class AgentRuntime(AgentLoop):
             row["pending_control"] = {"kind": "steer", "remain_paused": row["status"] == "paused" and bool(row.get("in_flight")) and intent is not None and not was_stopped}
             if ended or intent is None or was_stopped or (row["status"] == "paused" and not row.get("in_flight")):
                 row.update(steps=0, elapsed_seconds=0.0)
+                budget.restart_segment_audit(row)
             event(row, "goal_changed" if intent == "steer" else "information_added" if intent else "message_added", goal_revision=row["goal"]["revision"])
             close_queue(row, event, "agent_owner_changed")
             settle(row, event, data=data)
@@ -1939,11 +1958,18 @@ class AgentRuntime(AgentLoop):
                     row["in_flight"] = None
                     row["approved"] = None
                     settle(row, event, data=data)
+                if not row["pending_input"] and not row["pending_approval"]:
+                    exhausted = budget.exhausted_hard_limit(row)
+                    if exhausted:
+                        raise AgentError(exhausted)  # Resume never bypasses a hard budget.
                 if (row.get("steps", 0) >= (row.get("limits") or {}).get("max_steps", 16)
                         or row.get("elapsed_seconds", 0.0) >= (row.get("limits") or {}).get("max_seconds", 180)):
                     row.update(steps=0, elapsed_seconds=0.0, model_retry_count=0)
                     row.pop("model_retry_authority", None)
                     budget.new_round(row)
+                budget.restart_segment_audit(row)
+                for key in ("budget_limited", "budget_stop", "budget_wrap_up_reason"):
+                    row.get("outcome", {}).pop(key, None)
                 retry_policy.resume(row)
                 row["status"] = "waiting_input" if row["pending_input"] else "waiting_approval" if row["pending_approval"] else "queued"
                 row["error"] = None
@@ -2147,8 +2173,7 @@ class AgentRuntime(AgentLoop):
             or flight.get("context_epoch", 0) != row.get("context_epoch", 0)
             or flight.get("authority") != model_retry_authority(data["settings"])
             or write_permission_revoked(row, data["settings"])
-            or row["steps"] >= row["limits"]["max_steps"]
-            or row["elapsed_seconds"] >= row["limits"]["max_seconds"]
+            or budget.hard_run_limit(row)
             or budget.time_remaining(row) <= 0
         ):
             return False
@@ -2295,7 +2320,7 @@ class AgentRuntime(AgentLoop):
             pending = row.get("reconciliation", {})
             if not ambiguous(row) or pending.get("state") != "pending" or row["control_revision"] != selected["control_revision"]:
                 return False
-            if pending.get("attempts", 0) >= 3 or row["elapsed_seconds"] >= row["limits"]["max_seconds"] or receipt is None:
+            if pending.get("attempts", 0) >= 3 or budget.hard_run_limit(row) == "agent_time_limit" or receipt is None:
                 row["reconciliation"] = {**pending, "state": "unknown", "reason": "agent_reconciliation_limit"}
                 return False
             row["reconciliation"] = {"state": "running", "attempts": pending.get("attempts", 0) + 1, "operation_id": operation_id}
@@ -2319,7 +2344,8 @@ class AgentRuntime(AgentLoop):
             row = task(current, selected["id"])
             return (not current["settings"]["enabled"] or row["control_revision"] != selected["control_revision"] or
                     row["reconciliation"]["state"] != "running" or
-                    selected["elapsed_seconds"] + time.monotonic() - started >= selected["limits"]["max_seconds"])
+                    (budget.segment_is_hard(selected, "max_seconds") and
+                     selected["elapsed_seconds"] + time.monotonic() - started >= selected["limits"]["max_seconds"]))
         result = {"outcome": "unknown", "reason": "agent_reconciliation_failed"}
         context_valid = False
         try:
@@ -2367,8 +2393,7 @@ class AgentRuntime(AgentLoop):
                 and flight.get("context_epoch") == row.get("context_epoch", 0)
                 and flight.get("authority") == model_retry_authority(data["settings"])
                 and not write_permission_revoked(row, data["settings"])
-                and row["steps"] < row["limits"]["max_steps"]
-                and row["elapsed_seconds"] < row["limits"]["max_seconds"]
+                and not budget.hard_run_limit(row)
             )
             verification.record(row, flight, "confirmed" if result["outcome"] == "executed" else "not_executed", now(), result=proven_result)
             row["messages"].append({"role": "tool", "tool_call_id": flight["call_id"], "content": encoded(proven_result).decode(), "context_epoch": flight.get("context_epoch", 0)})
@@ -2438,6 +2463,8 @@ class AgentRuntime(AgentLoop):
                     row.pop("pending_control", None)
                 if row.get("pending_control"):
                     settle(row, event, data=data)
+                elif row["status"] in {"running", "queued"} and code in budget.LIMIT_CODES:
+                    budget.stop_for_limit(row, code)
                 elif row["status"] in {"running", "queued"}:
                     row.update(status="failed", error=code, approved=None)
                     event(row, "failed", error=code)
@@ -2497,8 +2524,8 @@ class AgentRuntime(AgentLoop):
                 elif row["status"] == "running" and row["control_revision"] == selected["_run_control_revision"]:
                     pending = row.get("verification") or {}
                     if (code == "agent_invalid_verification_response" and flight.get("kind") == "verification_model"
-                            and pending.get("format_retries", 0) < 1 and row["steps"] < row["limits"]["max_steps"]
-                            and row["elapsed_seconds"] < row["limits"]["max_seconds"] and data["settings"]["enabled"]):
+                            and pending.get("format_retries", 0) < 1 and not budget.hard_run_limit(row)
+                            and data["settings"]["enabled"]):
                         pending["format_retries"] = pending.get("format_retries", 0) + 1
                         row["status"] = "queued"
                         event(row, "verification_format_retry_scheduled", error=code, retry_count=pending["format_retries"])
@@ -2555,9 +2582,9 @@ class AgentRuntime(AgentLoop):
                 network = code in retry_policy.NETWORK_ERRORS
                 maximum = retry_policy.limit(code, safe_diag)
                 count = row.get("model_retry_count", 0)
+                run_limit = budget.hard_run_limit(row)
                 error = ("agent_permission_denied" if authority != selected.get("_model_retry_authority") else
-                         "agent_time_limit" if row["elapsed_seconds"] >= row["limits"]["max_seconds"] else
-                         "agent_step_limit" if row["steps"] >= row["limits"]["max_steps"] else
+                         run_limit if run_limit else
                          code if not network and count >= maximum else None)
                 row.pop("pending_control", None)
                 extra_event = {
@@ -2567,6 +2594,10 @@ class AgentRuntime(AgentLoop):
                     **({"request_id": req_id} if req_id else {}),
                     **({"diagnostics": safe_diag} if safe_diag else {}),
                 }
+                if error in budget.LIMIT_CODES:
+                    budget.stop_for_limit(row, error, **extra_event)
+                    subagents.on_subagent_settled_in_tx(data, row)
+                    return True
                 if error:
                     row.update(status="failed", error=error)
                     event(row, "failed", error=error, **extra_event)
@@ -2583,7 +2614,7 @@ class AgentRuntime(AgentLoop):
                         subagents.on_subagent_settled_in_tx(data, row)
                         return True
                     wait = retry_policy.delay(count + 1, safe_diag)
-                    remaining = min(row["limits"]["max_seconds"] - row["elapsed_seconds"], budget.time_remaining(row))
+                    remaining = budget.run_seconds_left(row, budget.time_remaining(row))
                     if wait >= remaining:
                         # Honor long Retry-After without exceeding time budgets or retrying early.
                         recovery["state"] = "disconnected"
@@ -2718,9 +2749,8 @@ class AgentRuntime(AgentLoop):
                       step=row["steps"], result=result, internal=call["name"] in INTERNAL_NAMES,
                       context_epoch=call.get("context_epoch", 0), timing=error_timing)
                 if row["status"] == "running":
-                    if code == "agent_time_limit" or code.endswith("_budget_exhausted"):
-                        row.update(status="failed", error=code)
-                        event(row, "failed", error=code)
+                    if code in budget.LIMIT_CODES:
+                        budget.stop_for_limit(row, code)
                         subagents.on_subagent_settled_in_tx(data, row)
                     else:
                         row["status"] = "queued"
@@ -2744,8 +2774,7 @@ class AgentRuntime(AgentLoop):
                     and not row.get("pending_approval")
                     and not row.get("approved")
                     and not row.get("pending_input")
-                    and row["elapsed_seconds"] < row["limits"]["max_seconds"]
-                    and (bool(row.get("queue")) or row["steps"] < row["limits"]["max_steps"])
+                    and budget.run_may_continue(row)
                     and within_budget
                 )
             self.store.transaction(reject)
@@ -2820,8 +2849,7 @@ class AgentRuntime(AgentLoop):
                         continue
                     retry_policy.charge_wait(row)
                     if budget.time_remaining(row) <= 0:
-                        row.update(status="failed", error="agent_time_budget_exhausted")
-                        event(row, "failed", error=row["error"])
+                        budget.stop_for_limit(row, "agent_time_budget_exhausted")
                         subagents.on_subagent_settled_in_tx(data, row)
                         continue
                     if row.get("model_retry_count", 0) and row.get("model_retry_authority") != model_retry_authority(data["settings"]):
@@ -2829,26 +2857,24 @@ class AgentRuntime(AgentLoop):
                         event(row, "failed", error=row["error"])
                         subagents.on_subagent_settled_in_tx(data, row)
                         continue
-                    if row["elapsed_seconds"] >= row["limits"]["max_seconds"]:
+                    boundary = budget.segment_boundary(row)
+                    if boundary and not budget.segment_is_hard(row, boundary):
+                        # Default per-run limits only size a segment. Checkpointing
+                        # here, at a claim, also lets older queued tasks run first.
+                        if budget.continue_segment(row, boundary):
+                            budget.stop_for_no_progress(row)
+                            subagents.on_subagent_settled_in_tx(data, row)
+                            continue
+                        boundary = budget.segment_boundary(row)
+                    if boundary:
+                        code = "agent_time_limit" if boundary == "max_seconds" else "agent_step_limit"
                         if row.get("verification"):
-                            verification.finish(row, error="agent_time_limit")
-                            event(row, "verification_finished", outcome=row["outcome"]["status"], error="agent_time_limit")
+                            verification.finish(row, error=code)
+                            event(row, "verification_finished", outcome=row["outcome"]["status"], error=code)
                             event(row, "completed")
                             subagents.on_subagent_settled_in_tx(data, row)
                             continue
-                        row.update(status="failed", error="agent_time_limit")
-                        event(row, "failed", error=row["error"])
-                        subagents.on_subagent_settled_in_tx(data, row)
-                        continue
-                    if not row["queue"] and row["steps"] >= row["limits"]["max_steps"]:
-                        if row.get("verification"):
-                            verification.finish(row, error="agent_step_limit")
-                            event(row, "verification_finished", outcome=row["outcome"]["status"], error="agent_step_limit")
-                            event(row, "completed")
-                            subagents.on_subagent_settled_in_tx(data, row)
-                            continue
-                        row.update(status="failed", error="agent_step_limit")
-                        event(row, "failed", error=row["error"])
+                        budget.stop_for_limit(row, code)
                         subagents.on_subagent_settled_in_tx(data, row)
                         continue
                     row["status"] = "running"
@@ -2893,10 +2919,13 @@ class AgentRuntime(AgentLoop):
                 # Business tools call this again under their mutation lock.
                 # Consuming one-shot approval does not immunize a queued write
                 # against a subsequent owner permission revocation.
+                # A default segment boundary never cancels work in flight; the
+                # next claim checkpoints it. Only an owner/legacy run limit cuts.
                 reason = ("agent_permission_denied" if write_permission_revoked(row, current["settings"]) else
                           "agent_owner_changed" if row["control_revision"] != selected["_run_control_revision"] else
                           "agent_cancelled" if not current["settings"]["enabled"] or row["status"] != "running" else
-                          "agent_time_limit" if selected["elapsed_seconds"] + time.monotonic() - started >= selected["limits"]["max_seconds"] else None)
+                          "agent_time_limit" if (budget.segment_is_hard(selected, "max_seconds") and
+                                                 selected["elapsed_seconds"] + time.monotonic() - started >= selected["limits"]["max_seconds"]) else None)
                 if reason is None:
                     try:
                         self._validate_context(row, cheap_only=True, control_state=current)
@@ -2955,7 +2984,7 @@ class AgentRuntime(AgentLoop):
                 if code == "agent_operation_failed":
                     self._record_runtime_fault(selected, exc)
                 if str(exc) == "agent_cancelled":
-                    code = getattr(cancelled, "reason", None) or ("agent_time_limit" if selected["elapsed_seconds"] + time.monotonic() - started >= selected["limits"]["max_seconds"] else "agent_cancelled")
+                    code = getattr(cancelled, "reason", None) or ("agent_time_limit" if (budget.segment_is_hard(selected, "max_seconds") and selected["elapsed_seconds"] + time.monotonic() - started >= selected["limits"]["max_seconds"]) else "agent_cancelled")
                 self._operation_error(selected, code, started)
             return WorkerRunResult(activity=bool(selected))
         except Exception as exc:
@@ -3110,7 +3139,7 @@ class AgentRuntime(AgentLoop):
                 row["elapsed_seconds"] += time.monotonic() - started
                 settle(row, event, data=data)
                 return False
-            if row["steps"] >= row["limits"]["max_steps"]:
+            if row["steps"] >= row["limits"]["max_steps"] and budget.segment_is_hard(row, "max_steps"):
                 raise AgentError("agent_step_limit")
             row["steps"] += 1
             row["in_flight"].update(kind="verification_model", dispatched=True)
@@ -3159,7 +3188,7 @@ class AgentRuntime(AgentLoop):
             if row["status"] != "running" or row["control_revision"] != selected["_run_control_revision"]:
                 settle(row, event, data=data)
                 return
-            if row["elapsed_seconds"] >= row["limits"]["max_seconds"]:
+            if budget.hard_run_limit(row) == "agent_time_limit":
                 verification.finish(row, error="agent_time_limit")
             else:
                 if assessment.get("reported_status"):
