@@ -25,6 +25,7 @@ from . import (
     image_capabilities,
     memory_integration,
     memory_runtime,
+    model_profiles,
     output_policy,
     projects,
     request_context,
@@ -751,7 +752,10 @@ class AgentLoop:
         capture_note = memory_integration.current_automatic_memory_capture_note(self)
         auto_note = automations.automation_developer_instructions(self.store, row)
         host_memory_note = "\n".join(note for note in (host_memory_note, capture_note, auto_note) if note) or None
+        # Resolved per request from the current model, never pinned in the task.
+        model_notes = model_profiles.for_task(self, row)["instructions"]
         instructions = instruction_layers(prefix_row, persisted_base=row.get("base_instructions"),
+                                          model_notes=model_notes,
                                           developer_instructions=host_memory_note,
                                           project_guidance=projects.guidance(row))
         guidance, memory_selection = memory_integration.select_guidance_and_memory(self, row)

@@ -26,6 +26,7 @@ from . import (
     lifecycle,
     memory_integration,
     memory_natural,
+    model_profiles,
     model_switch,
     output_policy,
     projects,
@@ -635,6 +636,8 @@ class AgentRuntime(AgentLoop):
         if image_capabilities.message_has_image_input(dispatch_messages):
             image_capabilities.require_route_image_support(model, model_client=self.model)
         policy = output_policy.select(model, dispatch_messages, specs, request_cap=output_cap)
+        profile_record = model_profiles.request_record(model_profiles.for_task(self, row, model),
+                                                       dispatch_messages, options)
         meter_row = {**row, "_request_id": active_request_id} if active_request_id else row
         dispatched = False
         def _invoke_model(allowed):
@@ -660,7 +663,7 @@ class AgentRuntime(AgentLoop):
             # The model tag lets later density calibration ignore another model's usage.
             response = self._meter_model(meter_row, _invoke_model,
                 input_bound=policy["estimated_input_tokens"], output_bound=policy["effective_cap"],
-                output_policy_record={**policy, "model_id": row["model_id"]},
+                output_policy_record={**policy, "model_id": row["model_id"], "model_profile": profile_record},
                 nested=nested, stage=stage,
                 can_reduce_output=getattr(self.model, "supports_output_token_limit", False) is True)
         except Exception:
@@ -1130,6 +1133,12 @@ class AgentRuntime(AgentLoop):
         for key, low, high in (("max_steps", 1, 128), ("max_seconds", 10, 3600), ("max_output_chars", 1000, 40000)):
             if key in values and (type(values[key]) is not int or not low <= values[key] <= high):
                 raise AgentError("agent_invalid_settings")
+        if model_profiles.SETTING in values:
+            try:
+                values = {**values, model_profiles.SETTING: model_profiles.validate_overrides(
+                    values[model_profiles.SETTING], self._model_metadata)}
+            except ValueError:
+                raise AgentError("agent_invalid_settings") from None
 
         def update(data):
             workspace_changed = "workspace_root" in values and values["workspace_root"] != data["settings"].get("workspace_root")

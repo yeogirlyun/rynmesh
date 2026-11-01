@@ -13,7 +13,7 @@ from .operation_permissions import projection as permission_projection
 from .output_policy import MAX_TOOL_CALLS
 from .tool_menu import SPEC as TOOL_MENU_SPEC
 
-PROMPT_VERSION = "ryn-agent-loop-v9"
+PROMPT_VERSION = "ryn-agent-loop-v10"
 
 SYSTEM = (
     "You are Ryn, an autonomous coding and workstation agent on the user's computer. Reply concisely in their language. "
@@ -84,19 +84,24 @@ def select_base_instructions(*, model_base=None, persisted_base=None, session_ba
 
 
 def instruction_layers(row: dict, *, model_base=None, persisted_base=None, session_base=None,
-                       developer_instructions=None, project_guidance="") -> list[dict]:
+                       model_notes="", developer_instructions=None, project_guidance="") -> list[dict]:
     """Build Ryn's internal instruction roles; adapters own provider compatibility.
 
     The base can be pinned in a task so switching providers does not silently
     rewrite an existing conversation. Host permissions remain a separate layer
     even when the caller explicitly overrides the base with an empty string.
+    Model notes (model_profiles) are resolved per request for the current model
+    and sit between the shared base and the permission/authority layer.
     """
     base = select_base_instructions(model_base=model_base, persisted_base=persisted_base,
                                     session_base=session_base)
     policy = ("This task is read-only: inspect and explain a proposed plan, never request a mutation tool."
               if row["permission_mode"] == "read_only" else
               "This task may request changes; the server enforces current owner permissions for every call.")
+    if not isinstance(model_notes, str):
+        raise ValueError("model notes must be text")
     messages = [{"role": "developer", "content": base},
+                *([{"role": "developer", "content": model_notes}] if model_notes else []),
                 {"role": "developer", "content": policy + authority(row)}]
     if developer_instructions is not None:
         if not isinstance(developer_instructions, str):
