@@ -11,12 +11,12 @@ from rynmesh.agent_runtime import projects
 from rynmesh.agent_runtime.store import AgentToolRejected, encoded
 
 
-def observe(local, cancelled=lambda: False):
+def observe(local, cancelled=lambda: False):  # noqa: F811 - imported pytest fixture parameter
     tools, context, _, _ = local
     return tools.perform("ryn_project_inspect", {}, context, cancelled)
 
 
-def test_entry_snapshot_includes_structure_existing_guidance_and_git_without_arbitrary_reads(local, monkeypatch):
+def test_entry_snapshot_includes_structure_existing_guidance_and_git_without_arbitrary_reads(local, monkeypatch):  # noqa: F811 - imported pytest fixture
     tools, _, root, _ = local
     (root / "engine").mkdir()
     (root / "engine" / "implementation.py").write_text("PRIVATE SOURCE BODY", encoding="utf-8")
@@ -52,7 +52,7 @@ def test_entry_snapshot_includes_structure_existing_guidance_and_git_without_arb
     assert len(encoded(result)) <= projects.INSPECT_BYTES
 
 
-def test_snapshot_pages_end_on_lines_and_continuation_returns_exact_remainder(local):
+def test_snapshot_pages_end_on_lines_and_continuation_returns_exact_remainder(local):  # noqa: F811 - imported pytest fixture
     tools, context, root, _ = local
     body = "".join(f"line {number}: {'测' * 35} \\\"\n" for number in range(100))
     (root / "README.md").write_bytes(body.encode())
@@ -66,7 +66,7 @@ def test_snapshot_pages_end_on_lines_and_continuation_returns_exact_remainder(lo
     assert page["text"] + remaining["text"] == body
 
 
-def test_large_directory_and_first_line_are_explicitly_incomplete_and_bounded(local):
+def test_large_directory_and_first_line_are_explicitly_incomplete_and_bounded(local):  # noqa: F811 - imported pytest fixture
     _, _, root, _ = local
     for number in range(120):
         (root / f"file-{number:03}-{'x' * 60}.txt").touch()
@@ -81,7 +81,7 @@ def test_large_directory_and_first_line_are_explicitly_incomplete_and_bounded(lo
     assert result["snapshot_incomplete"] is True and len(encoded(result)) <= projects.INSPECT_BYTES
 
 
-def test_child_directory_limit_does_not_claim_all_subdirectories_were_listed(local):
+def test_child_directory_limit_does_not_claim_all_subdirectories_were_listed(local):  # noqa: F811 - imported pytest fixture
     _, _, root, _ = local
     for number in range(12):
         (root / f"package{number:02}").mkdir()
@@ -92,7 +92,7 @@ def test_child_directory_limit_does_not_claim_all_subdirectories_were_listed(loc
     assert result["snapshot_incomplete"] is True
 
 
-def test_budget_counts_json_escaping_and_unicode_without_claiming_omitted_pages(local):
+def test_budget_counts_json_escaping_and_unicode_without_claiming_omitted_pages(local):  # noqa: F811 - imported pytest fixture
     _, _, root, _ = local
     (root / "package.json").write_text(json.dumps({"scripts": {
         f"{number:02}" + "测" * 78: "private command" for number in range(32)}}, ensure_ascii=False), encoding="utf-8")
@@ -122,7 +122,7 @@ def test_time_bounded_directory_sample_restarts_exact_listing_instead_of_skippin
     assert "not an exact sorted prefix" in listing["note"]
 
 
-def test_snapshot_does_not_follow_guidance_or_directory_symlinks(local, tmp_path):
+def test_snapshot_does_not_follow_guidance_or_directory_symlinks(local, tmp_path):  # noqa: F811 - imported pytest fixture
     _, _, root, _ = local
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -139,7 +139,7 @@ def test_snapshot_does_not_follow_guidance_or_directory_symlinks(local, tmp_path
     assert "OUTSIDE CONTENT" not in json.dumps(result) and "secret.txt" not in json.dumps(result)
 
 
-def test_snapshot_records_real_file_version_and_external_changes_still_block_edits(local):
+def test_snapshot_records_real_file_version_and_external_changes_still_block_edits(local):  # noqa: F811 - imported pytest fixture
     tools, context, root, _ = local
     path = root / "AGENTS.md"
     path.write_text("Original instructions.\n", encoding="utf-8")
@@ -151,7 +151,7 @@ def test_snapshot_records_real_file_version_and_external_changes_still_block_edi
         tools.preview("ryn_file_edit", {"path": "AGENTS.md", "old_text": "External", "new_text": "Updated"}, context)
 
 
-def test_cancellation_stops_snapshot_between_entry_reads(local, monkeypatch):
+def test_cancellation_stops_snapshot_between_entry_reads(local, monkeypatch):  # noqa: F811 - imported pytest fixture
     tools, _, root, _ = local
     (root / "AGENTS.md").write_text("Instructions.\n", encoding="utf-8")
     (root / "README.md").write_text("Must not read after cancellation.\n", encoding="utf-8")
@@ -171,7 +171,7 @@ def test_cancellation_stops_snapshot_between_entry_reads(local, monkeypatch):
     assert reads == ["AGENTS.md"]
 
 
-def test_permission_revocation_during_snapshot_is_rechecked_before_next_read(local, monkeypatch):
+def test_permission_revocation_during_snapshot_is_rechecked_before_next_read(local, monkeypatch):  # noqa: F811 - imported pytest fixture
     tools, _, root, state = local
     (root / "AGENTS.md").write_text("Instructions.\n", encoding="utf-8")
     (root / "README.md").write_text("Must not read after revocation.\n", encoding="utf-8")
@@ -191,7 +191,7 @@ def test_permission_revocation_during_snapshot_is_rechecked_before_next_read(loc
     assert reads == ["AGENTS.md"]
 
 
-def test_entry_snapshot_reports_nested_instructions_and_batches_observed_files(local, monkeypatch):
+def test_entry_snapshot_reports_nested_instructions_and_batches_observed_files(local, monkeypatch):  # noqa: F811 - imported pytest fixture
     tools, context, root, state = local
     (root / "AGENTS.md").write_text("Root guidance.\n", encoding="utf-8")
     (root / "README.md").write_text("Root readme.\n", encoding="utf-8")

@@ -199,7 +199,7 @@ def test_no_editor_payloads_in_distribution_configuration():
     assert "web_sha256" in CRAFT["wordcraft"]  # Only small pinned manifests ship.
 
 
-def test_agent_registry_defaults_and_stale_tool_rejection(node, manager):
+def test_agent_registry_defaults_and_stale_tool_rejection(node, manager):  # noqa: F811 - imported pytest fixture
     from rynmesh.agent_runtime.bridge import build_agent_integrations
 
     app, store = node

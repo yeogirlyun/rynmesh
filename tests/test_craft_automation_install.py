@@ -31,7 +31,7 @@ def runtime_boundary(monkeypatch):
     return installed, installs
 
 
-def test_queries_and_web_install_never_download_document_component(manager, runtime_boundary):
+def test_queries_and_web_install_never_download_document_component(manager, runtime_boundary):  # noqa: F811 - imported pytest fixture
     installed, installs = runtime_boundary
     before = manager.catalog()
     assert {p["id"] for p in before["plugins"] if p.get("automation_supported")} == set(DEFAULT_PLUGINS)
@@ -50,7 +50,7 @@ def test_queries_and_web_install_never_download_document_component(manager, runt
     assert (manager.cache / "wordcraft/v0.6.1/payload/wordcraft/index.html").read_text().startswith("<title>")
 
 
-def test_document_install_requires_installed_enabled_verified_inactive_plugin(manager, runtime_boundary):
+def test_document_install_requires_installed_enabled_verified_inactive_plugin(manager, runtime_boundary):  # noqa: F811 - imported pytest fixture
     _, installs = runtime_boundary
     with pytest.raises(craft_host.CraftError, match="plugin_not_installed"):
         manager.install_automation("wordcraft")
@@ -70,7 +70,7 @@ def test_document_install_requires_installed_enabled_verified_inactive_plugin(ma
     assert installs == []
 
 
-def test_document_capability_requires_verified_runtime_and_supported_platform(manager, runtime_boundary, monkeypatch):
+def test_document_capability_requires_verified_runtime_and_supported_platform(manager, runtime_boundary, monkeypatch):  # noqa: F811 - imported pytest fixture
     manager.install("wordcraft")
     monkeypatch.setattr(craft_native, "runtime_status", lambda cache, slug: {
         "supported": slug in DEFAULT_PLUGINS, "platform_supported": False,
@@ -88,7 +88,7 @@ def test_document_capability_requires_verified_runtime_and_supported_platform(ma
     assert row["automation_error"] == "craft_agent_runtime_not_verified"
 
 
-def test_document_install_http_is_owner_only_and_rejects_custom_arguments(manager, runtime_boundary, monkeypatch):
+def test_document_install_http_is_owner_only_and_rejects_custom_arguments(manager, runtime_boundary, monkeypatch):  # noqa: F811 - imported pytest fixture
     _, installs = runtime_boundary
     monkeypatch.setattr("rynmesh.node_apps.plugins.PluginManager", lambda *args, **kwargs: manager)
     app = FastAPI()

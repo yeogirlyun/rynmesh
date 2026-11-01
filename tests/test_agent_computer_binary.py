@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from test_agent_native_bridge import FAKE_WORKER_SCRIPT
 
 from rynmesh.agent_runtime.computer import (
     EXPECTED_WORKER_NAME,
@@ -56,7 +57,6 @@ from rynmesh.agent_runtime.computer import (
 )
 from rynmesh.agent_runtime.computer import binary as binary_mod
 from rynmesh.llm_package import process_guard
-from tests.test_agent_native_bridge import FAKE_WORKER_SCRIPT
 
 EXE_BASENAME = "ryn_computer_use.exe"
 MANIFEST_BASENAME = "computer-use-manifest.json"

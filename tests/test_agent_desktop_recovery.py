@@ -46,7 +46,7 @@ def test_uncertain_input_still_stops_without_replay(change):
     assert not isinstance(caught.value, AgentToolRejected)
 
 
-def test_selected_model_never_discovers_unrelated_providers(cli_metadata_catalog):
+def test_selected_model_never_discovers_unrelated_providers(cli_metadata_catalog):  # noqa: F811 - imported pytest fixture
     f = cli_metadata_catalog
     selected = []
     f.catalog.services["discover_local_model"] = lambda network, service: selected.append(service) or [f.record]
@@ -55,7 +55,7 @@ def test_selected_model_never_discovers_unrelated_providers(cli_metadata_catalog
     assert selected == ["codex-cli"]
 
 
-def test_display_uses_passive_catalog(cli_metadata_catalog):
+def test_display_uses_passive_catalog(cli_metadata_catalog):  # noqa: F811 - imported pytest fixture
     f = cli_metadata_catalog
     f.catalog.services["discover_display"] = lambda _: [f.record]
     f.catalog.services["discover"] = lambda _: pytest.fail("blocking remote catalog")

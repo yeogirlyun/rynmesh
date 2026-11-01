@@ -44,8 +44,6 @@ if (-not $SkipSidecar) {
     python -m venv $venvRoot
     Assert-Success 'Create Python build environment'
     $pythonExe = Join-Path $venvRoot 'Scripts/python.exe'
-    npm.cmd ci --omit=dev --prefix (Join-Path $repoRoot 'rynmesh/agent_runtime/chrome_runtime')
-    Assert-Success 'Install Chrome runtime dependencies'
     & $pythonExe -m pip install "${repoRoot}[documents]" 'pyinstaller==6.22.3'
     Assert-Success 'Install node dependencies'
     & $pythonExe -c 'import pypdf; import rynmesh.services.document_extract_child'

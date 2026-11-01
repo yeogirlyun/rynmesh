@@ -19,7 +19,7 @@ from test_memory_integration_contract import (
 )
 
 
-def test_current_owner_forget_rotates_its_own_provider_key_and_derived_context(integrated):
+def test_current_owner_forget_rotates_its_own_provider_key_and_derived_context(integrated):  # noqa: F811 - imported pytest fixture
     env = integrated
     seed_bound_memory(env)
     owner_start = "请根据我的摄影器材提供建议。"

@@ -313,6 +313,13 @@ def test_subagent_role_and_write_scope_enforcement():
 
 def test_subagent_interrupt_and_stop_all_actions(tmp_path: Path):
     _, runtime, model, _ = _build_env(tmp_path)
+    # Keep children working until the interrupt; an already completed task
+    # correctly stays completed when interrupted.
+    model.child_responses = [
+        {"message": {"role": "assistant", "tool_calls": [{"id": f"child_read_{i}", "type": "function",
+          "function": {"name": "ryn_file_read", "arguments": json.dumps({"path": "notes.txt"})}}]}}
+        for i in range(10)
+    ]
 
     model.parent_responses.append(
         {
@@ -365,10 +372,12 @@ def test_subagent_interrupt_and_stop_all_actions(tmp_path: Path):
     )
     parent_id = created["id"]
 
-    # Execute inference step + both queued tool execution steps so both subagents are spawned
-    runtime.run_once()
-    runtime.run_once()
-    runtime.run_once()
+    # Child tasks share the scheduler. Wait for the two parent dispatches,
+    # rather than assuming three worker ticks all belong to the parent.
+    for _ in range(10):
+        runtime.run_once()
+        if len(runtime.get(parent_id).get("subagents") or []) == 2:
+            break
     snap = runtime.get(parent_id)
     subs = snap.get("subagents") or []
     assert len(subs) == 2

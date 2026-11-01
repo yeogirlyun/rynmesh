@@ -1,9 +1,12 @@
 import json
+
 import pytest
+
 from rynmesh.agent_runtime.extensions import ExtensionStore
 from rynmesh.agent_runtime.extensions.imports import ExtensionImportManager
 from rynmesh.agent_runtime.extensions.web_app import validate_web_app
 from rynmesh.agent_runtime.store import AgentError
+
 
 @pytest.mark.parametrize('url',['javascript:alert(1)','file:///C:/secret','http://example.com','https://user:pass@example.com','https://example.com/#token','https://example.com\\@evil.test'])
 def test_reject_unsafe_app_origins(url):

@@ -51,7 +51,7 @@ def one_receipt(messages):
     return value, text
 
 
-def test_readonly_forget_discloses_real_host_result_without_forgotten_content(integrated):
+def test_readonly_forget_discloses_real_host_result_without_forgotten_content(integrated):  # noqa: F811 - imported pytest fixture
     env = integrated
     env.api.request('PUT', BASE + '/settings', {'permission_mode': 'read_only'})
     original = seed_bound_memory(env)
@@ -69,7 +69,7 @@ def test_readonly_forget_discloses_real_host_result_without_forgotten_content(in
                for message in row['messages']), 'Host protocol must not become fake chat history'
 
 
-def test_explicit_save_outcome_is_available_even_when_memory_use_is_off(integrated):
+def test_explicit_save_outcome_is_available_even_when_memory_use_is_off(integrated):  # noqa: F811 - imported pytest fixture
     env = integrated
     env.api.request('PUT', BASE + '/settings', {'permission_mode': 'read_only'})
     env.api.write('PUT', '/settings', {'use_enabled': False})
@@ -85,7 +85,7 @@ def test_explicit_save_outcome_is_available_even_when_memory_use_is_off(integrat
     assert all(value not in text for value in ('X-T5', 'XF16-55', 'mem_', 'content_sha256', 'source_message'))
 
 
-def test_missing_forget_match_is_not_reported_as_a_successful_deletion(integrated):
+def test_missing_forget_match_is_not_reported_as_a_successful_deletion(integrated):  # noqa: F811 - imported pytest fixture
     env = integrated
     task_id = env.api.create_task(FORGET)
     finish(env, task_id)
@@ -95,7 +95,7 @@ def test_missing_forget_match_is_not_reported_as_a_successful_deletion(integrate
     assert result['reason'] == 'no_matching_memory'
 
 
-def test_current_correction_reports_one_actual_update_without_replaying_old_fact_values(integrated):
+def test_current_correction_reports_one_actual_update_without_replaying_old_fact_values(integrated):  # noqa: F811 - imported pytest fixture
     env = integrated
     task_id = env.api.create_task(SAVE)
     finish(env, task_id)
@@ -109,7 +109,7 @@ def test_current_correction_reports_one_actual_update_without_replaying_old_fact
     assert all(value not in text for value in ('X-T5', 'X-H2', 'XF16-55'))
 
 
-def test_real_prior_receipt_cannot_be_projected_for_another_owner_turn_or_revision(integrated):
+def test_real_prior_receipt_cannot_be_projected_for_another_owner_turn_or_revision(integrated):  # noqa: F811 - imported pytest fixture
     env = integrated
     task_id = env.api.create_task(SAVE)
     finish(env, task_id)

@@ -16,7 +16,7 @@ from rynmesh.llm_package.chat import validate_chat
 from rynmesh.services import peer_box
 
 
-def test_image_tool_sends_actual_bounded_pixels_without_putting_base64_in_receipts(node, monkeypatch, tmp_path):
+def test_image_tool_sends_actual_bounded_pixels_without_putting_base64_in_receipts(node, monkeypatch, tmp_path):  # noqa: F811 - imported pytest fixture
     app, owner = node
     _, model_id = add_source(app)
     bridge, tools, catalog = build_agent_integrations(app, owner, owner.home)
@@ -50,7 +50,7 @@ def test_image_tool_sends_actual_bounded_pixels_without_putting_base64_in_receip
     assert receipt["result"]["width"] == 900
 
 
-def test_image_tool_cannot_read_outside_workspace_or_invent_vision_support(local):
+def test_image_tool_cannot_read_outside_workspace_or_invent_vision_support(local):  # noqa: F811 - imported pytest fixture
     tools, context, root, _ = local
     Image.new("RGB", (10, 10), "blue").save(root / "picture.png")
     with pytest.raises(AgentToolRejected, match="requires_api_model"):

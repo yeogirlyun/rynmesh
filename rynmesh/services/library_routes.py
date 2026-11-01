@@ -1,10 +1,14 @@
 """Local library projection over the existing managed imports and reading stores."""
 from typing import Any
-from fastapi import Request as FastAPIRequest, HTTPException
-from .library import LibraryError, LibraryService
-from .library_metadata import LibraryMetadataError, LibraryMetadataStore
-from .library_imports import MAX_IMPORT_BYTES, LibraryImportError
+
+from fastapi import HTTPException
+from fastapi import Request as FastAPIRequest
+
 from .digest import DigestError
+from .library import LibraryError, LibraryService
+from .library_imports import MAX_IMPORT_BYTES, LibraryImportError
+from .library_metadata import LibraryMetadataError, LibraryMetadataStore
+
 
 def install_library(app, *, home, imports, consumption, digest, local_control):
     app.state.library_imports = imports
@@ -33,7 +37,7 @@ def install_library(app, *, home, imports, consumption, digest, local_control):
                     record = _library_service()._consumption_record(identifier)
                     sources.append(app.state.ask_ryn.context.prepare(record['item_id']))
             return {"materials": [source['library_id'] for source in sources]}
-        except (ValueError, KeyError) as exc:
+        except (ValueError, KeyError):
             raise HTTPException(409, detail="ask_context_unavailable") from None
 
     @app.get("/api/local/library")

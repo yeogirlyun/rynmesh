@@ -37,6 +37,7 @@ from typing import Any
 from jsonschema import ValidationError, validate
 
 from .chrome_runtime import PACKAGE_ROOT as CHROME_RUNTIME_DIR
+from .chrome_runtime import external_runtime_dir
 from .js_runtime.manager import sanitized_worker_env
 from .local_browser import find_browser
 from .protocol import sanitized
@@ -87,8 +88,10 @@ SPEC = {
             "Run JavaScript in a sandboxed CodeMode runtime to batch and compose read-only tools "
             "(`await Promise.all([...])`, `as_settled([...])`, `stream_settled([...])`), filter/transform "
             "results in code, persist intermediate values and top-level bindings across turns (`store(key, value)` / `load(key)`), "
-            "and control Chrome/browsers via Codex Browser Use (`await setupBrowserRuntime(); const chrome = await agent.browsers.get('chrome')`) "
-            "when desktop_access is enabled. All read-only tools are available on `tools.<name>(args)` and listed in `ALL_TOOLS`. "
+            "and optionally control browsers through an explicitly installed compatible browser adapter "
+            "(`await setupBrowserRuntime(); const chrome = await agent.browsers.get('chrome')`) when desktop_access is enabled. "
+            "If the adapter is unavailable, use the built-in ryn_browser_* tools. "
+            "All read-only tools are available on `tools.<name>(args)` and listed in `ALL_TOOLS`. "
             "Use `text(...)` / `console.log(...)` to emit output, `image(...)` / `emitImage(...)` to attach an image, or return a JSON-serializable value."
         ),
         "parameters": {
@@ -550,7 +553,7 @@ async function detectExistingChromeCdpPort() {
 
 async function startFallbackCdpBackend() {
   if (cdpPipeServerInstance) return cdpPipeServerInstance.pipePath;
-  const scriptsDir = path.join(workerConfig.chrome_runtime_dir, 'scripts');
+  const scriptsDir = path.join(workerConfig.chrome_bridge_dir, 'scripts');
   if (!cdpPipeMod) {
     cdpPipeMod = await import(pathToFileURL(path.join(scriptsDir, 'cdp-pipe-server.mjs')).href);
   }
@@ -595,6 +598,13 @@ async function ensureBrowserServiceReady() {
   const wasmPath = fs.existsSync(path.join(scriptsDir, 'browser-accessibility.wasm.br'))
     ? path.join(scriptsDir, 'browser-accessibility.wasm.br')
     : path.join(runtimeDir, 'assets', 'browser-accessibility.wasm.br');
+  if (!runtimeDir || !fs.existsSync(path.join(scriptsDir, 'browser-client.mjs')) ||
+      !fs.existsSync(path.join(scriptsDir, 'browser-service.mjs')) || !fs.existsSync(wasmPath)) {
+    const err = new Error('agent_browser_adapter_unavailable: Use the built-in ryn_browser_* tools, or configure a separately installed compatible adapter with RYN_CHROME_RUNTIME_DIR.');
+    err.rejectedCode = 'agent_browser_adapter_unavailable';
+    activeExecState.rejectedCode = err.rejectedCode;
+    throw err;
+  }
 
   let backendPaths = '';
   const forceFallback = Boolean(
@@ -1130,6 +1140,7 @@ rl.on('line', (line) => {
     workerConfig = {
       task_id: msg.task_id || 'anon',
       chrome_runtime_dir: msg.chrome_runtime_dir || '',
+      chrome_bridge_dir: msg.chrome_bridge_dir || '',
       browser_executable: msg.browser_executable || '',
       headless_browser: Boolean(msg.headless_browser),
       force_cdp_fallback: Boolean(msg.force_cdp_fallback),
@@ -1294,7 +1305,8 @@ class _CodeModeWorkerSession:
         self.send({
             "type": "init_worker",
             "task_id": task_id or "anon",
-            "chrome_runtime_dir": str(CHROME_RUNTIME_DIR),
+            "chrome_runtime_dir": str(external_runtime_dir() or ""),
+            "chrome_bridge_dir": str(CHROME_RUNTIME_DIR),
             "browser_executable": os.environ.get("RYN_CHROME_EXECUTABLE") or find_browser() or "",
             "headless_browser": bool(headless_flag),
             "force_cdp_fallback": os.environ.get("RYN_CHROME_FORCE_CDP_FALLBACK") == "1",
@@ -1739,6 +1751,11 @@ class CodeModeRunner:
             raise AgentToolRejected(
                 "agent_desktop_access_required",
                 correction="Browser control in ryn_code_exec requires local_execution.desktop_access=true.",
+            )
+        if final_frame.get("rejected_code") == "agent_browser_adapter_unavailable":
+            raise AgentToolRejected(
+                "agent_browser_adapter_unavailable",
+                correction="Use the built-in ryn_browser_* tools or an explicitly installed compatible browser adapter.",
             )
 
         raw_items = final_frame.get("content_items") if isinstance(final_frame.get("content_items"), list) else []

@@ -10,7 +10,7 @@ from test_memory_integration_contract import integrated as integrated
 from test_memory_integration_contract import prohibit_network as prohibit_network
 
 
-def test_idempotent_old_request_replay_returns_fresh_state_without_reapplying(integrated):
+def test_idempotent_old_request_replay_returns_fresh_state_without_reapplying(integrated):  # noqa: F811 - imported pytest fixture
     env = integrated
     start = env.api.snapshot()
     original = {
@@ -32,7 +32,7 @@ def test_idempotent_old_request_replay_returns_fresh_state_without_reapplying(in
     assert replay["settings"] == after["settings"]
 
 
-def test_committed_create_replay_survives_catalog_drift_without_new_authorization(integrated):
+def test_committed_create_replay_survives_catalog_drift_without_new_authorization(integrated):  # noqa: F811 - imported pytest fixture
     env = integrated
     start = env.api.snapshot()
     original = {

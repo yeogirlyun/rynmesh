@@ -8,7 +8,7 @@ from test_agent_local_tools import local as local
 from rynmesh.agent_runtime.local_browser import Browser, find_browser
 
 
-def test_page_controls_and_text_are_reachable_beyond_first_page(local):
+def test_page_controls_and_text_are_reachable_beyond_first_page(local):  # noqa: F811 - imported pytest fixture
     if not find_browser():
         pytest.skip("Chromium unavailable")
     tools, context, root, state = local
@@ -113,7 +113,7 @@ def test_existing_task_enabling_desktop_access_exposes_browser_tools_on_next_mod
     assert set(tool_menu.BROWSER_TOOLS) <= second_turn_tools
 
 
-def test_disabling_desktop_access_rejects_calls_and_aborts_inflight_wait(local):
+def test_disabling_desktop_access_rejects_calls_and_aborts_inflight_wait(local):  # noqa: F811 - imported pytest fixture
     import threading
 
     from rynmesh.agent_runtime.runtime import write_permission_revoked
@@ -347,7 +347,7 @@ def test_window_budgets_desktop_off_preservation_and_pins_released_lifecycle():
     assert not (set(tool_menu.BROWSER_TOOLS) & set(state_disabled_again.get("loaded_names") or ()))
 
 
-def test_open_then_immediate_read_without_polling_and_navigation_timeout_status(local, monkeypatch):
+def test_open_then_immediate_read_without_polling_and_navigation_timeout_status(local, monkeypatch):  # noqa: F811 - imported pytest fixture
     if not find_browser():
         pytest.skip("Chromium unavailable")
     import http.server
@@ -422,7 +422,7 @@ def test_open_then_immediate_read_without_polling_and_navigation_timeout_status(
             httpd.shutdown()
 
 
-def test_hover_async_wait_clear_expanded_press_and_multi_tab_management(local):
+def test_hover_async_wait_clear_expanded_press_and_multi_tab_management(local):  # noqa: F811 - imported pytest fixture
     if not find_browser():
         pytest.skip("Chromium unavailable")
     from rynmesh.agent_runtime.store import AgentToolRejected
@@ -570,7 +570,7 @@ def test_hover_async_wait_clear_expanded_press_and_multi_tab_management(local):
     assert tab2_id not in tools._browser.pages
 
 
-def test_state_fields_iframe_click_occlusion_and_disabled_element_checks(local):
+def test_state_fields_iframe_click_occlusion_and_disabled_element_checks(local):  # noqa: F811 - imported pytest fixture
     if not find_browser():
         pytest.skip("Chromium unavailable")
     from rynmesh.agent_runtime.store import AgentToolRejected
@@ -644,7 +644,7 @@ def test_state_fields_iframe_click_occlusion_and_disabled_element_checks(local):
     assert frame_snap_after["elements"][0]["name"] == "Frame Clicked"
 
 
-def test_stable_element_refs_across_spa_insertions_replacements_and_scoped_reads(local):
+def test_stable_element_refs_across_spa_insertions_replacements_and_scoped_reads(local):  # noqa: F811 - imported pytest fixture
     if not find_browser():
         pytest.skip("Chromium unavailable")
     from rynmesh.agent_runtime.store import AgentToolRejected
@@ -741,7 +741,7 @@ def test_stable_element_refs_across_spa_insertions_replacements_and_scoped_reads
         execute(tools, context, "ryn_browser_action", {"page_id": page_id, "action": "click", "selector": scoped_sel}, "op_click_stale_nav")
 
 
-def test_websocket_disconnect_reconnects_reads_but_never_replays_mutating_actions(local):
+def test_websocket_disconnect_reconnects_reads_but_never_replays_mutating_actions(local):  # noqa: F811 - imported pytest fixture
     if not find_browser():
         pytest.skip("Chromium unavailable")
     from rynmesh.agent_runtime.store import AgentError
@@ -905,7 +905,7 @@ def test_inflight_inference_permission_change_reschedules_cleanly_and_preserves_
     assert runtime2.get(task2["id"])["status"] == "paused"
 
 
-def test_send_exception_on_mutating_command_and_post_side_effect_rejection_ledger(local):
+def test_send_exception_on_mutating_command_and_post_side_effect_rejection_ledger(local):  # noqa: F811 - imported pytest fixture
     if not find_browser():
         pytest.skip("Chromium unavailable")
     from rynmesh.agent_runtime.store import AgentError
@@ -1029,7 +1029,7 @@ def test_send_exception_on_mutating_command_and_post_side_effect_rejection_ledge
     assert tools.ledger_factory().get("op_click_then_revoke")["status"] == "dispatched"
 
 
-def test_click_revalidates_after_mouse_moved_press_verifies_focus_and_ancestor_scaled_iframe_rejected(local):
+def test_click_revalidates_after_mouse_moved_press_verifies_focus_and_ancestor_scaled_iframe_rejected(local):  # noqa: F811 - imported pytest fixture
     if not find_browser():
         pytest.skip("Chromium unavailable")
     from rynmesh.agent_runtime.store import AgentToolRejected
@@ -1101,7 +1101,7 @@ def test_click_revalidates_after_mouse_moved_press_verifies_focus_and_ancestor_s
         )
 
 
-def test_slow_main_document_headers_budget_and_selector_wait_recovers_after_main_thread_block(local, monkeypatch):
+def test_slow_main_document_headers_budget_and_selector_wait_recovers_after_main_thread_block(local, monkeypatch):  # noqa: F811 - imported pytest fixture
     if not find_browser():
         pytest.skip("Chromium unavailable")
     import http.server
@@ -1406,7 +1406,7 @@ def test_loopback_http_shared_verified_ssl_context_per_request_client_close_and_
             server.shutdown()
 
 
-def test_browser_write_atomic_begin_dispatched_two_writes_and_idempotent_retry(local, monkeypatch):
+def test_browser_write_atomic_begin_dispatched_two_writes_and_idempotent_retry(local, monkeypatch):  # noqa: F811 - imported pytest fixture
     import copy
     import os
 
@@ -1502,7 +1502,7 @@ def test_browser_write_atomic_begin_dispatched_two_writes_and_idempotent_retry(l
     assert len(write_snapshots) == 2
 
 
-def test_browser_write_cancel_after_durable_begin_dispatched_marks_not_executed_without_perform(local, monkeypatch):
+def test_browser_write_cancel_after_durable_begin_dispatched_marks_not_executed_without_perform(local, monkeypatch):  # noqa: F811 - imported pytest fixture
     import copy
 
     from rynmesh.agent_runtime.operation_ledger import OperationLedger

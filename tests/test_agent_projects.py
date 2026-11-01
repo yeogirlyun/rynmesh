@@ -101,7 +101,7 @@ def test_multiple_saved_projects_keep_explicit_task_binding_after_selection_and_
     assert restored.get(other["id"])["status"] == "queued"
 
 
-def test_actual_project_loop_preloads_tools_reads_instructions_and_creates_verified_output(node, monkeypatch, tmp_path):
+def test_actual_project_loop_preloads_tools_reads_instructions_and_creates_verified_output(node, monkeypatch, tmp_path):  # noqa: F811 - imported pytest fixture
     app, owner = node
     _, model_id = add_source(app)
     bridge, tools, catalog = build_agent_integrations(app, owner, owner.home)

@@ -1,5 +1,10 @@
 # Service platform: shared infrastructure for providers and seekers
 
+The owner-requested [node/service/plugin standard](NODE_SERVICE_PLUGIN_STANDARD.md)
+defines the shared vocabulary and public/private boundary for personal and
+corporate services as of 2026-10-29. The dated implementation inventory below
+retains its original scope.
+
 Status: reviewed 2026-10-03 against main `fa85833`. Delivered foundations are
 separated from proposed extensions. The owner requests a general-purpose value
 network, with internal Ryncoin earning/spending first and fiat exchange much

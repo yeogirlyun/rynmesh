@@ -25,8 +25,8 @@ Profiles are selected with `RYNMESH_TRANSPORT` (default: `camouflage`).
 
 from __future__ import annotations
 
-import http.client
 import hashlib
+import http.client
 import os
 import ssl
 import urllib.request
@@ -283,7 +283,7 @@ class StdlibHttpsTransport:
         except HTTPError as exc:
             raise TransportError(f"http status {exc.code}", reason="http_error",
                                  status=exc.code) from exc
-        except (URLError, TimeoutError, ssl.SSLError, OSError) as exc:
+        except (URLError, TimeoutError, ssl.SSLError, OSError):
             raise TransportError("http request failed", reason="http_error") from None
 
     def get_bytes(
@@ -320,7 +320,7 @@ class StdlibHttpsTransport:
         except TransportError:
             dest.unlink(missing_ok=True)
             raise
-        except (HTTPError, URLError, TimeoutError, ssl.SSLError, OSError) as exc:
+        except (HTTPError, URLError, TimeoutError, ssl.SSLError, OSError):
             dest.unlink(missing_ok=True)
             raise TransportError("http request failed", reason="http_error") from None
         return dest
@@ -421,7 +421,7 @@ class FrontedHttpsTransport:
 
         try:
             raw = socket.create_connection((connect_host, port), timeout=timeout_s)
-        except OSError as exc:
+        except OSError:
             raise TransportError("http request failed", reason="http_error") from None
         try:
             if scheme == "https":
@@ -433,7 +433,7 @@ class FrontedHttpsTransport:
                 request_headers["Content-Length"] = str(len(body))
             conn.request(method, path, body=body, headers=request_headers)
             resp = conn.getresponse()
-        except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
+        except (OSError, ssl.SSLError, http.client.HTTPException):
             try:
                 raw.close()
             except OSError:
@@ -449,7 +449,7 @@ class FrontedHttpsTransport:
         conn, resp = self._open(url, timeout_s, headers, method=method, body=body)
         try:
             return read_bounded(resp, max_bytes)
-        except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
+        except (OSError, ssl.SSLError, http.client.HTTPException):
             raise TransportError("http request failed", reason="http_error") from None
         finally:
             conn.close()
@@ -488,7 +488,7 @@ class FrontedHttpsTransport:
         except TransportError:
             dest.unlink(missing_ok=True)
             raise
-        except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
+        except (OSError, ssl.SSLError, http.client.HTTPException):
             dest.unlink(missing_ok=True)
             raise TransportError("http request failed", reason="http_error") from None
         finally:

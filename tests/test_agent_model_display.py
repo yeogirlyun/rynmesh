@@ -6,7 +6,7 @@ from test_agent_cli_models import cli_metadata_catalog as cli_metadata_catalog
 from test_agent_runtime import make_runtime
 
 
-def test_display_uses_observed_inventory_while_discovery_is_blocked(cli_metadata_catalog, monkeypatch):
+def test_display_uses_observed_inventory_while_discovery_is_blocked(cli_metadata_catalog, monkeypatch):  # noqa: F811 - imported pytest fixture
     from rynmesh.llm_package import codex_session
     f = cli_metadata_catalog
     identifier = "local/codex-cli/model/model-a"

@@ -198,6 +198,9 @@ def test_default_task_create_rejects_a_configuration_race(tmp_path):
     approve(runtime, task["id"])
     advance(runtime)
     def raced_catalog():
+        # Inject one concurrent owner update. Settings projection itself now
+        # reads the catalog; it must see the ordinary catalog on that read.
+        runtime.catalog.list_models = lambda: copy.deepcopy(rows)
         runtime.update_settings({"max_steps": 19})
         return copy.deepcopy(rows)
     runtime.catalog.list_models = raced_catalog

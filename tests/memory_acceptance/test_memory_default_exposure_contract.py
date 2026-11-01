@@ -39,7 +39,7 @@ def two_destinations(env, monkeypatch):
 
 
 @pytest.mark.parametrize('mode', ['selected_models', 'destination'])
-def test_new_explicit_facts_only_reach_the_configured_recipient(integrated, monkeypatch, mode):
+def test_new_explicit_facts_only_reach_the_configured_recipient(integrated, monkeypatch, mode):  # noqa: F811 - imported pytest fixture
     env = integrated
     first, second, allowed, _other = two_destinations(env, monkeypatch)
     env.api.write('PUT', '/settings', {'default_exposure': {
@@ -61,7 +61,7 @@ def test_new_explicit_facts_only_reach_the_configured_recipient(integrated, monk
 
 
 @pytest.mark.parametrize('mode', ['selected_models', 'restricted'])
-def test_no_allowed_recipient_stores_explicit_fact_locally_without_disclosure(integrated, mode):
+def test_no_allowed_recipient_stores_explicit_fact_locally_without_disclosure(integrated, mode):  # noqa: F811 - imported pytest fixture
     env = integrated
     env.api.write('PUT', '/settings', {'default_exposure': {'mode': mode, 'allowed_destinations': []}})
     finish(env, env.api.create_task(SAVE))
@@ -74,7 +74,7 @@ def test_no_allowed_recipient_stores_explicit_fact_locally_without_disclosure(in
     assert 'X-T5' not in outbound and 'XF16-55' not in outbound
 
 
-def test_content_correction_cannot_replace_old_recipient_with_new_default(integrated, monkeypatch):
+def test_content_correction_cannot_replace_old_recipient_with_new_default(integrated, monkeypatch):  # noqa: F811 - imported pytest fixture
     env = integrated
     _first, second, allowed, other = two_destinations(env, monkeypatch)
     env.api.write('PUT', '/settings', {'default_exposure': {
@@ -97,7 +97,7 @@ def test_content_correction_cannot_replace_old_recipient_with_new_default(integr
 
 
 @pytest.mark.parametrize('has_recipient', [True, False])
-def test_grounded_model_tool_obeys_the_same_recipient_rule(integrated, has_recipient):
+def test_grounded_model_tool_obeys_the_same_recipient_rule(integrated, has_recipient):  # noqa: F811 - imported pytest fixture
     env = integrated
     destination = env.catalog.destination(env.catalog.row)
     env.api.write('PUT', '/settings', {'default_exposure': {

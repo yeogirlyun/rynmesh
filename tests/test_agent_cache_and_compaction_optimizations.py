@@ -9,9 +9,8 @@ from test_agent_runtime import advance, assistant, make_runtime
 
 from rynmesh.agent_runtime import budget, memory, projects, results, tool_menu
 from rynmesh.agent_runtime.bridge import AgentModelBridge
-from rynmesh.agent_runtime.store import AgentError, encoded
+from rynmesh.agent_runtime.store import AgentError
 from rynmesh.llm_package.adapters import (
-    OpenAICompatibleAdapter,
     actual_usage,
     cached_input_tokens,
 )
@@ -448,6 +447,7 @@ def test_proactive_soft_landing_wrap_up_stops_on_owner_budget_without_auto_renew
 
 def test_code_mode_tab_ax_decorator_and_output_dedup(tmp_path):
     from types import SimpleNamespace
+
     from rynmesh.agent_runtime import code_mode
 
     runner = code_mode.CodeModeRunner(SimpleNamespace(local=None, specs=lambda: [], metadata=lambda _n: {}))

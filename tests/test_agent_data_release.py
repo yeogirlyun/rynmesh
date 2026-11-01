@@ -68,7 +68,7 @@ def endpoint(*, redirect=None, status=302):
         assert not thread.is_alive()
 
 
-def test_source_context_uses_real_record_and_actual_manager(node):
+def test_source_context_uses_real_record_and_actual_manager(node):  # noqa: F811 - imported pytest fixture
     app, store = node
     record, model_id = add_source(app)
     bridge, _, catalog = build_agent_integrations(app, store, store.home)
@@ -87,7 +87,7 @@ def test_source_context_uses_real_record_and_actual_manager(node):
 
 
 @pytest.mark.parametrize("expected", [None, {}])
-def test_allowlist_requires_explicit_valid_destination_before_dispatch(node, monkeypatch, expected):
+def test_allowlist_requires_explicit_valid_destination_before_dispatch(node, monkeypatch, expected):  # noqa: F811 - imported pytest fixture
     app, store = node
     _, model_id = add_source(app)
     bridge, _, _ = build_agent_integrations(app, store, store.home)
@@ -98,7 +98,7 @@ def test_allowlist_requires_explicit_valid_destination_before_dispatch(node, mon
     assert requests == []
 
 
-def test_memory_only_policy_preserves_unbound_adapter_compatibility(node, monkeypatch):
+def test_memory_only_policy_preserves_unbound_adapter_compatibility(node, monkeypatch):  # noqa: F811 - imported pytest fixture
     app, store = node
     _, model_id = add_source(app)
     bridge, _, _ = build_agent_integrations(app, store, store.home)
@@ -111,7 +111,7 @@ def test_memory_only_policy_preserves_unbound_adapter_compatibility(node, monkey
 
 
 @pytest.mark.parametrize("policy_state", [state(), {"version": 500, "sources": []}])
-def test_disallowed_or_malformed_policy_never_dispatches(node, monkeypatch, policy_state):
+def test_disallowed_or_malformed_policy_never_dispatches(node, monkeypatch, policy_state):  # noqa: F811 - imported pytest fixture
     app, store = node
     _, model_id = add_source(app)
     bridge, _, catalog = build_agent_integrations(app, store, store.home)
@@ -124,7 +124,7 @@ def test_disallowed_or_malformed_policy_never_dispatches(node, monkeypatch, poli
 
 @pytest.mark.parametrize("change_at", ["request_callback", "http_boundary"])
 @pytest.mark.parametrize("protocol", ["openai_chat", "openai_responses", "anthropic_messages"])
-def test_source_change_after_admission_is_rechecked_before_body_leaves(node, monkeypatch, change_at, protocol):
+def test_source_change_after_admission_is_rechecked_before_body_leaves(node, monkeypatch, change_at, protocol):  # noqa: F811 - imported pytest fixture
     app, store = node
     record, model_id = add_source(app)
     bridge, _, catalog = build_agent_integrations(app, store, store.home)
@@ -154,7 +154,7 @@ def test_source_change_after_admission_is_rechecked_before_body_leaves(node, mon
     assert requests == []
 
 
-def test_real_bridge_delivers_to_bound_endpoint_and_refuses_redirect(node):
+def test_real_bridge_delivers_to_bound_endpoint_and_refuses_redirect(node):  # noqa: F811 - imported pytest fixture
     app, store = node
     with endpoint() as (sink, received, _), endpoint() as (origin, requests, config):
         sources = app.state.llm_agent_services["source_store"]

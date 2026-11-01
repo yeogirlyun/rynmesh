@@ -14,7 +14,6 @@ import shutil
 import ssl
 import stat
 import tempfile
-import time
 import urllib.request
 import zipfile
 from contextlib import contextmanager
