@@ -81,7 +81,7 @@ CONTINUE_SECONDS = 20.0
 RETRYABLE_MODEL_ERRORS = {"agent_inference_timeout", "agent_model_connection_failed", "agent_model_busy",
                           "agent_model_upstream_failed",
                           "agent_invalid_model_response", "agent_compaction_size_limit", "agent_compaction_incomplete"}
-PUBLIC_FIELDS = ("id", "client_request_id", "title", "model_id", "reasoning_effort", "status", "revision", "created_at", "updated_at",
+PUBLIC_FIELDS = ("fork", "id", "client_request_id", "title", "model_id", "reasoning_effort", "status", "revision", "created_at", "updated_at",
                  "messages", "pending_user_messages", "events", "pending_approval", "steps", "result", "error", "connection_recovery", "limits", "permission_mode", "allowed_write_tools",
                  "model_destination", "local_execution", "project", "verification_evidence", "reconciliation", "archived", "result_refs", "file_artifact_revision",
                  "conversation_revision", "conversation_event_cursor", "source", "automation_id", "automation_run_id", "automation_kind",
@@ -1761,6 +1761,8 @@ class AgentRuntime(AgentLoop):
                 owner_update(row, message)
             row.update(approved=None, pending_approval=None, pending_input=None, result="",
                        latest_turn_is_silent_heartbeat=False, automation_run_id=None)
+            if row.get("fork"):
+                row["fork"]["awaiting_instruction"] = False
             row.setdefault("pending_user_messages", []).append(message)
             was_stopped = row.pop("turn_stopped", False)
             row["pending_control"] = {"kind": "steer", "remain_paused": row["status"] == "paused" and bool(row.get("in_flight")) and intent is not None and not was_stopped}
@@ -1921,6 +1923,8 @@ class AgentRuntime(AgentLoop):
                 subagents.on_subagent_settled_in_tx(data, row)
                 subagents.cascade_stop_subagents_in_tx(data, row, reason="owner_pause", close=False)
             elif action == "resume":
+                if (row.get("fork") or {}).get("awaiting_instruction"):
+                    raise AgentError("agent_fork_instruction_required")
                 if row["status"] not in {"paused", "interrupted"}:
                     raise AgentError("agent_invalid_transition")
                 if not data["settings"]["enabled"]:
@@ -2816,6 +2820,10 @@ class AgentRuntime(AgentLoop):
                     return None
                 rows = sorted(data["tasks"].values(), key=lambda row: row["updated_at"])
                 for row in rows:
+                    if (row.get("fork") or {}).get("awaiting_instruction"):
+                        if row["status"] == "queued":
+                            row["status"] = "paused"
+                        continue
                     if row["status"] != "queued" or not retry_policy.ready(row):
                         continue
                     retry_policy.charge_wait(row)

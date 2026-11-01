@@ -1,0 +1,13 @@
+.ra-file-changes { margin: 16px 0; padding: 16px; border: 1px solid var(--border, #73737355); border-radius: 12px; overflow-wrap: anywhere; }
+.ra-file-changes button { padding: 7px 12px; margin: 4px; border: 1px solid #8886; border-radius: 7px; background: transparent; color: inherit; cursor: pointer; }
+.ra-file-changes button:disabled { opacity: .45; cursor: default; }
+.ra-file-changes article { border-top: 1px solid #8885; padding: 12px 0; }
+.ra-file-change-heading { display: flex; gap: 12px; flex-wrap: wrap; justify-content: space-between; }
+.ra-file-change-heading label { display: inline-flex; align-items: center; gap: 8px; margin: 0; }
+.ra-file-change-heading input[type=checkbox] { width: 16px; height: 16px; min-height: 0; padding: 0; margin: 0; flex: 0 0 16px; }
+.ra-file-changes pre { max-height: 420px; overflow: auto; background: #7771; padding: 12px; white-space: pre; font: 12px/1.6 monospace; }
+.ra-file-changes summary { cursor: pointer; margin: 8px 0; }
+.ra-file-changes [role=alert] { color: #c95835; }
+.ra-file-change-muted, .ra-file-changes small { opacity: .72; font-size: 12px; }
+.ra-file-change-preview, .ra-file-change-result { border: 1px solid #8886; padding: 12px; margin-top: 12px; border-radius: 8px; }
+.ra-file-change-actions { display: flex; flex-wrap: wrap; gap: 8px; }
