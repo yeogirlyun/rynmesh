@@ -5,8 +5,8 @@ import { agentTaskCache, readAgentWorkspace, writeAgentWorkspace } from "../doma
 import RynAgentProgress, { groupAgentMessages, RynAgentTurnDuration } from "./RynAgentProgress";
 import { Fragment, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate as useRouterNavigate } from "react-router-dom";
-import { Trans, useTranslation } from "react-i18next";
-import { ArrowUp, BookOpen, Clock3, CornerDownRight, LoaderCircle, MoreHorizontal, Pencil, Square, Trash2, Check, CircleAlert, ListChecks, Monitor, Network, PanelLeftClose, PanelLeftOpen, Pause, Play, Settings, SlidersHorizontal, Share2, Sparkles, SquarePen, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { ArrowUp, BookOpen, Clock3, CornerDownRight, LoaderCircle, MoreHorizontal, Pencil, Search, Square, Trash2, Check, CircleAlert, ListChecks, Monitor, PanelLeftClose, PanelLeftOpen, Pause, Play, Settings, SlidersHorizontal, Sparkles, SquarePen, X } from "lucide-react";
 import { AgentAPIError, agentReadBackoff, isTransientAgentReadError, mergeAgentTaskSnapshot, agentMessageModelID, agentActionBody, agentAnswerBody, agentMessageBody, agentScopeBody, agentToolResultState, canContinueAgentTask, canResumeAgentTask, canUseAgentModel, canUseAgentAction, agentTaskState, isAgentActive, isAgentLateToolResult, pendingAgentText, sortAgentTasks, rynAgent, type AgentAction, type AgentApproval, type AgentMessageIntent, type AgentModel, type AgentProject, type AgentScopeSelection, type AgentScopeSnapshot, type AgentSettings, type AgentTask, type AgentTaskSummary, type AgentTool } from "../domain/rynAgent";
 import { AgentNavigationContext } from "../personal/agentNavigation";
 import { craftAgentPluginID } from "../domain/craftPlugins";
@@ -56,6 +56,10 @@ function playAutomationChime() {
 }
 import "./rynAgentText";
 import "./RynAgent.css";
+import RynAgentOverview from "./RynAgentOverview";
+import RynAgentWelcome from "./RynAgentWelcome";
+import { AgentPreviewHostContext } from "./RynAgentPreviewSurface";
+import "./RynAgentFocus.css";
 
 function isMissingAgentTaskError(reason: unknown): boolean {
   return reason instanceof AgentAPIError && (
@@ -188,6 +192,7 @@ export default function RynAgent() {
   const [controlUncertain, setControlUncertain] = useState(() => Boolean(saved(CONTROL_KEY)));
   const [tasksCollapsed, setTasksCollapsed] = useState(() => saved("ryn.agent.tasks") === "closed" || (window.innerWidth <= 760 && saved("ryn.agent.tasks") !== "open"));
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [taskQuery, setTaskQuery] = useState("");
   const [automationsList, setAutomationsList] = useState<AgentAutomation[]>([]);
   const [automationRuns, setAutomationRuns] = useState<AgentAutomationRun[]>([]);
   const [activeAutoToast, setActiveAutoToast] = useState<NonNullable<AgentTaskSummary["automation_notification"]> | null>(null);
@@ -195,6 +200,8 @@ export default function RynAgent() {
   const [showAutomationsView, setShowAutomationsView] = useState(false);
   const [showSkillsView, setShowSkillsView] = useState(false);
   const [subagentsDrawerOpen, setSubagentsDrawerOpen] = useState(false);
+  const [previewHost, setPreviewHost] = useState<HTMLDivElement | null>(null);
+  const openPreview = useCallback(() => setSubagentsDrawerOpen(false), []);
   const [selectedSubagentId, setSelectedSubagentId] = useState<string | null>(null);
   const [editingAutomation, setEditingAutomation] = useState<Partial<AgentAutomation> | null>(null);
   const [automationDialogOpen, setAutomationDialogOpen] = useState(false);
@@ -277,6 +284,7 @@ export default function RynAgent() {
   });
   const input = useRef<HTMLTextAreaElement>(null);
   const scroll = useRef<HTMLDivElement>(null);
+  const openedScrollTask = useRef<string | null>(null);
   const mutationRef = useRef(false);
   const deletedTaskIDs = useRef(new Set<string>());
   const recordMutationRevision = useRef(0);
@@ -918,6 +926,8 @@ export default function RynAgent() {
   const sendLabel = task?.allowed_actions ? effectiveIntent === "steer" ? "sendSteer" : "sendInformation" : selected ? "followup" : "send";
   const currentProject = task?.project || (!selected ? projects.find(item => item.id === projectID) : undefined);
   const generalTasks = tasks.filter(item => !item.project || !projects.some(project => project.id === item.project?.id));
+  const normalizedTaskQuery = taskQuery.trim().toLocaleLowerCase();
+  const matchingTasks = tasks.filter(item => `${item.title} ${item.project?.name || ""}`.toLocaleLowerCase().includes(normalizedTaskQuery));
   const visiblePending = pendingMessage && pendingMessage.phase !== "rejected" && (pendingMessage.taskID ? pendingMessage.taskID === selected : !selected && pendingMessage.draftKey === draftKey && (pendingMessage.navigationRevision ?? initialNavigationRef.current) === navigationRevision) ? pendingMessage : null;
   const pendingRecorded = Boolean(visiblePending && task?.messages.slice(visiblePending.baseMessageCount).some(message => message.role === "user" && (message.ui?.text ?? message.content)?.trim() === visiblePending.message));
   const pendingFeedback = visiblePending && <>
@@ -928,6 +938,14 @@ export default function RynAgent() {
     if (!visiblePending || !scroll.current) return;
     scroll.current.scrollTop = scroll.current.scrollHeight;
   }, [visiblePending?.requestID]);
+  useEffect(() => { openedScrollTask.current = null; }, [selected]);
+  useEffect(() => {
+    if (detailLoading || !task || task.id !== selected || !scroll.current || openedScrollTask.current === selected) return;
+    openedScrollTask.current = selected;
+    if (["failed", "interrupted", "paused", "waiting_approval", "waiting_input"].includes(task.status)) {
+      scroll.current.scrollTop = scroll.current.scrollHeight;
+    }
+  }, [selected, detailLoading, task?.id, task?.status]);
   useEffect(() => { if (task) setMessageIntent(isAgentActive(agentTaskState(task)) ? "steer" : "information"); }, [task?.id, task ? isAgentActive(agentTaskState(task)) : false]);
   const modelSelect = (disabled = false) => <RynAgentModelPicker models={models} value={task?.model_id || model} disabled={disabled || busy} selectionLocked={task ? !canUseAgentAction(task, "model") : false} title={t(task ? "taskModel" : "newTaskModel")} reasoningEfforts={supportedEfforts} effort={effectiveEffort} onEffortChange={setReasoningEffort} onManageTaskModel={task?.allowed_actions?.model ? () => { setTaskModelTarget(""); setTaskModelOpen(true); } : undefined} onChange={id => {
     if (task) { setTaskModelTarget(id); setTaskModelOpen(true); }
@@ -978,14 +996,14 @@ export default function RynAgent() {
     </section>
   ) : null;
 
-  return <section className={`ra-workspace${tasksCollapsed ? " ra-tasks-collapsed" : ""}`} aria-label={t("title")}>
+  return <AgentPreviewHostContext.Provider value={{ host: previewHost, onOpen: openPreview, hidden: subagentsDrawerOpen }}><section className={`ra-workspace ra-focus${tasksCollapsed ? " ra-tasks-collapsed" : ""}`} aria-label={t("title")}>
     <header className="ra-header">
       <div className="ra-header-left">
         <button className="ra-icon" aria-label={t(nav.collapsed ? "showNav" : "hideNav")} aria-expanded={!nav.collapsed} onClick={nav.toggle}>{nav.collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}</button>
         <button className="ra-icon" aria-label={t(tasksCollapsed ? "showTasks" : "hideTasks")} aria-expanded={!tasksCollapsed} aria-controls="ryn-agent-task-list" onClick={() => { setTasksCollapsed(!tasksCollapsed); save("ryn.agent.tasks", tasksCollapsed ? "open" : "closed"); }}><ListChecks size={18} /></button>
         <strong>{t("title")}</strong>
         <button className="ra-icon" aria-label={t("newTask")} title={t("newTask")} onClick={newTask}><SquarePen size={17} /></button>
-        {task && <span className="ra-current-title" title={task.title}>{task.title}</span>}
+        {(task || showSkillsView || showAutomationsView) && <span className="ra-current-title" title={showSkillsView ? (i18n.language.startsWith("zh") ? "技能" : "Skills") : showAutomationsView ? t("automations") : task?.title}>{showSkillsView ? (i18n.language.startsWith("zh") ? "技能" : "Skills") : showAutomationsView ? t("automations") : task?.title}</span>}
       </div>
       <div className="ra-header-right">{task?.subagents && task.subagents.length > 0 && <SubagentHeaderPill subagents={task.subagents} isOpen={subagentsDrawerOpen} onToggle={() => setSubagentsDrawerOpen(prev => !prev)} />}<details className="ra-chat-menu" onKeyDown={event => { if (event.key === "Escape") { event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}><summary className="ra-icon" aria-label={t("chatActions")} title={t("chatActions")}><MoreHorizontal size={19} /></summary><div className="ra-chat-menu-panel">        {backgroundTasks.length > 0 && <div className="ra-menu-background" role="status"><span>{t("backgroundHelp")}</span><div>{backgroundTasks.map(item => <button key={item.id} aria-label={t("openBackground", { title: item.title, status: t(agentTaskState(item)) })} onClick={() => chooseTask(item.id)}>{item.title} · {t(agentTaskState(item))}</button>)}</div></div>}{task && <>            <div className="ra-status" role="status"><span title={t("steps", { count: task.steps })}>{t(agentTaskState(task))}</span><div>
               {canUseAgentAction(task, "pause", ["running", "queued"].includes(task.status)) && <button disabled={busy} onClick={() => void action("pause")}><Pause size={14} />{t("pause")}</button>}
@@ -1035,10 +1053,15 @@ export default function RynAgent() {
         />
       )}
       <aside id="ryn-agent-task-list" className="ra-tasks" aria-label={t("tasks")} hidden={tasksCollapsed}>
+        <div className="ra-sidebar-caption"><span>WORKSPACE</span><span>Agent</span></div>
         <button className="ra-new" onClick={newTask}><SquarePen size={17} />{t("newTask")}</button>
+        <div className="ra-task-search"><Search size={15} aria-hidden="true" /><input type="search" aria-label={i18n.language.startsWith("zh") ? "搜索任务" : "Search tasks"} placeholder={i18n.language.startsWith("zh") ? "搜索任务…" : "Search tasks…"} value={taskQuery} onChange={event => setTaskQuery(event.target.value)} onKeyDown={event => { if (event.key === "Escape") setTaskQuery(""); }} />{taskQuery && <button type="button" className="ra-icon" aria-label={i18n.language.startsWith("zh") ? "清除搜索" : "Clear search"} onClick={() => setTaskQuery("")}><X size={13} /></button>}</div>
         <button type="button" className={`ra-nav-automations${showAutomationsView ? " is-active" : ""}`} onClick={() => { refreshAutomations(); setShowSkillsView(false); setShowAutomationsView(v => !v); }}><Clock3 size={16} /><span>{t("automations")}</span>{automationsList.filter(a => a.status !== "PAUSED").length > 0 && <span className="ra-nav-auto-badge">{automationsList.filter(a => a.status !== "PAUSED").length}</span>}</button>
         <button type="button" className={`ra-nav-automations${showSkillsView ? " is-active" : ""}`} onClick={() => { setShowAutomationsView(false); setShowSkillsView(v => !v); }}><BookOpen size={16} /><span>{i18n.language.startsWith("zh") ? "技能" : "Skills"}</span></button>
-        <div className="ra-task-items"><RynAgentProject value={currentProject?.id || projectID} onChange={chooseProject} navigationRevision={navigationRevision} tasks={tasks} activeTaskID={selected} onSelectTask={chooseTask} onNewTask={chooseProject} onProjectsChange={setProjects} restoreSelection={!pluginEntry && !saved(PROJECT_KEY)} renderTask={item => taskMenu.renderTask(item, true)} /><div className="ra-recent-heading"><small>{t("recent")}</small><button className="ra-icon" aria-label={t("projectGeneralTask")} title={t("projectGeneralTask")} onClick={chooseGeneralProject}><SquarePen size={14} /></button></div>{generalTasks.length ? generalTasks.map(item => taskMenu.renderTask(item)) : <p>{t("emptyTasks")}</p>}</div>
+        <div className="ra-task-items">
+          {normalizedTaskQuery && <div className="ra-search-results"><p className="ra-search-count" role="status">{i18n.language.startsWith("zh") ? `找到 ${matchingTasks.length} 个任务` : `${matchingTasks.length} tasks found`}</p>{matchingTasks.map(item => <div key={item.id}>{taskMenu.renderTask(item)}{item.project && <small className="ra-search-project">{item.project.name}</small>}</div>)}{!matchingTasks.length && <p className="ra-search-empty">{i18n.language.startsWith("zh") ? "试试其他任务名称或项目名称" : "Try another task or project name"}</p>}</div>}
+          <div hidden={Boolean(normalizedTaskQuery)}><RynAgentProject value={currentProject?.id || projectID} onChange={chooseProject} navigationRevision={navigationRevision} tasks={tasks} activeTaskID={selected} onSelectTask={chooseTask} onNewTask={chooseProject} onProjectsChange={setProjects} restoreSelection={!pluginEntry && !saved(PROJECT_KEY)} renderTask={item => taskMenu.renderTask(item, true)} /><div className="ra-recent-heading"><small>{t("recent")}</small><button className="ra-icon" aria-label={t("projectGeneralTask")} title={t("projectGeneralTask")} onClick={chooseGeneralProject}><SquarePen size={14} /></button></div>{generalTasks.length ? generalTasks.map(item => taskMenu.renderTask(item)) : <p>{t("emptyTasks")}</p>}</div>
+        </div>
         <ArchivedTasks enabled={recordsSupported} selected={selected} onChoose={chooseTask} revision={recordsRevision} renderTask={item => taskMenu.renderTask(item)} />
         <small className="ra-local"><Monitor size={14} />{t("localHistory")}</small>
       </aside>
@@ -1047,6 +1070,7 @@ export default function RynAgent() {
 
         {settingsReady && !enabled && task && <div className="ra-disabled-banner"><span>{t("historyDisabled")}</span><button disabled={busy} onClick={() => void updateSettings({ enabled: true, ...(model ? { model_id: model } : {}) })}>{t("enable")}</button></div>}
         {!detailLoading && task && <RynAgentTurnRail turns={turnRailItems} scrollRef={scroll} />}
+        {!detailLoading && task && <RynAgentOverview key={task.id} task={task} />}
         <div ref={scroll} className="ra-scroll" aria-busy={detailLoading}>
 
           {detailLoading ? <div className="ra-empty" role="status">{t("loading")}</div> : task ? <div key={`thread/${task.id}`} className="ra-thread"><RynAgentFork key={`fork/${task.id}`} task={task} onCreated={next => { acceptTask(next); chooseTask(next.id); }} onChoose={chooseTask} /><TaskArtifacts key={`artifacts/${task.id}`} task={task} maxTurnIndex={maxTurnIndex}>
@@ -1067,7 +1091,7 @@ export default function RynAgent() {
             </TaskArtifacts>
               <RynAgentConnection task={task} modelName={selectedModel?.source_name || selectedModel?.name || task.model_id} busy={busy || controlUncertain || !settingsReady} enabled={Boolean(enabled)} onAction={kind => void action(kind)} />
               {task.error && task.status !== "interrupted" && <section className="ra-task-error" role="alert"><strong>{t("error")}</strong><p>{task.error === "agent_extension_model_not_allowed" ? (i18n.language.startsWith("zh") ? "此任务包含受模型限制的数据。请切回允许的模型继续。" : "This task contains model-restricted data. Switch back to an allowed model to continue.") : budgetStopMessage(task, i18n.language.startsWith("zh")) ?? t(task.error === "agent_model_destination_unverifiable" ? "taskDestinationUnavailable" : task.error === "agent_model_destination_changed" ? "modelDestinationChanged" : task.error === "agent_model_protocol_unsupported" ? "protocolUnsupported" : task.error === "agent_model_protocol_invalid" ? "protocolInvalid" : "unknownError")}</p><code>{task.error}</code></section>}
-          </div> : visiblePending ? <div className="ra-thread">{pendingFeedback}</div> : !settingsReady ? <div className="ra-empty"><CircleAlert size={32} /><p>{t(resourceErrors.settings || "settingsLoadError")}</p></div> : !enabled ? <div key="welcome" className="ra-welcome"><Sparkles className="ra-welcome-symbol" size={42} /><h2>{t("disabledTitle")}</h2><p>{t("disabledHelp")}</p><label className="ra-enable-model">{t("model")}{modelSelect()}</label>{!models.some(canUseAgentModel) && <p>{t("noModel")} <Link to="/services/sources">{t("configureModels")}</Link></p>}<button className="ra-primary" disabled={busy || !selectedModel || !canUseAgentModel(selectedModel)} onClick={() => void updateSettings({ enabled: true, ...(model ? { model_id: model } : {}) })}>{t("enable")}</button><small>{t("enableHelp")}</small></div> : <div key="welcome" className="ra-welcome"><Sparkles className="ra-welcome-symbol" size={42} /><h2>{currentProject ? <Trans ns="rynAgent" i18nKey="projectWelcome" values={{ name: currentProject.path }} components={{ project: <span className="ra-welcome-project" /> }} /> : t("welcome")}</h2>{!currentProject && <p>{t("welcomeHelp")}</p>}{!currentProject && <div className="ra-suggestions">{([["inspect", ListChecks], ["sharing", Share2], ["devices", Network]] as const).map(([key, Icon]) => <button key={key} onClick={() => { changeDraft(t(`${key}Prompt`)); input.current?.focus(); }}><Icon size={15} />{t(key)}</button>)}</div>}</div>}
+          </div> : visiblePending ? <div className="ra-thread">{pendingFeedback}</div> : !settingsReady ? <div className="ra-empty"><CircleAlert size={32} /><p>{t(resourceErrors.settings || "settingsLoadError")}</p></div> : !enabled ? <div key="welcome" className="ra-welcome"><Sparkles className="ra-welcome-symbol" size={42} /><h2>{t("disabledTitle")}</h2><p>{t("disabledHelp")}</p><label className="ra-enable-model">{t("model")}{modelSelect()}</label>{!models.some(canUseAgentModel) && <p>{t("noModel")} <Link to="/services/sources">{t("configureModels")}</Link></p>}<button className="ra-primary" disabled={busy || !selectedModel || !canUseAgentModel(selectedModel)} onClick={() => void updateSettings({ enabled: true, ...(model ? { model_id: model } : {}) })}>{t("enable")}</button><small>{t("enableHelp")}</small></div> : <RynAgentWelcome key="welcome" project={currentProject} onPrompt={prompt => { changeDraft(prompt); input.current?.focus(); }} />}
 
         </div>
         {(enabled || task) && !task?.archived && <div className="ra-composer-area">
@@ -1087,11 +1111,12 @@ export default function RynAgent() {
 
         </div>}</>}
       </div>
+      <div className="ra-preview-host" ref={setPreviewHost} />
     </div>}
     {taskModelOpen && task && <div className="ra-modal-backdrop" onClick={event => { if (event.target === event.currentTarget && !busy) setTaskModelOpen(false); }}><section className="ra-modal ra-model-dialog" role="dialog" aria-modal="true" aria-label={t("taskModel")} onKeyDown={event => { if (event.key === "Escape" && !busy) setTaskModelOpen(false); }}><div className="ra-modal-head"><h2>{t("taskModel")}</h2><button type="button" className="ra-icon" aria-label={t("close")} disabled={busy} onClick={() => setTaskModelOpen(false)}><X size={18} /></button></div><RynAgentModel key={`model/${task.id}/${taskModelTarget}`} task={task} models={models} defaultModelID={settings?.model_id} busy={busy || controlUncertain} expanded initialModelID={taskModelTarget} onChange={next => { acceptTask(next); setTaskModelOpen(false); }} /></section></div>}
     {settingsOpen && settings && <AgentSettingsDialog settings={settings} projects={projects} currentProject={currentProject} busy={busy} onClose={() => setSettingsOpen(false)} onSave={async update => { if (await updateSettings(update)) setSettingsOpen(false); }} />}
     <AutomationDialog open={automationDialogOpen} initial={editingAutomation} activeTaskId={selected} tasks={tasks} runs={automationRuns} zh={i18n.language.startsWith("zh")} onClose={() => setAutomationDialogOpen(false)} onSaved={() => refreshAutomations()} onDeleted={() => refreshAutomations()} />
-  </section>;
+  </section></AgentPreviewHostContext.Provider>;
 }
 
 function ExecutionProgress({ task }: { task: AgentTask }) {
@@ -1240,7 +1265,8 @@ function ApprovalCard({ approval, controlled, enabled, canDeny, busy, waiting, o
 }
 
 function AgentSettingsDialog({ settings, projects, currentProject, busy, onClose, onSave }: { settings: AgentSettings; projects?: AgentProject[]; currentProject?: AgentProject; busy: boolean; onClose: () => void; onSave: (settings: Partial<AgentSettings>) => Promise<void> }) {
-  const { t } = useTranslation("rynAgent");
+  const { t, i18n } = useTranslation("rynAgent");
+  const zh = i18n.language.startsWith("zh");
   const [enabled, setEnabled] = useState(settings.enabled);
   const [tools, setTools] = useState<AgentTool[] | null>(null);
   const [toolError, setToolError] = useState(false);
@@ -1257,8 +1283,8 @@ function AgentSettingsDialog({ settings, projects, currentProject, busy, onClose
   const close = useRef<HTMLButtonElement>(null);
   useEffect(() => { const previous = document.activeElement as HTMLElement | null; close.current?.focus(); return () => previous?.focus(); }, []);
   useEffect(() => { let stopped = false; void rynAgent.tools().then(value => { if (!stopped) setTools(value.tools.filter(tool => tool.effect === "write")); }).catch(() => { if (!stopped) setToolError(true); }); return () => { stopped = true; }; }, []);
-  return <div className="ra-modal-backdrop" onClick={event => { if (event.target === event.currentTarget && !busy) onClose(); }}><section className="ra-modal" role="dialog" aria-modal="true" aria-label={t("settings")} onKeyDown={event => { if (event.key === "Escape" && !busy) onClose(); if (event.key === "Tab") { const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled)')); const first = controls[0], last = controls.at(-1); if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); } } }}><div className="ra-modal-head"><h2>{t("settings")}</h2><button ref={close} className="ra-icon" disabled={busy} aria-label={t("close")} onClick={onClose}><X size={18} /></button></div><label className="ra-setting"><span>{t("enabledLabel")}<small>{t("enableHelp")}</small></span><input type="checkbox" checked={enabled} disabled={busy} onChange={event => setEnabled(event.target.checked)} /></label><label className="ra-setting"><span>{t("workspaceRoot")}<small>{t("workspaceHelp")}</small></span><input aria-label={t("workspaceRoot")} value={workspace} disabled={busy} onChange={event => setWorkspace(event.target.value)} placeholder={t("defaultOutputFolder")} /></label><label className="ra-setting"><span>{t("desktopAccess")}<small>{t("desktopAccessHelp")}</small></span><input type="checkbox" aria-label={t("desktopAccess")} checked={desktopAccess} disabled={busy} onChange={event => setDesktopAccess(event.target.checked)} /></label>
-    <label className="ra-setting"><span>{t("contextBudget")}<small>{t("contextBudgetHelp")}</small></span>
+  return <div className="ra-modal-backdrop" onClick={event => { if (event.target === event.currentTarget && !busy) onClose(); }}><section className="ra-modal" role="dialog" aria-modal="true" aria-label={t("settings")} onKeyDown={event => { if (event.key === "Escape" && !busy) onClose(); if (event.key === "Tab") { const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled)')); const first = controls[0], last = controls.at(-1); if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); } } }}><div className="ra-modal-head"><h2>{t("settings")}</h2><button ref={close} className="ra-icon" disabled={busy} aria-label={t("close")} onClick={onClose}><X size={18} /></button></div><h3 className="ra-settings-group-title">{zh ? "工作环境" : "Workspace"}</h3><label className="ra-setting"><span>{t("enabledLabel")}<small>{t("enableHelp")}</small></span><input type="checkbox" checked={enabled} disabled={busy} onChange={event => setEnabled(event.target.checked)} /></label><label className="ra-setting"><span>{t("workspaceRoot")}<small>{t("workspaceHelp")}</small></span><input aria-label={t("workspaceRoot")} value={workspace} disabled={busy} onChange={event => setWorkspace(event.target.value)} placeholder={t("defaultOutputFolder")} /></label><label className="ra-setting"><span>{t("desktopAccess")}<small>{t("desktopAccessHelp")}</small></span><input type="checkbox" aria-label={t("desktopAccess")} checked={desktopAccess} disabled={busy} onChange={event => setDesktopAccess(event.target.checked)} /></label>
+    <h3 className="ra-settings-group-title">{zh ? "上下文与模型" : "Context and model"}</h3><label className="ra-setting"><span>{t("contextBudget")}<small>{t("contextBudgetHelp")}</small></span>
       <select aria-label={t("contextBudget")} value={contextMode} disabled={busy} onChange={event => setContextMode(event.target.value)}>
         <option value="auto">{t("contextAuto")}</option><option value="manual">{t("contextManual")}</option>
       </select>
@@ -1269,8 +1295,8 @@ function AgentSettingsDialog({ settings, projects, currentProject, busy, onClose
     {!contextValid && <p role="alert">{t("contextBudgetInvalid")}</p>}
     {contextPolicy && <p className="ra-model-context">{contextPolicy.context_window_known
       ? t("contextWindowKnown", { count: contextPolicy.context_window_tokens }) : t("contextWindowUnknown")}</p>}
-    <div className="ra-setting"><span>{t("extensions")}<small>{t("manageExtensions")}</small></span><Link className="ra-link" to="/settings/extensions" onClick={onClose}>{t("extensions")}</Link></div>
-    <PreferencesEditor /><MemoryEditor projects={projects} currentProject={currentProject} /><p>{t("modeHelp")}</p><fieldset className="ra-tool-permissions"><legend>{t("allowedTools")}</legend><p>{t("allowedToolsHelp")}</p>{toolError ? <p role="alert">{t("toolsLoadError")}</p> : tools === null ? <p role="status">{t("loading")}</p> : tools.length ? tools.map(tool => <label key={tool.name}><input type="checkbox" disabled={busy} checked={allowed.includes(tool.name)} onChange={event => setAllowed(current => event.target.checked ? [...current, tool.name] : current.filter(name => name !== tool.name))} /><span>{t(`tool_${tool.name}`, { defaultValue: tool.title })}</span></label>) : <p>{t("noWriteTools")}</p>}</fieldset><button className="ra-primary" disabled={busy || !contextValid} onClick={() => void onSave({ enabled, workspace_root: workspace.trim(), desktop_access: desktopAccess, ...contextChange, ...(tools !== null ? { allowed_write_tools: allowed.filter(name => tools.some(tool => tool.name === name)) } : {}) })}>{t(busy ? "saving" : "save")}</button></section></div>;
+    <h3 className="ra-settings-group-title">{zh ? "扩展与个性化" : "Extensions and personalization"}</h3><div className="ra-setting"><span>{t("extensions")}<small>{t("manageExtensions")}</small></span><Link className="ra-link" to="/settings/extensions" onClick={onClose}>{t("extensions")}</Link></div>
+    <PreferencesEditor /><MemoryEditor projects={projects} currentProject={currentProject} /><h3 className="ra-settings-group-title">{zh ? "操作权限" : "Operation permissions"}</h3><p>{t("modeHelp")}</p><fieldset className="ra-tool-permissions"><legend>{t("allowedTools")}</legend><p>{t("allowedToolsHelp")}</p>{toolError ? <p role="alert">{t("toolsLoadError")}</p> : tools === null ? <p role="status">{t("loading")}</p> : tools.length ? tools.map(tool => <label key={tool.name}><input type="checkbox" disabled={busy} checked={allowed.includes(tool.name)} onChange={event => setAllowed(current => event.target.checked ? [...current, tool.name] : current.filter(name => name !== tool.name))} /><span>{t(`tool_${tool.name}`, { defaultValue: tool.title })}</span></label>) : <p>{t("noWriteTools")}</p>}</fieldset><div className="ra-settings-save"><button className="ra-primary" disabled={busy || !contextValid} onClick={() => void onSave({ enabled, workspace_root: workspace.trim(), desktop_access: desktopAccess, ...contextChange, ...(tools !== null ? { allowed_write_tools: allowed.filter(name => tools.some(tool => tool.name === name)) } : {}) })}>{t(busy ? "saving" : "save")}</button></div></section></div>;
 }
 
 function WorkspaceSetup({initial, busy, onBind}: {initial: string; busy: boolean; onBind: (path: string) => Promise<void>}) {

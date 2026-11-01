@@ -299,6 +299,24 @@ def install_extension_routes(
 
         return await _run("update_plugin", _op)
 
+    @app.patch("/api/local/agent/extensions/plugins/{plugin_id}/web-capabilities")
+    async def configure_plugin_web_capabilities(plugin_id: str, request: Request):
+        payload = await _body(request, 4096)
+
+        def _op():
+            if set(payload) != {"downloads", "dialogs", "expected_instance_id", "expected_revision"}:
+                raise AgentError("agent_invalid_request")
+            return extensions.store.configure_plugin_web_capabilities(
+                plugin_id,
+                downloads=payload["downloads"], dialogs=payload["dialogs"],
+                expected_instance_id=payload["expected_instance_id"],
+                expected_revision=_parse_expected_revision(payload["expected_revision"]),
+                desktop_access=_desktop_access(),
+            )
+
+        # Browser permissions do not replace MCP instances or invalidate OAuth grants.
+        return await _run("configure_plugin_web_capabilities", _op)
+
     @app.delete("/api/local/agent/extensions/plugins/{plugin_id}")
     async def delete_plugin(plugin_id: str, request: Request):
         expected_rev = await _delete_revision(request)

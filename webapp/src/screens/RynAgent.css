@@ -1536,6 +1536,9 @@
 }
 .ra-workspace .ra-message th,
 .ra-workspace .ra-result th {
+  position: static;
+  top: auto;
+  z-index: auto;
   border: 0;
   border-bottom: 1px solid #e5e5e5;
   padding: 8px 12px 8px 0;

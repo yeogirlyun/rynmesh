@@ -59,7 +59,7 @@ def literal_command(command, shell):
                     index += 2
                     continue
                 quote = None
-            elif quote == '"' and char in "$`\\":
+            elif quote == '"' and char in ("$`" if shell == "powershell" else "$`\\"):
                 return None
             else:
                 word.append(char)

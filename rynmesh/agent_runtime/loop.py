@@ -46,7 +46,8 @@ from .prompt import (
 from .protocol import digest, event, model_retry_authority, now, sanitized, task
 from .store import AgentError, AgentToolRejected, encoded
 from .stream_tools import StreamToolMismatch
-from .streamed_reads import StreamedReads
+from .streamed_reads import NestedReadDispatch, StreamedReads
+from .tool_dispatch import MAX_PARALLEL_TOOLS, PARALLEL_READS, supports_parallel
 from .tool_router import assert_schema_unchanged, normalize_tool_calls
 from .turn_state import decide_turn
 
@@ -63,12 +64,7 @@ ALL_INTERNAL_NAMES = (
     | subagents.SUBAGENT_TOOL_NAMES
 )
 
-# Side-effect-free workstation reads that one model response may run concurrently.
-PARALLEL_READS = frozenset({"ryn_file_read", "ryn_file_list", "ryn_file_search", "ryn_process_read",
-                            "ryn_project_inspect", "ryn_local_environment", "ryn_list_plugins",
-                            "ryn_plugin_info", "ryn_list_craft_plugins", "ryn_craft_editor_info",
-                            "ryn_list_node_apps", "ryn_craft_tools", "ryn_craft_read", "ryn_web_search"})
-MAX_PARALLEL_READS = 8
+MAX_PARALLEL_READS = MAX_PARALLEL_TOOLS
 # Streaming text has an immediate in-memory display projection. Keep recoverable
 # checkpoints coalesced instead of encrypting the task for every token.
 # Tool intents, receipts and the complete assistant message retain their commits.
@@ -78,6 +74,20 @@ STREAM_PERSIST_CHARS = 512
 
 
 class AgentLoop:
+    def _execute_business_tool(self, selected, name, arguments, **options):
+        if name == "ryn_code_exec":
+            # The composition envelope must not hold the gate while awaiting children.
+            context = options.setdefault("context", {})
+            context["_dispatch_child_tool"] = NestedReadDispatch(
+                self, selected, self._business_specs(selected), options["cancelled"],
+                options["operation_id"])
+            return self.tools.execute(name, arguments, **options)
+        meta = self.tools.metadata(name)
+        with self._tool_dispatch_gate.enter(
+            selected["id"], parallel=supports_parallel(name, meta), cancelled=options["cancelled"]
+        ):
+            return self.tools.execute(name, arguments, **options)
+
     def _waiting_policy_snapshot(self):
         # Approval refresh needs policy and the pending call only. Copying all
         # transcripts on every idle tick stalls UI reads even with no work.
@@ -460,7 +470,7 @@ class AgentLoop:
             live_stream = self._start_stream(selected, step)
             reads = StreamedReads(self, selected, specs, cancelled, PARALLEL_READS, metadata=request_metadata)
             streams.append(reads)
-            stream = {"text": "", "at": time.monotonic(), "total": 0,
+            stream = {"text": "", "at": time.monotonic(), "total": 0, "retained_bytes": 0,
                       "writes": 0, "write_seconds": 0.0, "first_text_seconds": None}
 
             def flush_stream():
@@ -484,13 +494,16 @@ class AgentLoop:
                 if not isinstance(metadata, dict) or metadata.get("type") != "text_delta" or not isinstance(metadata.get("text"), str):
                     return
                 stream["total"] += len(metadata["text"].encode())
-                if stream["total"] > selected["limits"]["max_output_chars"]:
-                    raise AgentError("agent_output_limit")
                 if metadata["text"] and stream["first_text_seconds"] is None:
                     stream["first_text_seconds"] = time.monotonic() - request_started
-                text = sanitized(metadata["text"])
+                remaining = max(0, selected["limits"]["max_output_chars"] - stream["retained_bytes"])
+                text = sanitized(metadata["text"]).encode()[:remaining].decode("utf-8", errors="ignore")
+                stream["retained_bytes"] += len(text.encode())
                 stream["text"] += text
                 self._append_stream(selected["id"], live_stream, text)
+                if stream["total"] > selected["limits"]["max_output_chars"]:
+                    flush_stream()
+                    raise AgentError("agent_output_limit")
                 since_write = time.monotonic() - stream["at"]
                 if (stream["writes"] == 0 or
                         (since_write >= STREAM_MIN_PERSIST_SECONDS and
@@ -515,11 +528,16 @@ class AgentLoop:
                 raise AgentError("agent_model_response_stopped")
             content = raw.get("content") or ""
             calls = raw.get("tool_calls") or []
-            if not isinstance(content, str) or not isinstance(calls, list) or len(calls) > output_policy.MAX_TOOL_CALLS:
+            if not isinstance(content, str) or not isinstance(calls, list):
                 raise AgentError("agent_invalid_model_response")
             if len(encoded(raw)) > output_policy.MAX_RAW_RESPONSE_BYTES:
                 raise AgentError("agent_model_output_limit")
             if len(encoded(output_policy.visible_message(raw))) > selected["limits"]["max_output_chars"]:
+                # Non-streaming providers have no text_delta history to recover.
+                # Preserve only prose, never executable calls from a rejected turn.
+                if not stream["total"]:
+                    stream["text"] = sanitized(content).encode()[:selected["limits"]["max_output_chars"]].decode("utf-8", errors="ignore")
+                    flush_stream()
                 raise AgentError("agent_output_limit")
             if not calls and not content.strip():
                 raise AgentError("agent_invalid_model_response")
@@ -1551,7 +1569,7 @@ class AgentLoop:
             exec_started = time.monotonic()
             preparation_seconds = max(0.0, (exec_started - preparation_started) - prep_persistence_seconds)
             try:
-                result = sanitized(self.tools.execute(call["name"], copy.deepcopy(call["arguments"]), **execute_options))
+                result = sanitized(self._execute_business_tool(selected, call["name"], copy.deepcopy(call["arguments"]), **execute_options))
                 tool_execution_seconds = max(0.0, time.monotonic() - exec_started)
             finally:
                 t0 = time.monotonic()
@@ -1737,7 +1755,7 @@ class AgentLoop:
                     ctx["_observed_files_snapshot"] = observed_snapshot
                     options["context"] = ctx
                 try:
-                    res = sanitized(self.tools.execute(call["name"], copy.deepcopy(call["arguments"]), **options))
+                    res = sanitized(self._execute_business_tool(selected, call["name"], copy.deepcopy(call["arguments"]), **options))
                     return res, False, max(0.0, time.monotonic() - call_started)
                 except AgentError as exc:
                     code = str(exc) if str(exc).startswith("agent_") else "agent_operation_failed"

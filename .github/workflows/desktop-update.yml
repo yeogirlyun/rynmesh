@@ -69,6 +69,7 @@ jobs:
         run: |
           cd webapp
           npm ci
+          npm run build
           cd ..
           ./webapp/src-tauri/scripts/build-sidecar.sh
           ./webapp/src-tauri/scripts/fetch-llama-runtime.sh

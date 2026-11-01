@@ -119,7 +119,7 @@ def chat(adapter, body, *, task_id, timeout_s, model=""):
     required = choice == "required" or isinstance(choice, dict)
     schema = {"type": "object", "additionalProperties": False,
               "properties": {"content": {"type": "string"},
-                             "tool_calls": {"type": "array", "maxItems": 8, "minItems": 1 if required else 0,
+                             "tool_calls": {"type": "array", "minItems": 1 if required else 0,
                                             "items": {"type": "object", "additionalProperties": False,
                                                       "properties": {"name": {"type": "string", "enum": list(allowed) or ["disabled"]},
                                                                      "arguments": {"type": "object"}},

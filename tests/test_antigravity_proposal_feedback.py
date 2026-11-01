@@ -105,10 +105,10 @@ def test_rejection_category_is_exact_authored_and_contains_no_invalid_payload(mo
 
 
 @pytest.mark.parametrize("choice,maximum,minimum,allowed", [
-    ("auto", 8, 0, ["inspect_service"]),
+    ("auto", None, 0, ["inspect_service"]),
     ("none", 0, 0, ["disabled"]),
-    ("required", 8, 1, ["inspect_service"]),
-    ({"type": "function", "function": {"name": "inspect_service"}}, 8, 1, ["inspect_service"]),
+    ("required", None, 1, ["inspect_service"]),
+    ({"type": "function", "function": {"name": "inspect_service"}}, None, 1, ["inspect_service"]),
 ])
 def test_provider_output_schema_is_enforced_without_registering_executable_tools(monkeypatch, choice, maximum, minimum, allowed):
     seen = []
@@ -125,7 +125,7 @@ def test_provider_output_schema_is_enforced_without_registering_executable_tools
     assert options["schema"] == payload["output_schema"]
     assert options["schema"]["additionalProperties"] is False
     proposals = options["schema"]["properties"]["tool_calls"]
-    assert (proposals["maxItems"], proposals["minItems"]) == (maximum, minimum)
+    assert (proposals.get("maxItems"), proposals["minItems"]) == (maximum, minimum)
     assert proposals["items"]["properties"]["name"]["enum"] == allowed
     assert proposals["items"]["properties"]["arguments"] == {"type": "object"}
     assert set(options) == {"task_id", "timeout_s", "max_tokens", "schema", "model"}

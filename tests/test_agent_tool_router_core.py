@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from rynmesh.agent_runtime.output_policy import MAX_TOOL_CALL_ARGUMENT_BYTES, MAX_TOOL_CALLS
+from rynmesh.agent_runtime.output_policy import MAX_RAW_RESPONSE_BYTES, MAX_TOOL_CALL_ARGUMENT_BYTES
 from rynmesh.agent_runtime.store import AgentError, AgentToolRejected
 from rynmesh.agent_runtime.tool_router import (
     INVALID_TOOL_NAME,
@@ -71,10 +71,20 @@ def test_reused_call_ids_cannot_steal_an_existing_result(calls, existing):
     assert error.value.reason == "duplicate_call_id"
 
 
-def test_call_count_and_utf8_argument_budgets_reject_atomically():
+@pytest.mark.parametrize("count", [9, 17, 33, 100])
+def test_large_batches_keep_every_call_in_order(count):
+    calls = [call(f"call_{n}") for n in range(count)]
+    routed = normalize_tool_calls(calls, [spec()])
+    assert [item["call_id"] for item in routed] == [item["id"] for item in calls]
+    assert all(item["error_result"] is None for item in routed)
+
+
+def test_utf8_argument_and_total_byte_budgets_reject_atomically():
+    calls = [call(f"call_{n}", arguments=json.dumps({"path": "x" * 60000})) for n in range(5)]
+    assert len(json.dumps(calls).encode()) > MAX_RAW_RESPONSE_BYTES
     with pytest.raises(ToolCallProtocolError) as error:
-        normalize_tool_calls([call(f"call_{n}") for n in range(MAX_TOOL_CALLS + 1)], [spec()])
-    assert error.value.reason == "too_many_calls"
+        normalize_tool_calls(calls, [spec()])
+    assert error.value.reason == "response_too_large"
     raw = '{"path":"中文"}'
     with pytest.raises(ToolCallProtocolError) as error:
         normalize_tool_calls([call(arguments="{}"), call("large", arguments=raw)], [spec()],
@@ -82,8 +92,7 @@ def test_call_count_and_utf8_argument_budgets_reject_atomically():
     assert error.value.reason == "arguments_too_large"
 
 
-@pytest.mark.parametrize("budget", [{"max_calls": MAX_TOOL_CALLS + 1},
-                                    {"max_argument_bytes": MAX_TOOL_CALL_ARGUMENT_BYTES + 1}])
+@pytest.mark.parametrize("budget", [{"max_argument_bytes": MAX_TOOL_CALL_ARGUMENT_BYTES + 1}])
 def test_callers_may_lower_but_never_raise_global_proposal_limits(budget):
     with pytest.raises(ValueError, match="invalid tool-call budget"):
         normalize_tool_calls([], [], **budget)

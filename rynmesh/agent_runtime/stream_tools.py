@@ -10,6 +10,9 @@ import copy
 import json
 from concurrent.futures import ThreadPoolExecutor
 
+from .output_policy import MAX_RAW_RESPONSE_BYTES
+from .tool_dispatch import MAX_PARALLEL_TOOLS
+
 
 class StreamToolMismatch(RuntimeError):
     """Completed stream items differ from the authoritative final response."""
@@ -25,13 +28,14 @@ def _identity(raw):
 
 class StreamToolCoordinator:
     def __init__(self, normalize, admit, run, *, parallel_reads, internal_names=(),
-                 cancelled=lambda: False, max_workers=8):
-        if type(max_workers) is not int or not 1 <= max_workers <= 8:
+                 cancelled=lambda: False, max_workers=MAX_PARALLEL_TOOLS):
+        if type(max_workers) is not int or not 1 <= max_workers <= MAX_PARALLEL_TOOLS:
             raise ValueError("invalid stream read worker limit")
         self.normalize, self.admit, self.run = normalize, admit, run
         self.parallel_reads, self.internal_names = frozenset(parallel_reads), frozenset(internal_names)
         self.cancelled, self.max_workers = cancelled, max_workers
         self.items, self.started = {}, {}
+        self.proposal_bytes = 2
         self.next_index = 0
         self.blocked = self.closed = False
         self.executor = None
@@ -47,7 +51,7 @@ class StreamToolCoordinator:
                 self.close()
                 return
             index = event.get("index")
-            if type(index) is not int or not 0 <= index < 8:
+            if type(index) is not int or index < 0:
                 raise ValueError("invalid stream tool index")
             raw = copy.deepcopy(event.get("call"))
             identity = _identity(raw)
@@ -55,6 +59,9 @@ class StreamToolCoordinator:
                 if self.items[index]["identity"] != identity:
                     raise StreamToolMismatch()
                 return
+            self.proposal_bytes += len(identity.encode()) + 2
+            if self.proposal_bytes > MAX_RAW_RESPONSE_BYTES:
+                raise ValueError("stream tool batch byte limit exceeded")
             self.items[index] = {"raw_call": raw, "identity": identity}
             self._advance()
         except BaseException as exc:

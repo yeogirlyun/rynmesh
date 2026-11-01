@@ -74,5 +74,8 @@ export default function ExtensionWebApp() {
   if (error) return <p role="alert">{error} · <Link to="/settings/extensions/plugins">{tr("Manage plugins")}</Link></p>;
   if (!plugin?.web_app) return <p>{tr("Loading…")}</p>;
   const url = new URL(plugin.web_app.url); if (url.origin === window.location.origin) return <p role="alert">{tr("Plugin app must use a separate origin")}</p>; url.searchParams.set('host_origin', window.location.origin);
-  return <iframe ref={frame} title={plugin.title} src={url.href} sandbox="allow-scripts allow-forms allow-same-origin allow-popups" referrerPolicy="no-referrer" style={{ border: 0, width: '100%', height: 'calc(100vh - 48px)' }} />;
+  const sandbox = ['allow-scripts', 'allow-forms', 'allow-same-origin', 'allow-popups'];
+  if (plugin.web_app.permissions.includes('downloads')) sandbox.push('allow-downloads');
+  if (plugin.web_app.permissions.includes('dialogs')) sandbox.push('allow-modals');
+  return <iframe ref={frame} title={plugin.title} src={url.href} sandbox={sandbox.join(' ')} referrerPolicy="no-referrer" style={{ border: 0, width: '100%', height: 'calc(100vh - 48px)' }} />;
 }

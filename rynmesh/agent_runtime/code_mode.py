@@ -30,7 +30,7 @@ import time
 import uuid
 import weakref
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Any
 
@@ -39,8 +39,10 @@ from jsonschema import ValidationError, validate
 from .chrome_runtime import PACKAGE_ROOT as CHROME_RUNTIME_DIR
 from .js_runtime.manager import sanitized_worker_env
 from .local_browser import find_browser
+from .output_policy import MAX_RAW_RESPONSE_BYTES, MAX_TOOL_CALL_ARGUMENT_BYTES
 from .protocol import sanitized
 from .store import AgentToolRejected, encoded
+from .tool_dispatch import MAX_PARALLEL_TOOLS, ToolDispatchGate, supports_parallel
 
 
 def _resolve_node_binary() -> str:
@@ -70,7 +72,6 @@ def _resolve_node_binary() -> str:
 
 NAME = "ryn_code_exec"
 MAX_CODE_CHARS = 65536
-MAX_CHILD_CALLS = 16
 DEFAULT_YIELD_TIME_MS = 30000
 MAX_YIELD_TIME_MS = 60000
 DEFAULT_MAX_OUTPUT_TOKENS = 4000
@@ -1359,6 +1360,7 @@ class CodeModeRunner:
     def __init__(self, parent_tools: Any) -> None:
         self.parent_tools = parent_tools
         self._lock = threading.Lock()
+        self._dispatch_gate = ToolDispatchGate()
         # Keyed by task_id -> {"context_epoch": int, "scope_revision": int, "values": dict}
         self._task_stores: dict[str, dict[str, Any]] = {}
         # Keyed by task_id -> _CodeModeWorkerSession
@@ -1487,7 +1489,7 @@ class CodeModeRunner:
                 meta = self.parent_tools.metadata(t_name)
             except Exception:
                 continue
-            if meta.get("effect") != "read":
+            if meta.get("effect") != "read" or meta.get("requires_explicit_approval"):
                 continue
             if (meta.get("computer_access") or (meta.get("extension_binding") or {}).get("computer_access")) and not desktop_enabled:
                 continue
@@ -1546,6 +1548,11 @@ class CodeModeRunner:
         child_call_records: list[dict[str, Any]] = []
         collected_image_artifacts: list[dict[str, Any]] = []
         exec_id = f"exec_{uuid.uuid4().hex[:12]}"
+        deadline = time.monotonic() + (yield_time_ms / 1000.0)
+        child_stop = threading.Event()
+
+        def child_cancelled():
+            return child_stop.is_set() or time.monotonic() >= deadline or (callable(cancelled) and cancelled())
 
         def handle_child_tool_call(frame: dict[str, Any]) -> None:
             nonlocal child_calls_count
@@ -1559,16 +1566,8 @@ class CodeModeRunner:
             with child_calls_lock:
                 child_calls_count += 1
                 ordinal = child_calls_count
-                if ordinal > MAX_CHILD_CALLS:
-                    worker.send({
-                        "type": "tool_result",
-                        "id": call_id,
-                        "ok": False,
-                        "error": "agent_code_exec_call_limit_exceeded",
-                    })
-                    return
 
-            if callable(cancelled) and cancelled():
+            if child_cancelled():
                 worker.send({"type": "tool_result", "id": call_id, "ok": False, "error": "agent_cancelled"})
                 return
 
@@ -1585,7 +1584,7 @@ class CodeModeRunner:
                 worker.send({"type": "tool_result", "id": call_id, "ok": False, "error": err_code})
                 return
 
-            if not isinstance(raw_args, dict):
+            if not isinstance(raw_args, dict) or len(encoded(raw_args)) > MAX_TOOL_CALL_ARGUMENT_BYTES:
                 worker.send({
                     "type": "tool_result",
                     "id": call_id,
@@ -1610,7 +1609,7 @@ class CodeModeRunner:
             child_op_id = f"{operation_id or 'code'}_sub_{ordinal}_{uuid.uuid4().hex[:8]}"
             exec_kwargs: dict[str, Any] = {
                 "operation_id": child_op_id,
-                "cancelled": cancelled if callable(cancelled) else (lambda: False),
+                "cancelled": child_cancelled,
             }
             child_ctx: dict[str, Any] | None = None
             if meta.get("scope_context_supported"):
@@ -1621,7 +1620,14 @@ class CodeModeRunner:
                 exec_kwargs["context"] = child_ctx
 
             try:
-                res = sanitized(self.parent_tools.execute(raw_name, copy.deepcopy(raw_args), **exec_kwargs))
+                dispatch = ctx.get("_dispatch_child_tool")
+                if callable(dispatch):
+                    res = sanitized(dispatch(raw_name, copy.deepcopy(raw_args), **exec_kwargs))
+                else:
+                    # Standalone tool hosts retain the same admission policy.
+                    with self._dispatch_gate.enter(task_id, parallel=supports_parallel(raw_name, meta),
+                                                   cancelled=child_cancelled):
+                        res = sanitized(self.parent_tools.execute(raw_name, copy.deepcopy(raw_args), **exec_kwargs))
                 if child_ctx is not None and isinstance(child_ctx.get("_deferred_observed_files"), dict):
                     parent_deferred = ctx.get("_deferred_observed_files")
                     if isinstance(parent_deferred, dict):
@@ -1677,7 +1683,6 @@ class CodeModeRunner:
                     "error": str(exc),
                 })
 
-        deadline = time.monotonic() + (yield_time_ms / 1000.0)
         final_frame: dict[str, Any] | None = None
         discard_worker = ephemeral
 
@@ -1692,18 +1697,24 @@ class CodeModeRunner:
                     "desktop_access": desktop_enabled,
                 })
 
-                with ThreadPoolExecutor(max_workers=8, thread_name_prefix="ryn-code-mode-tool") as pool:
+                with ThreadPoolExecutor(max_workers=MAX_PARALLEL_TOOLS, thread_name_prefix="ryn-code-mode-tool") as pool:
+                    pending = set()
+                    request_bytes = 0
                     while True:
                         if callable(cancelled) and cancelled():
                             discard_worker = True
                             raise AgentToolRejected("agent_cancelled")
                         remaining = deadline - time.monotonic()
                         if remaining <= 0:
+                            child_stop.set()
                             discard_worker = True
                             raise AgentToolRejected(
                                 "agent_code_exec_timeout",
                                 correction=f"CodeMode script exceeded yield_time_ms ({yield_time_ms} ms). Increase yield_time_ms or simplify the script.",
                             )
+                        if len(pending) >= MAX_PARALLEL_TOOLS:
+                            _, pending = wait(pending, timeout=min(0.05, remaining), return_when=FIRST_COMPLETED)
+                            continue
                         try:
                             frame = worker.frames_q.get(timeout=min(0.1, remaining))
                         except queue.Empty:
@@ -1718,11 +1729,20 @@ class CodeModeRunner:
                             continue
                         f_type = frame.get("type")
                         if f_type == "tool_call":
-                            pool.submit(handle_child_tool_call, frame)
+                            request_bytes += len(encoded(frame))
+                            if request_bytes > MAX_RAW_RESPONSE_BYTES:
+                                child_stop.set()
+                                discard_worker = True
+                                raise AgentToolRejected("agent_model_output_limit",
+                                                        correction="Nested tool arguments exceed the cell byte budget.")
+                            pending.add(pool.submit(handle_child_tool_call, frame))
+                            pending = {future for future in pending if not future.done()}
                         elif f_type == "result":
                             final_frame = frame
+                            child_stop.set()
                             break
             finally:
+                child_stop.set()
                 if discard_worker:
                     self._discard_worker(task_id, worker)
 
