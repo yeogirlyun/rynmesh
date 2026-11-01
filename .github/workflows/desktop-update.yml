@@ -64,6 +64,10 @@ jobs:
           assert tomllib.loads(Path('pyproject.toml').read_text())['project']['version'] == version
           assert tomllib.loads(Path('webapp/src-tauri/Cargo.toml').read_text())['package']['version'] == version
           assert os.environ['RYN_DESKTOP_UPDATE_PUBLIC_KEY'] and os.environ['TAURI_SIGNING_PRIVATE_KEY'], 'Configure signing keys first'
+          updater_path = Path('webapp/src-tauri/tauri.updater.conf.json')
+          updater = json.loads(updater_path.read_text())
+          updater['plugins']['updater']['pubkey'] = os.environ['RYN_DESKTOP_UPDATE_PUBLIC_KEY'].strip()
+          updater_path.write_text(json.dumps(updater, indent=2))
       - name: Build Windows installer and signature
         if: runner.os == 'Windows'
         shell: pwsh
