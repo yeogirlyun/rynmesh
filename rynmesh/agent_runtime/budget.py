@@ -14,6 +14,79 @@ RANGES = {"max_total_model_calls": (1, 1024), "max_total_tool_calls": (1, 4096),
 DEFAULT_CACHED_INPUT_WEIGHT = 0.1
 PEER_CACHED_INPUT_WEIGHT = 1.0
 
+# Where a limit came from. Only "default" limits are host policy that may be
+# extended or continued automatically. "owner" limits were set explicitly and
+# are hard. Rows saved before sources were recorded are "legacy_unknown" and
+# stay hard: a value that happens to equal a default does not prove intent.
+LIMIT_SOURCES = frozenset({"default", "owner", "legacy_unknown"})
+# Per-run limits in row["limits"]. With a "default" source they only size an
+# execution segment: reaching them checkpoints and schedules the next segment.
+SEGMENT_LIMITS = ("max_steps", "max_seconds")
+EXHAUSTED_CODES = {"max_total_model_calls": "agent_model_call_budget_exhausted",
+                   "max_total_tool_calls": "agent_tool_budget_exhausted",
+                   "max_total_tokens": "agent_token_budget_exhausted",
+                   "max_total_seconds": "agent_time_budget_exhausted"}
+LIMIT_CODES = {**{code: key for key, code in EXHAUSTED_CODES.items()},
+               "agent_step_limit": "max_steps", "agent_time_limit": "max_seconds"}
+NO_PROGRESS_CODE = "agent_no_progress"
+# A wrap-up turn spends the last allowance of a hard limit; the run then stops on it.
+WRAP_UP_CODES = {"token_budget_low": "agent_token_budget_exhausted",
+                 "model_call_budget_low": "agent_model_call_budget_exhausted",
+                 "step_budget_low": "agent_step_limit"}
+
+
+def limit_source(row, key):
+    sources = (row.get("budget") or {}).get("limit_sources")
+    value = sources.get(key) if isinstance(sources, dict) else None
+    return value if value in LIMIT_SOURCES else "legacy_unknown"
+
+
+def is_hard(row, key):
+    return limit_source(row, key) != "default"
+
+
+def set_owner_limits(row, limits):
+    """Apply an explicit owner budget; every submitted key becomes a hard limit."""
+    state = initialize(row)
+    validate_limits(limits)
+    state["limits"].update(limits)
+    sources = state.setdefault("limit_sources", {key: "legacy_unknown" for key in DEFAULT_LIMITS})
+    for key in limits:
+        sources[key] = "owner"
+
+
+def segment_source(row, key):
+    sources = row.get("limits_source")
+    value = sources.get(key) if isinstance(sources, dict) else None
+    return value if value in LIMIT_SOURCES else "legacy_unknown"
+
+
+def segment_is_hard(row, key):
+    return segment_source(row, key) != "default"
+
+
+def hard_run_limit(row):
+    """Return the code of a reached per-run limit the host must not continue past."""
+    limits = row.get("limits") or {}
+    if row.get("elapsed_seconds", 0) >= limits.get("max_seconds", float("inf")) and segment_is_hard(row, "max_seconds"):
+        return "agent_time_limit"
+    if row.get("steps", 0) >= limits.get("max_steps", float("inf")) and segment_is_hard(row, "max_steps"):
+        return "agent_step_limit"
+    return None
+
+
+def exhausted_hard_limit(row):
+    """First hard cumulative limit that leaves no room for another model request."""
+    state = initialize(row)
+    totals = _totals(state, state["records"], lifetime=True)
+    if totals["charged_model_calls"] >= state["limits"]["max_total_model_calls"] and is_hard(row, "max_total_model_calls"):
+        return EXHAUSTED_CODES["max_total_model_calls"]
+    if totals["charged_tokens"] >= state["limits"]["max_total_tokens"] and is_hard(row, "max_total_tokens"):
+        return EXHAUSTED_CODES["max_total_tokens"]
+    if time_remaining(row) <= 0:
+        return EXHAUSTED_CODES["max_total_seconds"]
+    return None
+
 
 def infer_cached_input_weight(row: dict | None = None, model: dict | None = None) -> float:
     """Return cached-input billing weight for the route (1.0 for peer routes, 0.1 for direct API routes)."""
@@ -76,10 +149,14 @@ def initialize(row):
         legacy = bool(row.get("steps") or row.get("elapsed_seconds") or dispatches)
         legacy_tools = len({event.get("operation_id") or event.get("call_id") or event.get("seq") for event in dispatches if event["type"] == "tool_started"})
         legacy_models = max(row.get("steps", 0), sum(event["type"] == "model_started" for event in dispatches))
-        row["budget"] = {"limits": validate_limits({key: row["limits"][key] for key in DEFAULT_LIMITS if key in row["limits"]}),
+        explicit = {key: row["limits"][key] for key in DEFAULT_LIMITS if key in row["limits"]}
+        row["budget"] = {"limits": validate_limits(explicit),
                          "round": 1, "records": [], "legacy_usage_unknown": legacy,
                          "legacy_model_calls": legacy_models if legacy else 0, "legacy_tool_calls": legacy_tools,
-                         "legacy_seconds": row.get("elapsed_seconds", 0.0) if legacy else 0.0}
+                         "legacy_seconds": row.get("elapsed_seconds", 0.0) if legacy else 0.0,
+                         # A row with history, or limits stored in the old place, cannot prove default intent.
+                         "limit_sources": {key: "legacy_unknown" if legacy or key in explicit else "default"
+                                           for key in DEFAULT_LIMITS}}
     else:
         for rec in row["budget"].get("records", []):
             if (
@@ -132,9 +209,39 @@ def _totals(state, records, *, lifetime):
 def public(row):
     state = initialize(row)
     return {"limits": copy.deepcopy(state["limits"]), "round": state["round"],
+            "limit_sources": {key: limit_source(row, key) for key in DEFAULT_LIMITS},
+            "default_ceilings": {key: RANGES[key][1] for key in DEFAULT_LIMITS},
             "lifetime": _totals(state, state["records"], lifetime=True),
             "current_round": _totals(state, [record for record in state["records"] if record["round"] == state["round"]], lifetime=False),
             "reservation_policy": "Unknown model usage retains the conservative dispatch reservation; cost is unknown without trusted pricing."}
+
+
+def _room(row, state, key, used, need):
+    """Admit `need` more units; only a default limit grows, never past its ceiling."""
+    limits = state["limits"]
+    if used + need <= limits[key]:
+        return True
+    ceiling = RANGES[key][1]
+    if is_hard(row, key) or used + need > ceiling:
+        return False
+    previous = limits[key]
+    limits[key] = min(ceiling, max(previous + DEFAULT_LIMITS[key], int(math.ceil(used + need))))
+    if "event_cursor" in row:
+        from .protocol import event
+        event(row, "budget_auto_extended", limits=copy.deepcopy(limits), extended={key: limits[key]},
+              previous={key: previous}, reason="default_policy", round=state["round"])
+    return True
+
+
+def ensure_default_room(row, key, need):
+    """Grow a default allowance before an admission check that reads the limit directly."""
+    state = initialize(row)
+    if is_hard(row, key):
+        return
+    totals = _totals(state, state["records"], lifetime=True)
+    used = {"max_total_model_calls": totals["charged_model_calls"], "max_total_tool_calls": totals["charged_tool_calls"],
+            "max_total_tokens": totals["charged_tokens"], "max_total_seconds": totals["charged_seconds"]}[key]
+    _room(row, state, key, used, min(need, max(0, RANGES[key][1] - used)))
 
 
 def reserve(row, kind, stage, *, input_bound=0, output_bound=0, seconds_bound=None):
@@ -143,16 +250,18 @@ def reserve(row, kind, stage, *, input_bound=0, output_bound=0, seconds_bound=No
         raise AgentError("agent_invalid_budget")
     total = _totals(state, state["records"], lifetime=True)
     limits = state["limits"]
-    if total["charged_model_calls"] + (kind == "model") > limits["max_total_model_calls"]:
+    if not _room(row, state, "max_total_model_calls", total["charged_model_calls"], int(kind == "model")):
         raise AgentError("agent_model_call_budget_exhausted")
-    if total["charged_tool_calls"] + (kind == "tool") > limits["max_total_tool_calls"]:
+    if not _room(row, state, "max_total_tool_calls", total["charged_tool_calls"], int(kind == "tool")):
         raise AgentError("agent_tool_budget_exhausted")
     tokens = input_bound + output_bound if kind == "model" else 0
-    if type(tokens) is not int or tokens < 0 or total["charged_tokens"] + tokens > limits["max_total_tokens"]:
+    if type(tokens) is not int or tokens < 0 or not _room(row, state, "max_total_tokens", total["charged_tokens"], tokens):
         raise AgentError("agent_token_budget_exhausted")
     remaining = limits["max_total_seconds"] - total["charged_seconds"]
     if remaining <= 0 and seconds_bound != 0:
-        raise AgentError("agent_time_budget_exhausted")
+        if not _room(row, state, "max_total_seconds", total["charged_seconds"], 1):
+            raise AgentError("agent_time_budget_exhausted")
+        remaining = limits["max_total_seconds"] - total["charged_seconds"]
     seconds = min(remaining, seconds_bound if seconds_bound is not None else row["limits"]["max_seconds"])
     record = {"id": "usage_" + uuid.uuid4().hex, "kind": kind, "stage": stage, "round": state["round"],
               "status": "reserved", "input_tokens": None, "output_tokens": None,
@@ -216,11 +325,17 @@ def time_remaining(row):
     state = initialize(row)
     # The current flight's time is checked by its own monotonic callback.
     used = sum(record["charged_seconds"] for record in state["records"] if record["status"] != "reserved") + state["legacy_seconds"]
-    return max(0.0, state["limits"]["max_total_seconds"] - used - row.get("retry_wait_seconds", 0))
+    limit = state["limits"]["max_total_seconds"]
+    if not is_hard(row, "max_total_seconds"):
+        # A default allowance grows at admission; in-flight work is bounded by its ceiling.
+        limit = max(limit, RANGES["max_total_seconds"][1])
+    return max(0.0, limit - used - row.get("retry_wait_seconds", 0))
 
 
 def notice(row: dict) -> str | None:
     """Tell the model, once per threshold, how much of its step budget is gone."""
+    if not segment_is_hard(row, "max_steps"):
+        return None  # A default segment continues automatically; do not push an early wrap-up.
     steps, cap = row["steps"], row["limits"]["max_steps"]
     level = 2 if steps >= cap * 0.85 else 1 if steps >= cap * 0.6 else 0
     if level == 0:
@@ -235,3 +350,131 @@ def notice(row: dict) -> str | None:
               "Conclude from the evidence collected and report remaining uncertainties. "
               "If the owner requested changes, focus on the necessary change and its verification; do not broaden exploration.")
     return f"Server budget notice: {steps} of {cap} model steps are used. {advice}"
+
+
+def progress_summary(row):
+    """Host-written progress for a limit stop. It costs no model request."""
+    state = initialize(row)
+    totals = _totals(state, state["records"], lifetime=True)
+    lines = [f"Stopped before completion after {totals['charged_model_calls']} model requests "
+             f"and {totals['charged_tool_calls']} tool calls."]
+    changed = []
+    for receipt in row.get("receipts", []):
+        if receipt.get("effect") == "write" and receipt.get("status") == "confirmed":
+            arguments = receipt.get("arguments") if isinstance(receipt.get("arguments"), dict) else {}
+            label = arguments.get("path") or receipt.get("tool")
+            if isinstance(label, str) and label not in changed:
+                changed.append(label)
+    if changed:
+        lines.append("Confirmed changes: " + ", ".join(changed[:20]))
+    steps = [step.get("description") or step.get("title") or step.get("id")
+             for step in (row.get("plan") or {}).get("steps", []) if isinstance(step, dict)]
+    if steps:
+        lines.append("Latest model plan (not verified): " + "; ".join(str(item) for item in steps[:10]))
+    lines.append("The task is not complete. Remaining work continues from the saved history once the limit allows it.")
+    return "\n".join(lines)
+
+
+def stop_for_limit(row, code, *, summary=None, wrap_up_reason=None, **fields):
+    """End a run at a hard limit. Never reported as completed.
+
+    The status stays "failed" (the existing contract for budget stops that
+    clients and acceptance runners key on); outcome.status "budget_limited",
+    outcome.budget_stop and the budget_limit_reached event tell it apart from
+    an unrecoverable error. The owner continues with a new turn once the limit
+    allows it.
+    """
+    from .control import close_queue
+    from .protocol import event
+    key = LIMIT_CODES[code]
+    source = limit_source(row, key) if key in DEFAULT_LIMITS else segment_source(row, key)
+    if not row.get("in_flight"):
+        close_queue(row, event, code, keep_flight=False)
+    row.update(status="failed", error=code, approved=None, pending_approval=None)
+    outcome = row.setdefault("outcome", {})
+    outcome.update(status="budget_limited", budget_limited=True, assessment_requested=False,
+                   budget_stop={"code": code, "limit": key, "source": source},
+                   summary=summary if isinstance(summary, str) and summary.strip() else progress_summary(row),
+                   uncertainties=[f"Stopped at {key} ({source}) before the task was complete."])
+    if wrap_up_reason:
+        outcome["budget_wrap_up_reason"] = wrap_up_reason
+    else:
+        outcome.pop("budget_wrap_up_reason", None)
+    event(row, "budget_limit_reached", error=code, limit=key, source=source, **fields)
+
+
+def segment_boundary(row):
+    """Per-run limit reached between steps; queued calls drain before a step boundary."""
+    limits = row.get("limits") or {}
+    if row.get("elapsed_seconds", 0) >= limits.get("max_seconds", float("inf")):
+        return "max_seconds"
+    if not row.get("queue") and row.get("steps", 0) >= limits.get("max_steps", float("inf")):
+        return "max_steps"
+    return None
+
+
+def _segment_successes(row, since_seq):
+    count = 0
+    for item in row.get("events", []):
+        if item.get("seq", 0) <= since_seq or item.get("type") != "tool_result" or item.get("internal"):
+            continue
+        result = item.get("result")
+        if isinstance(result, dict) and not result.get("error") and not result.get("not_executed"):
+            count += 1
+    return count
+
+
+def continue_segment(row, reason):
+    """Checkpoint a default segment and start the next one in the same task.
+
+    Returns NO_PROGRESS_CODE instead when continuing would only repeat failing
+    work: a full step segment with no successful tool result, or two segments
+    in a row (for example slow ones that ended on time) without one.
+    """
+    from .protocol import event
+    segment = row.setdefault("execution_segment", {"index": 1, "started_seq": 0})
+    successes = _segment_successes(row, segment.get("started_seq", 0))
+    steps, elapsed = row.get("steps", 0), row.get("elapsed_seconds", 0.0)
+    idle = successes == 0 and steps > 0
+    segment["no_progress"] = int(segment.get("no_progress", 0)) + 1 if idle else 0
+    if idle and (reason == "max_steps" or segment["no_progress"] >= 2):
+        return NO_PROGRESS_CODE
+    # Only default counters restart; an owner/legacy per-run limit keeps counting.
+    if not segment_is_hard(row, "max_steps"):
+        row["steps"] = 0
+    if not segment_is_hard(row, "max_seconds"):
+        row["elapsed_seconds"] = 0.0
+    segment["index"] = int(segment.get("index", 1)) + 1
+    event(row, "execution_segment_continued", segment=segment["index"], reason=reason,
+          previous_steps=steps, previous_elapsed_seconds=elapsed, successful_tool_results=successes)
+    segment["started_seq"] = row["event_cursor"]
+    return None
+
+
+def restart_segment_audit(row):
+    """An owner turn or resume starts a fresh run and a fresh progress audit."""
+    if "event_cursor" in row:
+        row["execution_segment"] = {"index": 1, "started_seq": row["event_cursor"]}
+
+
+def stop_for_no_progress(row):
+    from .protocol import event
+    row.update(status="failed", error=NO_PROGRESS_CODE, approved=None, pending_approval=None)
+    outcome = row.setdefault("outcome", {})
+    outcome.update(status="unverified", assessment_requested=False, summary=progress_summary(row),
+                   uncertainties=["A full execution segment produced no successful tool result; "
+                                  "the host stopped instead of repeating failing work."])
+    event(row, "no_progress_stopped", error=NO_PROGRESS_CODE, steps=row.get("steps", 0))
+
+
+def run_seconds_left(row, lifetime_remaining):
+    """Seconds in-flight work may use: a default segment boundary never cuts it."""
+    if segment_is_hard(row, "max_seconds"):
+        return min(row["limits"]["max_seconds"] - row["elapsed_seconds"], lifetime_remaining)
+    return lifetime_remaining
+
+
+def run_may_continue(row):
+    """False only when the next claim must stop at an owner/legacy per-run limit."""
+    boundary = segment_boundary(row)
+    return boundary is None or not segment_is_hard(row, boundary)

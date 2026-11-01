@@ -10,7 +10,7 @@ from test_agent_runtime import advance, assistant, make_runtime
 from test_agent_runtime_model_switch import body as switch_body
 from test_agent_runtime_model_switch import setup as switch_setup
 
-from rynmesh.agent_runtime import output_policy, state, verification
+from rynmesh.agent_runtime import budget, output_policy, state, verification
 from rynmesh.agent_runtime.diagnostics import DiagnosticTools
 from rynmesh.agent_runtime.runtime import AgentRuntime
 from rynmesh.agent_runtime.store import AgentError, AgentStore, encoded
@@ -198,7 +198,8 @@ def test_adapter_without_output_cap_still_cannot_reserve_only_part_of_output(tmp
     row = stored(runtime, task["id"])
     estimate = output_policy.estimate_input(runtime._context(row), runtime._specs(row))["estimated_input_tokens"]
     def restrict(data):
-        data["tasks"][task["id"]]["budget"]["limits"]["max_total_tokens"] = estimate + 100
+        # An owner budget: a default allowance would grow instead of refusing.
+        budget.set_owner_limits(data["tasks"][task["id"]], {"max_total_tokens": estimate + 100})
     runtime.store.transaction(restrict)
     advance(runtime)
     assert not model.calls

@@ -422,7 +422,9 @@ def test_restart_recovery_preserves_cancel_pause_permission_budget_and_revision_
 
     t_cancel = make_in_flight_task("cancel", lambda row, _d: row.update(status="cancelled", pending_control={"kind": "cancel"}))
     t_pause = make_in_flight_task("pause", lambda row, _d: row.update(status="paused", pending_control={"kind": "pause"}))
-    t_budget = make_in_flight_task("budget", lambda row, _d: row.update(steps=row["limits"]["max_steps"]))
+    # An owner run limit stays hard after restart; a default one would only start a new segment.
+    t_budget = make_in_flight_task("budget", lambda row, _d: row.update(
+        steps=row["limits"]["max_steps"], limits_source={"max_steps": "owner", "max_seconds": "default"}))
     t_rev = make_in_flight_task("revision", lambda row, _d: row["goal"].update(revision=row["goal"]["revision"] + 1))
     t_perm = make_in_flight_task("perm", lambda row, _d: row["in_flight"].update(authority="stale_authority"))
 

@@ -755,6 +755,8 @@ def test_independent_budget_context_and_transport_gates_before_model_call(tmp_pa
             row["status"] = "running"
             state = budget.initialize(row)
             max_tokens = state["limits"]["max_total_tokens"]
+            # A hard (owner) allowance; a default one would grow instead of refusing.
+            budget.set_owner_limits(row, {"max_total_tokens": max_tokens})
             # Leave only 10,000 tokens remaining (< 14,704 image tokens + output cap)
             reservation = budget.reserve(
                 row,
