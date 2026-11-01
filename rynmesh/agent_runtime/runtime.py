@@ -555,14 +555,21 @@ class AgentRuntime(AgentLoop):
         # escaping and validated inline image bounds, before reserving or dispatching inference.
         model = self._model_metadata(row["model_id"]) or {}
         context_policy = self._context_policy(row)
-        output_policy.admit_request_context(
+
+        def admit_effective_capacity(analysis):
+            # Every model request (main, summary, checker, image inspection)
+            # must also fit the window at this model's observed token density.
+            size, capacity = self._effective_request_fit(row, analysis, context_policy)
+            if size > capacity:
+                raise AgentError("agent_context_limit")
+        admit_effective_capacity(output_policy.admit_request_context(
             model,
             messages,
             specs,
             manual_limit=row["limits"].get("max_context_chars"),
             provenance=row.get("context_budget_provenance"),
             context_policy=context_policy,
-        )
+        ))
         context = self._execution_context(row)
         options = {}
         discloses_memory = memory_integration.messages_disclose_memory(messages, row=row) or bool(row.get("memory_disclosed_in_epoch"))
@@ -617,14 +624,14 @@ class AgentRuntime(AgentLoop):
                 model_client=self.model,
                 native_artifact_loader=self._native_artifact_loader(),
             )
-            output_policy.admit_request_context(
+            admit_effective_capacity(output_policy.admit_request_context(
                 model,
                 dispatch_messages,
                 specs,
                 manual_limit=row["limits"].get("max_context_chars"),
                 provenance=row.get("context_budget_provenance"),
                 context_policy=context_policy,
-            )
+            ))
         if image_capabilities.message_has_image_input(dispatch_messages):
             image_capabilities.require_route_image_support(model, model_client=self.model)
         policy = output_policy.select(model, dispatch_messages, specs, request_cap=output_cap)
@@ -650,8 +657,10 @@ class AgentRuntime(AgentLoop):
                 row["model_id"], dispatch_messages, specs, cancelled, on_event,
                 **options, **({"max_output_tokens": allowed} if getattr(self.model, "supports_output_token_limit", False) else {}))
         try:
+            # The model tag lets later density calibration ignore another model's usage.
             response = self._meter_model(meter_row, _invoke_model,
-                input_bound=policy["estimated_input_tokens"], output_bound=policy["effective_cap"], output_policy_record=policy,
+                input_bound=policy["estimated_input_tokens"], output_bound=policy["effective_cap"],
+                output_policy_record={**policy, "model_id": row["model_id"]},
                 nested=nested, stage=stage,
                 can_reduce_output=getattr(self.model, "supports_output_token_limit", False) is True)
         except Exception:
@@ -3084,8 +3093,14 @@ class AgentRuntime(AgentLoop):
             if (receipt["goal_revision"] == selected["goal"]["revision"] and receipt["context_epoch"] == selected.get("context_epoch", 0)
                     and isinstance(receipt.get("result"), dict) and receipt["result"].get("result_ref")):
                 receipt["result"], _ = results.read(self.store, selected, receipt["result"]["result_ref"], provider=True)
-        messages = verification.checker_messages(checker_state, context_limit=self._context_limit(selected))
-        if len(encoded(messages)) > self._context_limit(selected):
+        # Build and pre-check with the same effective capacity as dispatch:
+        # optional metadata is dropped first; owner requirements, the answer,
+        # criteria and evidence are never cut, so an unfittable core is an
+        # explicit capacity error before any reservation or model call.
+        capacity, _ = self._effective_capacity(selected)
+        messages = verification.checker_messages(checker_state, context_limit=capacity)
+        size, capacity = self._effective_request_fit(selected, output_policy.analyze_request(messages, []))
+        if size > capacity:
             raise AgentError("agent_verification_context_limit")
 
         def mark(data):

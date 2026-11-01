@@ -947,20 +947,32 @@ class AgentLoop:
             for cut in self._closed_boundaries(messages, prior_through)
         )
 
-    def _effective_capacity(self, row: dict, context_limit: int | None = None) -> tuple[int, float | None]:
+    def _effective_capacity(self, row: dict, context_limit: int | None = None,
+                            policy: dict | None = None) -> tuple[int, float | None]:
         """Request bytes that fit the model's input window, and the observed bytes/token ratio.
 
         The hard byte limit already reserves output and framing at the default
         estimate; provider-reported usage can only tighten it, never loosen it.
         """
-        limit = self._context_limit(row) if context_limit is None else context_limit
-        policy_of = getattr(self, "_context_policy", None)
-        try:
-            policy = policy_of(row) if callable(policy_of) else None
-        except AgentError:
-            policy = None
+        if policy is None:
+            policy_of = getattr(self, "_context_policy", None)
+            try:
+                policy = policy_of(row) if callable(policy_of) else None
+            except AgentError:
+                policy = None
+        limit = context_limit if context_limit is not None else (
+            policy["effective_max_context_bytes"] if policy else self._context_limit(row))
         ratio = context_compaction.observed_bytes_per_token(row)
         return context_compaction.input_capacity(limit, policy, ratio), ratio
+
+    def _effective_request_fit(self, row: dict, analysis: dict, policy: dict | None = None) -> tuple[int, int]:
+        """(request size at the applied density, effective capacity) for an analyzed request."""
+        if policy is None:
+            policy_of = getattr(self, "_context_policy", None)
+            policy = policy_of(row) if callable(policy_of) else None
+        capacity, ratio = self._effective_capacity(row, policy=policy)
+        density = context_compaction.applied_density(policy, ratio)
+        return context_compaction.request_bytes_at_density(analysis, density), capacity
 
     def _compaction_pressure(self, selected: dict, context_limit: int, request_bytes: int, specs: list) -> dict:
         """Decide proactive compaction from the complete request against the model window.

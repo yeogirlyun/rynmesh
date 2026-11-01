@@ -59,11 +59,19 @@ _FAILED_STATUS = frozenset({"failed", "error", "timeout", "timed_out", "cancelle
 
 
 def observed_bytes_per_token(row) -> float | None:
-    """Request bytes per provider-reported input token of the latest main request."""
+    """Request bytes per provider-reported input token of the latest applicable main request.
+
+    Only text-only main requests to the task's *current* model count: image
+    usage mixes in heuristic image tokens, and another model has another
+    tokenizer. Usage recorded before model tags existed is trusted only when
+    the task never switched models.
+    """
     state = row.get("budget") if isinstance(row, dict) else None
     records = state.get("records") if isinstance(state, dict) else None
     if not isinstance(records, list):
         return None
+    current_model = row.get("model_id")
+    switched = bool(row.get("model_history"))
     for record in reversed(records):
         if not (isinstance(record, dict) and record.get("kind") == "model"
                 and record.get("stage") == "model" and record.get("status") == "settled"):
@@ -71,11 +79,28 @@ def observed_bytes_per_token(row) -> float | None:
         tokens, policy = record.get("input_tokens"), record.get("output_policy")
         if type(tokens) is not int or tokens <= 0 or not isinstance(policy, dict):
             continue
+        observed_model = policy.get("model_id")
+        if observed_model is not None and observed_model != current_model:
+            continue  # Another model's tokenizer.
+        if observed_model is None and switched:
+            continue  # Untagged usage may belong to the previous model.
         size = policy.get("projected_context_utf8_bytes")
         if type(size) is not int or size < MIN_CALIBRATION_REQUEST_BYTES or policy.get("estimated_image_tokens"):
             continue
         return size / tokens
     return None
+
+
+def applied_density(policy: dict | None, bytes_per_token: float | None) -> float | None:
+    """The bytes/token ratio that tightens capacity, or None when the default estimate stands.
+
+    Applies only to a declared window and to text denser than the default;
+    sparser text never loosens the admission limit.
+    """
+    if (bytes_per_token is None or bytes_per_token >= DEFAULT_BYTES_PER_TOKEN
+            or not isinstance(policy, dict) or not policy.get("context_window_known")):
+        return None
+    return max(MIN_BYTES_PER_TOKEN, bytes_per_token)
 
 
 def input_capacity(hard_limit_bytes: int, policy: dict | None = None, bytes_per_token: float | None = None) -> int:
@@ -86,12 +111,26 @@ def input_capacity(hard_limit_bytes: int, policy: dict | None = None, bytes_per_
     the capacity; sparser text never raises it above the admission limit.
     """
     capacity = int(hard_limit_bytes)
-    if (bytes_per_token is None or bytes_per_token >= DEFAULT_BYTES_PER_TOKEN
-            or not isinstance(policy, dict) or not policy.get("context_window_known")):
+    density = applied_density(policy, bytes_per_token)
+    if density is None:
         return capacity
     tokens = (int(policy.get("context_window_tokens") or 0) - int(policy.get("reserved_output_tokens") or 0)
               - int(policy.get("framing_reserve_tokens") or 0))
-    return max(0, min(capacity, int(tokens * max(MIN_BYTES_PER_TOKEN, bytes_per_token))))
+    return max(0, min(capacity, int(tokens * density)))
+
+
+def request_bytes_at_density(analysis: dict, density: float | None) -> int:
+    """Request size comparable with ``input_capacity`` for the same density.
+
+    Text is measured in UTF-8 bytes. Inline images keep their own token
+    heuristic and are converted at the same density instead of the default,
+    so ``size <= capacity`` means estimated text tokens plus image tokens fit
+    the input window. Without a density this is the admission projection.
+    """
+    if density is None:
+        return int(analysis["projected_context_utf8_bytes"])
+    image_tokens = int(analysis.get("estimated_image_tokens") or 0)
+    return int(analysis["text_projection_utf8_bytes"]) + math.ceil(image_tokens * density)
 
 
 def step_sizes(messages: list[dict]) -> list[int]:
