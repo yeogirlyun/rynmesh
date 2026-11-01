@@ -188,6 +188,8 @@ jobs:
           python-version: "3.12"
       - uses: dtolnay/rust-toolchain@stable
       - run: npm ci
+      - name: Build production web interface
+        run: npm run build
       - name: Build self-contained node sidecar
         run: ./src-tauri/scripts/build-sidecar.sh
       - name: Fetch pinned llama.cpp runtime

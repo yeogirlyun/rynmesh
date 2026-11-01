@@ -771,7 +771,8 @@ def test_reparse_point_and_symlink_rejection(tmp_path: Path, monkeypatch: pytest
 
     def _fake_reparse_lstat(path_arg: Any) -> Any:
         st = orig_lstat(path_arg)
-        if Path(path_arg).resolve() == target_worker:
+        # resolve() itself calls lstat on Python 3.13 and would recurse here.
+        if Path(os.path.abspath(path_arg)) == target_worker:
 
             class _ReparseStatProxy:
                 def __getattr__(self, name: str) -> Any:

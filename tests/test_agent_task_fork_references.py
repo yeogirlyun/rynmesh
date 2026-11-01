@@ -14,7 +14,7 @@ EXAMPLE = "result_" + "a" * 32
 
 
 @pytest.mark.parametrize("slot", ["user", "assistant", "tool_text", "tool_json_text", "arguments_text", "checkpoint_text"])
-def test_example_identifiers_in_text_do_not_read_storage(env, slot):
+def test_example_identifiers_in_text_do_not_read_storage(env, slot):  # noqa: F811 — imported pytest fixtures
     tid = parent(env)
     # Even a JSON example in ordinary conversation is still prose.
     text = 'Parser example: ' + json.dumps({"result_ref": EXAMPLE})
@@ -36,7 +36,7 @@ def test_example_identifiers_in_text_do_not_read_storage(env, slot):
 
 
 @pytest.mark.parametrize("key", ["resource_ref", "directory_ref", "listing_snapshot", "cursor", "next_cursor"])
-def test_parent_capability_in_nested_tool_arguments_rejects_without_child(env, resources, key):
+def test_parent_capability_in_nested_tool_arguments_rejects_without_child(env, resources, key):  # noqa: F811 — imported pytest fixtures
     resource_tools, _, context, state = resources
     env.runtime.tools.resources = resource_tools
     tid = parent(env)
@@ -58,7 +58,7 @@ def test_parent_capability_in_nested_tool_arguments_rejects_without_child(env, r
 
 
 @pytest.mark.parametrize("slot", ["tool_result", "tool_result_metadata", "arguments"])
-def test_structured_result_references_copy_nested_blobs_and_remain_readable(env, slot):
+def test_structured_result_references_copy_nested_blobs_and_remain_readable(env, slot):  # noqa: F811 — imported pytest fixtures
     tid = parent(env)
     source = stored(env, tid)
     leaf = results.save(env.runtime.store, source, {"name": "inspect_service", "operation_id": "leaf"},
@@ -84,7 +84,7 @@ def test_structured_result_references_copy_nested_blobs_and_remain_readable(env,
 
 
 @pytest.mark.parametrize("slot", ["tool_result", "arguments"])
-def test_missing_explicit_result_reference_still_fails_closed(env, slot):
+def test_missing_explicit_result_reference_still_fails_closed(env, slot):  # noqa: F811 — imported pytest fixtures
     tid = parent(env)
     append(env, tid,
            assistant(name="ryn_read_result", args={"result_id": EXAMPLE} if slot == "arguments" else {}, call_id="missing")["message"],
@@ -96,7 +96,7 @@ def test_missing_explicit_result_reference_still_fails_closed(env, slot):
     assert env.runtime.store.read() == before
 
 
-def test_undecodable_tool_arguments_cannot_bypass_validation(env):
+def test_undecodable_tool_arguments_cannot_bypass_validation(env):  # noqa: F811 — imported pytest fixtures
     tid = parent(env)
     call = assistant(name="ryn_read_resource", call_id="broken")["message"]
     call["tool_calls"][0]["function"]["arguments"] = '{"resource_ref":'

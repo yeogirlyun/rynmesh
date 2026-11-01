@@ -114,6 +114,9 @@ def test_build_entry_points_use_active_toolchain_before_building(sandbox, tmp_pa
         compiler(Path(sandbox["PATH"]) / "rustc")
     script_dir = tmp_path / "fixture/webapp/src-tauri/scripts"
     script_dir.mkdir(parents=True)
+    webui = script_dir.parents[1] / "dist"
+    webui.mkdir()
+    (webui / "index.html").write_text("<!doctype html><title>Build fixture</title>", encoding="utf-8")
     for source in (SCRIPTS / script, SCRIPTS / "rust-host-triple.sh"):
         if source.is_file():
             shutil.copy2(source, script_dir / source.name)

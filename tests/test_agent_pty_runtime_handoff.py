@@ -17,7 +17,7 @@ from rynmesh.services import peer_box
 @pytest.mark.skipif(os.name != "nt", reason="Windows shell and ConPTY integration")
 @pytest.mark.parametrize("tty", [False, True])
 @pytest.mark.parametrize("launch", [{"background": True}, {"yield_seconds": 0.2}])
-def test_process_survives_dispatch_handoff_then_obeys_task_cancel(node, monkeypatch, tmp_path, tty, launch):
+def test_process_survives_dispatch_handoff_then_obeys_task_cancel(node, monkeypatch, tmp_path, tty, launch):  # noqa: F811 — imported pytest fixtures
     app, owner_store = node
     _, model_id = add_source(app)
     bridge, tools, catalog = build_agent_integrations(app, owner_store, owner_store.home)
