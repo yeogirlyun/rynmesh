@@ -1,0 +1,35 @@
+{
+  "author": "consumer_process_proof / gpt-6.1-sol high",
+  "status": "implementation_frozen_independent_review_in_progress",
+  "scope": "Six legacy real-model controllers; synthetic tests only.",
+  "changes": [
+    "Restrict live planner to existing user source src-7de9fb1d36c44bc8 and glm-5.3-flash through migrate=False read_planner.",
+    "Explicit effective generation mapping before first business snapshot; record sanitized policy and mapping.",
+    "Keep outer ModelDispatchAdapter and permission/quota/revision gates; reject owner/hash/mapping drift before invocation.",
+    "R03 initializes once; recovery validates saved fixture identity and readonly preflight rejects corrupt history before route migration.",
+    "Remove ordinary4096 cap;keep true capability probe4096."
+  ],
+  "tests": {
+    "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_legacy_planner_policy.py tests/test_agent_planner_policy.py tests/test_agent_source_fixture.py tests/test_agent_source_update_fixture.py tests/test_agent_document_cases.py tests/test_agent_diagnostic_fixture.py tests/test_agent_consumer_process_proof.py tests/test_agent_sharing_recovery_case.py -q",
+    "passed": 55,
+    "seconds": 89.55,
+    "new_synthetic_tests": 15
+  },
+  "historical_test_failure": "Initial combined collection could not resolve planner_policy when older tests loaded controllers via file spec. Each controller now adds its own directory to bootstrap path; existing tests/shared helper unchanged. Final combined run passed.",
+  "limitations": [
+    "R03 retains historical launcher-only termination proof; not upgraded by parameter migration.",
+    "Synthetic reference path tests validate matching parameter mapping;not actual Node worker or real model acceptance.",
+    "No production/shared helper/other controller/historical evidence edits or paid calls."
+  ],
+  "sha256": {
+    "docs/acceptance/ryn-agent-delivery/real-model/run_baseline.py": "4099359FBFC79C30C2A6FB4DB0AFBB85D85D19D94D539A66B73452D12B94BE44",
+    "docs/acceptance/ryn-agent-delivery/real-model/run_documents.py": "4AE0690A13B72E1E6614873B6A9899E56B06CBE364996E3A4C5C0EE5861FAD96",
+    "docs/acceptance/ryn-agent-delivery/real-model/run_default_model.py": "9357E701FCA43334CB2096D4CA800EDBB41B800AD21D27F642F8833F73BFB6BA",
+    "docs/acceptance/ryn-agent-delivery/real-model/run_diagnostics.py": "ACA68FBF0D21E28171691132DBC0C015CC213561F7B200C2E32725E958F8EB6F",
+    "docs/acceptance/ryn-agent-delivery/real-model/run_recovery.py": "60D9D178878435D5E6CE597E2CEE19CBDD082C62FD2E1257AD86D23258B1343C",
+    "docs/acceptance/ryn-agent-delivery/real-model/run_sources.py": "A73886CAF0600F5DF306DEF0C3FE3480515A948C620385B555FACCD161126F6F",
+    "tests/test_agent_legacy_planner_policy.py": "32EE083D2F37D7D36C6FE7906B56C410FAE5B0BFDE0780A53A54F4CB23DFF42E"
+  },
+  "shared_helper_sha256": "C128E0CB5423E705F116A7B39FF0880A52E896D7D70D2FF9C281F2B4CB37A717",
+  "formal_executed_trials": 0
+}

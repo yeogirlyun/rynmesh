@@ -1,0 +1,69 @@
+{
+  "runs": [
+    {
+      "index": 1,
+      "passed": true,
+      "ordered_initial_share_read_revoke_read": true,
+      "sibling_private_all_model_reads": true,
+      "successful_tool_operations": 9,
+      "rejected_not_executed": [
+        {
+          "tool": "ryn_set_model_sharing",
+          "error": "agent_model_not_shareable"
+        }
+      ],
+      "successful_writes": 2,
+      "approvals": 2,
+      "model_calls": 7,
+      "elapsed_seconds": 94.172,
+      "input_tokens": 22662,
+      "output_tokens": 2758,
+      "usage_scope": "business runs only; initial capability probe usage was not captured"
+    },
+    {
+      "index": 2,
+      "passed": true,
+      "ordered_initial_share_read_revoke_read": true,
+      "sibling_private_all_model_reads": true,
+      "successful_tool_operations": 9,
+      "rejected_not_executed": [
+        {
+          "tool": "ryn_set_model_sharing",
+          "error": "agent_model_not_shareable"
+        }
+      ],
+      "successful_writes": 2,
+      "approvals": 2,
+      "model_calls": 7,
+      "elapsed_seconds": 135.375,
+      "input_tokens": 21914,
+      "output_tokens": 2790,
+      "usage_scope": "business runs only; initial capability probe usage was not captured"
+    },
+    {
+      "index": 3,
+      "passed": true,
+      "ordered_initial_share_read_revoke_read": true,
+      "sibling_private_all_model_reads": true,
+      "successful_tool_operations": 9,
+      "rejected_not_executed": [
+        {
+          "tool": "ryn_set_model_sharing",
+          "error": "agent_model_not_shareable"
+        }
+      ],
+      "successful_writes": 2,
+      "approvals": 2,
+      "model_calls": 7,
+      "elapsed_seconds": 88.687,
+      "input_tokens": 22920,
+      "output_tokens": 2423,
+      "usage_scope": "business runs only; initial capability probe usage was not captured"
+    }
+  ],
+  "all_three_objective_checks_passed": true,
+  "final_report_semantic_review_passed": false,
+  "other_run_context_identity_absent": true,
+  "all_three_passed": false,
+  "owner_source_unchanged": true
+}

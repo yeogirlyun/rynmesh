@@ -1,0 +1,18 @@
+{
+  "classification": "pinned native approval-wait mechanism passed; not Agent quality",
+  "formal_case_score": false,
+  "real_model": false,
+  "reviewer": "Root compared native RPC counts, exact host approval, operation events and encrypted budget ledger.",
+  "checks_passed": true,
+  "owner_wait_seconds": 21.0,
+  "parent_active_wall_seconds": 3.625,
+  "charged_operation_seconds": 0.032,
+  "model_requests": 2,
+  "tool_dispatches": 1,
+  "finding": "The pinned unmodified upstream worker waited longer than both the active execution limit and parent grace. It then dispatched the approved write once and returned the tool-backed answer. Native and Python wait measures agree within transport overhead. Actual token counters settled to 24 with no unsettled reservations.",
+  "limitations": [
+    "Synthetic model, no native persistent target or independent semantic quality assessment.",
+    "Completed before the final additive late-approval cancellation check; retain the later smoke separately.",
+    "Free-form input waiting, reference crash recovery and full budget/context alignment remain pending."
+  ]
+}

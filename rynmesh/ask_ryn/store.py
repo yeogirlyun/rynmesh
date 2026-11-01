@@ -29,7 +29,7 @@ MAX_PLAINTEXT = 11 * 1024 * 1024
 MAX_SYNC_BYTES = 88 * 1024 * 1024
 MAX_SYNC_PLAINTEXT = 64 * 1024 * 1024
 _ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
-FIELDS = ("id", "title", "serviceKey", "serviceName", "providerPeerId", "networkId", "createdAt", "updatedAt", "messages", "revision", "draft", "contextIds")
+FIELDS = ("id", "title", "serviceKey", "serviceName", "providerPeerId", "networkId", "createdAt", "updatedAt", "messages", "revision", "draft", "contextIds", "cliModel")
 MESSAGE_FIELDS = ("id", "role", "content", "createdAt", "status", "taskId", "inputTokens", "outputTokens", "cost", "contextIds", "contextBytes", "promptSha256")
 
 
@@ -65,6 +65,8 @@ def clean_conversation(value: Mapping[str, Any]) -> dict[str, Any]:
         raise ConversationError("ask_invalid_conversation")
     result = {key: value[key] for key in FIELDS if key in value and key != "revision"}
     result["id"] = _identity(result.get("id"))
+    if "cliModel" in result and (not isinstance(result["cliModel"], str) or (result["cliModel"] != "" and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", result["cliModel"]))):
+        raise ConversationError("ask_invalid_conversation")
     for key, limit in (("title", 512), ("serviceKey", 2048), ("serviceName", 512), ("providerPeerId", 1024), ("networkId", 256)):
         text = result.get(key)
         if not isinstance(text, str) or not text.strip() or len(text) > limit or any(ord(char) < 32 for char in text):

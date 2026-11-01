@@ -1,0 +1,89 @@
+{
+  "model_requests": [
+    {
+      "kind": "model",
+      "id": "agent_0a5b3dd17933424d89f43500dec39e9c:model:1",
+      "sampling_binding": {
+        "run_id": "166d952fc02648c59eacc22022a6023d",
+        "run_nonce": "648a239e0891458295fe5421393b713b",
+        "dataset_version": "ryn-agent-acceptance-2026-10-10.v2-draft.1",
+        "case_id": "Q01",
+        "cohort": "ryn",
+        "trial": 1,
+        "effective_case_sha256": "8ddb01f96aac5ff06d47dec665e172c3df43aa33656d627aaad4cde1ae8db354",
+        "overlay_sha256": "a90280553577ec075e6fe7e131a07c4ca830d4e60ea2600a2ae2c28b93e407e5"
+      },
+      "task_id": "agent_0a5b3dd17933424d89f43500dec39e9c",
+      "registration_sha256": "2cb533c6121ee894dc0aad77c077113b332343fdc34e3d5b085d58b94d51378e",
+      "dispatched_at": "2026-10-11T06:25:55.912213+00:00"
+    },
+    {
+      "kind": "model",
+      "id": "agent_0a5b3dd17933424d89f43500dec39e9c:model:3",
+      "sampling_binding": {
+        "run_id": "166d952fc02648c59eacc22022a6023d",
+        "run_nonce": "648a239e0891458295fe5421393b713b",
+        "dataset_version": "ryn-agent-acceptance-2026-10-10.v2-draft.1",
+        "case_id": "Q01",
+        "cohort": "ryn",
+        "trial": 1,
+        "effective_case_sha256": "8ddb01f96aac5ff06d47dec665e172c3df43aa33656d627aaad4cde1ae8db354",
+        "overlay_sha256": "a90280553577ec075e6fe7e131a07c4ca830d4e60ea2600a2ae2c28b93e407e5"
+      },
+      "task_id": "agent_0a5b3dd17933424d89f43500dec39e9c",
+      "registration_sha256": "2cb533c6121ee894dc0aad77c077113b332343fdc34e3d5b085d58b94d51378e",
+      "dispatched_at": "2026-10-11T06:25:56.500005+00:00"
+    },
+    {
+      "kind": "model",
+      "id": "agent_0a5b3dd17933424d89f43500dec39e9c:model:5",
+      "sampling_binding": {
+        "run_id": "166d952fc02648c59eacc22022a6023d",
+        "run_nonce": "648a239e0891458295fe5421393b713b",
+        "dataset_version": "ryn-agent-acceptance-2026-10-10.v2-draft.1",
+        "case_id": "Q01",
+        "cohort": "ryn",
+        "trial": 1,
+        "effective_case_sha256": "8ddb01f96aac5ff06d47dec665e172c3df43aa33656d627aaad4cde1ae8db354",
+        "overlay_sha256": "a90280553577ec075e6fe7e131a07c4ca830d4e60ea2600a2ae2c28b93e407e5"
+      },
+      "task_id": "agent_0a5b3dd17933424d89f43500dec39e9c",
+      "registration_sha256": "2cb533c6121ee894dc0aad77c077113b332343fdc34e3d5b085d58b94d51378e",
+      "dispatched_at": "2026-10-11T06:25:56.842236+00:00"
+    },
+    {
+      "kind": "model",
+      "id": "agent_0a5b3dd17933424d89f43500dec39e9c:model:6",
+      "sampling_binding": {
+        "run_id": "166d952fc02648c59eacc22022a6023d",
+        "run_nonce": "648a239e0891458295fe5421393b713b",
+        "dataset_version": "ryn-agent-acceptance-2026-10-10.v2-draft.1",
+        "case_id": "Q01",
+        "cohort": "ryn",
+        "trial": 1,
+        "effective_case_sha256": "8ddb01f96aac5ff06d47dec665e172c3df43aa33656d627aaad4cde1ae8db354",
+        "overlay_sha256": "a90280553577ec075e6fe7e131a07c4ca830d4e60ea2600a2ae2c28b93e407e5"
+      },
+      "task_id": "agent_0a5b3dd17933424d89f43500dec39e9c",
+      "registration_sha256": "2cb533c6121ee894dc0aad77c077113b332343fdc34e3d5b085d58b94d51378e",
+      "dispatched_at": "2026-10-11T06:25:57.013485+00:00"
+    },
+    {
+      "kind": "model",
+      "id": "agent_0a5b3dd17933424d89f43500dec39e9c:model:8",
+      "sampling_binding": {
+        "run_id": "166d952fc02648c59eacc22022a6023d",
+        "run_nonce": "648a239e0891458295fe5421393b713b",
+        "dataset_version": "ryn-agent-acceptance-2026-10-10.v2-draft.1",
+        "case_id": "Q01",
+        "cohort": "ryn",
+        "trial": 1,
+        "effective_case_sha256": "8ddb01f96aac5ff06d47dec665e172c3df43aa33656d627aaad4cde1ae8db354",
+        "overlay_sha256": "a90280553577ec075e6fe7e131a07c4ca830d4e60ea2600a2ae2c28b93e407e5"
+      },
+      "task_id": "agent_0a5b3dd17933424d89f43500dec39e9c",
+      "registration_sha256": "2cb533c6121ee894dc0aad77c077113b332343fdc34e3d5b085d58b94d51378e",
+      "dispatched_at": "2026-10-11T06:25:57.411403+00:00"
+    }
+  ]
+}

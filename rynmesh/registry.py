@@ -33,6 +33,9 @@ from .mailbox import MailboxError, verify_mailbox_envelope
 from .mailbox_store import FileMailboxStore
 from .types import now_iso
 
+# Upper bound for one long poll of open work orders (client and server).
+MAX_ORDER_WAIT_S = 25.0
+
 
 class RegistryError(RuntimeError):
     """A registry call failed.
@@ -622,6 +625,10 @@ class FilePeerRegistry:
 class HttpPeerRegistry:
     """Small HTTP client for the future rynmesh.ai registry service."""
 
+    # Open work orders can be long-polled: P2P signaling reaches an idle node
+    # as soon as it is submitted instead of on the node's next poll.
+    supports_order_wait = True
+
     def __init__(self, base_url: str, *, timeout_s: float = 10.0) -> None:
         self.base_url = _validate_registry_url(base_url)
         self.timeout_s = float(timeout_s)
@@ -756,8 +763,14 @@ class HttpPeerRegistry:
         capability: str = "",
         status: str = "open",
         max_age_hours: float | None = None,
+        wait_s: float = 0.0,
     ) -> list[SignedPayload]:
         params: dict[str, str] = {"network_id": network_id}
+        wait = max(0.0, min(float(wait_s or 0.0), MAX_ORDER_WAIT_S))
+        if wait:
+            # Registries that predate long polling ignore the parameter and
+            # answer at once; callers detect that from the elapsed time.
+            params["wait_s"] = str(wait)
         if provider_peer_id:
             params["provider_peer_id"] = provider_peer_id
         if requester_peer_id:
@@ -768,13 +781,14 @@ class HttpPeerRegistry:
             params["status"] = status
         if max_age_hours and max_age_hours > 0:
             params["max_age_hours"] = str(float(max_age_hours))
-        payload = self._json(
-            Request(
-                f"{self.base_url}/api/v1/jobs/work-orders?{urlencode(params)}",
-                headers={"user-agent": RYNMESH_USER_AGENT},
-                method="GET",
-            )
+        request = Request(
+            f"{self.base_url}/api/v1/jobs/work-orders?{urlencode(params)}",
+            headers={"user-agent": RYNMESH_USER_AGENT},
+            method="GET",
         )
+        # Only a long poll needs the longer timeout; plain calls keep the
+        # one-argument form that subclasses override.
+        payload = self._json(request, timeout_s=self.timeout_s + wait) if wait else self._json(request)
         records = payload.get("work_orders", payload if isinstance(payload, list) else [])
         if not isinstance(records, list):
             raise RegistryError("registry response missing work_orders list")
@@ -851,9 +865,9 @@ class HttpPeerRegistry:
             records.append(signed)
         return records
 
-    def _json(self, req: Request) -> dict[str, Any] | list[Any]:
+    def _json(self, req: Request, *, timeout_s: float | None = None) -> dict[str, Any] | list[Any]:
         try:
-            with _open_registry_request(req, timeout_s=self.timeout_s) as response:
+            with _open_registry_request(req, timeout_s=timeout_s or self.timeout_s) as response:
                 raw_bytes = response.read(MAX_REGISTRY_RESPONSE_BYTES + 1)
                 if len(raw_bytes) > MAX_REGISTRY_RESPONSE_BYTES:
                     raise RegistryError("registry_response_too_large")

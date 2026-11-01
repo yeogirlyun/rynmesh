@@ -1,0 +1,73 @@
+{
+  "review_version": "query-owner-provenance-independent-v1",
+  "reviewer": "sharing_review (non-author)",
+  "reviewed_at": "2026-10-10T05:50:52.624239+00:00",
+  "verdict": "no_material_findings_in_patch_scope",
+  "findings": [],
+  "reviewed_sha256": {
+    "docs/acceptance/ryn-agent-delivery/real-model/run_queries.py": "23c98bd64f34caeb7ba6bb4a3eca868fe412902a459c8cbb1490851dc876cdaf",
+    "tests/test_agent_query_planner_guard.py": "32c73eb9668996f791c0103b9ebf22e1eeb45edc03104c2852dd9c621f9fe87f"
+  },
+  "evidence": [
+    {
+      "file": "run_queries.py",
+      "lines": [
+        85,
+        105
+      ],
+      "assessment": "Live startup computes SHA256 directly from owner sources.enc bytes before read_planner. The before digest and ciphertext basis are written in an initial run record before case configuration or engine execution; after is null with pending status. No ciphertext or source credential is exported by the new fields."
+    },
+    {
+      "file": "run_queries.py",
+      "lines": [
+        131,
+        154
+      ],
+      "assessment": "Q06 selects the provider model-a identity independently of consumer selected peer identity. Every common provider_for lookup for that provider_selected re-reads the original owner path and rejects changed/unavailable bytes before installing inner transport. Mapping assertion and ModelDispatchAdapter type gate remain; only its inner transport is replaced. Both cohort branches use this installed gate."
+    },
+    {
+      "file": "run_queries.py",
+      "lines": [
+        238,
+        252
+      ],
+      "assessment": "Final after digest is independently calculated from current owner ciphertext bytes after llm_shutdown. Equality is evaluated against the startup digest. OSError records after=null, status=unknown, unchanged=false instead of reusing before or claiming equality."
+    },
+    {
+      "file": "run_queries.py",
+      "lines": [
+        85,
+        102,
+        238,
+        251
+      ],
+      "assessment": "Fixture mode leaves owner_path/hash unset, skips both owner reads, and records null before/after with not_applicable status and basis. unchanged=true is existing no-owner-applicable behavior, qualified by explicit not_applicable metadata."
+    },
+    {
+      "file": "run_queries.py",
+      "lines": [
+        190,
+        198,
+        223,
+        228,
+        254,
+        258
+      ],
+      "assessment": "Owner guard error strings remain limited to the two safe literal codes; arbitrary OSError messages/paths are not exported by these catches. Existing full record credential/reasoning export guard remains."
+    }
+  ],
+  "independent_validation": {
+    "command": ".venv\\Scripts\\python.exe -m pytest -q -p no:cacheprovider tests/test_agent_query_planner_guard.py --tb=short",
+    "exit_code": 0,
+    "passed": 16,
+    "elapsed_seconds": 15.33,
+    "scope": "Actual CLI orchestration with synthetic owner for normal/changed/deleted/unreadable final states and initialization record checks; fixture owner read forbidden; AST-extracted exact common gate with real outer ModelDispatchAdapter and offline counting inner; between-call drift; safe error-code export. No real model API."
+  },
+  "limitations": [
+    "Startup unreadability is fail-closed before an output directory/initial record exists; unknown/null recording applies to final re-read failure after a readable startup baseline. This patch does not add a startup-failure artifact collector.",
+    "The guard is a pre-dispatch byte observation, not a filesystem lock through the network request; equal endpoint hashes do not prove absence of transient ABA changes between observations. No such stronger claim is made.",
+    "The tests execute common gate and CLI orchestration without live engines; reference/Q06 live runs were not repeated.",
+    "Hashes are provenance of owner ciphertext bytes, not proof of decrypted semantic equality or provider identity by themselves. Production binding/permission/quota gates remain separate.",
+    "No production, test, or historical run/review was modified by this review; only this new review artifact was created. No held-out access."
+  ]
+}

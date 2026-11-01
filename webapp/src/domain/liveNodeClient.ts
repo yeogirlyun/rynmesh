@@ -202,6 +202,9 @@ export function makeLiveNodeClient(baseUrl = "/api/local"): NodeClient {
     setAutoUpdate: (on) =>
       requestJson(`${baseUrl}/settings`, { method: "PATCH", body: JSON.stringify({ auto_update: on }) }).then(() => undefined),
     peersHealth: () => requestJson(`${baseUrl}/peers/health`, { method: "POST" }),
+    directory: (options) =>
+      requestJson<import("./directory").DirectorySnapshot>(
+        `${baseUrl}/directory${qs({ quick: options?.quick ? "1" : undefined })}`),
     egressStatus: (region = "CN") => requestJson(`${baseUrl}/egress/status${qs({ region })}`),
     egressConnect: (req) =>
       requestJson(`${baseUrl}/egress/connect`, { method: "POST", body: JSON.stringify(req ?? {}) }),

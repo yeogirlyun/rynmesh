@@ -17,6 +17,7 @@ import { useAppContext } from "../appContext";
 import { LoadingPanel } from "../components/ui";
 import type { JobCapacity } from "../domain/types";
 import type { LLMServiceRecord } from "../domain/nodeClient";
+import { isServiceUsable } from "../domain/llmOrders";
 import { useProviderDiscovery, useServiceOrder } from "../domain/serviceExperience";
 import { providerIdentity, serviceDescriptors } from "../domain/serviceDescriptors";
 import styles from "./ServicesCatalog.module.css";
@@ -101,7 +102,7 @@ export default function ServicesCatalog() {
   const [recent, setRecent] = useState<RecentService[]>(loadRecentServices);
 
   const services = useMemo<CatalogService[]>(() => {
-    const llm = llmServices.find((service) => service.online) ?? llmServices[0];
+    const llm = llmServices.find(isServiceUsable) ?? llmServices[0];
     const video = findVideoCapacity(capacities);
     const llmPrice = llm?.service.pricing.minimum ?? 0;
     const llmCurrency = llm?.service.pricing.currency === "DEV_TASK_BALANCE" ? "credits" : llm?.service.pricing.currency;
@@ -116,7 +117,7 @@ export default function ServicesCatalog() {
         experience: "Chat",
         price: llm ? tr("From {{v0}} {{v1}}", { v0: llmPrice, v1: tr(llmCurrency || "credits") }) : tr("No provider online"),
         action: tr("Open chat"),
-        available: Boolean(llm?.online),
+        available: Boolean(llm && isServiceUsable(llm)),
         icon: Bot,
         href: llm ? llmHref(llm, networkId, client.mode) : "/services/manage#private-ai",
       },

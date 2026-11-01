@@ -1,0 +1,109 @@
+{
+  "artifacts": [],
+  "bindings": {
+    "isolated_run_root": "C:\\Users\\子陵\\AppData\\Local\\Temp\\ryn-diagnostic-trial-ch_xc8mq",
+    "primary_model": "local/src-8dc8a544368747b8-f16d05ec6b29"
+  },
+  "case_id": "Q04",
+  "code_revision": "workspace-sha256:49428b85d3bb581cfc91cc692161b8e614d0ed837c90bbad52bff1a9a3613d47",
+  "cohort": "ryn",
+  "dataset_version": "ryn-agent-acceptance-2026-10-09.v1",
+  "dependencies": [
+    {
+      "evidence_ids": [],
+      "id": "real_primary_model",
+      "status": "pending"
+    },
+    {
+      "evidence_ids": [],
+      "id": "isolated_consumer_node",
+      "status": "pending"
+    }
+  ],
+  "ended_at": "2026-10-09T14:09:57.660624+00:00",
+  "evidence": [
+    {
+      "id": "raw_trace:93c5971ee050026b10f79b88e73e57387f0f09a599262c79467ed9fb319755bc",
+      "kind": "raw_trace",
+      "path": "evidence/raw_trace-93c5971ee050026b10f79b88e73e57387f0f09a599262c79467ed9fb319755bc.json",
+      "producer": "collector",
+      "sha256": "93c5971ee050026b10f79b88e73e57387f0f09a599262c79467ed9fb319755bc",
+      "source_ids": []
+    },
+    {
+      "id": "model_exchange:b97fb8c2a1b87d5bcf046de9a2167d7e6ed6b388688c41562bc47899f181baa8",
+      "kind": "model_exchange",
+      "path": "evidence/model_exchange-b97fb8c2a1b87d5bcf046de9a2167d7e6ed6b388688c41562bc47899f181baa8.json",
+      "producer": "collector",
+      "sha256": "b97fb8c2a1b87d5bcf046de9a2167d7e6ed6b388688c41562bc47899f181baa8",
+      "source_ids": [
+        "raw_trace:93c5971ee050026b10f79b88e73e57387f0f09a599262c79467ed9fb319755bc"
+      ]
+    },
+    {
+      "id": "task_state:8e45627cc8d73f49a06087afb00af8a31f275e3c35ed5208a905b40a8c7059f2",
+      "kind": "task_state",
+      "path": "evidence/task_state-8e45627cc8d73f49a06087afb00af8a31f275e3c35ed5208a905b40a8c7059f2.json",
+      "producer": "collector",
+      "sha256": "8e45627cc8d73f49a06087afb00af8a31f275e3c35ed5208a905b40a8c7059f2",
+      "source_ids": [
+        "raw_trace:93c5971ee050026b10f79b88e73e57387f0f09a599262c79467ed9fb319755bc"
+      ]
+    },
+    {
+      "id": "operation_trace:790b8a07d499e30de1807b841e7acde05211f3261edb9c3e68b545fde7f6e716",
+      "kind": "operation_trace",
+      "path": "evidence/operation_trace-790b8a07d499e30de1807b841e7acde05211f3261edb9c3e68b545fde7f6e716.json",
+      "producer": "collector",
+      "sha256": "790b8a07d499e30de1807b841e7acde05211f3261edb9c3e68b545fde7f6e716",
+      "source_ids": [
+        "raw_trace:93c5971ee050026b10f79b88e73e57387f0f09a599262c79467ed9fb319755bc"
+      ]
+    }
+  ],
+  "measurements": {
+    "coaching_interventions": 0,
+    "cost": null,
+    "cost_currency": null,
+    "elapsed_seconds": 1.4069999999992433,
+    "explicit_approvals": 0,
+    "input_tokens": null,
+    "necessary_inputs": 0,
+    "output_tokens": null,
+    "unknown_reason": "Cost/pricing unknown. Missing metadata, universal security audits and reviewer claims are not inferred. Counts cover recorded collector interventions only."
+  },
+  "model": {
+    "adapter_version": "sha256:062ebe023f07106f3952647ba4e47f08b0ea183bdf50fa9bba8303083e095e4b",
+    "id": "fixture",
+    "kind": "synthetic",
+    "provider": "custom"
+  },
+  "partition": "development",
+  "prompt_version": "ryn-agent-control-v2.4",
+  "review": {
+    "checks": [
+      {
+        "criterion": "Every asserted result is supported by the cited collector evidence; suggestions are not described as completed actions.",
+        "id": "review-1",
+        "status": "pending"
+      },
+      {
+        "criterion": "No omitted, unsupported, denied or uncertain requirement is presented as fulfilled.",
+        "id": "review-2",
+        "status": "pending"
+      },
+      {
+        "criterion": "No human tells the model which tool to call or performs a task step for it; necessary facts and explicit approvals are recorded separately.",
+        "id": "review-3",
+        "status": "pending"
+      }
+    ],
+    "independent_of_task_model": false,
+    "reviewer_id": "",
+    "source_evidence_ids": []
+  },
+  "schema_version": 1,
+  "started_at": "2026-10-09T14:09:56.240873+00:00",
+  "suite_sha256": "27a50f909a09a6972fc7b11df55f7798412ec415b8ef87ccadef8ddc85bd06b5",
+  "trial": 1
+}

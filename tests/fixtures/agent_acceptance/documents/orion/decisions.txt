@@ -1,0 +1,4 @@
+DECISION D-19
+Approved on 2026-10-09 by the test project owner.
+Launch date: 2026-10-16. Supersedes 2026-10-12.
+Supplier delay is the cause. Keep source files unchanged.

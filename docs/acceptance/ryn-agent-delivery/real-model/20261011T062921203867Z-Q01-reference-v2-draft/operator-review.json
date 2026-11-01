@@ -1,0 +1,33 @@
+{
+  "kind": "operator-development-review-not-independent",
+  "at": "2026-10-11T06:31:29.668207+00:00",
+  "formal_pass": false,
+  "semantic_verdict": "failed_history_absence_claim",
+  "collection_verdict": "all_model_and_tool_dispatches",
+  "capture_errors": [],
+  "reference_session_observed": true,
+  "native_runtime_verdict": "complete",
+  "findings": [
+    {
+      "id": "Q01-REFERENCE-HISTORY",
+      "quote": "探针全部是 unknown，即没有任何一次成功的实时验证记录",
+      "reason": "Unknown or missing returned probe fields do not prove global absence of any successful historical verification. Same answer concludes all four have no successful real-time probe record. Catalog capability records and explicit history_coverage=not_established do not support this stronger interpretation."
+    }
+  ],
+  "calls": 3,
+  "elapsed_seconds": 87.6869999999999,
+  "owner_source_unchanged": true,
+  "source_configuration_unchanged": true,
+  "code_unchanged": true,
+  "independent_review": "pending_Astra_usage_limit",
+  "raw_sha256": {
+    "dispatch-audit.json": "8ef8dc86219027032d4324e296c06c761be229ea792de5724e47f8e4caa5767e",
+    "dispatch-events.jsonl": "d9f6350777ea59cdeef0a658e1deadff39a8b2660b832d7f03740fe6e680b2ca",
+    "effective-input.json": "40c2cc5bb08bc4dc53c2357f035b8830b3435c51da2c033fd7ef974c0d073fb5",
+    "model-requests.json": "00b87a3e2ec0786edb0ff9a71b3dab49d50cb5ab3423002a93549b1b09815072",
+    "native-rpc-events.jsonl": "42e816b32ff24eeb0ddb4ac625ef5867dd4d092abd2a755632ec5ae5e3839fe2",
+    "registration.json": "e8070dcb8cd3959dde5df6736d851fb4fd74e173923893584c2258398ad6a48f",
+    "run.json": "45e6f843a046aad0827e17b922c2fb6a452e6d651e5dae4acaa8b89ecc90b917",
+    "task-binding.json": "c2dbac74ed9fb22a7a2f4ec6757d149c4661f5bfb4422dadd8b879b1be465756"
+  }
+}

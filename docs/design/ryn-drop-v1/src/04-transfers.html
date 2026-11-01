@@ -1,0 +1,127 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="stylesheet" href="common.css">
+<style>
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 16px; }
+.stat { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; display: flex; align-items: center; gap: 12px; }
+.stat .v { font-size: 20px; font-weight: 700; } .stat .l { font-size: 12.5px; color: var(--muted); }
+.stat .ico { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; }
+.list { background: #fff; border: 1px solid var(--line); border-radius: 14px; margin-top: 14px; overflow: hidden; }
+.lh { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-bottom: 1px solid var(--line); }
+.lh .t { font-weight: 700; font-size: 15px; }
+.filter { display: flex; gap: 6px; margin-left: auto; }
+.filter span { padding: 4px 11px; border-radius: 8px; font-size: 13px; color: var(--muted); }
+.filter span.on { background: var(--line2); color: var(--ink); font-weight: 600; }
+.tr { display: grid; grid-template-columns: 34px 1.6fr 1fr 1.5fr 128px 92px; align-items: center; gap: 14px; padding: 12px 18px; border-bottom: 1px solid var(--line2); font-size: 13.5px; }
+.tr:last-child { border-bottom: 0; }
+.dir { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; }
+.dir.up { background: var(--blue-bg); color: var(--blue); } .dir.dn { background: var(--green-bg); color: var(--green); }
+.fn { font-weight: 600; } .fs { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+.pg .row { font-size: 12.5px; color: var(--muted); margin-top: 6px; }
+.acts { display: flex; gap: 6px; justify-content: flex-end; }
+.exp { background: #fafbfe; padding: 10px 18px 14px 66px; border-bottom: 1px solid var(--line2); }
+.hops { display: flex; align-items: center; gap: 10px; font-size: 12.5px; }
+.hop { display: flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 8px; border: 1px solid var(--line); background: #fff; }
+.hop.bad { color: var(--muted); text-decoration: line-through; }
+.hop.ok { border-color: #d8ccf7; color: var(--violet); font-weight: 600; }
+</style></head>
+<body class="withlegend"><div class="app">
+<div data-side="devices" data-badge="2"></div>
+<div class="main"><div data-top="<span class='muted'>设备</span><span data-i='cr' class='s14'></span><span>传输</span>"></div>
+<div class="content">
+  <div class="between"><div><h1>设备</h1></div>
+    <div class="row"><div class="btn"><span data-i="folder" class="s16"></span>打开接收文件夹</div><div class="btn pri"><span data-i="send" class="s16"></span>发送文件…</div></div></div>
+  <div class="tabs" style="margin-top:8px">
+    <div class="tab">我的设备</div><div class="tab">好友设备</div><div class="tab">附近</div><div class="tab on">传输 <span class="badge">2</span></div>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="ico" style="background:var(--blue-bg);color:var(--blue)"><span data-i="activity" class="s20"></span></div><div><div class="v">4 个进行中</div><div class="l">1 个等待对方确认</div></div></div>
+    <div class="stat"><div class="ico" style="background:var(--teal-bg);color:var(--teal)"><span data-i="zap" class="s20"></span></div><div><div class="v">166 MB/s</div><div class="l">当前总速度</div></div></div>
+    <div class="stat"><div class="ico" style="background:var(--green-bg);color:var(--green)"><span data-i="shield" class="s20"></span></div><div><div class="v">128.4 GB</div><div class="l">今天已传输，全部已校验</div></div></div>
+    <div class="stat"><div class="ico" style="background:var(--amber-bg);color:var(--amber)"><span data-i="cloud" class="s20"></span></div><div><div class="v">1 个排队</div><div class="l">对方离线，上线后自动发送</div></div></div>
+  </div>
+
+  <div class="list">
+    <div class="lh"><span class="t">进行中</span><span class="filter"><span class="on">全部</span><span>发送</span><span>接收</span></span><span class="btn sm"><span data-i="pause" class="s14"></span>全部暂停</span></div>
+    <div class="tr">
+      <div class="dir up"><span data-i="up" class="s16"></span></div>
+      <div><div class="fn">最终剪辑_v3_ProRes.mov</div><div class="fs">100.2 GB → 安娜 · 工作站</div></div>
+      <div><span class="chip p2p"><span data-i="globe" class="s14"></span>公网 P2P 直连</span></div>
+      <div class="pg"><div class="progress"><i style="width:37%"></i></div><div class="row"><span>37.1 / 100.2 GB</span><span class="grow"></span><span>剩余 24 分钟</span></div></div>
+      <div class="b">46.2 MB/s</div>
+      <div class="acts"><span class="btn sm icon"><span data-i="pause" class="s14"></span></span><span class="btn sm icon"><span data-i="x" class="s14"></span></span></div>
+    </div>
+    <div class="tr">
+      <div class="dir dn"><span data-i="downl" class="s16"></span></div>
+      <div><div class="fn">Windows11_24H2.iso</div><div class="fs">6.2 GB ← 书房台式机</div></div>
+      <div><span class="chip lan"><span data-i="wifi" class="s14"></span>局域网直连</span></div>
+      <div class="pg"><div class="progress teal"><i style="width:81%"></i></div><div class="row"><span>5.0 / 6.2 GB</span><span class="grow"></span><span>剩余 11 秒</span></div></div>
+      <div class="b">108 MB/s</div>
+      <div class="acts"><span class="btn sm icon"><span data-i="pause" class="s14"></span></span><span class="btn sm icon"><span data-i="x" class="s14"></span></span></div>
+    </div>
+    <div class="tr" style="border-bottom:0">
+      <div class="dir up"><span data-i="up" class="s16"></span></div>
+      <div><div class="fn">训练数据集_v2.tar</div><div class="fs">48.0 GB → 实验室服务器</div></div>
+      <div><span class="chip transit"><span data-i="route" class="s14"></span>中继节点转发</span></div>
+      <div class="pg"><div class="progress violet"><i style="width:22%"></i></div><div class="row"><span>10.6 / 48.0 GB</span><span class="grow"></span><span>剩余 52 分钟</span></div></div>
+      <div class="b">12.1 MB/s</div>
+      <div class="acts"><span class="btn sm icon"><span data-i="pause" class="s14"></span></span><span class="btn sm icon"><span data-i="x" class="s14"></span></span></div>
+    </div>
+    <div class="exp">
+      <div class="hops">
+        <span class="muted">线路尝试：</span>
+        <span class="hop bad"><span data-i="wifi" class="s14"></span>局域网</span><span data-i="cr" class="s14 faint"></span>
+        <span class="hop bad"><span data-i="globe" class="s14"></span>P2P 打洞（对方对称 NAT）</span><span data-i="cr" class="s14 faint"></span>
+        <span class="hop ok"><span data-i="route" class="s14"></span>经节点 “杭州-家庭-07” 转发</span>
+        <span class="row muted" style="gap:5px;margin-left:6px"><span data-i="lock" class="s14" style="color:var(--green)"></span>端到端加密，中继节点看不到内容 · 每 30 秒重试直连</span>
+      </div>
+    </div>
+    <div class="tr">
+      <div class="dir up"><span data-i="up" class="s16"></span></div>
+      <div><div class="fn">合同扫描件.pdf</div><div class="fs">8.6 MB → 公司笔记本</div></div>
+      <div><span class="chip relay"><span data-i="cloud" class="s14"></span>离线排队</span></div>
+      <div class="muted small">对方离线 · 上线后自动发送（保留 7 天）</div>
+      <div class="muted">—</div>
+      <div class="acts"><span class="btn sm icon"><span data-i="x" class="s14"></span></span></div>
+    </div>
+    <div class="tr">
+      <div class="dir up"><span data-i="up" class="s16"></span></div>
+      <div><div class="fn">现场照片/ 等 2 项</div><div class="fs">2.07 GB → 办公室-7</div></div>
+      <div><span class="chip near"><span data-i="radar" class="s14"></span>附近 · 未配对</span></div>
+      <div class="muted small">等待对方接收 · 校验码 <b class="mono" style="color:var(--ink)">🦊🌵🚀🎈 482 913</b></div>
+      <div class="muted">—</div>
+      <div class="acts"><span class="btn sm icon"><span data-i="x" class="s14"></span></span></div>
+    </div>
+  </div>
+
+  <div class="list">
+    <div class="lh"><span class="t">历史</span><span class="filter"><span class="on">今天</span><span>本周</span><span>失败</span></span><span class="btn sm ghost">清除</span></div>
+    <div class="tr">
+      <div class="dir dn"><span data-i="downl" class="s16"></span></div>
+      <div><div class="fn">素材_1013/</div><div class="fs">86 个文件 · 23.4 GB ← MacBook Pro</div></div>
+      <div><span class="chip p2p"><span data-i="globe" class="s14"></span>公网 P2P</span></div>
+      <div><span class="chip ok"><span data-i="shield" class="s14"></span>已校验 · 签名回执</span> <span class="muted small">用时 9 分 32 秒</span></div>
+      <div class="muted">14:31</div>
+      <div class="acts"><span class="btn sm">打开</span><span class="btn sm icon"><span data-i="folder" class="s14"></span></span></div>
+    </div>
+    <div class="tr">
+      <div class="dir up"><span data-i="up" class="s16"></span></div>
+      <div><div class="fn">年会视频_粗剪.mp4</div><div class="fs">14.8 GB → 家里 NAS</div></div>
+      <div><span class="chip p2p"><span data-i="globe" class="s14"></span>公网 P2P</span></div>
+      <div><span class="chip" style="background:var(--red-bg);color:var(--red)">中断 · 已传 61%</span> <span class="muted small">NAS 断电</span></div>
+      <div class="muted">11:02</div>
+      <div class="acts"><span class="btn sm"><span data-i="refresh" class="s14"></span>续传</span></div>
+    </div>
+  </div>
+
+  <div class="note" style="left:364px;top:248px">1</div>
+  <div class="note" style="left:364px;top:422px">2</div>
+  <div class="note" style="left:364px;top:476px">3</div>
+  <div class="note" style="left:1100px;top:712px">4</div>
+</div></div></div>
+<div class="legend">
+  <div class="k"><i>1</i><b>线路标签</b><span class="muted">局域网 / P2P / 中继 / 离线</span></div>
+  <div class="k"><i>2</i><b>线路过程</b><span class="muted">为什么走中继，一目了然</span></div>
+  <div class="k"><i>3</i><b>排队与待确认</b></div>
+  <div class="k"><i>4</i><b>断点续传</b><span class="muted">失败不用从头来</span></div>
+  <span class="tag">04 传输 · 示例数据</span>
+</div>
+<script src="common.js"></script></body></html>

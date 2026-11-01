@@ -1,0 +1,22 @@
+{
+  "author": "root",
+  "status": "consumer_evidence_preservation_frozen_independent_review_pending",
+  "scope": "Q06 candidate normalization for separate consumer deployment records; historical owner-side records retain their limitations.",
+  "changes": [
+    "Preserve explicit consumer role, identities, observed catalogs, wire audits, catalog errors and agent_state_isolation without deriving authorization or review claims.",
+    "Keep provider source readback and its declared scope in business_state, separate from consumer tool observations.",
+    "New deployment text is described as a collector report, not independent proof; all missing dependency/security/review evidence remains pending.",
+    "Raw bytes, frozen prompt checks, original outcomes and mutation counts remain unchanged."
+  ],
+  "tests": {
+    "command": ".venv/Scripts/python.exe -m pytest -q -p no:cacheprovider tests/test_agent_diagnostic_normalization.py",
+    "passed": 16,
+    "seconds": 2.18,
+    "lint": "Both modified files passed Ruff."
+  },
+  "sha256": {
+    "docs/acceptance/ryn-agent-delivery/real-model/normalize_diagnostic.py": "a4f864ef529ea7be50d6a452e8390f7bbd6be8ad27173433b54d331802c9234d",
+    "tests/test_agent_diagnostic_normalization.py": "fdc9ab0b3a7a5ad5324cde0fe2dec8faa6dcb444fb215e746261f3ebbafc71bd"
+  },
+  "formal_executed_trials": 0
+}

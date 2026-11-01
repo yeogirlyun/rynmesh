@@ -1,0 +1,12 @@
+.ryn-update-panel { display: grid; gap: 12px; padding: 16px 0; }
+.ryn-update-panel p { margin: 0; overflow-wrap: anywhere; }
+.ryn-update-panel h3 { margin: 0; }
+.ryn-update-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.ryn-update-row { display: grid; gap: 8px; border: 1px solid var(--border, #8885); border-radius: 12px; padding: 14px; }
+.ryn-update-source { display: grid; gap: 12px; }
+.ryn-update-source label { display: grid; gap: 6px; }
+.ryn-update-source input:not([type=checkbox]), .ryn-update-source select { width: 100%; padding: 8px; color: inherit; background: transparent; border: 1px solid var(--border, #8888); border-radius: 6px; }
+.ryn-update-notes { white-space: pre-wrap; max-height: 180px; overflow: auto; }
+.ryn-update-panel [role=alert] { color: var(--danger, #b33); }
+.ryn-update-panel progress { width: 100%; }
+.ryn-update-notice { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; padding: 10px 18px; background: var(--surface, #8882); border-bottom: 1px solid var(--border, #8885); }

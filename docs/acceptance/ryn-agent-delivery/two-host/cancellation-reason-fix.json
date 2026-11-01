@@ -1,0 +1,61 @@
+{
+  "kind": "cancellation-reason-minimal-fix",
+  "at": "2026-10-10T07:33:59.301429+00:00",
+  "author": "root, continuing after the assigned Astra author/reviewer hit usage limits",
+  "status": "implemented_regression_passed_independent_review_pending",
+  "formal_pass": false,
+  "analysis": "checker-cancellation-analysis.json",
+  "change": "Bridge preserves only whitelisted round/lifetime budget stop codes instead of collapsing them to agent_cancelled; safe usage metadata remains attached. Runtime also preserves budget cause for generic AgentError cancellation. Existing owner/manual cancellation behavior is retained.",
+  "unchanged": "No budget thresholds, vendor model parameters, retry count, remote deadline/cancel transport or original evidence changed.",
+  "files": {
+    "rynmesh/agent_runtime/store.py": "321cb6c69427b5d93c1ba990778380beb8aae9d2a666db2d854fe5ba7036a8f8",
+    "rynmesh/agent_runtime/bridge.py": "9aec8560cb3b9d07c0340ca0d0606ea24669287730404af956778757f475699e",
+    "rynmesh/agent_runtime/runtime.py": "305976db0a7f99b4e9d28668e91597b178de972936973e50eb97bb9fdabb0f19",
+    "tests/test_agent_cancellation_reason.py": "fae4274985e8d42c5147386561a97aa2c7556f12c71fa520e9117f32acfa9d09",
+    "tests/test_agent_request_deadline.py": "5480295942b6cfbd28b770f80ba9c301a734d215610bbf2b192c1174d9887be6"
+  },
+  "regression": {
+    "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_cancellation_reason.py tests/test_agent_request_deadline.py tests/test_agent_adapter_rejected_usage.py tests/test_agent_runtime_verification.py tests/test_agent_runtime_budget.py tests/test_agent_runtime_retry.py -q -p no:cacheprovider --tb=short",
+    "passed": 165,
+    "seconds": 22.12,
+    "final_test_only_edit": "Subsequent test change accepts the existing ValueError base class for predispatch cancellation, then 34 targeted tests passed in2.59s; no production edits after the 165-pass run.",
+    "ruff": "passed"
+  },
+  "before_fix_reproduction": {
+    "wheel_sha256": "b1dfe95d06efce6257435200a6dadcea78e88865d70314db68dec3abb0c7e34a",
+    "method": "Same final test file loaded against actual installed pre-fix wheel via explicit sys.path, printed bridge source path. No old installation edits.",
+    "failed": 12,
+    "passed": 22,
+    "seconds": 2.1,
+    "warnings": "Two pytest assert-rewrite warnings caused by preimported anyio; assertions executed."
+  },
+  "coverage": [
+    "predispatch/returned cancelled response/AdapterError/HTTPException",
+    "round and lifetime exhaustion plus manual owner cancellation",
+    "actual AgentRuntime main and verification stages with encrypted store",
+    "received usage retained and charged once",
+    "no late response published, no tools, no repeat request, never verified after budget stop",
+    "unknown callback text and non-string reason not exposed"
+  ],
+  "intermediate_failures": [
+    {
+      "result": "30 passed/4 failed",
+      "cause": "Verification test initially used nonverifying Tools; helper initially preserved owner_changed but explicit owner cancel must retain existing agent_cancelled public behavior. Corrected test fixture and narrowed reason whitelist to budget-only."
+    },
+    {
+      "result": "164 passed/1 failed",
+      "cause": "Existing request-deadline prompt test asserted retired exact wording. Updated assertion to the current equivalent missing-history rule; production prompt untouched."
+    },
+    {
+      "result": "17 failed/17 passed against old wheel",
+      "cause": "First pre-fix reproduction also rejected old plain ValueError subclass behavior. Final assertion uses ValueError and leaves only12 semantic failures."
+    }
+  ],
+  "remaining": [
+    "Non-author Astra review unavailable after usage limit; do not claim independent approval.",
+    "Remote cancellation remains best-effort: recorded post-cancel waiting23.275/132.751 seconds remains unresolved.",
+    "Answer semantic quality issues remain.",
+    "Rebuild and revalidate final same-snapshot physical hosts and Windows desktop; original two-host wheel is a historical pre-fix snapshot.",
+    "Full registered trials/reference/heldout acceptance remains unexecuted."
+  ]
+}

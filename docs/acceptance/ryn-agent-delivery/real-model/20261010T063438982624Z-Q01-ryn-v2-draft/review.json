@@ -1,0 +1,98 @@
+{
+  "review_kind": "independent-development-semantic-review",
+  "reviewer": "non-author Astra sharing_review",
+  "reviewed_at": "2026-10-10T06:40:14.861736+00:00",
+  "case_id": "Q01",
+  "cohort": "ryn",
+  "dataset_version": "ryn-agent-acceptance-2026-10-10.v2-draft.1",
+  "original_outcome_preserved": "verified",
+  "semantic_verdict": "failed",
+  "model_classification_verdict": "passed",
+  "formal_pass": false,
+  "raw_evidence_sha256": {
+    "run.json": "aa1eb99773da6e6b5882c0b9050838b39fcfc2ddb2c2fc2914ac02d24e66e458",
+    "registration.json": "f157b35db1655aac4361a8850da9387d2882f14e001bc98b79f14212fb09100e",
+    "task-binding.json": "7532080e520fc9903afa7bff3c144512a67e53290f6421836c915067d219a746",
+    "effective-input.json": "9a753b7f4424669a902144bec3e90de4705bbd8257d0e141502fcbc5d1eb530e"
+  },
+  "findings": [
+    {
+      "id": "Q01-HISTORY-1",
+      "severity": "P2",
+      "quote": "各模型均未做过实时连接/推理探测（probe_checked_at=null 或未见）",
+      "reason": "Null or absent probe metadata does not establish that probes never occurred. The universal negative also directly contradicts the same answer and visible model-d connection evidence: failed actual_loopback_socket_probe at 2026-10-09T08:00:00Z, connection_refused. No new task-time probe was run, but the answer did not limit its assertion to this task.",
+      "visible_evidence": "ryn_list_models and ryn_inspect_services: model-d.evidence.connection; default-model probe_checked_at=null is not a whole-pool historical statement.",
+      "ground_truth_separated": "Collector setup_probes records successful source-alpha/source-other chat and capability setup plus source-broken failure. These independently contradict never-tested but are not assumed to have been visible to the model. Visible model-d evidence already suffices.",
+      "violated_review_requirement": "Every asserted result is supported by the cited collector evidence; suggestions are not described as completed actions."
+    }
+  ],
+  "supported_claims": {
+    "model-a": [
+      "chat",
+      "agent",
+      "shared"
+    ],
+    "model-b": [
+      "chat"
+    ],
+    "model-c": [
+      "chat",
+      "agent"
+    ],
+    "model-d": [],
+    "stable_identity": "All four full stable IDs distinguished, including the two alpha models from different sources.",
+    "default": "Only source-alpha alpha is current enabled default; source-other alpha is not default.",
+    "sharing": "Exact model-a outgoing effective friend grant to actual node-b peer is correctly reported; model-b/c/d unshared is supported by owner-local complete configuration.",
+    "availability": "Main rows and summary table qualify chat availability as configuration readiness rather than current successful invocation.",
+    "remote_caveat": "remote_provider_grants unknown is irrelevant to this owner-local sharing question, but does not negate its correctly reported local grant. Recipient current reachability remains unverified."
+  },
+  "checker_assessment": {
+    "original_status": "passed",
+    "review": "Correct classification was recognized; the unsupported universal probe-history assertion was missed. Mechanical readback agreement does not validate all prose."
+  },
+  "mechanics": {
+    "calls": 3,
+    "elapsed_seconds": 133.40600000000268,
+    "read_tool_count": 4,
+    "business_writes": 0,
+    "permission_mode": "read_only",
+    "source_configuration_unchanged": true,
+    "owner_source_unchanged": true,
+    "owner_cipher_sha256_before": "1ab28b982d8804008d548fd54e9726f96568b3707438e99ecca90ed1434ea320",
+    "owner_cipher_sha256_after": "1ab28b982d8804008d548fd54e9726f96568b3707438e99ecca90ed1434ea320",
+    "owner_after_read_status": "read",
+    "collector_code_unchanged": true,
+    "independent_current_code_hash_match": true,
+    "code_file_count": 102,
+    "credential_scan_reported_no_egress": true,
+    "effective_output_caps": [
+      128000,
+      128000,
+      128000
+    ],
+    "usage": [
+      {
+        "input_tokens": 4009,
+        "output_tokens": 281
+      },
+      {
+        "input_tokens": 9959,
+        "output_tokens": 2123
+      },
+      {
+        "input_tokens": 16944,
+        "output_tokens": 4412
+      }
+    ],
+    "actual_owner_role": "node-a",
+    "actual_execution_peer_id": "squsZ+7sgb1Ab9Eji+cEVijnmqHy7F5DYOagqQTmMgY=",
+    "runtime_context_and_tool_store_match": true
+  },
+  "limitations": [
+    "One Q01 candidate development sample, draft contract disabled; no formal score, no reference comparison or 80% inference.",
+    "Single-machine isolated logical homes; no two-physical-host acceptance proof.",
+    "No new API, probes, task execution or production edits performed by reviewer.",
+    "This review checks raw transcript, collector metadata and current snapshot hashes; it does not repeat detailed encrypted budget accounting or independently prove all collector claims.",
+    "Original run.json and engine verified verdict remain untouched; independent review failure is separate."
+  ]
+}

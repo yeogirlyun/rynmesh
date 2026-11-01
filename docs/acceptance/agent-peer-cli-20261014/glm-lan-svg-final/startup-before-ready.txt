@@ -1,0 +1,5 @@
+page.goto: net::ERR_EMPTY_RESPONSE at http://127.0.0.1:18882/agent
+Call log:
+[2m  - navigating to "http://127.0.0.1:18882/agent", waiting until "load"[22m
+
+    at D:\code\rynmesh\.codex-tmp\glm-lan-svg-final.cjs:15:13

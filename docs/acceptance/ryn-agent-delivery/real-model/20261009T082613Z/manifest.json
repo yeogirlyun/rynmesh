@@ -1,0 +1,60 @@
+{
+  "started_at": "20261009T082613Z",
+  "provider": "zai",
+  "model": "glm-5.3-flash",
+  "configured_source_id": "src-7de9fb1d36c44bc8",
+  "real_upstream": true,
+  "credentials": "existing SourceStore credential; in-memory adapter only",
+  "scope": "isolated Ryn service stack + runtime, no browser or physical-peer test",
+  "cost": "unknown",
+  "runs": [
+    {
+      "index": 1,
+      "passed": true,
+      "tool_results": 10,
+      "read_counts": {
+        "ryn_list_models": 3,
+        "ryn_list_devices": 1,
+        "ryn_inspect_services": 3
+      },
+      "elapsed_seconds": 94.172,
+      "status": "completed",
+      "error": null,
+      "model_calls": 7
+    },
+    {
+      "index": 2,
+      "passed": true,
+      "tool_results": 10,
+      "read_counts": {
+        "ryn_list_models": 3,
+        "ryn_list_devices": 1,
+        "ryn_inspect_services": 3
+      },
+      "elapsed_seconds": 135.375,
+      "status": "completed",
+      "error": null,
+      "model_calls": 7
+    },
+    {
+      "index": 3,
+      "passed": true,
+      "tool_results": 10,
+      "read_counts": {
+        "ryn_list_models": 3,
+        "ryn_list_devices": 1,
+        "ryn_inspect_services": 3
+      },
+      "elapsed_seconds": 88.687,
+      "status": "completed",
+      "error": null,
+      "model_calls": 7
+    }
+  ],
+  "probe": {
+    "passed": true,
+    "elapsed_seconds": 31.719
+  },
+  "owner_source_unchanged": true,
+  "finished_at": "2026-10-09T08:32:04.773292+00:00"
+}

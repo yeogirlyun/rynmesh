@@ -1,0 +1,14 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "ryn-transport"
+version = "0.1.0"
+description = "Native P2P transport for Rynmesh: UDP hole punching + QUIC (quinn)"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+[tool.maturin]
+features = ["python"]
+module-name = "ryn_transport"

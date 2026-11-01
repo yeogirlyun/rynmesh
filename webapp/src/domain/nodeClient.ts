@@ -1,4 +1,6 @@
 import type { ConsumptionRecord } from "./digestClient";
+import type { DirectorySnapshot } from "./directory";
+import type { ModelTokenUsage } from "./aiSources";
 import type {
   ContentFilters,
   ContentBody,
@@ -36,7 +38,7 @@ export interface InferenceAccess {
 }
 
 export interface CLIServiceStatus {
-  kind: "codex_cli" | "claude_cli";
+  kind: "codex_cli" | "claude_cli" | "antigravity_cli";
   title: string;
   installed: boolean;
   configured: boolean;
@@ -44,6 +46,7 @@ export interface CLIServiceStatus {
   online: boolean;
   api_text_only: boolean;
   service_id: string;
+  usage?: ModelTokenUsage;
 }
 
 export interface CLIServicesStatus {
@@ -52,21 +55,36 @@ export interface CLIServicesStatus {
   personal_space_ready: boolean;
 }
 
+// ready: usable now. needs_connection: only advertised by a device this node has no
+// relationship with, so the provider would refuse it. offline: known but not reachable.
+export type ServiceAvailability = "ready" | "needs_connection" | "offline";
+
 export interface LLMServiceRecord {
+  cli_models?: { id: string; name: string; default: boolean; usage?: ModelTokenUsage }[];
+  usage?: ModelTokenUsage;
   network_id?: string;
   local_only?: boolean;
   peer_id: string;
   node_name?: string;
+  // The provider's own claim. Do not use it to decide whether a service is usable:
+  // read `availability` (see isServiceUsable).
   online: boolean;
   ready?: boolean;
   access?: "self" | "friend";
+  // False for a registry advertisement; true once the provider's signed catalog response bound the model.
+  binding_verified?: boolean;
+  // View model computed by the local node (rynmesh/llm_package/service_view.py).
+  online_claim?: boolean;
+  relationship?: "self" | "space_member" | "friend" | "discovered";
+  presence?: { state: "online" | "offline" | "unconfirmed"; basis: string };
+  availability?: { state: ServiceAvailability; reason: string };
   capacity?: { available?: number; max_concurrent?: number; running?: number };
   benchmark?: { latency_ms?: number; tokens_per_second?: number };
   service: {
     package_id: string;
     model_alias: string;
     runtime?: string;
-    adapter?: "codex_cli" | "claude_cli" | string;
+    adapter?: "codex_cli" | "claude_cli" | "antigravity_cli" | string;
     capabilities: string[];
     context_window: number;
     max_output_tokens: number;
@@ -222,8 +240,8 @@ export interface NodeClient {
   listLLMServices(networkId?: string): Promise<LLMServiceRecord[]>;
   getInferenceAccess(): Promise<InferenceAccess>;
   getCLIServices(): Promise<CLIServicesStatus>;
-  getCLIModels(kind: "codex_cli"): Promise<{ models: { id: string; name: string; default: boolean }[] }>;
-  setupCLIService(kind: CLIServiceStatus["kind"]): Promise<{ configured: boolean }>;
+  getCLIModels(kind: "codex_cli" | "antigravity_cli"): Promise<{ models: { id: string; name: string; default: boolean }[] }>;
+  setupCLIService(kind: CLIServiceStatus["kind"]): Promise<{ configured: boolean; tool_support?: string; agent_usable?: boolean }>;
   setCLISharing(kind: CLIServiceStatus["kind"], enabled: boolean): Promise<{ publication_enabled: boolean }>;
   setInferenceModelAlias(name: string, target: string): Promise<{ name: string; target: string }>;
   createInferenceKey(name: string, outputTokenLimit: number): Promise<{ id: string; key: string }>;
@@ -303,6 +321,9 @@ export interface NodeClient {
   updatesApply(): Promise<{ applied: boolean; version?: string; error?: string }>;
   setAutoUpdate(on: boolean): Promise<void>;
   peersHealth(): Promise<PeerHealth[]>;
+  // Devices and their services as one snapshot, probed by the node itself. Absent on a node
+  // that predates it (and on the fixture client): callers fall back to peers + services + health.
+  directory?(options?: { quick?: boolean }): Promise<DirectorySnapshot>;
   egressStatus(region?: string): Promise<EgressStatus>;
   egressConnect(req?: { region?: string; provider_peer_id?: string }): Promise<EgressStatus>;
   egressLaunch(

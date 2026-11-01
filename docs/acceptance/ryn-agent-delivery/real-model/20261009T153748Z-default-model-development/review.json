@@ -1,0 +1,24 @@
+{
+  "classification": "custom default-model development workflow passed; full C03 pending",
+  "formal_case_score": false,
+  "reviewer": "Root compared exact approval, all six tool dispatches, readbacks, independent state checks and final answer.",
+  "real_model_calls": 5,
+  "elapsed_seconds": 98.875,
+  "code_unchanged": true,
+  "owner_source_unchanged": true,
+  "finding": "One exact approved default-model write advanced settings revision 1 to 2. All five planner/checker calls continued on the original task model. Subsequent configuration and catalog reads confirmed the new default. Other settings and encrypted source configuration were unchanged. Final answer correctly limited availability evidence to catalog records and did not claim a new inference probe.",
+  "write_operation_id": "op_4cb5e6960d784fcb90136fa5e5a8f934",
+  "checks": {
+    "exactly_one_approved_write": true,
+    "default_selected": true,
+    "current_task_model_unchanged": true,
+    "other_settings_unchanged": true,
+    "source_configuration_and_sharing_unchanged": true
+  },
+  "limitations": [
+    "Custom default-only prompt; not frozen C03 or formal repetitions.",
+    "Two isolated source entries use the same actual upstream adapter; not two independent sources or physical hosts.",
+    "No target-model inference was requested. Future task destination binding is separately covered by production runtime tests.",
+    "Designated non-author Astra review, full sharing workflow, common security audit and reference comparison remain pending."
+  ]
+}

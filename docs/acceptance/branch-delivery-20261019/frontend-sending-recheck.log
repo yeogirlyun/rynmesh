@@ -1,0 +1,8 @@
+
+ RUN  v4.1.11 <repo>/webapp
+
+
+ Test Files  1 passed (1)
+      Tests  23 passed (23)
+   Start at  09:46:12
+   Duration  57.37s (transform 1.73s, setup 1.74s, import 2.95s, tests 48.33s, environment 3.87s)

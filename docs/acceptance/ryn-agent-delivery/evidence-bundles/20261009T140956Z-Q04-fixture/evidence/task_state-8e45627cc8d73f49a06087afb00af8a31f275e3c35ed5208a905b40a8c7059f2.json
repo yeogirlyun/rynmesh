@@ -1,0 +1,543 @@
+{
+  "allowed_actions": {
+    "answer": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": true
+    },
+    "approve": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": true
+    },
+    "archive": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "budget": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "cancel": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": false
+    },
+    "delete": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "deny": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": true
+    },
+    "information": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "model": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "pause": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": false
+    },
+    "reconcile": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": true
+    },
+    "restore": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": true
+    },
+    "resume": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": true
+    },
+    "scope": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "source_credential": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "steer": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    }
+  },
+  "allowed_write_tools": [],
+  "archived": false,
+  "budget": {
+    "current_round": {
+      "active_seconds": 0.031000000002677552,
+      "charged_model_calls": 3,
+      "charged_seconds": 0.031000000002677552,
+      "charged_tokens": 52741,
+      "charged_tool_calls": 2,
+      "cost": null,
+      "cost_status": "unknown",
+      "input_tokens": null,
+      "known_input_tokens": 0,
+      "known_output_tokens": 0,
+      "legacy_usage_unknown": false,
+      "model_calls": 3,
+      "output_tokens": null,
+      "tool_calls": 2,
+      "total_tokens": null,
+      "unsettled_operations": 0,
+      "usage_complete": false
+    },
+    "lifetime": {
+      "active_seconds": 0.031000000002677552,
+      "charged_model_calls": 3,
+      "charged_seconds": 0.031000000002677552,
+      "charged_tokens": 52741,
+      "charged_tool_calls": 2,
+      "cost": null,
+      "cost_status": "unknown",
+      "input_tokens": null,
+      "known_input_tokens": 0,
+      "known_output_tokens": 0,
+      "legacy_usage_unknown": false,
+      "model_calls": 3,
+      "output_tokens": null,
+      "tool_calls": 2,
+      "total_tokens": null,
+      "unsettled_operations": 0,
+      "usage_complete": false
+    },
+    "limits": {
+      "max_total_model_calls": 128,
+      "max_total_seconds": 3600,
+      "max_total_tokens": 2000000,
+      "max_total_tool_calls": 256
+    },
+    "reservation_policy": "Unknown model usage retains the conservative dispatch reservation; cost is unknown without trusted pricing.",
+    "round": 1
+  },
+  "client_request_id": null,
+  "control_revision": 1,
+  "created_at": "2026-10-09T14:09:57.323203+00:00",
+  "criteria": [
+    {
+      "assessment_kind": "semantic",
+      "description": "Satisfy the owner's complete current goal and constraints.",
+      "evidence_refs": [
+        "evidence_d8e4a728823a4559b620661734b14095"
+      ],
+      "goal_revision": 1,
+      "id": "goal-coverage",
+      "kind": "semantic",
+      "required": true,
+      "source": "user",
+      "source_ref": "agent_1c897f024e3c4c8eac5d0e55dffc9c55:owner:0",
+      "status": "passed",
+      "verifier": null
+    },
+    {
+      "description": "Recheck safe state, failure and dispatch metadata of the specified owner-node task.",
+      "evidence_refs": [
+        "evidence_d8e4a728823a4559b620661734b14095"
+      ],
+      "goal_revision": 1,
+      "id": "criterion_op_c8808e0dff6f4ba297c91514dd71c56a",
+      "kind": "mechanical",
+      "required": true,
+      "source": "tool",
+      "source_ref": "receipt_op_c8808e0dff6f4ba297c91514dd71c56a",
+      "status": "passed",
+      "verifier": "ryn_diagnose_task_facts"
+    }
+  ],
+  "error": null,
+  "event_cursor": 13,
+  "events": [
+    {
+      "at": "2026-10-09T14:09:57.323203+00:00",
+      "context_epoch": 0,
+      "seq": 1,
+      "type": "created"
+    },
+    {
+      "at": "2026-10-09T14:09:57.349233+00:00",
+      "context_epoch": 0,
+      "menu": {
+        "catalog_revision": "45a6e19951454cd0ccb320d22744cdad09cfeebfe58bf6d9a3a9b82dc1f3b2a8",
+        "context_epoch": 0,
+        "goal_revision": 1,
+        "loaded_names": [],
+        "mode": "full",
+        "revision": 1
+      },
+      "seq": 2,
+      "type": "tool_menu_changed"
+    },
+    {
+      "at": "2026-10-09T14:09:57.358202+00:00",
+      "context_epoch": 0,
+      "seq": 3,
+      "step": 1,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-09T14:09:57.380233+00:00",
+      "content": "Read the existing task's safe metadata.",
+      "context_epoch": 0,
+      "seq": 4,
+      "tool_count": 1,
+      "type": "assistant"
+    },
+    {
+      "at": "2026-10-09T14:09:57.401201+00:00",
+      "call_id": "diagnosis-call",
+      "context_epoch": 0,
+      "effect": "read",
+      "operation_id": "op_c8808e0dff6f4ba297c91514dd71c56a",
+      "seq": 5,
+      "tool": "ryn_diagnose_task",
+      "type": "tool_started"
+    },
+    {
+      "at": "2026-10-09T14:09:57.418201+00:00",
+      "call_id": "diagnosis-call",
+      "context_epoch": 0,
+      "operation_id": "op_c8808e0dff6f4ba297c91514dd71c56a",
+      "result": {
+        "elapsed_seconds": null,
+        "error": "resource_read_timeout",
+        "evidence": {
+          "kind": "owner_node_task_metadata_projection",
+          "other_task_contents_read": false,
+          "other_tasks_read": true,
+          "target_task_metadata_read": true
+        },
+        "note": "All states and counters describe task_id only, not the diagnosing task. Error codes classify observed failures, not every underlying cause. Missing time/usage stays null. A finished turn is not proof of goal completion.",
+        "operation_evidence_note": "Dispatch describes runtime invocation attempts, not proof that a business mutation occurred. Only stored event metadata is projected; no task data permissions are granted.",
+        "operations": [
+          {
+            "dispatched": true,
+            "effect": "read",
+            "error": null,
+            "not_executed": null,
+            "tool": "ryn_list_resource_roots"
+          },
+          {
+            "dispatched": true,
+            "effect": "read",
+            "error": null,
+            "not_executed": null,
+            "tool": "ryn_list_resources"
+          },
+          {
+            "connection_id": "435f4ab6da174d518ee2064b49f8f2eb",
+            "connection_name": "docs-offline",
+            "dispatched": true,
+            "effect": "read",
+            "error": "resource_read_timeout",
+            "not_executed": false,
+            "suggestion": {
+              "executed": false,
+              "id": "review_resource_connection",
+              "instruction": "The authorized resource read timed out. Check the named connection using the owner Drives interface; do not modify it or rerun the task automatically. This does not establish a credential or quota problem.",
+              "owner_path": "/drives"
+            },
+            "tool": "ryn_read_resource"
+          }
+        ],
+        "operations_truncated": false,
+        "outcome_status": "unverified",
+        "read_dispatch_count": 3,
+        "read_dispatched": true,
+        "run_state": "ended",
+        "status": "failed",
+        "steps": 3,
+        "suggestions": [
+          {
+            "executed": false,
+            "id": "review_resource_connection",
+            "instruction": "The authorized resource read timed out. Check the named connection using the owner Drives interface; do not modify it or rerun the task automatically. This does not establish a credential or quota problem.",
+            "owner_path": "/drives"
+          }
+        ],
+        "task_id": "task-failed-read",
+        "usage": {},
+        "write_dispatch_count": 0,
+        "write_dispatched": false
+      },
+      "seq": 6,
+      "tool": "ryn_diagnose_task",
+      "type": "tool_result"
+    },
+    {
+      "at": "2026-10-09T14:09:57.453778+00:00",
+      "context_epoch": 0,
+      "seq": 7,
+      "step": 2,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-09T14:09:57.475777+00:00",
+      "content": "Fixture diagnosis: task-failed-read recorded resource_read_timeout on docs-offline. The stored operation is a read, and no write was dispatched. Inspect that connection in Drives manually; the record does not establish a credential or quota issue. I did not modify the connection or rerun the task.",
+      "context_epoch": 0,
+      "seq": 8,
+      "tool_count": 0,
+      "type": "assistant"
+    },
+    {
+      "at": "2026-10-09T14:09:57.475777+00:00",
+      "context_epoch": 0,
+      "goal_revision": 1,
+      "seq": 9,
+      "type": "verification_started"
+    },
+    {
+      "at": "2026-10-09T14:09:57.524085+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_c8808e0dff6f4ba297c91514dd71c56a",
+      "evidence_id": "evidence_d8e4a728823a4559b620661734b14095",
+      "seq": 10,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-09T14:09:57.553596+00:00",
+      "context_epoch": 0,
+      "seq": 11,
+      "step": 3,
+      "type": "verification_model_started"
+    },
+    {
+      "at": "2026-10-09T14:09:57.576624+00:00",
+      "context_epoch": 0,
+      "outcome": "verified",
+      "seq": 12,
+      "type": "verification_finished"
+    },
+    {
+      "at": "2026-10-09T14:09:57.576624+00:00",
+      "context_epoch": 0,
+      "seq": 13,
+      "type": "completed"
+    }
+  ],
+  "goal": {
+    "constraints": [
+      {
+        "id": "constraint:agent_1c897f024e3c4c8eac5d0e55dffc9c55:owner:0",
+        "message_id": "agent_1c897f024e3c4c8eac5d0e55dffc9c55:owner:0",
+        "required": true,
+        "source": "user",
+        "text": "解释 task-failed-read 的失败原因和下一步，引用真实记录，不替我更改连接或重跑任务。"
+      }
+    ],
+    "kind": "unclassified",
+    "original_message_id": "agent_1c897f024e3c4c8eac5d0e55dffc9c55:owner:0",
+    "revision": 1,
+    "text": "解释 task-failed-read 的失败原因和下一步，引用真实记录，不替我更改连接或重跑任务。"
+  },
+  "id": "agent_1c897f024e3c4c8eac5d0e55dffc9c55",
+  "limits": {
+    "max_context_chars": 100000,
+    "max_output_chars": 20000,
+    "max_seconds": 600,
+    "max_steps": 24
+  },
+  "messages": [
+    {
+      "content": "解释 task-failed-read 的失败原因和下一步，引用真实记录，不替我更改连接或重跑任务。",
+      "message_id": "agent_1c897f024e3c4c8eac5d0e55dffc9c55:owner:0",
+      "role": "user"
+    },
+    {
+      "content": "Read the existing task's safe metadata.",
+      "context_epoch": 0,
+      "role": "assistant",
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{\"task_id\":\"task-failed-read\"}",
+            "name": "ryn_diagnose_task"
+          },
+          "id": "diagnosis-call",
+          "type": "function"
+        }
+      ]
+    },
+    {
+      "content": "{\"elapsed_seconds\":null,\"error\":\"resource_read_timeout\",\"evidence\":{\"kind\":\"owner_node_task_metadata_projection\",\"other_task_contents_read\":false,\"other_tasks_read\":true,\"target_task_metadata_read\":true},\"note\":\"All states and counters describe task_id only, not the diagnosing task. Error codes classify observed failures, not every underlying cause. Missing time/usage stays null. A finished turn is not proof of goal completion.\",\"operation_evidence_note\":\"Dispatch describes runtime invocation attempts, not proof that a business mutation occurred. Only stored event metadata is projected; no task data permissions are granted.\",\"operations\":[{\"dispatched\":true,\"effect\":\"read\",\"error\":null,\"not_executed\":null,\"tool\":\"ryn_list_resource_roots\"},{\"dispatched\":true,\"effect\":\"read\",\"error\":null,\"not_executed\":null,\"tool\":\"ryn_list_resources\"},{\"connection_id\":\"435f4ab6da174d518ee2064b49f8f2eb\",\"connection_name\":\"docs-offline\",\"dispatched\":true,\"effect\":\"read\",\"error\":\"resource_read_timeout\",\"not_executed\":false,\"suggestion\":{\"executed\":false,\"id\":\"review_resource_connection\",\"instruction\":\"The authorized resource read timed out. Check the named connection using the owner Drives interface; do not modify it or rerun the task automatically. This does not establish a credential or quota problem.\",\"owner_path\":\"/drives\"},\"tool\":\"ryn_read_resource\"}],\"operations_truncated\":false,\"outcome_status\":\"unverified\",\"read_dispatch_count\":3,\"read_dispatched\":true,\"run_state\":\"ended\",\"status\":\"failed\",\"steps\":3,\"suggestions\":[{\"executed\":false,\"id\":\"review_resource_connection\",\"instruction\":\"The authorized resource read timed out. Check the named connection using the owner Drives interface; do not modify it or rerun the task automatically. This does not establish a credential or quota problem.\",\"owner_path\":\"/drives\"}],\"task_id\":\"task-failed-read\",\"usage\":{},\"write_dispatch_count\":0,\"write_dispatched\":false}",
+      "context_epoch": 0,
+      "role": "tool",
+      "tool_call_id": "diagnosis-call"
+    },
+    {
+      "content": "Fixture diagnosis: task-failed-read recorded resource_read_timeout on docs-offline. The stored operation is a read, and no write was dispatched. Inspect that connection in Drives manually; the record does not establish a credential or quota issue. I did not modify the connection or rerun the task.",
+      "context_epoch": 0,
+      "role": "assistant"
+    }
+  ],
+  "model_destination": {
+    "catalog_model_id": "local/src-8dc8a544368747b8-f16d05ec6b29",
+    "destination_revision": "b2ae9cca8afb421fa0469c1b5c4c4f2e",
+    "provider_peer_id": "GCzCP3n9ywNg0+MIFZFCYGt8o3DNJoPVnmNDt73l8uQ=",
+    "source_id": "src-8dc8a544368747b8"
+  },
+  "model_id": "local/src-8dc8a544368747b8-f16d05ec6b29",
+  "outcome": {
+    "coverage_method": "independent_model_assessment",
+    "criteria_results": [
+      {
+        "criterion_id": "goal-coverage",
+        "evidence_refs": [
+          "evidence_d8e4a728823a4559b620661734b14095"
+        ],
+        "kind": "semantic",
+        "status": "passed"
+      },
+      {
+        "criterion_id": "criterion_op_c8808e0dff6f4ba297c91514dd71c56a",
+        "evidence_refs": [
+          "evidence_d8e4a728823a4559b620661734b14095"
+        ],
+        "kind": "mechanical",
+        "status": "passed"
+      }
+    ],
+    "evidence_refs": [
+      "evidence_d8e4a728823a4559b620661734b14095"
+    ],
+    "goal_revision": 1,
+    "mechanical_scope": [
+      {
+        "criterion_id": "criterion_op_c8808e0dff6f4ba297c91514dd71c56a",
+        "description": "Recheck safe state, failure and dispatch metadata of the specified owner-node task.",
+        "status": "passed"
+      }
+    ],
+    "semantic_assessment": {
+      "evidence_refs": [
+        "evidence_d8e4a728823a4559b620661734b14095"
+      ],
+      "status": "passed",
+      "summary": "Local fixture only; no real-model score.",
+      "uncovered_requirements": []
+    },
+    "status": "verified",
+    "summary": "Registered mechanical checks passed; independent semantic assessment found the current goal covered.",
+    "uncertainties": []
+  },
+  "pending_approval": null,
+  "pending_input": null,
+  "permission_mode": "read_only",
+  "plan": {
+    "goal_revision": 1,
+    "revision": 0,
+    "steps": []
+  },
+  "result": "Fixture diagnosis: task-failed-read recorded resource_read_timeout on docs-offline. The stored operation is a read, and no write was dispatched. Inspect that connection in Drives manually; the record does not establish a credential or quota issue. I did not modify the connection or rerun the task.",
+  "revision": 13,
+  "run_state": "ended",
+  "schema_version": 2,
+  "scope_revision": 1,
+  "skills": [],
+  "status": "completed",
+  "steps": 3,
+  "title": "解释 task-failed-read 的失败原因和下一步，引用真实记录，不替我更改连接或重跑任务。",
+  "updated_at": "2026-10-09T14:09:57.576624+00:00",
+  "verification_evidence": [
+    {
+      "checked_at": "2026-10-09T14:09:57.508350+00:00",
+      "criterion_id": "criterion_op_c8808e0dff6f4ba297c91514dd71c56a",
+      "evidence": {
+        "checked_facts": {
+          "elapsed_seconds": null,
+          "error": "resource_read_timeout",
+          "evidence": {
+            "kind": "owner_node_task_metadata_projection",
+            "other_task_contents_read": false,
+            "other_tasks_read": true,
+            "target_task_metadata_read": true
+          },
+          "note": "All states and counters describe task_id only, not the diagnosing task. Error codes classify observed failures, not every underlying cause. Missing time/usage stays null. A finished turn is not proof of goal completion.",
+          "operation_evidence_note": "Dispatch describes runtime invocation attempts, not proof that a business mutation occurred. Only stored event metadata is projected; no task data permissions are granted.",
+          "operations": [
+            {
+              "dispatched": true,
+              "effect": "read",
+              "error": null,
+              "not_executed": null,
+              "tool": "ryn_list_resource_roots"
+            },
+            {
+              "dispatched": true,
+              "effect": "read",
+              "error": null,
+              "not_executed": null,
+              "tool": "ryn_list_resources"
+            },
+            {
+              "connection_id": "435f4ab6da174d518ee2064b49f8f2eb",
+              "connection_name": "docs-offline",
+              "dispatched": true,
+              "effect": "read",
+              "error": "resource_read_timeout",
+              "not_executed": false,
+              "suggestion": {
+                "executed": false,
+                "id": "review_resource_connection",
+                "instruction": "The authorized resource read timed out. Check the named connection using the owner Drives interface; do not modify it or rerun the task automatically. This does not establish a credential or quota problem.",
+                "owner_path": "/drives"
+              },
+              "tool": "ryn_read_resource"
+            }
+          ],
+          "operations_truncated": false,
+          "outcome_status": "unverified",
+          "read_dispatch_count": 3,
+          "read_dispatched": true,
+          "run_state": "ended",
+          "status": "failed",
+          "steps": 3,
+          "suggestions": [
+            {
+              "executed": false,
+              "id": "review_resource_connection",
+              "instruction": "The authorized resource read timed out. Check the named connection using the owner Drives interface; do not modify it or rerun the task automatically. This does not establish a credential or quota problem.",
+              "owner_path": "/drives"
+            }
+          ],
+          "task_id": "task-failed-read",
+          "usage": {},
+          "write_dispatch_count": 0,
+          "write_dispatched": false
+        },
+        "coverage": "Current safe diagnostic classifications and registered configuration facts. Live elapsed/step/usage counters are observations, not compared as stable facts. Unknown or untested reachability is not connectivity proof; dispatch is not mutation proof.",
+        "current_state_matches": true,
+        "observation_sha256": "4afa1a272bbf77e53d782fda8df36ef98a0c66c71e18a3572a7682c52dd835bb",
+        "operation_attribution": "read_only_observation",
+        "uncertainties": []
+      },
+      "goal_revision": 1,
+      "id": "evidence_d8e4a728823a4559b620661734b14095",
+      "kind": "mechanical",
+      "receipt_id": "receipt_op_c8808e0dff6f4ba297c91514dd71c56a",
+      "scope_revision": 1,
+      "status": "passed"
+    }
+  ]
+}

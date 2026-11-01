@@ -1,0 +1,24 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-9.1.1, pluggy-1.6.0 -- <repo>\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: <repo>
+configfile: pyproject.toml
+collecting ... collected 118 items / 104 deselected / 14 selected
+
+tests/test_codex_usage_unknown.py::test_turn_reuses_preparsed_image_inputs_without_reading_the_message_body PASSED [  7%]
+tests/test_codex_usage_unknown.py::test_turn_malformed_usage_never_crashes_or_fabricates_tokens[absent] PASSED [ 14%]
+tests/test_codex_usage_unknown.py::test_turn_malformed_usage_never_crashes_or_fabricates_tokens[list] PASSED [ 21%]
+tests/test_codex_usage_unknown.py::test_turn_malformed_usage_never_crashes_or_fabricates_tokens[text] PASSED [ 28%]
+tests/test_codex_usage_unknown.py::test_turn_malformed_usage_never_crashes_or_fabricates_tokens[bool] PASSED [ 35%]
+tests/test_codex_usage_unknown.py::test_turn_malformed_usage_never_crashes_or_fabricates_tokens[last-null] PASSED [ 42%]
+tests/test_codex_usage_unknown.py::test_turn_malformed_usage_never_crashes_or_fabricates_tokens[last-list] PASSED [ 50%]
+tests/test_codex_usage_unknown.py::test_turn_malformed_usage_never_crashes_or_fabricates_tokens[last-text] PASSED [ 57%]
+tests/test_codex_usage_unknown.py::test_turn_malformed_usage_never_crashes_or_fabricates_tokens[last-bool] PASSED [ 64%]
+tests/test_codex_usage_unknown.py::test_turn_malformed_usage_never_crashes_or_fabricates_tokens[nonfinite] PASSED [ 71%]
+tests/test_codex_usage_unknown.py::test_turn_malformed_usage_never_crashes_or_fabricates_tokens[booleans] PASSED [ 78%]
+tests/test_codex_usage_unknown.py::test_turn_malformed_usage_never_crashes_or_fabricates_tokens[negative] PASSED [ 85%]
+tests/test_codex_usage_unknown.py::test_turn_malformed_usage_never_crashes_or_fabricates_tokens[not-integers] PASSED [ 92%]
+tests/test_agent_integrations.py::test_configured_codex_agent_support_precedes_optional_two_turn_probe PASSED [100%]
+
+- generated xml file: <repo>\.codex-tmp\delivery-20261019\codex-repair-tests.xml -
+===================== 14 passed, 104 deselected in 3.54s ======================

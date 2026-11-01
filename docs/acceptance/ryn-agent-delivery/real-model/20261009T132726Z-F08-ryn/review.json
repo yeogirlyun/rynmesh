@@ -1,0 +1,8 @@
+{
+  "classification": "development failure; not formal score",
+  "real_model_calls": 7,
+  "finding": "Two history checkpoints succeeded, and the newly allowed full closed prefix was selected for the third. The model then returned a summary larger than the permitted UTF-8 byte count, so the runtime rejected it without truncating evidence or writing an artifact.",
+  "repair": "General summary guidance now prioritizes observed business facts, remaining work and live resource references, omits repeated catalog/owner narration, and asks for a smaller target below the hard cap. This does not expand the frozen context window or change the case prompt.",
+  "unverified": "The tighter guidance has not yet demonstrated completion of the long-document task.",
+  "formal_case_score": false
+}

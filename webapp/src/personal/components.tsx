@@ -290,10 +290,12 @@ export function Modal({
   title,
   children,
   onClose,
+  className,
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
+  className?: string;
 }) {
   const { t } = useTranslation();
   const dialog = useRef<HTMLDialogElement>(null);
@@ -310,7 +312,7 @@ export function Modal({
   return (
     <dialog
       ref={dialog}
-      className="pf-dialog"
+      className={className ? `pf-dialog ${className}` : "pf-dialog"}
       aria-labelledby={id}
       onCancel={(event) => {
         event.preventDefault();

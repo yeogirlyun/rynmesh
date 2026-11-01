@@ -26,8 +26,9 @@ class AIAccessState:
 
 def install_ai_access(app: Any, *, home: str | Path, local_control: Callable,
                       relationship: Callable, friends: Callable | None = None, workers: Any = None) -> AIAccessStore:
-    permissions = AIAccessStore(home, relationship=relationship)
     prior = getattr(app.state, "ai_access", None)
+    permissions = AIAccessStore(home, relationship=relationship,
+                               sources=getattr(getattr(prior, "store", None), "sources", None))
     app.state.ai_access = AIAccessState(permissions, local_control, getattr(prior, "recheck", None))
     app.state.ai_access.provider = getattr(prior, "provider", None)
     if friends:

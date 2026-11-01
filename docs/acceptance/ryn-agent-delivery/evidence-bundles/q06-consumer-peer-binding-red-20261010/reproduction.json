@@ -1,0 +1,34 @@
+{
+  "command": [
+    "D:\\code\\rynmesh\\.venv\\Scripts\\python.exe",
+    "-m",
+    "pytest",
+    "tests/test_agent_access_query.py",
+    "-k",
+    "actual_gate and ryn",
+    "-x",
+    "-q"
+  ],
+  "returncode": 1,
+  "elapsed_seconds": 5.98388409614563,
+  "started_unix": 1791609770.499773,
+  "hashes_before": {
+    "rynmesh\\agent_runtime\\runtime.py": "a2787b20d9151c77e5b2eb4dc3e23992ba69b05ed3c096891d7cbce431238d49",
+    "rynmesh\\agent_runtime\\bridge.py": "a7b2d1798e3fc645f7b77dd9b734e262f1a5e252117d1ebd7ca95ed6a479d6e4",
+    "rynmesh\\llm_package\\routes.py": "1ca077341fffbe8e5cdc40fc6019983a6c1d2aac7c9a97530cac1d0e0955ae8c",
+    "docs\\acceptance\\ryn-agent-delivery\\real-model\\query_consumer.py": "0ebdc08fbcba3ab0a1aa9d9481503582cac053d8acd1ab6a922919afd4323091",
+    "tests\\test_agent_access_query.py": "627721c923ec773ff8ff1e6ba8a8dcb502376cbe6cf20a2d8159335fc8db3a00"
+  },
+  "hashes_after": {
+    "rynmesh\\agent_runtime\\runtime.py": "a2787b20d9151c77e5b2eb4dc3e23992ba69b05ed3c096891d7cbce431238d49",
+    "rynmesh\\agent_runtime\\bridge.py": "a7b2d1798e3fc645f7b77dd9b734e262f1a5e252117d1ebd7ca95ed6a479d6e4",
+    "rynmesh\\llm_package\\routes.py": "1ca077341fffbe8e5cdc40fc6019983a6c1d2aac7c9a97530cac1d0e0955ae8c",
+    "docs\\acceptance\\ryn-agent-delivery\\real-model\\query_consumer.py": "0ebdc08fbcba3ab0a1aa9d9481503582cac053d8acd1ab6a922919afd4323091",
+    "tests\\test_agent_access_query.py": "627721c923ec773ff8ff1e6ba8a8dcb502376cbe6cf20a2d8159335fc8db3a00"
+  },
+  "snapshot_unchanged": true,
+  "stdout": "F\n================================== FAILURES ===================================\n_____ test_q06_actual_gate_and_pinned_worker_share_generation_policy[ryn] _____\n\nnode = (<fastapi.applications.FastAPI object at 0x0000023C49927AD0>, <rynmesh.store.RynmeshStore object at 0x0000023C49927200>)\ntmp_path = WindowsPath('C:/Users/����/AppData/Local/Temp/pytest-of-����/pytest-416/test_q06_actual_gate_and_pinne0')\nmodules = (<module 'query_cases' from 'D:\\\\code\\\\rynmesh\\\\docs\\\\acceptance\\\\ryn-agent-delivery\\\\real-model\\\\query_cases.py'>, <module 'run_queries' from 'D:\\\\code\\\\rynmesh\\\\docs\\\\acceptance\\\\ryn-agent-delivery\\\\real-model\\\\run_queries.py'>)\nmonkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000023C49F0BBC0>\nplanner = (<module 'planner_policy' from 'D:\\\\code\\\\rynmesh\\\\docs\\\\acceptance\\\\ryn-agent-delivery\\\\real-model\\\\planner_policy.py... 'Synthetic GLM', 'provider': 'custom', ...}, <rynmesh.llm_package.sources.SourceAdapter object at 0x0000023C49EA9E50>)\ncohort = 'ryn'\n\n    @pytest.mark.parametrize(\"cohort\", [\"ryn\", \"reference\"])\n    def test_q06_actual_gate_and_pinned_worker_share_generation_policy(node, tmp_path, modules, monkeypatch, planner, cohort):  # noqa: F811\n        if cohort == \"reference\" and (not NODE.exists() or not (UPSTREAM / \"apps/zcode-cli/packages/adapters/dist/storage/index.js\").exists()):\n            pytest.skip(\"Pinned built reference and matching Node required\")\n        from rynmesh.llm_package.model_dispatch import ModelDispatchAdapter\n        app, store = node\n        query, runner = modules\n        helper, policy, _, adapter = planner\n        with query.QueryWorld(tmp_path / \"world\", \"Q06\") as world:\n            world.planner_policy = policy\n            selected = world.configure(app, store)\n            helper.assert_mapping(world.sources, world.bindings[\"model-a\"], policy)\n            consumer = world.access_query.consumer\n            bridge, tools, catalog = consumer.bridge, consumer.tools, consumer.models\n            world.attach(tools)\n            manager = app.state.llm_agent_services[\"provider_for\"](world.bindings[\"model-a\"].removeprefix(\"local/\"))\n            assert isinstance(manager.adapter, ModelDispatchAdapter)\n            manager.adapter.inner = adapter\n            scripted = runner.FixturePlanner(\"Q06\", cohort)\n            def synthetic(body):\n                return scripted.complete(selected, body[\"messages\"], body.get(\"tools\", []), lambda: False)[\"message\"]\n            requests = fake_upstream(monkeypatch, [synthetic] * 12, json_only=True)\n            runtime = runtime_for(consumer.store, bridge, tools, catalog, selected)\n            if cohort == \"ryn\":\n                execution = world.execute(runtime)\n>               assert execution[\"task\"][\"status\"] != \"failed\", json.dumps((execution[\"task\"].get(\"error\"), consumer.wire_audit))\nE               AssertionError: [\"agent_model_destination_changed\", [{\"task_id\": \"agent_f6ecd0bd639e4686b45fc9e6908403f6\", \"service_id\": \"src-9157657ebd12449b-8ed3f6ad685b\", \"provider_peer_id\": \"ZVqFBbrKLYtthJ2nHS7kGFwXOEpn2+7uiMxflGqVvgA=\", \"consumer_peer_id\": \"SJ3RM1p3eY84bH8Yob2sUHl7d0bFfL8gGliihHnS2BY=\", \"expected_model_binding\": null, \"transport\": \"local_signed_wire_fixture\", \"response_received\": true, \"state\": \"rejected\", \"error_code\": \"ai_permission_denied\"}]]\nE               assert 'failed' != 'failed'\n\ntests\\test_agent_access_query.py:184: AssertionError\n=========================== short test summary info ===========================\nFAILED tests/test_agent_access_query.py::test_q06_actual_gate_and_pinned_worker_share_generation_policy[ryn]\n!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!\n1 failed, 12 deselected in 5.09s\n",
+  "stderr": "",
+  "real_api_calls": 0,
+  "note": "New independent reproduction; earlier 1 failed / 1 passed (51.22s) combination did not persist a collector run.json or contemporaneous hash."
+}

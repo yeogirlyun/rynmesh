@@ -14,7 +14,7 @@ vi.mock("../domain/nas", () => ({ useNasStatus: () => ({ status: { enabled: fals
 
 const destinations = [
   ["我的服务", "/services"], ["浏览服务", "/services/catalog"],
-  ["AI 工作台", "/services/private-ai/chat"], ["AI 来源", "/services/sources"],
+  ["AI 工作台", "/services/private-ai/chat"], ["模型", "/services/sources"],
   ["API 接入", "/services/api"], ["服务设置", "/services/manage"],
 ];
 function Location() { return <output aria-label="当前路径">{useLocation().pathname}</output>; }

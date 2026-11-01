@@ -1,0 +1,5 @@
+{
+  "service_id": "codex-cli",
+  "tool_support": "supported",
+  "cli_model": "gpt-6.1-sol"
+}

@@ -1,0 +1,19 @@
+{
+  "classification": "native query collector wiring passed; not Agent quality",
+  "formal_case_score": false,
+  "real_model": false,
+  "reviewer": "Root inspected native counts, actual tool receipts, identity labels and business readbacks.",
+  "case_id": "Q01",
+  "dispatch_counts": {
+    "model": 3,
+    "tool": 1,
+    "approval": 0
+  },
+  "code_unchanged": true,
+  "source_configuration_unchanged": true,
+  "finding": "Pinned unmodified native runtime read the shared actual business world. Synthetic checker returned native protocol JSON; target complete is only a wiring assertion. No Ryn execution was performed; its queued task accounts for reference requests.",
+  "limitations": [
+    "Fixture planner does not answer the frozen business question; no semantic quality pass.",
+    "No final repetitions, real reference comparison or normalized security/dependency/reviewer evidence."
+  ]
+}

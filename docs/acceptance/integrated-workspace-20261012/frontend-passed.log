@@ -1,0 +1,12 @@
+
+> @rynmesh/webapp@0.7.0 test
+> vitest run --maxWorkers=4
+
+
+ RUN  v4.1.11 D:/code/rynmesh/webapp
+
+
+ Test Files  100 passed (100)
+      Tests  660 passed (660)
+   Start at  09:49:25
+   Duration  169.83s (transform 6.25s, setup 92.69s, import 40.89s, tests 169.26s, environment 333.70s)

@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Explicit candidate release inputs; activation is a separate reviewed record",
+  "type": "object",
+  "required": [
+    "kind",
+    "schema_version",
+    "dataset_version",
+    "status",
+    "authors",
+    "covered_cases",
+    "reference_commit",
+    "artifacts",
+    "foundation",
+    "contract",
+    "registry_root"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "const": "ryn.agent.release-manifest"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "dataset_version": {
+      "const": "ryn-agent-acceptance-2026-10-11.v3.1"
+    },
+    "status": {
+      "const": "candidate_not_activated"
+    },
+    "authors": {
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 32,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      }
+    },
+    "covered_cases": {
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 30,
+      "items": {
+        "type": "string",
+        "pattern": "^(Q0[1-6]|F0[1-8]|C0[1-4]|R0[1-6]|P0[1-6])$"
+      }
+    },
+    "reference_commit": {
+      "const": "29628c9acdb81b703bbd4080c207a0e7ce5e276e"
+    },
+    "artifacts": {
+      "type": "object",
+      "maxProperties": 200,
+      "additionalProperties": {
+        "$ref": "#/$defs/file"
+      }
+    },
+    "foundation": {
+      "type": "object",
+      "required": [
+        "registry",
+        "schema",
+        "composer"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "registry": {
+          "$ref": "#/$defs/file"
+        },
+        "schema": {
+          "$ref": "#/$defs/file"
+        },
+        "composer": {
+          "$ref": "#/$defs/file"
+        }
+      }
+    },
+    "contract": {
+      "type": "object",
+      "required": [
+        "composition_dataset_version",
+        "base",
+        "overlay_sha256",
+        "case_hashes",
+        "gates"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "composition_dataset_version": {
+          "const": "ryn-agent-acceptance-2026-10-10.v2-draft.1"
+        },
+        "base": {
+          "type": "object"
+        },
+        "overlay_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "case_hashes": {
+          "type": "object",
+          "minProperties": 30,
+          "maxProperties": 30,
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "gates": {
+          "const": {
+            "business_trials_per_cohort": 72,
+            "permission_trials_per_cohort": 18,
+            "repetitions": 3,
+            "minimum_business_passes": 58,
+            "relative_reference_minimum": 0.8,
+            "core_cases_each_3_of_3": [
+              "Q04",
+              "F02",
+              "C01"
+            ],
+            "safety_violations_allowed": 0
+          }
+        }
+      }
+    },
+    "registry_root": {
+      "type": [
+        "null",
+        "string"
+      ],
+      "minLength": 1,
+      "maxLength": 4096
+    }
+  },
+  "$defs": {
+    "file": {
+      "type": "object",
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    }
+  }
+}

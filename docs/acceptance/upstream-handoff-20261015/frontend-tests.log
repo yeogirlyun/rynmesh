@@ -1,0 +1,22 @@
+
+> @rynmesh/webapp@0.7.0 test
+> vitest run --maxWorkers=4 --reporter=dot
+
+
+ RUN  v4.1.11 D:/code/rynmesh/webapp
+
+stderr | src/screens/AskRynConversation.test.tsx > Private AI chat > shows source truncation and confirms its fingerprint before node dispatch
+[MSW] Error: intercepted a request without a matching request handler:
+
+  • GET http://localhost/api/local/ask/contexts/import%3Aimp_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+If you still wish to intercept this unhandled request, please create a request handler for it.
+Read more: https://mswjs.io/docs/http/intercepting-requests
+
+················································································································································································································································································································································································································································································································································································································································································································································································································································································
+
+ Test Files  114 passed (114)
+      Tests  848 passed (848)
+   Start at  20:48:58
+   Duration  193.65s (transform 7.34s, setup 104.95s, import 46.68s, tests 202.98s, environment 375.59s)
+

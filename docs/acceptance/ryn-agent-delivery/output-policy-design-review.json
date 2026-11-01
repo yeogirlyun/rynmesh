@@ -1,0 +1,30 @@
+{
+  "kind": "independent_read_only_architecture_review",
+  "author": "sharing_transaction",
+  "model": "gpt-6-astra",
+  "reasoning_effort": "high",
+  "status": "proposed_not_implemented",
+  "basis": "output-policy-audit.json",
+  "finding": "4096 ceiling is implementation policy; no corresponding frozen development cases/world contract found.",
+  "production_policy": [
+    "Use configured per-model effective output ceiling clamped by transport131072,remaining model context and explicit request limit.",
+    "Apply remaining lifetime token budget afterward, reserve before dispatch and settle actualusage; unknownusage keepsreservation.",
+    "Keep visible output byte limit separate from encrypted private continuation; retain bounded rawresponse/storage safeguards, never silently truncate required continuation.",
+    "Preserve availableusage/finishmetadata on rawoverflow and malformed response rejections."
+  ],
+  "matched_acceptance_policy": [
+    "Snapshot actual planner effective source policy including overrides without mutating owner.",
+    "Use execution-only policy for primaryinference, keeping businessfixturefacts unchanged; both candidate/reference use samepolicy.",
+    "Record policyversion/configured/effectivecaps/clampreasons/sourcepolicyhash; oldfailures remain oldpolicy.",
+    "Preserve frozeninputs,totalbudgets,time/calllimits,permissions,nativereferencebehavior andthinking/maxreasoning."
+  ],
+  "required_regressions": [
+    "Lower/larger configured ceilings.",
+    "Transport/context/request/lifetimebudget clamps.",
+    "Private continuation larger than visible limit, boundedstorage and restart.",
+    "Rawoverflow usage accounting.",
+    "Candidate/reference dispatchbounds equal."
+  ],
+  "excluded": "Bounded capability probes retain separate existingpolicy initially.",
+  "limits": "No livecalls or edits; increased generation allowance is not evidence of reliability improvement."
+}

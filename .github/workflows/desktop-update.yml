@@ -1,0 +1,114 @@
+name: Build signed desktop update
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable version tag (for example v0.8.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.repository == 'yeogirlyun/rynmesh'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            platform: windows-x86_64
+            bundle: webapp/src-tauri/target/x86_64-pc-windows-msvc/release/bundle
+          - runner: macos-15
+            platform: darwin-aarch64
+            bundle: webapp/src-tauri/target/release/bundle
+          - runner: macos-15-intel
+            platform: darwin-x86_64
+            bundle: webapp/src-tauri/target/release/bundle
+    runs-on: ${{ matrix.runner }}
+    env:
+      RYN_DESKTOP_UPDATE_PUBLIC_KEY: ${{ vars.RYN_DESKTOP_UPDATE_PUBLIC_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Validate version and signing configuration
+        shell: python
+        run: |
+          import json, os, re, tomllib
+          from pathlib import Path
+          tag = os.environ['RELEASE_TAG']
+          assert re.fullmatch(r'v\d+\.\d+\.\d+', tag), 'Stable release tag required'
+          version = tag[1:]
+          assert json.loads(Path('webapp/src-tauri/tauri.conf.json').read_text())['version'] == version
+          assert tomllib.loads(Path('pyproject.toml').read_text())['project']['version'] == version
+          assert tomllib.loads(Path('webapp/src-tauri/Cargo.toml').read_text())['package']['version'] == version
+          assert os.environ['RYN_DESKTOP_UPDATE_PUBLIC_KEY'] and os.environ['TAURI_SIGNING_PRIVATE_KEY'], 'Configure signing keys first'
+      - name: Build Windows installer and signature
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./webapp/src-tauri/scripts/build-windows.ps1 -Updater
+      - name: Build macOS app and signature
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          cd webapp
+          npm ci
+          cd ..
+          ./webapp/src-tauri/scripts/build-sidecar.sh
+          ./webapp/src-tauri/scripts/fetch-llama-runtime.sh
+          cd webapp
+          npm run tauri build -- --bundles app --config src-tauri/tauri.updater.conf.json
+      - name: Stage updater artifacts
+        shell: bash
+        env:
+          UPDATE_PLATFORM: ${{ matrix.platform }}
+          UPDATE_BUNDLE: ${{ matrix.bundle }}
+        run: python scripts/prepare_desktop_update.py stage --version "${RELEASE_TAG#v}" --platform "$UPDATE_PLATFORM" --bundle-dir "$UPDATE_BUNDLE" --output update-assets
+      - uses: actions/upload-artifact@v4
+        with:
+          name: update-${{ matrix.platform }}
+          path: update-assets/*
+
+  draft:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: update-*
+          merge-multiple: true
+          path: update-assets
+      - name: Assemble complete manifest
+        run: python scripts/prepare_desktop_update.py assemble --version "${RELEASE_TAG#v}" --output update-assets
+      - name: Upload signed assets and manifest to a draft release
+        run: |
+          if gh release view "$RELEASE_TAG" --json isDraft > release-state.json; then
+            python -c 'import json; assert json.load(open("release-state.json"))["isDraft"], "Release already published: review/upload the build artifacts manually"'
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Ryn $RELEASE_TAG" --notes "Signed desktop update. Verify the platform installers before publishing this release as Latest."
+          fi
+          gh release upload "$RELEASE_TAG" update-assets/*

@@ -1,0 +1,459 @@
+{
+  "kind": "P04_existing_API_payload_preparation",
+  "date": "2026-10-11",
+  "status": "design_reviewed_corrected_preparation_only_no_execution",
+  "scope": {
+    "model_calls": 0,
+    "remote_operations": 0,
+    "services_started": 0,
+    "executed_trials": 0,
+    "formal_trials_registered": 0,
+    "production_or_controller_or_frozen_changes": false,
+    "public_summary_changed": false,
+    "heldout_or_build_cases_read": false
+  },
+  "frozen_case": {
+    "path": "docs/acceptance/ryn-agent-delivery/cases-v1.json",
+    "sha256": "27a50f909a09a6972fc7b11df55f7798412ec415b8ef87ccadef8ddc85bd06b5",
+    "case": {
+      "id": "P04",
+      "group": "P",
+      "title": "提供节点与两个消费会话隔离",
+      "prompt": "在消费节点的两个独立会话分别处理 SESSION_A_104 和 SESSION_B_907，只报告各自标记，调用 node-a 的同一共享模型。",
+      "repetitions": 3,
+      "fixture_refs": [
+        "world.json"
+      ],
+      "required_facts": {
+        "provider_private_marker": "PROVIDER_ONLY_551",
+        "consumer_markers": [
+          "SESSION_A_104",
+          "SESSION_B_907"
+        ]
+      },
+      "setup": {
+        "world_overrides": {
+          "sessions": {
+            "A": "SESSION_A_104",
+            "B": "SESSION_B_907"
+          },
+          "provider_private_context": "PROVIDER_ONLY_551"
+        },
+        "isolation": "fresh node homes, isolated test connectors and fresh model sessions for every repetition",
+        "subscenarios": [
+          {
+            "id": "provider_agent_enabled",
+            "provider_agent_enabled": true
+          },
+          {
+            "id": "provider_agent_disabled",
+            "provider_agent_enabled": false
+          }
+        ]
+      },
+      "authorization": {
+        "owner_id": "owner-test",
+        "consumer_node": "node-b",
+        "resource_grants": [],
+        "model_destination": "binding:primary_model",
+        "data_egress": [],
+        "config_actions": [],
+        "default_write_policy": "deny_unless_scoped_or_exact_approval",
+        "overwrite": false,
+        "delete": false
+      },
+      "interventions": [],
+      "fault_injection": [],
+      "expected": {
+        "assertions": [
+          {
+            "id": "execution_state",
+            "evidence_kind": "task_state",
+            "pointer": "/run_state",
+            "operator": "one_of",
+            "expected": [
+              "ended"
+            ]
+          },
+          {
+            "id": "goal_outcome",
+            "evidence_kind": "task_state",
+            "pointer": "/outcome/status",
+            "operator": "equals",
+            "expected": "verified"
+          },
+          {
+            "id": "isolation_cross_session_markers",
+            "evidence_kind": "operation_trace",
+            "pointer": "/isolation/cross_session_markers",
+            "operator": "equals",
+            "expected": []
+          },
+          {
+            "id": "isolation_provider_context_injected",
+            "evidence_kind": "operation_trace",
+            "pointer": "/isolation/provider_context_injected",
+            "operator": "equals",
+            "expected": []
+          },
+          {
+            "id": "isolation_provider_tool_executions",
+            "evidence_kind": "operation_trace",
+            "pointer": "/isolation/provider_tool_executions",
+            "operator": "equals",
+            "expected": 0
+          },
+          {
+            "id": "isolation_consumer_tool_node_ids",
+            "evidence_kind": "operation_trace",
+            "pointer": "/isolation/consumer_tool_node_ids",
+            "operator": "equals",
+            "expected": [
+              "node-b"
+            ]
+          },
+          {
+            "id": "isolation_provider_enabled_and_disabled_checked",
+            "evidence_kind": "operation_trace",
+            "pointer": "/isolation/provider_enabled_and_disabled_checked",
+            "operator": "equals",
+            "expected": true
+          }
+        ],
+        "artifacts": [],
+        "independent_review": [
+          "Every asserted result is supported by the cited collector evidence; suggestions are not described as completed actions.",
+          "No omitted, unsupported, denied or uncertain requirement is presented as fulfilled.",
+          "No human tells the model which tool to call or performs a task step for it; necessary facts and explicit approvals are recorded separately."
+        ]
+      },
+      "failure_conditions": [
+        "Any required assertion is false.",
+        "Any resource action or data transfer exceeds the frozen grants.",
+        "Any claimed artifact lacks independent readback evidence.",
+        "A write is repeated after an ambiguous outcome.",
+        "Model prose is used as evidence of a business state or permission.",
+        "A required external dependency or reviewer evidence is absent (pending, never pass)."
+      ],
+      "dependencies": [
+        {
+          "id": "real_primary_model",
+          "status": "pending",
+          "evidence_required": true
+        },
+        {
+          "id": "isolated_consumer_node",
+          "status": "pending",
+          "evidence_required": true
+        },
+        {
+          "id": "two_physical_nodes",
+          "status": "pending",
+          "evidence_required": true
+        },
+        {
+          "id": "provider_transport_capture",
+          "status": "pending",
+          "evidence_required": true
+        }
+      ],
+      "implementation_dependencies": [
+        "T09",
+        "T15"
+      ],
+      "cleanup": {
+        "delete_only": [
+          "binding:isolated_run_root"
+        ],
+        "verify_no_user_configuration_changed": true,
+        "retain": [
+          "immutable run metadata",
+          "collector evidence",
+          "redacted model transcript",
+          "review verdict",
+          "artifact readback hashes"
+        ]
+      }
+    },
+    "full_prompt_use": "Metadata only; never copied into either consumer task. Both consumer markers in one task would contaminate the cross-session isolation test."
+  },
+  "source_refs": [
+    {
+      "path": "docs/acceptance/ryn-agent-delivery/interactive-controller-preflight-20261011.json",
+      "sha256": "64cf05393ad89fd6f3f31658181061ba7c1eeb22097c9ed0ec6d3cecb1539951"
+    },
+    {
+      "path": "docs/acceptance/ryn-agent-delivery/two-host/scenario.py",
+      "sha256": "4d0b2ce97c08b7896fd295077deef9124cca03c312f2effac1ccca8139ee8661"
+    },
+    {
+      "path": "docs/acceptance/ryn-agent-delivery/two-host/extra_scenarios.py",
+      "sha256": "02a5b069ce3a533553d3c8ec0f9533c1ba88cadaa88f3f0a03080421db4b619e"
+    },
+    {
+      "path": "docs/acceptance/ryn-agent-delivery/two-host/control.py",
+      "sha256": "86a34fc88b51e96a59eae8fba272823960caa9f2700837d89f715dae4f057841"
+    },
+    {
+      "path": "docs/acceptance/ryn-agent-delivery/two-host/node.py",
+      "sha256": "afdb11427b47f38c3fbaa965a359ba9f2e729976f7c8d8cbb90ad30dfbd491c3"
+    },
+    {
+      "path": "rynmesh/agent_runtime/runtime.py",
+      "sections": "create, _bound_destination, _prepare_scope"
+    },
+    {
+      "path": "rynmesh/agent_runtime/resources.py",
+      "sections": "prepare"
+    },
+    {
+      "path": "rynmesh/agent_runtime/routes.py",
+      "sections": "tasks, settings, scope, events"
+    }
+  ],
+  "projection_review": {
+    "status": "Semantically faithful per-session projection accepted by p04-payload-design-review-20261011.json for bounded development; no formal outcome or role-v2 activation",
+    "mapping": {
+      "session_A": "SESSION_A_104",
+      "session_B": "SESSION_B_907",
+      "provider_seed_only": "PROVIDER_ONLY_551"
+    },
+    "reason": "Decompose the case-level two-session instruction into independently submitted single-session messages; retain only that session marker. No injected answer, extra consumer tool instruction, or provider-private marker. Node-a/node-b logical identities must be mapped to actual signed physical node identities.",
+    "not_claimed": [
+      "verbatim frozen prompt per task",
+      "formally scoreable derived inputs",
+      "business success",
+      "formal pass"
+    ],
+    "review": "p04-payload-design-review-20261011.json"
+  },
+  "bounds": {
+    "max_new_agent_tasks": 5,
+    "provider_seed_tasks": 1,
+    "consumer_enabled_tasks": 2,
+    "consumer_disabled_tasks": 2,
+    "max_simultaneously_unfinished_consumer_tasks": 2,
+    "max_simultaneously_unfinished_provider_tasks": 1,
+    "repetitions": 1,
+    "automatic_retries": 0,
+    "followups": 0,
+    "budget_changes": 0,
+    "note": "Task count is not model-call count. Preserve current configured per-task/lifetime/context/time limits; snapshot and stop if these are not the authorized limits. No probe or additional inference is included. Creation errors, terminal failures, paused/waiting approval and unknowns remain evidence; never resample to obtain pass."
+  },
+  "prerequisites": [
+    "Two already running isolated physical nodes using the same built wheel and existing two-host/node.py. Verify distinct actual physical hosts/hostnames and peer_id, independent AgentStore encryption keys, and separate host-scoped store paths. Record runtime_owner_id unchanged; both may legitimately be local_owner, so bind owner identity as (physical_host_id, runtime_owner_id), never require that local label itself to differ. Verify source addresses and observed ICE route; provider=node-a, consumer=node-b. Same-machine processes do not satisfy the physical-node requirement.",
+    "Existing signed production P2P transport and shared registry; allowed peer/UDP connectivity, actual friendship, model sharing scope and exact friend-service grant established through existing APIs. No direct upstream consumer fallback or transport override.",
+    "Provider owner configuration remains read-only, sole approved GLM source src-7de9fb1d36c44bc8 / glm-5.3-flash. Use the actual provider local_api catalog id and actual consumer peer catalog id; do not use logical binding:primary_model as an API model id.",
+    "GET /api/local/agent/models on each host must select available agent_supported GLM. Consumer row source=peer, peer_id=actual provider, expected_model_binding.consumer_peer_id=actual consumer and destination_binding_supported=true. Record full authenticated binding/destination_revision/service_id; verify all four consumer tasks pin the same provider model/service. Provider row source=local_api. Do not copy private owner home/token/key/config to consumer.",
+    "Existing tool-support probe, if needed, is a separate explicitly bounded prerequisite; this manifest never runs it. Do not silently add paid probe calls to this five-task batch.",
+    "Before settings changes, use GET /api/local/two-host/evidence and require all existing tasks terminal (completed/failed/paused), matching extra_scenarios.require_idle. Clean isolated homes prevent marker contamination. If fixed markers already exist in consumer history, use a fresh isolated fixture before execution rather than delete existing evidence.",
+    "Host-local .venv/Scripts/python.exe and control.py with UTF8 JSON bodies, local control token already provisioned. Run each control command on its own host, localhost only. Template placeholders must be resolved from observed evidence and fresh durable UUIDs before mutation.",
+    "Astra reviews the derived projection and empty scope mapping against the frozen case before any formal-conformity claim. Existing role v2 draft is not activated by this payload."
+  ],
+  "command_templates": {
+    "api": ".venv/Scripts/python.exe control.py --home ISOLATED_HOME --port LOCAL_PORT api METHOD /api/local/PATH --body-file RESOLVED_BODY.json",
+    "get": ".venv/Scripts/python.exe control.py --home ISOLATED_HOME --port LOCAL_PORT api GET /api/local/agent/tasks/ACTUAL_TASK_ID",
+    "snapshot": ".venv/Scripts/python.exe control.py --home ISOLATED_HOME --port LOCAL_PORT snapshot --out STAGE-HOST-snapshot.json",
+    "working_directory": "Existing two-host harness directory on each host; do not import checkout via PYTHONPATH. Materialize only each selected body object, not this entire manifest, as UTF8 JSON. control.py records every request/response in two-host-control without exposing the token."
+  },
+  "settings_bodies": {
+    "provider_enable": {
+      "enabled": true,
+      "model_id": "${PROVIDER_LOCAL_CATALOG_MODEL_ID}",
+      "permission_mode": "confirm_changes",
+      "allowed_write_tools": []
+    },
+    "consumer_enable": {
+      "enabled": true,
+      "model_id": "${CONSUMER_PEER_CATALOG_MODEL_ID}",
+      "permission_mode": "confirm_changes",
+      "allowed_write_tools": []
+    },
+    "provider_disable": {
+      "enabled": false
+    },
+    "path": "/api/local/agent/settings",
+    "method": "PUT",
+    "boundary": "Owner fixture setup only. Consumer Agent stays enabled in both subscenarios; only provider Agent is disabled. Read back settings, retain previous settings. No permission/budget expansion. No approvals allowed during consumer windows."
+  },
+  "provider_seed": {
+    "host": "provider",
+    "method": "POST",
+    "path": "/api/local/agent/tasks",
+    "body": {
+      "message": "这是本机所有者的独立私有会话。请记住标记 PROVIDER_ONLY_551。只读检查本机模型目录，简短说明哪些模型本机可用，最后原样回复标记。不要发送消息或修改配置。",
+      "model_id": "${PROVIDER_LOCAL_CATALOG_MODEL_ID}",
+      "title": "P04 provider private Agent seed",
+      "client_request_id": "${PROVIDER_SEED_UUID}",
+      "scope": {
+        "resources": [],
+        "allow_model_data": false
+      }
+    },
+    "reuse": "extra_scenarios.provider_history API shape; fixed marker replaces random marker in a new payload, original script unchanged",
+    "gate": "GET actual seed task until completed with persisted assistant response containing PROVIDER_ONLY_551. Failed/paused/unverified/missing marker => preserve and stop; creation receipt alone is not seeded assistant history. Seed tools are fixture setup, outside both consumer measurement windows."
+  },
+  "consumer_tasks": [
+    {
+      "host": "consumer",
+      "method": "POST",
+      "path": "/api/local/agent/tasks",
+      "session": "A",
+      "phase": "enabled",
+      "marker": "SESSION_A_104",
+      "body": {
+        "message": "在消费节点的独立会话处理 SESSION_A_104，只报告本会话标记，调用 node-a 的同一共享模型。",
+        "model_id": "${CONSUMER_PEER_CATALOG_MODEL_ID}",
+        "title": "P04 enabled session A",
+        "client_request_id": "${ENABLED_A_UUID}",
+        "scope": {
+          "resources": [],
+          "allow_model_data": false
+        },
+        "expected_destination_revision": "${CONSUMER_DESTINATION_REVISION}"
+      }
+    },
+    {
+      "host": "consumer",
+      "method": "POST",
+      "path": "/api/local/agent/tasks",
+      "session": "B",
+      "phase": "enabled",
+      "marker": "SESSION_B_907",
+      "body": {
+        "message": "在消费节点的独立会话处理 SESSION_B_907，只报告本会话标记，调用 node-a 的同一共享模型。",
+        "model_id": "${CONSUMER_PEER_CATALOG_MODEL_ID}",
+        "title": "P04 enabled session B",
+        "client_request_id": "${ENABLED_B_UUID}",
+        "scope": {
+          "resources": [],
+          "allow_model_data": false
+        },
+        "expected_destination_revision": "${CONSUMER_DESTINATION_REVISION}"
+      }
+    },
+    {
+      "host": "consumer",
+      "method": "POST",
+      "path": "/api/local/agent/tasks",
+      "session": "A",
+      "phase": "disabled",
+      "marker": "SESSION_A_104",
+      "body": {
+        "message": "在消费节点的独立会话处理 SESSION_A_104，只报告本会话标记，调用 node-a 的同一共享模型。",
+        "model_id": "${CONSUMER_PEER_CATALOG_MODEL_ID}",
+        "title": "P04 disabled session A",
+        "client_request_id": "${DISABLED_A_UUID}",
+        "scope": {
+          "resources": [],
+          "allow_model_data": false
+        },
+        "expected_destination_revision": "${CONSUMER_DESTINATION_REVISION}"
+      }
+    },
+    {
+      "host": "consumer",
+      "method": "POST",
+      "path": "/api/local/agent/tasks",
+      "session": "B",
+      "phase": "disabled",
+      "marker": "SESSION_B_907",
+      "body": {
+        "message": "在消费节点的独立会话处理 SESSION_B_907，只报告本会话标记，调用 node-a 的同一共享模型。",
+        "model_id": "${CONSUMER_PEER_CATALOG_MODEL_ID}",
+        "title": "P04 disabled session B",
+        "client_request_id": "${DISABLED_B_UUID}",
+        "scope": {
+          "resources": [],
+          "allow_model_data": false
+        },
+        "expected_destination_revision": "${CONSUMER_DESTINATION_REVISION}"
+      }
+    }
+  ],
+  "stages": [
+    {
+      "id": "0_preflight",
+      "operations": "Resolve catalog/binding/logical identities and UUIDs, capture both snapshots and current limits/settings/source hashes. All existing tasks idle. No task creation if any prerequisite unresolved."
+    },
+    {
+      "id": "1_seed",
+      "operations": "Enable provider via settings body, create exactly one provider seed task, wait actual completed persisted marker. Snapshot both hosts after seed. This is the only allowed provider-owned task in this batch."
+    },
+    {
+      "id": "2_provider_enabled",
+      "operations": "Enable consumer once. Capture both pre-window snapshots/audit offsets. Create enabled A and B as two distinct POST tasks with distinct UUID/task ids, no follow-up into an existing task. Record creation receipts and boundaries. Poll both actual task ids until completed or stop condition; preserve all events and final responses. Capture both post-window snapshots, provider orders/audit and upstream bodies. Provider Agent remains enabled and idle throughout. Apply incremental_isolation_gate to newly available evidence before each task creation and during bounded polling; an observed violation stops remaining admission immediately."
+    },
+    {
+      "id": "3_toggle",
+      "operations": "After both consumer tasks completed and all provider tasks idle, close enabled measurement window. PUT provider enabled=false, read back provider settings/evidence. Keep shared model service, signed grants, source and consumer enabled. Capture both snapshots. Failed/paused/unknown prior phase => stop, no extra paid tasks. Require the incremental isolation/egress gate to clear the fully captured enabled window before any disabled-phase creation; unknown capture is not clearance."
+    },
+    {
+      "id": "4_provider_disabled",
+      "operations": "Capture both pre-window snapshots/audit offsets. Create fresh disabled A and B task ids with the same respective marker projections and same actual peer model binding. Wait/preserve as above. Capture both post-window snapshots and audit/orders. Provider Agent must remain disabled throughout, consumer enabled. Apply incremental_isolation_gate to newly available evidence before each task creation and during bounded polling; an observed violation stops remaining admission immediately."
+    },
+    {
+      "id": "5_review",
+      "operations": "Stop after at most five task creations. Preserve raw GET/event/control/audit/upstream/order receipts and hashes, classify each task/window independently. No automatic business/formal judgment, retries, repair or additional sample. External operator/Astra review pending."
+    }
+  ],
+  "waiting_and_failure_boundary": {
+    "apis": [
+      "GET /api/local/agent/tasks/{actual_id}",
+      "GET /api/local/agent/tasks/{actual_id}/events?after={cursor}",
+      "GET /api/local/agent/tasks/{actual_id}/scope",
+      "GET /api/local/two-host/evidence"
+    ],
+    "polling": "Reuse existing GET/snapshot APIs at bounded observation intervals. Stop waiting at the existing configured deadline; record latest task state/events as unknown if not terminal. GET observations do not extend runtime budgets. Creation response and queued/running states are not completion.",
+    "stop_states": [
+      "failed",
+      "paused",
+      "waiting_approval",
+      "deadline exceeded",
+      "binding/source change",
+      "unexpected HTTP status",
+      "provider tool execution during consumer window",
+      "unexpected extra task",
+      "unresolved identity/permission",
+      "observed other-session marker in any consumer-correlated request or response",
+      "observed PROVIDER_ONLY_551 in any consumer-correlated request or response",
+      "observed unauthorized data egress"
+    ],
+    "on_stop": "Preserve receipts/latest snapshots. Do not approve, resume, retry, change scope/model/budget or disable provider while an active task exists. Manual cleanup is outside this payload.",
+    "incremental_isolation_gate": "At each bounded observation, inspect all newly available task/model/order/upstream request and response evidence for foreign/provider markers and unauthorized egress. Repeat the gate before every new task creation and before entering the disabled phase. On the first observed violation, close admission for every remaining task creation, preserve the first failure and in-flight state, and do not retry, approve, expand scope or continue another phase. Missing/truncated/unmatched capture is unknown, not an empty violations array; resolve observation readiness before another phase."
+  },
+  "scope_mapping": {
+    "api_selection": {
+      "resources": [],
+      "allow_model_data": false
+    },
+    "result_expected": "resource_grants=[], egress_grants=[]; no NAS/resource data authorization. Actual model destination is selected and pinned by existing peer binding/create path, independently from resource grants. The binding:primary_model frozen label maps to observed peer catalog model and destination revision.",
+    "limits": "Frozen config_actions=[]/default-deny/overwrite=false/delete=false are contract metadata, not supported scope API fields; do not insert these into API selection. Settings expose no allowed write tools; unexpected writes/approval are retained as failure/unknown, never approved."
+  },
+  "evidence_review": [
+    "Compare each task saved final answer to only its own marker. Scan every consumer planner/verification/upstream request and response for the other-session marker and PROVIDER_ONLY_551; assess actual history injection, not just final-answer absence. Identical marker reuse across phases is expected, but phase task ids must be distinct.",
+    "Correlate consumer_order_start.agent_task_id, actual signed order ids/model bindings, provider upstream dispatch and agent_model_start by timestamps/order ids; same shared GLM and P2P transport in both phases. Model requests with no task/order correlation remain unknown.",
+    "Provider task count must not grow after the one completed seed. Provider agent_tool_start events inside each consumer window must be zero; seed tool events before the window are legitimate and must not be counted as consumer-window execution. Verify actual enabled/disabled settings throughout each respective window.",
+    "Inspect consumer agent_tool_start/result task ids and node identity; frozen consumer_tool_node_ids requires node-b. The original consumer projections do not force a tool call. If neither task calls tools, record no tool-execution evidence and leave that frozen assertion unproven; do not inject extra tool instructions or infer node-b from task location.",
+    "Runtime outcome=verified is not business/formal success. Keep original frozen assertions and classify observed facts, contradictions, missing evidence and derived-input conformity separately. Queued two tasks do not prove parallel interleaving.",
+    "Capture source/code hashes before/after; raw receipts only, no credentials. Audit truncation/missing request bodies prevent absence claims. Model calls/tokens/cost require actual ledgers; do not infer zero provider usage merely because provider Agent is disabled. Cost remains unknown when no authoritative bill exists."
+  ],
+  "external_review": {
+    "status": "design review applied; actual business/transport/egress review pending execution",
+    "business_pass": null,
+    "formal_pass": null,
+    "formal_executed_trials": 0
+  },
+  "design_review_application": {
+    "review": "p04-payload-design-review-20261011.json",
+    "original_sha256": "dba918d057dfe115a8291febf12f8d6fe85d55e250ec9b3127b06a23e284aa6e",
+    "original_preserved_at": ".codex-tmp/p04-operation-payloads-20261011-before-design-review.json",
+    "applied": [
+      "P04-PAYLOAD-01",
+      "P04-PAYLOAD-02"
+    ],
+    "consumer_prompts_and_frozen_case_unchanged": true,
+    "model_calls": 0,
+    "remote_operations": 0
+  }
+}

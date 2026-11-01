@@ -3,6 +3,13 @@
   "productName": "Ryn",
   "version": "0.7.0",
   "identifier": "ai.rynmesh.desktop",
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": ["https://github.com/yeogirlyun/rynmesh/releases/latest/download/desktop-latest.json"],
+      "windows": { "installMode": "passive" }
+    }
+  },
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",

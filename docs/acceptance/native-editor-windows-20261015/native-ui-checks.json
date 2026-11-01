@@ -1,0 +1,30 @@
+{
+  "pdf": {
+    "title": "PdfCraft — Ryn",
+    "owner": "process:C:\\Users\\子陵\\AppData\\Local\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\Ryn\\Ryn.exe",
+    "new_blank_pdf": true,
+    "native_save_dialog": true,
+    "exported_file": "native-window-proof.pdf",
+    "reopened_export": true,
+    "repeated_open_reuses_same_window": true,
+    "window_id": 3416954
+  },
+  "word": {
+    "title": "WordCraft — Ryn",
+    "owner": "process:C:\\Users\\子陵\\AppData\\Local\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\Ryn\\Ryn.exe",
+    "window_id": 19274900,
+    "blank_workbench": true
+  },
+  "close_editor_keeps_ryn": true,
+  "excel": {
+    "title": "GridCraft — Ryn",
+    "owner": "process:C:\\Users\\子陵\\AppData\\Local\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\Ryn\\Ryn.exe",
+    "window_id": 2892956
+  },
+  "ppt": {
+    "title": "DeckCraft — Ryn",
+    "owner": "process:C:\\Users\\子陵\\AppData\\Local\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\Ryn\\Ryn.exe",
+    "window_id": 992266,
+    "content": "Upstream Northern Lights sample"
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "kind": "C04-operator-control-and-report-review",
+  "formal_trials_executed": 0,
+  "actual_model_calls": 10,
+  "planner_checker_calls": 9,
+  "receiver_probe_calls": 1,
+  "input_tokens": 121496,
+  "output_tokens": 21509,
+  "known_total_tokens": 143005,
+  "unknown_usage_calls": 0,
+  "currency_cost": null,
+  "seconds": 392.912602,
+  "mechanical_checks": {
+    "initial_grant_preexisting": true,
+    "grant_barrier_observed": true,
+    "revoke_barrier_observed": true,
+    "probes_before_followup": true,
+    "before_b_allowed": true,
+    "before_c_denied_without_upstream": true,
+    "after_b_denied_without_upstream": true,
+    "model_a_still_shared_exact_friends_scope": true,
+    "model_a_receivers_empty": true,
+    "model_b_private": true,
+    "source_and_model_settings_unchanged": true,
+    "other_grants_unchanged": true,
+    "agent_settings_unchanged": true,
+    "completed": true,
+    "no_controller_stop": true
+  },
+  "owner_source_unchanged": true,
+  "code_unchanged": true,
+  "control_result": "exact approve-idempotent-existing-grant; actual signed B GLM call allowed/C rejected without dispatch; original owner revoke followup; exact revoke approved; B rejected without dispatch; model-b/private and unrelated configuration unchanged",
+  "report_review": "Reports distinguish configuration observation from live inference; original grant was explicitly described as already effective. Initial model report could not identify logical node-c from displayed ungranted-peer name and made its denial conclusion conditional; controller has separately signed node-c binding and actual denial proof after that report. Do not infer that the Agent itself identified or executed that probe.",
+  "business_success_seen": null,
+  "business_review_status": "pending independent semantic disposition of node-c report limitation",
+  "collection_limitation": "CountedAdapter recorded response.usage but production adapter uses reported_usage; all nine Agent call usages are present in bridge records. Only allowed external probe usage recovered from original provider order history (17+10), not guessed. No rerun or rewrite of raw run.",
+  "artifacts": {
+    "run.json": "2ce98a57cffac70bd609ccd9db807d3b058863ff7a3da97167815cc3f24a823e",
+    "receiver-probe-provider-order.json": "2b2e13f0f88fbeed1f98f1263315352f7cb83e667289b6da359cef089f44d303"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "classification": "development failure; not formal score",
+  "real_model_calls": 4,
+  "finding": "The model discovered three catalog pages and loaded six relevant schemas. One summary succeeded, but loading the schemas exhausted remaining context. The compactor could not select the latest fully closed exchange as a prefix, so it stopped before any business read or write.",
+  "repair": "Allow the complete closed history prefix as an additional compaction boundary. Exact owner constraints and mutation receipts remain pinned; originals and scope provenance remain in the encrypted transcript. A deterministic closed-exchange regression was added.",
+  "unverified": "The repair is not evidence of full long-document success. A new isolated live run is required.",
+  "formal_case_score": false
+}

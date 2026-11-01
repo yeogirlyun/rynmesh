@@ -89,6 +89,7 @@ class AskRunService:
                    "body": {"task_id": task_id, "idempotency_key": task_id, "provider_peer_id": preview["provider_peer_id"],
                             "service_id": preview["service_id"], "network_id": row["networkId"], "transport": "auto", "response_mode": "stream-v1",
                             "prompt": preview["prompt"], "prompt_format": preview.get("prompt_format", "text"),
+                            **({"cli_model": preview["cli_model"]} if preview.get("cli_model") else {}),
                             **({"ai_permission": intent["ai_permission"]} if "ai_permission" in intent else {}),
                             "max_tokens": preview["max_output_tokens"]}}
             runs[task_id] = run

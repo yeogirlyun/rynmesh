@@ -1,0 +1,108 @@
+{
+  "sources": [
+    {
+      "id": "src-1fe50b9c7ce9432b",
+      "kind": "local",
+      "name": "验收用本机模型",
+      "provider": "custom",
+      "base_url": "http://127.0.0.1:19004/v1",
+      "models": [
+        "acceptance-model",
+        "second-model"
+      ],
+      "context_window": 32768,
+      "max_output_tokens": 4096,
+      "request_defaults": {
+        "temperature": 0.2
+      },
+      "sharing": false,
+      "shared_models": [],
+      "enabled": true,
+      "status": "ready",
+      "tool_support": {
+        "acceptance-model": "supported",
+        "second-model": "supported"
+      },
+      "model_settings": {
+        "acceptance-model": {
+          "overrides": {},
+          "rule_revision": "ac467d96da6540e4a24dec10e288708d",
+          "destination_revision": "aabd71b4a4ef49dfb9c7654726d28d1d",
+          "evidence": {
+            "connection": {
+              "status": "unknown",
+              "checked_at": null
+            },
+            "model_exists": {
+              "status": "unknown",
+              "checked_at": null
+            },
+            "tools": {
+              "status": "unknown",
+              "checked_at": null
+            }
+          },
+          "effective": {
+            "context_window": 32768,
+            "max_output_tokens": 4096,
+            "request_defaults": {
+              "temperature": 0.2
+            },
+            "max_concurrent": 1,
+            "requests_per_day": null
+          },
+          "inherited_fields": [
+            "context_window",
+            "max_concurrent",
+            "max_output_tokens",
+            "request_defaults",
+            "requests_per_day"
+          ]
+        },
+        "second-model": {
+          "overrides": {},
+          "rule_revision": "087ab015ef974b928a78c517727c2047",
+          "destination_revision": "5d235892cacc4d9c90f6375039568107",
+          "evidence": {
+            "connection": {
+              "status": "passed",
+              "checked_at": "2026-10-09T19:33:40.290301+08:00",
+              "method": "two_turn_client_tool"
+            },
+            "model_exists": {
+              "status": "present",
+              "checked_at": "2026-10-09T19:33:40.290301+08:00",
+              "method": "two_turn_client_tool"
+            },
+            "tools": {
+              "status": "passed",
+              "checked_at": "2026-10-09T19:33:40.290301+08:00",
+              "method": "two_turn_client_tool"
+            }
+          },
+          "effective": {
+            "context_window": 32768,
+            "max_output_tokens": 4096,
+            "request_defaults": {
+              "temperature": 0.2
+            },
+            "max_concurrent": 1,
+            "requests_per_day": null
+          },
+          "inherited_fields": [
+            "context_window",
+            "max_concurrent",
+            "max_output_tokens",
+            "request_defaults",
+            "requests_per_day"
+          ]
+        }
+      },
+      "destination_revision": "8ba7434b1b2f4c22ae25a7afc6eef2ed",
+      "source_revision": "08a8444a8272494082cb98b4bb3b3acf",
+      "has_key": false
+    }
+  ],
+  "peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+  "node_name": "ryn-agent-acceptance-spvetm7q"
+}

@@ -1,0 +1,27 @@
+--- a/crates/ui-egui/src/theme.rs
++++ b/crates/ui-egui/src/theme.rs
+@@ -470,8 +470,22 @@
+ }
+ 
+ #[cfg(target_arch = "wasm32")]
+-fn load_fallback(_fonts: &mut FontDefinitions, _han: HanOrder) -> Vec<String> {
+-    Vec::new()
++fn load_fallback(fonts: &mut FontDefinitions, _han: HanOrder) -> Vec<String> {
++    // Ryn's web build supplies this OFL font as an external, SHA-256-pinned build input.
++    // Keep it in the font-definition factory so opening a workbook or changing language
++    // cannot discard the fallback when egui rebuilds its font families.
++    let bytes = include_bytes!(concat!(env!("CRAFT_FONTS_DIR"), "/NotoSansCJKsc-Regular.otf"));
++    if !font_parses(bytes, 0) {
++        log::warn!("Ryn CJK fallback is not a font egui can read");
++        return Vec::new();
++    }
++    let key = "ryn-cjk-sc".to_string();
++    fonts.font_data.insert(key.clone(), Arc::new(FontData::from_static(bytes)));
++    // Cover the default families too; named UI and cell roles receive the returned key.
++    for chain in fonts.families.values_mut() {
++        chain.push(key.clone());
++    }
++    vec![key]
+ }
+ 
+ /// Every fallback face we look for, in chain order: `(key, candidate files)`. One file per script

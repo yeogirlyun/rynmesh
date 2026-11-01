@@ -67,3 +67,61 @@ it("uses indeterminate progress for startup and hides duplicate start actions", 
   expect(screen.getByRole("progressbar")).not.toHaveAttribute("value");
   expect(screen.queryByRole("button", { name: "启动" })).not.toBeInTheDocument();
 });
+
+const configured: NativeModelStatus = { ...stopped, model_settings: {
+  configuration: { max_output_tokens: 1024, max_concurrent: 1, requests_per_day: null },
+  context_window: 4096, rule_revision: "first",
+  enforcement: { output_tokens: "upstream_request_limit", concurrency: "node_process", quota: "persisted_dispatch_attempts_utc_day" },
+} };
+
+it("saves only edited native parameters with CAS and leaves start and sharing independent", async () => {
+  const changes: unknown[] = [];
+  server.use(http.put("*/api/local/llm/native/model-config", async ({ request }) => {
+    const body = await request.json() as { configuration: object }; changes.push(body);
+    return HttpResponse.json({ ...configured, model_settings: { ...configured.model_settings,
+      rule_revision: "second", configuration: { ...configured.model_settings!.configuration, ...body.configuration } } });
+  }));
+  const user = page(configured);
+  expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "更多模型设置" }));
+  const output = screen.getByRole("spinbutton", { name: "最大输出 Token" });
+  expect(output).toHaveAttribute("max", "4096");
+  await user.clear(output); await user.type(output, "512");
+  await user.click(screen.getByRole("button", { name: "保存此模型参数" }));
+  expect(await screen.findByText("参数已保存。")).toBeInTheDocument();
+  expect(changes).toEqual([{ expected_rule_revision: "first", configuration: { max_output_tokens: 512 } }]);
+  expect(screen.getByRole("switch", { name: "分享给我的设备" })).not.toBeChecked();
+  expect(screen.getByRole("button", { name: "启动" })).toBeEnabled();
+});
+
+it("requires explicit reload after a native revision conflict and discards stale edits", async () => {
+  const writes = vi.fn();
+  const current = { ...configured, model_settings: { ...configured.model_settings!, rule_revision: "new", configuration: { ...configured.model_settings!.configuration, requests_per_day: 35 } } };
+  server.use(
+    http.put("*/api/local/llm/native/model-config", () => { writes(); return HttpResponse.json({ detail: "native_model_rule_revision_conflict" }, { status: 409 }); }),
+    http.get("*/api/local/llm/native", () => HttpResponse.json(current)),
+  );
+  const user = page(configured);
+  await user.click(screen.getByRole("button", { name: "更多模型设置" }));
+  await user.type(screen.getByRole("spinbutton", { name: "每日请求上限" }), "20");
+  await user.click(screen.getByRole("button", { name: "保存此模型参数" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("旧编辑不会自动覆盖新参数");
+  expect(screen.getByRole("button", { name: "保存此模型参数" })).toBeDisabled();
+  expect(writes).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole("button", { name: "重新读取" }));
+  expect(screen.getByRole("spinbutton", { name: "每日请求上限" })).toHaveValue(35);
+  expect(screen.getByRole("button", { name: "保存此模型参数" })).toBeDisabled();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("rejects output larger than the actual native context without sending a request", async () => {
+  const writes = vi.fn();
+  server.use(http.put("*/api/local/llm/native/model-config", () => { writes(); return HttpResponse.json(configured); }));
+  const user = page(configured);
+  await user.click(screen.getByRole("button", { name: "更多模型设置" }));
+  const output = screen.getByRole("spinbutton", { name: "最大输出 Token" });
+  await user.clear(output); await user.type(output, "9999");
+  await user.click(screen.getByRole("button", { name: "保存此模型参数" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("请核对数值范围");
+  expect(writes).not.toHaveBeenCalled();
+});

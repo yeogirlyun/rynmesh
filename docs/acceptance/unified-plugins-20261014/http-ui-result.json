@@ -1,0 +1,40 @@
+{
+  "node": "disposable-local-review-node",
+  "shell": "fixture",
+  "plugin_api": "actual-local-HTTP",
+  "catalog_entries": 17,
+  "default_selection": [
+    "pdfcraft",
+    "wordcraft",
+    "gridcraft",
+    "deckcraft"
+  ],
+  "selection_entries": 17,
+  "actual_installs": [
+    {
+      "id": "resume",
+      "status": 200
+    },
+    {
+      "id": "recruit",
+      "status": 200
+    },
+    {
+      "id": "desk",
+      "status": 200
+    },
+    {
+      "id": "nas",
+      "status": 200
+    },
+    {
+      "id": "wordcraft",
+      "status": 200
+    }
+  ],
+  "management_switches": 5,
+  "disable_removes_tools": true,
+  "mobile_width": 390,
+  "horizontal_overflow": false,
+  "javascript_errors": []
+}

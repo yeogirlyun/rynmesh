@@ -1,0 +1,95 @@
+{
+  "signed_registry_evidence": [
+    {
+      "alg": "ed25519",
+      "payload": {
+        "capabilities": [
+          "publish",
+          "seed",
+          "verify"
+        ],
+        "endpoints": [],
+        "metadata": {},
+        "network_id": "rynmesh-main",
+        "node_name": "node-d",
+        "peer_id": "XoZibmfF00f9PD9jonWkfKZsSnBcVGLyVnMlizz6wtU=",
+        "safety_packs": [
+          "@rynmesh/safety-core@0.1.0"
+        ],
+        "updated_at": ""
+      },
+      "public_key": "XoZibmfF00f9PD9jonWkfKZsSnBcVGLyVnMlizz6wtU=",
+      "signature": "/M3WCbZbJ8nllJ33vbHygX3Z+YZOSwyl2RBB462Vr2UPXua6w4JIzLUwpwKfIhZ8YKeAaLp2xOIJMkKs2hhFDQ=="
+    },
+    {
+      "alg": "ed25519",
+      "payload": {
+        "capabilities": [
+          "publish",
+          "seed",
+          "verify"
+        ],
+        "endpoints": [],
+        "metadata": {},
+        "network_id": "rynmesh-main",
+        "node_name": "node-c",
+        "peer_id": "uRIb3QF3OmAd54js0GrSAHt7S2tiNfo0QK1CHTHxt5w=",
+        "safety_packs": [
+          "@rynmesh/safety-core@0.1.0"
+        ],
+        "updated_at": "2026-10-09T07:50:00Z"
+      },
+      "public_key": "uRIb3QF3OmAd54js0GrSAHt7S2tiNfo0QK1CHTHxt5w=",
+      "signature": "CjB4R/SrKOrzg187W6C6AZ9SKaZrNIg1okeInZ27DJAmeShA+VBaA68ZCAlvCthUwmfJUaeze8lUjkHlIxuXCQ=="
+    },
+    {
+      "alg": "ed25519",
+      "payload": {
+        "capabilities": [
+          "publish",
+          "seed",
+          "verify"
+        ],
+        "endpoints": [
+          "http://127.0.0.1:53311"
+        ],
+        "metadata": {},
+        "network_id": "rynmesh-main",
+        "node_name": "node-a",
+        "peer_id": "TbqCVjgMc9oqwSRwFwA53HtSiE/acS61LvkBp3FYbq4=",
+        "safety_packs": [
+          "@rynmesh/safety-core@0.1.0"
+        ],
+        "updated_at": "2026-10-09T08:00:00Z"
+      },
+      "public_key": "TbqCVjgMc9oqwSRwFwA53HtSiE/acS61LvkBp3FYbq4=",
+      "signature": "hSKlG5KxYivtpEJJIdqKvTePVecPA46AAEn6YptR0IeWqoV0bY2+zFx2esSGayU/F/8CBVIvFJzquzSQ2msCCw=="
+    }
+  ],
+  "source_readback": {
+    "model-a": {
+      "agent": true,
+      "chat": true,
+      "id": "local/src-a2e1ff873433448c-8ed3f6ad685b",
+      "shared": true
+    },
+    "model-b": {
+      "agent": false,
+      "chat": true,
+      "id": "local/src-a2e1ff873433448c-f44e64e75f39",
+      "shared": false
+    },
+    "model-c": {
+      "agent": true,
+      "chat": true,
+      "id": "local/src-9ea238b896bf4c4f-8ed3f6ad685b",
+      "shared": false
+    },
+    "model-d": {
+      "agent": false,
+      "chat": false,
+      "id": "local/src-ad524eaf63a34354-8e2c7ac50813",
+      "shared": false
+    }
+  }
+}

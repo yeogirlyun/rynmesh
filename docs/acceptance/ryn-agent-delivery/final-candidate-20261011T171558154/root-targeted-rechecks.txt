@@ -1,0 +1,18 @@
+Source: exact stdout and exit status copied from exec_command tool results; not a redirected process log. No repeat runs were performed to create this record.
+
+Backend command (D:/code/rynmesh):
+.venv/Scripts/python.exe -m pytest -q tests/test_agent_request_deadline.py::test_unknown_history_rule_reaches_main_model tests/test_background_workers.py::test_create_app_registers_the_service_and_node_workers
+Tool chunk: d16e37; exit_code: 0
+..                                                                       [100%]
+2 passed in 1.94s
+
+Frontend command (D:/code/rynmesh/webapp):
+C:/nvm4w/nodejs/node.exe node_modules/vitest/vitest.mjs run src/Localization.test.tsx -t 'keeps new UI copy translated' --maxWorkers=1
+Tool chunk: 93c613; exit_code: 0
+ RUN  v4.1.11 D:/code/rynmesh/webapp
+ Test Files  1 passed (1)
+      Tests  1 passed | 5 skipped (6)
+   Start at  17:24:58
+   Duration  6.23s (transform 1.32s, setup 919ms, import 1.79s, tests 624ms, environment 2.60s)
+
+Changes: test-only alignment with existing prompt wording, existing llm.space-catalog worker, and untranslated protocol/version literals Token · / API Key / · v / v. Production source remained frozen.

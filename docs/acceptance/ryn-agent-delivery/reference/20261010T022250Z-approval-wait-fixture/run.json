@@ -1,0 +1,147 @@
+{
+  "kind": "pinned-reference-approval-wait-fixture",
+  "formal_case_score": false,
+  "real_model": false,
+  "isolated_home": "C:\\Users\\子陵\\AppData\\Local\\Temp\\ryn-reference-owner-wait-5rihsegf",
+  "code_snapshot": {
+    "docs\\acceptance\\ryn-agent-delivery\\reference\\approval_wait_smoke.py": "bc570ba634aa5efdfaa35659eb691cd4ad9ae55568cf53d36e82e1da07bded30",
+    "docs\\acceptance\\ryn-agent-delivery\\reference\\budget_host.py": "8d6997a26ea95fa57e6282148fb849910f5dbfcfa4691898a88b1875f8475bf1",
+    "docs\\acceptance\\ryn-agent-delivery\\reference\\worker_host.py": "3f9457fc84bbdb46bf3f9b107c6b0bdcbc5f987abc48447df2c42908f3f8e6db",
+    "docs\\acceptance\\ryn-agent-delivery\\reference\\tool_host.py": "4d44c1c709cad82f6d95395f22bccc2349350d0123d5c00621e423c7d95d5a17",
+    "docs\\acceptance\\ryn-agent-delivery\\reference\\zcode-adapter.mjs": "275bff07ea7bd85a47cf518d78c8bd90578ea6862033c821fdc636aa8c1f8d85",
+    "docs\\acceptance\\ryn-agent-delivery\\reference\\zcode-worker.mjs": "74bc30763298ee5015f4febb968a71f20ef2bf47077c5203b6b2eda5cff56b99"
+  },
+  "reference": {
+    "result": {
+      "response": "Synthetic write confirmed after approval.",
+      "turn_id": "turn_4a7e1f2f-4070-4e6c-934a-8666a85ca63e",
+      "upstream_last_turn_usage": {
+        "source": "provider",
+        "modelRequestCount": 2,
+        "inputTokens": 16,
+        "outputTokens": 8,
+        "totalTokens": 24,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 0,
+        "webFetchRequests": 0,
+        "webSearchRequests": 0
+      },
+      "registered_tools": [
+        "read",
+        "write"
+      ],
+      "event_count": 17,
+      "persistent_session": false,
+      "upstream_target_verification": false,
+      "owner_wait_seconds": 21.0058079,
+      "target_status": null,
+      "extra_host_tools": false,
+      "real_model": false
+    },
+    "dispatch_counts": {
+      "model": 2,
+      "tool": 1,
+      "approval": 1
+    },
+    "elapsed_seconds": 24.625,
+    "owner_wait_seconds": 21.0,
+    "active_wall_seconds": 3.625,
+    "stderr_bytes": 0,
+    "upstream_commit": "29628c9acdb81b703bbd4080c207a0e7ce5e276e"
+  },
+  "checks": {
+    "two_model_calls": true,
+    "one_write": true,
+    "long_owner_wait_excluded": true,
+    "native_wait_excluded": true,
+    "no_dispatch_during_wait": true
+  },
+  "checks_passed": true,
+  "budget": {
+    "limits": {
+      "max_total_model_calls": 128,
+      "max_total_seconds": 3600,
+      "max_total_tokens": 2000000,
+      "max_total_tool_calls": 256
+    },
+    "round": 1,
+    "lifetime": {
+      "model_calls": 2,
+      "tool_calls": 1,
+      "charged_model_calls": 2,
+      "charged_tool_calls": 1,
+      "known_input_tokens": 16,
+      "known_output_tokens": 8,
+      "input_tokens": 16,
+      "output_tokens": 8,
+      "total_tokens": 24,
+      "charged_tokens": 24,
+      "charged_seconds": 0.03199999999196734,
+      "active_seconds": 0.03199999999196734,
+      "cost": null,
+      "cost_status": "unknown",
+      "usage_complete": true,
+      "legacy_usage_unknown": false,
+      "unsettled_operations": 0
+    },
+    "current_round": {
+      "model_calls": 2,
+      "tool_calls": 1,
+      "charged_model_calls": 2,
+      "charged_tool_calls": 1,
+      "known_input_tokens": 16,
+      "known_output_tokens": 8,
+      "input_tokens": 16,
+      "output_tokens": 8,
+      "total_tokens": 24,
+      "charged_tokens": 24,
+      "charged_seconds": 0.03199999999196734,
+      "active_seconds": 0.03199999999196734,
+      "cost": null,
+      "cost_status": "unknown",
+      "usage_complete": true,
+      "legacy_usage_unknown": false,
+      "unsettled_operations": 0
+    },
+    "reservation_policy": "Unknown model usage retains the conservative dispatch reservation; cost is unknown without trusted pricing."
+  },
+  "waits": [
+    {
+      "no_dispatch_during_wait": true,
+      "seconds": 21.0
+    }
+  ],
+  "events": [
+    {
+      "type": "approval",
+      "name": "write",
+      "arguments": {
+        "enabled": true
+      },
+      "tool_call_id": "wait-write",
+      "preview": {
+        "revision": 1,
+        "after": {
+          "enabled": true
+        }
+      },
+      "approved": true
+    },
+    {
+      "type": "tool_result",
+      "name": "write",
+      "arguments": {
+        "enabled": true
+      },
+      "tool_call_id": "wait-write",
+      "identity": "7c366f9e6b27498675e61725450b693d1c870eea67aa25d6f37a93ca810be800",
+      "state": "returned",
+      "operation_id": "c793891855a145d5bbb7880ec15b5781:wait-write",
+      "result": {
+        "ok": true
+      }
+    }
+  ],
+  "code_unchanged": true
+}

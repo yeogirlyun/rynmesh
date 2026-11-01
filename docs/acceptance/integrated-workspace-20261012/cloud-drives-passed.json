@@ -1,0 +1,43 @@
+{
+  "record_date": "2026-10-09",
+  "scope": "real owner account create/upload/list/download and restart readback",
+  "providers": {
+    "Baidu": {
+      "create_directory": "passed",
+      "upload": "passed",
+      "list": "passed",
+      "download_byte_comparison": "passed",
+      "restart_readback": "passed"
+    },
+    "Google Drive": {
+      "create_directory": "passed",
+      "upload": "passed",
+      "list": "passed",
+      "download_byte_comparison": "passed",
+      "restart_readback": "passed"
+    },
+    "OneDrive": {
+      "create_directory": "passed",
+      "upload": "passed",
+      "list": "passed",
+      "download_byte_comparison": "passed",
+      "restart_readback": "passed"
+    }
+  },
+  "directory_cache": {
+    "encrypted_cache": "passed",
+    "restart_location_restore": "passed",
+    "pagination": "passed",
+    "background_refresh": "passed",
+    "late_response_isolation": "passed",
+    "historical_cached_interface_ms": {
+      "baidu": 4,
+      "google": 3
+    },
+    "historical_first_read_after_restart_ms": {
+      "baidu": 13,
+      "google": 5
+    }
+  },
+  "source_record_sha256": "2c186bc422e26c4135b4babe680bcef1c25dbe1e70152a87ca78550da4e2ffb1"
+}

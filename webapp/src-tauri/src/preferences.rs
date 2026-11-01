@@ -22,6 +22,7 @@ impl Default for Preferences {
     }
 }
 fn settings_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    if let Some(path) = crate::deployment::desktop_config_dir() { return Ok(path.join("desktop.json")); }
     app.path().app_config_dir().map(|path| path.join("desktop.json")).map_err(|e| e.to_string())
 }
 pub fn load(app: &tauri::AppHandle) -> Preferences {

@@ -1,0 +1,133 @@
+/* Plugin library: quiet surfaces, legible type, one place for each action. */
+.craft-center .craft-mark.craft-icon {
+  width:44px; height:44px; border-radius:12px; padding:7px;
+  background:color-mix(in srgb,var(--craft-icon-tone) 8%,var(--pf-panel));
+  color:var(--craft-icon-tone); border:1px solid color-mix(in srgb,var(--craft-icon-tone) 7%,transparent);
+}
+.craft-mark.craft-icon > svg { width:100%; height:100%; }
+.craft-mark.craft-icon-office { padding:2px; }
+[data-theme="dark"] .craft-center .craft-mark.craft-icon { color:color-mix(in srgb,var(--craft-icon-tone) 65%,white); background:color-mix(in srgb,var(--craft-icon-tone) 15%,var(--pf-panel)); }
+.pf-shell .craft-center.craft-manager { max-width:1184px; padding:32px 40px 28px; }
+.craft-library { --library-muted:color-mix(in srgb,var(--pf-text) 66%,var(--pf-panel)); }
+.craft-library button { -webkit-tap-highlight-color:transparent; }
+.craft-library button:focus-visible,.craft-library summary:focus-visible,.craft-library input:focus-visible { outline:2px solid var(--pf-selected-line); outline-offset:4px; }
+.craft-library-heading { display:flex; justify-content:space-between; align-items:center; gap:24px; margin-bottom:27px; }
+.craft-library-eyebrow { display:flex; align-items:center; gap:7px; color:var(--library-muted); font-size:11px; letter-spacing:.08em; margin-bottom:11px; }
+.pf-shell .craft-center .craft-library h1 { font-size:32px; font-weight:630; line-height:1.2; letter-spacing:-.9px; margin:0; }
+.craft-center .craft-library-heading p { font-size:14px; line-height:1.6; color:var(--library-muted); margin:11px 0 0; }
+.craft-library .craft-library-add { display:inline-flex; align-items:center; justify-content:center; gap:8px; flex-shrink:0; background:var(--pf-text); color:var(--pf-panel); padding:11px 17px; border:1px solid var(--pf-text); border-radius:10px; font-size:13px; font-weight:550; box-shadow:0 2px 3px #14233b0a; }
+.craft-library-ext-banner { display:flex; flex-direction:column; gap:10px; margin-bottom:20px; }
+.craft-library-ext-row { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; padding:16px 20px; border:1px solid var(--pf-line); border-radius:14px; background:var(--pf-panel); }
+.craft-library-ext-row strong { display:block; font-size:15px; font-weight:600; color:var(--pf-text); }
+.craft-library-ext-row p { margin:4px 0 0; font-size:12.5px; color:var(--library-muted); }
+.craft-library-ext-actions { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+.craft-library-ext-actions a { text-decoration:none; }
+.craft-library-toolbar { display:flex; align-items:center; justify-content:space-between; gap:20px; border-bottom:1px solid var(--pf-line); margin-bottom:24px; }
+.craft-library-tabs { display:flex; align-self:stretch; gap:27px; }
+.craft-library .craft-library-tabs button { display:flex; align-items:center; gap:8px; background:none; border:0; border-bottom:2px solid transparent; padding:16px 0; color:var(--library-muted); font-size:14px; }
+.craft-library .craft-library-tabs button[aria-pressed="true"] { color:var(--pf-text); border-bottom-color:var(--pf-text); font-weight:600; }
+.craft-library-tabs span { display:grid; place-items:center; font-size:11px; line-height:19px; min-width:21px; padding:0 5px; border-radius:6px; background:color-mix(in srgb,var(--pf-text) 5%,var(--pf-panel)); color:var(--library-muted); font-weight:500; font-variant-numeric:tabular-nums; }
+.craft-library-search { display:flex; align-items:center; gap:8px; width:228px; color:var(--library-muted); padding:8px 0 8px 11px; margin-bottom:6px; border:1px solid transparent; border-radius:8px; background:color-mix(in srgb,var(--pf-text) 3%,var(--pf-panel)); }
+.craft-library-search:focus-within { border-color:var(--pf-strong); }
+.pf-shell .craft-library .craft-library-search input[type="search"] { border:0; background:transparent; outline:0; width:100%; min-width:0; padding:0; margin:0; min-height:22px; color:var(--pf-text); font-size:12px; box-shadow:none; }
+.craft-library-search input::-webkit-search-cancel-button { display:none; }
+.craft-library-search input::placeholder { color:var(--library-muted); opacity:.85; }
+.craft-library-search > svg { flex-shrink:0; }
+.craft-library .craft-library-search button { border:0; background:none; padding:3px 8px 3px 0; color:var(--library-muted); display:grid; place-items:center; }
+.craft-library-categories { display:flex; flex-wrap:wrap; gap:5px; margin:-7px 0 23px; }
+.craft-library .craft-library-categories button { padding:6px 11px; font-size:12px; border:0; border-radius:6px; background:none; color:var(--library-muted); }
+.craft-library .craft-library-categories button[aria-pressed="true"] { background:color-mix(in srgb,var(--pf-text) 6%,var(--pf-panel)); color:var(--pf-text); font-weight:550; }
+.craft-library-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,290px),1fr)); gap:18px; }
+.craft-library-card { display:flex; flex-direction:column; min-width:0; background:var(--pf-panel); border:1px solid var(--pf-line); border-radius:15px; padding:22px 21px 0; box-shadow:0 2px 4px #14233b02; position:relative; }
+.craft-library-card:has(.craft-library-menu[open]) { z-index:3; }
+.craft-library-card-heading { display:flex; align-items:center; gap:13px; min-width:0; }
+.craft-center .craft-library-card .craft-mark.craft-icon { width:50px; height:50px; border-radius:13px; flex-shrink:0; }
+.craft-library-card-heading > div { min-width:0; flex:1; }
+.craft-center .craft-library-card h3 { margin:0; font-size:16px; font-weight:600; line-height:1.4; letter-spacing:-.3px; }
+.craft-center .craft-library-card-heading p { display:flex; flex-wrap:wrap; gap:5px; color:var(--library-muted); font-size:11px; line-height:1.6; margin:5px 0 0; }
+.craft-library-card-heading p span { opacity:.5; }
+.craft-library-menu { position:relative; margin:-13px -11px 0 0; align-self:flex-start; flex-shrink:0; }
+.craft-library-menu > summary { list-style:none; display:grid; place-items:center; width:29px; height:29px; border-radius:7px; color:var(--library-muted); }
+.craft-library-menu summary::-webkit-details-marker { display:none; }
+.craft-library-menu[open] > summary,.craft-library-menu > summary:hover { background:var(--pf-subtle); color:var(--pf-text); }
+.craft-library-menu > div { position:absolute; z-index:5; right:0; top:34px; width:190px; padding:5px; border:1px solid var(--pf-line); border-radius:10px; background:var(--pf-panel); box-shadow:0 10px 32px #10182816; }
+.craft-library .craft-library-menu button { display:flex; align-items:center; gap:9px; width:100%; padding:10px; text-align:left; border:0; background:none; border-radius:6px; color:var(--pf-text); font-size:12px; }
+.craft-library .craft-library-menu button:hover { background:var(--pf-subtle); }
+.craft-library .craft-library-menu button.danger { color:#b04e52; }
+.craft-center .craft-library-description { font-size:13px; line-height:1.65; color:var(--library-muted); margin:18px 0 12px; }
+.craft-library-meta { display:flex; align-items:center; gap:8px; min-height:20px; font-size:11px; color:var(--library-muted); margin-bottom:19px; flex-wrap:wrap; }
+.craft-library-meta > i { height:3px; width:3px; background:currentColor; border-radius:50%; opacity:.5; }
+.craft-library .craft-library-meta button { display:inline-flex; align-items:center; gap:4px; padding:0; font-size:11px; border:0; background:none; color:var(--library-muted); }
+.craft-library .craft-library-meta button:hover:not(:disabled) { color:var(--pf-text); }
+.craft-center .craft-library-warning { display:flex; align-items:center; gap:5px; color:#987640; font-size:11px; line-height:1.5; margin:-8px 0 15px; }
+[data-theme="dark"] .craft-center .craft-library-warning { color:#d0ad76; }
+.craft-library-warning svg { flex-shrink:0; }
+.craft-library-card > footer { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:auto; padding:13px 0; border-top:1px solid color-mix(in srgb,var(--pf-line) 72%,transparent); min-height:58px; }
+.craft-library .craft-library-open { display:inline-flex; align-items:center; gap:6px; background:none; color:var(--pf-text); padding:5px 0; border:0; font-size:12px; font-weight:550; }
+.craft-library .craft-library-open:hover:not(:disabled) { color:var(--pf-blue); }
+.craft-library-toggle { display:flex; align-items:center; gap:10px; cursor:pointer; font-size:11px; color:var(--library-muted); }
+.craft-library .craft-library-toggle input[role="switch"] { appearance:none; position:relative; width:34px; min-width:34px; height:20px; min-height:20px; max-height:20px; padding:0; margin:0; border:0; border-radius:20px; background:var(--pf-strong); cursor:pointer; box-shadow:inset 0 0 0 1px #15243b06; }
+.craft-library-toggle input[role="switch"]::before { content:""; position:absolute; left:3px; top:3px; width:14px; height:14px; border-radius:50%; background:#fff; box-shadow:0 1px 3px #1112; }
+.craft-library .craft-library-toggle input[role="switch"]:checked { background:var(--pf-text); }
+.craft-library-toggle input[role="switch"]:checked::before { transform:translateX(14px); }
+[data-theme="dark"] .craft-library .craft-library-toggle input[role="switch"]:checked { background:#87a7a0; }
+.craft-library-card.is-disabled .craft-icon { filter:saturate(.35); opacity:.65; }
+.craft-library-install-note { display:inline-flex; align-items:center; gap:4px; color:var(--library-muted); font-size:11px; }
+.craft-library .craft-library-install { display:inline-flex; align-items:center; gap:8px; padding:5px 0 5px 8px; border:0; background:none; color:var(--pf-text); font-size:12px; font-weight:550; }
+.craft-library-install > span { display:grid; place-items:center; background:var(--pf-subtle); border:1px solid var(--pf-line); width:25px; height:25px; border-radius:7px; }
+.craft-library .craft-library-discover { display:flex; align-items:center; gap:20px; width:100%; padding:21px 24px; margin-top:23px; text-align:left; background:color-mix(in srgb,var(--pf-text) 2%,var(--pf-panel)); border:1px solid color-mix(in srgb,var(--pf-line) 75%,transparent); border-radius:13px; color:var(--pf-text); }
+.craft-library-discover > span:nth-child(2) { flex:1; }
+.craft-library-discover strong { font-size:14px; font-weight:550; line-height:1.4; }
+.craft-library-discover small { display:block; margin-top:5px; color:var(--library-muted); font-size:12px; line-height:1.5; }
+.craft-library-mini-icons { display:flex; padding-left:3px; }
+.craft-center .craft-library-mini-icons .craft-icon { width:34px; height:37px; border-radius:9px; border:2px solid var(--pf-panel); margin-left:-3px; box-shadow:0 2px 5px #17233b09; }
+.craft-library-mini-icons .craft-icon:first-child { transform:rotate(-10deg) translateY(2px); }
+.craft-library-mini-icons .craft-icon:last-child { transform:rotate(9deg) translateY(2px); }
+.craft-library-foot { display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px 20px; margin-top:25px; padding:0 2px; font-size:11px; color:var(--library-muted); }
+.craft-center .craft-library-foot > p { display:flex; align-items:center; gap:7px; line-height:1.7; margin:0; }
+.craft-library-foot svg { flex-shrink:0; }
+.craft-library-storage > summary { display:flex; align-items:center; gap:6px; list-style:none; line-height:1.7; }
+.craft-library-storage[open] > summary svg { transform:rotate(90deg); }
+.craft-library-storage > div { max-width:430px; padding-top:12px; font-size:11px; line-height:1.7; }
+.craft-library-storage code { overflow-wrap:anywhere; font-size:10px; }
+.craft-center > .craft-notice { position:fixed; right:28px; bottom:26px; z-index:80; display:flex; align-items:center; gap:9px; max-width:calc(100vw - 40px); padding:13px 17px; margin:0; border:1px solid var(--pf-line); border-radius:11px; color:var(--pf-text); background:var(--pf-panel); box-shadow:0 5px 24px #17233b14; font-size:13px; }
+.craft-center > .craft-notice > svg { flex-shrink:0; color:var(--pf-green); }
+.craft-library-empty { display:flex; flex-direction:column; align-items:center; text-align:center; padding:60px 20px 64px; }
+.craft-library-empty > div { width:74px; height:74px; display:grid; place-items:center; border-radius:23px; background:var(--pf-subtle); color:var(--pf-muted); margin-bottom:22px; }
+.craft-center .craft-library-empty h2 { font-size:19px; font-weight:550; }
+.craft-center .craft-library-empty p { font-size:13px; color:var(--library-muted); margin:11px 0 23px; }
+@media(min-width:1600px) { .pf-shell .craft-center.craft-manager { padding-top:44px; } }
+@media(max-width:1100px) { .pf-shell .craft-center.craft-manager { padding-inline:28px; } }
+@media(max-width:620px) {
+  .pf-shell .craft-center.craft-manager { padding:25px 20px 30px; }
+  .craft-library-heading { gap:14px; align-items:flex-start; margin-bottom:22px; }
+  .pf-shell .craft-center .craft-library h1 { font-size:28px; }
+  .craft-library-eyebrow { font-size:10px; }
+  .craft-center .craft-library-heading p { max-width:210px; font-size:12px; }
+  .craft-library .craft-library-add { padding:9px 11px; font-size:12px; margin-top:27px; }
+  .craft-library-toolbar { flex-wrap:wrap-reverse; gap:8px; margin-bottom:20px; }
+  .craft-library-search { width:100%; margin:0; }
+  .craft-library-tabs { gap:28px; }
+  .craft-library-grid { grid-template-columns:1fr; gap:14px; }
+  .craft-library-card { padding:20px 20px 0; }
+  .craft-library-discover small { max-width:220px; }
+  .craft-library .craft-library-discover { gap:13px; padding:18px 16px; }
+  .craft-library-mini-icons .craft-icon:last-child { display:none; }
+  .craft-library-foot { margin-top:23px; }
+}
+@media(pointer:coarse) {
+  .craft-library .craft-library-meta button { min-height:32px; }
+  .craft-library .craft-library-search button { min-height:24px; }
+  .craft-library-menu > summary { min-height:36px; width:36px; }
+  .craft-library-toggle { min-height:44px; }
+  .craft-library .craft-library-toggle input[role="switch"] { width:38px; min-width:38px; height:23px; min-height:23px; max-height:23px; }
+  .craft-library-toggle input[role="switch"]::before { width:17px; height:17px; }
+  .craft-library-toggle input[role="switch"]:checked::before { transform:translateX(15px); }
+}
+@media(prefers-reduced-motion:no-preference) {
+  .craft-library-card { transition:border-color 160ms ease,box-shadow 160ms ease; }
+  .craft-library-card:hover { border-color:var(--pf-strong); box-shadow:0 4px 15px #17233b05; }
+  .craft-library-toggle input[role="switch"]::before { transition:transform 140ms ease; }
+  .craft-library .craft-library-discover { transition:background 160ms ease; }
+  .craft-library .craft-library-discover:hover { background:color-mix(in srgb,var(--pf-text) 4%,var(--pf-panel)); }
+}

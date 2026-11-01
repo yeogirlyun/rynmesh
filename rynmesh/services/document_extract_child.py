@@ -124,8 +124,9 @@ def _write(payload: str) -> None:
     sys.stdout.flush()
 
 
-def _emit(status: str, kind: str, text: str = "") -> None:
-    _write(json.dumps({"status": status, "kind": kind, "text": text, "chars": len(text)}))
+def _emit(status: str, kind: str, text: str = "", coverage: dict | None = None) -> None:
+    _write(json.dumps({"status": status, "kind": kind, "text": text, "chars": len(text),
+                       **({"pdf_pages": coverage} if coverage is not None else {})}))
 
 
 def _read_bounded(path: Path, limit: int) -> tuple[bytes, bool]:
@@ -155,7 +156,7 @@ def pdf_available() -> bool:
     return True
 
 
-def _read_pdf(data: bytes, limit: int) -> str:
+def _read_pdf(data: bytes, limit: int) -> tuple[str, dict]:
     """Bounded text from the PDF bytes in ``data``. Raises on a malformed file."""
 
     from pypdf import PdfReader
@@ -163,7 +164,9 @@ def _read_pdf(data: bytes, limit: int) -> str:
     reader = PdfReader(io.BytesIO(data))
     parts: list[str] = []
     total = 0
+    coverage = {"total": len(reader.pages), "processed": 0, "failed": 0, "without_text": 0}
     for page in reader.pages:
+        coverage["processed"] += 1
         # A page's own extractor is the untrusted part; a failure on one page
         # must not discard the pages already read.
         try:
@@ -171,31 +174,35 @@ def _read_pdf(data: bytes, limit: int) -> str:
         except MemoryError:
             raise
         except Exception:  # noqa: BLE001 - third-party detail must not leak
+            coverage["failed"] += 1
             continue
+        if not piece.strip():
+            coverage["without_text"] += 1
         parts.append(piece)
         total += len(piece)
         if total > limit:
             break
-    return "\n".join(parts)
+    return "\n".join(parts), coverage
 
 
-def _extract(path: Path, kind: str) -> tuple[str, str]:
-    """Bounded text for ``path``. Returns (text, failure_code); one is always empty."""
+def _extract(path: Path, kind: str) -> tuple[str, str, dict | None]:
+    """Return bounded text, failure code and optional PDF page coverage."""
 
     data, oversized = _read_bounded(path, MAX_INPUT_BYTES)
     if oversized:
-        return "", FAILED_TOO_LARGE
+        return "", FAILED_TOO_LARGE, None
     if kind in {"text", "markdown"}:
         try:
-            return data.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n"), ""
+            return data.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n"), "", None
         except UnicodeDecodeError:
-            return "", FAILED_NOT_TEXT
+            return "", FAILED_NOT_TEXT, None
     try:
-        return _read_pdf(data, MAX_OUTPUT_CHARS), ""
+        text, coverage = _read_pdf(data, MAX_OUTPUT_CHARS)
+        return text, "", coverage
     except MemoryError:
         raise
     except Exception:  # noqa: BLE001 - a malformed document is not a crash
-        return "", FAILED_UNREADABLE
+        return "", FAILED_UNREADABLE, None
 
 
 def main() -> int:
@@ -219,7 +226,7 @@ def main() -> int:
         return 0
 
     try:
-        text, failure = _extract(path, kind)
+        text, failure, coverage = _extract(path, kind)
     except MemoryError:
         # Deliberately allocation-free beyond the write itself: the payload was
         # built at import time. Reachable where `memory_limit_active()` is True.
@@ -232,10 +239,11 @@ def main() -> int:
         _emit(failure, kind)
         return 0
 
-    if len(text) > MAX_OUTPUT_CHARS:
-        _emit(STATUS_TRUNCATED, kind, text[:MAX_OUTPUT_CHARS])
+    partial = coverage is not None and (coverage["failed"] > 0 or coverage["processed"] < coverage["total"])
+    if len(text) > MAX_OUTPUT_CHARS or partial:
+        _emit(STATUS_TRUNCATED, kind, text[:MAX_OUTPUT_CHARS], coverage)
         return 0
-    _emit(STATUS_PARSED, kind, text)
+    _emit(STATUS_PARSED, kind, text, coverage)
     return 0
 
 

@@ -1,0 +1,148 @@
+{
+  "model": "gpt-6.1-sol",
+  "reasoning_effort": "low",
+  "fixture_only": true,
+  "measured_at": "2026-10-16T06:04:31.136437+00:00",
+  "unhinted_natural_query": {
+    "scenario": "unhinted_natural_query_with_shell_fault_hook_armed",
+    "prompt": "请帮我查一下当前工作区里记录的示例账户余额和币种是多少，直接回答具体数值和币种。",
+    "prompt_contains_tool_or_recovery_hints": false,
+    "shell_fault_hook_triggered": false,
+    "task_state": {
+      "status": "completed",
+      "error": null,
+      "steps": 3,
+      "elapsed_seconds": 14.748,
+      "in_flight": false
+    },
+    "tool_names": [
+      "ryn_file_list",
+      "ryn_file_read"
+    ],
+    "tool_errors": [],
+    "model_calls": [
+      {
+        "step": 1,
+        "tool_names": [
+          "ryn_file_list"
+        ],
+        "input_tokens": 11076,
+        "output_tokens": 44,
+        "provider_ms": 8469,
+        "finish_reason": "tool_calls",
+        "wall_ms": 9328,
+        "deadline_cancelled": false
+      },
+      {
+        "step": 2,
+        "tool_names": [
+          "ryn_file_read"
+        ],
+        "input_tokens": 11387,
+        "output_tokens": 34,
+        "provider_ms": 2500,
+        "finish_reason": "tool_calls",
+        "wall_ms": 2594,
+        "deadline_cancelled": false
+      },
+      {
+        "step": 3,
+        "tool_names": [],
+        "input_tokens": 11801,
+        "output_tokens": 35,
+        "provider_ms": 2266,
+        "finish_reason": "stop",
+        "wall_ms": 2312,
+        "deadline_cancelled": false
+      }
+    ],
+    "result_has_fixture_amount": true,
+    "passed": true,
+    "approval_events": 0,
+    "wall_ms": 15063
+  },
+  "injected_restart_state_model_continuation": {
+    "scenario": "injected_restart_state_model_continuation",
+    "prompt": "请帮我查一下当前工作区里记录的示例账户余额和币种是多少，直接回答具体数值和币种。",
+    "prompt_contains_tool_or_recovery_hints": false,
+    "initial_model_proposed_tools": [
+      "ryn_file_list"
+    ],
+    "initial_tool_call_rewritten_by_harness": true,
+    "injected_in_flight_tool": "ryn_shell_execute",
+    "task_state": {
+      "status": "completed",
+      "error": null,
+      "steps": 4,
+      "elapsed_seconds": 32.906,
+      "in_flight": false
+    },
+    "ledger_after_reconcile": {
+      "status": "failed",
+      "no_mutation": true,
+      "cleanup_confirmed": true,
+      "has_receipt_reserve": false
+    },
+    "tool_names_after_restart": [
+      "ryn_file_list",
+      "ryn_file_read"
+    ],
+    "tool_errors": [
+      "agent_node_restarted"
+    ],
+    "model_calls": [
+      {
+        "step": 1,
+        "tool_names": [
+          "ryn_file_list"
+        ],
+        "input_tokens": 11091,
+        "output_tokens": 50,
+        "provider_ms": 10656,
+        "finish_reason": "tool_calls",
+        "wall_ms": 10703,
+        "deadline_cancelled": false
+      },
+      {
+        "step": 2,
+        "tool_names": [
+          "ryn_file_list"
+        ],
+        "input_tokens": 11244,
+        "output_tokens": 61,
+        "provider_ms": 11264,
+        "finish_reason": "tool_calls",
+        "wall_ms": 11390,
+        "deadline_cancelled": false
+      },
+      {
+        "step": 3,
+        "tool_names": [
+          "ryn_file_read"
+        ],
+        "input_tokens": 11572,
+        "output_tokens": 64,
+        "provider_ms": 5672,
+        "finish_reason": "tool_calls",
+        "wall_ms": 5719,
+        "deadline_cancelled": false
+      },
+      {
+        "step": 4,
+        "tool_names": [],
+        "input_tokens": 12013,
+        "output_tokens": 40,
+        "provider_ms": 4312,
+        "finish_reason": "stop",
+        "wall_ms": 4391,
+        "deadline_cancelled": false
+      }
+    ],
+    "result_has_fixture_amount": true,
+    "passed": true,
+    "approval_events": 0,
+    "wall_ms": 33625
+  },
+  "passed": true,
+  "wall_ms": 48875
+}

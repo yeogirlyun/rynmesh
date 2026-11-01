@@ -1,0 +1,6 @@
+{
+  "classification": "controller setup failure; no model request",
+  "finding": "DocumentCase.settings used obsolete permission_mode confirm instead of the runtime's confirm_changes. Runtime correctly rejected it. No artifact or business mutation occurred.",
+  "repair": "Corrected the generic default and added a check that the actual runtime accepts the controller settings; frozen prompt, scopes and 12000-byte ceiling were unchanged.",
+  "formal_case_score": false
+}

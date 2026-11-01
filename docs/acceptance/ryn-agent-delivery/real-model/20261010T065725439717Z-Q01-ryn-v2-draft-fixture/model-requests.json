@@ -1,0 +1,89 @@
+{
+  "model_requests": [
+    {
+      "kind": "model",
+      "id": "agent_da71c1dfa1b6439aa50f1943d052faba:model:1",
+      "sampling_binding": {
+        "run_id": "ad12e39d29e44a43bc6f80fa711a7324",
+        "run_nonce": "fc5829d786e54f3a9cba95eb5989377c",
+        "dataset_version": "ryn-agent-acceptance-2026-10-10.v2-draft.1",
+        "case_id": "Q01",
+        "cohort": "ryn",
+        "trial": 1,
+        "effective_case_sha256": "8ddb01f96aac5ff06d47dec665e172c3df43aa33656d627aaad4cde1ae8db354",
+        "overlay_sha256": "a90280553577ec075e6fe7e131a07c4ca830d4e60ea2600a2ae2c28b93e407e5"
+      },
+      "task_id": "agent_da71c1dfa1b6439aa50f1943d052faba",
+      "registration_sha256": "79a405e7c450dc8fb58ca8c35afded3181a89394ce281e10190b3a5aa34da472",
+      "dispatched_at": "2026-10-10T06:57:33.156198+00:00"
+    },
+    {
+      "kind": "model",
+      "id": "agent_da71c1dfa1b6439aa50f1943d052faba:model:2",
+      "sampling_binding": {
+        "run_id": "ad12e39d29e44a43bc6f80fa711a7324",
+        "run_nonce": "fc5829d786e54f3a9cba95eb5989377c",
+        "dataset_version": "ryn-agent-acceptance-2026-10-10.v2-draft.1",
+        "case_id": "Q01",
+        "cohort": "ryn",
+        "trial": 1,
+        "effective_case_sha256": "8ddb01f96aac5ff06d47dec665e172c3df43aa33656d627aaad4cde1ae8db354",
+        "overlay_sha256": "a90280553577ec075e6fe7e131a07c4ca830d4e60ea2600a2ae2c28b93e407e5"
+      },
+      "task_id": "agent_da71c1dfa1b6439aa50f1943d052faba",
+      "registration_sha256": "79a405e7c450dc8fb58ca8c35afded3181a89394ce281e10190b3a5aa34da472",
+      "dispatched_at": "2026-10-10T06:57:33.402483+00:00"
+    },
+    {
+      "kind": "model",
+      "id": "agent_da71c1dfa1b6439aa50f1943d052faba:model:3",
+      "sampling_binding": {
+        "run_id": "ad12e39d29e44a43bc6f80fa711a7324",
+        "run_nonce": "fc5829d786e54f3a9cba95eb5989377c",
+        "dataset_version": "ryn-agent-acceptance-2026-10-10.v2-draft.1",
+        "case_id": "Q01",
+        "cohort": "ryn",
+        "trial": 1,
+        "effective_case_sha256": "8ddb01f96aac5ff06d47dec665e172c3df43aa33656d627aaad4cde1ae8db354",
+        "overlay_sha256": "a90280553577ec075e6fe7e131a07c4ca830d4e60ea2600a2ae2c28b93e407e5"
+      },
+      "task_id": "agent_da71c1dfa1b6439aa50f1943d052faba",
+      "registration_sha256": "79a405e7c450dc8fb58ca8c35afded3181a89394ce281e10190b3a5aa34da472",
+      "dispatched_at": "2026-10-10T06:57:33.594328+00:00"
+    },
+    {
+      "kind": "model",
+      "id": "agent_da71c1dfa1b6439aa50f1943d052faba:model:4",
+      "sampling_binding": {
+        "run_id": "ad12e39d29e44a43bc6f80fa711a7324",
+        "run_nonce": "fc5829d786e54f3a9cba95eb5989377c",
+        "dataset_version": "ryn-agent-acceptance-2026-10-10.v2-draft.1",
+        "case_id": "Q01",
+        "cohort": "ryn",
+        "trial": 1,
+        "effective_case_sha256": "8ddb01f96aac5ff06d47dec665e172c3df43aa33656d627aaad4cde1ae8db354",
+        "overlay_sha256": "a90280553577ec075e6fe7e131a07c4ca830d4e60ea2600a2ae2c28b93e407e5"
+      },
+      "task_id": "agent_da71c1dfa1b6439aa50f1943d052faba",
+      "registration_sha256": "79a405e7c450dc8fb58ca8c35afded3181a89394ce281e10190b3a5aa34da472",
+      "dispatched_at": "2026-10-10T06:57:33.742599+00:00"
+    },
+    {
+      "kind": "model",
+      "id": "agent_da71c1dfa1b6439aa50f1943d052faba:model:5",
+      "sampling_binding": {
+        "run_id": "ad12e39d29e44a43bc6f80fa711a7324",
+        "run_nonce": "fc5829d786e54f3a9cba95eb5989377c",
+        "dataset_version": "ryn-agent-acceptance-2026-10-10.v2-draft.1",
+        "case_id": "Q01",
+        "cohort": "ryn",
+        "trial": 1,
+        "effective_case_sha256": "8ddb01f96aac5ff06d47dec665e172c3df43aa33656d627aaad4cde1ae8db354",
+        "overlay_sha256": "a90280553577ec075e6fe7e131a07c4ca830d4e60ea2600a2ae2c28b93e407e5"
+      },
+      "task_id": "agent_da71c1dfa1b6439aa50f1943d052faba",
+      "registration_sha256": "79a405e7c450dc8fb58ca8c35afded3181a89394ce281e10190b3a5aa34da472",
+      "dispatched_at": "2026-10-10T06:57:33.953394+00:00"
+    }
+  ]
+}

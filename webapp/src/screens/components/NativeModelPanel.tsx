@@ -6,6 +6,7 @@ import { tr } from "../../uiI18n";
 import { isTauriDesktop } from "../../domain/nodeUrl";
 import { inspectNativeModel, uploadNativeModel, nativeBusy, nativeError, nativeModelRequest, nativeState, type LocalModelFile, type NativeModelStatus } from "../../domain/nativeModel";
 import "./NativeModelPanel.css";
+import NativeModelParameters from "./NativeModelParameters";
 
 export default function NativeModelPanel({ status, onUpdate, onConnect }: {
   status: NativeModelStatus | null; onUpdate: (value: NativeModelStatus) => void; onConnect: () => void;
@@ -80,7 +81,7 @@ export default function NativeModelPanel({ status, onUpdate, onConnect }: {
         {running ? <><Link className="ais-primary" to={`/services/private-ai/chat?peer=${encodeURIComponent(status.peer_id)}&service=${encodeURIComponent(status.id)}`}>{tr("开始聊天")}</Link><button className="ais-secondary" disabled={busy} onClick={() => action("stop")}><Square size={15} />{tr("停止")}</button></>
           : status.installed ? <button className="ais-primary" disabled={busy || !status.supported} onClick={() => action("start")}><Play size={16} />{tr(status.state === "error" ? "重试" : "启动")}</button>
           : <button className="ais-primary" disabled={busy || !status.supported} onClick={selected ? importSelected : choose}><FileInput size={18} />{busy ? tr("处理中…") : tr(selected ? "导入并启动" : "选择模型文件")}</button>}
-        {status.installed && <button className="ais-secondary native-model-more" aria-label={tr("更多模型设置")} aria-expanded={more} onClick={() => setMore(!more)}><MoreHorizontal size={19} /></button>}
+        {status.installed && <button className="ais-secondary native-model-more" disabled={busy} aria-label={tr("更多模型设置")} aria-expanded={more} onClick={() => setMore(!more)}><MoreHorizontal size={19} /></button>}
       </div>
       {!status.installed && <div className="native-model-import">
         {selected && <button className="native-model-link" disabled={busy} onClick={choose}>{tr("重新选择文件")}</button>}
@@ -93,7 +94,7 @@ export default function NativeModelPanel({ status, onUpdate, onConnect }: {
       <label><span><strong>{tr("随 Ryn 启动")}</strong><small>{tr("下次打开软件时自动启动这个模型")}</small></span><input role="switch" type="checkbox" aria-label={tr("随 Ryn 启动")} checked={status.autostart} disabled={busy} onChange={e => setting("autostart", e.target.checked)} /></label>
       <label><span><strong>{tr("分享给我的设备")}</strong><small>{tr("默认仅本机使用。")}</small></span><input role="switch" type="checkbox" aria-label={tr("分享给我的设备")} checked={status.sharing} disabled={busy} onChange={e => setting("sharing", e.target.checked)} /></label>
     </div>}
-    {more && !working && <div className="native-model-details"><p>{status.file_name}</p><p>{tr("运行方式")}: {status.backend || tr("启动时自动检测")}</p>
+    {more && !working && <div className="native-model-details"><NativeModelParameters key={status.id} status={status} busy={busy} onBusy={setBusy} onUpdate={onUpdate} /><p>{status.file_name}</p><p>{tr("运行方式")}: {status.backend || tr("启动时自动检测")}</p>
       <p>{tr("更换模型时，先卸载当前副本，再选择其他文件。")}</p>
       {!remove ? <button className="native-model-link" onClick={() => setRemove(true)}>{tr("卸载模型")}</button>
         : <><p>{tr("删除 Ryn 管理的模型副本，保留你导入的原文件。")}</p><button className="ais-secondary" disabled={busy} onClick={() => { setRemove(false); setMore(false); action("uninstall"); }}>{tr("确认卸载")}</button><button className="native-model-link" onClick={() => setRemove(false)}>{tr("取消")}</button></>}

@@ -1,0 +1,47 @@
+{
+  "kind": "physical-Windows-native-normal-exit-and-relaunch",
+  "at": "2026-10-11T07:46:34.331240+00:00",
+  "host": "172.16.8.82",
+  "installed_candidate": "windows-candidate-build-20261011.json",
+  "formal_trials_executed": 0,
+  "model_calls": 0,
+  "checks": {
+    "normal_tray_exit_stopped_installed_processes_and_port": true,
+    "relaunch_created_new_installed_processes": true,
+    "relaunch_listener_8791": true,
+    "identity_preserved": true,
+    "final_normal_quit_clean": true
+  },
+  "ui_observation": "Actual saved-credential RDP, installed desktop shortcut launch, Ryn standalone Agent page, desktop settings, tray Exit menu and confirmation; second shortcut launch loads home then independent disabled Agent page. Final cleanup uses same normal tray exit, no forced process termination.",
+  "wsl_service_observation": {
+    "personal-api": "active",
+    "mysql": "active",
+    "docker": "active",
+    "frpc-personal": "active",
+    "apache2": "active"
+  },
+  "limitations": [
+    "Installed candidate predates C02/context/final-commit fixes; final same-snapshot rebuild pending.",
+    "Empty Agent/model store only: populated conversation, approval and task-history recovery not established.",
+    "No claim sidebar collapse choice persists across restart."
+  ],
+  "artifacts": {
+    "after-final-quit.json": "e2baf7a9f13cb3e91264ff1766394e5380e9551d1080562c3c723e1b9433380f",
+    "after-quit.json": "211a0818842ccae51fe4e20226cb46916181c90334bb81ca94a1642e41090b22",
+    "after-quit.png": "c85f72bf488fb0c8ae1caf101d8f348186b75e70f54a3c333f22d7247b4d49c3",
+    "after-relaunch.json": "0ebea70335ab06261e3bf755b8166864b03a4a99027d836c9ee209773d62a463",
+    "before-quit.json": "e99d566b7e4f7a44728de2a94cc44fc0d11d0ff53003ec4d01caf5296776c2f8",
+    "exit-confirmation.png": "c670b4eab2e9fe9dbb3a23bbfb018f42ff1aa7a744d3a6807848aa30b62a15ae",
+    "normal-relaunch-agent.png": "cbc218c68e97186b294c6e3753acfd3d2ba458a02f8fe0e0e621c26b6b11b415",
+    "relaunch-agent.png": "cf118d0839f8216503acc059841867bf1dd45c1614e71b0fe26fffaa5819f244",
+    "tray-exit-menu.png": "c52bce0f2ad87b15bf1cc0d9bf0fc90c65fa9744a3eb402a41c1cadc5c6aa6ba"
+  },
+  "local_RDP_cleanup": {
+    "process_id": 10480,
+    "guarded_path": "C:/Windows/System32/mstsc.exe",
+    "guarded_command": "/v:172.16.8.82:3389",
+    "guarded_start_minute": "2026-10-11 15:33",
+    "client_closed": true,
+    "remote_session_logged_off": false
+  }
+}

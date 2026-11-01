@@ -1,0 +1,54 @@
+{
+  "kind": "offline-inference-facts-repair",
+  "date": "2026-10-11",
+  "formal_pass": false,
+  "formal_trials_executed": 0,
+  "model_behavior_pass": false,
+  "diagnosis": {
+    "evidence": [
+      "docs/acceptance/ryn-agent-delivery/p05-development-review-20261011.json",
+      "docs/acceptance/ryn-agent-delivery/p05-development-independent-review-20261011.json"
+    ],
+    "observed_failure": "P05 falsely denied selected-file model transfer and described a shared GLM response as local-only. The reviewed matched requests 3, 4 and 5 contain the authorized file body; request 4 produced the final answer.",
+    "production_gap": "prompt.authority exposed model_id but no destination-route or resource-egress facts. Local tool execution, read_only business permission and absence of a separate send-to-model business tool were conflated with inference locality and absence of model transfer.",
+    "fact_sources": [
+      "ModelCatalog and AgentRuntime save catalog_model_id, provider_peer_id, source_id and destination_revision in model_destination.",
+      "ResourceTools.prepare records destination-bound egress grants for selected resources; validate_context rechecks current connection generation, destination and origins.",
+      "AgentModelBridge submits request messages and tool results through the selected peer/local provider route.",
+      "Model switching clears current resource and egress grants unless explicitly transferred and validated; retained selection alone is not authorization."
+    ]
+  },
+  "changes": [
+    "New bounded inference_context projection classifies only saved server catalog routes as peer, local_api, local_service or unknown. API/service locality and peer upstream locality remain unestablished.",
+    "Projection records destination-binding presence and counts current resource grants with exact matching egress bindings. It ignores retained selection and does not claim live validation or historical dispatch proof.",
+    "Prompt v2.11 and independent checker receive the same facts and concise guidance: request messages and included tool results are model input without a separate business send tool; local tools/read_only do not establish local inference or no transfer.",
+    "Checker facts and guidance are included before serialized base-size calculation; original candidate answer, receipts and evidence are preserved.",
+    "No URL, credential, resource path/body, encrypted reference or arbitrary nested metadata is copied into the new projection. No persisted state schema, transport authorization, budget, acceptance fixture or contract is changed."
+  ],
+  "validation": {
+    "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_inference_context.py tests/test_agent_runtime_verification.py tests/test_agent_observation_transitions.py tests/test_agent_evidence_semantics.py tests/test_agent_business_verification.py -q",
+    "result": "101 passed in 13.90s",
+    "related_regression_command": ".venv/Scripts/python.exe -m pytest tests/test_agent_context_serialization.py tests/test_agent_tool_menu.py tests/test_agent_native_scope.py tests/test_agent_peer_scope.py tests/test_agent_runtime_model_switch.py -q",
+    "related_regression_result": "42 passed in 12.17s",
+    "new_tests": 10,
+    "coverage": [
+      "Actual offline signed peer request contains authorized resource body under read_only and the correct current inference facts; the same body is absent from the new system fact projection.",
+      "Actual configured-API adapter request, local native-service adapter request, and legacy unknown-route request carry conservative route facts.",
+      "Actual resource permission revocation blocks dispatch despite retained recorded grants.",
+      "Model switch clears current grant facts and old context while retaining owner selection; historical_egress remains not_established.",
+      "Checker receives current peer facts and original nonempty resource receipt unchanged, then receives cleared grant facts after model switch.",
+      "Nonmatching destination/grant IDs, missing binding and stale selections never become matching egress grants; arbitrary secret/large body fields are not projected.",
+      "Additive fact JSON and guidance stay below 1000 bytes (566 bytes for unknown baseline). Existing 4940-byte effective checker-context test passes without changing its limit or dropping raw receipts."
+    ],
+    "lint_command": ".venv/Scripts/python.exe -m ruff check rynmesh/agent_runtime/inference_context.py rynmesh/agent_runtime/prompt.py rynmesh/agent_runtime/verification.py tests/test_agent_inference_context.py",
+    "lint_result": "All checks passed",
+    "iteration": "Initial verbose guidance exceeded an existing 4940-byte checker test by 92 bytes. Only new guidance was shortened; original budgets, fixture data, receipts and assertions were retained."
+  },
+  "limits": [
+    "All model outputs in these tests are deterministic synthetic responses. Passing transport/projection tests does not establish corrected GLM reporting or a P05 business/model-behavior pass.",
+    "No paid model call, external remote operation or heldout/build_cases.py access was performed.",
+    "The new state is current recorded routing/consent metadata, not a historical per-resource egress audit. It neither asserts every authorized resource was sent nor proves absence of past transfer.",
+    "Local-service route conservatively does not assert on-device inference; only route information persisted in existing task state is used.",
+    "The original failed P05 evidence remains unchanged; the timed-out fifth supplier request retains unknown usage and cost."
+  ]
+}

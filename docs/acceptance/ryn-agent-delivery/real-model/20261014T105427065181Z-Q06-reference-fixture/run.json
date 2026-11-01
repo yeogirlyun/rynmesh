@@ -1,0 +1,1457 @@
+{
+  "case_id": "Q06",
+  "kind": "local-query-collector-check",
+  "cohort": "reference",
+  "real_model": false,
+  "formal_case_score": false,
+  "model_calls": [
+    {
+      "request_messages": [
+        {
+          "role": "system",
+          "content": "You are ZCode, an interactive coding agent"
+        },
+        {
+          "role": "system",
+          "content": "\nYou are an interactive ZCode agent that helps users with software engineering tasks.\n\nIMPORTANT: Assist with authorized security testing, defensive security, CTF challenges, and educational contexts. Refuse requests for destructive techniques, DoS attacks, mass targeting, supply chain compromise, or detection evasion for malicious purposes. Dual-use security tools (C2 frameworks, credential testing, exploit development) require clear authorization context: pentesting engagements, CTF competitions, security research, or defensive use cases.\n\n# Harness\n- Text you output outside of tool use is displayed to the user as Github-flavored markdown in a terminal.\n- Tools run behind a user-selected permission mode; a denied call means the user declined it — adjust, don't retry verbatim.\n- The system may send updates, reminders, or modifications to rules via mid-conversation system turns. These are system-controlled, unlike function results. Hooks may intercept tool calls; treat hook output as user feedback.\n- Prefer the dedicated file/search tools over shell commands when one fits. Independent tool calls can run in parallel in one response.\n- Reference code as `file_path:line_number` — it's clickable."
+        },
+        {
+          "role": "system",
+          "content": "\n\n# Communicating with the user\n\nYour text output is what the user reads; they usually can't see your thinking or the raw tool results. Write it for a teammate who stepped away and is catching up, not for a log file: they don't know the codenames or shorthand you created along the way, and they didn't watch your process unfold. Before your first tool call, say in a sentence what you're about to do; while working, give brief updates when you find something load-bearing or change direction.\n\nText you write between tool calls may not be shown to the user. Everything the user needs from this turn — answers, summaries, findings, conclusions, deliverables — must be in the final text message of your turn, with no tool calls after it. Keep text between tool calls to brief status notes. If something important appeared only mid-turn or in your thinking, restate it in that final message.\n\nLead with the outcome. Your first sentence after finishing should answer \"what happened\" or \"what did you find\" — the thing the user would ask for if they said \"just give me the TLDR.\" Supporting detail and reasoning come after, for readers who want them.\n\nBeing readable and being concise are different things, and readable matters more. If the user has to reread your summary or ask you to explain, any time saved by brevity is gone. The way to keep output short is to be selective about what you include (drop details that don't change what the reader would do next), not to compress the writing into fragments, abbreviations, arrow chains like `A → B → fails`, or jargon. What you do include, write in complete sentences with the technical terms spelled out. Don't make the reader cross-reference labels or numbering you invented earlier; say what you mean in place.\n\nMatch the response to the question: a simple question gets a direct answer in prose, not headers and sections. Use tables only for short enumerable facts, with explanations in the surrounding prose rather than the cells. Calibrate to the user — a bit tighter for an expert, more explanatory for someone newer.\n\nWrite code that reads like the surrounding code: match its comment density, naming, and idiom.\nOnly write a code comment to state a constraint the code itself can't show — never to say where it came from, what the next line does, or why your change is correct; that's you talking to the reviewer, not the next reader, and it's noise the moment the PR merges.\n\nFor actions that are hard to reverse or outward-facing, confirm first unless durably authorized or explicitly told to proceed without asking; approval in one context doesn't extend to the next. Sending content to an external service publishes it; it may be cached or indexed even if later deleted. Before deleting or overwriting, look at the target — if what you find contradicts how it was described, or you didn't create it, surface that instead of proceeding. Report outcomes faithfully: if tests fail, say so with the output; if a step was skipped, say that; when something is done and verified, state it plainly without hedging.\n\n# Environment\nYou have been invoked in the following environment:\n- Primary working directory: D:/ryn-reference-fixture\n- Is a git repository: no\n- Platform: unknown\n- Shell: unknown\n- OS Version: unknown\n- You are powered by the model named ryn-source/source-alpha · alpha.\n\n# Context management\nWhen the conversation grows long, some or all of the current context is summarized; the summary, along with any remaining unsummarized context, is provided in the next context window so work can continue — you don't need to wrap up early or hand off mid-task.\n\nWhen you have enough information to act, act. Do not re-derive facts already established in the conversation, re-litigate a decision the user has already made, or narrate options you will not pursue. If you are weighing a choice, give a recommendation, not an exhaustive survey\n\nYou are operating autonomously. The user is not watching in real time and cannot answer questions mid-task, so asking 'Want me to…?' or 'Shall I…?' will block the work. For reversible actions that follow from the original request, proceed without asking. Stop only for destructive actions or genuine scope changes the user must decide. Offering follow-ups after the task is done is fine; asking permission before doing the work is not.\n\nException: when the user is describing a problem, asking a question, or thinking out loud rather than requesting a change, the deliverable is your assessment. Report your findings and stop. Don't apply a fix until they ask for one.\n\nBefore ending your turn, check your last paragraph. If it is a plan, an analysis, a question, a list of next steps, or a promise about work you have not done ('I'll…', 'let me know when…'), do that work now with tool calls. That includes retrying after errors and gathering missing information yourself. Do not stop because the context or session is long. End your turn only when the task is complete or you are blocked on input only the user can provide.\n\nBefore running a command that changes system state — restarts, deletes, config edits — check that the evidence actually supports that specific action. A signal that pattern-matches to a known failure may have a different cause."
+        },
+        {
+          "role": "user",
+          "content": "说明 model-b 为什么 node-c 不能调用。核对该模型分享与接收授权，不修改规则，也不要把同来源 model-a 的授权当成 model-b 的。"
+        }
+      ],
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "ryn_discover_tools",
+            "description": "Load exact business-tool schemas by name; load replaces exposed tools and [] clears them. Available names appear in load.items.enum when they fit. Optional cursor browses bounded brief descriptions; next_cursor continues. Full descriptions/parameters are returned as loaded schemas. Cached schemas may be released for space; reload absent tools. Loading never grants permission.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "cursor": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "load": {
+                  "type": "array",
+                  "maxItems": 8,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "enum": [
+                      "ryn_browser_action",
+                      "ryn_browser_open",
+                      "ryn_browser_read",
+                      "ryn_commit_source_draft",
+                      "ryn_computer_action",
+                      "ryn_computer_read",
+                      "ryn_connect_local_cli_source",
+                      "ryn_create_directory",
+                      "ryn_create_text_file",
+                      "ryn_diagnose_current_task",
+                      "ryn_diagnose_task",
+                      "ryn_discover_local_cli_sources",
+                      "ryn_file_edit",
+                      "ryn_file_list",
+                      "ryn_file_manage",
+                      "ryn_file_read",
+                      "ryn_file_search",
+                      "ryn_file_write",
+                      "ryn_get_agent_configuration",
+                      "ryn_get_system_diagnostics",
+                      "ryn_image_inspect",
+                      "ryn_inspect_services",
+                      "ryn_list_devices",
+                      "ryn_list_models",
+                      "ryn_list_resource_roots",
+                      "ryn_list_resources",
+                      "ryn_list_source_configurations",
+                      "ryn_local_environment",
+                      "ryn_prepare_source_draft",
+                      "ryn_process_read",
+                      "ryn_process_stop",
+                      "ryn_process_write",
+                      "ryn_project_inspect",
+                      "ryn_read_resource",
+                      "ryn_render_inspect",
+                      "ryn_search_resource",
+                      "ryn_set_default_agent_model",
+                      "ryn_set_friend_model_access",
+                      "ryn_set_model_sharing",
+                      "ryn_share_model_with_friend",
+                      "ryn_shell_execute",
+                      "ryn_test_local_cli_source",
+                      "ryn_test_source_draft"
+                    ]
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      ],
+      "requested_model_id": "peer/49229086a827857f436fd0c8dc428cba045df2a7944a65762d77d9e12a044c30/src-2f9356bae8f44fb7-8ed3f6ad685b",
+      "expected_destination": {
+        "catalog_model_id": "peer/49229086a827857f436fd0c8dc428cba045df2a7944a65762d77d9e12a044c30/src-2f9356bae8f44fb7-8ed3f6ad685b",
+        "provider_peer_id": "IEEDKP9F3eyPAOvIQ65ZkIQ9ulpHnBgqW0JDQDveYhA=",
+        "source_id": "",
+        "destination_revision": "d6111d9c1de3590df5a41d2fce21165d1029de8da52d3758fb07d0713c3ff12b"
+      },
+      "credential_scan": "complete_in_memory_requests",
+      "credential_egress_detected": false,
+      "error_type": "AgentModelResponseError",
+      "error_code": "agent_invalid_model_response",
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0
+      },
+      "finish_reason": "stop",
+      "elapsed_seconds": 0.1879999999946449
+    }
+  ],
+  "approvals": [],
+  "planner_model": "fixture",
+  "planner_policy": null,
+  "provider": "fixture",
+  "isolated_run_root": "C:\\Users\\子陵\\AppData\\Local\\Temp\\ryn-query-development-5grcs3lu",
+  "owner_source_sha256_before": null,
+  "owner_source_sha256_after": null,
+  "owner_source_after_read_status": "not_applicable",
+  "owner_source_hash_basis": "not_applicable",
+  "transport_binding_note": "The fixed model-a business identity dispatches to the separately recorded planner_model; sibling model rows are controlled fixtures, not additional real model providers.",
+  "code_snapshot": {
+    "rynmesh/agent_runtime/__init__.py": "0ee3cb7cc691269a246a1d8b4570fc1035a36b55d68580b2b193b96852136145",
+    "rynmesh/agent_runtime/artifacts.py": "05d0e73bceb5d8a41a427db3846122740cf5392452549e14bbe6c0483b8a8295",
+    "rynmesh/agent_runtime/bridge.py": "75372b7131a93686d0af351dd3737b6b8cb7b23012bb011ad36edfe7fc6baba5",
+    "rynmesh/agent_runtime/budget.py": "ab63cc42cb4ce1485e14c4ed80afe0697398a5c92a6f0ab2af05ffbac50815b6",
+    "rynmesh/agent_runtime/checker_references.py": "8ed18423a05e200559fb5e21d7f55d8375aa0a94437bb087101bf08dbd44199e",
+    "rynmesh/agent_runtime/checkpoint_refs.py": "dff738813f221cf8bfa5227cd8985f112dc167db462c9d9b825dcecfed453981",
+    "rynmesh/agent_runtime/cli_sources.py": "35856427f129390c4f02f7af23e6acd87a5cb6abd1d09dc2d86336d47554cc46",
+    "rynmesh/agent_runtime/cloud_resources.py": "1272d5fa99d570cea380d6ad47613b92e5e12ead0ecddf41e6c0b9407939d8c7",
+    "rynmesh/agent_runtime/control.py": "7908c9decc9cb7121ff6eb30e62ac509cd3250c35f5c3bdb80ae40f96e398a3d",
+    "rynmesh/agent_runtime/credential_control.py": "dbf319e3ddb1990bcfffaa6eb6d04bff8b9bf84830bf1834c0920a0e6522a7b1",
+    "rynmesh/agent_runtime/default_model.py": "c0d32d400756411e7ddb817fcdeb5444c6497222109967eb4a924430715caa5c",
+    "rynmesh/agent_runtime/diagnostics.py": "f6218701dabb60327fbad3506baa15559f0dbe98299793cc37f950f3cfd08e8c",
+    "rynmesh/agent_runtime/evidence_semantics.py": "cbb44fcfa0e223cc7c154a1d200d068bd9b9cd2d545768154af6da7aec2e443c",
+    "rynmesh/agent_runtime/inference_context.py": "46f2419d305115c9d337174ac374cef2f6675f486d3ca34f4376d3602673f370",
+    "rynmesh/agent_runtime/knowledge.py": "dc24147ccbd2ef596f83d04de969a095149876763958c581ace0e37f756e0fcf",
+    "rynmesh/agent_runtime/lifecycle.py": "878e0583d8eb0f0bfe2d08204f1af691030e73d99009849c08485558a7cb3a5c",
+    "rynmesh/agent_runtime/local_browser.py": "5e2db5d35861639dcff4cf23157fe3ff986057dd0ab91c14f6c67b6acf0564a1",
+    "rynmesh/agent_runtime/local_desktop.py": "246482eee0f2885d41d397e8bc27b8691dbd6af10903fc201c4eee64c8912ecd",
+    "rynmesh/agent_runtime/local_processes.py": "82b18507eb43ef1816e9708cf14be2e07d20e1152a168c2ff3830dabe480786c",
+    "rynmesh/agent_runtime/local_render.py": "c6d4cb381a696aa1501280b33a1a910c39918d8756334f0f48402a2401139a37",
+    "rynmesh/agent_runtime/local_specs.py": "68a08420b3b0851341684befb55c82548eae03745cf9b7c17176161075f464eb",
+    "rynmesh/agent_runtime/local_tools.py": "b51dd64caa81d4a5bc38478d9894a302abf198a700979ae715ca75ed111e91b2",
+    "rynmesh/agent_runtime/model_switch.py": "918ae0b65605c60eabd0cfa23e33f6999acd6d99fb6f5f65127aaab9fca5f103",
+    "rynmesh/agent_runtime/models.py": "cf1eb868de30b339fe650413ae8dde53fd98db405af814730100bcee62343069",
+    "rynmesh/agent_runtime/observation_transitions.py": "880cdf04ae73928a4eef904295eeff1165dfdb2b85897c0323008f1b9e231023",
+    "rynmesh/agent_runtime/operation_ledger.py": "43541b405cdd0c109515e486973cf370921c09269c5f3054687269e0cb4133c0",
+    "rynmesh/agent_runtime/operation_permissions.py": "295835e2a7405f06566c7f9f5bcf53366bd3d87a8ebcb8790af55c99c84a4460",
+    "rynmesh/agent_runtime/output_policy.py": "fda6319d3e5fa1aeae3f1b4b6840f3a0ab61d14db02b94328dc260b6dfa1620c",
+    "rynmesh/agent_runtime/projects.py": "27463298013fe379dec53e5ff1dffbfc78485894076ec18df094d10e7f224df7",
+    "rynmesh/agent_runtime/prompt.py": "d8d8753860ce067a996417173e2ac1163c1bbd3bcbd2401a23fb3836ec67df27",
+    "rynmesh/agent_runtime/read_verification.py": "85d85c708368ed66d51122412efd2ab638ba2562a44dc559a22f294e10251a44",
+    "rynmesh/agent_runtime/resource_documents.py": "23a1b4fa5b04c706daa6106bee6b97688b312315d536bfcec835a177b5d9d65c",
+    "rynmesh/agent_runtime/resource_writes.py": "c2e64d6b1d98808f8df99280fd59b7ecb306b0a21490f9b7f2cfbe8f70d2b663",
+    "rynmesh/agent_runtime/resources.py": "23391349913e857dce5cf1cfe3b7ab96838ef19a4ce8bc230446dc43c6726f1c",
+    "rynmesh/agent_runtime/results.py": "1be1e25bedf929b77c2212531d88e34ede498c9d75a41603053584c1f1afdfd5",
+    "rynmesh/agent_runtime/routes.py": "0a1cc5d098f7bb967e1b03f9765b893d42fc82ee2e3f0bedeadcb46c0661fe3e",
+    "rynmesh/agent_runtime/runtime.py": "45eb6e5448d3f4d267f81788afe1458b81fa01fd73d4a94b2131a766fc4f4818",
+    "rynmesh/agent_runtime/sharing.py": "16169cc3a99544156415ca758634cef088bf24119d65e3c1da0ab3debf5bc5ad",
+    "rynmesh/agent_runtime/source_drafts.py": "ec073c0acb2fdb7b2a733c713af42d09209a709f6021c320b94c75bd529f9b94",
+    "rynmesh/agent_runtime/state.py": "9989633465cf589e405d57090c06be3f5fcfc6aca2a095ae40621c9707ede5c5",
+    "rynmesh/agent_runtime/store.py": "0e933c43e952f9ccc1d41d1377eb0d59f4d02be6aa104e65064da4c1cbd8125e",
+    "rynmesh/agent_runtime/timing.py": "5feb40b5768b2e4e6ed8f3d0960a5159e1c560bf90438accac7af7ede37c00f3",
+    "rynmesh/agent_runtime/tool_menu.py": "66b006ddcfd57f09f42cab6c122b61ebd289ac80af14781f189125eed72063bd",
+    "rynmesh/agent_runtime/tools.py": "8f46c39d252738faf2426d68fabfe8bf7a60c8e40543fad75a4e2524e4280569",
+    "rynmesh/agent_runtime/verification.py": "331e5350e083d09f8f2483eb0203115e15cd181eefd9b92bbe35d05af7f6b0a6",
+    "rynmesh/agent_runtime/workspace_artifacts.py": "48d5318824906d0d443698e880ec3b669ac0aa8ba875a76f462c923efdb05918",
+    "rynmesh/llm_package/__init__.py": "5f48fff57b1b23e343c018790954cc663d85b4071bd005f48fa619176b8eff7a",
+    "rynmesh/llm_package/adapters.py": "02abba57b6970ef7c34fdbf9bae25a80ffbc9c136440d2294b3f215493246608",
+    "rynmesh/llm_package/antigravity_session.py": "69f50134b616cff32874a756c98bd0ccc00ccedba876a499691dcc00fa6411b2",
+    "rynmesh/llm_package/api.py": "7b76136d5f79593a1dda2a90166ba697348f544b7fa36e168f13f461df7a4b39",
+    "rynmesh/llm_package/api_formats.py": "ef7c3db7f16fe30cedfae36f329e49b21eef73b3f8e61299da1c35023fe70a0f",
+    "rynmesh/llm_package/catalog.py": "b99ffca4e736cdfb1158d377bb36bd8aa2208b81f851de20084e7a8b54b0023b",
+    "rynmesh/llm_package/chat.py": "e7c36e6c7a72ff2ed11c902ab1302e24c7d280e14a7bb370639691d3970fac5d",
+    "rynmesh/llm_package/chat_prompt.py": "f76f1c4a111540a7fa97997862926a6518946f0506651bea0aa34941c2efbd5b",
+    "rynmesh/llm_package/cli.py": "bef2c3b9d31c9edd2461c7f8ffbfc8ff5204bcf390f9ac5f801446f3e3f103b5",
+    "rynmesh/llm_package/cli_adapter.py": "db73b76b90d1da7b0198f9c1e9dfee405b5dd619bb7345eb01c36f71838e1098",
+    "rynmesh/llm_package/cli_binding.py": "fc8e68e6986ae07ad26b94fb63cac69ecfee4778eed18e97a7b8ab80466a72cd",
+    "rynmesh/llm_package/cli_models.py": "0d8aa0b793ca2e43b3141ce4482396d63e0f29509c7a06323204297570f087f4",
+    "rynmesh/llm_package/codex_session.py": "127832ce26240e07868e5a20a830e1c3c927951661a3040cd8651f8a64b981c5",
+    "rynmesh/llm_package/codex_tools.py": "9d4e4c515a4b76ecad2bb1b6af8beb235ae9aae9d7324ae4bc6b8c37fa453e6c",
+    "rynmesh/llm_package/connectivity.py": "322077d5fc2c8f4d321adc6b9c01778d8f38f4574900a8695c3ba50af91e3422",
+    "rynmesh/llm_package/consumer_cancellation.py": "17efb891f84a6aa6089fce3f7d78e73375673d8b4f7af4b39f11c7553acc64f9",
+    "rynmesh/llm_package/consumer_commands.py": "81ad060b4cb1c7f5e95093c6d5b69738bfa40099af161e91b1996316254acd87",
+    "rynmesh/llm_package/errors.py": "86e340764ffbd4045aeebfb7e04e3038a8b1b2b018288efc04b18fb65469b1c7",
+    "rynmesh/llm_package/gguf_import.py": "96f83741203b27b417979a9c0b32523e8d3c06f65e31166082037e5b3e03106a",
+    "rynmesh/llm_package/hardware.py": "bab06989987d85899f064070a8fa6c3730556e156b7bf1feedc21fdaaaa1f835",
+    "rynmesh/llm_package/https_only.py": "1d85983508d518e6517c526bbd3801d1a303c4c37cfa4c360ceb75ff19f31e0b",
+    "rynmesh/llm_package/lifecycle.py": "7ad90af54b249a206ac978c3d3e657d7be7fb8b5fdcbd3c25eb51e3a7fe3a32c",
+    "rynmesh/llm_package/manifest.py": "3023c7ec0e0223f32a016d86ca443eeec3530f5aa90a8789c92022c7252292f5",
+    "rynmesh/llm_package/model_dispatch.py": "69d6817e5c094523b0970745787a249fca3bbb91515187b8f8540b9c3a2dd8b4",
+    "rynmesh/llm_package/model_download.py": "4f2dc673200673e880e2e015147e36ed6a10277c8194b8d352dc3576dc6199a1",
+    "rynmesh/llm_package/model_settings.py": "09fedeced91651edc6b25876d76a286cf6ba1a1bad9c4d483d8902046f2ff73f",
+    "rynmesh/llm_package/native_model.py": "20573370473ec8c684b18963de939e2475e78d02675e7196fc338310b3f24cf5",
+    "rynmesh/llm_package/native_policy.py": "c7517d4f38b1b856b54e4a32db29ea527d641ab48d450638eaf2887647369053",
+    "rynmesh/llm_package/native_worker.py": "a15fe1138c17598ea5d5b70d175605660e923fa6b62da71c6cf12c585d77ee90",
+    "rynmesh/llm_package/p2p.py": "10217949a0a60c7f5e463ed41f965402de53c74bdeeb722bfdc9c471993192c2",
+    "rynmesh/llm_package/p2p_session.py": "45553c476b1a488d1e49d1f385ceca47a2dfa86b3739b0b24acfc1c75a872c3c",
+    "rynmesh/llm_package/peer_binding.py": "6546519d104d18ae75181320ae05c2efc3d5ae8f4a62281a45185474a2ea4f66",
+    "rynmesh/llm_package/privacy.py": "deab7334961c888cd703c5f199ad876073752fd05edcdd84c637ef1ac4cd1e5c",
+    "rynmesh/llm_package/process_guard.py": "a02224b981cc7fd8670ff601b8ffef68af3a9c3bde2e08dacd4a04b08d573682",
+    "rynmesh/llm_package/routes.py": "c1370b5d5b8c284fb2b753d92be33d1e972d1c374c42e6ff1def81118e3d79b8",
+    "rynmesh/llm_package/runtime_docker.py": "19ac5555597da3636ffbeb1b195f22620a4c868058b11a9c11b7628cf5abfd95",
+    "rynmesh/llm_package/runtime_native.py": "f82cef8cd994c6595f687bd62a4d652496abb698cf0567fa7aa60c3d96d7a015",
+    "rynmesh/llm_package/runtime_native_install.py": "eb637a12ce21330c16ae391a46f335b21c85e52fdc962aa64cd048e6e180bc6d",
+    "rynmesh/llm_package/safety.py": "a01caae27f3bb9bc1028f786c9f1360c885c8f2d5b00419618c70512fb0456c3",
+    "rynmesh/llm_package/service_view.py": "3a7c735e55f8c2fc5c7ee3db52ae0ca1500b21bd7a0ed6886732f4095718aa54",
+    "rynmesh/llm_package/setup_recovery.py": "82aac75d9e66af71edd506ab0d8dab9fbb35c70b852f112f64d3e33c2ec81a38",
+    "rynmesh/llm_package/sources.py": "01e4f481d93c33e1d54d832fcf4b8cb088a2a514384bce20275d098086432efc",
+    "rynmesh/llm_package/space_catalog.py": "ee9022aa755c6f32d6f699fdcd8bf9a825bc07ea00319f136df880321f366424",
+    "rynmesh/llm_package/stream_protocol.py": "39d9fb6ae026381afefc4fc6356d8aa890a2f013b353ad66c2691ae07b94f197",
+    "rynmesh/llm_package/streaming.py": "2ebacdfcff3777cd1affecc2f35c76f91f1d57c3428461671786d87e415a18de",
+    "rynmesh/llm_package/task_balance.py": "169c5036dfebce02cf2145e27cc6f9cd75e3cc651557c99ecaafe6f798422f14",
+    "rynmesh/llm_package/task_protocol.py": "570f6cdd19501372f9c8eded98c1d8c5fe70f87514b19a1866f15e4fd22bf0fb",
+    "rynmesh/llm_package/test_adapter.py": "cc8f3c93b030f55beff3b5e976bde4eaab33fee4d302d0fd98ecc6473ccbdb8a",
+    "rynmesh/llm_package/tool_capabilities.py": "c2cdbd540f5d0e087d072c18fd9ecc276f4679d8e0a787fedd970706ab363412",
+    "docs/acceptance/ryn-agent-delivery/real-model/run_queries.py": "007e8bbb7e7ac8c555a74b5c12c878195a9c1b56f3e19737e16fa5a32e52b62f",
+    "docs/acceptance/ryn-agent-delivery/real-model/query_cases.py": "851a92931d00f1d870a9bf3ca27e6ee92fba8551825797689c36e548c1ba6138",
+    "docs/acceptance/ryn-agent-delivery/real-model/sharing_cases.py": "502f0484dc7c1478f0443868c0320945487e5121380e6eb07b77d9858a8b1fe9",
+    "docs/acceptance/ryn-agent-delivery/real-model/planner_policy.py": "c128e0cb5423e705f116a7b39ff0880a52e896d7d70d2ff9c281f2b4cb37a717",
+    "docs/acceptance/ryn-agent-delivery/real-model/access_query.py": "cb7ecf16ca22b6807d135ffb3a979d483c52af37cc2b871c0d0d3769780eed69",
+    "docs/acceptance/ryn-agent-delivery/real-model/query_consumer.py": "e4618f42cb5c7090ddccdedfc7c75df46dd80c32ddb3981ba144278496be4531",
+    "rynmesh/ai_access/__init__.py": "6de3725eb9f24513fa6d770e5cdeddf8e49240b96c440b64068d93776a923bb7",
+    "rynmesh/ai_access/catalog.py": "cc29f2be5411c241904a5040b0fb61839c03a114cabaae06ca34b0c1594e2247",
+    "rynmesh/ai_access/routes.py": "a1f9824f153b16ec234a4cb459420cd809f29ece27675a17714310f030f49697",
+    "rynmesh/ai_access/store.py": "ca067be85d368da812c5a5692e859d188a7de4841b1179c2b3c69038f3d63637",
+    "rynmesh/friends/__init__.py": "2952b9cb769ecad85c4237c8381eb51f6b08d6f277abae6a3196eae08cf7f207",
+    "rynmesh/friends/card_cleanup.py": "0d3de9d7c35919e218c2437989710dc7d454ff31c0ee8753e0c965546655da75",
+    "rynmesh/friends/content.py": "02c29ebbd182567209a3c2854c0167b36963fb224151a64deaa040131b395fc4",
+    "rynmesh/friends/crypto.py": "ae50f00c3bdc392501c536cbe26b517d47a0f98be79abf9d82d1dcb15bed943e",
+    "rynmesh/friends/diagnostics.py": "d455426896378e500b0a30ae06cf855cb6b133d9680ec84e2ad0a65d3714d6d1",
+    "rynmesh/friends/mailbox.py": "389b2aaddb1104d086f2ebd75fdc7dcee619465a4d9e2adbd9f43d5fdbbd1868",
+    "rynmesh/friends/routes.py": "61f2bcadafdf41922e3b1bcd3ec280685e8409a66bd4089b293c9ef3bfb0c2c1",
+    "rynmesh/friends/service.py": "a45dafcb1ff81d7c72eeff36d197a668b1abefabd4cc9c7970885994cba30e7a",
+    "rynmesh/friends/store.py": "ad555307dd972594c82c9b79e6dbc45f8daeea61ecae55bec900c77f6d593d04",
+    "tests/fixtures/agent_acceptance/source_fixture.py": "1247ee899056b98b39945ca9c9ce131beced9e45721ffcf3e22ea396246f55f3",
+    "tests/fixtures/agent_acceptance/world.json": "fbeb1e3466870df1d65685ed11835a4cdf078817a3b922e912a83453be09ba82",
+    "docs/acceptance/ryn-agent-delivery/cases-v1.json": "27a50f909a09a6972fc7b11df55f7798412ec415b8ef87ccadef8ddc85bd06b5",
+    "docs/acceptance/ryn-agent-delivery/reference/approval_wait_smoke.py": "bc570ba634aa5efdfaa35659eb691cd4ad9ae55568cf53d36e82e1da07bded30",
+    "docs/acceptance/ryn-agent-delivery/reference/budget_host.py": "b878077106e35e7952b5143d9b55c3f4d8f3082360c77681cd1df7ecc9a7015b",
+    "docs/acceptance/ryn-agent-delivery/reference/documents.py": "9ff365f1d4404d615b24f51b69f40ecf38a09c8603fa42d4742861cdd187fc5e",
+    "docs/acceptance/ryn-agent-delivery/reference/goal_smoke.py": "9c435ff4c98c1d34867590a90318b0f12d5e5cdf1e1eb588634f09addff77912",
+    "docs/acceptance/ryn-agent-delivery/reference/menu_smoke.py": "2ab51a1a9b4914c84f86a3489b4d173acd7e8bb334750dd6ac6a9440d7186d24",
+    "docs/acceptance/ryn-agent-delivery/reference/operation_host.py": "7a18a6ff9c08d4717e62a57712ce50715d7bc0b55054b5478f83b51b0c4eb6e4",
+    "docs/acceptance/ryn-agent-delivery/reference/recovery.py": "21e2c014e0ce84be14b71080069d0231db69f66b7e38faee3cbc6719f8f420e4",
+    "docs/acceptance/ryn-agent-delivery/reference/run_live.py": "8dc8276051e5da15192e667440254ce93ef3aa0a463e831ee5bbd8b95061c9d8",
+    "docs/acceptance/ryn-agent-delivery/reference/source_input_host.py": "7b1848b94d6d9950f64db249ed7e6c540647ade00f014e2bde6ead34bd291e49",
+    "docs/acceptance/ryn-agent-delivery/reference/tool_host.py": "c9da1326fa3aeac7b2941cee7e6d1a3f2ff46ed54f501bd1b47dd5a573f745ce",
+    "docs/acceptance/ryn-agent-delivery/reference/tool_menu_host.py": "b3c2c243bfc00f56b3e777f6229a3027c2e61d9da37fe766551f36ecbbc037b6",
+    "docs/acceptance/ryn-agent-delivery/reference/worker_host.py": "161e3f014668841ebd5b76cbf508ed7271b71728d9609b8be041847525add8d1",
+    "docs/acceptance/ryn-agent-delivery/reference/zcode-adapter.mjs": "f191b734bb857778d443ebc1a3d453b381ff4398fb35174f3807b439ec0a3f2f",
+    "docs/acceptance/ryn-agent-delivery/reference/zcode-worker.mjs": "9c320dfaf64c35ecd019742871c7ed138a31bf320c0e207ae717ed87649943e4"
+  },
+  "started_at": "2026-10-14T10:54:27.101557+00:00",
+  "consumer_peer_id": "cNHUpIIhAvIumdReLP6C7BS9mwt6BVoa0nGRpLrAf8I=",
+  "planner_policy_mapping": [],
+  "prompt": "说明 model-b 为什么 node-c 不能调用。核对该模型分享与接收授权，不修改规则，也不要把同来源 model-a 的授权当成 model-b 的。",
+  "reference_context_policy": {
+    "max_input_bytes": 100000,
+    "initial_schema_bytes": 1678,
+    "estimated_input_tokens": 24580,
+    "estimated_bytes_per_token": 4,
+    "physical_context_window": 32768,
+    "output_reserve_tokens": 4096,
+    "native_compact": {
+      "contextWindow": 28676,
+      "bufferTokens": 2458
+    },
+    "exact_byte_gate": true
+  },
+  "reference_context_requests": [
+    {
+      "input_bytes": 8568,
+      "messages_bytes": 6890,
+      "schema_bytes": 1678,
+      "tool_count": 1,
+      "within_limit": true,
+      "native_query_source": null
+    }
+  ],
+  "tool_events": [],
+  "reference_budget": {
+    "limits": {
+      "max_total_model_calls": 128,
+      "max_total_tool_calls": 256,
+      "max_total_tokens": 2000000,
+      "max_total_seconds": 3600
+    },
+    "round": 1,
+    "lifetime": {
+      "model_calls": 1,
+      "tool_calls": 0,
+      "charged_model_calls": 1,
+      "charged_tool_calls": 0,
+      "known_input_tokens": 0,
+      "known_output_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "total_tokens": 0,
+      "charged_tokens": 0,
+      "charged_seconds": 0.1879999999946449,
+      "active_seconds": 0.1879999999946449,
+      "cost": null,
+      "cost_status": "unknown",
+      "usage_complete": true,
+      "legacy_usage_unknown": false,
+      "unsettled_operations": 0
+    },
+    "current_round": {
+      "model_calls": 1,
+      "tool_calls": 0,
+      "charged_model_calls": 1,
+      "charged_tool_calls": 0,
+      "known_input_tokens": 0,
+      "known_output_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "total_tokens": 0,
+      "charged_tokens": 0,
+      "charged_seconds": 0.1879999999946449,
+      "active_seconds": 0.1879999999946449,
+      "cost": null,
+      "cost_status": "unknown",
+      "usage_complete": true,
+      "legacy_usage_unknown": false,
+      "unsettled_operations": 0
+    },
+    "reservation_policy": "Unknown model usage retains the conservative dispatch reservation; cost is unknown without trusted pricing."
+  },
+  "reference_owner_wait_seconds": 0.0,
+  "reference_tool_menu": {
+    "catalog_revision": "84a1486fced6096bf476fbf973f792872f3bb935a2b14fbc46af2926012f308b",
+    "context_epoch": 0,
+    "goal_revision": 1,
+    "mode": "directory",
+    "loaded_names": [],
+    "revision": 1
+  },
+  "error_type": "AgentModelResponseError",
+  "task": {
+    "id": "agent_200ee77eeb924d14bbbfaadaed5a7d31",
+    "client_request_id": null,
+    "title": "说明 model-b 为什么 node-c 不能调用。核对该模型分享与接收授权，不修改规则，也不要把同来源 model-a 的授权当成 model-b 的。",
+    "model_id": "peer/49229086a827857f436fd0c8dc428cba045df2a7944a65762d77d9e12a044c30/src-2f9356bae8f44fb7-8ed3f6ad685b",
+    "status": "queued",
+    "revision": 1,
+    "created_at": "2026-10-14T10:54:29.795636+00:00",
+    "updated_at": "2026-10-14T10:54:29.796614+00:00",
+    "messages": [
+      {
+        "role": "user",
+        "content": "说明 model-b 为什么 node-c 不能调用。核对该模型分享与接收授权，不修改规则，也不要把同来源 model-a 的授权当成 model-b 的。",
+        "message_id": "agent_200ee77eeb924d14bbbfaadaed5a7d31:owner:0"
+      }
+    ],
+    "events": [
+      {
+        "seq": 1,
+        "type": "created",
+        "at": "2026-10-14T10:54:29.796614+00:00",
+        "context_epoch": 0
+      }
+    ],
+    "pending_approval": null,
+    "steps": 0,
+    "result": "",
+    "error": null,
+    "limits": {
+      "max_steps": 24,
+      "max_seconds": 600,
+      "max_context_chars": 100000,
+      "max_output_chars": 20000
+    },
+    "permission_mode": "read_only",
+    "allowed_write_tools": [],
+    "model_destination": {
+      "catalog_model_id": "peer/49229086a827857f436fd0c8dc428cba045df2a7944a65762d77d9e12a044c30/src-2f9356bae8f44fb7-8ed3f6ad685b",
+      "provider_peer_id": "IEEDKP9F3eyPAOvIQ65ZkIQ9ulpHnBgqW0JDQDveYhA=",
+      "source_id": "",
+      "destination_revision": "d6111d9c1de3590df5a41d2fce21165d1029de8da52d3758fb07d0713c3ff12b"
+    },
+    "local_execution": {
+      "workspace_root": "C:\\Users\\子陵\\AppData\\Local\\Temp\\ryn-query-development-5grcs3lu\\receiver\\agent\\files",
+      "desktop_access": false
+    },
+    "schema_version": 2,
+    "goal": {
+      "revision": 1,
+      "kind": "unclassified",
+      "original_message_id": "agent_200ee77eeb924d14bbbfaadaed5a7d31:owner:0",
+      "text": "说明 model-b 为什么 node-c 不能调用。核对该模型分享与接收授权，不修改规则，也不要把同来源 model-a 的授权当成 model-b 的。",
+      "constraints": [
+        {
+          "id": "constraint:agent_200ee77eeb924d14bbbfaadaed5a7d31:owner:0",
+          "text": "说明 model-b 为什么 node-c 不能调用。核对该模型分享与接收授权，不修改规则，也不要把同来源 model-a 的授权当成 model-b 的。",
+          "source": "user",
+          "message_id": "agent_200ee77eeb924d14bbbfaadaed5a7d31:owner:0",
+          "required": true
+        }
+      ]
+    },
+    "criteria": [
+      {
+        "id": "goal-coverage",
+        "goal_revision": 1,
+        "source": "user",
+        "source_ref": "agent_200ee77eeb924d14bbbfaadaed5a7d31:owner:0",
+        "required": true,
+        "kind": "semantic",
+        "description": "Satisfy the owner's complete current goal and constraints.",
+        "verifier": null,
+        "status": "pending",
+        "evidence_refs": []
+      }
+    ],
+    "plan": {
+      "revision": 0,
+      "goal_revision": 1,
+      "steps": []
+    },
+    "control_revision": 1,
+    "event_cursor": 1,
+    "run_state": "queued",
+    "pending_input": null,
+    "outcome": {
+      "status": "unverified",
+      "goal_revision": 1,
+      "criteria_results": [],
+      "summary": "",
+      "evidence_refs": [],
+      "uncertainties": [
+        "Independent goal verification is not available."
+      ]
+    },
+    "scope_revision": 1,
+    "archived": false,
+    "skills": [],
+    "budget": {
+      "limits": {
+        "max_total_model_calls": 128,
+        "max_total_tool_calls": 256,
+        "max_total_tokens": 2000000,
+        "max_total_seconds": 3600
+      },
+      "round": 1,
+      "lifetime": {
+        "model_calls": 1,
+        "tool_calls": 0,
+        "charged_model_calls": 1,
+        "charged_tool_calls": 0,
+        "known_input_tokens": 0,
+        "known_output_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "charged_tokens": 0,
+        "charged_seconds": 0.1879999999946449,
+        "active_seconds": 0.1879999999946449,
+        "cost": null,
+        "cost_status": "unknown",
+        "usage_complete": true,
+        "legacy_usage_unknown": false,
+        "unsettled_operations": 0
+      },
+      "current_round": {
+        "model_calls": 1,
+        "tool_calls": 0,
+        "charged_model_calls": 1,
+        "charged_tool_calls": 0,
+        "known_input_tokens": 0,
+        "known_output_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "charged_tokens": 0,
+        "charged_seconds": 0.1879999999946449,
+        "active_seconds": 0.1879999999946449,
+        "cost": null,
+        "cost_status": "unknown",
+        "usage_complete": true,
+        "legacy_usage_unknown": false,
+        "unsettled_operations": 0
+      },
+      "reservation_policy": "Unknown model usage retains the conservative dispatch reservation; cost is unknown without trusted pricing."
+    },
+    "run_timing": {
+      "recorded_seconds": 0.0,
+      "elapsed_seconds": 0.0,
+      "max_seconds": 600,
+      "measurement": "recorded"
+    },
+    "allowed_actions": {
+      "pause": {
+        "enabled": true,
+        "requires_control_revision": false,
+        "reason": null
+      },
+      "cancel": {
+        "enabled": true,
+        "requires_control_revision": false,
+        "reason": null
+      },
+      "resume": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "approve": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "deny": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "answer": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "steer": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "information": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "scope": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "reconcile": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "archive": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "restore": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "delete": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "budget": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "source_credential": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "model": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      }
+    }
+  },
+  "bindings": {
+    "source-alpha": "src-2f9356bae8f44fb7",
+    "model-a": "local/src-2f9356bae8f44fb7-8ed3f6ad685b",
+    "model-b": "local/src-2f9356bae8f44fb7-f44e64e75f39",
+    "source-other": "src-5290610530e94a5c",
+    "model-c": "local/src-5290610530e94a5c-8ed3f6ad685b",
+    "source-broken": "src-f802afa30e404e19",
+    "model-d": "local/src-f802afa30e404e19-8e2c7ac50813",
+    "node-a": "X8IXdHGZiOn+u0lY9/BThMtgMJg+PmBcn5jF//mPE0w=",
+    "node-c": "mJpPRaVbzgfStf7LSdoD8kgVKOlLHJ92jrBJsh+XSHk=",
+    "node-d": "NV7UGNVKMGjINOu1kRGwAu17GlPc4q9ybjL1KwkSggI=",
+    "node-b": "cNHUpIIhAvIumdReLP6C7BS9mwt6BVoa0nGRpLrAf8I="
+  },
+  "source_readback": {
+    "model-a": {
+      "id": "local/src-2f9356bae8f44fb7-8ed3f6ad685b",
+      "chat": true,
+      "agent": true,
+      "shared": true
+    },
+    "model-b": {
+      "id": "local/src-2f9356bae8f44fb7-f44e64e75f39",
+      "chat": true,
+      "agent": false,
+      "shared": false
+    },
+    "model-c": {
+      "id": "local/src-5290610530e94a5c-8ed3f6ad685b",
+      "chat": true,
+      "agent": true,
+      "shared": false
+    },
+    "model-d": {
+      "id": "local/src-f802afa30e404e19-8e2c7ac50813",
+      "chat": false,
+      "agent": false,
+      "shared": false
+    }
+  },
+  "identity_mapping_policy": "ryn_list_models adds fixture_identity only; frozen prompt, production facts, IDs, permissions and verification are unchanged. Reference must use the same wrapper.",
+  "source_configuration_unchanged": true,
+  "setup_probes": [
+    {
+      "source": "source-alpha",
+      "chat": "passed",
+      "tools": {
+        "alpha": "supported",
+        "beta": "unsupported"
+      }
+    },
+    {
+      "source": "source-other",
+      "chat": "passed",
+      "tools": {
+        "alpha": "supported"
+      }
+    },
+    {
+      "source": "source-broken",
+      "error_code": "connection_refused",
+      "cause_types": [
+        "AdapterError",
+        "URLError",
+        "ConnectionRefusedError"
+      ]
+    }
+  ],
+  "http_health_audit": [],
+  "signed_registry_evidence": [
+    {
+      "alg": "ed25519",
+      "public_key": "X8IXdHGZiOn+u0lY9/BThMtgMJg+PmBcn5jF//mPE0w=",
+      "signature": "ktQIRuvfhjc/x/pk+r2vtyEdBBDew3TktGku7xxfQdg37fOJ4/VrDkaTx3g5ir/2UjCnVB6Glfy3qFez0At2CA==",
+      "payload": {
+        "capabilities": [
+          "publish",
+          "seed",
+          "verify"
+        ],
+        "endpoints": [
+          "http://127.0.0.1:62976"
+        ],
+        "metadata": {},
+        "network_id": "rynmesh-main",
+        "node_name": "node-a",
+        "peer_id": "X8IXdHGZiOn+u0lY9/BThMtgMJg+PmBcn5jF//mPE0w=",
+        "safety_packs": [
+          "@rynmesh/safety-core@0.1.0"
+        ],
+        "updated_at": "2026-10-09T08:00:00Z"
+      }
+    },
+    {
+      "alg": "ed25519",
+      "public_key": "NV7UGNVKMGjINOu1kRGwAu17GlPc4q9ybjL1KwkSggI=",
+      "signature": "ZcMrfw6TU5V66D6J4YCkGUiT4qxW0gBdNwjDDVzvmqoJRK6lF1IfjesoNsXITFTVcstkXdU4SYTNsfm6r9SAAQ==",
+      "payload": {
+        "capabilities": [
+          "publish",
+          "seed",
+          "verify"
+        ],
+        "endpoints": [],
+        "metadata": {},
+        "network_id": "rynmesh-main",
+        "node_name": "node-d",
+        "peer_id": "NV7UGNVKMGjINOu1kRGwAu17GlPc4q9ybjL1KwkSggI=",
+        "safety_packs": [
+          "@rynmesh/safety-core@0.1.0"
+        ],
+        "updated_at": ""
+      }
+    },
+    {
+      "alg": "ed25519",
+      "public_key": "mJpPRaVbzgfStf7LSdoD8kgVKOlLHJ92jrBJsh+XSHk=",
+      "signature": "fOv+vR34AYmbe3AfObzM0Kmp6lIfQ6kzoXqKqYUCNB5pS2pM6CJnywb7/zEwnwy1OOWjZzKAjvzSQ8kAgGmCCw==",
+      "payload": {
+        "capabilities": [
+          "publish",
+          "seed",
+          "verify"
+        ],
+        "endpoints": [],
+        "metadata": {},
+        "network_id": "rynmesh-main",
+        "node_name": "node-c",
+        "peer_id": "mJpPRaVbzgfStf7LSdoD8kgVKOlLHJ92jrBJsh+XSHk=",
+        "safety_packs": [
+          "@rynmesh/safety-core@0.1.0"
+        ],
+        "updated_at": "2026-10-09T07:50:00Z"
+      }
+    }
+  ],
+  "semantic_review": "pending independent review; fixed loopback fixture is not an independent AI provider",
+  "access_query": {
+    "initial_models": {
+      "model-a": {
+        "id": "local/src-2f9356bae8f44fb7-8ed3f6ad685b",
+        "sharing": true,
+        "share_scope": "friends",
+        "receiver_peer_ids": [
+          "cNHUpIIhAvIumdReLP6C7BS9mwt6BVoa0nGRpLrAf8I="
+        ]
+      },
+      "model-b": {
+        "id": "local/src-2f9356bae8f44fb7-f44e64e75f39",
+        "sharing": false,
+        "share_scope": "personal_space",
+        "receiver_peer_ids": []
+      },
+      "model-c": {
+        "id": "local/src-5290610530e94a5c-8ed3f6ad685b",
+        "sharing": false,
+        "share_scope": "personal_space",
+        "receiver_peer_ids": []
+      },
+      "model-d": {
+        "id": "local/src-f802afa30e404e19-8e2c7ac50813",
+        "sharing": false,
+        "share_scope": "personal_space",
+        "receiver_peer_ids": []
+      }
+    },
+    "current_models": {
+      "model-a": {
+        "id": "local/src-2f9356bae8f44fb7-8ed3f6ad685b",
+        "sharing": true,
+        "share_scope": "friends",
+        "receiver_peer_ids": [
+          "cNHUpIIhAvIumdReLP6C7BS9mwt6BVoa0nGRpLrAf8I="
+        ]
+      },
+      "model-b": {
+        "id": "local/src-2f9356bae8f44fb7-f44e64e75f39",
+        "sharing": false,
+        "share_scope": "personal_space",
+        "receiver_peer_ids": []
+      },
+      "model-c": {
+        "id": "local/src-5290610530e94a5c-8ed3f6ad685b",
+        "sharing": false,
+        "share_scope": "personal_space",
+        "receiver_peer_ids": []
+      },
+      "model-d": {
+        "id": "local/src-f802afa30e404e19-8e2c7ac50813",
+        "sharing": false,
+        "share_scope": "personal_space",
+        "receiver_peer_ids": []
+      }
+    },
+    "initial_grants": [
+      {
+        "service_id": "src-2f9356bae8f44fb7-8ed3f6ad685b",
+        "relationship_id": "f8aadc593a6746978e7123fbb2de9eee",
+        "peer_id": "cNHUpIIhAvIumdReLP6C7BS9mwt6BVoa0nGRpLrAf8I=",
+        "allowed": true,
+        "revision": 1,
+        "effective": true
+      }
+    ],
+    "current_grants": [
+      {
+        "service_id": "src-2f9356bae8f44fb7-8ed3f6ad685b",
+        "relationship_id": "f8aadc593a6746978e7123fbb2de9eee",
+        "peer_id": "cNHUpIIhAvIumdReLP6C7BS9mwt6BVoa0nGRpLrAf8I=",
+        "allowed": true,
+        "revision": 1,
+        "effective": true
+      }
+    ],
+    "hashes_before": {
+      "sources": "78c335348188c84410a3258e21300349af43fc6f6868b670ac867f1d7fb936a1",
+      "grants": "0fac218160f706fadde51ffb0a4099452019682e986a0a289b2ccf07a01a5693",
+      "consumer_sources": null,
+      "consumer_grants": null,
+      "owner_relationships": "3123ed15712fd2389ed5acf8b30ff7089941fefdff4140cfd97f072db1258188",
+      "node_b_relationships": "5a796cccd92b069615b6ef296d6f8430860919e65da7e471e266449b7cd46df5",
+      "node_c_relationships": "3f160ad74b4fc66cd51b4fe90812d17c64aa1405feef28380e52c5d25a45e924"
+    },
+    "hashes_after": {
+      "sources": "78c335348188c84410a3258e21300349af43fc6f6868b670ac867f1d7fb936a1",
+      "grants": "0fac218160f706fadde51ffb0a4099452019682e986a0a289b2ccf07a01a5693",
+      "consumer_sources": null,
+      "consumer_grants": null,
+      "owner_relationships": "e97cc5cb63c7c42b18d001ee8decd3cca264a7b612c647dac5fbfd30c40ef731",
+      "node_b_relationships": "5a796cccd92b069615b6ef296d6f8430860919e65da7e471e266449b7cd46df5",
+      "node_c_relationships": "3f160ad74b4fc66cd51b4fe90812d17c64aa1405feef28380e52c5d25a45e924"
+    },
+    "configuration_and_grants_unchanged": true,
+    "relationship_business_hashes_before": {
+      "owner_relationships": "cb5feed1d15d5331d6e77cb5b8e2608af8cbc2088a3876f2ae2d3b6a4ae86cde",
+      "node_b_relationships": "7480c1495f60ead504147619011cb15d3c03067b814ad7f5a7a33723c82e5156",
+      "node_c_relationships": "92e17d7c0481ba3d3ad53ddc973ee8fc30d9fd81127deac3463a81a9dc5eb509"
+    },
+    "relationship_business_hashes_after": {
+      "owner_relationships": "cb5feed1d15d5331d6e77cb5b8e2608af8cbc2088a3876f2ae2d3b6a4ae86cde",
+      "node_b_relationships": "7480c1495f60ead504147619011cb15d3c03067b814ad7f5a7a33723c82e5156",
+      "node_c_relationships": "92e17d7c0481ba3d3ad53ddc973ee8fc30d9fd81127deac3463a81a9dc5eb509"
+    },
+    "relationship_hash_exclusions": [
+      "nonces"
+    ],
+    "nonce_counts_before": {
+      "owner_relationships": 2,
+      "node_b_relationships": 0,
+      "node_c_relationships": 0
+    },
+    "nonce_counts_after": {
+      "owner_relationships": 3,
+      "node_b_relationships": 0,
+      "node_c_relationships": 0
+    },
+    "nonce_write_scope": "Authenticated catalog anti-replay protocol state only; all other friend state remains compared.",
+    "setup_receiver_visible_services": {
+      "node-b": [
+        "src-2f9356bae8f44fb7-8ed3f6ad685b"
+      ],
+      "node-c": []
+    },
+    "setup_admission_probes": [
+      {
+        "model": "model-a",
+        "receiver_peer_id": "cNHUpIIhAvIumdReLP6C7BS9mwt6BVoa0nGRpLrAf8I=",
+        "signed_request": true,
+        "copied_other_grant": false,
+        "result": "allowed",
+        "state": "succeeded",
+        "error_code": null,
+        "response_authenticated": true,
+        "upstream_requests": 1
+      },
+      {
+        "model": "model-b",
+        "receiver_peer_id": "mJpPRaVbzgfStf7LSdoD8kgVKOlLHJ92jrBJsh+XSHk=",
+        "signed_request": true,
+        "copied_other_grant": false,
+        "result": "denied",
+        "error_code": "personal_space_access_denied",
+        "upstream_requests": 0
+      },
+      {
+        "model": "model-a",
+        "receiver_peer_id": "mJpPRaVbzgfStf7LSdoD8kgVKOlLHJ92jrBJsh+XSHk=",
+        "signed_request": true,
+        "copied_other_grant": true,
+        "result": "denied",
+        "state": "rejected",
+        "error_code": "ai_permission_denied",
+        "response_authenticated": true,
+        "upstream_requests": 0
+      },
+      {
+        "model": "model-b",
+        "receiver_peer_id": "cNHUpIIhAvIumdReLP6C7BS9mwt6BVoa0nGRpLrAf8I=",
+        "signed_request": true,
+        "copied_other_grant": true,
+        "result": "denied",
+        "error_code": "personal_space_access_denied",
+        "upstream_requests": 0
+      }
+    ],
+    "setup_fixture_http_audit": [
+      {
+        "model": "alpha",
+        "saved": false,
+        "time": 1791975267.3010607,
+        "kind": "chat",
+        "max_tokens": 4096,
+        "authenticated": true,
+        "status": 200
+      },
+      {
+        "model": "alpha",
+        "saved": false,
+        "time": 1791975267.3036067,
+        "kind": "tool_start",
+        "max_tokens": 4096,
+        "authenticated": true,
+        "status": 200
+      },
+      {
+        "model": "alpha",
+        "saved": false,
+        "time": 1791975267.305508,
+        "kind": "tool_continue",
+        "max_tokens": 4096,
+        "authenticated": true,
+        "status": 200
+      },
+      {
+        "model": "beta",
+        "saved": false,
+        "time": 1791975267.3074622,
+        "kind": "chat",
+        "max_tokens": 4096,
+        "authenticated": true,
+        "status": 200
+      },
+      {
+        "model": "alpha",
+        "saved": false,
+        "time": 1791975267.3148694,
+        "kind": "chat",
+        "max_tokens": 4096,
+        "authenticated": true,
+        "status": 200
+      },
+      {
+        "model": "alpha",
+        "saved": false,
+        "time": 1791975267.3183327,
+        "kind": "tool_start",
+        "max_tokens": 4096,
+        "authenticated": true,
+        "status": 200
+      },
+      {
+        "model": "alpha",
+        "saved": false,
+        "time": 1791975267.3202846,
+        "kind": "tool_continue",
+        "max_tokens": 4096,
+        "authenticated": true,
+        "status": 200
+      },
+      {
+        "model": "alpha",
+        "saved": false,
+        "time": 1791975269.5995815,
+        "kind": "chat",
+        "max_tokens": 10,
+        "authenticated": true,
+        "status": 200
+      }
+    ],
+    "task_fixture_http_audit": [],
+    "http_audit_scope": "Synthetic source only; planner traffic is recorded separately in model_calls.",
+    "catalog_authentication": [
+      {
+        "peer_id": "cNHUpIIhAvIumdReLP6C7BS9mwt6BVoa0nGRpLrAf8I=",
+        "authenticated": true
+      },
+      {
+        "peer_id": "mJpPRaVbzgfStf7LSdoD8kgVKOlLHJ92jrBJsh+XSHk=",
+        "authenticated": true
+      },
+      {
+        "peer_id": "cNHUpIIhAvIumdReLP6C7BS9mwt6BVoa0nGRpLrAf8I=",
+        "authenticated": true
+      }
+    ],
+    "rejected_tools": [],
+    "executed_read_tools": [],
+    "source_replacements": [],
+    "grant_changes": [],
+    "read_only_boundary_passed": true
+  },
+  "consumer_role": "node-b_authorized_peer_consumer",
+  "provider_peer_id": "IEEDKP9F3eyPAOvIQ65ZkIQ9ulpHnBgqW0JDQDveYhA=",
+  "primary_model": "peer/49229086a827857f436fd0c8dc428cba045df2a7944a65762d77d9e12a044c30/src-2f9356bae8f44fb7-8ed3f6ad685b",
+  "consumer_local_sources": [],
+  "initial_consumer_models": [
+    {
+      "id": "peer/49229086a827857f436fd0c8dc428cba045df2a7944a65762d77d9e12a044c30/src-2f9356bae8f44fb7-8ed3f6ad685b",
+      "name": "source-alpha · alpha",
+      "source": "peer",
+      "source_name": "owner-provider",
+      "service_id": "src-2f9356bae8f44fb7-8ed3f6ad685b",
+      "peer_id": "IEEDKP9F3eyPAOvIQ65ZkIQ9ulpHnBgqW0JDQDveYhA=",
+      "adapter": "openai_compatible",
+      "runtime": "external",
+      "model_id": "source-alpha · alpha",
+      "source_id": "",
+      "destination_revision": "d6111d9c1de3590df5a41d2fce21165d1029de8da52d3758fb07d0713c3ff12b",
+      "available": true,
+      "agent_supported": true,
+      "tool_support": "supported",
+      "context_window": 32768,
+      "streaming": true,
+      "max_output_tokens": 4096,
+      "sharing": true,
+      "sharing_basis": "remote_catalog_advertisement",
+      "sharing_configuration_known": false,
+      "share_scope": "unknown",
+      "destination_binding_supported": true,
+      "expected_model_binding": {
+        "model_binding": {
+          "model_generation": "5233dd49ef96447592850889d536f71b",
+          "rule_revision": "c7d00a3eb8774b88a900d4fe4e778862",
+          "service_id": "src-2f9356bae8f44fb7-8ed3f6ad685b",
+          "version": "ryn.model-binding.v1"
+        },
+        "ai_permission": {
+          "relationship_id": "f8aadc593a6746978e7123fbb2de9eee",
+          "revision": 1
+        },
+        "consumer_peer_id": "cNHUpIIhAvIumdReLP6C7BS9mwt6BVoa0nGRpLrAf8I="
+      },
+      "consumer_peer_id": "cNHUpIIhAvIumdReLP6C7BS9mwt6BVoa0nGRpLrAf8I=",
+      "recipient_access": {
+        "kind": "friend",
+        "consumer_peer_id": "cNHUpIIhAvIumdReLP6C7BS9mwt6BVoa0nGRpLrAf8I=",
+        "basis": "authenticated_catalog_observation",
+        "catalog_available": true,
+        "current_access": "unknown",
+        "invocation_verified": false,
+        "ai_permission": {
+          "relationship_id": "f8aadc593a6746978e7123fbb2de9eee",
+          "revision": 1
+        }
+      },
+      "description": "可供本机 Agent 使用；工具在本机执行。"
+    }
+  ],
+  "current_consumer_models": [
+    {
+      "id": "peer/49229086a827857f436fd0c8dc428cba045df2a7944a65762d77d9e12a044c30/src-2f9356bae8f44fb7-8ed3f6ad685b",
+      "name": "source-alpha · alpha",
+      "source": "peer",
+      "source_name": "owner-provider",
+      "service_id": "src-2f9356bae8f44fb7-8ed3f6ad685b",
+      "peer_id": "IEEDKP9F3eyPAOvIQ65ZkIQ9ulpHnBgqW0JDQDveYhA=",
+      "adapter": "openai_compatible",
+      "runtime": "external",
+      "model_id": "source-alpha · alpha",
+      "source_id": "",
+      "destination_revision": "d6111d9c1de3590df5a41d2fce21165d1029de8da52d3758fb07d0713c3ff12b",
+      "available": true,
+      "agent_supported": true,
+      "tool_support": "supported",
+      "context_window": 32768,
+      "streaming": true,
+      "max_output_tokens": 4096,
+      "sharing": true,
+      "sharing_basis": "remote_catalog_advertisement",
+      "sharing_configuration_known": false,
+      "share_scope": "unknown",
+      "destination_binding_supported": true,
+      "expected_model_binding": {
+        "model_binding": {
+          "model_generation": "5233dd49ef96447592850889d536f71b",
+          "rule_revision": "c7d00a3eb8774b88a900d4fe4e778862",
+          "service_id": "src-2f9356bae8f44fb7-8ed3f6ad685b",
+          "version": "ryn.model-binding.v1"
+        },
+        "ai_permission": {
+          "relationship_id": "f8aadc593a6746978e7123fbb2de9eee",
+          "revision": 1
+        },
+        "consumer_peer_id": "cNHUpIIhAvIumdReLP6C7BS9mwt6BVoa0nGRpLrAf8I="
+      },
+      "consumer_peer_id": "cNHUpIIhAvIumdReLP6C7BS9mwt6BVoa0nGRpLrAf8I=",
+      "recipient_access": {
+        "kind": "friend",
+        "consumer_peer_id": "cNHUpIIhAvIumdReLP6C7BS9mwt6BVoa0nGRpLrAf8I=",
+        "basis": "authenticated_catalog_observation",
+        "catalog_available": true,
+        "current_access": "unknown",
+        "invocation_verified": false,
+        "ai_permission": {
+          "relationship_id": "f8aadc593a6746978e7123fbb2de9eee",
+          "revision": 1
+        }
+      },
+      "description": "可供本机 Agent 使用；工具在本机执行。"
+    }
+  ],
+  "consumer_wire_audit": [
+    {
+      "task_id": "agent_2e81d91306ca46c4a051d3f344119015",
+      "service_id": "src-2f9356bae8f44fb7-8ed3f6ad685b",
+      "provider_peer_id": "IEEDKP9F3eyPAOvIQ65ZkIQ9ulpHnBgqW0JDQDveYhA=",
+      "consumer_peer_id": "cNHUpIIhAvIumdReLP6C7BS9mwt6BVoa0nGRpLrAf8I=",
+      "expected_model_binding": {
+        "model_binding": {
+          "model_generation": "5233dd49ef96447592850889d536f71b",
+          "rule_revision": "c7d00a3eb8774b88a900d4fe4e778862",
+          "service_id": "src-2f9356bae8f44fb7-8ed3f6ad685b",
+          "version": "ryn.model-binding.v1"
+        },
+        "ai_permission": {
+          "relationship_id": "f8aadc593a6746978e7123fbb2de9eee",
+          "revision": 1
+        },
+        "consumer_peer_id": "cNHUpIIhAvIumdReLP6C7BS9mwt6BVoa0nGRpLrAf8I="
+      },
+      "transport": "local_signed_wire_fixture",
+      "response_received": true,
+      "state": "succeeded",
+      "error_code": null
+    }
+  ],
+  "agent_state_isolation": {
+    "consumer_store_exists": true,
+    "provider_store_exists": false,
+    "consumer_task_ids": [
+      "agent_200ee77eeb924d14bbbfaadaed5a7d31"
+    ],
+    "provider_task_ids": [],
+    "task_ids_overlap": [],
+    "consumer_message_counts": {
+      "agent_200ee77eeb924d14bbbfaadaed5a7d31": 1
+    },
+    "consumer_tool_execution_peer_id": "cNHUpIIhAvIumdReLP6C7BS9mwt6BVoa0nGRpLrAf8I=",
+    "provider_persistence_scope": "Provider inference orders, quota counters and transport logs are permitted; these are not Agent tasks or tool execution."
+  },
+  "catalog_refresh_errors": [],
+  "transport_scope": "Production signed consumer/provider protocol over a local fixture wire; no ICE or physical-node claim.",
+  "source_readback_scope": "Provider business truth for collector review only; model facts must come from actual execution-node tool observations.",
+  "metrics": {
+    "writes": 0
+  },
+  "physical_hosts": 1,
+  "write_counting_scope": "Task interval only, after fixture initialization and signed setup probes; source replacements plus changed grant mutations.",
+  "two_physical_nodes": "pending",
+  "normalizer_status": "pending integration",
+  "actual_source_http_audit": [
+    {
+      "model": "alpha",
+      "saved": false,
+      "time": 1791975267.3010607,
+      "kind": "chat",
+      "max_tokens": 4096,
+      "authenticated": true,
+      "status": 200
+    },
+    {
+      "model": "alpha",
+      "saved": false,
+      "time": 1791975267.3036067,
+      "kind": "tool_start",
+      "max_tokens": 4096,
+      "authenticated": true,
+      "status": 200
+    },
+    {
+      "model": "alpha",
+      "saved": false,
+      "time": 1791975267.305508,
+      "kind": "tool_continue",
+      "max_tokens": 4096,
+      "authenticated": true,
+      "status": 200
+    },
+    {
+      "model": "beta",
+      "saved": false,
+      "time": 1791975267.3074622,
+      "kind": "chat",
+      "max_tokens": 4096,
+      "authenticated": true,
+      "status": 200
+    },
+    {
+      "model": "alpha",
+      "saved": false,
+      "time": 1791975267.3148694,
+      "kind": "chat",
+      "max_tokens": 4096,
+      "authenticated": true,
+      "status": 200
+    },
+    {
+      "model": "alpha",
+      "saved": false,
+      "time": 1791975267.3183327,
+      "kind": "tool_start",
+      "max_tokens": 4096,
+      "authenticated": true,
+      "status": 200
+    },
+    {
+      "model": "alpha",
+      "saved": false,
+      "time": 1791975267.3202846,
+      "kind": "tool_continue",
+      "max_tokens": 4096,
+      "authenticated": true,
+      "status": 200
+    },
+    {
+      "model": "alpha",
+      "saved": false,
+      "time": 1791975269.5995815,
+      "kind": "chat",
+      "max_tokens": 10,
+      "authenticated": true,
+      "status": 200
+    }
+  ],
+  "reference_accounting_task": {
+    "id": "agent_200ee77eeb924d14bbbfaadaed5a7d31",
+    "client_request_id": null,
+    "title": "说明 model-b 为什么 node-c 不能调用。核对该模型分享与接收授权，不修改规则，也不要把同来源 model-a 的授权当成 model-b 的。",
+    "model_id": "peer/49229086a827857f436fd0c8dc428cba045df2a7944a65762d77d9e12a044c30/src-2f9356bae8f44fb7-8ed3f6ad685b",
+    "status": "queued",
+    "revision": 1,
+    "created_at": "2026-10-14T10:54:29.795636+00:00",
+    "updated_at": "2026-10-14T10:54:29.796614+00:00",
+    "messages": [
+      {
+        "role": "user",
+        "content": "说明 model-b 为什么 node-c 不能调用。核对该模型分享与接收授权，不修改规则，也不要把同来源 model-a 的授权当成 model-b 的。",
+        "message_id": "agent_200ee77eeb924d14bbbfaadaed5a7d31:owner:0"
+      }
+    ],
+    "events": [
+      {
+        "seq": 1,
+        "type": "created",
+        "at": "2026-10-14T10:54:29.796614+00:00",
+        "context_epoch": 0
+      }
+    ],
+    "pending_approval": null,
+    "steps": 0,
+    "result": "",
+    "error": null,
+    "limits": {
+      "max_steps": 24,
+      "max_seconds": 600,
+      "max_context_chars": 100000,
+      "max_output_chars": 20000
+    },
+    "permission_mode": "read_only",
+    "allowed_write_tools": [],
+    "model_destination": {
+      "catalog_model_id": "peer/49229086a827857f436fd0c8dc428cba045df2a7944a65762d77d9e12a044c30/src-2f9356bae8f44fb7-8ed3f6ad685b",
+      "provider_peer_id": "IEEDKP9F3eyPAOvIQ65ZkIQ9ulpHnBgqW0JDQDveYhA=",
+      "source_id": "",
+      "destination_revision": "d6111d9c1de3590df5a41d2fce21165d1029de8da52d3758fb07d0713c3ff12b"
+    },
+    "local_execution": {
+      "workspace_root": "C:\\Users\\子陵\\AppData\\Local\\Temp\\ryn-query-development-5grcs3lu\\receiver\\agent\\files",
+      "desktop_access": false
+    },
+    "schema_version": 2,
+    "goal": {
+      "revision": 1,
+      "kind": "unclassified",
+      "original_message_id": "agent_200ee77eeb924d14bbbfaadaed5a7d31:owner:0",
+      "text": "说明 model-b 为什么 node-c 不能调用。核对该模型分享与接收授权，不修改规则，也不要把同来源 model-a 的授权当成 model-b 的。",
+      "constraints": [
+        {
+          "id": "constraint:agent_200ee77eeb924d14bbbfaadaed5a7d31:owner:0",
+          "text": "说明 model-b 为什么 node-c 不能调用。核对该模型分享与接收授权，不修改规则，也不要把同来源 model-a 的授权当成 model-b 的。",
+          "source": "user",
+          "message_id": "agent_200ee77eeb924d14bbbfaadaed5a7d31:owner:0",
+          "required": true
+        }
+      ]
+    },
+    "criteria": [
+      {
+        "id": "goal-coverage",
+        "goal_revision": 1,
+        "source": "user",
+        "source_ref": "agent_200ee77eeb924d14bbbfaadaed5a7d31:owner:0",
+        "required": true,
+        "kind": "semantic",
+        "description": "Satisfy the owner's complete current goal and constraints.",
+        "verifier": null,
+        "status": "pending",
+        "evidence_refs": []
+      }
+    ],
+    "plan": {
+      "revision": 0,
+      "goal_revision": 1,
+      "steps": []
+    },
+    "control_revision": 1,
+    "event_cursor": 1,
+    "run_state": "queued",
+    "pending_input": null,
+    "outcome": {
+      "status": "unverified",
+      "goal_revision": 1,
+      "criteria_results": [],
+      "summary": "",
+      "evidence_refs": [],
+      "uncertainties": [
+        "Independent goal verification is not available."
+      ]
+    },
+    "scope_revision": 1,
+    "archived": false,
+    "skills": [],
+    "budget": {
+      "limits": {
+        "max_total_model_calls": 128,
+        "max_total_tool_calls": 256,
+        "max_total_tokens": 2000000,
+        "max_total_seconds": 3600
+      },
+      "round": 1,
+      "lifetime": {
+        "model_calls": 1,
+        "tool_calls": 0,
+        "charged_model_calls": 1,
+        "charged_tool_calls": 0,
+        "known_input_tokens": 0,
+        "known_output_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "charged_tokens": 0,
+        "charged_seconds": 0.1879999999946449,
+        "active_seconds": 0.1879999999946449,
+        "cost": null,
+        "cost_status": "unknown",
+        "usage_complete": true,
+        "legacy_usage_unknown": false,
+        "unsettled_operations": 0
+      },
+      "current_round": {
+        "model_calls": 1,
+        "tool_calls": 0,
+        "charged_model_calls": 1,
+        "charged_tool_calls": 0,
+        "known_input_tokens": 0,
+        "known_output_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "charged_tokens": 0,
+        "charged_seconds": 0.1879999999946449,
+        "active_seconds": 0.1879999999946449,
+        "cost": null,
+        "cost_status": "unknown",
+        "usage_complete": true,
+        "legacy_usage_unknown": false,
+        "unsettled_operations": 0
+      },
+      "reservation_policy": "Unknown model usage retains the conservative dispatch reservation; cost is unknown without trusted pricing."
+    },
+    "run_timing": {
+      "recorded_seconds": 0.0,
+      "elapsed_seconds": 0.0,
+      "max_seconds": 600,
+      "measurement": "recorded"
+    },
+    "allowed_actions": {
+      "pause": {
+        "enabled": true,
+        "requires_control_revision": false,
+        "reason": null
+      },
+      "cancel": {
+        "enabled": true,
+        "requires_control_revision": false,
+        "reason": null
+      },
+      "resume": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "approve": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "deny": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "answer": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "steer": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "information": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "scope": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "reconcile": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "archive": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "restore": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "delete": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "budget": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "source_credential": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "model": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      }
+    }
+  },
+  "reference_final_answer": null,
+  "elapsed_seconds": 15.40700000000652,
+  "ended_at": "2026-10-14T10:54:42.514006+00:00",
+  "owner_source_unchanged": true,
+  "code_unchanged": true
+}

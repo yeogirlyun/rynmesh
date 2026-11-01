@@ -1,0 +1,11 @@
+{
+  "reviewer": "root coordinator, independent of the GLM task model",
+  "formal_case_score": false,
+  "overall": "semantic_review_failed",
+  "mechanical_result": "Pinned ZCode ran seven model requests including its native goal verifier, seven business tools and one exact approval. The sole 1281-byte report exists, is independently read back, and original files are unchanged. The native verifier returned valid passed JSON, not its malformed-JSON fallback.",
+  "artifact_sha256": "d089496cdcda45bfba2332d47e25415f67b42136a1d7bfcaafe0ea7eab64a2d7",
+  "blocking_observation": "The generated report adds the factual assertion '剩余工作量集中在供应商交付相关事项上'. The fixed sources establish seven remaining work items and supplier delay, but do not establish that the remaining work is concentrated in supplier delivery. This unsupported connection is presented as fact, so an independently reviewed complete success is not established despite native target_status=complete.",
+  "confirmed_content": "35/42/7, 2026-10-16 replacing 2026-10-12, R-07/Mei Chen, D-19, and three named source citations are correct.",
+  "measurement_note": "Native returned turn usage covers six generation calls and excludes its subsequent completion verifier. Use the seven individually collected provider usages and dispatch counts for total usage; never use the native turn subtotal as the full-run total.",
+  "limits": ["code_unchanged=false", "additional source-draft tools became registered during ongoing development before this run, so this is not an exact matched final snapshot", "one development wiring trial, not formal reference score"]
+}

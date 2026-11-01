@@ -1,0 +1,32 @@
+{
+  "classification": "development workflow passed; formal acceptance pending",
+  "formal_case_score": false,
+  "reviewer": "Root coordinator read the frozen development F02 prompt, all three source fixture files, actual generated report, planner final answer, tool receipts and DAV audit. Separate Astra review and final repetitions remain pending.",
+  "real_model_calls": 8,
+  "elapsed_seconds": 161.094,
+  "code_unchanged": true,
+  "owner_source_unchanged": true,
+  "meaningful_operations": 8,
+  "finding": "The planner discovered the authorized roots, listed the input directory, read the three source files, checked the output directory, requested the exact new file, and read it back. The report correctly preserves 35/42/7, approved launch date 2026-10-16 superseding 2026-10-12, risk R-07, decision D-19 and all three source names. It claims no unsupported configuration change.",
+  "artifact": {
+    "path": "reports/acceptance/week-41.md",
+    "sha256": "552fa556e7caf36e128dc4930ba1b974e7fcef4fca05c0f21b6ecc63031e93a0",
+    "bytes": 1419
+  },
+  "write_audit": {
+    "put_count": 1,
+    "successful_create_count": 1,
+    "source_files_unchanged": true
+  },
+  "mechanical_checks": {
+    "exact_artifact_paths": true,
+    "source_files_unchanged": true,
+    "no_unexpected_writes": true
+  },
+  "limitations": [
+    "One development run, not final same-snapshot three repetitions.",
+    "Collector security fields do not cover the entire universal security audit.",
+    "No independent Astra review or matched native-reference quality score.",
+    "Same physical host with isolated actual HTTP DAV, not two physical nodes."
+  ]
+}

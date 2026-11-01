@@ -1,0 +1,17 @@
+{
+  "classification": "development semantic failure despite runtime verified",
+  "formal_case_score": false,
+  "reviewer": "Root coordinator independently read the retained final answer, actual source records and probe receipts against the frozen Q02 requirement.",
+  "real_model_calls": 4,
+  "elapsed_seconds": 165.797,
+  "code_unchanged": true,
+  "owner_source_unchanged": true,
+  "source_configuration_unchanged": true,
+  "supported": "The source had an actual connection_refused probe; credential presence does not establish credential validity. No configuration was changed.",
+  "failures": [
+    "The answer says 不是额度问题 even though quota is explicitly unmeasured. A connection refusal identifies the observed failure stage; it cannot establish that an independent quota problem is absent.",
+    "The answer also asserts the fault is confined to one port and rules out general local network failure using configured readiness/self-online facts, which are not exhaustive network evidence.",
+    "The separate semantic checker returned passed despite these unsupported exclusions; runtime verified is therefore not accepted as the development review verdict."
+  ],
+  "follow_up": "Strengthen generic planner/checker distinction between observed failure, untested causes and unsupported negative claims; preserve original task and tool facts. Revalidate through a new recorded real trial, not by editing this response or supplying task-specific hints. Non-author Astra review remains pending."
+}

@@ -1,0 +1,6 @@
+{
+  "connected": "Drive connected. You can close this window and return to Ryn.",
+  "failed": "Drive authorization failed. Return to Ryn and try again.",
+  "invalid_state": "Invalid authorization state. Return to Ryn and start authorization again.",
+  "expired": "Authorization expired. Return to Ryn and try again."
+}

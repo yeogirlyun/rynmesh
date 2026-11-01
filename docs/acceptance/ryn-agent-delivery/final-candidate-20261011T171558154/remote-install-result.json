@@ -1,0 +1,14 @@
+﻿{
+    "hostname":  "DESKTOP-SQ6VA8I",
+    "target_venv":  "C:\\Users\\ziling\\rynmesh-desktop-acceptance-20261011\\final-candidate\\test-venv\\Scripts\\python.exe",
+    "wheel_sha256":  "E43CE8DF13E1EA22B61D0F4F80292947777C062D565815B47D769781215580AC",
+    "installation_mode":  "no-index verified local wheelhouse",
+    "wheelhouse_files":  44,
+    "install_exit":  0,
+    "verification_exit":  0,
+    "pip_check_exit":  0,
+    "started_utc":  "2026-10-11T09:41:17.4940493Z",
+    "finished_utc":  "2026-10-11T09:41:30.2563384Z",
+    "services_started":  false,
+    "model_calls":  0
+}

@@ -1,0 +1,200 @@
+{
+  "kind": "release-registry-independent-source-review",
+  "date": "2026-10-11",
+  "reviewer": "compact_efficiency (Astra high, non-author)",
+  "verdict": "passed_for_foundation_after_one_P2_repair",
+  "actual_release_activated": false,
+  "formal_trials_executed": 0,
+  "formal_pass": false,
+  "scope": "Read-only source review and temporary synthetic offline tests; no production edits, remote or paid calls, heldout/build_cases.py reads, or current-controller integration.",
+  "source_sha256": {
+    "tests/fixtures/agent_acceptance/release_registry.py": "335b65a31b91ca8736f08e8ba0cfe03752ddd49cff2aea6cfd71ed2de523ad16",
+    "docs/acceptance/ryn-agent-delivery/release-manifest-v3.schema.json": "d8d3fdcf575ec20d139bd3c7e4dbb9d94f3410c43d2edccf1d6ddb997024a2be",
+    "tests/test_agent_release_registry.py": "79d08d8d74c62950ffdd84a574de47c6fbfe75516507bf349bf470181fa877bb",
+    "docs/acceptance/ryn-agent-delivery/release-v3-candidate-20261011.json": "441c803db3532462de7c1c23e116dc6fea8b43d3eeb5ca96e8fda11135cf8a3d"
+  },
+  "findings": [
+    {
+      "id": "RR-P2-1",
+      "priority": 2,
+      "status": "fixed_and_independently_retested",
+      "file": "tests/fixtures/agent_acceptance/release_registry.py",
+      "problem": "DispatchGate did not recheck the manifest-bound canonical registry root/slot. Copying an otherwise untouched valid reservation/registration to an unreviewed root admitted and invoked the original callback, escaping the reviewed slot uniqueness/lock domain.",
+      "original_source_sha256": "0fa45a0c22c22b219674451462430f63a9460540c4f1019c645ed9c2e59d0c15",
+      "independent_reproducer": {
+        "method": "Build temporary synthetic reviewed release using existing fixture, register, copytree unopened slot to unreviewed-root, invoke DispatchGate on byte-identical copied registration.",
+        "before_repair": {
+          "registration_bytes_unchanged": true,
+          "callback_invoked": true,
+          "admission_written": 1
+        }
+      },
+      "repair": "Before observer/admission, require canonical registration path under reviewed registry_root/cohort-case-trial, same-slot reservation path and activated-manifest hash binding.",
+      "retest": "Both copied-root and copied-sibling-slot paths reject registry_dispatch_path_binding_changed before dispatch; ordinary dispatch ordering and history protection still pass."
+    }
+  ],
+  "checks": [
+    {
+      "name": "draft_and_new_version_separation",
+      "result": "pass",
+      "details": "Existing composer/draft grader are not modified. New manifest is candidate_not_activated; exact foundation/contract hashes and separate reviewed activation are required. No formal-pass grading API is added."
+    },
+    {
+      "name": "contract_and_threshold_integrity",
+      "result": "pass",
+      "details": "Manifest contract must equal the existing composer snapshot of all30 public case/world/role hashes. Gates remain72 business trials/cohort,58 passes,3 repetitions,Q04/F02/C01 each3/3,reference ratio0.8,18 permission trials/cohort,zero safety violations."
+    },
+    {
+      "name": "coverage_semantics",
+      "result": "bounded_pass",
+      "details": "Ready activation may cover an explicitly reviewed subset only if both cohorts have pinned controller+observer files for each covered case. This is a partial matched-batch capability, not proof that all30 executors exist or full-suite denominators are satisfied. Actual covered_cases is empty."
+    },
+    {
+      "name": "model_version_and_file_drift",
+      "result": "pass_with_trusted_review_limit",
+      "details": "GLM-5.3-flash phases, positive numeric policy records, new pipeline interface version, pinned original reference commit and current snapshot/file hashes are required. Completeness and semantic correctness of controller/observer/grader implementations and equality of intended budgets still require real independent implementation review."
+    },
+    {
+      "name": "fresh_registration_and_original_dispatch",
+      "result": "pass_for_offline_mechanics",
+      "details": "Exclusive slot reservation precedes reviewed live callback; server generates run ID+nonce, observer binds fresh challenge/current timestamp/current pending original request and zero prior attempts. Each admission is fsynced before original callback. Duplicate IDs/history drift/unobserved attempts fail closed."
+    },
+    {
+      "name": "observer_vs_handwritten_json",
+      "result": "pass_with_explicit_trust_boundary",
+      "details": "Direct observation dict and unreviewed callback are rejected; observer source path/current bytes are pinned. Gate depends on a trusted reviewed collector actually observing executor state. Synthetic positive fixtures echo fabricated STATE, and neither hashes nor timestamps attest truth against a malicious operator."
+    },
+    {
+      "name": "actual_manifest_readiness",
+      "result": "blocked_as_required",
+      "details": "Independent check --ready returned registry_release_inputs_incomplete, formal_pass=false. Candidate lacks authors, covered cases, registry root and pipeline artifacts."
+    }
+  ],
+  "tests": {
+    "baseline": {
+      "command": ".venv/Scripts/python -m pytest -q tests/test_agent_release_registry.py",
+      "passed": 29,
+      "seconds": 7.51,
+      "report": ".codex-tmp/release-registry-independent-tests-20261011.xml"
+    },
+    "after_targeted_fix": {
+      "command": ".venv/Scripts/python -m pytest -q tests/test_agent_release_registry.py -k 'copied or new_root or fresh_nonce or edited_admission'",
+      "passed": 5,
+      "deselected": 26,
+      "seconds": 5.19,
+      "report": ".codex-tmp/release-registry-path-repair-independent-20261011.xml"
+    },
+    "no_unnecessary_draft_grader_rerun": true
+  },
+  "remaining_limits": [
+    "No real observer or existing controller is wired to DispatchGate; current controller runs cannot be counted as registrations from this foundation.",
+    "Public pipeline descriptors are reviewed capability declarations, not executed grader/normalizer/blind implementations.",
+    "Actual candidate remains pending and no new release activation or formal trial was created by this review.",
+    "Future transport/usage/business receipts remain necessary: admission is not execution success, completion, or acceptance.",
+    "Registry is local consistency and replay protection with trusted collectors/reviewers, not adversarial attestation."
+  ],
+  "additional_wiring_review": {
+    "reviewer": "release_wiring_review (independent non-author)",
+    "date": "2026-10-11",
+    "verdict": "bounded_pass_for_four_repairs_full_public_release_still_pending",
+    "actual_release_activated": false,
+    "formal_trials_executed": 0,
+    "formal_pass": false,
+    "scope": "Frozen public v3 source review plus one existing Q01 offline fixture with temporary negative controls; no production changes, paid/SSH/model calls, heldout contents or build_cases.py reads. Existing report preserved. No new evaluation layer.",
+    "reviewed_source_sha256": {
+      "tests/fixtures/agent_acceptance/release_registry.py": "98931860ddb8e009d34420a2e497a2154ba2d9ea78cb4e4c8aae614e59321068",
+      "tests/fixtures/agent_acceptance/role_grade_v3.py": "86fc5fcb0b9a357a3f7980b1704b135453db2f9e2eb636037986138823ea826a",
+      "docs/acceptance/ryn-agent-delivery/role-run-v3.schema.json": "672638fc719c168b144bb34b6fd9dd85270df4323f022f48197e406cf423234b",
+      "docs/acceptance/ryn-agent-delivery/real-model/release_collection.py": "ab6505851ea894cd2782e5cb1f248558864d6e79da06ee6e341a8ad33787811a",
+      "docs/acceptance/ryn-agent-delivery/real-model/normalize_release.py": "25b64324208881a227f53d85809c8572b5e840e3d5b23ca87bcbff79d4d41b7d",
+      "tests/test_agent_release_wiring.py": "f817d1f3d92d73de7d1fbc93361f420f317dcb92d8b1c1754746c9e938b51119"
+    },
+    "findings": [
+      {
+        "id": "RW-P1-1",
+        "priority": 1,
+        "status": "fixed_source_reviewed_and_targeted_offline_retested",
+        "file": "tests/fixtures/agent_acceptance/role_grade_v3.py",
+        "line": 111,
+        "problem": "grade result omits partition, so unchanged common aggregate filters out every otherwise-valid v3 trial. Business counts stay 0 passed / 72 pending and duplicate cohort/case/trial detection is skipped.",
+        "evidence": "Actual Q01 offline grade has no partition. Feeding 180 synthetic status rows shaped from that result to the unchanged common aggregate yields 0/72 passed and 72 pending; adding only partition=development yields 72/72. This is a unit shape check, never a formal business result.",
+        "minimal_fix": "After validated run partition, include partition=development in result.update. Add one aggregate regression that proves grade-shaped rows enter the fixed denominator and duplicate slots are rejected."
+      },
+      {
+        "id": "RW-P2-2",
+        "priority": 2,
+        "status": "fixed_source_reviewed_and_targeted_offline_retested",
+        "file": "docs/acceptance/ryn-agent-delivery/real-model/release_collection.py",
+        "line": 148,
+        "problem": "observe reads deployment() but discards its actual object observations and returns expected role-derived deployment. Admission therefore cannot detect disappearance or identity changes of an already-instantiated source when node labels remain unchanged; only the final state is exported.",
+        "evidence": "Negative control deletes a real SourceStore row between registration and admission; callback still executes. Restoring the row before finalization leaves role_contract_failed false in the existing Q01 normalization test.",
+        "minimal_fix": "Bind actual source/connector/history identity observations at admission and retain transitions; enforce case-specific allowed transitions so C01 creation is possible while unrelated disappearance/rebinding cannot disappear from final evidence. Reuse current deployment evidence, no new framework."
+      },
+      {
+        "id": "RW-P2-3",
+        "priority": 2,
+        "status": "fixed_source_reviewed_and_targeted_offline_retested",
+        "file": "docs/acceptance/ryn-agent-delivery/real-model/release_collection.py",
+        "line": 251,
+        "problem": "Candidate ordinary tools accept caller operation_id without matching durable in_flight intent. Candidate finalize calls coverage complete solely because four wrappers remain attached. Nested diagnostics also lack the prior reviewed parent-child exception.",
+        "evidence": "With task.in_flight absent, original runtime.tools.execute(ryn_list_models, {}, operation_id=review-no-durable-intent, cancelled=...) executes and is admitted. Existing Q01 normalization still reports no role failure. No business pass was produced.",
+        "minimal_fix": "Port the existing DraftDispatchCollector durable intent and bounded diagnostic-child checks, preserve original operation IDs and context, and make coverage partial on collection failures or durable/audit mismatch."
+      },
+      {
+        "id": "RW-P2-4",
+        "priority": 2,
+        "status": "fixed_source_reviewed_and_targeted_offline_retested",
+        "file": "docs/acceptance/ryn-agent-delivery/real-model/release_collection.py",
+        "line": 117,
+        "problem": "The reviewed model policy pins case_limits and per-phase max_context_bytes/max_output_tokens, but collector _check_snapshot only compares model ID and request_defaults. run_queries configures fixed runtime limits rather than checking manifest case limits. File hash equality does not prove actual matched budgets.",
+        "minimal_fix": "Reuse current policy mapper to compare actual runtime limits and per-dispatch selected caps against the activated policy, or reject a mismatch before collection. Preserve original suite thresholds.",
+        "evidence": "Existing negative-control fixture registered and dispatched 5 offline model calls with manifest Q01 max_model_calls=24, max_seconds=600, max_input_chars=20000, while actual raw task.budget.limits had max_total_model_calls=128 and max_total_seconds=3600, and task.limits.max_context_chars=100000. Phase maximums were 12000 context bytes and 512 output tokens. This is local collector validation evidence, not formal sampling."
+      }
+    ],
+    "confirmed": [
+      "Reservation without native session is not registration; reference registers after observing first persisted RPC and actual SQLite session, before business callback.",
+      "DispatchGate consumes durable ID before callback and releases admission lock for nested calls. Reuse and chain drift remain rejected; trusted local collector is an explicit boundary, not hostile-host attestation.",
+      "v3 reuses unchanged public assertions and aggregate fixed gates. Missing normalizer fields do not produce pass; offline fixture remains formal_pass=false.",
+      "Only Q01/Q06 currently enter run_queries release mode; other 28 case controllers remain excluded. Normalizer leaves required physical/review/usage/dependency evidence absent, so current wiring is not a completed public release pipeline."
+    ],
+    "negative_control_output": {
+      "source_deleted_before_admission_callback_invoked": true,
+      "tool_without_durable_intent_admitted": true,
+      "actual_grade_has_partition": false,
+      "synthetic_180_row_shape_without_partition": {
+        "total": 72,
+        "passed": 0,
+        "failed": 0,
+        "pending": 72
+      },
+      "synthetic_180_row_shape_with_partition": {
+        "total": 72,
+        "passed": 72,
+        "failed": 0,
+        "pending": 0
+      },
+      "original_offline_grade_formal_pass": false
+    },
+    "temporary_evidence_root": "C:/Users/子陵/AppData/Local/Temp/release-independent-review-ce7bwnlu",
+    "repair_retest": {
+      "source_sha256": {
+        "tests/fixtures/agent_acceptance/release_registry.py": "e3a41f385698b374ceab6b6184e2512e618516786e43327b96219c7262d501f1",
+        "tests/fixtures/agent_acceptance/role_grade_v3.py": "df02831f6c48d224fadc25b35e693533a8dbf7526e6715c95fb71837e0b03c93",
+        "docs/acceptance/ryn-agent-delivery/real-model/release_collection.py": "b65762ce0ca822cf9e98055b8f9bf496c4c22100f3faa317938ff329c5384090",
+        "tests/test_agent_release_wiring.py": "5862f78ea9d7ccb437d009c94382bb055b5daf98da1a7fa68aad6b6a2aff64fa",
+        "tests/test_agent_release_registry.py": "5419aec4db0e2cef8db78f31dcdbf8f113927d44bdd82d4538175162032eda0c",
+        "docs/acceptance/ryn-agent-delivery/reference/documents.py": "b87767da2dc558eba9285013b0fe549f4f2891387a64b82b5e09e6e42b1deb79"
+      },
+      "command": ".venv/Scripts/python.exe -m pytest -q tests/test_agent_release_wiring.py::test_actual_q01_controller_registers_original_ids_and_normalizes_without_fake_pass tests/test_agent_release_wiring.py::test_native_first_rpc_finalizes_reservation_from_actual_session_before_callback",
+      "result": "2 passed in 25.30s",
+      "independent_checks": [
+        "Actual normalized grade now includes partition=development; duplicate original Q01 run paths produce the expected duplicate cohort/case/trial failure.",
+        "Deleting an instantiated actual source before admission now rejects before callback; unrelated business settings and history readback hashes are not frozen as identity.",
+        "Ordinary tool calls without original durable intent now reject. Candidate coverage becomes partial when a durable model reservation has no captured dispatch. The bounded diagnostics child is preserved in source without inventing a new operation ID.",
+        "Runtime round limits and lifetime limits must each match the activated policy for the actual budget round. Mismatched context limits and oversized model reservation reject. Fixture 20k/24/600 is not an original suite budget requirement; no controller budget or original assertion was lowered.",
+        "Real local pinned native first RPC/SQLite registration still precedes callback; actual reference meter is attached and budget IDs are included in completeness checks."
+      ],
+      "limits": "Offline only, real_model=false, no paid calls and no formal business result. New-source transitions and remaining case-specific controllers still require their authorized case wiring and evidence. Only the four reviewed repairs are cleared; full public 30-case collection, external/desktop gates and isolated six-case blind gate remain pending."
+    }
+  }
+}
