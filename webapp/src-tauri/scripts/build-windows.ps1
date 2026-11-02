@@ -26,6 +26,14 @@ function Assert-Success([string]$Step) {
     if ($LASTEXITCODE -ne 0) { throw "$Step failed (exit $LASTEXITCODE)." }
 }
 
+Push-Location (Join-Path $repoRoot 'webapp')
+try {
+    npm.cmd ci
+    Assert-Success 'Install frontend dependencies'
+    npm.cmd run build
+    Assert-Success 'Build frontend before freezing bundled node'
+} finally { Pop-Location }
+
 if (-not $SkipSidecar) {
     New-Item -ItemType Directory -Force -Path $nativeTargetDir | Out-Null
     $prevCargoTargetDir = $env:CARGO_TARGET_DIR
@@ -73,6 +81,7 @@ if (-not $SkipSidecar) {
             --collect-submodules uvicorn --collect-submodules rynmesh --collect-submodules anyio --collect-submodules aioquic --collect-submodules pypdf `
             --collect-data rynmesh --copy-metadata rynmesh `
             --collect-data jsonschema_specifications --hidden-import ryn_transport `
+            --add-data "${repoRoot}/webapp/dist;rynmesh/webui" `
             --distpath $distDir --workpath $workDir `
             --specpath $buildRoot (Join-Path $tauriRoot 'sidecar/rynmesh_peer_entry.py')
         Assert-Success 'Build bundled node'
@@ -118,8 +127,6 @@ if (-not $SkipSidecar) {
 
 Push-Location (Join-Path $repoRoot 'webapp')
 try {
-    npm ci
-    Assert-Success 'Install frontend dependencies'
     $updateArgs = @()
     if ($Updater) {
         if (-not $env:RYN_DESKTOP_UPDATE_PUBLIC_KEY -or -not $env:TAURI_SIGNING_PRIVATE_KEY) {

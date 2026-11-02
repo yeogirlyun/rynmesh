@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { nodeControlUrl } from "../domain/nodeUrl";
 import type { AgentTask } from "../domain/rynAgent";
@@ -15,8 +16,19 @@ async function request<T>(id: string, path: string, body?: unknown): Promise<T> 
   return data;
 }
 
-export default function RynAgentFork({ task, onCreated, onChoose }: {
-  task: AgentTask; onCreated: (task: AgentTask) => void; onChoose: (id: string) => void;
+export function RynAgentForkSource({ task, onChoose }: { task: AgentTask; onChoose: (id: string) => void }) {
+  const { i18n } = useTranslation();
+  const zh = i18n.language.startsWith("zh");
+  if (!task.fork) return null;
+  return <section className="ra-fork"><div role="note">
+    <p>{zh ? "来源：" : "Forked from: "}<button type="button" onClick={() => onChoose(task.fork!.source_task_id)}>{task.fork.source_title}</button>
+      {zh ? `，第 ${task.fork.message_count} 条消息之后` : `, after message ${task.fork.message_count}`}</p>
+    <p>{zh ? "会话独立，但文件共享。" : "Independent conversation, shared files."}</p>
+  </div></section>;
+}
+
+export default function RynAgentFork({ task, onCreated, onChoose, showSource = true }: {
+  task: AgentTask; onCreated: (task: AgentTask) => void; onChoose: (id: string) => void; showSource?: boolean;
 }) {
   const { i18n } = useTranslation();
   const zh = i18n.language.startsWith("zh");
@@ -60,13 +72,9 @@ export default function RynAgentFork({ task, onCreated, onChoose }: {
     } finally { setBusy(false); }
   }
   return <section className="ra-fork">
-    {task.fork && <div role="note">
-      <p>{zh ? "来源：" : "Forked from: "}<button type="button" onClick={() => onChoose(task.fork!.source_task_id)}>{task.fork.source_title}</button>
-        {zh ? `，第 ${task.fork.message_count} 条消息之后` : `, after message ${task.fork.message_count}`}</p>
-      <p>{warning}</p>
-    </div>}
-    <button type="button" onClick={() => void show()}>{zh ? "分叉任务" : "Fork task"}</button>
-    {open && <div className="ra-modal-backdrop"><section className="ra-modal ra-fork-dialog" role="dialog" aria-modal="true" aria-label={zh ? "分叉任务" : "Fork task"}>
+    {showSource && <RynAgentForkSource task={task} onChoose={onChoose} />}
+    <button type="button" onClick={event => { const menu = event.currentTarget.closest("details.ra-chat-menu"); if (menu instanceof HTMLDetailsElement) menu.open = false; void show(); }}>{zh ? "分叉任务" : "Fork task"}</button>
+    {open && createPortal(<div className="ra-modal-backdrop"><section className="ra-modal ra-fork-dialog" role="dialog" aria-modal="true" aria-label={zh ? "分叉任务" : "Fork task"}>
       <h2>{zh ? "分叉任务" : "Fork task"}</h2>
       <p>{warning}</p>
       <p>{zh ? "只列出已保存且工具调用与结果完整配对的位置。历史操作不会重放。" : "Only saved boundaries with complete tool results are listed. Historical operations will not replay."}</p>
@@ -85,6 +93,6 @@ export default function RynAgentFork({ task, onCreated, onChoose }: {
       {error && <p role="alert">{zh ? "创建未完成，请检查位置、权限及附件/结果引用后重试：" : "Creation did not complete. Check the boundary, permissions and attachment/result references, then retry: "}{error}</p>}
       <button type="button" disabled={busy || !count || !title.trim()} onClick={() => void create()}>{busy ? (zh ? "处理中…" : "Working…") : (zh ? "创建并打开分叉" : "Create and open fork")}</button>{" "}
       <button type="button" disabled={busy} onClick={() => setOpen(false)}>{zh ? "关闭" : "Close"}</button>
-    </section></div>}
+    </section></div>, document.body)}
   </section>;
 }

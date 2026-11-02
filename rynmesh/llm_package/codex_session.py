@@ -49,7 +49,7 @@ def cleanup_stale_workspaces(base: Path):
 
 
 @contextmanager
-def private_workspace(*, copy_auth=True):
+def private_workspace(*, copy_auth=True, image_generation=False):
     check_disk(tempfile.gettempdir())
     base = Path(tempfile.gettempdir()) / "rynmesh-private-cli"
     base.mkdir(mode=0o700, exist_ok=True)
@@ -112,6 +112,11 @@ default_mode_request_user_input = false
 skill_search = false
 skip_host_skill_discovery = true
 '''
+        if image_generation:
+            # Only the dedicated origin-side image tool opts in. Normal model
+            # sessions remain inference-only. Native imagegen requires its host.
+            config = config.replace("image_generation = false", "image_generation = true")
+            config = config.replace("code_mode_host = false", "code_mode_host = true")
         (home / "config.toml").write_text(config, encoding="utf-8")
         keep = {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "LANG", "LC_ALL",
                 "OPENAI_API_KEY", "SSL_CERT_FILE", "SSL_CERT_DIR"}
@@ -154,6 +159,8 @@ DELTA_SIGNAL = {"method": "ryn/agentMessageDeltas"}
 class CodexRPC:
     # Per-turn state; a pooled process serves several turns.
     stream = False
+    output_limit = MAX_OUTPUT
+    cancelled = None
     output_bytes = 0
     _delta_signalled = False
     _checked_at = 0.0
@@ -163,9 +170,12 @@ class CodexRPC:
     deltas_received = 0
     last_event_at = None
 
-    def __init__(self, executable: str, timeout: float = 30, cpu_seconds: float | None = None):
+    def __init__(self, executable: str, timeout: float = 30, cpu_seconds: float | None = None,
+                 *, image_generation=False, cancelled=None):
         _check_protocol(executable, Path(executable).stat().st_mtime_ns)
-        self.workspace = private_workspace()
+        self.workspace = private_workspace(image_generation=True) if image_generation else private_workspace()
+        self.output_limit = 40 * 1024 * 1024 if image_generation else MAX_OUTPUT
+        self.cancelled = cancelled
         self.root, env = self.workspace.__enter__()
         try:
             self.process = spawn([executable, "app-server", "--stdio", "--strict-config"],
@@ -209,11 +219,11 @@ class CodexRPC:
     def _read(self):
         try:
             while not self.closed.is_set():
-                line = self.process.stdout.readline(MAX_OUTPUT + 1)
+                line = self.process.stdout.readline(self.output_limit + 1)
                 if not line:
                     break
                 self.output_bytes += len(line)
-                if self.output_bytes > MAX_OUTPUT:
+                if self.output_bytes > self.output_limit:
                     self.failure = "CLI output limit exceeded"
                     break
                 value = json.loads(line)
@@ -270,6 +280,8 @@ class CodexRPC:
 
     def receive(self):
         while True:
+            if self.cancelled and self.cancelled():
+                self._raise_with_diagnostics("Image generation cancelled", code="cancelled")
             if self.failure:
                 self._raise_with_diagnostics(self.failure)
             if time.monotonic() >= self.deadline:

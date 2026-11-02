@@ -1,4 +1,5 @@
 .pw-workspace { display: grid; gap: 20px; max-width: 1440px; margin: 0 auto; padding: 24px; }
+.pf-agent-shell .pw-workspace { width: 100%; box-sizing: border-box; overflow: auto; }
 .pw-header > div:first-child, .pw-actions, .pw-tabs { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .pw-header h1 { margin: 0; font-size: 24px; }
 .pw-header p { color: var(--text-muted, #64748b); line-height: 1.6; }

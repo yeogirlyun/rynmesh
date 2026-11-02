@@ -201,9 +201,9 @@ def test_owner_target_failure_projection_locates_timeout_and_proves_no_write_wit
 
 
 def test_actual_failed_read_operation_is_projected_without_rerunning_it(tmp_path):
-    runtime, _, _, _ = make_runtime(tmp_path, assistant(name="read:docs-offline"))
+    runtime, _, _, _ = make_runtime(tmp_path, assistant(name="read_docs_offline"))
     read = Mock(side_effect=AgentToolRejected("resource_read_timeout"))
-    runtime.tools = SimpleNamespace(specs=lambda: [{"type": "function", "function": {"name": "read:docs-offline", "description": "Read docs", "parameters": {"type": "object", "properties": {}, "additionalProperties": False}}}], metadata=lambda name: {"effect": "read", "title": "Read docs"}, execute=read)
+    runtime.tools = SimpleNamespace(specs=lambda: [{"type": "function", "function": {"name": "read_docs_offline", "description": "Read docs", "parameters": {"type": "object", "properties": {}, "additionalProperties": False}}}], metadata=lambda name: {"effect": "read", "title": "Read docs"}, execute=read)
     row = runtime.create({"message": "PRIVATE task data", "model_id": "local:test"})
     advance(runtime, 2)
     # The ordinary runtime allows a model to react to a rejected read. Freeze
@@ -214,7 +214,7 @@ def test_actual_failed_read_operation_is_projected_without_rerunning_it(tmp_path
     tools, _, _ = toolset(runtime)
     result = tools.execute("ryn_diagnose_task", {"task_id": row["id"]}, context={"owner_id": runtime.owner_id, "consumer_node_id": runtime.consumer_node_id}, cancelled=lambda: False)
     assert result["operations"][0]["error"] == "resource_read_timeout"
-    assert result["operations"][0]["tool"] == "read:docs-offline"
+    assert result["operations"][0]["tool"] == "read_docs_offline"
     assert result["write_dispatched"] is False
     read.assert_called_once()
     assert "PRIVATE" not in json.dumps(result)
@@ -251,3 +251,15 @@ def test_target_diagnostics_requires_trusted_owner_and_consumer_node(context):
     with pytest.raises(AgentToolRejected, match="^agent_diagnostics_context_denied$"):
         tools.execute("ryn_diagnose_task", {"task_id": "existing"}, context=context, cancelled=lambda: False)
     runtime.get.assert_not_called()
+
+
+def test_invalid_tool_catalog_name_is_rejected_before_dispatch(tmp_path):
+    runtime, _, _, _ = make_runtime(tmp_path, assistant(name="read:docs-offline"))
+    read = Mock()
+    runtime.tools = SimpleNamespace(
+        specs=lambda: [{"type": "function", "function": {"name": "read:docs-offline", "parameters": {"type": "object", "properties": {}}}}],
+        metadata=lambda name: {"effect": "read"}, execute=read)
+    row = runtime.create({"message": "Inspect", "model_id": "local:test"})
+    advance(runtime)
+    assert runtime.get(row["id"])["error"] == "agent_tool_definition_changed"
+    read.assert_not_called()

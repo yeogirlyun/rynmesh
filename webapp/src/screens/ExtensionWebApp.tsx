@@ -4,23 +4,75 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAppContext } from '../appContext';
 import { agentExtensions, queryPluginTool, type ExtensionPlugin } from '../domain/agentExtensions';
 import { peerProviders } from '../domain/peerProviders';
+import { useTranslation } from 'react-i18next';
+import { invoke } from '@tauri-apps/api/core';
+import { isTauriDesktop } from '../domain/nodeUrl';
 
 /** Remote UI stays on its own origin; only declared capabilities cross the frame boundary. */
-export default function ExtensionWebApp() {
+export default function ExtensionWebApp({ resolvedPlugin }: { resolvedPlugin?: ExtensionPlugin } = {}) {
   const { pluginId = '' } = useParams();
+  return <WebApp key={pluginId} pluginId={pluginId} resolvedPlugin={resolvedPlugin} />;
+}
+
+function WebApp({ pluginId, resolvedPlugin }: { pluginId: string; resolvedPlugin?: ExtensionPlugin }) {
   const { client } = useAppContext();
+  const { i18n } = useTranslation();
+  const zh = (i18n.resolvedLanguage || i18n.language).startsWith('zh');
+  const tx = (chinese: string, english: string) => zh ? chinese : english;
   const navigate = useNavigate();
-  const [plugin, setPlugin] = useState<ExtensionPlugin>();
+  const [plugin, setPlugin] = useState<ExtensionPlugin | undefined>(resolvedPlugin);
   const [error, setError] = useState('');
+  const [attempt, setAttempt] = useState(0);
+  const [reachable, setReachable] = useState(false);
   const frame = useRef<HTMLIFrameElement>(null);
+  // Keep an already-open error page in sync with supervisor recovery.
+  useEffect(() => {
+    if (!['plugin_service_unhealthy', 'plugin_service_start_timeout', 'plugin_service_exited', 'connection'].includes(error)) return;
+    const timer = window.setTimeout(() => {
+      setError(''); setReachable(false); setAttempt(value => value + 1);
+    }, 10000);
+    return () => window.clearTimeout(timer);
+  }, [error, attempt]);
   useEffect(() => {
     let active = true;
+    if (resolvedPlugin) {
+      setPlugin(resolvedPlugin);
+      if (!resolvedPlugin.enabled || !resolvedPlugin.web_app) setError('unavailable');
+      return;
+    }
+    setError('');
     agentExtensions.overview().then(o => {
       const p = o.plugins.find(p => p.id === pluginId);
-      if (active) { setPlugin(p); if (!p?.enabled || !p.web_app) setError('Plugin unavailable'); }
-    }).catch(() => active && setError('Plugin unavailable'));
+      if (active) { setPlugin(p); if (!p?.enabled || !p.web_app) setError('unavailable'); }
+    }).catch(() => active && setError('unavailable'));
     return () => { active = false; };
-  }, [pluginId]);
+  }, [pluginId, resolvedPlugin, attempt]);
+  useEffect(() => {
+    if (!plugin?.enabled || !plugin.web_app) return;
+    let url: URL;
+    try { url = new URL(plugin.web_app.url); } catch { setError('unavailable'); return; }
+    if (url.origin === window.location.origin) { setError('origin'); return; }
+    // WebView2 can display a blank error document and still fire iframe.onload.
+    // Check loopback availability before mounting an app whose local service may be stopped.
+    if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) { setReachable(true); return; }
+    let active = true;
+    const controller = new AbortController();
+    let timeout: number | undefined;
+    setReachable(false);
+    (async () => {
+      if (isTauriDesktop()) {
+        const managed = await invoke<boolean>('ensure_plugin_service', { pluginId });
+        if (!active || managed) return;
+      }
+      if (!active) return;
+      timeout = window.setTimeout(() => controller.abort(), 10000);
+      await fetch(url.href, { method: 'HEAD', mode: 'no-cors', credentials: 'omit', cache: 'no-store', signal: controller.signal });
+    })()
+      .then(() => { if (active) setReachable(true); })
+      .catch((reason) => { if (active) setError(typeof reason === 'string' && reason.startsWith('plugin_service_') ? reason : 'connection'); })
+      .finally(() => window.clearTimeout(timeout));
+    return () => { active = false; controller.abort(); window.clearTimeout(timeout); };
+  }, [plugin, pluginId, attempt]);
   useEffect(() => {
     if (!plugin?.enabled || !plugin.web_app) return;
     const origin = new URL(plugin.web_app.url).origin;
@@ -71,8 +123,21 @@ export default function ExtensionWebApp() {
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
   }, [plugin, pluginId, client, navigate]);
-  if (error) return <p role="alert">{error} · <Link to="/settings/extensions/plugins">{tr("Manage plugins")}</Link></p>;
-  if (!plugin?.web_app) return <p>{tr("Loading…")}</p>;
-  const url = new URL(plugin.web_app.url); if (url.origin === window.location.origin) return <p role="alert">{tr("Plugin app must use a separate origin")}</p>; url.searchParams.set('host_origin', window.location.origin);
-  return <iframe ref={frame} title={plugin.title} src={url.href} sandbox="allow-scripts allow-forms allow-same-origin allow-popups" referrerPolicy="no-referrer" style={{ border: 0, width: '100%', height: 'calc(100vh - 48px)' }} />;
+  if (error) return <section style={{ padding: 24 }}>
+    <p role="alert">{error === 'connection'
+      ? tx('无法连接插件服务，请重试。', 'Could not connect to the plugin service. Please retry.')
+      : error === 'plugin_service_port_in_use' ? tx('插件端口被其他进程占用。请退出旧版插件服务后重试。', 'Another process is using the plugin port. Close the previous plugin service and retry.')
+      : error === 'plugin_service_unhealthy' ? tx('插件服务暂时无响应，正在等待自动恢复…', 'The plugin service is not responding. Waiting for automatic recovery…')
+      : error === 'plugin_service_files_missing' ? tx('插件运行文件缺失，请重新安装此插件的服务包。', 'Plugin runtime files are missing. Reinstall its service package.')
+      : error.startsWith('plugin_service_') ? tx('插件服务启动失败，请重试。错误代码：', 'The plugin service could not start. Retry. Error: ') + error
+      : error === 'origin' ? tr('Plugin app must use a separate origin') : tx('插件不可用。请检查插件是否已启用。', 'Plugin unavailable. Check that it is enabled.')}</p>
+    <button className="ae-btn" onClick={() => { setError(''); setReachable(false); setAttempt(value => value + 1); }}>{tx('重试', 'Retry')}</button>
+    {' '}<Link to="/settings/extensions/plugins">{tr('Manage plugins')}</Link>
+  </section>;
+  if (!plugin?.enabled || !plugin.web_app || !reachable) return <div aria-busy="true" aria-label={tr('Loading…')} />;
+  const url = new URL(plugin.web_app.url); url.searchParams.set('host_origin', window.location.origin);
+  const sandbox = ['allow-scripts', 'allow-forms', 'allow-same-origin', 'allow-popups'];
+  if (plugin.web_app.permissions.includes('downloads')) sandbox.push('allow-downloads');
+  if (plugin.web_app.permissions.includes('dialogs')) sandbox.push('allow-modals');
+  return <iframe ref={frame} title={plugin.title} src={url.href} sandbox={sandbox.join(' ')} referrerPolicy="no-referrer" onError={() => setError('connection')} style={{ border: 0, width: '100%', height: '100%', flex: 1, minHeight: 0 }} />;
 }

@@ -9,6 +9,7 @@ import PluginWorkspace from "./PluginWorkspace";
 import { isPluginWorkspacePinned, pinnedPluginWorkspaces, setPluginWorkspacePinned } from "./pluginWorkspaceNavigation";
 
 vi.mock("./PeerProviderSettings", () => ({ PeerProviderSettings: ({ plugin }: { plugin: { id: string } }) => <p>Provider: {plugin.id}</p> }));
+vi.mock("../appContext", () => ({ useAppContext: () => ({ client: {} }) }));
 
 const root = "http://localhost/api/local/agent/extensions";
 const makePlugin = (id: string, provider = false) => ({
@@ -31,6 +32,23 @@ function mount(id = "alpha", search = "") {
 beforeEach(() => { localStorage.clear(); setLanguagePreference("en"); });
 
 describe("manifest-driven plugin workspace", () => {
+  it("opens the web app in place with one manifest request and no management interstitial", async () => {
+    let reads = 0;
+    let release!: () => void;
+    const ready = new Promise<void>(resolve => { release = resolve; });
+    server.use(http.get(root, async () => {
+      reads++; await ready;
+      return HttpResponse.json({ plugins: [{ ...makePlugin("alpha"), web_app: { url: "https://app.example.test/", permissions: [] } }] });
+    }));
+    mount();
+    expect(screen.queryByRole("heading", { name: "Plugin workspace" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Manage plugins" })).not.toBeInTheDocument();
+    release();
+    expect(await screen.findByTitle("Workspace alpha")).toHaveAttribute("src", `https://app.example.test/?host_origin=${encodeURIComponent(window.location.origin)}`);
+    expect(reads).toBe(1);
+    expect(screen.queryByRole("heading")).not.toBeInTheDocument();
+  });
   it("loads different installed plugin ids without auto-trusting hints, querying or pinning", async () => {
     let writes = 0;
     server.use(http.get(root, () => HttpResponse.json({ plugins: [makePlugin("alpha"), makePlugin("beta")], mcp_servers: [makeServer("alpha"), makeServer("beta")] })),

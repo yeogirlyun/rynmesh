@@ -362,6 +362,11 @@ pub fn request(port: u16, method: &str, path: &str, body: &str) -> Result<serde_
 }
 /// `request` for slow operations such as starting an editor, which verifies its files first.
 pub fn request_within(port: u16, method: &str, path: &str, body: &str, read_timeout: Duration) -> Result<serde_json::Value, String> {
+    request_bounded(port, method, path, body, read_timeout, 65536)
+}
+
+/// Large plugin tool catalogs need an explicit bounded response allowance.
+pub fn request_bounded(port: u16, method: &str, path: &str, body: &str, read_timeout: Duration, max_bytes: u64) -> Result<serde_json::Value, String> {
     let addr = format!("127.0.0.1:{port}").parse().map_err(|_| "invalid_port")?;
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(600)).map_err(|_| "node_unavailable")?;
     let _ = stream.set_read_timeout(Some(read_timeout));
@@ -372,7 +377,8 @@ pub fn request_within(port: u16, method: &str, path: &str, body: &str, read_time
     let request = format!("{method} {path} HTTP/1.0\r\nHost: 127.0.0.1\r\n{auth}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
     stream.write_all(request.as_bytes()).map_err(|_| "node_unavailable")?;
     let mut buf = String::new();
-    stream.take(65536).read_to_string(&mut buf).map_err(|_| "node_unavailable")?;
+    stream.take(max_bytes + 1).read_to_string(&mut buf).map_err(|_| "node_unavailable")?;
+    if buf.len() as u64 > max_bytes { return Err("node_response_too_large".into()); }
     let (header, payload) = buf.split_once("\r\n\r\n").ok_or("invalid_response")?;
     if header.lines().next().unwrap_or("").split_whitespace().nth(1) == Some("404") {
         return Err("node_endpoint_not_found".into());
@@ -409,6 +415,28 @@ pub fn wait_healthy(port: u16) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn large_catalogs_require_an_explicit_response_budget() {
+        fn serve() -> (u16, std::thread::JoinHandle<()>) {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let worker = std::thread::spawn(move || {
+                let (mut socket, _) = listener.accept().unwrap();
+                let mut request = [0; 4096]; let _ = socket.read(&mut request);
+                let body = serde_json::json!({"plugins": [], "tool_catalog": "x".repeat(100_000)}).to_string();
+                let _ = socket.write_all(format!("HTTP/1.0 200 OK\r\nContent-Length: {}\r\n\r\n{body}", body.len()).as_bytes());
+            });
+            (port, worker)
+        }
+        let (port, worker) = serve();
+        assert_eq!(request(port, "GET", "/catalog", "").unwrap_err(), "node_response_too_large");
+        worker.join().unwrap();
+        let (port, worker) = serve();
+        let value = request_bounded(port, "GET", "/catalog", "", Duration::from_secs(2), 200_000).unwrap();
+        assert_eq!(value["tool_catalog"].as_str().unwrap().len(), 100_000);
+        worker.join().unwrap();
+    }
 
     #[cfg(windows)]
     #[test]

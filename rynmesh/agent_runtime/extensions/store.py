@@ -1628,6 +1628,48 @@ class ExtensionStore:
             self._write(state)
             return self._public_plugin(plugin, state, desktop_access=desktop_access)
 
+    def configure_plugin_web_capabilities(
+        self,
+        plugin_id: str,
+        *,
+        downloads: bool,
+        dialogs: bool,
+        expected_instance_id: str,
+        expected_revision: int,
+        desktop_access: bool = False,
+    ) -> dict[str, Any]:
+        """Owner-configured browser capabilities without replacing identity or MCP state."""
+        if type(downloads) is not bool or type(dialogs) is not bool:
+            raise AgentError("agent_invalid_request")
+        if not isinstance(expected_instance_id, str) or not expected_instance_id or type(expected_revision) is not int or expected_revision < 1:
+            raise AgentError("agent_invalid_request")
+        with file_transaction(self.lock):
+            state = self._read()
+            plugin = state["plugins"].get(plugin_id)
+            if not plugin:
+                raise AgentError("agent_plugin_not_found")
+            if plugin.get("builtin"):
+                raise AgentError("agent_plugin_builtin_conflict")
+            if plugin.get("instance_id") != expected_instance_id:
+                raise AgentError("agent_stale_revision")
+            self._check_expected_revision(expected_revision, int(plugin.get("revision", 1)))
+            web = plugin.get("web_app")
+            if not isinstance(web, dict):
+                raise AgentError("agent_invalid_web_app")
+            permissions = set(web.get("permissions", []))
+            for capability, enabled in (("downloads", downloads), ("dialogs", dialogs)):
+                if enabled:
+                    permissions.add(capability)
+                else:
+                    permissions.discard(capability)
+            updated = validate_web_app({"url": web["url"], "permissions": sorted(permissions)})
+            if updated != web:
+                plugin["web_app"] = updated
+                plugin["revision"] = _alloc_generation(state)
+                plugin["updated_at"] = state["updated_at"] = _now()
+                self._write(state)
+            return self._public_plugin(plugin, state, desktop_access=desktop_access)
+
     def delete_plugin(
         self,
         plugin_id: str,

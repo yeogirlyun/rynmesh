@@ -131,7 +131,7 @@ def _response_schema(tools, *, strict=False):
     disabled = {"type": "object", "additionalProperties": False, "properties": {}, "required": []}
     return {"type": "object", "additionalProperties": False,
             "properties": {"content": {"type": "string"}, "tool_calls": {
-                "type": "array", "maxItems": 8 if variants else 0,
+                "type": "array", **({} if variants else {"maxItems": 0}),
                 "items": {"anyOf": variants} if variants else disabled}},
             "required": ["content", "tool_calls"]}
 

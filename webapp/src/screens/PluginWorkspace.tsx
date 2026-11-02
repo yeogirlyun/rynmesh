@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Box, ExternalLink, MessageCircle, Pin, PinOff, RefreshCw, Settings, Table2 } from "lucide-react";
 import { agentExtensions, type ExtensionOverview } from "../domain/agentExtensions";
 import { PeerProviderSettings } from "./PeerProviderSettings";
 import { PluginViews } from "./PluginViews";
+import ExtensionWebApp from "./ExtensionWebApp";
 import { isPluginWorkspacePinned, PIN_CHANGE_EVENT, pluginWorkspacePath, setPluginWorkspacePinned } from "./pluginWorkspaceNavigation";
 import "./PluginWorkspace.css";
 
@@ -42,6 +43,8 @@ function Workspace({ pluginId }: { pluginId: string }) {
   }, [pluginId]);
 
   const plugin = overview?.plugins.find(item => item.id === pluginId);
+  // Resolve the manifest without flashing the management UI before the app.
+  if (!plugin && loading) return <div aria-busy="true" aria-label={tx("正在加载插件…", "Loading plugin…")} />;
   if (!plugin) return <section className="pw-workspace">
     <h1>{tx("插件工作台", "Plugin workspace")}</h1>
     <p role={failed ? "alert" : "status"}>{loading ? tx("正在加载插件…", "Loading plugin…") : failed
@@ -57,7 +60,7 @@ function Workspace({ pluginId }: { pluginId: string }) {
   ].map(item => [item.id, item])).values()];
   const hasPages = Boolean(plugin.views?.length), hasProvider = Boolean(plugin.peer_provider);
   if (plugin.web_app && query.get("tab") !== "peers" && query.get("mode") !== "declarative") {
-    return <Navigate replace to={`/apps/extensions/${encodeURIComponent(plugin.id)}`} />;
+    return <ExtensionWebApp resolvedPlugin={plugin} />;
   }
   const showProvider = hasProvider && (tab === "peers" || !hasPages);
   const path = pluginWorkspacePath(plugin.id);

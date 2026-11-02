@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import re
+import threading
 import time
 import uuid
 
@@ -19,6 +20,7 @@ from .prompt import INTERNAL_NAMES
 from .protocol import digest, event, model_retry_authority, now, sanitized, task
 from .store import AgentError, AgentToolRejected, encoded
 from .stream_tools import StreamToolCoordinator
+from .tool_dispatch import MAX_PARALLEL_TOOLS
 from .tool_router import assert_schema_unchanged, normalize_tool_calls
 
 
@@ -102,11 +104,16 @@ class StreamedReads:
         self.stamp = _stamp(selected)
         self.authority = copy.deepcopy(selected.get("_model_retry_authority"))
         self.request_id = selected.get("_request_id")
+        self.parent_operation_id = None
         self.raw, self.records = {}, None
         self.existing_ids = {call["id"] for message in selected.get("messages", [])
                              for call in message.get("tool_calls", [])}
         self.coordinator = StreamToolCoordinator(self._normalize, self._admit, self._run,
             parallel_reads=parallel_reads, internal_names=INTERNAL_NAMES, cancelled=cancelled)
+
+    def _event_context(self):
+        return ({"source": "code_mode", "parent_operation_id": self.parent_operation_id}
+                if self.parent_operation_id else {"streamed": True})
 
     def _normalize(self, raw):
         call = normalize_tool_calls([raw], self.specs, existing_call_ids=self.existing_ids,
@@ -161,13 +168,17 @@ class StreamedReads:
             if meta is None:
                 return None
             journal = row.setdefault("stream_read_journal", [])
-            if len(journal) >= 8 or any(entry["call"]["call_id"] == call["call_id"] for entry in journal):
+            if len(journal) >= MAX_PARALLEL_TOOLS or any(entry["call"]["call_id"] == call["call_id"] for entry in journal):
                 return None
             try:
                 self.runtime.store.reserve(data, row["id"], output_policy.storage_growth(row["limits"]["max_output_chars"]) * (len(journal) + 1),
                                            extra_disk=results.MAX_RESULT_BYTES)
-                reservation = budget.reserve(row, "tool", call["name"])
+                # The code envelope already reserves/accounts for wall-clock time.
+                reservation = budget.reserve(row, "tool", call["name"],
+                                             **({"seconds_bound": 0} if self.parent_operation_id else {}))
             except AgentError as exc:
+                if self.parent_operation_id:
+                    raise
                 if str(exc) in {"agent_tool_budget_exhausted", "agent_time_budget_exhausted", "agent_token_budget_exhausted",
                                 "agent_storage_limit", "agent_storage_unavailable"}:
                     # Overlap is optional. The model may currently reserve the
@@ -189,10 +200,13 @@ class StreamedReads:
                      "stamp": copy.deepcopy(self.stamp), "authority": model_retry_authority(data["settings"]),
                      "reservation_id": reservation["id"], "reserved_seconds": reservation["charged_seconds"],
                      "state": "intent", "request_id": self.request_id}
+            if self.parent_operation_id:
+                entry["parent_operation_id"] = self.parent_operation_id
+                flight.update(self._event_context())
             journal.append(entry)
             verification.record(row, call, "intent", now(), flight=flight)
             event(row, "tool_started", tool=call["name"], call_id=call["call_id"], operation_id=call["operation_id"],
-                  effect="read", step=row["steps"], streamed=True)
+                  effect="read", step=row["steps"], **self._event_context())
             return {**copy.deepcopy(entry), "meta": copy.deepcopy(meta), "classification": classification}
         return self.runtime.store.transaction(admit)
 
@@ -203,7 +217,7 @@ class StreamedReads:
                 return
             entry = next((entry for entry in row.get("stream_read_journal", [])
                           if entry["call"]["operation_id"] == prepared["call"]["operation_id"]), None)
-            budget.settle(row, prepared["reservation_id"], elapsed_seconds=elapsed)
+            budget.settle(row, prepared["reservation_id"], elapsed_seconds=0 if self.parent_operation_id else elapsed)
             if entry is None or entry.get("state") == "complete":
                 return
             value = copy.deepcopy(outcome)
@@ -229,15 +243,19 @@ class StreamedReads:
             verification.record(row, prepared["call"], "failed" if value["failed"] else "confirmed", now(), result=value["result"])
             event(row, "tool_execution_completed", tool=prepared["call"]["name"], call_id=prepared["call"]["call_id"],
                   operation_id=prepared["call"]["operation_id"], result=value["result"],
-                  context_epoch=self.stamp["context_epoch"], streamed=True)
+                  context_epoch=self.stamp["context_epoch"], **self._event_context())
+            if self.parent_operation_id:
+                # Nested results belong to the JS promise, not standalone chat messages.
+                self.runtime._apply_deferred_observed_files(row, self.selected, value.get("deferred") or {})
+                row["stream_read_journal"].remove(entry)
         self.runtime.store.transaction(finish)
 
     def _run(self, prepared):
         started, deferred = time.monotonic(), {}
         call = prepared["call"]
-        deadline = started + prepared["reserved_seconds"]
+        deadline = float("inf") if self.parent_operation_id else started + prepared["reserved_seconds"]
         def cancelled():
-            if self.cancelled():
+            if self.cancelled() or (prepared.get("_nested_cancelled") and prepared["_nested_cancelled"]()):
                 cancelled.reason = getattr(self.cancelled, "reason", "agent_cancelled")
                 return True
             if time.monotonic() >= deadline:
@@ -259,7 +277,7 @@ class StreamedReads:
                     context["extension_binding"] = copy.deepcopy(call["extension_binding"])
                 options["context"] = context
             with diagnostic_log.context_scope(task_id=self.selected["id"], operation_id=call["operation_id"]):
-                result = sanitized(self.runtime.tools.execute(call["name"], copy.deepcopy(call["arguments"]), **options))
+                result = sanitized(self.runtime._execute_business_tool(self.selected, call["name"], copy.deepcopy(call["arguments"]), **options))
             outcome = {"result": result, "failed": False, "deferred": deferred,
                        "origin": copy.deepcopy(result.get("origin")) if isinstance(result, dict) and prepared["meta"].get("scope_context_supported") else None}
         except Exception as exc:
@@ -337,6 +355,61 @@ class StreamedReads:
         return _publish(row, records, recover=True)
 
 
+class NestedReadDispatch(StreamedReads):
+    """Code-mode children use the same read admission, budget and durable receipts.
+
+    Code mode retains its read-only tool contract. Writes continue through the
+    direct queue, where previews and interactive approval can suspend safely.
+    """
+
+    def __init__(self, runtime, selected, specs, cancelled, parent_operation_id):
+        super().__init__(runtime, selected, specs, cancelled, ())
+        self.parent_operation_id = parent_operation_id
+        self.ordinal = 0
+        self.lock = threading.Lock()
+
+    def __deepcopy__(self, memo):
+        return self
+
+    def _authorized(self, data, row):
+        flight = row.get("in_flight") or {}
+        return (not self.cancelled() and row.get("status") == "running" and not row.get("pending_control")
+                and data["settings"].get("enabled") and _same(row, self.stamp)
+                and flight.get("operation_id") == self.parent_operation_id
+                and flight.get("name") == "ryn_code_exec" and flight.get("dispatched")
+                and flight.get("authority") == model_retry_authority(data["settings"]))
+
+    def _check(self, data, row, call):
+        from .subagents import check_subagent_tool_policy
+        check_subagent_tool_policy(row, call["name"], call["arguments"])
+        return super()._check(data, row, call)
+
+    def __call__(self, name, arguments, *, operation_id, cancelled, context=None):
+        with self.lock:
+            index = self.ordinal
+            self.ordinal += 1
+        raw = {"id": "nested_" + uuid.uuid4().hex, "type": "function",
+               "function": {"name": name, "arguments": encoded(arguments).decode()}}
+        call = self._normalize(raw)
+        if call.get("error_result"):
+            raise AgentToolRejected(call["error_result"]["error"])
+        call["operation_id"] = operation_id
+        self.raw[index] = raw
+        try:
+            # Fail with the actual owner budget error, rather than the optional
+            # overlap fallback used by model streams.
+            prepared = self._admit(index, call)
+            if prepared is None:
+                raise AgentToolRejected("agent_permission_denied")
+            prepared["_nested_cancelled"] = cancelled
+            outcome = self._run(prepared)
+            if outcome["failed"]:
+                raise AgentToolRejected(outcome["result"]["error"])
+            return outcome["result"]
+        finally:
+            self.raw.pop(index, None)
+
+
 def recover_stream_reads(row, *, allow_publish=False):
     """Close durable read exchanges after restart, without executing any tool.
 
@@ -350,7 +423,12 @@ def recover_stream_reads(row, *, allow_publish=False):
                           result={"error": "agent_stream_read_interrupted", "no_mutation": True})
             verification.record(row, record["call"], "failed", now(), result=record["result"])
             event(row, "tool_execution_completed", tool=record["call"]["name"], call_id=record["call"]["call_id"],
-                  operation_id=record["call"]["operation_id"], result=record["result"], streamed=True)
+                  operation_id=record["call"]["operation_id"], result=record["result"],
+                  **({"source": "code_mode", "parent_operation_id": record["parent_operation_id"]}
+                     if record.get("parent_operation_id") else {"streamed": True}))
     if allow_publish:
-        _publish(row, records, recover=True)
+        _publish(row, [record for record in records if not record.get("parent_operation_id")], recover=True)
+    # Never replay a code cell or manufacture top-level calls for its children.
+    row["stream_read_journal"] = [record for record in row.get("stream_read_journal", [])
+                                  if not record.get("parent_operation_id")]
     return copy.deepcopy(records)

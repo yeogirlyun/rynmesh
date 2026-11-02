@@ -953,6 +953,15 @@ class LocalTools:
         policy = self.policy(context)
         preview = {"title": SPECS[name][0].split(".")[0], "workspace_root": policy["workspace_root"],
                    "desktop_access": policy["desktop_access"], "operation": copy.deepcopy(args)}
+        if name == "ryn_image_generate":
+            path = self.path(args["path"], context)
+            if path.suffix.lower() != ".png" or path.exists() or not path.parent.is_dir():
+                raise AgentToolRejected("agent_image_new_png_path_required",
+                    correction="Choose a new .png filename in an existing workspace directory.")
+            from ..llm_package.cli_adapter import CLIAgentAdapter
+            if not CLIAgentAdapter("codex_cli").health().get("ok"):
+                raise AgentToolRejected("agent_image_codex_required", correction="Install Codex and sign in to enable native image generation.")
+            return {**preview, "path": str(path), "provider": "codex_native"}
         if name == "ryn_apply_patch":
             plan = self._patch_plan(args, context, policy)
             # The patch text itself can be large: the preview carries its digest and
@@ -1405,6 +1414,24 @@ class LocalTools:
 
     def perform(self, name, args, context, cancelled, *, prepared_shell=None, operation_id=None, approved_preview=None, on_ready_host_gate=None):
         task_id = context["task_id"]
+        if name == "ryn_image_generate":
+            from ..llm_package.codex_image import generate
+            from ..llm_package.adapters import AdapterError
+            path = self.path(args["path"], context)
+            self.preview(name, args, context)
+            try:
+                raw, info = generate(args["prompt"], transparent_background=args.get("transparent_background", False), cancelled=cancelled)
+            except AdapterError as exc:
+                raise AgentError("agent_image_generation_failed: " + str(exc)) from exc
+            if cancelled():
+                raise AgentToolRejected("agent_cancelled")
+            if self.path(args["path"], context) != path:
+                raise AgentToolRejected("agent_approval_preview_changed")
+            # Exclusive creation protects files created by another process while
+            # generation was pending. No image bytes enter the model transcript.
+            with path.open("xb") as output:
+                output.write(raw)
+            return {"written": True, "path": str(path), "sha256": sha(raw), "bytes": len(raw), **info}
         if name == "ryn_project_inspect":
             from .projects import inspect
             if isinstance(context.get("_deferred_observed_files"), dict):
@@ -1915,7 +1942,11 @@ class LocalTools:
         matches = evidence["operation_confirmed"]
         if cancelled():
             raise AgentToolRejected("agent_cancelled")
-        if name.startswith("ryn_file_"):
+        if name == "ryn_image_generate":
+            path = self.path(result.get("path", receipt["arguments"]["path"]), context)
+            matches &= path.is_file() and path.stat().st_size == result.get("bytes") and sha(path.read_bytes()) == result.get("sha256")
+            evidence.update(path=str(path), current_state_matches=matches)
+        elif name.startswith("ryn_file_"):
             path = self.path(result.get("destination", result.get("path", receipt["arguments"]["path"])), context)
             expected = result
             later = False

@@ -10,6 +10,7 @@ mod craft_browser;
 mod system_apps;
 mod deployment;
 mod updates;
+mod plugin_services;
 use localization::tr;
 
 use node::NodeState;
@@ -42,6 +43,21 @@ pub(crate) fn focus_main(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show(); let _ = w.unminimize(); let _ = w.set_focus();
     }
+}
+fn invoice_pdf_url(target: &tauri::Url) -> bool {
+    target.scheme() == "https" && target.host_str() == Some("wework.gshopper.cn")
+        && target.port_or_known_default() == Some(443)
+        && target.username().is_empty() && target.password().is_none()
+        && target.path().starts_with("/files/invoices/") && target.path().ends_with(".pdf")
+}
+fn company_detail_url(target: &tauri::Url) -> bool {
+    let mut query = target.query_pairs();
+    target.scheme() == "https" && target.host_str() == Some("wework.gshopper.cn")
+        && target.port_or_known_default() == Some(443)
+        && target.username().is_empty() && target.password().is_none()
+        && target.path() == "/oa/companyDetail.php" && target.fragment().is_none()
+        && matches!(query.next(), Some((key, id)) if key == "id" && !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
+        && query.next().is_none()
 }
 fn open_requested_page(app: &tauri::AppHandle, args: &[String]) {
     if args.iter().any(|arg| arg == "--ai-sources") {
@@ -86,6 +102,7 @@ pub fn run() {
             preferences::set_desktop_preferences, preferences::desktop_node_port,
             updates::desktop_update_status, updates::desktop_update_check, updates::desktop_update_download,
             updates::desktop_update_install, updates::desktop_update_preferences,
+            plugin_services::ensure_plugin_service,
             desktop::desktop_status, desktop::desktop_action, localization::set_desktop_language,
             local_model::choose_local_model, drive_browser::open_drive_browser,
             mcp_auth_browser::open_mcp_auth_browser,
@@ -98,8 +115,36 @@ pub fn run() {
         .manage(desktop::RuntimeState::default())
         .manage(localization::LocalizedMenu::default())
         .manage(updates::UpdateState::default())
+        .manage(plugin_services::PluginServices::default())
         .manage(NodeState { child: Mutex::new(None), port, stopping: AtomicBool::new(false), lifecycle: Mutex::new(()) })
         .setup(move |app| {
+            // Original legacy document links need a window outside the embedded page.
+            let main = app.config().app.windows.iter().find(|window| window.label == "main")
+                .ok_or("main window configuration missing")?;
+            let document_app = app.handle().clone();
+            tauri::WebviewWindowBuilder::from_config(app, main)?
+                .on_new_window(move |target, _| {
+                    let document: Option<(&str, &str, fn(&tauri::Url) -> bool)> = if invoice_pdf_url(&target) {
+                        Some(("invoice-pdf", "Invoice PDF", invoice_pdf_url))
+                    } else if company_detail_url(&target) {
+                        Some(("company-detail", "Company Details", company_detail_url))
+                    } else {
+                        None
+                    };
+                    if let Some((label, title, allowed_navigation)) = document {
+                        if let Some(window) = document_app.get_webview_window(label) {
+                            let _ = window.navigate(target);
+                            let _ = window.show().and_then(|_| window.set_focus());
+                        } else {
+                            let _ = tauri::WebviewWindowBuilder::new(&document_app, label, tauri::WebviewUrl::External(target))
+                                .title(title).inner_size(960.0, 760.0).devtools(false)
+                                .on_navigation(allowed_navigation)
+                                .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+                                .build();
+                        }
+                    }
+                    tauri::webview::NewWindowResponse::Deny
+                }).build()?;
             #[cfg(target_os = "linux")]
             {
                 install_termination_handler();
@@ -155,6 +200,7 @@ pub fn run() {
                 if let Err(e) = node::start(handle.state::<NodeState>().inner()) { log::error!("failed to start Ryn node: {e}"); }
             });
             desktop::watchdog(app.handle().clone(), status, sharing);
+            plugin_services::watch(app.handle().clone());
             system_apps::sync_when_ready(app.handle());
             updates::initialize(app.handle());
             Ok(())
@@ -194,6 +240,7 @@ pub fn run() {
             }
         }
         if let RunEvent::ExitRequested { .. } = event {
+            handle.state::<plugin_services::PluginServices>().stop();
             // Only permanent shutdown sets this flag; manual restart never stops
             // the watchdog. After resume its next tick rechecks the node.
             handle.state::<NodeState>().stopping.store(true, Ordering::SeqCst);

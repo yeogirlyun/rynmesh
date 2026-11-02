@@ -71,7 +71,9 @@ export function PersonalShell({ children }: { children: ReactNode }) {
   const explorePaths = ["/library", "/explore", "/digest", "/search-ask", "/publish", "/items/", "/reading", "/offline", "/search", "/shared-reading", "/friend-updates"];
   const inExplore = explorePaths.some((path) => location.pathname.startsWith(path));
   const inAgent = location.pathname === "/agent";
-  const inFullWorkspace = inAgent || location.pathname.startsWith("/apps/extensions/");
+  const workspaceQuery = new URLSearchParams(location.search);
+  const inFullWorkspace = inAgent || location.pathname.startsWith("/apps/extensions/") ||
+    (location.pathname.startsWith("/apps/plugins/") && workspaceQuery.get("tab") !== "peers" && workspaceQuery.get("mode") !== "declarative");
   const inServices = location.pathname === "/services" || location.pathname.startsWith("/services/");
   // Keep every service entry available before configuration and across AI pages.
   const serviceLinks = [

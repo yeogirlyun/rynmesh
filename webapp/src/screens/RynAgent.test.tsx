@@ -86,6 +86,23 @@ it("automatically recovers initial settings failure without clicking Refresh", a
   expect(screen.getByRole("textbox")).toBeEnabled();
 });
 
+it.each(["failed", "interrupted", "paused", "waiting_approval", "waiting_input"] as const)("locates newly opened %s history once without overriding later scrolling", async status => {
+  const current = task({ status, messages: [{ role: "assistant", content: "History ready" }] });
+  const backend = api(true, [current]);
+  const height = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(1800);
+  try {
+    const user = userEvent.setup(); mount();
+    await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
+    await screen.findByText("History ready");
+    const scroller = document.querySelector<HTMLDivElement>(".ra-scroll")!;
+    await waitFor(() => expect(scroller.scrollTop).toBe(1800));
+    scroller.scrollTop = 120;
+    backend.setTasks([{ ...current, revision: 2, messages: [{ role: "assistant", content: "History refreshed" }] }]);
+    await screen.findByText("History refreshed", {}, { timeout: 5000 });
+    expect(scroller.scrollTop).toBe(120);
+  } finally { height.mockRestore(); }
+});
+
 it("renders live text between durable checkpoints without waiting for the old 1.2 second poll", async () => {
   const current = task({ events: [{ seq: 1, type: "model_started", at: 1, step: 1, context_epoch: 0 }] });
   api(true, [current]);

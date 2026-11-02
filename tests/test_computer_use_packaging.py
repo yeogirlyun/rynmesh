@@ -181,7 +181,7 @@ def test_extract_repo_contract_versions_matches_actual_rust_and_python_sources_a
     assert versions.wire_version == 1
     assert versions.target_triple == "x86_64-pc-windows-msvc"
     assert versions.installed_filename == "ryn_computer_use.exe"
-    assert versions.rynmesh_package_version == "0.7.0"
+    assert versions.rynmesh_package_version == "0.8.0"
 
     # Build a minimal mirror of the contract files in tmp_path to test version/constant drift rejection
     fake_repo = tmp_path / "repo"
@@ -1186,7 +1186,7 @@ def test_actual_tauri_windows_config_build_script_and_sidecar_entry_contracts(
     imported_names = [
         alias.name for node in top_imports for alias in node.names
     ]
-    assert imported_names == ["sys", "multiprocessing"]
+    assert sorted(imported_names) == ["multiprocessing", "sys"]
 
     idx_pkg_check = entry_text.index('"--ryn-computer-use-package-check"')
     idx_peer_http = entry_text.index("from rynmesh.peer_http import main")

@@ -562,6 +562,7 @@ class ExtensionToolAdapter:
             "risk": binding["effective_risk"],
             "scope_context_supported": True,
             "supports_preview": eff == "write",
+            "supports_parallel": eff == "read" and not binding["computer_access"],
             "preview_precondition": eff == "write",
             "computer_access": bool(binding["computer_access"]),
             "extension_binding": copy.deepcopy(binding),

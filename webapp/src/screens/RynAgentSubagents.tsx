@@ -1,4 +1,4 @@
-import { tr } from "../uiI18n";
+import { tr, useUILanguage } from "../uiI18n";
 import React, { useEffect, useMemo, useState } from "react";
 import type {
   AgentEvent,
@@ -227,7 +227,9 @@ export function SubagentHeaderPill({
   isOpen: boolean;
   onToggle: () => void;
 }) {
+  const zh = useUILanguage().startsWith("zh");
   if (!subagents.length) return null;
+  const attentionCount = subagents.filter(s => s.is_waiting || ["failed", "interrupted", "waiting_input", "waiting_approval"].includes(s.status)).length;
   const activeCount = subagents.filter(
     s => !s.closed && (s.status === "queued" || s.status === "running" || s.is_waiting),
   ).length;
@@ -239,6 +241,7 @@ export function SubagentHeaderPill({
       type="button"
       className={`ra-subagent-header-pill${isOpen ? " is-open" : ""}${activeCount > 0 ? " is-active" : ""}`}
       onClick={onToggle}
+      aria-expanded={isOpen}
       title={tr("查看并管理当前会话的子智能体 (Subagents)")}
     >
       <span className="ra-subagent-avatar-stack">
@@ -251,7 +254,7 @@ export function SubagentHeaderPill({
       <span className="ra-subagent-header-pill-label"> {tr("子智能体")} {activeCount > 0 ? (
           <>
             {" · "}
-            <strong className="is-running">{activeCount} {tr("个运行中")}</strong>
+            <strong className="is-running">{activeCount} {zh ? "个活跃" : "active"}</strong>
           </>
         ) : null}
         {completedCount > 0 ? (
@@ -267,6 +270,7 @@ export function SubagentHeaderPill({
           </>
         ) : null}
       </span>
+      {attentionCount > 0 && <span className="ra-subagent-attention-count">{attentionCount} {zh ? "需关注" : "need attention"}</span>}
       <span className="ra-subagent-header-pill-chevron" aria-hidden="true">▾</span>
     </button>
   );
@@ -658,8 +662,7 @@ export function SubagentComposerBar({
   onMentionSubagent: (nickname: string) => void;
   onStopAll: () => void;
 }) {
-  const [expanded, setExpanded] = useState(true);
-  if (!subagents.length) return null;
+  const [expanded, setExpanded] = useState(false);
 
   const activeSubagents = subagents.filter(
     s => !s.closed && (s.status === "queued" || s.status === "running" || s.is_waiting),
@@ -677,6 +680,7 @@ export function SubagentComposerBar({
       { added: 0, removed: 0 },
     );
   }, [subagents]);
+  if (!subagents.length) return null;
 
   return (
     <div className="ra-subagent-composer-bar">
@@ -684,6 +688,7 @@ export function SubagentComposerBar({
         <button
           type="button"
           className="ra-subagent-composer-bar-toggle"
+          aria-expanded={expanded}
           onClick={() => setExpanded(prev => !prev)}
         >
           <span className="ra-subagent-inline-chevron">{expanded ? "▼" : "▶"}</span>
@@ -796,6 +801,7 @@ export function SubagentRightDrawer({
   onInterruptSubagent: (subagentId: string) => void;
   onMentionSubagent: (nickname: string, quoteText?: string) => void;
 }) {
+  const zh = useUILanguage().startsWith("zh");
   const [expandedReadGroups, setExpandedReadGroups] = useState<Record<number, boolean>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [liveTickSec, setLiveTickSec] = useState(0);
@@ -822,14 +828,14 @@ export function SubagentRightDrawer({
     () =>
       subagents.filter(
         s => !s.closed && (s.status === "queued" || s.status === "running" || s.is_waiting),
-      ),
+      ).sort((a, b) => Number(b.is_waiting) - Number(a.is_waiting)),
     [subagents],
   );
   const completedList = useMemo(
     () =>
       subagents.filter(
         s => s.closed || (s.status !== "queued" && s.status !== "running" && !s.is_waiting),
-      ),
+      ).sort((a, b) => Number(["failed", "interrupted"].includes(b.status)) - Number(["failed", "interrupted"].includes(a.status))),
     [subagents],
   );
   const waitingCount = useMemo(
@@ -847,8 +853,8 @@ export function SubagentRightDrawer({
     const waiting = selected.is_waiting;
     const completed = selected.status === "completed";
     const isExplorer = selected.role === "explorer";
-    const stepIdx = selected.step_index || Math.max(1, selected.steps || 1);
-    const estTotal = selected.estimated_total_steps || Math.max(stepIdx, 4);
+    const stepIdx = selected.step_index ?? selected.steps;
+    const estTotal = selected.estimated_total_steps;
     const liveElapsed = (selected.elapsed_seconds || 0) + (running ? liveTickSec : 0);
 
     return (
@@ -944,8 +950,8 @@ export function SubagentRightDrawer({
               <div className="ra-subagent-timeline-header-right">
                 <span className="ra-subagent-timeline-step-badge">
                   {running
-                    ? `步骤 ${stepIdx}/${estTotal} 正在处理`
-                    : `共 ${Math.max(1, selected.timeline.length)} 步已完成`}
+                    ? (zh ? `正在处理${stepIdx > 0 ? ` · 步骤 ${stepIdx}${estTotal ? `/${estTotal}` : ""}` : ""}` : `Working${stepIdx > 0 ? ` · Step ${stepIdx}${estTotal ? `/${estTotal}` : ""}` : ""}`)
+                    : (zh ? `${selected.timeline.length} 条执行记录` : `${selected.timeline.length} activity records`)}
                 </span>
                 {(selected.diff_stats?.added > 0 || selected.diff_stats?.removed > 0) && (
                   <span className="ra-subagent-diff-stat">
@@ -1259,14 +1265,14 @@ export function SubagentRightDrawer({
 
                   <div className="ra-subagent-card-objective">{sub.instructions}</div>
 
-                  <div className="ra-subagent-card-progress-track">
+                  {Number.isFinite(sub.progress_percent) && sub.progress_percent > 0 && <div className="ra-subagent-card-progress-track" role="progressbar" aria-label={sub.nickname} aria-valuenow={Math.min(100, Math.max(0, sub.progress_percent))} aria-valuemin={0} aria-valuemax={100}>
                     <div
                       className={`ra-subagent-card-progress-fill ${
                         sub.is_waiting ? "is-waiting" : "is-running"
                       }`}
-                      style={{ width: `${Math.min(100, Math.max(8, sub.progress_percent || 20))}%` }}
+                      style={{ width: `${Math.min(100, Math.max(0, sub.progress_percent))}%` }}
                     />
-                  </div>
+                  </div>}
 
                   <div className="ra-subagent-card-step-row">
                     <span className="ra-subagent-card-step">
@@ -1285,7 +1291,7 @@ export function SubagentRightDrawer({
           <div className="ra-subagent-list-group">
             <div className="ra-subagent-list-group-header">
               <span className="ra-subagent-group-label">
-                <span className="ra-subagent-dot is-completed" /> {tr("完成 ·")} {completedList.length}
+                <span className="ra-subagent-dot is-completed" /> {zh ? "已结束 ·" : "Settled ·"} {completedList.length}
               </span>
               {avgCompletedSec > 0 && (
                 <span className="ra-subagent-avg-time">{tr("耗时均值")} {avgCompletedSec}{tr("s")}</span>
@@ -1306,7 +1312,7 @@ export function SubagentRightDrawer({
               return (
                 <div
                   key={sub.id}
-                  className={`ra-subagent-overview-card ${isCompletedOk ? "is-completed" : "is-settled"}`}
+                  className={`ra-subagent-overview-card ${isCompletedOk ? "is-completed" : "is-settled"}${["failed", "interrupted"].includes(sub.status) ? " needs-attention" : ""}`}
                   onClick={() => onSelectSubagent(sub.id)}
                   role="button"
                   tabIndex={0}

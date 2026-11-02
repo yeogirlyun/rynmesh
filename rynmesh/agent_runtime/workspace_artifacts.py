@@ -116,8 +116,8 @@ def history(row) -> dict:
             if (Path(path).name.casefold() in answers or artifact_id(path) in row.get("referenced_file_ids", [])) and artifact_id(path) not in files:
                 _touch(files, receipt, path, result["sha256"], False, "read")
                 files[artifact_id(path)]["revisions"] = 0
-        elif tool in {"ryn_file_write", "ryn_file_edit"} and result.get("written") and result.get("path"):
-            created = tool == "ryn_file_write" and (receipt.get("preview") or {}).get("before_sha256") is None
+        elif tool in {"ryn_file_write", "ryn_file_edit", "ryn_image_generate"} and result.get("written") and result.get("path"):
+            created = tool in {"ryn_file_write", "ryn_image_generate"} and (receipt.get("preview") or {}).get("before_sha256") is None
             _touch(files, receipt, result["path"], result.get("sha256"), created)
         elif tool == "ryn_apply_patch" and result.get("applied"):
             for item in result.get("files", []):
