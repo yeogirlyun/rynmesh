@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 OFFICE = ('pdfcraft', 'wordcraft', 'gridcraft', 'deckcraft')
 COMPANY = ('company-workspace', 'company-dashboard', 'company-affiliate')
@@ -51,7 +52,18 @@ def copy_new(source, target):
     stage = Path(tempfile.mkdtemp(prefix='.full-install-', dir=target.parent))
     try:
         shutil.copytree(source, stage, dirs_exist_ok=True)
-        stage.rename(target)
+        # Antivirus/indexers can hold a just-copied DLL open on Windows.
+        # Publish atomically after the temporary handle closes; never overwrite
+        # a version another installer has already published.
+        for attempt in range(12):
+            try:
+                stage.rename(target)
+                break
+            except OSError as exc:
+                transient = os.name == 'nt' and (isinstance(exc, PermissionError) or getattr(exc, 'winerror', None) in {5,32,33})
+                if not transient or attempt == 11:
+                    raise
+                time.sleep(min(.05 * 2 ** attempt, 1.5))
     finally:
         if stage.exists():
             shutil.rmtree(stage)

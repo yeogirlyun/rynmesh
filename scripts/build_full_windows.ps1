@@ -2,6 +2,7 @@ param(
     [Parameter(Mandatory=$true)][string]$Python,
     [Parameter(Mandatory=$true)][string]$CoreInstaller,
     [Parameter(Mandatory=$true)][string]$CoreCommit,
+    [Parameter(Mandatory=$true)][string]$CoreExecutable,
     [Parameter(Mandatory=$true)][string]$Payload,
     [Parameter(Mandatory=$true)][string]$WebViewInstaller,
     [Parameter(Mandatory=$true)][string]$Output,
@@ -31,11 +32,14 @@ try {
     $build=Join-Path $repo '.codex-tmp/full-package-20261103/final-helper'
     & $Python -m PyInstaller --noconfirm --onedir --name ryn-full-install --collect-submodules rynmesh --collect-data rynmesh --collect-data jsonschema_specifications --distpath "$build/dist" --workpath "$build/work" --specpath $build "$PSScriptRoot/full_package_install.py"
     if ($LASTEXITCODE -ne 0) { throw 'Provisioner build failed' }
+    $acceptance=Join-Path $build ('acceptance-'+[guid]::NewGuid().ToString('N'))
+    & $Python "$repo/qa/full_package_acceptance.py" --payload $payloadPath --helper "$build/dist/ryn-full-install/ryn-full-install.exe" --core $CoreExecutable --work $acceptance
+    if ($LASTEXITCODE -ne 0) { throw 'Complete package isolated acceptance failed' }
     $outputPath=[IO.Path]::GetFullPath($Output)
     New-Item -ItemType Directory -Force -Path (Split-Path $outputPath) | Out-Null
     & $MakeNsis /V2 "/DOUTPUT=$outputPath" "/DCORE=$((Resolve-Path -LiteralPath $CoreInstaller).Path)" "/DPAYLOAD=$payloadPath" "/DHELPER=$build/dist/ryn-full-install" "/DWEBVIEW=$((Resolve-Path -LiteralPath $WebViewInstaller).Path)" "$repo/deploy/windows/full-installer.nsi"
     if ($LASTEXITCODE -ne 0) { throw 'Complete installer build failed' }
-    $receipt=@{schema=1;ryn_commit=$manifest.ryn_commit;core_commit=$CoreCommit;company_commit=$manifest.company_commit;plugins=$manifest.plugins;installer_sha256=(Get-FileHash -LiteralPath $outputPath).Hash;core_sha256=(Get-FileHash -LiteralPath $CoreInstaller).Hash;webview_sha256=(Get-FileHash -LiteralPath $WebViewInstaller).Hash;bytes=(Get-Item -LiteralPath $outputPath).Length;helper_source_sha256=(Get-FileHash -LiteralPath "$PSScriptRoot/full_package_install.py").Hash}
+    $receipt=@{schema=1;ryn_commit=$manifest.ryn_commit;core_commit=$CoreCommit;company_commit=$manifest.company_commit;plugins=$manifest.plugins;installer_sha256=(Get-FileHash -LiteralPath $outputPath).Hash;core_sha256=(Get-FileHash -LiteralPath $CoreInstaller).Hash;webview_sha256=(Get-FileHash -LiteralPath $WebViewInstaller).Hash;bytes=(Get-Item -LiteralPath $outputPath).Length;helper_source_sha256=(Get-FileHash -LiteralPath "$PSScriptRoot/full_package_install.py").Hash;acceptance=(Get-Content "$acceptance/result.json" -Raw|ConvertFrom-Json)}
     [IO.File]::WriteAllText("$outputPath.json",($receipt|ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false))
     Write-Output $outputPath
 } finally { Pop-Location }

@@ -32,3 +32,23 @@ def test_existing_version_is_preserved(tmp_path):
     installer.copy_new(source, target)
     assert (target / 'asset').read_text() == 'existing'
     assert not list(tmp_path.glob('.full-install-*'))
+
+
+@pytest.mark.skipif(installer.os.name != 'nt', reason='Windows sharing violations')
+def test_copy_retries_transient_windows_sharing_violation(tmp_path, monkeypatch):
+    source, target = tmp_path / 'source', tmp_path / 'target'
+    source.mkdir()
+    (source / 'asset').write_text('complete')
+    rename = Path.rename
+    calls = []
+    def locked_then_ready(path, destination):
+        calls.append(path)
+        if len(calls) < 3:
+            raise PermissionError('transient antivirus lock')
+        return rename(path, destination)
+    monkeypatch.setattr(Path, 'rename', locked_then_ready)
+    monkeypatch.setattr(installer.time, 'sleep', lambda seconds: None)
+    installer.copy_new(source, target)
+    assert len(calls) == 3
+    assert (target / 'asset').read_text() == 'complete'
+    assert not list(tmp_path.glob('.full-install-*'))
