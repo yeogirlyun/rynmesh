@@ -237,6 +237,83 @@ pub fn watch(app: tauri::AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn offline_fixture() -> (PathBuf, Service) {
+        let root = PathBuf::from(std::env::var("RYN_PLUGIN_ACCEPTANCE_ROOT").expect("explicit isolated fixture required"));
+        let services = parse(&fs::read(root.join("services.json")).unwrap()).unwrap();
+        assert_eq!(services.len(), 1);
+        let service = services[0].clone();
+        assert_eq!(service.environment.get("COMPANY_RUNTIME_OFFLINE_CHECK").map(String::as_str), Some("1"));
+        // The company's verifier creates this file only under a new synthetic
+        // output directory. Never run this test against a user's installation.
+        let report: serde_json::Value = serde_json::from_slice(&fs::read(root.join("../../verification.json")).unwrap()).unwrap();
+        assert_eq!(report["live_install_modified"], false);
+        (root, service)
+    }
+
+    #[test]
+    #[ignore = "requires the company verifier's offline synthetic EXE fixture"]
+    fn packaged_runtime_reuses_recovers_reconfigures_and_stops() {
+        let (root, mut service) = offline_fixture();
+        let manager = PluginServices::default();
+        manager.ensure(&root, &service).unwrap();
+        let first = manager.children.lock().unwrap()[&service.id].child.id();
+        manager.ensure(&root, &service).unwrap();
+        assert_eq!(manager.children.lock().unwrap()[&service.id].child.id(), first);
+        {
+            let mut children = manager.children.lock().unwrap();
+            let child = &mut children.get_mut(&service.id).unwrap().child;
+            child.kill().unwrap();
+            child.wait().unwrap();
+        }
+        manager.ensure(&root, &service).unwrap();
+        let recovered = manager.children.lock().unwrap()[&service.id].child.id();
+        assert_ne!(recovered, first);
+        service.environment.insert("COMPANY_RUNTIME_ACCEPTANCE_REVISION".into(), "2".into());
+        manager.ensure(&root, &service).unwrap();
+        assert_ne!(manager.children.lock().unwrap()[&service.id].child.id(), recovered);
+        manager.stop();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while listening(service.port) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(!listening(service.port), "owned service must release its port on exit");
+        #[cfg(windows)]
+        {
+            struct Owner(Child);
+            impl Drop for Owner {
+                fn drop(&mut self) { let _ = self.0.kill(); let _ = self.0.wait(); }
+            }
+            use std::os::windows::process::CommandExt;
+            let mut owner = Owner(Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "plugin_services::tests::offline_owner_fixture", "--ignored"])
+                .env("RYN_PLUGIN_ACCEPTANCE_OWNER", "1")
+                .creation_flags(0x08000000).stdout(Stdio::null()).stderr(Stdio::null())
+                .spawn().unwrap());
+            let deadline = Instant::now() + Duration::from_secs(35);
+            while !healthy(&service) && Instant::now() < deadline {
+                assert!(owner.0.try_wait().unwrap().is_none());
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            assert!(healthy(&service));
+            owner.0.kill().unwrap();
+            owner.0.wait().unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while listening(service.port) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            assert!(!listening(service.port), "desktop crash must close the job-owned runtime");
+        }
+    }
+
+    #[test]
+    #[ignore = "subprocess helper for packaged runtime crash acceptance"]
+    fn offline_owner_fixture() {
+        assert_eq!(std::env::var("RYN_PLUGIN_ACCEPTANCE_OWNER").as_deref(), Ok("1"));
+        let (root, service) = offline_fixture();
+        let manager = PluginServices::default();
+        manager.ensure(&root, &service).unwrap();
+        std::thread::sleep(Duration::from_secs(60));
+    }
     #[test]
     fn occupied_foreign_port_is_never_adopted_or_stopped() {
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
