@@ -32,7 +32,9 @@ try {
     $build=Join-Path $repo '.codex-tmp/full-package-20261103/final-helper'
     & $Python -m PyInstaller --noconfirm --onedir --name ryn-full-install --collect-submodules rynmesh --collect-data rynmesh --collect-data jsonschema_specifications --distpath "$build/dist" --workpath "$build/work" --specpath $build "$PSScriptRoot/full_package_install.py"
     if ($LASTEXITCODE -ne 0) { throw 'Provisioner build failed' }
-    $acceptance=Join-Path $build ('acceptance-'+[guid]::NewGuid().ToString('N'))
+    # Match a normal installation's path depth; the portable OCR engine already
+    # contains long upstream file names under its model directory.
+    $acceptance=Join-Path $repo ('.codex-tmp/full-qa-'+[guid]::NewGuid().ToString('N').Substring(0,8))
     & $Python "$repo/qa/full_package_acceptance.py" --payload $payloadPath --helper "$build/dist/ryn-full-install/ryn-full-install.exe" --core $CoreExecutable --work $acceptance
     if ($LASTEXITCODE -ne 0) { throw 'Complete package isolated acceptance failed' }
     $outputPath=[IO.Path]::GetFullPath($Output)
