@@ -292,7 +292,7 @@ class McpOAuthManager:
         except Exception:
             return []
         siblings = []
-        for other in self.store.list_mcp_servers_internal():
+        for other in self.store.list_mcp_servers_internal(include_tools=False):
             if (other["instance_id"] != server["instance_id"]
                     and other.get("identity_group_id") == identity_group_id
                     and other.get("effective_enabled", other.get("enabled", False))
@@ -827,7 +827,7 @@ class McpOAuthManager:
             self._revoke(row)
 
     def public_status(self, instance_id):
-        server = next((s for s in self.store.list_mcp_servers_internal() if s["instance_id"] == instance_id), None)
+        server = next((s for s in self.store.list_mcp_servers_internal(include_tools=False) if s["instance_id"] == instance_id), None)
         if not server or server.get("transport") != "streamable_http" or has_static_authorization(server) or (server.get("auth") or {}).get("mode") == "none":
             return {"state": "not_required", "expires_at": None, "scopes": [], "issuer_host": None, "error": None}
         row = self._row(server)

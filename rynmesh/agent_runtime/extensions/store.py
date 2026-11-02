@@ -508,7 +508,10 @@ class ExtensionStore:
             },
         }
 
-    def _read(self) -> dict[str, Any]:
+    def _read(self, *, borrow: bool = False) -> dict[str, Any]:
+        # Borrow only under file_transaction for read-only projections that copy
+        # their result. Mutators retain an independent state by default. Every
+        # read still stats the file, so other processes' changes invalidate it.
         if not self.path.exists():
             self._cached_stamp = None
             self._cached_state = None
@@ -519,7 +522,7 @@ class ExtensionStore:
             st = self.path.stat()
             stamp = (st.st_mtime_ns, st.st_size)
             if self._cached_stamp == stamp and self._cached_state is not None:
-                return copy.deepcopy(self._cached_state)
+                return self._cached_state if borrow else copy.deepcopy(self._cached_state)
             envelope = read_json(self.path, max_bytes=MAX_BYTES)
             if not isinstance(envelope, dict) or envelope.get("version") != EXTENSIONS_VERSION:
                 raise AgentError("agent_state_unreadable")
@@ -1294,7 +1297,7 @@ class ExtensionStore:
     def get_plugin_view_internal(self, plugin_id: str, view_id: str) -> dict[str, Any]:
         """Read one live view and its exact tool binding atomically, without credentials."""
         with file_transaction(self.lock):
-            state = self._read()
+            state = self._read(borrow=True)
             plugin = state["plugins"].get(plugin_id)
             if not plugin:
                 raise AgentError("agent_plugin_not_found")
@@ -1331,7 +1334,7 @@ class ExtensionStore:
     def get_plugin_tool_internal(self, plugin_id: str, tool_name: str) -> dict[str, Any]:
         """Read one live read-only MCP tool belonging to a plugin atomically."""
         with file_transaction(self.lock):
-            state = self._read()
+            state = self._read(borrow=True)
             plugin = state["plugins"].get(plugin_id)
             if not plugin:
                 raise AgentError("agent_plugin_not_found")
@@ -1372,7 +1375,7 @@ class ExtensionStore:
     ) -> dict[str, Any]:
         """Return internal MCP server record (with decrypted secrets) for transport/invocation."""
         with file_transaction(self.lock):
-            state = self._read()
+            state = self._read(borrow=True)
             server = state["mcp_servers"].get(server_id)
             if not server:
                 raise AgentError("agent_mcp_server_not_found")
@@ -1405,13 +1408,16 @@ class ExtensionStore:
             out["identity_group_id"] = comp["id"] if comp else None
             return out
 
-    def list_mcp_servers_internal(self) -> list[dict[str, Any]]:
+    def list_mcp_servers_internal(self, *, include_tools: bool = True) -> list[dict[str, Any]]:
         """Include disabled installations so host-owned OAuth state can be retired."""
         with file_transaction(self.lock):
-            state = self._read()
+            state = self._read(borrow=True)
             result = []
             for server in state["mcp_servers"].values():
-                item = copy.deepcopy(server)
+                # OAuth inspects identity/configuration, never tool schemas.
+                item = copy.deepcopy(server if include_tools else {
+                    key: value for key, value in server.items() if key != "discovered_tools"
+                })
                 pid = server.get("plugin_id")
                 item["effective_enabled"] = self._is_server_effectively_enabled(server, state)
                 item["parent_enabled"] = self._is_parent_plugin_enabled(pid, state)

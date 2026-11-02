@@ -379,3 +379,33 @@ def test_generic_view_preserves_upstream_shape_and_filters_pagination_arguments(
     assert out["result"]["data"] == host.result["structuredContent"]["data"]
     assert "pagination" not in out["result"]["data"]
 
+
+
+def test_read_projections_are_detached_and_observe_other_store_writes(tmp_path):
+    store = ExtensionStore(tmp_path / 'agent')
+    install(store, tmp_path)
+    baseline = store.get_plugin_tool_internal('bundle', 'read_table')
+    view = store.get_plugin_view_internal('bundle', 'table')
+    view['tool']['input_schema']['properties'].clear()
+    tool = store.get_plugin_tool_internal('bundle', 'read_table')
+    tool['tool']['input_schema']['properties'].clear()
+    server = store.get_mcp_server_internal('bundle-reader')
+    server['discovered_tools'].clear()
+    listed = store.list_mcp_servers_internal()
+    next(s for s in listed if s['id'] == 'bundle-reader')['discovered_tools'].clear()
+    identities = store.list_mcp_servers_internal(include_tools=False)
+    identity = next(s for s in identities if s['id'] == 'bundle-reader')
+    assert 'discovered_tools' not in identity
+    identity['auth']['mode'] = 'changed-by-caller'
+    assert store.get_plugin_tool_internal('bundle', 'read_table') == baseline
+    assert store.get_plugin_view_internal('bundle', 'table')['tool'] == baseline['tool']
+    assert store.get_mcp_server_internal('bundle-reader')['auth']['mode'] == 'none'
+    other = ExtensionStore(tmp_path / 'agent', store.key)
+    other.set_plugin_enabled('bundle', False, expected_revision=plugin(other)['revision'])
+    assert not store.get_mcp_server_internal('bundle-reader')['effective_enabled']
+    assert not next(s for s in store.list_mcp_servers_internal(include_tools=False)
+                    if s['id'] == 'bundle-reader')['effective_enabled']
+    with pytest.raises(AgentError, match='agent_plugin_disabled'):
+        store.get_plugin_tool_internal('bundle', 'read_table')
+    with pytest.raises(AgentError, match='agent_plugin_disabled'):
+        store.get_plugin_view_internal('bundle', 'table')

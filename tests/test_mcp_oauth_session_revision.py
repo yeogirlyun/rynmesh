@@ -8,7 +8,7 @@ def test_session_revision_tracks_credential_replacement_and_logout():
     row = {'epoch': 'epoch-one', 'tokens': {'access_token': 'synthetic-private-token',
             'refresh_token': 'synthetic-refresh', 'expires_at': 9999999999}}
     manager = object.__new__(McpOAuthManager)
-    manager.store = SimpleNamespace(list_mcp_servers_internal=lambda: [server])
+    manager.store = SimpleNamespace(list_mcp_servers_internal=lambda **_: [server])
     manager._row = lambda _: row
     manager.clock = lambda: 1
     first = manager.public_status('synthetic')
