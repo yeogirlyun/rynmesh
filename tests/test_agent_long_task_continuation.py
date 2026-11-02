@@ -495,3 +495,22 @@ def test_default_token_allowance_grows_at_model_admission(tmp_path, monkeypatch)
     advance(owner_runtime, 2)
     refused = owner_runtime.get(owner["id"])
     assert refused["error"] == "agent_token_budget_exhausted" and owner_model.calls == []
+
+
+def test_owner_followup_handles_default_time_budget_near_its_ceiling(tmp_path):
+    runtime, _, _, _ = make_runtime(tmp_path, assistant("First answer."))
+    task = runtime.create({"message": "Give a first answer"})
+    advance(runtime, 10)
+    done = runtime.get(task["id"])
+    assert done["status"] == "completed"
+
+    def spend(data):
+        row = data["tasks"][task["id"]]
+        state = budget.initialize(row)
+        state["legacy_seconds"] = budget.RANGES["max_total_seconds"][1] - 0.25
+    runtime.store.transaction(spend)
+    followed = runtime.add_message(task["id"], {"message": "Continue the work", "expected_revision": done["revision"]})
+    assert followed["budget"]["limits"]["max_total_seconds"] == budget.RANGES["max_total_seconds"][1]
+    assert followed["budget"]["lifetime"]["charged_seconds"] >= budget.RANGES["max_total_seconds"][1] - 0.25
+    assert any("max_total_seconds" in item.get("extended", {}) for item in followed["events"]
+               if item["type"] == "budget_auto_extended")

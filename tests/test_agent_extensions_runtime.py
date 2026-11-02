@@ -1572,3 +1572,56 @@ for raw in sys.stdin:
             mgr.close()
             for s in spawned:
                 s.close()
+
+
+def test_mcp_conversation_and_receipt_reopen_as_followup_context(ext_env, tmp_path: Path):
+    """A service answer remains usable context after reopening encrypted history."""
+    runtime, model, tools, _, home = ext_env
+    script, counts = tmp_path / 'history_mcp.py', tmp_path / 'history_counts.json'
+    _write_fake_mcp_server(script, counts)
+    server = tools.extensions.store.upsert_mcp_server({
+        'id': 'history-service', 'name': 'Synthetic employee service', 'transport': 'stdio',
+        'command': sys.executable, 'args': ['-u', str(script)], 'enabled': True,
+        'read_only_tools': ['ping_info'],
+    })
+    tools.extensions.manager.test_server(server['id'], expected_revision=server['revision'])
+    name = compute_model_tool_name(server['id'], 'ping_info')
+    marker = 'synthetic-report-context-20261103'
+    model.responses = [
+        _assistant(name='ryn_discover_tools', args={'load': [name]}),
+        _assistant(name=name, args={'label': marker}, call_id='report-call'),
+        _assistant(content='The report is ready for your next question.'),
+    ]
+    created = runtime.create({'message': 'Prepare my synthetic report'})
+    for _ in range(10):
+        runtime.run_once()
+        if runtime.get(created['id'])['status'] == 'completed':
+            break
+    done = runtime.get(created['id'])
+    assert done['status'] == 'completed'
+    original = runtime.store.read()['tasks'][created['id']]
+    receipt = next(item for item in original['receipts'] if item['tool'] == name)
+    reopened = AgentRuntime(AgentStore(home / 'agent', runtime.store.key), model, tools, runtime.catalog)
+    reopened.reconcile()
+    persisted = reopened.store.read()['tasks'][created['id']]
+    assert persisted['messages'] == original['messages']
+    assert receipt in persisted['receipts']
+    assert marker in json.dumps(persisted)
+    for path in (home / 'agent').rglob('*.json'):
+        assert marker not in path.read_text(encoding='utf-8')
+
+    def followup(model_id, messages, specs, cancelled, on_event, **kwargs):
+        transcript = json.dumps(messages)
+        assert marker in transcript
+        assert 'The report is ready for your next question.' in transcript
+        assert 'Explain the previous report' in transcript
+        return _assistant(content='I used the saved report context.')
+
+    model.responses = [followup]
+    reopened.add_message(created['id'], {'message': 'Explain the previous report', 'expected_revision': done['revision']})
+    for _ in range(10):
+        reopened.run_once()
+        if reopened.get(created['id'])['status'] == 'completed':
+            break
+    assert reopened.get(created['id'])['result'] == 'I used the saved report context.'
+    assert json.loads(counts.read_text()) == {'ping_info': 1}
