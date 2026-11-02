@@ -104,10 +104,18 @@ def install(payload, destination, home):
         version = 'company-' + revision[:16]
         target = services_root / version
         copy_new(payload / 'company', target)
+        runtime_manifest = json.loads((payload / 'company/runtime-manifest.json').read_text(encoding='utf-8'))
+        for name, digest in runtime_manifest['files'].items():
+            if sha(target / name) != digest:
+                raise ValueError('Installed company runtime integrity failure: ' + name)
         env = dict(os.environ)
         env.update(COMPANY_APP_HOME=str(company_home), COMPANY_APP_PORT=str(port), COMPANY_RUNTIME_OFFLINE_CHECK='1')
-        subprocess.run([str(target / 'company-service.exe'), '--initialize'], env=env,
-                       check=True, timeout=120, creationflags=0x08000000 if os.name == 'nt' else 0)
+        # A second frozen application must initialize its own bootloader environment.
+        env['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
+        with (home / 'full-package-company-init.log').open('wb') as log:
+            subprocess.run([str(target / 'company-service.exe'), '--initialize'], env=env,
+                           stdout=log, stderr=log, check=True, timeout=180,
+                           creationflags=0x08000000 if os.name == 'nt' else 0)
         environment = dict(previous.get('environment', {})) if previous else {}
         environment.update(COMPANY_APP_HOME=str(company_home), COMPANY_APP_PORT=str(port))
         service = {'id': 'company', 'plugins': list(COMPANY), 'program': version + '/company-service.exe',

@@ -15,12 +15,27 @@ SetCompressor /SOLID lzma
 Section
   InitPluginsDir
   SetOutPath "$PLUGINSDIR"
+  File /oname=webview2.exe "${WEBVIEW}"
+  SetRegView 32
+  ReadRegStr $1 HKLM "SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+  StrCmp $1 "" 0 webview_ready
+  ReadRegStr $1 HKCU "SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+  StrCmp $1 "" 0 webview_ready
+  ExecWait '"$PLUGINSDIR\webview2.exe" /silent /install' $0
+  StrCmp $0 0 webview_ready
+  StrCmp $0 3010 webview_ready
+    MessageBox MB_ICONSTOP "WebView2 offline installation failed ($0)."
+    SetErrorLevel 1
+    Abort
+  webview_ready:
   File /oname=core-setup.exe "${CORE}"
   ; Retain the installed executable trio for rollback; data stays outside them.
+  IfFileExists "$INSTDIR\rollback\before-full-20261103\Ryn.exe" backup_done
   CreateDirectory "$INSTDIR\rollback\before-full-20261103"
   CopyFiles /SILENT "$INSTDIR\Ryn.exe" "$INSTDIR\rollback\before-full-20261103"
   CopyFiles /SILENT "$INSTDIR\rynmesh-peer.exe" "$INSTDIR\rollback\before-full-20261103"
   CopyFiles /SILENT "$INSTDIR\ryn_computer_use.exe" "$INSTDIR\rollback\before-full-20261103"
+  backup_done:
   DetailPrint "Installing Ryn..."
   ExecWait '"$PLUGINSDIR\core-setup.exe" /S /D=$INSTDIR' $0
   StrCmp $0 0 +3
