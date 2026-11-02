@@ -1,0 +1,38 @@
+[
+  {
+    "path": "/api/local/runtime/health",
+    "status": 200,
+    "seconds": 0.054,
+    "bytes": 48
+  },
+  {
+    "path": "/api/dashboard/session/desktop",
+    "status": 200,
+    "seconds": 3.415,
+    "bytes": 693
+  },
+  {
+    "path": "/api/dashboard/session",
+    "status": 200,
+    "seconds": 1.205,
+    "bytes": 343
+  },
+  {
+    "path": "/api/dashboard/session/desktop",
+    "status": 200,
+    "seconds": 0.536,
+    "bytes": 693
+  },
+  {
+    "path": "/api/dashboard/session",
+    "status": 200,
+    "seconds": 0.45,
+    "bytes": 343
+  },
+  {
+    "path": "/api/dashboard/legacy/finance/finance/company",
+    "status": 200,
+    "seconds": 0.58,
+    "bytes": 9266
+  }
+]
