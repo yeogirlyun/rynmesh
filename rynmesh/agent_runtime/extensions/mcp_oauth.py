@@ -837,7 +837,14 @@ class McpOAuthManager:
             state = "logged_out"
         if row.get("pending"):
             state = "pending"
-        return {"state": state, "expires_at": tokens.get("expires_at"), "scopes": row.get("granted_scopes", []),
+        # Opaque change marker lets local consumers reuse a short signed identity
+        # lease while detecting logout, re-login and token replacement. Never
+        # expose credentials (or use this marker as an authentication token).
+        session_revision = hashlib.sha256(json.dumps(
+            ["ryn.oauth.session.v1", row.get("epoch"), tokens], sort_keys=True,
+        ).encode()).hexdigest() if tokens else None
+        return {"state": state, "session_revision": session_revision,
+                "expires_at": tokens.get("expires_at"), "scopes": row.get("granted_scopes", []),
                 "issuer_host": urlsplit(row.get("issuer", "")).hostname, "error": row.get("error")}
 
     def close(self):
