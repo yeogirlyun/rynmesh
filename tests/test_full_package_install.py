@@ -147,6 +147,36 @@ def test_corrupt_compat_fails_before_changing_existing_install(office_payload):
     assert not cache.exists()
 
 
+@pytest.mark.parametrize('broken', ['payload', 'compatibility', 'agent'])
+def test_upgrade_repairs_damaged_program_resources_and_retains_user_files(office_payload, monkeypatch, broken):
+    import shutil
+    from rynmesh.node_apps import craft_host, craft_native
+    payload, cache, source, target, identifier = office_payload
+    (source / 'receipt.json').write_text('verified-receipt')
+    shutil.copytree(source, target)
+    (target / 'preferences.json').write_text('keep-settings')
+    (target / 'export.xlsx').write_bytes(b'keep-workbook')
+    damaged = {'payload': 'payload/original', 'compatibility': 'compatibility/' + identifier + '/editor.wasm',
+               'agent': 'agent/cli'}[broken]
+    (target / damaged).write_bytes(b'damaged')
+    def verify(root, slug):
+        folder = root / slug / 'v0.6.1'
+        if (folder / 'payload/original').read_bytes() != b'original':
+            raise craft_host.CraftError('craft_build_not_verified')
+        return folder / 'payload'
+    monkeypatch.setattr(craft_host, 'installed', verify)
+    monkeypatch.setattr(craft_native, 'runtime_status', lambda root, slug: {
+        'verified': (root / slug / 'v0.6.1/agent/cli').read_bytes() == b'native'})
+    installer.provision_office(payload, cache, 'gridcraft')
+    assert (target / damaged).read_bytes() == (source / damaged).read_bytes()
+    backups = list((target / '.full-repair-backups').glob('*/previous/' + damaged))
+    assert len(backups) == 1 and backups[0].read_bytes() == b'damaged'
+    assert (target / 'preferences.json').read_text() == 'keep-settings'
+    assert (target / 'export.xlsx').read_bytes() == b'keep-workbook'
+    installer.provision_office(payload, cache, 'gridcraft')
+    assert len(list((target / '.full-repair-backups').iterdir())) == 1
+
+
 def test_upgrade_rejects_missing_required_fonts_before_stopping_processes(tmp_path, monkeypatch):
     (tmp_path / 'full-package.json').write_text('{"files":{}}')
     calls = []
