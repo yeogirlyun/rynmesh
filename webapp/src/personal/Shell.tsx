@@ -26,6 +26,9 @@ import { AgentNavigationContext } from "./agentNavigation";
 import { DropActivity } from "./drop/DropActivity";
 import { pinnedPluginWorkspaces, PIN_CHANGE_EVENT, pluginWorkspacePath } from "../screens/pluginWorkspaceNavigation";
 import "../screens/rynAgentText";
+import { craftPlugins } from "../domain/craftPlugins";
+import { agentExtensions } from "../domain/agentExtensions";
+import { installedSidebarApps, type SidebarApp } from "./installedSidebarApps";
 export function PersonalShell({ children }: { children: ReactNode }) {
   const { t, i18n } = useTranslation();
   const { t: agentText } = useTranslation("rynAgent");
@@ -35,6 +38,25 @@ export function PersonalShell({ children }: { children: ReactNode }) {
   const [query, setQuery] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [pinnedPlugins, setPinnedPlugins] = useState(pinnedPluginWorkspaces);
+  const [installedApps, setInstalledApps] = useState<SidebarApp[]>([]);
+  useEffect(() => {
+    if (demo) return;
+    let stopped = false, loading = false;
+    const refresh = async () => {
+      if (loading) return;
+      loading = true;
+      try {
+        const [craft, extensions] = await Promise.all([craftPlugins.catalog(), agentExtensions.overview()]);
+        if (!stopped) setInstalledApps(installedSidebarApps(craft.plugins, extensions.plugins));
+      } catch { /* Retain the last successful catalog during node startup. */ }
+      finally { loading = false; }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 10000);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("ryn-installed-apps-changed", refresh);
+    return () => { stopped = true; clearInterval(timer); window.removeEventListener("focus", refresh); window.removeEventListener("ryn-installed-apps-changed", refresh); };
+  }, [demo]);
   const [agentNavCollapsed, setAgentNavCollapsed] = useState(() => {
     try { return sessionStorage.getItem("ryn.agent.navigation") === "closed" || (window.innerWidth <= 760 && sessionStorage.getItem("ryn.agent.navigation") !== "open"); }
     catch { return window.innerWidth <= 760; }
@@ -57,7 +79,8 @@ export function PersonalShell({ children }: { children: ReactNode }) {
     { to: "/services", label: t("nav.services"), icon: Box },
     { to: "/agent", label: agentText("title"), icon: MessageCircle },
     { to: "/apps", label: tr("Apps"), icon: Box },
-    ...pinnedPlugins.map(plugin => ({ to: pluginWorkspacePath(plugin.id), label: plugin.title, icon: Building2 })),
+    ...installedApps.map(app => ({ to: app.to, label: app.title, icon: Building2 })),
+    ...pinnedPlugins.filter(plugin => !installedApps.some(app => app.id === plugin.id)).map(plugin => ({ to: pluginWorkspacePath(plugin.id), label: plugin.title, icon: Building2 })),
     { to: "/devices", label: t("nav.devices"), icon: Network },
     { to: "/tasks", label: t("nav.tasks"), icon: CheckSquare },
     { to: "/drives", label: t("drive.title"), icon: HardDrive },
@@ -122,7 +145,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
       end={item.to === "/" || item.to === "/apps"}
       key={item.to}
       to={href(item.to)}
-      className={({ isActive }) => (isActive || (item.to.startsWith("/apps/plugins/") && location.pathname === item.to.replace("/apps/plugins/", "/apps/extensions/")) || (item.to === "/explore" && inExplore) || (item.to === "/devices" && location.pathname === "/peers") ? "active" : "")}
+      className={({ isActive }) => ((!item.to.includes("?open=") && isActive) || (item.to.startsWith("/apps/plugins/") && location.pathname === item.to.replace("/apps/plugins/", "/apps/extensions/")) || (item.to === "/explore" && inExplore) || (item.to === "/devices" && location.pathname === "/peers") ? "active" : "")}
     >
       <item.icon size={21} strokeWidth={1.6} />
       <span>{item.label}</span>
