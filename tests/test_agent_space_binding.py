@@ -93,6 +93,33 @@ def test_space_catalog_signed_metadata_only_and_stateless_actual_dispatch(space_
     assert [trace["messages"] for trace in p.traces] == [[{"role": "user", "content": "first history"}], [{"role": "user", "content": "second history"}]]
 
 
+def test_transport_failure_retains_only_unexpired_authorized_snapshot(space_pair):
+    p = space_pair
+    rows = p.consumer.refresh(p.locator)
+    checked = p.consumer.cache[p.locator["peer_id"]]["checked_at"]
+    def unavailable(*args):
+        raise OSError("temporary connection failure")
+    p.consumer.exchange = unavailable
+    with pytest.raises(TaskProtocolError):
+        p.consumer.refresh(p.locator)
+    assert p.consumer.records() == rows
+    assert p.consumer.cache[p.locator["peer_id"]]["checked_at"] == checked
+    p.consumer.clock = lambda: checked + 121
+    assert not p.consumer.records()
+    p.consumer.clock = lambda: checked + 1
+    p.child.set_policy("local")
+    assert not p.consumer.records()
+
+
+def test_broken_cli_does_not_remove_healthy_api_models(space_pair):
+    from rynmesh.llm_package.adapters import AdapterError
+    p = space_pair
+    def broken(**kwargs):
+        raise AdapterError("CLI executable is unavailable")
+    p.publisher.providers = lambda: [SimpleNamespace(accepting_orders=True, public_status=broken), p.provider]
+    assert len(p.consumer.refresh(p.locator)) == 1
+
+
 def test_both_nodes_policy_aba_invalidates_old_destination(space_pair):
     p = space_pair
     row = p.consumer.refresh(p.locator)[0]

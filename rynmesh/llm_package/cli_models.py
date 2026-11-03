@@ -44,6 +44,14 @@ def cached_models(kind, executable):
     return []
 
 
+def refresh_due(kind, executable):
+    """Refresh halfway through the TTL, leaving time for bounded discovery."""
+    key = (kind, executable) if kind == "codex_cli" else executable
+    with _cache_lock:
+        cached = _cache.get(key)
+        return not cached or not 0 <= time.monotonic() - cached[0] < (30 if kind == "codex_cli" else 15)
+
+
 def validate_model(model):
     if not isinstance(model, str) or (model and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", model)):
         raise AdapterError("invalid cli_model")

@@ -2222,6 +2222,19 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         policy=BackoffPolicy(busy_delay_s=15, idle_initial_s=15, idle_multiplier=1, idle_max_s=15,
                              error_multiplier=2, error_max_s=120),
     ))
+    # Inventory freshness must not depend on registry availability or UI reads.
+    # Separate workers keep a slow/broken CLI from starving the other CLI.
+    def refresh_cli_inventory(kind):
+        current = active_cli_managers().get(kind)
+        return bool(current and current.accepting_orders and current.adapter.refresh_inventory())
+
+    for kind in ("codex_cli", "antigravity_cli"):
+        registry.register(BackgroundWorkerSpec(
+            name="llm.inventory." + kind,
+            run_once=lambda kind=kind: refresh_cli_inventory(kind), initial_delay_s=1,
+            policy=BackoffPolicy(busy_delay_s=5, idle_initial_s=5, idle_multiplier=1, idle_max_s=5,
+                                 error_multiplier=2, error_max_s=15),
+        ))
     registry.register(BackgroundWorkerSpec(
         name="llm.publish-refresh",
         run_once=publish_once,

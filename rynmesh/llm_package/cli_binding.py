@@ -49,7 +49,7 @@ class CLIModelDispatchAdapter:
             "manifest": self.manifest.public_dict(), "kind": self.inner.kind}, sort_keys=True).encode()).hexdigest()
         return str(command), fingerprint
 
-    def current_models(self):
+    def current_models(self, *, refresh=False):
         """Use the discovery TTL, never an indefinitely retained selected snapshot."""
         from .cli_models import list_models
         command, fingerprint = self._configuration()
@@ -59,12 +59,20 @@ class CLIModelDispatchAdapter:
                 with file_transaction(self.lock_path):
                     prior = read_json(self.path, max_bytes=256 * 1024).get(
                         self.manifest.package_id, {}).get("fingerprint")
-            models = list_models(self.inner.kind, command, **({"refresh": True} if prior and prior != fingerprint else {}))
+            models = list_models(self.inner.kind, command, **({"refresh": True} if refresh or prior and prior != fingerprint else {}))
             if not models:
                 raise AdapterError("cli_model_unavailable", code="model_configuration_changed")
             self._observe_models(models, fingerprint)
             self._metadata_fingerprint = fingerprint
             return models
+
+    def refresh_inventory(self):
+        from .cli_models import refresh_due
+        command, fingerprint = self._configuration()
+        if self._metadata_fingerprint != fingerprint or refresh_due(self.inner.kind, command):
+            self.current_models(refresh=True)
+            return True
+        return False
 
     def display_models(self):
         """Passive UI metadata; admission always uses current_models instead.
