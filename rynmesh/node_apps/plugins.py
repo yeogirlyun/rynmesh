@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import secrets
 import shutil
@@ -620,6 +621,7 @@ def install_plugin_routes(app, *, home, peer_id, local_control):
         except craft_host.CraftError as exc:
             raise HTTPException(409, detail=str(exc)) from None
         except Exception:
+            logging.getLogger(__name__).exception("Local plugin operation failed")
             raise HTTPException(503, detail="plugin_operation_failed") from None
 
     @app.get("/api/local/plugins")

@@ -1714,6 +1714,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         providers=lambda: [*active_source_managers().values(), *active_cli_managers().values()],
         network_id=lambda: str(read_provider_settings().get("network_id") or "rynmesh-main"),
         exchange=exchange_space_catalog)
+    from .lan_space_catalog import LanSpaceCatalogRefresh
+    lan_space_catalog = LanSpaceCatalogRefresh(store, space_catalog)
 
     agent_registry_cache = {}
     agent_registry_lock = threading.Lock()
@@ -1871,9 +1873,12 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     app.state.llm_discover = discover
 
     def refresh_space_catalog_once():
+        network = str(read_provider_settings().get("network_id") or "rynmesh-main")
+        if lan_space_catalog.refresh_once(network):
+            return True
         # One metadata-only signed challenge per worker tick. Advertisements
         # locate a peer; only the authenticated response can bind its models.
-        rows = discover(str(read_provider_settings().get("network_id") or "rynmesh-main"))
+        rows = discover(network, cache_registry=True, passive_registry=True)
         candidates = {row["peer_id"]: row for row in rows if row.get("peer_id") != store.peer_id
             and row.get("access_policy") == "personal_space" and store.personal_space.allows_ai(row.get("peer_id"))}
         if not candidates:
@@ -2309,7 +2314,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     @app.get("/api/local/llm/services")
     def local_llm_services(network_id: str = "rynmesh-main") -> dict[str, Any]:
         try:
-            services = discover(network_id)
+            services = discover(network_id, cache_registry=True, passive_registry=True)
         except Exception:
             services = []
         return {"network_id": network_id, "services": services}
