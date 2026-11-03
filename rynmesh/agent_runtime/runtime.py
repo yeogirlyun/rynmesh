@@ -407,7 +407,7 @@ class AgentRuntime(AgentLoop):
         epoch = row.get("context_epoch", 0)
         return [message for message in row["messages"] if message["role"] == "user" or message.get("context_epoch", 0) == epoch]
 
-    def _execution_context(self, row: dict, operation_id=None) -> dict:
+    def _execution_context(self, row: dict, operation_id=None, *, cheap_only=False) -> dict:
         origins = {}
         for message in self._history(row):
             if message.get("role") == "tool" and isinstance(message.get("resource_origin"), dict) and "grant_id" in message["resource_origin"]:
@@ -415,7 +415,7 @@ class AgentRuntime(AgentLoop):
         model_destination = copy.deepcopy(row.get("model_destination") or {"catalog_model_id": row["model_id"], "provider_peer_id": "", "source_id": "", "destination_revision": ""})
         resource_grants = copy.deepcopy(row["scope"]["resource_grants"])
         egress_grants = copy.deepcopy(row["scope"]["egress_grants"])
-        if (not resource_grants and "selection" not in row["scope"]
+        if (not cheap_only and not resource_grants and "selection" not in row["scope"]
                 and hasattr(self.tools, "default_scope")
                 and getattr(self.model, "supports_destination_binding", False) is True
                 and model_destination.get("destination_revision")):
@@ -433,7 +433,12 @@ class AgentRuntime(AgentLoop):
                         egress_grants = auto_scope["egress_grants"]
             except Exception:
                 pass
-        return {**self._policy_context(row),
+        # Cancellation checks validate retained grants and local control state.
+        # They must not discover models or synthesize new resource authority on
+        # every stream chunk. Full checks still run at each dispatch boundary.
+        policy_context = ({"consumer_node_id": self.consumer_node_id, "model_destination": model_destination,
+                           "model_destination_verified": False} if cheap_only else self._policy_context(row))
+        return {**policy_context,
                 "_admit_extension_policy": _ExtensionPolicyAdmitter(self, row),
                 "task_id": row["id"], "operation_id": operation_id, "owner_id": self.owner_id,
                 "consumer_node_id": self.consumer_node_id, "goal_revision": row["goal"]["revision"],
@@ -460,7 +465,7 @@ class AgentRuntime(AgentLoop):
                 self.store.inspect(lambda data: projects.validate_binding(data, row["project"]))
             else:
                 projects.validate_binding(self.store.read(), row["project"])
-        context = self._execution_context(row)
+        context = self._execution_context(row, cheap_only=cheap_only)
         if self._requires_destination_binding(row, context):
             if not context["model_destination"].get("destination_revision") or getattr(self.model, "supports_destination_binding", False) is not True:
                 raise AgentError("agent_model_destination_unverifiable")
