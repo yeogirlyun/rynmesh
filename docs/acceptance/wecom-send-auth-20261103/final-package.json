@@ -1,0 +1,51 @@
+{
+  "installer": "D:\\code\\rynmesh\\output\\full-package-20261103-r3\\Ryn_0.8.0_Full_7Plugins_R3_x64.exe",
+  "sha256": "931f69b6240dfb402a05ef7300135374e81640b1d0e5edbaa27c8bf1314b2b5a",
+  "company_commit": "45e5d07c5b8d83b2ee12310ecba51eb04e370a5d",
+  "core_sha256": "DAA34A1A30DBE58757A6EB5215BFD181FF00B13CD0E3CC4BE978FC6F5447024E",
+  "core_commit": "4d1fe3d",
+  "schema": 1,
+  "helper_source_sha256": "9E2F8C3C9D6C8D81FB094FA536125972C9C13D4BF3FD2207BBD0EF11407C379F",
+  "bytes": 611260289,
+  "ryn_commit": "16ab30d7e371821352446291cf47dee227ffe11d",
+  "installer_sha256": "931F69B6240DFB402A05EF7300135374E81640B1D0E5EDBAA27C8BF1314B2B5A",
+  "acceptance": {
+    "fresh_install": true,
+    "repeat_install_preserves_identity_key_and_disabled_plugins": true,
+    "office_editors": [
+      "pdfcraft",
+      "wordcraft",
+      "gridcraft",
+      "deckcraft"
+    ],
+    "native_cli_version": [
+      "pdfcraft",
+      "wordcraft",
+      "gridcraft",
+      "deckcraft"
+    ],
+    "company_pages": [
+      "company-workspace",
+      "company-dashboard",
+      "company-affiliate"
+    ],
+    "company_health": {
+      "ok": true,
+      "service": "company",
+      "status": "ready"
+    },
+    "company_outbound_network": "blocked",
+    "live_install_modified": false,
+    "system_installer_executed": false
+  },
+  "webview_sha256": "62863F0F0611A16CCF124B4F15650C3B66624504EBA74D7CDE1E2AE5D951249B",
+  "plugins": [
+    "company-workspace",
+    "company-dashboard",
+    "company-affiliate",
+    "pdfcraft",
+    "wordcraft",
+    "gridcraft",
+    "deckcraft"
+  ]
+}
