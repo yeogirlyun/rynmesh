@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import time
 from typing import Any, Callable
@@ -12,6 +13,7 @@ from fastapi.responses import JSONResponse
 from ..diagnostic_log import failure
 from ..store import AgentError
 from .adapter import ExtensionToolAdapter
+from .local_services import LocalServiceCredentials
 from .views import query_plugin_tool, query_view
 
 
@@ -46,6 +48,7 @@ def install_extension_routes(
     local_control: Callable,
 ) -> None:
     """Mount `/api/local/agent/extensions` management routes on the FastAPI app."""
+    local_services = LocalServiceCredentials(extensions.store, extensions.manager)
 
     def _desktop_access() -> bool:
         try:
@@ -85,6 +88,65 @@ def install_extension_routes(
             return value
         except (TypeError, ValueError):
             raise HTTPException(400, detail="agent_invalid_request") from None
+
+    @app.post("/api/local/agent/extensions/local-service/prepare")
+    async def prepare_local_service(request: Request):
+        payload = await _body(request, max_bytes=8192)
+        if set(payload) != {"service_id", "plugin_ids", "server_ids", "port"}:
+            raise HTTPException(400, detail="agent_local_service_invalid")
+        # Only the authenticated native owner channel receives this secret.
+        return await _run("prepare_local_service", lambda: local_services.prepare(**payload))
+
+    @app.post("/api/local/agent/extensions/local-service/activate")
+    async def activate_local_service(request: Request):
+        payload = await _body(request, max_bytes=1024)
+        if set(payload) != {"service_id", "generation"}:
+            raise HTTPException(400, detail="agent_local_service_invalid")
+        return await _run("activate_local_service", lambda: local_services.activate(**payload))
+
+    @app.post("/api/local/agent/extensions/local-service/authorize-operation")
+    async def authorize_local_operation(request: Request):
+        # A service can only ask whether its own already-persisted operation is
+        # still authorized. It cannot mint approvals or read task contents.
+        if (not request.client or request.client.host not in {"127.0.0.1", "::1"}
+                or request.headers.get("origin") or request.headers.get("referer")):
+            raise HTTPException(403, detail="agent_local_service_denied")
+        raw = bytearray()
+        async for chunk in request.stream():
+            raw.extend(chunk)
+            if len(raw) > 8192:
+                raise HTTPException(413, detail="agent_request_limit")
+        try:
+            payload = json.loads(raw)
+            server = extensions.store.get_mcp_server_internal(payload["server_id"], require_enabled=True)
+            headers = server.get("secret_headers") or {}
+            for header in ("X-Ryn-Service-Token", "X-Ryn-Service-Generation"):
+                expected = headers.get(header, "")
+                if not expected or not hmac.compare_digest(expected.encode(), request.headers.get(header, "").encode()):
+                    raise ValueError
+            receipt = extensions.ledger_factory().get(payload["operation_id"])
+            binding = receipt["binding"]
+            if (receipt.get("trusted_operation") != payload
+                    or receipt["status"] not in {"dispatched", "confirmed"}
+                    or binding["task_id"] != payload["task_id"]
+                    or binding["arguments_sha256"] != payload["arguments_sha256"]
+                    or binding["extension_binding"]["server_id"] != server["id"]
+                    or payload["expires_at"] < time.time()):
+                raise ValueError
+            extensions.verify_binding(binding["extension_binding"])
+            def current(data):
+                row = data["tasks"].get(binding["task_id"])
+                if (not row or not data["settings"].get("enabled")
+                        or data["settings"].get("permission_mode") == "read_only"
+                        or row["status"] in {"cancelled", "paused", "interrupted", "failed"}
+                        or row.get("pending_control")):
+                    return False
+                actual = {"goal_revision": row["goal"]["revision"], "control_revision": row["control_revision"],
+                          "scope_revision": row["scope_revision"], "settings_revision": data.get("settings_revision", 0)}
+                return actual == binding.get("authority_revision") == payload.get("authority_revision")
+            return {"allowed": runtime.store.inspect(current)}
+        except (ValueError, KeyError, TypeError, AgentError):
+            return {"allowed": False}
 
     async def _delete_revision(request: Request) -> int:
         local_control(request)

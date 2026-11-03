@@ -212,6 +212,36 @@ Start-Sleep -Seconds 2;
     print(json.dumps({'upgrade_backup': str(backup), 'user_data_preserved': True}))
 
 
+def configure_local_mcp_services(store, declarations, port):
+    """Migrate only declared stock endpoints; never override customized URLs/auth."""
+    managed = []
+    for declaration in declarations.get('mcp_servers', []):
+        local = declaration.get('local_service') or {}
+        path = local.get('path', '')
+        if local.get('id') != 'company' or not path.startswith('/') or any(c in path for c in '?#\\'):
+            continue
+        endpoint = f'http://127.0.0.1:{port}{path}'
+        try:
+            server = store.get_mcp_server_internal(declaration['id'])
+        except Exception:
+            continue
+        if server.get('plugin_id') != declaration.get('plugin_id'):
+            continue
+        current = server.get('url')
+        # Any static bearer/auth customization is retained for owner review.
+        headers = server.get('secret_headers') or {}
+        if any(k.lower() == 'authorization' for k in headers) or server.get('bearer_token_env'):
+            continue
+        stock = set(local.get('legacy_urls', [])) | {declaration.get('url')}
+        if current != endpoint:
+            if current not in stock:
+                continue
+            store.upsert_mcp_server({'url': endpoint, 'auth': declaration.get('auth') or {}},
+                                    server_id=server['id'], expected_revision=server['revision'])
+        managed.append(server['id'])
+    return managed
+
+
 def install(payload, destination, home):
     from rynmesh.crypto import public_key_from_private
     from rynmesh.store import load_or_create_private_key
@@ -287,6 +317,13 @@ def install(payload, destination, home):
         mcp_servers=[s for s in declarations['mcp_servers'] if s.get('plugin_id') in missing])
     for slug in sorted(missing):
         store.set_plugin_enabled(slug, True)
+    managed_servers = configure_local_mcp_services(store, declarations, port)
+    with file_transaction(services_root / '.install.lock'):
+        config = json.loads(config_path.read_text(encoding='utf-8-sig'))
+        for service in config['services']:
+            if service['id'] == 'company':
+                service['mcp_servers'] = managed_servers
+        atomic_json(config_path, config)
     receipt = {'schema': 1, 'ryn_commit': manifest['ryn_commit'], 'company_commit': revision,
                'plugins': list(COMPANY + OFFICE), 'offline': True, 'installation': str(destination)}
     atomic_json(home / 'full-package-install.json', receipt)

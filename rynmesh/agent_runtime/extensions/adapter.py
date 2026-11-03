@@ -390,6 +390,40 @@ class ExtensionToolAdapter:
     def handles(self, name: str) -> bool:
         return isinstance(name, str) and (name == READ_SKILL_FILE_TOOL or name.startswith("mcp__"))
 
+    def plugin_catalog(self) -> list[dict[str, Any]]:
+        """Safe installed-plugin summary, using the same store as execution.
+
+        No credentials, endpoint URLs or remote diagnostic prose enter this view.
+        An entry is not an execution grant; dispatch revalidates its binding.
+        """
+        overview = self.store.overview()
+        oauth = getattr(self.manager, "oauth", None)
+        result = []
+        for plugin in overview["plugins"]:
+            if plugin.get("builtin"):
+                continue
+            connections = []
+            for server in overview["mcp_servers"]:
+                if server.get("plugin_id") != plugin["id"]:
+                    continue
+                state = server.get("status", "discovery_failed")
+                if not plugin.get("enabled") or not server.get("enabled"):
+                    state = "disabled"
+                elif oauth is not None:
+                    auth_state = oauth.public_status(server.get("instance_id", "")).get("state")
+                    if auth_state in {"logged_out", "pending", "error"}:
+                        state = "authentication_required"
+                available = state in {"ready", "Ready", "connected"} and server.get("discovery_revision", 0) > 0
+                connections.append({"server_id": server["id"], "state": state,
+                                    "discovered": server.get("discovery_revision", 0) > 0,
+                                    "available_tool_count": server.get("enabled_tools_count", 0) if available else 0,
+                                    "discovery_tool": "ryn_discover_tools"})
+            result.append({"id": plugin["id"], "name": plugin.get("name", plugin["id"]),
+                           "version": plugin.get("version"), "enabled": bool(plugin.get("enabled")),
+                           "connections": connections, "discovery_tool": "ryn_discover_tools",
+                           "skill_ids": list(plugin.get("skill_ids") or [])})
+        return result
+
     def _mcp_tools_cache_key(self) -> tuple[Any, ...] | None:
         store = self.store
         oauth = getattr(self.manager, "oauth", None)
@@ -698,6 +732,24 @@ class ExtensionToolAdapter:
                 tool=auth_tool,
                 context=context,
             )
+        service_preview = None
+        if binding["effective_effect"] == "write" and (server.get("secret_headers") or {}).get("X-Ryn-Service-Token"):
+            prepared = self.manager.call_tool(binding["server_id"], binding["original_tool_name"], arguments,
+                expected_revision=binding["revision"], expected_config_generation=binding["config_generation"],
+                expected_instance_id=binding["instance_id"], expected_schema_hash=binding["schema_sha256"], prepare=True)
+            service_preview = (prepared.get("structuredContent") or {}).get("preview")
+            try:
+                jsonschema_validate(service_preview, {
+                    "type": "object", "additionalProperties": False, "required": ["digest", "fields"],
+                    "properties": {"digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                        "fields": {"type": "array", "minItems": 1, "maxItems": 8, "items": {
+                            "type": "object", "additionalProperties": False, "required": ["label", "value"],
+                            "properties": {"label": {"type": "string", "maxLength": 80},
+                                           "value": {"type": "string", "maxLength": 5000}}}}}})
+                if prepared.get("isError"):
+                    raise ValueError
+            except (ValidationError, ValueError):
+                raise AgentToolRejected("agent_approval_preview_unavailable") from None
         return {
             "title": f"{server.get('name') or server['id']}: {tool.get('title') or tool.get('name')}",
             "server_id": binding["server_id"],
@@ -709,6 +761,7 @@ class ExtensionToolAdapter:
             "computer_access": bool(binding["computer_access"]),
             "operation": copy.deepcopy(arguments),
             "extension_binding": copy.deepcopy(binding),
+            **({"service_preview": service_preview} if service_preview is not None else {}),
         }
 
     def _normalize_mcp_result(
@@ -1001,6 +1054,8 @@ class ExtensionToolAdapter:
             "arguments_sha256": args_sha,
             "local_execution": copy.deepcopy(context.get("local_execution") or {}),
             "extension_binding": copy.deepcopy(binding),
+            "authority_revision": {key: context.get(key) for key in (
+                "goal_revision", "control_revision", "scope_revision", "settings_revision")},
         }
 
         with self._operation_lock(operation_id):
@@ -1186,10 +1241,24 @@ class ExtensionToolAdapter:
                     self._check_computer_access(context)
                 else:
                     self.local.policy(context)
-                ledger.update(operation_id, "dispatched", receipt_reserve=32768)
+                ledger.update(operation_id, "dispatched", receipt_reserve=32768,
+                              trusted_operation=dispatch_options.get("trusted_operation"))
                 passed_pre_dispatch = True
 
             try:
+                dispatch_options = {}
+                local_server = self.store.get_mcp_server_internal(binding["server_id"], require_enabled=True)
+                if (local_server.get("secret_headers") or {}).get("X-Ryn-Service-Token"):
+                    # This is outside model arguments and is emitted only after
+                    # durable intent plus the normal exact-preview approval.
+                    dispatch_options["trusted_operation"] = {
+                        "operation_id": operation_id, "task_id": context["task_id"],
+                        "arguments_sha256": args_sha, "connection_id": binding["instance_id"],
+                        "generation": binding["config_generation"], "expires_at": int(time.time()) + 60,
+                        "authority_revision": ledger_binding["authority_revision"],
+                        "server_id": binding["server_id"],
+                        "preview_digest": (current_preview.get("service_preview") or {}).get("digest"),
+                    }
                 raw_res = self.manager.call_tool(
                     binding["server_id"],
                     binding["original_tool_name"],
@@ -1201,6 +1270,7 @@ class ExtensionToolAdapter:
                     session_scope=session_scope,
                     before_dispatch=_before_write_dispatch,
                     cancelled=cancelled,
+                    **dispatch_options,
                 )
             except BaseException as exc:
                 if not passed_pre_dispatch:

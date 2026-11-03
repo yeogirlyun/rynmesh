@@ -84,7 +84,7 @@ def prepare(output, company, company_source, office_compat_dir=None):
                 plugin['skill_ids'].append(sid)
         for sid, record in source['mcp_servers'].items():
             if record.get('plugin_id') == slug:
-                servers.append({k: record[k] for k in ('id','name','description','transport','url','plugin_id','auth','data_policy') if k in record})
+                servers.append({k: record[k] for k in ('id','name','description','transport','url','plugin_id','auth','data_policy','local_service') if k in record})
                 plugin['mcp_server_ids'].append(sid)
         plugins.append(plugin)
     (output / 'company-plugins.json').write_text(json.dumps({'plugins':plugins,'skills':skills,'mcp_servers':servers}, ensure_ascii=False, indent=2), encoding='utf-8')

@@ -156,6 +156,7 @@ class RynTools:
             node_store=store,
             native_computer=self.native_computer,
         )
+        self.craft_plugins.extension_catalog = self.extensions.plugin_catalog
         self.code_mode = CodeModeRunner(self)
 
     def close(self):

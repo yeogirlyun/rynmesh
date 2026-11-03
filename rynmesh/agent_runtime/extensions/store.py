@@ -1406,6 +1406,7 @@ class ExtensionStore:
                 else None
             )
             out["identity_group_id"] = comp["id"] if comp else None
+            out["identity_group_origin"] = comp.get("origin") if comp else None
             return out
 
     def list_mcp_servers_internal(self, *, include_tools: bool = True) -> list[dict[str, Any]]:
@@ -1428,6 +1429,7 @@ class ExtensionStore:
                     else None
                 )
                 item["identity_group_id"] = comp["id"] if comp else None
+                item["identity_group_origin"] = comp.get("origin") if comp else None
                 result.append(item)
             return result
 
@@ -1453,6 +1455,7 @@ class ExtensionStore:
                         else None
                     )
                     item["identity_group_id"] = comp["id"] if comp else None
+                    item["identity_group_origin"] = comp.get("origin") if comp else None
                     result.append(item)
             return result
 
@@ -2565,6 +2568,30 @@ class ExtensionStore:
     # ------------------------------------------------------------------
     # Import Commit Persistence (creates disabled entries)
     # ------------------------------------------------------------------
+
+    def activate_local_service(self, bindings, credential: str, generation: str) -> None:
+        """Atomically bind a healthy owned service; retain user/OAuth identity."""
+        with file_transaction(self.lock):
+            state = self._read()
+            for sid, instance, config, enabled in bindings:
+                server = state["mcp_servers"].get(sid)
+                if (not server or server["instance_id"] != instance or server["config_generation"] != config
+                        or self._is_server_effectively_enabled(server, state) != enabled):
+                    raise AgentError("agent_local_service_stale")
+            for sid, *_ in bindings:
+                server = state["mcp_servers"][sid]
+                server.setdefault("secret_headers", {}).update({
+                    "X-Ryn-Service-Token": credential, "X-Ryn-Service-Generation": generation})
+                server["revision"] = server["config_generation"] = _alloc_generation(state)
+                server["config_sha256"] = _mcp_config_fingerprint(server)
+                server["discovered_tools"] = []
+                server["discovery_revision"] = 0
+                self._clear_server_hints(server)
+                server["status"] = "NeedsTest"
+                server["status_message"] = ""
+                server["updated_at"] = _now()
+            state["updated_at"] = _now()
+            self._write(state)
 
     def commit_imported_items(
         self,

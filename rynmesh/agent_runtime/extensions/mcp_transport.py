@@ -1091,6 +1091,8 @@ class StreamableHttpMcpSession:
         *,
         before_dispatch: Callable[[], None] | None = None,
         cancelled: Callable[[], bool] | None = None,
+        trusted_operation: dict[str, Any] | None = None,
+        prepare: bool = False,
     ) -> dict[str, Any]:
         if not self.initialized:
             try:
@@ -1100,8 +1102,9 @@ class StreamableHttpMcpSession:
                 raise
         with self.lock:
             return self._exchange(
-                "tools/call",
-                {"name": name, "arguments": arguments},
+                "tools/prepare" if prepare else "tools/call",
+                {"name": name, "arguments": arguments,
+                 **({"_meta": {"ryn_operation": trusted_operation}} if trusted_operation is not None else {})},
                 self.tool_timeout,
                 before_dispatch=before_dispatch,
                 cancelled=cancelled,
@@ -1139,7 +1142,7 @@ class McpSessionManager:
 
     def __init__(self, store: ExtensionStore) -> None:
         self.store = store
-        self.oauth = McpOAuthManager(store, on_connected=self._oauth_connected)
+        self.oauth = McpOAuthManager(store, on_connected=self._oauth_connected, trusted_origin=self._managed_oauth_origin)
         self._lock = threading.RLock()
         self._sessions: dict[tuple[str, str | None], StdioMcpSession | StreamableHttpMcpSession] = {}
         self._pending: dict[
@@ -1150,6 +1153,21 @@ class McpSessionManager:
         self._scope_generations: dict[str, int] = {}
         self._fallback_cwd = self.store.root / "mcp_runtime"
         self._fallback_cwd.mkdir(parents=True, exist_ok=True)
+
+    def _managed_oauth_origin(self, resource: str, target: str) -> bool:
+        from urllib.parse import urlsplit
+        local, remote = urlsplit(resource), urlsplit(target)
+        if local.scheme != "http" or local.hostname != "127.0.0.1" or remote.scheme != "https":
+            return False
+        for server in self.store.list_enabled_mcp_servers_internal():
+            if server.get("url") != resource or not (server.get("secret_headers") or {}).get("X-Ryn-Service-Token"):
+                continue
+            issuer = urlsplit(server.get("identity_group_origin") or "")
+            if (issuer.scheme == "https" and not issuer.username and not issuer.password
+                    and issuer.path in {"", "/"} and not issuer.query and not issuer.fragment
+                    and (remote.scheme, remote.netloc) == (issuer.scheme, issuer.netloc)):
+                return True
+        return False
 
     def _oauth_connected(self, server_id: str) -> None:
         try:
@@ -1631,6 +1649,8 @@ class McpSessionManager:
         session_scope: str | None = None,
         before_dispatch: Callable[[], None] | None = None,
         cancelled: Callable[[], bool] = lambda: False,
+        trusted_operation: dict[str, Any] | None = None,
+        prepare: bool = False,
     ) -> dict[str, Any]:
         """Execute a tool call against an enabled MCP server, enforcing identity & generation."""
         key = self._session_key(server_id, session_scope)
@@ -1698,11 +1718,21 @@ class McpSessionManager:
                 return True
 
         try:
+            extra = {}
+            if trusted_operation is not None or prepare:
+                from urllib.parse import urlsplit
+                url = urlsplit(server.get("url") or "")
+                if (not isinstance(session, StreamableHttpMcpSession) or url.scheme != "http"
+                        or url.hostname != "127.0.0.1" or not (server.get("secret_headers") or {}).get("X-Ryn-Service-Token")):
+                    raise AgentError("agent_local_service_binding_invalid")
+                extra["trusted_operation"] = trusted_operation
+                extra["prepare"] = prepare
             return session.call_tool(
                 tool_name,
                 arguments,
                 before_dispatch=_locked_pre_dispatch,
                 cancelled=_call_cancelled,
+                **extra,
             )
         except BaseException as exc:
             if getattr(exc, "server_id", None) is None:

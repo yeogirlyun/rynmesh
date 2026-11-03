@@ -1176,6 +1176,8 @@ function ApprovalCard({ approval, controlled, enabled, canDeny, busy, waiting, o
 }) {
   const { t } = useTranslation("rynAgent");
   const preview = record(approval.preview);
+  const servicePreview = record(preview.service_preview);
+  const serviceFields = Array.isArray(servicePreview.fields) ? servicePreview.fields.map(record) : [];
   const before = record(preview.before);
   const after = record(preview.after);
   const exactSharing = approval.tool === "ryn_share_model_with_friend";
@@ -1203,6 +1205,10 @@ function ApprovalCard({ approval, controlled, enabled, canDeny, busy, waiting, o
   return <section className="ra-approval" aria-label={t("approval")}>
     <div className="ra-result-head"><ListChecks size={18} /><strong>{t(sharing ? "modelSharingChange" : friend ? "friendAccessChange" : sourceDraft ? "sourceConfigChange" : defaultModel ? "defaultModelChange" : "approval")}</strong></div>
     <p>{t("approvalHelp")}</p>
+    {serviceFields.length > 0 && <dl className="ra-change-summary">{serviceFields.map((field, index) =>
+      typeof field.label === "string" && typeof field.value === "string"
+        ? <Fragment key={index}><dt>{field.label}</dt><dd style={{ whiteSpace: "pre-wrap" }}>{field.value}</dd></Fragment>
+        : null)}</dl>}
     {localFile && <dl className="ra-change-summary">
       <dt>{t("target")}</dt><dd><code>{String(preview.path)}</code>{typeof preview.destination === "string" ? <> → <code>{preview.destination}</code></> : null}</dd>
       {typeof preview.bytes === "number" && <><dt>{t("fileSize")}</dt><dd>{preview.bytes < 1048576 ? `${(preview.bytes / 1024).toFixed(1)} KiB` : `${(preview.bytes / 1048576).toFixed(1)} MiB`}</dd></>}

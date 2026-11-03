@@ -258,7 +258,7 @@ def test_restart_closes_nested_intent_without_replaying_or_fabricating_chat_call
     assert saved["receipts"][0]["status"] == "failed"
 
 
-@pytest.mark.parametrize("previous_base", [prompt._LEGACY_BATCH_SYSTEM, prompt._PRE_IMAGE_SYSTEM, prompt._PRE_IMAGE_BRIEF_SYSTEM])
+@pytest.mark.parametrize("previous_base", [prompt._LEGACY_BATCH_SYSTEM, prompt._PRE_IMAGE_SYSTEM, prompt._PRE_IMAGE_BRIEF_SYSTEM, prompt._PRE_PLUGIN_SYSTEM])
 def test_shipped_pinned_prompt_loses_obsolete_limit_but_custom_prompt_survives(host, previous_base):
     runtime, _, _ = host
     row = runtime.create({"message": "Inspect."})

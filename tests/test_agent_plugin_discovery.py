@@ -46,7 +46,7 @@ def test_current_apps_first_menu_and_discovered_info_use_live_read_only_tools(tm
     if "ryn_shell_execute" in first_names:
         assert first_names.index(ALL_LIST) < first_names.index("ryn_shell_execute")
     inventory = tool_data(model.calls[1], "plugins")
-    assert inventory["scope"] == "ryn_enabled_plugins" and inventory["includes_os_installed_apps"] is False
+    assert inventory["scope"] == "ryn_installed_plugins" and inventory["includes_os_installed_apps"] is False
     listed = inventory["plugins"]
     assert [plugin["id"] for plugin in listed] == ["wordcraft"]
     assert listed[0]["agent_tools"] == ["editor_info"]
@@ -79,7 +79,7 @@ def test_runtime_plugin_catalog_tracks_disable_and_reenable_without_desktop_acce
         advance(runtime, 5)
         assert runtime.get(task["id"])["status"] == "completed"
         inventory = tool_data(model.calls[-1], call_id)
-        assert inventory["scope"] == "ryn_enabled_plugins" and inventory["includes_os_installed_apps"] is False
+        assert inventory["scope"] == "ryn_installed_plugins" and inventory["includes_os_installed_apps"] is False
         plugins = inventory["plugins"]
         assert [plugin["id"] for plugin in plugins] == expected
         info_specs = [spec for spec in tools.specs() if spec["function"]["name"] == ALL_INFO]
@@ -88,3 +88,24 @@ def test_runtime_plugin_catalog_tracks_disable_and_reenable_without_desktop_acce
             assert info_specs[0]["function"]["parameters"]["properties"]["app"]["enum"] == ["wordcraft"]
         assert runtime.get(task["id"])["pending_approval"] is None
     assert len(model.calls) == 6
+
+
+def test_imported_connections_join_builtin_inventory_without_claiming_execution(tmp_path, node, manager):
+    manager.install("wordcraft")
+    _, _, tools = plugin_runtime(tmp_path, node, manager)
+    store = tools.extensions.store
+    store.commit_imported_items(plugins=[{"id": "synthetic-workspace", "name": "Synthetic workspace",
+        "mcp_server_ids": ["synthetic-local"], "skill_ids": []}], skills=[], mcp_servers=[{
+        "id": "synthetic-local", "plugin_id": "synthetic-workspace", "transport": "streamable_http",
+        "url": "http://127.0.0.1:19999/mcp", "secret_headers": {"Authorization": "synthetic-secret"}}])
+    inventory = tools.craft_plugins.execute(ALL_LIST, {}, lambda: False)
+    by_id = {p["id"]: p for p in inventory["plugins"]}
+    assert set(by_id) == {"wordcraft", "synthetic-workspace"}
+    entry = by_id["synthetic-workspace"]
+    assert entry["enabled"] is False
+    assert entry["connections"][0]["state"] == "disabled"
+    assert entry["connections"][0]["available_tool_count"] == 0
+    assert "synthetic-secret" not in json.dumps(inventory)
+    assert "19999" not in json.dumps(inventory)
+    assert tools.craft_plugins.execute(ALL_INFO, {"app": "synthetic-workspace"}, lambda: False) == entry
+    assert not any(s["function"]["name"].startswith("mcp__synthetic") for s in tools.specs())

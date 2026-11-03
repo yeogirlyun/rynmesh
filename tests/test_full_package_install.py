@@ -241,3 +241,29 @@ def test_packager_cannot_publish_without_required_compat(tmp_path, monkeypatch, 
         with pytest.raises(ValueError, match='compatibility build is missing'):
             packager.prepare(output, company, source)
         assert not (output / 'full-package.json').exists()
+
+
+@pytest.mark.parametrize('disabled', [False, True])
+@pytest.mark.parametrize('custom', [False, True])
+def test_managed_endpoint_migration_preserves_identity_and_disable(tmp_path, disabled, custom):
+    from rynmesh.agent_runtime.extensions import ExtensionStore
+    from rynmesh.services.peer_box import load_or_create_messaging_key
+    store = ExtensionStore(tmp_path / 'agent', load_or_create_messaging_key(tmp_path / 'key'))
+    original = 'https://custom.example.test/mcp' if custom else 'https://stock.example.test/ryn/mcp'
+    store.commit_imported_items(plugins=[{'id': 'p', 'mcp_server_ids': ['s'], 'skill_ids': []}], skills=[],
+        mcp_servers=[{'id': 's', 'plugin_id': 'p', 'transport': 'streamable_http', 'url': original}])
+    if not disabled:
+        store.set_plugin_enabled('p', True)
+    before = store.get_mcp_server_internal('s')
+    declaration = {'mcp_servers': [{'id': 's', 'plugin_id': 'p', 'url': 'http://127.0.0.1:18140/ryn/agent-mcp',
+        'auth': {'mode': 'oauth', 'client_id': 'ryn-desktop', 'scopes': ['workspace.access']},
+        'local_service': {'id': 'company', 'path': '/ryn/agent-mcp', 'legacy_urls': ['https://stock.example.test/ryn/mcp']}}]}
+    mapped = installer.configure_local_mcp_services(store, declaration, 19293)
+    after = store.get_mcp_server_internal('s')
+    assert after['instance_id'] == before['instance_id']
+    assert after['effective_enabled'] == before['effective_enabled'] == (not disabled)
+    assert after['url'] == (original if custom else 'http://127.0.0.1:19293/ryn/agent-mcp')
+    assert mapped == ([] if custom else ['s'])
+    generation = after['config_generation']
+    assert installer.configure_local_mcp_services(store, declaration, 19293) == mapped
+    assert store.get_mcp_server_internal('s')['config_generation'] == generation

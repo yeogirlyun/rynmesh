@@ -55,6 +55,7 @@ SPECS += [
 class PluginTools:
     def __init__(self, app):
         self.app = app
+        self.extension_catalog = lambda: []
 
     @property
     def manager(self):
@@ -64,10 +65,9 @@ class PluginTools:
         return value
 
     def specs(self):
-        if not getattr(self.app.state, "craft_plugins", None):
-            return []
-        catalog = self.manager.catalog()
+        catalog = self.manager.catalog() if getattr(self.app.state, "craft_plugins", None) else {"plugins": []}
         enabled = [p["id"] for p in catalog["plugins"] if p["enabled"]]
+        enabled = list(dict.fromkeys([*enabled, *(p["id"] for p in self.extension_catalog())]))
         editors = [slug for slug in enabled if slug in CRAFT]
         specs = []
         for original in SPECS:
@@ -87,7 +87,8 @@ class PluginTools:
         try:
             if name in {LIST, ALL_LIST}:
                 plugins = []
-                for row in self.manager.catalog()["plugins"]:
+                catalog = self.manager.catalog() if getattr(self.app.state, "craft_plugins", None) else {"plugins": []}
+                for row in catalog["plugins"]:
                     if not row["enabled"] or name == LIST and row["id"] not in CRAFT:
                         continue
                     item = {key: row[key] for key in ("id", "name", "version", "kind", "agent_tools", "editing_supported")}
@@ -105,7 +106,19 @@ class PluginTools:
                     plugins.append(item)
                 if name == LIST:
                     return {"plugins": plugins}
-                return {"scope": "ryn_enabled_plugins", "includes_os_installed_apps": False, "plugins": plugins}
+                # ExtensionStore owns imported connections; built-in entries retain
+                # their reviewed adapters. Do not collapse distinct MCP servers.
+                by_id = {p["id"]: p for p in plugins}
+                for entry in self.extension_catalog():
+                    if entry["id"] in by_id:
+                        by_id[entry["id"]]["connections"] = entry["connections"]
+                    else:
+                        by_id[entry["id"]] = entry
+                return {"scope": "ryn_installed_plugins", "includes_os_installed_apps": False, "plugins": list(by_id.values())}
+            if name == ALL_INFO:
+                extension = next((p for p in self.extension_catalog() if p["id"] == args["app"]), None)
+                if extension is not None:
+                    return extension
             if name == INFO and args["app"] not in CRAFT:
                 raise AgentToolRejected("agent_tool_arguments_invalid")
             with self.manager.lease(args["app"]) as spec:

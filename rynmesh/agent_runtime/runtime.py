@@ -443,6 +443,7 @@ class AgentRuntime(AgentLoop):
                 "task_id": row["id"], "operation_id": operation_id, "owner_id": self.owner_id,
                 "consumer_node_id": self.consumer_node_id, "goal_revision": row["goal"]["revision"],
                 "control_revision": row["control_revision"], "scope_revision": row["scope_revision"],
+                "settings_revision": self.store.inspect(lambda data: data.get("settings_revision", 0)),
                 "local_execution": copy.deepcopy(row.get("local_execution") or {}),
                 "model_destination": model_destination,
                 "resource_grants": resource_grants,
