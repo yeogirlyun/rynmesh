@@ -8,11 +8,11 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from full_package_install import OFFICE, COMPANY, sha
+from full_package_install import OFFICE, COMPANY, sha, require_office_compat
 from rynmesh.node_apps import craft_host, craft_native, craft_compat
 
 
-def prepare(output, company, company_source):
+def prepare(output, company, company_source, office_compat_dir=None):
     output.mkdir(parents=True, exist_ok=False)
     repo = Path(__file__).resolve().parents[1]
     revision = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
@@ -28,9 +28,13 @@ def prepare(output, company, company_source):
     for slug in OFFICE:
         version = craft_host.specification(slug)['tag']
         found = None
+        fallback = None
         for cache in caches:
             try:
                 craft_host.installed(cache, slug)
+                if fallback is None or craft_native.runtime_status(cache, slug)["verified"]:
+                    fallback = cache
+                require_office_compat(cache, slug)
                 if found is None:
                     found = cache
                 if craft_native.runtime_status(cache, slug)['verified']:
@@ -39,6 +43,9 @@ def prepare(output, company, company_source):
                         break
             except (OSError, ValueError):
                 pass
+        # Reuse a verified upstream cache when an explicit new archive is supplied;
+        # the mandatory check below still rejects missing compatibility builds.
+        found = found or fallback
         if found:
             root = found / slug / version
             target = output / 'office' / slug / version
@@ -50,6 +57,11 @@ def prepare(output, company, company_source):
             shutil.copy2(root / 'receipt.json', target / 'receipt.json')
         else:
             craft_host.install(output / 'office', slug)
+        if slug in craft_compat.COMPAT and office_compat_dir is not None:
+            archive = office_compat_dir / (slug + '-web-' + version.removeprefix('v') + '-' + craft_compat.COMPAT[slug]['id'] + '.zip')
+            if archive.is_file():
+                craft_compat.install(output / 'office', slug, archive)
+        require_office_compat(output / 'office', slug)
         if not craft_native.runtime_status(output / 'office', slug)['verified']:
             craft_native.install_runtime(output / 'office', slug)
         craft_host.installed(output / 'office', slug)
@@ -93,5 +105,6 @@ if __name__ == '__main__':
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--company', type=Path, required=True)
     parser.add_argument('--company-source', type=Path, required=True)
+    parser.add_argument('--office-compat-dir', type=Path, help='Pinned offline archives named APP-web-VERSION-COMPAT_ID.zip')
     args = parser.parse_args()
-    prepare(args.output, args.company, args.company_source)
+    prepare(args.output, args.company, args.company_source, args.office_compat_dir)

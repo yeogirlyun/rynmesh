@@ -17,11 +17,11 @@ from . import craft_host as host
 
 COMPAT = {
     "gridcraft": {
-        "id": "ryn-cjk-1",
+        "id": "ryn-cjk-blank-2",
         "base_version": "v0.6.1",
         "base_web_sha256": "86048ba175689ff852c141d6115e5491f0856f891300c3e1f91274b9c2709a42",
-        "archive_sha256": "beebcc8c9467845f4c2e404d64cf33c2cf2e08cec3d59f5bfdb43d36baced3c0",
-        "files_manifest_sha256": "8a82fd16ada4265ba906dfdb17f5dee78de5a3751d0492127093eff5b0ce783c",
+        "archive_sha256": "8db12ff172d14c18c784f965da4aa86eae6388ece2d559eba1cf9d15878e36ef",
+        "files_manifest_sha256": "e15340cd0046a6852652a02170b561733f33ca9a6ede3a22d6ebfa204601738c",
     },
     "wordcraft": {
         "id": "ryn-cjk-1",
@@ -36,6 +36,19 @@ COMPAT = {
         "base_web_sha256": "2e58067125b2c14d92d50888a6a03351302065ff4b99c0914892a078f05dfd66",
         "archive_sha256": "7acf50249aea23569c9dfeba1d765ff193477b3cdb0543d9b0a1ae46647e2cd3",
         "files_manifest_sha256": "2798d7945f8114e942b04124d302c2bb967fbf69845640952fad8d64fc0ab1e0",
+    }
+}
+
+
+# A core-only update must not discard a verified existing Chinese font fallback.
+# Full installers explicitly require the current compatibility build instead.
+PREVIOUS_COMPAT = {
+    "gridcraft": {
+        "id": "ryn-cjk-1",
+        "base_version": "v0.6.1",
+        "base_web_sha256": "86048ba175689ff852c141d6115e5491f0856f891300c3e1f91274b9c2709a42",
+        "archive_sha256": "beebcc8c9467845f4c2e404d64cf33c2cf2e08cec3d59f5bfdb43d36baced3c0",
+        "files_manifest_sha256": "8a82fd16ada4265ba906dfdb17f5dee78de5a3751d0492127093eff5b0ce783c"
     }
 }
 
@@ -118,13 +131,20 @@ def _verified(root, slug, spec):
         raise host.CraftError("craft_compat_not_verified") from None
 
 
-def installed(cache, slug):
+def installed(cache, slug, *, current_only=False):
     """No compatibility package means upstream behavior; a broken one fails closed."""
     spec = COMPAT.get(slug)
     if spec is None:
         return None
     root = _location(cache, slug, spec)
     if not root.exists():
+        previous = PREVIOUS_COMPAT.get(slug)
+        if (not current_only and previous and previous["id"] != spec["id"]
+                and previous["base_web_sha256"] == spec["base_web_sha256"]):
+            previous_root = _location(cache, slug, previous)
+            if previous_root.exists():
+                _check_spec(slug, previous)
+                return _verified(previous_root, slug, previous)
         return None
     _check_spec(slug, spec)
     return _verified(root, slug, spec)
