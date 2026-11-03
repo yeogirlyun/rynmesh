@@ -88,11 +88,47 @@ def validate_office_payload(payload):
         craft_host.installed(payload / 'office', slug)
 
 
+def repair_office_files(source, target, names):
+    """Replace only bundled program resources, retaining originals for rollback."""
+    if target.is_symlink() or target.is_junction():
+        raise ValueError('Linked Office version cannot be repaired')
+    source, target = source.resolve(), target.resolve()
+    for name in names:
+        for base in (source, target):
+            path = base / name
+            if path.is_symlink() or path.is_junction():
+                raise ValueError('Linked Office resource cannot be repaired')
+            if not path.resolve().is_relative_to(base):
+                raise ValueError('Office resource escapes its version directory')
+    backup = target / '.full-repair-backups' / uuid.uuid4().hex
+    stage, previous = backup / 'replacement', backup / 'previous'
+    stage.mkdir(parents=True)
+    previous.mkdir()
+    # Finish copying before moving any existing resource. Preferences, exports,
+    # other compatibility versions and plugin registration stay in place.
+    for name in names:
+        src, dst = source / name, stage / name
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if src.is_dir():
+            shutil.copytree(src, dst)
+        else:
+            shutil.copy2(src, dst)
+    for name in names:
+        old, saved = target / name, previous / name
+        saved.parent.mkdir(parents=True, exist_ok=True)
+        if old.exists():
+            old.rename(saved)
+        old.parent.mkdir(parents=True, exist_ok=True)
+        (stage / name).rename(old)
+
+
 def provision_office(payload_cache, cache, slug):
     from rynmesh.node_apps import craft_host, craft_native, craft_compat
     # Verify before touching an existing installation; never fall back to fontless builds.
     require_office_compat(payload_cache, slug)
     craft_host.installed(payload_cache, slug)
+    if not craft_native.runtime_status(payload_cache, slug)['verified']:
+        raise ValueError('Office payload runtime not verified: ' + slug)
     version = craft_host.specification(slug)['tag']
     source, target = payload_cache / slug / version, cache / slug / version
     copy_new(source, target)
@@ -101,11 +137,21 @@ def provision_office(payload_cache, cache, slug):
         # copy_new(target) intentionally preserves existing versions, so provision the
         # current compatibility version separately on every upgrade (including disabled apps).
         copy_new(source / 'compatibility' / identifier, target / 'compatibility' / identifier)
-    require_office_compat(cache, slug)
-    craft_host.installed(cache, slug)
+        try:
+            require_office_compat(cache, slug)
+        except (OSError, ValueError):
+            repair_office_files(source, target, ('compatibility/' + identifier,))
+            require_office_compat(cache, slug)
+    try:
+        craft_host.installed(cache, slug)
+    except (OSError, ValueError):
+        repair_office_files(source, target, ('payload', 'receipt.json'))
+        craft_host.installed(cache, slug)
     copy_new(source / 'agent', target / 'agent')
     if not craft_native.runtime_status(cache, slug)['verified']:
-        raise ValueError('Office runtime not verified: ' + slug)
+        repair_office_files(source, target, ('agent',))
+        if not craft_native.runtime_status(cache, slug)['verified']:
+            raise ValueError('Office runtime not verified: ' + slug)
 
 
 def allow_desktop_user(path):
