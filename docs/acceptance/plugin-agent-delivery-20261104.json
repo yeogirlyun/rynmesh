@@ -1,0 +1,40 @@
+{
+  "date": "2026-11-04",
+  "source_branch": "develop",
+  "build_commits": {
+    "host": "81160e3828324e7d59dc09a17a174bb19054efce",
+    "company": "8f98fa0cff66d9813434c375477f3139f48f429a",
+    "center": "eb2722d447e1d23bb74fceb3b16da116ba3010c4"
+  },
+  "artifacts": [
+    {
+      "path": "D:\\code\\_build-tools\\plugin-agent-delivery-20261104\\company-dashboard-2.1.0-test.zip",
+      "bytes": 7712,
+      "sha256": "d9c3cccf59e25c162b8095d0ca1fdc8995c5ba1be23818d09116c37370d1736a"
+    },
+    {
+      "path": "D:\\code\\_build-tools\\plugin-agent-delivery-20261104\\company-workspace-2.1.0-test.zip",
+      "bytes": 2339,
+      "sha256": "0e3b4712d950b86e350427c9bf775be3000786905e59c14d9bbbfa48594b5e10"
+    },
+    {
+      "path": "D:\\code\\_build-tools\\plugin-agent-delivery-20261104\\rynmesh-0.8.0-py3-none-any.whl",
+      "bytes": 16280342,
+      "sha256": "73a5e9c99763cb30c5e55f994b0f4d40f351d584e2168f28158dbf16d0e428eb"
+    },
+    {
+      "path": "D:\\code\\_build-tools\\center-plugin-agent-20261103\\dist\\ryn-plugin\\company-finance-2.1.0-test.zip",
+      "bytes": 10621,
+      "sha256": "35bc7c00ab204233fb1a0d0848b9ed96b2041eaedf87202a475aa2044f80484d"
+    }
+  ],
+  "checks": {
+    "real_model_synthetic_business": "76/76",
+    "center_static_emit": "0 target and 0 dependency diagnostics; generated JSON included",
+    "host_python_wheel": "passed",
+    "company_declarative_packages": "workspace and dashboard passed"
+  },
+  "scope": "Source integration and validation builds only. No desktop EXE installer, service EXE, installation, restart, production deployment or real business writes. Test ZIP origins are placeholders; not production packages.",
+  "center_emit_path": "D:\\code\\_build-tools\\center-plugin-agent-20261103\\run\\ryn-m1-local-validation\\emit",
+  "installed_version": "unchanged; see plugin-agent-installed-baseline-20261104.json in host repository"
+}
