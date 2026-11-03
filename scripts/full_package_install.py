@@ -5,6 +5,7 @@ Runs after the ordinary Ryn installer exits. Never downloads or copies user data
 import argparse
 import base64
 import csv
+import contextlib
 import hashlib
 import json
 import os
@@ -14,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 import uuid
 
 OFFICE = ('pdfcraft', 'wordcraft', 'gridcraft', 'deckcraft')
@@ -166,7 +168,9 @@ def allow_desktop_user(path):
 
 
 def prepare_upgrade(payload, destination):
+    print('stage: verify-package', flush=True)
     verify(Path(payload).resolve())  # Never uninstall before payload verification.
+    print('stage: verify-office', flush=True)
     validate_office_payload(Path(payload).resolve())
     destination = Path(destination).resolve()
     if destination == Path(destination.anchor) or destination == Path.home().resolve():
@@ -175,6 +179,7 @@ def prepare_upgrade(payload, destination):
     if not old.is_file():
         return
     backup = destination.parent / 'Ryn-install-backups' / uuid.uuid4().hex
+    print('stage: backup-program', flush=True)
     backup.mkdir(parents=True)
     for name in ('Ryn.exe', 'rynmesh-peer.exe', 'ryn_computer_use.exe', 'uninstall.exe'):
         if (destination / name).is_file():
@@ -193,11 +198,13 @@ Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and
 } | ForEach-Object {Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue};
 Start-Sleep -Seconds 2;
 '''.replace('__ROOT__', encoded_root)
+    print('stage: stop-owned-processes', flush=True)
     subprocess.run(['powershell.exe', '-NoProfile', '-EncodedCommand',
                     base64.b64encode(command.encode('utf-16le')).decode('ascii')],
                    check=True, capture_output=True, timeout=40, creationflags=0x08000000)
     uninstaller = destination / 'uninstall.exe'
     if uninstaller.is_file():
+        print('stage: uninstall-update-mode', flush=True)
         # Tauri's update mode explicitly preserves app data, startup preferences
         # and editor registrations. _?= keeps this process synchronous.
         subprocess.run([str(uninstaller), '/S', '/UPDATE', '_?=' + str(destination)],
@@ -286,16 +293,39 @@ def install(payload, destination, home):
     print(json.dumps(receipt))
 
 
-if __name__ == '__main__':
-    import multiprocessing
-    multiprocessing.freeze_support()
+def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--payload', type=Path, required=True)
     parser.add_argument('--destination', type=Path, required=True)
     parser.add_argument('--home', type=Path, default=Path(os.environ.get('RYNMESH_HOME', str(Path.home() / '.rynmesh'))))
     parser.add_argument('--prepare-upgrade', action='store_true')
-    args = parser.parse_args()
-    if args.prepare_upgrade:
-        prepare_upgrade(args.payload, args.destination)
-    else:
-        install(args.payload, args.destination, args.home)
+    parser.add_argument('--log', type=Path)
+    args = parser.parse_args(argv)
+    with contextlib.ExitStack() as stack:
+        if args.log:
+            args.log.parent.mkdir(parents=True, exist_ok=True)
+            log = stack.enter_context(args.log.open('a', encoding='utf-8', buffering=1))
+            stack.enter_context(contextlib.redirect_stdout(log))
+            stack.enter_context(contextlib.redirect_stderr(log))
+        print('operation: ' + ('prepare-upgrade' if args.prepare_upgrade else 'install'), flush=True)
+        try:
+            if args.prepare_upgrade:
+                prepare_upgrade(args.payload, args.destination)
+            else:
+                install(args.payload, args.destination, args.home)
+        except Exception as exc:
+            traceback.print_exc()
+            if isinstance(exc, (subprocess.CalledProcessError, subprocess.TimeoutExpired)):
+                for name in ('stdout', 'stderr'):
+                    value = getattr(exc, name, None)
+                    if value:
+                        print(name + ':', value.decode(errors='replace') if isinstance(value, bytes) else value)
+            return 1
+        print('operation: complete', flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    import multiprocessing
+    multiprocessing.freeze_support()
+    sys.exit(main())

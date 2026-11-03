@@ -9,6 +9,31 @@ installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
 
 
+def test_cli_retains_failure_stage_and_subprocess_stderr(tmp_path, monkeypatch):
+    def failed(*args):
+        print('stage: stop-owned-processes')
+        raise installer.subprocess.CalledProcessError(1, ['powershell.exe'], stderr=b'CIM unavailable')
+    monkeypatch.setattr(installer, 'prepare_upgrade', failed)
+    log = tmp_path / 'logs' / 'prepare.log'
+    result = installer.main(['--prepare-upgrade', '--payload', str(tmp_path),
+                             '--destination', str(tmp_path / 'install'), '--log', str(log)])
+    assert result == 1
+    text = log.read_text(encoding='utf-8')
+    assert 'stage: stop-owned-processes' in text
+    assert 'CIM unavailable' in text
+    assert 'operation: complete' not in text
+
+
+def test_cli_appends_success_without_destroying_previous_log(tmp_path, monkeypatch):
+    monkeypatch.setattr(installer, 'prepare_upgrade', lambda *args: None)
+    log = tmp_path / 'prepare.log'
+    log.write_text('previous attempt\n', encoding='utf-8')
+    assert installer.main(['--prepare-upgrade', '--payload', str(tmp_path),
+                           '--destination', str(tmp_path), '--log', str(log)]) == 0
+    assert log.read_text(encoding='utf-8').startswith('previous attempt\n')
+    assert 'operation: complete' in log.read_text(encoding='utf-8')
+
+
 def test_package_detects_changed_and_extra_files(tmp_path):
     asset = tmp_path / 'editor.wasm'
     asset.write_bytes(b'verified-build')

@@ -52,10 +52,11 @@ Section
   SetOutPath "$PLUGINSDIR\payload"
   File /r "${PAYLOAD}\*"
   DetailPrint "Verifying package, stopping and removing the previous Ryn program (keeping your data)..."
-  ExecWait '"$PLUGINSDIR\provision\ryn-full-install.exe" --prepare-upgrade --payload "$PLUGINSDIR\payload" --destination "$INSTDIR"' $0
+  CreateDirectory "$LOCALAPPDATA\Ryn-install-logs"
+  ExecWait '"$PLUGINSDIR\provision\ryn-full-install.exe" --prepare-upgrade --payload "$PLUGINSDIR\payload" --destination "$INSTDIR" --log "$LOCALAPPDATA\Ryn-install-logs\prepare.log"' $0
   StrCmp $0 0 upgrade_ready
     SetErrorLevel 1
-    MessageBox MB_ICONSTOP "Unable to prepare the previous Ryn installation ($0). Installation stopped; your data is retained." /SD IDOK
+    MessageBox MB_ICONSTOP "Installation preparation failed ($0). Installation stopped; your data is retained.$\r$\nDiagnostic log (if the helper started):$\r$\n$LOCALAPPDATA\Ryn-install-logs\prepare.log" /SD IDOK
     Abort
   upgrade_ready:
   DetailPrint "Installing Ryn..."
@@ -66,7 +67,7 @@ Section
     Abort
   core_ready:
   DetailPrint "Installing seven included plugins and local document engines..."
-  ExecWait '"$PLUGINSDIR\provision\ryn-full-install.exe" --payload "$PLUGINSDIR\payload" --destination "$INSTDIR"' $0
+  ExecWait '"$PLUGINSDIR\provision\ryn-full-install.exe" --payload "$PLUGINSDIR\payload" --destination "$INSTDIR" --log "$LOCALAPPDATA\Ryn-install-logs\plugins.log"' $0
   StrCmp $0 0 +4
     MessageBox MB_ICONSTOP "Plugin installation failed ($0). Your existing data is retained. Run this installer again to retry." /SD IDOK
     SetErrorLevel 1
