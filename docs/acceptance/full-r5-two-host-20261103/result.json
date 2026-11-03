@@ -1,0 +1,155 @@
+{
+  "bytes": 672140732,
+  "installer_sha256": "D19009E4CC3A2A32281C957109466DF99A85672AE228EEA947DEDCF0C6741965",
+  "ryn_commit": "ed64351131198951d14ffe059bd61a9d65a56903",
+  "core_commit": "5cf8073c83b2aeb79d047b89689d40a28c772ca8",
+  "company_commit": "45e5d07c5b8d83b2ee12310ecba51eb04e370a5d",
+  "acceptance": {
+    "fresh_install": true,
+    "repeat_install_preserves_identity_key_and_disabled_plugins": true,
+    "office_editors": [
+      "pdfcraft",
+      "wordcraft",
+      "gridcraft",
+      "deckcraft"
+    ],
+    "native_cli_version": [
+      "pdfcraft",
+      "wordcraft",
+      "gridcraft",
+      "deckcraft"
+    ],
+    "company_pages": [
+      "company-workspace",
+      "company-dashboard",
+      "company-affiliate"
+    ],
+    "company_health": {
+      "ok": true,
+      "service": "company",
+      "status": "ready"
+    },
+    "company_outbound_network": "blocked",
+    "live_install_modified": false,
+    "system_installer_executed": false
+  },
+  "date": "2026-11-03",
+  "package": "Ryn_0.8.0_Full_7Plugins_R5_x64.exe",
+  "hosts": {
+    "local": {
+      "core_sha256": "3584574A4463A928B1DDE49C25517CBF2C4A615B05A23AD9962AA3B4C8D5425C",
+      "peer_sha256": "3BE526E18C30C07F70B2C9BF045DD6592A5728A205EC6F72809AD174A60B3E12",
+      "company_health": {
+        "ok": true,
+        "service": "company",
+        "status": "ready"
+      },
+      "company_program": "company-45e5d07c5b8d83b2/company-service.exe",
+      "office": [
+        {
+          "id": "pdfcraft",
+          "enabled": true,
+          "installed": true,
+          "editing_supported": true
+        },
+        {
+          "id": "wordcraft",
+          "enabled": true,
+          "installed": true,
+          "editing_supported": true
+        },
+        {
+          "id": "gridcraft",
+          "enabled": true,
+          "installed": true,
+          "editing_supported": true
+        },
+        {
+          "id": "deckcraft",
+          "enabled": true,
+          "installed": true,
+          "editing_supported": true
+        }
+      ],
+      "company_pages": {
+        "company-affiliate": 200,
+        "company-dashboard": 200,
+        "company-workspace": 200
+      },
+      "install_exit_code": 0,
+      "installation": "%LOCALAPPDATA%/Ryn",
+      "preserved": {
+        "messaging.x25519": true,
+        "desktop_config": true,
+        "settings.json": true,
+        "company_key": true,
+        "identity.ed25519": true
+      },
+      "node_health": "ok"
+    },
+    "lan82": {
+      "core_sha256": "3584574A4463A928B1DDE49C25517CBF2C4A615B05A23AD9962AA3B4C8D5425C",
+      "peer_sha256": "3BE526E18C30C07F70B2C9BF045DD6592A5728A205EC6F72809AD174A60B3E12",
+      "company_health": {
+        "ok": true,
+        "service": "company",
+        "status": "ready"
+      },
+      "company_program": "company-45e5d07c5b8d83b2/company-service.exe",
+      "office": [
+        {
+          "id": "pdfcraft",
+          "enabled": true,
+          "installed": true,
+          "editing_supported": true
+        },
+        {
+          "id": "wordcraft",
+          "enabled": true,
+          "installed": true,
+          "editing_supported": true
+        },
+        {
+          "id": "gridcraft",
+          "enabled": true,
+          "installed": true,
+          "editing_supported": true
+        },
+        {
+          "id": "deckcraft",
+          "enabled": true,
+          "installed": true,
+          "editing_supported": true
+        }
+      ],
+      "company_pages": {
+        "company-affiliate": 200,
+        "company-dashboard": 200,
+        "company-workspace": 200
+      },
+      "install_exit_code": 0,
+      "installation": "%LOCALAPPDATA%/Ryn",
+      "preserved": {
+        "company_key": true,
+        "identity.ed25519": true,
+        "settings.json": true,
+        "messaging.x25519": true
+      },
+      "node_health": "ok",
+      "sharing": {
+        "state": "succeeded",
+        "output": "RYN_SHARE_OK",
+        "transport": "peer_http_direct",
+        "transport_evidence": {
+          "transport": "peer_http_direct",
+          "relay_used": false,
+          "stream_protocol": "",
+          "route": "lan",
+          "discovery_source": "lan"
+        },
+        "duration_ms": 921
+      }
+    }
+  },
+  "desktop_packaging_marker": "Tauri replaces UNK with NSS for the NSIS bundle; all remaining bytes match."
+}
