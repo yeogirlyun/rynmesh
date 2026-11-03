@@ -1,0 +1,23 @@
+{
+  "source_commit": "45e5d07c5b8d83b2ee12310ecba51eb04e370a5d",
+  "manifest_files_verified": 233,
+  "zero_admin_rows": true,
+  "network": "blocked in service",
+  "health": {
+    "ok": true,
+    "service": "company",
+    "status": "ready"
+  },
+  "checks": {
+    "messages/send:missing_intent": 403,
+    "send-requests/nonexistent/retry:missing_intent": 403,
+    "attachments:missing_intent": 403,
+    "send_reaches_payload_validation_without_admin": 400,
+    "dashboard_still_requires_auth": 404
+  },
+  "real_messages_sent": false,
+  "dashboard_denial_detail_code": "user_not_found",
+  "full_payload_company_commit": "45e5d07c5b8d83b2ee12310ecba51eb04e370a5d",
+  "full_payload_ryn_commit": "16ab30d7e371821352446291cf47dee227ffe11d",
+  "full_payload_company_executable_and_manifest_hashes_verified": true
+}
