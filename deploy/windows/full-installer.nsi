@@ -42,7 +42,7 @@ Section
   ExecWait '"$PLUGINSDIR\webview2.exe" /silent /install' $0
   StrCmp $0 0 webview_ready
   StrCmp $0 3010 webview_ready
-    MessageBox MB_ICONSTOP "WebView2 offline installation failed ($0)."
+    MessageBox MB_ICONSTOP "WebView2 offline installation failed ($0)." /SD IDOK
     SetErrorLevel 1
     Abort
   webview_ready:
@@ -55,20 +55,20 @@ Section
   ExecWait '"$PLUGINSDIR\provision\ryn-full-install.exe" --prepare-upgrade --payload "$PLUGINSDIR\payload" --destination "$INSTDIR"' $0
   StrCmp $0 0 upgrade_ready
     SetErrorLevel 1
-    MessageBox MB_ICONSTOP "Unable to prepare the previous Ryn installation ($0). Installation stopped; your data is retained."
+    MessageBox MB_ICONSTOP "Unable to prepare the previous Ryn installation ($0). Installation stopped; your data is retained." /SD IDOK
     Abort
   upgrade_ready:
   DetailPrint "Installing Ryn..."
   ExecWait '"$PLUGINSDIR\core-setup.exe" /S /D=$INSTDIR' $0
   StrCmp $0 0 core_ready
     SetErrorLevel 1
-    MessageBox MB_ICONSTOP "Ryn installation failed ($0)."
+    MessageBox MB_ICONSTOP "Ryn installation failed ($0)." /SD IDOK
     Abort
   core_ready:
   DetailPrint "Installing seven included plugins and local document engines..."
   ExecWait '"$PLUGINSDIR\provision\ryn-full-install.exe" --payload "$PLUGINSDIR\payload" --destination "$INSTDIR"' $0
   StrCmp $0 0 +4
-    MessageBox MB_ICONSTOP "Plugin installation failed ($0). Your existing data is retained. Run this installer again to retry."
+    MessageBox MB_ICONSTOP "Plugin installation failed ($0). Your existing data is retained. Run this installer again to retry." /SD IDOK
     SetErrorLevel 1
     Abort
   WriteRegStr HKCU "Software\Ryn\Craft" "SelectedPlugins" "pdfcraft;wordcraft;gridcraft;deckcraft"

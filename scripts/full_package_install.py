@@ -107,7 +107,9 @@ $root=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__ROOT__'));
 $prefix=$root.TrimEnd('\')+'\';
 Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and
   ($_.ExecutablePath.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)) -and
-  ($_.Name -in @('Ryn.exe','rynmesh-peer.exe','ryn_computer_use.exe','company-service.exe'))
+  (($_.Name -in @('Ryn.exe','rynmesh-peer.exe','ryn_computer_use.exe','company-service.exe')) -or
+   $_.ExecutablePath.StartsWith($prefix+'plugins\',[StringComparison]::OrdinalIgnoreCase) -or
+   $_.ExecutablePath.StartsWith($prefix+'plugin-services\',[StringComparison]::OrdinalIgnoreCase))
 } | ForEach-Object {Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue};
 Start-Sleep -Seconds 2;
 '''.replace('__ROOT__', encoded_root)
