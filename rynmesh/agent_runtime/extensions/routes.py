@@ -7,8 +7,8 @@ import json
 import time
 from typing import Any, Callable
 
-from fastapi import HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import BackgroundTasks, HTTPException, Request
+from fastapi.responses import JSONResponse, Response
 
 from ..diagnostic_log import failure
 from ..store import AgentError
@@ -98,16 +98,23 @@ def install_extension_routes(
         return await _run("prepare_local_service", lambda: local_services.prepare(**payload))
 
     @app.post("/api/local/agent/extensions/local-service/activate")
-    async def activate_local_service(request: Request):
+    async def activate_local_service(request: Request, background_tasks: BackgroundTasks):
         payload = await _body(request, max_bytes=1024)
         if set(payload) != {"service_id", "generation"}:
             raise HTTPException(400, detail="agent_local_service_invalid")
-        return await _run("activate_local_service", lambda: local_services.activate(**payload))
+        result = await _run("activate_local_service", lambda: local_services.activate(**payload))
+        async def rediscover():
+            for sid in result["server_ids"]:
+                try:
+                    server = extensions.store.get_mcp_server_internal(sid, require_enabled=True)
+                    await asyncio.to_thread(extensions.manager.test_server, sid, expected_revision=server["revision"])
+                except AgentError:
+                    # Auth-required/disabled states remain visible; never enable or borrow credentials.
+                    pass
+        background_tasks.add_task(rediscover)
+        return result
 
-    @app.post("/api/local/agent/extensions/local-service/authorize-operation")
-    async def authorize_local_operation(request: Request):
-        # A service can only ask whether its own already-persisted operation is
-        # still authorized. It cannot mint approvals or read task contents.
+    async def service_payload(request):
         if (not request.client or request.client.host not in {"127.0.0.1", "::1"}
                 or request.headers.get("origin") or request.headers.get("referer")):
             raise HTTPException(403, detail="agent_local_service_denied")
@@ -118,6 +125,14 @@ def install_extension_routes(
                 raise HTTPException(413, detail="agent_request_limit")
         try:
             payload = json.loads(raw)
+            if not isinstance(payload, dict):
+                raise ValueError()
+            return payload
+        except (ValueError, TypeError):
+            raise HTTPException(400, detail="agent_invalid_request") from None
+
+    def operation_allowed(request, payload):
+        try:
             server = extensions.store.get_mcp_server_internal(payload["server_id"], require_enabled=True)
             headers = server.get("secret_headers") or {}
             for header in ("X-Ryn-Service-Token", "X-Ryn-Service-Generation"):
@@ -144,9 +159,30 @@ def install_extension_routes(
                 actual = {"goal_revision": row["goal"]["revision"], "control_revision": row["control_revision"],
                           "scope_revision": row["scope_revision"], "settings_revision": data.get("settings_revision", 0)}
                 return actual == binding.get("authority_revision") == payload.get("authority_revision")
-            return {"allowed": runtime.store.inspect(current)}
+            return runtime.store.inspect(current)
         except (ValueError, KeyError, TypeError, AgentError):
-            return {"allowed": False}
+            return False
+
+    @app.post("/api/local/agent/extensions/local-service/authorize-operation")
+    async def authorize_local_operation(request: Request):
+        return {"allowed": operation_allowed(request, await service_payload(request))}
+
+    @app.post("/api/local/agent/extensions/local-service/artifact")
+    async def local_operation_artifact(request: Request):
+        payload = await service_payload(request)
+        if not operation_allowed(request, payload) or not isinstance(payload.get("artifact"), dict):
+            raise HTTPException(403, detail="agent_local_service_denied")
+        from ..artifact_transfers import ArtifactTransfers
+        receipt = extensions.ledger_factory().get(payload["operation_id"])
+        binding = receipt["binding"]
+        context = {"task_id": binding["task_id"], "owner_id": binding["owner_id"],
+                   "scope_revision": binding["authority_revision"]["scope_revision"]}
+        item = ArtifactTransfers(runtime.store).resolve(context, payload["artifact"]["artifact_ref"], content=True)
+        if {k: v for k, v in item.items() if k != "bytes"} != payload["artifact"]:
+            raise HTTPException(409, detail="agent_artifact_content_changed")
+        if not operation_allowed(request, payload):
+            raise HTTPException(403, detail="agent_local_service_denied")
+        return Response(item["bytes"], media_type="application/octet-stream", headers={"Cache-Control": "no-store"})
 
     async def _delete_revision(request: Request) -> int:
         local_control(request)

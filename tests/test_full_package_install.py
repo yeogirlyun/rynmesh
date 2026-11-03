@@ -267,3 +267,62 @@ def test_managed_endpoint_migration_preserves_identity_and_disable(tmp_path, dis
     generation = after['config_generation']
     assert installer.configure_local_mcp_services(store, declaration, 19293) == mapped
     assert store.get_mcp_server_internal('s')['config_generation'] == generation
+
+
+def test_release_three_way_upgrade_preserves_custom_skill_and_user_state(tmp_path):
+    import copy
+
+    from rynmesh.agent_runtime.extensions import ExtensionStore
+    from rynmesh.services.peer_box import load_or_create_messaging_key
+    store = ExtensionStore(tmp_path / 'agent', load_or_create_messaging_key(tmp_path / 'key'))
+    plugins = [{'id': 'p', 'name': 'Publisher', 'version': '1', 'skill_ids': ['stock', 'custom'], 'mcp_server_ids': ['s']}]
+    skills = [{'id': sid, 'plugin_id': 'p', 'content': 'old' if sid == 'stock' else 'user instructions', 'version': '1'}
+              for sid in ['stock', 'custom']]
+    servers = [{'id': 's', 'plugin_id': 'p', 'transport': 'streamable_http', 'url': 'https://custom.example.test/mcp'}]
+    store.commit_imported_items(plugins=plugins, skills=skills, mcp_servers=servers)
+    before = copy.deepcopy(store._read())
+    declarations = {'plugins': [{**plugins[0], 'version': '2'}],
+                    'skills': [{**s, 'content': 'new workflow', 'version': '2'} for s in skills], 'mcp_servers': servers,
+                    'previous_defaults': [{'plugins': {'p': plugins[0]},
+                       'skills': {s['id']: {**s, 'content': 'old'} for s in skills}}]}
+    result = store.migrate_release_defaults(declarations)
+    after = store._read()
+    assert after['skills']['stock']['content'] == 'new workflow'
+    assert after['skills']['custom']['content'] == 'user instructions'
+    assert after['skills']['custom']['version'] == '1'
+    assert result['conflicts'] and after['mcp_servers'] == before['mcp_servers']
+    assert after['plugins']['p']['enabled'] is False
+    assert after['skills']['stock']['instance_id'] == before['skills']['stock']['instance_id']
+    repeated = store.migrate_release_defaults(declarations)
+    assert repeated['updated'] == [] and store._read() == after
+    # Newly shipped connections are added disabled; previously removed ones
+    # stay removed. Neither migration can enable the existing parent plugin.
+    next_release = copy.deepcopy(declarations)
+    next_release['mcp_servers'] += [{'id': 'operations', 'plugin_id': 'p', 'transport': 'streamable_http',
+                                     'url': 'https://synthetic.example.test/operations'}]
+    store.migrate_release_defaults(next_release)
+    migrated = store._read()
+    assert migrated['mcp_servers']['operations']['enabled'] is False
+    assert 'operations' in migrated['plugins']['p']['mcp_server_ids']
+    store.delete_mcp_server('operations')
+    store.migrate_release_defaults(next_release)
+    assert 'operations' not in store._read()['mcp_servers']
+
+
+def test_release_retires_only_known_duplicate_default_connections(tmp_path):
+    from rynmesh.agent_runtime.extensions import ExtensionStore
+    from rynmesh.services.peer_box import load_or_create_messaging_key
+    store = ExtensionStore(tmp_path / 'agent', load_or_create_messaging_key(tmp_path / 'key'))
+    for sid, url in [('stock', 'https://synthetic.example.test/mcp'), ('custom', 'https://owner.example.test/mcp')]:
+        store.upsert_mcp_server({'id': sid, 'transport': 'streamable_http', 'url': url, 'enabled': True,
+            'auth': {'mode': 'oauth', 'client_id': 'ryn-desktop', 'scopes': ['finance.read']}})
+    declarations = {'retired_connections': [{'id': sid, 'plugin_id': None,
+        'urls': ['https://synthetic.example.test/mcp'], 'scopes': ['finance.read']} for sid in ['stock', 'custom']]}
+    before = store.get_mcp_server_internal('stock')
+    result = store.migrate_release_defaults(declarations)
+    retired = store.get_mcp_server_internal('stock')
+    assert not retired['enabled'] and retired['instance_id'] == before['instance_id'] and retired['auth'] == before['auth']
+    assert store.get_mcp_server_internal('custom')['enabled']
+    assert result['conflicts'] == [{'category': 'mcp_servers', 'id': 'custom', 'field': 'retirement'}]
+    store.migrate_release_defaults(declarations)
+    assert store.get_mcp_server_internal('stock')['revision'] == retired['revision']

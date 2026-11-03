@@ -383,12 +383,18 @@ class AgentRuntime(AgentLoop):
                 and self._execution_context(row).get("resource_grants"))
             else ()
         )
+        selected_skill_ids = {skill.get("id") for skill in row.get("skills", [])}
+        selected_plugins = {
+            plugin["id"] for plugin in (self.extensions.plugin_catalog() if self.extensions and selected_skill_ids else [])
+            if plugin["enabled"] and selected_skill_ids.intersection(plugin["skill_ids"])
+        }
+        preloads = tool_menu.plugin_preloads(business_specs, self._metadata, selected_plugins) if selected_plugins else ()
         return tool_menu.project(business_specs, ALL_INTERNAL_SPECS, row.get("tool_menu"),
             max_context_bytes=max_context_bytes, authority_bytes=authority_bytes,
             epoch=row.get("context_epoch", 0), goal_revision=row["goal"]["revision"],
             # Pins need room; in small windows the earlier seeds still apply.
             pinned_names=tool_menu.PLUGIN_DISCOVERY_TOOLS + (("ryn_project_inspect",) if row.get("project") else ()) + tool_menu.CORE_TOOLS + ("ryn_code_exec",) + desktop + skill_tools + resource_tools,
-            initial_names=tool_menu.PLUGIN_DISCOVERY_TOOLS + (("ryn_project_inspect", "ryn_file_read", "ryn_file_search", "ryn_file_edit",
+            initial_names=tool_menu.PLUGIN_DISCOVERY_TOOLS + preloads + (("ryn_project_inspect", "ryn_file_read", "ryn_file_search", "ryn_file_edit",
                            "ryn_shell_execute", "ryn_file_write", "ryn_file_list", "ryn_code_exec") if row.get("project") else
                           ("ryn_shell_execute", "ryn_file_read", "ryn_file_search", "ryn_code_exec")) + desktop + skill_tools + resource_tools), authority_bytes
 

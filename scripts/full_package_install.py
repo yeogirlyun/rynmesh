@@ -317,6 +317,7 @@ def install(payload, destination, home):
         mcp_servers=[s for s in declarations['mcp_servers'] if s.get('plugin_id') in missing])
     for slug in sorted(missing):
         store.set_plugin_enabled(slug, True)
+    migration = store.migrate_release_defaults(declarations)
     managed_servers = configure_local_mcp_services(store, declarations, port)
     with file_transaction(services_root / '.install.lock'):
         config = json.loads(config_path.read_text(encoding='utf-8-sig'))
@@ -325,7 +326,8 @@ def install(payload, destination, home):
                 service['mcp_servers'] = managed_servers
         atomic_json(config_path, config)
     receipt = {'schema': 1, 'ryn_commit': manifest['ryn_commit'], 'company_commit': revision,
-               'plugins': list(COMPANY + OFFICE), 'offline': True, 'installation': str(destination)}
+               'plugins': list(COMPANY + OFFICE), 'offline': True, 'installation': str(destination),
+               'declaration_migration': migration}
     atomic_json(home / 'full-package-install.json', receipt)
     print(json.dumps(receipt))
 

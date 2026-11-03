@@ -32,7 +32,12 @@ SPEC = {"type": "function", "function": {"name": NAME,
 
 
 def _tokenize(text: str) -> list[str]:
-    tokens = _TOKEN_RE.findall((text or "").lower())
+    text = text or ""
+    # Keep exact identifiers searchable while also indexing their word boundaries.
+    split = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", text)
+    tokens = _TOKEN_RE.findall(text.lower())
+    if split != text:
+        tokens += _TOKEN_RE.findall(split.lower())
     cjk = [t for t in tokens if "\u4e00" <= t <= "\u9fff"]
     return tokens + [cjk[i] + cjk[i + 1] for i in range(len(cjk) - 1)]
 
@@ -51,7 +56,9 @@ def _bm25_rank(names_map: dict[str, dict], metadata, query: str, limit: int = 8)
             for k, v in params.items()
         )
         try:
-            title = str((metadata(name) or {}).get("title") or "")
+            info = metadata(name) or {}
+            title = str(info.get("title") or "")
+            title += " " + str((info.get("extension_binding") or {}).get("original_tool_name") or "")
         except Exception:
             title = ""
         docs[name] = _tokenize(f"{name} {name} {title} {param_text} {desc}")
@@ -89,6 +96,23 @@ def capacity(max_context_bytes, authority_bytes):
 
 def catalog_revision(specs):
     return hashlib.sha256(encoded(specs)).hexdigest()
+
+
+def plugin_preloads(specs, metadata, plugin_ids):
+    """Bound relevant plugin schemas without granting execution permission."""
+    candidates = []
+    for spec in specs:
+        name = spec["function"]["name"]
+        info = metadata(name)
+        if (info.get("extension_binding") or {}).get("plugin_id") in plugin_ids:
+            candidates.append((info.get("effect") != "read", name, spec))
+    selected, size = [], 0
+    for _, name, spec in sorted(candidates, key=lambda item: (item[0], len(encoded(item[2])), item[1])):
+        cost = len(encoded(spec))
+        if len(selected) < 4 and size + cost <= 8192:
+            selected.append(name)
+            size += cost
+    return tuple(selected)
 
 
 def directory_spec(business_specs):
@@ -265,6 +289,15 @@ def discover(business_specs, internal_specs, metadata, state, args, *, capacity_
 
     if "load" in args or "unload" in args:
         requested, removed = args.get("load", []), args.get("unload", [])
+        def resolve(name):
+            if name in names:
+                return name
+            matches = [registered for registered in names
+                       if (metadata(registered).get("extension_binding") or {}).get("original_tool_name") == name]
+            if len(matches) != 1:
+                raise AgentToolRejected("agent_unknown_tool", correction="Discover the exact registered tool name; canonical names must identify one active connection.")
+            return matches[0]
+        requested, removed = [resolve(name) for name in requested], [resolve(name) for name in removed]
         if any(name not in names for name in [*requested, *removed]):
             raise AgentToolRejected("agent_unknown_tool")
         if "load" in args and not requested:

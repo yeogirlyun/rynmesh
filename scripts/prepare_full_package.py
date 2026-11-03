@@ -73,7 +73,7 @@ def prepare(output, company, company_source, office_compat_dir=None):
     plugins, skills, servers = [], [], []
     for slug in COMPANY:
         raw = source['plugins'][slug]
-        plugin = {k: raw[k] for k in ('id','name','title','description','version','data_policy','peer_provider') if k in raw}
+        plugin = {k: raw[k] for k in ('id','name','title','description','version','data_policy','peer_provider','desktop_routes') if k in raw}
         plugin.update(web_app={'url': 'http://127.0.0.1:18140/apps/' + slug,
                               'permissions': ['tools','models','messages','peer_provider','agent','downloads','dialogs']},
                       identity_group={'id':'gshopper','name':'Gshopper','origin':origin},
@@ -87,7 +87,9 @@ def prepare(output, company, company_source, office_compat_dir=None):
                 servers.append({k: record[k] for k in ('id','name','description','transport','url','plugin_id','auth','data_policy','local_service') if k in record})
                 plugin['mcp_server_ids'].append(sid)
         plugins.append(plugin)
-    (output / 'company-plugins.json').write_text(json.dumps({'plugins':plugins,'skills':skills,'mcp_servers':servers}, ensure_ascii=False, indent=2), encoding='utf-8')
+    (output / 'company-plugins.json').write_text(json.dumps({'plugins':plugins,'skills':skills,'mcp_servers':servers,
+        'previous_defaults': source.get('previous_defaults', []),
+        'retired_connections': source.get('retired_connections', [])}, ensure_ascii=False, indent=2), encoding='utf-8')
     files = {}
     for path in output.rglob('*'):
         if path.is_symlink() or path.is_junction():

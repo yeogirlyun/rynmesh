@@ -25,7 +25,12 @@ class LocalServiceCredentials:
             raise AgentError("agent_local_service_invalid")
         bindings = []
         for sid in server_ids:
-            server = self.store.get_mcp_server_internal(sid)
+            try:
+                server = self.store.get_mcp_server_internal(sid)
+            except AgentError as exc:
+                if str(exc) == "agent_mcp_server_not_found":
+                    continue  # Removing one plugin must not prevent its shared page service starting.
+                raise
             url = urlsplit(server.get("url") or "")
             if (server.get("plugin_id") not in plugin_ids or server.get("transport") != "streamable_http"
                     or url.scheme != "http" or url.hostname != "127.0.0.1" or url.port != port
@@ -51,4 +56,4 @@ class LocalServiceCredentials:
             del self._pending[service_id]
         for sid, *_ in pending["bindings"]:
             self.manager.invalidate_server(sid)
-        return {"ready": True}
+        return {"ready": True, "server_ids": [sid for sid, *_ in pending["bindings"]]}

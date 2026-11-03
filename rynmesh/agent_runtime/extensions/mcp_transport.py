@@ -1722,8 +1722,11 @@ class McpSessionManager:
             if trusted_operation is not None or prepare:
                 from urllib.parse import urlsplit
                 url = urlsplit(server.get("url") or "")
-                if (not isinstance(session, StreamableHttpMcpSession) or url.scheme != "http"
-                        or url.hostname != "127.0.0.1" or not (server.get("secret_headers") or {}).get("X-Ryn-Service-Token")):
+                local = url.scheme == "http" and url.hostname == "127.0.0.1" and (server.get("secret_headers") or {}).get("X-Ryn-Service-Token")
+                remote = (url.scheme == "https" and (server.get("auth") or {}).get("mode") == "oauth"
+                          and any(tool.get("name") == tool_name and (tool.get("input_schema") or {}).get("x-ryn-operation") == "1"
+                                  for tool in server.get("discovered_tools") or []))
+                if not isinstance(session, StreamableHttpMcpSession) or not (local or remote):
                     raise AgentError("agent_local_service_binding_invalid")
                 extra["trusted_operation"] = trusted_operation
                 extra["prepare"] = prepare

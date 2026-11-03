@@ -12,7 +12,7 @@ from .operation_permissions import GUIDANCE as PERMISSION_GUIDANCE
 from .operation_permissions import projection as permission_projection
 from .tool_menu import SPEC as TOOL_MENU_SPEC
 
-PROMPT_VERSION = "ryn-agent-loop-v12"
+PROMPT_VERSION = "ryn-agent-loop-v13"
 
 SYSTEM = (
     "You are Ryn, an autonomous coding and workstation agent on the user's computer. Reply concisely in their language. "
@@ -58,6 +58,13 @@ SYSTEM = SYSTEM.replace(
     "Use ryn_list_plugins/ryn_discover_tools; prefer authorized plugins and Skills, selected plugins first. "
     "Reconnect expired auth; never bypass denial or repeat uncertain writes: query the original ID. "
     "Use authorized UI for explicit UI tasks or confirmed gaps, not errors. Explain fallback. Discovery grants nothing. "
+)
+_PRE_STRICT_PLUGIN_SYSTEM = SYSTEM
+SYSTEM = SYSTEM.replace(
+    "Use ryn_list_plugins/ryn_discover_tools; prefer authorized plugins and Skills, selected plugins first. ",
+    "For app tasks, first use ryn_list_plugins or ryn_discover_tools before browser, computer or shell. "
+    "Use matching authorized plugins and Skills, selected plugins first; do not guess a website or bypass discovery. "
+    "Preloaded tools may not match the task: discover the exact capability instead of substituting an unrelated one. "
 )
 
 
@@ -123,7 +130,7 @@ def instruction_layers(row: dict, *, model_base=None, persisted_base=None, sessi
     """
     base = select_base_instructions(model_base=model_base, persisted_base=persisted_base,
                                     session_base=session_base)
-    if session_base is None and model_base is None and base in (_LEGACY_BATCH_SYSTEM, _PRE_IMAGE_SYSTEM, _PRE_IMAGE_BRIEF_SYSTEM, _PRE_PLUGIN_SYSTEM):
+    if session_base is None and model_base is None and base in (_LEGACY_BATCH_SYSTEM, _PRE_IMAGE_SYSTEM, _PRE_IMAGE_BRIEF_SYSTEM, _PRE_PLUGIN_SYSTEM, _PRE_STRICT_PLUGIN_SYSTEM):
         base = SYSTEM
     policy = ("This task is read-only: inspect and explain a proposed plan, never request a mutation tool."
               if row["permission_mode"] == "read_only" else

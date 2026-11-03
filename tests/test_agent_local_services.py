@@ -96,7 +96,7 @@ def test_service_callback_requires_exact_durable_grant_and_live_authority(tmp_pa
                  "arguments_sha256": "a" * 64, "expires_at": time.time() + 60,
                  "authority_revision": authority, "preview_digest": "b" * 64}
     ledger = OperationLedger(tmp_path / "runtime")
-    binding = {"operation_id": operation["operation_id"], "task_id": "task1",
+    binding = {"operation_id": operation["operation_id"], "task_id": "task1", "owner_id": "owner-A",
                "arguments_sha256": operation["arguments_sha256"], "extension_binding": {"server_id": "s"},
                "authority_revision": authority}
     ledger.begin(binding, {})
@@ -109,7 +109,7 @@ def test_service_callback_requires_exact_durable_grant_and_live_authority(tmp_pa
                                       expected_config_generation=server["config_generation"])
     extensions = SimpleNamespace(store=store, manager=None, ledger_factory=lambda: ledger, verify_binding=verify)
     app = FastAPI()
-    install_extension_routes(app, runtime=SimpleNamespace(store=SimpleNamespace(inspect=lambda fn: fn(data))),
+    install_extension_routes(app, runtime=SimpleNamespace(store=SimpleNamespace(root=tmp_path / "runtime", inspect=lambda fn: fn(data))),
                              extensions=extensions, local_control=lambda request: None)
     headers = {"X-Ryn-Service-Token": pending["credential"], "X-Ryn-Service-Generation": pending["generation"]}
     path = "/api/local/agent/extensions/local-service/authorize-operation"
@@ -117,6 +117,22 @@ def test_service_callback_requires_exact_durable_grant_and_live_authority(tmp_pa
         def allowed(payload=operation, request_headers=headers):
             return client.post(path, json=payload, headers=request_headers).json() == {"allowed": True}
         assert allowed()
+        import hashlib
+        ref = "artifact_" + "a"*48
+        content = b"approved binary"
+        descriptor = {"artifact_ref": ref, "name": "report.txt", "size": len(content),
+                      "sha256": hashlib.sha256(content).hexdigest(), "media_type": "text/plain",
+                      "purpose": "plugin_attachment", "expires_at": time.time()+900}
+        snapshot = tmp_path / "runtime" / "artifact-transfers" / ref
+        snapshot.parent.mkdir(parents=True, exist_ok=True)
+        snapshot.write_bytes(content)
+        task["artifact_transfers"] = {ref: {**descriptor, "owner_id": "owner-A", "task_id": "task1", "scope_revision": 1}}
+        operation["artifact"] = descriptor
+        artifact_path = "/api/local/agent/extensions/local-service/artifact"
+        assert client.post(artifact_path, json=operation, headers=headers).status_code == 403
+        ledger.update(operation["operation_id"], "dispatched", trusted_operation=operation)
+        assert client.post(artifact_path, json=operation, headers=headers).content == content
+        assert client.post(artifact_path, json=operation).status_code == 403
         for key, value in [("expires_at", time.time()+3600), ("preview_digest", "c"*64),
                            ("task_id", "other"), ("arguments_sha256", "d"*64)]:
             changed = copy.deepcopy(operation)
@@ -167,3 +183,12 @@ def test_managed_oauth_issuer_requires_enabled_instance_and_declared_https_origi
         assert not manager._managed_oauth_origin(resource, "https://identity.example.test")
     finally:
         manager.close()
+
+
+def test_deleted_mapping_does_not_resurrect_or_block_shared_service(tmp_path):
+    store, service, invalidated, _ = fixture(tmp_path)
+    pending = service.prepare(service_id="shared", plugin_ids=["p"], server_ids=["removed-server"], port=19293)
+    assert service.activate(service_id="shared", generation=pending["generation"])["server_ids"] == []
+    assert invalidated == []
+    with pytest.raises(AgentError):
+        store.get_mcp_server_internal("removed-server")

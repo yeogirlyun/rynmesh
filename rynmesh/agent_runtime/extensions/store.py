@@ -2593,6 +2593,108 @@ class ExtensionStore:
             state["updated_at"] = _now()
             self._write(state)
 
+    def migrate_release_defaults(self, declarations: dict[str, Any]) -> dict[str, Any]:
+        """Three-way publisher metadata update; never replace identity or user grants.
+
+        Only the verified installer calls this. Legacy defaults come from the
+        verified package; subsequent releases use the last saved defaults.
+        """
+        fields = {
+            "plugins": ("name", "title", "description", "version", "desktop_routes"),
+            "skills": ("name", "title", "description", "version", "content"),
+            "mcp_servers": ("name", "description"),
+        }
+        desired = {
+            category: {row["id"]: {key: copy.deepcopy(row[key]) for key in keys if key in row}
+                       for row in declarations.get(category, [])}
+            for category, keys in fields.items()
+        }
+        conflicts = []
+        updated = []
+        # New release components start disabled. A previously shipped component
+        # that the owner deleted is not re-created by an upgrade.
+        baseline = self._read()
+        earlier = [baseline.get("release_defaults", {}), *declarations.get("previous_defaults", [])]
+        additions = {}
+        for category in ("skills", "mcp_servers"):
+            additions[category] = [row for row in declarations.get(category, [])
+                if row.get("plugin_id") in baseline["plugins"] and row["id"] not in baseline[category]
+                and not any(row["id"] in release.get(category, {}) for release in earlier)]
+        if any(additions.values()):
+            self.commit_imported_items(plugins=[], skills=additions["skills"], mcp_servers=additions["mcp_servers"])
+        with file_transaction(self.lock):
+            state = self._read()
+            saved = state.setdefault("release_defaults", {})
+            previous = [saved, *declarations.get("previous_defaults", [])]
+            retired = state.setdefault("release_retired_connections", [])
+            for legacy in declarations.get("retired_connections", []):
+                identity = legacy["id"]
+                current = state["mcp_servers"].get(identity)
+                if identity in retired or not current:
+                    continue
+                if (current.get("plugin_id") != legacy.get("plugin_id")
+                        or current.get("url") not in legacy.get("urls", [])
+                        or current.get("secret_headers") or current.get("bearer_token_env")
+                        or current.get("auth", {}).get("scopes") != legacy.get("scopes")):
+                    conflicts.append({"category": "mcp_servers", "id": identity, "field": "retirement"})
+                    continue
+                current["enabled"] = False
+                current["explicitly_disabled"] = True
+                current["revision"] = current["config_generation"] = _alloc_generation(state)
+                current["config_sha256"] = _mcp_config_fingerprint(current)
+                current["updated_at"] = _now()
+                retired.append(identity)
+                updated.append({"category": "mcp_servers", "id": identity})
+            for category, entries in desired.items():
+                for identity, incoming in entries.items():
+                    current = state[category].get(identity)
+                    if not current or current.get("builtin"):
+                        continue  # Deleted entries are not resurrected.
+                    declaration = next(row for row in declarations[category] if row["id"] == identity)
+                    if category != "plugins" and current.get("plugin_id") != declaration.get("plugin_id"):
+                        continue
+                    if category != "plugins" and not any(identity in release.get(category, {}) for release in previous):
+                        parent = state["plugins"].get(current.get("plugin_id"))
+                        key = "skill_ids" if category == "skills" else "mcp_server_ids"
+                        if parent and identity not in parent.get(key, []):
+                            parent.setdefault(key, []).append(identity)
+                            parent["revision"] = _alloc_generation(state)
+                            updated.append({"category": "plugins", "id": parent["id"]})
+                    # Treat a Skill's source and version as a unit. Do not label
+                    # customized instructions as the new publisher release.
+                    source_changed = category == "skills" and current.get("content") != incoming.get("content")
+                    known_source = any(current.get("content") == release.get(category, {}).get(identity, {}).get("content")
+                                       for release in previous)
+                    changed = False
+                    for key, value in incoming.items():
+                        if key == "desktop_routes":
+                            continue  # Installer-only defaults, never an imported plugin's authority.
+                        if current.get(key) == value:
+                            continue
+                        known = any(key in release.get(category, {}).get(identity, {})
+                                    and current.get(key) == release[category][identity][key] for release in previous)
+                        if (category == "skills" and source_changed and (not known_source or current.get("package_dir"))) or not known:
+                            conflicts.append({"category": category, "id": identity, "field": key})
+                            continue
+                        current[key] = copy.deepcopy(value)
+                        changed = True
+                    if changed:
+                        current["revision"] = _alloc_generation(state)
+                        current["updated_at"] = _now()
+                        if category == "skills":
+                            current["install_generation"] = int(current.get("install_generation", 1)) + 1
+                            current["manifest_sha256"] = _canon_sha256({"content": current["content"], "version": current["version"]})
+                            current["files"] = [{"path": "SKILL.md", "size": len(current["content"].encode("utf-8"))}]
+                        updated.append({"category": category, "id": identity})
+                    saved.setdefault(category, {})[identity] = copy.deepcopy(incoming)
+            # Both metadata and migration journal commit in the same sealed write.
+            result = {"conflicts": conflicts, "defaults_sha256": _canon_sha256(desired)}
+            if state.get("release_migration") != result or updated:
+                state["release_migration"] = result
+                state["updated_at"] = _now()
+                self._write(state)
+        return {**result, "updated": updated}
+
     def commit_imported_items(
         self,
         *,
