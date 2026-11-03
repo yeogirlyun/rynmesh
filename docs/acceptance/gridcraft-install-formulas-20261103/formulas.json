@@ -1,0 +1,80 @@
+{
+  "baseline": {
+    "values": {
+      "A1": "",
+      "A2": "",
+      "A3": "",
+      "C1": {
+        "error": "#VALUE!"
+      },
+      "C2": {
+        "error": "#VALUE!"
+      },
+      "C3": {
+        "error": "#VALUE!"
+      },
+      "C4": 60.0,
+      "B3": 200.0,
+      "D1": "",
+      "E1": "00123",
+      "F1": " ",
+      "G1": "中文合计"
+    },
+    "selection": {
+      "average": 100.0,
+      "count": 2,
+      "max": 120.0,
+      "min": 80.0,
+      "numeric": 2,
+      "sum": 200.0
+    }
+  },
+  "fixed": {
+    "values": {
+      "A1": null,
+      "A2": null,
+      "A3": null,
+      "C1": "",
+      "C2": "",
+      "C3": "",
+      "C4": 60.0,
+      "B3": 200.0,
+      "D1": "",
+      "E1": "00123",
+      "F1": " ",
+      "G1": "中文合计"
+    },
+    "selection": {
+      "average": 100.0,
+      "count": 2,
+      "max": 120.0,
+      "min": 80.0,
+      "numeric": 2,
+      "sum": 200.0
+    }
+  },
+  "fresh_process_reopen": {
+    "values": {
+      "A1": null,
+      "A2": null,
+      "A3": null,
+      "C1": "",
+      "C2": "",
+      "C3": "",
+      "C4": 60.0,
+      "B3": 200.0,
+      "D1": "",
+      "E1": "00123",
+      "F1": " ",
+      "G1": "中文合计"
+    },
+    "selection": {
+      "average": 100.0,
+      "count": 2,
+      "max": 120.0,
+      "min": 80.0,
+      "numeric": 2,
+      "sum": 200.0
+    }
+  }
+}

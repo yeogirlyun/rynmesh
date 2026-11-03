@@ -75,6 +75,39 @@ def copy_new(source, target):
             shutil.rmtree(stage)
 
 
+def require_office_compat(cache, slug):
+    from rynmesh.node_apps import craft_compat
+    if slug in craft_compat.COMPAT and craft_compat.installed(cache, slug, current_only=True) is None:
+        raise ValueError('Required Office compatibility build is missing: ' + slug)
+
+
+def validate_office_payload(payload):
+    from rynmesh.node_apps import craft_host
+    for slug in OFFICE:
+        require_office_compat(payload / 'office', slug)
+        craft_host.installed(payload / 'office', slug)
+
+
+def provision_office(payload_cache, cache, slug):
+    from rynmesh.node_apps import craft_host, craft_native, craft_compat
+    # Verify before touching an existing installation; never fall back to fontless builds.
+    require_office_compat(payload_cache, slug)
+    craft_host.installed(payload_cache, slug)
+    version = craft_host.specification(slug)['tag']
+    source, target = payload_cache / slug / version, cache / slug / version
+    copy_new(source, target)
+    if slug in craft_compat.COMPAT:
+        identifier = craft_compat.COMPAT[slug]['id']
+        # copy_new(target) intentionally preserves existing versions, so provision the
+        # current compatibility version separately on every upgrade (including disabled apps).
+        copy_new(source / 'compatibility' / identifier, target / 'compatibility' / identifier)
+    require_office_compat(cache, slug)
+    craft_host.installed(cache, slug)
+    copy_new(source / 'agent', target / 'agent')
+    if not craft_native.runtime_status(cache, slug)['verified']:
+        raise ValueError('Office runtime not verified: ' + slug)
+
+
 def allow_desktop_user(path):
     if os.name != 'nt':
         return
@@ -88,6 +121,7 @@ def allow_desktop_user(path):
 
 def prepare_upgrade(payload, destination):
     verify(Path(payload).resolve())  # Never uninstall before payload verification.
+    validate_office_payload(Path(payload).resolve())
     destination = Path(destination).resolve()
     if destination == Path(destination.anchor) or destination == Path.home().resolve():
         raise ValueError('Unsafe installation directory')
@@ -129,7 +163,7 @@ def install(payload, destination, home):
     from rynmesh.crypto import public_key_from_private
     from rynmesh.store import load_or_create_private_key
     from rynmesh.services.peer_box import load_or_create_messaging_key
-    from rynmesh.node_apps import craft_host, craft_native
+    from rynmesh.node_apps import craft_host
     from rynmesh.node_apps.plugins import PluginManager
     from rynmesh.agent_runtime.extensions.store import ExtensionStore
     from rynmesh.file_transactions import file_transaction
@@ -138,6 +172,7 @@ def install(payload, destination, home):
     manifest = verify(payload)
     if not (destination / 'Ryn.exe').is_file():
         raise ValueError('Install Ryn core first')
+    validate_office_payload(payload)
     home.mkdir(parents=True, exist_ok=True)
     peer = public_key_from_private(load_or_create_private_key(home / 'identity.ed25519'))
     manager = PluginManager(home, peer)
@@ -145,15 +180,7 @@ def install(payload, destination, home):
         raise ValueError('Full installer must not access the network')
     manager.download = no_download
     for slug in OFFICE:
-        version = craft_host.specification(slug)['tag']
-        source = payload / 'office' / slug / version
-        target = manager.cache / slug / version
-        copy_new(source, target)
-        craft_host.installed(manager.cache, slug)
-        if not (target / 'agent').exists():
-            copy_new(source / 'agent', target / 'agent')
-        if not craft_native.runtime_status(manager.cache, slug)['verified']:
-            raise ValueError('Office runtime not verified: ' + slug)
+        provision_office(payload / 'office', manager.cache, slug)
         # Preserve an existing user's version, enable/disable state and preferences.
         if slug not in manager._read()['plugins']:
             manager.install(slug)

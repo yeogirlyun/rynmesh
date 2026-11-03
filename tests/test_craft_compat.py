@@ -222,7 +222,7 @@ def test_all_three_office_compatibility_specs_match_their_fixed_upstream_release
     assert set(compat.COMPAT) == {"gridcraft", "wordcraft", "pdfcraft"}
     for slug, spec in compat.COMPAT.items():
         compat._check_spec(slug, spec)
-        assert spec["id"] == "ryn-cjk-1"
+        assert spec["id"] == ("ryn-cjk-blank-2" if slug == "gridcraft" else "ryn-cjk-1")
 
 
 def test_offline_office_packages_coexist_without_replacing_each_others_bytes(tmp_path, monkeypatch):
@@ -246,3 +246,12 @@ def test_offline_office_packages_coexist_without_replacing_each_others_bytes(tmp
             previous_root = cache / previous / CRAFT[previous]["tag"]
             assert expected == {path.relative_to(previous_root).as_posix(): path.read_bytes() for path in previous_root.rglob("*") if path.is_file()}
             assert host.installed(cache, previous) == (previous_root / "compatibility/ryn-cjk-1/payload" / previous).resolve()
+
+
+def test_core_only_update_retains_previous_font_build_but_installer_requires_current(package, monkeypatch):
+    compat.install(package.cache, "gridcraft", package.path)
+    monkeypatch.setitem(compat.PREVIOUS_COMPAT, "gridcraft", dict(package.pin))
+    monkeypatch.setitem(compat.COMPAT, "gridcraft", {**package.pin, "id": "next-compat"})
+    assert compat.installed(package.cache, "gridcraft") == (package.root / "payload/gridcraft").resolve()
+    assert compat.installed(package.cache, "gridcraft", current_only=True) is None
+    assert host.installed(package.cache, "gridcraft") == (package.root / "payload/gridcraft").resolve()

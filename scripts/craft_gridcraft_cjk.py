@@ -33,7 +33,10 @@ BASE_WEB_SHA256 = "86048ba175689ff852c141d6115e5491f0856f891300c3e1f91274b9c2709
 BASE_WEB_URL = f"{UPSTREAM_URL}/releases/download/v0.6.1/gridcraft-web-0.6.1.zip"
 BASE_BINDINGS_NAME = "gridcraft-web-9e7653abe17db176"
 THEME = "crates/ui-egui/src/theme.rs"
-BUILD_ID = "gridcraft-web-0.6.1-ryn-cjk-1"
+COMPAT_ID = "ryn-cjk-blank-2"
+BUILD_ID = "gridcraft-web-0.6.1-" + COMPAT_ID
+FORMULA_PATCH = Path(__file__).parent / "patches/gridcraft-empty-inline.patch"
+FORMULA_FILES = {"crates/xlsx/src/sheet_read.rs", "crates/xlsx/src/tests/fixtures.rs"}
 MAX_FILE = 128 * 1024 * 1024
 FIXED_ZIP_TIME = (2026, 10, 18, 0, 0, 0)
 OLD = '''#[cfg(target_arch = "wasm32")]
@@ -72,8 +75,8 @@ def source_patch(source):
     if run(["git", "rev-parse", "HEAD"], cwd=source) != UPSTREAM_COMMIT:
         raise ValueError(f"source must be the pinned upstream commit {UPSTREAM_COMMIT}")
     changed = set(run(["git", "diff", "--name-only", "HEAD"], cwd=source).splitlines())
-    if changed - {THEME}:
-        raise ValueError(f"unexpected tracked source changes: {sorted(changed - {THEME})}")
+    if changed - {THEME} - FORMULA_FILES:
+        raise ValueError(f"unexpected tracked source changes: {sorted(changed - {THEME} - FORMULA_FILES)}")
     original = run(["git", "show", f"{UPSTREAM_COMMIT}:{THEME}"], cwd=source) + "\n"
     if original.count(OLD) != 1:
         raise ValueError("pinned upstream fallback anchor does not match")
@@ -85,7 +88,19 @@ def source_patch(source):
         original.splitlines(keepends=True), patched.splitlines(keepends=True),
         fromfile=f"a/{THEME}", tofile=f"b/{THEME}",
     )).encode("utf-8")
-    return current, patched, patch
+    # Validate exact source bytes against the reviewed patch, including regression tests.
+    formula_patch = FORMULA_PATCH.read_bytes()
+    check = subprocess.run(["git", "apply", "--reverse", "--check", str(FORMULA_PATCH.resolve())], cwd=source, capture_output=True)
+    if check.returncode == 0:
+        actual = subprocess.check_output(["git", "diff", "--", *sorted(FORMULA_FILES)], cwd=source)
+        if actual.replace(b"\r\n", b"\n") != formula_patch.replace(b"\r\n", b"\n"):
+            raise ValueError("XLSX source differs from the reviewed empty-inline patch")
+    else:
+        for name in FORMULA_FILES:
+            original_bytes = subprocess.check_output(["git", "show", f"{UPSTREAM_COMMIT}:{name}"], cwd=source)
+            if (source / name).read_bytes().replace(b"\r\n", b"\n") != original_bytes.replace(b"\r\n", b"\n"):
+                raise ValueError("unexpected XLSX source changes")
+    return current, patched, patch + formula_patch
 
 
 def checked_input(path, url, expected, *, download):
@@ -113,6 +128,8 @@ def inputs(font_dir, *, download):
 def prepare(source, font_dir):
     current, patched, _ = source_patch(source)
     inputs(font_dir, download=True)
+    if subprocess.run(["git", "apply", "--reverse", "--check", str(FORMULA_PATCH.resolve())], cwd=source, capture_output=True).returncode:
+        subprocess.run(["git", "apply", str(FORMULA_PATCH.resolve())], cwd=source, check=True)
     if current != patched:
         with (source / THEME).open("w", encoding="utf-8", newline="\n") as output:
             output.write(patched)
@@ -186,6 +203,7 @@ def package(source, font_dir, dist, output_dir, bindgen="wasm-bindgen"):
     current, patched, patch = source_patch(source)
     if current != patched:
         raise ValueError("source is not prepared with the reviewed CJK patch")
+    subprocess.run(["git", "apply", "--reverse", "--check", str(FORMULA_PATCH.resolve())], cwd=source, check=True)
     inputs(font_dir, download=False)
     if dist.is_symlink() or not (dist / "index.html").is_file():
         raise ValueError("distribution must contain a real root index.html")
@@ -225,7 +243,7 @@ def package(source, font_dir, dist, output_dir, bindgen="wasm-bindgen"):
     ).encode("utf-8")
     files["SOURCE-PATCH.diff"] = patch
     provenance = {
-        "schema": 1, "build_id": BUILD_ID, "id": "ryn-cjk-1",
+        "schema": 1, "build_id": BUILD_ID, "id": COMPAT_ID,
         "base_version": "v0.6.1", "base_web_sha256": BASE_WEB_SHA256,
         "upstream": {"repository": UPSTREAM_URL, "tag": "v0.6.1", "commit": UPSTREAM_COMMIT},
         "patch_sha256": sha256(patch), "cargo_lock_sha256": sha256((source / "Cargo.lock").read_bytes()),
@@ -235,7 +253,7 @@ def package(source, font_dir, dist, output_dir, bindgen="wasm-bindgen"):
         "target": "wasm32-unknown-unknown", "wasm_bindgen_version": WASM_BINDGEN_VERSION,
         "toolchain": tool_versions(bindgen),
         "files": {name: sha256(data) for name, data in sorted(files.items())},
-        "scope": "WASM font fallback only; no workbook, formula, import or menu-language changes",
+        "scope": "Embedded CJK fallback and blank literal inlineStr import; preserves formula text results",
     }
     files["CJK-PROVENANCE.json"] = (json.dumps(provenance, indent=2, sort_keys=True) + "\n").encode("utf-8")
     files["SHA256SUMS.txt"] = "".join(
@@ -261,7 +279,7 @@ def package(source, font_dir, dist, output_dir, bindgen="wasm-bindgen"):
     publish(archive_path, archive_bytes)
     publish(archive_path.with_suffix(".zip.sha256"), f"{sha256(archive_bytes)}  {archive_path.name}\n".encode("ascii"))
     return {
-        "archive": str(archive_path), "id": "ryn-cjk-1", "base_version": "v0.6.1",
+        "archive": str(archive_path), "id": COMPAT_ID, "base_version": "v0.6.1",
         "base_web_sha256": BASE_WEB_SHA256, "archive_sha256": sha256(archive_bytes),
         "files_manifest_sha256": manifest_digest, "entry": BUILD_ID,
         "size": len(archive_bytes), "files": len(files),
