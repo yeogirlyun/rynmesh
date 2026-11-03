@@ -80,7 +80,6 @@ export function PersonalShell({ children }: { children: ReactNode }) {
     { to: "/agent", label: agentText("title"), icon: MessageCircle },
     { to: "/apps", label: tr("Apps"), icon: Box },
     ...installedApps.map(app => ({ to: app.to, label: app.title, icon: Building2 })),
-    ...pinnedPlugins.filter(plugin => !installedApps.some(app => app.id === plugin.id)).map(plugin => ({ to: pluginWorkspacePath(plugin.id), label: plugin.title, icon: Building2 })),
     { to: "/devices", label: t("nav.devices"), icon: Network },
     { to: "/tasks", label: t("nav.tasks"), icon: CheckSquare },
     { to: "/drives", label: t("drive.title"), icon: HardDrive },

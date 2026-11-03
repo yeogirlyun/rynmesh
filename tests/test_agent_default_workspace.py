@@ -9,6 +9,26 @@ from rynmesh.agent_runtime.prompt import authority
 from rynmesh.agent_runtime.store import AgentError
 
 
+def test_cancellation_context_never_discovers_models_or_creates_scope(tmp_path, monkeypatch):
+    runtime, _, _, _ = make_runtime(tmp_path)
+    created = runtime.create({'message': 'hi'})
+    row = runtime.store.read()['tasks'][created['id']]
+    row['model_destination'] = {'catalog_model_id': row['model_id'], 'destination_revision': 'bound'}
+    row['model_destination_required'] = True
+    monkeypatch.setattr(runtime.model, 'supports_destination_binding', True, raising=False)
+    def forbidden(*args, **kwargs):
+        pytest.fail('cancellation must not wait for discovery or synthesize authority')
+    monkeypatch.setattr(runtime, '_current_destination', forbidden)
+    monkeypatch.setattr(runtime, '_policy_context', forbidden)
+    monkeypatch.setattr(runtime.tools, 'default_scope', forbidden, raising=False)
+    runtime._validate_context(row, cheap_only=True)
+    # Full dispatch validation must still resolve the current destination.
+    monkeypatch.setattr(runtime, '_current_destination', lambda *a, **kw: {'destination_revision': 'changed'})
+    monkeypatch.setattr(runtime, '_policy_context', lambda row: {})
+    with pytest.raises(AgentError, match='agent_model_destination_changed'):
+        runtime._validate_context(row)
+
+
 def test_fresh_task_can_create_and_read_file_without_directory_setup(tmp_path):
     runtime, _, _, _ = make_runtime(tmp_path)
     task = runtime.create({'message': 'Create an SVG'})

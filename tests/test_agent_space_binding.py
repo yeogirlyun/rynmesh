@@ -120,6 +120,32 @@ def test_broken_cli_does_not_remove_healthy_api_models(space_pair):
     assert len(p.consumer.refresh(p.locator)) == 1
 
 
+def test_agent_resolves_signed_space_model_without_waiting_for_registry(space_pair):
+    import threading
+    p = space_pair
+    p.consumer.refresh(p.locator)
+    entered, release = threading.Event(), threading.Event()
+    def blocked_registry(**kwargs):
+        entered.set()
+        release.wait(5)
+        raise OSError('registry unreachable')
+    p.child.store.list_job_capacities = blocked_registry
+    _, _, catalog = build_agent_integrations(p.apps[1], p.child.store, p.child.store.home)
+    done, rows = threading.Event(), []
+    def lookup():
+        rows.extend(catalog.list_models())
+        done.set()
+    worker = threading.Thread(target=lookup)
+    worker.start()
+    try:
+        assert entered.wait(2)
+        assert done.wait(1), 'signed model lookup waited for the registry'
+        assert any(row['source'] == 'peer' and row['destination_binding_supported'] for row in rows)
+    finally:
+        release.set()
+        worker.join(6)
+
+
 def test_both_nodes_policy_aba_invalidates_old_destination(space_pair):
     p = space_pair
     row = p.consumer.refresh(p.locator)[0]
