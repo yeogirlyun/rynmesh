@@ -133,8 +133,8 @@ export default function RynAgentComposer(props: Props) {
     setVoiceError(false);
     try { next.start(); setListening(true); } catch { setVoiceError(true); }
   };
-  const modeLabel = props.permissionMode === "read_only" ? "readOnly" : props.permissionMode === "confirm_changes" ? "confirmChanges" : props.permissionMode === "unknown" ? "unknownMode" : "fullAccess";
   const menuKeys = { workspace: "workspaceMode", read_only: "readOnly", confirm_changes: "confirmChanges", automatic: "automatic" } as const;
+  const modeLabel = props.permissionMode === "unknown" ? "unknownMode" : menuKeys[props.permissionMode];
   const escape = (event: React.KeyboardEvent<HTMLDetailsElement>) => {
     if (event.key === "Escape") { event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); }
   };
@@ -175,7 +175,7 @@ export default function RynAgentComposer(props: Props) {
       <div className="ra-composer-controls">
         <div className="ra-composer-left">
           <details ref={options} className="ra-composer-options" onKeyDown={escape}><summary aria-label={t("composerOptions")} title={t("composerOptions")}><Plus size={19} /></summary><div className="ra-composer-options-panel">{props.onAttachmentsChange && <button type="button" className="ra-attach-files" disabled={props.inputDisabled || preparingFiles} onClick={() => { picker.current?.click(); if (options.current) options.current.open = false; }}><Paperclip size={15} />{t("addAttachments")}</button>}{props.options}</div></details>
-          <details ref={permissions} className="ra-composer-permissions" onKeyDown={escape}><summary aria-label={t("mode")} title={t("mode")} className={modeLabel === "fullAccess" ? "ra-full-access" : ""}>{modeLabel === "fullAccess" ? <ShieldAlert size={13} /> : <ShieldCheck size={13} />}<span>{t(modeLabel)}</span><ChevronDown size={11} /></summary><div className="ra-permissions-menu" role="menu" aria-label={t("mode")}>
+          <details ref={permissions} className="ra-composer-permissions" onKeyDown={escape}><summary aria-label={t("mode")} title={t("mode")} className={props.permissionMode === "automatic" ? "ra-full-access" : ""}>{props.permissionMode === "automatic" ? <ShieldAlert size={13} /> : <ShieldCheck size={13} />}<span>{t(modeLabel)}</span><ChevronDown size={11} /></summary><div className="ra-permissions-menu" role="menu" aria-label={t("mode")}>
             {(Object.keys(menuKeys) as Array<AgentSettings["permission_mode"]>).map(mode => <button type="button" key={mode} role="menuitemradio" aria-checked={props.permissionMode === mode} disabled={props.busy || props.permissionLocked} onClick={() => { props.onPermission(mode); if (permissions.current) permissions.current.open = false; }}>{t(menuKeys[mode])}</button>)}
             {props.permissionLocked && <small>{t("taskPermissionFixed")}</small>}
           </div></details>
