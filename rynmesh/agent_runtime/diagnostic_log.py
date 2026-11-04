@@ -98,9 +98,9 @@ def failure(stage, exc, *, elapsed_seconds=None, diagnostics=None, **context_fie
                  ctx, round(elapsed_seconds, 3) if elapsed_seconds is not None else None, chain)
 
 
-def performance(stage, **phases):
+def performance(stage, *, operation=None, **phases):
     if sum(phases.values()) >= 1.0:
         ctx = _safe_context()
-        _log.warning("agent_slow at=%s pid=%s thread=%s stage=%s context=%s phases=%s",
-                     datetime.now(timezone.utc).isoformat(), os.getpid(), threading.current_thread().name[:48], stage,
+        _log.warning("agent_slow at=%s pid=%s thread=%s stage=%s operation=%s context=%s phases=%s",
+                     datetime.now(timezone.utc).isoformat(), os.getpid(), threading.current_thread().name[:48], stage, operation,
                      ctx, {key: round(value, 3) for key, value in phases.items()})

@@ -2925,7 +2925,7 @@ class AgentRuntime(AgentLoop):
                                         "goal_revision": row["goal"]["revision"], "control_revision": row["control_revision"], "scope_revision": row["scope_revision"]}
                     queued_at = self._queued_since.pop(row["id"], None)
                     scheduler_wait_seconds = max(0.0, claim_started - queued_at) if queued_at is not None else 0.0
-                    return {**copy.deepcopy(row), "_model_retry_authority": model_retry_authority(data["settings"]), "_run_control_revision": row["control_revision"],
+                    return {**row, "_model_retry_authority": model_retry_authority(data["settings"]), "_run_control_revision": row["control_revision"],
                             "_run_lifetime_remaining": budget.time_remaining(row),
                             "_scheduler_wait_seconds": scheduler_wait_seconds}
                 return None
