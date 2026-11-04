@@ -16,6 +16,13 @@ from ..file_transactions import file_transaction
 from . import craft_host as host
 
 COMPAT = {
+    "deckcraft": {
+        "id": "ryn-cjk-1",
+        "base_version": "v0.6.1",
+        "base_web_sha256": "dd76659f643fa98ff79c86bf439bcaeeaaf6bd3a4037a1dc6628c97366862ba1",
+        "archive_sha256": "b084a901521fff06acbea617d0eff0ab3fd390c3a0baae163f2f400a50e60db6",
+        "files_manifest_sha256": "ea1b5c9bc8d4d4b40fdaee21cd00a3ab54bf560f584580b2f8b5781b2ee3d302"
+    },
     "gridcraft": {
         "id": "ryn-cjk-blank-2",
         "base_version": "v0.6.1",

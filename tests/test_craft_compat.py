@@ -218,8 +218,8 @@ def test_module_cli_reports_compatibility_errors_without_a_traceback(tmp_path):
     assert "Traceback" not in result.stderr
 
 
-def test_all_three_office_compatibility_specs_match_their_fixed_upstream_releases():
-    assert set(compat.COMPAT) == {"gridcraft", "wordcraft", "pdfcraft"}
+def test_all_office_compatibility_specs_match_their_fixed_upstream_releases():
+    assert set(compat.COMPAT) == {"gridcraft", "wordcraft", "pdfcraft", "deckcraft"}
     for slug, spec in compat.COMPAT.items():
         compat._check_spec(slug, spec)
         assert spec["id"] == ("ryn-cjk-blank-2" if slug == "gridcraft" else "ryn-cjk-1")
@@ -228,7 +228,7 @@ def test_all_three_office_compatibility_specs_match_their_fixed_upstream_release
 def test_offline_office_packages_coexist_without_replacing_each_others_bytes(tmp_path, monkeypatch):
     cache = tmp_path / "cache"
     retained = {}
-    for slug in ("gridcraft", "wordcraft", "pdfcraft"):
+    for slug in compat.COMPAT:
         base = archive({f"{slug}/index.html": ("Upstream " + slug).encode()})
         monkeypatch.setitem(CRAFT, slug, {**CRAFT[slug], "web_sha256": sha(base)})
         host.install(cache, slug, download=lambda url, path, content=base: path.write_bytes(content))
