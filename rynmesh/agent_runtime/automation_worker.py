@@ -296,6 +296,24 @@ class AutomationSchedulerWorker:
         self.worker_id = worker_id
         self._lock = threading.Lock()
 
+    def _needs_tick(self, data: dict[str, Any]) -> bool:
+        if not data.get("settings", {}).get("enabled", True):
+            return False
+        records = data.get("automations", {})
+        current_ms = automations.now_ms()
+        for item in records.values():
+            if not isinstance(item, dict) or str(item.get("status") or "ACTIVE").upper() != "ACTIVE":
+                continue
+            due = item.get("next_run_at")
+            if due is None or (isinstance(due, (int, float)) and int(due) <= current_ms):
+                return True
+        for run in data.get("automation_runs", {}).values():
+            if isinstance(run, dict) and run.get("status") == "IN_PROGRESS":
+                task = data["tasks"].get(str(run.get("task_id") or ""))
+                if task and task.get("status") in {"completed", "failed", "cancelled"}:
+                    return True
+        return automations.sync_automation_files(self.runtime.store, records, check_only=True)
+
     def run_once(self) -> WorkerRunResult:
         if not self._lock.acquire(blocking=False):
             return WorkerRunResult(activity=False)
@@ -357,6 +375,10 @@ class AutomationSchedulerWorker:
 
                 return changed
 
+            # Recheck inside the transaction before dispatch. Idle two-second
+            # polls only inspect the committed schedule and its editable files.
+            if not self.runtime.store.inspect(self._needs_tick):
+                return WorkerRunResult(activity=False)
             activity = bool(self.runtime.store.transaction(tick))
             for tid in spawned_task_ids:
                 self.runtime._queued_since[tid] = time.monotonic()
