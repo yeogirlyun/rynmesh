@@ -150,6 +150,9 @@ def request_json(method, target, *, headers=None, data=None, json=None):
         raise OAuthHttpError() from None
 
 
+COMPANY_PLUGIN_IDS = frozenset({"company-workspace", "company-dashboard", "company-affiliate"})
+
+
 class McpOAuthStore:
     def __init__(self, store):
         self.path, self.lock = store.root / "mcp_oauth.json", store.root / ".mcp_oauth.lock"
@@ -199,11 +202,11 @@ class McpOAuthStore:
             return self._read()
 
     @contextmanager
-    def transaction(self):
+    def transaction(self, *, document=False):
         with file_transaction(self.lock):
             value = self._read()
             before = copy.deepcopy(value)
-            yield value["servers"]
+            yield value if document else value["servers"]
             if value != before:
                 self._write(value)
 
@@ -270,6 +273,8 @@ class McpOAuthManager:
         self.transport, self.on_connected = transport or request_json, on_connected
         self.trusted_origin = trusted_origin
         self._lock, self._flows = threading.RLock(), {}
+        self._member_lock = threading.Lock()
+        self._workspace_proof = None
 
     def _binding(self, server):
         return {"server_id": server["id"], "instance_id": server["instance_id"],
@@ -372,14 +377,17 @@ class McpOAuthManager:
                             break
                 return copy.deepcopy(row)
 
-    def _update(self, server, epoch, change):
+    def _update(self, server, epoch, change, *, login_id=None):
         with file_transaction(self.store.lock):
             self._current(server)
-            with self.credentials.transaction() as rows:
-                row = rows.get(server["instance_id"])
+            with self.credentials.transaction(document=True) as document:
+                row = document["servers"].get(server["instance_id"])
                 if not row or row.get("epoch") != epoch or row.get("binding") != self._binding(server):
                     fail("agent_mcp_oauth_configuration_changed")
                 change(row)
+                if login_id and server.get("plugin_id") in COMPANY_PLUGIN_IDS:
+                    document["company_action"] = {"id": hashlib.sha256(login_id.encode()).hexdigest(), "action": "login",
+                                                  "serverId": server["id"], "instanceId": server["instance_id"]}
                 row["updated_at"] = self.clock()
                 return copy.deepcopy(row)
 
@@ -630,7 +638,7 @@ class McpOAuthManager:
                 row.pop("error", None)
                 row.pop("challenge", None)
             with self._lock:
-                self._update(flow["server"], flow["epoch"], save)
+                self._update(flow["server"], flow["epoch"], save, login_id=auth_id)
                 sibling_ids = self._propagate_identity_group_tokens(flow["server"])
                 flow["state"] = "connected"
                 flow["discovery_pending"] = self.on_connected is not None
@@ -784,6 +792,72 @@ class McpOAuthManager:
             except Exception:
                 pass
 
+    def workspace_member(self):
+        # Only this installed plugin owns the workspace resource. Never forward a
+        # configurable server's bearer to an authority supplied by the client.
+        import httpx
+        servers = [s for s in self.store.list_mcp_servers_internal(include_tools=False)
+                   if s.get("plugin_id") == "company-workspace" and s.get("effective_enabled")
+                   and re.fullmatch(r"http://127[.]0[.]0[.]1:[0-9]+/ryn/agent-mcp", s.get("url") or "")]
+        if len(servers) != 1:
+            fail("agent_mcp_auth_required")
+        server = servers[0]
+        token = self.access_token(server)
+        if not token or not re.fullmatch(r"ryn_at_[A-Za-z0-9_-]{43}", token):
+            fail("agent_mcp_auth_required")
+        # Multiple simultaneously visible views verify the same actual bearer.
+        key = (server["instance_id"], hashlib.sha256(token.encode()).digest())
+        with self._member_lock:
+            cached = self._workspace_proof
+            if cached and cached[0] == key and cached[1] > time.monotonic():
+                return dict(cached[2])
+            with httpx.Client(timeout=5, trust_env=False, follow_redirects=False) as client:
+                response = client.post("https://dashboard-hk-api.gshopper.com.cn/ryn/workspace/authorize",
+                                       headers={"Authorization": "Bearer " + token}, json={"resource": server["url"]})
+            if response.status_code != 200:
+                fail("agent_mcp_auth_required")
+            actor = response.json()
+            member = actor.get("userid")
+            if (actor.get("resource") != server["url"] or actor.get("scope") != "workspace.access"
+                    or not isinstance(member, str) or not member or len(member) > 200):
+                fail("agent_mcp_auth_required")
+            result = {"memberId": member, "instanceId": server["instance_id"]}
+            self._workspace_proof = (key, time.monotonic() + 2, result)
+            return result
+
+    def company_connections(self):
+        states = {}
+        rows = self.credentials.read()["servers"]
+        for server in self.store.list_mcp_servers_internal(include_tools=False):
+            if server.get("plugin_id") not in COMPANY_PLUGIN_IDS or server.get("transport") != "streamable_http":
+                continue
+            row = rows.get(server["instance_id"], {})
+            tokens = row.get("tokens") or {}
+            usable = (server.get("effective_enabled") and not row.get("error") and not row.get("pending")
+                      and row.get("binding") == self._binding(server)
+                      and (tokens.get("refresh_token") or tokens.get("expires_at", 0) > self.clock()))
+            states[server["id"]] = bool(usable)
+        return states
+
+    def company_action(self):
+        return self.credentials.read().get("company_action", {"id": "", "action": "none"})
+
+    def logout_company(self):
+        with self._lock, file_transaction(self.store.lock):
+            servers = [s for s in self.store.list_mcp_servers_internal(include_tools=False)
+                       if s.get("plugin_id") in COMPANY_PLUGIN_IDS]
+            instances = {s["instance_id"] for s in servers}
+            with self.credentials.transaction(document=True) as document:
+                for instance in instances:
+                    document["servers"].pop(instance, None)
+                action = {"id": secrets.token_hex(16), "action": "logout"}
+                document["company_action"] = action
+            pending = [(flow["server"]["id"], ident) for ident, flow in self._flows.items()
+                       if flow["server"]["instance_id"] in instances and flow["state"] in {"waiting", "exchanging"}]
+        for sid, ident in pending:
+            self.cancel_login(sid, ident)
+        return {"cleared": True, "servers": [s["id"] for s in servers], "action": action}
+
     def logout(self, server_id, expected_revision=None):
         server = self.store.get_mcp_server_internal(server_id, require_enabled=False, expected_revision=expected_revision)
         previous = self.credentials.read()["servers"].get(server["instance_id"])
@@ -852,6 +926,7 @@ class McpOAuthManager:
             self.cancel_login(flow["server"]["id"], ident)
 
     def clear_all(self):
+        self.logout_company()
         self.close()
         for ident in list(self.credentials.read()["servers"]):
             self.forget(ident)

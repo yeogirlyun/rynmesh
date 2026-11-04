@@ -152,6 +152,10 @@ export const cancelMcpOauthLogin = (id: string, authId: string) =>
   extensionRequest<McpOauthProgress>(`/mcp/servers/${encodeURIComponent(id)}/oauth/login/${encodeURIComponent(authId)}/cancel`, "POST", {});
 export const logoutMcpOauth = (id: string, expected_revision: number) =>
   extensionRequest<McpOauthStatus>(`/mcp/servers/${encodeURIComponent(id)}/oauth/logout`, "POST", { expected_revision });
+export const getCompanyAccount = (signal?: AbortSignal) =>
+  extensionRequest<{ state: string; displayName: string; version: number; connections: Record<string,string> }>("/company/account", "GET", undefined, signal);
+export const logoutCompanyAccount = () =>
+  extensionRequest<{ cleared: boolean }>("/company/logout", "POST", {});
 export const clearLocalMcpAuthorizations = () =>
   extensionRequest<{ cleared: boolean }>("/mcp/oauth/clear-local-authorizations", "POST", { confirm: true });
 export const applyMcpServerHints = async (id: string, input: ExtensionServerHintsInput) =>

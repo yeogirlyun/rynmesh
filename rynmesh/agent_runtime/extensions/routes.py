@@ -308,6 +308,60 @@ def install_extension_routes(
             return result
         return await _run("oauth_logout", operation)
 
+    async def read_company_account():
+        import httpx
+        from urllib.parse import urlsplit
+        server = await _run("company_workspace", lambda: extensions.store.get_mcp_server_internal(
+            "company-workspace-mcp", require_enabled=False))
+        url = urlsplit(server.get("url") or "")
+        if (server.get("plugin_id") != "company-workspace" or url.scheme != "http"
+                or url.hostname != "127.0.0.1" or not url.port or url.path != "/ryn/agent-mcp"):
+            raise HTTPException(503, detail="company_account_unavailable")
+        try:
+            async with httpx.AsyncClient(timeout=8, trust_env=False) as client:
+                response = await client.get(f"http://127.0.0.1:{url.port}/api/company/account")
+                response.raise_for_status()
+                account = response.json()
+                return {key: account[key] for key in ("memberId", "displayName", "state", "version", "plugins", "connections")}
+        except (httpx.HTTPError, ValueError, KeyError):
+            raise HTTPException(503, detail="company_account_unavailable") from None
+
+    app.state.read_company_account = read_company_account
+
+    @app.get("/api/local/agent/extensions/company/account")
+    async def company_account(request: Request):
+        local_control(request)
+        return await read_company_account()
+
+    @app.get("/api/local/agent/extensions/company/workspace-member")
+    async def company_workspace_member(request: Request):
+        local_control(request)
+        return await _run("company_workspace_member", extensions.manager.oauth.workspace_member)
+
+    @app.get("/api/local/agent/extensions/company/connections")
+    async def company_connections(request: Request):
+        local_control(request)
+        return await _run("company_connections", extensions.manager.oauth.company_connections)
+
+    @app.get("/api/local/agent/extensions/company/account-action")
+    async def company_account_action(request: Request):
+        local_control(request)
+        return await _run("company_account_action", extensions.manager.oauth.company_action)
+
+    @app.post("/api/local/agent/extensions/company/logout")
+    async def logout_company(request: Request):
+        local_control(request)
+        def operation():
+            from .mcp_oauth import COMPANY_PLUGIN_IDS
+            providers = getattr(app.state, "peer_providers", None)
+            if providers:
+                providers.clear_local_company_sessions(COMPANY_PLUGIN_IDS)
+            result = extensions.manager.oauth.logout_company()
+            for server_id in result["servers"]:
+                extensions.manager.invalidate_server(server_id)
+            return result
+        return await _run("company_logout", operation)
+
     @app.post("/api/local/agent/extensions/mcp/oauth/clear-local-authorizations")
     async def clear_mcp_authorizations(request: Request):
         payload = await _body(request, 16384)
