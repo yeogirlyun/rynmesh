@@ -7,6 +7,7 @@ import binascii
 import copy
 import hashlib
 import io
+import json
 import re
 import threading
 import time
@@ -216,6 +217,7 @@ class ExtensionToolAdapter:
         native_computer: NativeComputerFacade | None = None,
     ) -> None:
         self.local = local_tools
+        self.local.download_authority = self.download_authority
         self.ledger_factory = ledger_factory
         self._node_store = node_store
         self._store = extension_store
@@ -803,6 +805,23 @@ class ExtensionToolAdapter:
             **({"artifact": artifact} if artifact else {}),
         }
 
+    def download_authority(self, binding, url, context):
+        from ..downloads import origin
+        from .mcp_transport import connector_headers
+        self.verify_binding(binding)
+        self._check_data_policy(binding, context, persist=True)
+        server = self.store.get_mcp_server_internal(binding["server_id"], require_enabled=True,
+            expected_revision=binding["revision"], expected_config_generation=binding["config_generation"],
+            expected_instance_id=binding["instance_id"])
+        authority = origin(server["url"])
+        if origin(url) != authority:
+            raise AgentToolRejected("agent_download_origin_mismatch")
+        headers = connector_headers(server)
+        token = self.manager.oauth.access_token(server)
+        if token:
+            headers["Authorization"] = "Bearer " + token
+        return headers, authority
+
     def _normalize_mcp_result(
         self,
         raw_result: dict[str, Any],
@@ -962,6 +981,11 @@ class ExtensionToolAdapter:
         if is_error:
             normalized["error"] = "agent_mcp_tool_returned_error"
         if isinstance(clean_structured, dict):
+            if not is_error:
+                from ..downloads import issue_refs
+                downloads = issue_refs(clean_structured, binding, context, self)
+                if downloads:
+                    normalized["text"] = "Download with ryn_download_file: " + json.dumps(downloads, ensure_ascii=False)
             normalized["structuredContent"] = clean_structured
         if files or artifacts:
             normalized["mcp_artifacts"] = [*artifacts, *files]

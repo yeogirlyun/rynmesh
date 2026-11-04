@@ -570,6 +570,30 @@ class StdioMcpSession:
         self.private_dir.cleanup()
 
 
+def connector_headers(server):
+    headers = {}
+    env_http_headers = server.get("env_http_headers") or {}
+    if isinstance(env_http_headers, dict):
+        for k, env_name in env_http_headers.items():
+            if isinstance(k, str) and k and isinstance(env_name, str) and env_name:
+                env_val = os.environ.get(env_name)
+                if env_val:
+                    headers[k] = str(env_val)
+    secret_headers = server.get("secret_headers") or {}
+    if isinstance(secret_headers, dict):
+        for k, v in secret_headers.items():
+            if isinstance(k, str) and k and v is not None:
+                headers[k] = str(v)
+    bearer_env = server.get("bearer_token_env")
+    if bearer_env and not any(key.lower() == "authorization" for key in headers):
+        token = os.environ.get(str(bearer_env))
+        if not token:
+            raise McpTransportError("agent_mcp_auth_required", dispatched=False)
+        headers["Authorization"] = f"Bearer {token}"
+
+    return headers
+
+
 class StreamableHttpMcpSession:
     """Bounded Streamable HTTP MCP client supporting JSON and incremental SSE responses."""
 
@@ -609,25 +633,7 @@ class StreamableHttpMcpSession:
             "Content-Type": "application/json",
             "User-Agent": USER_AGENT,
         }
-        env_http_headers = server.get("env_http_headers") or {}
-        if isinstance(env_http_headers, dict):
-            for k, env_name in env_http_headers.items():
-                if isinstance(k, str) and k and isinstance(env_name, str) and env_name:
-                    env_val = os.environ.get(env_name)
-                    if env_val:
-                        headers[k] = str(env_val)
-        secret_headers = server.get("secret_headers") or {}
-        if isinstance(secret_headers, dict):
-            for k, v in secret_headers.items():
-                if isinstance(k, str) and k and v is not None:
-                    headers[k] = str(v)
-        bearer_env = server.get("bearer_token_env")
-        if bearer_env and not any(key.lower() == "authorization" for key in headers):
-            token = os.environ.get(str(bearer_env))
-            if not token:
-                raise McpTransportError("agent_mcp_auth_required", dispatched=False)
-            headers["Authorization"] = f"Bearer {token}"
-
+        headers.update(connector_headers(server))
         self._base_headers = headers
         self._client = httpx.Client(follow_redirects=False, timeout=self.tool_timeout)
 
