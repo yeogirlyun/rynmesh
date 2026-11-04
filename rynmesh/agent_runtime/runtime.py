@@ -1531,7 +1531,7 @@ class AgentRuntime(AgentLoop):
         for receipt in row.get("receipts", []):
             tool_name = str(receipt.get("tool") or "")
             if tool_name not in {"ryn_file_write", "ryn_file_edit", "ryn_file_manage", "ryn_apply_patch", "ryn_file_read",
-                                 "ryn_render_inspect", "ryn_image_generate", "ryn_shell_execute", "ryn_process_read", "ryn_process_stop"} and not tool_name.startswith("mcp__"):
+                                 "ryn_render_inspect", "ryn_download_file", "ryn_image_generate", "ryn_shell_execute", "ryn_process_read", "ryn_process_stop"} and not tool_name.startswith("mcp__"):
                 continue
             result = receipt.get("result")
             if isinstance(result, dict) and result.get("result_ref"):
