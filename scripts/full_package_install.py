@@ -20,6 +20,23 @@ import uuid
 
 OFFICE = ('pdfcraft', 'wordcraft', 'gridcraft', 'deckcraft')
 COMPANY = ('company-workspace', 'company-dashboard', 'company-affiliate')
+FINANCE_RESOURCE = 'https://dashboard-hk-api.gshopper.com.cn/ryn/mcp'
+FINANCE_OAUTH_SERVERS = {'company-dashboard-dashboard': 'company-dashboard',
+                         'company-affiliate-affiliate': 'company-affiliate'}
+
+
+def migrate_finance_oauth_clients(store, declarations):
+    from rynmesh.agent_runtime.extensions.mcp_oauth import has_static_authorization
+    desired = {s['id']: s for s in declarations['mcp_servers'] if s['id'] in FINANCE_OAUTH_SERVERS}
+    for server in store.list_mcp_servers_internal(include_tools=False):
+        sid = server['id']
+        declared = desired.get(sid)
+        if not declared or server.get('plugin_id') != FINANCE_OAUTH_SERVERS[sid]:
+            continue
+        auth = declared.get('auth') or {}
+        if (declared['url'] == server.get('url') == FINANCE_RESOURCE and auth.get('client_id') == 'ryn-desktop'
+                and server.get('auth') == {**auth, 'client_id': None} and not has_static_authorization(server)):
+            store.upsert_mcp_server({'auth': auth}, server_id=sid, expected_revision=server['revision'])
 
 
 def sha(path):
@@ -318,6 +335,7 @@ def install(payload, destination, home):
     for slug in sorted(missing):
         store.set_plugin_enabled(slug, True)
     migration = store.migrate_release_defaults(declarations)
+    migrate_finance_oauth_clients(store, declarations)
     managed_servers = configure_local_mcp_services(store, declarations, port)
     with file_transaction(services_root / '.install.lock'):
         config = json.loads(config_path.read_text(encoding='utf-8-sig'))

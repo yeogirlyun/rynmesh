@@ -52,6 +52,11 @@ def main():
         assert result.returncode == 0, (slug, result.stderr[-500:])
     key = (home / 'company/config.key').read_bytes()
     identity = (home / 'identity.ed25519').read_bytes()
+    dashboard_server = 'company-dashboard-dashboard'
+    server = extensions.get_mcp_server_internal(dashboard_server)
+    assert server['auth']['client_id'] == 'ryn-desktop'
+    extensions.upsert_mcp_server({'auth': {**server['auth'], 'client_id': None}},
+                                 server_id=dashboard_server, expected_revision=server['revision'])
     extensions.set_plugin_enabled('company-dashboard', False)
     state = manager._read()
     state['plugins']['pdfcraft']['enabled'] = False
@@ -61,6 +66,7 @@ def main():
     assert not next(p for p in extensions.overview()['plugins'] if p['id']=='company-dashboard')['enabled']
     assert (home / 'company/config.key').read_bytes() == key
     assert (home / 'identity.ed25519').read_bytes() == identity
+    assert extensions.get_mcp_server_internal(dashboard_server, require_enabled=False)['auth']['client_id'] == 'ryn-desktop'
     config = json.loads((dest / 'plugin-services/services.json').read_text())
     assert config['version'] == 1
     service = config['services'][0]

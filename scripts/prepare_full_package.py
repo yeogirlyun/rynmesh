@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from full_package_install import OFFICE, COMPANY, sha, require_office_compat
+from full_package_install import OFFICE, COMPANY, FINANCE_OAUTH_SERVERS, FINANCE_RESOURCE, sha, require_office_compat
 from rynmesh.node_apps import craft_host, craft_native, craft_compat
 
 
@@ -84,6 +84,9 @@ def prepare(output, company, company_source, office_compat_dir=None):
                 plugin['skill_ids'].append(sid)
         for sid, record in source['mcp_servers'].items():
             if record.get('plugin_id') == slug:
+                if (FINANCE_OAUTH_SERVERS.get(sid) == slug and record.get('url') == FINANCE_RESOURCE
+                        and record['auth']['mode'] == 'oauth' and not record['auth'].get('client_id')):
+                    record['auth']['client_id'] = 'ryn-desktop'
                 servers.append({k: record[k] for k in ('id','name','description','transport','url','plugin_id','auth','data_policy','local_service') if k in record})
                 plugin['mcp_server_ids'].append(sid)
         plugins.append(plugin)
