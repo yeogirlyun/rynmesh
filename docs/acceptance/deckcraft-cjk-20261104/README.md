@@ -33,3 +33,17 @@ The packager checks the upstream ZIP, the font embedded in WASM and the accompan
 OFL, then updates the shell's asset URLs and integrity attributes. The ZIP and
 canonical manifest pins are in craft_compat.py. Full installer preparation accepts
 the ZIP via --office-compat-dir and requires its verified payload.
+
+## Local installation
+
+Built from develop commit 1f87ec5. Verified all 381 packaged Python source files
+against that commit. The focused installer and compatibility suite passed 46 tests.
+The four current Office compatibility payloads passed their pinned manifest checks.
+The PPT ZIP SHA-256 is b084a901521fff06acbea617d0eff0ab3fd390c3a0baae163f2f400a50e60db6.
+
+The existing Agent task reached completed and the running/queued count was zero
+before restarting the owned node. Ryn 0.8.0 is installed under %LOCALAPPDATA%/Ryn.
+The previous components are in %LOCALAPPDATA%/Ryn-install-backups/deckcraft-1f87ec5-20261104-104846.
+The node returned ok and the company service returned ready. The installed plugin
+launch API served the verified PPT shell on port 8921. The after.png capture shows
+the synthetic test file opened through that live editor.
