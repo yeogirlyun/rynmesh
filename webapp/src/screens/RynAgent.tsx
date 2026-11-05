@@ -1,7 +1,7 @@
 import RynAgentFork, { RynAgentForkSource } from "./RynAgentFork";
 import RynAgentFileChanges from "./RynAgentFileChanges";
 import RynAgentConnection, { hasConnectionRecovery } from "./RynAgentConnection";
-import { agentTaskCache, readAgentWorkspace, writeAgentWorkspace } from "../domain/agentWorkspaceCache";
+import { AGENT_TASKS_IN_MEMORY, agentTaskCache, agentTaskListCache, forgetAgentTask, hydrateAgentRecords, readAgentWorkspace, rememberAgentTask, rememberAgentTaskList, writeAgentWorkspace } from "../domain/agentWorkspaceCache";
 import RynAgentProgress, { groupAgentMessages, RynAgentTurnDuration } from "./RynAgentProgress";
 import { Fragment, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate as useRouterNavigate } from "react-router-dom";
@@ -110,6 +110,12 @@ function readQueuedMessages(): Record<string, QueuedFollowUpMessage[]> {
   }
 }
 interface PendingMessage { requestID: string; taskID: string; draftKey: string; message: string; baseMessageCount: number; navigationRevision?: number; phase: "sending" | "uncertain" | "rejected"; }
+/** The sidebar as last confirmed by the node, plus newer copies of opened tasks. */
+function cachedAgentTaskList(opened: Map<string, AgentTask>): AgentTaskSummary[] {
+  const byID = new Map((agentTaskListCache() || []).map(item => [item.id, item as AgentTaskSummary]));
+  for (const task of opened.values()) { const known = byID.get(task.id); if (!known || known.revision < task.revision) byID.set(task.id, task); }
+  return sortAgentTasks([...byID.values()].filter(item => !item.archived));
+}
 function newDraftKey(projectID = "") { return projectID ? `new:${projectID}` : "new"; }
 function readPendingMessage(): PendingMessage | null {
   try { const value = JSON.parse(saved(PENDING_MESSAGE_KEY)); return typeof value?.message === "string" && typeof value?.draftKey === "string" && typeof value?.taskID === "string" ? { ...value, phase: value.phase === "rejected" ? "rejected" : "uncertain" } : null; } catch { return null; }
@@ -176,7 +182,7 @@ export default function RynAgent() {
   const [cachedWorkspace] = useState(readAgentWorkspace);
   const [settings, setSettings] = useState<AgentSettings | null>(cachedWorkspace.settings);
   const [models, setModels] = useState<AgentModel[]>(cachedWorkspace.models);
-  const [tasks, setTasks] = useState<AgentTaskSummary[]>(() => sortAgentTasks([...taskCache.current.values()].filter(item => !item.archived)));
+  const [tasks, setTasks] = useState<AgentTaskSummary[]>(() => cachedAgentTaskList(taskCache.current));
   const [tasksReady, setTasksReady] = useState(false);
   const [recordsSupported, setRecordsSupported] = useState(false);
   const [recordsRevision, setRecordsRevision] = useState(0);
@@ -345,7 +351,8 @@ export default function RynAgent() {
     if (!previous || incoming.revision >= previous.revision) {
       taskCache.current.delete(incoming.id);
       taskCache.current.set(incoming.id, latest);
-      if (taskCache.current.size > 20) taskCache.current.delete(taskCache.current.keys().next().value!);
+      if (taskCache.current.size > AGENT_TASKS_IN_MEMORY) taskCache.current.delete(taskCache.current.keys().next().value!);
+      if (latest !== previous) rememberAgentTask(latest);
     }
     if (latest.archived !== undefined) setRecordsSupported(true);
     setTasks(current => {
@@ -473,6 +480,31 @@ export default function RynAgent() {
     return () => { active = false; refreshRevision.current++; refreshAbort.current?.abort(); };
   }, [refresh]);
   useEffect(() => { writeAgentWorkspace(settings, models, model); }, [settings, models, model]);
+  // Only a list confirmed by the node replaces the saved one.
+  useEffect(() => { if (tasksReady) rememberAgentTaskList(tasks); }, [tasks, tasksReady]);
+  useEffect(() => {
+    // After an app restart the device copy shows the records at once; the
+    // requests above still replace it as soon as the node answers.
+    let active = true;
+    void hydrateAgentRecords().then(() => {
+      if (!active) return;
+      if (!taskListLoaded.current) {
+        setTasks(current => {
+          const restored = cachedAgentTaskList(taskCache.current).filter(item => !deletedTaskIDs.current.has(item.id));
+          const byID = new Map(restored.map(item => [item.id, item]));
+          for (const item of current) { const known = byID.get(item.id); if (!known || known.revision <= item.revision) byID.set(item.id, item); }
+          return sortAgentTasks([...byID.values()].filter(item => !item.archived));
+        });
+      }
+      const id = selectedRef.current;
+      const restoredTask = id ? taskCache.current.get(id) : undefined;
+      if (restoredTask && !deletedTaskIDs.current.has(id)) {
+        setTask(current => current?.id === id ? current : restoredTask);
+        setDetailLoading(false);
+      }
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
   // Startup/reconnect failures recover without requiring the owner to press Refresh.
   useEffect(() => {
     if (!resourceErrors.settings && !resourceErrors.models) return;
@@ -600,6 +632,7 @@ export default function RynAgent() {
     recordMutationRevision.current++;
     deletedTaskIDs.current.add(id);
     taskCache.current.delete(id);
+    forgetAgentTask(id);
     setTasks(current => current.filter(item => item.id !== id)); setRecordsRevision(current => current + 1);
     setDrafts(current => { const next = { ...current }; delete next[id]; return next; });
     if (selectedRef.current === id) { selectedRef.current = ""; setSelected(""); setTask(null); setResourceErrors(current => ({ ...current, detail: "" })); }
