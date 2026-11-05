@@ -23,6 +23,7 @@ from ... import __version__
 from ...atomic_io import atomic_write_json, read_json
 from ...file_transactions import file_transaction
 from ...services import peer_box
+from ..diagnostic_log import oauth_event
 from ..store import AgentError
 
 CHANNEL = b"rynmesh-agent-mcp-oauth-v1"
@@ -48,6 +49,33 @@ class OAuthHttpError(McpOAuthError):
 
 def fail(code="agent_mcp_oauth_invalid_response"):
     raise McpOAuthError(code)
+
+
+# RFC 6749 4.1.2.1 / RFC 8707 authorization-response errors -> controlled codes.
+# Unknown values keep the historical generic denial code.
+AUTHORIZATION_ERRORS = {
+    "access_denied": "agent_mcp_oauth_login_denied",
+    "invalid_target": "agent_mcp_oauth_invalid_target",
+    "invalid_scope": "agent_mcp_oauth_invalid_scope",
+    "invalid_request": "agent_mcp_oauth_authorization_rejected",
+    "unauthorized_client": "agent_mcp_oauth_authorization_rejected",
+    "unsupported_response_type": "agent_mcp_oauth_authorization_rejected",
+    "server_error": "agent_mcp_oauth_authorization_unavailable",
+    "temporarily_unavailable": "agent_mcp_oauth_authorization_unavailable",
+}
+
+
+def flow_ref(auth_id):
+    """One-way correlation id for logs; never reveals or reconstructs auth_id."""
+    return hashlib.sha256(("ryn.oauth.flow.v1:" + str(auth_id)).encode()).hexdigest()[:12]
+
+
+def _trace(stage, flow=None, **fields):
+    try:
+        server = (flow or {}).get("server") or {}
+        oauth_event(stage, server=server.get("id"), flow=(flow or {}).get("ref"), **fields)
+    except Exception:
+        pass
 
 
 def canonical_url(value):
@@ -212,7 +240,8 @@ class McpOAuthStore:
 
 
 class _Loopback:
-    def __init__(self, callback, port, language):
+    def __init__(self, callback, port, language, trace=None):
+        trace = trace or (lambda *_args, **_kwargs: None)
         messages = {"connected": "Authorization completed. Return to Ryn.", "failed": "Authorization was not completed. Return to Ryn."}
         try:
             locale = "zh-CN" if str(language).lower().startswith("zh") else "en"
@@ -226,18 +255,25 @@ class _Loopback:
             def log_message(self, *_args):
                 pass
             def do_GET(self):
-                status = 400
+                status, reason = 400, "parse"
                 try:
                     parsed = urlsplit(self.path)
+                    if parsed.path != "/callback":
+                        # Browsers probe /favicon.ico etc.; never part of a flow.
+                        reason = "path"
+                        raise ValueError
                     pairs = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True, max_num_fields=12)
-                    if (len(self.path) + sum(len(k) + len(v) for k, v in self.headers.items()) > 16384 or parsed.scheme or parsed.netloc or parsed.path != "/callback" or parsed.fragment
-                            or self.headers.get_all("Host") != [f"127.0.0.1:{self.server.server_port}"]
-                            or any(self.headers.get(name) for name in ("Origin", "Forwarded", "X-Forwarded-For"))
-                            or len(pairs) != len(dict(pairs))):
+                    reason = ("oversize" if len(self.path) + sum(len(k) + len(v) for k, v in self.headers.items()) > 16384
+                              else "absolute_target" if parsed.scheme or parsed.netloc or parsed.fragment
+                              else "host" if self.headers.get_all("Host") != [f"127.0.0.1:{self.server.server_port}"]
+                              else "proxy_or_origin_header" if any(self.headers.get(name) for name in ("Origin", "Forwarded", "X-Forwarded-For"))
+                              else "duplicate_param" if len(pairs) != len(dict(pairs)) else "")
+                    if reason:
                         raise ValueError
                     status = 200 if callback(dict(pairs)) else 400
                 except Exception:
-                    pass
+                    if reason and reason != "path":
+                        trace("callback_rejected", reason=reason)
                 body = messages["connected" if status == 200 else "failed"].encode("utf-8")
                 self.send_response(status)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
@@ -477,6 +513,7 @@ class McpOAuthManager:
                 self._update(flow["server"], flow["epoch"], lambda r: r.pop("pending", None) if r.get("pending") == auth_id else None)
             except AgentError:
                 pass
+        _trace("login_expired", flow)
         if listener:
             listener.close()
 
@@ -504,9 +541,16 @@ class McpOAuthManager:
             if any(f["server"]["instance_id"] == server["instance_id"] and f["state"] in {"waiting", "exchanging"} for f in self._flows.values()):
                 fail("agent_mcp_oauth_login_pending")
             auth_id = secrets.token_urlsafe(32)
-            flow = {"server": server, "epoch": row["epoch"], "state": "waiting", "expires_at": self.clock() + 600}
+            flow = {"server": server, "epoch": row["epoch"], "state": "waiting", "expires_at": self.clock() + 600, "ref": flow_ref(auth_id)}
             self._flows[auth_id] = flow
-            self._update(server, row["epoch"], lambda r: r.update(pending=auth_id, pending_expires_at=flow["expires_at"]))
+            def begin(r):
+                # An error from an earlier, finished attempt must not survive as the
+                # status of this new attempt. Rows holding tokens keep their error:
+                # it is what blocks those credentials until a login succeeds.
+                if not r.get("tokens"):
+                    r.pop("error", None)
+                r.update(pending=auth_id, pending_expires_at=flow["expires_at"])
+            self._update(server, row["epoch"], begin)
         listener = None
         try:
             metadata = self.discover(server)
@@ -514,12 +558,14 @@ class McpOAuthManager:
             prior = row.get("client") or {}
             port = auth.get("callback_port") or (prior.get("redirect_port") if prior.get("registration") == "dcr" else 0) or 0
             try:
-                listener = _Loopback(lambda params: self.complete_login(auth_id, params), port, language)
+                listener = _Loopback(lambda params: self.complete_login(auth_id, params), port, language,
+                                     lambda stage, **kw: _trace(stage, flow, **kw))
             except OSError:
                 if auth.get("callback_port") or prior.get("registration") != "dcr":
                     fail("agent_mcp_oauth_callback_unavailable")
                 prior = {}
-                listener = _Loopback(lambda params: self.complete_login(auth_id, params), 0, language)
+                listener = _Loopback(lambda params: self.complete_login(auth_id, params), 0, language,
+                                     lambda stage, **kw: _trace(stage, flow, **kw))
             client = self._client(server, metadata, prior, listener.url)
             requested = set(_scopes(auth.get("scopes", []))) | set(row.get("granted_scopes", []))
             requested.update(_scopes((row.get("challenge") or {}).get("scope", metadata["scopes"])))
@@ -548,6 +594,7 @@ class McpOAuthManager:
             timer.daemon = True
             flow["timer"] = timer
             timer.start()
+            _trace("login_started", flow, redirect_port=listener.server.server_port)
             return {"auth_id": auth_id, "authorization_url": authorization_url, "expires_in": 600}
         except Exception as exc:
             with self._lock:
@@ -559,6 +606,7 @@ class McpOAuthManager:
                     pass
             if listener:
                 listener.close()
+            _trace("login_start_failed", flow, code=flow["error"])
             raise McpOAuthError(flow["error"]) from None
 
     def _client(self, server, metadata, prior, redirect_uri):
@@ -609,25 +657,48 @@ class McpOAuthManager:
     def complete_login(self, auth_id, params):
         with self._lock:
             flow = self._flows.get(auth_id)
-            if not flow or flow["state"] != "waiting" or not isinstance(params, dict) or not all(isinstance(k, str) and isinstance(val, str) for k, val in params.items()):
+            if not flow:
+                _trace("callback_rejected", reason="flow_missing")
+                return False
+            if flow["state"] != "waiting":
+                _trace("callback_rejected", flow, reason="flow_not_waiting", flow_state=flow["state"])
+                return False
+            if not isinstance(params, dict) or not all(isinstance(k, str) and isinstance(val, str) for k, val in params.items()):
+                _trace("callback_rejected", flow, reason="params_type")
                 return False
             if flow["expires_at"] <= self.clock():
+                _trace("callback_rejected", flow, reason="flow_expired")
                 self._expire(auth_id)
                 return False
             metadata = flow.get("metadata")
             if not metadata or set(params) - {"state", "iss", "code", "error", "error_description", "error_uri"}:
+                _trace("callback_rejected", flow, reason="unexpected_params" if metadata else "flow_not_ready")
                 return False
-            if len(params.get("state", "")) > 128 or not hmac.compare_digest(params.get("state", "").encode(), flow["oauth_state"].encode()) or (metadata["iss_required"] and "iss" not in params) or ("iss" in params and params["iss"] != metadata["issuer"]):
+            if len(params.get("state", "")) > 128 or not hmac.compare_digest(params.get("state", "").encode(), flow["oauth_state"].encode()):
+                _trace("callback_rejected", flow, reason="state_mismatch")
+                return False
+            if (metadata["iss_required"] and "iss" not in params) or ("iss" in params and params["iss"] != metadata["issuer"]):
+                _trace("callback_rejected", flow, reason="issuer_mismatch" if "iss" in params else "issuer_missing")
                 return False
             flow["state"] = "exchanging"
+        _trace("callback_accepted", flow, ok=bool(params.get("code")) and not params.get("error"))
         tokens = None
         try:
             if params.get("error") or not params.get("code"):
-                fail("agent_mcp_oauth_login_denied")
+                upstream = params.get("error", "")
+                code = AUTHORIZATION_ERRORS.get(upstream, "agent_mcp_oauth_login_denied")
+                _trace("authorization_error", flow, code=code,
+                       oauth_error=upstream if upstream in AUTHORIZATION_ERRORS else ("missing_code" if not upstream else "other"))
+                fail(code)
             self.store.get_mcp_server_internal(flow["server"]["id"], expected_revision=flow["server"]["revision"])
             self._current(flow["server"])
-            result = self._token_request(metadata, flow["client"], {"grant_type": "authorization_code", "code": _text(params["code"], 4096),
-                "redirect_uri": flow["redirect_uri"], "code_verifier": flow["verifier"], "resource": self._binding(flow["server"])["resource"]})
+            _trace("token_exchange_started", flow)
+            try:
+                result = self._token_request(metadata, flow["client"], {"grant_type": "authorization_code", "code": _text(params["code"], 4096),
+                    "redirect_uri": flow["redirect_uri"], "code_verifier": flow["verifier"], "resource": self._binding(flow["server"])["resource"]})
+            except OAuthHttpError as exc:
+                _trace("token_exchange_failed", flow, code=str(exc), http_status=exc.status, oauth_error=exc.oauth_error or "other")
+                raise
             tokens = self._tokens(result, self._binding(flow["server"])["resource"], flow["scopes"])
             def save(row):
                 if row.get("pending") != auth_id or flow["state"] != "exchanging" or flow["expires_at"] <= self.clock():
@@ -642,6 +713,7 @@ class McpOAuthManager:
                 sibling_ids = self._propagate_identity_group_tokens(flow["server"])
                 flow["state"] = "connected"
                 flow["discovery_pending"] = self.on_connected is not None
+            _trace("login_connected", flow)
             if self.on_connected:
                 def notify():
                     try:
@@ -662,6 +734,7 @@ class McpOAuthManager:
             with self._lock:
                 if flow["state"] == "exchanging":
                     flow["state"], flow["error"] = "failed", str(exc) if isinstance(exc, McpOAuthError) else "agent_mcp_oauth_request_failed"
+                _trace("login_failed", flow, code=flow.get("error"))
                 try:
                     self._update(flow["server"], flow["epoch"], lambda r: (r.pop("pending", None), r.update(error=flow.get("error", "agent_mcp_auth_required"))) if r.get("pending") == auth_id else None)
                 except AgentError:
@@ -703,6 +776,7 @@ class McpOAuthManager:
             if flow["state"] not in {"waiting", "exchanging"}:
                 return {"state": flow["state"]}
             flow["state"] = "cancelled"
+            _trace("login_cancelled", flow)
             listener, timer = flow.pop("listener", None), flow.pop("timer", None)
             try:
                 self._update(flow["server"], flow["epoch"], lambda r: r.pop("pending", None) if r.get("pending") == auth_id else None)
