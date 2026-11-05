@@ -336,6 +336,17 @@ export function agentReadBackoff(failures: number): number {
   return Math.min(15000, 1000 * 2 ** Math.min(Math.max(0, failures - 1), 4));
 }
 
+/**
+ * Delay before a poll retries a failed read. A poll never stops on an error:
+ * once the node answers again the page recovers without a manual refresh.
+ * Errors that are not connection or server failures (a conflict, a lock)
+ * retry more slowly: 5 s, 10 s, 20 s, then every 30 s.
+ */
+export function agentPollRetryDelay(failures: number, transient: boolean): number {
+  if (transient) return agentReadBackoff(failures);
+  return Math.min(30000, 5000 * 2 ** Math.min(Math.max(0, failures - 1), 3));
+}
+
 async function readAttempt<T>(run: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
   signal?.throwIfAborted();
   const controller = new AbortController();
