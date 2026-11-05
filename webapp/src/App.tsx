@@ -15,6 +15,7 @@ import { digestApi } from "./domain/digestClient";
 import { makeFixtureNodeClient } from "./domain/fixtureNodeClient";
 import { makeLiveNodeClient } from "./domain/liveNodeClient";
 import { startPoller } from "./domain/polling";
+import { hydrateAgentRecords } from "./domain/agentWorkspaceCache";
 import { startPeerPolling } from "./domain/peerPolling";
 import { nodeControlBaseUrl } from "./domain/nodeUrl";
 import {
@@ -190,6 +191,8 @@ export default function App() {
 
   useEffect(() => {
     applyAppearance(readAppearance());
+    // Read saved Agent records while the node starts, so the page opens with them.
+    if (client.mode === "live") void hydrateAgentRecords().catch(() => undefined);
     let cancelled = false;
     void (async () => {
       // The packaged desktop app launches the Ryn node as a sidecar; it can
