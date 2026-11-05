@@ -873,11 +873,13 @@ def create_app(store: RynmeshStore | None = None):
             },
         }
 
-    def peer_item(record: dict[str, Any], *, is_self: bool = False) -> dict[str, Any]:
+    def peer_item(record: dict[str, Any], *, is_self: bool = False,
+                  account: dict[str, Any] | None = None) -> dict[str, Any]:
         peer_id = str(record.get("peer_id", "") or "")
         metadata = record.get("metadata", {})
         metadata = metadata if isinstance(metadata, dict) else {}
-        account = account_for(peer_id)
+        if account is None:
+            account = account_for(peer_id)
         endpoint = first_http_endpoint(record.get("endpoints", []))
         return {
             "id": peer_id,
@@ -943,8 +945,17 @@ def create_app(store: RynmeshStore | None = None):
             item.get("peer_id") == active_store.peer_id for item in records
         ):
             records.append(self_peer_record(network_id))
+        # One scoreboard for the whole list; it used to be rebuilt for every device.
+        accounts = active_store.credit_ledger.accounts_for(
+            [str(item.get("peer_id", "") or "") for item in records]
+        )
         items = [
-            peer_item(item, is_self=item.get("peer_id") == active_store.peer_id) for item in records
+            peer_item(
+                item,
+                is_self=item.get("peer_id") == active_store.peer_id,
+                account=accounts[str(item.get("peer_id", "") or "")].to_dict(),
+            )
+            for item in records
         ]
         items.sort(key=lambda item: (not item.get("isSelf", False), item["name"], item["id"]))
         return items
