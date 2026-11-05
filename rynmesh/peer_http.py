@@ -691,6 +691,9 @@ def create_app(store: RynmeshStore | None = None):
                 await _asyncio.to_thread(native_model.close)
             if lan_discovery:
                 await _asyncio.to_thread(lan_discovery.close)
+            directory_refresher = getattr(lifespan_app.state, "directory_refresher", None)
+            if directory_refresher is not None:
+                directory_refresher.close()  # Does not wait for a running refresh.
             active_store.lan_discovery = None
             lifespan_app.state.loop = None
 
@@ -1496,13 +1499,42 @@ def create_app(store: RynmeshStore | None = None):
         peer_presence.update(results)
         return results
 
+    from .peer_directory_refresh import DirectoryRefresher, PhaseTimer, SingleFlight
+
+    def refresh_directory_cache(network_id: str) -> None:
+        """Background refresh: registry-backed caches, then one presence observation."""
+        timer = PhaseTimer("directory_refresh")
+        try:
+            # A non-cache read refreshes the peer-record and capacity caches.
+            with timer.phase("devices"):
+                items = discover_peer_items(network_id, include_self=True)
+            with timer.phase("probe"):
+                probe_peers(items)
+            discover_services = getattr(app.state, "llm_discover", None)
+            if discover_services is not None:
+                # Warms the service catalog cache that /directory reads passively.
+                with timer.phase("services"):
+                    discover_services(network_id, cache_registry=True)
+        finally:
+            timer.finish()
+
+    # Device-list requests read caches; this keeps them fresh on its own threads.
+    directory_refresher = DirectoryRefresher(refresh_directory_cache)
+    app.state.directory_refresher = directory_refresher
+    peer_health_flight = SingleFlight()
+
     @app.post("/api/local/peers/health")
     async def local_peers_health(request: FastAPIRequest) -> list[dict[str, Any]]:
         local_control(request)
+        network_id = control_network_id()
+
+        def check() -> list[dict[str, Any]]:
+            return probe_peers(discover_peer_items(network_id, include_self=True))
+
+        # An explicit check still probes now, but concurrent checks share one probe.
         # Registry I/O and unreachable peers must not block the event loop that
         # polls ICE signaling and serves the desktop's status requests.
-        items = await _asyncio.to_thread(discover_peer_items, control_network_id(), include_self=True)
-        return await _asyncio.to_thread(probe_peers, items)
+        return await _asyncio.to_thread(peer_health_flight.run, network_id, check)
 
     @app.post("/api/local/peers/discover")
     async def local_discover_peers(request: FastAPIRequest) -> list[dict[str, Any]]:
@@ -1519,8 +1551,17 @@ def create_app(store: RynmeshStore | None = None):
     def local_peers(request: FastAPIRequest) -> list[dict[str, Any]]:
         local_control(request)
         quick = request.query_params.get("quick", "").lower() in {"1", "true"}
-        return filtered_peers(discover_peer_items(control_network_id(), include_self=True,
-                                                 cache_only=quick), request)
+        network_id = control_network_id()
+        timer = PhaseTimer("local_peers")
+        if not quick:
+            # Never waits on the registry, except once after startup (bounded).
+            with timer.phase("refresh"):
+                directory_refresher.request(network_id)
+        with timer.phase("devices"):
+            items = discover_peer_items(network_id, include_self=True, cache_only=True)
+        result = filtered_peers(items, request)
+        timer.finish()
+        return result
 
     @app.get("/api/local/directory")
     async def local_directory(request: FastAPIRequest) -> dict[str, Any]:
@@ -1530,42 +1571,49 @@ def create_app(store: RynmeshStore | None = None):
 
         network_id = control_network_id()
         quick = request.query_params.get("quick", "").lower() in {"1", "true"}
-        items = await _asyncio.to_thread(discover_peer_items, network_id, include_self=True, cache_only=quick)
+        timer = PhaseTimer("local_directory")
         if not quick:
-            # Probe before judging services, so a device and its services are decided
-            # against the same fresh observation (no separate /peers/health poll needed).
-            try:
-                await _asyncio.to_thread(probe_peers, items)
-            except Exception:
-                pass  # Presence stays "unconfirmed" rather than failing the whole directory.
+            # Registry reads and device probes run in the background refresher
+            # (devices and services are judged against its latest observation).
+            # Only the first full read after startup waits for it, briefly.
+            with timer.phase("refresh"):
+                await _asyncio.to_thread(directory_refresher.request, network_id)
+        with timer.phase("devices"):
+            items = await _asyncio.to_thread(discover_peer_items, network_id, include_self=True, cache_only=True)
         services: list[dict[str, Any]] = []
         discover_services = getattr(app.state, "llm_discover", None)
         if discover_services is not None:
             try:
-                services = await _asyncio.to_thread(
-                    lambda: discover_services(network_id, cache_registry=True))
+                with timer.phase("services"):
+                    # Passive: cached registry advertisements, never a registry socket.
+                    services = await _asyncio.to_thread(
+                        lambda: discover_services(network_id, cache_registry=True, passive_registry=True))
             except Exception:
                 services = []  # Devices stay listed when the service catalog is unavailable.
         members: list[str] = []
-        try:
-            status = active_store.personal_space.status()
-            if status.get("membership") == "active":
-                members = [m["peer_id"] for m in status.get("members", []) if not m.get("removed")]
-        except Exception:
-            members = []
         friend_ids: list[str] = []
-        try:
-            friends_state = getattr(app.state, "friends", None)
-            if friends_state is not None:
-                friend_ids = [str(row.get("peer_id")) for row in friends_state.service.store.list_relationships()
-                              if row.get("peer_id")]
-        except Exception:
-            friend_ids = []
-        return build_snapshot(
-            items, services, self_id=active_store.peer_id, network_id=network_id,
-            members=members, friend_ids=friend_ids, probe_for=peer_presence.get,
-            policy=freshness, now=datetime.now(timezone.utc),
-        )
+        with timer.phase("membership"):
+            try:
+                status = active_store.personal_space.status()
+                if status.get("membership") == "active":
+                    members = [m["peer_id"] for m in status.get("members", []) if not m.get("removed")]
+            except Exception:
+                members = []
+            try:
+                friends_state = getattr(app.state, "friends", None)
+                if friends_state is not None:
+                    friend_ids = [str(row.get("peer_id")) for row in friends_state.service.store.list_relationships()
+                                  if row.get("peer_id")]
+            except Exception:
+                friend_ids = []
+        with timer.phase("snapshot"):
+            snapshot = build_snapshot(
+                items, services, self_id=active_store.peer_id, network_id=network_id,
+                members=members, friend_ids=friend_ids, probe_for=peer_presence.get,
+                policy=freshness, now=datetime.now(timezone.utc),
+            )
+        timer.finish()
+        return snapshot
 
     @app.get("/api/local/content")
     def local_content(request: FastAPIRequest) -> list[dict[str, Any]]:
