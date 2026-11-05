@@ -217,6 +217,9 @@ fn installed_sidecar_path(exe: &std::path::Path) -> Option<std::path::PathBuf> {
 #[cfg(windows)]
 fn ordinary_windows_launch_path(path: &std::path::Path) -> Option<std::path::PathBuf> {
     let text = path.to_str()?;
+    if let Some(unc) = text.strip_prefix(r"\\?\UNC\") {
+        return local_admin_share_path(unc);
+    }
     if let Some(local) = text.strip_prefix(r"\\?\") {
         let bytes = local.as_bytes();
         // Strip only the extended prefix of a local drive path; keep UNC and
@@ -225,26 +228,51 @@ fn ordinary_windows_launch_path(path: &std::path::Path) -> Option<std::path::Pat
             && bytes[1] == b':' && bytes[2] == b'\\')
             .then(|| std::path::PathBuf::from(local));
     }
-    if text.starts_with(r"\\") { return None; }
+    if let Some(unc) = text.strip_prefix(r"\\") {
+        return local_admin_share_path(unc);
+    }
     Some(path.to_path_buf())
+}
+
+/// `localhost\C$\rest` (or `127.0.0.1\C$\rest`) is this computer's own drive:
+/// launching the installed app through it must still run the installed
+/// sidecar, as `C:\rest`. Any other UNC path stays off the launch route.
+#[cfg(windows)]
+fn local_admin_share_path(unc: &str) -> Option<std::path::PathBuf> {
+    let mut parts = unc.splitn(3, '\\');
+    let host = parts.next()?;
+    let share = parts.next()?.as_bytes();
+    let rest = parts.next().unwrap_or("");
+    if !(host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1") { return None; }
+    if share.len() != 2 || !share[0].is_ascii_alphabetic() || share[1] != b'$' { return None; }
+    Some(std::path::PathBuf::from(format!("{}:\\{}", share[0].to_ascii_uppercase() as char, rest)))
 }
 
 fn sidecar_path() -> Option<std::path::PathBuf> {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(path) = installed_sidecar_path(&exe) { return Some(path); }
     }
+    // Only a development build may run the sidecar staged in the source tree.
+    // A release that cannot find its own sidecar must not start another version.
+    if !cfg!(debug_assertions) { return None; }
     let bin_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries");
     let path = bin_dir.join(format!("rynmesh-peer-{}{}", env!("RYN_TARGET"), if cfg!(windows) { ".exe" } else { "" }));
     path.is_file().then_some(path)
 }
 
-fn build_command(port: u16) -> Command {
+fn build_command(port: u16) -> std::io::Result<Command> {
     let mut cmd = if let Ok(custom) = std::env::var("RYNMESH_PEER_CMD") {
         let mut c = hidden_command(if cfg!(windows) { "cmd.exe" } else { "/bin/sh" });
         c.arg(if cfg!(windows) { "/C" } else { "-c" }).arg(custom);
+        log::info!("node sidecar: RYNMESH_PEER_CMD override");
         c
     } else if let Some(sidecar) = sidecar_path() {
+        log::info!("node sidecar: {}", sidecar.display());
         hidden_command(sidecar)
+    } else if !cfg!(debug_assertions) {
+        log::error!("installed node sidecar not found next to the app executable");
+        return Err(std::io::Error::new(std::io::ErrorKind::NotFound,
+            "installed node sidecar not found next to the app executable"));
     } else if which("rynmesh-peer") {
         hidden_command("rynmesh-peer")
     } else {
@@ -261,7 +289,7 @@ fn build_command(port: u16) -> Command {
     for (k, v) in node_env(port) {
         cmd.env(k, v);
     }
-    cmd
+    Ok(cmd)
 }
 
 pub fn start(state: &NodeState) -> std::io::Result<()> {
@@ -290,7 +318,7 @@ fn start_inner(state: &NodeState) -> std::io::Result<()> {
     }
     let log = open_log()?;
     let log_err = log.try_clone()?;
-    let mut cmd = build_command(state.port);
+    let mut cmd = build_command(state.port)?;
     cmd.stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(log_err));
@@ -446,6 +474,29 @@ mod tests {
             Some(PathBuf::from(r"C:\Users\子陵\AppData\Local\Packages\family\LocalCache\Local\Ryn\rynmesh-peer.exe")));
         assert!(ordinary_windows_launch_path(Path::new(r"\\?\UNC\server\share\rynmesh-peer.exe")).is_none());
         assert!(ordinary_windows_launch_path(Path::new(r"\\server\share\rynmesh-peer.exe")).is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn installed_app_launched_through_this_computers_admin_share_runs_its_own_sidecar() {
+        use std::path::{Path, PathBuf};
+        let installed = PathBuf::from(r"C:\Users\子陵\AppData\Local\Ryn\rynmesh-peer.exe");
+        for shared in [
+            r"\\?\UNC\localhost\C$\Users\子陵\AppData\Local\Ryn\rynmesh-peer.exe",
+            r"\\localhost\C$\Users\子陵\AppData\Local\Ryn\rynmesh-peer.exe",
+            r"\\?\UNC\127.0.0.1\C$\Users\子陵\AppData\Local\Ryn\rynmesh-peer.exe",
+            r"\\LocalHost\c$\Users\子陵\AppData\Local\Ryn\rynmesh-peer.exe",
+        ] {
+            assert_eq!(ordinary_windows_launch_path(Path::new(shared)), Some(installed.clone()), "{shared}");
+        }
+        for foreign in [
+            r"\\otherhost\C$\Users\子陵\AppData\Local\Ryn\rynmesh-peer.exe",
+            r"\\?\UNC\otherhost\C$\Ryn\rynmesh-peer.exe",
+            r"\\localhost\share\Ryn\rynmesh-peer.exe",
+            r"\\localhost\CD$\Ryn\rynmesh-peer.exe",
+        ] {
+            assert!(ordinary_windows_launch_path(Path::new(foreign)).is_none(), "{foreign}");
+        }
     }
 
     #[test]
