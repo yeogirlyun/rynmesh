@@ -19,3 +19,11 @@
 工作区仍为 `needs_authorization`，真实历史工具发现与调用尚未验收。历史需求不能标记为完成；Dashboard 授权和工作区授权不能混同。主壳 SHA-256 为 `4924688a9446b9edaa330f15a9ef1ea047a90fb20dad9930015cec40b62a1624`。
 
 回滚须停止同一进程树，分别恢复实际目录及隔离副本的升级前文件，保留现有配置与数据。不要只恢复其中一个路径视图。后续安装验证须检查响应内容确为 JSON 及真实功能路由，而非仅 HTTP 200、版本号或进程显示路径。
+
+## 公司插件 b890ec2 候选安装
+
+用户后续明确要求打包安装后，已由公司仓库 develop `b890ec22e453ca8080fa3758f7eaf4fe51ce13fe` 构建并注册到实际目录及隔离副本。运行目录为 `company-ad145f85e753393dc1f7`，manifest SHA-256 为 `ad145f85e753393dc1f70bb02d2ec0b9cbd65b44861e646f410339756fd52077`。一致性数据库和服务注册备份在私密验收目录 `pre-install-b890ec2`；旧运行目录未删除。
+
+重启核实主程序 health=ok、公司服务 status=ready、公司账号 logged_in。工作区仍 needs_authorization。直接调用运行中主程序的 `wecom_accounts_sessions` 得到 HTTP 400 / `agent_mcp_tool_disabled`，不是空聊天结果。中心只读记录仍显示既有工作区授权码已签发但未消费，尚无工作区 grant；本机日志反复报告 `api_ext_company_workspace_member` / `McpOAuthError`，缺少当次回调失败的足够细节。不得把本次状态轮询修复及健康检查说成真实聊天链路已修复。
+
+完整包使用已验证的办公插件资源，隔离首次安装、重复安装保留身份与禁用状态、四个办公引擎及三个公司页面检查通过。该检查禁用公司外连，不涉及真实聊天查询。完整包仍为用户测试候选，整项历史查询需求尚未完成。
