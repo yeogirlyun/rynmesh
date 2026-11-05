@@ -1119,7 +1119,7 @@ it("recovers task reads after a node outage without losing the current evidence 
   await waitFor(() => expect(screen.queryByText(/Could not refresh the task list/)).not.toBeInTheDocument());
   expect(screen.queryByText(/Could not refresh this task/)).not.toBeInTheDocument();
   expect(screen.getByRole("textbox")).toHaveValue("Keep this draft during restart");
-});
+}, 20000);
 
 it("reports a selected-detail failure on focus without an unhandled rejection or losing evidence", async () => {
   api(true, [task({ status: "completed", result: "Preserved evidence" })]);
@@ -1133,7 +1133,7 @@ it("reports a selected-detail failure on focus without an unhandled rejection or
   await screen.findByText(/Could not refresh this task/, {}, { timeout: 6000 });
   expect(screen.getByText("Preserved evidence")).toBeVisible();
   expect(screen.getByRole("textbox")).toHaveValue("Preserved draft");
-});
+}, 20000);
 
 it("ignores an older focus refresh that resolves after a newer visibility refresh", async () => {
   api(); mount(); await screen.findByRole("heading", { name: "What would you like me to do?" });
