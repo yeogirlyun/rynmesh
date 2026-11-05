@@ -14,6 +14,8 @@ import type { NodeClient } from "./domain/nodeClient";
 import { digestApi } from "./domain/digestClient";
 import { makeFixtureNodeClient } from "./domain/fixtureNodeClient";
 import { makeLiveNodeClient } from "./domain/liveNodeClient";
+import { startPoller } from "./domain/polling";
+import { startPeerPolling } from "./domain/peerPolling";
 import { nodeControlBaseUrl } from "./domain/nodeUrl";
 import {
   installNotificationNavigation,
@@ -83,6 +85,11 @@ import UnlockGate from "./screens/components/UnlockGate";
 const NasPage = lazy(() => import("./personal/Nas").then(m => ({ default: m.NasPage })));
 const DrivePreview = lazy(() => import("./personal/Drives").then(m => ({ default: m.DrivesPage })));
 const PluginsPage = lazy(() => import("./screens/CraftPlugins"));
+
+// Shell-wide background reads. Each runs one request at a time (see domain/polling.ts).
+const DISCOVERY_POLL_MS = 5000;
+const DISCOVERY_TIMEOUT_MS = 8000;
+const HIDDEN_POLL_MS = 30000;
 
 // Resolve the local Ryn node control-API base.
 // Precedence: explicit env override > packaged-desktop default > dev default.
@@ -169,11 +176,7 @@ export default function App() {
 
   useEffect(() => {
     if (!node) return;
-    let cancelled = false;
-    let fullTimer: number | undefined;
-    const started = Date.now();
     const setIfChanged = (incoming: Peer[], merge: boolean) => {
-      if (cancelled) return;
       setPeers(current => {
         const next = merge
           ? Array.from(new Map([...current, ...incoming].map(peer => [peer.id, peer])).values())
@@ -181,18 +184,8 @@ export default function App() {
         return JSON.stringify(next) === JSON.stringify(current) ? current : next;
       });
     };
-    const quick = () => {
-      void client.listPeers({ quick: true }).then(items => setIfChanged(items, true)).catch(() => undefined);
-    };
-    const full = async () => {
-      try { setIfChanged(await client.listPeers(), false); }
-      catch { /* Keep the latest local or cached discovery. */ }
-      if (!cancelled) fullTimer = window.setTimeout(full, Date.now() - started < 30000 ? 3000 : 15000);
-    };
-    quick();
-    void full();
-    const quickTimer = window.setInterval(quick, 2000);
-    return () => { cancelled = true; window.clearInterval(quickTimer); window.clearTimeout(fullTimer); };
+    const poller = startPeerPolling(client, setIfChanged);
+    return () => poller.stop();
   }, [client, node?.peer_id]);
 
   useEffect(() => {
@@ -224,28 +217,25 @@ export default function App() {
 
   useEffect(() => {
     if (client.mode !== "live") return;
-    let active = true;
-    const update = () => {
-      void digestApi
-        .getDiscoveryStatus()
-        .then((status) => {
-          if (!active) return;
-          if (settings && status.unread_count > lastUnread.current) {
-            void sendDiscoveryNotification(settings, status.unread_count, () =>
-              navigate("/digest"),
-            );
-          }
-          lastUnread.current = status.unread_count;
-        })
-        .catch(() => undefined);
-    };
-    update();
-    const timer = window.setInterval(update, 5000);
-    const seen = () => update();
+    const poller = startPoller({
+      intervalMs: DISCOVERY_POLL_MS,
+      hiddenIntervalMs: HIDDEN_POLL_MS,
+      timeoutMs: DISCOVERY_TIMEOUT_MS,
+      run: async (signal) => {
+        const status = await digestApi.getDiscoveryStatus({ signal });
+        if (signal.aborted) return;
+        if (settings && status.unread_count > lastUnread.current) {
+          void sendDiscoveryNotification(settings, status.unread_count, () =>
+            navigate("/digest"),
+          );
+        }
+        lastUnread.current = status.unread_count;
+      },
+    });
+    const seen = () => { void poller.refresh(); };
     window.addEventListener("ryn-discovery-seen", seen);
     return () => {
-      active = false;
-      window.clearInterval(timer);
+      poller.stop();
       window.removeEventListener("ryn-discovery-seen", seen);
     };
   }, [client, navigate, settings]);

@@ -4,12 +4,14 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { personalLabelKeys } from "./labels";
-import type { NodeClient, LLMServiceRecord, ServiceAvailability } from "../domain/nodeClient";
+import { NodeClientError, type NodeClient, type LLMServiceRecord, type ServiceAvailability } from "../domain/nodeClient";
+import { PollStoppedError, startPoller, type Poller } from "../domain/polling";
 import type { NodeStatus, Peer, PeerHealth } from "../domain/types";
 import {
   directoryFromLegacy,
@@ -90,6 +92,18 @@ type PersonalState = {
   ) => Promise<void>;
   refresh: () => Promise<void>;
 };
+// Background reads for every screen; each runs one request at a time (see domain/polling.ts).
+const DIRECTORY_POLL_MS = 15000;
+const DIRECTORY_HIDDEN_POLL_MS = 60000;
+const DIRECTORY_TIMEOUT_MS = 25000;
+const SPACE_PENDING_POLL_MS = 1500;
+const SPACE_PENDING_TIMEOUT_MS = 5000;
+
+/** Only a node that predates /directory may use the slower separate lists. */
+function directoryUnsupported(reason: unknown): boolean {
+  return reason instanceof NodeClientError && (reason.status === 404 || reason.status === 501);
+}
+
 export const PersonalContext = createContext<PersonalState | null>(null);
 export function usePersonal() {
   const state = useContext(PersonalContext);
@@ -189,21 +203,23 @@ export function PersonalProvider({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [space, setSpace] = useState<SpaceStatus | null>(null);
-  const refresh = useCallback(async () => {
+  const loadOnce = useCallback(async (signal: AbortSignal) => {
     // One request answers "which devices, what presence, which services". Only a node without
-    // /directory (or a failed call) falls back to the separate lists.
+    // /directory falls back to the separate lists: those are as slow as the directory, so a
+    // timeout, cancellation or server error keeps the last snapshot instead of adding requests.
     const loadDirectory = async () => {
       if (client.directory) {
         try {
-          return { snapshot: await client.directory(), degraded: false };
-        } catch {
-          /* fall back to the separate lists below */
+          return { snapshot: await client.directory({ signal }), degraded: false };
+        } catch (reason) {
+          if (!directoryUnsupported(reason)) throw reason;
         }
       }
       const [services, healthRows] = await Promise.allSettled([
         client.listLLMServices(),
         client.peersHealth(),
       ]);
+      if (signal.aborted) throw signal.reason;
       if (services.status === "fulfilled") setRecords(services.value);
       setHealth(healthRows.status === "fulfilled" ? healthRows.value : []);
       return {
@@ -211,20 +227,24 @@ export function PersonalProvider({
         degraded: services.status === "rejected" || healthRows.status === "rejected",
       };
     };
-    const [directoryResult, spaceResult] = await Promise.allSettled([loadDirectory(), client.spaceStatus()]);
+    const [directoryResult, spaceResult] = await Promise.allSettled([loadDirectory(), client.spaceStatus({ signal })]);
+    // The view closed: apply nothing. A timeout is reported like any other failed refresh.
+    if (signal.reason instanceof PollStoppedError) return;
     if (directoryResult.status === "fulfilled") setDirectory(directoryResult.value.snapshot);
     // A fresh object each refresh so everything derived from membership is recomputed,
     // even when the node (or a test double) hands back the same instance it mutated.
     if (spaceResult.status === "fulfilled") setSpace({ ...spaceResult.value });
     else setSpace(null);
-    setError(
-      directoryResult.status === "rejected" || spaceResult.status === "rejected" ||
-        (directoryResult.status === "fulfilled" && directoryResult.value.degraded)
-        ? "Some device or service information could not be refreshed."
-        : "",
-    );
+    const failed = directoryResult.status === "rejected" || spaceResult.status === "rejected" ||
+      (directoryResult.status === "fulfilled" && directoryResult.value.degraded);
+    setError(failed ? "Some device or service information could not be refreshed." : "");
     setLoading(false);
+    // Let the poller back off while the node cannot answer.
+    if (failed) throw new Error("personal_refresh_failed");
   }, [client]);
+  const poller = useRef<Poller | null>(null);
+  // Manual refreshes join the background poller, so a click never adds a parallel request.
+  const refresh = useCallback(() => poller.current?.refresh() ?? Promise.resolve(), []);
   // The one view every screen derives from: the node's snapshot when it has one, otherwise the
   // same shape rebuilt from the separate lists. Shell peers it does not list are kept.
   const view = useMemo<DirectorySnapshot>(() => {
@@ -252,19 +272,31 @@ export function PersonalProvider({
     }
   };
   useEffect(() => {
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 15000);
-    return () => clearInterval(timer);
-  }, [refresh]);
+    const own = startPoller({
+      run: loadOnce,
+      intervalMs: DIRECTORY_POLL_MS,
+      hiddenIntervalMs: DIRECTORY_HIDDEN_POLL_MS,
+      timeoutMs: DIRECTORY_TIMEOUT_MS,
+    });
+    poller.current = own;
+    return () => {
+      own.stop();
+      if (poller.current === own) poller.current = null;
+    };
+  }, [loadOnce]);
   useEffect(() => {
     if (!space?.pending.length) return;
-    let cancelled = false;
-    const timer = window.setInterval(() => {
-      void client.spaceStatus().then(status => {
-        if (!cancelled) setSpace(status);
-      }).catch(() => { /* The background retry will continue. */ });
-    }, 1500);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    // Membership changes settle quickly; poll faster only while one is pending.
+    const own = startPoller({
+      intervalMs: SPACE_PENDING_POLL_MS,
+      timeoutMs: SPACE_PENDING_TIMEOUT_MS,
+      immediate: false,
+      run: async (signal) => {
+        const status = await client.spaceStatus({ signal });
+        if (!signal.aborted) setSpace(status);
+      },
+    });
+    return () => own.stop();
   }, [client, space?.pending.length]);
   const baseDevices = useMemo<Device[]>(() => {
     if (demo)

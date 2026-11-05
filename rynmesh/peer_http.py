@@ -40,6 +40,10 @@ class PeerTransportError(RuntimeError):
     pass
 
 
+# Browsing devices' content: listings are asked in parallel and each is bounded,
+# so unreachable devices delay a scan by seconds instead of minutes.
+CONTENT_SCAN_PARALLELISM = 8
+CONTENT_LISTING_TIMEOUT_S = 8.0
 MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_PREVIEW_BYTES = 32 * 1024 * 1024
 MAX_MEDIA_BYTES = 10 * 1024 * 1024 * 1024
@@ -395,6 +399,7 @@ def create_app(store: RynmeshStore | None = None):
     try:
         from fastapi import FastAPI, HTTPException, Response
         from fastapi import Request as FastAPIRequest
+        from fastapi.concurrency import run_in_threadpool
         from fastapi.middleware.cors import CORSMiddleware
         from fastapi.responses import FileResponse
     except ImportError as exc:  # pragma: no cover
@@ -691,6 +696,9 @@ def create_app(store: RynmeshStore | None = None):
                 await _asyncio.to_thread(native_model.close)
             if lan_discovery:
                 await _asyncio.to_thread(lan_discovery.close)
+            directory_refresher = getattr(lifespan_app.state, "directory_refresher", None)
+            if directory_refresher is not None:
+                directory_refresher.close()  # Does not wait for a running refresh.
             active_store.lan_discovery = None
             lifespan_app.state.loop = None
 
@@ -873,11 +881,13 @@ def create_app(store: RynmeshStore | None = None):
             },
         }
 
-    def peer_item(record: dict[str, Any], *, is_self: bool = False) -> dict[str, Any]:
+    def peer_item(record: dict[str, Any], *, is_self: bool = False,
+                  account: dict[str, Any] | None = None) -> dict[str, Any]:
         peer_id = str(record.get("peer_id", "") or "")
         metadata = record.get("metadata", {})
         metadata = metadata if isinstance(metadata, dict) else {}
-        account = account_for(peer_id)
+        if account is None:
+            account = account_for(peer_id)
         endpoint = first_http_endpoint(record.get("endpoints", []))
         return {
             "id": peer_id,
@@ -943,8 +953,17 @@ def create_app(store: RynmeshStore | None = None):
             item.get("peer_id") == active_store.peer_id for item in records
         ):
             records.append(self_peer_record(network_id))
+        # One scoreboard for the whole list; it used to be rebuilt for every device.
+        accounts = active_store.credit_ledger.accounts_for(
+            [str(item.get("peer_id", "") or "") for item in records]
+        )
         items = [
-            peer_item(item, is_self=item.get("peer_id") == active_store.peer_id) for item in records
+            peer_item(
+                item,
+                is_self=item.get("peer_id") == active_store.peer_id,
+                account=accounts[str(item.get("peer_id", "") or "")].to_dict(),
+            )
+            for item in records
         ]
         items.sort(key=lambda item: (not item.get("isSelf", False), item["name"], item["id"]))
         return items
@@ -1048,27 +1067,59 @@ def create_app(store: RynmeshStore | None = None):
             for item in active_store.list_local_content().get("content", [])
         }
 
+    from .peer_directory_refresh import SingleFlight as _SingleFlight
+
+    content_scan_flight = _SingleFlight()
+
     def network_content(network_id: str) -> list[dict[str, Any]]:
+        """Local content plus every reachable device's listing.
+
+        Home asks for content and recommendations together; concurrent callers
+        share one scan, and each gets its own list.
+        """
+        return list(content_scan_flight.run(network_id, lambda: scan_network_content(network_id)))
+
+    def scan_network_content(network_id: str) -> list[dict[str, Any]]:
         fetched_ids = local_content_ids()
         items: list[dict[str, Any]] = []
         self_record = self_peer_record(network_id)
         for raw in active_store.list_local_content().get("content", []):
             items.append(content_item(raw, provider=self_record, fetched_ids=fetched_ids))
+        # Device records come from the cache the directory refresher keeps
+        # current, so a scan never waits on an unreachable registry.
+        directory_refresher.request(network_id)
+        targets = []
         for peer in active_store.discover_peers(
             network_id=network_id,
             include_self=False,
             max_age_hours=float(os.environ.get("RYNMESH_DISCOVERY_MAX_AGE_HOURS", "24") or 24),
             use_cache_on_error=True,
+            cache_only=True,
         ).get("peers", []):
             endpoint = first_http_endpoint(peer.get("endpoints", []))
-            if not endpoint:
-                continue
+            if endpoint:
+                targets.append((peer, endpoint))
+        # Listings are small. Devices are asked in parallel and each answer is
+        # bounded, so one unreachable device costs seconds, not the full fetch
+        # timeout once per device in a row.
+        listing_timeout = min(_fetch_timeout(), CONTENT_LISTING_TIMEOUT_S)
+
+        def listing_of(target: tuple[dict[str, Any], str]) -> tuple[dict[str, Any], dict[str, Any] | None]:
+            peer, endpoint = target
             try:
-                listing = active_store.list_peer_content(
-                    endpoint,
-                    timeout_s=_fetch_timeout(),
-                )
+                return peer, active_store.list_peer_content(endpoint, timeout_s=listing_timeout)
             except (PeerTransportError, StoreError, OSError):
+                return peer, None
+
+        results: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
+        if targets:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=min(CONTENT_SCAN_PARALLELISM, len(targets)),
+                                    thread_name_prefix="ryn-content-scan") as pool:
+                results = list(pool.map(listing_of, targets))
+        for peer, listing in results:
+            if listing is None:
                 continue
             provider = dict(peer)
             provider.update(dict(listing.get("peer", {})))
@@ -1485,13 +1536,42 @@ def create_app(store: RynmeshStore | None = None):
         peer_presence.update(results)
         return results
 
+    from .peer_directory_refresh import DirectoryRefresher, PhaseTimer, SingleFlight
+
+    def refresh_directory_cache(network_id: str) -> None:
+        """Background refresh: registry-backed caches, then one presence observation."""
+        timer = PhaseTimer("directory_refresh")
+        try:
+            # A non-cache read refreshes the peer-record and capacity caches.
+            with timer.phase("devices"):
+                items = discover_peer_items(network_id, include_self=True)
+            with timer.phase("probe"):
+                probe_peers(items)
+            discover_services = getattr(app.state, "llm_discover", None)
+            if discover_services is not None:
+                # Warms the service catalog cache that /directory reads passively.
+                with timer.phase("services"):
+                    discover_services(network_id, cache_registry=True)
+        finally:
+            timer.finish()
+
+    # Device-list requests read caches; this keeps them fresh on its own threads.
+    directory_refresher = DirectoryRefresher(refresh_directory_cache)
+    app.state.directory_refresher = directory_refresher
+    peer_health_flight = SingleFlight()
+
     @app.post("/api/local/peers/health")
     async def local_peers_health(request: FastAPIRequest) -> list[dict[str, Any]]:
         local_control(request)
+        network_id = control_network_id()
+
+        def check() -> list[dict[str, Any]]:
+            return probe_peers(discover_peer_items(network_id, include_self=True))
+
+        # An explicit check still probes now, but concurrent checks share one probe.
         # Registry I/O and unreachable peers must not block the event loop that
         # polls ICE signaling and serves the desktop's status requests.
-        items = await _asyncio.to_thread(discover_peer_items, control_network_id(), include_self=True)
-        return await _asyncio.to_thread(probe_peers, items)
+        return await _asyncio.to_thread(peer_health_flight.run, network_id, check)
 
     @app.post("/api/local/peers/discover")
     async def local_discover_peers(request: FastAPIRequest) -> list[dict[str, Any]]:
@@ -1501,15 +1581,25 @@ def create_app(store: RynmeshStore | None = None):
         except json.JSONDecodeError:
             body = {}
         network_id = control_network_id(body.get("network") or body.get("network_id"))
-        active_store.register_node(network_id=network_id)
-        return discover_peer_items(network_id, include_self=True)
+        # Registry I/O runs off the event loop so it cannot stall every other request.
+        await run_in_threadpool(lambda: active_store.register_node(network_id=network_id))
+        return await run_in_threadpool(lambda: discover_peer_items(network_id, include_self=True))
 
     @app.get("/api/local/peers")
     def local_peers(request: FastAPIRequest) -> list[dict[str, Any]]:
         local_control(request)
         quick = request.query_params.get("quick", "").lower() in {"1", "true"}
-        return filtered_peers(discover_peer_items(control_network_id(), include_self=True,
-                                                 cache_only=quick), request)
+        network_id = control_network_id()
+        timer = PhaseTimer("local_peers")
+        if not quick:
+            # Never waits on the registry, except once after startup (bounded).
+            with timer.phase("refresh"):
+                directory_refresher.request(network_id)
+        with timer.phase("devices"):
+            items = discover_peer_items(network_id, include_self=True, cache_only=True)
+        result = filtered_peers(items, request)
+        timer.finish()
+        return result
 
     @app.get("/api/local/directory")
     async def local_directory(request: FastAPIRequest) -> dict[str, Any]:
@@ -1519,42 +1609,49 @@ def create_app(store: RynmeshStore | None = None):
 
         network_id = control_network_id()
         quick = request.query_params.get("quick", "").lower() in {"1", "true"}
-        items = await _asyncio.to_thread(discover_peer_items, network_id, include_self=True, cache_only=quick)
+        timer = PhaseTimer("local_directory")
         if not quick:
-            # Probe before judging services, so a device and its services are decided
-            # against the same fresh observation (no separate /peers/health poll needed).
-            try:
-                await _asyncio.to_thread(probe_peers, items)
-            except Exception:
-                pass  # Presence stays "unconfirmed" rather than failing the whole directory.
+            # Registry reads and device probes run in the background refresher
+            # (devices and services are judged against its latest observation).
+            # Only the first full read after startup waits for it, briefly.
+            with timer.phase("refresh"):
+                await _asyncio.to_thread(directory_refresher.request, network_id)
+        with timer.phase("devices"):
+            items = await _asyncio.to_thread(discover_peer_items, network_id, include_self=True, cache_only=True)
         services: list[dict[str, Any]] = []
         discover_services = getattr(app.state, "llm_discover", None)
         if discover_services is not None:
             try:
-                services = await _asyncio.to_thread(
-                    lambda: discover_services(network_id, cache_registry=True))
+                with timer.phase("services"):
+                    # Passive: cached registry advertisements, never a registry socket.
+                    services = await _asyncio.to_thread(
+                        lambda: discover_services(network_id, cache_registry=True, passive_registry=True))
             except Exception:
                 services = []  # Devices stay listed when the service catalog is unavailable.
         members: list[str] = []
-        try:
-            status = active_store.personal_space.status()
-            if status.get("membership") == "active":
-                members = [m["peer_id"] for m in status.get("members", []) if not m.get("removed")]
-        except Exception:
-            members = []
         friend_ids: list[str] = []
-        try:
-            friends_state = getattr(app.state, "friends", None)
-            if friends_state is not None:
-                friend_ids = [str(row.get("peer_id")) for row in friends_state.service.store.list_relationships()
-                              if row.get("peer_id")]
-        except Exception:
-            friend_ids = []
-        return build_snapshot(
-            items, services, self_id=active_store.peer_id, network_id=network_id,
-            members=members, friend_ids=friend_ids, probe_for=peer_presence.get,
-            policy=freshness, now=datetime.now(timezone.utc),
-        )
+        with timer.phase("membership"):
+            try:
+                status = active_store.personal_space.status()
+                if status.get("membership") == "active":
+                    members = [m["peer_id"] for m in status.get("members", []) if not m.get("removed")]
+            except Exception:
+                members = []
+            try:
+                friends_state = getattr(app.state, "friends", None)
+                if friends_state is not None:
+                    friend_ids = [str(row.get("peer_id")) for row in friends_state.service.store.list_relationships()
+                                  if row.get("peer_id")]
+            except Exception:
+                friend_ids = []
+        with timer.phase("snapshot"):
+            snapshot = build_snapshot(
+                items, services, self_id=active_store.peer_id, network_id=network_id,
+                members=members, friend_ids=friend_ids, probe_for=peer_presence.get,
+                policy=freshness, now=datetime.now(timezone.utc),
+            )
+        timer.finish()
+        return snapshot
 
     @app.get("/api/local/content")
     def local_content(request: FastAPIRequest) -> list[dict[str, Any]]:
@@ -1622,40 +1719,50 @@ def create_app(store: RynmeshStore | None = None):
         local_control(request)
         body = await request.json()
         provider_peer_id = str(body.get("providerPeerId", ""))
-        for peer in active_store.discover_peers(
-            network_id=control_network_id(), include_self=False
-        ).get("peers", []):
-            if peer.get("peer_id") != provider_peer_id:
-                continue
-            endpoint = first_http_endpoint(peer.get("endpoints", []))
-            result = active_store.fetch_peer_content_preview(
-                endpoint,
-                route_id(content_id),
-                expected_peer_id=provider_peer_id,
-                timeout_s=_fetch_timeout(),
-            )
-            return {"ok": True, "size": human_size(Path(result["preview_path"]).stat().st_size)}
-        raise HTTPException(status_code=404, detail="provider_peer_not_found")
+
+        def fetch() -> dict[str, Any]:
+            for peer in active_store.discover_peers(
+                network_id=control_network_id(), include_self=False
+            ).get("peers", []):
+                if peer.get("peer_id") != provider_peer_id:
+                    continue
+                endpoint = first_http_endpoint(peer.get("endpoints", []))
+                result = active_store.fetch_peer_content_preview(
+                    endpoint,
+                    route_id(content_id),
+                    expected_peer_id=provider_peer_id,
+                    timeout_s=_fetch_timeout(),
+                )
+                return {"ok": True, "size": human_size(Path(result["preview_path"]).stat().st_size)}
+            raise HTTPException(status_code=404, detail="provider_peer_not_found")
+
+        # Registry and peer I/O run off the event loop so they cannot stall every other request.
+        return await run_in_threadpool(fetch)
 
     @app.post("/api/local/content/{content_id}/fetch-full")
     async def local_fetch_full(content_id: str, request: FastAPIRequest) -> dict[str, Any]:
         local_control(request)
         body = await request.json()
         provider_peer_id = str(body.get("providerPeerId", ""))
-        for peer in active_store.discover_peers(
-            network_id=control_network_id(), include_self=False
-        ).get("peers", []):
-            if peer.get("peer_id") != provider_peer_id:
-                continue
-            endpoint = first_http_endpoint(peer.get("endpoints", []))
-            result = active_store.fetch_peer_content_full(
-                endpoint,
-                route_id(content_id),
-                expected_peer_id=provider_peer_id,
-                timeout_s=_fetch_timeout(),
-            )
-            return {"ok": True, "size": human_size(Path(result["content_path"]).stat().st_size)}
-        raise HTTPException(status_code=404, detail="provider_peer_not_found")
+
+        def fetch() -> dict[str, Any]:
+            for peer in active_store.discover_peers(
+                network_id=control_network_id(), include_self=False
+            ).get("peers", []):
+                if peer.get("peer_id") != provider_peer_id:
+                    continue
+                endpoint = first_http_endpoint(peer.get("endpoints", []))
+                result = active_store.fetch_peer_content_full(
+                    endpoint,
+                    route_id(content_id),
+                    expected_peer_id=provider_peer_id,
+                    timeout_s=_fetch_timeout(),
+                )
+                return {"ok": True, "size": human_size(Path(result["content_path"]).stat().st_size)}
+            raise HTTPException(status_code=404, detail="provider_peer_not_found")
+
+        # Registry and peer I/O run off the event loop so they cannot stall every other request.
+        return await run_in_threadpool(fetch)
 
     @app.get("/api/local/provenance/{head_hash}")
     def local_provenance(head_hash: str, request: FastAPIRequest) -> list[dict[str, Any]]:
@@ -2122,7 +2229,9 @@ def create_app(store: RynmeshStore | None = None):
         except json.JSONDecodeError:
             body = {}
         now_unix = time.time()
-        items = network_content(control_network_id())
+        # Asking devices for their listings must not stall the event loop
+        # (it serves health checks and the Agent's reads).
+        items = await run_in_threadpool(network_content, control_network_id())
         items.extend(_digest_service().recommendation_items())
         profile_signals = _recommendation_profile.signals()
         return recommendation_service.recommend_from_items(
@@ -2164,7 +2273,7 @@ def create_app(store: RynmeshStore | None = None):
         local_control(request)
         body = await request.json()
         content_id = str(body.get("contentId", "") or "")
-        candidates = network_content(control_network_id())
+        candidates = await run_in_threadpool(network_content, control_network_id())
         candidates.extend(_digest_service().recommendation_items())
         item = next(
             (candidate for candidate in candidates if candidate.get("content_id") == content_id),
@@ -2194,12 +2303,14 @@ def create_app(store: RynmeshStore | None = None):
         query = str(body.get("text", "")).strip()
         digest = _digest_service().last_digest() or {}
         provider = _model_provider()
+        # Evaluated before the model call; it used to run on the event loop.
+        content_items = await run_in_threadpool(network_content, control_network_id())
         result = await _asyncio.to_thread(
             ask_service.answer,
             query,
             provider=provider,
             digest_items=digest.get("items", []),
-            content_items=network_content(control_network_id()),
+            content_items=content_items,
         )
         _audit().append(
             "rec",

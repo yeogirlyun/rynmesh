@@ -222,7 +222,7 @@ export interface LLMHardwareReport {
 }
 
 export interface NodeClient {
-  spaceStatus(): Promise<import("./space").SpaceStatus>;
+  spaceStatus(opts?: { signal?: AbortSignal }): Promise<import("./space").SpaceStatus>;
   spaceAction(action: string, body?: Record<string, unknown>): Promise<import("./space").SpaceStatus>;
   spaceBackup(password: string): Promise<Record<string, unknown>>;
   mode: "live" | "fixture";
@@ -293,7 +293,8 @@ export interface NodeClient {
   updateLLMPrivacy(retentionSeconds: LLMPrivacySettings["result_retention_seconds"]): Promise<LLMPrivacySettings>;
   clearLLMOrders(): Promise<{ ok: boolean; removed: number }>;
   discoverPeers(req?: { network?: string }): Promise<Peer[]>;
-  listPeers(filters?: PeerFilters): Promise<Peer[]>;
+  // The signal is a separate argument: filters become query parameters.
+  listPeers(filters?: PeerFilters, opts?: { signal?: AbortSignal }): Promise<Peer[]>;
   listContent(filters?: ContentFilters): Promise<ContentItem[]>;
   getContentItem(contentId: string): Promise<ContentItem>;
   getContentBody(contentId: string): Promise<ContentBody>;
@@ -337,7 +338,7 @@ export interface NodeClient {
   peersHealth(): Promise<PeerHealth[]>;
   // Devices and their services as one snapshot, probed by the node itself. Absent on a node
   // that predates it (and on the fixture client): callers fall back to peers + services + health.
-  directory?(options?: { quick?: boolean }): Promise<DirectorySnapshot>;
+  directory?(options?: { quick?: boolean; signal?: AbortSignal }): Promise<DirectorySnapshot>;
   egressStatus(region?: string): Promise<EgressStatus>;
   egressConnect(req?: { region?: string; provider_peer_id?: string }): Promise<EgressStatus>;
   egressLaunch(

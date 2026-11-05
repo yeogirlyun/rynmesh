@@ -7,7 +7,7 @@ import { Fragment, useCallback, useContext, useEffect, useRef, useState } from "
 import { Link, useLocation, useNavigate as useRouterNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ArrowUp, BookOpen, Clock3, CornerDownRight, LoaderCircle, MoreHorizontal, Pencil, Search, Square, Trash2, Check, CircleAlert, ListChecks, Monitor, PanelLeftClose, PanelLeftOpen, Pause, Play, Settings, SlidersHorizontal, Sparkles, SquarePen, X } from "lucide-react";
-import { AgentAPIError, agentReadBackoff, isTransientAgentReadError, mergeAgentTaskSnapshot, agentMessageModelID, agentActionBody, agentAnswerBody, agentMessageBody, agentScopeBody, agentToolResultState, canContinueAgentTask, canResumeAgentTask, canUseAgentModel, canUseAgentAction, agentTaskState, isAgentActive, isAgentLateToolResult, pendingAgentText, sortAgentTasks, rynAgent, type AgentAction, type AgentApproval, type AgentMessageIntent, type AgentModel, type AgentProject, type AgentScopeSelection, type AgentScopeSnapshot, type AgentSettings, type AgentTask, type AgentTaskSummary, type AgentTool } from "../domain/rynAgent";
+import { AgentAPIError, agentPollRetryDelay, isTransientAgentReadError, mergeAgentTaskSnapshot, agentMessageModelID, agentActionBody, agentAnswerBody, agentMessageBody, agentScopeBody, agentToolResultState, canContinueAgentTask, canResumeAgentTask, canUseAgentModel, canUseAgentAction, agentTaskState, isAgentActive, isAgentLateToolResult, pendingAgentText, sortAgentTasks, rynAgent, type AgentAction, type AgentApproval, type AgentMessageIntent, type AgentModel, type AgentProject, type AgentScopeSelection, type AgentScopeSnapshot, type AgentSettings, type AgentTask, type AgentTaskSummary, type AgentTool } from "../domain/rynAgent";
 import { AgentNavigationContext } from "../personal/agentNavigation";
 import { craftAgentPluginID } from "../domain/craftPlugins";
 import ChatMarkdown from "./ChatMarkdown";
@@ -172,6 +172,7 @@ export default function RynAgent() {
   const [pluginDraftKey, setPluginDraftKey] = useState(pluginEntry?.draftKey || "");
   const nav = useContext(AgentNavigationContext);
   const taskCache = useRef(agentTaskCache());
+  const taskListLoaded = useRef(false);
   const [cachedWorkspace] = useState(readAgentWorkspace);
   const [settings, setSettings] = useState<AgentSettings | null>(cachedWorkspace.settings);
   const [models, setModels] = useState<AgentModel[]>(cachedWorkspace.models);
@@ -356,6 +357,7 @@ export default function RynAgent() {
     if (selectedRef.current === latest.id) setTask(current => current?.id === latest.id && current.revision > latest.revision ? current : latest);
   }, []);
   const acceptTaskList = useCallback((incoming: AgentTaskSummary[]) => {
+    taskListLoaded.current = true;
     setTasksReady(true);
     if (incoming.some(item => item.archived !== undefined)) setRecordsSupported(true);
     setTasks(current => sortAgentTasks(incoming.filter(item => !deletedTaskIDs.current.has(item.id)).map(item => {
@@ -427,8 +429,12 @@ export default function RynAgent() {
         if (recordsVersion === recordMutationRevision.current) acceptTaskList(nextTasks.tasks);
         recoverCreate(nextTasks.tasks);
         setResourceErrors(current => ({ ...current, tasks: "" }));
-      }).catch(() => {
-        if (refreshID === refreshRevision.current) setResourceErrors(current => ({ ...current, tasks: "historyLoadError" }));
+      }).catch(reason => {
+        if (refreshID !== refreshRevision.current) return;
+        // A list is already on screen: one dropped connection is left to the poll,
+        // which reports only repeated failures.
+        if (isTransientAgentReadError(reason) && taskListLoaded.current) return;
+        setResourceErrors(current => ({ ...current, tasks: "historyLoadError" }));
       }),
       currentID ? rynAgent.task(currentID, controller.signal).then(detail => {
         if (refreshID !== refreshRevision.current || currentID !== selectedRef.current) return;
@@ -436,6 +442,7 @@ export default function RynAgent() {
       }).catch(reason => {
         if (refreshID !== refreshRevision.current || currentID !== selectedRef.current) return;
         if (isMissingAgentTaskError(reason)) { deleteRecord(currentID); return; }
+        if (isTransientAgentReadError(reason) && taskCache.current.has(currentID)) return;
         setResourceErrors(current => ({ ...current, detail: "detailLoadError" }));
       }) : Promise.resolve(),
     ]);
@@ -527,8 +534,8 @@ export default function RynAgent() {
         const transient = isTransientAgentReadError(reason);
         failures++;
         if (!transient || failures > 1) setResourceErrors(current => ({ ...current, tasks: "historyLoadError" }));
-        if (!transient) return;
-        delay = agentReadBackoff(failures);
+        // Never stop on an error: the list recovers by itself once the node answers again.
+        delay = agentPollRetryDelay(failures, transient);
       }
       if (!stopped) timer = window.setTimeout(poll, delay);
     };
@@ -559,8 +566,8 @@ export default function RynAgent() {
         const transient = isTransientAgentReadError(reason);
         failures++;
         if (!transient || !cached || failures > 1) setResourceErrors(current => ({ ...current, detail: "detailLoadError" }));
-        if (!transient) return;
-        delay = agentReadBackoff(failures);
+        // Never stop on an error: the task and its timer recover once the node answers again.
+        delay = agentPollRetryDelay(failures, transient);
       }
       if (!stopped) timer = window.setTimeout(poll, delay);
     };

@@ -202,7 +202,25 @@ export class DigestClientError extends Error {
 // loopback default > Vite dev proxy.
 const baseUrl = nodeControlBaseUrl;
 
+/** A read that its caller does not bound must still release its browser connection. */
+const DEFAULT_READ_TIMEOUT_MS = 60_000;
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = (init?.method ?? "GET").toUpperCase();
+  // Mutations may legitimately run long, so only unbounded GETs get the default limit.
+  const bounded = method === "GET" && !init?.signal ? new AbortController() : null;
+  const deadline = bounded ? setTimeout(() => bounded.abort(), DEFAULT_READ_TIMEOUT_MS) : undefined;
+  try {
+    return await sendJson<T>(path, bounded ? { ...init, signal: bounded.signal } : init);
+  } catch (error) {
+    if (bounded?.signal.aborted) throw new DigestClientError(tr("Timeout"), 0);
+    throw error;
+  } finally {
+    if (deadline !== undefined) clearTimeout(deadline);
+  }
+}
+
+async function sendJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${baseUrl()}${path}`, {
     // Carry the session cookie when the node is reached through a tunnel.
     credentials: "include",
@@ -237,7 +255,8 @@ export const digestApi = {
   removeSource: (sourceId: string) =>
     requestJson<{ ok: boolean }>(`/sources/${sourceId}`, { method: "DELETE" }),
   getDigest: () => requestJson<Digest>("/digest"),
-  getDiscoveryStatus: () => requestJson<DiscoveryStatus>("/discovery/status"),
+  getDiscoveryStatus: (opts?: { signal?: AbortSignal }) =>
+    requestJson<DiscoveryStatus>("/discovery/status", { signal: opts?.signal }),
   markDiscoverySeen: () =>
     requestJson<DiscoveryStatus>("/discovery/seen", { method: "POST" }),
   refreshDigest: () =>
