@@ -1693,6 +1693,11 @@
 .pf-agent-shell .pf-main { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 0; overflow: hidden; }
 .pf-agent-shell .pf-main > .ra-workspace,
 .pf-agent-shell .pf-main > .cfa-root { flex: 1; min-height: 0; }
+/* Kept plugin pages: hidden ones stay laid out at their last size, off screen and out of reach. */
+.pf-kept-plugins { position: fixed; left: 0; top: 0; visibility: hidden; pointer-events: none; z-index: -1; overflow: hidden; contain: strict; }
+.pf-kept-plugins.is-active { position: relative; flex: 1; min-height: 0; visibility: visible; pointer-events: auto; z-index: auto; contain: none; }
+.pf-kept-plugin { position: absolute; inset: 0; display: flex; flex-direction: column; visibility: hidden; }
+.pf-kept-plugins.is-active > .pf-kept-plugin.is-active { visibility: visible; }
 .pf-agent-shell.pf-agent-nav-collapsed { grid-template-columns: minmax(0, 1fr); }
 .pf-agent-shell .pf-sidebar[hidden] { display: none !important; }
 @media (max-width: 760px) {

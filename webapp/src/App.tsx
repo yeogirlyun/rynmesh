@@ -61,6 +61,7 @@ import NodeApps from "./screens/NodeApps";
 import ExtensionWebApp from "./screens/ExtensionWebApp";
 import CraftApps from "./screens/CraftApps";
 import PluginWorkspace from "./screens/PluginWorkspace";
+import { KeptPluginPages, KeptPluginPagesProvider } from "./screens/KeptPluginPages";
 import { craftPlugins } from "./domain/craftPlugins";
 import Publish from "./screens/Publish";
 import Peers from "./screens/Peers";
@@ -286,11 +287,14 @@ export default function App() {
       refreshShell={refreshShell}
     >
       <DropProvider mode={client.mode} notify={notify}>
+      <KeptPluginPagesProvider>
       <PersonalShell>
         {isTauriDesktop() ? <DesktopUpdateNotice /> : null}
         {offline ? <OfflineBanner onRetry={refreshShell} /> : null}
         <Outlet context={context} />
+        <KeptPluginPages client={client} />
       </PersonalShell>
+      </KeptPluginPagesProvider>
       <IncomingTransferDialog />
       <DropNotices />
       </DropProvider>
