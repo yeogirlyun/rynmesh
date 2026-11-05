@@ -1763,7 +1763,13 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             services.extend(row for row in access_state.catalog.records() if row.get("network_id", "rynmesh-main") == network_id)
         services.extend(row for row in space_catalog.records() if row.get("network_id", "rynmesh-main") == network_id)
         if external_catalog:
-            services.extend(external_catalog.records())
+            # A failed plugin authority withholds that provider's records. It must
+            # not hide independent local models or authenticated peer catalogs.
+            from ..peer_providers.validation import PeerProviderError
+            try:
+                services.extend(external_catalog.records())
+            except PeerProviderError:
+                pass
         # A model can switch between explicit-friend and space policy while an
         # older authenticated catalog is still cached. Catalog and dispatch
         # must select the same most recently authenticated record.
