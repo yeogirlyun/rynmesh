@@ -59,6 +59,24 @@ fn company_detail_url(target: &tauri::Url) -> bool {
         && matches!(query.next(), Some((key, id)) if key == "id" && !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
         && query.next().is_none()
 }
+fn legacy_oa_page(target: &tauri::Url, paths: &[&str]) -> bool {
+    target.scheme() == "https" && target.host_str() == Some("wework.gshopper.cn")
+        && target.port_or_known_default() == Some(443)
+        && target.username().is_empty() && target.password().is_none()
+        && paths.contains(&target.path()) && target.fragment().is_none()
+}
+/// The EPR/VAT list opened from the legacy company list.
+fn company_vat_url(target: &tauri::Url) -> bool {
+    let mut query = target.query_pairs();
+    legacy_oa_page(target, &["/oa/companyVat.php"])
+        && matches!(query.next(), Some((key, user)) if key == "user" && !user.is_empty() && user.len() <= 64
+            && user.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)))
+        && query.next().is_none()
+}
+/// The VAT window searches its own list, reloads after edits and switches to the shop tax page.
+fn company_vat_navigation(target: &tauri::Url) -> bool {
+    legacy_oa_page(target, &["/oa/companyVat.php", "/oa/companyVatFee.php"])
+}
 fn open_requested_page(app: &tauri::AppHandle, args: &[String]) {
     if args.iter().any(|arg| arg == "--ai-sources") {
         if let Some(w) = app.get_webview_window("main") {
@@ -128,6 +146,8 @@ pub fn run() {
                         Some(("invoice-pdf", "Invoice PDF", invoice_pdf_url))
                     } else if company_detail_url(&target) {
                         Some(("company-detail", "Company Details", company_detail_url))
+                    } else if company_vat_url(&target) {
+                        Some(("company-vat", "Company VAT", company_vat_navigation))
                     } else {
                         None
                     };
@@ -247,4 +267,52 @@ pub fn run() {
             node::stop(handle.state::<NodeState>().inner());
         }
     });
+}
+
+#[cfg(test)]
+mod legacy_document_tests {
+    use super::*;
+    fn url(value: &str) -> tauri::Url { tauri::Url::parse(value).unwrap() }
+
+    #[test]
+    fn company_vat_link_opens_its_own_window() {
+        assert!(company_vat_url(&url("https://wework.gshopper.cn/oa/companyVat.php?user=Test.User")));
+        for denied in [
+            "http://wework.gshopper.cn/oa/companyVat.php?user=Test.User",
+            "https://wework.gshopper.cn:8443/oa/companyVat.php?user=Test.User",
+            "https://evil@wework.gshopper.cn/oa/companyVat.php?user=Test.User",
+            "https://wework.gshopper.cn.example/oa/companyVat.php?user=Test.User",
+            "https://wework.gshopper.cn/oa/companyVat.php",
+            "https://wework.gshopper.cn/oa/companyVat.php?user=",
+            "https://wework.gshopper.cn/oa/companyVat.php?user=Test.User&next=x",
+            "https://wework.gshopper.cn/oa/companyVat.php?user=Test%20User",
+            "https://wework.gshopper.cn/oa/companyVat.php?user=Test.User#x",
+            "https://wework.gshopper.cn/oa/companyVatFee.php?user=Test.User",
+        ] {
+            assert!(!company_vat_url(&url(denied)), "{denied}");
+        }
+        // The other legacy documents keep their own rules.
+        assert!(company_detail_url(&url("https://wework.gshopper.cn/oa/companyDetail.php?id=159")));
+        assert!(!company_detail_url(&url("https://wework.gshopper.cn/oa/companyVat.php?user=Test.User")));
+        assert!(invoice_pdf_url(&url("https://wework.gshopper.cn/files/invoices/a.pdf")));
+    }
+
+    #[test]
+    fn company_vat_window_stays_on_its_pages() {
+        for allowed in [
+            "https://wework.gshopper.cn/oa/companyVat.php?user=Test.User",
+            "https://wework.gshopper.cn/oa/companyVat.php?user=Test.User&company=ALPHA",
+            "https://wework.gshopper.cn/oa/companyVatFee.php?user=Test.User",
+        ] {
+            assert!(company_vat_navigation(&url(allowed)), "{allowed}");
+        }
+        for denied in [
+            "https://wework.gshopper.cn/oa/companyList.php?user=Test.User",
+            "https://wework.gshopper.cn/oa/shopList.php?erp=qq",
+            "https://example.com/oa/companyVat.php?user=Test.User",
+            "http://wework.gshopper.cn/oa/companyVatFee.php?user=Test.User",
+        ] {
+            assert!(!company_vat_navigation(&url(denied)), "{denied}");
+        }
+    }
 }
