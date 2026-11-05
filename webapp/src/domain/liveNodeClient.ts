@@ -10,7 +10,25 @@ import type {
   PrivacyEraseScope,
 } from "./types";
 
+/** A read that its caller does not bound must still release its browser connection. */
+export const DEFAULT_READ_TIMEOUT_MS = 60_000;
+
 async function requestJson<T>(path: string, init?: RequestInit, localizeDetail = false): Promise<T> {
+  const method = (init?.method ?? "GET").toUpperCase();
+  // Mutations may legitimately run long, so only unbounded GETs get the default limit.
+  const bounded = method === "GET" && !init?.signal ? new AbortController() : null;
+  const deadline = bounded ? setTimeout(() => bounded.abort(), DEFAULT_READ_TIMEOUT_MS) : undefined;
+  try {
+    return await sendJson<T>(path, bounded ? { ...init, signal: bounded.signal } : init, localizeDetail);
+  } catch (error) {
+    if (bounded?.signal.aborted) throw new NodeClientError(tr("Timeout"), 0);
+    throw error;
+  } finally {
+    if (deadline !== undefined) clearTimeout(deadline);
+  }
+}
+
+async function sendJson<T>(path: string, init?: RequestInit, localizeDetail = false): Promise<T> {
   const response = await fetch(path, {
     // Carry the session cookie when the node is reached through a tunnel.
     credentials: "include",
@@ -48,7 +66,7 @@ function qs<T extends object>(value: T | undefined): string {
 
 export function makeLiveNodeClient(baseUrl = "/api/local"): NodeClient {
   return {
-    spaceStatus: () => requestJson(`${baseUrl}/space`),
+    spaceStatus: (opts) => requestJson(`${baseUrl}/space`, { signal: opts?.signal }),
     spaceAction: (action, body = {}) => requestJson(`${baseUrl}/space/${encodeURIComponent(action)}`, { method: "POST", body: JSON.stringify(body) }, true),
     spaceBackup: (password) => requestJson(`${baseUrl}/space/backup`, { method: "POST", body: JSON.stringify({ password }) }, true),
     mode: "live",
@@ -144,7 +162,8 @@ export function makeLiveNodeClient(baseUrl = "/api/local"): NodeClient {
     clearLLMOrders: () => requestJson(`${baseUrl}/llm/orders`, { method: "DELETE" }),
     discoverPeers: (req) =>
       requestJson(`${baseUrl}/peers/discover`, { method: "POST", body: JSON.stringify(req ?? {}) }),
-    listPeers: (filters?: PeerFilters) => requestJson(`${baseUrl}/peers${qs(filters)}`),
+    listPeers: (filters?: PeerFilters, opts?: { signal?: AbortSignal }) =>
+      requestJson(`${baseUrl}/peers${qs(filters)}`, { signal: opts?.signal }),
     listContent: (filters?: ContentFilters) => requestJson(`${baseUrl}/content${qs(filters)}`),
     getContentItem: (contentId: string) => requestJson(`${baseUrl}/content/${contentId}`),
     getContentBody: (contentId: string) =>
@@ -227,7 +246,7 @@ export function makeLiveNodeClient(baseUrl = "/api/local"): NodeClient {
     peersHealth: () => requestJson(`${baseUrl}/peers/health`, { method: "POST" }),
     directory: (options) =>
       requestJson<import("./directory").DirectorySnapshot>(
-        `${baseUrl}/directory${qs({ quick: options?.quick ? "1" : undefined })}`),
+        `${baseUrl}/directory${qs({ quick: options?.quick ? "1" : undefined })}`, { signal: options?.signal }),
     egressStatus: (region = "CN") => requestJson(`${baseUrl}/egress/status${qs({ region })}`),
     egressConnect: (req) =>
       requestJson(`${baseUrl}/egress/connect`, { method: "POST", body: JSON.stringify(req ?? {}) }),
