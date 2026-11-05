@@ -13,6 +13,31 @@ _CODE = re.compile(r"agent_[a-z0-9_]{1,100}\Z")
 _SAFE_ID = re.compile(r"[A-Za-z0-9_:-]{1,80}\Z")
 _SAFE_ENUM = re.compile(r"[a-z0-9_]{1,40}\Z")
 _LOCAL = threading.local()
+# Modules whose exception text is always a controlled ``agent_*`` code.
+_CODED_MODULES = frozenset({"rynmesh.agent_runtime.store", "rynmesh.agent_runtime.extensions.mcp_oauth"})
+_OAUTH_FIELDS = {
+    "server": _SAFE_ID, "flow": re.compile(r"[a-f0-9]{12}\Z"), "reason": _SAFE_ENUM,
+    "code": _CODE, "flow_state": _SAFE_ENUM, "oauth_error": _SAFE_ENUM,
+}
+
+
+def oauth_event(stage, **fields):
+    """Stage-level OAuth trace. Only bounded enums, server ids, ports, counts and a
+    one-way flow reference are accepted; URLs, codes, verifiers and tokens cannot
+    be expressed through this function."""
+    if not isinstance(stage, str) or not _SAFE_ENUM.fullmatch(stage):
+        return
+    out = {}
+    for key, value in fields.items():
+        pattern = _OAUTH_FIELDS.get(key)
+        if pattern is not None and isinstance(value, str) and pattern.fullmatch(value):
+            out[key] = value
+        elif key in {"http_status", "redirect_port", "tools"} and type(value) is int and 0 <= value <= 65535:
+            out[key] = value
+        elif key in {"ok", "had_tokens"} and isinstance(value, bool):
+            out[key] = value
+    _log.warning("agent_oauth at=%s pid=%s thread=%s stage=%s fields=%s",
+                 datetime.now(timezone.utc).isoformat(), os.getpid(), threading.current_thread().name[:48], stage, out)
 
 
 def _safe_context() -> dict:
@@ -76,7 +101,7 @@ def failure(stage, exc, *, elapsed_seconds=None, diagnostics=None, **context_fie
     while current is not None and id(current) not in seen and len(chain) < 5:
         seen.add(id(current))
         name = re.sub(r"[^A-Za-z0-9_]", "", type(current).__name__)[:80]
-        code = str(current) if type(current).__module__ == "rynmesh.agent_runtime.store" else ""
+        code = str(current) if type(current).__module__ in _CODED_MODULES else ""
         diag = safe_diagnostics(getattr(current, "diagnostics", None))
         chain.append({"type": name, **({"code": code} if _CODE.fullmatch(code) else {}),
                       **{key: value for key in ("errno", "winerror")

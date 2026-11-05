@@ -1176,12 +1176,19 @@ class McpSessionManager:
         return False
 
     def _oauth_connected(self, server_id: str) -> None:
+        from ..diagnostic_log import oauth_event
         try:
             current = self.store.get_mcp_server_internal(server_id, require_enabled=False)
-            if self.oauth.public_status(current["instance_id"])["state"] == "logged_in":
-                self.test_server(server_id, expected_revision=current["revision"], restart=True)
-        except Exception:
-            pass
+            state = self.oauth.public_status(current["instance_id"])["state"]
+            if state != "logged_in":
+                oauth_event("discovery_skipped", server=server_id, reason=state if isinstance(state, str) else "unknown")
+                return
+            self.test_server(server_id, expected_revision=current["revision"], restart=True)
+            after = self.store.get_mcp_server_internal(server_id, require_enabled=False)
+            oauth_event("discovery_finished", server=server_id, ok=True, tools=len(after.get("discovered_tools") or []))
+        except Exception as exc:
+            code = str(exc) if isinstance(exc, AgentError) else ""
+            oauth_event("discovery_finished", server=server_id, ok=False, code=code, reason=type(exc).__name__.lower()[:40])
 
     @staticmethod
     def _session_key(server_id: str, session_scope: str | None = None) -> tuple[str, str | None]:
