@@ -325,6 +325,14 @@ class McpOAuthManager:
             fail("agent_mcp_oauth_configuration_changed")
         return current
 
+    @staticmethod
+    def _same_authorization(left, right):
+        # Plugin/UI revisions and temporary disablement are not OAuth identity.
+        # Endpoint, auth configuration, owner instance and config generation are.
+        ignored = {"plugin_revision", "effective_enabled"}
+        return ({k: v for k, v in (left or {}).items() if k not in ignored}
+                == {k: v for k, v in (right or {}).items() if k not in ignored})
+
     def _identity_group_siblings(self, server):
         identity_group_id = server.get("identity_group_id")
         if not identity_group_id or not server.get("url"):
@@ -386,6 +394,9 @@ class McpOAuthManager:
             siblings = self._identity_group_siblings(current) if current.get("identity_group_id") else []
             with self.credentials.transaction() as rows:
                 row = rows.get(server["instance_id"])
+                if row and row.get("binding") != binding and self._same_authorization(row.get("binding"), binding):
+                    row["binding"] = binding
+                    row.pop("pending", None)
                 if not row or row.get("binding") != binding:
                     row = {"binding": binding, "resource": binding["resource"], "epoch": secrets.token_hex(16), "granted_scopes": []}
                     rows[server["instance_id"]] = row
@@ -414,13 +425,21 @@ class McpOAuthManager:
                             break
                 return copy.deepcopy(row)
 
-    def _update(self, server, epoch, change, *, login_id=None):
+    def _update(self, server, epoch, change, *, login_id=None, refresh=False):
         with file_transaction(self.store.lock):
-            self._current(server)
+            if refresh:
+                current = self.store.get_mcp_server_internal(server["id"], require_enabled=False)
+                if not self._same_authorization(self._binding(current), self._binding(server)):
+                    fail("agent_mcp_oauth_configuration_changed")
+            else:
+                current = self._current(server)
             with self.credentials.transaction(document=True) as document:
                 row = document["servers"].get(server["instance_id"])
-                if not row or row.get("epoch") != epoch or row.get("binding") != self._binding(server):
+                matches = (self._same_authorization(row.get("binding"), self._binding(server)) if row and refresh
+                           else bool(row and row.get("binding") == self._binding(server)))
+                if not row or row.get("epoch") != epoch or not matches:
                     fail("agent_mcp_oauth_configuration_changed")
+                row["binding"] = self._binding(current)
                 change(row)
                 if login_id and server.get("plugin_id") in COMPANY_PLUGIN_IDS:
                     document["company_action"] = {"id": hashlib.sha256(login_id.encode()).hexdigest(), "action": "login",
@@ -588,6 +607,7 @@ class McpOAuthManager:
                 with self.credentials.transaction(document=True) as document:
                     seed = document.setdefault("device_seed", secrets.token_hex(32))
                     params["ryn_device_id"] = hmac.new(seed.encode(), metadata["issuer"].encode(), hashlib.sha256).hexdigest()
+                params["ryn_replace_legacy"] = "oldest"
             if requested:
                 params["scope"] = " ".join(sorted(requested))
             endpoint = urlsplit(metadata["authorization_endpoint"])
@@ -810,6 +830,8 @@ class McpOAuthManager:
         self._update(server, row["epoch"], lambda r: r.update(challenge=safe, error="agent_mcp_auth_required"))
 
     def access_token(self, server, force_refresh=False, *, refresh_state=None):
+        if not server.get("effective_enabled", server.get("enabled", False)):
+            fail("agent_mcp_oauth_server_disabled")
         if has_static_authorization(server) or (server.get("auth") or {}).get("mode") == "none":
             return None
         row = self._row(server)
@@ -856,11 +878,14 @@ class McpOAuthManager:
                         fail("agent_mcp_auth_required")
                     value.update(tokens=refreshed, granted_scopes=_scopes(refreshed["scope"]))
                     value.pop("error", None)
-                self._update(server, row["epoch"], save)
-                self._propagate_identity_group_tokens(server)
+                self._update(server, row["epoch"], save, refresh=True)
+                current_server = self.store.get_mcp_server_internal(server["id"], require_enabled=False)
+                self._propagate_identity_group_tokens(current_server)
             except AgentError:
                 self._revoke({**current, "tokens": refreshed})
                 raise
+            if not current_server.get("effective_enabled", current_server.get("enabled", False)):
+                fail("agent_mcp_oauth_server_disabled")
             return refreshed["access_token"]
 
     def _revoke(self, row):

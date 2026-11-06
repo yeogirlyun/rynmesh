@@ -2739,6 +2739,7 @@ class ExtensionStore:
             committed_skills: list[str] = []
             committed_servers: list[str] = []
             plugin_policies = {plugin["id"]: normalize_policy(plugin.get("data_policy")) for plugin in plugins}
+            incoming_plugins = {plugin["id"]: plugin for plugin in plugins}
 
             for skill in skills:
                 sid = skill["id"]
@@ -2869,6 +2870,19 @@ class ExtensionStore:
                     "updated_at": now,
                 }
                 record["config_sha256"] = _mcp_config_fingerprint(record)
+                previous = state["mcp_servers"].get(mid)
+                parent_id = record.get("plugin_id")
+                previous_parent = state["plugins"].get(parent_id) or {}
+                incoming_parent = incoming_plugins.get(parent_id, previous_parent)
+                # Import is a new executable/UI revision, but an unchanged OAuth
+                # connection still belongs to the same installed account. Keep
+                # its identity while invalidating all probes/tool revisions.
+                if (previous and record["transport"] == "streamable_http"
+                        and previous.get("plugin_id") == parent_id
+                        and previous_parent.get("identity_group") == incoming_parent.get("identity_group")
+                        and _mcp_config_fingerprint(previous) == record["config_sha256"]):
+                    record["instance_id"] = previous["instance_id"]
+                    record["config_generation"] = previous.get("config_generation", 1)
                 state["mcp_servers"][mid] = record
                 committed_servers.append(mid)
 
