@@ -309,6 +309,33 @@ def test_release_three_way_upgrade_preserves_custom_skill_and_user_state(tmp_pat
     assert 'operations' not in store._read()['mcp_servers']
 
 
+def test_release_moves_only_unchanged_connection_to_new_sign_in_mode(tmp_path):
+    from rynmesh.agent_runtime.extensions import ExtensionStore
+    from rynmesh.services.peer_box import load_or_create_messaging_key
+    store = ExtensionStore(tmp_path / 'agent', load_or_create_messaging_key(tmp_path / 'key'))
+    published = {'mode': 'oauth', 'client_id': 'ryn-desktop', 'scopes': ['workspace.access']}
+    owner = {**published, 'scopes': ['workspace.access', 'owner.extra']}
+    plugins = [{'id': 'p', 'name': 'Publisher', 'version': '1', 'mcp_server_ids': ['stock', 'custom']}]
+    servers = [{'id': sid, 'plugin_id': 'p', 'transport': 'streamable_http', 'auth': auth,
+                'url': 'http://127.0.0.1:18140/' + sid} for sid, auth in (('stock', published), ('custom', owner))]
+    store.commit_imported_items(plugins=plugins, skills=[], mcp_servers=servers)
+    before = store._read()['mcp_servers']
+    declarations = {'mcp_servers': [{**s, 'auth': {'mode': 'none'}} for s in servers],
+                    'previous_defaults': [{'mcp_servers': {s['id']: {'auth': {**published, 'callback_port': None}} for s in servers}}]}
+    result = store.migrate_release_defaults(declarations)
+    after = store._read()['mcp_servers']
+    stock, custom = after['stock'], after['custom']
+    assert stock['auth'] == {'mode': 'none', 'client_id': None, 'scopes': [], 'callback_port': None}
+    assert stock['instance_id'] == before['stock']['instance_id'] and stock['enabled'] == before['stock']['enabled']
+    assert stock['config_generation'] > before['stock']['config_generation'] and stock['status'] == 'NeedsTest'
+    assert stock['config_sha256'] != before['stock']['config_sha256'] and stock['discovered_tools'] == []
+    # An owner-changed sign-in setting is kept and reported, never replaced.
+    assert custom == before['custom']
+    assert result['conflicts'] == [{'category': 'mcp_servers', 'id': 'custom', 'field': 'auth'}]
+    repeated = store.migrate_release_defaults(declarations)
+    assert repeated['updated'] == [] and store._read()['mcp_servers']['stock'] == stock
+
+
 def test_release_retires_only_known_duplicate_default_connections(tmp_path):
     from rynmesh.agent_runtime.extensions import ExtensionStore
     from rynmesh.services.peer_box import load_or_create_messaging_key

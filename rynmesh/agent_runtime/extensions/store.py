@@ -2602,10 +2602,17 @@ class ExtensionStore:
         fields = {
             "plugins": ("name", "title", "description", "version", "desktop_routes"),
             "skills": ("name", "title", "description", "version", "content"),
-            "mcp_servers": ("name", "description"),
+            # A publisher may move its own connection to another sign-in mode
+            # (e.g. an installer-issued local credential instead of OAuth). The
+            # three-way rule below still keeps any owner-changed value.
+            "mcp_servers": ("name", "description", "auth"),
         }
+
+        def release_value(key, value):
+            return normalize_mcp_auth(value) if key == "auth" else value
+
         desired = {
-            category: {row["id"]: {key: copy.deepcopy(row[key]) for key in keys if key in row}
+            category: {row["id"]: {key: copy.deepcopy(release_value(key, row[key])) for key in keys if key in row}
                        for row in declarations.get(category, [])}
             for category, keys in fields.items()
         }
@@ -2665,22 +2672,34 @@ class ExtensionStore:
                     source_changed = category == "skills" and current.get("content") != incoming.get("content")
                     known_source = any(current.get("content") == release.get(category, {}).get(identity, {}).get("content")
                                        for release in previous)
-                    changed = False
+                    changed = connection_changed = False
                     for key, value in incoming.items():
                         if key == "desktop_routes":
                             continue  # Installer-only defaults, never an imported plugin's authority.
                         if current.get(key) == value:
                             continue
                         known = any(key in release.get(category, {}).get(identity, {})
-                                    and current.get(key) == release[category][identity][key] for release in previous)
+                                    and current.get(key) == release_value(key, release[category][identity][key])
+                                    for release in previous)
                         if (category == "skills" and source_changed and (not known_source or current.get("package_dir"))) or not known:
                             conflicts.append({"category": category, "id": identity, "field": key})
                             continue
                         current[key] = copy.deepcopy(value)
                         changed = True
+                        connection_changed = connection_changed or key == "auth"
                     if changed:
                         current["revision"] = _alloc_generation(state)
                         current["updated_at"] = _now()
+                        if connection_changed:
+                            # Same treatment as any connection change: no session,
+                            # probe or tool list from the old sign-in mode is reused.
+                            current["config_generation"] = current["revision"]
+                            current["config_sha256"] = _mcp_config_fingerprint(current)
+                            current["discovered_tools"] = []
+                            current["discovery_revision"] = 0
+                            self._clear_server_hints(current)
+                            current["status"] = "NeedsTest"
+                            current["status_message"] = ""
                         if category == "skills":
                             current["install_generation"] = int(current.get("install_generation", 1)) + 1
                             current["manifest_sha256"] = _canon_sha256({"content": current["content"], "version": current["version"]})
