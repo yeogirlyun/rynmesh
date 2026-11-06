@@ -285,7 +285,9 @@ class _Loopback:
                 self.end_headers()
                 self.wfile.write(body)
         class CallbackServer(ThreadingHTTPServer):
-            allow_reuse_address = False
+            # POSIX can retain the closed callback in TIME_WAIT. Reuse that
+            # address for the registered client; Windows keeps exclusive binds.
+            allow_reuse_address = not hasattr(socket, "SO_EXCLUSIVEADDRUSE")
             def server_bind(self):
                 if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
                     self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)

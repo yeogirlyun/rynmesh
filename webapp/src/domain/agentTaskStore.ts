@@ -243,8 +243,13 @@ export function saveAgentTask(scope: string, task: AgentTask) {
     const transaction = database.transaction(RECORD_STORE, "readwrite");
     const done = transactionDone(transaction);
     const store = transaction.objectStore(RECORD_STORE);
-    store.put(record);
     const all = await requestResult(store.index("scope").getAll(scope)) as EncryptedRecord[];
+    // Writes in the same millisecond (or after a clock correction) must retain
+    // their actual order, including across reloads and other browser tabs.
+    for (const previous of all) {
+      if (Number.isFinite(previous.savedAt)) record.savedAt = Math.max(record.savedAt, previous.savedAt + 1);
+    }
+    store.put(record);
     const opened = all.filter(item => item.kind === "task" && item.id !== id).sort((left, right) => right.savedAt - left.savedAt);
     for (const old of opened.slice(PERSISTED_AGENT_TASKS - 1)) store.delete(old.id);
     await done;
