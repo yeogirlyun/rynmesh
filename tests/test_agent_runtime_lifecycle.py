@@ -9,6 +9,7 @@ import pytest
 from test_agent_runtime import advance, assistant, make_runtime
 from test_agent_runtime_control import control
 
+from rynmesh.agent_runtime import storage_relief
 from rynmesh.agent_runtime.runtime import AgentRuntime
 from rynmesh.agent_runtime.store import AgentError, AgentStore
 
@@ -67,7 +68,9 @@ def test_deleted_create_request_never_recreates_task(tmp_path, archived):
     assert not list((tmp_path / "archives").rglob("sessions.json"))
 
 
-def test_archive_frees_two_hundred_task_active_capacity(tmp_path):
+def test_archive_frees_two_hundred_task_active_capacity(tmp_path, monkeypatch):
+    # The hard limit itself; automatic archiving is covered in test_agent_storage_relief.
+    monkeypatch.setattr(storage_relief, "needed", lambda *args, **kwargs: False)
     runtime, _, _, _ = make_runtime(tmp_path, assistant("answer"))
     row = runtime.create({"message": "original"})
     advance(runtime)

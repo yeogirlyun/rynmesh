@@ -317,6 +317,17 @@ class AgentStore:
     def read(self) -> dict:
         return _copy(self._snapshot())
 
+    def usage(self) -> dict:
+        """Committed decrypted bytes of the active state, for capacity decisions.
+
+        Per-task sizes come from the split layout's root index; a legacy single
+        file reports none, and callers measure those rows themselves.
+        """
+        data = self._snapshot()
+        total = self._total if self._index or not data.get("tasks") else len(encoded(data))
+        return {"total": total, "limit": MAX_PLAINTEXT, "count": len(data.get("tasks", {})),
+                "tasks": {task_id: entry["bytes"] for task_id, entry in self._index.items()}}
+
     def read_control(self, task_id: str) -> dict:
         """Fresh cancellation authority without cloning every task's transcript.
 

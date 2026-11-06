@@ -93,7 +93,7 @@ export function TaskRecords({ task, busy, onChange, onDelete }: { task: AgentTas
   const supported = task && ["archive", "restore", "delete"].some(action => task.allowed_actions?.[action]);
   if (!supported && !pending) return null;
   return <section className="ra-records" aria-label={t("taskRecords")}>
-    {task?.archived && <p>{t("archivedHelp")}</p>}
+    {task?.archived && <p>{t(task.archive_reason === "storage" ? "archivedForStorage" : "archivedHelp")}</p>}
     {error && <p role="alert">{t(error)}</p>}
     {pending && <p role="status">{t(pending.cleanup_pending ? "cleanupPending" : "recordUncertain")} <button disabled={busy || working} onClick={() => void run(pending)}>{t(pending.cleanup_pending ? "retryCleanup" : "checkRecord")}</button></p>}
     {supported && <div className="ra-scope-actions">

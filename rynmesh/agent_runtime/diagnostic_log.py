@@ -96,6 +96,16 @@ def safe_diagnostics(raw) -> dict:
     return out
 
 
+def storage_relief(trigger, *, archived, before_bytes, after_bytes, tasks):
+    """Counts only: why space was freed and how much. Never task ids or titles."""
+    if not isinstance(trigger, str) or not _SAFE_ENUM.fullmatch(trigger):
+        return
+    if not all(type(value) is int and value >= 0 for value in (archived, before_bytes, after_bytes, tasks)):
+        return
+    _log.warning("agent_storage_relief at=%s pid=%s trigger=%s archived=%s before_bytes=%s after_bytes=%s tasks=%s",
+                 datetime.now(timezone.utc).isoformat(), os.getpid(), trigger, archived, before_bytes, after_bytes, tasks)
+
+
 def failure(stage, exc, *, elapsed_seconds=None, diagnostics=None, **context_fields):
     chain, seen, current = [], set(), exc if isinstance(exc, BaseException) else None
     while current is not None and id(current) not in seen and len(chain) < 5:

@@ -253,6 +253,9 @@ def create(runtime, source_id, value):
     if value["shared_workspace_confirmed"] is not True or type(value["message_count"]) is not int:
         raise AgentError("agent_invalid_fork_request")
     fingerprint = digest({"fork_source": source_id, **value})
+    relieve = getattr(runtime, "_relieve_storage", None)
+    if callable(relieve):
+        relieve("fork", exclude={source_id}, need_tasks=1)
 
     def commit(data):
         existing = lifecycle.duplicate(runtime.store, data, request_id, fingerprint)
