@@ -3,7 +3,7 @@ import RynAgentFileChanges from "./RynAgentFileChanges";
 import RynAgentConnection, { hasConnectionRecovery } from "./RynAgentConnection";
 import { AGENT_TASKS_IN_MEMORY, agentTaskCache, agentTaskListCache, forgetAgentTask, hydrateAgentRecords, readAgentWorkspace, rememberAgentTask, rememberAgentTaskList, writeAgentWorkspace } from "../domain/agentWorkspaceCache";
 import RynAgentProgress, { groupAgentMessages, RynAgentTurnDuration } from "./RynAgentProgress";
-import { Fragment, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate as useRouterNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ArrowUp, BookOpen, Clock3, CornerDownRight, LoaderCircle, MoreHorizontal, Pencil, Search, Square, Trash2, Check, CircleAlert, ListChecks, Monitor, PanelLeftClose, PanelLeftOpen, Pause, Play, Settings, SlidersHorizontal, Sparkles, SquarePen, X } from "lucide-react";
@@ -115,6 +115,34 @@ function cachedAgentTaskList(opened: Map<string, AgentTask>): AgentTaskSummary[]
   const byID = new Map((agentTaskListCache() || []).map(item => [item.id, item as AgentTaskSummary]));
   for (const task of opened.values()) { const known = byID.get(task.id); if (!known || known.revision < task.revision) byID.set(task.id, task); }
   return sortAgentTasks([...byID.values()].filter(item => !item.archived));
+}
+const OWNER_SCROLL_EVENTS = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+/**
+ * Show the newest part of an opened conversation at once. The thread scrolls
+ * smoothly for in-page jumps, so this jump turns smoothing off; otherwise the
+ * owner watches it slide down from the top. Parts that arrive a moment later
+ * (file lists, the node's newer copy) keep it at the bottom until the owner
+ * scrolls or the short settle time ends.
+ */
+function showLatestMessages(element: HTMLElement, settleMs = 2000): () => void {
+  const jump = () => {
+    const smooth = element.style.scrollBehavior;
+    element.style.scrollBehavior = "auto";
+    element.scrollTop = element.scrollHeight;
+    element.style.scrollBehavior = smooth;
+  };
+  jump();
+  if (typeof ResizeObserver === "undefined") return () => undefined;
+  const resize = new ResizeObserver(jump);
+  for (const child of element.children) resize.observe(child);
+  const stop = () => {
+    resize.disconnect();
+    window.clearTimeout(timer);
+    for (const type of OWNER_SCROLL_EVENTS) element.removeEventListener(type, stop);
+  };
+  const timer = window.setTimeout(stop, settleMs);
+  for (const type of OWNER_SCROLL_EVENTS) element.addEventListener(type, stop, { passive: true });
+  return stop;
 }
 function newDraftKey(projectID = "") { return projectID ? `new:${projectID}` : "new"; }
 function readPendingMessage(): PendingMessage | null {
@@ -978,14 +1006,13 @@ export default function RynAgent() {
     if (!visiblePending || !scroll.current) return;
     scroll.current.scrollTop = scroll.current.scrollHeight;
   }, [visiblePending?.requestID]);
-  useEffect(() => { openedScrollTask.current = null; }, [selected]);
-  useEffect(() => {
+  // Layout effects place an opened conversation before it is painted.
+  useLayoutEffect(() => { openedScrollTask.current = null; }, [selected]);
+  useLayoutEffect(() => {
     if (detailLoading || !task || task.id !== selected || !scroll.current || openedScrollTask.current === selected) return;
     openedScrollTask.current = selected;
-    if (["failed", "interrupted", "paused", "waiting_approval", "waiting_input"].includes(task.status)) {
-      scroll.current.scrollTop = scroll.current.scrollHeight;
-    }
-  }, [selected, detailLoading, task?.id, task?.status]);
+    return showLatestMessages(scroll.current);
+  }, [selected, detailLoading, task?.id]);
   useEffect(() => { if (task) setMessageIntent(isAgentActive(agentTaskState(task)) ? "steer" : "information"); }, [task?.id, task ? isAgentActive(agentTaskState(task)) : false]);
   const modelSelect = (disabled = false) => <RynAgentModelPicker models={models} value={task?.model_id || model} disabled={disabled || busy} selectionLocked={task ? !canUseAgentAction(task, "model") : false} title={t(task ? "taskModel" : "newTaskModel")} reasoningEfforts={supportedEfforts} effort={effectiveEffort} onEffortChange={setReasoningEffort} onManageTaskModel={task?.allowed_actions?.model ? () => { setTaskModelTarget(""); setTaskModelOpen(true); } : undefined} onChange={id => {
     if (task) { setTaskModelTarget(id); setTaskModelOpen(true); }

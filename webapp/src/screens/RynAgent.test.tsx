@@ -86,7 +86,7 @@ it("automatically recovers initial settings failure without clicking Refresh", a
   expect(screen.getByRole("textbox")).toBeEnabled();
 });
 
-it.each(["failed", "interrupted", "paused", "waiting_approval", "waiting_input"] as const)("locates newly opened %s history once without overriding later scrolling", async status => {
+it.each(["completed", "running", "failed", "interrupted", "paused", "waiting_approval", "waiting_input"] as const)("locates newly opened %s history once without overriding later scrolling", async status => {
   const current = task({ status, messages: [{ role: "assistant", content: "History ready" }] });
   const backend = api(true, [current]);
   const height = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(1800);
@@ -101,6 +101,68 @@ it.each(["failed", "interrupted", "paused", "waiting_approval", "waiting_input"]
     await screen.findByText("History refreshed", {}, { timeout: 5000 });
     expect(scroller.scrollTop).toBe(120);
   } finally { height.mockRestore(); }
+});
+
+it("opens every conversation at its latest message without a smooth slide from the top", async () => {
+  const first = task({ status: "completed", messages: [{ role: "assistant", content: "First history" }] });
+  const second = task({ id: "task-2", title: "Weekly report", status: "completed", revision: 1, messages: [{ role: "assistant", content: "Second history" }] });
+  api(true, [first, second]);
+  const height = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(2400);
+  const jumps: string[] = [];
+  const top = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop")!;
+  Object.defineProperty(HTMLElement.prototype, "scrollTop", { configurable: true, get() { return top.get!.call(this); },
+    set(value: number) { if ((this as HTMLElement).classList.contains("ra-scroll")) jumps.push((this as HTMLElement).style.scrollBehavior); top.set!.call(this, value); } });
+  try {
+    const user = userEvent.setup(); mount();
+    await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
+    await screen.findByText("First history");
+    const scroller = document.querySelector<HTMLDivElement>(".ra-scroll")!;
+    await waitFor(() => expect(scroller.scrollTop).toBe(2400));
+    scroller.scrollTop = 0;
+    jumps.length = 0;
+    await user.click(screen.getByRole("button", { name: "Weekly report" }));
+    await screen.findByText("Second history");
+    await waitFor(() => expect(scroller.scrollTop).toBe(2400));
+    expect(jumps).toEqual(["auto"]);
+    expect(scroller.style.scrollBehavior).toBe("");
+  } finally {
+    delete (HTMLElement.prototype as { scrollTop?: number }).scrollTop;
+    height.mockRestore();
+  }
+});
+
+it("keeps an opened conversation at the bottom while late parts load, until the owner scrolls", async () => {
+  const observers = new Set<FakeResizeObserver>();
+  class FakeResizeObserver {
+    constructor(readonly callback: () => void) {}
+    observe() { observers.add(this); }
+    unobserve() {}
+    disconnect() { observers.delete(this); }
+  }
+  const notify = () => act(() => [...observers].forEach(observer => observer.callback()));
+  vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+  const current = task({ status: "completed", messages: [{ role: "assistant", content: "History ready" }] });
+  api(true, [current]);
+  let contentHeight = 1800;
+  const height = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(() => contentHeight);
+  try {
+    const user = userEvent.setup(); mount();
+    await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
+    await screen.findByText("History ready");
+    const scroller = document.querySelector<HTMLDivElement>(".ra-scroll")!;
+    await waitFor(() => expect(scroller.scrollTop).toBe(1800));
+    contentHeight = 2600;
+    notify();
+    expect(scroller.scrollTop).toBe(2600);
+    fireEvent.wheel(scroller);
+    scroller.scrollTop = 300;
+    contentHeight = 3200;
+    notify();
+    expect(scroller.scrollTop).toBe(300);
+  } finally {
+    height.mockRestore();
+    vi.unstubAllGlobals();
+  }
 });
 
 it("renders live text between durable checkpoints without waiting for the old 1.2 second poll", async () => {
