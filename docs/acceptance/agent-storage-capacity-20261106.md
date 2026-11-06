@@ -66,8 +66,45 @@ record: extra archive/index fields are ignored and compact events still carry
   `RynAgentStorageNotes`, `RynAgentRecords`, `RynAgentProgress`, `RynAgentStream`,
   `RynAgentNavigationSending`, `domain/rynAgent` pass; one 5 s typing timeout in
   `RynAgentConversationControls` also times out (twice) on the base.
-- The full `tests/test_agent*.py` run was still in progress at merge time; its
-  comparison against the base is recorded in the follow-up commit.
+- Full `tests/test_agent*.py` (3 h 12 min, from a partial copy): 1958 passed,
+  156 failed, 350 errors. Most errors came from the copy missing the tracked
+  `docs/acceptance/ryn-agent-delivery/` helpers. Every failing or erroring test,
+  every file that failed to collect, and the four storage-related files were
+  then rerun on full exports of the merge `3284f4c` and of its first parent
+  `054ba81` (same interpreter, `-n 2`):
+  - `3284f4c`: 595 passed, 100 failed, 25 errors, 16 skipped.
+  - `054ba81`: 586 passed, 101 failed, 25 errors, 16 skipped.
+  - No test fails only on `3284f4c`. The extra passes are the 8 new storage
+    tests plus `test_r06_real_collector_restart_keeps_compaction_and_original_4_plus_8`,
+    which failed only on the base (timing).
+  - 50 of the 125 shared failing entries are in `test_agent_extensions_oauth.py`,
+    whose loopback HTTP login times out on this VM. The rest fail the same way
+    on the base.
+  - `test_agent_storage_relief`, `test_agent_runtime_lifecycle`,
+    `test_agent_streamed_reads` and `test_agent_store_layout` all pass.
+
+## Packaged build (develop `23eb988`)
+
+`23eb988` is `3284f4c` plus five later commits that change no Python file, so
+the bundled node runs the code tested above.
+
+- `webapp/src-tauri/scripts/build-windows.ps1`, 832 s on the VM with warm caches.
+  `Ryn_0.8.0_x64-setup.exe` is 58,066,007 bytes, SHA256
+  `227952ecc74a48b6d3e7b9c5c28d1cc2ebefb96ea11eaa88ee75353dd89ce040`. The bundled
+  `rynmesh-peer.exe` is SHA256
+  `d254b9af25530f9b879a7f7ab8f9d614b125b92b1fae1abfc4e3c0f974283d07`, identical to
+  `src-tauri/binaries` and to the smoke-tested copy.
+- Packaged node against an isolated home seeded by the **old** code `054ba81`
+  with 125 completed tasks (23.9 MB decrypted):
+  - It answered after 11 s.
+  - The idle relief archived 60 tasks about 30 s after start
+    (`agent_storage_relief trigger=idle archived=60 before_bytes=23889257 after_bytes=12442257 tasks=65`).
+  - An auto-archived task opens with `archive_reason: "storage"` and its full
+    178,690-character tool output.
+  - `restore` returned 200, leaving 66 active / 59 archived.
+- The installer, build log and smoke report are kept outside git in
+  `artifacts/develop-release-20261106-23eb988/`. The previous installer,
+  `artifacts/develop-release-20261106-90228de/`, is the rollback.
 
 ## Not verified here
 
