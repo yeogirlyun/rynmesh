@@ -30,6 +30,7 @@ export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true 
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
   const [reachable, setReachable] = useState(false);
+  const [frameGeneration, setFrameGeneration] = useState(0);
   const frame = useRef<HTMLIFrameElement>(null);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
@@ -72,11 +73,30 @@ export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true 
     let active = true;
     const controller = new AbortController();
     let timeout: number | undefined;
+    let monitor: number | undefined;
     setReachable(false);
     (async () => {
       if (isTauriDesktop()) {
         const managed = await invoke<boolean>('ensure_plugin_service', { pluginId });
-        if (!active || managed) return;
+        if (!active) return;
+        if (managed) {
+          let instance = await invoke<number | null>('plugin_service_instance', { pluginId });
+          const check = async () => {
+            try {
+              const current = await invoke<number | null>('plugin_service_instance', { pluginId });
+              if (!active) return;
+              if (current !== instance) {
+                instance = current;
+                setFrameGeneration(value => value + 1);
+              }
+              monitor = window.setTimeout(check, 5000);
+            } catch (reason) {
+              if (active) setError(typeof reason === 'string' && reason.startsWith('plugin_service_') ? reason : 'connection');
+            }
+          };
+          if (active) monitor = window.setTimeout(check, 5000);
+          return;
+        }
       }
       if (!active) return;
       timeout = window.setTimeout(() => controller.abort(), 10000);
@@ -85,7 +105,7 @@ export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true 
       .then(() => { if (active) setReachable(true); })
       .catch((reason) => { if (active) setError(typeof reason === 'string' && reason.startsWith('plugin_service_') ? reason : 'connection'); })
       .finally(() => window.clearTimeout(timeout));
-    return () => { active = false; controller.abort(); window.clearTimeout(timeout); };
+    return () => { active = false; controller.abort(); window.clearTimeout(timeout); window.clearTimeout(monitor); };
   }, [plugin, pluginId, attempt]);
   useEffect(() => {
     if (!plugin?.enabled || !plugin.web_app) return;
@@ -153,5 +173,5 @@ export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true 
   const sandbox = ['allow-scripts', 'allow-forms', 'allow-same-origin', 'allow-popups'];
   if (plugin.web_app.permissions.includes('downloads')) sandbox.push('allow-downloads');
   if (plugin.web_app.permissions.includes('dialogs')) sandbox.push('allow-modals');
-  return <iframe ref={frame} title={plugin.title} src={url.href} sandbox={sandbox.join(' ')} referrerPolicy="no-referrer" onLoad={announceVisibility} onError={() => setError('connection')} style={{ border: 0, width: '100%', height: '100%', flex: 1, minHeight: 0 }} />;
+  return <iframe key={frameGeneration} ref={frame} title={plugin.title} src={url.href} sandbox={sandbox.join(' ')} referrerPolicy="no-referrer" onLoad={announceVisibility} onError={() => setError('connection')} style={{ border: 0, width: '100%', height: '100%', flex: 1, minHeight: 0 }} />;
 }

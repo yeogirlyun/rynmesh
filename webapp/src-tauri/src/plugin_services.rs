@@ -226,6 +226,24 @@ fn recovery_due(since: &mut Option<Instant>, now: Instant) -> bool {
     now.duration_since(*since.get_or_insert(now)) >= Duration::from_secs(90)
 }
 
+/// Observe an installed runtime without restarting it or reloading the tool catalog.
+/// The PID lets kept-alive frames detect a restart even between health polls.
+#[tauri::command]
+pub async fn plugin_service_instance(app: tauri::AppHandle, plugin_id: String) -> Result<Option<u32>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (_, services) = installed()?;
+        let Some(service) = services.iter().find(|s| s.plugins.contains(&plugin_id)) else { return Ok(None); };
+        let state = app.state::<PluginServices>();
+        let mut children = state.children.lock().unwrap();
+        let Some(owned) = children.get_mut(&service.id) else { return Err("plugin_service_exited".into()); };
+        if owned.spec != *service || !matches!(owned.child.try_wait(), Ok(None)) {
+            return Err("plugin_service_exited".into());
+        }
+        if !healthy(service) { return Err("plugin_service_unhealthy".into()); }
+        Ok(Some(owned.child.id()))
+    }).await.map_err(|_| "plugin_service_unhealthy")?
+}
+
 pub fn watch(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         let mut last_attempt = BTreeMap::<String, Instant>::new();

@@ -121,6 +121,7 @@ pub fn run() {
             updates::desktop_update_status, updates::desktop_update_check, updates::desktop_update_download,
             updates::desktop_update_install, updates::desktop_update_preferences,
             plugin_services::ensure_plugin_service,
+            plugin_services::plugin_service_instance,
             desktop::desktop_status, desktop::desktop_action, localization::set_desktop_language,
             local_model::choose_local_model, drive_browser::open_drive_browser,
             mcp_auth_browser::open_mcp_auth_browser,
