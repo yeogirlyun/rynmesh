@@ -7,15 +7,21 @@ import { peerProviders } from '../domain/peerProviders';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { isTauriDesktop } from '../domain/nodeUrl';
+import type { NodeClient } from '../domain/nodeClient';
 
 /** Remote UI stays on its own origin; only declared capabilities cross the frame boundary. */
 export default function ExtensionWebApp({ resolvedPlugin }: { resolvedPlugin?: ExtensionPlugin } = {}) {
   const { pluginId = '' } = useParams();
-  return <WebApp key={pluginId} pluginId={pluginId} resolvedPlugin={resolvedPlugin} />;
+  const { client } = useAppContext();
+  return <PluginWebApp key={pluginId} pluginId={pluginId} resolvedPlugin={resolvedPlugin} client={client} />;
 }
 
-function WebApp({ pluginId, resolvedPlugin }: { pluginId: string; resolvedPlugin?: ExtensionPlugin }) {
-  const { client } = useAppContext();
+/** Message telling a kept-alive plugin page whether the user can see it, so it can pause background work. */
+export const PLUGIN_VISIBILITY_MESSAGE = 'ryn.plugin.visibility';
+
+export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true }: {
+  pluginId: string; resolvedPlugin?: ExtensionPlugin; client: NodeClient; visible?: boolean;
+}) {
   const { i18n } = useTranslation();
   const zh = (i18n.resolvedLanguage || i18n.language).startsWith('zh');
   const tx = (chinese: string, english: string) => zh ? chinese : english;
@@ -25,6 +31,14 @@ function WebApp({ pluginId, resolvedPlugin }: { pluginId: string; resolvedPlugin
   const [attempt, setAttempt] = useState(0);
   const [reachable, setReachable] = useState(false);
   const frame = useRef<HTMLIFrameElement>(null);
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+  const announceVisibility = () => {
+    const target = frame.current?.contentWindow;
+    if (!target || !plugin?.web_app) return;
+    try { target.postMessage({ type: PLUGIN_VISIBILITY_MESSAGE, visible: visibleRef.current }, new URL(plugin.web_app.url).origin); } catch { /* The frame is navigating. */ }
+  };
+  useEffect(announceVisibility, [visible]);
   // Keep an already-open error page in sync with supervisor recovery.
   useEffect(() => {
     if (!['plugin_service_unhealthy', 'plugin_service_start_timeout', 'plugin_service_exited', 'connection'].includes(error)) return;
@@ -139,5 +153,5 @@ function WebApp({ pluginId, resolvedPlugin }: { pluginId: string; resolvedPlugin
   const sandbox = ['allow-scripts', 'allow-forms', 'allow-same-origin', 'allow-popups'];
   if (plugin.web_app.permissions.includes('downloads')) sandbox.push('allow-downloads');
   if (plugin.web_app.permissions.includes('dialogs')) sandbox.push('allow-modals');
-  return <iframe ref={frame} title={plugin.title} src={url.href} sandbox={sandbox.join(' ')} referrerPolicy="no-referrer" onError={() => setError('connection')} style={{ border: 0, width: '100%', height: '100%', flex: 1, minHeight: 0 }} />;
+  return <iframe ref={frame} title={plugin.title} src={url.href} sandbox={sandbox.join(' ')} referrerPolicy="no-referrer" onLoad={announceVisibility} onError={() => setError('connection')} style={{ border: 0, width: '100%', height: '100%', flex: 1, minHeight: 0 }} />;
 }

@@ -1,5 +1,6 @@
 import { nodeControlUrl } from "./nodeUrl";
-import type { AgentModel, AgentSettings, AgentTask } from "./rynAgent";
+import type { AgentModel, AgentSettings, AgentTask, AgentTaskSummary } from "./rynAgent";
+import { agentTaskSummary, loadAgentRecords, removeAgentTask, saveAgentTask, saveAgentTaskList } from "./agentTaskStore";
 
 interface AgentWorkspaceSnapshot {
   settings: AgentSettings | null;
@@ -9,11 +10,74 @@ interface AgentWorkspaceSnapshot {
 
 function key() { return `ryn.agent.workspace-v1:${nodeControlUrl("/agent")}`; }
 const taskCaches = new Map<string, Map<string, AgentTask>>();
+const taskLists = new Map<string, AgentTaskSummary[]>();
+const hydrations = new Map<string, Promise<void>>();
+/** Opened conversations held in memory; the device copy keeps a few more. */
+export const AGENT_TASKS_IN_MEMORY = 20;
 export function agentTaskCache(): Map<string, AgentTask> {
   const scope = key();
   let tasks = taskCaches.get(scope);
   if (!tasks) { tasks = new Map(); taskCaches.set(scope, tasks); }
   return tasks;
+}
+
+/** The last complete task list from the node, kept across page switches. */
+export function agentTaskListCache(): AgentTaskSummary[] | undefined {
+  return taskLists.get(key());
+}
+
+export function rememberAgentTaskList(tasks: AgentTaskSummary[]) {
+  const scope = key();
+  taskLists.set(scope, tasks.map(agentTaskSummary));
+  saveAgentTaskList(scope, tasks);
+}
+
+export function rememberAgentTask(task: AgentTask) {
+  saveAgentTask(key(), task);
+}
+
+export function forgetAgentTask(id: string) {
+  const scope = key();
+  const list = taskLists.get(scope);
+  if (list?.some(item => item.id === id)) {
+    const next = list.filter(item => item.id !== id);
+    taskLists.set(scope, next);
+    saveAgentTaskList(scope, next);
+  }
+  taskCaches.get(scope)?.delete(id);
+  removeAgentTask(scope, id);
+}
+
+/**
+ * Loads this node's saved Agent records into memory once per app run. Records
+ * already refreshed from the node in this run are never replaced by older copies.
+ */
+export function hydrateAgentRecords(): Promise<void> {
+  const scope = key();
+  let hydration = hydrations.get(scope);
+  if (!hydration) {
+    hydration = loadAgentRecords(scope).then(({ tasks, details }) => {
+      if (tasks && !taskLists.has(scope)) taskLists.set(scope, tasks);
+      const cache = agentTaskCache();
+      // Oldest first, so the most recently opened end up last (newest) in the Map.
+      for (const task of details.slice(0, AGENT_TASKS_IN_MEMORY).reverse()) {
+        const known = cache.get(task.id);
+        if (known && known.revision >= task.revision) continue;
+        cache.delete(task.id);
+        cache.set(task.id, task);
+        if (cache.size > AGENT_TASKS_IN_MEMORY) cache.delete(cache.keys().next().value!);
+      }
+    });
+    hydrations.set(scope, hydration);
+  }
+  return hydration;
+}
+
+/** Test isolation: forgets everything this module holds in memory. */
+export function resetAgentWorkspaceMemory() {
+  taskCaches.clear();
+  taskLists.clear();
+  hydrations.clear();
 }
 
 // Only configuration and public model metadata persist. Conversation contents,

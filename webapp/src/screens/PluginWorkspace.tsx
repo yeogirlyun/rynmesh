@@ -6,8 +6,12 @@ import { agentExtensions, type ExtensionOverview } from "../domain/agentExtensio
 import { PeerProviderSettings } from "./PeerProviderSettings";
 import { PluginViews } from "./PluginViews";
 import ExtensionWebApp from "./ExtensionWebApp";
+import { KeptPluginPage, useKeptPluginPages } from "./KeptPluginPages";
 import { isPluginWorkspacePinned, PIN_CHANGE_EVENT, pluginWorkspacePath, setPluginWorkspacePinned } from "./pluginWorkspaceNavigation";
 import "./PluginWorkspace.css";
+
+// The last manifest lets a revisited plugin page show at once while it refreshes.
+let lastOverview: ExtensionOverview | null = null;
 
 export default function PluginWorkspace() {
   const { pluginId = "" } = useParams();
@@ -21,8 +25,9 @@ function Workspace({ pluginId }: { pluginId: string }) {
   const tx = (chinese: string, english: string) => zh ? chinese : english;
   const location = useLocation(), navigate = useNavigate();
   const query = new URLSearchParams(location.search);
-  const [overview, setOverview] = useState<ExtensionOverview | null>(null);
+  const [overview, setOverview] = useState<ExtensionOverview | null>(lastOverview);
   const [loading, setLoading] = useState(true), [failed, setFailed] = useState(false);
+  const keeper = useKeptPluginPages();
   const [pinned, setPinned] = useState(() => isPluginWorkspacePinned(pluginId));
   const [tab, setTab] = useState(query.get("tab") === "peers" ? "peers" : "pages");
   const generation = useRef(0);
@@ -31,6 +36,7 @@ function Workspace({ pluginId }: { pluginId: string }) {
     setLoading(true); setFailed(false);
     try {
       const next = await agentExtensions.overview();
+      lastOverview = next;
       if (current === generation.current) setOverview(next);
     } catch { if (current === generation.current) setFailed(true); }
     finally { if (current === generation.current) setLoading(false); }
@@ -43,6 +49,9 @@ function Workspace({ pluginId }: { pluginId: string }) {
   }, [pluginId]);
 
   const plugin = overview?.plugins.find(item => item.id === pluginId);
+  const usable = Boolean(plugin?.enabled && plugin.web_app);
+  // A kept page of a plugin that was removed or turned off is closed, not hidden.
+  useEffect(() => { if (overview && !loading && !failed && !usable) keeper?.drop(pluginId); }, [overview, loading, failed, usable, keeper, pluginId]);
   // Resolve the manifest without flashing the management UI before the app.
   if (!plugin && loading) return <div aria-busy="true" aria-label={tx("正在加载插件…", "Loading plugin…")} />;
   if (!plugin) return <section className="pw-workspace">
@@ -60,7 +69,7 @@ function Workspace({ pluginId }: { pluginId: string }) {
   ].map(item => [item.id, item])).values()];
   const hasPages = Boolean(plugin.views?.length), hasProvider = Boolean(plugin.peer_provider);
   if (plugin.web_app && query.get("tab") !== "peers" && query.get("mode") !== "declarative") {
-    return <ExtensionWebApp resolvedPlugin={plugin} />;
+    return keeper && usable ? <KeptPluginPage plugin={plugin} /> : <ExtensionWebApp resolvedPlugin={plugin} />;
   }
   const showProvider = hasProvider && (tab === "peers" || !hasPages);
   const path = pluginWorkspacePath(plugin.id);
