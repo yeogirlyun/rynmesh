@@ -148,7 +148,7 @@ export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true 
     <button className="ae-btn" onClick={() => { setError(''); setReachable(false); setAttempt(value => value + 1); }}>{tx('重试', 'Retry')}</button>
     {' '}<Link to="/settings/extensions/plugins">{tr('Manage plugins')}</Link>
   </section>;
-  if (!plugin?.enabled || !plugin.web_app || !reachable) return <div aria-busy="true" aria-label={tr('Loading…')} />;
+  if (!plugin?.enabled || !plugin.web_app || !reachable) return <div role="status" aria-busy="true" style={{ padding: 24 }}>{tx('正在连接插件服务…', 'Connecting to the plugin service…')}</div>;
   const url = new URL(plugin.web_app.url); url.searchParams.set('host_origin', window.location.origin);
   const sandbox = ['allow-scripts', 'allow-forms', 'allow-same-origin', 'allow-popups'];
   if (plugin.web_app.permissions.includes('downloads')) sandbox.push('allow-downloads');

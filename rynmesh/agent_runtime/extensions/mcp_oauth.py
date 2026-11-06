@@ -42,9 +42,9 @@ class McpOAuthError(AgentError):
 
 class OAuthHttpError(McpOAuthError):
     def __init__(self, status=503, error=None):
-        super().__init__("agent_mcp_oauth_request_failed")
+        super().__init__("agent_mcp_oauth_device_limit" if error == "device_limit" else "agent_mcp_oauth_request_failed")
         self.status = status
-        self.oauth_error = error if error in {"invalid_grant", "invalid_client", "invalid_scope"} else None
+        self.oauth_error = error if error in {"invalid_grant", "invalid_client", "invalid_scope", "device_limit"} else None
 
 
 def fail(code="agent_mcp_oauth_invalid_response"):
@@ -54,6 +54,7 @@ def fail(code="agent_mcp_oauth_invalid_response"):
 # RFC 6749 4.1.2.1 / RFC 8707 authorization-response errors -> controlled codes.
 # Unknown values keep the historical generic denial code.
 AUTHORIZATION_ERRORS = {
+    "device_limit": "agent_mcp_oauth_device_limit",
     "access_denied": "agent_mcp_oauth_login_denied",
     "invalid_target": "agent_mcp_oauth_invalid_target",
     "invalid_scope": "agent_mcp_oauth_invalid_scope",
@@ -581,6 +582,12 @@ class McpOAuthManager:
             params = {"response_type": "code", "client_id": client["client_id"], "redirect_uri": listener.url,
                       "state": state, "code_challenge": base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("="),
                       "code_challenge_method": "S256", "resource": row["resource"]}
+            if server.get("plugin_id") in COMPANY_PLUGIN_IDS:
+                # Persist independently of connection revisions and token rotation.
+                # Scope the pseudonymous installation hint to the issuer.
+                with self.credentials.transaction(document=True) as document:
+                    seed = document.setdefault("device_seed", secrets.token_hex(32))
+                    params["ryn_device_id"] = hmac.new(seed.encode(), metadata["issuer"].encode(), hashlib.sha256).hexdigest()
             if requested:
                 params["scope"] = " ".join(sorted(requested))
             endpoint = urlsplit(metadata["authorization_endpoint"])

@@ -318,6 +318,28 @@ def test_optional_issuer_and_upstream_errors_are_fixed(tmp_path, authority):
         manager.close()
 
 
+def test_company_device_hint_survives_relogin_and_manager_restart(tmp_path, authority, monkeypatch):
+    import rynmesh.agent_runtime.extensions.mcp_oauth as oauth
+    store, manager = setup(tmp_path, authority)
+    # Treat the synthetic fixture as a company connection without real networking.
+    monkeypatch.setattr(oauth, 'COMPANY_PLUGIN_IDS', frozenset({None}))
+    try:
+        first = begin(store, manager)
+        ident = parse_qs(urlsplit(first['authorization_url']).query)['ryn_device_id'][0]
+        assert len(ident) == 64
+        manager.cancel_login('remote', first['auth_id'])
+        manager.close()
+        manager = McpOAuthManager(store)
+        second = begin(store, manager)
+        assert parse_qs(urlsplit(second['authorization_url']).query)['ryn_device_id'] == [ident]
+        response = httpx.get(authority.callback(second['authorization_url'], error='device_limit'), trust_env=False)
+        assert response.status_code == 400
+        assert manager.login_status('remote', second['auth_id']) == {'state': 'failed', 'error': 'agent_mcp_oauth_device_limit'}
+        assert ident not in manager.credentials.path.read_text()
+    finally:
+        manager.close()
+
+
 def test_dcr_fixed_port_and_preregistered_priority(tmp_path, authority):
     store, manager = setup(tmp_path, authority, client_id=None)
     try:
