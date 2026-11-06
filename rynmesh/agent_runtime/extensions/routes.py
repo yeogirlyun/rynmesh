@@ -602,11 +602,18 @@ def install_extension_routes(
             if not isinstance(preview_id, str) or not preview_id.strip():
                 raise AgentError("agent_import_preview_not_found")
             expected_rev = _parse_expected_revision(payload.get("expected_revision"))
+            previous_servers = extensions.store.list_mcp_servers_internal(include_tools=False)
             overview = extensions.imports.commit(
                 preview_id.strip(),
                 expected_revision=expected_rev,
                 desktop_access=_desktop_access(),
             )
+            current_instances = {s["instance_id"] for s in extensions.store.list_mcp_servers_internal(include_tools=False)}
+            oauth = getattr(extensions.manager, "oauth", None)
+            if oauth is not None:
+                for previous in previous_servers:
+                    if previous["instance_id"] not in current_instances:
+                        oauth.forget(previous["instance_id"])
             for srv in overview.get("mcp_servers") or []:
                 if isinstance(srv, dict) and isinstance(srv.get("id"), str):
                     extensions.manager.invalidate_server(srv["id"])
