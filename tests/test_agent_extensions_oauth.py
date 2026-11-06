@@ -694,6 +694,53 @@ def test_reimport_preserves_login_but_invalidates_old_execution_binding(tmp_path
         manager.close()
 
 
+def test_enable_route_rediscovers_reimported_authenticated_tools(tmp_path, authority):
+    from types import SimpleNamespace
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from rynmesh.agent_runtime.extensions import ExtensionToolAdapter
+    from rynmesh.agent_runtime.extensions.routes import install_extension_routes
+
+    store, oauth = setup(tmp_path, authority)
+    reimport_oauth_plugin(store, authority)
+    login(store, oauth, authority)
+    oauth.close()
+    sessions = McpSessionManager(store)
+    # Login normally discovers tools; unchanged import must discard that catalog.
+    sessions._oauth_connected('remote')
+    assert server(store)['discovered_tools']
+    original = server(store)['instance_id']
+    token = sessions.oauth.access_token(server(store))
+    reimport_oauth_plugin(store, authority)
+    assert not server(store)['discovered_tools']
+    store.set_plugin_enabled('company-test', False)
+    calls = authority.list_count
+    sessions.rediscover_authenticated('remote')
+    assert authority.list_count == calls  # Disabled endpoints are never probed.
+    adapter = ExtensionToolAdapter(SimpleNamespace(), lambda: None, extension_store=store, session_manager=sessions)
+    app = FastAPI()
+    runtime = SimpleNamespace(store=SimpleNamespace(inspect=lambda read: read({'settings': {}})))
+    install_extension_routes(app, runtime=runtime, extensions=adapter, local_control=lambda request: None)
+    try:
+        with TestClient(app) as client:
+            plugin = next(p for p in store.overview()['plugins'] if p['id'] == 'company-test')
+            response = client.patch('/api/local/agent/extensions/plugins/company-test', json={
+                'enabled': True, 'expected_revision': plugin['revision']})
+            assert response.status_code == 200, response.text
+        current = server(store)
+        assert current['instance_id'] == original and current['status'] == 'ready'
+        assert len(current['discovered_tools']) == 1 and authority.list_count == calls + 1
+        assert sessions.oauth.access_token(current) == token
+        result = sessions.call_tool('remote', 'read', {}, expected_revision=current['revision'],
+            expected_config_generation=current['config_generation'], expected_instance_id=current['instance_id'],
+            expected_schema_hash=current['discovered_tools'][0]['schema_sha256'])
+        assert result['content'][0]['text'] == 'synthetic result'
+        sessions.rediscover_authenticated('remote')
+        assert authority.list_count == calls + 1  # No repeated probe of a ready catalog.
+    finally:
+        sessions.close()
+
+
 @pytest.mark.parametrize('change', ['url', 'client', 'scope'])
 def test_reimport_changed_authority_does_not_inherit_login(tmp_path, authority, change):
     store, manager = setup(tmp_path, authority)

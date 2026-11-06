@@ -447,6 +447,9 @@ def install_extension_routes(
             )
             for mid in result.get("mcp_server_ids") or []:
                 extensions.manager.invalidate_server(mid)
+            if payload["enabled"]:
+                for mid in result.get("mcp_server_ids") or []:
+                    extensions.manager.rediscover_authenticated(mid)
             return result
 
         return await _run("update_plugin", _op)

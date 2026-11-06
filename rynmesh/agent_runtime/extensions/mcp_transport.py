@@ -1175,6 +1175,15 @@ class McpSessionManager:
                 return True
         return False
 
+    def rediscover_authenticated(self, server_id: str) -> None:
+        """Restore a cleared tool catalog when an authenticated plugin is enabled."""
+        current = self.store.get_mcp_server_internal(server_id, require_enabled=False)
+        if (current.get("effective_enabled") is True
+                and current.get("transport") == "streamable_http"
+                and current.get("status") == "NeedsTest"
+                and not current.get("discovered_tools")):
+            self._oauth_connected(server_id)
+
     def _oauth_connected(self, server_id: str) -> None:
         from ..diagnostic_log import oauth_event
         try:
