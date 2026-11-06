@@ -73,8 +73,7 @@ class DefaultModelTool:
             if "read_only" in {row["permission_mode"], data["settings"]["permission_mode"]}:
                 raise AgentToolRejected("agent_permission_denied")
             if flight["authorization"] == "automatic" and (
-                    row["permission_mode"] != "automatic" or data["settings"]["permission_mode"] != "automatic"
-                    or NAME not in row["allowed_write_tools"] or NAME not in data["settings"]["allowed_write_tools"]):
+                    row["permission_mode"] != "automatic" or data["settings"]["permission_mode"] != "automatic"):
                 raise AgentToolRejected("agent_permission_denied")
             if data.get("settings_revision", 0) != args["expected_settings_revision"]:
                 raise AgentToolRejected("agent_settings_revision_conflict")
