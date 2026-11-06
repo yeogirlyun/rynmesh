@@ -144,7 +144,7 @@ export interface AgentMessage {
   content: string | null;
   tool_call_id?: string;
   tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
-  ui?: { kind: "input_answer" | "source_credential" | "verification_feedback" | "change_review" | "steer" | "information" | "message" | "heartbeat" | "silent_heartbeat"; text?: string; prompt?: string; pending_input_id?: string; fields?: Array<{ label: string; value: string }>; endpoint?: string; has_credential?: boolean; hidden?: boolean; automation_id?: string; automation_name?: string };
+  ui?: { kind: "input_answer" | "source_credential" | "verification_feedback" | "change_review" | "steer" | "information" | "message" | "heartbeat" | "silent_heartbeat" | "partial_recovery"; text?: string; prompt?: string; pending_input_id?: string; fields?: Array<{ label: string; value: string }>; endpoint?: string; has_credential?: boolean; hidden?: boolean; automation_id?: string; automation_name?: string };
 }
 export interface AgentEvent {
   seq: number;
@@ -202,6 +202,7 @@ export interface AgentTaskSummary {
   scope_revision?: number;
   model_destination?: AgentModelDestination;
   archived?: boolean;
+  archive_reason?: "storage";
   result_refs?: AgentResultRef[];
   file_artifact_revision?: number;
   budget?: AgentBudget;
@@ -327,6 +328,13 @@ const READ_TIMEOUT_MS = 10000;
 const READ_RETRY_DELAY_MS = 250;
 
 /** Only connection failures and server outages are safe candidates for automatic GET recovery. */
+// Written by Ryn (not the model) when a reply broke off after its read tools ran.
+const PARTIAL_RECOVERY_NOTE = "Recovered completed read calls from a partial model response; the original response did not finish.";
+
+export function isPartialRecoveryMessage(message: AgentMessage): boolean {
+  return message.role === "assistant" && (message.ui?.kind === "partial_recovery" || message.content === PARTIAL_RECOVERY_NOTE);
+}
+
 export function isTransientAgentReadError(reason: unknown): boolean {
   return reason instanceof AgentAPIError ? reason.status === 0 || reason.status >= 500 && reason.status < 600
     : reason instanceof TypeError || reason instanceof DOMException && reason.name === "NetworkError";

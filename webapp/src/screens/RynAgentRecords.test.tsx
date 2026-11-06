@@ -28,6 +28,13 @@ it("restores the original paused state without an automatic resume", async () =>
   await waitFor(() => expect(changed).toHaveBeenCalledWith(expect.objectContaining({ status: "paused", archived: false })));
 });
 
+it("explains a task Ryn archived to free storage", () => {
+  render(<TaskRecords task={{ ...task, archived: true, archive_reason: "storage", allowed_actions: { restore: { enabled: true, reason: null, requires_control_revision: true } } }} busy={false} onChange={vi.fn()} onDelete={vi.fn()} />);
+  expect(screen.getByText(/archived this older task automatically to free Agent storage/)).toBeVisible();
+  expect(screen.queryByText(/Restoring keeps its original state/)).toBeNull();
+  expect(screen.getByRole("button", { name: "Restore task" })).toBeEnabled();
+});
+
 it("does not offer legacy actions or enable a server-blocked deletion", () => {
   const view = render(<TaskRecords task={{ ...task, allowed_actions: undefined }} busy={false} onChange={vi.fn()} onDelete={vi.fn()} />);
   expect(screen.queryByRole("button")).not.toBeInTheDocument();

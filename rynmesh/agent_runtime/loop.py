@@ -43,7 +43,7 @@ from .prompt import (
     plan_message,
     provider_messages,
 )
-from .protocol import digest, event, model_retry_authority, now, sanitized, task
+from .protocol import digest, event, event_result, model_retry_authority, now, sanitized, task
 from .store import AgentError, AgentToolRejected, encoded
 from .stream_tools import StreamToolMismatch
 from .streamed_reads import NestedReadDispatch, StreamedReads
@@ -819,7 +819,7 @@ class AgentLoop:
                     continue
                 if item["tool"] in {"ryn_code_exec", "ryn_shell_execute"} and item["call_id"] in uncompacted_call_ids:
                     continue
-                res = item["result"]
+                res = event_result(row, item)
                 if (
                     isinstance(res, dict)
                     and (res.get("server_id") == "computer-use" or res.get("tool") in {"computer_act_window", "ryn_computer_action"})

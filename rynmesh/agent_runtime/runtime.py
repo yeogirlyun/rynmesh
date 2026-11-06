@@ -6,6 +6,7 @@ request tools: this module alone decides whether those tools may execute.
 """
 from __future__ import annotations
 
+import contextlib
 import copy
 import re
 import threading
@@ -33,6 +34,7 @@ from . import (
     reasoning,
     retry_policy,
     results,
+    storage_relief,
     subagents,
     timing,
     tool_menu,
@@ -55,7 +57,7 @@ from .prompt import (
     PROMPT_VERSION,
     select_base_instructions,
 )
-from .protocol import digest, event, model_retry_authority, now, sanitized, task
+from .protocol import digest, event, hydrated_events, model_retry_authority, now, sanitized, task
 from .state import (
     PUBLIC_STATE_FIELDS,
     initialize,
@@ -87,7 +89,7 @@ PUBLIC_FIELDS = ("fork", "id", "client_request_id", "title", "model_id", "reason
                  "model_destination", "local_execution", "project", "verification_evidence", "reconciliation", "archived", "result_refs", "file_artifact_revision",
                  "conversation_revision", "conversation_event_cursor", "source", "automation_id", "automation_run_id", "automation_kind",
                  "latest_turn_is_silent_heartbeat", "automation_notification", "parent_task_id", "subagent_ids",
-                 "limits_source", "execution_segment", *PUBLIC_STATE_FIELDS)
+                 "limits_source", "execution_segment", "archive_reason", *PUBLIC_STATE_FIELDS)
 VISUAL_SUFFIXES = (".svg", ".html", ".htm", ".png", ".jpg", ".jpeg", ".gif", ".webp")
 
 
@@ -96,6 +98,8 @@ def public_task(row: dict, *, summary: bool = False, settings: dict | None = Non
                 data: dict | None = None) -> dict:
     synchronize(row)
     result = copy.deepcopy({key: row[key] for key in PUBLIC_FIELDS if key in row and not (summary and key in {"messages", "pending_user_messages", "events"})})
+    if "events" in result:
+        result["events"] = hydrated_events(row, result["events"])
     # Metadata changes advance revision too; only an actual completed response
     # identifies a new completion for clients that were away from the task.
     result["completion_event_seq"] = next((item["seq"] for item in reversed(row.get("events", []))
@@ -230,6 +234,10 @@ class AgentRuntime(AgentLoop):
         # external IO runs concurrently; claiming a task remains exclusive.
         self._run_lock = threading.Lock()
         self._run_slots = threading.BoundedSemaphore(6)
+        self._storage_relief_lock = threading.Lock()
+        # First idle check shortly after start (an upgraded store may already be
+        # full), then at most once a minute.
+        self._next_idle_relief = time.monotonic() + 30
         self._active_lock = threading.Lock()
         self._active_runs = {}
         self._queued_since = {}
@@ -951,7 +959,62 @@ class AgentRuntime(AgentLoop):
         finally:
             self._settle_usage(selected["id"], reservation["id"], elapsed=time.monotonic() - started)
 
+    def _relieve_storage(self, trigger, *, exclude=(), need_bytes=0, reserve_bytes=0, need_tasks=0, force=False) -> int:
+        """Archive the least recently updated finished tasks when the store is nearly full.
+
+        ``need_bytes`` will stay stored (a restored task); ``reserve_bytes`` is
+        only held while one step runs, so it triggers relief but is not part of
+        the target. Returns how many tasks moved to their archive. Each move is
+        an ordinary archive (nothing is deleted); a task that changed meanwhile
+        is skipped.
+        """
+        with self._storage_relief_lock:
+            usage = self.store.usage()
+            if not force and not storage_relief.needed(usage, need_bytes=need_bytes + reserve_bytes, need_tasks=need_tasks):
+                return 0
+            plan = self.store.inspect(lambda data: storage_relief.candidates(data, usage["tasks"], set(exclude)))
+            total, count, chosen = usage["total"] + need_bytes, usage["count"] + need_tasks, []
+            for item in plan:
+                if storage_relief.satisfied(total, count):
+                    break
+                chosen.append(item)
+                total, count = total - item["bytes"], count - 1
+            if not chosen:
+                return 0
+            # One commit for the whole batch: each commit re-copies the active
+            # state, so archiving dozens of tasks one by one would stall a step.
+            with contextlib.ExitStack() as gates:
+                for item in sorted(chosen, key=lambda item: item["id"]):
+                    gates.enter_context(credential_control.gate(self.store, item["id"]))
+                archived = len(lifecycle.archive_many(self.store, chosen, event, reason="storage",
+                                                      on_mutate=memory_integration.on_task_lifecycle_in_tx))
+            if archived:
+                after = self.store.usage()
+                diagnostic_log.storage_relief(trigger, archived=archived, before_bytes=usage["total"],
+                                              after_bytes=after["total"], tasks=after["count"])
+            return archived
+
+    def _schedule_idle_storage_relief(self):
+        """Archive old tasks while nothing runs, off the scheduler's lock."""
+        current = time.monotonic()
+        if current < self._next_idle_relief:
+            return
+        self._next_idle_relief = current + 60
+
+        def relieve():
+            try:
+                self._relieve_storage("idle")
+            except Exception as exc:
+                diagnostic_log.failure("storage_relief", exc)
+        threading.Thread(target=relieve, name="ryn-agent-storage-relief", daemon=True).start()
+
     def _reserve_output(self, selected):
+        # Free room before this step reserves its output, instead of failing
+        # the step's commit after the model has already answered.
+        self._relieve_storage("step", exclude={selected["id"]},
+                              reserve_bytes=output_policy.storage_growth(selected["limits"]["max_output_chars"])
+                              + results.MAX_RESULT_BYTES)
+
         def reserve(data):
             row = task(data, selected["id"])
             if row.get("in_flight"):
@@ -1502,6 +1565,13 @@ class AgentRuntime(AgentLoop):
         return self.store.transaction(rename)
 
     def _lifecycle(self, task_id: str, value: dict, operation: str) -> dict:
+        if operation == "restore":
+            try:
+                archived = lifecycle.find(self.store, self.store.read(), task_id)
+            except AgentError:
+                archived = None  # change() reports the precise error.
+            if archived is not None and archived.get("archived"):
+                self._relieve_storage("restore", exclude={task_id}, need_bytes=len(encoded(archived)), need_tasks=1)
         result = lifecycle.change(self.store, task_id, value, operation, event, now,
                                   on_mutate=memory_integration.on_task_lifecycle_in_tx)
         if result.get("deleted"):
@@ -1572,7 +1642,7 @@ class AgentRuntime(AgentLoop):
         if type(after) is not int or after < 0:
             raise AgentError("agent_invalid_cursor")
         row = lifecycle.find(self.store, self.store.read(), task_id)
-        return {"events": [item for item in row["events"] if item["seq"] > after], "cursor": row["event_cursor"], "status": row["status"], "revision": row["revision"], "control_revision": row["control_revision"]}
+        return {"events": hydrated_events(row, [item for item in row["events"] if item["seq"] > after]), "cursor": row["event_cursor"], "status": row["status"], "revision": row["revision"], "control_revision": row["control_revision"]}
 
     def create(self, value: dict) -> dict:
         if set(value) - {"message", "model_id", "title", "client_request_id", "scope", "expected_destination_revision", "skill_ids", "budget_limits", "response_language", "project_id", "reasoning_effort", "attachments"}:
@@ -1617,6 +1687,7 @@ class AgentRuntime(AgentLoop):
         title = value.get("title", content[:80].replace("\n", " "))
         if not isinstance(title, str) or not title.strip() or len(title) > 160:
             raise AgentError("agent_invalid_title")
+        self._relieve_storage("create", need_tasks=1)
 
         def create(data):
             if request_id:
@@ -2575,7 +2646,11 @@ class AgentRuntime(AgentLoop):
                     subagents.on_subagent_settled_in_tx(data, row)
             self.store.transaction(verification_failed)
             return
-        if code in RETRYABLE_MODEL_ERRORS and not selected["queue"]:
+        # A full store fails the commit, not the model. Once older finished
+        # tasks are archived, the step retries once from its recorded evidence.
+        storage_freed = (code == "agent_storage_limit" and not selected["queue"]
+                         and self._relieve_storage("commit_failed", exclude={selected["id"]}, force=True) > 0)
+        if (code in RETRYABLE_MODEL_ERRORS or storage_freed) and not selected["queue"]:
             now_mono = time.monotonic()
             req_started = selected.get("_request_started")
             prep_started = selected.get("_preparation_started", started)
@@ -2931,6 +3006,8 @@ class AgentRuntime(AgentLoop):
                 return None
             # Avoid rewriting encrypted history every idle worker tick.
             if not peek["enabled"] or not peek["queued"]:
+                if peek["enabled"]:
+                    self._schedule_idle_storage_relief()
                 return WorkerRunResult()
             claim_started = time.monotonic()
             selected = self.store.transaction(claim)
