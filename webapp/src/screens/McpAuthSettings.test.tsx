@@ -28,6 +28,20 @@ beforeEach(() => {
 });
 
 describe("MCP sign-in settings", () => {
+  it("shows the current member on a mismatched company connection and signs out the group", async () => {
+    const url = "http://localhost/api/local/agent/extensions/company";
+    let cleared = false;
+    server.use(http.get(url + "/account", () => HttpResponse.json({
+      state: cleared ? "logged_out" : "logged_in", version: cleared ? 2 : 1,
+      displayName: cleared ? "" : "Member B", plugins: { dashboard: "needs_authorization" },
+    })), http.post(url + "/logout", () => { cleared = true; return HttpResponse.json({ cleared: true }); }));
+    render(<McpAuthSettings server={fixture({plugin_id: "company-dashboard", oauth:{state:"logged_in"}})} onRefresh={vi.fn()} />);
+    expect(await screen.findByText(/Member B.*Authorization required/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    await waitFor(() => expect(screen.queryByText(/Member B/)).not.toBeInTheDocument(), { timeout: 3000 });
+    expect(cleared).toBe(true);
+  });
+
   it("starts on owner click, polls to success, and refreshes the server overview", async () => {
     start(); const onRefresh = vi.fn();
     server.use(http.get(`${base}/oauth/login/${auth}`, () => HttpResponse.json({ state: "connected" })));

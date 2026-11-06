@@ -570,6 +570,30 @@ class StdioMcpSession:
         self.private_dir.cleanup()
 
 
+def connector_headers(server):
+    headers = {}
+    env_http_headers = server.get("env_http_headers") or {}
+    if isinstance(env_http_headers, dict):
+        for k, env_name in env_http_headers.items():
+            if isinstance(k, str) and k and isinstance(env_name, str) and env_name:
+                env_val = os.environ.get(env_name)
+                if env_val:
+                    headers[k] = str(env_val)
+    secret_headers = server.get("secret_headers") or {}
+    if isinstance(secret_headers, dict):
+        for k, v in secret_headers.items():
+            if isinstance(k, str) and k and v is not None:
+                headers[k] = str(v)
+    bearer_env = server.get("bearer_token_env")
+    if bearer_env and not any(key.lower() == "authorization" for key in headers):
+        token = os.environ.get(str(bearer_env))
+        if not token:
+            raise McpTransportError("agent_mcp_auth_required", dispatched=False)
+        headers["Authorization"] = f"Bearer {token}"
+
+    return headers
+
+
 class StreamableHttpMcpSession:
     """Bounded Streamable HTTP MCP client supporting JSON and incremental SSE responses."""
 
@@ -609,25 +633,7 @@ class StreamableHttpMcpSession:
             "Content-Type": "application/json",
             "User-Agent": USER_AGENT,
         }
-        env_http_headers = server.get("env_http_headers") or {}
-        if isinstance(env_http_headers, dict):
-            for k, env_name in env_http_headers.items():
-                if isinstance(k, str) and k and isinstance(env_name, str) and env_name:
-                    env_val = os.environ.get(env_name)
-                    if env_val:
-                        headers[k] = str(env_val)
-        secret_headers = server.get("secret_headers") or {}
-        if isinstance(secret_headers, dict):
-            for k, v in secret_headers.items():
-                if isinstance(k, str) and k and v is not None:
-                    headers[k] = str(v)
-        bearer_env = server.get("bearer_token_env")
-        if bearer_env and not any(key.lower() == "authorization" for key in headers):
-            token = os.environ.get(str(bearer_env))
-            if not token:
-                raise McpTransportError("agent_mcp_auth_required", dispatched=False)
-            headers["Authorization"] = f"Bearer {token}"
-
+        headers.update(connector_headers(server))
         self._base_headers = headers
         self._client = httpx.Client(follow_redirects=False, timeout=self.tool_timeout)
 
@@ -1091,6 +1097,8 @@ class StreamableHttpMcpSession:
         *,
         before_dispatch: Callable[[], None] | None = None,
         cancelled: Callable[[], bool] | None = None,
+        trusted_operation: dict[str, Any] | None = None,
+        prepare: bool = False,
     ) -> dict[str, Any]:
         if not self.initialized:
             try:
@@ -1100,8 +1108,9 @@ class StreamableHttpMcpSession:
                 raise
         with self.lock:
             return self._exchange(
-                "tools/call",
-                {"name": name, "arguments": arguments},
+                "tools/prepare" if prepare else "tools/call",
+                {"name": name, "arguments": arguments,
+                 **({"_meta": {"ryn_operation": trusted_operation}} if trusted_operation is not None else {})},
                 self.tool_timeout,
                 before_dispatch=before_dispatch,
                 cancelled=cancelled,
@@ -1139,7 +1148,7 @@ class McpSessionManager:
 
     def __init__(self, store: ExtensionStore) -> None:
         self.store = store
-        self.oauth = McpOAuthManager(store, on_connected=self._oauth_connected)
+        self.oauth = McpOAuthManager(store, on_connected=self._oauth_connected, trusted_origin=self._managed_oauth_origin)
         self._lock = threading.RLock()
         self._sessions: dict[tuple[str, str | None], StdioMcpSession | StreamableHttpMcpSession] = {}
         self._pending: dict[
@@ -1151,13 +1160,44 @@ class McpSessionManager:
         self._fallback_cwd = self.store.root / "mcp_runtime"
         self._fallback_cwd.mkdir(parents=True, exist_ok=True)
 
+    def _managed_oauth_origin(self, resource: str, target: str) -> bool:
+        from urllib.parse import urlsplit
+        local, remote = urlsplit(resource), urlsplit(target)
+        if local.scheme != "http" or local.hostname != "127.0.0.1" or remote.scheme != "https":
+            return False
+        for server in self.store.list_enabled_mcp_servers_internal():
+            if server.get("url") != resource or not (server.get("secret_headers") or {}).get("X-Ryn-Service-Token"):
+                continue
+            issuer = urlsplit(server.get("identity_group_origin") or "")
+            if (issuer.scheme == "https" and not issuer.username and not issuer.password
+                    and issuer.path in {"", "/"} and not issuer.query and not issuer.fragment
+                    and (remote.scheme, remote.netloc) == (issuer.scheme, issuer.netloc)):
+                return True
+        return False
+
+    def rediscover_authenticated(self, server_id: str) -> None:
+        """Restore a cleared tool catalog when an authenticated plugin is enabled."""
+        current = self.store.get_mcp_server_internal(server_id, require_enabled=False)
+        if (current.get("effective_enabled") is True
+                and current.get("transport") == "streamable_http"
+                and current.get("status") == "NeedsTest"
+                and not current.get("discovered_tools")):
+            self._oauth_connected(server_id)
+
     def _oauth_connected(self, server_id: str) -> None:
+        from ..diagnostic_log import oauth_event
         try:
             current = self.store.get_mcp_server_internal(server_id, require_enabled=False)
-            if self.oauth.public_status(current["instance_id"])["state"] == "logged_in":
-                self.test_server(server_id, expected_revision=current["revision"], restart=True)
-        except Exception:
-            pass
+            state = self.oauth.public_status(current["instance_id"])["state"]
+            if state != "logged_in":
+                oauth_event("discovery_skipped", server=server_id, reason=state if isinstance(state, str) else "unknown")
+                return
+            self.test_server(server_id, expected_revision=current["revision"], restart=True)
+            after = self.store.get_mcp_server_internal(server_id, require_enabled=False)
+            oauth_event("discovery_finished", server=server_id, ok=True, tools=len(after.get("discovered_tools") or []))
+        except Exception as exc:
+            code = str(exc) if isinstance(exc, AgentError) else ""
+            oauth_event("discovery_finished", server=server_id, ok=False, code=code, reason=type(exc).__name__.lower()[:40])
 
     @staticmethod
     def _session_key(server_id: str, session_scope: str | None = None) -> tuple[str, str | None]:
@@ -1631,6 +1671,8 @@ class McpSessionManager:
         session_scope: str | None = None,
         before_dispatch: Callable[[], None] | None = None,
         cancelled: Callable[[], bool] = lambda: False,
+        trusted_operation: dict[str, Any] | None = None,
+        prepare: bool = False,
     ) -> dict[str, Any]:
         """Execute a tool call against an enabled MCP server, enforcing identity & generation."""
         key = self._session_key(server_id, session_scope)
@@ -1698,11 +1740,24 @@ class McpSessionManager:
                 return True
 
         try:
+            extra = {}
+            if trusted_operation is not None or prepare:
+                from urllib.parse import urlsplit
+                url = urlsplit(server.get("url") or "")
+                local = url.scheme == "http" and url.hostname == "127.0.0.1" and (server.get("secret_headers") or {}).get("X-Ryn-Service-Token")
+                remote = (url.scheme == "https" and (server.get("auth") or {}).get("mode") == "oauth"
+                          and any(tool.get("name") == tool_name and (tool.get("input_schema") or {}).get("x-ryn-operation") == "1"
+                                  for tool in server.get("discovered_tools") or []))
+                if not isinstance(session, StreamableHttpMcpSession) or not (local or remote):
+                    raise AgentError("agent_local_service_binding_invalid")
+                extra["trusted_operation"] = trusted_operation
+                extra["prepare"] = prepare
             return session.call_tool(
                 tool_name,
                 arguments,
                 before_dispatch=_locked_pre_dispatch,
                 cancelled=_call_cancelled,
+                **extra,
             )
         except BaseException as exc:
             if getattr(exc, "server_id", None) is None:

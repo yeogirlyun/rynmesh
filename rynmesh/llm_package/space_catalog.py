@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 
 from ..services import peer_box
 from .peer_binding import valid
+from .adapters import AdapterError
 from .task_protocol import TaskProtocolError, open_task, seal_task
 
 PATH = "/api/peer/llm/space-catalog"
@@ -63,7 +64,11 @@ class SpaceModelCatalog:
                 # This is a short-lived identity challenge, not CLI discovery.
                 # Publication refreshes the CLI inventory independently; spawning
                 # a CLI here can exceed the peer HTTP timeout for every model.
-                status = provider.public_status(cached_cli_models=True)
+                try:
+                    status = provider.public_status(cached_cli_models=True)
+                except (AdapterError, OSError):
+                    # One unavailable executable must not hide healthy sources.
+                    continue
                 # CLI services follow the node's current sharing policy. Older
                 # manifests do not carry the API-source personal-space-only flag.
                 if status.get("access_policy") != "personal_space":
@@ -122,10 +127,15 @@ class SpaceModelCatalog:
         task_id = "space-catalog-" + uuid.uuid4().hex
         with self.lock:
             self.tickets[peer] = task_id
+        transport_failed = False
         try:
             request = self._seal({"task_id": task_id, "reply_messaging_pub": peer_box.public_key_b64(self.key)},
                 task_id, "space_model_catalog_request", peer, advertised["node_messaging_pub"])
-            wire = self.exchange(peer, request)
+            try:
+                wire = self.exchange(peer, request)
+            except Exception:
+                transport_failed = True
+                raise
             if len(json.dumps(wire).encode()) > 2 * MAX_BYTES:
                 raise TaskProtocolError("space_catalog_response_limit")
             outer, body = open_task(wire, recipient_peer_id=self.store.peer_id,
@@ -159,7 +169,10 @@ class SpaceModelCatalog:
             return copy.deepcopy(rows)
         except Exception:
             with self.lock:
-                if self.tickets.get(peer) == task_id:
+                # A failed connection is not a new catalog. Keep the previous
+                # signed snapshot only until its original expiry; records()
+                # still checks the current membership generation on every read.
+                if self.tickets.get(peer) == task_id and not transport_failed:
                     self.cache.pop(peer, None)
             raise TaskProtocolError("space_catalog_refresh_failed") from None
         finally:

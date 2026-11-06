@@ -91,6 +91,13 @@ def _build_test_env(tmp_path: Path):
     return app, runtime, model, client
 
 
+def test_idle_scheduler_does_not_take_write_lock(tmp_path, monkeypatch):
+    app, runtime, _, _ = _build_test_env(tmp_path)
+    worker = app.state.agent_automation_worker
+    monkeypatch.setattr(runtime.store, "transaction", lambda _: pytest.fail("idle scheduler took write lock"))
+    assert not worker.run_once().activity
+
+
 def test_rrule_schedule_labels_and_next_run_calculation():
     rrule_daily = automations.build_rrule(repeat="daily", time_str="22:00")
     assert rrule_daily == "FREQ=DAILY;BYHOUR=22;BYMINUTE=0;BYSECOND=0"

@@ -1286,7 +1286,7 @@ class LocalTools:
                     unknown_err.diagnostics = copy.deepcopy(diag)
                     raise unknown_err from exc
                 if (
-                    name in {"ryn_file_write", "ryn_file_edit", "ryn_file_manage", "ryn_apply_patch", "ryn_process_write", "ryn_process_stop"}
+                    name in {"ryn_download_file", "ryn_file_write", "ryn_file_edit", "ryn_file_manage", "ryn_apply_patch", "ryn_process_write", "ryn_process_stop"}
                     and not getattr(exc, "after_side_effect", False)
                 ):
                     failure("local_rejected", exc)
@@ -1414,6 +1414,9 @@ class LocalTools:
 
     def perform(self, name, args, context, cancelled, *, prepared_shell=None, operation_id=None, approved_preview=None, on_ready_host_gate=None):
         task_id = context["task_id"]
+        if name == "ryn_download_file":
+            from .downloads import save
+            return save(self, args["source"], context, cancelled)
         if name == "ryn_image_generate":
             from ..llm_package.codex_image import generate
             from ..llm_package.adapters import AdapterError
@@ -1942,8 +1945,8 @@ class LocalTools:
         matches = evidence["operation_confirmed"]
         if cancelled():
             raise AgentToolRejected("agent_cancelled")
-        if name == "ryn_image_generate":
-            path = self.path(result.get("path", receipt["arguments"]["path"]), context)
+        if name in {"ryn_image_generate", "ryn_download_file"}:
+            path = self.path(result["path"], context)
             matches &= path.is_file() and path.stat().st_size == result.get("bytes") and sha(path.read_bytes()) == result.get("sha256")
             evidence.update(path=str(path), current_state_matches=matches)
         elif name.startswith("ryn_file_"):

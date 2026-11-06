@@ -1,5 +1,7 @@
 """Per-task encrypted storage: one root commits each task file by digest."""
+from concurrent.futures import ThreadPoolExecutor
 import json
+import threading
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
@@ -166,3 +168,80 @@ def test_unchanged_task_poll_returns_only_live_fields(tmp_path):
     assert runtime.get(task["id"], full["revision"] - 1) == full
     summaries = runtime.list_tasks()
     assert summaries[0]["id"] == task["id"] and "messages" not in summaries[0]
+
+
+def test_task_poll_reads_last_commit_during_slow_write(tmp_path):
+    runtime, _, _, _ = make_runtime(tmp_path, assistant("Done."))
+    task_id = runtime.create({"message": "Say done."})["id"]
+    previous = runtime.get(task_id)
+    entered, release = threading.Event(), threading.Event()
+
+    def mutate(data):
+        data["tasks"][task_id]["title"] = "committed later"
+        entered.set()
+        assert release.wait(10)
+
+    with ThreadPoolExecutor(2) as pool:
+        writer = pool.submit(runtime.store.transaction, mutate)
+        try:
+            assert entered.wait(5)
+            assert pool.submit(runtime.list_tasks).result(2)[0]["title"] == previous["title"]
+            assert pool.submit(runtime.get, task_id).result(2)["title"] == previous["title"]
+            control = pool.submit(runtime.store.read_control, task_id).result(2)
+            assert control["tasks"][task_id]["title"] == previous["title"]
+        finally:
+            release.set()
+        writer.result(5)
+    assert runtime.get(task_id)["title"] == "committed later"
+
+
+def test_slow_result_copy_does_not_block_next_writer(tmp_path):
+    store = AgentStore(tmp_path, X25519PrivateKey.generate())
+    seed(store, "a")
+    copying, release = threading.Event(), threading.Event()
+
+    class SlowResult:
+        def __deepcopy__(self, memo):
+            copying.set()
+            assert release.wait(10)
+            return "copied"
+
+    with ThreadPoolExecutor(2) as pool:
+        first = pool.submit(store.transaction, lambda data: SlowResult())
+        try:
+            assert copying.wait(5)
+            second = pool.submit(store.transaction, lambda data: data["tasks"]["a"].update(title="next"))
+            second.result(2)
+        finally:
+            release.set()
+        assert first.result(5) == "copied"
+    assert store.read()["tasks"]["a"]["title"] == "next"
+
+
+def test_competing_prepared_writes_apply_each_callback_once(tmp_path, monkeypatch):
+    store = AgentStore(tmp_path, X25519PrivateKey.generate())
+    seed(store, "a")
+    other = AgentStore(tmp_path, store.key)
+    barrier = threading.Barrier(2)
+    for instance in (store, other):
+        original = instance._snapshot
+
+        def same_base(original=original):
+            snapshot = original()
+            barrier.wait(timeout=5)
+            return snapshot
+        monkeypatch.setattr(instance, "_snapshot", same_base)
+    calls = []
+
+    def append(data, label):
+        calls.append(label)
+        data["tasks"]["a"]["events"].append({"type": label})
+
+    with ThreadPoolExecutor(2) as pool:
+        futures = [pool.submit(instance.transaction, lambda data, label=label: append(data, label))
+                   for instance, label in ((store, "left"), (other, "right"))]
+        for future in futures:
+            future.result(10)
+    assert sorted(calls) == ["left", "right"]
+    final = AgentStore(tmp_path, store.key).read()
+    assert sorted(event["type"] for event in final["tasks"]["a"]["events"]) == ["left", "right"]

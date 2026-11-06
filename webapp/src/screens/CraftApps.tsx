@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ArrowRight, ArrowUpRight, Bot, CheckCircle2, Download, FileUser, FolderCheck, HardDrive, Headset, UsersRound } from "lucide-react";
 import { Modal } from "../personal/components";
@@ -41,6 +41,8 @@ export default function CraftApps({ manage = false }: { manage?: boolean }) {
   const warningText = (app: CraftPlugin) => text(app.warning === "cjk_font_coverage" ? "cjkWarning" : "fontWarning");
   const warningShortText = (app: CraftPlugin) => text(app.warning === "cjk_font_coverage" ? "cjkWarningShort" : "fontWarningShort");
   const navigate = useNavigate();
+  const location = useLocation();
+  const sidebarLaunch = useRef("");
   const [catalog, setCatalog] = useState<CraftCatalog | null>(null);
   const [extensionOverview, setExtensionOverview] = useState<ExtensionOverview | null>(null);
   const [error, setError] = useState("");
@@ -163,6 +165,16 @@ export default function CraftApps({ manage = false }: { manage?: boolean }) {
     setCatalog(value); setReady(null); setModal(null); setNotice(text(modal.kind === "uninstall" ? "uninstalled" : "saved"));
     if (modal.app.id === "nas") { setNasHandoff(null); nasChanged(); }
   });
+  useEffect(() => {
+    const id = new URLSearchParams(location.search).get("open");
+    if (!id) { sidebarLaunch.current = ""; return; }
+    if (!catalog || manage || sidebarLaunch.current === location.key) return;
+    sidebarLaunch.current = location.key;
+    const app = catalog.plugins.find(item => item.id === id && item.installed && item.enabled);
+    navigate("/apps", { replace: true });
+    if (app) void open(app);
+    else failure(new Error("plugin_disabled"));
+  }, [catalog, location.key, location.search, manage]);
   const installAutomation = () => run(async () => {
     if (!modal || modal.kind !== "agent") return;
     const id = modal.app.id;

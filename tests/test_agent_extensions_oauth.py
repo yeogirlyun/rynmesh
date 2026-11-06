@@ -318,6 +318,28 @@ def test_optional_issuer_and_upstream_errors_are_fixed(tmp_path, authority):
         manager.close()
 
 
+def test_company_device_hint_survives_relogin_and_manager_restart(tmp_path, authority, monkeypatch):
+    import rynmesh.agent_runtime.extensions.mcp_oauth as oauth
+    store, manager = setup(tmp_path, authority)
+    # Treat the synthetic fixture as a company connection without real networking.
+    monkeypatch.setattr(oauth, 'COMPANY_PLUGIN_IDS', frozenset({None}))
+    try:
+        first = begin(store, manager)
+        ident = parse_qs(urlsplit(first['authorization_url']).query)['ryn_device_id'][0]
+        assert len(ident) == 64
+        manager.cancel_login('remote', first['auth_id'])
+        manager.close()
+        manager = McpOAuthManager(store)
+        second = begin(store, manager)
+        assert parse_qs(urlsplit(second['authorization_url']).query)['ryn_device_id'] == [ident]
+        response = httpx.get(authority.callback(second['authorization_url'], error='device_limit'), trust_env=False)
+        assert response.status_code == 400
+        assert manager.login_status('remote', second['auth_id']) == {'state': 'failed', 'error': 'agent_mcp_oauth_device_limit'}
+        assert ident not in manager.credentials.path.read_text()
+    finally:
+        manager.close()
+
+
 def test_dcr_fixed_port_and_preregistered_priority(tmp_path, authority):
     store, manager = setup(tmp_path, authority, client_id=None)
     try:
@@ -633,6 +655,143 @@ def test_disabled_login_refused_and_config_change_discards_tokens(tmp_path, auth
     assert manager.public_status(original)["state"] == "logged_out"
     assert "client" not in manager.credentials.read()["servers"][original]
     manager.close()
+
+
+def reimport_oauth_plugin(store, authority, **changes):
+    item = {"id": "remote", "plugin_id": "company-test", "transport": "streamable_http",
+            "url": authority.resource, "auth": {"mode": "oauth", "client_id": "desktop"}, **changes}
+    store.commit_imported_items(plugins=[{"id": "company-test", "version": "2", "mcp_server_ids": ["remote"]}],
+                                skills=[], mcp_servers=[item])
+    store.set_plugin_enabled("company-test", True)
+
+
+def test_reimport_preserves_login_but_invalidates_old_execution_binding(tmp_path, authority):
+    store, manager = setup(tmp_path, authority)
+    try:
+        reimport_oauth_plugin(store, authority)
+        login(store, manager, authority)
+        before = server(store)
+        token = manager.access_token(before)
+        reimport_oauth_plugin(store, authority)
+        after = server(store)
+        assert before['instance_id'] == after['instance_id']
+        assert before['config_generation'] == after['config_generation']
+        assert before['revision'] != after['revision'] and before['plugin_revision'] != after['plugin_revision']
+        with pytest.raises(McpOAuthError, match='configuration_changed'):
+            manager.access_token(before)
+        assert manager.public_status(after['instance_id'])['state'] == 'logged_in'
+        assert manager.access_token(after) == token
+        manager.close()
+        manager = McpOAuthManager(store)
+        assert manager.access_token(server(store)) == token
+        store.set_plugin_enabled('company-test', False)
+        with pytest.raises(McpOAuthError, match='server_disabled'):
+            manager.access_token(store.get_mcp_server_internal('remote', require_enabled=False))
+        store.set_plugin_enabled('company-test', True)
+        assert manager.access_token(server(store)) == token
+        assert len(authority.refresh) == 1
+    finally:
+        manager.close()
+
+
+def test_enable_route_rediscovers_reimported_authenticated_tools(tmp_path, authority):
+    from types import SimpleNamespace
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from rynmesh.agent_runtime.extensions import ExtensionToolAdapter
+    from rynmesh.agent_runtime.extensions.routes import install_extension_routes
+
+    store, oauth = setup(tmp_path, authority)
+    reimport_oauth_plugin(store, authority)
+    login(store, oauth, authority)
+    oauth.close()
+    sessions = McpSessionManager(store)
+    # Login normally discovers tools; unchanged import must discard that catalog.
+    sessions._oauth_connected('remote')
+    assert server(store)['discovered_tools']
+    original = server(store)['instance_id']
+    token = sessions.oauth.access_token(server(store))
+    reimport_oauth_plugin(store, authority)
+    assert not server(store)['discovered_tools']
+    store.set_plugin_enabled('company-test', False)
+    calls = authority.list_count
+    sessions.rediscover_authenticated('remote')
+    assert authority.list_count == calls  # Disabled endpoints are never probed.
+    adapter = ExtensionToolAdapter(SimpleNamespace(), lambda: None, extension_store=store, session_manager=sessions)
+    app = FastAPI()
+    runtime = SimpleNamespace(store=SimpleNamespace(inspect=lambda read: read({'settings': {}})))
+    install_extension_routes(app, runtime=runtime, extensions=adapter, local_control=lambda request: None)
+    try:
+        with TestClient(app) as client:
+            plugin = next(p for p in store.overview()['plugins'] if p['id'] == 'company-test')
+            response = client.patch('/api/local/agent/extensions/plugins/company-test', json={
+                'enabled': True, 'expected_revision': plugin['revision']})
+            assert response.status_code == 200, response.text
+        current = server(store)
+        assert current['instance_id'] == original and current['status'] == 'ready'
+        assert len(current['discovered_tools']) == 1 and authority.list_count == calls + 1
+        assert sessions.oauth.access_token(current) == token
+        result = sessions.call_tool('remote', 'read', {}, expected_revision=current['revision'],
+            expected_config_generation=current['config_generation'], expected_instance_id=current['instance_id'],
+            expected_schema_hash=current['discovered_tools'][0]['schema_sha256'])
+        assert result['content'][0]['text'] == 'synthetic result'
+        sessions.rediscover_authenticated('remote')
+        assert authority.list_count == calls + 1  # No repeated probe of a ready catalog.
+    finally:
+        sessions.close()
+
+
+@pytest.mark.parametrize('change', ['url', 'client', 'scope'])
+def test_reimport_changed_authority_does_not_inherit_login(tmp_path, authority, change):
+    store, manager = setup(tmp_path, authority)
+    try:
+        reimport_oauth_plugin(store, authority)
+        login(store, manager, authority)
+        before = server(store)
+        updates = {'url': authority.resource + '/other'} if change == 'url' else {
+            'auth': {'mode': 'oauth', 'client_id': 'other' if change == 'client' else 'desktop',
+                     'scopes': ['new.scope'] if change == 'scope' else []}}
+        reimport_oauth_plugin(store, authority, **updates)
+        assert server(store)['instance_id'] != before['instance_id']
+        assert manager.public_status(server(store)['instance_id'])['state'] == 'logged_out'
+        manager.forget(before['instance_id'])
+        assert not authority.refresh
+    finally:
+        manager.close()
+
+
+def test_reimport_during_refresh_keeps_the_rotated_credential(tmp_path, authority):
+    store, manager = setup(tmp_path, authority)
+    reimport_oauth_plugin(store, authority)
+    login(store, manager, authority)
+    ready, release = threading.Event(), threading.Event()
+    actual, result, errors = manager.transport, [], []
+    def delayed(method, url, **kwargs):
+        value = actual(method, url, **kwargs)
+        if url.endswith('/token'):
+            ready.set()
+            assert release.wait(8)
+        return value
+    manager.transport = delayed
+    before = server(store)
+    def refresh():
+        try: result.append(manager.access_token(before, force_refresh=True))
+        except Exception as exc: errors.append(str(exc))
+    thread = threading.Thread(target=refresh)
+    thread.start()
+    try:
+        assert ready.wait(5)
+        reimport_oauth_plugin(store, authority)
+        assert manager.public_status(server(store)['instance_id'])['state'] == 'logged_in'
+    finally:
+        release.set(); thread.join(8)
+        manager.transport = actual
+    try:
+        assert not errors and len(result) == 1
+        assert manager.access_token(server(store)) == result[0]
+        assert len(authority.refresh) == 1
+    finally:
+        manager.close()
 
 
 def test_login_poll_waits_for_discovery_and_stays_authorized_after_revision_change(tmp_path, authority):

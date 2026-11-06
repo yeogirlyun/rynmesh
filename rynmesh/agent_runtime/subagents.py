@@ -12,7 +12,7 @@ from pathlib import PurePosixPath
 
 from . import budget
 from .control import close_queue, settle
-from .protocol import event, now
+from .protocol import event, event_result, now
 from .state import SCHEMA_VERSION, initialize, owner_update
 from .store import DEFAULT_SETTINGS, AgentError, AgentToolRejected
 
@@ -1102,7 +1102,8 @@ def compute_subagent_diff_and_timeline(child_row: dict) -> tuple[dict, list[dict
 
             if tname in {"ryn_file_read", "ryn_file_search", "ryn_file_list", "ryn_project_inspect"}:
                 target = _normalize_rel_path(str(args.get("path") or args.get("query") or "."), ws_root)
-                res_obj = res_ev.get("result") if res_ev and isinstance(res_ev.get("result"), dict) else {}
+                full = event_result(child_row, res_ev) if res_ev else None
+                res_obj = full if isinstance(full, dict) else {}
                 line_range = None
                 if tname == "ryn_file_read":
                     s_line = res_obj.get("start_line") or args.get("start_line") or 1

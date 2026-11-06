@@ -930,7 +930,10 @@ def public_automation(store: Any, item: dict[str, Any]) -> dict[str, Any]:
 
 def sync_automations_from_disk_in_tx(store: Any, data: dict[str, Any]) -> bool:
     ensure_automation_state(data)
-    automations: dict[str, Any] = data["automations"]
+    return sync_automation_files(store, data["automations"], check_only=False)
+
+
+def sync_automation_files(store: Any, automations: dict[str, Any], *, check_only: bool) -> bool:
     root = automations_root(store)
     changed = False
 
@@ -950,6 +953,8 @@ def sync_automations_from_disk_in_tx(store: Any, data: dict[str, Any]) -> bool:
             continue
         existing = automations.get(auto_id)
         if not isinstance(existing, dict):
+            if check_only:
+                return True
             record = normalize_automation_record(store, {**parsed, "id": auto_id})
             automations[auto_id] = record
             write_automation_files(store, record)
@@ -968,6 +973,8 @@ def sync_automations_from_disk_in_tx(store: Any, data: dict[str, Any]) -> bool:
                 "auto_archive",
             ):
                 if key in parsed and parsed[key] != existing.get(key):
+                    if check_only:
+                        return True
                     merged = normalize_automation_record(store, parsed, existing=existing)
                     automations[auto_id] = merged
                     changed = True
@@ -979,6 +986,8 @@ def sync_automations_from_disk_in_tx(store: Any, data: dict[str, Any]) -> bool:
             continue
         toml_file = automation_toml_path(store, auto_id)
         if not toml_file.exists():
+            if check_only:
+                return True
             write_automation_files(store, item)
 
     return changed

@@ -10,6 +10,7 @@ import threading
 import time
 import uuid
 from datetime import datetime
+from contextvars import ContextVar
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -18,6 +19,9 @@ from . import validation as v
 from .oauth import OAuthClient, ProviderHttpError, request_json
 from .storage import SealedStore
 from .validation import PeerProviderError
+
+
+company_member = ContextVar("peer_provider_company_member", default=None)
 
 
 class PeerProviderService:
@@ -113,6 +117,9 @@ class PeerProviderService:
             row = self._rows.get(plugin_id)
             if not row or not row["enabled"]:
                 v.fail("peer_provider_unavailable")
+            member = company_member.get()
+            if member is not None and (not member or (row.get("binding") or {}).get("member_id") != member):
+                v.fail("peer_provider_login_required")
             if session and not row.get("session"):
                 v.fail("peer_provider_login_required")
             return copy.deepcopy(row)
@@ -215,6 +222,18 @@ class PeerProviderService:
             self._save()
         await self.bind(plugin_id)
         return self.status(plugin_id)
+
+    def clear_local_company_sessions(self, plugin_ids):
+        self.sync_from_extensions()
+        with self._lock:
+            for plugin_id in plugin_ids:
+                row = self._rows.get(plugin_id)
+                if row:
+                    self._clear(plugin_id)
+                    row.pop("session", None)
+                    row.pop("binding", None)
+                    row.update(published={}, epoch=uuid.uuid4().hex)
+            self._save()
 
     async def logout(self, plugin_id):
         self.sync_from_extensions()
@@ -411,7 +430,7 @@ class PeerProviderService:
         status = self.status(plugin_id)
         dir_data = None
         ws_data = None
-        if not status.get("bound") and self.mcp_workspace_source is not None:
+        if not status.get("bound") and company_member.get() is None and self.mcp_workspace_source is not None:
             try:
                 fallback_ws = await asyncio.to_thread(self.mcp_workspace_source, plugin_id)
                 if isinstance(fallback_ws, dict) and isinstance(fallback_ws.get("colleagues"), list):
@@ -436,7 +455,7 @@ class PeerProviderService:
                     ws_data = ws_raw
             except Exception:
                 ws_data = None
-        if ws_data is None and self.mcp_workspace_source is not None:
+        if ws_data is None and company_member.get() is None and self.mcp_workspace_source is not None:
             try:
                 fallback_ws = await asyncio.to_thread(self.mcp_workspace_source, plugin_id)
                 if isinstance(fallback_ws, dict) and isinstance(fallback_ws.get("colleagues"), list):

@@ -26,6 +26,8 @@ from ..node_apps.plugin_agent import NAMES as PLUGIN_NAMES
 from ..node_apps.plugin_agent import SPECS as PLUGIN_SPECS
 from ..node_apps.plugin_agent import PluginTools
 from ..services.peer_health import PeerHealthProbe
+from .artifact_transfers import NAME as ARTIFACT_LIST
+from .artifact_transfers import ArtifactTransfers
 from .cli_sources import CONNECT as CLI_CONNECT
 from .cli_sources import KINDS as CLI_KINDS
 from .cli_sources import NAMES as CLI_NAMES
@@ -69,6 +71,7 @@ _SOURCE_CONFIG = _schema({"name": {"type": "string", "minLength": 1, "maxLength"
     "request_defaults": _schema({"thinking": {"type": ["object", "boolean"]}, "reasoning_effort": {"type": "string", "maxLength": 32},
         "temperature": {"type": "number"}, "top_p": {"type": "number"}}), "enabled": {"type": "boolean"}}, ["name", "kind", "base_url", "models"])
 _SPECS = {
+    ARTIFACT_LIST: ("List short-lived file references for receipt-backed files read or created in this task. Use artifact_ref for an approved plugin attachment upload, never send a server path or base64. Read the user-provided file with the normal file tool first if absent. Does not upload or send anything.", "read", "low", _schema()),
     "ryn_discover_local_cli_sources": ("Discover supported CLI sources installed on THIS device, their setup status and sharing availability. Returns adapter kinds; detection is not login or inference proof. No shell commands, paths or secrets accepted.", "read", "low", _schema()),
     CLI_CONNECT: ("Connect a discovered installed CLI as a private local AI source. Runs a fixed login/chat probe under this task budget. Reuses existing configuration without resetting sharing. Does not install software, change default/current models or enable sharing. Requires exact setup preview approval. Connected models with an Agent tool bridge are ready to use; no separate tool test is required.", "write", "high", _schema({"kind": {"enum": list(CLI_KINDS)}}, ["kind"])),
     CLI_TEST: ("Optionally diagnose a configured local CLI using two fixed synthetic client-tool exchanges; persist diagnostic evidence. Charged to this task budget. No user data or real business tools execute. The diagnostic result does not enable or disable connected models and is not required before selecting or using one.", "read", "medium", _schema({"kind": {"enum": list(CLI_KINDS)}}, ["kind"])),
@@ -156,6 +159,7 @@ class RynTools:
             node_store=store,
             native_computer=self.native_computer,
         )
+        self.craft_plugins.extension_catalog = self.extensions.plugin_catalog
         self.code_mode = CodeModeRunner(self)
 
     def close(self):
@@ -388,6 +392,8 @@ class RynTools:
         if name not in _SPECS:
             raise AgentToolRejected("agent_unknown_tool")
         description, effect, risk, _ = _SPECS[name]
+        if name == ARTIFACT_LIST:
+            return {"effect": "read", "title": description, "risk": "low", "scope_context_supported": True, "supports_preview": False, "preview_precondition": False}
         if name in {DEFAULT_MODEL_NAME, FRIEND_SHARING_NAME}:
             return {"effect": effect, "title": description, "risk": risk, "scope_context_supported": True,
                     "supports_preview": True, "preview_precondition": True}
@@ -576,6 +582,8 @@ class RynTools:
         if name == FRIEND_SHARING_NAME:
             return self.friend_sharing.execute(arguments, operation_id=operation_id, context=context,
                                               expected_preview=expected_preview, cancelled=cancelled)
+        if name == ARTIFACT_LIST:
+            return ArtifactTransfers(self.local.store).issue(context)
         if name in DIAGNOSTIC_NAMES:
             return bounded_result(self.diagnostics.execute(name, arguments, context=context, cancelled=cancelled), strict=True)
         if name in CLI_NAMES:

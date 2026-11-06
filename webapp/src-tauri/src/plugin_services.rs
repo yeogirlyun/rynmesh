@@ -15,6 +15,8 @@ struct Service {
     health_path: String,
     #[serde(default)]
     environment: BTreeMap<String, String>,
+    #[serde(default)]
+    mcp_servers: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -59,6 +61,7 @@ fn parse(bytes: &[u8]) -> Result<Vec<Service>, String> {
     let mut ports = BTreeSet::new();
     for s in &config.services {
         if !safe_id(&s.id) || !ids.insert(s.id.clone()) || s.plugins.is_empty() || s.plugins.len() > 100 ||
+            s.mcp_servers.len() > 32 || s.mcp_servers.iter().any(|id| !safe_id(id)) ||
             s.plugins.iter().any(|id| !safe_id(id) || !plugins.insert(id.clone())) || s.port == 0 || !ports.insert(s.port) ||
             s.program.as_os_str().is_empty() || !s.program.components().all(|c| matches!(c, Component::Normal(_))) ||
             !s.health_path.starts_with('/') || s.health_path.len() > 2048 ||
@@ -109,7 +112,7 @@ fn healthy(s: &Service) -> bool {
         && line.ends_with('\n') && line.split_whitespace().nth(1) == Some("200")
 }
 
-fn spawn(root: &Path, service: &Service) -> Result<OwnedService, String> {
+fn spawn(root: &Path, service: &Service, credentials: Option<&serde_json::Value>, node_port: u16) -> Result<OwnedService, String> {
     let base = root.canonicalize().map_err(|_| "plugin_service_files_missing")?;
     let program = base.join(&service.program).canonicalize().map_err(|_| "plugin_service_files_missing")?;
     if !program.starts_with(&base) || !program.is_file() { return Err("plugin_service_program_invalid".into()); }
@@ -119,6 +122,11 @@ fn spawn(root: &Path, service: &Service) -> Result<OwnedService, String> {
     let mut command = Command::new(&program);
     command.current_dir(program.parent().unwrap()).envs(&service.environment)
         .stdin(Stdio::null()).stdout(log).stderr(log_err);
+    if let Some(value) = credentials {
+        command.env("RYN_PLUGIN_SERVICE_TOKEN", value["credential"].as_str().ok_or("plugin_service_credentials_invalid")?)
+            .env("RYN_PLUGIN_SERVICE_GENERATION", value["generation"].as_str().ok_or("plugin_service_credentials_invalid")?)
+            .env("RYN_PLUGIN_HOST_PORT", node_port.to_string());
+    }
     #[cfg(windows)]
     { use std::os::windows::process::CommandExt; command.creation_flags(0x08000000); }
     #[cfg(unix)]
@@ -152,7 +160,7 @@ fn own_tree(pid: u32) -> Result<usize, String> {
 }
 
 impl PluginServices {
-    fn ensure(&self, root: &Path, s: &Service) -> Result<(), String> {
+    fn ensure(&self, root: &Path, s: &Service, node_port: u16) -> Result<(), String> {
         let mut children = self.children.lock().unwrap();
         if self.stopping.load(Ordering::SeqCst) { return Err("plugin_service_stopping".into()); }
         if let Some(owned) = children.get_mut(&s.id) {
@@ -170,11 +178,22 @@ impl PluginServices {
         }
         // Never adopt/terminate a foreign listener just because it uses the desired port.
         if listening(s.port) { return Err("plugin_service_port_in_use".into()); }
-        let mut owned = spawn(root, s)?;
+        let credentials = if s.mcp_servers.is_empty() { None } else {
+            Some(crate::node::request_bounded(node_port, "POST", "/api/local/agent/extensions/local-service/prepare",
+                &serde_json::json!({"service_id": s.id, "plugin_ids": s.plugins, "server_ids": s.mcp_servers, "port": s.port}).to_string(),
+                Duration::from_secs(5), 4096)?)
+        };
+        let mut owned = spawn(root, s, credentials.as_ref(), node_port)?;
         let deadline = Instant::now() + Duration::from_secs(30);
         while Instant::now() < deadline && !self.stopping.load(Ordering::SeqCst) {
             if !matches!(owned.child.try_wait(), Ok(None)) { return Err("plugin_service_exited".into()); }
-            if healthy(s) { children.insert(s.id.clone(), owned); return Ok(()); }
+            if healthy(s) {
+                if let Some(value) = &credentials {
+                    crate::node::request_bounded(node_port, "POST", "/api/local/agent/extensions/local-service/activate",
+                        &serde_json::json!({"service_id": s.id, "generation": value["generation"]}).to_string(), Duration::from_secs(5), 4096)?;
+                }
+                children.insert(s.id.clone(), owned); return Ok(());
+            }
             std::thread::sleep(Duration::from_millis(200));
         }
         Err("plugin_service_start_timeout".into())
@@ -195,7 +214,7 @@ pub async fn ensure_plugin_service(app: tauri::AppHandle, plugin_id: String) -> 
         if !live.iter().any(|p| p["id"].as_str() == Some(&plugin_id) && plugin_matches(p, service)) {
             return Err("plugin_service_disabled".into());
         }
-        app.state::<PluginServices>().ensure(&root, service).map_err(|error| {
+        app.state::<PluginServices>().ensure(&root, service, app.state::<crate::node::NodeState>().port).map_err(|error| {
             log::warn!("plugin service {}: {error}", service.id);
             error
         })?;
@@ -205,6 +224,24 @@ pub async fn ensure_plugin_service(app: tauri::AppHandle, plugin_id: String) -> 
 
 fn recovery_due(since: &mut Option<Instant>, now: Instant) -> bool {
     now.duration_since(*since.get_or_insert(now)) >= Duration::from_secs(90)
+}
+
+/// Observe an installed runtime without restarting it or reloading the tool catalog.
+/// The PID lets kept-alive frames detect a restart even between health polls.
+#[tauri::command]
+pub async fn plugin_service_instance(app: tauri::AppHandle, plugin_id: String) -> Result<Option<u32>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (_, services) = installed()?;
+        let Some(service) = services.iter().find(|s| s.plugins.contains(&plugin_id)) else { return Ok(None); };
+        let state = app.state::<PluginServices>();
+        let mut children = state.children.lock().unwrap();
+        let Some(owned) = children.get_mut(&service.id) else { return Err("plugin_service_exited".into()); };
+        if owned.spec != *service || !matches!(owned.child.try_wait(), Ok(None)) {
+            return Err("plugin_service_exited".into());
+        }
+        if !healthy(service) { return Err("plugin_service_unhealthy".into()); }
+        Ok(Some(owned.child.id()))
+    }).await.map_err(|_| "plugin_service_unhealthy")?
 }
 
 pub fn watch(app: tauri::AppHandle) {
@@ -223,7 +260,7 @@ pub fn watch(app: tauri::AppHandle) {
                         if live.iter().any(|p| plugin_matches(p, service)) {
                             if last_attempt.get(&service.id).is_none_or(|last| last.elapsed() >= Duration::from_secs(30)) {
                                 last_attempt.insert(service.id.clone(), Instant::now());
-                                if let Err(error) = state.ensure(&root, service) { log::warn!("plugin service {}: {error}", service.id); }
+                                if let Err(error) = state.ensure(&root, service, app.state::<crate::node::NodeState>().port) { log::warn!("plugin service {}: {error}", service.id); }
                             }
                         } else { state.children.lock().unwrap().remove(&service.id); last_attempt.remove(&service.id); }
                     }
@@ -255,9 +292,9 @@ mod tests {
     fn packaged_runtime_reuses_recovers_reconfigures_and_stops() {
         let (root, mut service) = offline_fixture();
         let manager = PluginServices::default();
-        manager.ensure(&root, &service).unwrap();
+        manager.ensure(&root, &service, 0).unwrap();
         let first = manager.children.lock().unwrap()[&service.id].child.id();
-        manager.ensure(&root, &service).unwrap();
+        manager.ensure(&root, &service, 0).unwrap();
         assert_eq!(manager.children.lock().unwrap()[&service.id].child.id(), first);
         {
             let mut children = manager.children.lock().unwrap();
@@ -265,11 +302,11 @@ mod tests {
             child.kill().unwrap();
             child.wait().unwrap();
         }
-        manager.ensure(&root, &service).unwrap();
+        manager.ensure(&root, &service, 0).unwrap();
         let recovered = manager.children.lock().unwrap()[&service.id].child.id();
         assert_ne!(recovered, first);
         service.environment.insert("COMPANY_RUNTIME_ACCEPTANCE_REVISION".into(), "2".into());
-        manager.ensure(&root, &service).unwrap();
+        manager.ensure(&root, &service, 0).unwrap();
         assert_ne!(manager.children.lock().unwrap()[&service.id].child.id(), recovered);
         manager.stop();
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -311,7 +348,7 @@ mod tests {
         assert_eq!(std::env::var("RYN_PLUGIN_ACCEPTANCE_OWNER").as_deref(), Ok("1"));
         let (root, service) = offline_fixture();
         let manager = PluginServices::default();
-        manager.ensure(&root, &service).unwrap();
+        manager.ensure(&root, &service, 0).unwrap();
         std::thread::sleep(Duration::from_secs(60));
     }
     #[test]
@@ -320,7 +357,7 @@ mod tests {
         let mut service = parse(&serde_json::to_vec(&config()).unwrap()).unwrap().remove(0);
         service.port = listener.local_addr().unwrap().port();
         let state = PluginServices::default();
-        assert_eq!(state.ensure(Path::new("missing"), &service), Err("plugin_service_port_in_use".into()));
+        assert_eq!(state.ensure(Path::new("missing"), &service, 0), Err("plugin_service_port_in_use".into()));
         assert!(state.children.lock().unwrap().is_empty());
         assert!(listening(service.port));
     }

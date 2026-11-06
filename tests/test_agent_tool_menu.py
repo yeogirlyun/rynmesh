@@ -34,6 +34,32 @@ class ManyTools(Tools):
         assert arguments == {"service_id": "svc1"}
 
 
+def test_canonical_name_load_resolves_only_one_current_connection():
+    specs = [{"type": "function", "function": {"name": name, "parameters": {"type": "object"}}}
+             for name in ['mcp_one_status', 'mcp_two_other']]
+    def metadata(name):
+        return {"effect": "read", "extension_binding": {"original_tool_name": 'status' if name == 'mcp_one_status' else 'other'}}
+    state = {"mode": "directory", "catalog_revision": tool_menu.catalog_revision(specs), "loaded_names": [], "revision": 1}
+    result, _ = tool_menu.discover(specs, [], metadata, state, {"load": ['status']}, capacity_bytes=20000)
+    assert result['loaded_names'] == ['mcp_one_status'] and result['permission_granted'] is False
+    with pytest.raises(AgentToolRejected):
+        tool_menu.discover(specs, [], lambda _: {"effect": "read", "extension_binding": {"original_tool_name": 'status'}},
+                           state, {"load": ['status']}, capacity_bytes=20000)
+
+
+def test_selected_plugin_preload_is_bounded_and_keeps_other_tools_discoverable():
+    specs = [{"type": "function", "function": {"name": f"tool_{i}", "description": "query " * 100,
+              "parameters": {"type": "object", "properties": {}}}} for i in range(12)]
+    def metadata(name):
+        index = int(name.split('_')[1])
+        return {"effect": "read" if index % 2 else "write",
+                "extension_binding": {"plugin_id": "selected" if index < 8 else "other"}}
+    names = tool_menu.plugin_preloads(specs, metadata, {'selected'})
+    assert names == ('tool_1', 'tool_3', 'tool_5', 'tool_7')
+    assert sum(len(encoded(s)) for s in specs if s['function']['name'] in names) <= 8192
+    assert len(specs) == 12  # Loading doesn't remove any discovery candidates.
+
+
 @pytest.mark.parametrize("changed_menu", [False, True])
 def test_discovery_prepares_once_outside_state_lock_and_rejects_stale_commit(tmp_path, monkeypatch, changed_menu):
     runtime, _, _, _ = make_runtime(tmp_path,
@@ -370,3 +396,8 @@ def test_released_core_pins_stay_released_on_subsequent_projection():
     assert state2.get("loaded_names", []) == []
     assert [s["function"]["name"] for s in specs2] == [tool_menu.NAME]
 
+
+def test_search_indexes_canonical_camel_case_names():
+    specs = {'mcp_financialdashboard': {'function': {'name': 'mcp_financialdashboard', 'description': '查询财务仪表盘汇总', 'parameters': {}}}}
+    metadata = lambda _: {'extension_binding': {'original_tool_name': 'pl_financialDashboard'}}
+    assert tool_menu._bm25_rank(specs, metadata, 'financial dashboard') == ['mcp_financialdashboard']

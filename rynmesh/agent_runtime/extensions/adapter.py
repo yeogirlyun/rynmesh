@@ -7,6 +7,7 @@ import binascii
 import copy
 import hashlib
 import io
+import json
 import re
 import threading
 import time
@@ -216,6 +217,7 @@ class ExtensionToolAdapter:
         native_computer: NativeComputerFacade | None = None,
     ) -> None:
         self.local = local_tools
+        self.local.download_authority = self.download_authority
         self.ledger_factory = ledger_factory
         self._node_store = node_store
         self._store = extension_store
@@ -256,7 +258,13 @@ class ExtensionToolAdapter:
                 self._native_computer = bind_owner_native_computer(
                     owner, local_tools=self.local
                 )
+            self._native_computer.desktop_route_check = self._check_desktop_route
             return self._native_computer
+
+    def _check_desktop_route(self, context, process_name):
+        from ..desktop_routes import check, published_routes
+
+        check(self.local.store, context, process_name, published_routes(self.store._read()))
 
     def _should_route_builtin_to_native_computer(self) -> bool:
         return True
@@ -283,6 +291,7 @@ class ExtensionToolAdapter:
             self._native_computer = bind_owner_native_computer(
                 agent_store, local_tools=self.local
             )
+            self._native_computer.desktop_route_check = self._check_desktop_route
             if (
                 self._store is not None
                 and self._bound_root == resolved_root
@@ -390,6 +399,56 @@ class ExtensionToolAdapter:
     def handles(self, name: str) -> bool:
         return isinstance(name, str) and (name == READ_SKILL_FILE_TOOL or name.startswith("mcp__"))
 
+    def plugin_catalog(self) -> list[dict[str, Any]]:
+        """Safe installed-plugin summary, using the same store as execution.
+
+        No credentials, endpoint URLs or remote diagnostic prose enter this view.
+        An entry is not an execution grant; dispatch revalidates its binding.
+        """
+        overview = self.store.overview()
+        oauth = getattr(self.manager, "oauth", None)
+        result = []
+        for plugin in overview["plugins"]:
+            if plugin.get("builtin"):
+                continue
+            connections = []
+            for server in overview["mcp_servers"]:
+                if server.get("plugin_id") != plugin["id"]:
+                    continue
+                raw_state = server.get("status", "")
+                state = {"ready": "available", "Ready": "available", "connected": "available",
+                         "NeedsTest": "pending_connection", "NeedsAuth": "authentication_required",
+                         "NeedsPermission": "permission_denied", "disabled": "disabled"}.get(raw_state, "discovery_failed")
+                code = server.get("status_message", "")
+                if code in {"agent_mcp_transport_error", "agent_mcp_timeout", "agent_mcp_server_unavailable"}:
+                    state = "service_unreachable"
+                elif code in {"agent_mcp_permission_denied", "PERMISSION_DENIED"}:
+                    state = "permission_denied"
+                elif code in {"agent_mcp_protocol_error", "STALE_CAPABILITY", "VERSION_INCOMPATIBLE"}:
+                    state = "version_incompatible"
+                if not plugin.get("enabled") or not server.get("enabled"):
+                    state = "disabled"
+                elif oauth is not None:
+                    auth_state = oauth.public_status(server.get("instance_id", "")).get("state")
+                    if auth_state in {"logged_out", "pending", "error"}:
+                        state = "authentication_required"
+                available = state == "available" and server.get("discovery_revision", 0) > 0
+                if state == "available" and not available:
+                    state = "pending_connection"
+                connections.append({"server_id": server["id"], "state": state,
+                                    "discovered": server.get("discovery_revision", 0) > 0,
+                                    "available_tool_count": server.get("enabled_tools_count", 0) if available else 0,
+                                    "discovery_tool": "ryn_discover_tools",
+                                    "last_discovered_at": server.get("last_tested_at"),
+                                    "recovery": {"disabled": "enable_plugin", "authentication_required": "reconnect",
+                                                 "service_unreachable": "start_service", "version_incompatible": "update_components",
+                                                 "permission_denied": "review_permissions"}.get(state, "discover_tools")})
+            result.append({"id": plugin["id"], "name": plugin.get("name", plugin["id"]),
+                           "version": plugin.get("version"), "enabled": bool(plugin.get("enabled")),
+                           "connections": connections, "discovery_tool": "ryn_discover_tools",
+                           "skill_ids": list(plugin.get("skill_ids") or [])})
+        return result
+
     def _mcp_tools_cache_key(self) -> tuple[Any, ...] | None:
         store = self.store
         oauth = getattr(self.manager, "oauth", None)
@@ -438,6 +497,8 @@ class ExtensionToolAdapter:
         out: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] = {}
         oauth = getattr(self.manager, "oauth", None)
         for server in self.store.list_enabled_mcp_servers_internal():
+            if server.get("status") not in {"ready", "Ready", "connected"}:
+                continue
             if oauth is not None and oauth.public_status(str(server.get("instance_id") or "")).get("state") in {"logged_out", "pending", "error"}:
                 continue
             enabled_tools = server.get("enabled_tools")
@@ -500,6 +561,9 @@ class ExtensionToolAdapter:
                 if isinstance(tool.get("input_schema"), dict)
                 else {"type": "object"}
             )
+            schema.pop("x-ryn-artifact", None)
+            schema.pop("x-ryn-operation", None)
+            schema.pop("x-ryn-result", None)
             prefix = f"[{server.get('name') or server['id']}] "
             raw_desc = str(tool.get("description") or tool.get("title") or tool.get("name") or "").strip()
             result.append(
@@ -689,7 +753,7 @@ class ExtensionToolAdapter:
             and binding["effective_effect"] == "write"
         ):
             auth_server, _auth_plugin, auth_tool = builtin_auth
-            return self.native_computer.preview_mcp_write(
+            preview = self.native_computer.preview_mcp_write(
                 binding["original_tool_name"],
                 arguments,
                 binding=binding,
@@ -698,6 +762,34 @@ class ExtensionToolAdapter:
                 tool=auth_tool,
                 context=context,
             )
+            return preview
+        service_preview = None
+        artifact = None
+        if binding["effective_effect"] == "write" and ((server.get("secret_headers") or {}).get("X-Ryn-Service-Token")
+                or (tool.get("input_schema") or {}).get("x-ryn-operation") == "1"):
+            from ..artifact_transfers import PURPOSE, ArtifactTransfers
+            declaration = (tool.get("input_schema") or {}).get("x-ryn-artifact")
+            if declaration is not None:
+                if declaration != {"argument": "artifact_ref", "purpose": PURPOSE}:
+                    raise AgentToolRejected("agent_artifact_transfer_invalid")
+                artifact = ArtifactTransfers(self.local.store).resolve(context, arguments.get("artifact_ref"))
+            prepared = self.manager.call_tool(binding["server_id"], binding["original_tool_name"], arguments,
+                expected_revision=binding["revision"], expected_config_generation=binding["config_generation"],
+                expected_instance_id=binding["instance_id"], expected_schema_hash=binding["schema_sha256"], prepare=True,
+                trusted_operation={"task_id": context["task_id"], **({"artifact": artifact} if artifact else {})})
+            service_preview = (prepared.get("structuredContent") or {}).get("preview")
+            try:
+                jsonschema_validate(service_preview, {
+                    "type": "object", "additionalProperties": False, "required": ["digest", "fields"],
+                    "properties": {"digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                        "fields": {"type": "array", "minItems": 1, "maxItems": 8, "items": {
+                            "type": "object", "additionalProperties": False, "required": ["label", "value"],
+                            "properties": {"label": {"type": "string", "maxLength": 80},
+                                           "value": {"type": "string", "maxLength": 5000}}}}}})
+                if prepared.get("isError"):
+                    raise ValueError
+            except (ValidationError, ValueError):
+                raise AgentToolRejected("agent_approval_preview_unavailable") from None
         return {
             "title": f"{server.get('name') or server['id']}: {tool.get('title') or tool.get('name')}",
             "server_id": binding["server_id"],
@@ -709,7 +801,26 @@ class ExtensionToolAdapter:
             "computer_access": bool(binding["computer_access"]),
             "operation": copy.deepcopy(arguments),
             "extension_binding": copy.deepcopy(binding),
+            **({"service_preview": service_preview} if service_preview is not None else {}),
+            **({"artifact": artifact} if artifact else {}),
         }
+
+    def download_authority(self, binding, url, context):
+        from ..downloads import origin
+        from .mcp_transport import connector_headers
+        self.verify_binding(binding)
+        self._check_data_policy(binding, context, persist=True)
+        server = self.store.get_mcp_server_internal(binding["server_id"], require_enabled=True,
+            expected_revision=binding["revision"], expected_config_generation=binding["config_generation"],
+            expected_instance_id=binding["instance_id"])
+        authority = origin(server["url"])
+        if origin(url) != authority:
+            raise AgentToolRejected("agent_download_origin_mismatch")
+        headers = connector_headers(server)
+        token = self.manager.oauth.access_token(server)
+        if token:
+            headers["Authorization"] = "Bearer " + token
+        return headers, authority
 
     def _normalize_mcp_result(
         self,
@@ -726,6 +837,7 @@ class ExtensionToolAdapter:
         text_parts: list[str] = []
         normalized_blocks: list[dict[str, Any]] = []
         artifacts: list[dict[str, Any]] = []
+        files: list[dict[str, Any]] = []
         seen_b64: set[str] = set()
         artifacts_by_b64: dict[str, dict[str, Any]] = {}
 
@@ -823,6 +935,30 @@ class ExtensionToolAdapter:
             elif b_type == "resource":
                 # Never dereference local file URIs from external MCP servers.
                 res_obj = block.get("resource") if isinstance(block.get("resource"), dict) else {}
+                blob = res_obj.get("blob")
+                if isinstance(blob, str):
+                    seen_b64.add(blob)
+                    extensions = {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+                                  "application/pdf": ".pdf", "text/csv": ".csv"}
+                    mime = res_obj.get("mimeType")
+                    if mime not in extensions or len(blob) > 2800000 or files:
+                        raise AgentError("agent_mcp_artifact_invalid")
+                    try:
+                        raw_bytes = base64.b64decode(blob, validate=True)
+                    except (ValueError, binascii.Error):
+                        raise AgentError("agent_mcp_artifact_invalid") from None
+                    if not raw_bytes or len(raw_bytes) > 2 * 1024 * 1024:
+                        raise AgentError("agent_mcp_artifact_invalid")
+                    rel_path = f".ryn/mcp/{safe_task}/{safe_op}/export{extensions[mime]}"
+                    target_path = self.local.path(rel_path, context)
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                    atomic_write_bytes(target_path, raw_bytes)
+                    file_sha = hashlib.sha256(raw_bytes).hexdigest()
+                    if hasattr(self.local, "_record_observed_files"):
+                        self.local._record_observed_files(context, {target_path: file_sha})
+                    entry = {"path": rel_path, "sha256": file_sha, "bytes": len(raw_bytes), "mime_type": mime}
+                    files.append(entry)
+                    normalized_blocks.append({"type": "text", "text": "File saved to task workspace: " + rel_path})
                 inline_text = res_obj.get("text")
                 if isinstance(inline_text, str) and inline_text:
                     clipped = inline_text[:MAX_TEXT_BLOCK_CHARS]
@@ -845,9 +981,17 @@ class ExtensionToolAdapter:
         if is_error:
             normalized["error"] = "agent_mcp_tool_returned_error"
         if isinstance(clean_structured, dict):
+            if not is_error:
+                from ..downloads import issue_refs
+                downloads = issue_refs(clean_structured, binding, context, self)
+                if downloads:
+                    normalized["text"] = "Download with ryn_download_file: " + json.dumps(downloads, ensure_ascii=False)
             normalized["structuredContent"] = clean_structured
+        if files or artifacts:
+            normalized["mcp_artifacts"] = [*artifacts, *files]
+        if files:
+            normalized["files"] = files
         if artifacts:
-            normalized["mcp_artifacts"] = artifacts
             normalized["images"] = copy.deepcopy(artifacts)
             normalized["image_path"] = artifacts[0]["path"]
             normalized["image_note"] = (
@@ -1001,6 +1145,8 @@ class ExtensionToolAdapter:
             "arguments_sha256": args_sha,
             "local_execution": copy.deepcopy(context.get("local_execution") or {}),
             "extension_binding": copy.deepcopy(binding),
+            "authority_revision": {key: context.get(key) for key in (
+                "goal_revision", "control_revision", "scope_revision", "settings_revision")},
         }
 
         with self._operation_lock(operation_id):
@@ -1186,10 +1332,26 @@ class ExtensionToolAdapter:
                     self._check_computer_access(context)
                 else:
                     self.local.policy(context)
-                ledger.update(operation_id, "dispatched", receipt_reserve=32768)
+                ledger.update(operation_id, "dispatched", receipt_reserve=32768,
+                              trusted_operation=dispatch_options.get("trusted_operation"))
                 passed_pre_dispatch = True
 
             try:
+                dispatch_options = {}
+                local_server = self.store.get_mcp_server_internal(binding["server_id"], require_enabled=True)
+                if ((local_server.get("secret_headers") or {}).get("X-Ryn-Service-Token")
+                        or current_preview.get("service_preview")):
+                    # This is outside model arguments and is emitted only after
+                    # durable intent plus the normal exact-preview approval.
+                    dispatch_options["trusted_operation"] = {
+                        "operation_id": operation_id, "task_id": context["task_id"],
+                        "arguments_sha256": args_sha, "connection_id": binding["instance_id"],
+                        "generation": binding["config_generation"], "expires_at": int(time.time()) + 60,
+                        "authority_revision": ledger_binding["authority_revision"],
+                        "server_id": binding["server_id"],
+                        "preview_digest": (current_preview.get("service_preview") or {}).get("digest"),
+                        **({"artifact": current_preview["artifact"]} if current_preview.get("artifact") else {}),
+                    }
                 raw_res = self.manager.call_tool(
                     binding["server_id"],
                     binding["original_tool_name"],
@@ -1201,6 +1363,7 @@ class ExtensionToolAdapter:
                     session_scope=session_scope,
                     before_dispatch=_before_write_dispatch,
                     cancelled=cancelled,
+                    **dispatch_options,
                 )
             except BaseException as exc:
                 if not passed_pre_dispatch:
@@ -1276,6 +1439,10 @@ class ExtensionToolAdapter:
                 )
                 if isinstance(exc, (KeyboardInterrupt, SystemExit)):
                     raise
+                recovered = self._recover_declared_result(binding, arguments, operation_id, context, cancelled)
+                if recovered is not None:
+                    ledger.update(operation_id, "confirmed", result=recovered)
+                    return recovered
                 unknown_err = AgentError("agent_write_outcome_unknown")
                 unknown_err.diagnostics = copy.deepcopy(diagnostic)  # type: ignore[attr-defined]
                 raise unknown_err from None
@@ -1302,6 +1469,43 @@ class ExtensionToolAdapter:
                 raise unknown_err
             ledger.update(operation_id, "confirmed", result=normalized)
             return normalized
+
+    def _recover_declared_result(self, binding, arguments, operation_id, context, cancelled):
+        """One authorized status query after response loss; never resend a write."""
+        try:
+            self.verify_binding(binding)
+            active = self._active_mcp_tools()
+            entry = active.get(binding["model_tool_name"])
+            declaration = (entry[1].get("input_schema") or {}).get("x-ryn-result") if entry else None
+            if (not isinstance(declaration, dict) or set(declaration) - {"tool", "argument", "source_argument"}
+                    or not all(isinstance(declaration.get(key), str) for key in ("tool", "argument"))):
+                return None
+            result_entry = next((value for value in active.values() if value[2]["server_id"] == binding["server_id"]
+                                 and value[2]["original_tool_name"] == declaration["tool"]), None)
+            if not result_entry or result_entry[2]["effective_effect"] != "read":
+                return None
+            status_binding = result_entry[2]
+            value = arguments.get(declaration["source_argument"]) if declaration.get("source_argument") else operation_id
+            status_args = {declaration["argument"]: value}
+            self.validate(status_binding["model_tool_name"], status_args)
+            def before():
+                if cancelled():
+                    raise AgentToolRejected("agent_cancelled")
+                self.verify_binding(binding)
+                self.verify_binding(status_binding)
+                self._check_data_policy(status_binding, context, persist=True)
+            raw = self.manager.call_tool(binding["server_id"], declaration["tool"], status_args,
+                expected_revision=status_binding["revision"], expected_config_generation=status_binding["config_generation"],
+                expected_instance_id=status_binding["instance_id"], expected_schema_hash=status_binding["schema_sha256"],
+                before_dispatch=before, cancelled=cancelled)
+            if raw.get("isError"):
+                return None
+            result = self._normalize_mcp_result(raw, binding=binding, context=context, operation_id=operation_id)
+            result["recovery"] = {"tool": status_binding["model_tool_name"], "request_id": value,
+                                  "write_replayed": False}
+            return result
+        except Exception:
+            return None
 
     def reconcile(self, operation_id: str, context: dict[str, Any]) -> dict[str, Any]:
         operation = context.get("operation") or {}

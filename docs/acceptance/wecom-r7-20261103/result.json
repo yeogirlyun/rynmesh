@@ -1,0 +1,56 @@
+{
+  "company_commit": "3a01dc90f5d4e0e998b64091a551dc6117550fa7",
+  "ryn_commit": "ceeb6599ce617cc68b8a75d12ee893be3e5f06dd",
+  "core_commit": "efd9fa13f8c2b501f689b6b04deec754cd79b8fb",
+  "schema": 1,
+  "plugins": [
+    "company-workspace",
+    "company-dashboard",
+    "company-affiliate",
+    "pdfcraft",
+    "wordcraft",
+    "gridcraft",
+    "deckcraft"
+  ],
+  "webview_sha256": "62863F0F0611A16CCF124B4F15650C3B66624504EBA74D7CDE1E2AE5D951249B",
+  "installer_sha256": "60BF81703BC03BCC4D9115007AAAED694DA4BB92CA69F779A036339F30B8A337",
+  "core_sha256": "FFB575D8BC7F0937A6BFD437B828598E76780A60D9D1CF10117454BD528AFE59",
+  "helper_source_sha256": "C227D454C070BC9401E051DE9706749366F1FC759D38138F73DDF7ED8DAA386F",
+  "acceptance": {
+    "fresh_install": true,
+    "repeat_install_preserves_identity_key_and_disabled_plugins": true,
+    "office_editors": [
+      "pdfcraft",
+      "wordcraft",
+      "gridcraft",
+      "deckcraft"
+    ],
+    "native_cli_version": [
+      "pdfcraft",
+      "wordcraft",
+      "gridcraft",
+      "deckcraft"
+    ],
+    "company_pages": [
+      "company-workspace",
+      "company-dashboard",
+      "company-affiliate"
+    ],
+    "company_health": {
+      "ok": true,
+      "service": "company",
+      "status": "ready"
+    },
+    "company_outbound_network": "blocked",
+    "live_install_modified": false,
+    "system_installer_executed": false
+  },
+  "bytes": 681522006,
+  "installer": "Ryn_0.8.0_Full_7Plugins_R7_x64.exe",
+  "recipient_confirmed_by_user": true,
+  "wecom_send_status": "confirmed",
+  "targeted_tests_passed": 40,
+  "local_and_82_health": "ready",
+  "identity_and_configuration_preserved": true,
+  "ajiu_computer_directly_tested": false
+}

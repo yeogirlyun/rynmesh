@@ -1,0 +1,31 @@
+diff --git a/crates/fonts/build.rs b/crates/fonts/build.rs
+index 76e7dc4..645785b 100644
+--- a/crates/fonts/build.rs
++++ b/crates/fonts/build.rs
+@@ -57,7 +57,7 @@ fn manifest(dir: &std::path::Path, manifest: &std::path::Path) -> Result<String,
+         if EXCLUDED_FAMILIES.contains(family) {
+             continue;
+         }
+-        if wasm && !matches!((*family, *style), ("BIZ UDPGothic", "Regular") | ("Inter", "Regular" | "Bold" | "Variable")) {
++        if wasm && !matches!((*family, *style), ("BIZ UDPGothic" | "LXGW WenKai TC", "Regular") | ("Inter", "Regular" | "Bold" | "Variable")) {
+             continue;
+         }
+         let path = dir.join(file).canonicalize().map_err(|e| format!("{file}: {e}"))?;
+diff --git a/crates/ui-egui/src/theme.rs b/crates/ui-egui/src/theme.rs
+index 0016714..0eddcdf 100644
+--- a/crates/ui-egui/src/theme.rs
++++ b/crates/ui-egui/src/theme.rs
+@@ -178,6 +178,13 @@ pub fn install_fonts(ctx: &egui::Context) {
+     let mut bold: Vec<String> = names.iter().filter(|(fam, st, _)| *fam == "Inter" && *st == "SemiBold").map(|(_, _, n)| n.clone()).collect();
+     bold.extend(defs.families.get(&FontFamily::Proportional).cloned().unwrap_or_default());
+     defs.families.insert(FontFamily::Name("bold".into()), bold);
++    if let Some(f) = deckcraft_fonts::CRAFT_FONTS.iter().find(|f| f.family == "LXGW WenKai TC" && f.style == "Regular") {
++        let key = f.family.to_owned();
++        defs.font_data.insert(key.clone(), std::sync::Arc::new(FontData::from_static(f.bytes)));
++        for chain in defs.families.values_mut() {
++            chain.push(key.clone());
++        }
++    }
+     ctx.set_fonts(defs);
+ }
+ 

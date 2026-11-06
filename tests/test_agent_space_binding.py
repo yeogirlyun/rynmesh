@@ -93,6 +93,59 @@ def test_space_catalog_signed_metadata_only_and_stateless_actual_dispatch(space_
     assert [trace["messages"] for trace in p.traces] == [[{"role": "user", "content": "first history"}], [{"role": "user", "content": "second history"}]]
 
 
+def test_transport_failure_retains_only_unexpired_authorized_snapshot(space_pair):
+    p = space_pair
+    rows = p.consumer.refresh(p.locator)
+    checked = p.consumer.cache[p.locator["peer_id"]]["checked_at"]
+    def unavailable(*args):
+        raise OSError("temporary connection failure")
+    p.consumer.exchange = unavailable
+    with pytest.raises(TaskProtocolError):
+        p.consumer.refresh(p.locator)
+    assert p.consumer.records() == rows
+    assert p.consumer.cache[p.locator["peer_id"]]["checked_at"] == checked
+    p.consumer.clock = lambda: checked + 121
+    assert not p.consumer.records()
+    p.consumer.clock = lambda: checked + 1
+    p.child.set_policy("local")
+    assert not p.consumer.records()
+
+
+def test_broken_cli_does_not_remove_healthy_api_models(space_pair):
+    from rynmesh.llm_package.adapters import AdapterError
+    p = space_pair
+    def broken(**kwargs):
+        raise AdapterError("CLI executable is unavailable")
+    p.publisher.providers = lambda: [SimpleNamespace(accepting_orders=True, public_status=broken), p.provider]
+    assert len(p.consumer.refresh(p.locator)) == 1
+
+
+def test_agent_resolves_signed_space_model_without_waiting_for_registry(space_pair):
+    import threading
+    p = space_pair
+    p.consumer.refresh(p.locator)
+    entered, release = threading.Event(), threading.Event()
+    def blocked_registry(**kwargs):
+        entered.set()
+        release.wait(5)
+        raise OSError('registry unreachable')
+    p.child.store.list_job_capacities = blocked_registry
+    _, _, catalog = build_agent_integrations(p.apps[1], p.child.store, p.child.store.home)
+    done, rows = threading.Event(), []
+    def lookup():
+        rows.extend(catalog.list_models())
+        done.set()
+    worker = threading.Thread(target=lookup)
+    worker.start()
+    try:
+        assert entered.wait(2)
+        assert done.wait(1), 'signed model lookup waited for the registry'
+        assert any(row['source'] == 'peer' and row['destination_binding_supported'] for row in rows)
+    finally:
+        release.set()
+        worker.join(6)
+
+
 def test_both_nodes_policy_aba_invalidates_old_destination(space_pair):
     p = space_pair
     row = p.consumer.refresh(p.locator)[0]

@@ -117,6 +117,7 @@ class AgentStore:
         self.lock = self.root / ".sessions.lock"
         self.key = messaging_key
         self.pub = peer_box.public_key_b64(messaging_key)
+        self._published = None  # Atomic (file stamp, immutable committed state) pair.
         self._cached_stamp = None
         self._cached_data = None
         self._cached_layout = None
@@ -141,6 +142,7 @@ class AgentStore:
 
     def _read(self, *, copy_result=True) -> dict:
         if not self.path.exists():
+            self._published = None
             self._cached_stamp = self._cached_data = None
             self._cached_layout = None
             self._migration_pending = False
@@ -169,7 +171,7 @@ class AgentStore:
                 tasks = {}
                 for task_id, entry in index.items():
                     # A content-addressed blob already parsed for the cache is reused.
-                    tasks[task_id] = (previous[task_id] if self._index.get(task_id) == entry and task_id in previous
+                    tasks[task_id] = (_copy(previous[task_id]) if self._index.get(task_id) == entry and task_id in previous
                                       else self._load_task(task_id, entry))
                     total += entry["bytes"]
                 if total > MAX_PLAINTEXT:
@@ -181,6 +183,7 @@ class AgentStore:
             data = migrate(data)
             self._migration_pending = before_migration != encoded(data)
             self._cached_stamp, self._cached_data, self._index, self._total = stamp, data, index, total
+            self._published = (stamp, data)
             self._cached_layout = envelope["version"]
             return _copy(data) if copy_result else data
         except AgentError:
@@ -249,6 +252,7 @@ class AgentStore:
         cache = _copy({key: value for key, value in data.items() if key != "tasks"})
         cache["tasks"] = {task_id: _copy(row) if task_id in changed else cached[task_id] for task_id, row in data["tasks"].items()}
         self._cached_stamp, self._cached_data, self._index, self._total = self._stamp(), cache, index, total
+        self._published = (self._cached_stamp, cache)
         self._cached_layout = ROOT_VERSION
         self._migration_pending = False
         live = {entry["file"] for entry in index.values()}
@@ -296,28 +300,51 @@ class AgentStore:
                         or (_BLOB_NAME.fullmatch(path.name) and path.name not in live)):
                     path.unlink()
 
-    def read(self) -> dict:
+    def _snapshot(self) -> dict:
+        # Writers publish only after atomic root replacement. A reader may see
+        # the preceding commit while a writer prepares the next one. A changed
+        # root (including another process's commit) must be reloaded under lock.
+        published = self._published
+        if published is not None:
+            try:
+                if published[0] == self._stamp():
+                    return published[1]
+            except FileNotFoundError:
+                pass
         with file_transaction(self.lock):
-            return self._read()
+            return self._read(copy_result=False)
+
+    def read(self) -> dict:
+        return _copy(self._snapshot())
+
+    def usage(self) -> dict:
+        """Committed decrypted bytes of the active state, for capacity decisions.
+
+        Per-task sizes come from the split layout's root index; a legacy single
+        file reports none, and callers measure those rows themselves.
+        """
+        data = self._snapshot()
+        total = self._total if self._index or not data.get("tasks") else len(encoded(data))
+        return {"total": total, "limit": MAX_PLAINTEXT, "count": len(data.get("tasks", {})),
+                "tasks": {task_id: entry["bytes"] for task_id, entry in self._index.items()}}
 
     def read_control(self, task_id: str) -> dict:
         """Fresh cancellation authority without cloning every task's transcript.
 
-        The cache stamp and file lock are identical to read(). Only a detached
+        The committed root is validated exactly as in read(). Only a detached
         projection escapes the lock; resource origins retain their exact epoch.
         """
-        with file_transaction(self.lock):
-            data = self._read(copy_result=False)
-            row = data.get("tasks", {}).get(task_id)
-            if row is None:
-                raise AgentError("agent_task_not_found")
-            control = {key: value for key, value in row.items() if key not in {
-                "messages", "events", "receipts", "result_refs", "verification_evidence", "result",
-                "queue", "context_checkpoint", "verification", "verification_rejected_responses", "conversation_branches"}}
-            control["messages"] = [{key: message[key] for key in ("role", "context_epoch", "resource_origin") if key in message}
-                                   for message in row.get("messages", []) if isinstance(message.get("resource_origin"), dict)]
-            return copy.deepcopy({"settings": data["settings"], "projects": data.get("projects", {}),
-                                  "tasks": {task_id: control}})
+        data = self._snapshot()
+        row = data.get("tasks", {}).get(task_id)
+        if row is None:
+            raise AgentError("agent_task_not_found")
+        control = {key: value for key, value in row.items() if key not in {
+            "messages", "events", "receipts", "result_refs", "verification_evidence", "result",
+            "queue", "context_checkpoint", "verification", "verification_rejected_responses", "conversation_branches"}}
+        control["messages"] = [{key: message[key] for key in ("role", "context_epoch", "resource_origin") if key in message}
+                               for message in row.get("messages", []) if isinstance(message.get("resource_origin"), dict)]
+        return copy.deepcopy({"settings": data["settings"], "projects": data.get("projects", {}),
+                              "tasks": {task_id: control}})
 
     def inspect(self, view: Callable[[dict], Any]) -> Any:
         """Run a read-only view over the cached state without copying every task.
@@ -325,25 +352,35 @@ class AgentStore:
         The view must not modify its argument; only its result is detached.
         """
         started = time.monotonic()
-        with file_transaction(self.lock):
-            acquired = time.monotonic()
-            result = _copy(view(self._read(copy_result=False)))
+        snapshot = self._snapshot()
+        acquired = time.monotonic()
+        result = _copy(view(snapshot))
         performance("state_inspect", lock_wait_seconds=acquired - started,
                     read_view_seconds=time.monotonic() - acquired)
         return result
 
     def transaction(self, mutate: Callable[[dict], Any]) -> Any:
         started = time.monotonic()
+        snapshot = self._snapshot()
+        data = _copy(snapshot)
+        prepared = time.monotonic()
         with file_transaction(self.lock):
             acquired = time.monotonic()
-            data = self._read()
+            current = self._read(copy_result=False)
+            if current is not snapshot:
+                # A concurrent writer won. Rebase before invoking the callback
+                # so mutations with external effects are never replayed.
+                data = _copy(current)
             read = time.monotonic()
             result = mutate(data)
             mutated = time.monotonic()
             self._write(data)
             written = time.monotonic()
-            result = copy.deepcopy(result)
-        performance("state_transaction", lock_wait_seconds=acquired - started,
+        # _write publishes detached objects. The transaction owns its result.
+        result = copy.deepcopy(result)
+        operation = getattr(getattr(mutate, "__code__", None), "co_qualname", "callback")
+        performance("state_transaction", operation=operation, prepare_seconds=prepared - started,
+                    lock_wait_seconds=acquired - prepared,
                     read_seconds=read - acquired, mutation_seconds=mutated - read,
                     write_seconds=written - mutated, copy_seconds=time.monotonic() - written)
         return result

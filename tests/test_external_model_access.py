@@ -201,3 +201,17 @@ def test_signed_probe_rejects_messaging_key_substitution(pair):
     catalog = pair.c.services["external_catalog"]
     bad = {**pair.row, "messaging_pub": peer_box.public_key_b64(pair.c.key)}
     assert catalog.refresh(bad) is False
+
+
+def test_broken_peer_provider_preserves_local_service_catalog(pair, monkeypatch):
+    from rynmesh.peer_providers.validation import PeerProviderError
+
+    def unavailable():
+        raise PeerProviderError("peer_provider_configuration_unavailable")
+
+    monkeypatch.setattr(pair.p.authority, "cached_models", unavailable)
+    endpoint = next(route.endpoint for route in pair.p.app.routes
+                    if route.path == "/api/local/llm/services")
+    rows = endpoint()["services"]
+    assert any(row["service"]["package_id"] == pair.sid for row in rows)
+    assert all(row.get("provider_resource") != RESOURCE for row in rows)

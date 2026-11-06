@@ -29,7 +29,7 @@ win over late responses. Uncertain mutations are never replayed automatically.
 | `workspace` (new default) | Queries and local workstation actions execute continuously. External configuration/access changes retain approval boundaries. |
 | `read_only` | Typed reads and recognized literal shell reads execute; mutations are denied. |
 | `confirm_changes` | Reads execute; other effects require an exact preview and approval. |
-| `automatic` | Reads execute; other effects use the owner's selected tool grants. |
+| `automatic` | Full access: every change runs without a dialog, including plugin and configuration changes. Explicit-approval tools (component installs, app operations) and the desktop-access grant still apply. |
 
 Both task and current host permissions apply. Changing host settings cannot
 elevate an existing task's permission snapshot. Existing saved modes are retained;

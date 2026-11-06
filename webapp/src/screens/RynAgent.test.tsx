@@ -86,7 +86,7 @@ it("automatically recovers initial settings failure without clicking Refresh", a
   expect(screen.getByRole("textbox")).toBeEnabled();
 });
 
-it.each(["failed", "interrupted", "paused", "waiting_approval", "waiting_input"] as const)("locates newly opened %s history once without overriding later scrolling", async status => {
+it.each(["completed", "running", "failed", "interrupted", "paused", "waiting_approval", "waiting_input"] as const)("locates newly opened %s history once without overriding later scrolling", async status => {
   const current = task({ status, messages: [{ role: "assistant", content: "History ready" }] });
   const backend = api(true, [current]);
   const height = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(1800);
@@ -101,6 +101,68 @@ it.each(["failed", "interrupted", "paused", "waiting_approval", "waiting_input"]
     await screen.findByText("History refreshed", {}, { timeout: 5000 });
     expect(scroller.scrollTop).toBe(120);
   } finally { height.mockRestore(); }
+});
+
+it("opens every conversation at its latest message without a smooth slide from the top", async () => {
+  const first = task({ status: "completed", messages: [{ role: "assistant", content: "First history" }] });
+  const second = task({ id: "task-2", title: "Weekly report", status: "completed", revision: 1, messages: [{ role: "assistant", content: "Second history" }] });
+  api(true, [first, second]);
+  const height = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(2400);
+  const jumps: string[] = [];
+  const top = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop")!;
+  Object.defineProperty(HTMLElement.prototype, "scrollTop", { configurable: true, get() { return top.get!.call(this); },
+    set(value: number) { if ((this as HTMLElement).classList.contains("ra-scroll")) jumps.push((this as HTMLElement).style.scrollBehavior); top.set!.call(this, value); } });
+  try {
+    const user = userEvent.setup(); mount();
+    await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
+    await screen.findByText("First history");
+    const scroller = document.querySelector<HTMLDivElement>(".ra-scroll")!;
+    await waitFor(() => expect(scroller.scrollTop).toBe(2400));
+    scroller.scrollTop = 0;
+    jumps.length = 0;
+    await user.click(screen.getByRole("button", { name: "Weekly report" }));
+    await screen.findByText("Second history");
+    await waitFor(() => expect(scroller.scrollTop).toBe(2400));
+    expect(jumps).toEqual(["auto"]);
+    expect(scroller.style.scrollBehavior).toBe("");
+  } finally {
+    delete (HTMLElement.prototype as { scrollTop?: number }).scrollTop;
+    height.mockRestore();
+  }
+});
+
+it("keeps an opened conversation at the bottom while late parts load, until the owner scrolls", async () => {
+  const observers = new Set<FakeResizeObserver>();
+  class FakeResizeObserver {
+    constructor(readonly callback: () => void) {}
+    observe() { observers.add(this); }
+    unobserve() {}
+    disconnect() { observers.delete(this); }
+  }
+  const notify = () => act(() => [...observers].forEach(observer => observer.callback()));
+  vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+  const current = task({ status: "completed", messages: [{ role: "assistant", content: "History ready" }] });
+  api(true, [current]);
+  let contentHeight = 1800;
+  const height = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(() => contentHeight);
+  try {
+    const user = userEvent.setup(); mount();
+    await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
+    await screen.findByText("History ready");
+    const scroller = document.querySelector<HTMLDivElement>(".ra-scroll")!;
+    await waitFor(() => expect(scroller.scrollTop).toBe(1800));
+    contentHeight = 2600;
+    notify();
+    expect(scroller.scrollTop).toBe(2600);
+    fireEvent.wheel(scroller);
+    scroller.scrollTop = 300;
+    contentHeight = 3200;
+    notify();
+    expect(scroller.scrollTop).toBe(300);
+  } finally {
+    height.mockRestore();
+    vi.unstubAllGlobals();
+  }
 });
 
 it("renders live text between durable checkpoints without waiting for the old 1.2 second poll", async () => {
@@ -854,22 +916,22 @@ it("recovers an uncertain create after reload from its server request id without
   expect(screen.getAllByText("Inspect devices")).toHaveLength(3); // Header, task list and server message.
 });
 
-it("disables Agent without erasing tasks and saves only explicitly opted-in write tools", async () => {
+it("disables Agent without erasing tasks and no longer offers a per-tool automatic checklist", async () => {
   const backend = api(true, [task({ status: "completed", result: "Saved evidence" })]);
   const user = userEvent.setup();
   mount();
   await screen.findByRole("heading", { name: "What would you like me to do?" });
   await user.click(screen.getByRole("button", { name: "Agent settings" }));
   const dialog = screen.getByRole("dialog", { name: "Agent settings" });
-  await screen.findByText("Manage model sharing");
-  expect(within(dialog).queryByText("inspect_devices")).not.toBeInTheDocument();
-  await user.click(within(dialog).getByRole("checkbox", { name: /Manage model sharing/ }));
+  // Automatic is full access, so there is no list of tools to opt in.
+  expect(within(dialog).getByText(/Automatic is full access/)).toBeInTheDocument();
+  expect(within(dialog).queryByRole("checkbox", { name: /Manage model sharing/ })).not.toBeInTheDocument();
   await user.type(within(dialog).getByRole("textbox", { name: "Working directory" }), "D:\\RynWorkspace");
   await user.click(within(dialog).getByRole("checkbox", { name: "Allow computer and browser operations" }));
   await user.click(within(dialog).getByRole("checkbox", { name: /Enable Agent on this device/ }));
   await user.click(within(dialog).getByRole("button", { name: "Save settings" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-  expect(backend.updates).toHaveBeenCalledWith({ enabled: false, workspace_root: "D:\\RynWorkspace", desktop_access: true, allowed_write_tools: ["set_model_sharing"] });
+  expect(backend.updates).toHaveBeenCalledWith({ enabled: false, workspace_root: "D:\\RynWorkspace", desktop_access: true });
   await user.click(screen.getByRole("button", { name: "Inspect devices" }));
   await screen.findByText("Saved evidence");
   expect(screen.getByRole("textbox")).toBeDisabled();
@@ -1108,8 +1170,10 @@ it("recovers task reads after a node outage without losing the current evidence 
       : HttpResponse.json({ detail: "agent_unavailable" }, { status: 503 })),
   );
   window.dispatchEvent(new Event("focus"));
-  await screen.findByText(/Could not refresh the task list/);
-  await screen.findByText(/Could not refresh this task/);
+  // With a list and task on screen, one dropped read is not reported; the poll
+  // reports the outage once a second read in a row fails.
+  await screen.findByText(/Could not refresh the task list/, {}, { timeout: 6000 });
+  await screen.findByText(/Could not refresh this task/, {}, { timeout: 6000 });
   expect(screen.getByText("Saved evidence before restart")).toBeVisible();
   expect(screen.getByRole("textbox")).toHaveValue("Keep this draft during restart");
   online = true;
@@ -1117,7 +1181,7 @@ it("recovers task reads after a node outage without losing the current evidence 
   await waitFor(() => expect(screen.queryByText(/Could not refresh the task list/)).not.toBeInTheDocument());
   expect(screen.queryByText(/Could not refresh this task/)).not.toBeInTheDocument();
   expect(screen.getByRole("textbox")).toHaveValue("Keep this draft during restart");
-});
+}, 20000);
 
 it("reports a selected-detail failure on focus without an unhandled rejection or losing evidence", async () => {
   api(true, [task({ status: "completed", result: "Preserved evidence" })]);
@@ -1127,10 +1191,11 @@ it("reports a selected-detail failure on focus without an unhandled rejection or
   await user.type(screen.getByRole("textbox"), "Preserved draft");
   server.use(http.get("*/api/local/agent/tasks/:id", () => HttpResponse.json({}, { status: 503 })));
   window.dispatchEvent(new Event("focus"));
-  await screen.findByText(/Could not refresh this task/);
+  // The cached task stays on screen; the poll reports the failure once it repeats.
+  await screen.findByText(/Could not refresh this task/, {}, { timeout: 6000 });
   expect(screen.getByText("Preserved evidence")).toBeVisible();
   expect(screen.getByRole("textbox")).toHaveValue("Preserved draft");
-});
+}, 20000);
 
 it("ignores an older focus refresh that resolves after a newer visibility refresh", async () => {
   api(); mount(); await screen.findByRole("heading", { name: "What would you like me to do?" });
@@ -1457,3 +1522,61 @@ it("supports mid-turn steer vs queued follow-up messages and auto-dispatches que
   await waitFor(() => expect(controlSpy).toHaveBeenCalledTimes(2), { timeout: 3000 });
   expect(controlSpy).toHaveBeenLastCalledWith("task-1", "messages", expect.objectContaining({ message: "Second queued item" }));
 });
+
+const LIST_ERROR = "Could not refresh the task list. The selected task and saved draft remain available.";
+const DETAIL_ERROR = "Could not refresh this task. Existing evidence and your draft are preserved; refresh before retrying a failed action.";
+
+it("keeps polling the task list after a non-connection error and clears the banner once the node answers", async () => {
+  api();
+  const failUntil = Date.now() + 3000;
+  let polls = 0;
+  server.use(http.get("*/api/local/agent/tasks", ({ request }) => {
+    if (new URL(request.url).searchParams.has("archived")) return HttpResponse.json({ tasks: [] });
+    polls++;
+    return Date.now() < failUntil
+      ? HttpResponse.json({ detail: "agent_state_unreadable" }, { status: 409 })
+      : HttpResponse.json({ tasks: [] });
+  }));
+  mount();
+  await screen.findByText(LIST_ERROR, {}, { timeout: 4000 });
+  // The first poll fails inside the window; the old loop stopped there for good.
+  await waitFor(() => expect(screen.queryByText(LIST_ERROR)).not.toBeInTheDocument(), { timeout: 10000 });
+  expect(polls).toBeGreaterThanOrEqual(3);
+}, 20000);
+
+it("keeps polling the open task after a non-connection error and recovers on its own", async () => {
+  const current = task({ status: "running", messages: [{ role: "assistant", content: "Working on it" }] });
+  api(true, [current]);
+  let failing = false;
+  server.use(http.get("*/api/local/agent/tasks/task-1", () => failing
+    ? HttpResponse.json({ detail: "agent_state_unreadable" }, { status: 409 })
+    : HttpResponse.json(current)));
+  const user = userEvent.setup(); mount();
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
+  await screen.findByText("Working on it");
+  failing = true;
+  await screen.findByText(DETAIL_ERROR, {}, { timeout: 4000 });
+  failing = false;
+  await waitFor(() => expect(screen.queryByText(DETAIL_ERROR)).not.toBeInTheDocument(), { timeout: 10000 });
+  expect(screen.getByText("Working on it")).toBeVisible();
+}, 20000);
+
+it("does not flag a loaded task list when one focus refresh loses its connection", async () => {
+  api(true, [task({ status: "completed" })]);
+  let offline = false;
+  server.use(http.get("*/api/local/agent/tasks", ({ request }) => {
+    if (new URL(request.url).searchParams.has("archived")) return HttpResponse.json({ tasks: [] });
+    return offline ? HttpResponse.error() : HttpResponse.json({ tasks: [task({ status: "completed" })] });
+  }));
+  mount();
+  await screen.findByRole("button", { name: "Inspect devices" });
+  offline = true;
+  window.dispatchEvent(new Event("focus"));
+  let flagged = false;
+  for (let elapsed = 0; elapsed < 2500; elapsed += 50) {
+    if (elapsed === 1000) offline = false;
+    if (screen.queryByText(LIST_ERROR)) flagged = true;
+    await act(() => new Promise(resolve => setTimeout(resolve, 50)));
+  }
+  expect(flagged).toBe(false);
+}, 10000);

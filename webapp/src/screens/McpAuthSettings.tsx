@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { agentExtensions, cancelMcpOauthLogin, clearLocalMcpAuthorizations, getMcpOauthLogin, logoutMcpOauth, startMcpOauthLogin,
+import { agentExtensions, cancelMcpOauthLogin, clearLocalMcpAuthorizations, getMcpOauthLogin, getCompanyAccount, logoutCompanyAccount, logoutMcpOauth, startMcpOauthLogin,
   type ExtensionMcpServer, type McpOauthProgress } from "../domain/agentExtensions";
 import { reserveMcpAuthBrowser } from "../domain/mcpAuthBrowser";
 
@@ -13,6 +13,30 @@ export function McpAuthSettings({ server, onRefresh }: { server: ExtensionMcpSer
   const [error, setError] = useState(false);
   const [clearConfirm, setClearConfirm] = useState(false);
   const [clientId, setClientId] = useState(server.auth?.client_id || "");
+  const company = ["company-workspace", "company-dashboard", "company-affiliate"].includes(server.plugin_id || "");
+  const [account, setAccount] = useState<Awaited<ReturnType<typeof getCompanyAccount>> | null>(null);
+  const loginServer = useRef(server.id);
+  useEffect(() => {
+    if (!company) return;
+    const abort = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    let version: number | undefined;
+    const sync = async () => {
+      try {
+        const next = await getCompanyAccount(abort.signal);
+        if (abort.signal.aborted) return;
+        setAccount(next);
+        if (version !== undefined && version !== next.version) {
+          setProgress(null);
+          refresh.current();
+        }
+        version = next.version;
+      } catch { if (!abort.signal.aborted) setAccount(null); }
+      if (!abort.signal.aborted) timer = setTimeout(sync, 1000);
+    };
+    void sync();
+    return () => { abort.abort(); clearTimeout(timer); };
+  }, [company, server.instance_id]);
   const epoch = useRef(0);
   const refresh = useRef(onRefresh); refresh.current = onRefresh;
   useEffect(() => {
@@ -26,7 +50,7 @@ export function McpAuthSettings({ server, onRefresh }: { server: ExtensionMcpSer
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
       try {
-        const result = await getMcpOauthLogin(server.id, authId, abort.signal);
+        const result = await getMcpOauthLogin(loginServer.current, authId, abort.signal);
         if (abort.signal.aborted || epoch.current !== current) return;
         setProgress(result.state);
         if (result.state === "waiting" || result.state === "exchanging") timer = setTimeout(() => void poll(), 1500);
@@ -41,7 +65,9 @@ export function McpAuthSettings({ server, onRefresh }: { server: ExtensionMcpSer
       server.header_keys.some(key => key.toLowerCase() === "authorization") ||
       Object.keys(server.env_http_headers || {}).some(key => key.toLowerCase() === "authorization")) return null;
   const pending = progress === "waiting" || progress === "exchanging" || (progress === null && server.oauth?.state === "pending");
-  const loggedIn = server.oauth?.state === "logged_in" && progress !== "cancelled";
+  const scopedStatus = account?.connections?.[server.id] || "needs_authorization";
+  const loggedIn = (company && account ? account.state === "logged_in" && scopedStatus === "available"
+    : server.oauth?.state === "logged_in") && progress !== "cancelled";
   async function act(work: () => Promise<void>) {
     const current = epoch.current;
     setBusy(true); setError(false);
@@ -56,13 +82,21 @@ export function McpAuthSettings({ server, onRefresh }: { server: ExtensionMcpSer
     void act(async () => {
       let result;
       try {
-        result = await startMcpOauthLogin(server.id, server.revision, i18n.language);
-        if (epoch.current !== current) { browser.cancel(); await cancelMcpOauthLogin(server.id, result.auth_id); return; }
+        let target = server;
+        if (company && !["company-workspace-mcp", "company-dashboard-dashboard"].includes(server.id)) {
+          const overview = await agentExtensions.overview();
+          const workspace = overview.mcp_servers.find(s => s.plugin_id === "company-workspace" && s.id === "company-workspace-mcp");
+          if (!workspace) throw new Error("company_login_unavailable");
+          target = workspace;
+        }
+        loginServer.current = target.id;
+        result = await startMcpOauthLogin(target.id, target.revision, i18n.language);
+        if (epoch.current !== current) { browser.cancel(); await cancelMcpOauthLogin(loginServer.current, result.auth_id); return; }
         await browser.open(result.authorization_url);
         setAuthId(result.auth_id); setProgress("waiting");
       } catch {
         browser.cancel();
-        if (result) await cancelMcpOauthLogin(server.id, result.auth_id).catch(() => undefined);
+        if (result) await cancelMcpOauthLogin(loginServer.current, result.auth_id).catch(() => undefined);
         throw new Error("mcp_login_failed");
       }
     });
@@ -70,6 +104,7 @@ export function McpAuthSettings({ server, onRefresh }: { server: ExtensionMcpSer
   return <section className="ae-section-card" aria-label={tx("MCP 登录", "MCP sign-in")}>
     <h3>{tx("登录状态", "Sign-in status")}</h3>
     <p role="status">{pending ? tx("等待浏览器授权…", "Waiting for browser authorization…") : loggedIn ? tx("已登录", "Signed in") : tx("未登录", "Signed out")}</p>
+    {company && account?.state === "logged_in" && <p>{tx("当前公司账号", "Company account")} · {account.displayName}{scopedStatus === "needs_authorization" ? tx(" · 需要授权", " · Authorization required") : ""}</p>}
     {error ? <p role="alert">{tx("操作未完成。请检查服务器登录配置后重试。", "The operation could not be completed. Check the server sign-in settings and retry.")}</p> : null}
     <details className="ae-auth-advanced">
       <summary>{tx("登录配置", "Sign-in settings")}</summary>
@@ -92,12 +127,14 @@ export function McpAuthSettings({ server, onRefresh }: { server: ExtensionMcpSer
     <div className="ae-inline-actions">
       <button type="button" className="ae-btn ae-btn-primary" disabled={busy || pending || !server.enabled} onClick={login}>{loggedIn ? tx("重新登录", "Sign in again") : tx("登录", "Sign in")}</button>
       {pending ? <button type="button" className="ae-btn" disabled={busy} onClick={() => void act(async () => {
-        if (authId) await cancelMcpOauthLogin(server.id, authId);
+        if (authId) await cancelMcpOauthLogin(loginServer.current, authId);
         else await logoutMcpOauth(server.id, server.revision);
         setAuthId(""); setProgress("cancelled"); refresh.current();
       })}>{tx("取消授权", "Cancel authorization")}</button> : null}
-      {loggedIn ? <button type="button" className="ae-btn" disabled={busy} onClick={() => void act(async () => {
-        await logoutMcpOauth(server.id, server.revision); setProgress("cancelled"); refresh.current();
+      {(loggedIn || (company && (account?.state === "logged_in" || server.oauth?.state === "logged_in"))) ? <button type="button" className="ae-btn" disabled={busy} onClick={() => void act(async () => {
+        if (company) await logoutCompanyAccount();
+        else await logoutMcpOauth(server.id, server.revision);
+        setProgress("cancelled"); refresh.current();
       })}>{tx("退出登录", "Sign out")}</button> : null}
     </div>
     {clearConfirm ? <div className="ae-confirm-dialog" role="alertdialog" aria-label={tx("确认清除授权", "Confirm authorization removal")}>

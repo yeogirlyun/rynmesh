@@ -23,6 +23,7 @@ from ... import __version__
 from ...atomic_io import atomic_write_json, read_json
 from ...file_transactions import file_transaction
 from ...services import peer_box
+from ..diagnostic_log import oauth_event
 from ..store import AgentError
 
 CHANNEL = b"rynmesh-agent-mcp-oauth-v1"
@@ -41,13 +42,41 @@ class McpOAuthError(AgentError):
 
 class OAuthHttpError(McpOAuthError):
     def __init__(self, status=503, error=None):
-        super().__init__("agent_mcp_oauth_request_failed")
+        super().__init__("agent_mcp_oauth_device_limit" if error == "device_limit" else "agent_mcp_oauth_request_failed")
         self.status = status
-        self.oauth_error = error if error in {"invalid_grant", "invalid_client", "invalid_scope"} else None
+        self.oauth_error = error if error in {"invalid_grant", "invalid_client", "invalid_scope", "device_limit"} else None
 
 
 def fail(code="agent_mcp_oauth_invalid_response"):
     raise McpOAuthError(code)
+
+
+# RFC 6749 4.1.2.1 / RFC 8707 authorization-response errors -> controlled codes.
+# Unknown values keep the historical generic denial code.
+AUTHORIZATION_ERRORS = {
+    "device_limit": "agent_mcp_oauth_device_limit",
+    "access_denied": "agent_mcp_oauth_login_denied",
+    "invalid_target": "agent_mcp_oauth_invalid_target",
+    "invalid_scope": "agent_mcp_oauth_invalid_scope",
+    "invalid_request": "agent_mcp_oauth_authorization_rejected",
+    "unauthorized_client": "agent_mcp_oauth_authorization_rejected",
+    "unsupported_response_type": "agent_mcp_oauth_authorization_rejected",
+    "server_error": "agent_mcp_oauth_authorization_unavailable",
+    "temporarily_unavailable": "agent_mcp_oauth_authorization_unavailable",
+}
+
+
+def flow_ref(auth_id):
+    """One-way correlation id for logs; never reveals or reconstructs auth_id."""
+    return hashlib.sha256(("ryn.oauth.flow.v1:" + str(auth_id)).encode()).hexdigest()[:12]
+
+
+def _trace(stage, flow=None, **fields):
+    try:
+        server = (flow or {}).get("server") or {}
+        oauth_event(stage, server=server.get("id"), flow=(flow or {}).get("ref"), **fields)
+    except Exception:
+        pass
 
 
 def canonical_url(value):
@@ -150,6 +179,9 @@ def request_json(method, target, *, headers=None, data=None, json=None):
         raise OAuthHttpError() from None
 
 
+COMPANY_PLUGIN_IDS = frozenset({"company-workspace", "company-dashboard", "company-affiliate"})
+
+
 class McpOAuthStore:
     def __init__(self, store):
         self.path, self.lock = store.root / "mcp_oauth.json", store.root / ".mcp_oauth.lock"
@@ -199,17 +231,18 @@ class McpOAuthStore:
             return self._read()
 
     @contextmanager
-    def transaction(self):
+    def transaction(self, *, document=False):
         with file_transaction(self.lock):
             value = self._read()
             before = copy.deepcopy(value)
-            yield value["servers"]
+            yield value if document else value["servers"]
             if value != before:
                 self._write(value)
 
 
 class _Loopback:
-    def __init__(self, callback, port, language):
+    def __init__(self, callback, port, language, trace=None):
+        trace = trace or (lambda *_args, **_kwargs: None)
         messages = {"connected": "Authorization completed. Return to Ryn.", "failed": "Authorization was not completed. Return to Ryn."}
         try:
             locale = "zh-CN" if str(language).lower().startswith("zh") else "en"
@@ -223,18 +256,25 @@ class _Loopback:
             def log_message(self, *_args):
                 pass
             def do_GET(self):
-                status = 400
+                status, reason = 400, "parse"
                 try:
                     parsed = urlsplit(self.path)
+                    if parsed.path != "/callback":
+                        # Browsers probe /favicon.ico etc.; never part of a flow.
+                        reason = "path"
+                        raise ValueError
                     pairs = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True, max_num_fields=12)
-                    if (len(self.path) + sum(len(k) + len(v) for k, v in self.headers.items()) > 16384 or parsed.scheme or parsed.netloc or parsed.path != "/callback" or parsed.fragment
-                            or self.headers.get_all("Host") != [f"127.0.0.1:{self.server.server_port}"]
-                            or any(self.headers.get(name) for name in ("Origin", "Forwarded", "X-Forwarded-For"))
-                            or len(pairs) != len(dict(pairs))):
+                    reason = ("oversize" if len(self.path) + sum(len(k) + len(v) for k, v in self.headers.items()) > 16384
+                              else "absolute_target" if parsed.scheme or parsed.netloc or parsed.fragment
+                              else "host" if self.headers.get_all("Host") != [f"127.0.0.1:{self.server.server_port}"]
+                              else "proxy_or_origin_header" if any(self.headers.get(name) for name in ("Origin", "Forwarded", "X-Forwarded-For"))
+                              else "duplicate_param" if len(pairs) != len(dict(pairs)) else "")
+                    if reason:
                         raise ValueError
                     status = 200 if callback(dict(pairs)) else 400
                 except Exception:
-                    pass
+                    if reason and reason != "path":
+                        trace("callback_rejected", reason=reason)
                 body = messages["connected" if status == 200 else "failed"].encode("utf-8")
                 self.send_response(status)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
@@ -270,6 +310,8 @@ class McpOAuthManager:
         self.transport, self.on_connected = transport or request_json, on_connected
         self.trusted_origin = trusted_origin
         self._lock, self._flows = threading.RLock(), {}
+        self._member_lock = threading.Lock()
+        self._workspace_proof = None
 
     def _binding(self, server):
         return {"server_id": server["id"], "instance_id": server["instance_id"],
@@ -282,6 +324,14 @@ class McpOAuthManager:
         if self._binding(current) != self._binding(server):
             fail("agent_mcp_oauth_configuration_changed")
         return current
+
+    @staticmethod
+    def _same_authorization(left, right):
+        # Plugin/UI revisions and temporary disablement are not OAuth identity.
+        # Endpoint, auth configuration, owner instance and config generation are.
+        ignored = {"plugin_revision", "effective_enabled"}
+        return ({k: v for k, v in (left or {}).items() if k not in ignored}
+                == {k: v for k, v in (right or {}).items() if k not in ignored})
 
     def _identity_group_siblings(self, server):
         identity_group_id = server.get("identity_group_id")
@@ -344,6 +394,9 @@ class McpOAuthManager:
             siblings = self._identity_group_siblings(current) if current.get("identity_group_id") else []
             with self.credentials.transaction() as rows:
                 row = rows.get(server["instance_id"])
+                if row and row.get("binding") != binding and self._same_authorization(row.get("binding"), binding):
+                    row["binding"] = binding
+                    row.pop("pending", None)
                 if not row or row.get("binding") != binding:
                     row = {"binding": binding, "resource": binding["resource"], "epoch": secrets.token_hex(16), "granted_scopes": []}
                     rows[server["instance_id"]] = row
@@ -372,14 +425,25 @@ class McpOAuthManager:
                             break
                 return copy.deepcopy(row)
 
-    def _update(self, server, epoch, change):
+    def _update(self, server, epoch, change, *, login_id=None, refresh=False):
         with file_transaction(self.store.lock):
-            self._current(server)
-            with self.credentials.transaction() as rows:
-                row = rows.get(server["instance_id"])
-                if not row or row.get("epoch") != epoch or row.get("binding") != self._binding(server):
+            if refresh:
+                current = self.store.get_mcp_server_internal(server["id"], require_enabled=False)
+                if not self._same_authorization(self._binding(current), self._binding(server)):
                     fail("agent_mcp_oauth_configuration_changed")
+            else:
+                current = self._current(server)
+            with self.credentials.transaction(document=True) as document:
+                row = document["servers"].get(server["instance_id"])
+                matches = (self._same_authorization(row.get("binding"), self._binding(server)) if row and refresh
+                           else bool(row and row.get("binding") == self._binding(server)))
+                if not row or row.get("epoch") != epoch or not matches:
+                    fail("agent_mcp_oauth_configuration_changed")
+                row["binding"] = self._binding(current)
                 change(row)
+                if login_id and server.get("plugin_id") in COMPANY_PLUGIN_IDS:
+                    document["company_action"] = {"id": hashlib.sha256(login_id.encode()).hexdigest(), "action": "login",
+                                                  "serverId": server["id"], "instanceId": server["instance_id"]}
                 row["updated_at"] = self.clock()
                 return copy.deepcopy(row)
 
@@ -469,6 +533,7 @@ class McpOAuthManager:
                 self._update(flow["server"], flow["epoch"], lambda r: r.pop("pending", None) if r.get("pending") == auth_id else None)
             except AgentError:
                 pass
+        _trace("login_expired", flow)
         if listener:
             listener.close()
 
@@ -496,9 +561,16 @@ class McpOAuthManager:
             if any(f["server"]["instance_id"] == server["instance_id"] and f["state"] in {"waiting", "exchanging"} for f in self._flows.values()):
                 fail("agent_mcp_oauth_login_pending")
             auth_id = secrets.token_urlsafe(32)
-            flow = {"server": server, "epoch": row["epoch"], "state": "waiting", "expires_at": self.clock() + 600}
+            flow = {"server": server, "epoch": row["epoch"], "state": "waiting", "expires_at": self.clock() + 600, "ref": flow_ref(auth_id)}
             self._flows[auth_id] = flow
-            self._update(server, row["epoch"], lambda r: r.update(pending=auth_id, pending_expires_at=flow["expires_at"]))
+            def begin(r):
+                # An error from an earlier, finished attempt must not survive as the
+                # status of this new attempt. Rows holding tokens keep their error:
+                # it is what blocks those credentials until a login succeeds.
+                if not r.get("tokens"):
+                    r.pop("error", None)
+                r.update(pending=auth_id, pending_expires_at=flow["expires_at"])
+            self._update(server, row["epoch"], begin)
         listener = None
         try:
             metadata = self.discover(server)
@@ -506,12 +578,14 @@ class McpOAuthManager:
             prior = row.get("client") or {}
             port = auth.get("callback_port") or (prior.get("redirect_port") if prior.get("registration") == "dcr" else 0) or 0
             try:
-                listener = _Loopback(lambda params: self.complete_login(auth_id, params), port, language)
+                listener = _Loopback(lambda params: self.complete_login(auth_id, params), port, language,
+                                     lambda stage, **kw: _trace(stage, flow, **kw))
             except OSError:
                 if auth.get("callback_port") or prior.get("registration") != "dcr":
                     fail("agent_mcp_oauth_callback_unavailable")
                 prior = {}
-                listener = _Loopback(lambda params: self.complete_login(auth_id, params), 0, language)
+                listener = _Loopback(lambda params: self.complete_login(auth_id, params), 0, language,
+                                     lambda stage, **kw: _trace(stage, flow, **kw))
             client = self._client(server, metadata, prior, listener.url)
             requested = set(_scopes(auth.get("scopes", []))) | set(row.get("granted_scopes", []))
             requested.update(_scopes((row.get("challenge") or {}).get("scope", metadata["scopes"])))
@@ -527,6 +601,13 @@ class McpOAuthManager:
             params = {"response_type": "code", "client_id": client["client_id"], "redirect_uri": listener.url,
                       "state": state, "code_challenge": base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("="),
                       "code_challenge_method": "S256", "resource": row["resource"]}
+            if server.get("plugin_id") in COMPANY_PLUGIN_IDS:
+                # Persist independently of connection revisions and token rotation.
+                # Scope the pseudonymous installation hint to the issuer.
+                with self.credentials.transaction(document=True) as document:
+                    seed = document.setdefault("device_seed", secrets.token_hex(32))
+                    params["ryn_device_id"] = hmac.new(seed.encode(), metadata["issuer"].encode(), hashlib.sha256).hexdigest()
+                params["ryn_replace_legacy"] = "oldest"
             if requested:
                 params["scope"] = " ".join(sorted(requested))
             endpoint = urlsplit(metadata["authorization_endpoint"])
@@ -540,6 +621,7 @@ class McpOAuthManager:
             timer.daemon = True
             flow["timer"] = timer
             timer.start()
+            _trace("login_started", flow, redirect_port=listener.server.server_port)
             return {"auth_id": auth_id, "authorization_url": authorization_url, "expires_in": 600}
         except Exception as exc:
             with self._lock:
@@ -551,6 +633,7 @@ class McpOAuthManager:
                     pass
             if listener:
                 listener.close()
+            _trace("login_start_failed", flow, code=flow["error"])
             raise McpOAuthError(flow["error"]) from None
 
     def _client(self, server, metadata, prior, redirect_uri):
@@ -601,25 +684,48 @@ class McpOAuthManager:
     def complete_login(self, auth_id, params):
         with self._lock:
             flow = self._flows.get(auth_id)
-            if not flow or flow["state"] != "waiting" or not isinstance(params, dict) or not all(isinstance(k, str) and isinstance(val, str) for k, val in params.items()):
+            if not flow:
+                _trace("callback_rejected", reason="flow_missing")
+                return False
+            if flow["state"] != "waiting":
+                _trace("callback_rejected", flow, reason="flow_not_waiting", flow_state=flow["state"])
+                return False
+            if not isinstance(params, dict) or not all(isinstance(k, str) and isinstance(val, str) for k, val in params.items()):
+                _trace("callback_rejected", flow, reason="params_type")
                 return False
             if flow["expires_at"] <= self.clock():
+                _trace("callback_rejected", flow, reason="flow_expired")
                 self._expire(auth_id)
                 return False
             metadata = flow.get("metadata")
             if not metadata or set(params) - {"state", "iss", "code", "error", "error_description", "error_uri"}:
+                _trace("callback_rejected", flow, reason="unexpected_params" if metadata else "flow_not_ready")
                 return False
-            if len(params.get("state", "")) > 128 or not hmac.compare_digest(params.get("state", "").encode(), flow["oauth_state"].encode()) or (metadata["iss_required"] and "iss" not in params) or ("iss" in params and params["iss"] != metadata["issuer"]):
+            if len(params.get("state", "")) > 128 or not hmac.compare_digest(params.get("state", "").encode(), flow["oauth_state"].encode()):
+                _trace("callback_rejected", flow, reason="state_mismatch")
+                return False
+            if (metadata["iss_required"] and "iss" not in params) or ("iss" in params and params["iss"] != metadata["issuer"]):
+                _trace("callback_rejected", flow, reason="issuer_mismatch" if "iss" in params else "issuer_missing")
                 return False
             flow["state"] = "exchanging"
+        _trace("callback_accepted", flow, ok=bool(params.get("code")) and not params.get("error"))
         tokens = None
         try:
             if params.get("error") or not params.get("code"):
-                fail("agent_mcp_oauth_login_denied")
+                upstream = params.get("error", "")
+                code = AUTHORIZATION_ERRORS.get(upstream, "agent_mcp_oauth_login_denied")
+                _trace("authorization_error", flow, code=code,
+                       oauth_error=upstream if upstream in AUTHORIZATION_ERRORS else ("missing_code" if not upstream else "other"))
+                fail(code)
             self.store.get_mcp_server_internal(flow["server"]["id"], expected_revision=flow["server"]["revision"])
             self._current(flow["server"])
-            result = self._token_request(metadata, flow["client"], {"grant_type": "authorization_code", "code": _text(params["code"], 4096),
-                "redirect_uri": flow["redirect_uri"], "code_verifier": flow["verifier"], "resource": self._binding(flow["server"])["resource"]})
+            _trace("token_exchange_started", flow)
+            try:
+                result = self._token_request(metadata, flow["client"], {"grant_type": "authorization_code", "code": _text(params["code"], 4096),
+                    "redirect_uri": flow["redirect_uri"], "code_verifier": flow["verifier"], "resource": self._binding(flow["server"])["resource"]})
+            except OAuthHttpError as exc:
+                _trace("token_exchange_failed", flow, code=str(exc), http_status=exc.status, oauth_error=exc.oauth_error or "other")
+                raise
             tokens = self._tokens(result, self._binding(flow["server"])["resource"], flow["scopes"])
             def save(row):
                 if row.get("pending") != auth_id or flow["state"] != "exchanging" or flow["expires_at"] <= self.clock():
@@ -630,10 +736,11 @@ class McpOAuthManager:
                 row.pop("error", None)
                 row.pop("challenge", None)
             with self._lock:
-                self._update(flow["server"], flow["epoch"], save)
+                self._update(flow["server"], flow["epoch"], save, login_id=auth_id)
                 sibling_ids = self._propagate_identity_group_tokens(flow["server"])
                 flow["state"] = "connected"
                 flow["discovery_pending"] = self.on_connected is not None
+            _trace("login_connected", flow)
             if self.on_connected:
                 def notify():
                     try:
@@ -654,6 +761,7 @@ class McpOAuthManager:
             with self._lock:
                 if flow["state"] == "exchanging":
                     flow["state"], flow["error"] = "failed", str(exc) if isinstance(exc, McpOAuthError) else "agent_mcp_oauth_request_failed"
+                _trace("login_failed", flow, code=flow.get("error"))
                 try:
                     self._update(flow["server"], flow["epoch"], lambda r: (r.pop("pending", None), r.update(error=flow.get("error", "agent_mcp_auth_required"))) if r.get("pending") == auth_id else None)
                 except AgentError:
@@ -695,6 +803,7 @@ class McpOAuthManager:
             if flow["state"] not in {"waiting", "exchanging"}:
                 return {"state": flow["state"]}
             flow["state"] = "cancelled"
+            _trace("login_cancelled", flow)
             listener, timer = flow.pop("listener", None), flow.pop("timer", None)
             try:
                 self._update(flow["server"], flow["epoch"], lambda r: r.pop("pending", None) if r.get("pending") == auth_id else None)
@@ -721,6 +830,8 @@ class McpOAuthManager:
         self._update(server, row["epoch"], lambda r: r.update(challenge=safe, error="agent_mcp_auth_required"))
 
     def access_token(self, server, force_refresh=False, *, refresh_state=None):
+        if not server.get("effective_enabled", server.get("enabled", False)):
+            fail("agent_mcp_oauth_server_disabled")
         if has_static_authorization(server) or (server.get("auth") or {}).get("mode") == "none":
             return None
         row = self._row(server)
@@ -767,11 +878,14 @@ class McpOAuthManager:
                         fail("agent_mcp_auth_required")
                     value.update(tokens=refreshed, granted_scopes=_scopes(refreshed["scope"]))
                     value.pop("error", None)
-                self._update(server, row["epoch"], save)
-                self._propagate_identity_group_tokens(server)
+                self._update(server, row["epoch"], save, refresh=True)
+                current_server = self.store.get_mcp_server_internal(server["id"], require_enabled=False)
+                self._propagate_identity_group_tokens(current_server)
             except AgentError:
                 self._revoke({**current, "tokens": refreshed})
                 raise
+            if not current_server.get("effective_enabled", current_server.get("enabled", False)):
+                fail("agent_mcp_oauth_server_disabled")
             return refreshed["access_token"]
 
     def _revoke(self, row):
@@ -783,6 +897,72 @@ class McpOAuthManager:
                     {"token": token, "token_type_hint": "refresh_token" if tokens.get("refresh_token") else "access_token"})
             except Exception:
                 pass
+
+    def workspace_member(self):
+        # Only this installed plugin owns the workspace resource. Never forward a
+        # configurable server's bearer to an authority supplied by the client.
+        import httpx
+        servers = [s for s in self.store.list_mcp_servers_internal(include_tools=False)
+                   if s.get("plugin_id") == "company-workspace" and s.get("effective_enabled")
+                   and re.fullmatch(r"http://127[.]0[.]0[.]1:[0-9]+/ryn/agent-mcp", s.get("url") or "")]
+        if len(servers) != 1:
+            fail("agent_mcp_auth_required")
+        server = servers[0]
+        token = self.access_token(server)
+        if not token or not re.fullmatch(r"ryn_at_[A-Za-z0-9_-]{43}", token):
+            fail("agent_mcp_auth_required")
+        # Multiple simultaneously visible views verify the same actual bearer.
+        key = (server["instance_id"], hashlib.sha256(token.encode()).digest())
+        with self._member_lock:
+            cached = self._workspace_proof
+            if cached and cached[0] == key and cached[1] > time.monotonic():
+                return dict(cached[2])
+            with httpx.Client(timeout=5, trust_env=False, follow_redirects=False) as client:
+                response = client.post("https://dashboard-hk-api.gshopper.com.cn/ryn/workspace/authorize",
+                                       headers={"Authorization": "Bearer " + token}, json={"resource": server["url"]})
+            if response.status_code != 200:
+                fail("agent_mcp_auth_required")
+            actor = response.json()
+            member = actor.get("userid")
+            if (actor.get("resource") != server["url"] or actor.get("scope") != "workspace.access"
+                    or not isinstance(member, str) or not member or len(member) > 200):
+                fail("agent_mcp_auth_required")
+            result = {"memberId": member, "instanceId": server["instance_id"]}
+            self._workspace_proof = (key, time.monotonic() + 2, result)
+            return result
+
+    def company_connections(self):
+        states = {}
+        rows = self.credentials.read()["servers"]
+        for server in self.store.list_mcp_servers_internal(include_tools=False):
+            if server.get("plugin_id") not in COMPANY_PLUGIN_IDS or server.get("transport") != "streamable_http":
+                continue
+            row = rows.get(server["instance_id"], {})
+            tokens = row.get("tokens") or {}
+            usable = (server.get("effective_enabled") and not row.get("error") and not row.get("pending")
+                      and row.get("binding") == self._binding(server)
+                      and (tokens.get("refresh_token") or tokens.get("expires_at", 0) > self.clock()))
+            states[server["id"]] = bool(usable)
+        return states
+
+    def company_action(self):
+        return self.credentials.read().get("company_action", {"id": "", "action": "none"})
+
+    def logout_company(self):
+        with self._lock, file_transaction(self.store.lock):
+            servers = [s for s in self.store.list_mcp_servers_internal(include_tools=False)
+                       if s.get("plugin_id") in COMPANY_PLUGIN_IDS]
+            instances = {s["instance_id"] for s in servers}
+            with self.credentials.transaction(document=True) as document:
+                for instance in instances:
+                    document["servers"].pop(instance, None)
+                action = {"id": secrets.token_hex(16), "action": "logout"}
+                document["company_action"] = action
+            pending = [(flow["server"]["id"], ident) for ident, flow in self._flows.items()
+                       if flow["server"]["instance_id"] in instances and flow["state"] in {"waiting", "exchanging"}]
+        for sid, ident in pending:
+            self.cancel_login(sid, ident)
+        return {"cleared": True, "servers": [s["id"] for s in servers], "action": action}
 
     def logout(self, server_id, expected_revision=None):
         server = self.store.get_mcp_server_internal(server_id, require_enabled=False, expected_revision=expected_revision)
@@ -852,6 +1032,7 @@ class McpOAuthManager:
             self.cancel_login(flow["server"]["id"], ident)
 
     def clear_all(self):
+        self.logout_company()
         self.close()
         for ident in list(self.credentials.read()["servers"]):
             self.forget(ident)

@@ -82,6 +82,8 @@ def _publish(row, records, *, recover=False):
             return False
         messages.append({"role": "assistant", "content": "Recovered completed read calls from a partial model response; the original response did not finish.",
                          "tool_calls": [copy.deepcopy(record["raw_call"]) for record in records],
+                         # The content is a note for the model; the UI shows its own wording.
+                         "ui": {"kind": "partial_recovery"},
                          "context_epoch": row.get("context_epoch", 0)})
     unanswered = [record for record in records if record["call"]["call_id"] not in answered]
     notice = budget.notice(row) if unanswered else None

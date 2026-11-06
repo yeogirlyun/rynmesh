@@ -1,9 +1,9 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import { makeFixtureNodeClient } from "../domain/fixtureNodeClient";
 import type { DirectoryPeer, DirectorySnapshot } from "../domain/directory";
-import type { LLMServiceRecord } from "../domain/nodeClient";
+import { NodeClientError, type LLMServiceRecord } from "../domain/nodeClient";
 import type { NodeStatus, Peer } from "../domain/types";
 import { PersonalProvider, usePersonal } from "./model";
 
@@ -79,7 +79,7 @@ describe("PersonalProvider reading the node's directory", () => {
   });
 
   it("falls back to the separate lists when the node has no usable directory", async () => {
-    const { result, services, health } = setup(new Error("404"), [
+    const { result, services, health } = setup(new NodeClientError("Local Ryn node returned 404", 404), [
       { id: "remote", slug: "r", name: "Remote", endpoint: "", network: "net", tier: "unverified", credits: 0,
         weight: 0, lastSeen: "now", served: 0, fetched: 0 },
     ]);
@@ -87,6 +87,42 @@ describe("PersonalProvider reading the node's directory", () => {
     health.mockResolvedValue([{ peerId: "remote", online: true, checkedAt: "" }]);
     await waitFor(() => expect(result.current.services).toHaveLength(1));
     expect(result.current.devices.find((d) => d.id === "remote")?.online).toBe(true);
+  });
+
+  it.each([0, 500, 503])("keeps the last snapshot and adds no requests when /directory fails with %s", async (status) => {
+    const { result, services, health, directory } = setup(new NodeClientError("Local Ryn node returned an error", status));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(directory).toHaveBeenCalled();
+    expect(services).not.toHaveBeenCalled();
+    expect(health).not.toHaveBeenCalled();
+    expect(result.current.error).toBe("Some device or service information could not be refreshed.");
+  });
+
+  it("keeps one /directory request in flight while it hangs, and a manual refresh joins it", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+    try {
+      let inFlight = 0;
+      let maxInFlight = 0;
+      const { result, services, health, directory } = setup(snapshot([]));
+      directory.mockImplementation((options?: { signal?: AbortSignal }) => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        return new Promise<DirectorySnapshot>((_, reject) => {
+          options?.signal?.addEventListener("abort", () => { inFlight -= 1; reject(options.signal!.reason); }, { once: true });
+        });
+      });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      void result.current.refresh();
+      void result.current.refresh();
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(maxInFlight).toBe(1);
+      // Every hung run is bounded by its 25 s timeout before the next one starts.
+      expect(directory.mock.calls.length).toBeLessThanOrEqual(4);
+      expect(services).not.toHaveBeenCalled();
+      expect(health).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps shell peers the snapshot does not list", async () => {

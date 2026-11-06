@@ -1,0 +1,29 @@
+{
+  "fresh_install": true,
+  "repeat_install_preserves_identity_key_and_disabled_plugins": true,
+  "office_editors": [
+    "pdfcraft",
+    "wordcraft",
+    "gridcraft",
+    "deckcraft"
+  ],
+  "native_cli_version": [
+    "pdfcraft",
+    "wordcraft",
+    "gridcraft",
+    "deckcraft"
+  ],
+  "company_pages": [
+    "company-workspace",
+    "company-dashboard",
+    "company-affiliate"
+  ],
+  "company_health": {
+    "ok": true,
+    "service": "company",
+    "status": "ready"
+  },
+  "company_outbound_network": "blocked",
+  "live_install_modified": false,
+  "system_installer_executed": false
+}

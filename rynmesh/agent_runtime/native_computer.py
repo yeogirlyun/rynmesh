@@ -1957,6 +1957,7 @@ class NativeComputerFacade:
             "window_ref": copy.deepcopy(obs_rec.window_ref),
             "window_title": obs_rec.window_title,
             "window_pid": int(obs_rec.window_ref["pid"]),
+            "process_name": obs_rec.process_name,
             "window_rect": rect_list,
             "expected_state_token": obs_rec.state_token,
             "observation_id": obs_rec.observation_id,
@@ -1966,6 +1967,9 @@ class NativeComputerFacade:
         }
         if follow_up_action is not None:
             plan_out["follow_up_action"] = follow_up_action
+        route_check = getattr(self, "desktop_route_check", None)
+        if callable(route_check):
+            route_check(context, obs_rec.process_name)
         return plan_out
 
     # =========================================================================
@@ -2270,6 +2274,7 @@ class NativeComputerFacade:
             "operation": copy.deepcopy(dict(arguments)),
             "window_title": plan["window_title"],
             "window_pid": plan["window_pid"],
+            "process_name": plan["process_name"],
             "window_rect": plan["window_rect"],
             "window_ref": plan["window_ref"],
             "expected_state_token": plan["expected_state_token"],

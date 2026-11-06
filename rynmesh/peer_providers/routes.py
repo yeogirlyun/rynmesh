@@ -11,7 +11,19 @@ def install_peer_provider_routes(app, service, local_control):
 
     async def run(request, action):
         local_control(request)
+        from .service import company_member
+        from ..agent_runtime.extensions.mcp_oauth import COMPANY_PLUGIN_IDS
+        token = None
         try:
+            pid = request.path_params.get("plugin_id")
+            if (pid in COMPANY_PLUGIN_IDS and hasattr(app.state, "read_company_account")
+                    and request.url.path.rsplit("/",1)[-1] in {"workspace","auto-sync","catalog","models","publish","refresh","bind"}):
+                account = await app.state.read_company_account()
+                member = account.get("memberId")
+                if account.get("state") != "logged_in" or not member:
+                    raise PeerProviderError("peer_provider_login_required")
+                token = company_member.set(member)
+                service._get(pid, session=True)
             result = action()
             if hasattr(result, "__await__"):
                 result = await result
@@ -20,6 +32,9 @@ def install_peer_provider_routes(app, service, local_control):
             raise HTTPException(409, str(exc)) from None
         except Exception:
             raise HTTPException(503, "peer_provider_unavailable") from None
+        finally:
+            if token is not None:
+                company_member.reset(token)
 
     async def body(request):
         raw = await request.body()

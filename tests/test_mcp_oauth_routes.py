@@ -388,3 +388,51 @@ def test_real_privacy_json_and_all_scope_zip_exports_exclude_local_oauth_file(tm
         app.state.peer_providers.close()
         app.state.llm_shutdown()
 
+
+
+def test_company_logout_clears_disabled_and_pending_but_preserves_unowned(host, tmp_path, monkeypatch):
+    from rynmesh.agent_runtime.extensions import ExtensionImportManager
+
+    manager = real_oauth(host)
+    members = []
+    for plugin_id in ('company-workspace', 'company-dashboard'):
+        package = tmp_path / plugin_id
+        package.mkdir()
+        (package / 'plugin.json').write_text(json.dumps({'id':plugin_id, 'name':plugin_id}))
+        (package / 'mcp.json').write_text(json.dumps({'mcpServers':{'reader':{
+            'type':'http', 'url':'https://mcp.example.test/tools','oauth':{'clientId':'desktop'}}}}))
+        importer = ExtensionImportManager(host.store)
+        preview = importer.preview({'kind':'plugin','path':str(package)})
+        importer.commit(preview['preview_id'], expected_revision=preview['expected_revision'])
+        plugin = next(p for p in host.store.overview()['plugins'] if p['id'] == plugin_id)
+        host.store.set_plugin_enabled(plugin_id, plugin_id == 'company-workspace', expected_revision=plugin['revision'])
+        members.append(host.store.get_mcp_server_internal(plugin_id+'-reader', require_enabled=False))
+
+    unrelated = server(host, 'company-unowned')
+    for srv in members + [unrelated]:
+        row = manager._row(srv)
+        manager._update(srv, row['epoch'], lambda r:r.update(tokens={'access_token':CANARY,'expires_at':9999999999}))
+    pending = members[0]
+    epoch = manager._row(pending)['epoch']
+    def sign_in(row):
+        row.update(tokens={'access_token':CANARY, 'refresh_token':'synthetic-refresh','scope':'', 'expires_at':0},
+                   client={},metadata={})
+    manager._update(pending,epoch,sign_in,login_id='synthetic-confirmed-scan')
+    marker = manager.company_action()
+    monkeypatch.setattr(manager,'_token_request',lambda *a,**kw:{'access_token':'rotated','token_type':'Bearer'})
+    assert manager.access_token(pending) == 'rotated'
+    assert manager.company_action() == marker
+    manager._flows['pending'] = dict(server=pending, epoch=epoch, state='waiting', expires_at=9999999999)
+    before = [s['effective_enabled'] for s in members]
+    assert before == [True, False]
+    response = host.client.post(PREFIX+'/company/logout')
+    assert response.status_code == 200 and response.json()['cleared'] is True
+    assert not manager.complete_login('pending', {})
+    with pytest.raises(AgentError):
+        manager._update(pending, epoch, lambda r:r.update(tokens={}))
+    reopened = McpOAuthManager(host.store, transport=manager.transport)
+    saved = reopened.credentials.read()['servers']
+    assert all(not saved.get(s['instance_id'], {}).get('tokens') for s in members)
+    assert saved[unrelated['instance_id']]['tokens']['access_token'] == CANARY
+    assert [host.store.get_mcp_server_internal(s['id'], require_enabled=False)['effective_enabled'] for s in members] == before
+    assert reopened.company_action()['action'] == 'logout'

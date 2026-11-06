@@ -2,16 +2,18 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import time
 from typing import Any, Callable
 
-from fastapi import HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import BackgroundTasks, HTTPException, Request
+from fastapi.responses import JSONResponse, Response
 
 from ..diagnostic_log import failure
 from ..store import AgentError
 from .adapter import ExtensionToolAdapter
+from .local_services import LocalServiceCredentials
 from .views import query_plugin_tool, query_view
 
 
@@ -46,6 +48,7 @@ def install_extension_routes(
     local_control: Callable,
 ) -> None:
     """Mount `/api/local/agent/extensions` management routes on the FastAPI app."""
+    local_services = LocalServiceCredentials(extensions.store, extensions.manager)
 
     def _desktop_access() -> bool:
         try:
@@ -85,6 +88,101 @@ def install_extension_routes(
             return value
         except (TypeError, ValueError):
             raise HTTPException(400, detail="agent_invalid_request") from None
+
+    @app.post("/api/local/agent/extensions/local-service/prepare")
+    async def prepare_local_service(request: Request):
+        payload = await _body(request, max_bytes=8192)
+        if set(payload) != {"service_id", "plugin_ids", "server_ids", "port"}:
+            raise HTTPException(400, detail="agent_local_service_invalid")
+        # Only the authenticated native owner channel receives this secret.
+        return await _run("prepare_local_service", lambda: local_services.prepare(**payload))
+
+    @app.post("/api/local/agent/extensions/local-service/activate")
+    async def activate_local_service(request: Request, background_tasks: BackgroundTasks):
+        payload = await _body(request, max_bytes=1024)
+        if set(payload) != {"service_id", "generation"}:
+            raise HTTPException(400, detail="agent_local_service_invalid")
+        result = await _run("activate_local_service", lambda: local_services.activate(**payload))
+        async def rediscover():
+            for sid in result["server_ids"]:
+                try:
+                    server = extensions.store.get_mcp_server_internal(sid, require_enabled=True)
+                    await asyncio.to_thread(extensions.manager.test_server, sid, expected_revision=server["revision"])
+                except AgentError:
+                    # Auth-required/disabled states remain visible; never enable or borrow credentials.
+                    pass
+        background_tasks.add_task(rediscover)
+        return result
+
+    async def service_payload(request):
+        if (not request.client or request.client.host not in {"127.0.0.1", "::1"}
+                or request.headers.get("origin") or request.headers.get("referer")):
+            raise HTTPException(403, detail="agent_local_service_denied")
+        raw = bytearray()
+        async for chunk in request.stream():
+            raw.extend(chunk)
+            if len(raw) > 8192:
+                raise HTTPException(413, detail="agent_request_limit")
+        try:
+            payload = json.loads(raw)
+            if not isinstance(payload, dict):
+                raise ValueError()
+            return payload
+        except (ValueError, TypeError):
+            raise HTTPException(400, detail="agent_invalid_request") from None
+
+    def operation_allowed(request, payload):
+        try:
+            server = extensions.store.get_mcp_server_internal(payload["server_id"], require_enabled=True)
+            headers = server.get("secret_headers") or {}
+            for header in ("X-Ryn-Service-Token", "X-Ryn-Service-Generation"):
+                expected = headers.get(header, "")
+                if not expected or not hmac.compare_digest(expected.encode(), request.headers.get(header, "").encode()):
+                    raise ValueError
+            receipt = extensions.ledger_factory().get(payload["operation_id"])
+            binding = receipt["binding"]
+            if (receipt.get("trusted_operation") != payload
+                    or receipt["status"] not in {"dispatched", "confirmed"}
+                    or binding["task_id"] != payload["task_id"]
+                    or binding["arguments_sha256"] != payload["arguments_sha256"]
+                    or binding["extension_binding"]["server_id"] != server["id"]
+                    or payload["expires_at"] < time.time()):
+                raise ValueError
+            extensions.verify_binding(binding["extension_binding"])
+            def current(data):
+                row = data["tasks"].get(binding["task_id"])
+                if (not row or not data["settings"].get("enabled")
+                        or data["settings"].get("permission_mode") == "read_only"
+                        or row["status"] in {"cancelled", "paused", "interrupted", "failed"}
+                        or row.get("pending_control")):
+                    return False
+                actual = {"goal_revision": row["goal"]["revision"], "control_revision": row["control_revision"],
+                          "scope_revision": row["scope_revision"], "settings_revision": data.get("settings_revision", 0)}
+                return actual == binding.get("authority_revision") == payload.get("authority_revision")
+            return runtime.store.inspect(current)
+        except (ValueError, KeyError, TypeError, AgentError):
+            return False
+
+    @app.post("/api/local/agent/extensions/local-service/authorize-operation")
+    async def authorize_local_operation(request: Request):
+        return {"allowed": operation_allowed(request, await service_payload(request))}
+
+    @app.post("/api/local/agent/extensions/local-service/artifact")
+    async def local_operation_artifact(request: Request):
+        payload = await service_payload(request)
+        if not operation_allowed(request, payload) or not isinstance(payload.get("artifact"), dict):
+            raise HTTPException(403, detail="agent_local_service_denied")
+        from ..artifact_transfers import ArtifactTransfers
+        receipt = extensions.ledger_factory().get(payload["operation_id"])
+        binding = receipt["binding"]
+        context = {"task_id": binding["task_id"], "owner_id": binding["owner_id"],
+                   "scope_revision": binding["authority_revision"]["scope_revision"]}
+        item = ArtifactTransfers(runtime.store).resolve(context, payload["artifact"]["artifact_ref"], content=True)
+        if {k: v for k, v in item.items() if k != "bytes"} != payload["artifact"]:
+            raise HTTPException(409, detail="agent_artifact_content_changed")
+        if not operation_allowed(request, payload):
+            raise HTTPException(403, detail="agent_local_service_denied")
+        return Response(item["bytes"], media_type="application/octet-stream", headers={"Cache-Control": "no-store"})
 
     async def _delete_revision(request: Request) -> int:
         local_control(request)
@@ -210,6 +308,60 @@ def install_extension_routes(
             return result
         return await _run("oauth_logout", operation)
 
+    async def read_company_account():
+        import httpx
+        from urllib.parse import urlsplit
+        server = await _run("company_workspace", lambda: extensions.store.get_mcp_server_internal(
+            "company-workspace-mcp", require_enabled=False))
+        url = urlsplit(server.get("url") or "")
+        if (server.get("plugin_id") != "company-workspace" or url.scheme != "http"
+                or url.hostname != "127.0.0.1" or not url.port or url.path != "/ryn/agent-mcp"):
+            raise HTTPException(503, detail="company_account_unavailable")
+        try:
+            async with httpx.AsyncClient(timeout=8, trust_env=False) as client:
+                response = await client.get(f"http://127.0.0.1:{url.port}/api/company/account")
+                response.raise_for_status()
+                account = response.json()
+                return {key: account[key] for key in ("memberId", "displayName", "state", "version", "plugins", "connections")}
+        except (httpx.HTTPError, ValueError, KeyError):
+            raise HTTPException(503, detail="company_account_unavailable") from None
+
+    app.state.read_company_account = read_company_account
+
+    @app.get("/api/local/agent/extensions/company/account")
+    async def company_account(request: Request):
+        local_control(request)
+        return await read_company_account()
+
+    @app.get("/api/local/agent/extensions/company/workspace-member")
+    async def company_workspace_member(request: Request):
+        local_control(request)
+        return await _run("company_workspace_member", extensions.manager.oauth.workspace_member)
+
+    @app.get("/api/local/agent/extensions/company/connections")
+    async def company_connections(request: Request):
+        local_control(request)
+        return await _run("company_connections", extensions.manager.oauth.company_connections)
+
+    @app.get("/api/local/agent/extensions/company/account-action")
+    async def company_account_action(request: Request):
+        local_control(request)
+        return await _run("company_account_action", extensions.manager.oauth.company_action)
+
+    @app.post("/api/local/agent/extensions/company/logout")
+    async def logout_company(request: Request):
+        local_control(request)
+        def operation():
+            from .mcp_oauth import COMPANY_PLUGIN_IDS
+            providers = getattr(app.state, "peer_providers", None)
+            if providers:
+                providers.clear_local_company_sessions(COMPANY_PLUGIN_IDS)
+            result = extensions.manager.oauth.logout_company()
+            for server_id in result["servers"]:
+                extensions.manager.invalidate_server(server_id)
+            return result
+        return await _run("company_logout", operation)
+
     @app.post("/api/local/agent/extensions/mcp/oauth/clear-local-authorizations")
     async def clear_mcp_authorizations(request: Request):
         payload = await _body(request, 16384)
@@ -295,6 +447,9 @@ def install_extension_routes(
             )
             for mid in result.get("mcp_server_ids") or []:
                 extensions.manager.invalidate_server(mid)
+            if payload["enabled"]:
+                for mid in result.get("mcp_server_ids") or []:
+                    extensions.manager.rediscover_authenticated(mid)
             return result
 
         return await _run("update_plugin", _op)
@@ -450,11 +605,18 @@ def install_extension_routes(
             if not isinstance(preview_id, str) or not preview_id.strip():
                 raise AgentError("agent_import_preview_not_found")
             expected_rev = _parse_expected_revision(payload.get("expected_revision"))
+            previous_servers = extensions.store.list_mcp_servers_internal(include_tools=False)
             overview = extensions.imports.commit(
                 preview_id.strip(),
                 expected_revision=expected_rev,
                 desktop_access=_desktop_access(),
             )
+            current_instances = {s["instance_id"] for s in extensions.store.list_mcp_servers_internal(include_tools=False)}
+            oauth = getattr(extensions.manager, "oauth", None)
+            if oauth is not None:
+                for previous in previous_servers:
+                    if previous["instance_id"] not in current_instances:
+                        oauth.forget(previous["instance_id"])
             for srv in overview.get("mcp_servers") or []:
                 if isinstance(srv, dict) and isinstance(srv.get("id"), str):
                     extensions.manager.invalidate_server(srv["id"])

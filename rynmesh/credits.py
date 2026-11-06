@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass, field
+import os
+import threading
+import time
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 from .crypto import SignedPayload, canonical_json, sha256_bytes, sign_payload, verify_signed_payload
 from .identity import IdentityTier, tier_can_issue, tier_distribution_cap
@@ -27,6 +30,9 @@ GENERAL_CATEGORY = "general"
 # global/general reputation score; a scoreboard must ask for them by name.
 DEV_CATEGORY_PREFIX = "dev:"
 TASK_BALANCE_CATEGORY = DEV_CATEGORY_PREFIX + "task_balance"
+# How long verified events are reused while no event file changes. Verification
+# depends on each issuer's identity tier, which can change without a file change.
+VERIFIED_EVENTS_TTL_SECONDS = 60.0
 
 
 EVENT_WEIGHTS: dict[str, float] = {
@@ -234,6 +240,12 @@ class FileCreditLedger:
         if self.policy.enforce_distribution_tier_cap and self.tier_resolver is None:
             raise CreditLedgerError("credit_distribution_tier_cap_resolver_required")
         self.events_dir.mkdir(parents=True, exist_ok=True)
+        # Verified-event cache; see _verified_events.
+        self._verified_lock = threading.Lock()
+        self._verified: list[tuple[SignedPayload, CreditEvent]] | None = None
+        self._verified_fingerprint: tuple[int, int, int, int] | None = None
+        self._verified_at = 0.0
+        self._clock: Callable[[], float] = time.monotonic
 
     def _issuer_tier(self, issuer_peer_id: str) -> IdentityTier | None:
         if self.tier_resolver is None:
@@ -276,6 +288,7 @@ class FileCreditLedger:
         path = self._event_path(event)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(signed_event.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
+        self._invalidate_verified_events()
         return {
             "status": "recorded",
             "event_id": event.to_payload()["event_id"],
@@ -317,6 +330,84 @@ class FileCreditLedger:
         signed = sign_credit_event(event, private_key_bytes=private_key_bytes)
         return self.append(signed)
 
+    def _events_fingerprint(self) -> tuple[int, int, int, int]:
+        """Stat-only summary of the event files that glob("*/*.json") reads.
+
+        Any added, removed or rewritten event file changes it, including files
+        written by another process, without reading or verifying any file.
+        """
+        count = total_size = newest = mtime_sum = 0
+        try:
+            subjects = [entry for entry in os.scandir(self.events_dir)
+                        if not entry.name.startswith(".") and entry.is_dir()]
+        except OSError:
+            return (0, 0, 0, 0)
+        for subject in subjects:
+            try:
+                entries = list(os.scandir(subject.path))
+            except OSError:
+                continue
+            for entry in entries:
+                if entry.name.startswith(".") or not entry.name.endswith(".json"):
+                    continue
+                try:
+                    info = entry.stat()
+                except OSError:
+                    continue
+                count += 1
+                total_size += info.st_size
+                newest = max(newest, info.st_mtime_ns)
+                mtime_sum += info.st_mtime_ns
+        return (count, total_size, newest, mtime_sum)
+
+    def _verified_events(self) -> list[tuple[SignedPayload, CreditEvent]]:
+        """Every event file that passes verification, in file order.
+
+        Reading and verifying every event used to happen on each call, and a
+        device list called it once per device. The result is reused while no
+        event file changed, nothing was appended here, and it is younger than
+        VERIFIED_EVENTS_TTL_SECONDS (verification depends on each issuer's
+        identity tier, which can change without any file changing). Concurrent
+        callers wait for one rebuild instead of each verifying everything.
+        """
+        with self._verified_lock:
+            fingerprint = self._events_fingerprint()
+            if (
+                self._verified is not None
+                and fingerprint == self._verified_fingerprint
+                and self._clock() - self._verified_at < VERIFIED_EVENTS_TTL_SECONDS
+            ):
+                return self._verified
+            verified: list[tuple[SignedPayload, CreditEvent]] = []
+            # A few issuers sign most events; resolving a tier reads identity
+            # claims from disk, so each issuer is resolved once per rebuild.
+            issuer_tiers: dict[str, IdentityTier | None] = {}
+            for path in sorted(self.events_dir.glob("*/*.json")):
+                try:
+                    signed = SignedPayload.from_dict(json.loads(path.read_text(encoding="utf-8")))
+                    # Re-verify with the current policy + resolver so events that
+                    # passed under an old policy but would fail now are quietly
+                    # excluded from rankings (write-time gate is the same code path).
+                    peek = CreditEvent.from_payload(signed.payload)
+                    if peek.issuer_peer_id not in issuer_tiers:
+                        issuer_tiers[peek.issuer_peer_id] = self._issuer_tier(peek.issuer_peer_id)
+                    event = verify_credit_event_with_policy(
+                        signed,
+                        policy=self.policy,
+                        issuer_tier=issuer_tiers[peek.issuer_peer_id],
+                    )
+                except (OSError, json.JSONDecodeError, KeyError, ValueError, CreditLedgerError):
+                    continue
+                verified.append((signed, event))
+            self._verified = verified
+            self._verified_fingerprint = fingerprint
+            self._verified_at = self._clock()
+            return verified
+
+    def _invalidate_verified_events(self) -> None:
+        with self._verified_lock:
+            self._verified = None
+
     def list_events(
         self,
         *,
@@ -324,25 +415,14 @@ class FileCreditLedger:
         category: str = GLOBAL_CATEGORY,
     ) -> list[SignedPayload]:
         events: list[SignedPayload] = []
-        for path in sorted(self.events_dir.glob("*/*.json")):
-            try:
-                signed = SignedPayload.from_dict(json.loads(path.read_text(encoding="utf-8")))
-                # Re-verify with the current policy + resolver so events that
-                # passed under an old policy but would fail now are quietly
-                # excluded from rankings (write-time gate is the same code path).
-                peek = CreditEvent.from_payload(signed.payload)
-                event = verify_credit_event_with_policy(
-                    signed,
-                    policy=self.policy,
-                    issuer_tier=self._issuer_tier(peek.issuer_peer_id),
-                )
-            except (OSError, json.JSONDecodeError, KeyError, ValueError, CreditLedgerError):
-                continue
+        for signed, event in self._verified_events():
             if subject_peer_id and event.subject_peer_id != subject_peer_id:
                 continue
             if not _category_matches(event.category, category):
                 continue
-            events.append(signed)
+            # A fresh copy per caller: SignedPayload deep-copies its payload, so
+            # a caller cannot change what the next caller reads.
+            events.append(replace(signed))
         return events
 
     def find_by_dedupe(
@@ -367,6 +447,19 @@ class FileCreditLedger:
         accounts = self.scoreboard(category=category)
         return accounts.get(peer_id, _empty_account(peer_id, self.policy))
 
+    def accounts_for(
+        self,
+        peer_ids: Iterable[str],
+        *,
+        category: str = GLOBAL_CATEGORY,
+    ) -> dict[str, CreditAccount]:
+        """Accounts for several peers from one scoreboard; a peer without events gets an empty account."""
+        accounts = self.scoreboard(category=category)
+        return {
+            peer_id: accounts.get(peer_id, _empty_account(peer_id, self.policy))
+            for peer_id in peer_ids
+        }
+
     def scoreboard(
         self,
         *,
@@ -385,13 +478,11 @@ class FileCreditLedger:
             active_resolver = None
         now = datetime.now(timezone.utc)
         buckets: dict[str, dict[str, Any]] = {}
-        for signed in self.list_events(category=category):
-            peek = CreditEvent.from_payload(signed.payload)
-            event = verify_credit_event_with_policy(
-                signed,
-                policy=self.policy,
-                issuer_tier=self._issuer_tier(peek.issuer_peer_id),
-            )
+        # Events were verified once in _verified_events; only the time-decayed
+        # totals are computed here, so scores always use the current time.
+        for _signed, event in self._verified_events():
+            if not _category_matches(event.category, category):
+                continue
             bucket = buckets.setdefault(
                 event.subject_peer_id,
                 {

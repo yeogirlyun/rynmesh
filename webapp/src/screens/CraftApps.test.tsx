@@ -78,6 +78,14 @@ it("selects the office four and performs no download before confirmation", async
   expect(craftPlugins.setup).toHaveBeenCalledOnce();
 });
 
+it("opens an installed editor from its sidebar route without reinstalling", async () => {
+  present();
+  render(<MemoryRouter initialEntries={["/apps?open=pdfcraft"]}><CraftApps /><Location /></MemoryRouter>);
+  await waitFor(() => expect(craftPlugins.launch).toHaveBeenCalledWith("pdfcraft", "local-launch-ticket"));
+  expect(craftPlugins.install).not.toHaveBeenCalled();
+  expect(screen.getByTestId("location")).toHaveTextContent("/apps");
+});
+
 it("retains completed downloads after a partial failure and retries only missing plugins", async () => {
   const user = userEvent.setup(); mount();
   const normal = vi.mocked(craftPlugins.install).getMockImplementation()!;

@@ -1714,6 +1714,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         providers=lambda: [*active_source_managers().values(), *active_cli_managers().values()],
         network_id=lambda: str(read_provider_settings().get("network_id") or "rynmesh-main"),
         exchange=exchange_space_catalog)
+    from .lan_space_catalog import LanSpaceCatalogRefresh
+    lan_space_catalog = LanSpaceCatalogRefresh(store, space_catalog)
 
     agent_registry_cache = {}
     agent_registry_lock = threading.Lock()
@@ -1761,7 +1763,13 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             services.extend(row for row in access_state.catalog.records() if row.get("network_id", "rynmesh-main") == network_id)
         services.extend(row for row in space_catalog.records() if row.get("network_id", "rynmesh-main") == network_id)
         if external_catalog:
-            services.extend(external_catalog.records())
+            # A failed plugin authority withholds that provider's records. It must
+            # not hide independent local models or authenticated peer catalogs.
+            from ..peer_providers.validation import PeerProviderError
+            try:
+                services.extend(external_catalog.records())
+            except PeerProviderError:
+                pass
         # A model can switch between explicit-friend and space policy while an
         # older authenticated catalog is still cached. Catalog and dispatch
         # must select the same most recently authenticated record.
@@ -1776,8 +1784,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             with agent_registry_lock:
                 cached = agent_registry_cache.get(network_id) if cache_registry else None
             if passive_registry:
-                # Opening the local composer never waits for a registry socket.
-                # This is a display path; dispatch still resolves current authority.
+                # Metadata reads never wait for a registry socket. These cached
+                # advertisements are locators; dispatch checks signed authority.
                 with agent_registry_lock:
                     if ((cached is None or time.monotonic() - cached[0] >= 10)
                             and network_id not in agent_registry_refreshing):
@@ -1871,9 +1879,12 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     app.state.llm_discover = discover
 
     def refresh_space_catalog_once():
+        network = str(read_provider_settings().get("network_id") or "rynmesh-main")
+        if lan_space_catalog.refresh_once(network):
+            return True
         # One metadata-only signed challenge per worker tick. Advertisements
         # locate a peer; only the authenticated response can bind its models.
-        rows = discover(str(read_provider_settings().get("network_id") or "rynmesh-main"))
+        rows = discover(network, cache_registry=True, passive_registry=True)
         candidates = {row["peer_id"]: row for row in rows if row.get("peer_id") != store.peer_id
             and row.get("access_policy") == "personal_space" and store.personal_space.allows_ai(row.get("peer_id"))}
         if not candidates:
@@ -2217,6 +2228,19 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         policy=BackoffPolicy(busy_delay_s=15, idle_initial_s=15, idle_multiplier=1, idle_max_s=15,
                              error_multiplier=2, error_max_s=120),
     ))
+    # Inventory freshness must not depend on registry availability or UI reads.
+    # Separate workers keep a slow/broken CLI from starving the other CLI.
+    def refresh_cli_inventory(kind):
+        current = active_cli_managers().get(kind)
+        return bool(current and current.accepting_orders and current.adapter.refresh_inventory())
+
+    for kind in ("codex_cli", "antigravity_cli"):
+        registry.register(BackgroundWorkerSpec(
+            name="llm.inventory." + kind,
+            run_once=lambda kind=kind: refresh_cli_inventory(kind), initial_delay_s=1,
+            policy=BackoffPolicy(busy_delay_s=5, idle_initial_s=5, idle_multiplier=1, idle_max_s=5,
+                                 error_multiplier=2, error_max_s=15),
+        ))
     registry.register(BackgroundWorkerSpec(
         name="llm.publish-refresh",
         run_once=publish_once,
@@ -2309,7 +2333,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     @app.get("/api/local/llm/services")
     def local_llm_services(network_id: str = "rynmesh-main") -> dict[str, Any]:
         try:
-            services = discover(network_id)
+            services = discover(network_id, cache_registry=True, passive_registry=True)
         except Exception:
             services = []
         return {"network_id": network_id, "services": services}
@@ -3176,7 +3200,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             local = provider_for(service_id)
             if local and (local.manifest.adapter in {"codex_cli", "claude_cli", "antigravity_cli"} or service_id in active_source_managers()):
                 return await execute_local_cli(body, local, prompt, max_tokens, chat)
-        records = await asyncio.to_thread(discover, network_id)
+        records = await asyncio.to_thread(discover, network_id, cache_registry=True,
+                                         passive_registry="expected_model_binding" in body)
         external_resource = resource_of(body.get("expected_model_binding"))
         selected = next((item for item in records
                          if item.get("peer_id") == provider_peer_id
@@ -4323,7 +4348,10 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         "discover": discover, "provider_for": provider_for, "execute_order": execute_order,
         # Only untrusted registry locators are cached. Local configuration and
         # authenticated access catalogs above are rechecked on every call.
-        "discover_agent": lambda network: discover(network, cache_registry=True),
+        # Registry advertisements are locators, never authority. Do not put a
+        # registry timeout on every Agent metadata/permission check. Signed
+        # catalogs and current local configuration are still read each time.
+        "discover_agent": lambda network: discover(network, cache_registry=True, passive_registry=True),
         "discover_display": lambda network: discover(network, cache_registry=True, passive_registry=True),
         # Resolving a local model must not wait for registry or peer catalogs.
         # Local readiness, configuration and exact bindings are still rebuilt.

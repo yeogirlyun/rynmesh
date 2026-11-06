@@ -31,7 +31,7 @@ describe('remote app capability boundary', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Waiting for automatic recovery');
     await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
     expect(screen.getByTitle('Reports')).toBeInTheDocument();
-    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(invoke).mock.calls.filter(call => call[0] === 'ensure_plugin_service')).toHaveLength(2);
   });
   it('explains a port conflict without mounting a foreign service', async () => {
     (window as any).__TAURI_INTERNALS__ = {};
@@ -44,7 +44,8 @@ describe('remote app capability boundary', () => {
   it('waits for the managed desktop service before mounting the local frame', async () => {
     (window as any).__TAURI_INTERNALS__ = {};
     let ready!: (managed: boolean) => void;
-    vi.mocked(invoke).mockReturnValue(new Promise(resolve => { ready = resolve; }));
+    vi.mocked(invoke).mockImplementation((command: string) => command === 'ensure_plugin_service'
+      ? new Promise(resolve => { ready = resolve; }) : Promise.resolve(101));
     vi.mocked(agentExtensions.overview).mockResolvedValue({ plugins: [{ ...plugin, web_app: { ...plugin.web_app, url: 'http://127.0.0.1:18140/apps/reports' } }] } as any);
     const pending = mount();
     await waitFor(() => expect(invoke).toHaveBeenCalledWith('ensure_plugin_service', { pluginId: 'reports' }));
@@ -62,6 +63,45 @@ describe('remote app capability boundary', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(await screen.findByTitle('Reports')).toBeInTheDocument();
     expect(fetchService).toHaveBeenCalledTimes(2);
+  });
+  it('replaces an already loaded error document when the service restarts between polls', async () => {
+    (window as any).__TAURI_INTERNALS__ = {};
+    let instance = 101;
+    vi.mocked(invoke).mockImplementation(async command => command === 'ensure_plugin_service' ? true : instance);
+    vi.mocked(agentExtensions.overview).mockResolvedValue({ plugins: [{ ...plugin, web_app: { ...plugin.web_app, url: 'http://127.0.0.1:18140/apps/reports' } }] } as any);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await act(async () => {
+      render(<MemoryRouter initialEntries={['/apps/extensions/reports']}><Routes><Route path='/apps/extensions/:pluginId' element={<ExtensionWebApp />} /></Routes></MemoryRouter>);
+    });
+    const first = screen.getByTitle('Reports');
+    // WebView2 fires load for chrome-error://chromewebdata, without an error event.
+    fireEvent.load(first);
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(screen.getByTitle('Reports')).toBe(first);
+    instance = 102;
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(screen.getByTitle('Reports')).not.toBe(first);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+  it('detects an outage after mount and remounts after automatic recovery', async () => {
+    (window as any).__TAURI_INTERNALS__ = {};
+    let down = false;
+    vi.mocked(invoke).mockImplementation(async command => {
+      if (down) throw 'plugin_service_unhealthy';
+      return command === 'ensure_plugin_service' ? true : 101;
+    });
+    vi.mocked(agentExtensions.overview).mockResolvedValue({ plugins: [{ ...plugin, web_app: { ...plugin.web_app, url: 'http://127.0.0.1:18140/apps/reports' } }] } as any);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await act(async () => {
+      render(<MemoryRouter initialEntries={['/apps/extensions/reports']}><Routes><Route path='/apps/extensions/:pluginId' element={<ExtensionWebApp />} /></Routes></MemoryRouter>);
+    });
+    const first = screen.getByTitle('Reports');
+    down = true;
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(screen.getByRole('alert')).toHaveTextContent('Waiting for automatic recovery');
+    down = false;
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+    expect(screen.getByTitle('Reports')).not.toBe(first);
   });
   it('keeps downloads blocked unless the plugin declares them', async () => {
     const frame=await mount();

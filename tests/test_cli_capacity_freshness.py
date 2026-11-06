@@ -79,6 +79,24 @@ def test_passive_binding_never_discovers_or_reuses_expired_capacity(cli_metadata
     assert adapter.cached_binding_for_model("model-a") is None
 
 
+def test_background_inventory_refreshes_before_binding_expires(cli_metadata_catalog):
+    import time
+    from rynmesh.llm_package import cli_models
+    fixture = cli_metadata_catalog
+    adapter = fixture.manager.adapter
+    assert adapter.refresh_inventory()
+    before = adapter.cached_binding_for_model("model-a")
+    assert before
+    assert not adapter.refresh_inventory()
+    key = ("codex_cli", str(fixture.binary))
+    stamp, models = cli_models._cache[key]
+    cli_models._cache[key] = (time.monotonic() - 35, models)
+    assert adapter.cached_binding_for_model("model-a") == before
+    assert adapter.refresh_inventory()
+    assert adapter.cached_binding_for_model("model-a") == before
+    assert len(fixture.enumerations) == 2
+
+
 def test_empty_refreshed_listing_closes_default_dispatch_without_reusing_old_binding(cli_metadata_catalog, monkeypatch):
     fixture = cli_metadata_catalog
     adapter = fixture.manager.adapter

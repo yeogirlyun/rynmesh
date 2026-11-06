@@ -12,7 +12,7 @@ from .operation_permissions import GUIDANCE as PERMISSION_GUIDANCE
 from .operation_permissions import projection as permission_projection
 from .tool_menu import SPEC as TOOL_MENU_SPEC
 
-PROMPT_VERSION = "ryn-agent-loop-v11"
+PROMPT_VERSION = "ryn-agent-loop-v13"
 
 SYSTEM = (
     "You are Ryn, an autonomous coding and workstation agent on the user's computer. Reply concisely in their language. "
@@ -48,6 +48,23 @@ SYSTEM += (
     "or preserve its motif, palette or layout unless the user asked to keep them. When retrying after image generation becomes available, "
     "start from the user's request, not the fallback. Never substitute SVG, canvas, drawing code or a rasterized version for requested native image generation. "
     "If native generation fails, report the failure instead of silently changing the production method. "
+)
+
+
+# Keep exact shipped variants for migration; never replace a custom/pinned base.
+_PRE_PLUGIN_SYSTEM = SYSTEM
+SYSTEM = SYSTEM.replace(
+    "For Ryn internal document plugins (PdfCraft/WordCraft/SheetCraft), use ryn_list_plugins first; for OS desktop applications (e.g. WeChat, Zoom) when desktop_access is enabled, use computer_observe_windows -> computer_read_window -> computer_act_window directly without calling ryn_list_plugins or ryn_project_inspect. ",
+    "Use ryn_list_plugins/ryn_discover_tools; prefer authorized plugins and Skills, selected plugins first. "
+    "Reconnect expired auth; never bypass denial or repeat uncertain writes: query the original ID. "
+    "Use authorized UI for explicit UI tasks or confirmed gaps, not errors. Explain fallback. Discovery grants nothing. "
+)
+_PRE_STRICT_PLUGIN_SYSTEM = SYSTEM
+SYSTEM = SYSTEM.replace(
+    "Use ryn_list_plugins/ryn_discover_tools; prefer authorized plugins and Skills, selected plugins first. ",
+    "For app tasks, first use ryn_list_plugins or ryn_discover_tools before browser, computer or shell. "
+    "Use matching authorized plugins and Skills, selected plugins first; do not guess a website or bypass discovery. "
+    "Preloaded tools may not match the task: discover the exact capability instead of substituting an unrelated one. "
 )
 
 
@@ -113,7 +130,7 @@ def instruction_layers(row: dict, *, model_base=None, persisted_base=None, sessi
     """
     base = select_base_instructions(model_base=model_base, persisted_base=persisted_base,
                                     session_base=session_base)
-    if session_base is None and model_base is None and base in (_LEGACY_BATCH_SYSTEM, _PRE_IMAGE_SYSTEM, _PRE_IMAGE_BRIEF_SYSTEM):
+    if session_base is None and model_base is None and base in (_LEGACY_BATCH_SYSTEM, _PRE_IMAGE_SYSTEM, _PRE_IMAGE_BRIEF_SYSTEM, _PRE_PLUGIN_SYSTEM, _PRE_STRICT_PLUGIN_SYSTEM):
         base = SYSTEM
     policy = ("This task is read-only: inspect and explain a proposed plan, never request a mutation tool."
               if row["permission_mode"] == "read_only" else
@@ -151,7 +168,7 @@ def authority(row: dict) -> str:
     if 0 < len(port) <= 5 and port.isascii() and port.isdigit() and 0 < int(port) <= 65535:
         context["local_control_api"] = {"origin": f"http://127.0.0.1:{int(port)}", "schema_path": "/openapi.json"}
     context["file_output_policy"] = (
-        "Create and edit text files in workspace_root with ryn_apply_patch (several files per patch); generate images with ryn_image_generate; other binary files may use shell. Confirm outputs via readback or workspace_files. "
+        "Create and edit text files in workspace_root with ryn_apply_patch (several files per patch); generate images with ryn_image_generate; download URLs or plugin fileRef values with ryn_download_file; other binary files may use shell. Confirm outputs via readback or workspace_files. "
         "Link final files as [name](absolute-path) with forward slashes, <paths with spaces>; embed images as ![description](absolute-path). "
         "Use the supplied workspace without asking for a folder."
         + (" For connected cloud drives (e.g. Baidu Netdisk / 百度网盘, Google Drive, OneDrive) and NAS resources, use ryn_list_resource_roots, ryn_list_resources, ryn_create_directory, ryn_upload_resource_file, and ryn_create_text_file directly instead of searching the local OS desktop or filesystem."
@@ -170,8 +187,10 @@ def authority(row: dict) -> str:
     return ("\nServer control state: " + json.dumps(context, ensure_ascii=False, separators=(",", ":"))
             + "\nOwner corrections steer the task; host permission settings still apply. "
             "workspace mode automatically runs workstation tools; read operations run without confirmation. "
-            "confirm_changes is the user's strict mode for other effects. Automatic mode uses the user's tool grants. "
-            "External configuration/access changes retain their host approval boundary. "
+            "confirm_changes is the user's strict mode for other effects. "
+            "automatic mode is full access: the host runs every change, including plugin and configuration changes, without a dialog; "
+            "only explicit-approval tools (component installs, app operations) and desktop access keep their gates. "
+            "External configuration/access changes retain their host approval boundary in other modes. "
             "When the owner delegates setup and asks to enter only a missing secret in a popup, author/run a local program "
             "(using local_control_api when configuring Ryn) that collects and submits it locally without exposing secrets to model context; "
             "use ryn_request_input kind=credential_ref only when full source connection facts also need owner input. "

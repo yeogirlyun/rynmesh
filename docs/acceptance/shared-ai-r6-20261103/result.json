@@ -1,0 +1,169 @@
+{
+  "bytes": 683443695,
+  "installer_sha256": "1AA3D1FCF227F687A8DCB5955E98F5EE49174EE52377A8D4EDDB0815F901E5FC",
+  "ryn_commit": "efd9fa13f8c2b501f689b6b04deec754cd79b8fb",
+  "core_commit": "efd9fa13f8c2b501f689b6b04deec754cd79b8fb",
+  "company_commit": "45e5d07c5b8d83b2ee12310ecba51eb04e370a5d",
+  "acceptance": {
+    "fresh_install": true,
+    "repeat_install_preserves_identity_key_and_disabled_plugins": true,
+    "office_editors": [
+      "pdfcraft",
+      "wordcraft",
+      "gridcraft",
+      "deckcraft"
+    ],
+    "native_cli_version": [
+      "pdfcraft",
+      "wordcraft",
+      "gridcraft",
+      "deckcraft"
+    ],
+    "company_pages": [
+      "company-workspace",
+      "company-dashboard",
+      "company-affiliate"
+    ],
+    "company_health": {
+      "ok": true,
+      "service": "company",
+      "status": "ready"
+    },
+    "company_outbound_network": "blocked",
+    "live_install_modified": false,
+    "system_installer_executed": false
+  },
+  "package": "Ryn_0.8.0_Full_7Plugins_R6_x64.exe",
+  "hosts": {
+    "local": {
+      "installation": "%LOCALAPPDATA%/Ryn",
+      "preserved": {
+        "company_key": true,
+        "identity.ed25519": true,
+        "settings.json": true,
+        "desktop_config": true,
+        "messaging.x25519": true
+      },
+      "core_sha256": "82FCC3E99B06AFF08C420E68F31F701C369E62D472F63EE0C26AD03D0C46D620",
+      "peer_sha256": "E590D007E70E6CA36627012F4708AB27A21954321FB0363F0D306B51B2DCF41E",
+      "health": "ok",
+      "office": [
+        {
+          "id": "pdfcraft",
+          "enabled": true,
+          "installed": true,
+          "editing_supported": true
+        },
+        {
+          "id": "wordcraft",
+          "enabled": true,
+          "installed": true,
+          "editing_supported": true
+        },
+        {
+          "id": "gridcraft",
+          "enabled": true,
+          "installed": true,
+          "editing_supported": true
+        },
+        {
+          "id": "deckcraft",
+          "enabled": true,
+          "installed": true,
+          "editing_supported": true
+        }
+      ],
+      "company_pages": {
+        "company-affiliate": 200,
+        "company-dashboard": 200,
+        "company-workspace": 200
+      }
+    },
+    "lan82": {
+      "installation": "%LOCALAPPDATA%/Ryn",
+      "preserved": {
+        "company_key": true,
+        "identity.ed25519": true,
+        "settings.json": true,
+        "messaging.x25519": true
+      },
+      "core_sha256": "82FCC3E99B06AFF08C420E68F31F701C369E62D472F63EE0C26AD03D0C46D620",
+      "peer_sha256": "E590D007E70E6CA36627012F4708AB27A21954321FB0363F0D306B51B2DCF41E",
+      "health": "ok",
+      "office": [
+        {
+          "id": "pdfcraft",
+          "enabled": true,
+          "installed": true,
+          "editing_supported": true
+        },
+        {
+          "id": "wordcraft",
+          "enabled": true,
+          "installed": true,
+          "editing_supported": true
+        },
+        {
+          "id": "gridcraft",
+          "enabled": true,
+          "installed": true,
+          "editing_supported": true
+        },
+        {
+          "id": "deckcraft",
+          "enabled": true,
+          "installed": true,
+          "editing_supported": true
+        }
+      ],
+      "company_pages": {
+        "company-affiliate": 200,
+        "company-dashboard": 200,
+        "company-workspace": 200
+      }
+    }
+  },
+  "greetings": [
+    {
+      "status": "completed",
+      "create_ms": 42,
+      "first_text_ms": 2594,
+      "total_ms": 3560,
+      "output": "Hi! What can I help you with today?"
+    },
+    {
+      "status": "completed",
+      "create_ms": 40,
+      "first_text_ms": 2377,
+      "total_ms": 3625,
+      "output": "Hi! What can I help you with today?"
+    },
+    {
+      "status": "completed",
+      "create_ms": 47,
+      "first_text_ms": 2596,
+      "total_ms": 3561,
+      "output": "Hi! What can I help you with today?"
+    }
+  ],
+  "catalog": {
+    "warmup_samples": 5,
+    "sample_interval_seconds": 5,
+    "stable_samples": 67,
+    "stable_start": "2026-11-03T15:44:42.9583822+08:00",
+    "stable_end": "2026-11-03T15:50:57.6105698+08:00",
+    "expected_shared_count": 4,
+    "all_ready_and_verified": true
+  },
+  "sidebar_company_only": [
+    "company-dashboard",
+    "company-workspace",
+    "company-affiliate"
+  ],
+  "agent_model_options": {
+    "samples": 18,
+    "count": 26,
+    "all_available": true,
+    "stable_identifiers": true
+  }
+}

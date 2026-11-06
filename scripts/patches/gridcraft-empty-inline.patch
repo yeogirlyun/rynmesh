@@ -1,0 +1,51 @@
+diff --git a/crates/xlsx/src/sheet_read.rs b/crates/xlsx/src/sheet_read.rs
+index 77b46d9..de11456 100644
+--- a/crates/xlsx/src/sheet_read.rs
++++ b/crates/xlsx/src/sheet_read.rs
+@@ -403,7 +403,13 @@ fn read_cell(cx: &mut Ctx<'_>, sheet: &mut Sheet, st: &mut RowState, c: &El, pos
+         },
+         "str" => v.map(|v| Value::text(xml::decode_xstring(v))).unwrap_or(Value::Empty),
+         "inlineStr" => {
+-            c.child("is").map(|is| Value::text(xml::rich_text(is))).or_else(|| v.map(|v| Value::text(xml::decode_xstring(v)))).unwrap_or(Value::Empty)
++            let text = c.child("is").map(xml::rich_text).or_else(|| v.map(xml::decode_xstring));
++            // Exporters can serialize blank inputs as empty inline strings.
++            // Preserve whitespace and formula results; only literal empty inputs are blank.
++            match text {
++                Some(text) if !text.is_empty() || c.child("f").is_some() => Value::text(text),
++                _ => Value::Empty,
++            }
+         }
+         "b" => v.map(|v| Value::Bool(matches!(v.trim(), "1" | "true" | "TRUE"))).unwrap_or(Value::Empty),
+         "e" => v.map(|v| Value::Error(CellError::parse(v.trim()).unwrap_or(CellError::Value))).unwrap_or(Value::Empty),
+diff --git a/crates/xlsx/src/tests/fixtures.rs b/crates/xlsx/src/tests/fixtures.rs
+index 47dde5a..a70202d 100644
+--- a/crates/xlsx/src/tests/fixtures.rs
++++ b/crates/xlsx/src/tests/fixtures.rs
+@@ -495,3 +495,27 @@ fn text_box_formatting_is_read_and_written() {
+     assert_eq!(rgb(g.text_outline.map(|o| o.0)), rgb(f.text_outline.map(|o| o.0)));
+     assert_eq!(g.text_outline.map(|o| o.1), Some(1.5));
+ }
++
++#[test]
++fn ryn_empty_inline_inputs_are_blank_but_text_and_formula_results_are_preserved() {
++    let body = r#"<sheetData><row r="1">
++        <c r="A1" t="inlineStr"><is><t></t></is></c>
++        <c r="B1" t="inlineStr"><is/></c>
++        <c r="C1" t="inlineStr"><v></v></c>
++        <c r="D1" t="inlineStr"><is><t xml:space="preserve"> </t></is></c>
++        <c r="E1" t="inlineStr"><is><t>00123</t></is></c>
++        <c r="F1" t="str"><f>IF(1=1,"","x")</f><v></v></c>
++        <c r="G1" t="inlineStr"><f>IF(1=1,"","x")</f><is><t></t></is></c>
++        <c r="H1" t="inlineStr"><is><r><t></t></r></is></c>
++    </row></sheetData>"#;
++    let (wb, _) = read_xlsx(&minimal(body, &[], "", "")).unwrap();
++    let sh = wb.sheet(0).unwrap();
++    for cell in ["A1", "B1", "C1", "H1"] {
++        assert_eq!(sh.value(at(cell)), Value::Empty, "{cell}");
++    }
++    assert_eq!(sh.value(at("D1")), Value::text(" "));
++    assert_eq!(sh.value(at("E1")), Value::text("00123"));
++    for cell in ["F1", "G1"] {
++        assert_eq!(sh.value(at(cell)), Value::text(""), "{cell}");
++    }
++}

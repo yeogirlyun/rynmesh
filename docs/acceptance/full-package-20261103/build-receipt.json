@@ -1,0 +1,49 @@
+{
+  "company_commit": "60c564cc25b7bf85ce049aa6a31bc677b35e203c",
+  "webview_sha256": "62863F0F0611A16CCF124B4F15650C3B66624504EBA74D7CDE1E2AE5D951249B",
+  "core_commit": "3348a335935be7696b5eec67fc85fd852caae62b",
+  "ryn_commit": "113034585ddccdfdeafb22d2dfb28e8392b94d35",
+  "core_sha256": "DC7120BD1ACF243CE3F72EB524FA8AFF52CA5784239F0E7EB5C1FDAC74DE527C",
+  "bytes": 611460747,
+  "plugins": [
+    "company-workspace",
+    "company-dashboard",
+    "company-affiliate",
+    "pdfcraft",
+    "wordcraft",
+    "gridcraft",
+    "deckcraft"
+  ],
+  "installer_sha256": "D72D349FE7CD700EB0804CC9492096834AA6367DC5438F61E8E0065272BAFE89",
+  "acceptance": {
+    "fresh_install": true,
+    "repeat_install_preserves_identity_key_and_disabled_plugins": true,
+    "office_editors": [
+      "pdfcraft",
+      "wordcraft",
+      "gridcraft",
+      "deckcraft"
+    ],
+    "native_cli_version": [
+      "pdfcraft",
+      "wordcraft",
+      "gridcraft",
+      "deckcraft"
+    ],
+    "company_pages": [
+      "company-workspace",
+      "company-dashboard",
+      "company-affiliate"
+    ],
+    "company_health": {
+      "ok": true,
+      "service": "company",
+      "status": "ready"
+    },
+    "company_outbound_network": "blocked",
+    "live_install_modified": false,
+    "system_installer_executed": false
+  },
+  "helper_source_sha256": "B47E6A5ACC35217A42CC9CBB528B843E735BF320E06F45F0AECE614E86D74FC0",
+  "schema": 1
+}

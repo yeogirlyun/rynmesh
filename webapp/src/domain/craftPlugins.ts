@@ -64,6 +64,7 @@ export const systemApps = {
 // Start menu, Launchpad and "Open with" follow every change to the installed, enabled editors.
 async function changed(result: Promise<CraftCatalog>): Promise<CraftCatalog> {
   const catalog = await result;
+  window.dispatchEvent(new Event("ryn-installed-apps-changed"));
   // The plugin change stands either way; a failed sync shows in the plugin's details.
   void systemApps.sync().catch(() => undefined);
   return catalog;

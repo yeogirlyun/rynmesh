@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { server } from "../test/server";
-import { rynAgent, type AgentTask } from "../domain/rynAgent";
+import { AgentAPIError, rynAgent, type AgentTask } from "../domain/rynAgent";
 import { TaskArtifacts, TurnDeliverables } from "./RynAgentArtifacts";
 import RynAgentProgress from "./RynAgentProgress";
 import ChatMarkdown from "./ChatMarkdown";
@@ -450,4 +450,26 @@ it("exports the absolute local path through native drag and keeps the floating m
   expect(parseFloat(options.style.top)).toBeLessThan(660);
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("button", { name: "Default application" })).not.toBeInTheDocument());
+});
+
+it("retries a non-connection listing error every 15 s, four times, then leaves it to Refresh", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const listing = vi.spyOn(rynAgent, "artifacts").mockRejectedValue(new AgentAPIError("agent_state_unreadable", 409));
+  const view = render(<TaskArtifacts task={done} />);
+  try {
+    await act(async () => {});
+    expect(listing).toHaveBeenCalledTimes(1);
+    await act(() => vi.advanceTimersByTimeAsync(14_999));
+    expect(listing).toHaveBeenCalledTimes(1);
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    expect(listing).toHaveBeenCalledTimes(2);
+    await act(() => vi.advanceTimersByTimeAsync(15_000 * 3));
+    expect(listing).toHaveBeenCalledTimes(5);
+    await act(() => vi.advanceTimersByTimeAsync(120_000));
+    expect(listing).toHaveBeenCalledTimes(5);
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeVisible();
+  } finally {
+    view.unmount();
+    listing.mockRestore();
+  }
 });

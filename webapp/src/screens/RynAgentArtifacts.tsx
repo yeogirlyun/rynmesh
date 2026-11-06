@@ -14,6 +14,9 @@ import "../personal/nas.css";
 // Tool results that can add, change or remove a task's workspace files or their render evidence.
 const FILE_TOOLS = new Set(["ryn_file_write", "ryn_file_edit", "ryn_file_manage", "ryn_apply_patch", "ryn_file_read", "ryn_render_inspect", "ryn_image_generate", "ryn_shell_execute", "ryn_process_read", "ryn_process_stop"]);
 const EMPTY_FILES: AgentFileArtifact[] = [];
+// A listing error that is not a connection or server failure is retried this often, then left to Refresh.
+const ARTIFACT_PERSISTENT_RETRY_MS = 15000;
+const ARTIFACT_PERSISTENT_RETRIES = 4;
 const HELPER_SCRIPT_RE = /\.(?:py|pyc|pyo|json|jsonl|sh|bash|zsh|ps1|bat|cmd|js|mjs|cjs|ts|tsx|yaml|yml|toml|ini|cfg|log|tmp|bak)$/i;
 const INTERMEDIATE_RENDER_RE = /(?:^|[/_-])(?:page|slide|render|preview|crop|tmp|temp|check)[-_]?\d*\.(?:png|jpe?g|webp|ppm|pgm|pbm)$/i;
 
@@ -183,6 +186,8 @@ export function TaskArtifacts({ task, maxTurnIndex = 0, children }: { task: Agen
     const controller = new AbortController(); setChosen(null); setError(false);
     let timer: ReturnType<typeof setTimeout> | undefined;
     let failures = 0; let unchanged = 0; let loading = false;
+    // Consecutive errors that are not connection or server failures (a conflict, a lock).
+    let persistentFailures = 0;
     let previous = "";
     const load = async () => {
       if (controller.signal.aborted || loading) return;
@@ -197,6 +202,7 @@ export function TaskArtifacts({ task, maxTurnIndex = 0, children }: { task: Agen
         unchanged = snapshot === previous ? unchanged + 1 : 0;
         previous = snapshot;
         setListing(current => JSON.stringify(current) === snapshot ? current : value); setError(false);
+        persistentFailures = 0;
         const unavailable = value.files?.some(file => file.status === "unavailable");
         failures = unavailable ? failures + 1 : 0;
         // A completed model turn may still have a command producing files.
@@ -211,6 +217,10 @@ export function TaskArtifacts({ task, maxTurnIndex = 0, children }: { task: Agen
         setError(true);
         if (isTransientAgentReadError(reason)) {
           timer = setTimeout(load, agentReadBackoff(++failures));
+        } else if (persistentFailures < ARTIFACT_PERSISTENT_RETRIES) {
+          // Retry a few times on its own; after that the Refresh button remains.
+          persistentFailures += 1;
+          timer = setTimeout(load, ARTIFACT_PERSISTENT_RETRY_MS);
         }
       } finally { loading = false; }
     };

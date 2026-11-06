@@ -14,6 +14,9 @@ import type { NodeClient } from "./domain/nodeClient";
 import { digestApi } from "./domain/digestClient";
 import { makeFixtureNodeClient } from "./domain/fixtureNodeClient";
 import { makeLiveNodeClient } from "./domain/liveNodeClient";
+import { startPoller } from "./domain/polling";
+import { hydrateAgentRecords } from "./domain/agentWorkspaceCache";
+import { startPeerPolling } from "./domain/peerPolling";
 import { nodeControlBaseUrl } from "./domain/nodeUrl";
 import {
   installNotificationNavigation,
@@ -58,6 +61,7 @@ import NodeApps from "./screens/NodeApps";
 import ExtensionWebApp from "./screens/ExtensionWebApp";
 import CraftApps from "./screens/CraftApps";
 import PluginWorkspace from "./screens/PluginWorkspace";
+import { KeptPluginPages, KeptPluginPagesProvider } from "./screens/KeptPluginPages";
 import { craftPlugins } from "./domain/craftPlugins";
 import Publish from "./screens/Publish";
 import Peers from "./screens/Peers";
@@ -83,6 +87,11 @@ import UnlockGate from "./screens/components/UnlockGate";
 const NasPage = lazy(() => import("./personal/Nas").then(m => ({ default: m.NasPage })));
 const DrivePreview = lazy(() => import("./personal/Drives").then(m => ({ default: m.DrivesPage })));
 const PluginsPage = lazy(() => import("./screens/CraftPlugins"));
+
+// Shell-wide background reads. Each runs one request at a time (see domain/polling.ts).
+const DISCOVERY_POLL_MS = 5000;
+const DISCOVERY_TIMEOUT_MS = 8000;
+const HIDDEN_POLL_MS = 30000;
 
 // Resolve the local Ryn node control-API base.
 // Precedence: explicit env override > packaged-desktop default > dev default.
@@ -169,11 +178,7 @@ export default function App() {
 
   useEffect(() => {
     if (!node) return;
-    let cancelled = false;
-    let fullTimer: number | undefined;
-    const started = Date.now();
     const setIfChanged = (incoming: Peer[], merge: boolean) => {
-      if (cancelled) return;
       setPeers(current => {
         const next = merge
           ? Array.from(new Map([...current, ...incoming].map(peer => [peer.id, peer])).values())
@@ -181,22 +186,14 @@ export default function App() {
         return JSON.stringify(next) === JSON.stringify(current) ? current : next;
       });
     };
-    const quick = () => {
-      void client.listPeers({ quick: true }).then(items => setIfChanged(items, true)).catch(() => undefined);
-    };
-    const full = async () => {
-      try { setIfChanged(await client.listPeers(), false); }
-      catch { /* Keep the latest local or cached discovery. */ }
-      if (!cancelled) fullTimer = window.setTimeout(full, Date.now() - started < 30000 ? 3000 : 15000);
-    };
-    quick();
-    void full();
-    const quickTimer = window.setInterval(quick, 2000);
-    return () => { cancelled = true; window.clearInterval(quickTimer); window.clearTimeout(fullTimer); };
+    const poller = startPeerPolling(client, setIfChanged);
+    return () => poller.stop();
   }, [client, node?.peer_id]);
 
   useEffect(() => {
     applyAppearance(readAppearance());
+    // Read saved Agent records while the node starts, so the page opens with them.
+    if (client.mode === "live") void hydrateAgentRecords().catch(() => undefined);
     let cancelled = false;
     void (async () => {
       // The packaged desktop app launches the Ryn node as a sidecar; it can
@@ -224,28 +221,25 @@ export default function App() {
 
   useEffect(() => {
     if (client.mode !== "live") return;
-    let active = true;
-    const update = () => {
-      void digestApi
-        .getDiscoveryStatus()
-        .then((status) => {
-          if (!active) return;
-          if (settings && status.unread_count > lastUnread.current) {
-            void sendDiscoveryNotification(settings, status.unread_count, () =>
-              navigate("/digest"),
-            );
-          }
-          lastUnread.current = status.unread_count;
-        })
-        .catch(() => undefined);
-    };
-    update();
-    const timer = window.setInterval(update, 5000);
-    const seen = () => update();
+    const poller = startPoller({
+      intervalMs: DISCOVERY_POLL_MS,
+      hiddenIntervalMs: HIDDEN_POLL_MS,
+      timeoutMs: DISCOVERY_TIMEOUT_MS,
+      run: async (signal) => {
+        const status = await digestApi.getDiscoveryStatus({ signal });
+        if (signal.aborted) return;
+        if (settings && status.unread_count > lastUnread.current) {
+          void sendDiscoveryNotification(settings, status.unread_count, () =>
+            navigate("/digest"),
+          );
+        }
+        lastUnread.current = status.unread_count;
+      },
+    });
+    const seen = () => { void poller.refresh(); };
     window.addEventListener("ryn-discovery-seen", seen);
     return () => {
-      active = false;
-      window.clearInterval(timer);
+      poller.stop();
       window.removeEventListener("ryn-discovery-seen", seen);
     };
   }, [client, navigate, settings]);
@@ -293,11 +287,14 @@ export default function App() {
       refreshShell={refreshShell}
     >
       <DropProvider mode={client.mode} notify={notify}>
+      <KeptPluginPagesProvider>
       <PersonalShell>
         {isTauriDesktop() ? <DesktopUpdateNotice /> : null}
         {offline ? <OfflineBanner onRetry={refreshShell} /> : null}
         <Outlet context={context} />
+        <KeptPluginPages client={client} />
       </PersonalShell>
+      </KeptPluginPagesProvider>
       <IncomingTransferDialog />
       <DropNotices />
       </DropProvider>

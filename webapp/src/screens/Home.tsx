@@ -16,6 +16,7 @@ import {
 } from "../components/ui";
 import type { ActivityEvent, ContentItem, Recommendation } from "../domain/types";
 import { digestApi } from "../domain/digestClient";
+import { startPoller } from "../domain/polling";
 import RecommendedServices from "./components/RecommendedServices";
 
 type HomeSource = "activity" | "recommendations" | "content";
@@ -83,18 +84,21 @@ export default function Home() {
 
   useEffect(() => {
     let active = true;
-    const updateDiscovery = () => {
-      void digestApi.getDiscoveryStatus().then(async (status) => {
-        if (!active) return;
+    // One status read at a time, cancelled when the page closes (see domain/polling.ts).
+    const poller = startPoller({
+      intervalMs: 4000,
+      hiddenIntervalMs: 30000,
+      timeoutMs: 8000,
+      run: async (signal) => {
+        const status = await digestApi.getDiscoveryStatus({ signal });
+        if (!active || signal.aborted) return;
         setAvailableRecommendations(status.item_count);
         if (status.item_count > 0 && status.item_count !== knownDiscoveryItems.current && !pending.current.recommendations) {
           if (await load("recommendations") && active) knownDiscoveryItems.current = status.item_count;
         }
-      }).catch(() => undefined);
-    };
-    updateDiscovery();
-    const timer = window.setInterval(updateDiscovery, 4000);
-    return () => { active = false; window.clearInterval(timer); };
+      },
+    });
+    return () => { active = false; poller.stop(); };
   }, [load]);
 
   const flagged = items.filter((item) => ["flagged", "blocked"].includes(item.safety_outcome)).length;

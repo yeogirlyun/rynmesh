@@ -100,6 +100,7 @@ it("changes permissions through the toolbar menu and closes it after selection",
   const onPermission = vi.fn(), user = userEvent.setup();
   render(<RynAgentComposer {...props({ onPermission })} />);
   const trigger = screen.getByLabelText("Tool permissions", { selector: "summary" });
+  expect(trigger).toHaveTextContent("Work autonomously");
   await user.click(trigger);
   const menu = screen.getByRole("menu", { name: "Tool permissions" });
   expect(within(menu).getByRole("menuitemradio", { name: "Work autonomously" })).toHaveAttribute("aria-checked", "true");

@@ -1,0 +1,861 @@
+{
+  "cases": 76,
+  "passed": 76,
+  "real_external_business_writes": 0,
+  "data": "synthetic business adapters; real configured model",
+  "results": [
+    {
+      "file": "ambiguous-desktop0-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 8,
+      "transport_count": 0,
+      "tools": [
+        "wecom_accounts_sessions",
+        "wecom_find_targets"
+      ]
+    },
+    {
+      "file": "ambiguous-desktop0-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 4,
+      "transport_count": 0,
+      "tools": [
+        "wecom_accounts_sessions",
+        "wecom_find_targets"
+      ]
+    },
+    {
+      "file": "ambiguous-desktop1-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 5,
+      "transport_count": 0,
+      "tools": [
+        "wecom_accounts_sessions",
+        "wecom_find_targets"
+      ]
+    },
+    {
+      "file": "ambiguous-desktop1-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 4,
+      "transport_count": 0,
+      "tools": [
+        "wecom_accounts_sessions",
+        "wecom_find_targets"
+      ]
+    },
+    {
+      "file": "draft-desktop0-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 2,
+      "transport_count": 0,
+      "tools": []
+    },
+    {
+      "file": "draft-desktop0-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 2,
+      "transport_count": 0,
+      "tools": []
+    },
+    {
+      "file": "draft-desktop1-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 2,
+      "transport_count": 0,
+      "tools": []
+    },
+    {
+      "file": "draft-desktop1-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": []
+    },
+    {
+      "file": "empty-desktop0-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 4,
+      "transport_count": 0,
+      "tools": [
+        "journal_records",
+        "journal_logs"
+      ]
+    },
+    {
+      "file": "empty-desktop0-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 4,
+      "transport_count": 0,
+      "tools": [
+        "journal_records",
+        "journal_logs"
+      ]
+    },
+    {
+      "file": "empty-desktop1-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "journal_records"
+      ]
+    },
+    {
+      "file": "empty-desktop1-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "journal_records"
+      ]
+    },
+    {
+      "file": "invalid_argument-desktop0-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 6,
+      "transport_count": 0,
+      "tools": [
+        "loan_summary",
+        "journal_records",
+        "journal_records",
+        "journal_logs"
+      ]
+    },
+    {
+      "file": "invalid_argument-desktop0-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 6,
+      "transport_count": 0,
+      "tools": [
+        "journal_records",
+        "journal_records",
+        "journal_records",
+        "journal_logs"
+      ]
+    },
+    {
+      "file": "invalid_argument-desktop1-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 7,
+      "transport_count": 0,
+      "tools": [
+        "journal_records",
+        "journal_records",
+        "journal_records",
+        "journal_records",
+        "journal_logs"
+      ]
+    },
+    {
+      "file": "invalid_argument-desktop1-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 6,
+      "transport_count": 0,
+      "tools": [
+        "journal_records",
+        "journal_records",
+        "journal_records",
+        "journal_logs"
+      ]
+    },
+    {
+      "file": "journal-alt1-desktop0-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "journal_records"
+      ]
+    },
+    {
+      "file": "journal-alt1-desktop0-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 4,
+      "transport_count": 0,
+      "tools": [
+        "journal_records"
+      ]
+    },
+    {
+      "file": "journal-alt1-desktop1-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "journal_records"
+      ]
+    },
+    {
+      "file": "journal-alt1-desktop1-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "journal_records"
+      ]
+    },
+    {
+      "file": "journal-alt2-desktop0-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "journal_records"
+      ]
+    },
+    {
+      "file": "journal-alt2-desktop0-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "journal_records"
+      ]
+    },
+    {
+      "file": "journal-alt2-desktop1-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "journal_records"
+      ]
+    },
+    {
+      "file": "journal-alt2-desktop1-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "journal_records"
+      ]
+    },
+    {
+      "file": "lost-desktop0-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 7,
+      "transport_count": 1,
+      "tools": [
+        "wecom_accounts_sessions",
+        "wecom_find_targets",
+        "wecom_send",
+        "wecom_send_result",
+        "wecom_send_result"
+      ]
+    },
+    {
+      "file": "lost-desktop0-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 6,
+      "transport_count": 1,
+      "tools": [
+        "wecom_accounts_sessions",
+        "wecom_find_targets",
+        "wecom_send",
+        "wecom_send_result",
+        "wecom_send_result"
+      ]
+    },
+    {
+      "file": "lost-desktop1-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 6,
+      "transport_count": 1,
+      "tools": [
+        "wecom_accounts_sessions",
+        "wecom_find_targets",
+        "wecom_send",
+        "wecom_send_result",
+        "wecom_send_result"
+      ]
+    },
+    {
+      "file": "lost-desktop1-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 6,
+      "transport_count": 1,
+      "tools": [
+        "wecom_accounts_sessions",
+        "wecom_find_targets",
+        "wecom_send",
+        "wecom_send_result",
+        "wecom_send_result"
+      ]
+    },
+    {
+      "file": "permission_denied-desktop0-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 5,
+      "transport_count": 0,
+      "tools": [
+        "journal_records",
+        "journal_records",
+        "journal_logs"
+      ]
+    },
+    {
+      "file": "permission_denied-desktop0-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "journal_records"
+      ]
+    },
+    {
+      "file": "permission_denied-desktop1-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "journal_records"
+      ]
+    },
+    {
+      "file": "permission_denied-desktop1-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "journal_records"
+      ]
+    },
+    {
+      "file": "query1-desktop0-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "journal_records"
+      ]
+    },
+    {
+      "file": "query1-desktop0-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "journal_records"
+      ]
+    },
+    {
+      "file": "query1-desktop1-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 4,
+      "transport_count": 0,
+      "tools": [
+        "journal_records"
+      ]
+    },
+    {
+      "file": "query1-desktop1-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "journal_records"
+      ]
+    },
+    {
+      "file": "query2-desktop0-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "balance_list"
+      ]
+    },
+    {
+      "file": "query2-desktop0-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "balance_list"
+      ]
+    },
+    {
+      "file": "query2-desktop1-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "balance_list"
+      ]
+    },
+    {
+      "file": "query2-desktop1-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "balance_list"
+      ]
+    },
+    {
+      "file": "query3-desktop0-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "balance_overview"
+      ]
+    },
+    {
+      "file": "query3-desktop0-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "balance_overview"
+      ]
+    },
+    {
+      "file": "query3-desktop1-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "balance_overview"
+      ]
+    },
+    {
+      "file": "query3-desktop1-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "balance_overview"
+      ]
+    },
+    {
+      "file": "query4-desktop0-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "pl_report"
+      ]
+    },
+    {
+      "file": "query4-desktop0-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "pl_report"
+      ]
+    },
+    {
+      "file": "query4-desktop1-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "pl_report"
+      ]
+    },
+    {
+      "file": "query4-desktop1-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "pl_report"
+      ]
+    },
+    {
+      "file": "query5-desktop0-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "cashFlow_dailyDetail"
+      ]
+    },
+    {
+      "file": "query5-desktop0-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 4,
+      "transport_count": 0,
+      "tools": [
+        "cashFlow_dailyDetail"
+      ]
+    },
+    {
+      "file": "query5-desktop1-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 4,
+      "transport_count": 0,
+      "tools": [
+        "cashFlow_rules",
+        "cashFlow_dailyDetail"
+      ]
+    },
+    {
+      "file": "query5-desktop1-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "cashFlow_dailyDetail"
+      ]
+    },
+    {
+      "file": "query6-desktop0-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "pl_financialDashboard"
+      ]
+    },
+    {
+      "file": "query6-desktop0-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 4,
+      "transport_count": 0,
+      "tools": [
+        "pl_financialDashboard",
+        "cashFlow_dailyDetail"
+      ]
+    },
+    {
+      "file": "query6-desktop1-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "pl_financialDashboard"
+      ]
+    },
+    {
+      "file": "query6-desktop1-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 3,
+      "transport_count": 0,
+      "tools": [
+        "pl_financialDashboard"
+      ]
+    },
+    {
+      "file": "send1-desktop0-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 6,
+      "transport_count": 1,
+      "tools": [
+        "wecom_accounts_sessions",
+        "wecom_find_targets",
+        "wecom_send",
+        "wecom_send_result"
+      ]
+    },
+    {
+      "file": "send1-desktop0-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 7,
+      "transport_count": 1,
+      "tools": [
+        "wecom_accounts_sessions",
+        "wecom_find_targets",
+        "wecom_send",
+        "wecom_send_result"
+      ]
+    },
+    {
+      "file": "send1-desktop1-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 6,
+      "transport_count": 1,
+      "tools": [
+        "wecom_accounts_sessions",
+        "wecom_find_targets",
+        "wecom_send",
+        "wecom_send_result"
+      ]
+    },
+    {
+      "file": "send1-desktop1-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 6,
+      "transport_count": 1,
+      "tools": [
+        "wecom_accounts_sessions",
+        "wecom_find_targets",
+        "wecom_send",
+        "wecom_send_result"
+      ]
+    },
+    {
+      "file": "send2-desktop0-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 6,
+      "transport_count": 1,
+      "tools": [
+        "wecom_accounts_sessions",
+        "wecom_find_targets",
+        "wecom_send",
+        "wecom_send_result"
+      ]
+    },
+    {
+      "file": "send2-desktop0-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 7,
+      "transport_count": 1,
+      "tools": [
+        "wecom_accounts_sessions",
+        "wecom_find_targets",
+        "wecom_send",
+        "wecom_send_result"
+      ]
+    },
+    {
+      "file": "send2-desktop1-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 8,
+      "transport_count": 1,
+      "tools": [
+        "wecom_accounts_sessions",
+        "wecom_find_targets",
+        "wecom_send",
+        "wecom_send_result"
+      ]
+    },
+    {
+      "file": "send2-desktop1-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 7,
+      "transport_count": 1,
+      "tools": [
+        "wecom_accounts_sessions",
+        "wecom_find_targets",
+        "wecom_send",
+        "wecom_send_result"
+      ]
+    },
+    {
+      "file": "send3-desktop0-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 6,
+      "transport_count": 1,
+      "tools": [
+        "wecom_accounts_sessions",
+        "wecom_find_targets",
+        "wecom_send",
+        "wecom_send_result"
+      ]
+    },
+    {
+      "file": "send3-desktop0-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 7,
+      "transport_count": 1,
+      "tools": [
+        "wecom_accounts_sessions",
+        "wecom_find_targets",
+        "wecom_send",
+        "wecom_send_result"
+      ]
+    },
+    {
+      "file": "send3-desktop1-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 7,
+      "transport_count": 1,
+      "tools": [
+        "wecom_accounts_sessions",
+        "wecom_find_targets",
+        "wecom_send",
+        "wecom_send_result"
+      ]
+    },
+    {
+      "file": "send3-desktop1-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 7,
+      "transport_count": 1,
+      "tools": [
+        "wecom_accounts_sessions",
+        "wecom_find_targets",
+        "wecom_send",
+        "wecom_send_result"
+      ]
+    },
+    {
+      "file": "service_unavailable-desktop0-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 5,
+      "transport_count": 0,
+      "tools": [
+        "journal_records",
+        "journal_records",
+        "journal_logs"
+      ]
+    },
+    {
+      "file": "service_unavailable-desktop0-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 5,
+      "transport_count": 0,
+      "tools": [
+        "journal_records",
+        "journal_records",
+        "journal_logs"
+      ]
+    },
+    {
+      "file": "service_unavailable-desktop1-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 6,
+      "transport_count": 0,
+      "tools": [
+        "cashFlow_rules",
+        "journal_records",
+        "journal_records",
+        "journal_logs"
+      ]
+    },
+    {
+      "file": "service_unavailable-desktop1-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 4,
+      "transport_count": 0,
+      "tools": [
+        "journal_records",
+        "journal_records"
+      ]
+    },
+    {
+      "file": "unknown-desktop0-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 7,
+      "transport_count": 1,
+      "tools": [
+        "wecom_accounts_sessions",
+        "wecom_find_targets",
+        "wecom_send",
+        "wecom_send_result",
+        "wecom_send_result"
+      ]
+    },
+    {
+      "file": "unknown-desktop0-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 7,
+      "transport_count": 1,
+      "tools": [
+        "wecom_accounts_sessions",
+        "wecom_find_targets",
+        "wecom_send",
+        "wecom_send_result",
+        "wecom_send_result"
+      ]
+    },
+    {
+      "file": "unknown-desktop1-1.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 9,
+      "transport_count": 1,
+      "tools": [
+        "wecom_accounts_sessions",
+        "wecom_find_targets",
+        "wecom_send",
+        "wecom_send_result",
+        "wecom_send_result",
+        "wecom_send_result"
+      ]
+    },
+    {
+      "file": "unknown-desktop1-2.json",
+      "passed": true,
+      "model": "glm-5.3-flash",
+      "steps": 9,
+      "transport_count": 1,
+      "tools": [
+        "wecom_accounts_sessions",
+        "wecom_find_targets",
+        "wecom_send",
+        "wecom_send_result",
+        "wecom_send_result",
+        "wecom_send_result"
+      ]
+    }
+  ]
+}

@@ -56,7 +56,47 @@ def eligible(row):
             and row["status"] in {"completed", "failed", "cancelled", "paused"})
 
 
-def change(store, task_id, value, operation, emit, stamp, *, on_mutate=None):
+def _archive_in_tx(store, data, row, emit, *, on_mutate=None, reason=None, remember=None):
+    task_id = row["id"]
+    row["archived"] = True
+    if reason:
+        # Shown in the archive list; older versions ignore the field.
+        row["archive_reason"] = reason
+    emit(row, "archived", **({"reason": reason} if reason else {}))
+    if remember is not None:
+        remember(row)
+    # Archive content is committed before the index that points at it.
+    archive_store(store, task_id).transaction(lambda archived: archived.update(
+        version=VERSION, schema_version=data["schema_version"], settings={}, tasks={task_id: row}))
+    data.setdefault("archives", {})[task_id] = {key: row.get(key) for key in ("id", "client_request_id", "request_fingerprint", "updated_at")}
+    data["tasks"].pop(task_id)
+    if callable(on_mutate):
+        on_mutate(data, task_id, "archive")
+
+
+def archive_many(store, items, emit, *, on_mutate=None, reason=None):
+    """Archive several unchanged, idle tasks in one commit of the active store.
+
+    ``items`` carry each task's id and the control revision it was chosen at; a
+    task that changed, started work, or was archived meanwhile is left alone.
+    The caller holds each task's credential gate. Returns the archived ids.
+    """
+    def mutate(data):
+        done = []
+        for item in items:
+            row = data["tasks"].get(item["id"])
+            if (row is None or row.get("archived") or row.get("control_revision") != item["control_revision"]
+                    or not eligible(row)):
+                continue
+            if len(data.get("archives", {})) >= 10000:
+                break
+            _archive_in_tx(store, data, row, emit, on_mutate=on_mutate, reason=reason)
+            done.append(row["id"])
+        return done
+    return store.transaction(mutate)
+
+
+def change(store, task_id, value, operation, emit, stamp, *, on_mutate=None, reason=None):
     if set(value) - {"expected_control_revision", "client_request_id"}:
         raise AgentError("agent_invalid_request")
     keyed = {**value, "lifecycle_action": operation}
@@ -79,6 +119,7 @@ def change(store, task_id, value, operation, emit, stamp, *, on_mutate=None):
             if len(data["tasks"]) >= 200:
                 raise AgentError("agent_task_limit")
             row["archived"] = False
+            row.pop("archive_reason", None)
             row.setdefault("local_execution", {})["desktop_access"] = bool(data.get("settings", {}).get("desktop_access", False))
             row.update(approved=None, pending_approval=None)
             emit(row, "restored")
@@ -97,15 +138,8 @@ def change(store, task_id, value, operation, emit, stamp, *, on_mutate=None):
                 raise AgentError("agent_invalid_transition")
             if len(data.get("archives", {})) >= 10000:
                 raise AgentError("agent_archive_limit")
-            row["archived"] = True
-            emit(row, "archived")
-            remember_request(row, keyed)
-            target = archive_store(store, task_id)
-            target.transaction(lambda archived: archived.update(version=VERSION, schema_version=data["schema_version"], settings={}, tasks={task_id: row}))
-            data.setdefault("archives", {})[task_id] = {key: row.get(key) for key in ("id", "client_request_id", "request_fingerprint", "updated_at")}
-            data["tasks"].pop(task_id)
-            if callable(on_mutate):
-                on_mutate(data, task_id, operation)
+            _archive_in_tx(store, data, row, emit, on_mutate=on_mutate, reason=reason,
+                           remember=lambda current: remember_request(current, keyed))
             return row
         if operation != "delete":
             raise AgentError("agent_invalid_action")
