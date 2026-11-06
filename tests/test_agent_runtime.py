@@ -319,26 +319,30 @@ def test_client_request_id_is_durable_and_conflict_checked(tmp_path):
         restarted.create({**value, "message": "different"})
 
 
-def test_automatic_mode_is_an_explicit_intersected_tool_allowlist(tmp_path):
+def test_automatic_mode_is_full_access_without_any_tool_grants(tmp_path):
+    # Owner report 2026-11-06: choosing 自动处理 still opened confirmation dialogs
+    # because nothing was checked in the old per-tool list.
     runtime, _, tools, _ = make_runtime(tmp_path, assistant(name="share_service", args={"service_id": "svc1"}))
-    runtime.update_settings({"permission_mode": "automatic", "allowed_write_tools": ["share_service"]})
+    runtime.update_settings({"permission_mode": "automatic", "allowed_write_tools": []})
     row = runtime.create({"message": "share"})
     advance(runtime, 2)
     assert tools.shared
     assert runtime.get(row["id"])["pending_approval"] is None
+    assert not any(item["type"] == "approval_requested" for item in runtime.get(row["id"])["events"])
     assert any(item["type"] == "automatically_authorized" for item in runtime.get(row["id"])["events"])
+    # The stored list is still validated for older clients that send it.
     with pytest.raises(AgentError, match="agent_invalid_settings"):
         runtime.update_settings({"allowed_write_tools": ["shell"]})
     with pytest.raises(AgentError, match="agent_invalid_settings"):
         runtime.update_settings({"allowed_write_tools": ["inspect_service"]})
 
 
-@pytest.mark.parametrize("revoke", [True, False])
-def test_automatic_never_silently_elevates_task_or_ignores_revocation(tmp_path, revoke):
+@pytest.mark.parametrize("created,later", [("automatic", "confirm_changes"), ("confirm_changes", "automatic")])
+def test_automatic_never_silently_elevates_task_or_ignores_revocation(tmp_path, created, later):
     runtime, _, tools, _ = make_runtime(tmp_path, assistant(name="share_service", args={"service_id": "svc1"}))
-    runtime.update_settings({"permission_mode": "automatic", "allowed_write_tools": ["share_service"] if revoke else []})
+    runtime.update_settings({"permission_mode": created})
     row = runtime.create({"message": "share"})
-    runtime.update_settings({"allowed_write_tools": [] if revoke else ["share_service"]})
+    runtime.update_settings({"permission_mode": later})
     advance(runtime, 2)
     assert runtime.get(row["id"])["status"] == "waiting_approval"
     assert tools.calls == []
@@ -536,7 +540,6 @@ def test_read_failure_is_model_visible_and_can_be_corrected(tmp_path):
 @pytest.mark.parametrize("automatic,settings_change", [
     (False, {"permission_mode": "read_only"}),
     (True, {"permission_mode": "read_only"}),
-    (True, {"allowed_write_tools": []}),
     (True, {"permission_mode": "confirm_changes"}),
 ])
 def test_revocation_after_authorization_consumed_stops_write_under_business_lock(tmp_path, automatic, settings_change):

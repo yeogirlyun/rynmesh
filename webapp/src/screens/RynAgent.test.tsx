@@ -916,22 +916,22 @@ it("recovers an uncertain create after reload from its server request id without
   expect(screen.getAllByText("Inspect devices")).toHaveLength(3); // Header, task list and server message.
 });
 
-it("disables Agent without erasing tasks and saves only explicitly opted-in write tools", async () => {
+it("disables Agent without erasing tasks and no longer offers a per-tool automatic checklist", async () => {
   const backend = api(true, [task({ status: "completed", result: "Saved evidence" })]);
   const user = userEvent.setup();
   mount();
   await screen.findByRole("heading", { name: "What would you like me to do?" });
   await user.click(screen.getByRole("button", { name: "Agent settings" }));
   const dialog = screen.getByRole("dialog", { name: "Agent settings" });
-  await screen.findByText("Manage model sharing");
-  expect(within(dialog).queryByText("inspect_devices")).not.toBeInTheDocument();
-  await user.click(within(dialog).getByRole("checkbox", { name: /Manage model sharing/ }));
+  // Automatic is full access, so there is no list of tools to opt in.
+  expect(within(dialog).getByText(/Automatic is full access/)).toBeInTheDocument();
+  expect(within(dialog).queryByRole("checkbox", { name: /Manage model sharing/ })).not.toBeInTheDocument();
   await user.type(within(dialog).getByRole("textbox", { name: "Working directory" }), "D:\\RynWorkspace");
   await user.click(within(dialog).getByRole("checkbox", { name: "Allow computer and browser operations" }));
   await user.click(within(dialog).getByRole("checkbox", { name: /Enable Agent on this device/ }));
   await user.click(within(dialog).getByRole("button", { name: "Save settings" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-  expect(backend.updates).toHaveBeenCalledWith({ enabled: false, workspace_root: "D:\\RynWorkspace", desktop_access: true, allowed_write_tools: ["set_model_sharing"] });
+  expect(backend.updates).toHaveBeenCalledWith({ enabled: false, workspace_root: "D:\\RynWorkspace", desktop_access: true });
   await user.click(screen.getByRole("button", { name: "Inspect devices" }));
   await screen.findByText("Saved evidence");
   expect(screen.getByRole("textbox")).toBeDisabled();

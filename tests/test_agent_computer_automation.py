@@ -33,10 +33,17 @@ def test_both_desktop_grants_are_required():
     assert decide(CALL, META, policy(), policy(desktop=False)).action == "ask"
 
 
-def test_automatic_allowlist_inherits_only_an_explicit_desktop_grant():
-    assert decide(CALL, META, policy("automatic"), policy()).action == "ask"
-    assert decide(CALL, META, policy("automatic", grants=["ryn_computer_action"]), policy()).action == "execute"
-    assert decide(CALL, META, policy("automatic", grants=["ryn_file_write"]), policy()).action == "ask"
+def test_automatic_full_access_still_needs_the_desktop_grant():
+    auto = lambda **kw: policy("automatic", **kw)
+    assert decide(CALL, META, auto(), auto()).action == "execute"
+    assert decide(CALL, META, auto(desktop=False), auto()).action == "ask"
+    assert decide(CALL, META, auto(), auto(desktop=False)).action == "ask"
+    # Full access covers any desktop server once the owner allowed desktop use.
+    external = {"effect": "write", "computer_access": True}
+    assert decide(CALL, external, auto(), auto()).action == "execute"
+    assert decide(CALL, external, auto(desktop=False), auto()).action == "ask"
+    # Outside automatic, an external server still cannot claim the bundled authority.
+    assert decide(CALL, external, policy(), policy()).action == "ask"
 
 
 def test_explicit_approval_metadata_is_preserved():

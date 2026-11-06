@@ -287,17 +287,12 @@ def create(runtime, source_id, value):
         initialize(row)
         # Persist the intersection at creation, so later global relaxation cannot
         # give this child authority that it never had when it was forked.
-        from .execution_policy import WORKSPACE_TOOLS
+        # Strictest first; automatic (full access) only when both allow it.
         modes = {source["permission_mode"], settings["permission_mode"]}
-        if "read_only" in modes:
-            row["permission_mode"] = "read_only"
-        elif "confirm_changes" in modes:
-            row["permission_mode"] = "confirm_changes"
-        elif "automatic" in modes:
-            row["permission_mode"] = "automatic"
-            sets = [set(policy.get("allowed_write_tools", [])) if policy["permission_mode"] == "automatic"
-                    else set(WORKSPACE_TOOLS) for policy in (source, settings)]
-            row["allowed_write_tools"] = sorted(sets[0] & sets[1])
+        for mode in ("read_only", "confirm_changes", "workspace", "automatic"):
+            if mode in modes:
+                row["permission_mode"] = mode
+                break
         # Config only. Never copy receipts, approvals, queues, processes, callbacks,
         # provider sessions, verification evidence, budgets used, or live plans.
         for key in ("local_execution", "project", "model_destination", "model_destination_required",

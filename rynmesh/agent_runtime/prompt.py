@@ -187,8 +187,10 @@ def authority(row: dict) -> str:
     return ("\nServer control state: " + json.dumps(context, ensure_ascii=False, separators=(",", ":"))
             + "\nOwner corrections steer the task; host permission settings still apply. "
             "workspace mode automatically runs workstation tools; read operations run without confirmation. "
-            "confirm_changes is the user's strict mode for other effects. Automatic mode uses the user's tool grants. "
-            "External configuration/access changes retain their host approval boundary. "
+            "confirm_changes is the user's strict mode for other effects. "
+            "automatic mode is full access: the host runs every change, including plugin and configuration changes, without a dialog; "
+            "only explicit-approval tools (component installs, app operations) and desktop access keep their gates. "
+            "External configuration/access changes retain their host approval boundary in other modes. "
             "When the owner delegates setup and asks to enter only a missing secret in a popup, author/run a local program "
             "(using local_control_api when configuring Ryn) that collects and submits it locally without exposing secrets to model context; "
             "use ryn_request_input kind=credential_ref only when full source connection facts also need owner input. "

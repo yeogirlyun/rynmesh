@@ -237,16 +237,20 @@ def decide(call, metadata, row, settings):
     # This alias is authored by the host only after verifying the builtin
     # provider, schema and enablement. Never derive it from a model tool name.
     workstation_tool = metadata.get("workstation_permission_tool")
+    desktop_granted = ((row.get("local_execution") or {}).get("desktop_access") is True
+                       and settings.get("desktop_access") is True)
     inherited_desktop = (workstation_tool == "ryn_computer_action"
                          and metadata.get("computer_access") is True
-                         and (row.get("local_execution") or {}).get("desktop_access") is True
-                         and settings.get("desktop_access") is True)
+                         and desktop_granted)
     for policy in (row, settings):
         if policy["permission_mode"] == "workspace":
             if call["name"] not in WORKSPACE_TOOLS and not inherited_desktop:
                 return Decision("ask", "external_change")
         elif policy["permission_mode"] == "automatic":
-            grants = policy.get("allowed_write_tools", [])
-            if call["name"] not in grants and not (inherited_desktop and workstation_tool in grants):
-                return Decision("ask", "tool_not_granted")
+            # Full access: the owner chose to let every change run without a
+            # dialog, including plugin and configuration changes. Only the
+            # hard gates above (explicit-approval tools, read-only, strict
+            # confirmation) and the desktop grant still apply.
+            if metadata.get("computer_access") and not desktop_granted:
+                return Decision("ask", "desktop_access")
     return Decision("execute", "automatic")
