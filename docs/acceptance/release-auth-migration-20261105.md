@@ -18,4 +18,5 @@
 在 SG-VM 本地工作树运行（Python 3.12.10，借用仓库 `.venv` 依赖）：
 
 - `tests/test_full_package_install.py`：24 通过，含新增 `test_release_moves_only_unchanged_connection_to_new_sign_in_mode`（未改动的默认 OAuth 连接迁移为 `none`，代次/指纹/状态重置；用户改过的连接保持原样并报告冲突；重复迁移无变化）。
-- 扩展、MCP、OAuth、本机服务、导入、发布相关测试集结果见合入记录。
+- 2026-11-06 合入前对照（本分支含 develop 1afd85a，对比 develop 5bae09d）：完整安装、扩展存储、插件更新、统一插件、Craft 插件、插件发现、清单兼容、对端提供方导入、插件视图、MCP OAuth 配置共 10 个文件，本分支 249 通过、1 失败；失败项 `test_current_apps_first_menu_and_discovered_info_use_live_read_only_tools[12000]` 在 develop 上同样失败。
+- `test_agent_extensions_oauth.py` 等需本机 HTTP 往返的用例在 SG-VM 上读超时，develop 上同样超时，未作为对照。
