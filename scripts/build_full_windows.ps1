@@ -64,7 +64,8 @@ try {
     try { Remove-Item -LiteralPath $acceptance -Recurse -Force } catch { Write-Warning "Could not remove $acceptance`: $_" }
     $outputPath=[IO.Path]::GetFullPath($Output)
     New-Item -ItemType Directory -Force -Path (Split-Path $outputPath) | Out-Null
-    $compressor=if ($Compression -eq 'zlib') { @('/XSetCompressor /FINAL zlib') } else { @('/XSetCompressor /FINAL /SOLID lzma','/XSetCompressorDictSize 128') }
+    # @() keeps a one-item list an array; a splatted string is passed one character at a time.
+    $compressor=@(if ($Compression -eq 'zlib') { '/XSetCompressor /FINAL zlib' } else { '/XSetCompressor /FINAL /SOLID lzma'; '/XSetCompressorDictSize 128' })
     & $MakeNsis /V2 @compressor "/DOUTPUT=$outputPath" "/DCORE=$((Resolve-Path -LiteralPath $CoreInstaller).Path)" "/DPAYLOAD=$payloadPath" "/DHELPER=$build/dist/ryn-full-install" "/DWEBVIEW=$((Resolve-Path -LiteralPath $WebViewInstaller).Path)" "$repo/deploy/windows/full-installer.nsi"
     if ($LASTEXITCODE -ne 0) { throw 'Complete installer build failed' }
     $receipt=@{schema=1;ryn_commit=$manifest.ryn_commit;core_commit=$CoreCommit;company_commit=$manifest.company_commit;plugins=$manifest.plugins;installer_sha256=(Get-FileHash -LiteralPath $outputPath).Hash;core_sha256=(Get-FileHash -LiteralPath $CoreInstaller).Hash;webview_sha256=(Get-FileHash -LiteralPath $WebViewInstaller).Hash;bytes=(Get-Item -LiteralPath $outputPath).Length;helper_source_sha256=(Get-FileHash -LiteralPath "$PSScriptRoot/full_package_install.py").Hash;helper_executable_sha256=(Get-FileHash -LiteralPath $helperExe).Hash;helper_reused=$helperReused;compression=$Compression;acceptance=$acceptanceResult}
