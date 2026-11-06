@@ -306,7 +306,7 @@ it("can select autonomous workstation execution and retain it in the workspace c
   await user.click(screen.getByLabelText("Tool permissions", { selector: "summary" }));
   await user.click(screen.getByRole("menuitemradio", { name: "Work autonomously" }));
   await waitFor(() => expect(backend.updates).toHaveBeenCalledWith({ permission_mode: "workspace" }));
-  await waitFor(() => expect(screen.getByText("Full access", { selector: ".ra-composer-permissions summary span" })).toBeVisible());
+  await waitFor(() => expect(screen.getByText("Work autonomously", { selector: ".ra-composer-permissions summary span" })).toBeVisible());
 });
 
 it("shows a normal completed answer without an independent-assessment warning card", async () => {

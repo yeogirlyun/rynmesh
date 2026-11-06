@@ -13,6 +13,7 @@ import math
 import os
 import re
 import stat
+import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -373,6 +374,19 @@ def _resolve_opened_fd_path(fd: int) -> Path:
         if raw_final.startswith("\\\\?\\"):
             raw_final = raw_final[4:]
         return _check_input_filesystem_path_syntax(raw_final, label="opened_handle_path").resolve(strict=True)
+    if sys.platform == "darwin":
+        import fcntl
+
+        try:
+            # Darwin provides F_GETPATH rather than Linux's /proc/self/fd.
+            # Resolve the opened descriptor, never the caller-supplied filename.
+            raw = fcntl.fcntl(fd, 50, bytes(1024)).split(b"\0", 1)[0]
+            return Path(os.fsdecode(raw)).resolve(strict=True)
+        except OSError as exc:
+            raise JsResourceError(
+                "ryn_js_resource_unreadable",
+                "Opened resource file handle path could not be resolved",
+            ) from exc
     proc_fd = Path(f"/proc/self/fd/{fd}")
     if proc_fd.exists():
         return proc_fd.resolve(strict=True)

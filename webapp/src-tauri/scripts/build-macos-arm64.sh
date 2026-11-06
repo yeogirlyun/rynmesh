@@ -16,6 +16,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 xcode-select -p >/dev/null
 cd "$ROOT/webapp"
 npm ci
+npm run build
 sh src-tauri/scripts/build-sidecar.sh
 sh src-tauri/scripts/fetch-llama-runtime.sh aarch64-apple-darwin
 npm run tauri -- build --target aarch64-apple-darwin --bundles app,dmg
