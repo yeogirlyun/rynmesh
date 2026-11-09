@@ -1,9 +1,15 @@
 # Rynmesh Product Milestones
 
-Status: active roadmap, reviewed 2026-10-03 against merged main
+Long-term direction clarified by the owner on 2026-11-09:
+[five product objectives and near-term acceptance](PRODUCT_DIRECTION.md).
+Personal utility, common personal/company nodes, real company workflows,
+user-controlled accumulated AI context and open participant applications guide
+current priorities. The implementation/release evidence below is a dated snapshot.
+
+Implementation baseline reviewed 2026-10-03 against merged main
 [`fa85833`](https://github.com/yeogirlyun/rynmesh/commit/fa85833f2cee8b4cfb70a0f7fc8c7a9a5e976c4e).
-The published release remains `v0.7.0` (2026-09-15). Changes merged afterward
-are not claimed to be present in its downloadable artifacts.
+At that review the published release was `v0.7.0` (2026-09-15). Changes merged
+afterward are not claimed to be present in that release's downloadable artifacts.
 
 Rynmesh is alpha software. **Implemented** means code exists; **verified**
 names its evidence; **released** means a published artifact includes it.
