@@ -48,14 +48,24 @@ describe('remote app capability boundary', () => {
     expect(screen.getByTitle('Reports').getAttribute('src')).toContain('/apps/company-dashboard?view=cash-flow&host_origin=');
   });
   it('delivers a one-use browser bootstrap only to an enabled company frame', async () => {
-    vi.mocked(bootstrapCompanyBrowserSession).mockResolvedValue({ ticket: 'one-use-test-ticket' });
+    vi.mocked(bootstrapCompanyBrowserSession).mockResolvedValue({ ticket: 'one-use-test-ticket', origin: 'https://app.example.test' });
     vi.mocked(agentExtensions.overview).mockResolvedValue({ plugins: [{ ...plugin, id: 'company-workspace' }] } as any);
     render(<MemoryRouter initialEntries={['/apps/extensions/company-workspace']}><Routes><Route path='/apps/extensions/:pluginId' element={<ExtensionWebApp />} /></Routes></MemoryRouter>);
     const frame = await screen.findByTitle('Reports') as HTMLIFrameElement;
     const reply = vi.spyOn(frame.contentWindow!, 'postMessage');
     request(frame, { data: { type: 'ryn.plugin.request', id: 'bootstrap', method: 'company.session.bootstrap', args: [] } });
     await waitFor(() => expect(bootstrapCompanyBrowserSession).toHaveBeenCalledWith('company-workspace'));
-    expect(reply).toHaveBeenCalledWith({ type: 'ryn.plugin.response', id: 'bootstrap', result: { ticket: 'one-use-test-ticket' } }, { targetOrigin: 'https://app.example.test' });
+    expect(reply).toHaveBeenCalledWith({ type: 'ryn.plugin.response', id: 'bootstrap', result: { ticket: 'one-use-test-ticket', origin: 'https://app.example.test' } }, { targetOrigin: 'https://app.example.test' });
+  });
+  it('never passes a company ticket to a manifest with a mismatched service origin', async () => {
+    vi.mocked(bootstrapCompanyBrowserSession).mockResolvedValue({ ticket: 'must-not-leak', origin: 'http://127.0.0.1:18140' });
+    vi.mocked(agentExtensions.overview).mockResolvedValue({ plugins: [{ ...plugin, id: 'company-workspace' }] } as any);
+    render(<MemoryRouter initialEntries={['/apps/extensions/company-workspace']}><Routes><Route path='/apps/extensions/:pluginId' element={<ExtensionWebApp />} /></Routes></MemoryRouter>);
+    const frame = await screen.findByTitle('Reports') as HTMLIFrameElement;
+    const reply = vi.spyOn(frame.contentWindow!, 'postMessage');
+    request(frame, { data: { type: 'ryn.plugin.request', id: 'bootstrap', method: 'company.session.bootstrap', args: [] } });
+    await waitFor(() => expect(reply).toHaveBeenCalled());
+    expect(JSON.stringify(reply.mock.calls)).not.toContain('must-not-leak');
   });
   it('does not offer company bootstrap to another plugin', async () => {
     const frame = await mount();

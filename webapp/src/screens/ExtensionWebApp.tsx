@@ -176,6 +176,7 @@ export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true 
         if (method === 'company.session.bootstrap') {
           if (!COMPANY_PAGES.has(pluginId) || args.length !== 0) throw new Error();
           const result = await bootstrapCompanyBrowserSession(pluginId);
+          if (result.origin !== origin) throw new Error();
           // A navigation during bootstrap must never receive the old frame's ticket.
           if (event.source && event.source === frame.current?.contentWindow) event.source.postMessage({ type: 'ryn.plugin.response', id, result }, { targetOrigin: origin });
           return;
