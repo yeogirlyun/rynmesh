@@ -77,7 +77,8 @@ export interface ExtensionMcpServer {
   oauth?: McpOauthStatus;
   data_policy?: ExtensionDataPolicy;
   discovery_revision?: number;
-  read_only_sources?: Record<string, "owner" | "server_hint">;
+  /** "installer": declared read-only by a service the signed installer runs; trusted without a prompt. */
+  read_only_sources?: Record<string, "owner" | "server_hint" | "installer">;
   server_hint_candidates?: ExtensionServerHintCandidate[];
   id: string;
   instance_id?: string;
@@ -775,7 +776,7 @@ export function normalizeMcpServer(raw: Record<string, unknown>): ExtensionMcpSe
     data_policy: raw.data_policy && typeof raw.data_policy === "object" ? raw.data_policy as ExtensionDataPolicy : undefined,
     discovery_revision: typeof raw.discovery_revision === "number" ? raw.discovery_revision : undefined,
     read_only_sources: raw.read_only_sources && typeof raw.read_only_sources === "object"
-      ? Object.fromEntries(Object.entries(raw.read_only_sources).filter(([, value]) => value === "owner" || value === "server_hint")) as Record<string, "owner" | "server_hint"> : {},
+      ? Object.fromEntries(Object.entries(raw.read_only_sources).filter(([, value]) => value === "owner" || value === "server_hint" || value === "installer")) as Record<string, "owner" | "server_hint" | "installer"> : {},
     server_hint_candidates: Array.isArray(raw.server_hint_candidates) ? raw.server_hint_candidates
       .filter((value): value is ExtensionServerHintCandidate => Boolean(value && typeof value === "object" && typeof value.name === "string"
         && typeof value.schema_sha256 === "string" && /^[0-9a-f]{64}$/.test(value.schema_sha256)))
