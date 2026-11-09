@@ -157,7 +157,9 @@ def parse_auth_challenge(value):
 def request_json(method, target, *, headers=None, data=None, json=None):
     canonical_url(target)
     try:
-        with httpx.Client(timeout=10, follow_redirects=False, trust_env=False) as client:
+        # Token renewal may wait on the authorization server's own lookups. Giving
+        # up early keeps an old credential that a rotating server may reject.
+        with httpx.Client(timeout=30, follow_redirects=False, trust_env=False) as client:
             with client.stream(method, target, headers={"User-Agent": USER_AGENT, **(headers or {})}, data=data, json=json) as response:
                 raw = bytearray()
                 for chunk in response.iter_bytes():

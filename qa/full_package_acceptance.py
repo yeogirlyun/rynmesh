@@ -1,4 +1,4 @@
-"""Isolated offline first-install/reinstall acceptance; never runs the system installer."""
+"""Isolated offline first-install/reinstall acceptance of the company plugins; never runs the system installer."""
 import argparse
 import hashlib
 import json
@@ -12,7 +12,6 @@ import time
 import urllib.request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from rynmesh.node_apps import craft_host, craft_native
 from rynmesh.node_apps.plugins import PluginManager
 from rynmesh.agent_runtime.extensions.store import ExtensionStore
 from rynmesh.services.peer_box import load_or_create_messaging_key
@@ -38,18 +37,11 @@ def main():
     extensions = ExtensionStore(home / 'agent', load_or_create_messaging_key(home / 'messaging.x25519'))
     plugins = {p['id']: p for p in extensions.overview()['plugins']}
     company = ('company-workspace','company-dashboard','company-affiliate')
-    office = ('pdfcraft','wordcraft','gridcraft','deckcraft')
     assert all(plugins[s]['enabled'] for s in company)
-    from fastapi.testclient import TestClient
-    for slug in office:
-        assert manager._read()['plugins'][slug]['enabled']
-        runtime = craft_native.runtime_status(manager.cache, slug)
-        assert runtime['verified'], runtime
-        with TestClient(craft_host.create_editor(manager.cache, slug)) as client:
-            response = client.get('/index.html', headers={'host':'127.0.0.1'})
-            assert response.status_code == 200, (slug, response.status_code)
-        result = subprocess.run([runtime['executable'], '--version'], capture_output=True, timeout=20)
-        assert result.returncode == 0, (slug, result.stderr[-500:])
+    # Office is downloaded by Ryn on first start: the helper must leave its setup open.
+    office = ('pdfcraft','wordcraft','gridcraft','deckcraft')
+    office_state = manager._read()
+    assert not any(s in office_state['plugins'] for s in office) and not office_state.get('setup_completed'), office_state
     key = (home / 'company/config.key').read_bytes()
     identity = (home / 'identity.ed25519').read_bytes()
     dashboard_server = 'company-dashboard-dashboard'
@@ -58,11 +50,8 @@ def main():
     extensions.upsert_mcp_server({'auth': {**server['auth'], 'client_id': None}},
                                  server_id=dashboard_server, expected_revision=server['revision'])
     extensions.set_plugin_enabled('company-dashboard', False)
-    state = manager._read()
-    state['plugins']['pdfcraft']['enabled'] = False
-    manager._write(state)
     subprocess.run(command, check=True, capture_output=True, timeout=180)
-    assert not manager._read()['plugins']['pdfcraft']['enabled']
+    assert not any(s in manager._read()['plugins'] for s in office)
     assert not next(p for p in extensions.overview()['plugins'] if p['id']=='company-dashboard')['enabled']
     assert (home / 'company/config.key').read_bytes() == key
     assert (home / 'identity.ed25519').read_bytes() == identity
@@ -96,7 +85,7 @@ def main():
             proc.terminate()
             proc.wait(timeout=20)
     result = {'fresh_install':True,'repeat_install_preserves_identity_key_and_disabled_plugins':True,
-              'office_editors':list(office),'native_cli_version':list(office),'company_pages':list(company),
+              'office_bundled':False,'office_setup_left_for_first_start':True,'company_pages':list(company),
               'company_health':health,'company_outbound_network':'blocked','live_install_modified':False,
               'system_installer_executed':False}
     (root / 'result.json').write_text(json.dumps(result, indent=2), encoding='utf-8')

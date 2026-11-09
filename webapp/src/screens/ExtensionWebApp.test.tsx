@@ -83,11 +83,11 @@ describe('remote app capability boundary', () => {
     expect(screen.getByTitle('Reports')).not.toBe(first);
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
-  it('detects an outage after mount and remounts after automatic recovery', async () => {
+  it('keeps an open page through slow health checks and only notes a sustained slowdown', async () => {
     (window as any).__TAURI_INTERNALS__ = {};
     let down = false;
     vi.mocked(invoke).mockImplementation(async command => {
-      if (down) throw 'plugin_service_unhealthy';
+      if (down && command === 'plugin_service_instance') throw 'plugin_service_unhealthy';
       return command === 'ensure_plugin_service' ? true : 101;
     });
     vi.mocked(agentExtensions.overview).mockResolvedValue({ plugins: [{ ...plugin, web_app: { ...plugin.web_app, url: 'http://127.0.0.1:18140/apps/reports' } }] } as any);
@@ -97,11 +97,40 @@ describe('remote app capability boundary', () => {
     });
     const first = screen.getByTitle('Reports');
     down = true;
-    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
-    expect(screen.getByRole('alert')).toHaveTextContent('Waiting for automatic recovery');
-    down = false;
     await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+    expect(screen.getByTitle('Reports')).toBe(first);
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(screen.getByRole('status')).toHaveTextContent('responding slowly');
+    expect(screen.getByTitle('Reports')).toBe(first);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    down = false;
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(screen.getByTitle('Reports')).toBe(first);
+  });
+  it('restarts an exited service from the open page and reloads only after the new process is up', async () => {
+    (window as any).__TAURI_INTERNALS__ = {};
+    let instance: number | 'exited' = 101;
+    vi.mocked(invoke).mockImplementation(async command => {
+      if (command === 'ensure_plugin_service') { if (instance === 'exited') instance = 102; return true; }
+      if (instance === 'exited') throw 'plugin_service_exited';
+      return instance;
+    });
+    vi.mocked(agentExtensions.overview).mockResolvedValue({ plugins: [{ ...plugin, web_app: { ...plugin.web_app, url: 'http://127.0.0.1:18140/apps/reports' } }] } as any);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await act(async () => {
+      render(<MemoryRouter initialEntries={['/apps/extensions/reports']}><Routes><Route path='/apps/extensions/:pluginId' element={<ExtensionWebApp />} /></Routes></MemoryRouter>);
+    });
+    const first = screen.getByTitle('Reports');
+    instance = 'exited';
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(screen.getByRole('status')).toHaveTextContent('restarting');
+    expect(screen.getByTitle('Reports')).toBe(first);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
     expect(screen.getByTitle('Reports')).not.toBe(first);
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
   it('keeps downloads blocked unless the plugin declares them', async () => {
     const frame=await mount();
