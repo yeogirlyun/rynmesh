@@ -246,6 +246,8 @@ class ExtensionToolAdapter:
         self._op_guard = threading.Lock()
         self._op_locks: dict[str, list[Any]] = {}
         self._active_mcp_tools_cache: tuple[tuple[Any, ...], dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]]] | None = None
+        self._turn_rediscovered: dict[str, float] = {}
+        self._plugin_overview_cache: tuple[tuple[Any, ...], tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]] | None = None
 
     def _resolve_owner(self) -> Any:
         return (
@@ -351,7 +353,17 @@ class ExtensionToolAdapter:
             self._manager = McpSessionManager(self.store)
         return self._manager
 
+    def refresh_catalogs_soon(self) -> None:
+        """Ask remote plugin servers for their current tools without waiting."""
+        refresh = getattr(self.manager, "refresh_tool_catalogs", None)
+        if callable(refresh):
+            try:
+                refresh()
+            except Exception:
+                pass
+
     def overview(self, *, desktop_access: bool = False) -> dict[str, Any]:
+        self.refresh_catalogs_soon()
         value = self.store.overview(desktop_access=desktop_access)
         oauth = getattr(self.manager, "oauth", None)
         if oauth is None:
@@ -449,10 +461,15 @@ class ExtensionToolAdapter:
                                     "recovery": {"disabled": "enable_plugin", "authentication_required": "reconnect",
                                                  "service_unreachable": "start_service", "version_incompatible": "update_components",
                                                  "permission_denied": "review_permissions"}.get(state, "discover_tools")})
+            skills = {skill.get("id"): skill for skill in overview.get("skills", []) if isinstance(skill, dict)}
             result.append({"id": plugin["id"], "name": plugin.get("name", plugin["id"]),
+                           # What the plugin is for, so "not supported" is never guessed from a name.
+                           "description": str(plugin.get("description") or "")[:400],
                            "version": plugin.get("version"), "enabled": bool(plugin.get("enabled")),
                            "connections": connections, "discovery_tool": "ryn_discover_tools",
-                           "skill_ids": list(plugin.get("skill_ids") or [])})
+                           "skill_ids": list(plugin.get("skill_ids") or []),
+                           "skills": [{"id": skill_id, "description": str((skills.get(skill_id) or {}).get("description") or "")[:300]}
+                                      for skill_id in list(plugin.get("skill_ids") or [])[:12]]})
         return result
 
     def _mcp_tools_cache_key(self) -> tuple[Any, ...] | None:
@@ -556,6 +573,7 @@ class ExtensionToolAdapter:
         return out
 
     def specs(self, context: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        self.refresh_catalogs_soon()
         result: list[dict[str, Any]] = [copy.deepcopy(READ_SKILL_FILE_SPEC)]
         active = self._active_mcp_tools()
         for model_name in sorted(active.keys()):
@@ -598,6 +616,158 @@ class ExtensionToolAdapter:
         if not callable(admit):
             raise AgentToolRejected("agent_extension_model_not_allowed")
         admit(data_policy.snapshot_source(server), persist=persist)
+
+    # ------------------------------------------------------------------
+    # Plugin facts the model needs every turn (docs/PLUGIN_TOOL_CATALOG_FIX_PLAN_ZH.md)
+    # ------------------------------------------------------------------
+
+    # Before a turn's first model request, wait at most this long for tool lists.
+    TURN_CATALOG_WAIT_SECONDS = 3.0
+    # A signed-in plugin left without a tool list is reconnected at most this often.
+    TURN_REDISCOVER_SECONDS = 300.0
+    PLUGIN_INDEX_LINE_CHARS = 200
+    PLUGIN_INDEX_BYTES = 3000
+    # Model-facing recovery advice; the model answers in the owner's language.
+    PLUGIN_RECOVERY = {
+        "authentication_required": "sign-in needed: ask the owner to sign in again on the Plugins page",
+        "service_unreachable": "service not reachable: ask the owner to start the plugin service or retry shortly",
+        "pending_connection": "still connecting: retry shortly, or ask the owner to test it on the Plugins page",
+        "discovery_failed": "connection failed: ask the owner to test it on the Plugins page",
+        "version_incompatible": "needs a component update: ask the owner to update the plugin",
+        "permission_denied": "this account lacks permission: the owner must ask an administrator",
+        "disabled": "turned off: the owner can turn it on on the Plugins page",
+        "model_not_allowed": "not allowed for the current model by the plugin's data policy: switch to an allowed model",
+    }
+
+    def refresh_catalogs_for_turn(self, wait_seconds: float | None = None) -> None:
+        """Bring plugin tool lists up to date before a turn's first model request.
+
+        Lists checked within the refresh interval are used as they are. Older
+        ones are read again, all at once, for at most wait_seconds; a slower
+        server finishes in the background and its list reaches the next request.
+        A signed-in connection left without any tool list is reconnected too.
+        Never fails the turn.
+        """
+        wait = self.TURN_CATALOG_WAIT_SECONDS if wait_seconds is None else max(0.0, float(wait_seconds))
+        try:
+            manager = self.manager
+            refresh = getattr(manager, "refresh_tool_catalogs", None)
+            started = list(refresh() or []) if callable(refresh) else []
+            threads = []
+            now = time.monotonic()
+            for server in self.store.list_enabled_mcp_servers_internal():
+                sid = str(server.get("id") or "")
+                if (not sid or server.get("transport") != "streamable_http"
+                        or server.get("status") != "NeedsTest" or server.get("discovered_tools")):
+                    continue
+                with self._lock:
+                    if now - self._turn_rediscovered.get(sid, -self.TURN_REDISCOVER_SECONDS) < self.TURN_REDISCOVER_SECONDS:
+                        continue
+                    self._turn_rediscovered[sid] = now
+
+                def rediscover(server_id=sid):
+                    try:
+                        manager.rediscover_authenticated(server_id)
+                    except Exception:
+                        pass
+                thread = threading.Thread(target=rediscover, daemon=True, name=f"ryn-mcp-rediscover-{sid[:24]}")
+                thread.start()
+                threads.append(thread)
+            deadline = time.monotonic() + wait
+            waiter = getattr(manager, "wait_for_catalogs", None)
+            if callable(waiter):
+                # Also a refresh another request already started for this list.
+                waiter(None, wait)
+            for thread in threads:
+                thread.join(max(0.0, deadline - time.monotonic()))
+        except Exception:
+            pass  # The turn goes on with the lists it already has.
+
+    def plugin_overview_for_model(self, context: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        """Each installed plugin with what it is for and any connection that cannot be used now.
+
+        Unusable connections are never dropped silently: the model must be able
+        to say "sign in to Dashboard" instead of "this feature does not exist".
+        """
+        # The catalog read is shared by every request of a step (same key as the active-tool cache).
+        key = self._mcp_tools_cache_key()
+        cached = self._plugin_overview_cache
+        if key is not None and cached is not None and cached[0] == key:
+            catalog, servers = cached[1]
+        else:
+            catalog = self.plugin_catalog()
+            servers = {str(server.get("id")): server for server in self.store.list_mcp_servers_internal(include_tools=False)}
+            if key is not None:
+                self._plugin_overview_cache = (key, (catalog, servers))
+        rows = []
+        for plugin in catalog:
+            unavailable = []
+            for connection in plugin.get("connections") or []:
+                server = servers.get(str(connection.get("server_id"))) or {}
+                state = str(connection.get("state") or "discovery_failed")
+                if state == "available" and not data_policy.allows(server.get("data_policy"), context):
+                    state = "model_not_allowed"
+                # A connection the owner turned off inside an enabled plugin is a choice, not a fault.
+                if state not in {"available", "disabled"}:
+                    unavailable.append({"name": str(server.get("name") or connection.get("server_id") or ""),
+                                        "state": state, "recovery": self.PLUGIN_RECOVERY.get(state, self.PLUGIN_RECOVERY["discovery_failed"])})
+            if not plugin.get("enabled"):
+                unavailable = [{"name": str(plugin.get("name") or plugin.get("id")), "state": "disabled",
+                                "recovery": self.PLUGIN_RECOVERY["disabled"]}]
+            rows.append({"id": plugin["id"], "name": str(plugin.get("name") or plugin["id"]),
+                         "description": str(plugin.get("description") or ""),
+                         "skills": [skill for skill in plugin.get("skills") or [] if isinstance(skill, dict)],
+                         "skill_ids": [str(skill_id) for skill_id in plugin.get("skill_ids") or []],
+                         "unavailable": unavailable})
+        return rows
+
+    def plugin_context_note(self, context: dict[str, Any] | None = None, *, selected_skill_ids=()) -> str:
+        """A short, stable index of plugins for the model's developer context.
+
+        The text changes only when plugins, their descriptions or their usability
+        change, so ordinary turns keep a byte-identical prefix. Plugins whose
+        Skill the owner selected come first when the index must be shortened.
+        """
+        try:
+            rows = self.plugin_overview_for_model(context)
+        except Exception:
+            return ""
+        if not rows:
+            return ""
+        chosen = {str(skill_id) for skill_id in selected_skill_ids or ()}
+        rows.sort(key=lambda row: not chosen.intersection(row["skill_ids"]))  # stable: selected first
+        header = ("Installed plugins. Load their tools with ryn_discover_tools. A plugin marked unavailable still has "
+                  "the feature: tell the owner what to fix, never that the feature is unsupported.")
+        lines, used, omitted = [header], len(header.encode("utf-8")), 0
+        for row in rows:
+            text = row["description"].strip()
+            skills = []
+            for skill in row["skills"]:
+                description = str(skill.get("description") or "").strip()
+                skills.append(str(skill.get("id") or "") + (f" ({description})" if description and description != text else ""))
+            if skills:
+                text += " Skills: " + "; ".join(skills)
+            text = text[:self.PLUGIN_INDEX_LINE_CHARS]
+            notes = "; ".join(f"{item['name']} {item['recovery']}" for item in row["unavailable"])
+            line = f"- {row['name']}: {text}" + (f" [Unavailable now: {notes}]" if notes else "")
+            size = len(line.encode("utf-8")) + 1
+            if used + size > self.PLUGIN_INDEX_BYTES:
+                omitted += 1
+                continue
+            lines.append(line)
+            used += size
+        if omitted:
+            lines.append(f"- {omitted} more plugins: call ryn_list_plugins.")
+        return "\n".join(lines)
+
+    def unavailable_plugins(self, context: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        """Plugins with a connection the model cannot use now, for tool search results."""
+        try:
+            rows = self.plugin_overview_for_model(context)
+        except Exception:
+            return []
+        return [{"plugin": row["name"], "description": row["description"][:self.PLUGIN_INDEX_LINE_CHARS],
+                 "unavailable": row["unavailable"]} for row in rows if row["unavailable"]][:12]
 
     def metadata(self, name: str) -> dict[str, Any]:
         if name == READ_SKILL_FILE_TOOL:

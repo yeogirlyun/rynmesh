@@ -195,6 +195,7 @@ class AgentLoop:
             prep_persistence_seconds += max(0.0, time.monotonic() - t0)
             caller_selected["_prep_persistence_seconds"] = prep_persistence_seconds
             self._validate_context(selected)
+            self._refresh_plugin_catalogs_at_turn_start(selected)
             (specs, menu_state), _ = self._menu(selected)
             menu_reason = "projection"
             synced_state = {}
@@ -730,6 +731,29 @@ class AgentLoop:
             used = max(used, analysis["raw_serialized_utf8_bytes"])
         return used
 
+    def _refresh_plugin_catalogs_at_turn_start(self, row: dict) -> None:
+        """Before the first model request after an owner message, make plugin tool lists current.
+
+        A plugin may gain tools on its server at any time; a list read days ago
+        made the Agent call an existing feature unsupported. Later requests of
+        the same turn keep the list the turn started with.
+        """
+        extensions = getattr(self, "extensions", None)
+        if extensions is None:
+            return
+        messages = [message for message in row.get("messages") or [] if isinstance(message, dict)]
+        last_user = max((index for index, message in enumerate(messages) if message.get("role") == "user"), default=-1)
+        if last_user < 0 or any(message.get("role") == "assistant" for message in messages[last_user + 1:]):
+            return
+        extensions.refresh_catalogs_for_turn()
+
+    def _plugin_note(self, row: dict) -> str:
+        extensions = getattr(self, "extensions", None)
+        if extensions is None:
+            return ""
+        selected = [skill.get("id") for skill in row.get("skills") or [] if isinstance(skill, dict)]
+        return extensions.plugin_context_note(self._execution_context(row), selected_skill_ids=selected)
+
     def _context(self, row: dict) -> list[dict]:
         checkpoint = row.get("context_checkpoint")
         history = self._history(row)
@@ -772,7 +796,8 @@ class AgentLoop:
         host_memory_note = memory_integration.current_host_memory_operation_note(self, row)
         capture_note = memory_integration.current_automatic_memory_capture_note(self)
         auto_note = automations.automation_developer_instructions(self.store, row)
-        host_memory_note = "\n".join(note for note in (host_memory_note, capture_note, auto_note) if note) or None
+        plugin_note = self._plugin_note(row)
+        host_memory_note = "\n".join(note for note in (host_memory_note, capture_note, auto_note, plugin_note) if note) or None
         # Resolved per request from the current model, never pinned in the task.
         model_notes = model_profiles.for_task(self, row)["instructions"]
         instructions = instruction_layers(prefix_row, persisted_base=row.get("base_instructions"),
@@ -1938,6 +1963,11 @@ class AgentLoop:
                 assert_schema_unchanged(call, current)
             discovery = tool_menu.discover(business_specs, ALL_INTERNAL_SPECS, self._metadata,
                 menu_state, args, capacity_bytes=tool_menu.capacity(max_context_bytes, authority_bytes))
+            # Tools of an unusable plugin are not in the catalog; say which plugin and how to restore it.
+            unavailable = (self.extensions.unavailable_plugins(self._execution_context(selected))
+                           if getattr(self, "extensions", None) is not None else [])
+            if unavailable and isinstance(discovery[0], dict):
+                discovery = ({**discovery[0], "unavailable_plugins": unavailable}, discovery[1])
         page = None
         reference = None
         if call["name"] == "ryn_read_result":

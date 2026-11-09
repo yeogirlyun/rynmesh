@@ -66,6 +66,15 @@ SYSTEM = SYSTEM.replace(
     "Use matching authorized plugins and Skills, selected plugins first; do not guess a website or bypass discovery. "
     "Preloaded tools may not match the task: discover the exact capability instead of substituting an unrelated one. "
 )
+# For a short time the base carried the unavailable-plugin rule. It now travels
+# with the plugin index (present only when plugins are installed), so a task
+# pinned to that base returns to the current one and plugin-free requests stay small.
+_UNAVAILABLE_PLUGIN_RULE_SYSTEM = SYSTEM.replace(
+    "Preloaded tools may not match the task: discover the exact capability instead of substituting an unrelated one. ",
+    "Preloaded tools may not match the task: discover the exact capability instead of substituting an unrelated one. "
+    "A plugin that is unavailable (sign-in needed, offline, disabled) is not missing a feature: tell the owner what to "
+    "fix, such as signing in, instead of saying the feature is unsupported. "
+)
 
 
 def obj(properties, required):
@@ -130,7 +139,8 @@ def instruction_layers(row: dict, *, model_base=None, persisted_base=None, sessi
     """
     base = select_base_instructions(model_base=model_base, persisted_base=persisted_base,
                                     session_base=session_base)
-    if session_base is None and model_base is None and base in (_LEGACY_BATCH_SYSTEM, _PRE_IMAGE_SYSTEM, _PRE_IMAGE_BRIEF_SYSTEM, _PRE_PLUGIN_SYSTEM, _PRE_STRICT_PLUGIN_SYSTEM):
+    if session_base is None and model_base is None and base in (_LEGACY_BATCH_SYSTEM, _PRE_IMAGE_SYSTEM, _PRE_IMAGE_BRIEF_SYSTEM, _PRE_PLUGIN_SYSTEM, _PRE_STRICT_PLUGIN_SYSTEM,
+                                                                        _UNAVAILABLE_PLUGIN_RULE_SYSTEM):
         base = SYSTEM
     policy = ("This task is read-only: inspect and explain a proposed plan, never request a mutation tool."
               if row["permission_mode"] == "read_only" else

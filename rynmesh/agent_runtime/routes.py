@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -18,6 +19,13 @@ from .diagnostic_log import failure
 from .memory_worker import MEMORY_WORKER_NAME, MemoryExtractionWorker
 from .runtime import AgentRuntime
 from .store import SHIPPED_PERMISSION_MODE, AgentError, AgentStore
+
+
+def _refresh_plugin_catalogs(extensions: Any) -> None:
+    try:
+        extensions.refresh_catalogs_soon()
+    except Exception as exc:
+        failure("plugin_catalog_startup_refresh", exc)
 
 
 def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
@@ -66,6 +74,10 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
             failure("startup_permission_default", exc)
     app.state.agent_runtime = runtime
     app.state.agent_startup_error = startup_error
+    if startup_error is None and getattr(tools, "extensions", None) is not None:
+        # An installed copy may hold plugin tool lists read days ago; check them once now, off the start path.
+        threading.Thread(target=_refresh_plugin_catalogs, args=(tools.extensions,),
+                         name="ryn-plugin-catalogs-start", daemon=True).start()
     memory_worker = MemoryExtractionWorker(runtime)
     app.state.agent_memory_worker = memory_worker
     automation_worker = AutomationSchedulerWorker(runtime)
