@@ -6,8 +6,21 @@ turns are condensed, so no evidence of what ran is lost.
 """
 from __future__ import annotations
 
+import re
 from collections import Counter
 from typing import Any
+
+_CONTINUED_SUFFIX = re.compile(r"\s*（续(?: (\d+))?）$")
+
+
+def continued_title(title: str) -> str:
+    """"Plan" -> "Plan（续）" -> "Plan（续 2）" -> "Plan（续 3）": one suffix, never stacked."""
+    base, hops = str(title or "").strip(), 0
+    while (match := _CONTINUED_SUFFIX.search(base)):
+        hops = max(hops + 1, int(match.group(1) or 1))
+        base = base[:match.start()].rstrip()
+    hops += 1
+    return base[:72] + ("（续）" if hops == 1 else f"（续 {hops}）")
 
 # Older turns keep their owner message, final replies, decisions and errors.
 # Their step-by-step process events are condensed into one turn_compacted event.

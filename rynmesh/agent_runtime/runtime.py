@@ -1999,7 +1999,7 @@ class AgentRuntime(AgentLoop):
         summary = event_compaction.continuation_summary(old)
         body = {"message": CONTINUATION_PREFIX + summary + CONTINUATION_SEPARATOR + content,
                 "model_id": old["model_id"],
-                "title": (str(old.get("title") or "").strip()[:72] + "（续）") or "（续）"}
+                "title": event_compaction.continued_title(old.get("title") or "")}
         if value.get("client_request_id"):
             body["client_request_id"] = value["client_request_id"]
         if value.get("attachments"):

@@ -86,3 +86,37 @@ def test_an_oversized_conversation_continues_in_a_linked_new_one(tmp_path):
     assert runtime.get(row["id"])["continued_to"] == continued["id"]
     advance(runtime)
     assert runtime.get(continued["id"])["result"] == "Continued answer."
+
+
+def test_continued_titles_get_one_numbered_suffix():
+    title = event_compaction.continued_title
+    assert title("Invoices") == "Invoices（续）"
+    assert title("Invoices（续）") == "Invoices（续 2）"
+    assert title("Invoices（续 2）") == "Invoices（续 3）"
+    # Titles stacked by an earlier build are folded into one counted suffix.
+    assert title("Invoices（续）（续）（续）") == "Invoices（续 4）"
+    assert title("") == "（续）"
+
+
+def test_goal_history_stays_small_in_a_long_conversation(tmp_path):
+    runtime, _, _, _ = make_runtime(tmp_path, *[assistant(f"ok {i}") for i in range(40)])
+    runtime.update_settings({"max_context_chars": 400000})
+    row = runtime.create({"message": "Start."})
+    advance(runtime)
+    # A task written by an older build kept full goal copies (every earlier message, every time).
+    runtime.store.transaction(lambda data: data["tasks"][row["id"]].update(goal_history=[
+        {**data["tasks"][row["id"]]["goal"], "constraints": [{"id": "constraint:old", "text": "x" * 5000}]}] * 3))
+    sizes = []
+    for turn in range(30):
+        send(runtime, row["id"], f"Requirement {turn}: " + "detail " * 300)
+        advance(runtime)
+        sizes.append(len(encoded(runtime.store.read()["tasks"][row["id"]])))
+    stored = runtime.store.read()["tasks"][row["id"]]
+    history = stored["goal_history"]
+    assert len(history) == 20
+    assert all("constraints" not in item and "text" not in item for item in history)
+    assert history[-1]["constraint_ids"][-1].startswith("constraint:") and len(history[-1]["constraint_ids"]) == 30  # start + 29 earlier messages
+    assert "x" * 5000 not in str(history)
+    # Growth per owner message stays about the same (was proportional to the number of earlier messages).
+    early, late = sizes[5] - sizes[4], sizes[29] - sizes[28]
+    assert late < early * 1.5, sizes

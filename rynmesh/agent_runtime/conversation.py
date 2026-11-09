@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 
 from . import budget
+from .state import record_goal_history
 
 
 def rewrite(row: dict, control: dict, emit, *, data: dict | None = None) -> None:
@@ -58,7 +59,7 @@ def rewrite(row: dict, control: dict, emit, *, data: dict | None = None) -> None
             row["memory_disclosed_in_epoch"] = False
         memory_integration.apply_owner_turn_memory_in_tx(None, data, row)
     row["observed_files"] = {}
-    row.setdefault("goal_history", []).append(copy.deepcopy(row["goal"]))
+    record_goal_history(row)
     owners = [message for message in row["messages"] if message["role"] == "user"]
     revision = row["goal"]["revision"] + 1
     first = owners[0]

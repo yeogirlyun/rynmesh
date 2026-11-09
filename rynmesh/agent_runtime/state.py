@@ -5,8 +5,6 @@ construct goal/criterion sources; business verification is a separate concern.
 """
 from __future__ import annotations
 
-import copy
-
 SCHEMA_VERSION = 2
 CONTROL_EVENTS = {"created", "workspace_bound", "message_added", "approval_requested", "approved", "denied", "paused",
                   "resumed", "cancelled", "goal_changed", "information_added", "input_requested", "input_answered", "scope_changed", "permissions_changed", "reconciliation_requested", "archived", "restored", "budget_changed", "source_credential_saved", "source_credential_revoked", "model_changed"}
@@ -108,9 +106,32 @@ def migrate(data: dict) -> dict:
     return data
 
 
+GOAL_HISTORY_LIMIT = 20
+
+
+def _goal_snapshot(goal: dict) -> dict:
+    """A past goal revision without the owner's texts (those stay in messages)."""
+    return {"revision": goal.get("revision"), "kind": goal.get("kind"),
+            "original_message_id": goal.get("original_message_id"),
+            "constraint_ids": [item.get("id") for item in goal.get("constraints", []) if isinstance(item, dict)]}
+
+
+def record_goal_history(row: dict) -> None:
+    """Remember the goal before it changes, bounded.
+
+    Copying the whole goal each time grew with the square of the number of owner
+    messages (every snapshot repeated every earlier message) and pushed long
+    conversations over the task size limit. Older full copies are compacted too.
+    """
+    history = [_goal_snapshot(item) if isinstance(item, dict) and "constraints" in item else item
+               for item in row.get("goal_history", [])]
+    history.append(_goal_snapshot(row["goal"]))
+    row["goal_history"] = history[-GOAL_HISTORY_LIMIT:]
+
+
 def owner_update(row: dict, message: dict) -> None:
     """Called only after the authenticated owner entry point validates input."""
-    row.setdefault("goal_history", []).append(copy.deepcopy(row["goal"]))
+    record_goal_history(row)
     goal = row["goal"]
     goal["revision"] += 1
     goal["constraints"].append({"id": "constraint:" + message["message_id"], "text": message["content"], "source": "user",
