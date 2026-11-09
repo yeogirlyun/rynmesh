@@ -43,6 +43,14 @@ DEFAULT_SETTINGS = {
     # Exact catalog model id -> model_profiles profile id (explicit override).
     "model_profile_overrides": {},
 }
+PERMISSION_MODES = frozenset({"workspace", "read_only", "confirm_changes", "automatic"})
+# The Ryn app ships with full access ("自动处理"): every change runs without a
+# dialog except the hard gates in execution_policy.decide.
+SHIPPED_PERMISSION_MODE = "automatic"
+# Root key recording where settings.permission_mode came from: "shipped_default"
+# (this build chose it), "legacy" (an older build saved a non-default value) or
+# "owner" (set through update_settings). Only an unrecorded source is migrated.
+PERMISSION_MODE_SOURCE = "settings_permission_mode_source"
 # An additional conservative byte ceiling for an undeclared model window.
 UNKNOWN_WINDOW_CONTEXT_CHARS = 120000
 
@@ -111,7 +119,13 @@ def _blob_name(task_id: str, digest: str) -> str:
 
 
 class AgentStore:
-    def __init__(self, root: str | Path, messaging_key: Any):
+    def __init__(self, root: str | Path, messaging_key: Any, *, permission_mode: str | None = None):
+        # A bare store starts in DEFAULT_SETTINGS' conservative mode, so an
+        # embedded runtime never runs changes unasked. The Ryn app passes its
+        # shipped mode (SHIPPED_PERMISSION_MODE) for a first start.
+        if permission_mode is not None and permission_mode not in PERMISSION_MODES:
+            raise ValueError("unsupported Agent permission mode")
+        self._permission_mode = permission_mode
         self.root = Path(root)
         self.path = self.root / "sessions.json"
         self.lock = self.root / ".sessions.lock"
@@ -147,8 +161,12 @@ class AgentStore:
             self._cached_layout = None
             self._migration_pending = False
             self._index, self._total = {}, 0
-            return {"version": VERSION, "schema_version": 2, "settings": dict(DEFAULT_SETTINGS), "tasks": {},
-                    "context_budget_version": 2, "settings_context_budget_provenance": "default_auto"}
+            fresh = {"version": VERSION, "schema_version": 2, "settings": dict(DEFAULT_SETTINGS), "tasks": {},
+                     "context_budget_version": 2, "settings_context_budget_provenance": "default_auto"}
+            if self._permission_mode is not None:
+                fresh["settings"]["permission_mode"] = self._permission_mode
+                fresh[PERMISSION_MODE_SOURCE] = "shipped_default"
+            return fresh
         try:
             stamp = self._stamp()
             if stamp == self._cached_stamp and self._cached_data is not None:
