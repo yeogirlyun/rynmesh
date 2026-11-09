@@ -11,6 +11,7 @@ import math
 import os
 import re
 import stat
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -816,6 +817,15 @@ def _resolve_opened_fd_path(fd: int) -> Path:
         elif raw_final.startswith("\\\\?\\"):
             raw_final = raw_final[4:]
         return Path(raw_final).resolve(strict=True)
+    if sys.platform == "darwin":
+        import fcntl
+
+        # Darwin has no /proc. Resolve the opened handle, retaining all of the
+        # caller's containment and file-identity checks.
+        raw = fcntl.fcntl(fd, 50, bytes(1024)).split(b"\0", 1)[0]  # F_GETPATH
+        if not raw:
+            raise ValueError("artifact_handle_path_unresolvable")
+        return Path(os.fsdecode(raw)).resolve(strict=True)
     proc_fd = Path(f"/proc/self/fd/{fd}")
     if proc_fd.exists():
         return proc_fd.resolve(strict=True)

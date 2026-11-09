@@ -458,6 +458,7 @@ def test_codex_cli_image_inspect_preserves_turn_start_image_items_and_keeps_stor
     runtime, bridge, tools, store, workspace = _setup_runtime_with_model(
         tmp_path,
         codex_row,
+        _assistant(name="ryn_discover_tools", args={"load": ["ryn_image_inspect"]}),
         _assistant(name="ryn_image_inspect", args={"path": "canary.png", "question": "What color is the box?"}, call_id="call_img_1"),
         _assistant("Observed a blue-teal rectangle from the submitted image."),
         _assistant("Observed a blue-teal rectangle from the submitted image."),
@@ -475,10 +476,11 @@ def test_codex_cli_image_inspect_preserves_turn_start_image_items_and_keeps_stor
         current = runtime.get(task["id"])
         assert current["status"] == "completed", current.get("error")
 
-        # Call 0 is the main loop turn that emitted tool_call ryn_image_inspect.
-        # Call 1 is the nested image_inspection stage invoked by ryn_image_inspect (exactly ONE nested call).
-        assert len(bridge.calls) == 3
-        inspection_call = bridge.calls[1]
+        # Discover the lazy tool before invoking it. Call 2 is the one nested
+        # image_inspection request; discovery is itself an ordinary model turn.
+        assert len(bridge.calls) == 4
+        assert any(s["function"]["name"] == "ryn_image_inspect" for s in bridge.calls[1]["tool_specs"])
+        inspection_call = bridge.calls[2]
         inspection_messages = inspection_call["messages"]
         nested_req_id = inspection_call["options"].get("request_id")
         assert isinstance(nested_req_id, str) and nested_req_id.startswith("req_")
@@ -574,6 +576,7 @@ def test_inspect_image_uses_model_configured_output_up_to_16384_tokens(tmp_path)
     runtime, bridge, tools, _store, workspace = _setup_runtime_with_model(
         tmp_path,
         api_row,
+        _assistant(name="ryn_discover_tools", args={"load": ["ryn_image_inspect"]}),
         _assistant(name="ryn_image_inspect", args={"path": "canary.png", "question": "Check layout"}, call_id="call_img_cap"),
         _assistant("Detailed layout inspection without length truncation."),
         _assistant("Layout verified."),
@@ -588,8 +591,8 @@ def test_inspect_image_uses_model_configured_output_up_to_16384_tokens(tmp_path)
 
         current = runtime.get(task["id"])
         assert current["status"] == "completed", current.get("error")
-        assert len(bridge.calls) == 3
-        assert bridge.calls[1]["options"]["max_output_tokens"] == 16384
+        assert len(bridge.calls) == 4
+        assert bridge.calls[2]["options"]["max_output_tokens"] == 16384
     finally:
         tools.close()
 
@@ -646,6 +649,7 @@ def test_antigravity_cli_and_explicit_negative_models_refuse_both_tool_and_exist
     runtime, bridge, tools, store, workspace = _setup_runtime_with_model(
         tmp_path,
         agy_row,
+        _assistant(name="ryn_discover_tools", args={"load": ["ryn_image_inspect"]}),
         _assistant(name="ryn_image_inspect", args={"path": "sample.png"}, call_id="call_agy_img"),
         _assistant("Cannot inspect pixels on Antigravity CLI because stream-json is text-only."),
     )
@@ -669,7 +673,8 @@ def test_antigravity_cli_and_explicit_negative_models_refuse_both_tool_and_exist
         assert "stream-json" in err.get("correction", "")
         assert err["details"]["reason"] == "antigravity_cli_stream_json_text_only"
 
-        # Now test _complete directly with an already-present canonical user image_url message on Antigravity CLI:
+        # Old image history must not block text-only conversations. The image
+        # is omitted with a visible note; explicit inspection above still fails.
         calls_before = len(bridge.calls)
         store.transaction(lambda data: data["tasks"][task["id"]].update(status="running"))
         selected = store.read()["tasks"][task["id"]]
@@ -682,9 +687,13 @@ def test_antigravity_cli_and_explicit_negative_models_refuse_both_tool_and_exist
                 {"type": "image_url", "image_url": {"url": inline_url}},
             ],
         }]
-        with pytest.raises(AgentToolRejected, match="agent_image_input_unsupported"):
-            runtime._complete(selected, canonical_image_messages, [], lambda: False, lambda _event: None)
-        assert len(bridge.calls) == calls_before
+        runtime._complete(selected, canonical_image_messages, [], lambda: False, lambda _event: None)
+        assert len(bridge.calls) == calls_before + 1
+        assert image_inputs(bridge.calls[-1]["messages"]) == []
+        assert "Look at this inline image." in json.dumps(bridge.calls[-1]["messages"])
+        assert any(e["type"] == "images_omitted" and e["count"] == 1
+                   and e["reason"] == "antigravity_cli_stream_json_text_only"
+                   for e in runtime.get(task["id"])["events"])
     finally:
         tools.close()
 
@@ -693,6 +702,7 @@ def test_antigravity_cli_and_explicit_negative_models_refuse_both_tool_and_exist
     runtime2, bridge2, tools2, store2, workspace2 = _setup_runtime_with_model(
         tmp_path,
         neg_api_row,
+        _assistant(name="ryn_discover_tools", args={"load": ["ryn_image_inspect"]}),
         _assistant(name="ryn_image_inspect", args={"path": "sample.png"}, call_id="call_neg_api"),
         _assistant("Selected API model is text-only."),
     )

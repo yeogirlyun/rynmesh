@@ -1,25 +1,23 @@
-"""Offline provisioning of the company plugins for the complete Windows installer.
+"""Offline provisioning for the explicit seven-plugin Windows installer.
 
 Runs after the ordinary Ryn installer exits. Never downloads or copies user data.
-The Office editors are not bundled: the installer records them as selected, and Ryn
-offers to download them (with its pinned Chinese-font builds) on first start.
 """
 import argparse
 import base64
-import csv
 import contextlib
+import csv
 import hashlib
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import traceback
 import uuid
+from pathlib import Path
 
+OFFICE = ('pdfcraft', 'wordcraft', 'gridcraft', 'deckcraft')
 COMPANY = ('company-workspace', 'company-dashboard', 'company-affiliate')
 FINANCE_RESOURCE = 'https://dashboard-hk-api.gshopper.com.cn/ryn/mcp'
 FINANCE_OAUTH_SERVERS = {'company-dashboard-dashboard': 'company-dashboard',
@@ -95,6 +93,85 @@ def copy_new(source, target):
             shutil.rmtree(stage)
 
 
+def require_office_compat(cache, slug):
+    from rynmesh.node_apps import craft_compat
+    if slug in craft_compat.COMPAT and craft_compat.installed(cache, slug, current_only=True) is None:
+        raise ValueError('Required Office compatibility build is missing: ' + slug)
+
+
+def validate_office_payload(payload):
+    from rynmesh.node_apps import craft_host
+    for slug in OFFICE:
+        require_office_compat(payload / 'office', slug)
+        craft_host.installed(payload / 'office', slug)
+
+
+def repair_office_files(source, target, names):
+    """Replace only bundled program resources, retaining originals for rollback."""
+    if target.is_symlink() or target.is_junction():
+        raise ValueError('Linked Office version cannot be repaired')
+    source, target = source.resolve(), target.resolve()
+    for name in names:
+        for base in (source, target):
+            path = base / name
+            if path.is_symlink() or path.is_junction():
+                raise ValueError('Linked Office resource cannot be repaired')
+            if not path.resolve().is_relative_to(base):
+                raise ValueError('Office resource escapes its version directory')
+    backup = target / '.full-repair-backups' / uuid.uuid4().hex
+    stage, previous = backup / 'replacement', backup / 'previous'
+    stage.mkdir(parents=True)
+    previous.mkdir()
+    # Finish copying before moving any existing resource. Preferences, exports,
+    # other compatibility versions and plugin registration stay in place.
+    for name in names:
+        src, dst = source / name, stage / name
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if src.is_dir():
+            shutil.copytree(src, dst)
+        else:
+            shutil.copy2(src, dst)
+    for name in names:
+        old, saved = target / name, previous / name
+        saved.parent.mkdir(parents=True, exist_ok=True)
+        if old.exists():
+            old.rename(saved)
+        old.parent.mkdir(parents=True, exist_ok=True)
+        (stage / name).rename(old)
+
+
+def provision_office(payload_cache, cache, slug):
+    from rynmesh.node_apps import craft_compat, craft_host, craft_native
+    # Verify before touching an existing installation; never fall back to fontless builds.
+    require_office_compat(payload_cache, slug)
+    craft_host.installed(payload_cache, slug)
+    if not craft_native.runtime_status(payload_cache, slug)['verified']:
+        raise ValueError('Office payload runtime not verified: ' + slug)
+    version = craft_host.specification(slug)['tag']
+    source, target = payload_cache / slug / version, cache / slug / version
+    copy_new(source, target)
+    if slug in craft_compat.COMPAT:
+        identifier = craft_compat.COMPAT[slug]['id']
+        # copy_new(target) intentionally preserves existing versions, so provision the
+        # current compatibility version separately on every upgrade (including disabled apps).
+        copy_new(source / 'compatibility' / identifier, target / 'compatibility' / identifier)
+        try:
+            require_office_compat(cache, slug)
+        except (OSError, ValueError):
+            repair_office_files(source, target, ('compatibility/' + identifier,))
+            require_office_compat(cache, slug)
+    try:
+        craft_host.installed(cache, slug)
+    except (OSError, ValueError):
+        repair_office_files(source, target, ('payload', 'receipt.json'))
+        craft_host.installed(cache, slug)
+    copy_new(source / 'agent', target / 'agent')
+    if not craft_native.runtime_status(cache, slug)['verified']:
+        repair_office_files(source, target, ('agent',))
+        if not craft_native.runtime_status(cache, slug)['verified']:
+            raise ValueError('Office runtime not verified: ' + slug)
+
+
 def allow_desktop_user(path):
     if os.name != 'nt':
         return
@@ -109,6 +186,8 @@ def allow_desktop_user(path):
 def prepare_upgrade(payload, destination):
     print('stage: verify-package', flush=True)
     verify(Path(payload).resolve())  # Never uninstall before payload verification.
+    print('stage: verify-office', flush=True)
+    validate_office_payload(Path(payload).resolve())
     destination = Path(destination).resolve()
     if destination == Path(destination.anchor) or destination == Path.home().resolve():
         raise ValueError('Unsafe installation directory')
@@ -180,17 +259,31 @@ def configure_local_mcp_services(store, declarations, port):
 
 
 def install(payload, destination, home):
-    from rynmesh.store import load_or_create_private_key
-    from rynmesh.services.peer_box import load_or_create_messaging_key
     from rynmesh.agent_runtime.extensions.store import ExtensionStore
+    from rynmesh.crypto import public_key_from_private
     from rynmesh.file_transactions import file_transaction
+    from rynmesh.node_apps.plugins import PluginManager
+    from rynmesh.services.peer_box import load_or_create_messaging_key
+    from rynmesh.store import load_or_create_private_key
 
-    payload, destination, home = map(lambda p: Path(p).resolve(), (payload, destination, home))
+    payload, destination, home = (Path(p).resolve() for p in (payload, destination, home))
     manifest = verify(payload)
     if not (destination / 'Ryn.exe').is_file():
         raise ValueError('Install Ryn core first')
+    validate_office_payload(payload)
     home.mkdir(parents=True, exist_ok=True)
-    load_or_create_private_key(home / 'identity.ed25519')
+    peer = public_key_from_private(load_or_create_private_key(home / 'identity.ed25519'))
+    manager = PluginManager(home, peer)
+    def no_download(*args, **kwargs):
+        raise ValueError('Full installer must not access the network')
+    manager.download = no_download
+    for slug in OFFICE:
+        provision_office(payload / 'office', manager.cache, slug)
+        # Preserve an existing user's version, enable/disable state and preferences.
+        if slug not in manager._read()['plugins']:
+            manager.install(slug)
+    manager.finish_setup()
+    allow_desktop_user(manager.cache)
 
     services_root = destination / 'plugin-services'
     config_path = services_root / 'services.json'
@@ -249,7 +342,7 @@ def install(payload, destination, home):
                 service['mcp_servers'] = managed_servers
         atomic_json(config_path, config)
     receipt = {'schema': 1, 'ryn_commit': manifest['ryn_commit'], 'company_commit': revision,
-               'plugins': list(COMPANY), 'offline': True, 'installation': str(destination),
+               'plugins': list(COMPANY + OFFICE), 'offline': True, 'installation': str(destination),
                'declaration_migration': migration}
     atomic_json(home / 'full-package-install.json', receipt)
     print(json.dumps(receipt))

@@ -67,12 +67,12 @@ Section
     MessageBox MB_ICONSTOP "Ryn installation failed ($0)." /SD IDOK
     Abort
   core_ready:
-  DetailPrint "Installing the company plugins..."
+  DetailPrint "Installing the company and Office plugins..."
   ExecWait '"$PLUGINSDIR\provision\ryn-full-install.exe" --payload "$PLUGINSDIR\payload" --destination "$INSTDIR" --log "$LOCALAPPDATA\Ryn-install-logs\plugins.log"' $0
   StrCmp $0 0 +4
     MessageBox MB_ICONSTOP "Plugin installation failed ($0). Your existing data is retained. Run this installer again to retry." /SD IDOK
     SetErrorLevel 1
     Abort
-  ; Office is not bundled: Ryn opens Apps on first start with these selected for download.
+  ; Record Office choices; the helper already provisions verified offline payloads.
   WriteRegStr HKCU "Software\Ryn\Craft" "SelectedPlugins" "pdfcraft;wordcraft;gridcraft;deckcraft"
 SectionEnd
