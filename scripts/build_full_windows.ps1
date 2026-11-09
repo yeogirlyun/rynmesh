@@ -7,8 +7,8 @@ param(
     [Parameter(Mandatory=$true)][string]$WebViewInstaller,
     [Parameter(Mandatory=$true)][string]$Output,
     [string]$MakeNsis = "$env:LOCALAPPDATA/tauri/NSIS/makensis.exe",
-    # lzma (solid, 128 MB window) lets each Office CLI/GUI pair share one copy of their
-    # common code: 176 MB -> 37 MB vs 90 MB with zlib. zlib is ~5x faster for test builds.
+    # lzma (solid, 128 MB window) gives the smallest download; zlib is ~5x faster for test builds.
+    # Office is not bundled: Ryn downloads it after installation.
     [ValidateSet('lzma','zlib')][string]$Compression = 'lzma'
 )
 $ErrorActionPreference='Stop'

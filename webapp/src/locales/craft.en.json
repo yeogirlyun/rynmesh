@@ -160,6 +160,8 @@
     "plugin_launch_expired": "The launch request expired. Click Open to retry.",
     "plugin_launch_rejected": "The target address or node did not match. Opening was blocked.",
     "craft_checksum_mismatch": "Download verification failed. The package was not installed.",
+    "craft_compat_checksum_mismatch": "The Chinese font build failed verification and was not installed. Try installing again.",
+    "craft_compat_not_verified": "The Chinese font build is missing or failed verification. Uninstall and install again.",
     "craft_build_not_verified": "The package is missing or failed verification. Uninstall and reinstall it.",
     "craft_native_only": "This version has no web build.",
     "plugin_state_invalid": "Plugin state is damaged. Check local data.",

@@ -45,6 +45,68 @@ def manager(tmp_path, monkeypatch):
     value.close()
 
 
+def _office_with_chinese_font_pins(tmp_path, monkeypatch, compat_bytes=None):
+    from rynmesh.node_apps import craft_compat
+
+    def zipped(files):
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w") as archive:
+            for name, data in files.items():
+                archive.writestr(name, data)
+        return output.getvalue()
+
+    def sha(data):
+        return hashlib.sha256(data).hexdigest()
+
+    base = zipped({"wordcraft/index.html": b"<title>Upstream</title>"})
+    files = {"wordcraft/index.html": b"<title>Chinese</title>", "wordcraft/OFL.txt": b"Font license"}
+    raw = zipped(files)
+    manifest = {"entry": "wordcraft", "files": {name: sha(data) for name, data in files.items()}}
+    monkeypatch.setitem(CRAFT, "wordcraft", {**CRAFT["wordcraft"], "web_sha256": sha(base)})
+    monkeypatch.setitem(craft_compat.COMPAT, "wordcraft", {
+        "id": "ryn-cjk-1", "base_version": CRAFT["wordcraft"]["tag"], "base_web_sha256": sha(base),
+        "archive_sha256": sha(raw), "files_manifest_sha256": craft_compat.manifest_digest(manifest)})
+    urls = []
+    served = {"compat": raw if compat_bytes is None else compat_bytes}
+
+    def download(url, path):
+        urls.append(url)
+        path.write_bytes(served["compat"] if url.startswith(craft_compat.RELEASE_URL) else base)
+
+    manager = PluginManager(tmp_path / "node", "owner-node", cache=tmp_path / "plugins", download=download)
+    return SimpleNamespace(manager=manager, urls=urls, served=served, raw=raw)
+
+
+def test_install_also_fetches_rynmesh_chinese_font_build(tmp_path, monkeypatch):
+    office = _office_with_chinese_font_pins(tmp_path, monkeypatch)
+    try:
+        office.manager.install("wordcraft")
+        assert office.urls == [
+            "https://github.com/storytold/wordcraft/releases/download/v0.6.1/wordcraft-web-0.6.1.zip",
+            "https://github.com/yeogirlyun/rynmesh/releases/download/office-cjk-1/wordcraft-web-0.6.1-ryn-cjk-1.zip",
+        ]
+        web = craft_host.installed(office.manager.cache, "wordcraft")
+        assert (web / "index.html").read_bytes() == b"<title>Chinese</title>"
+        assert next(p for p in office.manager.catalog()["plugins"] if p["id"] == "wordcraft")["installed"]
+    finally:
+        office.manager.close()
+
+
+def test_failed_chinese_font_download_leaves_the_editor_uninstalled_until_retried(tmp_path, monkeypatch):
+    office = _office_with_chinese_font_pins(tmp_path, monkeypatch, compat_bytes=b"not the pinned archive")
+    try:
+        with pytest.raises(craft_host.CraftError):
+            office.manager.install("wordcraft")
+        assert not next(p for p in office.manager.catalog()["plugins"] if p["id"] == "wordcraft")["installed"]
+        office.served["compat"] = office.raw
+        office.urls.clear()
+        office.manager.install("wordcraft")
+        assert office.urls == ["https://github.com/yeogirlyun/rynmesh/releases/download/office-cjk-1/wordcraft-web-0.6.1-ryn-cjk-1.zip"]
+        assert next(p for p in office.manager.catalog()["plugins"] if p["id"] == "wordcraft")["installed"]
+    finally:
+        office.manager.close()
+
+
 def test_defaults_external_storage_no_startup_work(manager, monkeypatch, tmp_path):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
     monkeypatch.setattr(craft_host, "download_to", lambda *_: pytest.fail("startup download"))
