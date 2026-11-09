@@ -273,3 +273,17 @@
 - 让中心主动推送“工具已变化”通知。
 - 未选中技能的正文自动加载。
 - 稳定性方案里的其它步骤。
+
+---
+
+## 9. 实施记录
+
+本方案由两个分支分工完成，避免同一批函数被改两遍：
+
+| 部分 | 在哪里 | 内容 |
+|---|---|---|
+| 后台核对、工具没变不写入、插件列表带简介、提示词规则 | `177a889`（`codex/agent-stability` 上单独的提交，直接接在 `121bf47` 后面） | `McpSessionManager.refresh_tool_catalogs` / `_refresh_catalog`、`CATALOG_REFRESH_SECONDS = 300`、`adapter.refresh_catalogs_soon`（`overview()` 和 `specs()` 开头调用，不等待）、`plugin_catalog` 的 `description` / `skills`、`prompt._PRE_UNAVAILABLE_PLUGIN_SYSTEM` |
+| 其余部分 | `claude/plugin-tool-catalog`（合并了 `177a889`） | 每回合第一次请求前最多等 3 秒；“需要测试”的已登录插件自动重连；程序启动时后台核对；处理 `tools/list_changed`；每轮的插件能力索引和不可用状态；工具搜索结果附上不可用插件；本文的测试 |
+| 公司插件简介和只读名单 | 公司插件仓库 `claude/plugin-tool-catalog` | 见 4.6 |
+
+和 4.2 的差别：`177a889` 的核对遇到任何错误（包括需要登录）都保留旧清单和旧状态，不改成 NeedsAuth。登录失效由 OAuth 状态反映，`plugin_catalog` 会显示为“需要登录”，效果相同。
