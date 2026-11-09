@@ -17,7 +17,7 @@ from .computer_status import get_computer_status_response
 from .diagnostic_log import failure
 from .memory_worker import MEMORY_WORKER_NAME, MemoryExtractionWorker
 from .runtime import AgentRuntime
-from .store import AgentError, AgentStore
+from .store import SHIPPED_PERMISSION_MODE, AgentError, AgentStore
 
 
 def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
@@ -48,7 +48,8 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
                 await asyncio.to_thread(native_computer.close)
 
     app.router.lifespan_context = lifespan
-    runtime = AgentRuntime(AgentStore(Path(home) / "agent", messaging_key), model, tools, catalog, consumer_node_id=getattr(store, "peer_id", None))
+    runtime = AgentRuntime(AgentStore(Path(home) / "agent", messaging_key, permission_mode=SHIPPED_PERMISSION_MODE),
+                           model, tools, catalog, consumer_node_id=getattr(store, "peer_id", None))
     startup_error = None
     try:
         runtime.reconcile()
@@ -57,6 +58,12 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
         # sharing, friends, or the rest of the node from starting.
         startup_error = "agent_state_unreadable"
         failure("startup_reconcile", exc)
+    if startup_error is None:
+        try:
+            runtime.adopt_shipped_permission_mode(SHIPPED_PERMISSION_MODE)
+        except (AgentError, OSError) as exc:
+            # The saved mode stays; the Agent itself still starts.
+            failure("startup_permission_default", exc)
     app.state.agent_runtime = runtime
     app.state.agent_startup_error = startup_error
     memory_worker = MemoryExtractionWorker(runtime)
