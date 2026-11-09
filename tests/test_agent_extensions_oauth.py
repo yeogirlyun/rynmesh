@@ -78,6 +78,8 @@ class LocalAuthority:
         self.prm_missing, self.oidc_only, self.issuer_path = False, False, ""
         self.metadata_overrides, self.prm_overrides = {}, {}
         self.require_auth, self.challenge_scope = True, "tools.read"
+        # A stable device credential: renewal keeps it and omits refresh_token.
+        self.stable_refresh, self.access_seconds = False, 3600
         fixture = self
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *_args):
@@ -143,12 +145,16 @@ class LocalAuthority:
                 self.refresh_count += 1
                 if self.refresh_error:
                     return (400 if self.refresh_error == "invalid_grant" else 503), {}, {"error": self.refresh_error, "error_description": "synthetic-secret-do-not-echo"}
-                params = self.refresh.pop(body.get("refresh_token"), None)
+                params = (self.refresh.get if self.stable_refresh else self.refresh.pop)(body.get("refresh_token"), None)
                 if not params or body.get("resource") != params["resource"]:
                     return 400, {}, {"error": "invalid_grant"}
+                if self.stable_refresh:
+                    access = "synthetic-access-" + secrets.token_hex(8)
+                    self.access[access] = params
+                    return 200, {}, {"access_token": access, "expires_in": self.access_seconds, "token_type": "Bearer", "scope": params.get("scope", ""), "resource": params["resource"]}
             access, refresh = "synthetic-access-" + secrets.token_hex(8), "synthetic-refresh-" + secrets.token_hex(8)
             self.access[access], self.refresh[refresh] = params, params
-            return 200, {}, {"access_token": access, "refresh_token": refresh, "expires_in": 3600, "token_type": "Bearer", "scope": params.get("scope", ""), "resource": params["resource"]}
+            return 200, {}, {"access_token": access, "refresh_token": refresh, "expires_in": self.access_seconds, "token_type": "Bearer", "scope": params.get("scope", ""), "resource": params["resource"]}
         if path == "/revoke":
             self.refresh.pop(body.get("token"), None)
             return 200, {}, {}
@@ -448,6 +454,40 @@ def test_refresh_serialization_invalid_grant_and_network_failure(tmp_path, autho
         manager.access_token(row, force_refresh=True)
     assert manager.public_status(row["instance_id"])["state"] == "error"
     manager.close()
+
+
+def test_stable_device_credential_survives_renewals_and_lost_responses(tmp_path, authority):
+    authority.stable_refresh, authority.access_seconds = True, 30 * 86400
+    store, manager = setup(tmp_path, authority)
+    login(store, manager, authority)
+    row = server(store)
+    held = manager.credentials.read()["servers"][row["instance_id"]]["tokens"]["refresh_token"]
+    start = manager.clock()
+    first = manager.access_token(row)
+    manager.clock = lambda: start + 30 * 86400 - 30
+    renewed = manager.access_token(row)
+    assert renewed != first and authority.refresh_count == 1
+    tokens = manager.credentials.read()["servers"][row["instance_id"]]["tokens"]
+    assert tokens["refresh_token"] == held and tokens["expires_at"] > manager.clock() + 29 * 86400
+    # A renewal whose response was lost is simply sent again with the same credential.
+    authority.refresh_error = "server_error"
+    with pytest.raises(McpOAuthError, match="refresh_unavailable"):
+        manager.access_token(row, force_refresh=True)
+    authority.refresh_error = None
+    assert manager.access_token(row, force_refresh=True) != renewed
+    assert manager.public_status(row["instance_id"])["state"] == "logged_in"
+    manager.close()
+
+
+def test_token_requests_wait_for_slow_authorization_servers(monkeypatch):
+    seen = {}
+    real = httpx.Client
+    def client(**kwargs):
+        seen.update(kwargs)
+        return real(transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"ok": True})), **{k: v for k, v in kwargs.items() if k != "transport"})
+    monkeypatch.setattr(httpx, "Client", client)
+    assert request_json("POST", "https://public.example.test/token", data={"grant_type": "refresh_token"}) == {"ok": True}
+    assert seen["timeout"] == 30
 
 
 @pytest.mark.parametrize("change", ["logout", "cancel", "delete", "config", "disable_enable"])

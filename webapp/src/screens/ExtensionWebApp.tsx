@@ -18,6 +18,9 @@ export default function ExtensionWebApp({ resolvedPlugin }: { resolvedPlugin?: E
 
 /** Message telling a kept-alive plugin page whether the user can see it, so it can pause background work. */
 export const PLUGIN_VISIBILITY_MESSAGE = 'ryn.plugin.visibility';
+/** Health polls run every 5 s; a busy service may miss a few without being down. */
+const PLUGIN_HEALTH_POLL_MS = 5000;
+const SLOW_POLLS_BEFORE_NOTICE = 3;
 
 export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true }: {
   pluginId: string; resolvedPlugin?: ExtensionPlugin; client: NodeClient; visible?: boolean;
@@ -31,6 +34,9 @@ export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true 
   const [attempt, setAttempt] = useState(0);
   const [reachable, setReachable] = useState(false);
   const [frameGeneration, setFrameGeneration] = useState(0);
+  // An open page is never replaced by an error for a slow or restarting service;
+  // it stays usable under a notice, and reloads only when the process changed.
+  const [degraded, setDegraded] = useState<'' | 'slow' | 'restarting'>('');
   const frame = useRef<HTMLIFrameElement>(null);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
@@ -75,26 +81,38 @@ export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true 
     let timeout: number | undefined;
     let monitor: number | undefined;
     setReachable(false);
+    setDegraded('');
     (async () => {
       if (isTauriDesktop()) {
         const managed = await invoke<boolean>('ensure_plugin_service', { pluginId });
         if (!active) return;
         if (managed) {
-          let instance = await invoke<number | null>('plugin_service_instance', { pluginId });
+          let instance = await invoke<number | null>('plugin_service_instance', { pluginId }).catch(() => null);
+          let failures = 0;
           const check = async () => {
             try {
               const current = await invoke<number | null>('plugin_service_instance', { pluginId });
               if (!active) return;
+              failures = 0;
+              setDegraded('');
               if (current !== instance) {
                 instance = current;
                 setFrameGeneration(value => value + 1);
               }
-              monitor = window.setTimeout(check, 5000);
             } catch (reason) {
-              if (active) setError(typeof reason === 'string' && reason.startsWith('plugin_service_') ? reason : 'connection');
+              if (!active) return;
+              failures += 1;
+              if (reason === 'plugin_service_exited') {
+                // Start it again now instead of waiting for the background supervisor.
+                setDegraded('restarting');
+                await invoke<boolean>('ensure_plugin_service', { pluginId }).catch(() => false);
+              } else if (failures >= SLOW_POLLS_BEFORE_NOTICE) {
+                setDegraded('slow');
+              }
             }
+            if (active) monitor = window.setTimeout(check, PLUGIN_HEALTH_POLL_MS);
           };
-          if (active) monitor = window.setTimeout(check, 5000);
+          if (active) monitor = window.setTimeout(check, PLUGIN_HEALTH_POLL_MS);
           return;
         }
       }
@@ -173,5 +191,12 @@ export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true 
   const sandbox = ['allow-scripts', 'allow-forms', 'allow-same-origin', 'allow-popups'];
   if (plugin.web_app.permissions.includes('downloads')) sandbox.push('allow-downloads');
   if (plugin.web_app.permissions.includes('dialogs')) sandbox.push('allow-modals');
-  return <iframe key={frameGeneration} ref={frame} title={plugin.title} src={url.href} sandbox={sandbox.join(' ')} referrerPolicy="no-referrer" onLoad={announceVisibility} onError={() => setError('connection')} style={{ border: 0, width: '100%', height: '100%', flex: 1, minHeight: 0 }} />;
+  return <>
+    {degraded && <div role="status" style={{ padding: '4px 12px', fontSize: 12, background: 'rgba(245, 158, 11, 0.12)', borderBottom: '1px solid rgba(245, 158, 11, 0.35)' }}>
+      {degraded === 'restarting'
+        ? tx('插件服务正在重新启动，页面会自动刷新…', 'The plugin service is restarting. This page will reload automatically…')
+        : tx('插件响应较慢，正在等待恢复。当前页面仍可查看。', 'The plugin is responding slowly. Waiting for it to recover; this page stays open.')}
+    </div>}
+    <iframe key={frameGeneration} ref={frame} title={plugin.title} src={url.href} sandbox={sandbox.join(' ')} referrerPolicy="no-referrer" onLoad={announceVisibility} onError={() => setError('connection')} style={{ border: 0, width: '100%', height: '100%', flex: 1, minHeight: 0 }} />
+  </>;
 }
