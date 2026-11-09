@@ -47,8 +47,8 @@ from .control import (
     allowed_actions,
     ambiguous,
     check_version,
-    reconciliation_active,
     close_queue,
+    reconciliation_active,
     recoverable_read_in_flight,
     remember_request,
     request_replayed,
@@ -2505,12 +2505,12 @@ class AgentRuntime(AgentLoop):
         return True
 
     def adopt_shipped_permission_mode(self, mode: str) -> bool:
-        """Move an install that never picked a mode onto the shipped one, once.
+        """Record legacy mode provenance without changing a saved mode.
 
-        Older builds saved "workspace" without recording who chose it. That was
-        their default, so it moves; any other saved value was picked and stays.
-        Existing tasks keep the mode they were created with. Called at node
-        construction, after reconcile and before worker startup.
+        Older builds saved "workspace" without recording who chose it, so an
+        explicit owner choice cannot be distinguished from the old default.
+        Fresh stores use the shipped mode; existing settings and tasks stay as
+        saved. Called at node construction, after reconcile and before workers.
         """
         if mode not in PERMISSION_MODES:
             raise AgentError("agent_invalid_settings")
@@ -2520,12 +2520,8 @@ class AgentRuntime(AgentLoop):
         def adopt(data):
             if PERMISSION_MODE_SOURCE in data:
                 return False
-            moved = data["settings"].get("permission_mode", "workspace") == "workspace" and mode != "workspace"
-            if moved:
-                data["settings"]["permission_mode"] = mode
-                data["settings_revision"] = data.get("settings_revision", 0) + 1
-            data[PERMISSION_MODE_SOURCE] = "shipped_default" if moved else "legacy"
-            return moved
+            data[PERMISSION_MODE_SOURCE] = "legacy"
+            return False
         return self.store.transaction(adopt)
 
     def reconcile(self) -> None:

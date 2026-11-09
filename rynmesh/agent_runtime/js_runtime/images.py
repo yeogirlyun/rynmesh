@@ -10,6 +10,7 @@ import re
 import secrets
 import stat
 import struct
+import sys
 import threading
 import uuid
 from collections import deque
@@ -230,6 +231,16 @@ def _resolve_opened_fd_path(fd: int) -> Path:
         elif raw_final.startswith("\\\\?\\"):
             raw_final = raw_final[4:]
         return Path(raw_final).resolve(strict=True)
+    if sys.platform == "darwin":
+        import fcntl
+
+        try:
+            raw = fcntl.fcntl(fd, 50, bytes(1024)).split(b"\0", 1)[0]  # F_GETPATH
+            if not raw:
+                raise ValueError("empty handle path")
+            return Path(os.fsdecode(raw)).resolve(strict=True)
+        except (OSError, ValueError) as exc:
+            raise JsProtocolError("ryn_js_image_artifact_unreadable", "Opened artifact handle path could not be resolved") from exc
     proc_fd = Path(f"/proc/self/fd/{fd}")
     if proc_fd.exists():
         return proc_fd.resolve(strict=True)
