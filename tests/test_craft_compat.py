@@ -255,3 +255,64 @@ def test_core_only_update_retains_previous_font_build_but_installer_requires_cur
     assert compat.installed(package.cache, "gridcraft") == (package.root / "payload/gridcraft").resolve()
     assert compat.installed(package.cache, "gridcraft", current_only=True) is None
     assert host.installed(package.cache, "gridcraft") == (package.root / "payload/gridcraft").resolve()
+
+
+def test_release_download_installs_only_the_pinned_archive(package):
+    urls = []
+    raw = package.path.read_bytes()
+    def download(url, path):
+        urls.append(url)
+        path.write_bytes(raw)
+    compat.download_install(package.cache, "gridcraft", download=download)
+    assert urls == [compat.RELEASE_URL + "gridcraft-web-0.6.1-ryn-cjk-1.zip"]
+    assert host.installed(package.cache, "gridcraft") == (package.root / "payload/gridcraft").resolve()
+    compat.download_install(package.cache, "gridcraft", download=lambda *_: pytest.fail("downloaded again"))
+    assert not list((package.cache / "gridcraft").glob(".download-compat-*"))
+
+
+def test_release_download_with_other_bytes_is_rejected(package):
+    with pytest.raises(host.CraftError, match="checksum"):
+        compat.download_install(package.cache, "gridcraft", download=lambda url, path: path.write_bytes(b"tampered"))
+    assert not package.root.exists()
+    assert not list((package.cache / "gridcraft").glob(".download-compat-*"))
+    assert host.installed(package.cache, "gridcraft") == package.upstream
+
+
+def test_release_download_requires_the_upstream_editor_first(tmp_path):
+    with pytest.raises(host.CraftError):
+        compat.download_install(tmp_path / "empty", "gridcraft", download=lambda *_: pytest.fail("downloaded"))
+
+
+def test_release_assets_and_applicability_match_the_pins():
+    assert compat.RELEASE_URL == "https://github.com/yeogirlyun/rynmesh/releases/download/office-cjk-1/"
+    assert {slug: compat.asset_name(slug) for slug in compat.COMPAT} == {
+        "deckcraft": "deckcraft-web-0.6.1-ryn-cjk-1.zip",
+        "gridcraft": "gridcraft-web-0.6.1-ryn-cjk-blank-2.zip",
+        "wordcraft": "wordcraft-web-0.6.1-ryn-cjk-1.zip",
+        "pdfcraft": "pdfcraft-web-0.7.1-ryn-cjk-1.zip",
+    }
+    assert all(compat.applies(slug) for slug in compat.COMPAT)
+    assert not compat.applies("gridcraft", {**CRAFT["gridcraft"], "web_sha256": "0" * 64})
+    assert not compat.applies("gridcraft", {**CRAFT["gridcraft"], "tag": "v9.9.9"})
+    assert not compat.applies("cadcraft")
+
+
+def test_release_asset_and_original_archive_both_install_the_same_pinned_files(package, monkeypatch, tmp_path):
+    # The release asset is a repack: other archive bytes, the same pinned file manifest.
+    repacked = archive(dict(reversed(list(package.files.items()))))
+    assert sha(repacked) != package.pin["archive_sha256"]
+    with pytest.raises(host.CraftError, match="checksum"):
+        compat.download_install(package.cache, "gridcraft", download=lambda url, path: path.write_bytes(repacked))
+    monkeypatch.setitem(compat.COMPAT, "gridcraft", {**package.pin, "release_sha256": sha(repacked)})
+    compat.download_install(package.cache, "gridcraft", download=lambda url, path: path.write_bytes(repacked))
+    receipt = json.loads((package.root / "receipt.json").read_text())
+    assert receipt["archive_sha256"] == sha(repacked)
+    assert host.installed(package.cache, "gridcraft") == (package.root / "payload/gridcraft").resolve()
+    # An existing install made from the original archive still verifies.
+    receipt["archive_sha256"] = package.pin["archive_sha256"]
+    (package.root / "receipt.json").write_text(json.dumps(receipt))
+    assert compat.installed(package.cache, "gridcraft") == (package.root / "payload/gridcraft").resolve()
+    receipt["archive_sha256"] = "0" * 64
+    (package.root / "receipt.json").write_text(json.dumps(receipt))
+    with pytest.raises(host.CraftError):
+        compat.installed(package.cache, "gridcraft")

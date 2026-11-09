@@ -26,7 +26,7 @@ from fastapi.responses import JSONResponse
 from ..atomic_io import atomic_write_json
 from ..file_transactions import file_transaction
 from . import builtin_plugins as builtin
-from . import craft_host, craft_native
+from . import craft_compat, craft_host, craft_native
 from .craft_catalog import CRAFT
 
 DEFAULT_PLUGINS = ("pdfcraft", "wordcraft", "gridcraft", "deckcraft")
@@ -360,8 +360,13 @@ class PluginManager:
                 else:
                     self._set_progress(slug, kind="plugin", phase="downloading", downloaded_bytes=0, total_bytes=None, percent=0)
                     kwargs = {"download": self.download} if self.download else {}
+                    update_spec = self.update_spec(slug)
                     with craft_host.track_progress(lambda fields: self._set_progress(slug, kind="plugin", **fields)):
-                        craft_host.install(self.cache, slug, spec=self.update_spec(slug), **kwargs)
+                        craft_host.install(self.cache, slug, spec=update_spec, **kwargs)
+                        # Upstream web builds have no Chinese font: also fetch Ryn's pinned
+                        # build. A failure fails the install rather than showing boxes.
+                        if update_spec is None and craft_compat.applies(slug):
+                            craft_compat.download_install(self.cache, slug, **kwargs)
                 with self.lock, file_transaction(self.lock_path):
                     state = self._read()
                     state["plugins"][slug] = {**state["plugins"].get(slug, {}), "version": self.version(slug), "enabled": True, "generation": secrets.token_hex(16)}
