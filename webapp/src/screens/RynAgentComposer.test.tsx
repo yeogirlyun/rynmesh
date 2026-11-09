@@ -261,3 +261,44 @@ it("appends final voice results to the newest draft and stops recognition on unm
   expect(active?.stop).toHaveBeenCalledOnce();
   expect(active?.onresult).toBeNull();
 });
+
+function clipboard(files: File[], text = "") {
+  return { files, types: [...(files.length ? ["Files"] : []), ...(text ? ["text/plain"] : [])], getData: (type: string) => type === "text/plain" ? text : "" };
+}
+
+it("pastes spreadsheet cells as text instead of a picture of them", async () => {
+  const onAttachmentsChange = vi.fn();
+  render(<RynAgentComposer {...props({ onAttachmentsChange })} attachments={[]} />);
+  const picture = new File([new Uint8Array([137, 80, 78, 71])], "image.png", { type: "image/png" });
+  const notPrevented = fireEvent.paste(screen.getByRole("textbox", { name: "Tell Ryn what to do" }),
+    { clipboardData: clipboard([picture], "日期\t金额\n2026-11-09\t1200") });
+  expect(notPrevented).toBe(true);  // The browser inserts the text itself.
+  await new Promise(resolve => setTimeout(resolve, 20));
+  expect(onAttachmentsChange).not.toHaveBeenCalled();
+});
+
+it("still attaches a plain screenshot and a copied file", async () => {
+  render(<AttachmentComposer />);
+  const shot = new File([new Uint8Array([137, 80, 78, 71])], "image.png", { type: "image/png" });
+  fireEvent.paste(screen.getByRole("textbox", { name: "Tell Ryn what to do" }), { clipboardData: clipboard([shot]) });
+  expect(await screen.findByText("image.png")).toBeInTheDocument();
+  const sheet = new File(["a"], "付款.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  fireEvent.paste(screen.getByRole("textbox", { name: "Tell Ryn what to do" }), { clipboardData: clipboard([sheet], "付款.xlsx") });
+  expect(await screen.findByText("付款.xlsx")).toBeInTheDocument();
+});
+
+it("turns a very large pasted table into a .tsv attachment", async () => {
+  render(<AttachmentComposer />);
+  const picture = new File([new Uint8Array([1])], "image.png", { type: "image/png" });
+  fireEvent.paste(screen.getByRole("textbox", { name: "Tell Ryn what to do" }),
+    { clipboardData: clipboard([picture], "a\tb\n".repeat(6000)) });
+  expect(await screen.findByText("pasted-table.tsv")).toBeInTheDocument();
+});
+
+it("warns when the selected model cannot read an attached image", () => {
+  const image: AgentDraftAttachment = { id: "1", name: "shot.png", media_type: "image/png", data_base64: "AA==" };
+  const view = render(<RynAgentComposer {...props({ onAttachmentsChange: vi.fn(), imageWarning: "Text model cannot read images." })} attachments={[image]} />);
+  expect(screen.getByText("Text model cannot read images.")).toBeInTheDocument();
+  view.rerender(<RynAgentComposer {...props({ onAttachmentsChange: vi.fn(), imageWarning: "Text model cannot read images." })} attachments={[{ ...image, name: "notes.txt", media_type: "text/plain" }]} />);
+  expect(screen.queryByText("Text model cannot read images.")).not.toBeInTheDocument();
+});

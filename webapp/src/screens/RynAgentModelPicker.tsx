@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
-import { Check, ChevronDown } from "lucide-react";
+import { Check, ChevronDown, Image as ImageIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { formatTokenCount } from "../domain/aiSources";
 import { canUseAgentModel, type AgentModel } from "../domain/rynAgent";
@@ -117,7 +117,7 @@ export default function RynAgentModelPicker({ models, value, onChange, disabled 
         {groups.map(group => <div role="group" aria-label={group.name} key={group.name} className="ra-model-group">
           <div className="ra-model-group-label" aria-hidden="true">{group.name}</div>
           {group.models.map(model => { const note = status(model); const badge = usageBadge(model); return <div key={model.id} id={optionID(model.id)} data-model-id={model.id} role="option" aria-selected={model.id === value} aria-disabled={selectionLocked || !selectable(model)} aria-label={model.name} aria-describedby={note ? `${optionID(model.id)}-status` : undefined} className={`ra-model-option${activeID === model.id ? " active" : ""}`} title={canUseAgentModel(model) ? model.name : model.description || model.name} onPointerMove={() => setActiveID(model.id)} onMouseDown={event => event.preventDefault()} onClick={() => choose(model)}>
-            <span className="ra-model-option-text"><span>{model.name}</span>{note && <small id={`${optionID(model.id)}-status`}>{note}</small>}</span>
+            <span className="ra-model-option-text"><span>{model.name}{model.supports_image_input === true && <ImageIcon size={12} className={`ra-model-image${model.image_support === "supported" ? "" : " ra-model-image-unknown"}`} role="img" aria-label={model.image_support === "supported" ? text("可读图片", "Reads images") : text("可能可读图片（未确认）", "May read images (not confirmed)")} />}</span>{model.source === "peer" && model.source_name && <small className="ra-model-shared-from">{text(`共享自 ${model.source_name}`, `Shared by ${model.source_name}`)}</small>}{note && <small id={`${optionID(model.id)}-status`}>{note}</small>}</span>
             <span className="ra-model-option-right">{badge && <span className="ra-model-usage-pill" aria-hidden="true">{badge}</span>}{model.id === value && <Check size={15} aria-hidden="true" />}</span>
           </div>; })}
         </div>)}

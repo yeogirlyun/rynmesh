@@ -41,6 +41,8 @@ interface Props {
   sendButton: ReactNode;
   attachments?: AgentDraftAttachment[];
   onAttachmentsChange?(attachments: AgentDraftAttachment[]): void;
+  /** Shown under image attachments when the selected model cannot read images. */
+  imageWarning?: string;
   onAttachmentsBusyChange?(busy: boolean): void;
 }
 
@@ -160,9 +162,23 @@ export default function RynAgentComposer(props: Props) {
           <span>{file.name}</span><button type="button" aria-label={t("removeAttachment", { name: file.name })} disabled={props.inputDisabled || preparingFiles} onClick={() => props.onAttachmentsChange?.(attachments.filter(item => item.id !== file.id))}><X size={13} /></button>
         </div>)}
       </div>}
+      {props.imageWarning && attachments.some(attachmentIsImage) && <p className="ra-attachment-warning" role="status">{props.imageWarning}</p>}
       <textarea ref={props.inputRef} rows={1} aria-label={t("input")} placeholder={props.placeholder || t("placeholder")} value={props.value} disabled={props.inputDisabled} onChange={event => props.onChange(event.target.value)} onPaste={event => {
         const files = Array.from(event.clipboardData.files);
-        if (props.onAttachmentsChange && files.length && !props.inputDisabled) { event.preventDefault(); void addFiles(files); }
+        if (!props.onAttachmentsChange || !files.length || props.inputDisabled) return;
+        // Excel, WPS, Word and web tables put a picture of the cells next to the
+        // text. Paste the text; a plain screenshot still becomes an attachment.
+        const text = typeof event.clipboardData.getData === "function" ? event.clipboardData.getData("text/plain") : "";
+        if (text.trim() && files.every(file => file.type.startsWith("image/"))) {
+          if (text.length > 20000) {
+            event.preventDefault();
+            const name = i18n.resolvedLanguage?.startsWith("zh") ? "粘贴的表格.tsv" : "pasted-table.tsv";
+            // The File icon import shadows the global File constructor here.
+            void addFiles([new globalThis.File([text], name, { type: "text/tab-separated-values" })]);
+          }
+          return;
+        }
+        event.preventDefault(); void addFiles(files);
       }} onKeyDown={event => {
         if (event.nativeEvent.isComposing || event.keyCode === 229) return;
         if (event.key === "Enter" && !event.shiftKey) {

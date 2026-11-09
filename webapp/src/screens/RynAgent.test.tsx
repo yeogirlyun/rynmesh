@@ -1014,6 +1014,33 @@ it("never offers resume when a dispatched write has an unknown outcome", async (
   expect(backend.actions).not.toHaveBeenCalled();
 });
 
+it("lets the owner continue past an unconfirmed step without resume or a running spinner", async () => {
+  const allowed = { enabled: true, reason: null, requires_control_revision: true };
+  const blocked = { enabled: false, reason: "agent_operation_unresolved", requires_control_revision: true };
+  api(true, [controlled({ status: "interrupted", run_state: "paused", error: "agent_write_outcome_unknown",
+    allowed_actions: { information: allowed, steer: allowed, model: allowed, delete: allowed, resume: blocked } })]);
+  const user = userEvent.setup();
+  mount();
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
+  await screen.findByText(/Send a message to continue/);
+  expect(screen.queryByText(/Start a new task/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("img", { name: "Checking an unresolved operation" })).not.toBeInTheDocument();
+  expect(document.querySelector(".ra-task-indicator-running")).toBeNull();
+  await user.type(screen.getByRole("textbox", { name: "Tell Ryn what to do" }), "Check the real state first.");
+  expect(screen.getByRole("button", { name: "Send information" })).toBeEnabled();
+});
+
+it("explains that a fresh reconciliation briefly holds new messages", async () => {
+  const held = { enabled: false, reason: "agent_reconciliation_running", requires_control_revision: true };
+  api(true, [controlled({ status: "interrupted", run_state: "reconciling", error: "agent_write_outcome_unknown",
+    allowed_actions: { information: held, steer: held } })]);
+  const user = userEvent.setup();
+  mount();
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
+  await screen.findByText(/Checking the result of the interrupted step/);
+});
+
 it("keeps tasks in update-time order when an older task is selected and refreshed", async () => {
   api(true, [task({ id: "newer", title: "Recent task", updated_at: 10 }), task()]);
   const user = userEvent.setup();

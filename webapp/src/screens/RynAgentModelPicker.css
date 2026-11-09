@@ -39,3 +39,7 @@
 .ra-workspace .ra-model-picker .ra-model-manage { justify-content: flex-start; width: 100%; border: 0; border-radius: 7px; padding: 7px; background: transparent; font-size: 12px; }
 .ra-workspace .ra-model-picker .ra-model-manage:hover { background: var(--pf-subtle); }
 @media (max-width: 760px) { .ra-model-trigger-name { max-width: 150px; } .ra-model-list { max-height: min(320px, calc(100dvh - 220px)); } }
+
+.ra-model-image { margin-left: 6px; vertical-align: -1px; color: var(--ra-accent, #2563eb); }
+.ra-model-image-unknown { opacity: .45; }
+.ra-model-shared-from { color: var(--ra-muted, #6b7280); }

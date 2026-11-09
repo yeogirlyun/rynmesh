@@ -131,6 +131,7 @@ export default function ModelPoolSettings({ source, modelID, onClose, onSaved }:
       tokens_per_day: overrides.tokens_per_day?.toString() || "",
       shared_tokens_per_day: overrides.shared_tokens_per_day?.toString() || "",
       request_defaults: overrides.request_defaults === undefined ? "" : JSON.stringify(overrides.request_defaults, null, 2),
+      image_input: overrides.image_input || "auto",
     };
   });
   if (!settings) return null;
@@ -175,6 +176,7 @@ export default function ModelPoolSettings({ source, modelID, onClose, onSaved }:
         configuration[name] = value ? Number(value) : null;
       }
       configuration.request_defaults = draft.request_defaults.trim() ? JSON.parse(draft.request_defaults) : null;
+      configuration.image_input = draft.image_input && draft.image_input !== "auto" ? draft.image_input : null;
       const inheritedContext = inheritedSource.context_window_mode === "auto"
         ? inheritedSource.model_metadata?.[modelID]?.context_window || settings.effective.context_window || 32768 : inheritedSource.context_window;
       const context = Number(configuration.context_window || inheritedContext);
@@ -212,11 +214,12 @@ export default function ModelPoolSettings({ source, modelID, onClose, onSaved }:
         tokens_per_day: next.overrides.tokens_per_day?.toString() || "",
         shared_tokens_per_day: next.overrides.shared_tokens_per_day?.toString() || "",
         request_defaults: next.overrides.request_defaults === undefined ? "" : JSON.stringify(next.overrides.request_defaults, null, 2),
+        image_input: next.overrides.image_input || "auto",
       });
     } catch { setConflict(true); setError(text("无法读取当前模型配置。", "Could not read current model configuration.")); }
     finally { setBusy(false); }
   };
-  const probe = async (kind: "connection" | "model_exists" | "tools") => {
+  const probe = async (kind: "connection" | "model_exists" | "tools" | "image") => {
     if (busy || conflict) return;
     setBusy(true); setError("");
     let probeFailed = false;
@@ -270,8 +273,17 @@ export default function ModelPoolSettings({ source, modelID, onClose, onSaved }:
         <button className="mp-link-btn" type="button" disabled={busy || conflict} onClick={() => reset("request_defaults")}>{text("恢复来源请求参数", "Inherit source request parameters")}</button>
       </span>
     </label>
+    <label className="ais-field mp-compact-field">
+      {text("图片输入", "Image input")}
+      <select aria-label={text("图片输入", "Image input")} value={draft.image_input || "auto"} disabled={busy || conflict} onChange={event => edit("image_input", event.target.value)}>
+        <option value="auto">{text("自动（按图片测试和模型列表）", "Automatic (image test and model listing)")}</option>
+        <option value="supported">{text("支持图片", "Reads images")}</option>
+        <option value="unsupported">{text("不支持图片", "Text only")}</option>
+      </select>
+      <span className="mp-field-foot"><small>{text("图片测试", "Image test")}: {({ supported: text("支持", "supported"), unsupported: text("不支持", "not supported"), unknown: text("未确认", "not confirmed") } as Record<string, string>)[settings.evidence.image?.status || "unknown"] || text("未确认", "not confirmed")}{settings.evidence.image?.checked_at ? ` · ${new Date(settings.evidence.image.checked_at).toLocaleString()}` : ""} · {text("共享出去的模型按这里的结果对外声明", "Shared copies of this model announce this result")}</small></span>
+    </label>
     <details className="mp-evidence-details"><summary>{text("当前请求参数及证据", "Effective request parameters and evidence")}</summary><pre>{JSON.stringify({ request_defaults: settings.effective.request_defaults, evidence: settings.evidence }, null, 2)}</pre></details>
-    <div className="mp-probes"><button className="ais-secondary" disabled={busy || conflict} onClick={() => void probe("connection")}>{text("探测连接", "Probe connection")}</button><button className="ais-secondary" disabled={busy || conflict} onClick={() => void probe("model_exists")}>{text("核对模型列表", "Check model listing")}</button><button className="ais-secondary" disabled={busy || conflict} onClick={() => void probe("tools")}>{text("诊断工具调用", "Diagnose tool calls")}</button></div>
+    <div className="mp-probes"><button className="ais-secondary" disabled={busy || conflict} onClick={() => void probe("connection")}>{text("探测连接", "Probe connection")}</button><button className="ais-secondary" disabled={busy || conflict} onClick={() => void probe("model_exists")}>{text("核对模型列表", "Check model listing")}</button><button className="ais-secondary" disabled={busy || conflict} onClick={() => void probe("image")}>{text("测试图片", "Test image input")}</button><button className="ais-secondary" disabled={busy || conflict} onClick={() => void probe("tools")}>{text("诊断工具调用", "Diagnose tool calls")}</button></div>
     {error && <p role="alert">{error}</p>}
     <div className="ais-modal-footer"><button className="ais-secondary" disabled={busy} onClick={() => void reload()}>{text("重新读取", "Reload")}</button><button className="ais-primary" disabled={busy || conflict} onClick={() => void save()}>{text("保存此模型参数", "Save this model's parameters")}</button></div>
   </div></Modal>;

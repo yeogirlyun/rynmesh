@@ -9,7 +9,7 @@ export interface AgentTurnTiming {
   seconds: number | null;
   approximate: boolean;
   live: boolean;
-  state: "running" | "queued" | "waiting_approval" | "waiting_input" | "paused" | "ended";
+  state: "running" | "queued" | "waiting_approval" | "waiting_input" | "paused" | "interrupted" | "ended";
 }
 
 function seconds(value: unknown): number | null {
@@ -95,8 +95,10 @@ export function agentTurnTiming(task: AgentTask, turnIndex: number): AgentTurnTi
   const owners = task.messages.filter(message => message.role === "user");
   const latest = turnIndex === owners.length - 1;
   const taskState = agentTaskState(task);
-  const state = !latest ? "ended" : taskState === "waiting_approval" || taskState === "waiting_input" || taskState === "paused" ? taskState
-    : ["running", "pausing", "reconciling"].includes(taskState) ? "running" : taskState === "queued" ? "queued" : "ended";
+  // Only a server-reported running state ticks; an interrupted turn says so.
+  const state = !latest ? "ended" : ["running", "pausing", "reconciling"].includes(taskState) ? "running"
+    : taskState === "queued" ? "queued" : task.status === "interrupted" ? "interrupted"
+    : taskState === "waiting_approval" || taskState === "waiting_input" || taskState === "paused" ? taskState : "ended";
   const unknown: AgentTurnTiming = { seconds: null, approximate: false, live: false, state };
   if (turnIndex < 0 || turnIndex >= owners.length) return unknown;
   const events = [...task.events].sort((left, right) => left.seq - right.seq);

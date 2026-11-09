@@ -54,6 +54,8 @@ export interface AIModelParameters {
   requests_per_day: number | null;
   tokens_per_day?: number | null;
   shared_tokens_per_day?: number | null;
+  /** Owner choice for image input; "auto" follows the image test and model listing. */
+  image_input?: "auto" | "supported" | "unsupported";
 }
 export type ModelShareScope = "personal_space" | "friends";
 export type APIProtocol = "openai_chat" | "openai_responses" | "anthropic_messages";
@@ -65,7 +67,7 @@ export interface AIModelSettings {
   inherited_fields: Array<keyof AIModelParameters | "share_scope">;
   rule_revision: string;
   destination_revision: string;
-  evidence: { connection?: unknown; model_exists?: unknown; tools?: { status: string; checked_at: string | null } };
+  evidence: { connection?: unknown; model_exists?: unknown; tools?: { status: string; checked_at: string | null }; image?: { status: string; checked_at: string | null } };
   usage?: ModelTokenUsage;
 }
 

@@ -208,3 +208,18 @@ it("omits reasoning controls without model capability and prevents effort change
   await user.click(high);
   expect(changeEffort).not.toHaveBeenCalled();
 });
+
+it("marks image-capable models and names the computer a shared model comes from", async () => {
+  const user = userEvent.setup();
+  render(<RynAgentModelPicker value="local" onChange={vi.fn()} models={[
+    { id: "local", name: "DeepSeek · deepseek-flash", source: "local_api", source_name: "DeepSeek", available: true, agent_supported: true, supports_image_input: true, image_support: "supported" },
+    { id: "peer", name: "DeepSeek · deepseek-flash", source: "peer", source_name: "Boss PC", available: true, agent_supported: true, supports_image_input: true, image_support: "unknown" },
+    { id: "text", name: "Text model", source: "local_api", source_name: "DeepSeek", available: true, agent_supported: true, supports_image_input: false },
+  ]} />);
+  await user.click(screen.getByRole("combobox", { name: "Model" }));
+  const list = screen.getByRole("listbox", { name: "Model" });
+  expect(within(list).getByRole("img", { name: "Reads images" })).toBeInTheDocument();
+  expect(within(list).getByRole("img", { name: "May read images (not confirmed)" })).toBeInTheDocument();
+  expect(within(list).getByText("Shared by Boss PC")).toBeInTheDocument();
+  expect(within(list).getAllByRole("img").length).toBe(2);
+});

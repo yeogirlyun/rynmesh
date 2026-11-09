@@ -103,3 +103,5 @@
 [data-theme="dark"] .ra-composer-permissions > summary.ra-full-access { color: #f8aa71; }
 [data-theme="dark"] .ra-workspace .ra-composer .ra-send:not(:disabled) { background: #f5f5f5; border-color: #f5f5f5; color: #0d0d0d; }
 @media (max-width: 760px) { .ra-composer-context { gap: 13px; margin-inline: 10px; padding-left: 9px; font-size: 11px; } .ra-workspace .ra-context-project { font-size: 11px; } .ra-workspace .ra-composer { padding-inline: 12px; } .ra-workspace .ra-composer-controls { gap: 5px; } .ra-workspace .ra-composer-controls > .ra-composer-left { gap: 3px; } .ra-workspace .ra-composer-controls > .ra-composer-right { gap: 4px; } .ra-composer-permissions > summary { font-size: 11px; } .ra-permissions-menu { left: -25px; } }
+
+.ra-attachment-warning { margin: 4px 12px 0; font-size: 12px; color: var(--ra-warning, #b45309); }

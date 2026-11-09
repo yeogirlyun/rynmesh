@@ -111,6 +111,11 @@ export interface AgentModel {
   source_name?: string;
   peer_id?: string;
   usage?: ModelTokenUsage;
+  /** Server decision for this exact route: whether images reach the model. */
+  supports_image_input?: boolean;
+  image_support?: "supported" | "unknown" | "unsupported";
+  image_transport?: string;
+  image_capability_reason?: string;
 }
 export interface AgentTool { name: string; title: string; effect: "read" | "write"; description?: string; }
 export interface AgentSkill { id: string; version: string; title: string; description: string; }
@@ -203,6 +208,9 @@ export interface AgentTaskSummary {
   model_destination?: AgentModelDestination;
   archived?: boolean;
   archive_reason?: "storage";
+  /** A conversation that grew too long continues in a linked new one. */
+  continued_from?: string;
+  continued_to?: string;
   result_refs?: AgentResultRef[];
   file_artifact_revision?: number;
   budget?: AgentBudget;
