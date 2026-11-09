@@ -2683,7 +2683,10 @@ class AgentRuntime(AgentLoop):
                 and not budget.hard_run_limit(row)
             )
             verification.record(row, flight, "confirmed" if result["outcome"] == "executed" else "not_executed", now(), result=proven_result)
-            row["messages"].append({"role": "tool", "tool_call_id": flight["call_id"], "content": encoded(proven_result).decode(), "context_epoch": flight.get("context_epoch", 0)})
+            reconciled_message = {"role": "tool", "tool_call_id": flight["call_id"], "content": encoded(proven_result).decode(), "context_epoch": flight.get("context_epoch", 0)}
+            if isinstance(proven_result, dict) and (proven_result.get("is_error") or proven_result.get("error")):
+                reconciled_message["is_error"] = True  # The recorded reply was a tool-reported error.
+            row["messages"].append(reconciled_message)
             row["queue"] = [call for call in row["queue"] if call["operation_id"] != operation_id]
             row["in_flight"] = None
             close_queue(row, event, "agent_reconciliation_requires_review", keep_flight=False)
