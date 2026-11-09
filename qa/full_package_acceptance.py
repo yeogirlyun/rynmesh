@@ -17,6 +17,8 @@ from rynmesh.node_apps import craft_host, craft_native
 from rynmesh.node_apps.plugins import PluginManager
 from rynmesh.services.peer_box import load_or_create_messaging_key
 from rynmesh.store import load_or_create_private_key
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
+from full_package_install import COMPANY, OFFICE, package_plugins, verify
 
 
 def main():
@@ -24,6 +26,8 @@ def main():
     for name in ('payload', 'helper', 'core', 'work'):
         parser.add_argument('--' + name, type=Path, required=True)
     args = parser.parse_args()
+    selected = package_plugins(verify(args.payload.resolve()))
+    office = OFFICE if set(OFFICE).issubset(selected) else ()
     root = args.work.resolve()
     root.mkdir(parents=True, exist_ok=False)
     dest, home = root / 'install', root / 'home'
@@ -36,8 +40,10 @@ def main():
     manager = PluginManager(home, peer)
     extensions = ExtensionStore(home / 'agent', load_or_create_messaging_key(home / 'messaging.x25519'))
     plugins = {p['id']: p for p in extensions.overview()['plugins']}
-    company = ('company-workspace','company-dashboard','company-affiliate')
-    office = ('pdfcraft','wordcraft','gridcraft','deckcraft')
+    company = COMPANY
+    assert json.loads((home / 'full-package-install.json').read_text())['plugins'] == list(selected)
+    if not office:
+        assert not set(OFFICE) & set(manager._read()['plugins'])
     assert all(plugins[s]['enabled'] for s in company)
     from fastapi.testclient import TestClient
     for slug in office:
@@ -58,10 +64,20 @@ def main():
                                  server_id=dashboard_server, expected_revision=server['revision'])
     extensions.set_plugin_enabled('company-dashboard', False)
     state = manager._read()
-    state['plugins']['pdfcraft']['enabled'] = False
+    if office:
+        state['plugins']['pdfcraft']['enabled'] = False
+    else:
+        # The company-only helper must not alter an unrelated Office registration.
+        state['plugins']['pdfcraft'] = {'version':'synthetic-existing', 'enabled':False}
     manager._write(state)
+    office_state_before = manager.state_path.read_bytes()
+    retained = home / 'retained-office-export.pdf'
+    retained.write_bytes(b'synthetic user document; preserve')
     subprocess.run(command, check=True, capture_output=True, timeout=180)
     assert not manager._read()['plugins']['pdfcraft']['enabled']
+    if not office:
+        assert manager.state_path.read_bytes() == office_state_before
+    assert retained.read_bytes() == b'synthetic user document; preserve'
     assert not next(p for p in extensions.overview()['plugins'] if p['id']=='company-dashboard')['enabled']
     assert (home / 'company/config.key').read_bytes() == key
     assert (home / 'identity.ed25519').read_bytes() == identity
@@ -95,7 +111,8 @@ def main():
             proc.terminate()
             proc.wait(timeout=20)
     result = {'fresh_install':True,'repeat_install_preserves_identity_key_and_disabled_plugins':True,
-              'office_editors':list(office),'native_cli_version':list(office),'company_pages':list(company),
+              'selected_plugins':list(selected),'office_editors':list(office),'native_cli_version':list(office),
+              'existing_office_untouched':not bool(office),'company_pages':list(company),
               'company_health':health,'company_outbound_network':'blocked','live_install_modified':False,
               'system_installer_executed':False}
     (root / 'result.json').write_text(json.dumps(result, indent=2), encoding='utf-8')

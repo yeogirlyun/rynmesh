@@ -8,7 +8,7 @@ param(
     [Parameter(Mandatory=$true)][string]$Output,
     [string]$MakeNsis = "$env:LOCALAPPDATA/tauri/NSIS/makensis.exe",
     # lzma (solid, 128 MB window) gives the smallest download; zlib is ~5x faster for test builds.
-    # Keep verified Office payloads bundled until first-start downloads are released and accepted.
+    # Payload manifest selects three-company-only or the default seven-plugin bundle.
     [ValidateSet('lzma','zlib')][string]$Compression = 'lzma'
 )
 $ErrorActionPreference='Stop'
@@ -34,6 +34,9 @@ try {
     $payloadPath=(Resolve-Path -LiteralPath $Payload).Path
     $manifestPath=Join-Path $payloadPath 'full-package.json'
     $manifest=Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    & $Python -c 'import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); from full_package_install import verify; verify(Path(sys.argv[2]))' $PSScriptRoot $payloadPath
+    if ($LASTEXITCODE -ne 0) { throw 'Invalid package scope or payload inventory' }
+    $officeDefines=@(if ($manifest.plugins -contains 'pdfcraft') { '/DWITH_OFFICE' })
     $manifest.ryn_commit=(git rev-parse HEAD)
     [IO.File]::WriteAllText($manifestPath,($manifest|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
     $build=Join-Path $repo '.codex-tmp/full-package-20261103/final-helper'
@@ -70,7 +73,7 @@ try {
     New-Item -ItemType Directory -Force -Path (Split-Path $outputPath) | Out-Null
     # @() keeps a one-item list an array; a splatted string is passed one character at a time.
     $compressor=@(if ($Compression -eq 'zlib') { '/XSetCompressor /FINAL zlib' } else { '/XSetCompressor /FINAL /SOLID lzma'; '/XSetCompressorDictSize 128' })
-    & $MakeNsis /V2 @compressor "/DOUTPUT=$outputPath" "/DCORE=$((Resolve-Path -LiteralPath $CoreInstaller).Path)" "/DPAYLOAD=$payloadPath" "/DHELPER=$build/dist/ryn-full-install" "/DWEBVIEW=$((Resolve-Path -LiteralPath $WebViewInstaller).Path)" "$repo/deploy/windows/full-installer.nsi"
+    & $MakeNsis /V2 @compressor @officeDefines "/DOUTPUT=$outputPath" "/DCORE=$((Resolve-Path -LiteralPath $CoreInstaller).Path)" "/DPAYLOAD=$payloadPath" "/DHELPER=$build/dist/ryn-full-install" "/DWEBVIEW=$((Resolve-Path -LiteralPath $WebViewInstaller).Path)" "$repo/deploy/windows/full-installer.nsi"
     if ($LASTEXITCODE -ne 0) { throw 'Complete installer build failed' }
     $receipt=@{schema=1;ryn_commit=$manifest.ryn_commit;core_commit=$CoreCommit;company_commit=$manifest.company_commit;plugins=$manifest.plugins;installer_sha256=(Get-FileHash -LiteralPath $outputPath).Hash;core_sha256=(Get-FileHash -LiteralPath $CoreInstaller).Hash;webview_sha256=(Get-FileHash -LiteralPath $WebViewInstaller).Hash;bytes=(Get-Item -LiteralPath $outputPath).Length;helper_source_sha256=(Get-FileHash -LiteralPath "$PSScriptRoot/full_package_install.py").Hash;helper_executable_sha256=(Get-FileHash -LiteralPath $helperExe).Hash;helper_reused=$helperReused;compression=$Compression;acceptance=$acceptanceResult}
     [IO.File]::WriteAllText("$outputPath.json",($receipt|ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false))

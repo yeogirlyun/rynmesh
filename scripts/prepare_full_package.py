@@ -1,4 +1,4 @@
-"""Stage only verified distributable code for a seven-plugin installer."""
+"""Stage verified code for the seven-plugin installer, or explicit company-only mode."""
 import argparse
 import json
 import os
@@ -20,7 +20,7 @@ from full_package_install import (
 from rynmesh.node_apps import craft_compat, craft_host, craft_native
 
 
-def prepare(output, company, company_source, office_compat_dir=None):
+def prepare(output, company, company_source, office_compat_dir=None, *, company_only=False):
     output.mkdir(parents=True, exist_ok=False)
     repo = Path(__file__).resolve().parents[1]
     revision = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
@@ -29,52 +29,53 @@ def prepare(output, company, company_source, office_compat_dir=None):
         if sha(company / name) != digest:
             raise ValueError('Company bundle mismatch: ' + name)
     shutil.copytree(company, output / 'company')
-    cache_base = Path(os.environ['LOCALAPPDATA']) / 'Ryn/plugins'
-    bases = [cache_base, Path.home() / '.rynmesh/plugins',
-             Path(os.environ['LOCALAPPDATA']) / 'Packages/OpenAI.Codex_2p2nqsd0c76g0/LocalCache/Local/Ryn/plugins']
-    caches = [p for base in bases if base.is_dir() for p in base.iterdir() if p.is_dir()]
-    for slug in OFFICE:
-        version = craft_host.specification(slug)['tag']
-        found = None
-        fallback = None
-        for cache in caches:
-            try:
-                craft_host.installed(cache, slug)
-                if fallback is None or craft_native.runtime_status(cache, slug)["verified"]:
-                    fallback = cache
-                require_office_compat(cache, slug)
-                if found is None:
-                    found = cache
-                if craft_native.runtime_status(cache, slug)['verified']:
-                    found = cache
-                    if slug not in craft_compat.COMPAT or craft_compat.installed(cache, slug):
-                        break
-            except (OSError, ValueError):
-                pass
-        # Reuse a verified upstream cache when an explicit new archive is supplied;
-        # the mandatory check below still rejects missing compatibility builds.
-        found = found or fallback
-        if found:
-            root = found / slug / version
-            target = output / 'office' / slug / version
-            # Explicit allowlist excludes document exports, preferences and caches.
-            target.mkdir(parents=True)
-            for name in ('payload', 'agent', 'compatibility'):
-                if (root / name).exists():
-                    shutil.copytree(root / name, target / name)
-            shutil.copy2(root / 'receipt.json', target / 'receipt.json')
-        else:
-            craft_host.install(output / 'office', slug)
-        if slug in craft_compat.COMPAT and office_compat_dir is not None:
-            archive = office_compat_dir / (slug + '-web-' + version.removeprefix('v') + '-' + craft_compat.COMPAT[slug]['id'] + '.zip')
-            if archive.is_file():
-                craft_compat.install(output / 'office', slug, archive)
-        require_office_compat(output / 'office', slug)
-        if not craft_native.runtime_status(output / 'office', slug)['verified']:
-            craft_native.install_runtime(output / 'office', slug)
-        craft_host.installed(output / 'office', slug)
-        assert craft_native.runtime_status(output / 'office', slug)['verified']
-        print('Staged', slug, flush=True)
+    if not company_only:
+        cache_base = Path(os.environ['LOCALAPPDATA']) / 'Ryn/plugins'
+        bases = [cache_base, Path.home() / '.rynmesh/plugins',
+                 Path(os.environ['LOCALAPPDATA']) / 'Packages/OpenAI.Codex_2p2nqsd0c76g0/LocalCache/Local/Ryn/plugins']
+        caches = [p for base in bases if base.is_dir() for p in base.iterdir() if p.is_dir()]
+        for slug in OFFICE:
+            version = craft_host.specification(slug)['tag']
+            found = None
+            fallback = None
+            for cache in caches:
+                try:
+                    craft_host.installed(cache, slug)
+                    if fallback is None or craft_native.runtime_status(cache, slug)["verified"]:
+                        fallback = cache
+                    require_office_compat(cache, slug)
+                    if found is None:
+                        found = cache
+                    if craft_native.runtime_status(cache, slug)['verified']:
+                        found = cache
+                        if slug not in craft_compat.COMPAT or craft_compat.installed(cache, slug):
+                            break
+                except (OSError, ValueError):
+                    pass
+            # Reuse a verified upstream cache when an explicit new archive is supplied;
+            # the mandatory check below still rejects missing compatibility builds.
+            found = found or fallback
+            if found:
+                root = found / slug / version
+                target = output / 'office' / slug / version
+                # Explicit allowlist excludes document exports, preferences and caches.
+                target.mkdir(parents=True)
+                for name in ('payload', 'agent', 'compatibility'):
+                    if (root / name).exists():
+                        shutil.copytree(root / name, target / name)
+                shutil.copy2(root / 'receipt.json', target / 'receipt.json')
+            else:
+                craft_host.install(output / 'office', slug)
+            if slug in craft_compat.COMPAT and office_compat_dir is not None:
+                archive = office_compat_dir / (slug + '-web-' + version.removeprefix('v') + '-' + craft_compat.COMPAT[slug]['id'] + '.zip')
+                if archive.is_file():
+                    craft_compat.install(output / 'office', slug, archive)
+            require_office_compat(output / 'office', slug)
+            if not craft_native.runtime_status(output / 'office', slug)['verified']:
+                craft_native.install_runtime(output / 'office', slug)
+            craft_host.installed(output / 'office', slug)
+            assert craft_native.runtime_status(output / 'office', slug)['verified']
+            print('Staged', slug, flush=True)
     source = json.loads((company_source / 'plugin-declarations.json').read_text(encoding='utf-8'))
     origin = 'https://dashboard-hk-api.gshopper.com.cn'
     source = json.loads(json.dumps(source).replace('https://plugin.example.test', origin))
@@ -110,7 +111,7 @@ def prepare(output, company, company_source, office_compat_dir=None):
                 raise ValueError('Private data in package')
             files[path.relative_to(output).as_posix()] = sha(path)
     (output / 'full-package.json').write_text(json.dumps({'schema':1,'ryn_commit':revision,
-        'company_commit':company_manifest['source_commit'],'plugins':list(COMPANY+OFFICE),'files':files}, indent=2), encoding='utf-8')
+        'company_commit':company_manifest['source_commit'],'plugins':list(COMPANY if company_only else COMPANY+OFFICE),'files':files}, indent=2), encoding='utf-8')
 
 
 if __name__ == '__main__':
@@ -119,5 +120,6 @@ if __name__ == '__main__':
     parser.add_argument('--company', type=Path, required=True)
     parser.add_argument('--company-source', type=Path, required=True)
     parser.add_argument('--office-compat-dir', type=Path, help='Pinned offline archives named APP-web-VERSION-COMPAT_ID.zip')
+    parser.add_argument('--company-only', action='store_true', help='Bundle only the three company plugins; leave existing Office apps untouched')
     args = parser.parse_args()
-    prepare(args.output, args.company, args.company_source, args.office_compat_dir)
+    prepare(args.output, args.company, args.company_source, args.office_compat_dir, company_only=args.company_only)

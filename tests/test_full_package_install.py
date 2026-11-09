@@ -37,7 +37,7 @@ def test_cli_appends_success_without_destroying_previous_log(tmp_path, monkeypat
 def test_package_detects_changed_and_extra_files(tmp_path):
     asset = tmp_path / 'editor.wasm'
     asset.write_bytes(b'verified-build')
-    (tmp_path / 'full-package.json').write_text(json.dumps({'files': {'editor.wasm': installer.sha(asset)}}))
+    (tmp_path / 'full-package.json').write_text(json.dumps({'plugins':list(installer.COMPANY + installer.OFFICE), 'files': {'editor.wasm': installer.sha(asset)}}))
     installer.verify(tmp_path)
     asset.write_bytes(b'changed-build')
     with pytest.raises(ValueError, match='integrity'):
@@ -75,7 +75,7 @@ def test_upgrade_backs_up_and_preserves_data_using_update_uninstall(tmp_path, mo
     monkeypatch.setattr(installer, 'validate_office_payload', lambda payload: None)
     payload = tmp_path / 'payload'
     payload.mkdir()
-    (payload / 'full-package.json').write_text('{"files":{}}')
+    (payload / 'full-package.json').write_text(json.dumps({'plugins':list(installer.COMPANY + installer.OFFICE), 'files':{}}))
     destination = tmp_path / 'Ryn'
     destination.mkdir()
     (destination / 'Ryn.exe').write_bytes(b'old-app')
@@ -204,7 +204,7 @@ def test_upgrade_repairs_damaged_program_resources_and_retains_user_files(office
 
 
 def test_upgrade_rejects_missing_required_fonts_before_stopping_processes(tmp_path, monkeypatch):
-    (tmp_path / 'full-package.json').write_text('{"files":{}}')
+    (tmp_path / 'full-package.json').write_text(json.dumps({'plugins':list(installer.COMPANY + installer.OFFICE), 'files':{}}))
     calls = []
     monkeypatch.setattr(installer.subprocess, 'run', lambda *a, **kw: calls.append(a))
     with pytest.raises(ValueError, match='compatibility build is missing'):
@@ -354,3 +354,126 @@ def test_release_retires_only_known_duplicate_default_connections(tmp_path):
     assert result['conflicts'] == [{'category': 'mcp_servers', 'id': 'custom', 'field': 'retirement'}]
     store.migrate_release_defaults(declarations)
     assert store.get_mcp_server_internal('stock')['revision'] == retired['revision']
+
+
+@pytest.mark.parametrize('plugins', [[], ['company-workspace'], list(installer.COMPANY)+['pdfcraft'],
+                                    list(installer.COMPANY)+['company-workspace'], list(installer.COMPANY)+['unknown']])
+def test_only_explicit_three_or_seven_plugin_manifests_are_accepted(plugins):
+    with pytest.raises(ValueError, match='exactly'):
+        installer.package_plugins({'plugins':plugins})
+
+
+def test_company_only_manifest_rejects_even_an_empty_office_payload(tmp_path):
+    (tmp_path/'full-package.json').write_text(json.dumps({'plugins':list(installer.COMPANY),'files':{}}))
+    assert installer.verify(tmp_path)['plugins'] == list(installer.COMPANY)
+    (tmp_path/'office').mkdir()
+    with pytest.raises(ValueError, match='must not contain Office'):
+        installer.verify(tmp_path)
+
+
+def synthetic_company_payload(tmp_path):
+    payload = tmp_path/'payload'
+    company = payload/'company'
+    company.mkdir(parents=True)
+    binary = company/'company-service.exe'
+    binary.write_bytes(b'synthetic executable; never execute')
+    (company/'runtime-manifest.json').write_text(json.dumps({'source_commit':'c'*40,
+        'files':{'company-service.exe':installer.sha(binary)}}))
+    declarations = {'plugins':[{'id':p,'name':p,'mcp_server_ids':[],'skill_ids':[],
+        'web_app':{'url':'http://127.0.0.1:18140/apps/'+p,'permissions':[]}} for p in installer.COMPANY],
+        'skills':[], 'mcp_servers':[]}
+    (payload/'company-plugins.json').write_text(json.dumps(declarations))
+    manifest = {'schema':1, 'ryn_commit':'a'*40, 'company_commit':'c'*40,'plugins':list(installer.COMPANY),
+        'files':{p.relative_to(payload).as_posix():installer.sha(p) for p in payload.rglob('*') if p.is_file()}}
+    (payload/'full-package.json').write_text(json.dumps(manifest))
+    return payload
+
+
+def test_company_only_install_and_repeat_never_touch_existing_office(tmp_path, monkeypatch):
+    import socket
+    from rynmesh.node_apps import plugins
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Company-only mode must not touch Office or the network')
+    monkeypatch.setattr(socket.socket, 'connect', forbidden)
+    monkeypatch.setattr(socket.socket, 'connect_ex', forbidden)
+    monkeypatch.setattr(plugins, 'PluginManager', forbidden)
+    monkeypatch.setattr(installer, 'validate_office_payload', forbidden)
+    monkeypatch.setattr(installer, 'provision_office', forbidden)
+    monkeypatch.setattr(installer, 'allow_desktop_user', lambda path:None)
+    payload = synthetic_company_payload(tmp_path)
+    home, destination = tmp_path/'home', tmp_path/'install'
+    home.mkdir(); destination.mkdir()
+    (destination/'Ryn.exe').write_bytes(b'synthetic core')
+    existing = home/'craft-plugins.json'
+    existing.write_bytes(b'{"plugins":{"pdfcraft":{"enabled":false}},"setup_complete":false}')
+    export = home/'plugins/pdfcraft/my-document.pdf'
+    export.parent.mkdir(parents=True)
+    export.write_bytes(b'keep owner data')
+    original = existing.read_bytes()
+    calls = []
+    def initialize(command, **kwargs):
+        assert command[1:] == ['--initialize']
+        assert Path(command[0]).resolve().is_relative_to(destination.resolve())
+        calls.append(command)
+    monkeypatch.setattr(installer.subprocess, 'run', initialize)
+    installer.install(payload, destination, home)
+    identity = (home/'identity.ed25519').read_bytes()
+    installer.install(payload, destination, home)
+    assert len(calls) == 2
+    assert existing.read_bytes() == original
+    assert export.read_bytes() == b'keep owner data'
+    assert (home/'identity.ed25519').read_bytes() == identity
+    receipt = json.loads((home/'full-package-install.json').read_text())
+    assert receipt['plugins'] == list(installer.COMPANY)
+    installer.prepare_upgrade(payload, tmp_path/'not-installed')
+
+
+def test_company_only_stager_never_reads_or_downloads_office(tmp_path, monkeypatch):
+    script_dir = Path(__file__).resolve().parents[1]/'scripts'
+    monkeypatch.syspath_prepend(str(script_dir))
+    spec = importlib.util.spec_from_file_location('prepare_company_only', script_dir/'prepare_full_package.py')
+    packager = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(packager)
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Office staging must not run in company-only mode')
+    for obj, method in [(packager.craft_host,'specification'),(packager.craft_host,'install'),
+                        (packager.craft_native,'install_runtime'),(packager.craft_compat,'installed')]:
+        monkeypatch.setattr(obj, method, forbidden)
+    monkeypatch.delenv('LOCALAPPDATA', raising=False)
+    monkeypatch.setattr(packager.subprocess, 'check_output', lambda *args,**kwargs:'synthetic-main-commit')
+    company = tmp_path/'company'; company.mkdir()
+    (company/'runtime-manifest.json').write_text(json.dumps({'source_commit':'c'*40,'files':{}}))
+    source = tmp_path/'source'; source.mkdir()
+    (source/'plugin-declarations.json').write_text(json.dumps({'plugins':{p:{'id':p,'name':p} for p in installer.COMPANY},
+                                                              'mcp_servers':{}}))
+    output = tmp_path/'out'
+    packager.prepare(output, company, source, company_only=True)
+    manifest = installer.verify(output)
+    assert manifest['plugins'] == list(installer.COMPANY)
+    assert not (output/'office').exists()
+
+
+def test_default_stager_keeps_all_four_office_plugins(tmp_path, monkeypatch):
+    script_dir = Path(__file__).resolve().parents[1]/'scripts'
+    monkeypatch.syspath_prepend(str(script_dir))
+    spec = importlib.util.spec_from_file_location('prepare_default_seven', script_dir/'prepare_full_package.py')
+    packager = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(packager)
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path/'local'))
+    monkeypatch.setattr(Path, 'home', lambda:tmp_path/'home')
+    monkeypatch.setattr(packager.subprocess, 'check_output', lambda *args,**kwargs:'synthetic-main-commit')
+    visited = []
+    monkeypatch.setattr(packager.craft_host, 'specification', lambda slug:{'tag':'v1'})
+    monkeypatch.setattr(packager.craft_host, 'install', lambda cache,slug:visited.append(slug))
+    monkeypatch.setattr(packager.craft_host, 'installed', lambda *args:True)
+    monkeypatch.setattr(packager.craft_native, 'runtime_status', lambda *args:{'verified':True})
+    monkeypatch.setattr(packager.craft_compat, 'installed', lambda *args,**kwargs:tmp_path)
+    company = tmp_path/'company'; company.mkdir()
+    (company/'runtime-manifest.json').write_text(json.dumps({'source_commit':'c'*40,'files':{}}))
+    source = tmp_path/'source'; source.mkdir()
+    (source/'plugin-declarations.json').write_text(json.dumps({'plugins':{p:{'id':p,'name':p} for p in installer.COMPANY},
+                                                              'mcp_servers':{}}))
+    output = tmp_path/'out'
+    packager.prepare(output, company, source)
+    assert visited == list(installer.OFFICE)
+    assert installer.verify(output)['plugins'] == list(installer.COMPANY+installer.OFFICE)

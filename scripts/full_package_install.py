@@ -1,4 +1,4 @@
-"""Offline provisioning for the explicit seven-plugin Windows installer.
+"""Offline provisioning for an explicit three-company or seven-plugin Windows installer.
 
 Runs after the ordinary Ryn installer exits. Never downloads or copies user data.
 """
@@ -43,9 +43,22 @@ def sha(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
+def package_plugins(manifest):
+    plugins = manifest.get('plugins')
+    if not isinstance(plugins, list) or any(not isinstance(p, str) for p in plugins):
+        raise ValueError('Package must declare its plugin set')
+    for allowed in (COMPANY, COMPANY + OFFICE):
+        if len(plugins) == len(allowed) and set(plugins) == set(allowed):
+            return allowed
+    raise ValueError('Package must contain exactly three company plugins or all seven plugins')
+
+
 def verify(root):
     manifest = json.loads((root / 'full-package.json').read_text(encoding='utf-8'))
+    plugins = package_plugins(manifest)
     files = manifest['files']
+    if not set(OFFICE).issubset(plugins) and (root / 'office').exists():
+        raise ValueError('Company-only package must not contain Office payloads')
     actual = set()
     for path in root.rglob('*'):
         if path.is_symlink() or path.is_junction():
@@ -185,9 +198,10 @@ def allow_desktop_user(path):
 
 def prepare_upgrade(payload, destination):
     print('stage: verify-package', flush=True)
-    verify(Path(payload).resolve())  # Never uninstall before payload verification.
-    print('stage: verify-office', flush=True)
-    validate_office_payload(Path(payload).resolve())
+    manifest = verify(Path(payload).resolve())  # Never uninstall before payload verification.
+    if set(OFFICE).issubset(package_plugins(manifest)):
+        print('stage: verify-office', flush=True)
+        validate_office_payload(Path(payload).resolve())
     destination = Path(destination).resolve()
     if destination == Path(destination.anchor) or destination == Path.home().resolve():
         raise ValueError('Unsafe installation directory')
@@ -270,20 +284,24 @@ def install(payload, destination, home):
     manifest = verify(payload)
     if not (destination / 'Ryn.exe').is_file():
         raise ValueError('Install Ryn core first')
-    validate_office_payload(payload)
+    selected_plugins = package_plugins(manifest)
+    with_office = set(OFFICE).issubset(selected_plugins)
+    if with_office:
+        validate_office_payload(payload)
     home.mkdir(parents=True, exist_ok=True)
     peer = public_key_from_private(load_or_create_private_key(home / 'identity.ed25519'))
-    manager = PluginManager(home, peer)
-    def no_download(*args, **kwargs):
-        raise ValueError('Full installer must not access the network')
-    manager.download = no_download
-    for slug in OFFICE:
-        provision_office(payload / 'office', manager.cache, slug)
-        # Preserve an existing user's version, enable/disable state and preferences.
-        if slug not in manager._read()['plugins']:
-            manager.install(slug)
-    manager.finish_setup()
-    allow_desktop_user(manager.cache)
+    if with_office:
+        manager = PluginManager(home, peer)
+        def no_download(*args, **kwargs):
+            raise ValueError('Full installer must not access the network')
+        manager.download = no_download
+        for slug in OFFICE:
+            provision_office(payload / 'office', manager.cache, slug)
+            # Preserve an existing user's version, enable/disable state and preferences.
+            if slug not in manager._read()['plugins']:
+                manager.install(slug)
+        manager.finish_setup()
+        allow_desktop_user(manager.cache)
 
     services_root = destination / 'plugin-services'
     config_path = services_root / 'services.json'
@@ -342,7 +360,7 @@ def install(payload, destination, home):
                 service['mcp_servers'] = managed_servers
         atomic_json(config_path, config)
     receipt = {'schema': 1, 'ryn_commit': manifest['ryn_commit'], 'company_commit': revision,
-               'plugins': list(COMPANY + OFFICE), 'offline': True, 'installation': str(destination),
+               'plugins': list(selected_plugins), 'offline': True, 'installation': str(destination),
                'declaration_migration': migration}
     atomic_json(home / 'full-package-install.json', receipt)
     print(json.dumps(receipt))
