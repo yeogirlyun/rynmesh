@@ -6,6 +6,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { setLanguagePreference } from "../i18n";
 import { server } from "../test/server";
 import PluginWorkspace from "./PluginWorkspace";
+import { agentExtensions } from "../domain/agentExtensions";
+import { act } from "@testing-library/react";
 import { isPluginWorkspacePinned, pinnedPluginWorkspaces, setPluginWorkspacePinned } from "./pluginWorkspaceNavigation";
 
 vi.mock("./PeerProviderSettings", () => ({ PeerProviderSettings: ({ plugin }: { plugin: { id: string } }) => <p>Provider: {plugin.id}</p> }));
@@ -32,6 +34,19 @@ function mount(id = "alpha", search = "") {
 beforeEach(() => { localStorage.clear(); setLanguagePreference("en"); });
 
 describe("manifest-driven plugin workspace", () => {
+  it("shows an initial loading state and offers recovery when the manifest never arrives", async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const overview = vi.spyOn(agentExtensions, 'overview').mockImplementation(signal => new Promise((_resolve, reject) => {
+      signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+    }));
+    try {
+      mount('never-arrives');
+      expect(screen.getByRole('status')).toHaveTextContent('Loading plugin');
+      await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+      expect(screen.getByRole('alert')).toHaveTextContent('Could not load the plugin');
+      expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
+    } finally { overview.mockRestore(); vi.useRealTimers(); }
+  });
   it("opens the web app in place with one manifest request and no management interstitial", async () => {
     let reads = 0;
     let release!: () => void;
