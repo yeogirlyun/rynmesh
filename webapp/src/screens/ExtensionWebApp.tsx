@@ -60,8 +60,14 @@ export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true 
   useEffect(() => {
     if (!plugin?.web_app || !reportsLifecycle) return;
     const origin = new URL(plugin.web_app.url).origin;
+    const announceAuthorization = () => frame.current?.contentWindow?.postMessage({ type: 'ryn.company.authorization.changed' }, origin);
     const receive = (event: MessageEvent) => {
-      if (event.source !== frame.current?.contentWindow || event.origin !== origin || event.data?.type !== PLUGIN_LIFECYCLE_MESSAGE) return;
+      if (event.source !== frame.current?.contentWindow || event.origin !== origin) return;
+      if (event.data?.type === 'ryn.company.authorization.changed') {
+        window.dispatchEvent(new Event('ryn:company-authorization-changed'));
+        return;
+      }
+      if (event.data?.type !== PLUGIN_LIFECYCLE_MESSAGE) return;
       if (event.data.phase === 'ready') setPageState('ready');
       else if (event.data.phase === 'error') setPageState('error');
       if (typeof event.data.route === 'string' && event.data.route.length < 4096) {
@@ -72,7 +78,11 @@ export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true 
       }
     };
     window.addEventListener('message', receive);
-    return () => window.removeEventListener('message', receive);
+    window.addEventListener('ryn:company-authorization-changed', announceAuthorization);
+    return () => {
+      window.removeEventListener('message', receive);
+      window.removeEventListener('ryn:company-authorization-changed', announceAuthorization);
+    };
   }, [plugin?.web_app?.url, reportsLifecycle]);
   const frameUrl = useMemo(() => {
     if (!plugin?.web_app) return '';

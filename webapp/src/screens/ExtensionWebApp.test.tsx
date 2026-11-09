@@ -28,6 +28,7 @@ describe('remote app capability boundary', () => {
       render(<MemoryRouter initialEntries={['/apps/extensions/company-dashboard']}><Routes><Route path='/apps/extensions/:pluginId' element={<ExtensionWebApp />} /></Routes></MemoryRouter>);
     });
     const first = screen.getByTitle('Reports') as HTMLIFrameElement;
+    const authorizationReply = vi.spyOn(first.contentWindow!, 'postMessage');
     fireEvent.load(first);
     expect(first).toHaveAttribute('data-page-state', 'loading');
     const lifecycle = (origin: string, phase: string, route?: string) => fireEvent(window, new MessageEvent('message', {
@@ -35,6 +36,11 @@ describe('remote app capability boundary', () => {
     }));
     lifecycle('https://foreign.example', 'ready');
     expect(first).toHaveAttribute('data-page-state', 'loading');
+    authorizationReply.mockClear();
+    fireEvent(window, new MessageEvent('message', { source: first.contentWindow, origin: 'https://foreign.example', data: { type: 'ryn.company.authorization.changed' } }));
+    expect(authorizationReply).not.toHaveBeenCalled();
+    fireEvent(window, new MessageEvent('message', { source: first.contentWindow, origin: 'https://company.example.test', data: { type: 'ryn.company.authorization.changed' } }));
+    expect(authorizationReply).toHaveBeenCalledWith({ type: 'ryn.company.authorization.changed' }, 'https://company.example.test');
     await act(async () => { await vi.advanceTimersByTimeAsync(15000); });
     expect(screen.getByTitle('Reports')).toBe(first);
     expect(screen.getByRole('alert')).toHaveTextContent('has not finished initializing');

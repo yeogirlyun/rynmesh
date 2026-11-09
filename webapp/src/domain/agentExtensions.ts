@@ -147,8 +147,11 @@ export interface McpOauthProgress {
 
 export const startMcpOauthLogin = (id: string, expected_revision: number, language: string) =>
   extensionRequest<McpOauthLogin>(`/mcp/servers/${encodeURIComponent(id)}/oauth/login`, "POST", { expected_revision, language });
-export const getMcpOauthLogin = (id: string, authId: string, signal?: AbortSignal) =>
-  extensionRequest<McpOauthProgress>(`/mcp/servers/${encodeURIComponent(id)}/oauth/login/${encodeURIComponent(authId)}`, "GET", undefined, signal);
+export const getMcpOauthLogin = async (id: string, authId: string, signal?: AbortSignal) => {
+  const result = await extensionRequest<McpOauthProgress>(`/mcp/servers/${encodeURIComponent(id)}/oauth/login/${encodeURIComponent(authId)}`, "GET", undefined, signal);
+  if (id.startsWith('company-') && result.state === 'connected') window.dispatchEvent(new Event('ryn:company-authorization-changed'));
+  return result;
+};
 export const cancelMcpOauthLogin = (id: string, authId: string) =>
   extensionRequest<McpOauthProgress>(`/mcp/servers/${encodeURIComponent(id)}/oauth/login/${encodeURIComponent(authId)}/cancel`, "POST", {});
 export const logoutMcpOauth = (id: string, expected_revision: number) =>
