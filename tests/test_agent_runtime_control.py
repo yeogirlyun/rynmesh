@@ -298,15 +298,18 @@ def test_scope_changed_during_read_cannot_reemit_late_body(tmp_path, resources):
     assert "LATE_RESOURCE_581" in json.dumps(runtime.store.read()["tasks"][row["id"]]["messages"])
 
 
-def test_unknown_write_blocks_scope_and_new_messages(tmp_path, resources):
+def test_unknown_write_blocks_scope_and_resume_but_an_owner_message_continues(tmp_path, resources):
+    # Changed with docs/AGENT_STABILITY_FIX_PLAN_ZH.md S1: an unconfirmed write no longer locks the
+    # conversation. Scope changes and Resume stay blocked; an owner message acknowledges the step.
     runtime, _, _, _, row, _, _ = resource_runtime(tmp_path, resources)
     runtime.store.transaction(lambda data: data["tasks"][row["id"]].update(status="interrupted", error="agent_write_outcome_unknown",
         in_flight={"kind": "tool", "effect": "write", "dispatched": True, "operation_id": "unknown-write"}))
     with pytest.raises(AgentError, match="agent_operation_unresolved"):
         set_scope(runtime, row["id"])
-    with pytest.raises(AgentError, match="agent_operation_unresolved"):
-        steer(runtime, row["id"])
     assert not runtime.get(row["id"])["allowed_actions"]["resume"]["enabled"]
+    steer(runtime, row["id"])
+    stored = runtime.store.read()["tasks"][row["id"]]
+    assert stored["in_flight"] is None and stored["acknowledged_unknown"]["operation_id"] == "unknown-write"
 
 
 def test_create_scope_is_atomic_version_bound_and_idempotent(tmp_path, resources):

@@ -115,20 +115,34 @@ def test_consumed_queued_approval_requires_pause_then_is_discarded(tmp_path):
     assert stored["approved"] is None and stored["queue"] == [] and not tools.calls
 
 
-@pytest.mark.parametrize("kind", ["model", "tool", "unknown"])
-def test_inflight_or_unknown_operation_never_switches(tmp_path, kind):
+@pytest.mark.parametrize("kind", ["model", "tool"])
+def test_inflight_operation_never_switches(tmp_path, kind):
     runtime, _, _, _, task_id, _ = setup(tmp_path)
     request = body(runtime, task_id)
     def mark(data):
         row = data["tasks"][task_id]
-        row["in_flight"] = {"kind": kind, "effect": "write" if kind == "unknown" else "read", "dispatched": True}
-        if kind == "unknown":
-            row.update(status="interrupted", error="agent_write_outcome_unknown")
+        row["in_flight"] = {"kind": kind, "effect": "read", "dispatched": True}
     runtime.store.transaction(mark)
     with pytest.raises(AgentError, match="agent_operation_unresolved"):
         runtime.switch_model(task_id, request)
     assert runtime.get(task_id)["model_id"] == "local:test"
     assert runtime.get(task_id)["allowed_actions"]["model"]["enabled"] is False
+
+
+def test_unknown_write_is_acknowledged_by_a_model_switch(tmp_path):
+    # Changed with docs/AGENT_STABILITY_FIX_PLAN_ZH.md S1: switching model never repeats the write,
+    # so it is allowed once no reconciliation is running, and it acknowledges the unknown step.
+    runtime, _, _, _, task_id, _ = setup(tmp_path)
+    def mark(data):
+        row = data["tasks"][task_id]
+        row["in_flight"] = {"kind": "tool", "effect": "write", "dispatched": True, "operation_id": "op-unknown"}
+        row.update(status="interrupted", error="agent_write_outcome_unknown")
+    runtime.store.transaction(mark)
+    assert runtime.get(task_id)["allowed_actions"]["model"]["enabled"] is True
+    runtime.switch_model(task_id, body(runtime, task_id))
+    stored = runtime.store.read()["tasks"][task_id]
+    assert stored["model_id"] == "local:other" and stored["in_flight"] is None
+    assert stored["acknowledged_unknown"]["operation_id"] == "op-unknown"
 
 
 def test_explicit_scope_transfer_revalidates_and_rebinds_destination(tmp_path):

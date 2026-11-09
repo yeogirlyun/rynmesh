@@ -45,6 +45,7 @@ from .adapters import (
     cached_input_tokens,
 )
 from .chat import reported_token_count, validate_chat
+from .image_input_profile import SHARED_V2_CARRIER, shared_image_carrier_scope
 from .chat_prompt import CHAT_FORMAT, decode_chat_prompt
 from .consumer_cancellation import ConsumerOrderCancelled, cancellable_exchange
 from .consumer_commands import ConsumerCommands
@@ -488,6 +489,17 @@ class ProviderService:
             signed_request, recipient_peer_id=self.store.peer_id,
             recipient_messaging_key=self.messaging_key, expected_kind="llm_request",
         )
+        # A consumer that saw image-carrier:inline-v2 in this manifest may send
+        # larger inline images; everything else keeps the legacy carrier.
+        carrier = body.get("image_carrier")
+        if carrier is not None and (carrier != SHARED_V2_CARRIER
+                                    or "image-carrier:" + SHARED_V2_CARRIER not in self.manifest.capabilities):
+            raise TaskProtocolError("unsupported image carrier")
+        with shared_image_carrier_scope(carrier):
+            return self._handle_opened(signed_request, outer, body, on_event, on_delta=on_delta)
+
+    def _handle_opened(self, signed_request: dict[str, Any], outer: dict[str, Any], body: dict[str, Any],
+                       on_event: Any = None, *, on_delta: Callable[[str], None] | None = None) -> dict[str, Any]:
         space = getattr(self.store, "personal_space", None)
         explicit_friends = "explicit-friends" in self.manifest.capabilities
         external_permission = body.get("external_permission")
@@ -1435,11 +1447,14 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 if not record.get("enabled") or record.get("status") != "ready":
                     continue
                 for model in record["models"]:
+                    image_state = model_settings.image_input_state(record, model)
                     revision = model_settings.fingerprint(record, model)
                     policy = model_settings.effective(record, model)
                     sid = source_store.model_service_id(record, model)
                     current = source_managers.get(sid)
-                    if current is None or getattr(current, "_source_revision", "") != revision:
+                    # A new image test result changes what is published, not the destination.
+                    if (current is None or getattr(current, "_source_revision", "") != revision
+                            or getattr(current, "_image_state", None) != image_state):
                         manifest = LLMPackageManifest(package_id=sid, mode="openai_compatible",
                             public_model_alias=record["name"] + " · " + model, adapter="openai_compatible",
                             model=model, base_url=record["base_url"], allow_non_loopback=record["kind"] == "api",
@@ -1447,13 +1462,16 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                             timeout_seconds=180, capabilities=["text-generation", "streaming", "client-tools",
                                 "explicit-friends" if policy["share_scope"] == "friends" else "personal-space-only",
                                 *(["protocol:" + record["protocol"]] if record.get("protocol") in
-                                  {"openai_responses", "anthropic_messages"} else [])])
+                                  {"openai_responses", "anthropic_messages"} else []),
+                                *({"supported": ["image-input"], "unsupported": ["image-unsupported"]}.get(image_state, [])),
+                                "image-carrier:" + SHARED_V2_CARRIER])
                         adapter = source_store.adapter(record, model)
                         if model in record.get("model_settings", {}):
                             adapter = ModelDispatchAdapter(source_store, record, model, adapter)
                         current = ProviderService(manifest=manifest, adapter=adapter,
                             store=store, task_store=provider_orders, balance=balance, messaging_key=messaging_key)
                         current._source_revision = revision
+                        current._image_state = image_state
                     current._source_tool_support = record.get("tool_support", {}).get(model, "unknown")
                     current.accepting_orders = model in source_store.shared_models(record)
                     desired[sid] = current
@@ -2519,12 +2537,15 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         model = body["model_id"]
         record_before_listing = dict(record)
         probe = body.get("probe", "tools")
-        if probe not in {"connection", "model_exists", "tools"}:
+        if probe not in {"connection", "model_exists", "tools", "image"}:
             raise HTTPException(400, "model_probe_invalid")
         status = "passed"
         try:
             if probe == "tools":
                 result = await asyncio.to_thread(source_store.probe_model_tools, record, model)
+            elif probe == "image":
+                result = {"model_id": model, **await asyncio.to_thread(source_store.probe_model_image, record, model)}
+                status = result["image_support"]
             elif probe == "model_exists":
                 listing = await asyncio.to_thread(source_store.probe, record, models_only=True)
                 status = "present" if model in listing["models"] else "not_listed"
@@ -2540,8 +2561,11 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                       if status == "error" else "tool_protocol_mismatch"}
         if probe == "tools":
             result["tool_support"] = "supported" if status == "passed" else "unknown" if status == "error" else "unsupported"
+        if probe == "image" and status in {"error", "failed"}:
+            status = "unknown"  # A transport failure says nothing about image input.
         evidence = {"status": status, "checked_at": datetime.now(timezone.utc).isoformat(),
-                    "method": {"tools": "two_turn_client_tool", "connection": "fixed_chat", "model_exists": "models_listing"}[probe]}
+                    "method": {"tools": "two_turn_client_tool", "connection": "fixed_chat", "model_exists": "models_listing",
+                               "image": "red_square_colour"}[probe]}
         if result.get("error_code"):
             evidence["error_code"] = result["error_code"]
         with source_store.lock:
@@ -3181,7 +3205,11 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         network_id = str(body.get("network_id") or "rynmesh-main")
         provider_peer_id = str(body.get("provider_peer_id") or "")
         service_id = str(body.get("service_id") or "")
-        chat = validate_chat(body["chat"]) if "chat" in body else None
+        image_carrier = body.get("image_carrier")
+        if image_carrier not in (None, SHARED_V2_CARRIER) or (image_carrier and "chat" not in body):
+            raise HTTPException(400, "image_carrier_invalid")
+        with shared_image_carrier_scope(image_carrier):
+            chat = validate_chat(body["chat"]) if "chat" in body else None
         prompt = json.dumps(chat, ensure_ascii=False) if chat else str(body.get("prompt") or "")
         prompt_format = body.get("prompt_format", "text")
         try:
@@ -3250,6 +3278,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         if not chat and capacity.get("available") is not None and int(capacity["available"]) < 1:
             raise HTTPException(status_code=409, detail="capacity_exhausted: Provider is busy")
         public_manifest = dict(selected["service"])
+        if image_carrier and "image-carrier:" + SHARED_V2_CARRIER not in list(public_manifest.get("capabilities") or []):
+            raise HTTPException(409, "image_carrier_unsupported")
         cli_model = body.get("cli_model", "")
         if cli_model:
             from .cli_models import validate_model
@@ -3449,9 +3479,12 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     "task_id": task_id,
                     "idempotency_key": idempotency_key,
                     "service_id": service_id,
-                    "prompt": prompt,
+                    # A v2 provider rebuilds the prompt from chat; sending it twice
+                    # would halve the room for images inside the order limit.
+                    "prompt": "[chat]" if image_carrier else prompt,
                     "max_tokens": max_tokens,
                     **({"chat": chat} if chat else {}),
+                    **({"image_carrier": image_carrier} if image_carrier else {}),
                     **({"cli_model": cli_model} if cli_model else {}),
                     **({"prompt_format": prompt_format} if prompt_format != "text" else {}),
                     **({"ai_permission": body["ai_permission"]} if "ai_permission" in body else {}),

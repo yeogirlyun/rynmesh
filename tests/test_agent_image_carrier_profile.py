@@ -1241,7 +1241,7 @@ def test_scope_cleanup_on_callbacks_concurrent_threads_exceptions_and_cancellati
 # ============================================================================
 
 
-def test_peer_route_blocks_expanded_image_with_zero_execute_order_and_allows_legacy_small_image():
+def test_peer_route_compresses_expanded_image_for_legacy_carrier_and_keeps_small_image():
     bridge, _, row, services = _make_bridge()
     row.update(source="peer", peer_id="own-peer")
     calls: list[dict[str, object]] = []
@@ -1259,19 +1259,21 @@ def test_peer_route_blocks_expanded_image_with_zero_execute_order_and_allows_leg
     services["execute_order"] = execute_order
     services["cancel_order"] = lambda _: None
 
-    # 1) Expanded local-sized image (> 128 KiB) must be refused before execute_order
-    with pytest.raises(AgentToolRejected) as exc_info:
-        bridge.complete(row["id"], _user_image_messages(PNG_3_46MIB), [], lambda: False)
-    assert str(exc_info.value) == "agent_image_input_unsupported"
-    assert exc_info.value.details.get("reason") == "peer_expanded_image_carrier_unsupported"
-    assert len(calls) == 0
+    # 1) An expanded local-sized image (> 128 KiB) is compressed to the legacy carrier
+    #    limit and sent, and the compression is reported instead of failing the task.
+    resized = bridge.complete(row["id"], _user_image_messages(PNG_3_46MIB), [], lambda: False)
+    assert len(calls) == 1 and resized["shared_image_resize"]["resized"] == 1
+    sent_url = calls[0]["chat"]["messages"][0]["content"][1]["image_url"]["url"]
+    ok_sent, _ = check_legacy_public_carrier_compatible([{"role": "user", "content": [
+        {"type": "image_url", "image_url": {"url": sent_url}}]}])
+    assert ok_sent and "image_carrier" not in calls[0]
 
     # 2) Legacy-sized canonical image (<= 128 KiB, <= 180,000 chars) still dispatches to peer
     ok_legacy, reason = check_legacy_public_carrier_compatible(_user_image_messages(PNG_SEED_SMALL))
     assert ok_legacy and reason is None
     result = bridge.complete(row["id"], _user_image_messages(PNG_SEED_SMALL), [], lambda: False)
     assert result["message"]["content"] == ANSWER
-    assert len(calls) == 1
+    assert len(calls) == 2 and "shared_image_resize" not in result
 
 
 # ============================================================================

@@ -214,7 +214,8 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                 status = exc.code
                 diag = read_http_failure(exc, phase)
                 exc.close()
-                code = text = ("source_protocol_parameters_unsupported" if status in {400, 422}
+                code = text = ("upstream_image_rejected" if diag.get("image_rejected")
+                               else "source_protocol_parameters_unsupported" if status in {400, 422}
                                else "upstream_http_failed")
             elif isinstance(exc, OSError):
                 timeout = isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)

@@ -74,6 +74,7 @@ RUNTIME_ERROR_CODES = frozenset({
     "stream_delivery_failed", "upstream_http_failed", "upstream_response_invalid",
     "source_protocol_parameters_unsupported",
     "source_protocol_response_invalid",
+    "upstream_image_rejected",
 })
 
 
@@ -207,7 +208,10 @@ class OpenAICompatibleAdapter:
                 pass
             finally:
                 exc.close()
-            raise AdapterError(f"local API request failed: {code}", code=code, diagnostics=describe(exc, phase, value)) from None
+            diagnostics = describe(exc, phase, value)
+            if classify_errors and diagnostics.get("image_rejected"):
+                code = "upstream_image_rejected"  # The model refused the image, not the request.
+            raise AdapterError(f"local API request failed: {code}", code=code, diagnostics=diagnostics) from None
         except OSError as exc:
             timed_out = isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)
             code = "inference_timeout" if timed_out else "runtime_connection_failed"
@@ -460,7 +464,8 @@ class OpenAICompatibleAdapter:
         except urllib.error.HTTPError as exc:
             diagnostics = read_http_failure(exc, phase)
             exc.close()
-            raise failure("upstream_http_failed", diagnostics) from None
+            raise failure("upstream_image_rejected" if diagnostics.get("image_rejected") else "upstream_http_failed",
+                          diagnostics) from None
         except OSError as exc:
             timed_out = isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)
             raise failure("inference_timeout" if timed_out else "runtime_connection_failed", describe(exc, phase)) from None

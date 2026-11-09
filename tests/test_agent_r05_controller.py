@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import FastAPI
 from test_agent_peer_binding import paired  # noqa: F401
-from test_agent_runtime import assistant, make_runtime
+from test_agent_runtime import assistant, fold_spy, make_runtime
 
 from rynmesh.agent_runtime.bridge import build_agent_integrations
 from rynmesh.agent_runtime.runtime import AgentRuntime
@@ -64,9 +64,12 @@ def test_production_peer_stream_reaches_runtime_deltas_without_catalog_override(
         app.state.agent_runtime = runtime
         runtime.update_settings({"enabled": True, "model_id": selected["id"], "max_context_chars": 100000})
         task = runtime.create({"message": "Synthetic stream plumbing only."})
+        folded = fold_spy(monkeypatch)
         runtime.run_once()
         saved = runtime.get(task["id"])
-        assert len([e for e in saved["events"] if e["type"] == "text_delta"]) == 12
+        # All 12 streamed deltas were persisted, then folded into the final reply.
+        assert len(folded) == 12
+        assert not [e for e in saved["events"] if e["type"] == "text_delta"]
         assert saved["control_revision"] == task["control_revision"]
         assert saved["event_cursor"] > task["event_cursor"] and len(observed) == 1
     finally:

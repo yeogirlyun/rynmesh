@@ -9,7 +9,7 @@ from collections import deque
 from types import SimpleNamespace
 
 import pytest
-from test_agent_runtime import advance, make_runtime
+from test_agent_runtime import advance, fold_spy, make_runtime
 
 from rynmesh.agent_runtime.bridge import AgentModelBridge
 from rynmesh.agent_runtime.models import ModelCatalog
@@ -425,7 +425,7 @@ def test_streamed_deltas_queue_one_wakeup_and_keep_execution_events():
     assert len(rpc.take_deltas()) == 2048
 
 
-def test_agent_runtime_steps_continue_the_same_codex_thread(codex, tmp_path):
+def test_agent_runtime_steps_continue_the_same_codex_thread(codex, tmp_path, monkeypatch):
     from test_agent_reasoning_effort import codex_model
 
     runtime, _, tools, _ = make_runtime(tmp_path / "agent")
@@ -438,6 +438,7 @@ def test_agent_runtime_steps_continue_the_same_codex_thread(codex, tmp_path):
     codex.replies.extend([propose("inspect_service", service_id="svc1"), propose("inspect_service", service_id="svc2"),
                           answer("Both services inspected.")])
     created = runtime.create({"message": "inspect svc1 and svc2"})
+    folded = fold_spy(monkeypatch)
     advance(runtime, 8)
     done = runtime.get(created["id"])
     assert done["status"] == "completed", done.get("error")
@@ -452,7 +453,9 @@ def test_agent_runtime_steps_continue_the_same_codex_thread(codex, tmp_path):
         (message,) = codex.payload(params)["messages"]
         assert message["role"] == "tool"
     events = runtime.store.read()["tasks"][created["id"]]["events"]
-    assert "".join(event["text"] for event in events if event["type"] == "text_delta") == "Both services inspected."
+    # The answer streamed, then folded into the final assistant event.
+    assert "".join(event["text"] for event in folded) == "Both services inspected."
+    assert not [event for event in events if event["type"] == "text_delta"]
 
 
 # Window-scoped retention: (command, model, effort, requester, window) groups.

@@ -18,10 +18,12 @@ from ..llm_package.api_formats import normalize
 from ..llm_package.chat import validate_chat
 from ..llm_package.data_release import DataReleaseError, model_request_scope
 from ..llm_package.image_input_profile import (
+    SHARED_V2_CARRIER,
     check_legacy_public_carrier_compatible,
     cleared_internal_image_scope,
     internal_image_scope,
     prepare_internal_image_profile,
+    shared_image_carrier_scope,
 )
 from . import data_policy, image_capabilities, output_policy, reasoning
 from .model_events import (
@@ -183,6 +185,8 @@ class AgentModelBridge:
             raise AgentError("agent_model_destination_changed")
         task_id = request_id if isinstance(request_id, str) and re.fullmatch(r"agent_[0-9a-f]{32}", request_id) else "agent_" + uuid.uuid4().hex
         has_images = image_capabilities.message_has_image_input(messages)
+        shared_carrier = None
+        shared_resize = None
         if has_images:
             if target.get("source") == "peer":
                 cap = image_capabilities.evaluate_image_capability(target, model_client=self)
@@ -190,12 +194,17 @@ class AgentModelBridge:
                     getattr(self, "supports_image_input", False) is not True
                     or target.get("agent_supported") is False
                     or target.get("adapter") in image_capabilities.TEXT_ONLY_CLI_ADAPTERS
-                    or (
-                        cap["model_image_support"] == "unsupported"
-                        and cap["image_capability_reason"] != "peer_image_route_unverified"
-                    )
+                    or cap["supports_image_input"] is not True
                 ):
                     image_capabilities.require_route_image_support(target, model_client=self)
+                # A shared model gets the same images as a local one; only what
+                # exceeds the agreed carrier is compressed, and that is reported.
+                shared_carrier = SHARED_V2_CARRIER if cap["image_transport"] == "peer_inline_v2" else None
+                try:
+                    messages, shared_resize = image_capabilities.fit_images_for_shared_route(
+                        messages, shared_carrier or "inline-v1")
+                except (ValueError, OSError):
+                    raise AgentError("agent_image_invalid") from None
             else:
                 image_capabilities.require_route_image_support(target, model_client=self)
         policy = output_policy.select(target, messages, tool_specs, request_cap=max_output_tokens)
@@ -203,7 +212,7 @@ class AgentModelBridge:
         image_profile = None
         if has_images:
             if target.get("source") == "peer":
-                legacy_ok, legacy_reason = check_legacy_public_carrier_compatible(messages)
+                legacy_ok, legacy_reason = (True, None) if shared_carrier else check_legacy_public_carrier_compatible(messages)
                 if not legacy_ok:
                     raise AgentToolRejected(
                         "agent_image_input_unsupported",
@@ -246,7 +255,7 @@ class AgentModelBridge:
                             },
                         ) from None
                     raise AgentError("agent_image_invalid") from None
-        with internal_image_scope(image_profile):
+        with internal_image_scope(image_profile), shared_image_carrier_scope(shared_carrier):
             chat = normalize({"messages": messages, "tools": tool_specs, "max_tokens": maximum}, "chat")
         if reasoning_effort is not None:
             chat["reasoning_effort"] = reasoning.validate(target, reasoning_effort)
@@ -406,6 +415,7 @@ class AgentModelBridge:
                     "network_id": self.catalog.network, "provider_peer_id": target["peer_id"],
                     "service_id": target["service_id"], "chat": chat, "max_tokens": maximum,
                     "task_id": task_id, "transport": "p2p", "_prefer_lan": True, "_no_retention": True,
+                    **({"image_carrier": shared_carrier} if shared_carrier else {}),
                     **({"conversation_key": window} if window else {})}
                 if target.get("cli_model"):
                     request["cli_model"] = target["cli_model"]
@@ -420,6 +430,7 @@ class AgentModelBridge:
                                       "ai_permission_denied": "agent_model_destination_changed",
                                       "source_protocol_parameters_unsupported": "agent_model_protocol_unsupported",
                                       "source_protocol_response_invalid": "agent_model_protocol_invalid",
+                                      "upstream_image_rejected": "agent_model_image_rejected",
                                       "model_daily_quota_exhausted": "agent_model_quota_exhausted"}.get(result.get("error_code"), "agent_inference_failed"))
             stopped = cancelled()
             if stopped or expired():
@@ -427,7 +438,8 @@ class AgentModelBridge:
                 err = AgentModelResponseError(usage, finish, cancellation_reason(cancelled) if stopped else "agent_inference_timeout")
                 err.request_id = task_id
                 raise err
-            response = {**self._response(result, target, tool_specs, policy), "request_policy": request_policy, "request_id": task_id}
+            response = {**self._response(result, target, tool_specs, policy), "request_policy": request_policy, "request_id": task_id,
+                        **({"shared_image_resize": shared_resize} if shared_resize and shared_resize.get("resized") else {})}
             try:
                 model_events.finish(response)
             except ModelEventError:
@@ -464,6 +476,7 @@ class AgentModelBridge:
             code = {"inference_timeout": "agent_inference_timeout",
                     "runtime_connection_failed": "agent_model_connection_failed",
                     "upstream_http_failed": "agent_model_upstream_failed",
+                    "upstream_image_rejected": "agent_model_image_rejected",
                     "source_protocol_parameters_unsupported": "agent_model_protocol_unsupported",
                     "source_protocol_response_invalid": "agent_model_protocol_invalid",
                     "runtime_busy": "agent_model_busy",

@@ -11,9 +11,31 @@ from urllib.error import HTTPError
 REASONS = {"dns_temporary", "dns_not_found", "tls_certificate", "tls", "reset", "refused", "timeout", "http", "connection", "quota"}
 
 
+_IMAGE_WORDS = ("image", "vision", "multimodal", "picture")
+_REFUSAL_WORDS = ("not support", "unsupported", "unknown variant", "only supported", "does not accept",
+                  "not allowed", "expected `text`", "expected text", "not available", "invalid content", "cannot process")
+
+
+def image_rejection(envelope):
+    """True when a 4xx error body says the model refused image input. Keeps no text."""
+    if not isinstance(envelope, dict):
+        return False
+    parts = []
+    for container in (envelope, envelope.get("error") if isinstance(envelope.get("error"), dict) else {}):
+        for key in ("message", "detail", "code", "type", "param", "error"):
+            value = container.get(key)
+            if isinstance(value, str):
+                parts.append(value[:2000])
+    joined = " ".join(parts).lower()
+    return any(word in joined for word in _IMAGE_WORDS) and any(word in joined for word in _REFUSAL_WORDS)
+
+
 def describe(exc, phase="request", envelope=None):
     if isinstance(exc, HTTPError):
         result = {"network_reason": "http", "network_phase": phase, "http_status": exc.code}
+        if 400 <= exc.code < 500 and image_rejection(envelope):
+            # A closed flag only; the response body itself is never retained.
+            result["image_rejected"] = True
         detail = envelope.get("error") if isinstance(envelope, dict) else None
         if isinstance(detail, dict):
             code = detail.get("code") or detail.get("type")

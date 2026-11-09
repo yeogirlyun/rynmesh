@@ -14,6 +14,7 @@ import stat
 from pathlib import Path
 from typing import Any
 
+from ..llm_package.model_settings import KNOWN_VENDOR_IMAGE_INPUT
 from .store import AgentToolRejected
 
 VERIFIED_API_IMAGE_ADAPTERS = frozenset({
@@ -23,6 +24,63 @@ VERIFIED_API_IMAGE_ADAPTERS = frozenset({
     "anthropic_messages",
 })
 VERIFIED_CLI_IMAGE_ADAPTERS = frozenset({"codex_cli"})
+# Shared models: the provider judges its own model and publishes the result.
+PEER_IMAGE_CARRIER_V2 = "image-carrier:inline-v2"
+OWNER_IMAGE_SETTINGS = frozenset({"auto", "supported", "unsupported"})
+LEARNED_REJECTION_SECONDS = 24 * 3600
+_LEARNED_REJECTIONS: dict[str, float] = {}
+
+
+def _learned_key(row: dict[str, Any]) -> str:
+    return "|".join(str(row.get(key) or "") for key in ("id", "model_id", "cli_model", "destination_revision"))
+
+
+def mark_image_rejected(row: dict[str, Any] | None, *, now: float | None = None) -> None:
+    """Remember for a day that this exact model route refused an image."""
+    if isinstance(row, dict) and row:
+        import time as _time
+        if len(_LEARNED_REJECTIONS) >= 256:
+            _LEARNED_REJECTIONS.pop(next(iter(_LEARNED_REJECTIONS)))
+        _LEARNED_REJECTIONS[_learned_key(row)] = (now if now is not None else _time.time()) + LEARNED_REJECTION_SECONDS
+
+
+def learned_image_rejection(row: dict[str, Any] | None, *, now: float | None = None) -> bool:
+    if not isinstance(row, dict) or not row:
+        return False
+    import time as _time
+    key = _learned_key(row)
+    expires = _LEARNED_REJECTIONS.get(key)
+    if expires is None:
+        return False
+    if (now if now is not None else _time.time()) >= expires:
+        _LEARNED_REJECTIONS.pop(key, None)
+        return False
+    return True
+
+
+def reset_learned_image_rejections() -> None:
+    _LEARNED_REJECTIONS.clear()
+
+
+def _owner_image_setting(row: dict[str, Any], source_record: dict[str, Any] | None, model_id: str) -> str:
+    """The owner's per-model "image input" choice: auto, supported or unsupported."""
+    candidates: list[Any] = []
+    settings = row.get("model_settings")
+    if isinstance(settings, dict):
+        candidates.append((settings.get("overrides") or {}).get("image_input"))
+    if isinstance(source_record, dict) and model_id:
+        per_model = ((source_record.get("model_settings") or {}).get(model_id) or {})
+        if isinstance(per_model, dict):
+            candidates.append((per_model.get("overrides") or {}).get("image_input"))
+    for value in candidates:
+        if value in {"supported", "unsupported"}:
+            return value
+    return "auto"
+
+
+def _known_vendor_image_input(model_id: str) -> bool:
+    normalized = str(model_id or "").strip().lower().rsplit("/", 1)[-1]
+    return bool(normalized) and any(normalized.startswith(prefix) for prefix in KNOWN_VENDOR_IMAGE_INPUT)
 TEXT_ONLY_CLI_ADAPTERS = frozenset({"antigravity_cli", "claude_cli"})
 
 UNSUPPORTED_CAPABILITY_MARKERS = frozenset({
@@ -311,6 +369,15 @@ def evaluate_image_capability(
         meta_dicts.append(row)
 
     model_support, meta_reason = _inspect_explicit_model_image_metadata(meta_dicts, capability_tokens)
+    owner_setting = _owner_image_setting(row, source_record, model_id)
+    if owner_setting == "supported":
+        model_support, meta_reason = "supported", "owner_setting_supported"
+    elif owner_setting == "unsupported":
+        model_support, meta_reason = "unsupported", "owner_setting_unsupported"
+    elif learned_image_rejection(row):
+        model_support, meta_reason = "unsupported", "upstream_rejected_image"
+    elif model_support == "unknown" and _known_vendor_image_input(model_id):
+        model_support, meta_reason = "supported", "known_vendor_image_input"
 
     def _result(
         *,
@@ -379,13 +446,28 @@ def evaluate_image_capability(
         )
 
     if source == "peer":
+        # The provider judges its own model with the same rules and publishes
+        # image-input / image-unsupported. Without a declaration the support
+        # is unknown, exactly like an unprobed local API model.
+        if model_support == "unsupported":
+            return _result(
+                supports_input=False,
+                image_support="unsupported",
+                model_image_support="unsupported",
+                carrier_available=False,
+                transport="none",
+                reason=("provider_declared_image_unsupported" if meta_reason == "route_capability_text_only"
+                        else meta_reason or "provider_declared_image_unsupported"),
+            )
         return _result(
-            supports_input=False,
-            image_support="unsupported",
+            supports_input=True,
+            image_support="supported" if model_support == "supported" else "unknown",
             model_image_support=model_support,
-            carrier_available=False,
-            transport="none",
-            reason=meta_reason if model_support == "unsupported" and meta_reason else "peer_image_route_unverified",
+            carrier_available=True,
+            # The catalog row keeps the computed transport, not the raw manifest list.
+            transport=("peer_inline_v2" if PEER_IMAGE_CARRIER_V2 in capability_tokens
+                       or row.get("image_transport") == "peer_inline_v2" else "peer_inline_v1"),
+            reason=meta_reason if model_support == "supported" and meta_reason else "peer_image_support_unknown",
         )
 
     if source == "local_service" and adapter in VERIFIED_CLI_IMAGE_ADAPTERS:
@@ -407,7 +489,7 @@ def evaluate_image_capability(
             reason=meta_reason if model_support == "supported" and meta_reason else "verified_codex_cli_image_carrier",
         )
 
-    if source == "local_api" and adapter in VERIFIED_API_IMAGE_ADAPTERS:
+    if source in {"local_api", "local_service"} and adapter in VERIFIED_API_IMAGE_ADAPTERS:
         if model_support == "unsupported":
             return _result(
                 supports_input=False,
@@ -2838,3 +2920,116 @@ def materialize_operation_images(
         "route_capability": cap,
         "status": "materialized",
     }
+
+
+def _compress_image_bytes(raw: bytes, max_bytes: int) -> bytes:
+    """Re-encode one image as JPEG small enough for a shared-model carrier."""
+    from PIL import Image, ImageOps
+
+    with Image.open(io.BytesIO(raw)) as source:
+        source.seek(0)  # GIF: first frame only.
+        frame = ImageOps.exif_transpose(source).convert("RGBA")
+    background = Image.new("RGB", frame.size, "white")
+    background.paste(frame, mask=frame.getchannel("A"))
+    for side in (2048, 1600, 1280, 1024, 768, 512):
+        candidate = background.copy()
+        candidate.thumbnail((side, side))
+        for quality in (82, 68, 50, 35):
+            output = io.BytesIO()
+            candidate.save(output, "JPEG", quality=quality, optimize=True)
+            if len(output.getvalue()) <= max_bytes:
+                return output.getvalue()
+    raise ValueError("image_compression_failed")
+
+
+def fit_images_for_shared_route(messages: list[dict[str, Any]], carrier: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Keep shared-model images inside the agreed carrier, compressing only what does not fit.
+
+    The local route is never touched. A compressed image is reported, never silent.
+    """
+    from ..llm_package.image_input_profile import (
+        LEGACY_PUBLIC_ALLOWED_MIMES,
+        LEGACY_PUBLIC_MAX_IMAGE_BYTES,
+        SHARED_V2_ALLOWED_MIMES,
+        SHARED_V2_CARRIER,
+        SHARED_V2_MAX_IMAGE_BYTES,
+        SHARED_V2_MAX_TOTAL_IMAGE_BYTES,
+    )
+
+    v2 = carrier == SHARED_V2_CARRIER
+    single = SHARED_V2_MAX_IMAGE_BYTES if v2 else LEGACY_PUBLIC_MAX_IMAGE_BYTES
+    allowed = SHARED_V2_ALLOWED_MIMES if v2 else LEGACY_PUBLIC_ALLOWED_MIMES
+    out = copy.deepcopy(messages)
+    found: list[tuple[dict[str, Any], str, bytes]] = []
+    for message in out:
+        if not isinstance(message, dict) or message.get("role") != "user" or not isinstance(message.get("content"), list):
+            continue
+        for part in message["content"]:
+            if not isinstance(part, dict) or part.get("type") != "image_url":
+                continue
+            url = (part.get("image_url") or {}).get("url")
+            match = _DATA_IMAGE_URL_RE.fullmatch(url) if isinstance(url, str) else None
+            if not match:
+                continue
+            mime = "image/jpeg" if match.group(1).lower() == "image/jpg" else match.group(1).lower()
+            try:
+                raw = base64.b64decode(match.group(2), validate=True)
+            except ValueError:
+                continue
+            found.append((part, mime, raw))
+    def replace(part: dict[str, Any], data: bytes) -> None:
+        part["image_url"]["url"] = "data:image/jpeg;base64," + base64.b64encode(data).decode("ascii")
+
+    sizes = [len(raw) for _part, _mime, raw in found]
+    resized: set[int] = set()
+    for index, (part, mime, raw) in enumerate(found):
+        if mime in allowed and len(raw) <= single:
+            continue
+        smaller = _compress_image_bytes(raw, single)
+        replace(part, smaller)
+        sizes[index] = len(smaller)
+        resized.add(index)
+    if v2 and found and sum(sizes) > SHARED_V2_MAX_TOTAL_IMAGE_BYTES:
+        target = SHARED_V2_MAX_TOTAL_IMAGE_BYTES // len(found)
+        for index, (part, _mime, _raw) in enumerate(found):
+            if sizes[index] <= target:
+                continue
+            current = base64.b64decode(part["image_url"]["url"].split(",", 1)[1])
+            smaller = _compress_image_bytes(current, target)
+            replace(part, smaller)
+            sizes[index] = len(smaller)
+            resized.add(index)
+    report = {"carrier": carrier, "images": len(found), "resized": len(resized),
+              "original_bytes": sum(len(found[i][2]) for i in resized),
+              "final_bytes": sum(sizes[i] for i in resized)}
+    return out, report
+
+
+OMITTED_IMAGE_NOTE = ("[An image attachment was not sent: the selected model cannot read images on this route. "
+                      "Its file name and local path, when it came from a file, are listed in this message.]")
+
+
+def omit_images(messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int, bool]:
+    """Replace every image part with a short note, so old images never fail a text-only request.
+
+    Returns (messages, omitted_count, latest_owner_message_had_images).
+    """
+    out = copy.deepcopy(messages)
+    omitted = 0
+    latest_user = max((index for index, message in enumerate(out)
+                       if isinstance(message, dict) and message.get("role") == "user"), default=-1)
+    latest_had = False
+    for index, message in enumerate(out):
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, list):
+            continue
+        replaced = []
+        for part in content:
+            if isinstance(part, dict) and (part.get("type") in {"image_url", "image", "input_image"} or "image_url" in part):
+                omitted += 1
+                latest_had = latest_had or index == latest_user
+                replaced.append({"type": "text", "text": OMITTED_IMAGE_NOTE})
+            else:
+                replaced.append(part)
+        message["content"] = replaced
+    return out, omitted, latest_had

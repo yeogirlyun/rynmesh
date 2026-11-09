@@ -3141,3 +3141,5 @@
 [data-theme="dark"] .ra-connection.is-stopped { background: #1e293b; border-color: #334155; }
 [data-theme="dark"] .ra-connection p, [data-theme="dark"] .ra-connection-heading small { color: #a2aec0; }
 @media (prefers-reduced-motion: reduce) { .ra-connection .ra-spinner { animation: none; } }
+
+.ra-error-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }

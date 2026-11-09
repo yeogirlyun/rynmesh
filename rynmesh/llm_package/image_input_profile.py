@@ -26,6 +26,14 @@ MAX_INTERNAL_TOTAL_IMAGE_PIXELS = 32_000_000
 LEGACY_PUBLIC_MAX_URL_CHARS = 180_000
 LEGACY_PUBLIC_MAX_IMAGE_BYTES = 128 * 1024
 LEGACY_PUBLIC_MAX_IMAGES_PER_MESSAGE = 4
+# Shared-model carrier v2: both computers are new enough to agree on larger
+# inline images. The request still has to fit the 16 MiB order limit after
+# base64 and encryption, so the per-request total stays below the local 12 MiB.
+SHARED_V2_CARRIER = "inline-v2"
+SHARED_V2_MAX_IMAGE_BYTES = 6 * 1024 * 1024
+SHARED_V2_MAX_TOTAL_IMAGE_BYTES = 6 * 1024 * 1024
+SHARED_V2_MAX_IMAGES = 4
+SHARED_V2_ALLOWED_MIMES = frozenset({"image/png", "image/jpeg", "image/webp", "image/gif"})
 LEGACY_PUBLIC_ALLOWED_MIMES = frozenset({"image/png", "image/jpeg", "image/webp"})
 
 _CANONICAL_DATA_IMAGE_URL_RE = re.compile(
@@ -200,6 +208,25 @@ def internal_image_scope(profile: InternalImageProfile | None):
         yield profile
     finally:
         _CURRENT_PROFILE.reset(token)
+
+
+_SHARED_CARRIER: ContextVar[str | None] = ContextVar("ryn_shared_image_carrier", default=None)
+
+
+def current_shared_image_carrier() -> str | None:
+    return _SHARED_CARRIER.get()
+
+
+@contextmanager
+def shared_image_carrier_scope(carrier: str | None):
+    """Accept shared-carrier v2 image sizes while validating one shared-model order."""
+    if carrier not in {None, SHARED_V2_CARRIER}:
+        raise ValueError("unsupported_shared_image_carrier")
+    token = _SHARED_CARRIER.set(carrier)
+    try:
+        yield carrier
+    finally:
+        _SHARED_CARRIER.reset(token)
 
 
 @contextmanager

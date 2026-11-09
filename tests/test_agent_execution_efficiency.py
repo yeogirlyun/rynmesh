@@ -2,7 +2,7 @@
 from types import SimpleNamespace
 
 import pytest
-from test_agent_runtime import assistant, make_runtime
+from test_agent_runtime import assistant, fold_spy, make_runtime
 
 from rynmesh.agent_runtime.store import AgentStore
 
@@ -29,6 +29,7 @@ def test_small_stream_chunks_are_coalesced_without_losing_first_or_final_text(
     runtime, model, _, key = make_runtime(tmp_path)
     created = runtime.create({"message": "Inspect a bounded set of facts."})
     clock = simulated_clock(monkeypatch, runtime)
+    folded = fold_spy(monkeypatch)
     pieces = [f"片段{index} " for index in range(count)]
     text = "".join(pieces)
 
@@ -45,9 +46,10 @@ def test_small_stream_chunks_are_coalesced_without_losing_first_or_final_text(
     model.complete = streaming
     runtime.run_once()
     done = AgentStore(tmp_path, key).read()["tasks"][created["id"]]
-    deltas = [event for event in done["events"] if event["type"] == "text_delta"]
-    # Final assistant text is normalized by the turn controller; recoverable
-    # deltas below must still preserve every streamed byte.
+    # Final assistant text is normalized by the turn controller; the deltas
+    # persisted while streaming (folded once the reply is final) kept every byte.
+    deltas = folded
+    assert not [event for event in done["events"] if event["type"] == "text_delta"]
     assert done["status"] == "completed" and done["result"] == text.strip()
     assert done["messages"][-1]["content"] == text.strip()
     assert "".join(event["text"] for event in deltas) == text
@@ -65,6 +67,7 @@ def test_large_stream_bursts_do_not_force_a_commit_per_callback(tmp_path, monkey
     runtime, model, _, _ = make_runtime(tmp_path)
     created = runtime.create({"message": "Report the observations."})
     clock = simulated_clock(monkeypatch, runtime)
+    folded = fold_spy(monkeypatch)
     pieces = ["x" * 1000 for _ in range(16)]
 
     def streaming(model_id, messages, specs, cancelled, on_event):
@@ -76,10 +79,11 @@ def test_large_stream_bursts_do_not_force_a_commit_per_callback(tmp_path, monkey
     model.complete = streaming
     runtime.run_once()
     done = runtime.get(created["id"])
-    deltas = [event for event in done["events"] if event["type"] == "text_delta"]
     assert done["status"] == "completed" and done["result"] == "".join(pieces)
-    assert "".join(event["text"] for event in deltas) == done["result"]
-    assert len(deltas) == 2
+    # Streamed text was persisted in two commits, then folded into the final reply.
+    assert "".join(event["text"] for event in folded) == done["result"]
+    assert len(folded) == 2
+    assert not [event for event in done["events"] if event["type"] == "text_delta"]
 
 
 def test_buffered_stream_tail_cannot_publish_a_late_answer_after_pause(tmp_path, monkeypatch):

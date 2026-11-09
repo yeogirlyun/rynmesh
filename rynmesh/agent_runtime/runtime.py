@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import math
 import re
 import threading
 import time
@@ -22,6 +23,7 @@ from . import (
     credential_control,
     data_policy,
     diagnostic_log,
+    event_compaction,
     image_capabilities,
     knowledge,
     lifecycle,
@@ -41,9 +43,11 @@ from . import (
     verification,
 )
 from .control import (
+    acknowledgeable,
     allowed_actions,
     ambiguous,
     check_version,
+    reconciliation_active,
     close_queue,
     recoverable_read_in_flight,
     remember_request,
@@ -51,7 +55,7 @@ from .control import (
     settle,
 )
 from .input_attachments import attach_to_message, parse_attachments
-from .loop import ALL_INTERNAL_NAMES, ALL_INTERNAL_SPECS, AgentLoop
+from .loop import ALL_INTERNAL_NAMES, ALL_INTERNAL_SPECS, OWNER_TURN_EVENTS, AgentLoop
 from .prompt import (
     INTERNAL_NAMES,
     PROMPT_VERSION,
@@ -60,6 +64,7 @@ from .prompt import (
 from .protocol import digest, event, hydrated_events, model_retry_authority, now, sanitized, task
 from .state import (
     PUBLIC_STATE_FIELDS,
+    compact_goal_history,
     initialize,
     owner_update,
     synchronize,
@@ -91,7 +96,22 @@ PUBLIC_FIELDS = ("fork", "id", "client_request_id", "title", "model_id", "reason
                  "model_destination", "local_execution", "project", "verification_evidence", "reconciliation", "archived", "result_refs", "file_artifact_revision",
                  "conversation_revision", "conversation_event_cursor", "source", "automation_id", "automation_run_id", "automation_kind",
                  "latest_turn_is_silent_heartbeat", "automation_notification", "parent_task_id", "subagent_ids",
-                 "limits_source", "execution_segment", "archive_reason", *PUBLIC_STATE_FIELDS)
+                 "limits_source", "execution_segment", "archive_reason", "continued_from", "continued_to", *PUBLIC_STATE_FIELDS)
+CONTINUATION_PREFIX = ("[Continued from an earlier conversation that grew too long. The summary below was "
+                       "written by Ryn from that conversation; it is context, not a new instruction.]\n\n")
+CONTINUATION_SEPARATOR = "\n\n[The owner's new message follows.]\n\n"
+
+
+class ContinueInNewTask(Exception):
+    """Raised inside a transaction (rolling it back) when a conversation must continue elsewhere."""
+
+
+UNKNOWN_OUTCOME_NOTE = (
+    "This step started but its result was never confirmed (the owner stopped the task, Ryn restarted, "
+    "the request timed out, or the response was lost). It may have fully run, partly run, or not run at all. "
+    "Before doing it again, check the actual state with read-only tools. Do not assume it failed and do not "
+    "repeat it blindly."
+)
 VISUAL_SUFFIXES = (".svg", ".html", ".htm", ".png", ".jpg", ".jpeg", ".gif", ".webp")
 
 
@@ -100,6 +120,9 @@ def public_task(row: dict, *, summary: bool = False, settings: dict | None = Non
                 data: dict | None = None) -> dict:
     synchronize(row)
     result = copy.deepcopy({key: row[key] for key in PUBLIC_FIELDS if key in row and not (summary and key in {"messages", "pending_user_messages", "events"})})
+    if result.get("run_state") == "reconciling" and not reconciliation_active(row):
+        # A finished "unknown" reconciliation is waiting for the owner, not running.
+        result["run_state"] = "paused"
     if "events" in result:
         result["events"] = hydrated_events(row, result["events"])
     # Metadata changes advance revision too; only an actual completed response
@@ -658,6 +681,15 @@ class AgentRuntime(AgentLoop):
                 provenance=row.get("context_budget_provenance"),
                 context_policy=context_policy,
             ))
+        # An image the selected route cannot carry becomes a short note, so a
+        # picture in the history never fails this or any later request. Only an
+        # explicit image inspection still fails as a tool error.
+        if stage != "image_inspection" and image_capabilities.message_has_image_input(dispatch_messages):
+            route_cap = image_capabilities.evaluate_image_capability(model, model_client=self.model)
+            if route_cap["supports_image_input"] is not True:
+                dispatch_messages, omitted, latest = image_capabilities.omit_images(dispatch_messages)
+                if omitted and not nested:
+                    self._note_images_omitted(row["id"], omitted, route_cap["image_capability_reason"], latest)
         if image_capabilities.message_has_image_input(dispatch_messages):
             image_capabilities.require_route_image_support(model, model_client=self.model)
         policy = output_policy.select(model, dispatch_messages, specs, request_cap=output_cap)
@@ -684,13 +716,29 @@ class AgentRuntime(AgentLoop):
             return self.model.complete(
                 row["model_id"], dispatch_messages, specs, cancelled, on_event,
                 **options, **({"max_output_tokens": allowed} if getattr(self.model, "supports_output_token_limit", False) else {}))
-        try:
+        def _metered():
             # The model tag lets later density calibration ignore another model's usage.
-            response = self._meter_model(meter_row, _invoke_model,
+            return self._meter_model(meter_row, _invoke_model,
                 input_bound=policy["estimated_input_tokens"], output_bound=policy["effective_cap"],
                 output_policy_record={**policy, "model_id": row["model_id"], "model_profile": profile_record},
                 nested=nested, stage=stage,
                 can_reduce_output=getattr(self.model, "supports_output_token_limit", False) is True)
+        try:
+            try:
+                response = _metered()
+            except AgentError as exc:
+                # The model or an older sharing computer refused the images: remember
+                # that for this route and retry once without them, so the task goes on.
+                if (str(exc) != "agent_model_image_rejected" or stage == "image_inspection"
+                        or not image_capabilities.message_has_image_input(dispatch_messages)):
+                    raise
+                image_capabilities.mark_image_rejected(model)
+                dispatch_messages, omitted, latest = image_capabilities.omit_images(dispatch_messages)
+                if not nested:
+                    self._note_images_omitted(row["id"], omitted, "upstream_rejected_image", latest)
+                image_report = None
+                dispatched = False
+                response = _metered()
         except Exception:
             if dispatched:
                 if image_report and image_report.get("has_candidate_artifacts") and image_report.get("image_prepared"):
@@ -737,6 +785,9 @@ class AgentRuntime(AgentLoop):
                     )
                     self._record_image_request_linkage(row, attempted_linkage)
             raise
+        resize = response.get("shared_image_resize") if isinstance(response, dict) else None
+        if isinstance(resize, dict) and resize.get("resized") and not nested:
+            self._note_shared_image_resize(row["id"], resize)
         if image_report and image_report.get("has_candidate_artifacts"):
             dispatch_status = "submitted" if image_report.get("image_prepared") else "not_dispatched"
             msg = response.get("message") if isinstance(response, dict) else None
@@ -1779,13 +1830,25 @@ class AgentRuntime(AgentLoop):
             check_version(row, value, goal=intent is not None)
             if not data["settings"]["enabled"]:
                 raise AgentError("agent_disabled")
+            if acknowledgeable(row):
+                if intent is not None and not allowed_actions(row, data["settings"])[intent]["enabled"]:
+                    raise AgentError("agent_operation_unresolved")
+                self._acknowledge_unknown_in_tx(row)
             resumable_interrupted = row["status"] == "interrupted" and (not row["in_flight"] or recoverable_read_in_flight(row)) and not ambiguous(row)
-            if intent is None and ((row["status"] not in {"completed", "failed", "paused"} and not resumable_interrupted) or (row["in_flight"] and not resumable_interrupted) or row["queue"] or row["pending_approval"] or row["pending_input"]):
+            if intent is None and ((row["status"] not in {"completed", "failed", "paused", "cancelled"} and not resumable_interrupted) or (row["in_flight"] and not resumable_interrupted) or row["queue"] or row["pending_approval"] or row["pending_input"]):
                 raise AgentError("agent_task_busy")
             if intent is not None and not allowed_actions(row, data["settings"])[intent]["enabled"]:
                 raise AgentError("agent_operation_unresolved" if ambiguous(row) else "agent_invalid_transition")
-            if len(row["events"]) >= 1000:
-                raise AgentError("agent_task_limit")
+            # A long conversation is condensed, never refused. Only if it is
+            # still too large does it continue in a new linked conversation.
+            size = len(encoded(row))
+            if event_compaction.needs_compaction(row, size):
+                # Full goal copies from older builds go first: they repeat every earlier message.
+                shrunk = compact_goal_history(row)
+                if event_compaction.compact_until_small(row) or shrunk:
+                    size = len(encoded(row))
+            if event_compaction.over_hard_limit(row, size, reserve_events=2):
+                raise ContinueInNewTask()
             effort = reasoning.validate(self._model_metadata(row["model_id"]), value["reasoning_effort"]) if "reasoning_effort" in value else None
             if row["status"] == "interrupted" and row["in_flight"]:
                 if not recoverable_read_in_flight(row) or ambiguous(row):
@@ -1815,14 +1878,26 @@ class AgentRuntime(AgentLoop):
             owners = [message for message in [*row["messages"], *row.get("pending_user_messages", [])] if message["role"] == "user"]
             prospective = {**row, "messages": [*owners, message], "skills": merged_skills,
                            "context_checkpoint": None, "tool_menu": None}
-            (future_specs, _), authority_bytes = self._menu(prospective)
-            if authority_bytes + len(encoded(future_specs)) > self._context_limit(row):
-                raise AgentError("agent_context_limit")
-            if len(encoded(row)) + len(encoded(message)) > 2 * 1024 * 1024:
-                raise AgentError("agent_task_limit")
+            # Every owner message stays in every request. Once they no longer fit
+            # the model's context together, continue in a linked new conversation
+            # (its first message carries a bounded summary). A message too large
+            # on its own is refused as before.
+            try:
+                (future_specs, _), authority_bytes = self._menu(prospective)
+                too_large = authority_bytes + len(encoded(future_specs)) > self._context_limit(row)
+            except AgentError as exc:
+                if str(exc) != "agent_tool_schema_limit":
+                    raise
+                too_large = True
+            if too_large:
+                if not self._continuation_fits(row, prospective, message, content):
+                    raise AgentError("agent_context_limit")
+                raise ContinueInNewTask()
+            if len(encoded(row)) + len(encoded(message)) > event_compaction.TASK_BYTES_HARD_LIMIT:
+                raise ContinueInNewTask()
             memory_natural.stamp_single_owner_message_in_tx(data, message)
             row["skills"] = merged_skills
-            ended = row["status"] in {"completed", "failed", "interrupted"} or bool(row.get("turn_stopped"))
+            ended = row["status"] in {"completed", "failed", "interrupted", "cancelled"} or bool(row.get("turn_stopped"))
             if effort is not None:
                 # Running requests already own an immutable task snapshot.
                 # This preference starts with the next admitted request.
@@ -1928,7 +2003,48 @@ class AgentRuntime(AgentLoop):
                         pass
             remember_request(row, value)
             return public_task(row, settings=data["settings"], data=data)
-        return self.store.transaction(add)
+        try:
+            return self.store.transaction(add)
+        except ContinueInNewTask:
+            return self._continue_in_new_task(task_id, value, content)
+
+    def _continuation_fits(self, row: dict, prospective: dict, message: dict, content: str) -> bool:
+        """Whether this message, as the first message of a continued conversation, fits the model."""
+        first_text = CONTINUATION_PREFIX + event_compaction.continuation_summary(row) + CONTINUATION_SEPARATOR + content
+        first = {**message, "content": first_text if isinstance(message.get("content"), str) else message["content"]}
+        alone = {**prospective, "messages": [first], "goal": {**row["goal"], "text": first_text, "constraints": []}}
+        try:
+            (specs, _), authority_bytes = self._menu(alone)
+        except AgentError:
+            return False
+        return authority_bytes + len(encoded(specs)) <= self._context_limit(row)
+
+    def _continue_in_new_task(self, task_id: str, value: dict, content: str) -> dict:
+        """The conversation is too large even after condensing: continue it in a new, linked one."""
+        old = lifecycle.find(self.store, self.store.read(), task_id)
+        summary = event_compaction.continuation_summary(old)
+        body = {"message": CONTINUATION_PREFIX + summary + CONTINUATION_SEPARATOR + content,
+                "model_id": old["model_id"],
+                "title": event_compaction.continued_title(old.get("title") or "")}
+        if value.get("client_request_id"):
+            body["client_request_id"] = value["client_request_id"]
+        if value.get("attachments"):
+            body["attachments"] = value["attachments"]
+        if isinstance(old.get("project"), dict) and old["project"].get("id"):
+            body["project_id"] = old["project"]["id"]
+        created = self.create(body)
+
+        def link(data):
+            previous = data["tasks"].get(task_id)
+            current = data["tasks"].get(created["id"])
+            if previous is not None and previous.get("continued_to") != created["id"]:
+                previous["continued_to"] = created["id"]
+                event(previous, "continued_in_new_task", task_id=created["id"])
+            if current is not None and current.get("continued_from") != task_id:
+                current["continued_from"] = task_id
+                event(current, "continued_from", task_id=task_id)
+            return public_task(current, settings=data["settings"], data=data) if current is not None else created
+        return self.store.transaction(link)
 
     def _edit_message(self, task_id: str, value: dict, content: str, prepared=None, *, added_skills=None) -> dict:
         if value.get("intent") not in {None, "steer", "information"} or type(value["edit_message_index"]) is not int:
@@ -1946,6 +2062,8 @@ class AgentRuntime(AgentLoop):
             index = value["edit_message_index"]
             if index < 0 or index >= len(row["messages"]) or row["messages"][index].get("role") != "user":
                 raise AgentError("agent_invalid_message_index")
+            if event_compaction.needs_compaction(row, len(encoded(row))):
+                event_compaction.compact_until_small(row)
             if len(row["events"]) >= 998 or len(encoded(row)) + len(content.encode()) > 2 * 1024 * 1024:
                 raise AgentError("agent_task_limit")
             replacement = {"role": "user", "content": content, "message_id": "owner_" + uuid.uuid4().hex,
@@ -2180,7 +2298,8 @@ class AgentRuntime(AgentLoop):
                         row.update(status="queued" if may_continue else "paused", error=None)
                         event(row, "reconciliation_finished", outcome=row["reconciliation"]["state"], operation_id=flight.get("operation_id"), continued=may_continue)
                 else:
-                    row["reconciliation"] = {"state": "pending", "attempts": row.get("reconciliation", {}).get("attempts", 0)}
+                    row["reconciliation"] = {"state": "pending", "attempts": row.get("reconciliation", {}).get("attempts", 0),
+                                             "requested_at": now()}
                     event(row, "reconciliation_requested")
             else:
                 raise AgentError("agent_invalid_action")
@@ -2228,6 +2347,60 @@ class AgentRuntime(AgentLoop):
     def _recover_read_operation(self, row: dict, flight: dict | None, *, error: str = "agent_read_interrupted") -> bool:
         ok, _ = self._recover_read_operation_details(row, flight, error=error)
         return ok
+
+    def _note_images_omitted(self, task_id: str, count: int, reason: str, latest: bool) -> None:
+        """Tell the owner once per turn that images were not sent to the model."""
+        def note(data):
+            row = data["tasks"].get(task_id)
+            if row is None:
+                return
+            owner_seq = max((item["seq"] for item in row["events"] if item["type"] in OWNER_TURN_EVENTS), default=0)
+            if any(item["type"] == "images_omitted" and item["seq"] > owner_seq for item in row["events"]):
+                return
+            event(row, "images_omitted", count=count, reason=str(reason or "")[:80], latest_message=bool(latest))
+        try:
+            self.store.transaction(note)
+        except AgentError:
+            pass  # A notice must never fail the request itself.
+
+    def _note_shared_image_resize(self, task_id: str, report: dict) -> None:
+        def note(data):
+            row = data["tasks"].get(task_id)
+            if row is not None:
+                event(row, "images_resized_for_shared_route",
+                      **{key: report[key] for key in ("carrier", "images", "resized", "original_bytes", "final_bytes")
+                         if type(report.get(key)) in (int, str)})
+        try:
+            self.store.transaction(note)
+        except AgentError:
+            pass
+
+    def _acknowledge_unknown_in_tx(self, row: dict) -> None:
+        """The owner continues past an unconfirmed write.
+
+        The model is told the step may have run; the operation itself is never
+        queued or dispatched again, and its receipt stays "unknown".
+        """
+        flight = row.get("in_flight") or {}
+        call_id = flight.get("call_id")
+        epoch = flight.get("context_epoch", row.get("context_epoch", 0))
+        result = {"error": "agent_write_outcome_unknown", "outcome": "unknown", "not_executed": False,
+                  "note": UNKNOWN_OUTCOME_NOTE}
+        if call_id and not any(item.get("role") == "tool" and item.get("tool_call_id") == call_id
+                               for item in row["messages"]):
+            row["messages"].append({"role": "tool", "tool_call_id": call_id, "content": encoded(result).decode(),
+                                    "context_epoch": epoch, "is_error": True})
+            event(row, "tool_result", tool=flight.get("name"), call_id=call_id,
+                  operation_id=flight.get("operation_id"), result=result, context_epoch=epoch)
+        row["queue"] = [call for call in row.get("queue", []) if call.get("call_id") != call_id]
+        close_queue(row, event, "agent_reconciliation_requires_review", keep_flight=False)
+        if (row.get("pending_control") or {}).get("kind") in {"pause", "stop", "permissions"}:
+            row.pop("pending_control", None)
+        row["acknowledged_unknown"] = {"operation_id": flight.get("operation_id"), "tool": flight.get("name"), "at": now()}
+        row.update(in_flight=None, approved=None, pending_approval=None, error=None)
+        if row["status"] not in {"interrupted", "cancelled"}:
+            row["status"] = "interrupted"
+        event(row, "unknown_outcome_acknowledged", operation_id=flight.get("operation_id"), tool=flight.get("name"))
 
     def _settle_interrupted_read(
         self, row: dict, flight: dict, error_code: str, *, recovery: dict | None = None
@@ -2445,7 +2618,7 @@ class AgentRuntime(AgentLoop):
     def _schedule_reconciliation(self, row):
         prior = row.get("reconciliation")
         if hasattr(self.tools, "reconcile") and (prior is None or prior.get("state") == "running"):
-            row["reconciliation"] = {"state": "pending", "attempts": (prior or {}).get("attempts", 0)}
+            row["reconciliation"] = {"state": "pending", "attempts": (prior or {}).get("attempts", 0), "requested_at": now()}
 
     def _reconcile_operation(self, selected: dict) -> None:
         """Query the original operation only; never dispatch the mutation again."""
@@ -2462,7 +2635,8 @@ class AgentRuntime(AgentLoop):
             if pending.get("attempts", 0) >= 3 or budget.hard_run_limit(row) == "agent_time_limit" or receipt is None:
                 row["reconciliation"] = {**pending, "state": "unknown", "reason": "agent_reconciliation_limit"}
                 return False
-            row["reconciliation"] = {"state": "running", "attempts": pending.get("attempts", 0) + 1, "operation_id": operation_id}
+            row["reconciliation"] = {"state": "running", "attempts": pending.get("attempts", 0) + 1, "operation_id": operation_id,
+                                     "started_at": now()}
             self.store.reserve(data, row["id"], output_policy.storage_growth(row["limits"]["max_output_chars"]))
             event(row, "reconciliation_started", operation_id=operation_id)
             return True

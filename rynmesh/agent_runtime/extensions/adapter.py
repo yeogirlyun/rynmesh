@@ -1629,7 +1629,9 @@ class ExtensionToolAdapter:
             if (normalized.get("is_error") or normalized.get("error")) and not self._declared_result_tool(binding):
                 # The tool answered, with an error. That reply is the call's
                 # outcome: record it, show it to the model, never resend it.
+                # side_effects=unknown makes the loop refuse a blind identical retry.
                 normalized["outcome_note"] = TOOL_ERROR_NOTE
+                normalized["side_effects"] = "unknown"
                 ledger.update(operation_id, "confirmed", result=normalized)
                 return normalized
             if normalized.get("is_error") or normalized.get("error"):

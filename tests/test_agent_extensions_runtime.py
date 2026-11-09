@@ -1259,6 +1259,7 @@ def test_mcp_write_result_is_error_returns_reply_without_lock_or_replay(tmp_path
         assert res["is_error"] is True and res["error"] == "agent_mcp_tool_returned_error"
         assert "Synthetic application processing failed." in res["text"]
         assert "does not prove nothing changed" in res["outcome_note"]
+        assert res["side_effects"] == "unknown"  # The loop refuses a blind identical retry.
         assert _read_count(counter1) == 1
         ledger_row = tools1.resource_writes.ledger.get(op_id)
         assert ledger_row["status"] == "confirmed"
@@ -1292,8 +1293,7 @@ def test_mcp_write_result_is_error_returns_reply_without_lock_or_replay(tmp_path
     try:
         for _ in range(12):
             rt2.run_once()
-            row = rt2.get(tid2)
-            if row["status"] in {"failed", "interrupted", "cancelled", "completed", "waiting_approval"}:
+            if model2.write_calls >= 3:
                 break
         state2 = rt2.get(tid2)
         assert state2["status"] != "interrupted" and state2["error"] != "agent_write_outcome_unknown"

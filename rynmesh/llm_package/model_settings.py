@@ -15,7 +15,12 @@ FIELDS = {
     "tokens_per_day",
     "shared_tokens_per_day",
     "share_scope",
+    "image_input",
 }
+IMAGE_INPUT_VALUES = ("auto", "supported", "unsupported")
+# Model-name prefixes whose image input was confirmed with the owner's image test.
+# Add an entry only after that test passed on a real account; never from memory.
+KNOWN_VENDOR_IMAGE_INPUT: tuple[str, ...] = ()
 DESTINATION_FIELDS = {"context_window", "max_output_tokens", "request_defaults"}
 FALLBACK_CONTEXT_WINDOW = 32768
 KNOWN_VENDOR_CONTEXT_WINDOWS = (
@@ -137,7 +142,8 @@ def defaults(record, model=None):
             "requests_per_day": None,
             "tokens_per_day": None,
             "shared_tokens_per_day": None,
-            "share_scope": "personal_space"}
+            "share_scope": "personal_space",
+            "image_input": "auto"}
 
 
 def validate(values):
@@ -149,6 +155,8 @@ def validate(values):
     quota = values.get("requests_per_day")
     if "share_scope" in values and values["share_scope"] not in ("personal_space", "friends"):
         raise ValueError("model_share_scope_invalid")
+    if "image_input" in values and values["image_input"] not in IMAGE_INPUT_VALUES:
+        raise ValueError("model_image_input_invalid")
     if quota is not None and (type(quota) is not int or not 1 <= quota <= 1000000):
         raise ValueError("model_requests_per_day_invalid")
     for tok_key in ("tokens_per_day", "shared_tokens_per_day"):
@@ -206,12 +214,36 @@ def reconcile(record, old):
     record["model_settings"] = settings
 
 
+def image_input_state(record, model):
+    """What this computer knows about the model's image input: supported, unsupported or unknown.
+
+    Same order as the Agent's own decision: owner setting, image test, the
+    provider's model listing, then confirmed vendor prefixes. A sharing
+    computer publishes this so every user of the model sees the same answer.
+    """
+    row = record.get("model_settings", {}).get(model, {})
+    owner = (row.get("overrides") or {}).get("image_input")
+    if owner in {"supported", "unsupported"}:
+        return owner
+    tested = ((row.get("evidence") or {}).get("image") or {}).get("status")
+    if tested in {"supported", "unsupported"}:
+        return tested
+    modalities = (record.get("model_metadata", {}).get(model) or {}).get("input_modalities")
+    if isinstance(modalities, list) and modalities:
+        lowered = {str(item).strip().lower() for item in modalities}
+        return "supported" if lowered & {"image", "images", "vision", "multimodal"} else "unsupported"
+    normalized = str(model or "").strip().lower().rsplit("/", 1)[-1]
+    if normalized and any(normalized.startswith(prefix) for prefix in KNOWN_VENDOR_IMAGE_INPUT):
+        return "supported"
+    return "unknown"
+
+
 def public(record, model):
     row = record.get("model_settings", {}).get(model, {})
     return {**copy.deepcopy(row), "effective": effective(record, model), **context_metadata(record, model),
             "inherited_fields": sorted(FIELDS - set(row.get("overrides", {}))),
             "evidence": {key: copy.deepcopy(row.get("evidence", {}).get(key, {"status": "unknown", "checked_at": None}))
-                         for key in ("connection", "model_exists", "tools")}}
+                         for key in ("connection", "model_exists", "tools", "image")}}
 
 
 def fingerprint(record, model):
