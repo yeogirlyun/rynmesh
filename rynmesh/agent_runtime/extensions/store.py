@@ -601,7 +601,7 @@ class ExtensionStore:
             srv.setdefault("discovery_revision", 0)
             sources = srv.get("read_only_sources") or {}
             srv["read_only_sources"] = {
-                name: "server_hint" if sources.get(name) == "server_hint" else "owner"
+                name: sources.get(name) if sources.get(name) in {"server_hint", "installer"} else "owner"
                 for name in srv.get("read_only_tools") or []
             }
             if legacy_config:
@@ -899,6 +899,7 @@ class ExtensionStore:
         enabled_tools = server.get("enabled_tools")
         disabled_tools = set(server.get("disabled_tools") or [])
         read_only_tools = set(server.get("read_only_tools") or [])
+        owner_write_tools = set(server.get("owner_write_tools") or [])
         read_only_sources = {
             name: (server.get("read_only_sources") or {}).get(name, "owner")
             for name in sorted(read_only_tools)
@@ -1013,6 +1014,7 @@ class ExtensionStore:
                 for tool in tools_view
                 if tool["annotations"]["readOnlyHint"] is True and not tool["owner_read_only"]
                 and tool_name_counts[tool["name"]] == 1 and int(server.get("discovery_revision", 0)) > 0
+                and not (self._installer_service_trusted(server) and tool["name"] in owner_write_tools)
             ],
             "tools": tools_view,
             "tools_count": len(tools_view),
@@ -2316,6 +2318,8 @@ class ExtensionStore:
                 "disabled_tools": list(existing.get("disabled_tools") or []) if existing else [],
                 "read_only_tools": list(existing.get("read_only_tools") or []) if existing else [],
                 "read_only_sources": dict(existing.get("read_only_sources") or {}) if existing else {},
+                "owner_write_tools": list(existing.get("owner_write_tools") or []) if existing else [],
+                "installer_service_generation": existing.get("installer_service_generation") if existing else None,
                 "discovery_revision": int(existing.get("discovery_revision", 0)) if existing else 0,
                 "discovered_tools": list(existing.get("discovered_tools") or []) if existing else [],
                 "status": existing.get("status", "NeedsTest") if existing else ("NeedsTest" if enabled else "disabled"),
@@ -2363,11 +2367,17 @@ class ExtensionStore:
         if "disabled_tools" in payload and isinstance(payload["disabled_tools"], list):
             record["disabled_tools"] = sorted({str(x) for x in payload["disabled_tools"] if str(x)})
         if "read_only_tools" in payload and isinstance(payload["read_only_tools"], list):
+            previous = set(record.get("read_only_tools") or [])
             record["read_only_tools"] = sorted({str(x) for x in payload["read_only_tools"] if str(x)})
             previous_sources = record.get("read_only_sources") or {}
             record["read_only_sources"] = {
                 name: previous_sources.get(name, "owner") for name in record["read_only_tools"]
             }
+            # An installer-trusted tool the owner turns off stays off after later discoveries.
+            current = set(record["read_only_tools"])
+            declined = set(record.get("owner_write_tools") or [])
+            declined |= {name for name in previous - current if previous_sources.get(name) == "installer"}
+            record["owner_write_tools"] = sorted(declined - current)
         if "computer_access" in payload and not record.get("builtin"):
             record["computer_access"] = bool(payload["computer_access"])
 
@@ -2442,15 +2452,32 @@ class ExtensionStore:
                             "model_tool_name": compute_model_tool_name(server_id, name),
                         }
                     )
-                sources = server.get("read_only_sources") or {}
+                sources = dict(server.get("read_only_sources") or {})
                 retained = set(server.get("read_only_tools") or [])
+                installer_trusted = self._installer_service_trusted(server)
+                name_counts = Counter(tool["name"] for tool in normalized)
                 for name in list(retained):
-                    if sources.get(name, "owner") != "server_hint":
+                    source = sources.get(name, "owner")
+                    if source == "owner":
                         continue
                     matching = [tool for tool in normalized if tool["name"] == name]
-                    if (len(matching) != 1 or matching[0]["annotations"]["readOnlyHint"] is not True
-                            or matching[0]["schema_sha256"] != old_tools.get(name, {}).get("schema_sha256")):
+                    if len(matching) != 1 or matching[0]["annotations"]["readOnlyHint"] is not True:
                         retained.remove(name)
+                    elif source == "installer" and not installer_trusted:
+                        retained.remove(name)
+                    elif (source == "server_hint"
+                            and matching[0]["schema_sha256"] != old_tools.get(name, {}).get("schema_sha256")):
+                        retained.remove(name)
+                if installer_trusted:
+                    # The signed installer started this service, so its own read-only
+                    # declarations are trusted without a separate owner prompt.
+                    declined = set(server.get("owner_write_tools") or [])
+                    for tool in normalized:
+                        name = tool["name"]
+                        if (tool["annotations"]["readOnlyHint"] is True and name_counts[name] == 1
+                                and name not in declined and name not in retained):
+                            retained.add(name)
+                            sources[name] = "installer"
                 server["read_only_tools"] = sorted(retained)
                 server["read_only_sources"] = {name: sources.get(name, "owner") for name in sorted(retained)}
                 server["discovered_tools"] = normalized
@@ -2463,6 +2490,12 @@ class ExtensionStore:
             state["updated_at"] = now
             self._write(state)
             return self._public_mcp_server(server, state, desktop_access=desktop_access)
+
+    @staticmethod
+    def _installer_service_trusted(server: dict[str, Any]) -> bool:
+        """True while the server still runs the configuration the installer's service bound."""
+        generation = server.get("installer_service_generation")
+        return type(generation) is int and generation == server.get("config_generation")
 
     @staticmethod
     def _clear_server_hints(server: dict[str, Any]) -> None:
@@ -2583,6 +2616,7 @@ class ExtensionStore:
                 server.setdefault("secret_headers", {}).update({
                     "X-Ryn-Service-Token": credential, "X-Ryn-Service-Generation": generation})
                 server["revision"] = server["config_generation"] = _alloc_generation(state)
+                server["installer_service_generation"] = server["config_generation"]
                 server["config_sha256"] = _mcp_config_fingerprint(server)
                 server["discovered_tools"] = []
                 server["discovery_revision"] = 0

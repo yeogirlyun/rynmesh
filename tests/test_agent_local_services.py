@@ -192,3 +192,55 @@ def test_deleted_mapping_does_not_resurrect_or_block_shared_service(tmp_path):
     assert invalidated == []
     with pytest.raises(AgentError):
         store.get_mcp_server_internal("removed-server")
+
+
+def _discover(store, tools):
+    current = store.get_mcp_server_internal("s")
+    return store.record_mcp_discovery("s", expected_revision=current["revision"], status="ready", discovered_tools=[
+        {"name": name, "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": hint}} for name, hint in tools])
+
+
+def _restart(service):
+    pending = prepare(service)
+    service.activate(service_id="owned", generation=pending["generation"])
+
+
+def test_installer_service_read_only_tools_are_trusted_without_a_prompt_across_restarts(tmp_path):
+    store, service, _, _ = fixture(tmp_path)
+    # Not yet bound by the installer's service: the owner is asked as before.
+    row = _discover(store, [("lookup", True), ("send", False)])
+    assert [c["name"] for c in row["server_hint_candidates"]] == ["lookup"] and row["read_only_tools"] == []
+    for _ in range(2):  # every Ryn start rebinds the service with a fresh credential
+        _restart(service)
+        row = _discover(store, [("lookup", True), ("send", False)])
+        assert row["read_only_tools"] == ["lookup"] and row["read_only_sources"] == {"lookup": "installer"}
+        assert row["server_hint_candidates"] == []
+        assert {t["name"]: t["effective_effect"] for t in row["tools"]} == {"lookup": "read", "send": "write"}
+    # A tool that stops declaring read-only becomes a change again.
+    row = _discover(store, [("lookup", False), ("send", False)])
+    assert row["read_only_tools"] == [] and row["server_hint_candidates"] == []
+
+
+def test_owner_choice_to_treat_installer_tool_as_change_survives_restart(tmp_path):
+    store, service, _, _ = fixture(tmp_path)
+    _restart(service)
+    row = _discover(store, [("lookup", True), ("search", True)])
+    row = store.upsert_mcp_server({"read_only_tools": ["search"]}, server_id="s", expected_revision=row["revision"])
+    assert row["read_only_tools"] == ["search"]
+    _restart(service)
+    row = _discover(store, [("lookup", True), ("search", True)])
+    assert row["read_only_tools"] == ["search"] and row["server_hint_candidates"] == []
+    row = store.upsert_mcp_server({"read_only_tools": ["lookup", "search"]}, server_id="s", expected_revision=row["revision"])
+    assert row["read_only_sources"] == {"lookup": "owner", "search": "installer"}
+    assert store.get_mcp_server_internal("s")["owner_write_tools"] == []
+
+
+def test_owner_endpoint_change_ends_installer_trust(tmp_path):
+    store, service, _, _ = fixture(tmp_path)
+    _restart(service)
+    row = _discover(store, [("lookup", True)])
+    assert row["read_only_tools"] == ["lookup"]
+    row = store.upsert_mcp_server({"url": "http://127.0.0.1:19294/mcp"}, server_id="s", expected_revision=row["revision"])
+    assert row["read_only_tools"] == []
+    row = _discover(store, [("lookup", True)])
+    assert row["read_only_tools"] == [] and [c["name"] for c in row["server_hint_candidates"]] == ["lookup"]
