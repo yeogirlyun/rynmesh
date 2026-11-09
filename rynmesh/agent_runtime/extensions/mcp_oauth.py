@@ -25,6 +25,7 @@ from ...file_transactions import file_transaction
 from ...services import peer_box
 from ..diagnostic_log import oauth_event
 from ..store import AgentError
+from .company_authorization import CompanyAuthorizationChannel, record_revocation
 
 CHANNEL = b"rynmesh-agent-mcp-oauth-v1"
 VERSION = "ryn.agent.mcp-oauth.v1"
@@ -316,6 +317,10 @@ class McpOAuthManager:
         self._lock, self._flows = threading.RLock(), {}
         self._member_lock = threading.Lock()
         self._workspace_proof = None
+        self.company_authorization = CompanyAuthorizationChannel(self)
+        if self.credentials.read().get("company_authorization", {}).get("service"):
+            self.company_authorization.sync_bindings()
+            self.company_authorization.start()
 
     def _binding(self, server):
         return {"server_id": server["id"], "instance_id": server["instance_id"],
@@ -376,6 +381,8 @@ class McpOAuthManager:
                 for sib in siblings:
                     sib_binding = self._binding(sib)
                     sib_row = rows.get(sib["instance_id"])
+                    if sib_row and sib_row.get('local_logged_out'):
+                        continue
                     if not sib_row or sib_row.get("binding") != sib_binding:
                         sib_row = {"binding": sib_binding, "resource": sib_binding["resource"], "epoch": secrets.token_hex(16), "granted_scopes": []}
                         rows[sib["instance_id"]] = sib_row
@@ -408,7 +415,7 @@ class McpOAuthManager:
                     row.pop("pending", None)
                 row_tok = row.get("tokens") or {}
                 row_valid = bool(row_tok and not row.get("error") and row_tok.get("expires_at", 0) > self.clock() + 60)
-                if not row_valid and not row.get("pending") and current.get("identity_group_id"):
+                if not row_valid and not row.get("pending") and not row.get('local_logged_out') and current.get("identity_group_id"):
                     for sib in siblings:
                         sib_row = rows.get(sib["instance_id"])
                         sib_tok = (sib_row or {}).get("tokens") or {}
@@ -444,12 +451,45 @@ class McpOAuthManager:
                 if not row or row.get("epoch") != epoch or not matches:
                     fail("agent_mcp_oauth_configuration_changed")
                 row["binding"] = self._binding(current)
+                previous_tokens = copy.deepcopy(row.get('tokens'))
+                previously_authorized = bool(previous_tokens)
+                previous_scopes = set(row.get('granted_scopes') or [])
+                previous_error = row.get('error')
                 change(row)
-                if login_id and server.get("plugin_id") in COMPANY_PLUGIN_IDS:
-                    document["company_action"] = {"id": hashlib.sha256(login_id.encode()).hexdigest(), "action": "login",
-                                                  "serverId": server["id"], "instanceId": server["instance_id"]}
+                if previous_tokens != row.get('tokens'):
+                    row['lease_revision'] = row.get('lease_revision', 0) + 1
+                authorization_changed = False
+                if (previously_authorized and not row.get('tokens')
+                        and server.get('plugin_id') in COMPANY_PLUGIN_IDS):
+                    record_revocation(document, [server['plugin_id']], reason='authorization_removed')
+                    authorization_changed = True
+                elif (previously_authorized and server.get('plugin_id') in COMPANY_PLUGIN_IDS
+                      and ((row.get('error') == 'agent_mcp_auth_required' and not previous_error)
+                           or (previous_scopes - set(row.get('granted_scopes') or [])))):
+                    record_revocation(document, [server['plugin_id']], reason='authorization_reduced')
+                    authorization_changed = True
+                if login_id:
+                    row.pop('local_logged_out', None)
+                if login_id and server.get('plugin_id') in COMPANY_PLUGIN_IDS:
+                    if server['id'] in {'company-workspace-mcp', 'company-dashboard-dashboard'}:
+                        document['company_action'] = {'id': hashlib.sha256(login_id.encode()).hexdigest(), 'action': 'login',
+                                                      'serverId': server['id'], 'instanceId': server['instance_id']}
+                        sequence = record_revocation(document, ['*'], reason='account_login')
+                        document['company_action']['authorizationSequence'] = sequence
+                    else:
+                        # A connection grant is not a new company person. Keep
+                        # the verified identity action and its renewable lease.
+                        state = document.setdefault('company_authorization',
+                            {'sequence': 0, 'revocations': {}, 'acknowledged': -1})
+                        state['sequence'] += 1
+                        state.setdefault('scope_grants', {})[server['plugin_id']] = state['sequence']
                 row["updated_at"] = self.clock()
-                return copy.deepcopy(row)
+                result = copy.deepcopy(row)
+        if login_id and server.get("plugin_id") in COMPANY_PLUGIN_IDS:
+            self.company_authorization.changed()
+        elif authorization_changed:
+            self.company_authorization._wake.set()
+        return result
 
     def _allowed_url(self, resource, target):
         target = canonical_url(target)
@@ -935,6 +975,19 @@ class McpOAuthManager:
             self._workspace_proof = (key, time.monotonic() + 2, result)
             return result
 
+    def rebind_local_service(self, previous):
+        """Preserve identity only for a verified host-owned transport rotation."""
+        with self.credentials.transaction() as rows:
+            for server in previous:
+                row = rows.get(server['instance_id'])
+                if row and row.get('binding') == self._binding(server):
+                    current = self.store.get_mcp_server_internal(server['id'], require_enabled=False)
+                    before, after = self._binding(server), self._binding(current)
+                    if {k: v for k, v in before.items() if k != 'config_generation'} != {
+                            k: v for k, v in after.items() if k != 'config_generation'}:
+                        fail('agent_mcp_oauth_configuration_changed')
+                    row['binding'] = after
+
     def company_connections(self):
         states = {}
         rows = self.credentials.read()["servers"]
@@ -944,7 +997,7 @@ class McpOAuthManager:
             row = rows.get(server["instance_id"], {})
             tokens = row.get("tokens") or {}
             usable = (server.get("effective_enabled") and not row.get("error") and not row.get("pending")
-                      and row.get("binding") == self._binding(server)
+                      and self._same_authorization(row.get("binding"), self._binding(server))
                       and (tokens.get("refresh_token") or tokens.get("expires_at", 0) > self.clock()))
             states[server["id"]] = bool(usable)
         return states
@@ -962,22 +1015,27 @@ class McpOAuthManager:
                     document["servers"].pop(instance, None)
                 action = {"id": secrets.token_hex(16), "action": "logout"}
                 document["company_action"] = action
+                record_revocation(document, ["*"], reason="company_logout")
             pending = [(flow["server"]["id"], ident) for ident, flow in self._flows.items()
                        if flow["server"]["instance_id"] in instances and flow["state"] in {"waiting", "exchanging"}]
         for sid, ident in pending:
             self.cancel_login(sid, ident)
-        return {"cleared": True, "servers": [s["id"] for s in servers], "action": action}
+        delivery = self.company_authorization.changed()
+        return {"cleared": True, "servers": [s["id"] for s in servers], "action": action, "authorizationDelivery": delivery}
 
     def logout(self, server_id, expected_revision=None):
         server = self.store.get_mcp_server_internal(server_id, require_enabled=False, expected_revision=expected_revision)
         previous = self.credentials.read()["servers"].get(server["instance_id"])
-        siblings = self._identity_group_siblings(server) if server.get("identity_group_id") else []
+        siblings = (self._identity_group_siblings(server) if server.get("identity_group_id")
+                    and server.get("plugin_id") not in COMPANY_PLUGIN_IDS else [])
         sibling_instances = {s["instance_id"] for s in siblings}
         for ident, flow in list(self._flows.items()):
             if flow["server"]["instance_id"] == server["instance_id"] or flow["server"]["instance_id"] in sibling_instances:
                 self.cancel_login(flow["server"]["id"], ident)
+        if server.get("plugin_id") in COMPANY_PLUGIN_IDS:
+            self.company_authorization.revoke([server["plugin_id"]], "connection_logout")
         row = self._row(server)
-        self._update(server, row["epoch"], lambda r: (r.pop("tokens", None), r.pop("pending", None), r.pop("error", None), r.update(epoch=secrets.token_hex(16))))
+        self._update(server, row["epoch"], lambda r: (r.pop("tokens", None), r.pop("pending", None), r.pop("error", None), r.update(epoch=secrets.token_hex(16), local_logged_out=True)))
         if siblings:
             with file_transaction(self.store.lock):
                 with self.credentials.transaction() as rows:
@@ -989,10 +1047,27 @@ class McpOAuthManager:
                             sib_row.pop("error", None)
                             sib_row["epoch"] = secrets.token_hex(16)
                             sib_row["updated_at"] = self.clock()
-        self._revoke(previous or row)
-        return self.public_status(server["instance_id"])
+        # Revoking a shared upstream refresh token would log out unrelated plugins.
+        token = ((previous or row).get("tokens") or {}).get("refresh_token")
+        shared = token and any((r.get("tokens") or {}).get("refresh_token") == token
+                               for r in self.credentials.read()["servers"].values())
+        if not shared:
+            if server.get('plugin_id') in COMPANY_PLUGIN_IDS:
+                threading.Thread(target=self._revoke, args=(previous or row,),
+                                 name='company-remote-revoke', daemon=True).start()
+            else:
+                self._revoke(previous or row)
+        result = self.public_status(server['instance_id'])
+        if server.get('plugin_id') in COMPANY_PLUGIN_IDS:
+            result['authorizationDelivery'] = self.company_authorization.changed()
+        return result
 
-    def forget(self, instance_id):
+    def forget(self, instance_id, *, previous=None):
+        if previous is None:
+            previous = next((s for s in self.store.list_mcp_servers_internal(include_tools=False)
+                             if s["instance_id"] == instance_id), None)
+        if previous and previous.get("plugin_id") in COMPANY_PLUGIN_IDS:
+            self.company_authorization.revoke([previous["plugin_id"]], "connection_removed")
         for ident, flow in list(self._flows.items()):
             if flow["server"]["instance_id"] == instance_id:
                 self.cancel_login(flow["server"]["id"], ident)
@@ -1008,7 +1083,11 @@ class McpOAuthManager:
                         for other in rows.values()
                     )
         if row and not shared_elsewhere:
-            self._revoke(row)
+            if previous and previous.get('plugin_id') in COMPANY_PLUGIN_IDS:
+                threading.Thread(target=self._revoke, args=(row,),
+                                 name='company-remote-revoke', daemon=True).start()
+            else:
+                self._revoke(row)
 
     def public_status(self, instance_id):
         server = next((s for s in self.store.list_mcp_servers_internal(include_tools=False) if s["instance_id"] == instance_id), None)
@@ -1032,6 +1111,7 @@ class McpOAuthManager:
                 "issuer_host": urlsplit(row.get("issuer", "")).hostname, "error": row.get("error")}
 
     def close(self):
+        self.company_authorization.close()
         for ident, flow in list(self._flows.items()):
             self.cancel_login(flow["server"]["id"], ident)
 

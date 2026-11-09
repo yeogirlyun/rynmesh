@@ -2733,6 +2733,7 @@ class ExtensionStore:
 
         with file_transaction(self.lock):
             state = self._read()
+            previous_import_servers = copy.deepcopy(state['mcp_servers'])
             self._check_expected_revision(expected_revision, int(state.get("revision", 1)))
             now = _now()
             committed_plugins: list[str] = []
@@ -2906,6 +2907,7 @@ class ExtensionStore:
                 own_servers = {srv["id"]: srv["id"] for srv in mcp_servers
                                if srv.get("plugin_id") == pid and srv["id"] in plugin.get("mcp_server_ids", [])}
                 views = normalize_views(plugin.get("views", []), own_servers)
+                previous_plugin = state['plugins'].get(pid)
                 state["plugins"][pid] = {
                     "id": pid,
                     "instance_id": uuid.uuid4().hex,
@@ -2933,6 +2935,28 @@ class ExtensionStore:
                     "revision": gen,
                     "updated_at": now,
                 }
+                # Exact company-package re-import is not an explicit disable.
+                # Changed/new packages retain disabled-first activation.
+                current_plugin = state['plugins'][pid]
+                equivalent_fields = ('manifest_sha256', 'web_app', 'identity_group',
+                    'peer_provider', 'data_policy', 'views', 'skill_ids', 'mcp_server_ids',
+                    'computer_access', 'version')
+                equivalent_company = (
+                    pid in {'company-workspace', 'company-dashboard', 'company-affiliate'}
+                    and previous_plugin is not None
+                    and (current_plugin.get('manifest_sha256') or not current_plugin.get('skill_ids'))
+                    and all(previous_plugin.get(k) == current_plugin.get(k) for k in equivalent_fields)
+                    and all(sid in previous_import_servers and sid in state['mcp_servers']
+                            and previous_import_servers[sid].get('instance_id') == state['mcp_servers'][sid].get('instance_id')
+                            and previous_import_servers[sid].get('config_generation') == state['mcp_servers'][sid].get('config_generation')
+                            for sid in current_plugin['mcp_server_ids']))
+                if equivalent_company:
+                    current_plugin['enabled'] = previous_plugin.get('enabled', False)
+                    for sid in current_plugin['mcp_server_ids']:
+                        current_server, previous_server = state['mcp_servers'][sid], previous_import_servers[sid]
+                        current_server['enabled'] = previous_server.get('enabled', False)
+                        current_server['explicitly_disabled'] = previous_server.get('explicitly_disabled', False)
+                        current_server['status'] = 'NeedsTest' if current_server['enabled'] else 'disabled'
                 committed_plugins.append(pid)
 
             _alloc_generation(state)

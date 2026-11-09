@@ -8,6 +8,7 @@ import time
 from urllib.parse import urlsplit
 
 from ..store import AgentError
+from ...file_transactions import file_transaction
 
 
 class LocalServiceCredentials:
@@ -45,6 +46,11 @@ class LocalServiceCredentials:
                 raise AgentError("agent_local_service_limit")
             self._pending[service_id] = {"generation": generation, "credential": credential,
                                          "bindings": bindings, "expires": now + 60}
+        channel = getattr(getattr(self.manager, 'oauth', None), 'company_authorization', None)
+        if channel is not None:
+            channel.register(service_id=service_id, plugin_ids=plugin_ids,
+                             server_ids=[sid for sid, *_ in bindings], port=port,
+                             credential=credential, generation=generation)
         return {"generation": generation, "credential": credential}
 
     def activate(self, *, service_id, generation):
@@ -52,7 +58,15 @@ class LocalServiceCredentials:
             pending = self._pending.get(service_id)
             if not pending or pending["expires"] <= self.clock() or pending["generation"] != generation:
                 raise AgentError("agent_local_service_stale")
-            self.store.activate_local_service(pending["bindings"], pending["credential"], generation)
+            # Per-launch service transport credentials are not a change of user
+            # or issuer. Preserve an exactly bound OAuth row across this rotation.
+            oauth = getattr(self.manager, 'oauth', None)
+            with file_transaction(self.store.lock):
+                previous = [self.store.get_mcp_server_internal(sid, require_enabled=False)
+                            for sid, *_ in pending['bindings']]
+                self.store.activate_local_service(pending["bindings"], pending["credential"], generation)
+                if oauth is not None:
+                    oauth.rebind_local_service(previous)
             del self._pending[service_id]
         for sid, *_ in pending["bindings"]:
             self.manager.invalidate_server(sid)

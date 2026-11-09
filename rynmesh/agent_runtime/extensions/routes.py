@@ -18,6 +18,10 @@ from .views import query_plugin_tool, query_view
 
 
 def _error_status(code: str) -> int:
+    if code == 'agent_local_service_denied':
+        return 403
+    if code == 'agent_local_service_unavailable':
+        return 503
     if code.endswith("_not_found"):
         return 404
     if (
@@ -114,14 +118,14 @@ def install_extension_routes(
         background_tasks.add_task(rediscover)
         return result
 
-    async def service_payload(request):
+    async def service_payload(request, max_bytes=8192):
         if (not request.client or request.client.host not in {"127.0.0.1", "::1"}
                 or request.headers.get("origin") or request.headers.get("referer")):
             raise HTTPException(403, detail="agent_local_service_denied")
         raw = bytearray()
         async for chunk in request.stream():
             raw.extend(chunk)
-            if len(raw) > 8192:
+            if len(raw) > max_bytes:
                 raise HTTPException(413, detail="agent_request_limit")
         try:
             payload = json.loads(raw)
@@ -253,12 +257,19 @@ def install_extension_routes(
 
         def _op():
             expected_rev = _parse_expected_revision(payload.get("expected_revision"))
+            previous = extensions.store.get_mcp_server_internal(server_id, require_enabled=False,
+                                                                expected_revision=expected_rev)
             result = extensions.store.upsert_mcp_server(
                 payload,
                 server_id=server_id,
                 expected_revision=expected_rev,
                 desktop_access=_desktop_access(),
             )
+            channel = getattr(getattr(extensions.manager, 'oauth', None), 'company_authorization', None)
+            if channel is not None:
+                delivery = channel.changed_server(previous, extensions.store.get_mcp_server_internal(server_id, require_enabled=False))
+                if delivery is not None:
+                    result['authorizationDelivery'] = delivery
             extensions.manager.invalidate_server(server_id)
             return result
 
@@ -269,7 +280,10 @@ def install_extension_routes(
         expected_rev = await _delete_revision(request)
 
         def _op():
-            previous = extensions.store.get_mcp_server_internal(server_id)
+            previous = extensions.store.get_mcp_server_internal(server_id, expected_revision=expected_rev)
+            channel = getattr(getattr(extensions.manager, 'oauth', None), 'company_authorization', None)
+            if channel is not None:
+                channel.changed_server(previous, {})
             result = extensions.store.delete_mcp_server(
                 server_id,
                 expected_revision=expected_rev,
@@ -277,7 +291,11 @@ def install_extension_routes(
             extensions.manager.invalidate_server(server_id)
             oauth = getattr(extensions.manager, "oauth", None)
             if oauth is not None and previous:
-                oauth.forget(previous["instance_id"])
+                if channel is not None:
+                    oauth.forget(previous['instance_id'], previous=previous)
+                    result['authorizationDelivery'] = channel.delivery_status()
+                else:
+                    oauth.forget(previous['instance_id'])
             return result
 
         return await _run("delete_mcp_server", _op)
@@ -310,16 +328,11 @@ def install_extension_routes(
 
     async def read_company_account():
         import httpx
-        from urllib.parse import urlsplit
-        server = await _run("company_workspace", lambda: extensions.store.get_mcp_server_internal(
-            "company-workspace-mcp", require_enabled=False))
-        url = urlsplit(server.get("url") or "")
-        if (server.get("plugin_id") != "company-workspace" or url.scheme != "http"
-                or url.hostname != "127.0.0.1" or not url.port or url.path != "/ryn/agent-mcp"):
-            raise HTTPException(503, detail="company_account_unavailable")
+        target, headers = await _run('company_account_target',
+            extensions.manager.oauth.company_authorization.account_target)
         try:
             async with httpx.AsyncClient(timeout=8, trust_env=False) as client:
-                response = await client.get(f"http://127.0.0.1:{url.port}/api/company/account")
+                response = await client.get(target, headers=headers)
                 response.raise_for_status()
                 account = response.json()
                 return {key: account[key] for key in ("memberId", "displayName", "state", "version", "plugins", "connections")}
@@ -347,6 +360,40 @@ def install_extension_routes(
     async def company_account_action(request: Request):
         local_control(request)
         return await _run("company_account_action", extensions.manager.oauth.company_action)
+
+    @app.get("/api/local/agent/extensions/company/authorization-delivery")
+    async def company_authorization_delivery(request: Request):
+        local_control(request)
+        return await _run('company_authorization_delivery',
+                          extensions.manager.oauth.company_authorization.delivery_status)
+
+    @app.post("/api/local/agent/extensions/company/browser-bootstrap")
+    async def company_browser_bootstrap(request: Request):
+        # A plugin iframe must use the validated native host bridge. Other
+        # loopback web pages cannot silently bootstrap the desktop identity.
+        origin = request.headers.get('origin')
+        if origin and origin not in {'http://tauri.localhost', 'https://tauri.localhost', 'tauri://localhost'}:
+            raise HTTPException(403, detail='agent_local_service_denied')
+        payload = await _body(request, 1024)
+        if set(payload) != {"plugin_id"}:
+            raise HTTPException(400, detail="agent_invalid_request")
+        return await _run("company_browser_bootstrap", lambda:
+            extensions.manager.oauth.company_authorization.bootstrap(payload['plugin_id']))
+
+    @app.post("/api/local/agent/extensions/company/authorization-state")
+    async def company_authorization_state(request: Request):
+        payload = await service_payload(request, max_bytes=32768)
+        if set(payload) - {'acknowledged', 'pendingLogouts'}:
+            raise HTTPException(400, detail="agent_invalid_request")
+        channel = extensions.manager.oauth.company_authorization
+        token = request.headers.get('X-Ryn-Service-Token', '')
+        generation = request.headers.get('X-Ryn-Service-Generation', '')
+        def operation():
+            if 'acknowledged' in payload:
+                channel.acknowledge(token, generation, payload['acknowledged'])
+            acknowledgements = channel.apply_service_logouts(token, generation, payload.get('pendingLogouts', []))
+            return {**channel.snapshot(token, generation), 'logoutAcks': acknowledgements}
+        return await _run("company_authorization_state", operation)
 
     @app.post("/api/local/agent/extensions/company/logout")
     async def logout_company(request: Request):
@@ -445,6 +492,9 @@ def install_extension_routes(
                 expected_revision=expected_rev,
                 desktop_access=_desktop_access(),
             )
+            channel = getattr(getattr(extensions.manager, 'oauth', None), 'company_authorization', None)
+            if channel is not None and not payload['enabled']:
+                result['authorizationDelivery'] = channel.revoke([plugin_id], 'plugin_disabled')
             for mid in result.get("mcp_server_ids") or []:
                 extensions.manager.invalidate_server(mid)
             if payload["enabled"]:
@@ -479,16 +529,24 @@ def install_extension_routes(
         def _op():
             previous = [server for server in extensions.store.list_mcp_servers_internal()
                         if server.get("plugin_id") == plugin_id]
+            channel = getattr(getattr(extensions.manager, 'oauth', None), 'company_authorization', None)
             result = extensions.store.delete_plugin(
                 plugin_id,
                 expected_revision=expected_rev,
             )
+            if channel is not None:
+                channel.revoke([plugin_id], 'plugin_removed')
             for mid in result.get("removed_mcp_server_ids") or []:
                 extensions.manager.invalidate_server(mid)
             oauth = getattr(extensions.manager, "oauth", None)
             if oauth is not None:
                 for server in previous:
-                    oauth.forget(server["instance_id"])
+                    if channel is not None:
+                        oauth.forget(server['instance_id'], previous=server)
+                    else:
+                        oauth.forget(server['instance_id'])
+                if channel is not None:
+                    result['authorizationDelivery'] = channel.delivery_status()
             return result
 
         return await _run("delete_plugin", _op)
@@ -614,9 +672,18 @@ def install_extension_routes(
             current_instances = {s["instance_id"] for s in extensions.store.list_mcp_servers_internal(include_tools=False)}
             oauth = getattr(extensions.manager, "oauth", None)
             if oauth is not None:
+                channel = getattr(oauth, 'company_authorization', None)
+                if channel is not None:
+                    channel.sync_bindings()
+                    channel.changed()
                 for previous in previous_servers:
-                    if previous["instance_id"] not in current_instances:
-                        oauth.forget(previous["instance_id"])
+                    if previous['instance_id'] not in current_instances:
+                        if channel is not None:
+                            oauth.forget(previous['instance_id'], previous=previous)
+                        else:
+                            oauth.forget(previous['instance_id'])
+                if channel is not None:
+                    overview['authorizationDelivery'] = channel.delivery_status()
             for srv in overview.get("mcp_servers") or []:
                 if isinstance(srv, dict) and isinstance(srv.get("id"), str):
                     extensions.manager.invalidate_server(srv["id"])
