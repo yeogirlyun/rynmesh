@@ -208,7 +208,10 @@ class OpenAICompatibleAdapter:
                 pass
             finally:
                 exc.close()
-            raise AdapterError(f"local API request failed: {code}", code=code, diagnostics=describe(exc, phase, value)) from None
+            diagnostics = describe(exc, phase, value)
+            if classify_errors and diagnostics.get("image_rejected"):
+                code = "upstream_image_rejected"  # The model refused the image, not the request.
+            raise AdapterError(f"local API request failed: {code}", code=code, diagnostics=diagnostics) from None
         except OSError as exc:
             timed_out = isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)
             code = "inference_timeout" if timed_out else "runtime_connection_failed"

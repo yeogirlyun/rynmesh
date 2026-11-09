@@ -242,3 +242,35 @@ def test_refused_image_is_retried_once_without_it_and_remembered(tmp_path):
     advance(runtime)
     assert runtime.get(row["id"])["result"] == "Still fine."
     assert len(model.calls) == 3  # Remembered: no second refused attempt.
+
+
+def test_non_streaming_chat_reports_an_image_refusal_from_a_real_http_error():
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from rynmesh.llm_package.adapters import AdapterError, OpenAICompatibleAdapter
+
+    class Refuse(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            body = json.dumps({"error": {"message": "Failed to deserialize the JSON body into the target type: "
+                                                   "messages[0]: unknown variant `image_url`, expected `text`",
+                                         "type": "invalid_request_error"}}).encode()
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Refuse)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        adapter = OpenAICompatibleAdapter(base_url=f"http://127.0.0.1:{server.server_address[1]}", model="text-sim")
+        with pytest.raises(AdapterError) as caught:
+            adapter.chat({"messages": _user_image_messages(PNG_SEED_SMALL), "max_tokens": 16}, task_id="t", timeout_s=10)
+        assert caught.value.code == "upstream_image_rejected"
+    finally:
+        server.shutdown()
