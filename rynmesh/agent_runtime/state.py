@@ -13,6 +13,7 @@ CONTROL_EVENTS = {"created", "workspace_bound", "message_added", "approval_reque
 CONTROL_EVENTS.add("approval_no_longer_required")
 CONTROL_EVENTS.add("connection_paused")
 CONTROL_EVENTS.update({"message_edit_requested", "message_edited"})
+CONTROL_EVENTS.add("unknown_outcome_acknowledged")
 PUBLIC_STATE_FIELDS = ("schema_version", "goal", "criteria", "plan", "control_revision", "event_cursor",
                        "run_state", "pending_input", "outcome", "scope_revision")
 

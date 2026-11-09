@@ -17,6 +17,9 @@ from . import model_settings
 from .adapters import AdapterError, OpenAICompatibleAdapter, validate_local_url
 from .model_usage import ModelUsageStore
 
+# A 16x16 red square for the owner-triggered image test.
+IMAGE_PROBE_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAI0lEQVR4nGO8IyLCQApgIkk1w6gG4gATkergYFQDMYDkUAIATz0BJPq/6scAAAAASUVORK5CYII='
+
 PROTOCOLS = {"openai_chat", "openai_responses", "anthropic_messages"}
 
 # Documentation for local clients, including task-authored programs. Runtime
@@ -352,6 +355,27 @@ class SourceStore:
             raise ValueError("unknown configured model")
         self.probe_adapter_tools(self.adapter(record, model), model_settings.effective(record, model)["max_output_tokens"])
         return {"model_id": model, "tool_support": "supported"}
+
+    def probe_model_image(self, record, model):
+        """Explicit owner-triggered image test: one small red square, asked its colour."""
+        if model not in record["models"]:
+            raise ValueError("unknown configured model")
+        return self.probe_adapter_image(self.adapter(record, model), model_settings.effective(record, model)["max_output_tokens"])
+
+    @staticmethod
+    def probe_adapter_image(adapter, max_output_tokens):
+        messages = [{"role": "user", "content": [
+            {"type": "text", "text": "What colour is this square? Answer with one colour word."},
+            {"type": "image_url", "image_url": {"url": IMAGE_PROBE_DATA_URL, "detail": "low"}}]}]
+        try:
+            result = adapter.chat({"messages": messages, "max_tokens": min(1024, max_output_tokens)},
+                                  task_id="source-image-" + uuid.uuid4().hex, timeout_s=60)
+        except AdapterError as exc:
+            if exc.code == "upstream_image_rejected":
+                return {"image_support": "unsupported"}
+            raise
+        text = str(result.get("text") or (result.get("message") or {}).get("content") or "").lower()
+        return {"image_support": "supported" if ("red" in text or "红" in text) else "unknown"}
 
     @staticmethod
     def probe_adapter_tools(adapter, max_output_tokens):

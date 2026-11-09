@@ -43,6 +43,7 @@ from .prompt import (
     plan_message,
     provider_messages,
 )
+from . import event_compaction
 from .protocol import digest, event, event_result, model_retry_authority, now, sanitized, task
 from .store import AgentError, AgentToolRejected, encoded
 from .stream_tools import StreamToolMismatch
@@ -71,6 +72,11 @@ MAX_PARALLEL_READS = MAX_PARALLEL_TOOLS
 STREAM_MIN_PERSIST_SECONDS = 5.0
 STREAM_MAX_PERSIST_SECONDS = 30.0
 STREAM_PERSIST_CHARS = 512
+
+
+# Events that start or redirect an owner turn.
+OWNER_TURN_EVENTS = frozenset({"created", "message_added", "information_added", "goal_changed",
+                               "input_answered", "unknown_outcome_acknowledged", "message_edited"})
 
 
 class AgentLoop:
@@ -647,6 +653,7 @@ class AgentLoop:
                 subagents.drain_subagent_notifications_in_tx(data, row)
                 event(row, "assistant", content=message["content"], tool_count=len(pending),
                       step=step, request_id=request_id, attempt=attempt, timing=timing)
+                event_compaction.fold_stream_deltas(row)
                 effective_action = "complete" if wrap_up_reason else decision.action
                 effective_reason = f"budget_wrap_up:{wrap_up_reason}" if wrap_up_reason else decision.reason
                 event(row, "turn_decision", action=effective_action, reason=effective_reason, step=step)
@@ -1496,6 +1503,22 @@ class AgentLoop:
                            and receipt["arguments_sha256"] == digest(call["arguments"])
                            and receipt.get("result", {}).get("error") == "owner_denied_operation" for receipt in row.get("receipts", [])):
                         raise AgentToolRejected("agent_owner_denied_operation")
+                    # A write the tool already answered with an error may have partly
+                    # applied. Refuse the identical call until the owner speaks again;
+                    # the model may check the state or change the arguments.
+                    last_owner_at = next((str(item.get("at") or "") for item in reversed(row["events"])
+                                          if item["type"] in OWNER_TURN_EVENTS), "")
+                    if any(receipt["goal_revision"] == row["goal"]["revision"] and receipt["tool"] == call["name"]
+                           and receipt["arguments_sha256"] == digest(call["arguments"])
+                           and str(receipt.get("started_at") or "") > last_owner_at
+                           and isinstance(receipt.get("result"), dict)
+                           and receipt["result"].get("side_effects") == "unknown"
+                           for receipt in row.get("receipts", [])):
+                        raise AgentToolRejected(
+                            "agent_repeated_failed_write",
+                            correction="This exact write already returned an error and may have partly applied. "
+                                       "Check the actual state with a read, change the arguments, or ask the owner.",
+                        )
                     approved = row["approved"]
                     automatic = decision.action == "execute" and decision.basis == "automatic"
                     if decision.action == "ask":

@@ -336,16 +336,25 @@ def test_central_route_and_model_image_capability_matrix():
     assert agy_cap["supports_image_input"] is False
     assert agy_cap["image_capability_reason"] == "antigravity_cli_stream_json_text_only"
 
-    # 6. Peer and other unverified CLI routes remain unsupported.
+    # 6. A shared (peer) model follows its provider's declaration. Without one it is
+    #    "unknown" and may receive images over the legacy inline carrier, like an
+    #    unprobed local API model; a declared text-only model never does.
     peer_cap = image_capabilities.evaluate_image_capability({
         "id": "peer/node-2/svc-1",
         "source": "peer",
         "adapter": "openai_compatible",
         "agent_supported": True,
     })
-    assert peer_cap["supports_image_input"] is False
-    assert peer_cap["image_carrier_available"] is False
-    assert peer_cap["image_capability_reason"] == "peer_image_route_unverified"
+    assert peer_cap["supports_image_input"] is True
+    assert peer_cap["image_support"] == "unknown"
+    assert peer_cap["image_transport"] == "peer_inline_v1"
+    assert peer_cap["image_capability_reason"] == "peer_image_support_unknown"
+    declared_text_only = image_capabilities.evaluate_image_capability({
+        "id": "peer/node-2/svc-1", "source": "peer", "adapter": "openai_compatible",
+        "agent_supported": True, "capabilities": ["image-unsupported"],
+    })
+    assert declared_text_only["supports_image_input"] is False
+    assert declared_text_only["image_capability_reason"] == "provider_declared_image_unsupported"
 
 
 def test_model_catalog_exposes_safe_image_capability_fields(tmp_path):
@@ -437,8 +446,11 @@ def test_model_catalog_exposes_safe_image_capability_fields(tmp_path):
     assert agy["image_transport"] == "none"
     assert agy["image_capability_reason"] == "antigravity_cli_stream_json_text_only"
 
+    # Shared models follow the provider's own judgement; without a text-only
+    # declaration they may receive images like an unprobed local model.
     peer_rows = [m for m in by_id.values() if m["source"] == "peer"]
-    assert peer_rows and all(m["supports_image_input"] is False for m in peer_rows)
+    assert peer_rows and all(m["supports_image_input"] is True and m["image_support"] in {"unknown", "supported"}
+                             and m["image_transport"] in {"peer_inline_v1", "peer_inline_v2"} for m in peer_rows)
 
 
 def test_codex_cli_image_inspect_preserves_turn_start_image_items_and_keeps_store_base64_free(tmp_path, monkeypatch):

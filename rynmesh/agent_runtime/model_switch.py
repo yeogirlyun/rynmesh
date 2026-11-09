@@ -4,10 +4,10 @@ from __future__ import annotations
 import copy
 
 from . import projects, reasoning
-from .control import ambiguous, check_version, close_queue, remember_request, request_replayed
+from .control import acknowledgeable, ambiguous, check_version, close_queue, remember_request, request_replayed
 from .store import AgentError
 
-SAFE_STATES = {"paused", "completed", "failed", "waiting_input", "waiting_approval", "interrupted"}
+SAFE_STATES = {"paused", "completed", "failed", "waiting_input", "waiting_approval", "interrupted", "cancelled"}
 DATA_POLICY = {
     "sent_after_resume": ["owner_messages", "current_goal", "selected_skills", "current_saved_preferences"],
     "excluded": ["previous_model_messages", "previous_tool_results", "previous_summaries", "previous_resource_grants"],
@@ -17,8 +17,16 @@ DATA_POLICY = {
 
 
 def available(row):
+    control = row.get("pending_control")
+    # A cancelled task keeps its settled cancel marker; that is not pending work.
+    settled_cancel = row["status"] == "cancelled" and (control or {}).get("kind") == "cancel"
     return (not row.get("archived") and row["status"] in SAFE_STATES
-            and not row.get("in_flight") and not ambiguous(row) and not row.get("pending_control"))
+            and not row.get("in_flight") and not ambiguous(row) and (not control or settled_cancel))
+
+
+def switchable(row):
+    """Switching model never repeats an unconfirmed write; the switch acknowledges it."""
+    return available(row) or (not row.get("archived") and acknowledgeable(row))
 
 
 def resolve(runtime, model_id):
@@ -55,7 +63,7 @@ def preview(runtime, task_id, model_id):
     from .runtime import task
     state = runtime.store.read()
     row = task(state, task_id)
-    if not available(row):
+    if not switchable(row):
         raise AgentError("agent_operation_unresolved" if ambiguous(row) or row.get("in_flight") else "agent_invalid_transition")
     model, destination = resolve(runtime, model_id)
     scope_authorized = bool(row["scope"]["resource_grants"] or row.get("project"))
@@ -86,7 +94,7 @@ def change(runtime, task_id, value):
     if request_replayed(selected, request):
         return public_task(selected, settings=initial["settings"])
     check_version(selected, value)
-    if not available(selected):
+    if not switchable(selected):
         raise AgentError("agent_operation_unresolved" if ambiguous(selected) or selected.get("in_flight") else "agent_invalid_transition")
     model, destination = resolve(runtime, value["model_id"])
     if value["expected_destination"] != destination:
@@ -110,6 +118,8 @@ def change(runtime, task_id, value):
         check_version(row, value)
         if type(value["expected_scope_revision"]) is not int or value["expected_scope_revision"] != row["scope_revision"]:
             raise AgentError("agent_scope_revision_conflict")
+        if acknowledgeable(row) and not row.get("archived"):
+            runtime._acknowledge_unknown_in_tx(row)
         if not available(row):
             raise AgentError("agent_operation_unresolved" if ambiguous(row) or row.get("in_flight") else "agent_invalid_transition")
         if value["transfer_resource_scope"] and row.get("project"):

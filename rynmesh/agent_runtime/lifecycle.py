@@ -10,7 +10,7 @@ import copy
 import hashlib
 
 from ..file_transactions import file_transaction
-from .control import ambiguous, check_version, remember_request, request_replayed
+from .control import ambiguous, check_version, owner_removable, remember_request, request_replayed
 from .store import VERSION, AgentError, AgentStore
 
 
@@ -131,7 +131,9 @@ def change(store, task_id, value, operation, emit, stamp, *, on_mutate=None, rea
             # Stale encrypted copies are unreachable after the atomic index
             # update. Keeping one until next archive avoids cross-file rollback.
             return row
-        if not eligible(row):
+        # Automatic archiving stays strict (eligible); the owner may remove any
+        # task that is not working right now, including an unconfirmed write.
+        if not owner_removable(row):
             raise AgentError("agent_operation_unresolved" if ambiguous(row) else "agent_task_busy")
         if operation == "archive":
             if row.get("archived"):

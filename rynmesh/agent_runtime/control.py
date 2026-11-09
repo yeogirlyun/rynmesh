@@ -3,8 +3,15 @@ from __future__ import annotations
 
 import hashlib
 import uuid
+from datetime import datetime, timezone
 
 from .store import AgentError, encoded
+
+# A reconciliation holds owner input only while it can still finish. Local
+# commands never produce a completion receipt, so an "unknown" result must not
+# lock the conversation: the owner may continue and the model is told.
+RECONCILIATION_PENDING_SECONDS = 60
+RECONCILIATION_RUNNING_SECONDS = 120
 
 
 def check_version(row, value, *, goal=False):
@@ -67,13 +74,63 @@ def ambiguous(row):
     return False
 
 
+def _age_seconds(stamp, current):
+    if not isinstance(stamp, str):
+        return None
+    try:
+        then = datetime.fromisoformat(stamp)
+    except ValueError:
+        return None
+    if then.tzinfo is None:
+        then = then.replace(tzinfo=timezone.utc)
+    return (current - then).total_seconds()
+
+
+def reconciliation_active(row, current=None):
+    """True only while a pending/running reconciliation is fresh enough to finish."""
+    record = row.get("reconciliation") or {}
+    state = record.get("state")
+    if state not in {"pending", "running"}:
+        return False
+    age = _age_seconds(record.get("started_at" if state == "running" else "requested_at"),
+                       current or datetime.now(timezone.utc))
+    limit = RECONCILIATION_RUNNING_SECONDS if state == "running" else RECONCILIATION_PENDING_SECONDS
+    return age is not None and 0 <= age < limit
+
+
+def acknowledgeable(row, current=None):
+    """An unconfirmed write the owner may acknowledge by continuing the conversation."""
+    return ambiguous(row) and not reconciliation_active(row, current)
+
+
+def owner_removable(row, current=None):
+    """The owner may archive or delete any task that is not working right now.
+
+    Removing a record never repeats a write. Automatic archiving keeps its
+    stricter rule (lifecycle.eligible).
+    """
+    status, flight = row["status"], row.get("in_flight")
+    if ambiguous(row):
+        return not reconciliation_active(row, current)
+    if status == "interrupted" and flight and not row.get("queue") and recoverable_read_in_flight(row):
+        return True  # A read cut short by a restart changes nothing; its record may go.
+    return (not flight and not row.get("queue")
+            and status in {"completed", "failed", "cancelled", "paused", "interrupted"})
+
+
 def allowed_actions(row, settings):
     status, flight = row["status"], row.get("in_flight")
     enabled = settings.get("enabled", False)
     uncertain = ambiguous(row)
+    # Sending a message, switching model, archiving or deleting never repeats
+    # the unconfirmed write; only a fresh reconciliation holds them back.
+    held = uncertain and reconciliation_active(row)
+    continuable = uncertain and not held
     recoverable_read = status == "interrupted" and recoverable_read_in_flight(row) and not uncertain
     active = status in {"queued", "running", "waiting_approval", "waiting_input"}
-    mutable = enabled and not uncertain and (status in {"queued", "running", "waiting_approval", "waiting_input", "paused", "completed", "failed"} or (status == "interrupted" and (not flight or recoverable_read)))
+    mutable = enabled and (continuable or (not uncertain and (status in {"queued", "running", "waiting_approval", "waiting_input", "paused", "completed", "failed"}
+                                                              or (status == "interrupted" and (not flight or recoverable_read))
+                                                              or (status == "cancelled" and not flight))))
     possible = {"pause": active, "stop": active, "cancel": status not in {"completed", "failed", "cancelled"},
                 "resume": enabled and status in {"paused", "interrupted"} and (not flight or recoverable_read) and not uncertain,
                 "approve": enabled and status == "waiting_approval" and bool(row["pending_approval"]) and "read_only" not in {row["permission_mode"], settings["permission_mode"]},
@@ -83,10 +140,12 @@ def allowed_actions(row, settings):
                 "reconcile": enabled and ((uncertain and row.get("reconciliation", {}).get("attempts", 0) < 3) or recoverable_read)
                              and row.get("reconciliation", {}).get("state") not in {"pending", "running"}}
     safe_lifecycle = not flight and not row.get("queue") and not uncertain and status in {"completed", "failed", "cancelled", "paused"}
-    possible.update(rename=True, archive=safe_lifecycle and not row.get("archived"), restore=bool(row.get("archived")), delete=safe_lifecycle)
+    removable = owner_removable(row)
+    possible.update(rename=True, archive=removable and not row.get("archived"), restore=bool(row.get("archived")), delete=removable)
     possible["budget"] = safe_lifecycle and status in {"paused", "completed", "failed"}
     possible["source_credential"] = enabled and not flight and not uncertain and status in {"queued", "waiting_input", "paused", "completed", "failed"}
-    possible["model"] = not flight and not uncertain and not row.get("pending_control") and status in {"paused", "completed", "failed", "waiting_input", "waiting_approval", "interrupted"}
+    possible["model"] = continuable or (not flight and not uncertain and status in {"paused", "completed", "failed", "waiting_input", "waiting_approval", "interrupted", "cancelled"}
+                                        and (not row.get("pending_control") or (status == "cancelled" and row["pending_control"].get("kind") == "cancel")))
     possible["edit_message"] = enabled and not uncertain and status != "interrupted" and not row.get("pending_user_messages")
     if (row.get("fork") or {}).get("awaiting_instruction"):
         possible["resume"] = False
@@ -94,7 +153,7 @@ def allowed_actions(row, settings):
     if row.get("archived"):
         possible = {action: allowed if action in {"rename", "restore", "delete"} else False for action, allowed in possible.items()}
     return {action: {"enabled": bool(allowed), "requires_control_revision": action not in {"pause", "stop", "cancel"},
-                     "reason": None if allowed else "agent_operation_unresolved" if uncertain else "agent_disabled" if not enabled and action not in {"pause", "stop", "cancel"} else "agent_invalid_transition"}
+                     "reason": None if allowed else "agent_reconciliation_running" if held else "agent_operation_unresolved" if uncertain else "agent_disabled" if not enabled and action not in {"pause", "stop", "cancel"} else "agent_invalid_transition"}
             for action, allowed in possible.items()}
 
 

@@ -1028,7 +1028,7 @@ def test_early_specs_before_install_agent_and_normal_order_key_binding_and_recon
         _close(app2_r, runtime=rt2_r)
 
 
-def test_mcp_write_result_is_error_preserves_unknown_and_blocks_model_retry(tmp_path: Path):
+def test_mcp_write_result_is_error_is_reported_and_never_redispatched(tmp_path: Path):
     from rynmesh.agent_runtime.store import AgentError, encoded
     from rynmesh.agent_runtime.tools import RynTools
     from rynmesh.llm_package.routes import install_llm_routes
@@ -1204,7 +1204,8 @@ def test_mcp_write_result_is_error_preserves_unknown_and_blocks_model_retry(tmp_
         tools.craft.close()
         app.state.llm_shutdown()
 
-    # 1. Direct adapter + encrypted OperationLedger: read isError returns normal error, write isError raises agent_write_outcome_unknown
+    # 1. Direct adapter + encrypted OperationLedger: read and write isError both return an ordinary error;
+    #    the write result says its side effects are unknown and the same operation_id is never re-dispatched.
     app1, rt1, _, tools1, tid1, write_name1, read_name1, counter1 = _setup(tmp_path / "direct")
     try:
         adapter = tools1.extensions
@@ -1216,19 +1217,18 @@ def test_mcp_write_result_is_error_preserves_unknown_and_blocks_model_retry(tmp_
         assert read_res["error"] == "agent_mcp_tool_returned_error"
         assert _read_count(counter1) == 0
 
-        # Write isError: durable count=1, raises AgentError('agent_write_outcome_unknown'), ledger stays 'dispatched'
+        # Write isError: durable count=1, an ordinary error result that says side effects are unknown
         op_id = "direct-iserror-fixture-operation"
         w_ctx = rt1._tool_context(rt1.store.read()["tasks"][tid1], op_id)
         w_ctx["extension_binding"] = adapter.metadata(write_name1)["extension_binding"]
         preview = adapter.preview(write_name1, {}, context=w_ctx)
-        with pytest.raises(AgentError) as exc_info:
-            adapter.execute(write_name1, {}, operation_id=op_id, context=w_ctx, expected_preview=preview)
-        assert str(exc_info.value) == "agent_write_outcome_unknown"
+        write_res = adapter.execute(write_name1, {}, operation_id=op_id, context=w_ctx, expected_preview=preview)
+        assert write_res["is_error"] is True and write_res["side_effects"] == "unknown"
+        assert write_res["error"] == "agent_mcp_tool_returned_error"
         assert _read_count(counter1) == 1
 
         ledger_row = tools1.resource_writes.ledger.get(op_id)
-        assert ledger_row["status"] == "dispatched"
-        assert ledger_row["error"] == "agent_mcp_tool_returned_error"
+        assert ledger_row["status"] == "confirmed" and ledger_row["result"]["is_error"] is True
         assert _1X1_PNG_B64 not in json.dumps(ledger_row)
 
         rec_ctx = rt1._tool_context(rt1.store.read()["tasks"][tid1], op_id)
@@ -1240,8 +1240,7 @@ def test_mcp_write_result_is_error_preserves_unknown_and_blocks_model_retry(tmp_
             "extension_binding": adapter.metadata(write_name1)["extension_binding"],
         }
         rec = tools1.reconcile(op_id, context=rec_ctx, cancelled=lambda: False)
-        assert rec["outcome"] == "unknown"
-        assert rec["error"] == "agent_mcp_tool_returned_error"
+        assert rec["outcome"] == "unknown"  # An error result never proves the write happened.
 
         # Same operation_id retry must NOT re-execute the remote write (count stays 1)
         with pytest.raises(AgentError) as exc_retry:
@@ -1251,28 +1250,23 @@ def test_mcp_write_result_is_error_preserves_unknown_and_blocks_model_retry(tmp_
     finally:
         _close(app1, rt1, tools1)
 
-    # 2. Full runtime + model new-call retry across ticks, reconciliation, and fresh reconstruction
+    # 2. Full runtime: the model sees the error and keeps working; a blind identical retry
+    #    is refused before dispatch, so the remote write still ran exactly once.
     app2, rt2, model2, tools2, tid2, write_name2, _, counter2 = _setup(tmp_path / "runtime")
     try:
         for _ in range(10):
             rt2.run_once()
-            row = rt2.get(tid2)
-            if row["status"] in {"failed", "interrupted", "cancelled", "completed", "waiting_approval"}:
+            if model2.write_calls >= 3:
                 break
         assert _read_count(counter2) == 1
-        assert model2.write_calls == 1
+        assert model2.write_calls >= 2
         state2 = rt2.get(tid2)
-        assert state2["status"] == "interrupted"
-        assert state2["error"] == "agent_write_outcome_unknown"
-
-        # Run reconciliation tick -> state becomes unknown, count remains 1, model never called a second time
-        rt2.run_once()
-        rt2.run_once()
-        state2_after = rt2.get(tid2)
-        assert state2_after["reconciliation"]["state"] == "unknown"
-        assert [r["status"] for r in _receipts(rt2, tid2) if r["tool"] == write_name2] == ["unknown"]
-        assert _read_count(counter2) == 1
-        assert model2.write_calls == 1
+        assert state2["error"] != "agent_write_outcome_unknown"
+        assert state2["allowed_actions"]["information"]["enabled"] or state2["status"] in {"queued", "running"}
+        stored = rt2.store.read()["tasks"][tid2]
+        refused = [m for m in stored["messages"] if m["role"] == "tool" and "agent_repeated_failed_write" in m["content"]]
+        assert refused, "the identical retry must come back as a tool error"
+        assert all(r["status"] != "unknown" for r in _receipts(rt2, tid2) if r["tool"] == write_name2)
     finally:
         _close(app2, rt2, tools2)
 
@@ -1304,12 +1298,8 @@ def test_mcp_write_result_is_error_preserves_unknown_and_blocks_model_retry(tmp_
     try:
         rt2_r.run_once()
         reconstructed_state = rt2_r.get(tid2)
-        assert reconstructed_state["status"] == "interrupted"
-        assert reconstructed_state["error"] == "agent_write_outcome_unknown"
-        assert reconstructed_state["reconciliation"]["state"] == "unknown"
-        assert [r["status"] for r in _receipts(rt2_r, tid2) if r["tool"] == write_name2] == ["unknown"]
-        assert _read_count(counter2) == 1
-        assert model2_r.write_calls == 0
+        assert reconstructed_state["error"] != "agent_write_outcome_unknown"
+        assert _read_count(counter2) == 1  # A restart never re-dispatches the answered write.
     finally:
         _close(app2_r, rt2_r, tools2_r)
 

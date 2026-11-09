@@ -16,7 +16,12 @@ from referencing import Registry
 
 from .adapters import actual_usage, cached_input_tokens
 from .image_input_profile import (
+    SHARED_V2_CARRIER,
+    SHARED_V2_MAX_IMAGE_BYTES,
+    SHARED_V2_MAX_IMAGES,
+    SHARED_V2_MAX_TOTAL_IMAGE_BYTES,
     current_internal_image_profile,
+    current_shared_image_carrier,
     verify_messages_against_profile,
 )
 from .reasoning import validate_effort
@@ -106,6 +111,8 @@ def validate_chat(value: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(messages, list) or not messages:
         raise ValueError("messages must be a non-empty array")
     active_profile = current_internal_image_profile()
+    shared_v2 = active_profile is None and current_shared_image_carrier() == SHARED_V2_CARRIER
+    shared_v2_images = shared_v2_bytes = 0
     total_profile_images = 0
     pending: set[str] = set()
     for msg_idx, message in enumerate(messages):
@@ -154,6 +161,22 @@ def validate_chat(value: dict[str, Any]) -> dict[str, Any]:
                         raise ValueError("images must be bounded inline data URLs")
                     images += 1
                     total_profile_images += 1
+                elif shared_v2:
+                    # Negotiated shared-model carrier: larger images, same inline form.
+                    if (not isinstance(url, str) or len(url) > (SHARED_V2_MAX_IMAGE_BYTES + 2) // 3 * 4 + 32
+                            or not re.fullmatch(r"data:image/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+={0,2}", url)):
+                        raise ValueError("images must be bounded inline data URLs")
+                    try:
+                        raw = base64.b64decode(url.split(",", 1)[1], validate=True)
+                    except ValueError:
+                        raise ValueError("invalid image data") from None
+                    shared_v2_images += 1
+                    shared_v2_bytes += len(raw)
+                    if not raw or len(raw) > SHARED_V2_MAX_IMAGE_BYTES or shared_v2_bytes > SHARED_V2_MAX_TOTAL_IMAGE_BYTES:
+                        raise ValueError("image size limit exceeded")
+                    if shared_v2_images > SHARED_V2_MAX_IMAGES:
+                        raise ValueError("image count limit exceeded")
+                    images += 1
                 else:
                     if not isinstance(url, str) or len(url) > 180000 or not re.fullmatch(r"data:image/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}", url):
                         raise ValueError("images must be bounded inline data URLs")

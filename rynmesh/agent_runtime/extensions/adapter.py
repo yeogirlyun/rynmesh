@@ -202,6 +202,12 @@ def _strip_raw_images(
     return value
 
 
+MCP_WRITE_ERROR_NOTE = (
+    "The tool reported an error. That does not prove nothing changed. Check the actual state "
+    "with a read before trying again, and do not repeat the identical call blindly."
+)
+
+
 class ExtensionToolAdapter:
     """Exposes enabled MCP server tools and ryn_read_skill_file through RynTools."""
 
@@ -1471,18 +1477,13 @@ class ExtensionToolAdapter:
                 allow_image_rejection=False,
             )
             if normalized.get("is_error") or normalized.get("error"):
-                # MCP tool-level isError=true does not prove rollback or absence of side effects.
-                # Preserve dispatched/unknown status with bounded sanitized diagnostics and halt retries.
-                ledger.update(
-                    operation_id,
-                    "dispatched",
-                    error=str(normalized.get("error") or "agent_mcp_tool_returned_error"),
-                    error_result=normalized,
-                    receipt_reserve=0,
-                )
-                unknown_err = AgentError("agent_write_outcome_unknown")
-                unknown_err.diagnostics = copy.deepcopy(normalized)  # type: ignore[attr-defined]
-                raise unknown_err
+                # The tool answered with an error. Report it to the model like any
+                # other tool error instead of locking the task. isError does not
+                # prove nothing changed, so say so; the receipt keeps is_error and
+                # this operation_id is never dispatched again (see the replay checks).
+                reported = {**normalized, "is_error": True, "side_effects": "unknown", "note": MCP_WRITE_ERROR_NOTE}
+                ledger.update(operation_id, "confirmed", result=reported)
+                return reported
             ledger.update(operation_id, "confirmed", result=normalized)
             return normalized
 
