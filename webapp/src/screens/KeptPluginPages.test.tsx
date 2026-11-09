@@ -81,6 +81,29 @@ describe("kept plugin pages", () => {
     expect(holder(dash)).toHaveClass("is-active");
   });
 
+  it("preserves sibling order on revisits while evicting the least recently used page", async () => {
+    const user = userEvent.setup();
+    mount();
+    const dash = await screen.findByTitle("Page dash");
+    for (const id of ["work", "affiliate"]) {
+      await user.click(screen.getByRole("button", { name: `Open ${id}` }));
+      await screen.findByTitle(`Page ${id}`);
+    }
+    const siblings = Array.from(holder(dash).parentElement!.children);
+    for (const id of ["work", "affiliate", "dash"]) {
+      await user.click(screen.getByRole("button", { name: `Open ${id}` }));
+      expect(Array.from(holder(dash).parentElement!.children)).toEqual(siblings);
+      expect(holder(screen.getByTitle(`Page ${id}`))).toHaveClass("is-active");
+    }
+    await user.click(screen.getByRole("button", { name: "Open extra" }));
+    await screen.findByTitle("Page extra");
+    expect(screen.queryByTitle("Page work")).not.toBeInTheDocument();
+    expect(screen.getByTitle("Page dash")).toBe(dash);
+    expect(Array.from(holder(dash).parentElement!.children).map(node => node.getAttribute("data-plugin-id")))
+      .toEqual(["dash", "affiliate", "extra"]);
+    expect(document.querySelectorAll(".pf-kept-plugin")).toHaveLength(KEPT_PLUGIN_PAGES);
+  });
+
   it("keeps a refreshed but unchanged manifest from reloading the page", async () => {
     const user = userEvent.setup();
     mount();

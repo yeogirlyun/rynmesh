@@ -30,17 +30,23 @@ function samePage(left: ExtensionPlugin, right: ExtensionPlugin) {
 export function KeptPluginPagesProvider({ children }: { children: ReactNode }) {
   const [pages, setPages] = useState<KeptPage[]>([]);
   const [active, setActive] = useState<string | null>(null);
+  const recency = useRef<string[]>([]);
   const show = useCallback((plugin: ExtensionPlugin) => {
+    // Recency must not determine DOM order: moving an existing iframe ancestor
+    // can reload its browsing context even when React preserves the element.
+    recency.current = [...recency.current.filter(id => id !== plugin.id), plugin.id].slice(-KEPT_PLUGIN_PAGES);
+    const retained = new Set(recency.current);
     setPages(current => {
       const known = current.find(page => page.id === plugin.id);
       const kept = known && samePage(known.plugin, plugin) ? known : { id: plugin.id, plugin };
-      // Most recently shown last; the oldest page is closed first.
-      return [...current.filter(page => page.id !== plugin.id), kept].slice(-KEPT_PLUGIN_PAGES);
+      if (known) return kept === known ? current : current.map(page => page.id === plugin.id ? kept : page);
+      return [...current.filter(page => retained.has(page.id)), kept];
     });
     setActive(plugin.id);
   }, []);
   const hide = useCallback((id: string) => setActive(current => current === id ? null : current), []);
   const drop = useCallback((id: string) => {
+    recency.current = recency.current.filter(pageId => pageId !== id);
     setPages(current => current.some(page => page.id === id) ? current.filter(page => page.id !== id) : current);
     setActive(current => current === id ? null : current);
   }, []);
