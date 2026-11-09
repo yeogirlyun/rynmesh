@@ -8,7 +8,7 @@ param(
     [Parameter(Mandatory=$true)][string]$Output,
     [string]$MakeNsis = "$env:LOCALAPPDATA/tauri/NSIS/makensis.exe",
     # lzma (solid, 128 MB window) gives the smallest download; zlib is ~5x faster for test builds.
-    # Office is not bundled: Ryn downloads it after installation.
+    # Keep verified Office payloads bundled until first-start downloads are released and accepted.
     [ValidateSet('lzma','zlib')][string]$Compression = 'lzma'
 )
 $ErrorActionPreference='Stop'

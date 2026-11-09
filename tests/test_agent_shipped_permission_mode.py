@@ -1,6 +1,5 @@
 """The Ryn app starts in full access ("自动处理"); owner choices are never overridden."""
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
-
 from test_agent_runtime import Catalog, Model, Tools, advance, assistant
 
 from rynmesh.agent_runtime.runtime import AgentRuntime
@@ -50,16 +49,16 @@ def test_new_install_starts_in_full_access_and_runs_changes_without_asking(tmp_p
     assert [name for name, *_ in tools.calls] == ["share_service"]
 
 
-def test_old_install_on_the_old_default_moves_once(tmp_path):
+def test_old_install_with_ambiguous_workspace_mode_keeps_it(tmp_path):
     key = X25519PrivateKey.generate()
     old = legacy_install(tmp_path, key)
     before = saved(old)
     assert before[:2] == ("workspace", None)
     runtime, _, _ = runtime_at(tmp_path, key)
-    assert runtime.adopt_shipped_permission_mode(SHIPPED_PERMISSION_MODE) is True
-    assert saved(runtime) == ("automatic", "shipped_default", before[2] + 1)
     assert runtime.adopt_shipped_permission_mode(SHIPPED_PERMISSION_MODE) is False
-    assert saved(runtime) == ("automatic", "shipped_default", before[2] + 1)
+    assert saved(runtime) == ("workspace", "legacy", before[2])
+    assert runtime.adopt_shipped_permission_mode(SHIPPED_PERMISSION_MODE) is False
+    assert saved(runtime) == ("workspace", "legacy", before[2])
 
 
 def test_old_install_with_a_picked_mode_keeps_it(tmp_path):
@@ -89,7 +88,7 @@ def test_existing_tasks_keep_their_own_mode(tmp_path):
     runtime, _, _ = runtime_at(tmp_path, key)
     runtime.adopt_shipped_permission_mode(SHIPPED_PERMISSION_MODE)
     assert runtime.get(task["id"])["permission_mode"] == "workspace"
-    assert runtime.create({"message": "Inspect svc2."})["permission_mode"] == "automatic"
+    assert runtime.create({"message": "Inspect svc2."})["permission_mode"] == "workspace"
 
 
 def test_bare_store_keeps_the_conservative_library_default(tmp_path):
