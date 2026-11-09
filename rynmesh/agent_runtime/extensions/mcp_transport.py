@@ -11,6 +11,7 @@ import sys
 import tempfile
 import threading
 import time
+from datetime import datetime, timezone
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
@@ -183,6 +184,17 @@ def _resolve_executable(command: str, cwd: str | None) -> str:
 # manager re-reads that server's list; such notices do not count toward the
 # per-session notification limit because each only schedules one refresh.
 TOOLS_LIST_CHANGED = "notifications/tools/list_changed"
+
+
+def _seconds_since_listed(server: dict[str, Any]) -> float:
+    """Age of the stored tool list; unknown counts as old."""
+    try:
+        listed = datetime.fromisoformat(str(server.get("last_tested_at") or ""))
+        if listed.tzinfo is None:
+            listed = listed.replace(tzinfo=timezone.utc)
+        return max(0.0, (datetime.now(timezone.utc) - listed).total_seconds())
+    except (TypeError, ValueError):
+        return float("inf")
 
 
 def _announce_tools_changed(session: Any) -> None:
@@ -1229,7 +1241,8 @@ class McpSessionManager:
             with self._lock:
                 if sid in self._catalog_refreshing:
                     continue
-                if not force and now - self._catalog_checked.get(sid, -CATALOG_REFRESH_SECONDS) < CATALOG_REFRESH_SECONDS:
+                # First sight in this process: a list read minutes ago (sign-in, test) is still fresh.
+                if not force and now - self._catalog_checked.get(sid, now - _seconds_since_listed(server)) < CATALOG_REFRESH_SECONDS:
                     continue
                 self._catalog_refreshing.add(sid)
                 self._catalog_checked[sid] = now
