@@ -31,17 +31,21 @@ function Workspace({ pluginId }: { pluginId: string }) {
   const [pinned, setPinned] = useState(() => isPluginWorkspacePinned(pluginId));
   const [tab, setTab] = useState(query.get("tab") === "peers" ? "peers" : "pages");
   const generation = useRef(0);
+  const pending = useRef<AbortController | null>(null);
   const reload = useCallback(async () => {
     const current = ++generation.current;
+    pending.current?.abort();
+    const controller = new AbortController();
+    pending.current = controller;
+    const timeout = window.setTimeout(() => controller.abort(), 10000);
     setLoading(true); setFailed(false);
     try {
-      const next = await agentExtensions.overview();
-      lastOverview = next;
-      if (current === generation.current) setOverview(next);
+      const next = await agentExtensions.overview(controller.signal);
+      if (current === generation.current) { lastOverview = next; setOverview(next); }
     } catch { if (current === generation.current) setFailed(true); }
-    finally { if (current === generation.current) setLoading(false); }
+    finally { window.clearTimeout(timeout); if (current === generation.current) setLoading(false); }
   }, []);
-  useEffect(() => { void reload(); return () => { generation.current++; }; }, [reload]);
+  useEffect(() => { void reload(); return () => { generation.current++; pending.current?.abort(); }; }, [reload]);
   useEffect(() => {
     const sync = () => setPinned(isPluginWorkspacePinned(pluginId));
     window.addEventListener(PIN_CHANGE_EVENT, sync); window.addEventListener("storage", sync);
@@ -53,7 +57,7 @@ function Workspace({ pluginId }: { pluginId: string }) {
   // A kept page of a plugin that was removed or turned off is closed, not hidden.
   useEffect(() => { if (overview && !loading && !failed && !usable) keeper?.drop(pluginId); }, [overview, loading, failed, usable, keeper, pluginId]);
   // Resolve the manifest without flashing the management UI before the app.
-  if (!plugin && loading) return <div aria-busy="true" aria-label={tx("正在加载插件…", "Loading plugin…")} />;
+  if (!plugin && loading) return <div role="status" aria-busy="true" style={{ padding: 24 }}>{tx("正在加载插件…", "Loading plugin…")}</div>;
   if (!plugin) return <section className="pw-workspace">
     <h1>{tx("插件工作台", "Plugin workspace")}</h1>
     <p role={failed ? "alert" : "status"}>{loading ? tx("正在加载插件…", "Loading plugin…") : failed

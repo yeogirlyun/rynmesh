@@ -1,8 +1,8 @@
 import { tr } from "../uiI18n";
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAppContext } from '../appContext';
-import { agentExtensions, queryPluginTool, type ExtensionPlugin } from '../domain/agentExtensions';
+import { agentExtensions, bootstrapCompanyBrowserSession, queryPluginTool, type ExtensionPlugin } from '../domain/agentExtensions';
 import { peerProviders } from '../domain/peerProviders';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
@@ -21,6 +21,8 @@ export const PLUGIN_VISIBILITY_MESSAGE = 'ryn.plugin.visibility';
 /** Health polls run every 5 s; a busy service may miss a few without being down. */
 const PLUGIN_HEALTH_POLL_MS = 5000;
 const SLOW_POLLS_BEFORE_NOTICE = 3;
+export const PLUGIN_LIFECYCLE_MESSAGE = 'ryn.plugin.lifecycle';
+const COMPANY_PAGES = new Set(['company-workspace', 'company-dashboard', 'company-affiliate']);
 
 export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true }: {
   pluginId: string; resolvedPlugin?: ExtensionPlugin; client: NodeClient; visible?: boolean;
@@ -34,6 +36,9 @@ export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true 
   const [attempt, setAttempt] = useState(0);
   const [reachable, setReachable] = useState(false);
   const [frameGeneration, setFrameGeneration] = useState(0);
+  const [pageState, setPageState] = useState<'loading' | 'ready' | 'error' | 'timeout'>('loading');
+  const recoverableRoute = useRef('');
+  const reportsLifecycle = COMPANY_PAGES.has(pluginId);
   // An open page is never replaced by an error for a slow or restarting service;
   // it stays usable under a notice, and reloads only when the process changed.
   const [degraded, setDegraded] = useState<'' | 'slow' | 'restarting'>('');
@@ -46,6 +51,35 @@ export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true 
     try { target.postMessage({ type: PLUGIN_VISIBILITY_MESSAGE, visible: visibleRef.current }, new URL(plugin.web_app.url).origin); } catch { /* The frame is navigating. */ }
   };
   useEffect(announceVisibility, [visible]);
+  useEffect(() => {
+    if (!reachable || !reportsLifecycle) return;
+    setPageState('loading');
+    const timer = window.setTimeout(() => setPageState(state => state === 'loading' ? 'timeout' : state), 15000);
+    return () => window.clearTimeout(timer);
+  }, [reachable, reportsLifecycle, frameGeneration]);
+  useEffect(() => {
+    if (!plugin?.web_app || !reportsLifecycle) return;
+    const origin = new URL(plugin.web_app.url).origin;
+    const receive = (event: MessageEvent) => {
+      if (event.source !== frame.current?.contentWindow || event.origin !== origin || event.data?.type !== PLUGIN_LIFECYCLE_MESSAGE) return;
+      if (event.data.phase === 'ready') setPageState('ready');
+      else if (event.data.phase === 'error') setPageState('error');
+      if (typeof event.data.route === 'string' && event.data.route.length < 4096) {
+        try {
+          const route = new URL(event.data.route, origin);
+          if (route.origin === origin && route.pathname.startsWith('/apps/')) recoverableRoute.current = route.pathname + route.search + route.hash;
+        } catch { /* Invalid route is not recoverable. */ }
+      }
+    };
+    window.addEventListener('message', receive);
+    return () => window.removeEventListener('message', receive);
+  }, [plugin?.web_app?.url, reportsLifecycle]);
+  const frameUrl = useMemo(() => {
+    if (!plugin?.web_app) return '';
+    const url = new URL(recoverableRoute.current || plugin.web_app.url, plugin.web_app.url);
+    url.searchParams.set('host_origin', window.location.origin);
+    return url.href;
+  }, [plugin?.web_app?.url, frameGeneration]);
   // Keep an already-open error page in sync with supervisor recovery.
   useEffect(() => {
     if (!['plugin_service_unhealthy', 'plugin_service_start_timeout', 'plugin_service_exited', 'connection'].includes(error)) return;
@@ -62,11 +96,13 @@ export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true 
       return;
     }
     setError('');
-    agentExtensions.overview().then(o => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 10000);
+    agentExtensions.overview(controller.signal).then(o => {
       const p = o.plugins.find(p => p.id === pluginId);
       if (active) { setPlugin(p); if (!p?.enabled || !p.web_app) setError('unavailable'); }
-    }).catch(() => active && setError('unavailable'));
-    return () => { active = false; };
+    }).catch(() => active && setError('unavailable')).finally(() => window.clearTimeout(timeout));
+    return () => { active = false; controller.abort(); window.clearTimeout(timeout); };
   }, [pluginId, resolvedPlugin, attempt]);
   useEffect(() => {
     if (!plugin?.enabled || !plugin.web_app) return;
@@ -137,6 +173,13 @@ export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true 
         if (!live?.enabled || live.web_app?.url !== plugin.web_app?.url) throw new Error();
         const permissions = live.web_app?.permissions || [];
         if (JSON.stringify(args).length > 65536) throw new Error();
+        if (method === 'company.session.bootstrap') {
+          if (!COMPANY_PAGES.has(pluginId) || args.length !== 0) throw new Error();
+          const result = await bootstrapCompanyBrowserSession(pluginId);
+          // A navigation during bootstrap must never receive the old frame's ticket.
+          if (event.source && event.source === frame.current?.contentWindow) event.source.postMessage({ type: 'ryn.plugin.response', id, result }, { targetOrigin: origin });
+          return;
+        }
         const methods: Record<string, { permission: string; run: () => unknown }> = {
           'agent.draft': { permission: 'agent', run: () => {
             if (typeof args[0] !== 'string' || !args[0].trim() || args[0].length > 16000) throw new Error();
@@ -187,16 +230,24 @@ export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true 
     {' '}<Link to="/settings/extensions/plugins">{tr('Manage plugins')}</Link>
   </section>;
   if (!plugin?.enabled || !plugin.web_app || !reachable) return <div role="status" aria-busy="true" style={{ padding: 24 }}>{tx('正在连接插件服务…', 'Connecting to the plugin service…')}</div>;
-  const url = new URL(plugin.web_app.url); url.searchParams.set('host_origin', window.location.origin);
   const sandbox = ['allow-scripts', 'allow-forms', 'allow-same-origin', 'allow-popups'];
   if (plugin.web_app.permissions.includes('downloads')) sandbox.push('allow-downloads');
   if (plugin.web_app.permissions.includes('dialogs')) sandbox.push('allow-modals');
   return <>
+    {reportsLifecycle && pageState !== 'ready' && <div role={pageState === 'loading' ? 'status' : 'alert'} style={{ padding: '8px 12px' }}>
+      {pageState === 'loading' ? tx('正在初始化插件页面…', 'Initializing the plugin page…')
+        : pageState === 'error' ? tx('插件页面遇到错误，可重新加载恢复。', 'The plugin page encountered an error. Reload to recover.')
+        : tx('插件页面尚未完成初始化，可继续等待或重新加载。', 'The plugin page has not finished initializing. Wait or reload.')}
+      {pageState !== 'loading' && <button className="ae-btn" onClick={() => setFrameGeneration(value => value + 1)}>{tx('重新加载页面', 'Reload page')}</button>}
+    </div>}
     {degraded && <div role="status" style={{ padding: '4px 12px', fontSize: 12, background: 'rgba(245, 158, 11, 0.12)', borderBottom: '1px solid rgba(245, 158, 11, 0.35)' }}>
       {degraded === 'restarting'
         ? tx('插件服务正在重新启动，页面会自动刷新…', 'The plugin service is restarting. This page will reload automatically…')
         : tx('插件响应较慢，正在等待恢复。当前页面仍可查看。', 'The plugin is responding slowly. Waiting for it to recover; this page stays open.')}
     </div>}
-    <iframe key={frameGeneration} ref={frame} title={plugin.title} src={url.href} sandbox={sandbox.join(' ')} referrerPolicy="no-referrer" onLoad={announceVisibility} onError={() => setError('connection')} style={{ border: 0, width: '100%', height: '100%', flex: 1, minHeight: 0 }} />
+    <iframe key={frameGeneration} ref={frame} title={plugin.title} src={frameUrl} sandbox={sandbox.join(' ')} referrerPolicy="no-referrer" onLoad={() => {
+      announceVisibility();
+      if (reportsLifecycle) frame.current?.contentWindow?.postMessage({ type: 'ryn.plugin.lifecycle.request' }, new URL(plugin.web_app!.url).origin);
+    }} onError={() => { setDegraded('slow'); if (reportsLifecycle) setPageState('error'); }} data-page-state={reportsLifecycle ? pageState : 'unreported'} style={{ border: 0, width: '100%', height: '100%', flex: 1, minHeight: 0 }} />
   </>;
 }

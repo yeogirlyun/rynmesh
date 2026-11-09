@@ -154,6 +154,9 @@ export const logoutMcpOauth = (id: string, expected_revision: number) =>
   extensionRequest<McpOauthStatus>(`/mcp/servers/${encodeURIComponent(id)}/oauth/logout`, "POST", { expected_revision });
 export const getCompanyAccount = (signal?: AbortSignal) =>
   extensionRequest<{ state: string; displayName: string; version: number; connections: Record<string,string> }>("/company/account", "GET", undefined, signal);
+
+export const bootstrapCompanyBrowserSession = (pluginId: string) =>
+  extensionRequest<{ ticket: string }>("/company/browser-bootstrap", "POST", { plugin_id: pluginId });
 export const logoutCompanyAccount = () =>
   extensionRequest<{ cleared: boolean }>("/company/logout", "POST", {});
 export const clearLocalMcpAuthorizations = () =>

@@ -2,12 +2,12 @@ import { act, fireEvent, render, screen, waitFor, cleanup } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import ExtensionWebApp from './ExtensionWebApp';
-import { agentExtensions, queryPluginTool } from '../domain/agentExtensions';
+import { agentExtensions, bootstrapCompanyBrowserSession, queryPluginTool } from '../domain/agentExtensions';
 import { invoke } from '@tauri-apps/api/core';
 import { setLanguagePreference } from '../i18n';
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 vi.mock('../appContext', () => ({ useAppContext: () => ({ client: {} }) }));
-vi.mock('../domain/agentExtensions', () => ({ agentExtensions: { overview: vi.fn() }, queryPluginTool: vi.fn() }));
+vi.mock('../domain/agentExtensions', () => ({ agentExtensions: { overview: vi.fn() }, bootstrapCompanyBrowserSession: vi.fn(), queryPluginTool: vi.fn() }));
 vi.mock('../domain/peerProviders', () => ({ peerProviders: {} }));
 const plugin = { id: 'reports', title: 'Reports', enabled: true, web_app: { url: 'https://app.example.test/', permissions: ['tools'] } };
 beforeEach(() => { setLanguagePreference('en'); vi.mocked(agentExtensions.overview).mockResolvedValue({ plugins: [plugin] } as any); vi.mocked(queryPluginTool).mockResolvedValue({ tool: 'read_rows', result: { count: 2 } }); });
@@ -20,6 +20,50 @@ function request(frame: HTMLIFrameElement, overrides = {}) {
   fireEvent(window, new MessageEvent('message', { source: frame.contentWindow, origin: 'https://app.example.test', data: { type: 'ryn.plugin.request', id: 'one', method: 'tools.query', args: ['read_rows', {}] }, ...overrides }));
 }
 describe('remote app capability boundary', () => {
+  it('requires a trusted app-ready message, keeps a timed-out frame, and restores its route on recovery', async () => {
+    const company = { ...plugin, id: 'company-dashboard', web_app: { url: 'https://company.example.test/apps/company-dashboard', permissions: [] } };
+    vi.mocked(agentExtensions.overview).mockResolvedValue({ plugins: [company] } as any);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await act(async () => {
+      render(<MemoryRouter initialEntries={['/apps/extensions/company-dashboard']}><Routes><Route path='/apps/extensions/:pluginId' element={<ExtensionWebApp />} /></Routes></MemoryRouter>);
+    });
+    const first = screen.getByTitle('Reports') as HTMLIFrameElement;
+    fireEvent.load(first);
+    expect(first).toHaveAttribute('data-page-state', 'loading');
+    const lifecycle = (origin: string, phase: string, route?: string) => fireEvent(window, new MessageEvent('message', {
+      source: first.contentWindow, origin, data: { type: 'ryn.plugin.lifecycle', phase, route },
+    }));
+    lifecycle('https://foreign.example', 'ready');
+    expect(first).toHaveAttribute('data-page-state', 'loading');
+    await act(async () => { await vi.advanceTimersByTimeAsync(15000); });
+    expect(screen.getByTitle('Reports')).toBe(first);
+    expect(screen.getByRole('alert')).toHaveTextContent('has not finished initializing');
+    lifecycle('https://company.example.test', 'ready', '/apps/company-dashboard?view=cash-flow');
+    expect(first).toHaveAttribute('data-page-state', 'ready');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    lifecycle('https://company.example.test', 'error', 'https://foreign.example/');
+    expect(screen.getByTitle('Reports')).toBe(first);
+    fireEvent.click(screen.getByRole('button', { name: 'Reload page' }));
+    expect(screen.getByTitle('Reports')).not.toBe(first);
+    expect(screen.getByTitle('Reports').getAttribute('src')).toContain('/apps/company-dashboard?view=cash-flow&host_origin=');
+  });
+  it('delivers a one-use browser bootstrap only to an enabled company frame', async () => {
+    vi.mocked(bootstrapCompanyBrowserSession).mockResolvedValue({ ticket: 'one-use-test-ticket' });
+    vi.mocked(agentExtensions.overview).mockResolvedValue({ plugins: [{ ...plugin, id: 'company-workspace' }] } as any);
+    render(<MemoryRouter initialEntries={['/apps/extensions/company-workspace']}><Routes><Route path='/apps/extensions/:pluginId' element={<ExtensionWebApp />} /></Routes></MemoryRouter>);
+    const frame = await screen.findByTitle('Reports') as HTMLIFrameElement;
+    const reply = vi.spyOn(frame.contentWindow!, 'postMessage');
+    request(frame, { data: { type: 'ryn.plugin.request', id: 'bootstrap', method: 'company.session.bootstrap', args: [] } });
+    await waitFor(() => expect(bootstrapCompanyBrowserSession).toHaveBeenCalledWith('company-workspace'));
+    expect(reply).toHaveBeenCalledWith({ type: 'ryn.plugin.response', id: 'bootstrap', result: { ticket: 'one-use-test-ticket' } }, { targetOrigin: 'https://app.example.test' });
+  });
+  it('does not offer company bootstrap to another plugin', async () => {
+    const frame = await mount();
+    const reply = vi.spyOn(frame.contentWindow!, 'postMessage');
+    request(frame, { data: { type: 'ryn.plugin.request', id: 'bootstrap', method: 'company.session.bootstrap', args: [] } });
+    await waitFor(() => expect(reply).toHaveBeenCalled());
+    expect(bootstrapCompanyBrowserSession).not.toHaveBeenCalled();
+  });
   it('automatically reopens after the managed service recovers', async () => {
     (window as any).__TAURI_INTERNALS__ = {};
     vi.mocked(invoke).mockRejectedValueOnce('plugin_service_unhealthy').mockResolvedValue(true);
