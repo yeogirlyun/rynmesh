@@ -116,6 +116,19 @@ def _goal_snapshot(goal: dict) -> dict:
             "constraint_ids": [item.get("id") for item in goal.get("constraints", []) if isinstance(item, dict)]}
 
 
+def compact_goal_history(row: dict) -> bool:
+    """Shrink full goal copies left by older builds. Returns whether anything changed."""
+    old = row.get("goal_history")
+    if not isinstance(old, list):
+        return False
+    history = [_goal_snapshot(item) if isinstance(item, dict) and "constraints" in item else item for item in old]
+    history = history[-GOAL_HISTORY_LIMIT:]
+    if history == old:
+        return False
+    row["goal_history"] = history
+    return True
+
+
 def record_goal_history(row: dict) -> None:
     """Remember the goal before it changes, bounded.
 
@@ -123,10 +136,10 @@ def record_goal_history(row: dict) -> None:
     messages (every snapshot repeated every earlier message) and pushed long
     conversations over the task size limit. Older full copies are compacted too.
     """
-    history = [_goal_snapshot(item) if isinstance(item, dict) and "constraints" in item else item
-               for item in row.get("goal_history", [])]
+    compact_goal_history(row)
+    history = row.setdefault("goal_history", [])
     history.append(_goal_snapshot(row["goal"]))
-    row["goal_history"] = history[-GOAL_HISTORY_LIMIT:]
+    del history[:-GOAL_HISTORY_LIMIT]
 
 
 def owner_update(row: dict, message: dict) -> None:

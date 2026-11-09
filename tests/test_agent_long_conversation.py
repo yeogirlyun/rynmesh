@@ -120,3 +120,19 @@ def test_goal_history_stays_small_in_a_long_conversation(tmp_path):
     # Growth per owner message stays about the same (was proportional to the number of earlier messages).
     early, late = sizes[5] - sizes[4], sizes[29] - sizes[28]
     assert late < early * 1.5, sizes
+
+
+def test_full_goal_copies_from_an_older_build_are_shrunk_before_continuing(tmp_path):
+    runtime, _, _, _ = make_runtime(tmp_path, assistant("First."), assistant("Same conversation."))
+    row = runtime.create({"message": "Start."})
+    advance(runtime)
+    old_copy = {"revision": 1, "kind": "unclassified", "original_message_id": "m", "text": "t",
+                "constraints": [{"id": "constraint:old", "text": "x" * 100_000}]}
+    runtime.store.transaction(lambda data: data["tasks"][row["id"]].update(goal_history=[old_copy] * 25))
+    assert len(encoded(runtime.store.read()["tasks"][row["id"]])) > event_compaction.TASK_BYTES_HARD_LIMIT
+    after = send(runtime, row["id"], "Still there?")
+    assert after["id"] == row["id"]  # Shrunk in place, not continued in a new conversation.
+    advance(runtime)
+    stored = runtime.store.read()["tasks"][row["id"]]
+    assert len(stored["goal_history"]) <= 20 and "x" * 1000 not in str(stored["goal_history"])
+    assert runtime.get(row["id"])["result"] == "Same conversation."

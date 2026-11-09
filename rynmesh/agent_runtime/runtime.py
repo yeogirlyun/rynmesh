@@ -64,6 +64,7 @@ from .prompt import (
 from .protocol import digest, event, hydrated_events, model_retry_authority, now, sanitized, task
 from .state import (
     PUBLIC_STATE_FIELDS,
+    compact_goal_history,
     initialize,
     owner_update,
     synchronize,
@@ -1842,7 +1843,9 @@ class AgentRuntime(AgentLoop):
             # still too large does it continue in a new linked conversation.
             size = len(encoded(row))
             if event_compaction.needs_compaction(row, size):
-                if event_compaction.compact_until_small(row):
+                # Full goal copies from older builds go first: they repeat every earlier message.
+                shrunk = compact_goal_history(row)
+                if event_compaction.compact_until_small(row) or shrunk:
                     size = len(encoded(row))
             if event_compaction.over_hard_limit(row, size, reserve_events=2):
                 raise ContinueInNewTask()
