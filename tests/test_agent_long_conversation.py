@@ -1,10 +1,11 @@
 """A long conversation is condensed or continued, never refused."""
 from __future__ import annotations
 
+import pytest
 from test_agent_runtime import advance, assistant, make_runtime
 
 from rynmesh.agent_runtime import event_compaction
-from rynmesh.agent_runtime.store import encoded
+from rynmesh.agent_runtime.store import AgentError, encoded
 
 
 def send(runtime, task_id, message):
@@ -136,3 +137,27 @@ def test_full_goal_copies_from_an_older_build_are_shrunk_before_continuing(tmp_p
     stored = runtime.store.read()["tasks"][row["id"]]
     assert len(stored["goal_history"]) <= 20 and "x" * 1000 not in str(stored["goal_history"])
     assert runtime.get(row["id"])["result"] == "Same conversation."
+
+
+def test_owner_messages_that_outgrow_the_model_context_continue_in_a_new_conversation(tmp_path):
+    runtime, _, _, _ = make_runtime(tmp_path, *[assistant(f"ok {i}") for i in range(20)])
+    row = runtime.create({"message": "Start."})
+    advance(runtime)
+    tid, continued = row["id"], None
+    for turn in range(12):
+        out = send(runtime, tid, f"Part {turn}: " + "detail " * 1400)
+        if out["id"] != tid:
+            continued = out
+            break
+        advance(runtime)
+    # Every owner message is kept in every request; when they no longer fit, the
+    # conversation continues instead of refusing the message (agent_tool_schema_limit).
+    assert continued is not None and continued["continued_from"] == row["id"]
+    assert runtime.get(row["id"])["continued_to"] == continued["id"]
+    advance(runtime)
+    assert runtime.get(continued["id"])["status"] == "completed"
+    # A message too large on its own is still refused, and no conversation is created for it.
+    count = len(runtime.store.read()["tasks"])
+    with pytest.raises(AgentError):
+        send(runtime, continued["id"], "huge " * 40000)
+    assert len(runtime.store.read()["tasks"]) == count

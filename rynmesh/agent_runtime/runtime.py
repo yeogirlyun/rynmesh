@@ -1878,9 +1878,21 @@ class AgentRuntime(AgentLoop):
             owners = [message for message in [*row["messages"], *row.get("pending_user_messages", [])] if message["role"] == "user"]
             prospective = {**row, "messages": [*owners, message], "skills": merged_skills,
                            "context_checkpoint": None, "tool_menu": None}
-            (future_specs, _), authority_bytes = self._menu(prospective)
-            if authority_bytes + len(encoded(future_specs)) > self._context_limit(row):
-                raise AgentError("agent_context_limit")
+            # Every owner message stays in every request. Once they no longer fit
+            # the model's context together, continue in a linked new conversation
+            # (its first message carries a bounded summary). A message too large
+            # on its own is refused as before.
+            try:
+                (future_specs, _), authority_bytes = self._menu(prospective)
+                too_large = authority_bytes + len(encoded(future_specs)) > self._context_limit(row)
+            except AgentError as exc:
+                if str(exc) != "agent_tool_schema_limit":
+                    raise
+                too_large = True
+            if too_large:
+                if not self._continuation_fits(row, prospective, message, content):
+                    raise AgentError("agent_context_limit")
+                raise ContinueInNewTask()
             if len(encoded(row)) + len(encoded(message)) > event_compaction.TASK_BYTES_HARD_LIMIT:
                 raise ContinueInNewTask()
             memory_natural.stamp_single_owner_message_in_tx(data, message)
@@ -1995,6 +2007,17 @@ class AgentRuntime(AgentLoop):
             return self.store.transaction(add)
         except ContinueInNewTask:
             return self._continue_in_new_task(task_id, value, content)
+
+    def _continuation_fits(self, row: dict, prospective: dict, message: dict, content: str) -> bool:
+        """Whether this message, as the first message of a continued conversation, fits the model."""
+        first_text = CONTINUATION_PREFIX + event_compaction.continuation_summary(row) + CONTINUATION_SEPARATOR + content
+        first = {**message, "content": first_text if isinstance(message.get("content"), str) else message["content"]}
+        alone = {**prospective, "messages": [first], "goal": {**row["goal"], "text": first_text, "constraints": []}}
+        try:
+            (specs, _), authority_bytes = self._menu(alone)
+        except AgentError:
+            return False
+        return authority_bytes + len(encoded(specs)) <= self._context_limit(row)
 
     def _continue_in_new_task(self, task_id: str, value: dict, content: str) -> dict:
         """The conversation is too large even after condensing: continue it in a new, linked one."""
