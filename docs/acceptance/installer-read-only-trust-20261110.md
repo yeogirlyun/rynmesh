@@ -51,5 +51,8 @@
     OAuth 晚到交换 ×6：两边都失败；
   - `test_agent_extensions_oauth.py` + `test_mcp_oauth_incident_replay.py` 串行：两边都是 35 failed / 34 errors，
     主要是本机本地测试服务器 `httpx.ReadTimeout`，与本改动无关。
-- 前端：合并到 develop 后在主工作区跑相关 vitest（见下）。
+- 合并到 develop（c8ef194，含期间 develop 新增的 9fd0351 等提交）后复查：
+  - `test_agent_local_services.py` + `test_mcp_data_policy_store.py` + `test_agent_extensions_store.py`：76 passed；
+  - vitest `RynAgentReadOnlyHints` / `McpDataPolicy` / `PluginViews`：31 passed；
+  - `tsc -b --noEmit`：通过。
 - 未做：主人电脑安装新包后实际看卡片消失；真实模型任务。
