@@ -26,7 +26,28 @@ from .mcp_oauth import (
     has_static_authorization,
     parse_auth_challenge,
 )
-from .store import COMPUTER_USE_SERVER_ID, ExtensionStore
+from .store import COMPUTER_USE_SERVER_ID, ExtensionStore, _canon_sha256
+
+# A remote plugin can add tools at any time (for example a new company data
+# query). Re-read its catalog in the background so the Agent never believes a
+# tool "does not exist" only because the list was read days ago.
+CATALOG_REFRESH_SECONDS = 300
+
+
+def _catalog_signature(tools: list[dict[str, Any]], *, stored: bool) -> frozenset:
+    rows = []
+    for tool in tools or []:
+        if not isinstance(tool, dict) or not str(tool.get("name") or "").strip():
+            continue
+        if stored:
+            schema_sha = tool.get("schema_sha256")
+            read_only = (tool.get("annotations") or {}).get("readOnlyHint") is True
+        else:
+            schema = tool.get("inputSchema") or tool.get("input_schema") or {"type": "object"}
+            schema_sha = _canon_sha256(schema if isinstance(schema, dict) else {"type": "object"})
+            read_only = isinstance(tool.get("annotations"), dict) and tool["annotations"].get("readOnlyHint") is True
+        rows.append((str(tool["name"]).strip(), schema_sha, str(tool.get("description") or "")[:1000], read_only))
+    return frozenset(rows)
 
 PROTOCOL_VERSION = "2025-03-26"
 STREAMABLE_HTTP_PROTOCOL_VERSION = "2025-06-18"
@@ -1159,6 +1180,73 @@ class McpSessionManager:
         self._scope_generations: dict[str, int] = {}
         self._fallback_cwd = self.store.root / "mcp_runtime"
         self._fallback_cwd.mkdir(parents=True, exist_ok=True)
+        self._catalog_checked: dict[str, float] = {}
+        self._catalog_refreshing: set[str] = set()
+
+    def refresh_tool_catalogs(self, *, force: bool = False) -> list[str]:
+        """Start background tools/list refreshes for ready remote plugin servers.
+
+        Never blocks the caller. A failed refresh keeps the current list and
+        status; only an actual change is written (which bumps the revision).
+        """
+        started: list[str] = []
+        now = time.monotonic()
+        try:
+            servers = self.store.list_enabled_mcp_servers_internal()
+        except Exception:
+            return started
+        for server in servers:
+            sid = str(server.get("id") or "")
+            if (not sid or server.get("transport") != "streamable_http"
+                    or server.get("status") not in {"ready", "Ready", "connected"}):
+                continue
+            try:
+                if self.oauth.public_status(str(server.get("instance_id") or "")).get("state") in {"logged_out", "pending", "error"}:
+                    continue
+            except Exception:
+                continue
+            with self._lock:
+                if sid in self._catalog_refreshing:
+                    continue
+                if not force and now - self._catalog_checked.get(sid, -CATALOG_REFRESH_SECONDS) < CATALOG_REFRESH_SECONDS:
+                    continue
+                self._catalog_refreshing.add(sid)
+                self._catalog_checked[sid] = now
+            threading.Thread(target=self._refresh_catalog, args=(sid,), daemon=True,
+                             name=f"ryn-mcp-catalog-{sid[:24]}").start()
+            started.append(sid)
+        return started
+
+    def _refresh_catalog(self, server_id: str) -> bool:
+        session = None
+        try:
+            current = self.store.get_mcp_server_internal(server_id, require_enabled=True)
+            session = self._create_session(current)
+            tools = session.list_all_tools()
+            if (_catalog_signature(tools, stored=False)
+                    == _catalog_signature(current.get("discovered_tools") or [], stored=True)):
+                return False
+            self.store.record_mcp_discovery(
+                server_id,
+                expected_revision=int(current["revision"]),
+                expected_config_generation=current.get("config_generation"),
+                expected_instance_id=current.get("instance_id"),
+                expected_enabled=True,
+                discovered_tools=tools,
+                status="ready",
+                status_message="",
+            )
+            return True
+        except Exception:
+            return False  # Keep the last good catalog; a transient error is not "no tools".
+        finally:
+            if session is not None:
+                try:
+                    session.close()
+                except Exception:
+                    pass
+            with self._lock:
+                self._catalog_refreshing.discard(server_id)
 
     def _managed_oauth_origin(self, resource: str, target: str) -> bool:
         from urllib.parse import urlsplit
