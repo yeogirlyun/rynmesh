@@ -444,17 +444,26 @@ def test_private_provider_continuation_never_exposes_reasoning_or_reasoning_even
 
 def test_only_real_text_deltas_are_persisted_and_bounded(tmp_path):
     runtime, model, _, _ = make_runtime(tmp_path)
+    ids, streamed = [], []
 
     def streaming(model_id, messages, specs, cancelled, on_event):
         on_event({"type": "reasoning_delta", "text": "private-thought"})
         on_event({"type": "text_delta", "text": "Actual "})
         on_event({"type": "text_delta", "text": "answer."})
+        stored = runtime.store.read()["tasks"][ids[0]]
+        streamed.extend(item["text"] for item in stored["events"] if item["type"] == "text_delta")
+        assert "private-thought" not in json.dumps(stored)
         return assistant("Actual answer.")
     model.complete = streaming
     row = runtime.create({"message": "Inspect"})
+    ids.append(row["id"])
     advance(runtime)
     done = runtime.get(row["id"])
-    assert "".join(item["text"] for item in done["events"] if item["type"] == "text_delta") == "Actual answer."
+    # While streaming, real text is persisted (never reasoning); once the reply is
+    # final its deltas are folded into the assistant event (event_compaction).
+    assert streamed and "Actual answer.".startswith("".join(streamed))
+    assert [item["content"] for item in done["events"] if item["type"] == "assistant"] == ["Actual answer."]
+    assert not [item for item in done["events"] if item["type"] == "text_delta"]
     assert "private-thought" not in json.dumps(done)
 
 
