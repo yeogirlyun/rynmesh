@@ -1,4 +1,5 @@
 import { nodeControlUrl } from "./nodeUrl";
+import { observeCompanyAuthorizationDelivery } from './companyAuthorizationDelivery';
 
 export type ExtensionSourceFormat =
   | "builtin"
@@ -1060,7 +1061,9 @@ async function extensionRequest<T>(path: string, method = "GET", body?: unknown,
           : "extension_request_failed";
     throw new AgentExtensionError(code, response.status);
   }
-  return response.json() as Promise<T>;
+  const data = await response.json();
+  observeCompanyAuthorizationDelivery(data?.authorizationDelivery);
+  return data as T;
 }
 
 export const agentExtensions = {

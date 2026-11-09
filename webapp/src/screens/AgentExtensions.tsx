@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { CompanyAuthorizationNotice } from './CompanyAuthorizationNotice';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -1517,6 +1518,7 @@ export default function AgentExtensions() {
         </div>
       ) : null}
 
+      <CompanyAuthorizationNotice />
       {actionNotice ? (
         <div
           className={`ae-banner ${actionNotice.tone === "error" ? "ae-banner-error" : ""}`}

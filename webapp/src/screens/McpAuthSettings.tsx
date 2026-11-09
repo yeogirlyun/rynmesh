@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { agentExtensions, cancelMcpOauthLogin, clearLocalMcpAuthorizations, getMcpOauthLogin, getCompanyAccount, logoutCompanyAccount, logoutMcpOauth, startMcpOauthLogin,
   type ExtensionMcpServer, type McpOauthProgress } from "../domain/agentExtensions";
 import { reserveMcpAuthBrowser } from "../domain/mcpAuthBrowser";
+import { CompanyAuthorizationNotice } from './CompanyAuthorizationNotice';
 
 export function McpAuthSettings({ server, onRefresh }: { server: ExtensionMcpServer; onRefresh: () => void }) {
   const { i18n } = useTranslation();
@@ -102,6 +103,7 @@ export function McpAuthSettings({ server, onRefresh }: { server: ExtensionMcpSer
     });
   }
   return <section className="ae-section-card" aria-label={tx("MCP 登录", "MCP sign-in")}>
+    <CompanyAuthorizationNotice />
     <h3>{tx("登录状态", "Sign-in status")}</h3>
     <p role="status">{pending ? tx("等待浏览器授权…", "Waiting for browser authorization…") : loggedIn ? tx("已登录", "Signed in") : tx("未登录", "Signed out")}</p>
     {company && account?.state === "logged_in" && <p>{tx("当前公司账号", "Company account")} · {account.displayName}{scopedStatus === "needs_authorization" ? tx(" · 需要授权", " · Authorization required") : ""}</p>}
