@@ -17,6 +17,22 @@ from rynmesh.agent_runtime.store import AgentError, AgentStore, AgentToolRejecte
 from rynmesh.background_workers import BackgroundWorkerRegistry
 
 
+def fold_spy(monkeypatch):
+    """Record streamed text events as the finished reply folds them into its assistant event."""
+    from rynmesh.agent_runtime import event_compaction
+    folded: list[dict] = []
+    real = event_compaction.fold_stream_deltas
+
+    def spy(row):
+        started = max((item["seq"] for item in row["events"] if item.get("type") == "model_started"), default=None)
+        folded.extend(item for item in row["events"] if item.get("type") == "text_delta"
+                      and started is not None and item["seq"] > started)
+        return real(row)
+
+    monkeypatch.setattr(event_compaction, "fold_stream_deltas", spy)
+    return folded
+
+
 def assistant(content="", name=None, args=None, call_id=None):
     message = {"role": "assistant", "content": content}
     if name:

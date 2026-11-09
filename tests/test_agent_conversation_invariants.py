@@ -24,12 +24,14 @@ FLIGHTS = {
     "undispatched_write": {"kind": "tool", "name": "share_service", "effect": "write", "dispatched": False,
                            "call_id": "call_u", "operation_id": "op_u", "arguments": {"service_id": "svc"}},
 }
+# Built when each case runs: a timestamp taken at import goes stale during a long
+# test session, and a "fresh" reconciliation older than two minutes is no longer fresh.
 RECONCILIATIONS = {
-    "none": None,
-    "running_fresh": {"state": "running", "attempts": 1, "started_at": datetime.now(timezone.utc).isoformat()},
-    "finished_unknown": {"state": "unknown", "attempts": 3},
-    "stale_pending": {"state": "pending", "attempts": 0,
-                      "requested_at": (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()},
+    "none": lambda: None,
+    "running_fresh": lambda: {"state": "running", "attempts": 1, "started_at": datetime.now(timezone.utc).isoformat()},
+    "finished_unknown": lambda: {"state": "unknown", "attempts": 3},
+    "stale_pending": lambda: {"state": "pending", "attempts": 0,
+                              "requested_at": (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()},
 }
 
 
@@ -54,7 +56,7 @@ CASES = list(itertools.product(IDLE, ERRORS, FLIGHTS, RECONCILIATIONS))
 
 @pytest.mark.parametrize("status,error,flight,reconciliation", CASES)
 def test_idle_conversations_can_continue_switch_model_and_be_removed(status, error, flight, reconciliation):
-    row = _row(status, error, FLIGHTS[flight], RECONCILIATIONS[reconciliation])
+    row = _row(status, error, FLIGHTS[flight], RECONCILIATIONS[reconciliation]())
     actions = allowed_actions(row, SETTINGS)
     uncertain = ambiguous(row)
     if uncertain:

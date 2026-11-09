@@ -38,7 +38,15 @@ class FixturePlanner:
         discovery = discover(specs, ['ryn_list_models', 'ryn_list_devices', 'ryn_inspect_services'])
         if discovery:
             return discovery
+        if not specs and any(m.get("role") == "system" and "CONTEXT CHECKPOINT COMPACTION" in str(m.get("content"))
+                             for m in messages):
+            # The runtime may compact history before any request; answer like a model would.
+            message = {"role": "assistant", "content": "Goal: collector exercise. Findings: read tool results are "
+                       "retained by the server. Next: finish the current verification."}
+            return {"message": message, "usage": {"input_tokens": None, "output_tokens": None}, "finish_reason": "stop"}
         messages = business_history(messages)
+        # After a checkpoint the earlier reads live in the summary: answer instead of re-reading.
+        compacted = any("Historical checkpoint" in str(m.get("content")) for m in messages)
         if not specs:
             if self.cohort == "reference":
                 assert "Verify whether the active session goal" in messages[-1]["content"]
@@ -48,13 +56,13 @@ class FixturePlanner:
                 text = json.dumps({"status": "unknown", "summary": "Fixture collector only; no independent semantic assessment.",
                     "uncovered_requirements": ["independent report review"], "evidence_refs": [row["id"] for row in evidence]})
             message = {"role": "assistant", "content": text}
-        elif self.case_id == "Q06" and len([m for m in messages if m["role"] == "tool"]) < 3:
+        elif self.case_id == "Q06" and not compacted and len([m for m in messages if m["role"] == "tool"]) < 3:
             # Synthetic transport exercise only: real model receives no script.
             index = len([m for m in messages if m["role"] == "tool"])
             name = ("ryn_list_models", "ryn_list_devices", "ryn_inspect_services")[index]
             message = {"role": "assistant", "content": None, "tool_calls": [{"id": "fixture-read-" + str(index), "type": "function",
                 "function": {"name": name, "arguments": "{}"}}]}
-        elif not any(message["role"] == "tool" for message in messages):
+        elif not compacted and not any(message["role"] == "tool" for message in messages):
             name = "ryn_list_devices" if self.case_id == "Q03" else "ryn_list_models"
             message = {"role": "assistant", "content": None, "tool_calls": [{"id": "fixture-read", "type": "function",
                 "function": {"name": name, "arguments": "{}"}}]}

@@ -2,7 +2,7 @@
 from types import SimpleNamespace
 
 import pytest
-from test_agent_runtime import assistant, make_runtime
+from test_agent_runtime import assistant, fold_spy, make_runtime
 
 from rynmesh.agent_runtime.store import AgentError, AgentStore
 
@@ -47,12 +47,16 @@ def test_live_text_changes_without_a_durable_revision_or_commit(tmp_path, monkey
         return assistant("我先检查一下磁盘。")
 
     model.complete = complete
+    folded = fold_spy(monkeypatch)
     runtime.run_once()
     done = runtime.get(created["id"])
     assert done["status"] == "completed" and done["result"] == "我先检查一下磁盘。"
     assert done["streaming"] is None and not runtime._streams
     assert runtime.get(created["id"], done["revision"])["streaming"] is None
-    assert "".join(item["text"] for item in done["events"] if item["type"] == "text_delta") == done["result"]
+    # Every streamed piece was persisted, then folded into the final assistant event.
+    assert "".join(item["text"] for item in folded) == done["result"]
+    assert not [item for item in done["events"] if item["type"] == "text_delta"]
+    assert [item["content"] for item in done["events"] if item["type"] == "assistant"] == [done["result"]]
 
 
 @pytest.mark.parametrize("stop", ["pause", "cancel", "error"])
