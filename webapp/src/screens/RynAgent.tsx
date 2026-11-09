@@ -1162,7 +1162,7 @@ export default function RynAgent() {
         />
       )}
       <aside id="ryn-agent-task-list" className="ra-tasks" aria-label={t("tasks")} hidden={tasksCollapsed}>
-        <div className="ra-sidebar-caption"><span>WORKSPACE</span><span>Agent</span></div>
+        <div className="ra-sidebar-caption"><span>{i18n.language.startsWith("zh") ? "工作区" : "WORKSPACE"}</span><span>{i18n.language.startsWith("zh") ? "助手" : "Agent"}</span></div>
         <button className="ra-new" onClick={newTask}><SquarePen size={17} />{t("newTask")}</button>
         <div className="ra-task-search"><Search size={15} aria-hidden="true" /><input type="search" aria-label={i18n.language.startsWith("zh") ? "搜索任务" : "Search tasks"} placeholder={i18n.language.startsWith("zh") ? "搜索任务…" : "Search tasks…"} value={taskQuery} onChange={event => setTaskQuery(event.target.value)} onKeyDown={event => { if (event.key === "Escape") setTaskQuery(""); }} />{taskQuery && <button type="button" className="ra-icon" aria-label={i18n.language.startsWith("zh") ? "清除搜索" : "Clear search"} onClick={() => setTaskQuery("")}><X size={13} /></button>}</div>
         <button type="button" className={`ra-nav-automations${showAutomationsView ? " is-active" : ""}`} onClick={() => { refreshAutomations(); setShowSkillsView(false); setShowAutomationsView(v => !v); }}><Clock3 size={16} /><span>{t("automations")}</span>{automationsList.filter(a => a.status !== "PAUSED").length > 0 && <span className="ra-nav-auto-badge">{automationsList.filter(a => a.status !== "PAUSED").length}</span>}</button>

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { agentTaskSummary, clearAgentRecords, flushAgentRecords, loadAgentRecords, PERSISTED_AGENT_TASKS, removeAgentTask, saveAgentTask, saveAgentTaskList } from "./agentTaskStore";
 import { agentTaskCache, agentTaskListCache, forgetAgentTask, hydrateAgentRecords, rememberAgentTask, rememberAgentTaskList, resetAgentWorkspaceMemory } from "./agentWorkspaceCache";
 import type { AgentTask } from "./rynAgent";
@@ -73,6 +73,23 @@ test("keeps only the most recently opened conversations", async () => {
   expect(loaded.details).toHaveLength(PERSISTED_AGENT_TASKS);
   expect(loaded.details[0].id).toBe(`t${PERSISTED_AGENT_TASKS + 2}`);
   expect(loaded.details.some(item => item.id === "t0")).toBe(false);
+});
+
+test("orders equal-timestamp saves and later saves after a clock correction", async () => {
+  const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+  try {
+    for (const id of ["first", "second", "third"]) {
+      saveAgentTask("node-a", task(id));
+      await flushAgentRecords();
+    }
+    expect((await loadAgentRecords("node-a")).details.map(item => item.id)).toEqual(["third", "second", "first"]);
+    clock.mockReturnValue(900);
+    saveAgentTask("node-a", task("latest"));
+    await flushAgentRecords();
+    expect((await loadAgentRecords("node-a")).details[0].id).toBe("latest");
+  } finally {
+    clock.mockRestore();
+  }
 });
 
 test("a removed task is not written back by an earlier queued save", async () => {

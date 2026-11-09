@@ -66,7 +66,7 @@ export default function RynAgentFileChanges({ taskId, revision }: { taskId: stri
         <div className="ra-file-change-heading"><label><input type="checkbox" checked={selected.includes(file.id)} disabled={busy || !file.can_undo}
           onChange={ev => { setPreview(null); setSelected(ev.target.checked ? [...new Set([...selected, file.id])] : selected.filter(id => id !== file.id)); }} />
           <strong>{file.path}</strong></label><span>{labels[file.status] || file.status}{file.rename_group ? text(" · 重命名关联", " · Linked rename") : ""}</span></div>
-        <small>{file.problem ? text("文件操作记录（状态待核实）", "File operation record (unconfirmed)") : text("确认文件工具修改", "Confirmed file-tool change")} · {file.before_bytes ?? "?"} → {file.after_bytes ?? "?"} B · {file.media_type}</small>
+        <small>{file.problem ? text("文件操作记录（状态待核实）", "File operation record (unconfirmed)") : text("确认文件工具修改", "Confirmed file-tool change")} · {file.before_bytes ?? "?"} → {file.after_bytes ?? "?"} {text("字节", "B")} · {file.media_type}</small>
         {(file.conflict || file.problem) && <p role="alert">{text("不可安全撤销：", "Cannot safely undo: ")}{reason(file.conflict || file.problem || "")}</p>}
         {file.binary ? <p>{text("二进制文件：不提供文本 diff", "Binary file: no text diff")}</p> : <details><summary>{text("查看 diff", "View diff")}</summary><pre tabIndex={0}>{file.diff || text("无文本差异", "No text difference")}</pre>{file.diff_truncated && <p>{text("diff 预览已截断；撤销使用完整快照。", "Diff preview truncated; undo uses complete snapshots.")}</p>}</details>}
         <button disabled={busy || !file.can_undo || review.task_busy} onClick={() => prepare([file.id])}>{text("预览撤销此文件", "Preview undo for this file")}</button>
@@ -78,7 +78,7 @@ export default function RynAgentFileChanges({ taskId, revision }: { taskId: stri
       </div>}
       {preview && <section className="ra-file-change-preview" aria-label={text("撤销预览", "Undo preview")}>
         <h4>{text("撤销预览", "Undo preview")}</h4>
-        {preview.data.items.map(item => <p key={item.path}>{item.path} — {item.before.sha256 === null ? text("删除本任务新建文件", "Remove task-created file") : text("恢复修改前快照", "Restore original snapshot")} ({item.after.bytes} → {item.before.bytes} B)</p>)}
+        {preview.data.items.map(item => <p key={item.path}>{item.path} — {item.before.sha256 === null ? text("删除本任务新建文件", "Remove task-created file") : text("恢复修改前快照", "Restore original snapshot")} ({item.after.bytes} → {item.before.bytes} {text("字节", "B")})</p>)}
         {preview.data.conflicts.map(item => <p role="alert" key={item.path}>{text("冲突，整批未执行：", "Conflict, entire batch blocked: ")}{item.path} — {reason(item.reason)}</p>)}
         <button disabled={busy || !preview.data.can_undo} onClick={undo}>{text("确认撤销这些文件", "Confirm undo these files")}</button>
         <button disabled={busy} onClick={() => setPreview(null)}>{text("取消", "Cancel")}</button>
