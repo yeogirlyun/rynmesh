@@ -36,3 +36,7 @@ Ryn 已完成的功能集成在 `develop`，交付到 `yeogirlyun/rynmesh` 并�
 ### 最终复测
 
 前端改用单工作线程执行同一组文件（agentTaskStore、nodeUrl、RynAgent），3 个文件 101 项全部通过，退出码 0。首次 worker 启动超时如上保留记录。合并新增改动的 `git diff --check` 通过；新增内容高置信度私钥、GitHub token、AWS access-key 模式扫描无匹配，此检查不代表完整历史安全审计。
+
+### 正式插件远端核验
+
+老板仓库 `yeogirlyun/gshopper-ryn-node` 的 `develop` 已更新至 `88d244026114900aeec3050a17b5e7586681f7a2`，通过 `git ls-remote` 核验。基于该仓库已有 `396a9c8a` 增量集成，保留中心服务及其插件独立修复；合入后 Python 19 项、带网络保护的前端 20 项全部通过。正式入口：https://github.com/yeogirlyun/gshopper-ryn-node/tree/develop/integrations/company-app 。
