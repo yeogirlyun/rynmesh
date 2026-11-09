@@ -345,7 +345,17 @@ class ExtensionToolAdapter:
             self._manager = McpSessionManager(self.store)
         return self._manager
 
+    def refresh_catalogs_soon(self) -> None:
+        """Ask remote plugin servers for their current tools without waiting."""
+        refresh = getattr(self.manager, "refresh_tool_catalogs", None)
+        if callable(refresh):
+            try:
+                refresh()
+            except Exception:
+                pass
+
     def overview(self, *, desktop_access: bool = False) -> dict[str, Any]:
+        self.refresh_catalogs_soon()
         value = self.store.overview(desktop_access=desktop_access)
         oauth = getattr(self.manager, "oauth", None)
         if oauth is None:
@@ -443,10 +453,15 @@ class ExtensionToolAdapter:
                                     "recovery": {"disabled": "enable_plugin", "authentication_required": "reconnect",
                                                  "service_unreachable": "start_service", "version_incompatible": "update_components",
                                                  "permission_denied": "review_permissions"}.get(state, "discover_tools")})
+            skills = {skill.get("id"): skill for skill in overview.get("skills", []) if isinstance(skill, dict)}
             result.append({"id": plugin["id"], "name": plugin.get("name", plugin["id"]),
+                           # What the plugin is for, so "not supported" is never guessed from a name.
+                           "description": str(plugin.get("description") or "")[:400],
                            "version": plugin.get("version"), "enabled": bool(plugin.get("enabled")),
                            "connections": connections, "discovery_tool": "ryn_discover_tools",
-                           "skill_ids": list(plugin.get("skill_ids") or [])})
+                           "skill_ids": list(plugin.get("skill_ids") or []),
+                           "skills": [{"id": skill_id, "description": str((skills.get(skill_id) or {}).get("description") or "")[:300]}
+                                      for skill_id in list(plugin.get("skill_ids") or [])[:12]]})
         return result
 
     def _mcp_tools_cache_key(self) -> tuple[Any, ...] | None:
@@ -550,6 +565,7 @@ class ExtensionToolAdapter:
         return out
 
     def specs(self, context: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        self.refresh_catalogs_soon()
         result: list[dict[str, Any]] = [copy.deepcopy(READ_SKILL_FILE_SPEC)]
         active = self._active_mcp_tools()
         for model_name in sorted(active.keys()):
