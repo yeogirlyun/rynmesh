@@ -160,6 +160,8 @@
     "plugin_launch_expired": "启动请求已过期，请重新点击打开。",
     "plugin_launch_rejected": "目标地址或节点不匹配，已阻止打开。",
     "craft_checksum_mismatch": "下载文件校验失败，未安装此程序包。",
+    "craft_compat_checksum_mismatch": "中文字体版下载校验失败，未安装。请重试安装。",
+    "craft_compat_not_verified": "中文字体版缺失或校验失败，请卸载后重新安装。",
     "craft_build_not_verified": "程序包缺失或校验失败，请卸载后重新安装。",
     "craft_native_only": "当前版本没有 Web 构建。",
     "plugin_state_invalid": "插件状态文件损坏，请检查本机数据。",

@@ -66,6 +66,8 @@ from .state import (
 )
 from .store import (
     DEFAULT_SETTINGS,
+    PERMISSION_MODE_SOURCE,
+    PERMISSION_MODES,
     AgentError,
     AgentModelResponseError,
     AgentReadFailure,
@@ -1202,7 +1204,7 @@ class AgentRuntime(AgentLoop):
             raise AgentError("agent_invalid_settings")
         if "model_id" in values and (not isinstance(values["model_id"], str) or len(values["model_id"]) > 1024):
             raise AgentError("agent_invalid_settings")
-        if "permission_mode" in values and values["permission_mode"] not in {"workspace", "read_only", "confirm_changes", "automatic"}:
+        if "permission_mode" in values and values["permission_mode"] not in PERMISSION_MODES:
             raise AgentError("agent_invalid_settings")
         if "allowed_write_tools" in values:
             allowed = values["allowed_write_tools"]
@@ -1245,6 +1247,9 @@ class AgentRuntime(AgentLoop):
                 changed = True  # Explicit owner reselection supersedes the old binding.
             if changed:
                 data["settings_revision"] = data.get("settings_revision", 0) + 1
+            if "permission_mode" in values:
+                # The owner's own pick is never replaced by a later shipped default.
+                data[PERMISSION_MODE_SOURCE] = "owner"
             data["settings"].update(values)
             if permission_changed:
                 for row in data["tasks"].values():
@@ -2320,6 +2325,30 @@ class AgentRuntime(AgentLoop):
             return False
         return True
 
+    def adopt_shipped_permission_mode(self, mode: str) -> bool:
+        """Move an install that never picked a mode onto the shipped one, once.
+
+        Older builds saved "workspace" without recording who chose it. That was
+        their default, so it moves; any other saved value was picked and stays.
+        Existing tasks keep the mode they were created with. Called at node
+        construction, after reconcile and before worker startup.
+        """
+        if mode not in PERMISSION_MODES:
+            raise AgentError("agent_invalid_settings")
+        if not self.store.path.exists() or self.store.inspect(lambda state: PERMISSION_MODE_SOURCE in state):
+            return False
+
+        def adopt(data):
+            if PERMISSION_MODE_SOURCE in data:
+                return False
+            moved = data["settings"].get("permission_mode", "workspace") == "workspace" and mode != "workspace"
+            if moved:
+                data["settings"]["permission_mode"] = mode
+                data["settings_revision"] = data.get("settings_revision", 0) + 1
+            data[PERMISSION_MODE_SOURCE] = "shipped_default" if moved else "legacy"
+            return moved
+        return self.store.transaction(adopt)
+
     def reconcile(self) -> None:
         """Called once at node construction, before worker startup."""
         if not self.store.path.exists():
@@ -2506,7 +2535,10 @@ class AgentRuntime(AgentLoop):
                 and not budget.hard_run_limit(row)
             )
             verification.record(row, flight, "confirmed" if result["outcome"] == "executed" else "not_executed", now(), result=proven_result)
-            row["messages"].append({"role": "tool", "tool_call_id": flight["call_id"], "content": encoded(proven_result).decode(), "context_epoch": flight.get("context_epoch", 0)})
+            reconciled_message = {"role": "tool", "tool_call_id": flight["call_id"], "content": encoded(proven_result).decode(), "context_epoch": flight.get("context_epoch", 0)}
+            if isinstance(proven_result, dict) and (proven_result.get("is_error") or proven_result.get("error")):
+                reconciled_message["is_error"] = True  # The recorded reply was a tool-reported error.
+            row["messages"].append(reconciled_message)
             row["queue"] = [call for call in row["queue"] if call["operation_id"] != operation_id]
             row["in_flight"] = None
             close_queue(row, event, "agent_reconciliation_requires_review", keep_flight=False)

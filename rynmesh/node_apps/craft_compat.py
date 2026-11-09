@@ -1,6 +1,7 @@
-"""Explicit offline compatibility builds, independently pinned beside unchanged releases.
+"""Compatibility builds, independently pinned beside unchanged releases.
 
-An archive and its canonical file manifest must both match pins in this module.
+An archive and its canonical file manifest must both match pins in this module,
+whether it comes from a local file or from Ryn's own release download.
 Receipts record installation results; their contents never establish trust.
 """
 
@@ -21,7 +22,8 @@ COMPAT = {
         "base_version": "v0.6.1",
         "base_web_sha256": "dd76659f643fa98ff79c86bf439bcaeeaaf6bd3a4037a1dc6628c97366862ba1",
         "archive_sha256": "b084a901521fff06acbea617d0eff0ab3fd390c3a0baae163f2f400a50e60db6",
-        "files_manifest_sha256": "ea1b5c9bc8d4d4b40fdaee21cd00a3ab54bf560f584580b2f8b5781b2ee3d302"
+        "files_manifest_sha256": "ea1b5c9bc8d4d4b40fdaee21cd00a3ab54bf560f584580b2f8b5781b2ee3d302",
+        "release_sha256": "01ef3bf81754c4d3049fc8f3ca912c71d7c8f22cef755ffee7b0387eb4818505",
     },
     "gridcraft": {
         "id": "ryn-cjk-blank-2",
@@ -29,6 +31,7 @@ COMPAT = {
         "base_web_sha256": "86048ba175689ff852c141d6115e5491f0856f891300c3e1f91274b9c2709a42",
         "archive_sha256": "8db12ff172d14c18c784f965da4aa86eae6388ece2d559eba1cf9d15878e36ef",
         "files_manifest_sha256": "e15340cd0046a6852652a02170b561733f33ca9a6ede3a22d6ebfa204601738c",
+        "release_sha256": "460cf42ca6ada606582b1af92ec014bc894481078bf021e1dc13862945682351",
     },
     "wordcraft": {
         "id": "ryn-cjk-1",
@@ -36,6 +39,7 @@ COMPAT = {
         "base_web_sha256": "85e458cb5adaa75afa871a9858c735ef7fd1e05741c6bf5d444dc09a1eb29e0a",
         "archive_sha256": "53364159ed1d5d1af984a849ed9ab339fe7657e1fa6941c027aa786fe654dc47",
         "files_manifest_sha256": "84125c56ecebdff5cee7b1c88d00f09c4aa4dae9f3aedfe599bbdbe245605816",
+        "release_sha256": "190f7dbb3d86c74cbe4f37dd80c11191e9754e3d3da88869a48b7e401c95b13f",
     },
     "pdfcraft": {
         "id": "ryn-cjk-1",
@@ -43,6 +47,7 @@ COMPAT = {
         "base_web_sha256": "2e58067125b2c14d92d50888a6a03351302065ff4b99c0914892a078f05dfd66",
         "archive_sha256": "7acf50249aea23569c9dfeba1d765ff193477b3cdb0543d9b0a1ae46647e2cd3",
         "files_manifest_sha256": "2798d7945f8114e942b04124d302c2bb967fbf69845640952fad8d64fc0ab1e0",
+        "release_sha256": "bf7267ff689a884aa4831f2a863ee6bf0c615a4ff6b669e6b1cff8f00a3f21a5",
     }
 }
 
@@ -58,6 +63,51 @@ PREVIOUS_COMPAT = {
         "files_manifest_sha256": "8a82fd16ada4265ba906dfdb17f5dee78de5a3751d0492127093eff5b0ce783c"
     }
 }
+
+
+# Upstream web builds embed no Chinese font, so Ryn publishes these builds as assets of
+# its own release. The assets were repacked from verified installs (the original build
+# archives were not kept), so each has its own release_sha256 pin; both archives extract
+# to exactly the pinned file manifest. The pins, not this host, establish trust.
+RELEASE_URL = "https://github.com/yeogirlyun/rynmesh/releases/download/office-cjk-1/"
+
+
+def asset_name(slug, spec=None):
+    spec = spec or COMPAT[slug]
+    return f"{slug}-web-{spec['base_version'].removeprefix('v')}-{spec['id']}.zip"
+
+
+def applies(slug, upstream=None):
+    """True when the pinned build was made for the upstream release being installed."""
+    spec = COMPAT.get(slug)
+    upstream = upstream or host.specification(slug)
+    return spec is not None and (spec["base_version"], spec["base_web_sha256"]) == (
+        upstream.get("tag"), upstream.get("web_sha256"))
+
+
+def download_install(cache, slug, *, download=host.download_to):
+    """Fetch the pinned archive from Ryn's release and install it exactly like a local one."""
+    spec = COMPAT.get(slug)
+    if spec is None:
+        raise host.CraftError("craft_compat_unsupported")
+    _check_spec(slug, spec)
+    host._upstream_installed(cache, slug)
+    if _location(cache, slug, spec).exists():
+        web = installed(cache, slug, current_only=True)
+        return {"app": slug, "version": spec["base_version"], "compatibility": spec["id"], "state": "ready", "web_dir": str(web)}
+    stage =Path(tempfile.mkdtemp(prefix=".download-compat-", dir=host._location(cache, slug).parent))
+    try:
+        archive = stage / asset_name(slug, spec)
+        host.report_progress(phase="downloading", downloaded_bytes=0, total_bytes=None, percent=0)
+        download(RELEASE_URL + asset_name(slug, spec), archive)
+        return install(cache, slug, archive)
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
+
+
+def _archive_pins(spec):
+    """The original build archive and, when published, Ryn's release asset."""
+    return {value for value in (spec["archive_sha256"], spec.get("release_sha256")) if value}
 
 
 def manifest_digest(manifest):
@@ -96,7 +146,9 @@ def _check_spec(slug, spec):
         upstream["tag"], upstream["web_sha256"]
     ):
         raise host.CraftError("craft_compat_base_mismatch")
-    for key in ("archive_sha256", "files_manifest_sha256"):
+    for key in ("archive_sha256", "files_manifest_sha256", "release_sha256"):
+        if key == "release_sha256" and key not in spec:
+            continue
         value = spec[key]
         if not isinstance(value, str) or len(value) != 64 or any(c not in "0123456789abcdef" for c in value):
             raise host.CraftError("craft_compat_not_pinned")
@@ -111,8 +163,7 @@ def _verified(root, slug, spec):
         receipt = json.loads(receipt_path.read_bytes())
         if any(receipt[key] != value for key, value in {
             "app": slug, "version": spec["base_version"], "compatibility": spec["id"],
-            "archive_sha256": spec["archive_sha256"],
-        }.items()):
+        }.items()) or receipt["archive_sha256"] not in _archive_pins(spec):
             raise ValueError
         manifest = {"entry": receipt["entry"], "files": receipt["files"]}
         if manifest_digest(manifest) != spec["files_manifest_sha256"]:
@@ -158,7 +209,7 @@ def installed(cache, slug, *, current_only=False):
 
 
 def install(cache, slug, archive_path):
-    """Install only the source-pinned local archive; never fetch or modify upstream."""
+    """Install only the source-pinned archive; never modify upstream."""
     spec = COMPAT.get(slug)
     if spec is None:
         raise host.CraftError("craft_compat_unsupported")
@@ -181,7 +232,8 @@ def install(cache, slug, archive_path):
                         if size > host.MAX_ARCHIVE:
                             raise host.CraftError("craft_archive_limit")
                         out.write(chunk)
-                if host.digest(archive) != spec["archive_sha256"]:
+                archive_sha256 = host.digest(archive)
+                if archive_sha256 not in _archive_pins(spec):
                     raise host.CraftError("craft_compat_checksum_mismatch")
                 payload = stage / "payload"
                 web = host.extract(archive, payload)
@@ -193,7 +245,7 @@ def install(cache, slug, archive_path):
                     raise host.CraftError("craft_compat_not_verified")
                 receipt = {
                     "app": slug, "version": spec["base_version"], "compatibility": spec["id"],
-                    "archive_sha256": spec["archive_sha256"], **manifest,
+                    "archive_sha256": archive_sha256, **manifest,
                 }
                 (stage / "receipt.json").write_text(json.dumps(receipt, indent=2), encoding="utf-8")
                 archive.unlink()
