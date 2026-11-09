@@ -179,6 +179,21 @@ def _resolve_executable(command: str, cwd: str | None) -> str:
     raise McpTransportError("agent_mcp_executable_not_found", dispatched=False)
 
 
+# A server may say its tool list changed while it answers another request. The
+# manager re-reads that server's list; such notices do not count toward the
+# per-session notification limit because each only schedules one refresh.
+TOOLS_LIST_CHANGED = "notifications/tools/list_changed"
+
+
+def _announce_tools_changed(session: Any) -> None:
+    callback = getattr(session, "on_tools_changed", None)
+    if callable(callback):
+        try:
+            callback()
+        except Exception:
+            pass
+
+
 class StdioMcpSession:
     """Serial, bounded STDIO MCP client session using process_guard without shell=True."""
 
@@ -400,6 +415,9 @@ class StdioMcpSession:
                         request_id=ident,
                     )
                 if "id" not in message and str(message.get("method", "")).startswith("notifications/"):
+                    if message.get("method") == TOOLS_LIST_CHANGED:
+                        _announce_tools_changed(self)
+                        continue
                     self.notifications += 1
                     if self.notifications > 64:
                         raise McpTransportError(
@@ -799,6 +817,9 @@ class StreamableHttpMcpSession:
             if not isinstance(parsed, dict) or parsed.get("jsonrpc") != "2.0":
                 raise McpTransportError("agent_mcp_protocol_invalid", dispatched=True)
             if "id" not in parsed and str(parsed.get("method", "")).startswith("notifications/"):
+                if parsed.get("method") == TOOLS_LIST_CHANGED:
+                    _announce_tools_changed(self)
+                    continue
                 self.notifications += 1
                 if self.notifications > 64:
                     raise McpTransportError("agent_mcp_notification_limit", dispatched=True)
@@ -1330,9 +1351,13 @@ class McpSessionManager:
         cancelled: Callable[[], bool] = lambda: False,
     ) -> StdioMcpSession | StreamableHttpMcpSession:
         transport = str(server.get("transport", "stdio")).lower()
+        session: StdioMcpSession | StreamableHttpMcpSession
         if transport == "streamable_http":
-            return StreamableHttpMcpSession(server, cancelled=cancelled, oauth=self.oauth)
-        return StdioMcpSession(server, fallback_cwd=self._fallback_cwd, cancelled=cancelled)
+            session = StreamableHttpMcpSession(server, cancelled=cancelled, oauth=self.oauth)
+        else:
+            session = StdioMcpSession(server, fallback_cwd=self._fallback_cwd, cancelled=cancelled)
+        session.on_tools_changed = lambda sid=str(server["id"]): self.catalog_changed(sid)  # type: ignore[attr-defined]
+        return session
 
     def invalidate_server(self, server_id: str) -> None:
         sid = str(server_id)
@@ -1359,6 +1384,30 @@ class McpSessionManager:
                 sessions.extend(self._pending.pop(k, ()))
         for session in sessions:
             session.close()
+
+    def catalog_changed(self, server_id: str) -> None:
+        """The server announced tools/list_changed: re-read its list now, once."""
+        sid = str(server_id)
+        with self._lock:
+            if sid in self._catalog_refreshing:
+                return
+            self._catalog_refreshing.add(sid)
+            self._catalog_checked[sid] = time.monotonic()
+        threading.Thread(target=self._refresh_catalog, args=(sid,), daemon=True,
+                         name=f"ryn-mcp-catalog-{sid[:24]}").start()
+
+    def wait_for_catalogs(self, server_ids: Any, timeout: float) -> bool:
+        """Wait up to timeout for these tool-list refreshes (None: all now running); True when all finished."""
+        with self._lock:
+            wanted = set(self._catalog_refreshing) if server_ids is None else {str(sid) for sid in server_ids}
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        while True:
+            with self._lock:
+                if not wanted & self._catalog_refreshing:
+                    return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.05)
 
     def close(self) -> None:
         self.oauth.close()
