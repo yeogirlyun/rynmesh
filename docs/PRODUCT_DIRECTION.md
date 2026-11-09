@@ -57,9 +57,39 @@ model training or autonomous learning require their own implemented evidence.
 - Corporate additions are reusable organization capabilities plus private
   policy/configuration. Use normal connectors and declared capabilities so
   personal and company deployments can participate in the same network.
-- Open-source participation is free of platform commission. Paid services can
-  pay their actual providers. The existing internal Ryncoin alpha has its own
-  operating limits; fiat conversion remains a later stage.
+- Open-source participation is free of platform commission. Future paid services
+  can pay their actual providers through Ryncoin. Its launch follows user utility
+  and adoption; the existing alpha is implementation evidence with its own limits.
+
+## Economic sequence: adoption, internal circulation, then exchange
+
+Owner clarification, 2026-11-09:
+
+1. **Now: earn adoption through utility.** Deliver personal apps, company work,
+   durable assistant context and useful sharing. Downloads, repeat use and real
+   workflows establish demand. Ryncoin launch, advertising and subscriptions
+   are later milestones; they are not prerequisites for the next user pilot.
+2. **Later: earned internal service credits, called Ryncoin.** Once a meaningful
+   user base and commercial demand exist, providers earn from useful content,
+   services and verified network work. Participants spend on other providers,
+   content and services. Advertising budgets, direct subscriptions and their
+   provider payouts use this common network unit. A participant can both earn
+   and consume. This initial credit phase has no cash purchase, cash-out or
+   fixed fiat value. A user works for others or the network, then uses earned
+   credits to enjoy others' services. Issuance rewards follow public useful-work rules; payments
+   transfer existing balances, and activity alone does not guarantee minting.
+3. **Much later: currency exchange.** At sufficient scale, a reviewed exchange
+   service lets participants buy Ryncoin and lets earners sell for supported
+   currencies at market prices. Exchange, liquidity, custody and operating rules
+   are a separate milestone. The initial credits have no promised redemption;
+   future exchange is a later design/operating decision, with no fixed peg.
+
+Select an internal-economy pilot only after evidence of repeat users, useful
+providers and commercial demand; numeric launch thresholds remain to be proposed.
+Internal circulation reduces the initial product scope. Regulatory treatment
+depends on the design and jurisdictions and requires review before launch;
+internal-only circulation is not an automatic exemption. See the
+[economy roadmap](NETWORK_ECONOMY_ROADMAP.md#launch-sequence-owner-clarification-2026-11-09).
 
 ## Near-term delivery: prove both personal and employee value
 
