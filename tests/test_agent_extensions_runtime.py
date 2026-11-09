@@ -1028,7 +1028,7 @@ def test_early_specs_before_install_agent_and_normal_order_key_binding_and_recon
         _close(app2_r, runtime=rt2_r)
 
 
-def test_mcp_write_result_is_error_preserves_unknown_and_blocks_model_retry(tmp_path: Path):
+def test_mcp_write_result_is_error_returns_reply_without_lock_or_replay(tmp_path: Path):
     from rynmesh.agent_runtime.store import AgentError, encoded
     from rynmesh.agent_runtime.tools import RynTools
     from rynmesh.llm_package.routes import install_llm_routes
@@ -1080,12 +1080,28 @@ def test_mcp_write_result_is_error_preserves_unknown_and_blocks_model_retry(tmp_
                                 "inputSchema": {{"type": "object", "properties": {{}}, "additionalProperties": False}},
                                 "annotations": {{"readOnlyHint": True}},
                             }},
+                            {{
+                                "name": "synthetic_send",
+                                "description": "Send-like write that declares a result tool and returns isError=true",
+                                "inputSchema": {{"type": "object", "properties": {{}}, "additionalProperties": False,
+                                                "x-ryn-result": {{"tool": "synthetic_send_result", "argument": "request_id"}}}},
+                                "annotations": {{"readOnlyHint": False}},
+                            }},
+                            {{
+                                "name": "synthetic_send_result",
+                                "description": "Result lookup that cannot find the request",
+                                "inputSchema": {{"type": "object", "properties": {{"request_id": {{"type": "string"}}}},
+                                                "required": ["request_id"], "additionalProperties": False}},
+                                "annotations": {{"readOnlyHint": True}},
+                            }},
                         ]
                     }}
                 elif method == "tools/call":
                     tname = req["params"]["name"]
                     if tname == "synthetic_read_err":
                         val = {{"isError": True, "content": [{{"type": "text", "text": "Read query failed."}}]}}
+                    elif tname == "synthetic_send_result":
+                        val = {{"isError": True, "content": [{{"type": "text", "text": "REQUEST_NOT_FOUND"}}]}}
                     else:
                         count = read_count() + 1
                         COUNTER.parent.mkdir(parents=True, exist_ok=True)
@@ -1121,6 +1137,9 @@ def test_mcp_write_result_is_error_preserves_unknown_and_blocks_model_retry(tmp_
 
         def complete(self, model_id, messages, specs, cancelled, on_event=None, **kwargs):
             exposed = {row["function"]["name"] for row in specs}
+            if self.write_calls and any(m.get("role") == "tool" and "outcome_note" in str(m.get("content")) for m in messages):
+                self.calls.append({"name": "final", "write_call_index": self.write_calls})
+                return {"message": {"role": "assistant", "content": "The tool reported an error; I did not resend it."}}
             if self.name not in exposed:
                 name, args = "ryn_discover_tools", {"load": [self.name]}
             else:
@@ -1173,15 +1192,16 @@ def test_mcp_write_result_is_error_preserves_unknown_and_blocks_model_retry(tmp_
                 "command": sys.executable,
                 "args": ["-u", str(worker_script), str(counter)],
                 "computer_access": False,
-                "read_only_tools": ["synthetic_read_err"],
+                "read_only_tools": ["synthetic_read_err", "synthetic_send_result"],
             },
             expected_revision=ext.overview()["revision"],
         )
         srv = ext.get_mcp_server_internal("iserror-fixture", require_enabled=True)
         discovered = tools.extensions.manager.test_server("iserror-fixture", expected_revision=srv["revision"])
-        assert discovered["test_result"]["tools_count"] == 2 and _read_count(counter) == 0
+        assert discovered["test_result"]["tools_count"] == 4 and _read_count(counter) == 0
         write_name = compute_model_tool_name("iserror-fixture", "synthetic_write")
         read_name = compute_model_tool_name("iserror-fixture", "synthetic_read_err")
+        send_name = compute_model_tool_name("iserror-fixture", "synthetic_send")
         model.name = write_name
         ws = sub_root / "ws"
         ws.mkdir(parents=True, exist_ok=True)
@@ -1196,7 +1216,7 @@ def test_mcp_write_result_is_error_preserves_unknown_and_blocks_model_retry(tmp_
             }
         )
         task = runtime.create({"message": "Record one synthetic fixture item."})
-        return app, runtime, model, tools, task["id"], write_name, read_name, counter
+        return app, runtime, model, tools, task["id"], write_name, read_name, send_name, counter
 
     def _close(app, runtime, tools):
         runtime.update_settings({"enabled": False})
@@ -1204,11 +1224,27 @@ def test_mcp_write_result_is_error_preserves_unknown_and_blocks_model_retry(tmp_
         tools.craft.close()
         app.state.llm_shutdown()
 
-    # 1. Direct adapter + encrypted OperationLedger: read isError returns normal error, write isError raises agent_write_outcome_unknown
-    app1, rt1, _, tools1, tid1, write_name1, read_name1, counter1 = _setup(tmp_path / "direct")
+    def _write_context(adapter, runtime, tid, name, op_id):
+        ctx = runtime._tool_context(runtime.store.read()["tasks"][tid], op_id)
+        ctx["extension_binding"] = adapter.metadata(name)["extension_binding"]
+        return ctx, adapter.preview(name, {}, context=ctx)
+
+    def _reconcile(adapter, tools, runtime, tid, name, op_id):
+        ctx = runtime._tool_context(runtime.store.read()["tasks"][tid], op_id)
+        ctx["operation"] = {
+            "operation_id": op_id,
+            "tool": name,
+            "arguments": {},
+            "arguments_sha256": hashlib.sha256(encoded({})).hexdigest(),
+            "extension_binding": adapter.metadata(name)["extension_binding"],
+        }
+        return tools.reconcile(op_id, context=ctx, cancelled=lambda: False)
+
+    # 1. Direct adapter + encrypted OperationLedger.
+    app1, rt1, _, tools1, tid1, write_name1, read_name1, send_name1, counter1 = _setup(tmp_path / "direct")
     try:
         adapter = tools1.extensions
-        # Read-only isError returns ordinary error payload without raising AgentError
+        # Read-only isError returns an ordinary error payload.
         read_ctx = rt1._tool_context(rt1.store.read()["tasks"][tid1], "op-read-err")
         read_ctx["extension_binding"] = adapter.metadata(read_name1)["extension_binding"]
         read_res = adapter.execute(read_name1, {}, operation_id="op-read-err", context=read_ctx)
@@ -1216,67 +1252,61 @@ def test_mcp_write_result_is_error_preserves_unknown_and_blocks_model_retry(tmp_
         assert read_res["error"] == "agent_mcp_tool_returned_error"
         assert _read_count(counter1) == 0
 
-        # Write isError: durable count=1, raises AgentError('agent_write_outcome_unknown'), ledger stays 'dispatched'
+        # A change tool's own error reply is its outcome: returned, recorded, never resent.
         op_id = "direct-iserror-fixture-operation"
-        w_ctx = rt1._tool_context(rt1.store.read()["tasks"][tid1], op_id)
-        w_ctx["extension_binding"] = adapter.metadata(write_name1)["extension_binding"]
-        preview = adapter.preview(write_name1, {}, context=w_ctx)
-        with pytest.raises(AgentError) as exc_info:
-            adapter.execute(write_name1, {}, operation_id=op_id, context=w_ctx, expected_preview=preview)
-        assert str(exc_info.value) == "agent_write_outcome_unknown"
+        w_ctx, preview = _write_context(adapter, rt1, tid1, write_name1, op_id)
+        res = adapter.execute(write_name1, {}, operation_id=op_id, context=w_ctx, expected_preview=preview)
+        assert res["is_error"] is True and res["error"] == "agent_mcp_tool_returned_error"
+        assert "Synthetic application processing failed." in res["text"]
+        assert "does not prove nothing changed" in res["outcome_note"]
         assert _read_count(counter1) == 1
-
         ledger_row = tools1.resource_writes.ledger.get(op_id)
-        assert ledger_row["status"] == "dispatched"
-        assert ledger_row["error"] == "agent_mcp_tool_returned_error"
+        assert ledger_row["status"] == "confirmed"
+        assert ledger_row["result"]["is_error"] is True
         assert _1X1_PNG_B64 not in json.dumps(ledger_row)
-
-        rec_ctx = rt1._tool_context(rt1.store.read()["tasks"][tid1], op_id)
-        rec_ctx["operation"] = {
-            "operation_id": op_id,
-            "tool": write_name1,
-            "arguments": {},
-            "arguments_sha256": hashlib.sha256(encoded({})).hexdigest(),
-            "extension_binding": adapter.metadata(write_name1)["extension_binding"],
-        }
-        rec = tools1.reconcile(op_id, context=rec_ctx, cancelled=lambda: False)
-        assert rec["outcome"] == "unknown"
-        assert rec["error"] == "agent_mcp_tool_returned_error"
-
-        # Same operation_id retry must NOT re-execute the remote write (count stays 1)
-        with pytest.raises(AgentError) as exc_retry:
-            adapter.execute(write_name1, {}, operation_id=op_id, context=w_ctx, expected_preview=preview)
-        assert str(exc_retry.value) == "agent_write_outcome_unknown"
+        rec = _reconcile(adapter, tools1, rt1, tid1, write_name1, op_id)
+        assert rec["outcome"] == "executed" and rec["receipt"]["result"]["is_error"] is True
+        # The same operation_id returns the recorded reply without re-dispatch.
+        again = adapter.execute(write_name1, {}, operation_id=op_id, context=w_ctx, expected_preview=preview)
+        assert again["is_error"] is True and again["outcome_note"] == res["outcome_note"]
         assert _read_count(counter1) == 1
+
+        # A tool that declares a result tool may have acted: one lookup, then unknown.
+        send_op = "direct-iserror-send-operation"
+        s_ctx, s_preview = _write_context(adapter, rt1, tid1, send_name1, send_op)
+        with pytest.raises(AgentError) as exc_send:
+            adapter.execute(send_name1, {}, operation_id=send_op, context=s_ctx, expected_preview=s_preview)
+        assert str(exc_send.value) == "agent_write_outcome_unknown"
+        assert _read_count(counter1) == 2
+        send_row = tools1.resource_writes.ledger.get(send_op)
+        assert send_row["status"] == "dispatched" and send_row["error"] == "agent_mcp_tool_returned_error"
+        assert _reconcile(adapter, tools1, rt1, tid1, send_name1, send_op)["outcome"] == "unknown"
+        with pytest.raises(AgentError, match="agent_write_outcome_unknown"):
+            adapter.execute(send_name1, {}, operation_id=send_op, context=s_ctx, expected_preview=s_preview)
+        assert _read_count(counter1) == 2
     finally:
         _close(app1, rt1, tools1)
 
-    # 2. Full runtime + model new-call retry across ticks, reconciliation, and fresh reconstruction
-    app2, rt2, model2, tools2, tid2, write_name2, _, counter2 = _setup(tmp_path / "runtime")
+    # 2. Full runtime: the task continues after the error reply instead of locking.
+    app2, rt2, model2, tools2, tid2, write_name2, _, _, counter2 = _setup(tmp_path / "runtime")
     try:
-        for _ in range(10):
+        for _ in range(12):
             rt2.run_once()
             row = rt2.get(tid2)
             if row["status"] in {"failed", "interrupted", "cancelled", "completed", "waiting_approval"}:
                 break
-        assert _read_count(counter2) == 1
-        assert model2.write_calls == 1
         state2 = rt2.get(tid2)
-        assert state2["status"] == "interrupted"
-        assert state2["error"] == "agent_write_outcome_unknown"
-
-        # Run reconciliation tick -> state becomes unknown, count remains 1, model never called a second time
-        rt2.run_once()
-        rt2.run_once()
-        state2_after = rt2.get(tid2)
-        assert state2_after["reconciliation"]["state"] == "unknown"
-        assert [r["status"] for r in _receipts(rt2, tid2) if r["tool"] == write_name2] == ["unknown"]
+        assert state2["status"] != "interrupted" and state2["error"] != "agent_write_outcome_unknown"
         assert _read_count(counter2) == 1
-        assert model2.write_calls == 1
+        assert model2.write_calls == 1 and model2.calls[-1]["name"] == "final"
+        internal = rt2.store.read()["tasks"][tid2]
+        replies = [m for m in internal["messages"] if m.get("role") == "tool" and "outcome_note" in m.get("content", "")]
+        assert len(replies) == 1 and replies[0].get("is_error") is True
+        assert "unknown" not in [r["status"] for r in _receipts(rt2, tid2) if r["tool"] == write_name2]
     finally:
         _close(app2, rt2, tools2)
 
-    # 3. Fresh node/app/tools/runtime reconstruction on the same home preserves count=1 and unknown reconciliation
+    # 3. A rebuilt node on the same home neither resends the call nor relocks the task.
     sub_root = tmp_path / "runtime"
     node2_r = RynmeshStore(home=sub_root / "node", network_dir=sub_root / "network")
     app2_r = FastAPI()
@@ -1304,10 +1334,7 @@ def test_mcp_write_result_is_error_preserves_unknown_and_blocks_model_retry(tmp_
     try:
         rt2_r.run_once()
         reconstructed_state = rt2_r.get(tid2)
-        assert reconstructed_state["status"] == "interrupted"
-        assert reconstructed_state["error"] == "agent_write_outcome_unknown"
-        assert reconstructed_state["reconciliation"]["state"] == "unknown"
-        assert [r["status"] for r in _receipts(rt2_r, tid2) if r["tool"] == write_name2] == ["unknown"]
+        assert reconstructed_state["error"] != "agent_write_outcome_unknown"
         assert _read_count(counter2) == 1
         assert model2_r.write_calls == 0
     finally:

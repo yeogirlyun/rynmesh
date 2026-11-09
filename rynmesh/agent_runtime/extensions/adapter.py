@@ -107,6 +107,12 @@ ALLOWED_IMAGE_MIMES: dict[str, tuple[str, str]] = {
 MAX_MCP_IMAGE_BYTES = 4 * 1024 * 1024
 MAX_MCP_IMAGE_PIXELS = 16_000_000
 MAX_TEXT_BLOCK_CHARS = 32_000
+# Shown to the model with a tool-reported error from a change tool.
+TOOL_ERROR_NOTE = (
+    "The tool itself replied with this error. Ryn did not and will not resend this call. "
+    "An error reply does not prove nothing changed: check the current state with a read tool "
+    "before trying the change again. If a reference expired, look it up again first."
+)
 
 _SAFE_PATH_SEGMENT_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 
@@ -1156,11 +1162,9 @@ class ExtensionToolAdapter:
                 if prior.get("binding") != ledger_binding:
                     raise AgentError("agent_operation_id_conflict")
                 prior_res = prior.get("result")
-                if (
-                    prior.get("status") == "confirmed"
-                    and isinstance(prior_res, dict)
-                    and not (prior_res.get("is_error") or prior_res.get("error"))
-                ):
+                if prior.get("status") == "confirmed" and isinstance(prior_res, dict):
+                    # A recorded reply, including a tool-reported error, is
+                    # returned again; the call itself is never sent twice.
                     return copy.deepcopy(prior_res)
                 if prior.get("status") == "not_executed":
                     raise AgentToolRejected(
@@ -1184,11 +1188,9 @@ class ExtensionToolAdapter:
                 if prior.get("binding") != ledger_binding:
                     raise AgentError("agent_operation_id_conflict")
                 prior_res = prior.get("result")
-                if (
-                    prior.get("status") == "confirmed"
-                    and isinstance(prior_res, dict)
-                    and not (prior_res.get("is_error") or prior_res.get("error"))
-                ):
+                if prior.get("status") == "confirmed" and isinstance(prior_res, dict):
+                    # A recorded reply, including a tool-reported error, is
+                    # returned again; the call itself is never sent twice.
                     return copy.deepcopy(prior_res)
                 if prior.get("status") == "not_executed":
                     raise AgentToolRejected(
@@ -1454,9 +1456,20 @@ class ExtensionToolAdapter:
                 operation_id=operation_id,
                 allow_image_rejection=False,
             )
+            if (normalized.get("is_error") or normalized.get("error")) and not self._declared_result_tool(binding):
+                # The tool answered, with an error. That reply is the call's
+                # outcome: record it, show it to the model, never resend it.
+                normalized["outcome_note"] = TOOL_ERROR_NOTE
+                ledger.update(operation_id, "confirmed", result=normalized)
+                return normalized
             if normalized.get("is_error") or normalized.get("error"):
-                # MCP tool-level isError=true does not prove rollback or absence of side effects.
-                # Preserve dispatched/unknown status with bounded sanitized diagnostics and halt retries.
+                # Tools that declare a result tool (x-ryn-result: sends, retries,
+                # uploads) may have acted before failing. Ask that tool once;
+                # without a clear answer the outcome stays unknown.
+                recovered = self._recover_declared_result(binding, arguments, operation_id, context, cancelled)
+                if recovered is not None:
+                    ledger.update(operation_id, "confirmed", result=recovered)
+                    return recovered
                 ledger.update(
                     operation_id,
                     "dispatched",
@@ -1469,6 +1482,20 @@ class ExtensionToolAdapter:
                 raise unknown_err
             ledger.update(operation_id, "confirmed", result=normalized)
             return normalized
+
+    def _declared_result_tool(self, binding) -> bool:
+        """Whether this tool declares a result tool (x-ryn-result).
+
+        Such tools (sends, retries, uploads) may act before reporting an error.
+        A tool that can no longer be looked up is treated the same way.
+        """
+        try:
+            entry = self._active_mcp_tools().get(binding["model_tool_name"])
+        except Exception:
+            return True
+        if entry is None:
+            return True
+        return "x-ryn-result" in (entry[1].get("input_schema") or {})
 
     def _recover_declared_result(self, binding, arguments, operation_id, context, cancelled):
         """One authorized status query after response loss; never resend a write."""
@@ -1528,11 +1555,9 @@ class ExtensionToolAdapter:
         ):
             return {"outcome": "unknown"}
         row_result = row.get("result")
-        if (
-            row.get("status") == "confirmed"
-            and isinstance(row_result, dict)
-            and not (row_result.get("is_error") or row_result.get("error"))
-        ):
+        if row.get("status") == "confirmed" and isinstance(row_result, dict):
+            # Includes a recorded tool-reported error: the call completed and
+            # its reply is the receipt.
             return {
                 "outcome": "executed",
                 "receipt": {
