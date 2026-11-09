@@ -6,3 +6,4 @@
 - 本地运行数据、账号凭据、密钥、数据库、缓存、日志及大型构建产物不得提交。需要归档的脱敏验收证据放入 `docs/acceptance/`。
 - 更新本机程序前保留可回滚版本；只清理已核实属于本项目的旧进程，不影响其他应用。保留现有配置和用户数据，重启后检查程序版本、健康状态和插件服务。
 - 公司插件位于 `D:/code/chat-backend/integrations/company-app`，与主程序分仓维护；关联修改需要分别集成、构建并记录版本，不能仅更新其中一个仓库。
+- Git 正式交付目标：主程序为 `https://github.com/yeogirlyun/rynmesh`，公司工作台、Dashboard、联盟营销三个插件统一交付到老板的私有仓库 `https://github.com/yeogirlyun/gshopper-ryn-node`，均以 `develop` 集成。`yyeogirl/chat-backend` 是旧交付位置，不能代替老板仓库交付。

@@ -4,7 +4,7 @@
 
 Ryn 已完成的功能集成在 `develop`，交付到 `yeogirlyun/rynmesh` 并同步 `yyeogirl/rynmesh`。推送前发现上游另有 5 个提交，已通过合并提交 `0b236bf` 无冲突纳入，保留双方修改，不强制覆盖远端。
 
-公司插件交付到私有 `yyeogirl/chat-backend` 的 `develop`，GitHub 提交 `b9385033`，本地集成提交 `f900d993`。两个提交的 `integrations/company-app` 目录完全一致；构建源码仍为 `d86f942b`，后续仅增加交付文档。GitHub 使用已有干净历史，不推送本地旧财务后端历史。
+公司工作台、Dashboard、联盟营销三个插件的正式交付仓库是老板的私有 `yeogirlyun/gshopper-ryn-node`，分支 `develop`，目录 `integrations/company-app`。本轮将本地构建来源 `d86f942b` 的新增修改增量合入老板仓库，保留该仓库已有独立修复及中心服务。此前上传到 `yyeogirl/chat-backend` 的 `b9385033` 仅为误选的旧交付位置，不是本次正式交付入口。
 
 ## 本次功能变化
 
