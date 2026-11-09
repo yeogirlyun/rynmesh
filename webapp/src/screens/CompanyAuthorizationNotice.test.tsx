@@ -12,7 +12,7 @@ it('does not claim completion until a durable service ACK and ignores stale resp
   vi.stubGlobal('fetch', fetchStatus);
   render(<CompanyAuthorizationNotice />);
   act(() => observeCompanyAuthorizationDelivery({ sequence: 100, acknowledged: false, pending: true }));
-  expect(screen.getByRole('status')).toHaveTextContent('sign-out is not yet complete');
+  expect(screen.getByRole('status')).toHaveTextContent('the change is not yet fully applied');
   act(() => observeCompanyAuthorizationDelivery({ sequence: 99, acknowledged: true, pending: false }));
   expect(screen.getByRole('status')).toBeInTheDocument();
   await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
