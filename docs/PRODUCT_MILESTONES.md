@@ -143,6 +143,13 @@ public payments and network rewards cannot bypass this gate.
 
 ## P5: Internal Ryncoin earn/spend economy — configured alpha implemented
 
+Launch sequencing clarified 2026-11-09: this remains a later product milestone,
+after useful personal/company journeys, a meaningful user base and commercial
+demand. Current alpha code is not a public economy launch. Advertising budgets,
+direct subscriptions and provider payments will use Ryncoin in the future
+internal economy; fiat purchase/redemption belongs to P7. See
+[the phased launch plan](NETWORK_ECONOMY_ROADMAP.md#launch-sequence-owner-clarification-2026-11-09).
+
 Goal: participants earn Ryncoin from direct customers or protocol rewards for
 useful network work, and spend it with other participants inside Rynmesh.
 

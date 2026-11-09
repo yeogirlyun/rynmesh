@@ -1,5 +1,38 @@
 # General-purpose value exchange and Ryncoin infrastructure
 
+## Launch sequence — owner clarification, 2026-11-09
+
+The near-term milestone is useful personal/company nodes, accumulated assistant
+context, repeat users and growth. Ryncoin launches later, after a meaningful user
+base and business demand exist. The alpha described below is technical evidence;
+it does not put token issuance, advertising, subscriptions or exchange into the
+current implementation batch. See [product direction](PRODUCT_DIRECTION.md).
+
+| Stage | Intended behavior | Gate |
+|---|---|---|
+| User adoption | Useful apps, company workflows, personal context, friend interaction and repeat use. | Demonstrated user utility and retention; grow participants and providers. |
+| Internal credits, later | Earn Ryncoin by useful work for others or the network; spend it on others' content/services. Later ad budgets, direct subscriptions and provider payouts use the same unit. No cash purchase, cash-out or fixed fiat value. | Real repeat users and demand; reviewed issuance, settlement, contribution evidence and operating model. |
+| Currency exchange, much later | Users can buy Ryncoin; contributors can sell accumulated coins for supported currencies at supply/demand prices. | Scale plus reviewed exchange, liquidity, custody and jurisdictional requirements. |
+
+Useful contributions can include content, services and basic node work. Customer,
+subscriber and advertiser payments transfer existing balances to participating
+providers according to agreed/public terms. Protocol rewards for verified basic
+network services issue coins under explicit rules. Neither a new app interaction
+nor a transfer automatically creates new coins. Prices, issuance allocations,
+ad attribution and subscription terms remain future design work.
+
+The initial product is game-like earned service credits, with no money entering
+or leaving that system and no promised cash redemption. Any future currency
+exchange is a separate later milestone. This design boundary and the term
+"game credits" do not by themselves establish a regulatory exemption. For
+example, [MiCA recital 17](https://eur-lex.europa.eu/eli/reg/2023/1114/oj/eng)
+describes an exclusion for issuer-only assets that cannot transfer to other
+holders; Ryncoin's intended participant-to-participant transfers need their own
+assessment. This is a sequencing boundary, not a jurisdictional classification.
+No operating launch, automatic telemetry or issuance service is started here.
+
+## Existing technical alpha and broader design
+
 Status: owner-approved direction and first digital-work alpha implementation,
 2026-10-04: v2 protocol hardening adds immutable cases, bound deadline outcomes, admission/closing reserves and legacy replay. See [hardening design](EXCHANGE_PROTOCOL_HARDENING.md) and [issue #89](https://github.com/yeogirlyun/rynmesh/issues/89). [Exchange alpha](EXCHANGE_ALPHA.md) documents the delivered subset
 and [issue #87](https://github.com/yeogirlyun/rynmesh/issues/87) records its design.
