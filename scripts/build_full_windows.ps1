@@ -22,7 +22,11 @@ try {
     if (git diff --name-only $CoreCommit HEAD -- rynmesh webapp native pyproject.toml) {
         throw 'Core source changed: rebuild the ordinary installer first'
     }
-    if ((Get-Item -LiteralPath $WebViewInstaller).Length -lt 50000000) { throw 'Standalone WebView2 installer required' }
+    # The installer only runs this when WebView2 is missing (Windows 11 ships it), so bundle the
+    # ~2 MB online bootstrapper instead of the 206 MB offline installer.
+    if ((Get-Item -LiteralPath $WebViewInstaller).Length -gt 10000000) {
+        throw 'Pass the WebView2 bootstrapper MicrosoftEdgeWebview2Setup.exe (~2 MB, https://go.microsoft.com/fwlink/p/?LinkId=2124703), not the offline installer'
+    }
     $signature=Get-AuthenticodeSignature -LiteralPath $WebViewInstaller
     if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'CN=Microsoft Corporation,') {
         throw 'Invalid Microsoft WebView2 signature'
