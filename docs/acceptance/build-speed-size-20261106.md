@@ -89,9 +89,17 @@ makensis on the Word CLI+GUI pair alone (176.5 MB): zlib 21 s / 89.7 MB, lzma 8 
 - The helper reuse path (stamp hit).
 - Installing an LZMA-128 complete installer on a machine. Solid LZMA unpacks more slowly than zlib at install time.
 
-## Open size decisions
+## 2026-11-09: WebView2 bootstrapper instead of the offline installer
 
-- Offline WebView2 installer: 206 MB, already compressed, so ~40% of the 500 MB installer. Windows 11 ships WebView2, the installer only runs it when WebView2 is missing, and the core installer already uses the download bootstrapper.
+The user chose to drop the 206 MB offline WebView2 installer (~40% of the 500 MB complete installer). `build_full_windows.ps1` now rejects a WebView2 installer over 10 MB and still requires a valid Microsoft signature. Pass the ~2 MB bootstrapper; the one already on the host is `.codex-tmp/full-package-20261103/MicrosoftEdgeWebView2RuntimeInstallerX64.exe` (1,888,976 bytes, signed by Microsoft, "Microsoft Edge Update Setup" 1.3.311.5).
+
+The installer still checks for WebView2 before it removes the old Ryn program. If WebView2 is missing it downloads it; if that fails (no internet) it stops before changing anything.
+
+Checked: `full-installer.nsi` compiles with both compressors using the bootstrapper; the guard accepts the bootstrapper and rejects the 206 MB file. Not checked: a real install on a machine without WebView2.
+
+Expected complete installer: about 290-300 MB with lzma (500 MB minus the 206 MB file plus 2 MB).
+
+## Open size decisions
 - Office desktop GUI programs: about 310 MB raw. Ryn only runs `*-cli.exe`, but runtime verification pins the complete upstream archive. With the 128 MB lzma dictionary each GUI adds only ~5 MB next to its CLI, so dropping them is not worth the verification change.
 - `frida` in the company service: 162 MB raw. Used on purpose (`collect_all('frida')`, WeCom native send); company repository.
 - About 13 old `.codex-tmp/full-qa-*` folders (~1 GB each) remain on the host; not deleted.

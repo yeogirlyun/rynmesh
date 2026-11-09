@@ -39,10 +39,11 @@ Section
   StrCmp $1 "" 0 webview_ready
   ReadRegStr $1 HKCU "SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
   StrCmp $1 "" 0 webview_ready
+  DetailPrint "Downloading and installing Microsoft WebView2..."
   ExecWait '"$PLUGINSDIR\webview2.exe" /silent /install' $0
   StrCmp $0 0 webview_ready
   StrCmp $0 3010 webview_ready
-    MessageBox MB_ICONSTOP "WebView2 offline installation failed ($0)." /SD IDOK
+    MessageBox MB_ICONSTOP "WebView2 installation failed ($0). Connect to the internet and run this installer again; nothing was changed." /SD IDOK
     SetErrorLevel 1
     Abort
   webview_ready:
