@@ -62,3 +62,16 @@
 - 回归日志、旧版对照日志、`node-smoke.json`、`company-runtime-qa/verification.json` 留在本机产物目录，运行数据不提交。
 
 本次未替换现有安装，因此无需执行回滚。原有 `artifacts/develop-release-20261109-fe17e67/Ryn_0.8.0_x64-setup.exe` 等旧包保留；日后实际更新本机前仍应备份当前程序并按项目规则验收。
+
+## 后续本机安装与启动（2026-11-10）
+
+用户随后明确要求安装启动，已执行完整候选安装包，退出码 0。
+
+- 原位安装目录：`%LOCALAPPDATA%/Packages/OpenAI.Codex_2p2nqsd0c76g0/LocalCache/Local/Ryn`。
+- 备份位于该目录的同级 `Ryn-install-backups/develop-cc94d2a-20261110-002610`，保留旧程序、安装配置与原活动插件运行包。
+- 沿用原节点及公司插件数据目录；节点身份、消息密钥、公司配置密钥哈希均保持不变，桌面配置保留。
+- 节点和电脑操作程序与构建输出 SHA256 相同；桌面程序逐字节核对后仅有 Tauri 预期的 bundle 标记 `UNK` → `NSS` 差异。初次直接哈希比较因此中止启动；确认标记差异后继续完成启动，没有重复安装。
+- 公司插件 `d86f942` 的运行清单 902 个文件全部通过哈希校验，实际进程来自新版本目录。
+- Ryn 桌面窗口已启动并响应；节点 8791 健康状态 `ok`，Agent 设置接口 HTTP 200。
+- 公司服务 18140 状态 `ready`；workspace、dashboard、affiliate 三个页面均 HTTP 200。
+- 本机安装及健康记录保存在产物目录的 `local-install.json`、`local-health.json`。本节是对上文“尚未覆盖本机安装”的后续状态更新；Office 下载及原有测试限制仍然适用。
