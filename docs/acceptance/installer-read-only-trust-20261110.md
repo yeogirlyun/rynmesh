@@ -229,3 +229,13 @@
 - 在该隔离实例将 ryn_dashboard_identity 通过 API 改为写，原生设置正常退出 Ryn，再启动同一隔离程序：Dashboard 6/51、59 个 installer，该工具仍为 write、0 候选，助手页无卡片、dismissed 为 null。
 - 随后仅停止已核实路径属于该隔离安装的进程，再执行原冻结安装迁移程序并启动：Dashboard 6/55、59 个 installer，该工具仍为 write、0 候选；改回只读后 source=owner。第 8 项真实登录、原生重启和再安装的策略验证通过；隔离再安装使用安装包内同一冻结 helper，没有运行会改变全局安装注册信息的外层 NSIS。
 - 为补齐第 7 项，另建 fresh-pristine 的空 home/config/profile，未复制账号、Cookie、配置或工具目录；复制同构建程序并执行同一冻结安装迁移程序，回执含 Dashboard/operations/affiliate。首次启动 Dashboard 为 NeedsAuth、6/0、0 工具，信任指纹绑定有效；已打开扫码入口等待用户登录。之前 fresh 目录和登录完整保留。
+
+### 最终验收结论与正式环境恢复
+
+- 全新 fresh-pristine 空目录已完成用户扫码，原服务器 instance_id 未改变，首次真实发现 Dashboard 为 config/discovery `6/28`，60 个声明只读工具全部来源 installer、候选 0；affiliate 为 `8/29`、60 个 installer、候选 0，workspace 为 `26/27`、7 个 installer，3 个写工具未误标。实际 Agent 页无卡片，`ryn.agent.read-only-hints-dismissed` 为 null。第 7 项通过；此目录没有重导入、复制认证或手动确认工具。
+- 隔离新装及再安装使用正式单一安装包内的同一冻结安装 helper，加上同构建桌面/节点二进制；未在隔离目录重跑会修改全局安装注册信息的外层 NSIS。这一验证范围明确保留，不声称外层 NSIS 在第二个目录完整运行。
+- PPT 任务完成并停止其 18891 节点后，本轮停止隔离实例，恢复正式安装桌面；确认正式进程与开始菜单入口均指向 `C:/Users/子陵/AppData/Local/Packages/OpenAI.Codex_2p2nqsd0c76g0/LocalCache/Local/Ryn/Ryn.exe`。build-info 为 core `22783aa24406ff3bf19f63d70fe528146a40d96b`、company runtime `93f5046bd36c4636dff6498ac8f03666fff0653c`；独立 PPT 任务更新的技能包另行交付，不将其冒充本次安装包原始技能。
+- 正式插件经另一任务重导入、手动确认后来源为 server_hint。本轮先保存加密配置备份，然后仅用本次安装 payload 的公司声明重新执行安装步骤 `trust_installer_connections`；该方法自行执行全部匹配约束，没有直接赋值信任字段，没有重导入或回滚新技能。断言 plugins/skills 完整相同，所有服务器 URL/auth/headers/启用状态/instance/config_generation/owner_write_tools 不变。成功绑定 Dashboard/operations/affiliate。
+- 最终正式接口：Dashboard `239/425`，60 个 installer、0 候选；workspace `420/421`，7 个 installer、0 候选，3 个写工具未误标。affiliate 保留历史 owner 36 + installer 4，仍为 NeedsAuth；operations 仍禁用，不扩大本次认证或启用范围。真实助手页无卡片，自动处理模式保留；仅 8791 正常节点监听，18891 与 9333 均未监听。
+- 汇总：第 1 项审查、第 2 项指定测试（pytest 207、vitest 31、tsc）、第 3 项正式构建安装、第 4 项安装回执、第 5 项接口、第 6 项两次正常重启与界面/数据查询、第 7 项全新登录、第 8 项主人选择、第 9 项真实模型只读查询、第 10 项快捷方式/build-info 均通过上述范围的验收。另有 7 项边界测试通过。未执行无关已知失败用例的修复；未发送消息或做财务写入。并行任务误操作已单独记录并恢复，不作为产品缺陷。
+- 单一安装包 SHA256：`98a7859cd21bc68a00397255e9b5e616bff78dea77e97728767ec50cbe5a4021`；回滚目录 `artifacts/remote-readonly-20261110/rollback-20261110-115034` 保留。隔离目录及登录也保留、不提交。最终文档经任务分支合并 develop 后向正式 `yeogirlyun/rynmesh` 推送；以实际 Git 推送回执核实，不推旧 origin。
