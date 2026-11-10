@@ -502,3 +502,30 @@ def test_default_stager_keeps_all_four_office_plugins(tmp_path, monkeypatch):
     packager.prepare(output, company, source)
     assert visited == list(installer.OFFICE)
     assert installer.verify(output)['plugins'] == list(installer.COMPANY+installer.OFFICE)
+
+
+@pytest.mark.parametrize('disabled', [False, True])
+def test_external_skill_resources_preserve_state_and_reinstall(tmp_path, disabled):
+    from rynmesh.agent_runtime.extensions import ExtensionStore
+    from rynmesh.services.peer_box import load_or_create_messaging_key
+    store = ExtensionStore(tmp_path/'agent', load_or_create_messaging_key(tmp_path/'key'))
+    skill = {'id': 'company-dashboard', 'plugin_id': 'company-dashboard', 'content': 'Use workflow.md', 'version': '2.2.0'}
+    store.commit_imported_items(plugins=[{'id': 'company-dashboard', 'skill_ids': [skill['id']]}], skills=[skill], mcp_servers=[])
+    store.set_plugin_enabled('company-dashboard', True)
+    store.set_skill_enabled(skill['id'], not disabled)
+    source = tmp_path/'payload/company-skills/company-dashboard'
+    source.mkdir(parents=True)
+    (source/'SKILL.md').write_text(skill['content'])
+    (source/'workflow.md').write_text('External workflow')
+    installer.provision_skill_resources(store, tmp_path/'payload', {'skills': [skill]})
+    installed = store._read()['skills'][skill['id']]
+    assert Path(installed['package_dir'], 'workflow.md').read_text() == 'External workflow'
+    assert installed['enabled'] == (not disabled)
+    assert installed['explicitly_disabled'] == disabled
+    installer.provision_skill_resources(store, tmp_path/'payload', {'skills': [skill]})
+    assert store._read()['skills'][skill['id']] == installed
+    # Customized inline instructions must not be replaced by publisher defaults.
+    store.commit_imported_items(plugins=[], skills=[{**skill, 'content': 'My custom workflow'}], mcp_servers=[])
+    customized = store._read()['skills'][skill['id']]
+    installer.provision_skill_resources(store, tmp_path/'payload', {'skills': [skill]})
+    assert store._read()['skills'][skill['id']] == customized

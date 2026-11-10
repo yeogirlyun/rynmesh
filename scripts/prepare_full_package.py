@@ -102,6 +102,36 @@ def prepare(output, company, company_source, office_compat_dir=None, *, company_
     (output / 'company-plugins.json').write_text(json.dumps({'plugins':plugins,'skills':skills,'mcp_servers':servers,
         'previous_defaults': source.get('previous_defaults', []),
         'retired_connections': source.get('retired_connections', [])}, ensure_ascii=False, indent=2), encoding='utf-8')
+    # Ship external skill assets separately from the service executable.
+    # Bound large files using the same verified-parts format as plugin ZIPs.
+    import hashlib
+    for skill in skills:
+        source_root = company_source / 'skills' / skill['id']
+        if not source_root.is_dir():
+            continue
+        target_root = output / 'company-skills' / skill['id']
+        target_root.mkdir(parents=True)
+        (target_root / 'SKILL.md').write_text(skill['content'], encoding='utf-8')
+        for resource in sorted(source_root.rglob('*')):
+            if resource.is_symlink() or resource.is_junction():
+                raise ValueError('Skill resource links are forbidden')
+            relative = resource.relative_to(source_root)
+            if not resource.is_file() or resource.name == 'SKILL.md' or '__pycache__' in relative.parts or resource.suffix == '.pyc':
+                continue
+            target = target_root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            raw = resource.read_bytes()
+            if len(raw) <= 512 * 1024:
+                target.write_bytes(raw)
+            else:
+                names = []
+                for i, start in enumerate(range(0, len(raw), 400 * 1024), 1):
+                    part = target.with_name(target.name + '.part' + str(i))
+                    part.write_bytes(raw[start:start + 400 * 1024])
+                    names.append(part.name)
+                target.with_name(target.name + '.parts.json').write_text(json.dumps({'parts': names, 'sha256': hashlib.sha256(raw).hexdigest()}), encoding='utf-8')
+        from rynmesh.agent_runtime.extensions.store import compute_directory_manifest
+        compute_directory_manifest(target_root)
     files = {}
     for path in output.rglob('*'):
         if path.is_symlink() or path.is_junction():

@@ -55,6 +55,12 @@ def main():
             assert response.status_code == 200, (slug, response.status_code)
         result = subprocess.run([runtime['executable'], '--version'], capture_output=True, timeout=20)
         assert result.returncode == 0, (slug, result.stderr[-500:])
+    for source in (args.payload / 'company-skills').glob('*'):
+        skill = extensions._read()['skills'][source.name]
+        installed = Path(skill['package_dir'])
+        from rynmesh.agent_runtime.extensions.store import compute_directory_manifest
+        assert compute_directory_manifest(source) == compute_directory_manifest(installed)
+        assert skill['enabled']
     key = (home / 'company/config.key').read_bytes()
     identity = (home / 'identity.ed25519').read_bytes()
     dashboard_server = 'company-dashboard-dashboard'

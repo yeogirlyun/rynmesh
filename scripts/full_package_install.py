@@ -38,6 +38,27 @@ def migrate_finance_oauth_clients(store, declarations):
             store.upsert_mcp_server({'auth': auth}, server_id=sid, expected_revision=server['revision'])
 
 
+def provision_skill_resources(store, payload, declarations):
+    """Bind publisher assets only to matching inline defaults; preserve imported packages."""
+    current = store._read()['skills']
+    for declared in declarations['skills']:
+        sid = declared['id']
+        source = payload / 'company-skills' / sid
+        if not source.resolve().is_relative_to((payload / 'company-skills').resolve()):
+            raise ValueError('Invalid skill resource path')
+        skill = current.get(sid)
+        if (not source.is_dir() or not skill or skill.get('package_dir')
+                or skill.get('plugin_id') != declared.get('plugin_id')
+                or skill.get('content') != declared.get('content')):
+            continue
+        target = store.allocate_package_dir('skill', sid)
+        copy_new(source, target)
+        store.commit_imported_items(plugins=[], mcp_servers=[],
+            skills=[{**declared, 'package_dir': str(target)}])
+        if skill.get('enabled') or skill.get('explicitly_disabled'):
+            store.set_skill_enabled(sid, bool(skill.get('enabled')))
+
+
 def sha(path):
     with Path(path).open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
@@ -351,6 +372,7 @@ def install(payload, destination, home):
     for slug in sorted(missing):
         store.set_plugin_enabled(slug, True)
     migration = store.migrate_release_defaults(declarations)
+    provision_skill_resources(store, payload, declarations)
     migrate_finance_oauth_clients(store, declarations)
     managed_servers = configure_local_mcp_services(store, declarations, port)
     # The package's own remote connections (e.g. Dashboard) keep their read-only
