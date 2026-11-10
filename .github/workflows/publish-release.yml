@@ -54,7 +54,8 @@ jobs:
           import json, os, re, subprocess
           from pathlib import Path
           version = os.environ['VERSION']
-          assert re.fullmatch(r'\d+\.\d+\.\d+', version), 'Use X.Y.Z, for example 0.9.0'
+          stable_version = r'(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)'
+          assert re.fullmatch(stable_version, version), 'Use X.Y.Z with no leading zeros, for example 0.9.0'
           parse = lambda value: tuple(int(part) for part in value.split('.'))
           tags = subprocess.run(['git', 'tag', '--list', 'v*'], capture_output=True, text=True, check=True).stdout.split()
           assert f'v{version}' not in tags, f'v{version} already exists'
