@@ -244,3 +244,56 @@ def test_owner_endpoint_change_ends_installer_trust(tmp_path):
     assert row["read_only_tools"] == []
     row = _discover(store, [("lookup", True)])
     assert row["read_only_tools"] == [] and [c["name"] for c in row["server_hint_candidates"]] == ["lookup"]
+
+
+def test_installer_discovery_duplicate_schema_and_persistence(tmp_path):
+    store, service, _, _ = fixture(tmp_path)
+    _restart(service)
+    row = _discover(store, [("lookup", True)])
+    store = ExtensionStore(tmp_path / "agent", load_or_create_messaging_key(tmp_path / "key"))
+    assert store.get_mcp_server_internal("s")["read_only_sources"] == {"lookup": "installer"}
+    row = store.record_mcp_discovery("s", expected_revision=row["revision"], status="ready", discovered_tools=[
+        {"name": "lookup", "inputSchema": {"type": "object", "required": ["query"]},
+         "annotations": {"readOnlyHint": True}}])
+    assert row["read_only_sources"] == {"lookup": "installer"}
+    row = _discover(store, [("lookup", True), ("lookup", False)])
+    assert row["read_only_tools"] == [] and row["server_hint_candidates"] == []
+    assert all(tool["effective_effect"] == "write" for tool in row["tools"])
+
+
+def test_remote_company_server_is_not_covered_by_local_service_trust(tmp_path):
+    store, service, _, _ = fixture(tmp_path)
+    row = store.get_mcp_server_internal("s")
+    store.upsert_mcp_server({"url": "https://example.test/mcp"}, server_id="s", expected_revision=row["revision"])
+    with pytest.raises(AgentError, match="agent_local_service_binding_invalid"):
+        prepare(service)
+    row = _discover(store, [("lookup", True)])
+    assert row["read_only_tools"] == []
+    assert [tool["name"] for tool in row["server_hint_candidates"]] == ["lookup"]
+
+
+def test_owner_can_turn_reconfirmed_installer_tool_back_to_write(tmp_path):
+    store, service, _, _ = fixture(tmp_path)
+    _restart(service)
+    row = _discover(store, [("lookup", True)])
+    for selected in ([], ["lookup"], []):
+        row = store.upsert_mcp_server({"read_only_tools": selected}, server_id="s", expected_revision=row["revision"])
+    _restart(service)
+    row = _discover(store, [("lookup", True)])
+    assert row["read_only_tools"] == []
+    assert row["server_hint_candidates"] == []
+
+
+def test_reimport_requires_a_new_installer_activation(tmp_path):
+    store, service, _, _ = fixture(tmp_path)
+    _restart(service)
+    _discover(store, [("lookup", True)])
+    store.commit_imported_items(plugins=[{"id": "p", "mcp_server_ids": ["s"], "skill_ids": []}], skills=[],
+        mcp_servers=[{"id": "s", "plugin_id": "p", "transport": "streamable_http", "url": "http://127.0.0.1:19293/mcp"}])
+    store.set_plugin_enabled("p", True)
+    row = _discover(store, [("lookup", True)])
+    assert row["read_only_tools"] == [] and len(row["server_hint_candidates"]) == 1
+    _restart(service)
+    row = _discover(store, [("lookup", True)])
+    assert row["read_only_sources"] == {"lookup": "installer"}
+    assert row["server_hint_candidates"] == []
