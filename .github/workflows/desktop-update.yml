@@ -146,7 +146,7 @@ jobs:
           else
             gh release create "$RELEASE_TAG" --verify-tag --draft --title "Ryn $RELEASE_TAG" --notes "Signed desktop update. Verify the platform installers before publishing this release as Latest."
           fi
-          gh release upload "$RELEASE_TAG" update-assets/*
+          gh release upload "$RELEASE_TAG" update-assets/* --clobber
 
   upload-existing-draft:
     if: github.repository == 'yeogirlyun/rynmesh' && inputs.upload_only

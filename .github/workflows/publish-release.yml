@@ -48,7 +48,8 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - name: Check that the version is new
+      - name: Check version and select immutable release source
+        id: source
         shell: python
         run: |
           import json, os, re, subprocess
@@ -58,17 +59,31 @@ jobs:
           assert re.fullmatch(stable_version, version), 'Use X.Y.Z with no leading zeros, for example 0.9.0'
           parse = lambda value: tuple(int(part) for part in value.split('.'))
           tags = subprocess.run(['git', 'tag', '--list', 'v*'], capture_output=True, text=True, check=True).stdout.split()
-          assert f'v{version}' not in tags, f'v{version} already exists'
+          tag = f'v{version}'
+          release = subprocess.run(['gh', 'release', 'view', tag, '--json', 'isDraft'], capture_output=True, text=True)
+          if release.returncode == 0:
+              assert json.loads(release.stdout)['isDraft'], 'Release already published; refusing to modify it'
+          elif 'release not found' not in release.stderr.lower():
+              raise RuntimeError(release.stderr)
+          if tag in tags:
+              subprocess.run(['git', 'merge-base', '--is-ancestor', tag, 'HEAD'], check=True)
+              subprocess.run(['git', 'checkout', '--detach', tag], check=True)
+              subprocess.run(['python', 'scripts/set_release_version.py', version, '--check'], check=True)
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+                  output.write('resume=true\n')
+              raise SystemExit(0)
           released = [parse(t[1:]) for t in tags if re.fullmatch(r'v\d+\.\d+\.\d+', t)]
           assert all(parse(version) > old for old in released), f'{version} must be newer than v{".".join(map(str, max(released)))}'
           current = json.loads(Path('webapp/src-tauri/tauri.conf.json').read_text())['version']
           assert parse(version) >= parse(current), f'{version} is older than the code ({current})'
       - name: Set the version everywhere
+        if: steps.source.outputs.resume != 'true'
         run: python scripts/set_release_version.py "$VERSION"
       - name: Commit and tag
+        if: steps.source.outputs.resume != 'true'
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email "310818052+yyeogirl@users.noreply.github.com"
           if ! git diff --quiet; then
             git commit -am "chore(release): v$VERSION"
             git push origin "HEAD:refs/heads/$BRANCH"
