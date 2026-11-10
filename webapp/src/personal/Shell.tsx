@@ -29,6 +29,8 @@ import "../screens/rynAgentText";
 import { craftPlugins } from "../domain/craftPlugins";
 import { agentExtensions } from "../domain/agentExtensions";
 import { installedSidebarApps, type SidebarApp } from "./installedSidebarApps";
+import { DesktopUpdateButton } from "../screens/UpdatesPanel";
+import { isTauriDesktop } from "../domain/nodeUrl";
 export function PersonalShell({ children }: { children: ReactNode }) {
   const { t, i18n } = useTranslation();
   const { t: agentText } = useTranslation("rynAgent");
@@ -156,6 +158,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
     } }}>
     <div className={`pf-shell${menuOpen ? " menu-open" : ""}${inFullWorkspace ? " pf-agent-shell" : ""}${(inFullWorkspace && agentNavCollapsed) || isStandalone ? " pf-agent-nav-collapsed" : ""}`}>
       <aside className="pf-sidebar" aria-label={t("shell.mainNavigation")} hidden={(inFullWorkspace && agentNavCollapsed) || isStandalone}>
+        <div className="pf-brand-row">
         <NavLink className="pf-brand" to={href("/")} aria-label={`Ryn ${t("nav.home")}`}>
           <svg viewBox="0 0 30 34" aria-hidden="true">
             <path
@@ -166,6 +169,8 @@ export function PersonalShell({ children }: { children: ReactNode }) {
           </svg>
           <span>Ryn</span>
         </NavLink>
+        {isTauriDesktop() && <DesktopUpdateButton />}
+        </div>
         <button className="pf-workspace" onClick={() => navigate(href("/settings/space"))} aria-label={t("shell.manageSpace")}>
           <UserRound size={20} />
           <span>{space?.space?.name || t("shell.personal")}</span>
@@ -194,6 +199,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
           onClick={() => setMenuOpen(false)}
         />
       )}
+      {isTauriDesktop() && inFullWorkspace && agentNavCollapsed && !isStandalone && <DesktopUpdateButton floating />}
       <div className="pf-main-column">
         {!inFullWorkspace && !isStandalone && <header className="pf-topbar">
           <button

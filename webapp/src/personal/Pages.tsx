@@ -31,6 +31,7 @@ import { EditDevice, PairDevice, ShareServices } from "./Dialogs";
 import { DeviceTopology } from "./DeviceTopology";
 import { DevicesWorkspace } from "./drop/DevicesWorkspace";
 import { LanguageSelect } from "./LanguageSelect";
+import { isTauriDesktop } from "../domain/nodeUrl";
 import { nativeModelRequest, nativeBusy } from "../domain/nativeModel";
 import { tr } from "../uiI18n";
 import { personalHref, usePersonal, type Device, type Service } from "./model";
@@ -681,6 +682,7 @@ export function PersonalSettings() {
           <Link className="pf-button" to={personalHref("/settings/space", demo)}>{t("settings.manageSpace")} <ChevronRight size={16} /></Link>
         </div>
       </section>
+      {isTauriDesktop() && <section className="pf-setting-row"><div><h2>{tr("Software updates")}</h2><p>{tr("Ryn downloads new versions in the background. When one is ready, click Update next to the Ryn logo.")}</p></div><Link className="pf-button" to={href("/settings/updates")}>{tr("Update settings")} <ChevronRight size={16} /></Link></section>}
       <section className="pf-setting-row"><div><h2>{t("nav.desktop")}</h2><p>{t("settings.desktopHelp")}</p></div><Link className="pf-button" to={href("/settings/desktop")}>{t("settings.desktopSettings")} <ChevronRight size={16} /></Link></section>
       <section className="pf-setting-row"><div><h2>{t("nav.agentExtensions")}</h2><p>{t("settings.agentExtensionsHelp")}</p></div><Link className="pf-button" to={href("/settings/extensions")}>{t("settings.manageAgentExtensions")} <ChevronRight size={16} /></Link></section>
       <section>

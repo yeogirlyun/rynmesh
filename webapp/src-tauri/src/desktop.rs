@@ -141,10 +141,14 @@ fn action_inner(app: &tauri::AppHandle, action: &str) -> Result<String, String> 
                 Ok(_) => tr("This will disconnect services on this computer. Other service requests may also be interrupted."),
                 Err(_) => tr("Task status is unavailable. Running work may be interrupted."),
             };
-            if !message(&format!("{}\n\n{warning}", tr(if action == "quit" { "Quit Ryn?" } else { "Restart the node in Ryn?" })), true) {
+            let update_notice = match (action, crate::updates::version_on_quit(app)) {
+                ("quit", Some(version)) => format!("\n\n{}", tr("Ryn {{version}} will be installed as Ryn quits.").replace("{{version}}", &version)),
+                _ => String::new(),
+            };
+            if !message(&format!("{}\n\n{warning}{update_notice}", tr(if action == "quit" { "Quit Ryn?" } else { "Restart the node in Ryn?" })), true) {
                 return Ok("Cancelled.".into());
             }
-            if action == "quit" { app.exit(0); return Ok("Quitting Ryn.".into()); }
+            if action == "quit" { crate::updates::note_quit(app); app.exit(0); return Ok("Quitting Ryn.".into()); }
             node::restart(state.inner()).map_err(|_| "Could not restart the node. Open logs for details.")?;
             app.state::<RuntimeState>().reset_recovery.store(true, Ordering::SeqCst);
             if !node::wait_healthy(state.port) { return Err("The node did not become ready. Open logs or retry.".into()); }

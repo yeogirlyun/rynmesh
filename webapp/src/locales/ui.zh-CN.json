@@ -2256,5 +2256,8 @@
   "'s device. No model download or API key is needed here.": "的设备。此处无需下载模型或填写 API 密钥。",
   "The model or price differs from the original invitation. Review these current details before accepting.": "模型或价格与原邀请不同，请先审核当前详情再接受。",
   "Verify this device at its new address. Keep the original relationship, AI permissions and history. This does not restore revoked access.": "验证此设备的新地址，保留原有关系、AI 权限和历史；不会恢复已撤销的权限。",
-  "The selected service changed. Open the current model before sharing.": "所选服务已变更，请打开当前模型后再共享。"
+  "The selected service changed. Open the current model before sharing.": "所选服务已变更，请打开当前模型后再共享。",
+  "Ryn {{version}} will be installed as Ryn quits.": "退出时将安装 Ryn {{version}}。",
+  "Ryn downloads new versions in the background. When one is ready, click Update next to the Ryn logo.": "Ryn 会在后台下载新版本，下好后点左上角 Ryn 旁边的「更新」即可。",
+  "Update settings": "更新设置"
 }

@@ -134,7 +134,11 @@ jobs:
           merge-multiple: true
           path: update-assets
       - name: Assemble complete manifest
-        run: python scripts/prepare_desktop_update.py assemble --version "${RELEASE_TAG#v}" --output update-assets
+        # The draft's notes (written by "Publish new Ryn version") are shown in Ryn's update popup.
+        run: |
+          notes=""
+          if gh release view "$RELEASE_TAG" --json body --jq .body > release-notes.txt 2>/dev/null; then notes="$(cat release-notes.txt)"; fi
+          python scripts/prepare_desktop_update.py assemble --version "${RELEASE_TAG#v}" --output update-assets --notes "$notes"
       - name: Upload signed assets and manifest to a draft release
         run: |
           if gh release view "$RELEASE_TAG" --json isDraft > release-state.json; then
