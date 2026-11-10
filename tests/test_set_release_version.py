@@ -46,6 +46,9 @@ def test_sets_every_release_version_and_nothing_else(tmp_path):
 
 
 def test_rejects_anything_but_a_stable_version(tmp_path):
-    for value in ["0.9", "v0.9.0", "0.9.0-rc.1", "0.9.0\n"]:
+    for value in ["0.9", "v0.9.0", "0.9.0-rc.1", "0.9.0\n", "00.9.0", "0.09.0", "0.9.00", "٠.٩.٠"]:
+        root = _copy(tmp_path)
+        before = {name: (root / name).read_bytes() for name in FILES}
         with pytest.raises(ValueError):
-            module.apply(value, root=_copy(tmp_path), check=True)
+            module.apply(value, root=root)
+        assert before == {name: (root / name).read_bytes() for name in FILES}
