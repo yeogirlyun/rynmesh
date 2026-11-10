@@ -211,3 +211,12 @@
 - 随后再次正常退出正式安装，启动 `artifacts/remote-readonly-20261110/fresh/install/Ryn.exe`，仅使用 `fresh/home`、`fresh/config`、`fresh/profile`，无真实账号或 Cookie 复制。原生空账号界面已显示 Dashboard 登录入口，等待用户亲自扫码，尚未确认任何只读提示。
 - 隔离环境最初使用 18991 节点端口，公司页面返回 `authorization_sync_pending`。定位公司插件 `application.py` 的 `HOST_EXTENSIONS_BASE` 固定为 8791，账号同步不随握手的 `RYN_PLUGIN_HOST_PORT` 改变；切换隔离实例到空闲标准端口 8791 后账号接口从 503 恢复为预期的未登录 401，登录页正常。这是非标准节点端口的已有兼容性限制，不是只读信任失败；没有绕过认证或更改正式安装。
 - 当前正式安装暂停运行，以便隔离实例占用标准端口；隔离实例临时使用 9333 读取 localStorage。待登录与主人选择验收后，应退出隔离实例，恢复正式安装、不带调试参数启动并确认健康。全部通过前仍不推送。
+
+### 登录后异常的操作溯源（并行任务干扰）
+
+- 用户完成隔离账号扫码登录后，Dashboard 实际发现 60 个只读声明工具（远端已新增 2 个工具），但候选为 60、只读列表为空。此结果不能作为原始空目录安装失败的证据：该实例在登录前已被另一个 Codex PPT 开发任务重新导入插件并直接回写内部状态。
+- 已读取该任务的实际命令与成功退出结果：其导入包在隔离目录于 12:18:58 落地；随后从 GET extensions 的公开响应恢复 plugins/skills/mcp_servers，将公开字段写回加密 Store。该恢复未恢复内部 installer_config_sha256，且将 command/cwd/bearer_token_env 的 null 改成空字符串，保留了旧 config_sha256。记录中的指纹与实际重新计算的指纹不一致；并非用户操作导致。
+- 用户登录后接口为 ready，Dashboard config_generation/discovery_revision 为 6/42、60 个候选；affiliate 为 8/41、60 个 installer、0 候选，workspace 仍为 7 个 installer、0 候选。重新执行本次冻结安装迁移程序后，trusted_connections 仅包含 affiliate，Dashboard 未获信任，未为通过验收而修改其配置或伪造信任指纹。
+- 同一 PPT 任务随后使用正式数据目录的独立节点端口 18891，重新导入 Dashboard 并调用 apply-server-hints。因此本轮之前记录的正式安装验收结果是当时状态的证据，不能冒充并行操作后的最新状态；其手动确认也不能证明 installer 自动信任。
+- 当前本轮隔离实例已停止，正式桌面界面尚未恢复；18891 的正式数据节点属于另一任务，未结束它，也未回滚其插件更新。已请用户暂停另一任务后再继续，避免同时读写同一配置。原安装回滚目录保持可用。
+- 第 7 项全新安装登录验收、第 8 项原生主人选择/重启/再安装验收仍未完成（此前元数据回放通过不变）；不宣称全部通过、不推送正式远端。未提交公开响应原文、加密配置、身份信息或日志，本节仅记脱敏操作和结论。
