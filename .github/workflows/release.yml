@@ -14,6 +14,10 @@ on:
 env:
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
+concurrency:
+  group: release-package-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -59,7 +63,7 @@ jobs:
         run: |
           if gh release view "$RELEASE_TAG" --json isDraft > release-state.json; then
             python -c 'import json; assert json.load(open("release-state.json"))["isDraft"], "Release already published"'
-            gh release upload "$RELEASE_TAG" dist/*
+            gh release upload "$RELEASE_TAG" dist/* --clobber
           else
             gh release create "$RELEASE_TAG" dist/* --verify-tag --generate-notes --draft
           fi
@@ -122,7 +126,10 @@ jobs:
       - name: Upload desktop artifact to release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$RELEASE_TAG" "Ryn-${RELEASE_TAG#v}-macos-${{ matrix.arch }}.dmg" --clobber
+        run: |
+          gh release view "$RELEASE_TAG" --json isDraft > release-state.json
+          python -c 'import json; assert json.load(open("release-state.json"))["isDraft"], "Release already published"'
+          gh release upload "$RELEASE_TAG" "Ryn-${RELEASE_TAG#v}-macos-${{ matrix.arch }}.dmg" --clobber
 
   linux-desktop:
     name: Linux desktop (Ubuntu 24.04 x86_64)
@@ -178,5 +185,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          gh release view "$RELEASE_TAG" --json isDraft > release-state.json
+          python -c 'import json; assert json.load(open("release-state.json"))["isDraft"], "Release already published"'
           artifact="Ryn-${RELEASE_TAG#v}-linux-x86_64.deb"
-          gh release upload "$RELEASE_TAG" "$artifact" "$artifact.sha256"
+          gh release upload "$RELEASE_TAG" "$artifact" "$artifact.sha256" --clobber
