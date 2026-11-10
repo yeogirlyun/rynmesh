@@ -36,6 +36,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: desktop-update-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   build:
     if: github.repository == 'yeogirlyun/rynmesh' && !inputs.upload_only
