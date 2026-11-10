@@ -85,8 +85,12 @@ def test_the_mailbox_mode_forces_the_consumer_onto_store_and_forward(
     assert seen == {}
 
 
+@pytest.mark.parametrize(("provider_base", "consumer_base"), [
+    ("http://127.0.0.1:18891", "http://127.0.0.1:18892"),
+    ("http://127.0.0.1:51301", "http://127.0.0.1:51302"),
+])
 def test_authorize_consumer_posts_peer_id_in_the_body_not_the_query_string(
-    e2e, monkeypatch
+    e2e, monkeypatch, provider_base, consumer_base,
 ) -> None:
     """Privacy hardening: `friend-services` must not carry `?peer_id=...` in the URL."""
 
@@ -94,27 +98,29 @@ def test_authorize_consumer_posts_peer_id_in_the_body_not_the_query_string(
 
     def fake_json(url, body=None, timeout=20, *, method=None):
         calls.append((url, body, method))
-        if url == e2e.CONSUMER + "/api/local/friends":
+        if url == consumer_base + "/api/local/friends":
             return {"friends": [{"peer_id": "provider-peer",
                                   "relationship_id": "rel-1", "status": "active"}]}
-        if url == e2e.PROVIDER + "/api/local/ai-access":
+        if url == provider_base + "/api/local/ai-access":
             return {"grants": [{"service_id": "svc", "relationship_id": "rel-1", "revision": 3}]}
-        if url == e2e.PROVIDER + "/api/local/ai-access/svc/rel-1":
+        if url == provider_base + "/api/local/ai-access/svc/rel-1":
             assert method == "PUT"
             return {"grant": {"allowed": True}}
-        if url == e2e.CONSUMER + "/api/local/ai-access/friend-services":
+        if url == consumer_base + "/api/local/ai-access/friend-services":
             return {"status": "authorized", "services": [{
                 "service": {"package_id": "svc"}, "online": True,
                 "ai_permission": {"relationship_id": "rel-1", "revision": 4}}]}
         raise AssertionError(f"unexpected _json call: {url}")
 
     monkeypatch.setattr(e2e, "_json", fake_json)
-    permission = e2e._authorize_consumer("provider-peer", "svc")
+    permission = e2e._authorize_consumer(
+        "provider-peer", "svc", provider_base=provider_base, consumer_base=consumer_base,
+    )
     assert permission == {"relationship_id": "rel-1", "revision": 4}
 
     friend_calls = [call for call in calls if "friend-services" in call[0]]
     assert len(friend_calls) == 1
     url, body, method = friend_calls[0]
-    assert url == e2e.CONSUMER + "/api/local/ai-access/friend-services"
+    assert url == consumer_base + "/api/local/ai-access/friend-services"
     assert "?" not in url and "peer_id=" not in url
     assert body == {"peer_id": "provider-peer"}

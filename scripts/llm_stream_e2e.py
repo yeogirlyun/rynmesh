@@ -18,11 +18,17 @@ from typing import Any
 
 from rynmesh.transport import network_key_header
 
+if __package__:
+    from .llm_e2e import _authorize_consumer
+else:
+    from llm_e2e import _authorize_consumer
+
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE = ROOT / "deploy" / "llm-e2e" / "docker-compose.yml"
 TOKEN_HEADERS = {
     "Content-Type": "application/json",
     "Authorization": "Bearer rynmesh-e2e-browser-token",
+    "x-ryn-local-token": "rynmesh-e2e-browser-token",
 }
 TOKEN_HEADERS.update(network_key_header())
 E2E_PROMPT = "Reply with a short confirmation that the encrypted two-node path works."
@@ -169,7 +175,9 @@ def up(mode: str) -> None:
     elif mode == "host-real":
         env["RYNMESH_LLM_MANIFEST"] = "/config/host-real-manifest.json"
     elif mode in {"test", "relay-test", "stream-test"}:
-        env["RYNMESH_LLM_MANIFEST"] = "/config/test-manifest.json"
+        env["RYNMESH_LLM_MANIFEST"] = (
+            "/config/stream-manifest.json" if mode == "stream-test" else "/config/test-manifest.json"
+        )
     # Never inherit an operator's route override into deterministic evidence.
     env["RYNMESH_LLM_FORCE_RELAY"] = "1" if mode == "relay-test" else "0"
     args = ["up", "-d", "--build"]
@@ -197,6 +205,9 @@ def verify(
         "network_id": "rynmesh-llm-e2e", "benchmark": True,
     }, timeout=180)
     provider_id = str(published["record"]["peer_id"])
+    permission = _authorize_consumer(
+        provider_id, service_id, provider_base=provider_base, consumer_base=consumer_base,
+    )
     deadline = time.monotonic() + 30
     discovered: dict[str, Any] = {}
     while time.monotonic() < deadline:
@@ -207,6 +218,8 @@ def verify(
         ):
             break
         time.sleep(1)
+    else:
+        raise RuntimeError(f"E2E authorized service was not discovered: {service_id}")
     expected_transport = {
         "relay-test": "encrypted_relay",
         "test": "ice_udp_direct",
@@ -216,6 +229,7 @@ def verify(
     }.get(mode, "")
     task_id = f"e2e-{mode}-{time.time_ns()}"
     order = _mode_order(mode, provider_id=provider_id, service_id=service_id, task_id=task_id)
+    order["ai_permission"] = permission
     submitted_ns = time.monotonic_ns()
     queued = _json(
         consumer_base + "/api/local/llm/orders/async", order, timeout=30,
@@ -228,7 +242,17 @@ def verify(
     terminal = next((event for event in events if event["event"] in {"complete", "error"}), None)
     if terminal is None:
         raise RuntimeError("E2E event stream ended without a terminal event")
-    result = dict(terminal["data"])
+    # SSE completion is body-free. Retrieve the one-shot private answer through
+    # the existing authenticated result endpoint, without resubmitting inference.
+    deadline = time.monotonic() + 5
+    while True:
+        result = _json(f"{consumer_base}/api/local/llm/orders/{task_id}")
+        if result.get("state") in {"succeeded", "failed", "cancelled", "timed_out"}:
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError("E2E terminal result was not available after SSE completion")
+        # The SSE event can precede publication of the worker's one-shot answer.
+        time.sleep(0.05)
     result.setdefault("task_id", task_id)
     duplicate = _json(
         consumer_base + "/api/local/llm/orders/async", order, timeout=30,
@@ -391,6 +415,8 @@ def _local_environment(root: Path) -> dict[str, str]:
         "RYNMESH_NETWORK_ID": "rynmesh-llm-e2e",
         "RYNMESH_REGISTRY_URL": "",
         "RYNMESH_AUTO_REGISTER": "1",
+        "RYNMESH_LOCAL_TOKEN": "rynmesh-e2e-browser-token",
+        "RYNMESH_FRIEND_ALLOW_LOOPBACK": "1",
         "RYNMESH_HOME": str(root / "base-home"),
         "RYNMESH_NETWORK_DIR": str(root / "base-network"),
     })
@@ -498,7 +524,9 @@ def local_run(mode: str) -> dict[str, Any]:
         log_dir = temp_root / "logs"
         log_dir.mkdir()
         manifest = json.loads(
-            (ROOT / "deploy" / "llm-e2e" / "config" / "test-manifest.json").read_text(
+            (ROOT / "deploy" / "llm-e2e" / "config" / (
+                "stream-manifest.json" if mode == "local-stream" else "test-manifest.json"
+            )).read_text(
                 encoding="utf-8",
             )
         )
@@ -531,6 +559,7 @@ def local_run(mode: str) -> dict[str, Any]:
             "RYNMESH_PEER_HOST": "127.0.0.1",
             "RYNMESH_PEER_PORT": str(provider_port),
             "RYNMESH_PEER_ENDPOINT": f"http://127.0.0.1:{provider_port}",
+            "RYNMESH_FRIEND_ENDPOINT": f"http://127.0.0.1:{provider_port}",
             "RYNMESH_LLM_SERVICE_MANIFEST": str(manifest_path),
         }
         consumer_env = peer_common | {
@@ -540,6 +569,7 @@ def local_run(mode: str) -> dict[str, Any]:
             "RYNMESH_PEER_HOST": "127.0.0.1",
             "RYNMESH_PEER_PORT": str(consumer_port),
             "RYNMESH_PEER_ENDPOINT": f"http://127.0.0.1:{consumer_port}",
+            "RYNMESH_FRIEND_ENDPOINT": f"http://127.0.0.1:{consumer_port}",
         }
         commands = [
             ("registry", [sys.executable, "-m", "rynmesh.registry_http"], registry_env),
