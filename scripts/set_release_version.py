@@ -29,6 +29,9 @@ def _text_files(version):
         "rynmesh/__init__.py": lambda t: _replace_once(t, r'^(__version__ = ")[^"]+(")', version, "rynmesh/__init__.py"),
         "webapp/src-tauri/Cargo.toml": lambda t: _replace_once(t, r'\A(\[package\]\s*\nname = "app"\s*\nversion = ")[^"]+(")', version, "Cargo.toml"),
         "webapp/src-tauri/Cargo.lock": lambda t: _replace_once(t, r'^(name = "app"\r?\nversion = ")[^"]+(")', version, "Cargo.lock"),
+        "website/index.html": lambda t: _replace_once(
+            _replace_once(t, r'(Current release: v)[0-9.]+(</span>)', version, "website release badge"),
+            r'(RynMesh · MIT · v)[0-9.]+( ·)', version, "website footer"),
     }
 
 
