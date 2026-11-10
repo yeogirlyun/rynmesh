@@ -1,0 +1,102 @@
+name: Publish new Ryn version
+
+# One button: Actions > "Publish new Ryn version" > Run workflow, enter the version.
+# It sets the version in every file, commits and tags it, creates a draft release with
+# the notes, and starts the builds (Python package, macOS/Linux installers and the signed
+# desktop updates). Review the draft, then press Publish: installed copies of Ryn pick
+# the update up within an hour.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: New version, for example 0.9.0
+        required: true
+        type: string
+      notes:
+        description: What changed (shown in Ryn's update popup)
+        required: false
+        type: string
+      branch:
+        description: Branch to release from
+        required: false
+        default: develop
+        type: string
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: publish-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.repository == 'yeogirlyun/rynmesh'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ inputs.version }}
+      NOTES: ${{ inputs.notes }}
+      BRANCH: ${{ inputs.branch }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Check that the version is new
+        shell: python
+        run: |
+          import json, os, re, subprocess
+          from pathlib import Path
+          version = os.environ['VERSION']
+          stable_version = r'(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)'
+          assert re.fullmatch(stable_version, version), 'Use X.Y.Z with no leading zeros, for example 0.9.0'
+          parse = lambda value: tuple(int(part) for part in value.split('.'))
+          tags = subprocess.run(['git', 'tag', '--list', 'v*'], capture_output=True, text=True, check=True).stdout.split()
+          assert f'v{version}' not in tags, f'v{version} already exists'
+          released = [parse(t[1:]) for t in tags if re.fullmatch(r'v\d+\.\d+\.\d+', t)]
+          assert all(parse(version) > old for old in released), f'{version} must be newer than v{".".join(map(str, max(released)))}'
+          current = json.loads(Path('webapp/src-tauri/tauri.conf.json').read_text())['version']
+          assert parse(version) >= parse(current), f'{version} is older than the code ({current})'
+      - name: Set the version everywhere
+        run: python scripts/set_release_version.py "$VERSION"
+      - name: Commit and tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet; then
+            git commit -am "chore(release): v$VERSION"
+            git push origin "HEAD:refs/heads/$BRANCH"
+          fi
+          python scripts/set_release_version.py "$VERSION" --check
+          git tag -a "v$VERSION" -m "Ryn v$VERSION"
+          git push origin "refs/tags/v$VERSION"
+      - name: Create the draft release with these notes
+        run: |
+          if [ -n "$NOTES" ]; then printf '%s\n' "$NOTES" > notes.md; else printf 'Ryn v%s\n' "$VERSION" > notes.md; fi
+          if gh release view "v$VERSION" --json isDraft > state.json 2>/dev/null; then
+            python -c 'import json; assert json.load(open("state.json"))["isDraft"], "Release already published"'
+            gh release edit "v$VERSION" --notes-file notes.md
+          else
+            gh release create "v$VERSION" --verify-tag --draft --title "Ryn v$VERSION" --notes-file notes.md
+          fi
+      # A tag pushed with this workflow's token starts no workflow by itself, so the
+      # builds are started here, from the tagged commit.
+      - name: Start the builds
+        run: |
+          gh workflow run release.yml --ref "v$VERSION" -f tag="v$VERSION"
+          gh workflow run desktop-update.yml --ref "v$VERSION" -f tag="v$VERSION"
+      - name: Summary
+        run: |
+          {
+            echo "### Ryn v$VERSION is building"
+            echo
+            echo "1. Wait for **Release package** and **Build signed desktop update** to finish (about 30–40 minutes)."
+            echo "2. Open the draft release v$VERSION, check that desktop-latest.json and the installers are attached."
+            echo "3. Press **Publish release** (keep *Set as the latest release*). Installed Ryn picks it up within an hour."
+          } >> "$GITHUB_STEP_SUMMARY"
