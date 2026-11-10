@@ -203,3 +203,11 @@
 - 在真实 Ryn 的“设置 → 桌面端 → 退出 Ryn”打开正常退出确认框后，Computer Use 点击“确定”连续失败，错误为 `foreground window did not report a process id`；重新激活并观察确认框后重试仍失败。已请求用户手动确认，未以强制结束进程冒充正常重启。**两次正常重启尚未完成。**
 - 本轮为读取 WebView localStorage 临时以 9333 调试端口启动。待用户完成退出后需无调试参数启动并验证端口关闭；不把当前待退出状态描述为已完成收尾。
 - 脱敏证据位于 `artifacts/remote-readonly-20261110/`，构建产物、数据库、凭据、Cookie 和日志均未纳入提交。验收文档通过任务分支合并本地 develop；因仍有上述未验项，遵照“全部通过后再推送”的要求暂不推送。
+
+### 用户协助退出后的续验
+
+- 用户确认已正常退出，核对原 Ryn 进程消失后启动同一正式安装。第一次重启：Dashboard `239/391`、workspace `389/390`（config/discovery）。第二次经原生退出确认正常关闭再启动：Dashboard `239/392`、workspace 服务就绪后为 `393/394`。两次 Dashboard 均 58 个 installer、0 候选；workspace 均 7 个 installer、0 候选，3 个写工具未误标。
+- 换用另一原生界面接口后成功操作退出确认，未通过强杀正式安装冒充正常重启。两次均进入 Agent 页确认无卡片；首次重启读取 localStorage 仍为 null。第二次不带调试参数启动，9333 无监听；Dashboard 数据视图查询再次成功。第 6 项两次正常重启验收已完成。
+- 随后再次正常退出正式安装，启动 `artifacts/remote-readonly-20261110/fresh/install/Ryn.exe`，仅使用 `fresh/home`、`fresh/config`、`fresh/profile`，无真实账号或 Cookie 复制。原生空账号界面已显示 Dashboard 登录入口，等待用户亲自扫码，尚未确认任何只读提示。
+- 隔离环境最初使用 18991 节点端口，公司页面返回 `authorization_sync_pending`。定位公司插件 `application.py` 的 `HOST_EXTENSIONS_BASE` 固定为 8791，账号同步不随握手的 `RYN_PLUGIN_HOST_PORT` 改变；切换隔离实例到空闲标准端口 8791 后账号接口从 503 恢复为预期的未登录 401，登录页正常。这是非标准节点端口的已有兼容性限制，不是只读信任失败；没有绕过认证或更改正式安装。
+- 当前正式安装暂停运行，以便隔离实例占用标准端口；隔离实例临时使用 9333 读取 localStorage。待登录与主人选择验收后，应退出隔离实例，恢复正式安装、不带调试参数启动并确认健康。全部通过前仍不推送。
