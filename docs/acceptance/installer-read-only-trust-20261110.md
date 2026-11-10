@@ -155,3 +155,51 @@
 - `test_installer_connection_trust.py` + `test_full_package_install.py` + `test_agent_local_services.py`
   + `test_mcp_data_policy_store.py` + `test_agent_extensions_store.py`：**123 passed**。
 - 未做：重新打包安装后在主机上确认 Dashboard 来源变为 `installer`；本机 505c754 不含此补修。
+
+## 远端 Dashboard 第二轮本机验收（2026-11-10）
+
+结论：代码、回归、实际安装、存量账号 Dashboard 信任和真实模型只读查询通过；完整验收尚未结束。两次正常重启、空账号登录后的发现/界面，以及主人选择的完整原生重启验收仍待完成，因此没有推送正式仓库。以下不将离线回放冒充真实登录结果。
+
+### 构建、安装和入口
+
+- 核心从无已跟踪改动的 `develop` 提交 `22783aa24406ff3bf19f63d70fe528146a40d96b` 构建。公司插件从正式仓库 `yeogirlyun/gshopper-ryn-node` 的干净 develop `93f5046bd36c4636dff6498ac8f03666fff0653c` 构建，已核对与远端 develop 一致；未使用有其他未提交改动的 chat-backend 工作区。
+- 单一安装包：`artifacts/remote-readonly-20261110/Ryn_0.8.0_22783aa_company-93f5046b_full-setup.exe`，145459021 字节；SHA-256 `98a7859cd21bc68a00397255e9b5e616bff78dea77e97728767ec50cbe5a4021`。包含主程序及三个公司插件，保留已有 Office 注册。
+- 实际进程与安装位置为 `%USERPROFILE%/AppData/Local/Packages/OpenAI.Codex_2p2nqsd0c76g0/LocalCache/Local/Ryn/Ryn.exe`。该绝对路径也写在既有 `ryn-desktop.json` 中，用户数据仍为 `%USERPROFILE%/.rynmesh`，公司数据路径未变。
+- 安装前停止的进程均按完整路径和 Ryn 专属名称核对。旧程序、公司运行包、公司数据库、节点配置与密钥、Ryn 注册表项和快捷方式已备份至 `artifacts/remote-readonly-20261110/rollback-20261110-115034`；回滚脚本及目录保留可用，均不提交。
+- 安装退出码 0，身份与公司配置密钥哈希保持不变；公司运行包 902 个文件通过清单校验。新节点和电脑工具二进制与构建产物完全一致，桌面程序仅有已核对的 NSIS `UNK`→`NSS` 三字节标记差异。
+- 已备份并修复 `Programs/Ryn/Ryn.lnk`：由 10 月 29 日的 `outputs/ryn-desktop-current/Ryn.exe` 改指实际新安装；桌面、开始菜单主入口也核对为同一路径。旧构建目录未覆盖或删除。
+- 已将安装目录过期的 `build-info.json` 更新为实际核心/公司提交、安装包哈希、安装二进制哈希及回滚位置。
+- 实际安装回执 `trusted_connections` 包含 `company-dashboard-dashboard`、`company-dashboard-operations`、`company-affiliate-affiliate`。未为了匹配声明修改老板的地址、认证或请求头。
+
+### 代码与自动化验证
+
+- 审查 `git diff d50ff6e 22783aa -- rynmesh scripts tests`：绑定只由安装迁移调用，且限定公司声明、同 plugin_id、远端 HTTP、相同 URL/规范化认证、无自定义请求头或令牌环境变量；实际指纹必须一致。普通编辑和导入不接受信任标记。
+- 地址、认证、secret_headers、env_http_headers、bearer_token_env 变化后，指纹变化并撤销信任；再安装也不会为自定义连接绑定。启用状态不影响指纹。
+- 共用授予逻辑仍要求布尔 true 和唯一工具名；主人 opt-out 优先。schema 变化后仍由当前受信配置的声明决定；不再声明只读的 installer 工具会被移出。旧数据缺失来源按既有 owner 行为读取。
+- upsert 暂时保留旧指纹仅用于策略变化识别，保存前重算新指纹；同时修改地址与只读选择的隔离用例通过。导入伪造信任字段无法取得信任；重导入会丢弃绑定，远端到下次安装迁移才重新绑定。
+- 指定六个 pytest 文件：**207 passed**；vitest `RynAgentReadOnlyHints`、`McpDataPolicy`、`PluginViews`：**31 passed**；`tsc -b --noEmit`：通过。
+- 另做 7 项隔离配置边界用例，全部通过。未发现需要修改源码的新缺陷；未重跑用户列明的三个无关旧失败。
+- 新冻结节点空目录连续启动两次通过；公司冻结运行包三次隔离启动通过；本次打包的安装迁移程序首次安装/重复安装、身份密钥、禁用插件、已有 Office 和用户文件保留检查通过。
+
+### 实际接口、界面与模型
+
+启动后主动调用 Dashboard `/test`，确实重新发现 58 个工具，再读取 `GET /api/local/agent/extensions`：
+
+| 服务器 | config_generation | discovery_revision | 当前工具 / 声明只读 | 来源 | 候选 |
+| --- | --- | --- | --- | --- | --- |
+| Dashboard | 239 | 388（安装前 348） | 58 / 58 | installer 58 | 0 |
+| workspace | 386 | 387（安装前 381） | 10 / 7 | installer 7 | 0 |
+| affiliate | 61 | 201 | 40 / 40（历史发现） | owner 36、installer 4 | 0 |
+
+- Dashboard 58 个声明只读工具全部在列表中；workspace 的 3 个非只读工具未被误标。affiliate 仍为 NeedsAuth，未把历史发现冒充本轮认证成功；operations 已禁用，未擅自启用。
+- 实际 WebView 中 `ryn.agent.read-only-hints-dismissed` 为 null，未清除或修改真实 localStorage。进入 Agent 页原生观察与 DOM 检查均无确认卡片。
+- Dashboard 页面保留登录并展示数据；插件数据视图 `balance-overview/query` 成功，无只读确认错误。未触发任何发送、写入或财务更新。
+- 现有真实模型在 automatic 模式执行专用任务，仅调用 `ryn_dashboard_identity`，任务 completed，实际 effect=read；预览/审批事件 0、pending_approval 为空、该任务写操作账本记录 0，无 `agent_write_outcome_unknown`。仅保留脱敏结果摘要，不提交身份响应、任务日志或账本。
+
+### 隔离验收与待续项
+
+- 独立空数据目录经本次冻结安装迁移程序初始化，回执含 Dashboard 信任。使用新冻结节点实际启动并探测远端，得到 `NeedsAuth / agent_mcp_auth_required`，工具数 0；未复制真实账号凭据。**尚未由用户登录并发现工具，不能认定全新安装界面验收通过。**
+- 另一隔离目录回放真实 Dashboard 的 58 个工具声明（仅元数据），将 `ryn_dashboard_identity` 改为写，重新打开 Store 后仍为写且无候选；再运行本次冻结安装迁移程序并重新发现，仍为写且无候选；改回只读后来源 owner。真实用户配置未改变。此项证明持久化与再安装路径，**不等同于已完成原生 Ryn 重启及登录界面验收**。
+- 在真实 Ryn 的“设置 → 桌面端 → 退出 Ryn”打开正常退出确认框后，Computer Use 点击“确定”连续失败，错误为 `foreground window did not report a process id`；重新激活并观察确认框后重试仍失败。已请求用户手动确认，未以强制结束进程冒充正常重启。**两次正常重启尚未完成。**
+- 本轮为读取 WebView localStorage 临时以 9333 调试端口启动。待用户完成退出后需无调试参数启动并验证端口关闭；不把当前待退出状态描述为已完成收尾。
+- 脱敏证据位于 `artifacts/remote-readonly-20261110/`，构建产物、数据库、凭据、Cookie 和日志均未纳入提交。验收文档通过任务分支合并本地 develop；因仍有上述未验项，遵照“全部通过后再推送”的要求暂不推送。
