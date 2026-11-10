@@ -2373,10 +2373,14 @@ class ExtensionStore:
             record["read_only_sources"] = {
                 name: previous_sources.get(name, "owner") for name in record["read_only_tools"]
             }
-            # An installer-trusted tool the owner turns off stays off after later discoveries.
+            # Keep an owner's opt-out even after a prior re-confirmation changed
+            # the tool's source from installer to owner.
             current = set(record["read_only_tools"])
             declined = set(record.get("owner_write_tools") or [])
-            declined |= {name for name in previous - current if previous_sources.get(name) == "installer"}
+            declined |= {
+                name for name in previous - current
+                if previous_sources.get(name) == "installer" or self._installer_service_trusted(record)
+            }
             record["owner_write_tools"] = sorted(declined - current)
         if "computer_access" in payload and not record.get("builtin"):
             record["computer_access"] = bool(payload["computer_access"])
