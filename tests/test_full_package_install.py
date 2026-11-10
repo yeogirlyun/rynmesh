@@ -371,7 +371,7 @@ def test_company_only_manifest_rejects_even_an_empty_office_payload(tmp_path):
         installer.verify(tmp_path)
 
 
-def synthetic_company_payload(tmp_path):
+def synthetic_company_payload(tmp_path, mcp_servers=()):
     payload = tmp_path/'payload'
     company = payload/'company'
     company.mkdir(parents=True)
@@ -379,9 +379,10 @@ def synthetic_company_payload(tmp_path):
     binary.write_bytes(b'synthetic executable; never execute')
     (company/'runtime-manifest.json').write_text(json.dumps({'source_commit':'c'*40,
         'files':{'company-service.exe':installer.sha(binary)}}))
-    declarations = {'plugins':[{'id':p,'name':p,'mcp_server_ids':[],'skill_ids':[],
+    declarations = {'plugins':[{'id':p,'name':p,'skill_ids':[],
+        'mcp_server_ids':[s['id'] for s in mcp_servers if s['plugin_id'] == p],
         'web_app':{'url':'http://127.0.0.1:18140/apps/'+p,'permissions':[]}} for p in installer.COMPANY],
-        'skills':[], 'mcp_servers':[]}
+        'skills':[], 'mcp_servers':list(mcp_servers)}
     (payload/'company-plugins.json').write_text(json.dumps(declarations))
     manifest = {'schema':1, 'ryn_commit':'a'*40, 'company_commit':'c'*40,'plugins':list(installer.COMPANY),
         'files':{p.relative_to(payload).as_posix():installer.sha(p) for p in payload.rglob('*') if p.is_file()}}
@@ -426,6 +427,30 @@ def test_company_only_install_and_repeat_never_touch_existing_office(tmp_path, m
     receipt = json.loads((home/'full-package-install.json').read_text())
     assert receipt['plugins'] == list(installer.COMPANY)
     installer.prepare_upgrade(payload, tmp_path/'not-installed')
+
+
+def test_install_trusts_read_only_tools_of_the_packages_remote_connection(tmp_path, monkeypatch):
+    from rynmesh.agent_runtime.extensions import ExtensionStore
+    from rynmesh.services.peer_box import load_or_create_messaging_key
+    monkeypatch.setattr(installer, 'allow_desktop_user', lambda path: None)
+    monkeypatch.setattr(installer.subprocess, 'run', lambda command, **kwargs: None)
+    dashboard = {'id': 'company-dashboard-dashboard', 'plugin_id': 'company-dashboard',
+                 'transport': 'streamable_http', 'url': installer.FINANCE_RESOURCE,
+                 'auth': {'mode': 'oauth', 'client_id': 'ryn-desktop', 'scopes': ['finance.read']}}
+    payload = synthetic_company_payload(tmp_path, [dashboard])
+    home, destination = tmp_path/'home', tmp_path/'install'
+    home.mkdir(); destination.mkdir()
+    (destination/'Ryn.exe').write_bytes(b'synthetic core')
+    installer.install(payload, destination, home)
+    assert json.loads((home/'full-package-install.json').read_text())['trusted_connections'] == [dashboard['id']]
+    store = ExtensionStore(home/'agent', load_or_create_messaging_key(home/'messaging.x25519'))
+    row = store.get_mcp_server_internal(dashboard['id'])
+    row = store.record_mcp_discovery(dashboard['id'], expected_revision=row['revision'], status='ready',
+        discovered_tools=[{'name': name, 'inputSchema': {'type': 'object'}, 'annotations': {'readOnlyHint': hint}}
+                          for name, hint in (('balance', True), ('approve', False))])
+    assert row['read_only_sources'] == {'balance': 'installer'}
+    assert row['server_hint_candidates'] == []
+    assert {t['name']: t['effective_effect'] for t in row['tools']} == {'balance': 'read', 'approve': 'write'}
 
 
 def test_company_only_stager_never_reads_or_downloads_office(tmp_path, monkeypatch):

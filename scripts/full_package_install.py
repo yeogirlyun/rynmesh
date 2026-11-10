@@ -353,6 +353,10 @@ def install(payload, destination, home):
     migration = store.migrate_release_defaults(declarations)
     migrate_finance_oauth_clients(store, declarations)
     managed_servers = configure_local_mcp_services(store, declarations, port)
+    # The package's own remote connections (e.g. Dashboard) keep their read-only
+    # declarations trusted, as the local service does after its handshake.
+    trusted_connections = store.trust_installer_connections(
+        [s for s in declarations['mcp_servers'] if s.get('plugin_id') in COMPANY])
     with file_transaction(services_root / '.install.lock'):
         config = json.loads(config_path.read_text(encoding='utf-8-sig'))
         for service in config['services']:
@@ -361,7 +365,7 @@ def install(payload, destination, home):
         atomic_json(config_path, config)
     receipt = {'schema': 1, 'ryn_commit': manifest['ryn_commit'], 'company_commit': revision,
                'plugins': list(selected_plugins), 'offline': True, 'installation': str(destination),
-               'declaration_migration': migration}
+               'declaration_migration': migration, 'trusted_connections': trusted_connections}
     atomic_json(home / 'full-package-install.json', receipt)
     print(json.dumps(receipt))
 

@@ -109,3 +109,49 @@
 - 补修提交 `d322893`，合并 `develop` 为 `d5b53d8`，已推送正式主程序仓库 `yeogirlyun/rynmesh` 的 develop；没有修改公司插件仓库。
 - 最后再次经程序自己的退出确认正常退出，然后不带调试参数启动原 505c754。节点 8791 与公司服务 18140 健康接口均 200，9333 无监听。本地服务 config/discovery 为 `380/381`，Dashboard 仍为 `239/348`，二者候选均 0，Agent 页无确认卡。
 - 真实账号、工具权限、配置、localStorage 与回滚文件未改动；新增的本地验收 Agent 任务保留可查。新的主人选择补修尚未打包安装；远端 Dashboard 自动信任与旧快捷方式/过期 build-info 仍列为待解决项。
+
+## 远端 Dashboard 补修（2026-11-10）
+
+复验指出：截图里的 Dashboard 是远端连接（`dashboard-hk-api…/ryn/mcp`），不在本地服务握手的范围里，第一版修复没有覆盖它。
+
+### 原因
+
+- 安装包每次运行都会执行 `migrate_release_defaults`。新版本只要改了 Dashboard 的 `auth` 声明，它就按“连接已更换”处理：
+  清空工具列表、`discovery_revision` 归零、`_clear_server_hints` 清掉全部 `server_hint` 确认。重新发现后 58 个工具又全部待确认。
+- `migrate_finance_oauth_clients` 改认证、插件启用状态切换、主人改配置，也会走同一条清除路径。
+- 所以 Dashboard 的卡片和安装有关：安装包迁移了连接，就需要再确认一次；全新安装第一次发现时也一定会出现。
+
+### 改动
+
+- `ExtensionStore.trust_installer_connections(declarations)`：只由已验证的安装脚本在所有迁移之后调用。
+  对公司插件声明的远端连接（不含 `local_service`）逐个核对：
+  服务器存在、`plugin_id` 一致、`streamable_http`、地址与声明一致、认证规范化后与声明一致，
+  且没有主人加的请求头、令牌环境变量。通过后记下当时的配置指纹 `installer_config_sha256`。
+- `_installer_service_trusted`：本地服务仍按握手的 `config_generation`；远端连接按 `installer_config_sha256 == config_sha256`。
+  指纹不含启用状态，所以插件或服务器的停用/启用不会结束信任；地址、认证、请求头等任何改动都会结束信任。
+- 绑定时立即处理已经发现的工具：声明只读且名字唯一的工具设为只读，来源 `installer`；
+  以前主人从卡片确认的 `server_hint` 改记为 `installer`；主人改回“会修改”的工具（`owner_write_tools`）不动。
+  之后每次发现仍按同一规则处理。
+- `upsert_mcp_server` 重建记录时保留 `installer_config_sha256`，并让策略字段看到修改前的指纹，
+  使“主人改回会修改”在远端连接上同样被记住（与 d322893 对本地服务的修复一致）。
+- `scripts/full_package_install.py`：迁移和本地端点配置之后调用上述方法，回执增加 `trusted_connections`。
+- 导入路径为每个服务器新建记录，不会带入信任字段，第三方插件包不能借此获得安装包信任。
+
+不变：主人自己添加的服务器，即使地址相同、或连接已被主人改过，仍按原规则确认一次；
+主人在界面里手动重新导入插件后，到下次运行安装包之前回到待确认（与现有“重导入重置主人选择”一致）。
+
+### 验证（VM，基线 develop d50ff6e）
+
+- 新增 `tests/test_installer_connection_trust.py` 9 个用例，以及 `test_full_package_install.py` 中走完整 `install()` 的 1 个用例：
+  - 安装包绑定后已发现的只读工具立即生效，原 `server_hint` 改为 `installer`，非只读工具仍是写，重复安装无变化；
+  - 发现时 schema 变化、重新打开 Store、插件停用/启用、服务器停用/启用之后仍然信任；工具不再声明只读后移出；
+  - 主人“改回会修改 → 重新确认 → 再改回”之后，重新发现和再次安装都保留选择；
+  - 主人改地址后信任结束并出现待确认，下次安装也不为主人的地址担保；
+  - 主人改过认证范围、加了 Authorization 请求头或令牌环境变量的连接不被信任；
+  - 同地址的主人自建服务器、`plugin_id` 不符、带 `local_service`、不存在的声明均不被信任；
+  - 安装包认证迁移先清掉确认，随后绑定，重新发现后无待确认；
+  - 完整 `install()`：回执 `trusted_connections` 含 Dashboard，发现后只读工具来源 `installer`、待确认为空。
+- 这 10 个用例在旧代码上全部失败，新代码上通过。
+- `test_installer_connection_trust.py` + `test_full_package_install.py` + `test_agent_local_services.py`
+  + `test_mcp_data_policy_store.py` + `test_agent_extensions_store.py`：**123 passed**。
+- 未做：重新打包安装后在主机上确认 Dashboard 来源变为 `installer`；本机 505c754 不含此补修。
