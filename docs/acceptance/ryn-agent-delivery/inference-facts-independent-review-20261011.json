@@ -1,0 +1,43 @@
+{
+  "kind": "inference-facts-limited-independent-review",
+  "reviewer": "root,not implementation author",
+  "scope": "P05 missing inference destination facts;main andcheckerprojection only",
+  "findings": [],
+  "reviewed": [
+    "Projection distinguishes server-bound peer/local_api/local_service/unknown route; does not infer endpoint locality or assert historical egress.",
+    "Current matching egress grant counts are labelled recorded, not authorization bypass; live validation remains enforced.",
+    "System projection contains no endpoint,credential,resourcepath/body or opaque refs.",
+    "Checker receives same bounded facts before its byte accounting; raw resource receipts preserved."
+  ],
+  "tests": {
+    "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_inference_context.py -q",
+    "passed": 10,
+    "seconds": 3.03
+  },
+  "files": {
+    "rynmesh/agent_runtime/inference_context.py": "17431bc96e65d1d7e263a987d00772a65c8bc71d60858017b1963dbee9160ae0",
+    "rynmesh/agent_runtime/prompt.py": "1faf5fafd56a904e208bb1e357e338db7ea1485fa3be940f2f60abc50c722d31",
+    "rynmesh/agent_runtime/verification.py": "178bc4b780539b1807c6793a89ace8de03492baee9b68b3fd563e87c57968455",
+    "tests/test_agent_inference_context.py": "3e712f297a1e5f3d5ead14a62f20f40444d8d7e4bf39c684a59e5f7fe5546753"
+  },
+  "real_model_calls": 0,
+  "formal_pass": false,
+  "limits": [
+    "Offline actual transport integration uses synthetic upstream; no corrected GLM behavior asserted.",
+    "P05 historical false report and timeout remain failed.",
+    "No independent historical request audit is inferred solely from saved scope."
+  ],
+  "followup": {
+    "reason": "New566bytefacts reduced existing8000byte fixture headroom; condensed equivalent general SYSTEM/authority prose while preserving all constraints and original approval phrase. No fixture/limit changes.",
+    "prompt_version": "ryn-agent-control-v2.12",
+    "validation": "34 inference/approval/diagnostic tests passed4.24s",
+    "prior_failure": "Earlier34 run:33pass/1exactapprovalphrase assertion failure; restored original no write executes before owner approval phrase, test unchanged.",
+    "files": {
+      "rynmesh/agent_runtime/prompt.py": "5c94babf35accb4e5d999474161963b905edd1ef4c6868a3287da8371a66964e",
+      "rynmesh/agent_runtime/runtime.py": "2385563b0d4ba5df4c77186e09dab8869efcca5a58982f6e7579418f5a2d9540",
+      "rynmesh/agent_runtime/inference_context.py": "17431bc96e65d1d7e263a987d00772a65c8bc71d60858017b1963dbee9160ae0",
+      "rynmesh/agent_runtime/verification.py": "178bc4b780539b1807c6793a89ace8de03492baee9b68b3fd563e87c57968455"
+    },
+    "runtime_hash_note": "Includes concurrent compact-efficiency implementation; its behavior requires separate review."
+  }
+}

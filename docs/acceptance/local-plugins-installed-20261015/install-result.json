@@ -1,0 +1,79 @@
+[
+  {
+    "id": "cadcraft",
+    "installed": true,
+    "enabled": true,
+    "verified_cache_reused": true,
+    "seconds": 0.33
+  },
+  {
+    "id": "designcraft",
+    "installed": true,
+    "enabled": true,
+    "verified_cache_reused": true,
+    "seconds": 0.45
+  },
+  {
+    "id": "effectcraft",
+    "installed": true,
+    "enabled": true,
+    "verified_cache_reused": true,
+    "seconds": 0.75
+  },
+  {
+    "id": "figcraft",
+    "installed": true,
+    "enabled": true,
+    "verified_cache_reused": true,
+    "seconds": 0.52
+  },
+  {
+    "id": "lightcraft",
+    "installed": true,
+    "enabled": true,
+    "verified_cache_reused": true,
+    "seconds": 1.28
+  },
+  {
+    "id": "photocraft",
+    "installed": true,
+    "enabled": true,
+    "verified_cache_reused": true,
+    "seconds": 0.38
+  },
+  {
+    "id": "soundcraft",
+    "installed": true,
+    "enabled": true,
+    "verified_cache_reused": true,
+    "seconds": 0.27
+  },
+  {
+    "id": "vectorcraft",
+    "installed": true,
+    "enabled": true,
+    "verified_cache_reused": true,
+    "seconds": 0.81
+  },
+  {
+    "id": "resume",
+    "installed": true,
+    "enabled": true,
+    "verified_cache_reused": false,
+    "seconds": 0.05
+  },
+  {
+    "id": "recruit",
+    "installed": true,
+    "enabled": true,
+    "verified_cache_reused": false,
+    "seconds": 0.05
+  },
+  {
+    "id": "desk",
+    "installed": true,
+    "enabled": true,
+    "verified_cache_reused": false,
+    "seconds": 0.05
+  }
+]

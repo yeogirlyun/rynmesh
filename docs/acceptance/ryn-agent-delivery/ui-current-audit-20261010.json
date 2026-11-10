@@ -1,0 +1,342 @@
+{
+  "schema_version": 1,
+  "audit_id": "ui-current-audit-20261010",
+  "completed_at": "2026-10-10T14:25:20.4893126+08:00",
+  "scope": "Read-only current frontend acceptance against final independent Agent UI and T13/T14. No production source edits, owner configuration edits, real model API, deployment, heldout or generator access.",
+  "working_directory": "D:/code/rynmesh",
+  "git_head": "278e6474547618ab23bf1c83a514a054c67e8db1",
+  "snapshot_note": "Dirty shared working tree; HEAD alone does not identify audited code. Core frontend hashes below identify the reviewed files. This audit is not final G5 same-snapshot regression.",
+  "verdict": "Scoped final UI structure and model/assistant independence supported by current source, focused tests and isolated actual browser page. T13/T14 complete real integration and T17 desktop delivery remain unaccepted.",
+  "confirmed_new_defects": [],
+  "scripts": {
+    "dev": "vite",
+    "test": "vitest run",
+    "lint": "tsc -b --noEmit",
+    "build": "tsc -b && vite build",
+    "test_environment": "Vitest 4.1.11 + jsdom + MSW; onUnhandledRequest=error",
+    "not_run": "Unrelated full frontend suite, lint/build and desktop packaging were not repeated for this read-only audit. They require coordinated final snapshot validation."
+  },
+  "unit_test_runs": [
+    {
+      "command": "npm test -- src/screens/RynAgent.test.tsx src/screens/ModelPool.test.tsx src/screens/ModelPoolSettings.test.tsx src/screens/ModelPoolSharing.test.tsx src/screens/RynAgentScope.test.tsx src/screens/RynAgentModel.test.tsx src/screens/RynAgentBudget.test.tsx src/screens/RynAgentGuidance.test.tsx src/screens/RynAgentRecords.test.tsx src/App.agentRoutes.test.tsx src/personal/ServiceNavigation.test.tsx --maxWorkers=2 --reporter=dot",
+      "log": "D:/code/rynmesh/docs/acceptance/ryn-agent-delivery/ui-current-audit-tests-20261010.log",
+      "passed_files": 9,
+      "passed_tests": 53,
+      "unhandled_errors": 2,
+      "status": "failed_environment",
+      "failure": "RynAgent.test.tsx and RynAgentScope.test.tsx forks worker startup timed out. No assertion failure reported; these two files were not counted as passed in this run."
+    },
+    {
+      "command": "npm test -- src/screens/RynAgent.test.tsx src/screens/RynAgentScope.test.tsx --maxWorkers=1 --reporter=dot",
+      "log": "D:/code/rynmesh/docs/acceptance/ryn-agent-delivery/ui-current-audit-tests-retry-20261010.log",
+      "passed_files": 2,
+      "passed_tests": 52,
+      "status": "passed",
+      "duration_seconds": 31.93,
+      "note": "Only files whose workers failed to start were retried. Combined focused coverage is 11 distinct files and 105 tests, not one uninterrupted clean suite run."
+    }
+  ],
+  "checks": [
+    {
+      "id": "UI01",
+      "requirement": "Independent top-level Ryn Agent, full workspace, no duplicated services tabs/topheader",
+      "static": {
+        "status": "supported",
+        "paths": [
+          "webapp/src/App.tsx:376",
+          "webapp/src/personal/Shell.tsx:43",
+          "webapp/src/personal/Shell.tsx:154",
+          "webapp/src/personal/personal.css:1684",
+          "webapp/src/screens/RynAgent.css:1"
+        ]
+      },
+      "unit": {
+        "status": "passed",
+        "test": "RynAgent.test.tsx:486; App.agentRoutes.test.tsx"
+      },
+      "actual_page": {
+        "status": "passed_isolated_stub",
+        "viewport": [
+          1024,
+          768
+        ],
+        "pf_topbar_and_service_nav_count": 0,
+        "document_scroll_size": [
+          1024,
+          768
+        ]
+      },
+      "desktop_native": "not_run"
+    },
+    {
+      "id": "UI02",
+      "requirement": "Main navigation and task list independently collapse",
+      "static": {
+        "status": "supported",
+        "paths": [
+          "webapp/src/personal/Shell.tsx:110",
+          "webapp/src/screens/RynAgent.tsx:333",
+          "webapp/src/screens/RynAgent.tsx:334"
+        ]
+      },
+      "unit": {
+        "status": "passed",
+        "test": "RynAgent.test.tsx:486 checks all four combinations and input preservation"
+      },
+      "actual_page": {
+        "status": "passed_isolated_stub",
+        "four_combinations_at": [
+          1024,
+          768
+        ],
+        "narrow_at": [
+          390,
+          768
+        ],
+        "note": "At 390px both open sidebars use intentional overlays. Toolbar remains accessible; independently closing them restores the task/composer. No horizontal document overflow."
+      },
+      "desktop_native": "not_run"
+    },
+    {
+      "id": "UI03",
+      "requirement": "Assistant optional; disabled assistant still allows manual source configuration and per-model sharing",
+      "static": {
+        "status": "supported",
+        "paths": [
+          "webapp/src/screens/RynAgent.tsx:540",
+          "webapp/src/screens/ModelPool.tsx:78",
+          "webapp/src/screens/ModelPool.tsx:102",
+          "webapp/src/screens/ModelPool.tsx:120"
+        ]
+      },
+      "unit": {
+        "status": "passed",
+        "tests": [
+          "ModelPool.test.tsx:32",
+          "ModelPool.test.tsx:46",
+          "ModelPool.test.tsx:61",
+          "RynAgent.test.tsx:527"
+        ]
+      },
+      "actual_page": {
+        "status": "passed_isolated_stub",
+        "steps": [
+          "Enabled the fixture assistant, read existing approval task, opened settings, unchecked assistant and saved",
+          "Visited model pool while Optional assistant remained displayed",
+          "Enabled sharing for model-a, preserving model-b; request only contained shared_models",
+          "Opened manual source edit modal and closed without saving",
+          "Explicitly verified fixture model-b and selected it as assistant default; request only contained model_id and assistant stayed disabled"
+        ]
+      },
+      "desktop_native": "not_run",
+      "real_manual_inference": "not_run"
+    },
+    {
+      "id": "UI04",
+      "requirement": "Assistant model selection, local/external provenance and sharing are separate concepts",
+      "static": {
+        "status": "supported",
+        "paths": [
+          "webapp/src/screens/ModelPool.tsx:46",
+          "webapp/src/screens/ModelPool.tsx:68",
+          "webapp/src/screens/ModelPool.tsx:132",
+          "webapp/src/screens/ModelPoolSharing.tsx:91"
+        ]
+      },
+      "unit": {
+        "status": "passed",
+        "tests": [
+          "ModelPool.test.tsx",
+          "ModelPoolSettings.test.tsx",
+          "ModelPoolSharing.test.tsx",
+          "RynAgentModel.test.tsx"
+        ]
+      },
+      "actual_page": {
+        "status": "passed_isolated_stub",
+        "note": "API rows display API provenance; peer row displays From another device/provider shared and no owner sharing control. Default badge changes separately from Shared/Private. Requests recorded below prove frontend request separation only."
+      },
+      "real_two_node_authorization": "not_run"
+    },
+    {
+      "id": "T13",
+      "requirement": "Model configuration, verification, assistant default and per-model sharing; verification after invalidation remains reachable",
+      "static": {
+        "status": "supported_scoped",
+        "paths": [
+          "webapp/src/screens/ModelPool.tsx:134",
+          "webapp/src/screens/ModelPoolSettings.tsx:95",
+          "webapp/src/screens/ModelPoolSharing.tsx"
+        ]
+      },
+      "unit": {
+        "status": "passed",
+        "tests": [
+          "ModelPool.test.tsx:78",
+          "ModelPoolSettings.test.tsx:62",
+          "ModelPoolSettings.test.tsx:72",
+          "ModelPoolSettings.test.tsx:82",
+          "ModelPoolSharing.test.tsx:84"
+        ]
+      },
+      "actual_page": {
+        "status": "partial_isolated_stub",
+        "note": "Verification/default/sharing/manual edit exercised. Advanced per-model parameters and exact friend grants covered by component tests, not exercised with live server in browser."
+      },
+      "delivery": "not_accepted_full_integration"
+    },
+    {
+      "id": "T14",
+      "requirement": "Full task interaction: scope, plan, steering/waiting, outcome, results, budget/skills/preferences/history",
+      "static": {
+        "status": "implemented_controls_present",
+        "paths": [
+          "webapp/src/screens/RynAgent.tsx",
+          "webapp/src/screens/RynAgentScope.tsx",
+          "webapp/src/screens/RynAgentBudget.tsx",
+          "webapp/src/screens/RynAgentGuidance.tsx",
+          "webapp/src/screens/RynAgentRecords.tsx",
+          "webapp/src/screens/RynAgentModel.tsx"
+        ]
+      },
+      "unit": {
+        "status": "passed_focused",
+        "note": "Existing component tests cover owner controls, stable control revisions, bound answers, permissions, stale/uncertain receipt recovery, rejected versus executed receipts, independent history loading, archived tasks and output pagination."
+      },
+      "actual_page": {
+        "status": "partial_isolated_stub",
+        "note": "Existing task history, approval card, task model attribution, composer, assistant settings and background-task warning observed. No schema-v2 task execution, real file output open/save, restart recovery, budget/skills/preferences persistence or fault-injected HTTP history flow performed in browser."
+      },
+      "delivery": "not_accepted_full_integration"
+    }
+  ],
+  "prior_plan_issues_rechecked": [
+    {
+      "issue": "Default model invalidation hides verification",
+      "current_evidence": "ModelPool default badge and verification branch independent; current regression ModelPool.test.tsx:78 passed",
+      "status": "fixed_at_component_level"
+    },
+    {
+      "issue": "Model catalog failure prevents task history",
+      "current_evidence": "RynAgent tests at 596/618/669 pass independent history, settings and detail failures",
+      "status": "fixed_at_component_level"
+    },
+    {
+      "issue": "Rejected calls counted as executed and cancelled writes hide late receipts",
+      "current_evidence": "RynAgent.test.tsx:628 passed; UI uses agentToolResultState/isAgentLateToolResult",
+      "status": "fixed_at_component_level"
+    },
+    {
+      "issue": "Switching tasks obscures background execution",
+      "current_evidence": "RynAgent.test.tsx:644 passed; actual page displays background warning",
+      "status": "supported_at_component_and_isolated_page_levels"
+    },
+    {
+      "issue": "High-frequency event revisions invalidate pause",
+      "current_evidence": "RynAgent.test.tsx:224 passes stable control version request",
+      "status": "component_pass_only_not_live_stream_acceptance"
+    }
+  ],
+  "actual_page_environment": {
+    "url": "http://127.0.0.1:5189",
+    "source": "Current webapp source served by Vite",
+    "client_mode": "fixture for shell/node-client; isolated in-memory HTTP responses for /api/local/agent and source endpoints",
+    "server_script": "D:/code/rynmesh/.codex-tmp/ui-current-audit-server.mjs",
+    "requests_log": "D:/code/rynmesh/docs/acceptance/ryn-agent-delivery/ui-current-audit-requests-20261010.json",
+    "safety_boundary": "No proxy, no external model network operation, all /api/local paths intercepted before serving. Source URL invalid.example is display-only. Browser tab closed, viewport reset, server terminated after audit.",
+    "limitations": "Responses are fixtures, not production API contract acceptance. Legacy-shaped task used only for layout. Native model endpoint fixture unsupported; no native model outcome claim.",
+    "browser_console_errors_observed": []
+  },
+  "screenshots": [
+    "D:/code/rynmesh/docs/acceptance/ryn-agent-delivery/ui-current-agent-1024-both-open.jpg",
+    "D:/code/rynmesh/docs/acceptance/ryn-agent-delivery/ui-current-agent-1024-main-closed.jpg",
+    "D:/code/rynmesh/docs/acceptance/ryn-agent-delivery/ui-current-agent-1024-both-closed.jpg",
+    "D:/code/rynmesh/docs/acceptance/ryn-agent-delivery/ui-current-agent-1024-tasks-closed.jpg",
+    "D:/code/rynmesh/docs/acceptance/ryn-agent-delivery/ui-current-agent-1024-approval.jpg",
+    "D:/code/rynmesh/docs/acceptance/ryn-agent-delivery/ui-current-agent-390-overlays.jpg",
+    "D:/code/rynmesh/docs/acceptance/ryn-agent-delivery/ui-current-agent-390-approval.jpg",
+    "D:/code/rynmesh/docs/acceptance/ryn-agent-delivery/ui-current-models-disabled-sharing.jpg",
+    "D:/code/rynmesh/docs/acceptance/ryn-agent-delivery/ui-current-models-disabled-manual-config.jpg",
+    "D:/code/rynmesh/docs/acceptance/ryn-agent-delivery/ui-current-models-disabled-default.jpg",
+    "D:/code/rynmesh/docs/acceptance/ryn-agent-delivery/ui-current-atomic-preview-1024-summary.jpg",
+    "D:/code/rynmesh/docs/acceptance/ryn-agent-delivery/ui-current-atomic-preview-1024-exact-id.jpg",
+    "D:/code/rynmesh/docs/acceptance/ryn-agent-delivery/ui-current-atomic-preview-390-summary.jpg",
+    "D:/code/rynmesh/docs/acceptance/ryn-agent-delivery/ui-current-atomic-preview-390-exact-id.jpg",
+    "D:/code/rynmesh/docs/acceptance/ryn-agent-delivery/ui-current-atomic-preview-390-actions.jpg",
+    "D:/code/rynmesh/docs/acceptance/ryn-agent-delivery/ui-approved-prototype-1024.jpg",
+    "D:/code/rynmesh/docs/acceptance/ryn-agent-delivery/ui-approved-prototype-1024-both-open.jpg"
+  ],
+  "open_evidence_gaps": [
+    {
+      "id": "GAP02",
+      "requirement": "T13 real source-to-probe-to-default-to-share workflow",
+      "missing": "Only frontend fixture requests; no real provider probe, source save/rollback, exact receiver grants or two-node call.",
+      "next": "Execute existing authorized real integration acceptance separately; retain this UI audit as frontend evidence only."
+    },
+    {
+      "id": "GAP03",
+      "requirement": "T14 all production controls and artifact workflow",
+      "missing": "Actual schema-v2 owner control flow, scope selection and failure, files/results, skills/preferences/budget, real restart and target outcome not run in browser.",
+      "next": "Use stabilized backend contracts and authorized test directories in final end-to-end acceptance."
+    },
+    {
+      "id": "GAP04",
+      "requirement": "T17 native desktop installation/upgrade",
+      "missing": "No installed Windows package, upgrade/restart, native sidecar recovery or legacy manual chat runtime exercised.",
+      "next": "Perform real desktop install/upgrade acceptance on delivery snapshot; never infer from jsdom/browser screenshots."
+    },
+    {
+      "id": "GAP05",
+      "requirement": "G5 final code snapshot checks",
+      "missing": "Read-only current dirty tree audited; no coordinated final complete frontend/backend regression and build.",
+      "next": "Run agreed release checks after final code freeze. Existing unrelated passing suites need not be replayed solely for counts before then."
+    }
+  ],
+  "source_sha256": {
+    "webapp/src/App.tsx": "B2CF05760BB27A2752611B8DEC42291D04FBAFB7670B4B20BDD020A9587A8271",
+    "webapp/src/personal/Shell.tsx": "81B778C808E0687B17E3AA03847243D543F9468009A1101B5F08CC28B03FEF13",
+    "webapp/src/personal/personal.css": "B8C3CBA0E16D0B0AA9AEF430836A35DAC8F43345C38980E5465F5FFEA2B04F7D",
+    "webapp/src/screens/RynAgent.tsx": "9D06D984485F8C8632DB1DD980F908DB8810C69A65D7B43AA4047ACC06F552E7",
+    "webapp/src/screens/RynAgent.css": "A4643DC37E66BD6AE0F757331B0631888A989E2B9EAB67498E18DE6D13FC5380",
+    "webapp/src/screens/ModelPool.tsx": "5C48FA51B0E2280093BB3B9385FC64AB329290C5CC5453E1BF43ECB850B55CD9",
+    "webapp/src/screens/ModelPoolSettings.tsx": "DE1EF4D169D3DD9C8936E18B097BCAD3AD39539E9182C3365297FE7A26CA9EBA",
+    "webapp/src/screens/ModelPoolSharing.tsx": "2B19D492AF0B183D57A3D8E23B267CA0B2023C52FCEC8944E6549BF3FDED9838"
+  },
+  "prototype_comparison": {
+    "status": "completed_structure_comparison",
+    "reference_path": "C:/Users/子陵/.codex/visualizations/2026/10/08/01a11b01-af8c-7f60-8115-71b9d5736db0/ryn-agent-module.html",
+    "viewport": [
+      1024,
+      768
+    ],
+    "served_read_only": "http://127.0.0.1:5190",
+    "external_connections": "CSP connect-src none; source contains no external resource link or fetch",
+    "conclusion": "Current actual page and approved prototype both have independent Agent primary entry, compact Agent toolbar without duplicated Services tabs/header, separately controllable main navigation/task list, and large composer/content work area. This closes structural reference gap only; no pixel-perfect or complete functional equivalence claim."
+  },
+  "atomic_sharing_preview_followup": {
+    "status": "passed_actual_page_isolated_stub",
+    "contract": "ryn_share_model_with_friend",
+    "source": "RynAgent.test.tsx:407 fixture shape and current ApprovalCard",
+    "viewports": [
+      [
+        1024,
+        768
+      ],
+      [
+        390,
+        768
+      ]
+    ],
+    "observed": [
+      "Model name model-b and exact model_id audit/model-b",
+      "Only recipient Audit recipient B / audit-selected-peer-b",
+      "Existing allowed grant audit-old-peer-a explicitly revoked; denied grant excluded from revocation summary",
+      "Other models/default model/assistant enablement stay unchanged explicitly stated",
+      "Exact parameter details expand and read in both widths",
+      "390px scroll reaches rejection/approval buttons while composer stays below"
+    ],
+    "production_actions": "none; never clicked approve, deny or cancel",
+    "request_log": "D:/code/rynmesh/docs/acceptance/ryn-agent-delivery/ui-current-audit-atomic-preview-requests-20261010.json",
+    "note": "Earlier generic approval screenshots only demonstrate layout; use these followup screenshots for sharing-specific summary. This validates frontend presentation, not approval execution or backend atomicity."
+  }
+}

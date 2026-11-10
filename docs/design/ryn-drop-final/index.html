@@ -1,0 +1,2811 @@
+<!doctype html>
+<html lang="en" data-visualize-standalone>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src 'unsafe-inline' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Ryn 设备互传 最终确认原型</title>
+<style>:root{color-scheme:light dark;background:light-dark(rgb(255 255 255), rgb(24 24 24))}html,body{margin:0}body{box-sizing:border-box;padding:1rem;background:inherit}iframe{display:block;width:100%;height:calc(100vh - 2rem);margin:0 auto;border:0}</style>
+
+</head>
+<body>
+<iframe id="codex-visualization" sandbox="allow-scripts" referrerpolicy="no-referrer" title="Ryn 设备互传 最终确认原型" data-srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot; data-visualize-standalone&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;
+&lt;meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;default-src &#x27;none&#x27;; script-src &#x27;unsafe-inline&#x27; &#x27;unsafe-eval&#x27; &#x27;wasm-unsafe-eval&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src &#x27;unsafe-inline&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src &#x27;none&#x27;; object-src &#x27;none&#x27;; base-uri &#x27;none&#x27;; form-action &#x27;none&#x27;&quot;&gt;
+&lt;title&gt;Ryn 设备互传 最终确认原型&lt;/title&gt;
+&lt;style&gt;:root {
+  color-scheme: light dark;
+  background-color: var(
+    --background,
+    var(--color-background-primary, light-dark(rgb(255 255 255), rgb(24 24 24)))
+  ) !important;
+
+  /* Agent-facing contract; keep in sync with SKILL.md. */
+  --background: var(
+    --color-background-primary,
+    light-dark(rgb(255 255 255), rgb(24 24 24))
+  );
+  --foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --card: color-mix(in oklab, var(--foreground) 5%, var(--background));
+  --card-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --popover: var(
+    --color-background-secondary,
+    light-dark(rgb(255 255 255), rgb(45 45 45))
+  );
+  --popover-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --primary: var(
+    --color-text-info,
+    light-dark(rgb(51 156 255), rgb(131 195 255))
+  );
+  --primary-foreground: var(
+    --color-text-inverse,
+    light-dark(rgb(255 255 255), rgb(13 13 13))
+  );
+  --secondary: var(
+    --color-background-secondary,
+    light-dark(rgb(255 255 255 / 96%), rgb(54 54 54 / 96%))
+  );
+  --secondary-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --muted: color-mix(in srgb, var(--foreground) 10%, transparent);
+  --muted-foreground: var(
+    --color-text-secondary,
+    light-dark(rgb(26 28 31 / 49.4%), rgb(255 255 255 / 49.8%))
+  );
+  --accent: var(
+    --color-background-info,
+    light-dark(rgb(229 242 255), rgb(13 39 63))
+  );
+  --accent-foreground: var(
+    --color-text-info,
+    light-dark(rgb(51 156 255), rgb(131 195 255))
+  );
+  --destructive: var(
+    --color-text-warning,
+    light-dark(rgb(226 85 7), rgb(255 133 73))
+  );
+  --border: var(
+    --color-border-secondary,
+    light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%))
+  );
+  --input: var(
+    --color-border-primary,
+    light-dark(
+      rgb(26 28 31 / 11.8%),
+      color-mix(in oklab, rgb(0 0 0) 10%, transparent)
+    )
+  );
+  --ring: var(
+    --color-ring-primary,
+    light-dark(rgb(51 156 255), rgb(131 195 255 / 76%))
+  );
+  --font-size-base: var(--font-text-md-size, 16px);
+  --blue: light-dark(rgb(51 156 255), rgb(51 156 255));
+  --orange: light-dark(rgb(226 85 7), rgb(251 106 34));
+  --green: light-dark(rgb(0 162 64), rgb(64 201 119));
+  --red: light-dark(rgb(224 46 42), rgb(255 103 100));
+  --purple: light-dark(rgb(146 79 247), rgb(173 123 249));
+  --yellow: light-dark(rgb(255 195 0), rgb(255 210 64));
+  --viz-series-1: var(--primary);
+  --viz-series-2: light-dark(rgb(243 136 59), rgb(245 154 86));
+  --viz-series-3: light-dark(rgb(93 201 119), rgb(116 213 139));
+  --viz-series-4: light-dark(rgb(235 119 177), rgb(240 143 192));
+  --viz-series-5: light-dark(rgb(155 121 236), rgb(170 145 239));
+  --viz-series-6: light-dark(rgb(58 185 177), rgb(90 203 194));
+
+  /* Internal implementation variables; not part of the agent contract. */
+  --font-sans:
+    -apple-system-body, ui-sans-serif, -apple-system, system-ui, &quot;Segoe UI&quot;,
+    Helvetica, &quot;Apple Color Emoji&quot;, Arial, sans-serif, &quot;Segoe UI Emoji&quot;,
+    &quot;Segoe UI Symbol&quot;;
+  --font-mono:
+    ui-monospace, SFMono-Regular, &quot;SF Mono&quot;, Menlo, Consolas, &quot;Liberation Mono&quot;,
+    monospace;
+  --font-size-normal: max(11px, var(--font-size-base));
+  --font-size-tooltip: calc(var(--font-size-base) - 1px);
+  --font-size-small: max(11px, calc(var(--font-size-base) - 2px));
+  --font-size-h1: calc(var(--font-size-normal) * 1.7142857143);
+  --font-size-h2: calc(var(--font-size-normal) * 1.4285714286);
+  --font-size-h3: calc(var(--font-size-normal) * 1.2857142857);
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --icon-size: 16px;
+  --line-height-normal: calc(var(--font-size-normal) * 1.5);
+  --line-height-tooltip: calc(var(--font-size-tooltip) * 1.4285714286);
+  --line-height-small: calc(var(--font-size-small) + 4px);
+  --corner-shape: round;
+  --radius: var(--border-radius-lg, 8px);
+  --radius-sm: calc(var(--radius) * 0.5);
+  --radius-md: calc(var(--radius) * 0.75);
+  --radius-lg: var(--radius);
+  --radius-2xl: calc(var(--radius) * 2);
+  --radius-full: 9999px;
+  --shadow-sm: 0 1px 2px -1px rgb(0 0 0 / 8%);
+  --checkmark-image: url(&quot;data:image/svg+xml,%3Csvg xmlns=&#x27;http://www.w3.org/2000/svg&#x27; viewBox=&#x27;0 0 17 17&#x27;%3E%3Cpath d=&#x27;M12.8961 3.64101C13.1297 3.41418 13.4984 3.37523 13.7779 3.56581C14.0571 3.75635 14.1554 4.11331 14.0299 4.41347L13.9615 4.53847L7.71151 13.7045C7.59411 13.8767 7.4063 13.9877 7.19881 14.0072C6.99136 14.0267 6.78564 13.9533 6.63826 13.806L2.88826 10.056L2.79842 9.9457C2.6192 9.67407 2.64927 9.30496 2.88826 9.06581C3.12738 8.82669 3.49647 8.79676 3.76815 8.97597L3.8785 9.06581L7.03084 12.2182L12.8053 3.74941L12.8961 3.64101Z&#x27;/%3E%3C/svg%3E&quot;);
+
+  /* Legacy aliases; not part of the current agent contract. */
+  --viz-bg: transparent;
+  --viz-panel: var(--card);
+  --viz-border: var(--border);
+  --viz-text: var(--foreground);
+  --viz-muted: var(--muted-foreground);
+  --viz-accent: var(--primary);
+  --viz-accent-text: var(--primary-foreground);
+  --viz-accent-bg: var(--accent);
+  --viz-font-size: var(--font-size-base);
+  --viz-warning: var(--destructive);
+}
+
+:root[data-theme=&quot;light&quot;] {
+  color-scheme: light;
+}
+
+:root[data-theme=&quot;dark&quot;] {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html &gt; body {
+  /* Preserve MCP aliases for older inline renderers without creating :root cycles. */
+  --color-background-primary: var(
+    --background,
+    light-dark(rgb(255 255 255), rgb(24 24 24))
+  );
+  --color-text-primary: var(
+    --foreground,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --color-border-secondary: var(
+    --border,
+    light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%))
+  );
+
+  margin: 0;
+  padding: var(--visualize-paint-gutter, 0px);
+  color: var(--foreground);
+  background: transparent !important;
+  font-family: var(--font-sans) !important;
+  -webkit-font-smoothing: antialiased;
+  font-size: var(--font-size-base);
+  line-height: calc(var(--font-size-base) * 1.625);
+  font-weight: var(--font-weight-normal);
+}
+
+.cursor-interaction {
+  cursor: var(--cursor-interaction, pointer);
+}
+
+a {
+  color: color-mix(in srgb, var(--viz-accent) 80%, var(--viz-text) 20%);
+  cursor: var(--cursor-interaction, pointer);
+  text-decoration: none;
+  text-underline-offset: 2px;
+  font-weight: inherit;
+}
+
+a:is(:hover, :focus-visible) {
+  text-decoration-line: underline;
+  text-decoration-style: dashed;
+  text-decoration-thickness: 0.5px;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p {
+  margin-block: 0;
+}
+p,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+li,
+.table {
+  font-family: var(--font-sans);
+}
+
+h1 {
+  font-size: calc(var(--font-size-base) * 1.5);
+  line-height: 1.3333333333;
+}
+
+h2 {
+  font-size: calc(var(--font-size-base) * 1.25);
+  line-height: 1.4;
+}
+h3 {
+  font-size: calc(var(--font-size-base) * 1.125);
+  line-height: 1.5555555556;
+}
+h4 {
+  font-size: var(--font-size-base);
+  line-height: 1.5;
+}
+h5,
+h6 {
+  font-size: var(--font-size-base);
+  line-height: calc(var(--font-size-base) * 1.625);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+b,
+strong,
+th {
+  font-weight: 600;
+}
+
+code:not(pre code) {
+  display: inline;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  corner-shape: var(--corner-shape);
+  background: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  word-break: break-word;
+}
+pre,
+pre code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.table {
+  width: 100%;
+  color: var(--foreground);
+  font: inherit;
+  text-align: start;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: calc(var(--font-size-base) * 0.875);
+  line-height: calc(var(--font-size-base) * 1.625);
+  font-family: var(--font-sans);
+}
+
+.table :is(th, td) {
+  padding-block: 10px;
+  padding-inline: 0 24px;
+  overflow-wrap: anywhere;
+  border-bottom: 1px solid var(--border);
+  text-align: start;
+  vertical-align: top;
+  border-bottom-color: color-mix(in srgb, var(--foreground) 5%, transparent);
+}
+.table :is(th, td):not(:last-child) {
+  padding-inline-end: calc(var(--font-size-base) * 1.5);
+}
+
+.table-responsive &gt; .table :is(th, td) {
+  overflow-wrap: break-word;
+}
+
+.table :is(th, td):last-child {
+  padding-inline-end: 0;
+}
+
+.table :is(caption, thead th) {
+  font-weight: 600;
+}
+
+.table thead :is(th, td) {
+  border-bottom-color: var(--border-strong, var(--input));
+  padding-block: calc(var(--font-size-base) / 2);
+  line-height: var(--font-size-base);
+}
+
+.table tbody tr:last-child :is(th, td) {
+  border-bottom: 0;
+}
+.table tbody :is(th, td) {
+  padding-block: calc(var(--font-size-base) * 0.625);
+}
+
+.table.table-sm :is(th, td) {
+  padding-block: 8px;
+}
+
+.table.table-sm :is(th, td):not(:last-child) {
+  padding-inline-end: 16px;
+}
+
+.table :is(.text-end, [align=&quot;right&quot;]) {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.table :is(.text-center, [align=&quot;center&quot;]) {
+  text-align: center;
+}
+
+.table .text-nowrap {
+  white-space: nowrap;
+}
+
+#widget {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  background: transparent !important;
+}
+
+.card {
+  min-width: 0;
+  padding: 12px;
+  overflow: hidden;
+  overflow-wrap: break-word;
+  border-radius: var(--radius-2xl);
+  corner-shape: var(--corner-shape);
+  color: var(--card-foreground);
+  background: var(--card);
+}
+
+.widget {
+  min-width: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-lg);
+  corner-shape: var(--corner-shape);
+  box-shadow: 0 0 0 0.5px var(--border-strong, var(--border));
+  color: var(--foreground);
+  background: var(--background);
+}
+
+#widget &gt; :not(.card, .widget, .progress) {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 50;
+  top: 0;
+  left: 0;
+  width: max-content;
+  max-width: min(
+    20rem,
+    var(--tooltip-available-width, calc(100vw - 10px)),
+    calc(100vw - 10px)
+  );
+  max-height: min(
+    var(--tooltip-available-height, calc(100vh - 10px)),
+    calc(100vh - 10px)
+  );
+  border: 1px solid var(--border);
+  corner-shape: var(--corner-shape);
+  overflow-wrap: break-word;
+  white-space: normal;
+  pointer-events: none;
+  user-select: none;
+  font-family: var(--font-sans);
+  padding: 5px 12px;
+  border-color: color-mix(
+    in oklab,
+    light-dark(var(--primary-foreground), var(--foreground)) 5%,
+    transparent
+  );
+  border-radius: var(--radius-2xl);
+  color: light-dark(var(--primary-foreground), var(--foreground));
+  background: light-dark(var(--foreground), var(--popover));
+  box-shadow: 0 8px 18px rgb(15 23 42 / 20%);
+  letter-spacing: -0.15px;
+  font-size: calc(var(--font-size-base) * 14 / 16);
+  font-size: round(nearest, calc(var(--font-size-base) * 14 / 16), 1px);
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+}
+
+.viz-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(max(180px, 24%), 1fr));
+  gap: 10px;
+}
+
+.viz-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.viz-stat-value {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+.viz-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+hr {
+  width: 100%;
+  height: 1px;
+  margin-block: 6px;
+  border: 0;
+  background: var(--border);
+}
+
+.nav {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.progress {
+  display: flex;
+  height: 8px;
+  margin-block: calc((var(--line-height-normal, 1.5em) - 8px) / 2);
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+}
+
+.progress-bar:only-child {
+  border-radius: var(--radius-full);
+}
+
+.progress-bar {
+  height: 100%;
+  flex-shrink: 0;
+  border: 0;
+  background: var(--viz-series-1);
+}
+
+.viz-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  color: color-mix(in srgb, var(--foreground) 40%, var(--muted-foreground));
+  background: color-mix(in srgb, var(--foreground) 5%, transparent);
+  font-family: var(--font-sans);
+  font-size: calc(var(--font-size-base) * 14 / 16);
+  font-size: round(nearest, calc(var(--font-size-base) * 14 / 16), 1px);
+  font-weight: var(--font-weight-normal);
+  line-height: 1;
+}
+
+small,
+.text-small {
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-small);
+}
+
+.text-muted {
+  color: var(--muted-foreground);
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.viz-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.viz-controls &gt; .form-label {
+  display: grid;
+  min-width: min(100%, 260px);
+  flex: 1 1 280px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin-bottom: 0;
+}
+
+.viz-controls &gt; .form-label &gt; :is(.form-control, .form-range, .form-select) {
+  grid-column: 1 / -1;
+}
+
+.btn,
+.nav-link,
+.form-check-input,
+.form-control,
+.form-range,
+.form-select {
+  font: inherit;
+}
+
+/* Match inline alignment without overriding a containing flex or grid layout. */
+.btn,
+.nav-link,
+.form-control,
+.form-select,
+.form-range,
+.form-check {
+  vertical-align: middle;
+}
+
+.btn,
+.nav-link {
+  appearance: button;
+  display: inline-flex;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0 8px;
+  -webkit-app-region: no-drag;
+  border: 1px solid var(--input);
+  corner-shape: var(--corner-shape);
+  cursor: var(--cursor-interaction, pointer);
+  text-align: center;
+  text-decoration: none;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-font-smoothing: inherit;
+  font-family: var(--font-sans);
+  height: fit-content;
+  min-height: calc(12px + 2 * var(--control-spacing, 12px));
+  padding-inline: var(--control-spacing, 12px);
+  border-color: transparent;
+  border-radius: var(--radius-full);
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 5%, transparent);
+  font-size: calc(var(--font-size-base) * 14 / 16);
+  font-size: round(nearest, calc(var(--font-size-base) * 14 / 16), 1px);
+  font-weight: var(--font-weight-normal);
+  line-height: 18px;
+}
+
+.btn {
+  border-color: var(--border);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+}
+
+.btn:is(.btn-block, .viz-tile) {
+  inline-size: 100%;
+}
+
+.btn.viz-tile {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+a.btn {
+  cursor: var(--cursor-interaction, pointer);
+  text-decoration: none;
+}
+
+.btn:not(:disabled):hover {
+  background: light-dark(
+    color-mix(in srgb, var(--foreground) 5.5%, transparent),
+    color-mix(in srgb, var(--foreground) 8%, transparent)
+  );
+}
+
+.nav-link:not(:disabled):not([aria-disabled=&quot;true&quot;]):hover {
+  background: color-mix(in srgb, var(--foreground) 10%, transparent);
+}
+
+.btn-primary {
+  border-color: var(--border);
+  color: var(--primary-foreground);
+  background: var(--foreground);
+  background-clip: border-box;
+}
+
+.btn-primary .text-muted {
+  color: color-mix(in srgb, var(--primary-foreground) 50%, transparent);
+}
+
+.btn-primary:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 80%, transparent);
+  background-clip: border-box;
+}
+
+.btn-ghost {
+  border-color: transparent;
+  color: var(--muted-foreground);
+  background: transparent;
+}
+
+.btn-ghost:not(:disabled):hover {
+  color: var(--muted-foreground);
+  background: light-dark(
+    color-mix(in srgb, var(--foreground) 5.5%, transparent),
+    color-mix(in srgb, var(--foreground) 8%, transparent)
+  );
+}
+
+.nav-pills .nav-link {
+  min-width: 0;
+  border-color: transparent;
+  color: var(--muted-foreground);
+  background: transparent;
+}
+
+.nav-justified .nav-link {
+  flex: 1 1 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.nav-pills .nav-link.active {
+  color: var(--foreground);
+  background: var(--muted);
+}
+
+/* Shared preview chrome; product styles stay inside each variant. */
+.viz-dotted-background {
+  background-image: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--foreground) 14%, transparent) 0.8px,
+    transparent 0.8px
+  );
+  background-position: center;
+  background-size: 16px 16px;
+}
+
+.viz-carousel {
+  position: relative;
+  min-width: 0;
+}
+
+.viz-carousel:has(&gt; .viz-carousel-controls) {
+  min-height: calc(60px + var(--viz-carousel-picker-height, 0px));
+  padding-bottom: 60px;
+}
+
+.viz-carousel &gt; [data-variant][hidden] {
+  display: none !important;
+}
+
+.viz-carousel &gt; [data-variant] {
+  isolation: isolate;
+}
+
+.viz-carousel-controls {
+  --viz-carousel-hover: light-dark(
+    color-mix(in srgb, var(--foreground) 5.4%, transparent),
+    color-mix(in srgb, var(--foreground) 7.8%, transparent)
+  );
+  position: absolute;
+  z-index: 2;
+  bottom: 8px;
+  left: 50%;
+  display: flex;
+  width: max-content;
+  /* Leave room for the host&#x27;s design-controls launcher at the trailing edge. */
+  max-width: calc(100% - 96px);
+  align-items: center;
+  gap: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  color: var(--foreground);
+  background: var(--background);
+  font-family: var(--font-sans);
+  /* Match the settings dropdown chrome independently of the content font size. */
+  font-size: 13px;
+  font-weight: var(--font-weight-normal);
+  line-height: 18px;
+  transform: translateX(-50%);
+  user-select: none;
+}
+
+/* Keep authored mockup button styles out of the shared carousel chrome. */
+.viz-carousel-controls button,
+.viz-carousel-picker &gt; summary {
+  display: flex !important;
+  height: auto !important;
+  min-height: 30px;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 4px;
+  padding: 0 6px !important;
+  -webkit-app-region: no-drag;
+  border: 0 !important;
+  border-radius: 14px !important;
+  color: inherit !important;
+  background: transparent !important;
+  font: inherit !important;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.viz-carousel-controls &gt; button,
+.viz-carousel-picker &gt; summary {
+  position: relative;
+  isolation: isolate;
+}
+
+.viz-carousel-controls &gt; button {
+  --icon-size: 16px;
+  width: 30px !important;
+  padding: 0 !important;
+}
+
+.viz-carousel-picker &gt; summary {
+  padding-inline: 12px !important;
+}
+
+.viz-carousel-controls .viz-carousel-caret {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  margin: 0;
+  color: inherit;
+  transform: rotate(180deg);
+}
+
+.viz-carousel-controls &gt; button &gt; svg,
+.viz-carousel-controls .viz-carousel-caret,
+.viz-carousel-count {
+  opacity: 0.5;
+}
+
+.viz-carousel-controls &gt; button::before,
+.viz-carousel-picker &gt; summary::before {
+  position: absolute;
+  z-index: -1;
+  inset: 3px;
+  border-radius: 12px;
+  content: &quot;&quot;;
+  pointer-events: none;
+}
+
+.viz-carousel-controls &gt; button:hover::before,
+.viz-carousel-picker &gt; summary:hover::before {
+  background: var(--viz-carousel-hover);
+}
+
+.viz-carousel-controls &gt; button,
+.viz-carousel-controls [data-lucide],
+.viz-carousel-controls .lucide {
+  flex-shrink: 0;
+}
+
+.viz-carousel-picker {
+  min-width: 0;
+}
+
+.viz-carousel-picker &gt; summary {
+  min-width: 0;
+  list-style: none;
+}
+
+.viz-carousel-picker &gt; summary::-webkit-details-marker {
+  display: none;
+}
+
+.viz-carousel-count {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.viz-carousel-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viz-carousel-options {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 4px);
+  left: 0;
+  display: flex;
+  max-height: 240px;
+  flex-direction: column;
+  gap: 2px;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--background);
+  box-shadow: 0 4px 12px light-dark(rgb(0 0 0 / 6%), rgb(0 0 0 / 25%));
+}
+
+.viz-carousel-options &gt; button {
+  border-radius: max(0px, calc(var(--radius-lg) - 5px)) !important;
+  width: 100% !important;
+  min-height: 28px;
+  justify-content: flex-start !important;
+  padding: 4px 8px !important;
+  font-size: var(--font-size-small) !important;
+  text-align: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.viz-carousel-options &gt; [aria-current=&quot;true&quot;],
+.viz-carousel-options &gt; button:hover {
+  background: var(--viz-carousel-hover) !important;
+}
+
+.btn:disabled,
+.nav-link:disabled,
+.nav-link[aria-disabled=&quot;true&quot;] {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+[data-lucide] {
+  stroke-width: 1.6;
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--foreground);
+}
+
+.form-control {
+  display: block;
+  width: 100%;
+  padding: 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  corner-shape: var(--corner-shape);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  height: calc(12px + 2 * var(--control-spacing, 12px));
+  min-height: calc(12px + 2 * var(--control-spacing, 12px));
+  padding-inline: calc(4px + var(--control-spacing, 12px) / 2);
+  border-color: var(--input);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--popover) 96%, transparent);
+  font-size: calc(var(--font-size-base) * 14 / 16);
+  font-size: round(nearest, calc(var(--font-size-base) * 14 / 16), 1px);
+  font-weight: var(--font-weight-normal);
+  line-height: 1.4285714286;
+}
+.form-control:is(
+  [type=&quot;file&quot;],
+  [type=&quot;date&quot;],
+  [type=&quot;datetime-local&quot;],
+  [type=&quot;month&quot;],
+  [type=&quot;week&quot;],
+  [type=&quot;color&quot;]
+) {
+  height: calc(12px + 2 * var(--control-spacing, 12px));
+  min-height: calc(12px + 2 * var(--control-spacing, 12px));
+  line-height: 18px;
+}
+.form-control:is(
+  [type=&quot;date&quot;],
+  [type=&quot;datetime-local&quot;],
+  [type=&quot;month&quot;],
+  [type=&quot;week&quot;]
+) {
+  padding-inline: var(--control-spacing, 12px);
+}
+
+.form-control::placeholder {
+  color: var(--muted-foreground);
+}
+
+.form-control[type=&quot;file&quot;] {
+  overflow: hidden;
+  cursor: var(--cursor-interaction, pointer);
+  padding: 0;
+}
+
+.form-control[type=&quot;file&quot;]::file-selector-button {
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid var(--input);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: inherit;
+  font: inherit;
+  min-height: calc(10px + 2 * var(--control-spacing, 12px));
+  padding-inline: var(--control-spacing, 12px);
+  margin-inline-end: var(--control-spacing, 12px);
+}
+
+.form-control[type=&quot;file&quot;]:not(:disabled):hover::file-selector-button {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-control-color[type=&quot;color&quot;] {
+  width: 40px;
+  height: calc(12px + 2 * var(--control-spacing, 12px));
+  padding: 3px;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch {
+  border: 0;
+  border-radius: calc(var(--radius-lg) - 4px);
+  corner-shape: var(--corner-shape);
+}
+
+textarea.form-control {
+  height: auto;
+  resize: vertical;
+  min-height: 96px;
+  padding: 8px 10px;
+}
+
+.form-control:focus-visible {
+  border-color: var(--ring);
+  box-shadow: none;
+}
+.form-control:disabled {
+  color: var(--muted-foreground);
+  background: color-mix(in srgb, var(--foreground) 5%, transparent);
+  opacity: 1;
+}
+.form-control[aria-invalid=&quot;true&quot;] {
+  border-color: var(--red);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 20%, transparent);
+}
+
+.form-control:disabled,
+.form-select:disabled {
+  cursor: not-allowed;
+}
+
+.form-select {
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: fit-content;
+  min-height: calc(12px + 2 * var(--control-spacing, 12px));
+  margin: 0;
+  /* The secondary icon role is 14px at compact density and 16px at web density. */
+  --icon-size: calc(10px + var(--control-spacing, 12px) / 2);
+  /* Settings dropdowns retain a 12px inset and a 4px text-to-chevron gap. */
+  padding: 0 calc(16px + var(--icon-size)) 0 12px;
+  outline: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  corner-shape: var(--corner-shape);
+  color: var(--foreground);
+  background-color: var(--secondary);
+  background-image:
+    linear-gradient(
+      45deg,
+      transparent calc(50% - 0.6px),
+      var(--muted-foreground) calc(50% - 0.6px) calc(50% + 0.6px),
+      transparent calc(50% + 0.6px)
+    ),
+    linear-gradient(
+      135deg,
+      transparent calc(50% - 0.6px),
+      var(--muted-foreground) calc(50% - 0.6px) calc(50% + 0.6px),
+      transparent calc(50% + 0.6px)
+    );
+  background-position:
+    calc(100% - 12px - var(--icon-size) / 2) 50%,
+    calc(100% - 12px - var(--icon-size) * 0.18) 50%;
+  background-repeat: no-repeat;
+  background-size: calc(var(--icon-size) * 0.32) calc(var(--icon-size) * 0.32);
+  cursor: var(--cursor-interaction, default);
+  font-size: calc(var(--font-size-base) * 14 / 16);
+  font-size: round(nearest, calc(var(--font-size-base) * 14 / 16), 1px);
+  font-weight: var(--font-weight-normal);
+  line-height: 18px;
+}
+
+.form-select option {
+  color: var(--popover-foreground);
+  background-color: var(--popover);
+}
+
+.form-select:not(:disabled):hover {
+  background-color: light-dark(
+    color-mix(in srgb, var(--foreground) 5.5%, transparent),
+    color-mix(in srgb, var(--foreground) 8%, transparent)
+  );
+}
+
+.form-select:focus-visible {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+.form-select:disabled {
+  opacity: 0.4;
+}
+
+.form-check {
+  display: flex;
+  min-height: calc(12px + 2 * var(--control-spacing, 12px));
+  align-items: center;
+  gap: 6px;
+}
+
+.form-check-input {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  margin: 0;
+  border: 1px solid var(--input);
+  color: var(--primary-foreground);
+  background-color: transparent;
+  cursor: var(--cursor-interaction, default);
+  transition:
+    background-color 150ms,
+    border-color 150ms,
+    box-shadow 150ms;
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;] {
+  corner-shape: round;
+  box-shadow: var(--shadow-sm);
+  position: relative;
+  width: calc(10px + var(--control-spacing, 12px) / 2);
+  height: calc(10px + var(--control-spacing, 12px) / 2);
+  border-color: var(--border-strong, var(--input));
+  border-radius: calc(var(--radius-sm) / 2);
+  background-color: transparent;
+  color: var(--foreground);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input:not(:disabled):not(:checked):hover {
+  background-color: var(--card);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input[type=&quot;checkbox&quot;]:is(:checked, :indeterminate) {
+  border-color: var(--border-strong, var(--input));
+  background-color: color-mix(in srgb, var(--popover) 96%, transparent);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input[type=&quot;checkbox&quot;]:checked::before {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--primary-foreground);
+  content: &quot;&quot;;
+  mask: var(--checkmark-image) center / 12px 12px no-repeat;
+  background-color: var(--foreground);
+}
+.form-check:not(.form-switch)
+  .form-check-input[type=&quot;checkbox&quot;]:indeterminate::before {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 65%;
+  height: 6.65%;
+  margin: auto;
+  border-radius: var(--radius-full);
+  background: var(--foreground);
+  mask: none;
+  content: &quot;&quot;;
+}
+
+.form-check-input[type=&quot;radio&quot;] {
+  border-radius: var(--radius-full);
+  width: 16px;
+  height: 16px;
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--input);
+}
+
+.form-check-input[type=&quot;radio&quot;]:checked {
+  border: 0;
+  background: radial-gradient(
+    circle,
+    var(--primary-foreground) 0 3px,
+    var(--foreground) 3px
+  );
+  box-shadow: none;
+}
+
+.form-check:not(.form-switch) .form-check-input:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;]:focus-visible {
+  border-color: var(--ring);
+  outline: none;
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled {
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+}
+.form-check:not(.form-switch) .form-check-input[type=&quot;radio&quot;]:disabled,
+.form-check:not(.form-switch)
+  .form-check-input[type=&quot;radio&quot;]:disabled
+  + .form-check-label {
+  opacity: 0.5;
+}
+
+.form-switch .form-check-input:disabled,
+.form-switch .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.form-check-label {
+  color: var(--foreground);
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-switch .form-check-input {
+  position: relative;
+  width: 32px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+  box-shadow: none;
+  transition: background-color 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border: 1px solid light-dark(var(--primary-foreground), var(--foreground));
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-sm);
+  content: &quot;&quot;;
+  transform: translate(2px, -50%);
+  transition: transform 200ms cubic-bezier(0, 0, 0.2, 1);
+  border-color: #fff;
+  background: #fff;
+}
+
+.form-switch .form-check-input:checked {
+  background: var(--blue);
+}
+
+.form-switch .form-check-input:checked::before {
+  transform: translate(14px, -50%);
+}
+
+.form-switch .form-check-input:focus-visible {
+  box-shadow: 0 0 0 2px var(--ring);
+  outline: none;
+}
+
+.form-range {
+  appearance: none;
+  display: block;
+  width: 100%;
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  accent-color: var(--primary);
+  height: calc(12px + 2 * var(--control-spacing, 12px));
+  min-height: calc(12px + 2 * var(--control-spacing, 12px));
+  outline: none;
+  border-radius: var(--radius-full);
+  color: var(--foreground);
+  background: transparent;
+}
+
+.form-range::-webkit-slider-runnable-track {
+  background: var(--form-range-track, var(--border));
+  height: 2px;
+  border-radius: var(--radius-full);
+}
+
+.form-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  margin-top: -9px;
+  border-color: transparent;
+  background: currentColor;
+  box-shadow: var(--shadow-sm);
+}
+
+/* Outline the native track and thumb, preserving the larger input hit area. */
+.form-range:focus-visible::-webkit-slider-runnable-track {
+  outline: 2px auto Highlight;
+  outline-color: -webkit-focus-ring-color;
+}
+
+.form-range::-moz-range-track {
+  background: var(--form-range-track, var(--border));
+  height: 2px;
+  border-radius: var(--radius-full);
+}
+
+.form-range::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  border-color: transparent;
+  background: currentColor;
+  box-shadow: var(--shadow-sm);
+}
+
+.form-range:focus-visible::-moz-range-thumb {
+  outline: 2px solid Highlight;
+  outline-offset: 2px;
+}
+
+.form-range:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.btn:not(.btn-primary, .viz-tile):is(
+  [aria-pressed=&quot;true&quot;],
+  [aria-selected=&quot;true&quot;],
+  .is-selected
+) {
+  border-color: transparent;
+  color: var(--primary-foreground);
+  background: var(--blue);
+}
+
+.btn.viz-tile:is([aria-pressed=&quot;true&quot;], [aria-selected=&quot;true&quot;], .is-selected) {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+.btn:focus-visible,
+.nav-link:focus-visible {
+  outline-offset: 2px;
+  outline: none;
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+.viz-carousel-controls :is(button, summary):focus-visible {
+  outline: 2px solid var(--ring) !important;
+  outline-offset: 2px !important;
+}
+
+/* Web recipes are the default, including on renderers without inline style queries. */
+@supports (border-radius: if(style(--corner-shape: round): 1px; else: 2px)) {
+  /* Match the host&#x27;s proportional text-sm scale at every text preference. */
+  .tooltip,
+  .viz-badge,
+  .btn,
+  .nav-link,
+  .form-control,
+  .form-select {
+    font-size: if(
+      style(--corner-shape: round): round(
+          nearest,
+          calc(var(--font-size-base) * 14 / 16),
+          1px
+        );
+        else: round(nearest, calc(var(--font-size-base) * 13 / 14), 1px)
+    );
+  }
+
+  .btn,
+  .nav-link,
+  .form-select {
+    border-radius: if(
+      style(--corner-shape: round): var(--radius-full); else: var(--radius-lg)
+    );
+  }
+
+  .form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;] {
+    border-radius: if(
+      style(--corner-shape: round): calc(var(--radius-sm) / 2);
+        else: calc(var(--radius-lg) * 0.4)
+    );
+  }
+
+  .tooltip {
+    font-weight: if(
+      style(--corner-shape: round): 600; else: var(--font-weight-normal)
+    );
+  }
+}
+
+@media (pointer: coarse) {
+  .viz-carousel:has(&gt; .viz-carousel-controls) {
+    min-height: calc(76px + var(--viz-carousel-picker-height, 0px));
+    padding-bottom: 76px;
+  }
+
+  .btn,
+  .nav-link,
+  .viz-carousel-controls button,
+  .viz-carousel-picker &gt; summary,
+  .form-control,
+  .form-select {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  /* Keep small-screen WebKit from zooming when a text field receives focus. */
+  .form-control,
+  .form-select {
+    font-size: max(16px, calc(var(--font-size-base) * 14 / 16));
+    font-size: max(
+      16px,
+      round(nearest, calc(var(--font-size-base) * 14 / 16), 1px)
+    );
+  }
+  .form-control:is(
+    [type=&quot;file&quot;],
+    [type=&quot;date&quot;],
+    [type=&quot;datetime-local&quot;],
+    [type=&quot;month&quot;],
+    [type=&quot;week&quot;],
+    [type=&quot;time&quot;],
+    [type=&quot;color&quot;]
+  ) {
+    height: 44px;
+    min-height: 44px;
+    font-size: max(16px, calc(var(--font-size-base) * 14 / 16));
+    font-size: max(
+      16px,
+      round(nearest, calc(var(--font-size-base) * 14 / 16), 1px)
+    );
+  }
+
+  .form-control[type=&quot;file&quot;]::file-selector-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .form-control-color[type=&quot;color&quot;] {
+    width: 44px;
+    height: 44px;
+  }
+
+  .form-control:is(
+    [type=&quot;date&quot;],
+    [type=&quot;datetime-local&quot;],
+    [type=&quot;month&quot;],
+    [type=&quot;time&quot;],
+    [type=&quot;week&quot;]
+  ) {
+    min-width: 0;
+    max-width: 100%;
+    padding-block: 8px;
+  }
+
+  .form-check {
+    min-height: 44px;
+    padding-inline: 15px;
+  }
+
+  .form-check-input {
+    position: relative;
+  }
+
+  .form-check-input::after {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 44px;
+    height: 44px;
+    content: &quot;&quot;;
+    transform: translate(-50%, -50%);
+  }
+
+  .form-check-label {
+    display: inline-flex;
+    min-width: 44px;
+    min-height: 44px;
+    align-items: center;
+  }
+
+  .form-range {
+    height: 44px;
+    touch-action: pan-y;
+  }
+}
+
+svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+#widget &gt; svg {
+  width: 100%;
+}
+
+/* Model-authored chart rules can otherwise stretch icons after these styles load. */
+svg.lucide {
+  display: block;
+  width: var(--icon-size) !important;
+  height: var(--icon-size) !important;
+  flex: none;
+  margin: 0 !important;
+  stroke-width: 1.6;
+}
+
+.text-warning,
+.text-destructive {
+  color: var(--destructive);
+}
+
+html&gt;body{padding:0}&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;script type=&quot;application/json&quot; id=&quot;codex-visualization-widget-state&quot;&gt;__CODEX_VISUALIZATION_WIDGET_STATE__&lt;/script&gt;
+&lt;script&gt;(() =&gt; {
+  const root = document.documentElement;
+  const mediaQuery = globalThis.matchMedia(&quot;(prefers-color-scheme: dark)&quot;);
+  const apply = Reflect.apply;
+  const isArray = Array.isArray;
+  const hasOwn = Object.hasOwn;
+  const parentWindow = globalThis.parent;
+  const stringify = JSON.stringify;
+  const parse = JSON.parse;
+  const encode = TextEncoder.prototype.encode.bind(new TextEncoder());
+  const initialStateElement = document.getElementById(
+    &quot;codex-visualization-widget-state&quot;,
+  );
+  const initialGlobals = parse(initialStateElement?.textContent ?? &quot;{}&quot;);
+  initialStateElement?.remove();
+  /** @type {Record&lt;string, unknown&gt; | null} */
+  let state = initialGlobals.widgetState ?? null;
+  const statePersistence = initialGlobals.statePersistence ?? &quot;none&quot;;
+  let nextStateRequestId = 0;
+  /** @type {Map&lt;number, { resolve: () =&gt; void; reject: (error: Error) =&gt; void; timeout: ReturnType&lt;typeof globalThis.setTimeout&gt;; serializedState: string }&gt;} */
+  const pendingStateWrites = new Map();
+  const persistenceError = () =&gt;
+    Object.assign(
+      new Error(&quot;The host could not persist the widget state update&quot;),
+      {
+        code: -32000,
+        data: { code: &quot;widget_state_persistence_failed&quot;, retryable: false },
+      },
+    );
+  /**
+   * @param {object} prototype
+   * @param {string} property
+   */
+  const getPrototypeGetter = (prototype, property) =&gt; {
+    // oxlint-disable-next-line typescript/unbound-method -- invoked through captured Reflect.apply
+    const getter = Object.getOwnPropertyDescriptor(prototype, property)?.get;
+    if (getter == null) {
+      throw new Error(`Missing ${property} getter`);
+    }
+    return getter;
+  };
+  const getMessageData = getPrototypeGetter(MessageEvent.prototype, &quot;data&quot;);
+  const getMessagePorts = getPrototypeGetter(MessageEvent.prototype, &quot;ports&quot;);
+  const getMessageSource = getPrototypeGetter(MessageEvent.prototype, &quot;source&quot;);
+  // oxlint-disable-next-line typescript/unbound-method -- captured before the untrusted fragment runs
+  const addHostMessageListener = MessagePort.prototype.addEventListener;
+  // oxlint-disable-next-line typescript/unbound-method -- captured before the untrusted fragment runs
+  const postHostMessage = MessagePort.prototype.postMessage;
+  // oxlint-disable-next-line typescript/unbound-method -- captured before the untrusted fragment runs
+  const startHostPort = MessagePort.prototype.start;
+  // oxlint-disable-next-line typescript/unbound-method -- captured before the untrusted fragment runs
+  const stopMessagePropagation = Event.prototype.stopImmediatePropagation;
+  /** @type {MessagePort | null} */
+  let hostPort = null;
+  const postToHost = (type, payload) =&gt; {
+    if (hostPort != null) {
+      apply(postHostMessage, hostPort, [{ type, ...payload }]);
+    }
+  };
+  const openExternal = ({ href }) =&gt; {
+    if (globalThis.navigator.userActivation?.isActive === true) {
+      postToHost(&quot;open-external&quot;, { href });
+    }
+  };
+  const sendFollowUpMessage = ({ context, prompt, title }) =&gt; {
+    if (globalThis.navigator.userActivation?.isActive === true) {
+      postToHost(&quot;follow-up&quot;, { context, prompt, title });
+    }
+    return Promise.resolve();
+  };
+  /**
+   * @param {Record&lt;string, unknown&gt; | ((previous: Record&lt;string, unknown&gt; | null) =&gt; Record&lt;string, unknown&gt;)} next
+   * @returns {Promise&lt;void&gt;}
+   */
+  const setWidgetState = async (next) =&gt; {
+    const nextState = typeof next === &quot;function&quot; ? next(state) : next;
+    if (
+      nextState == null ||
+      typeof nextState !== &quot;object&quot; ||
+      isArray(nextState)
+    ) {
+      throw new TypeError(&quot;Widget state must be a JSON object&quot;);
+    }
+    const inputState = stringify(
+      nextState,
+      (_key, /** @type {unknown} */ value) =&gt; {
+        if (
+          typeof value === &quot;undefined&quot; ||
+          typeof value === &quot;function&quot; ||
+          typeof value === &quot;symbol&quot; ||
+          (typeof value === &quot;number&quot; &amp;&amp; !Number.isFinite(value))
+        ) {
+          throw new TypeError(&quot;Widget state must be a JSON object&quot;);
+        }
+        return value;
+      },
+    );
+    const parsedState = parse(inputState);
+    if (
+      parsedState == null ||
+      typeof parsedState !== &quot;object&quot; ||
+      isArray(parsedState)
+    ) {
+      throw new TypeError(&quot;Widget state must be a JSON object&quot;);
+    }
+    const storedState = {
+      modelContent: null,
+      privateContent: null,
+      ...parsedState,
+    };
+    const serializedState = stringify(storedState);
+    if (encode(serializedState).length &gt; 16 * 1024) {
+      throw new TypeError(
+        &quot;Widget state must be a JSON object of at most 16 KiB&quot;,
+      );
+    }
+    if (
+      hasOwn(storedState, &quot;imageIds&quot;) &amp;&amp;
+      (!isArray(storedState.imageIds) ||
+        storedState.imageIds.some(
+          (/** @type {unknown} */ id) =&gt; typeof id !== &quot;string&quot;,
+        ))
+    ) {
+      throw new TypeError(&quot;Widget state imageIds must be an array of strings&quot;);
+    }
+    if (storedState.imageIds?.length &gt; 0) {
+      throw Object.assign(
+        new TypeError(&quot;Visualization state does not support image attachments&quot;),
+        { code: -32602, data: { code: &quot;images_unsupported&quot; } },
+      );
+    }
+    state = storedState;
+    globalThis.openai.widgetState = state;
+    globalThis.dispatchEvent(
+      new CustomEvent(&quot;openai:set_globals&quot;, {
+        detail: { globals: { widgetState: state } },
+      }),
+    );
+    if (statePersistence === &quot;none&quot;) {
+      throw persistenceError();
+    }
+    const id = ++nextStateRequestId;
+    return new Promise((resolve, reject) =&gt; {
+      const timeout = globalThis.setTimeout(() =&gt; {
+        pendingStateWrites.delete(id);
+        reject(persistenceError());
+      }, 30_000);
+      pendingStateWrites.set(id, { resolve, reject, timeout, serializedState });
+      postToHost(&quot;widget-state-write&quot;, { id, state: serializedState });
+    });
+  };
+  const syncTheme = () =&gt; {
+    const theme = mediaQuery.matches ? &quot;dark&quot; : &quot;light&quot;;
+    root.dataset.theme = theme;
+    globalThis.openai = {
+      ...globalThis.openai,
+      openExternal,
+      sendFollowUpMessage,
+      setWidgetState,
+      theme,
+      visualizationStyleVariables: {},
+      visualizationTheme: theme,
+      widgetState: state,
+      statePersistence,
+      stateModelContext: &quot;none&quot;,
+    };
+    globalThis.dispatchEvent(
+      new CustomEvent(&quot;openai:set_globals&quot;, {
+        detail: { globals: globalThis.openai },
+      }),
+    );
+  };
+  const sendHeight = () =&gt; {
+    postToHost(&quot;height&quot;, {
+      height: Math.ceil(
+        Math.max(
+          document.body.scrollHeight,
+          document.body.getBoundingClientRect().height,
+        ),
+      ),
+    });
+  };
+
+  globalThis.addEventListener(
+    &quot;message&quot;,
+    (event) =&gt; {
+      const data = apply(getMessageData, event, []);
+      const ports = apply(getMessagePorts, event, []);
+      const source = apply(getMessageSource, event, []);
+      if (
+        hostPort != null ||
+        source !== parentWindow ||
+        typeof data !== &quot;object&quot; ||
+        data?.type !== &quot;codex-visualization-initialize&quot; ||
+        !isArray(ports) ||
+        ports.length !== 1
+      ) {
+        return;
+      }
+      apply(stopMessagePropagation, event, []);
+      const nextHostPort = ports[0];
+      try {
+        apply(addHostMessageListener, nextHostPort, [
+          &quot;message&quot;,
+          (event) =&gt; {
+            const data = apply(getMessageData, event, []);
+            if (typeof data === &quot;object&quot; &amp;&amp; data?.type === &quot;measure&quot;) {
+              sendHeight();
+            } else if (
+              typeof data === &quot;object&quot; &amp;&amp;
+              data?.type === &quot;widget-state-result&quot;
+            ) {
+              /** @type {unknown} */
+              const id = data.id;
+              if (typeof id !== &quot;number&quot;) {
+                return;
+              }
+              const pending = pendingStateWrites.get(id);
+              if (pending != null) {
+                pendingStateWrites.delete(id);
+                globalThis.clearTimeout(pending.timeout);
+                if (data.ok === true) {
+                  pending.resolve();
+                } else {
+                  pending.reject(persistenceError());
+                }
+              }
+            }
+          },
+        ]);
+        apply(startHostPort, nextHostPort, []);
+      } catch {
+        return;
+      }
+      hostPort = nextHostPort;
+      for (const [id, { serializedState }] of pendingStateWrites) {
+        postToHost(&quot;widget-state-write&quot;, { id, state: serializedState });
+      }
+      sendHeight();
+    },
+    { capture: true },
+  );
+  document.currentScript?.remove();
+  mediaQuery.addEventListener(&quot;change&quot;, syncTheme);
+  globalThis.addEventListener(&quot;click&quot;, (event) =&gt; {
+    if (event.defaultPrevented) {
+      return;
+    }
+    let element = null;
+    if (event.target instanceof globalThis.Element) {
+      element = event.target;
+    } else if (event.target instanceof globalThis.Node) {
+      element = event.target.parentElement;
+    }
+    const link = element?.closest(&quot;a[href]&quot;);
+    const href = link?.getAttribute(&quot;href&quot;);
+    if (href == null) {
+      return;
+    }
+    if (href.startsWith(&quot;#&quot;)) {
+      let id;
+      try {
+        id = decodeURIComponent(href.slice(1));
+      } catch {
+        return;
+      }
+      const target = id.length === 0 ? root : document.getElementById(id);
+      if (
+        target == null ||
+        globalThis.navigator.userActivation?.isActive !== true
+      ) {
+        return;
+      }
+      event.preventDefault();
+      postToHost(&quot;scroll-to&quot;, {
+        top: target.getBoundingClientRect().top + globalThis.scrollY,
+      });
+      return;
+    }
+    event.preventDefault();
+    openExternal({ href });
+  });
+  new ResizeObserver(sendHeight).observe(document.body);
+  syncTheme();
+})();
+&lt;/script&gt;
+&lt;style&gt;
+#ryn-drop{--rd-bg:light-dark(#fcfdff,#1d2732);--rd-side:light-dark(#f5f8fc,#1b2530);--rd-panel:light-dark(#ffffff,#222e3a);--rd-soft:light-dark(#f2f6fc,#293847);--rd-text:light-dark(#17233b,#edf2f9);--rd-muted:light-dark(#657694,#a7bad2);--rd-line:light-dark(#e1e8f2,#344454);--rd-blue:light-dark(#4669aa,#a2bcec);--rd-bluefill:light-dark(#edf3ff,#293e59);--rd-solid:light-dark(#243f6a,#a2bcec);--rd-on:light-dark(#ffffff,#14243e);--rd-green:light-dark(#18816f,#60ccba);--rd-warn:light-dark(#9b641e,#f0bd72);--rd-shadow:0 18px 55px #0d203526;--rd-radius:14px;font:14px/1.5 &#x27;Segoe UI&#x27;,&#x27;Microsoft YaHei UI&#x27;,sans-serif;color:var(--rd-text);background:var(--rd-bg);border:1px solid var(--rd-line);border-radius:16px;position:relative;isolation:isolate;width:100%;min-width:0;container-type:inline-size}
+#ryn-drop *{box-sizing:border-box}#ryn-drop [hidden]{display:none!important}#ryn-drop button,#ryn-drop input,#ryn-drop textarea,#ryn-drop select{font:inherit;color:inherit}#ryn-drop button{cursor:inherit}#ryn-drop button:disabled{opacity:.45;cursor:not-allowed}#ryn-drop button:focus-visible,#ryn-drop input:focus-visible,#ryn-drop textarea:focus-visible,#ryn-drop select:focus-visible{outline:2px solid var(--rd-blue);outline-offset:3px}#ryn-drop h1,#ryn-drop h2,#ryn-drop h3,#ryn-drop p{margin:0}#ryn-drop h1{font-size:28px;font-weight:600;letter-spacing:-.8px}#ryn-drop h2{font-size:19px;font-weight:600;letter-spacing:-.3px}#ryn-drop h3{font-size:15px;font-weight:600}#ryn-drop svg{width:17px;height:17px;stroke-width:1.7;flex-shrink:0}#ryn-drop .rd-muted{color:var(--rd-muted)}#ryn-drop .rd-small{font-size:12px}#ryn-drop .rd-row{display:flex;gap:10px;align-items:center;min-width:0}#ryn-drop .rd-between{display:flex;align-items:center;justify-content:space-between;gap:12px}#ryn-drop .rd-grow{flex:1;min-width:0}#ryn-drop .rd-button{border:1px solid var(--rd-line);background:var(--rd-panel);padding:9px 13px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;gap:7px;white-space:nowrap;font-size:13px;font-weight:500}#ryn-drop .rd-button:hover{background:var(--rd-soft)}#ryn-drop .rd-primary{background:var(--rd-solid);color:var(--rd-on);border-color:var(--rd-solid)}#ryn-drop .rd-primary:hover{filter:brightness(1.12);background:var(--rd-solid)}#ryn-drop .rd-ghost{border:0;background:transparent;padding:8px;color:var(--rd-muted)}#ryn-drop .rd-ghost:hover{background:var(--rd-soft);color:var(--rd-text)}#ryn-drop .rd-icon-button{width:34px;height:34px;padding:0;flex-shrink:0}#ryn-drop .rd-link{color:var(--rd-blue);background:transparent;border:0;padding:2px 0;font-size:12px;display:inline-flex;gap:5px;align-items:center}#ryn-drop .rd-line{height:1px;background:var(--rd-line);margin:18px 0}#ryn-drop .rd-dot{display:inline-block;width:6px;height:6px;background:var(--rd-green);border-radius:50%;flex-shrink:0}#ryn-drop .rd-pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:3px 7px;border-radius:5px;background:var(--rd-soft);color:var(--rd-muted);white-space:nowrap}#ryn-drop .rd-pill svg{width:12px;height:12px}#ryn-drop .rd-good{color:var(--rd-green)}#ryn-drop .rd-num{font-variant-numeric:tabular-nums}
+#ryn-drop .rd-shell{display:grid;grid-template-columns:172px minmax(0,1fr);min-height:720px}#ryn-drop .rd-sidebar{background:var(--rd-side);border-right:1px solid var(--rd-line);padding:26px 15px 18px;border-radius:16px 0 0 16px;display:flex;flex-direction:column;gap:5px}#ryn-drop .rd-brand{font-size:29px;letter-spacing:-1.8px;font-weight:650;padding:0 13px 20px;display:flex;align-items:center;gap:10px}#ryn-drop .rd-brandmark{height:27px;width:27px;border-radius:9px;background:var(--rd-solid);display:grid;place-items:center;color:var(--rd-on);font-size:20px;letter-spacing:-2px;padding-right:2px}#ryn-drop .rd-space{padding:9px 11px;background:var(--rd-panel);border:1px solid var(--rd-line);border-radius:9px;margin-bottom:23px;font-size:12px;display:flex;align-items:center;gap:8px}#ryn-drop .rd-avatar{width:28px;height:28px;display:grid;place-items:center;background:var(--rd-bluefill);color:var(--rd-blue);border-radius:9px;font-size:11px;font-weight:600;flex-shrink:0}#ryn-drop .rd-nav{display:flex;align-items:center;gap:11px;padding:10px 13px;color:var(--rd-muted);font-size:13px;border-radius:9px}#ryn-drop .rd-nav.active{background:var(--rd-bluefill);color:var(--rd-blue);font-weight:600}#ryn-drop .rd-sidebar-label{font-size:10px;letter-spacing:1.2px;color:var(--rd-muted);padding:22px 13px 8px}#ryn-drop .rd-sidebar-end{margin-top:auto;padding:28px 9px 0}#ryn-drop .rd-local{font-size:11px;color:var(--rd-muted);border-top:1px solid var(--rd-line);padding-top:16px;margin-top:12px}#ryn-drop .rd-main{min-width:0;position:relative}#ryn-drop .rd-topbar{height:64px;border-bottom:1px solid var(--rd-line);padding:0 28px;display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12px;color:var(--rd-muted)}#ryn-drop .rd-topbar strong{color:var(--rd-text);font-weight:500}#ryn-drop .rd-topright{display:flex;align-items:center;gap:10px}#ryn-drop .rd-topright .rd-button{font-size:11px}#ryn-drop .rd-content{padding:27px 30px 24px}#ryn-drop .rd-pagehead{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:22px}#ryn-drop .rd-pagehead p{color:var(--rd-muted);font-size:12px;margin-top:5px}#ryn-drop .rd-tabs{display:flex;gap:26px;border-bottom:1px solid var(--rd-line);margin-bottom:23px}#ryn-drop .rd-tab{border:0;background:transparent;color:var(--rd-muted);padding:0 1px 13px;font-size:13px;position:relative;display:flex;align-items:center;gap:7px}#ryn-drop .rd-tab.active{color:var(--rd-blue);font-weight:600}#ryn-drop .rd-tab.active:after{content:&#x27;&#x27;;height:2px;background:var(--rd-blue);position:absolute;bottom:-1px;left:0;right:0}#ryn-drop .rd-count{font-size:10px;background:var(--rd-bluefill);padding:1px 5px;border-radius:4px;color:var(--rd-blue)}#ryn-drop .rd-filterbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:18px}#ryn-drop .rd-filter{border:0;background:transparent;color:var(--rd-muted);padding:7px 11px;border-radius:7px;font-size:12px}#ryn-drop .rd-filter.active{color:var(--rd-text);background:var(--rd-soft);font-weight:500}#ryn-drop .rd-filterbar .rd-visibility{margin-left:auto;color:var(--rd-muted);font-size:11px}
+#ryn-drop .rd-devicegrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}#ryn-drop .rd-device{position:relative;background:var(--rd-panel);border:1px solid var(--rd-line);border-radius:var(--rd-radius);padding:20px;min-width:0}#ryn-drop .rd-device.selected{border-color:light-dark(#aabfe0,#628eca);box-shadow:0 0 0 2px var(--rd-bluefill)}#ryn-drop .rd-device-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:22px}#ryn-drop .rd-device-title{font-size:15px;font-weight:600;display:flex;gap:7px;align-items:center;flex-wrap:wrap}#ryn-drop .rd-device-sub{color:var(--rd-muted);font-size:11px;margin-top:3px}#ryn-drop .rd-device-foot{display:flex;justify-content:space-between;align-items:center;gap:8px;border-top:1px solid var(--rd-line);margin-top:16px;padding-top:12px;font-size:11px;color:var(--rd-muted)}#ryn-drop .rd-art{height:40px;width:55px;position:relative;color:var(--rd-muted);flex-shrink:0}#ryn-drop .rd-art.laptop:before{content:&#x27;&#x27;;position:absolute;width:40px;height:27px;border:2px solid currentColor;border-radius:4px;left:6px;top:3px;background:var(--rd-soft);box-shadow:inset 0 0 0 3px var(--rd-panel)}#ryn-drop .rd-art.laptop:after{content:&#x27;&#x27;;position:absolute;width:53px;height:4px;bottom:5px;left:0;border:1px solid currentColor;border-radius:1px 1px 5px 5px;background:var(--rd-panel)}#ryn-drop .rd-art.server:before{content:&#x27;&#x27;;position:absolute;width:37px;height:39px;border:1.5px solid currentColor;border-radius:7px;left:6px;top:0;background:repeating-linear-gradient(0deg,transparent 0 9px,var(--rd-line) 10px 11px),var(--rd-soft)}#ryn-drop .rd-art.server:after{content:&#x27;&#x27;;position:absolute;width:4px;height:4px;background:var(--rd-green);border-radius:50%;right:17px;top:8px;box-shadow:0 11px 0 var(--rd-green),0 22px 0 var(--rd-green)}#ryn-drop .rd-art.phone:before{content:&#x27;&#x27;;position:absolute;width:24px;height:40px;border:1.5px solid currentColor;border-radius:7px;left:13px;top:0;background:var(--rd-soft);box-shadow:inset 0 0 0 3px var(--rd-panel)}#ryn-drop .rd-art.phone:after{content:&#x27;&#x27;;position:absolute;width:8px;height:2px;border-radius:2px;left:22px;top:5px;background:currentColor}#ryn-drop .rd-art.monitor:before{content:&#x27;&#x27;;position:absolute;width:45px;height:29px;border:1.5px solid currentColor;left:2px;top:0;border-radius:4px;background:var(--rd-soft);box-shadow:inset 0 0 0 3px var(--rd-panel)}#ryn-drop .rd-art.monitor:after{content:&#x27;&#x27;;position:absolute;width:19px;height:8px;border-bottom:2px solid currentColor;left:16px;top:30px;background:linear-gradient(90deg,transparent 8px,currentColor 8px,currentColor 10px,transparent 10px)}#ryn-drop .rd-menu{position:absolute;z-index:8;right:14px;top:57px;width:200px;padding:6px;background:var(--rd-panel);border:1px solid var(--rd-line);border-radius:11px;box-shadow:var(--rd-shadow)}#ryn-drop .rd-menu button{display:flex;align-items:center;gap:10px;width:100%;padding:10px 9px;border:0;background:transparent;border-radius:6px;font-size:12px;text-align:left}#ryn-drop .rd-menu button:hover{background:var(--rd-bluefill);color:var(--rd-blue)}#ryn-drop .rd-menu button:first-child{color:var(--rd-blue);background:var(--rd-bluefill)}#ryn-drop .rd-menu hr{border:0;border-top:1px solid var(--rd-line);margin:5px 3px}#ryn-drop .rd-help{font-size:11px;color:var(--rd-muted);display:flex;align-items:center;gap:7px;margin-top:16px}#ryn-drop .rd-sectiontitle{font-size:11px;letter-spacing:.3px;color:var(--rd-muted);margin:26px 0 12px}#ryn-drop .rd-transferstrip{background:var(--rd-panel);border:1px solid var(--rd-line);border-radius:12px;padding:15px 17px;display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:12px;align-items:center}#ryn-drop .rd-fileicon{width:37px;height:44px;border:1px solid var(--rd-line);border-radius:8px;background:var(--rd-soft);display:grid;place-items:center;color:var(--rd-blue);flex-shrink:0}#ryn-drop .rd-fileicon svg{width:20px;height:20px}#ryn-drop .rd-filename{font-size:13px;font-weight:500;overflow-wrap:anywhere}#ryn-drop .rd-progress{height:4px;background:var(--rd-soft);border-radius:5px;margin:12px 0 8px;overflow:hidden}#ryn-drop .rd-progress span{display:block;height:100%;background:var(--rd-blue);border-radius:5px}#ryn-drop .rd-transfermeta{font-size:11px;color:var(--rd-muted);display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}#ryn-drop .rd-empty{padding:55px 20px;text-align:center;color:var(--rd-muted)}#ryn-drop .rd-empty h3{color:var(--rd-text);margin:12px 0 5px}#ryn-drop .rd-offline{color:var(--rd-muted)}#ryn-drop .rd-offline .rd-dot{background:var(--rd-muted)}
+#ryn-drop .rd-conversation{display:grid;grid-template-columns:178px minmax(0,1fr);border:1px solid var(--rd-line);border-radius:var(--rd-radius);background:var(--rd-panel);min-height:460px}#ryn-drop .rd-threads{padding:12px 8px;border-right:1px solid var(--rd-line);background:var(--rd-side);border-radius:var(--rd-radius) 0 0 var(--rd-radius)}#ryn-drop .rd-thread{display:flex;align-items:center;gap:9px;border:0;background:transparent;padding:12px 8px;width:100%;text-align:left;border-radius:9px;margin-bottom:4px}#ryn-drop .rd-thread.active{background:var(--rd-bluefill)}#ryn-drop .rd-thread small{font-size:10px;color:var(--rd-muted);display:block;margin-top:2px}#ryn-drop .rd-thread strong{font-weight:500;font-size:12px}#ryn-drop .rd-chat{min-width:0;display:flex;flex-direction:column}#ryn-drop .rd-chathead{padding:15px 19px;border-bottom:1px solid var(--rd-line);display:flex;align-items:center;gap:10px}#ryn-drop .rd-chathead h3{font-size:14px}#ryn-drop .rd-chathead .rd-small{font-size:10px;margin-top:3px}#ryn-drop .rd-chatbody{padding:17px 20px;flex:1}#ryn-drop .rd-date{font-size:10px;text-align:center;color:var(--rd-muted);margin:0 0 19px}#ryn-drop .rd-message{margin:13px 0;max-width:90%;width:fit-content}#ryn-drop .rd-message.mine{margin-left:auto}#ryn-drop .rd-bubble{border:1px solid var(--rd-line);padding:10px 13px;border-radius:11px 11px 11px 3px;font-size:12px;background:var(--rd-panel);overflow-wrap:anywhere;white-space:pre-wrap}#ryn-drop .mine .rd-bubble{background:var(--rd-bluefill);border-color:transparent;border-radius:11px 11px 3px 11px}#ryn-drop .rd-msgmeta{margin-top:4px;font-size:10px;color:var(--rd-muted)}#ryn-drop .mine .rd-msgmeta{text-align:right}#ryn-drop .rd-filebubble{padding:15px;border:1px solid var(--rd-line);border-radius:12px;background:var(--rd-panel);max-width:360px;width:100%}#ryn-drop .rd-filebubble .rd-actions{display:flex;justify-content:space-between;align-items:center;margin-top:12px}#ryn-drop .rd-chatnote{display:flex;align-items:center;justify-content:center;gap:5px;color:var(--rd-muted);font-size:10px;margin:17px 0 0}#ryn-drop .rd-composer{margin:0 16px 14px;padding:11px 12px;border:1px solid var(--rd-line);border-radius:11px;background:var(--rd-bg)}#ryn-drop .rd-composer textarea{display:block;border:0;resize:vertical;min-height:45px;width:100%;background:transparent;font-size:12px;padding:2px;line-height:1.5}#ryn-drop .rd-composer-bottom{display:flex;justify-content:space-between;align-items:center;margin-top:5px;gap:6px}#ryn-drop .rd-composer-bottom .rd-button{padding:7px 10px;font-size:11px}#ryn-drop .rd-composer-tip{font-size:10px;color:var(--rd-muted)}#ryn-drop .rd-status{font-size:11px;color:var(--rd-muted);padding:9px 12px;background:var(--rd-soft);border-radius:8px;margin-bottom:12px}#ryn-drop .rd-transferlist{display:grid;gap:12px}#ryn-drop .rd-transferitem{padding:19px;border:1px solid var(--rd-line);border-radius:12px;background:var(--rd-panel)}#ryn-drop .rd-transferitem .rd-fileicon{width:40px;height:46px}#ryn-drop .rd-transferitem .rd-progress{margin-top:17px}#ryn-drop .rd-transferitem .rd-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:13px}#ryn-drop .rd-failed{color:var(--rd-warn)}
+#ryn-drop .rd-overlay{position:absolute;inset:0;z-index:20;display:flex;justify-content:flex-end;background:#12233b38;border-radius:0 16px 16px 0;align-items:stretch}#ryn-drop .rd-sheet{width:min(435px,100%);background:var(--rd-panel);border-left:1px solid var(--rd-line);padding:27px;box-shadow:var(--rd-shadow);border-radius:0 16px 16px 0;align-self:stretch;min-width:0}#ryn-drop .rd-sheet-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:7px}#ryn-drop .rd-sheet-sub{font-size:12px;color:var(--rd-muted);margin-bottom:25px!important}#ryn-drop .rd-recipient{padding:14px;background:var(--rd-soft);border-radius:11px;display:flex;align-items:center;gap:12px;margin-bottom:23px}#ryn-drop .rd-recipient .rd-art{transform:scale(.85);transform-origin:center}#ryn-drop .rd-recipient strong{font-weight:600;font-size:13px}#ryn-drop .rd-recipient p{font-size:11px;color:var(--rd-muted);margin-top:3px}#ryn-drop .rd-filelist{display:grid;gap:0}#ryn-drop .rd-fileline{padding:13px 0;border-bottom:1px solid var(--rd-line);display:flex;align-items:center;gap:11px;min-width:0}#ryn-drop .rd-fileline .rd-small{font-size:11px;margin-top:3px;color:var(--rd-muted)}#ryn-drop .rd-droparea{padding:20px 10px;text-align:center;border:1px dashed var(--rd-line);border-radius:10px;margin:15px 0;display:flex;justify-content:center;gap:8px;align-items:center;color:var(--rd-blue);font-size:12px;background:var(--rd-bg)}#ryn-drop .rd-droparea.dragging{background:var(--rd-bluefill);border-color:var(--rd-blue)}#ryn-drop .rd-field{display:block;font-size:11px;margin:19px 0 6px;color:var(--rd-muted)}#ryn-drop .rd-input{display:block;width:100%;border:1px solid var(--rd-line);border-radius:8px;background:var(--rd-bg);padding:10px;font-size:12px!important}#ryn-drop .rd-note{padding:12px;border:1px solid var(--rd-line);border-radius:9px;font-size:11px;color:var(--rd-muted);margin-top:18px;display:flex;gap:9px;align-items:flex-start}#ryn-drop .rd-note strong{display:block;color:var(--rd-text);font-weight:500;margin-bottom:3px}#ryn-drop .rd-sheet-footer{border-top:1px solid var(--rd-line);margin-top:26px;padding-top:18px;display:flex;align-items:center;justify-content:space-between;gap:10px}#ryn-drop .rd-modaloverlay{align-items:flex-start;justify-content:center;padding:65px 18px}#ryn-drop .rd-modal{background:var(--rd-panel);border:1px solid var(--rd-line);border-radius:18px;padding:26px;max-width:405px;width:100%;box-shadow:var(--rd-shadow)}#ryn-drop .rd-modal-mark{width:49px;height:49px;border:1px solid var(--rd-line);background:var(--rd-bluefill);border-radius:15px;display:grid;place-items:center;color:var(--rd-blue);margin-bottom:17px}#ryn-drop .rd-modal-mark svg{width:24px;height:24px}#ryn-drop .rd-modal p{font-size:12px;color:var(--rd-muted);margin-top:7px}#ryn-drop .rd-modal .rd-fileline{margin-top:10px}#ryn-drop .rd-modal-footer{display:flex;gap:10px;justify-content:flex-end;margin-top:22px}#ryn-drop .rd-check{display:flex;align-items:flex-start;gap:8px;font-size:11px;color:var(--rd-muted);margin-top:16px}#ryn-drop .rd-check input{accent-color:var(--rd-blue);margin-top:2px}#ryn-drop .rd-route-diagram{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--rd-soft);padding:22px 14px;border-radius:11px;margin:20px 0;font-size:12px;text-align:center}#ryn-drop .rd-route-line{height:1px;background:var(--rd-blue);flex:1;position:relative}#ryn-drop .rd-route-line:after{content:&#x27;&#x27;;position:absolute;right:0;top:-3px;width:7px;height:7px;border-right:1px solid var(--rd-blue);border-top:1px solid var(--rd-blue);transform:rotate(45deg)}#ryn-drop .rd-kv{display:grid;grid-template-columns:100px minmax(0,1fr);gap:13px;font-size:12px;margin:22px 0}#ryn-drop .rd-kv dt{color:var(--rd-muted)}#ryn-drop .rd-kv dd{margin:0;overflow-wrap:anywhere}#ryn-drop .rd-toast{margin:0 30px 16px;padding:11px 14px;background:var(--rd-bluefill);color:var(--rd-blue);border:1px solid var(--rd-line);border-radius:9px;font-size:12px;display:flex;align-items:center;gap:8px}#ryn-drop .rd-mobilebar{display:none}#ryn-drop .rd-prototype{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:9px 19px;border-top:1px solid var(--rd-line);font-size:10px;color:var(--rd-muted);background:var(--rd-side);border-radius:0 0 16px 16px}#ryn-drop .rd-back-mobile{display:none}
+@container(max-width:850px){#ryn-drop .rd-shell{grid-template-columns:140px minmax(0,1fr)}#ryn-drop .rd-sidebar{padding-left:10px;padding-right:10px}#ryn-drop .rd-content{padding:23px 22px}#ryn-drop .rd-topbar{padding:0 22px}#ryn-drop .rd-conversation{grid-template-columns:145px minmax(0,1fr)}#ryn-drop .rd-chatbody{padding:14px}#ryn-drop .rd-thread{gap:6px;padding:10px 5px}#ryn-drop .rd-device{padding:17px}#ryn-drop .rd-composer-tip{display:none}}
+@container(max-width:650px){#ryn-drop .rd-shell{grid-template-columns:minmax(0,1fr);min-height:650px}#ryn-drop .rd-sidebar{display:none}#ryn-drop .rd-topbar{height:55px;padding:0 18px}#ryn-drop .rd-content{padding:22px 18px}#ryn-drop .rd-pagehead h1{font-size:25px}#ryn-drop .rd-pagehead p{max-width:250px}#ryn-drop .rd-conversation{grid-template-columns:145px minmax(0,1fr)}#ryn-drop .rd-overlay{border-radius:16px}#ryn-drop .rd-sheet{border-radius:16px}#ryn-drop .rd-mobilebar{display:flex;justify-content:space-around;gap:8px;border-top:1px solid var(--rd-line);padding:13px;background:var(--rd-panel)}#ryn-drop .rd-mobilebar span{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--rd-muted)}#ryn-drop .rd-mobilebar .active{color:var(--rd-blue)}#ryn-drop .rd-filterbar .rd-visibility{display:none}#ryn-drop .rd-toast{margin:0 18px 16px}}
+@container(max-width:460px){#ryn-drop .rd-devicegrid{grid-template-columns:minmax(0,1fr);gap:10px}#ryn-drop .rd-device{padding:15px}#ryn-drop .rd-device-top{margin-bottom:12px}#ryn-drop .rd-device-foot{margin-top:12px;padding-top:10px}#ryn-drop .rd-pagehead{align-items:flex-start}#ryn-drop .rd-pagehead .rd-button{padding:8px;font-size:11px}#ryn-drop .rd-pagehead .rd-button svg{display:none}#ryn-drop .rd-pagehead p{max-width:205px}#ryn-drop .rd-tabs{gap:25px}#ryn-drop .rd-content{padding:19px 15px}#ryn-drop .rd-filter{padding:6px 9px;font-size:11px}#ryn-drop .rd-conversation{display:block}#ryn-drop .rd-threads{display:flex;border-right:0;border-bottom:1px solid var(--rd-line);border-radius:12px 12px 0 0;padding:5px;gap:3px}#ryn-drop .rd-thread{padding:8px 5px;justify-content:center;margin:0}#ryn-drop .rd-thread .rd-avatar,#ryn-drop .rd-thread small{display:none}#ryn-drop .rd-thread strong{font-size:10px}#ryn-drop .rd-chathead{padding:12px}#ryn-drop .rd-chathead .rd-pill{display:none}#ryn-drop .rd-chatbody{padding:13px 10px}#ryn-drop .rd-message{max-width:96%}#ryn-drop .rd-composer{margin:0 9px 10px;padding:9px}#ryn-drop .rd-composer textarea{font-size:16px}#ryn-drop .rd-transferstrip{padding:13px;grid-template-columns:minmax(0,1fr) auto;gap:9px}#ryn-drop .rd-transferstrip&gt;.rd-fileicon{display:none}#ryn-drop .rd-sheet{padding:20px 17px}#ryn-drop .rd-sheet h2{font-size:18px}#ryn-drop .rd-transferitem{padding:14px}#ryn-drop .rd-transferitem .rd-between{flex-wrap:wrap}#ryn-drop .rd-topright&gt;.rd-avatar{display:none}#ryn-drop .rd-modaloverlay{padding:35px 12px}#ryn-drop .rd-modal{padding:21px}#ryn-drop .rd-prototype{font-size:10px}#ryn-drop .rd-filterbar{gap:3px}#ryn-drop .rd-note{font-size:11px}}
+@media(pointer:coarse){#ryn-drop button{min-height:44px}#ryn-drop .rd-icon-button{min-width:44px}#ryn-drop input,#ryn-drop textarea,#ryn-drop select{font-size:16px!important}}
+#ryn-drop h1,#ryn-drop h2,#ryn-drop h3,#ryn-drop p{font-family:inherit}
+#ryn-drop .rd-message.mine .rd-filebubble{margin-left:auto}
+#ryn-drop .rd-bubble{font-size:13px}
+#ryn-drop .rd-msgmeta,#ryn-drop .rd-chatnote{font-size:11px}
+#ryn-drop .rd-device-sub{font-size:12px}
+/* Revision: open surfaces and a device connection map. */
+#ryn-drop{border:0;border-radius:0}
+#ryn-drop .rd-sidebar,#ryn-drop .rd-prototype{border-radius:0}
+#ryn-drop .rd-space{background:transparent;border:0;padding-left:8px}
+#ryn-drop .rd-conversation{border:0;border-radius:0;background:transparent;grid-template-columns:174px minmax(0,1fr);min-height:480px}
+#ryn-drop .rd-threads{background:transparent;border-radius:0;padding:0 13px 0 0}
+#ryn-drop .rd-thread{border-radius:5px}
+#ryn-drop .rd-chathead{padding-top:0;padding-bottom:18px}
+#ryn-drop .rd-chatbody{padding:22px 24px}
+#ryn-drop .rd-bubble{border:0;background:var(--rd-soft);border-radius:8px}
+#ryn-drop .rd-message.mine .rd-bubble{border-radius:8px}
+#ryn-drop .rd-filebubble{border:0;border-radius:6px;background:var(--rd-soft);padding:17px 19px}
+#ryn-drop .rd-fileicon{border:0;border-radius:0;background:transparent}
+#ryn-drop .rd-filebubble .rd-progress{background:var(--rd-line)}
+#ryn-drop .rd-filebubble .rd-button{background:transparent;border:0;padding:4px 0}
+#ryn-drop .rd-composer{border:0;border-top:1px solid var(--rd-line);border-radius:0;background:transparent;margin:0 0 0 20px;padding:15px 4px 2px}
+#ryn-drop .rd-transferstrip{border:0;border-radius:0;background:transparent;padding:15px 0}
+#ryn-drop .rd-transferlist{gap:0}
+#ryn-drop .rd-transferitem{border:0;border-bottom:1px solid var(--rd-line);border-radius:0;background:transparent;padding:22px 0}
+#ryn-drop .rd-filterbar{margin-bottom:9px}
+#ryn-drop .rd-network-top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:22px 0 8px;font-size:11px;color:var(--rd-muted)}
+#ryn-drop .rd-legend{display:flex;flex-wrap:wrap;align-items:center;gap:16px;font-size:11px;color:var(--rd-muted)}
+#ryn-drop .rd-legend span{display:inline-flex;align-items:center;gap:6px}
+#ryn-drop .rd-legend i{width:21px;height:0;border-top:1.5px solid var(--rd-blue);display:inline-block}
+#ryn-drop .rd-legend .lan{border-color:var(--rd-green)}
+#ryn-drop .rd-legend .relay{border-top-style:dashed}
+#ryn-drop .rd-map{height:350px;position:relative;min-width:0;margin-top:10px}
+#ryn-drop .rd-map-wires{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;z-index:0}
+#ryn-drop .rd-map-wires path{fill:none;stroke:var(--rd-blue);stroke-width:1.5}
+#ryn-drop .rd-map-wires path.lan{stroke:var(--rd-green)}
+#ryn-drop .rd-map-wires path.relay{stroke-dasharray:5 5}
+#ryn-drop .rd-map-wires path.selected{stroke-width:2}
+#ryn-drop .rd-map-node{position:absolute;width:150px;z-index:1;transform:translateX(-50%);text-align:center}
+#ryn-drop .rd-map-node.origin{left:12%;top:127px}
+#ryn-drop .rd-map-node.local{left:48%;top:12px}
+#ryn-drop .rd-map-node.hub{left:48%;top:224px}
+#ryn-drop .rd-map-node.remote-one{left:84%;top:66px}
+#ryn-drop .rd-map-node.remote-two{left:84%;top:239px}
+#ryn-drop .rd-map-node.solo{left:80%;top:127px}
+#ryn-drop .rd-node-select{border:0;background:transparent;display:flex;flex-direction:column;align-items:center;gap:5px;width:100%;padding:0;color:var(--rd-text)}
+#ryn-drop .rd-node-visual{height:58px;width:74px;display:grid;place-items:center;background:var(--rd-bg);position:relative;border-radius:50%}
+#ryn-drop .rd-node-visual .rd-art{transform:scale(1.08)}
+#ryn-drop .rd-map-node.selected .rd-node-visual{background:var(--rd-bluefill)}
+#ryn-drop .rd-map-node.selected .rd-node-name{color:var(--rd-blue)}
+#ryn-drop .rd-node-select:hover .rd-node-visual{background:var(--rd-soft)}
+#ryn-drop .rd-node-name{font-size:13px;font-weight:500;background:var(--rd-bg);padding:0 3px}
+#ryn-drop .rd-node-detail{font-size:11px;color:var(--rd-muted);background:var(--rd-bg);padding:0 3px}
+#ryn-drop .rd-node-detail .rd-dot{margin-right:4px}
+#ryn-drop .rd-node-menu{position:absolute;right:0;top:14px;width:26px;height:26px;min-width:26px;opacity:.7}
+#ryn-drop .rd-map-node .rd-menu{top:48px;right:3px;text-align:left}
+#ryn-drop .rd-map-node:has(.rd-menu){z-index:8}
+#ryn-drop .rd-node-hub{width:38px;height:38px;border:1px solid var(--rd-line);border-radius:50%;display:grid;place-items:center;background:var(--rd-bg);color:var(--rd-muted)}
+#ryn-drop .rd-map-node.hub .rd-node-visual{height:44px}
+#ryn-drop .rd-map-node.origin .rd-node-visual{background:var(--rd-bluefill);border-radius:50%}
+#ryn-drop .rd-map-node.origin .rd-node-name{font-weight:600}
+#ryn-drop .rd-selected-device{display:flex;align-items:center;gap:14px;padding:20px 0;border-top:1px solid var(--rd-line);border-bottom:1px solid var(--rd-line);margin-top:5px;flex-wrap:wrap}
+#ryn-drop .rd-selected-device strong{font-size:14px;font-weight:500}
+#ryn-drop .rd-selected-device p{font-size:11px;color:var(--rd-muted);margin-top:4px}
+#ryn-drop .rd-selected-device .rd-selection-actions{display:flex;gap:13px;align-items:center}
+#ryn-drop .rd-selected-device .rd-link{font-size:12px}
+#ryn-drop .rd-offline-row{display:flex;align-items:center;gap:12px;margin-top:16px;color:var(--rd-muted);font-size:11px}
+#ryn-drop .rd-offline-row .rd-offline-device{border:0;background:transparent;display:flex;align-items:center;gap:7px;font-size:12px;color:var(--rd-muted);padding:4px 0}
+#ryn-drop .rd-offline-menu-wrap{position:relative}
+#ryn-drop .rd-offline-menu-wrap .rd-menu{top:30px;right:0}
+#ryn-drop .rd-map-empty{padding:75px 10px;text-align:center;font-size:12px;color:var(--rd-muted)}
+#ryn-drop .rd-sectiontitle{margin-top:20px;margin-bottom:0}
+@container(max-width:850px){#ryn-drop .rd-map-node{width:125px}#ryn-drop .rd-map-node.origin{left:11%}#ryn-drop .rd-map-node.remote-one,#ryn-drop .rd-map-node.remote-two{left:86%}#ryn-drop .rd-node-menu{right:-2px}#ryn-drop .rd-node-name{font-size:12px}#ryn-drop .rd-legend{gap:10px}#ryn-drop .rd-conversation{grid-template-columns:145px minmax(0,1fr)}}
+@container(max-width:650px){#ryn-drop .rd-map-node{width:130px}#ryn-drop .rd-map-node.origin{left:13%}#ryn-drop .rd-map-node.remote-one,#ryn-drop .rd-map-node.remote-two{left:83%}#ryn-drop .rd-conversation{grid-template-columns:135px minmax(0,1fr)}#ryn-drop .rd-chatbody{padding:18px 14px}}
+@container(max-width:460px){#ryn-drop .rd-map{height:490px}#ryn-drop .rd-network-top{align-items:flex-start;flex-direction:column;margin-top:19px}#ryn-drop .rd-map-node{width:120px}#ryn-drop .rd-map-node.origin{left:24%;top:15px}#ryn-drop .rd-map-node.local{left:77%;top:15px}#ryn-drop .rd-map-node.hub{left:24%;top:224px}#ryn-drop .rd-map-node.remote-one{left:77%;top:193px}#ryn-drop .rd-map-node.remote-two{left:77%;top:363px}#ryn-drop .rd-map-node.solo{left:76%;top:225px}#ryn-drop .rd-node-menu{right:1px;top:-10px}#ryn-drop .rd-map-node .rd-menu{top:32px;right:0}#ryn-drop .rd-node-detail{font-size:10px}#ryn-drop .rd-selected-device{gap:10px;padding:15px 0}#ryn-drop .rd-selected-device&gt;.rd-art{display:none}#ryn-drop .rd-selected-device .rd-selection-actions{width:100%;padding-top:5px}#ryn-drop .rd-selected-device .rd-selection-actions .rd-button{flex:1}#ryn-drop .rd-selected-device .rd-selection-actions .rd-link{flex:1;justify-content:center}#ryn-drop .rd-offline-row{flex-wrap:wrap;gap:6px}#ryn-drop .rd-offline-row .rd-offline-menu-wrap{margin-left:auto}#ryn-drop .rd-conversation{display:block}#ryn-drop .rd-threads{padding:0 0 13px;border-right:0;margin-bottom:15px}#ryn-drop .rd-chathead{padding:0 0 14px}#ryn-drop .rd-chatbody{padding:15px 0}#ryn-drop .rd-composer{margin:0;padding:14px 0 0}#ryn-drop .rd-message{max-width:100%}#ryn-drop .rd-filebubble{padding:14px}#ryn-drop .rd-mobilebar{background:transparent}}
+#ryn-drop .rd-menu.rd-context-menu{position:absolute;z-index:19;right:auto;width:210px;text-align:left}
+#ryn-drop .rd-context-title{font-size:11px;color:var(--rd-muted);padding:7px 9px 9px;border-bottom:1px solid var(--rd-line);margin-bottom:5px}
+&lt;/style&gt;
+&lt;div id=&quot;ryn-drop&quot; aria-label=&quot;Ryn 设备互传交互设计&quot;&gt;
+  &lt;div class=&quot;rd-shell&quot;&gt;
+    &lt;aside class=&quot;rd-sidebar&quot; aria-label=&quot;应用导航示意&quot;&gt;
+      &lt;div class=&quot;rd-brand&quot;&gt;&lt;span class=&quot;rd-brandmark&quot;&gt;r&lt;/span&gt;ryn&lt;/div&gt;
+      &lt;div class=&quot;rd-space&quot;&gt;&lt;span class=&quot;rd-avatar&quot;&gt;LZ&lt;/span&gt;&lt;span&gt;Lay 的空间&lt;/span&gt;&lt;/div&gt;
+      &lt;div class=&quot;rd-nav&quot;&gt;&lt;i data-lucide=&quot;house&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;首页&lt;/div&gt;
+      &lt;div class=&quot;rd-nav&quot;&gt;&lt;i data-lucide=&quot;box&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;服务&lt;/div&gt;
+      &lt;div class=&quot;rd-nav&quot;&gt;&lt;i data-lucide=&quot;sparkles&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;Ryn Agent&lt;/div&gt;
+      &lt;div class=&quot;rd-nav active&quot;&gt;&lt;i data-lucide=&quot;network&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;设备&lt;/div&gt;
+      &lt;div class=&quot;rd-nav&quot;&gt;&lt;i data-lucide=&quot;square-check&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;任务&lt;/div&gt;
+      &lt;div class=&quot;rd-nav&quot;&gt;&lt;i data-lucide=&quot;hard-drive&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;云盘&lt;/div&gt;
+      &lt;div class=&quot;rd-sidebar-label&quot;&gt;你的空间&lt;/div&gt;
+      &lt;div class=&quot;rd-nav&quot;&gt;&lt;i data-lucide=&quot;compass&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;发现&lt;/div&gt;
+      &lt;div class=&quot;rd-nav&quot;&gt;&lt;i data-lucide=&quot;users&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;好友&lt;/div&gt;
+      &lt;div class=&quot;rd-sidebar-end&quot;&gt;&lt;div class=&quot;rd-row rd-small rd-muted&quot;&gt;&lt;i data-lucide=&quot;settings-2&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;设置&lt;/div&gt;&lt;div class=&quot;rd-local&quot;&gt;&lt;span class=&quot;rd-dot&quot;&gt;&lt;/span&gt; 工作电脑 · 本机&lt;br&gt;&lt;span style=&quot;display:block;margin-top:4px&quot;&gt;Windows · Ryn 已连接&lt;/span&gt;&lt;/div&gt;&lt;/div&gt;
+    &lt;/aside&gt;
+    &lt;main class=&quot;rd-main&quot;&gt;
+      &lt;header class=&quot;rd-topbar&quot;&gt;&lt;div class=&quot;rd-row&quot;&gt;&lt;span&gt;我的空间&lt;/span&gt;&lt;span&gt;/&lt;/span&gt;&lt;strong&gt;设备&lt;/strong&gt;&lt;/div&gt;&lt;div class=&quot;rd-topright&quot;&gt;&lt;button class=&quot;rd-button rd-ghost cursor-interaction&quot; data-action=&quot;incoming&quot;&gt;&lt;i data-lucide=&quot;inbox&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;接收请求 &lt;span class=&quot;rd-count&quot; id=&quot;rd-request-count&quot;&gt;1&lt;/span&gt;&lt;/button&gt;&lt;span class=&quot;rd-avatar&quot;&gt;LZ&lt;/span&gt;&lt;/div&gt;&lt;/header&gt;
+      &lt;div class=&quot;rd-content&quot;&gt;
+        &lt;div class=&quot;rd-pagehead&quot;&gt;&lt;div&gt;&lt;h1&gt;设备&lt;/h1&gt;&lt;p&gt;无论在身边，还是在远方。&lt;/p&gt;&lt;/div&gt;&lt;button class=&quot;rd-button cursor-interaction&quot; data-action=&quot;pair&quot;&gt;&lt;i data-lucide=&quot;plus&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;添加设备&lt;/button&gt;&lt;/div&gt;
+        &lt;div class=&quot;rd-tabs&quot; aria-label=&quot;设备工作区&quot;&gt;
+          &lt;button class=&quot;rd-tab active cursor-interaction&quot; data-tab=&quot;devices&quot; aria-pressed=&quot;true&quot;&gt;设备网络&lt;/button&gt;
+          &lt;button class=&quot;rd-tab cursor-interaction&quot; data-tab=&quot;chat&quot; aria-pressed=&quot;false&quot;&gt;会话 &lt;span class=&quot;rd-count&quot;&gt;2&lt;/span&gt;&lt;/button&gt;
+          &lt;button class=&quot;rd-tab cursor-interaction&quot; data-tab=&quot;transfers&quot; aria-pressed=&quot;false&quot;&gt;传输 &lt;span class=&quot;rd-count&quot; id=&quot;rd-active-count&quot;&gt;1&lt;/span&gt;&lt;/button&gt;
+        &lt;/div&gt;
+        &lt;section id=&quot;rd-view&quot; aria-label=&quot;设备内容&quot;&gt;&lt;/section&gt;
+      &lt;/div&gt;
+      &lt;div id=&quot;rd-toast&quot; class=&quot;rd-toast&quot; role=&quot;status&quot; aria-live=&quot;polite&quot; hidden&gt;&lt;/div&gt;
+      &lt;div class=&quot;rd-mobilebar&quot; aria-label=&quot;移动端应用导航示意&quot;&gt;&lt;span&gt;&lt;i data-lucide=&quot;house&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;首页&lt;/span&gt;&lt;span class=&quot;active&quot;&gt;&lt;i data-lucide=&quot;network&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;设备&lt;/span&gt;&lt;span&gt;&lt;i data-lucide=&quot;box&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;服务&lt;/span&gt;&lt;span&gt;&lt;i data-lucide=&quot;user-round&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;我的&lt;/span&gt;&lt;/div&gt;
+      &lt;div id=&quot;rd-overlay&quot; class=&quot;rd-overlay&quot; hidden&gt;&lt;/div&gt;
+    &lt;/main&gt;
+  &lt;/div&gt;
+  &lt;footer class=&quot;rd-prototype&quot;&gt;&lt;span&gt;RYN / 设备互传 · 交互设计稿&lt;/span&gt;&lt;span&gt;示例数据 · 不会实际发送文件或消息&lt;/span&gt;&lt;/footer&gt;
+&lt;/div&gt;
+&lt;script&gt;
+(()=&gt;{
+const root=document.getElementById(&#x27;ryn-drop&#x27;),view=root.querySelector(&#x27;#rd-view&#x27;),overlay=root.querySelector(&#x27;#rd-overlay&#x27;);
+const icon=(name)=&gt;`&lt;i data-lucide=&quot;${name}&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;`;
+const esc=(s)=&gt;String(s).replace(/[&amp;&lt;&gt;&quot;&#x27;]/g,c=&gt;({&#x27;&amp;&#x27;:&#x27;&amp;amp;&#x27;,&#x27;&lt;&#x27;:&#x27;&amp;lt;&#x27;,&#x27;&gt;&#x27;:&#x27;&amp;gt;&#x27;,&#x27;&quot;&#x27;:&#x27;&amp;quot;&#x27;,&quot;&#x27;&quot;:&#x27;&amp;#39;&#x27;}[c]));
+const devices=[{id:&#x27;nas&#x27;,name:&#x27;家里的 NAS&#x27;,os:&#x27;Linux&#x27;,kind:&#x27;server&#x27;,group:&#x27;mine&#x27;,route:&#x27;公网直连&#x27;,routeIcon:&#x27;globe&#x27;,meta:&#x27;38 ms&#x27;,online:true},{id:&#x27;mac&#x27;,name:&#x27;MacBook Pro&#x27;,os:&#x27;macOS&#x27;,kind:&#x27;laptop&#x27;,group:&#x27;mine&#x27;,route:&#x27;局域网直连&#x27;,routeIcon:&#x27;wifi&#x27;,meta:&#x27;2 ms&#x27;,online:true},{id:&#x27;studio&#x27;,name:&#x27;工作室电脑&#x27;,os:&#x27;Windows&#x27;,kind:&#x27;monitor&#x27;,group:&#x27;mine&#x27;,route:&#x27;离线&#x27;,routeIcon:&#x27;moon&#x27;,meta:&#x27;上次在线 2 小时前&#x27;,online:false},{id:&#x27;phone&#x27;,name:&#x27;我的 iPhone&#x27;,os:&#x27;iOS · 移动端规划&#x27;,kind:&#x27;phone&#x27;,group:&#x27;mine&#x27;,route:&#x27;公网直连&#x27;,routeIcon:&#x27;globe&#x27;,meta:&#x27;56 ms&#x27;,online:true},{id:&#x27;lin&#x27;,name:&#x27;小林的 MacBook&#x27;,os:&#x27;macOS · 好友设备&#x27;,kind:&#x27;laptop&#x27;,group:&#x27;friend&#x27;,route:&#x27;中继连接&#x27;,routeIcon:&#x27;waypoints&#x27;,meta:&#x27;84 ms&#x27;,online:true},{id:&#x27;near&#x27;,name:&#x27;附近的 MacBook&#x27;,os:&#x27;macOS · 未配对&#x27;,kind:&#x27;laptop&#x27;,group:&#x27;nearby&#x27;,route:&#x27;局域网&#x27;,routeIcon:&#x27;wifi&#x27;,meta:&#x27;尚未验证身份&#x27;,online:true}];
+const state={tab:&#x27;devices&#x27;,group:&#x27;mine&#x27;,device:&#x27;nas&#x27;,menu:&#x27;nas&#x27;,paused:false,filter:&#x27;all&#x27;,messages:{},added:[],selectedFiles:[{name:&#x27;旅行素材_2026.zip&#x27;,size:&#x27;100 GB&#x27;,bytes:100000000000,type:&#x27;archive&#x27;},{name:&#x27;拍摄清单.pdf&#x27;,size:&#x27;2.4 MB&#x27;,bytes:2400000,type:&#x27;file-text&#x27;}],received:false,modal:null,notice:&#x27;&#x27;,resumeFailed:false};
+const initial=window.openai?.widgetState?.privateContent;if(initial&amp;&amp;[&#x27;devices&#x27;,&#x27;chat&#x27;,&#x27;transfers&#x27;].includes(initial.tab)){state.tab=initial.tab;state.menu=null;}
+let restoreFocus=null;
+state.menu=null;
+function icons(){if(globalThis.lucide)lucide.createIcons({attrs:{width:17,height:17}});root.querySelectorAll(&#x27;button&#x27;).forEach(b=&gt;b.classList.add(&#x27;cursor-interaction&#x27;));}
+function save(){window.openai?.setWidgetState?.({modelContent:{screen:state.tab,selectedDevice:dev().name},privateContent:{tab:state.tab}})?.catch(()=&gt;{});}
+function dev(id=state.device){return devices.find(d=&gt;d.id===id)||devices[0];}
+function art(d){return `&lt;div class=&quot;rd-art ${d.kind}&quot; aria-hidden=&quot;true&quot;&gt;&lt;/div&gt;`;}
+function route(d){return `&lt;span class=&quot;rd-pill ${d.online?&#x27;&#x27;:&#x27;rd-offline&#x27;}&quot;&gt;${icon(d.routeIcon)}${d.route}&lt;/span&gt;`;}
+function toast(text){const t=root.querySelector(&#x27;#rd-toast&#x27;);t.textContent=text;t.hidden=false;}
+function go(tab){state.tab=tab;state.menu=null;close();render();save();}
+function progress(p=64.8){return `&lt;div class=&quot;rd-progress&quot; role=&quot;progressbar&quot; aria-label=&quot;旅行素材传输进度&quot; aria-valuemin=&quot;0&quot; aria-valuemax=&quot;100&quot; aria-valuenow=&quot;${p}&quot;&gt;&lt;span style=&quot;width:${p}%&quot;&gt;&lt;/span&gt;&lt;/div&gt;`;}
+function transferCard(compact=false){return `&lt;div class=&quot;${compact?&#x27;rd-transferstrip&#x27;:&#x27;rd-filebubble&#x27;}&quot;&gt;${compact?`&lt;div class=&quot;rd-fileicon&quot;&gt;${icon(&#x27;archive&#x27;)}&lt;/div&gt;`:&#x27;&#x27;}&lt;div class=&quot;rd-grow&quot;&gt;${compact?&#x27;&#x27;:`&lt;div class=&quot;rd-row&quot; style=&quot;margin-bottom:12px&quot;&gt;&lt;div class=&quot;rd-fileicon&quot;&gt;${icon(&#x27;archive&#x27;)}&lt;/div&gt;&lt;div&gt;&lt;div class=&quot;rd-filename&quot;&gt;旅行素材_2026.zip&lt;/div&gt;&lt;div class=&quot;rd-small rd-muted&quot;&gt;100 GB · 发往家里的 NAS&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;`}${compact?&#x27;&lt;div class=&quot;rd-between&quot;&gt;&lt;span class=&quot;rd-filename&quot;&gt;旅行素材_2026.zip&lt;/span&gt;&lt;span class=&quot;rd-pill&quot;&gt;公网直连&lt;/span&gt;&lt;/div&gt;&#x27;:&#x27;&#x27;}${progress()}&lt;div class=&quot;rd-transfermeta rd-num&quot;&gt;&lt;span&gt;64.8 / 100 GB&lt;/span&gt;&lt;span&gt;${state.paused?&#x27;已暂停 · 进度已保留&#x27;:&#x27;42.6 MB/s · 剩余约 14 分钟&#x27;}&lt;/span&gt;&lt;/div&gt;${compact?&#x27;&#x27;:`&lt;div class=&quot;rd-actions&quot;&gt;&lt;button class=&quot;rd-link&quot; data-action=&quot;route&quot;&gt;${icon(&#x27;globe&#x27;)}公网直连 ${icon(&#x27;chevron-right&#x27;)}&lt;/button&gt;&lt;button class=&quot;rd-button&quot; data-action=&quot;pause&quot;&gt;${icon(state.paused?&#x27;play&#x27;:&#x27;pause&#x27;)}${state.paused?&#x27;继续&#x27;:&#x27;暂停&#x27;}&lt;/button&gt;&lt;/div&gt;`}&lt;/div&gt;${compact?`&lt;button class=&quot;rd-button rd-ghost rd-icon-button&quot; data-action=&quot;pause&quot; aria-label=&quot;${state.paused?&#x27;继续传输&#x27;:&#x27;暂停传输&#x27;}&quot;&gt;${icon(state.paused?&#x27;play&#x27;:&#x27;pause&#x27;)}&lt;/button&gt;`:&#x27;&#x27;}&lt;/div&gt;`;}
+function renderChat(){const d=dev();view.innerHTML=`&lt;div class=&quot;rd-conversation&quot;&gt;&lt;aside class=&quot;rd-threads&quot; aria-label=&quot;设备会话&quot;&gt;${devices.filter(x=&gt;[&#x27;nas&#x27;,&#x27;mac&#x27;,&#x27;lin&#x27;].includes(x.id)||x.id===d.id).map(x=&gt;`&lt;button class=&quot;rd-thread ${d.id===x.id?&#x27;active&#x27;:&#x27;&#x27;}&quot; data-chat=&quot;${x.id}&quot;&gt;&lt;span class=&quot;rd-avatar&quot;&gt;${icon(x.kind===&#x27;server&#x27;?&#x27;server&#x27;:x.kind===&#x27;phone&#x27;?&#x27;smartphone&#x27;:&#x27;laptop&#x27;)}&lt;/span&gt;&lt;span&gt;&lt;strong&gt;${x.name}&lt;/strong&gt;&lt;small&gt;${x.id===&#x27;nas&#x27;?&#x27;旅行素材_2026.zip&#x27;:x.id===&#x27;mac&#x27;?&#x27;链接已送达&#x27;:&#x27;开始一段设备会话&#x27;}&lt;/small&gt;&lt;/span&gt;&lt;/button&gt;`).join(&#x27;&#x27;)}&lt;/aside&gt;&lt;div class=&quot;rd-chat&quot;&gt;&lt;header class=&quot;rd-chathead&quot;&gt;&lt;span class=&quot;rd-avatar&quot;&gt;${icon(d.kind===&#x27;server&#x27;?&#x27;server&#x27;:d.kind===&#x27;phone&#x27;?&#x27;smartphone&#x27;:&#x27;laptop&#x27;)}&lt;/span&gt;&lt;div class=&quot;rd-grow&quot;&gt;&lt;h3&gt;${d.name}&lt;/h3&gt;&lt;div class=&quot;rd-small rd-muted&quot;&gt;${d.online?&#x27;&lt;span class=&quot;rd-dot&quot;&gt;&lt;/span&gt; 在线&#x27;:&#x27;离线&#x27;} · ${d.group===&#x27;mine&#x27;?&#x27;我的设备&#x27;:d.group===&#x27;friend&#x27;?&#x27;好友设备&#x27;:&#x27;未配对设备&#x27;}&lt;/div&gt;&lt;/div&gt;${route(d)}&lt;button class=&quot;rd-button rd-ghost rd-icon-button&quot; data-action=&quot;route&quot; aria-label=&quot;连接详情&quot;&gt;${icon(&#x27;info&#x27;)}&lt;/button&gt;&lt;/header&gt;&lt;div class=&quot;rd-chatbody&quot;&gt;&lt;div class=&quot;rd-date&quot;&gt;今天 · 14:32&lt;/div&gt;${!d.online?&#x27;&lt;div class=&quot;rd-status&quot;&gt;设备离线。新消息会保留在本机，重新连接后再发送。&lt;/div&gt;&#x27;:&#x27;&#x27;}${d.id===&#x27;nas&#x27;?`&lt;div class=&quot;rd-message mine&quot;&gt;&lt;div class=&quot;rd-bubble&quot;&gt;旅行素材放到这里，晚上接着剪。&lt;/div&gt;&lt;div class=&quot;rd-msgmeta&quot;&gt;工作电脑 · 14:32 · 已送达&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;rd-message&quot;&gt;&lt;div class=&quot;rd-bubble&quot;&gt;好，原片直接发来就行。&lt;/div&gt;&lt;div class=&quot;rd-msgmeta&quot;&gt;来自家里的 NAS · 14:33&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;rd-message mine&quot; style=&quot;width:100%&quot;&gt;${transferCard()}&lt;div class=&quot;rd-msgmeta&quot;&gt;工作电脑 · 14:35&lt;/div&gt;&lt;/div&gt;`:d.id===&#x27;mac&#x27;?&#x27;&lt;div class=&quot;rd-message mine&quot;&gt;&lt;div class=&quot;rd-bubble&quot;&gt;项目地址： https://rynmesh.com&lt;/div&gt;&lt;div class=&quot;rd-msgmeta&quot;&gt;工作电脑 · 14:21 · 已送达&lt;/div&gt;&lt;/div&gt;&#x27;:&#x27;&lt;div class=&quot;rd-empty&quot;&gt;&lt;h3&gt;给这台设备留句话&lt;/h3&gt;&lt;p class=&quot;rd-small&quot;&gt;文字、链接和文件，放在同一段会话里。&lt;/p&gt;&lt;/div&gt;&#x27;}${(state.messages[d.id]||[]).map(m=&gt;`&lt;div class=&quot;rd-message mine&quot;&gt;&lt;div class=&quot;rd-bubble&quot;&gt;${esc(m)}&lt;/div&gt;&lt;div class=&quot;rd-msgmeta&quot;&gt;${d.online?&#x27;模拟已送达&#x27;:&#x27;等待设备上线&#x27;}&lt;/div&gt;&lt;/div&gt;`).join(&#x27;&#x27;)}${state.added.filter(a=&gt;a.device===d.id).map(a=&gt;`&lt;div class=&quot;rd-message mine&quot;&gt;&lt;div class=&quot;rd-filebubble&quot;&gt;&lt;div class=&quot;rd-row&quot;&gt;&lt;div class=&quot;rd-fileicon&quot;&gt;${icon(&#x27;files&#x27;)}&lt;/div&gt;&lt;div&gt;&lt;div class=&quot;rd-filename&quot;&gt;${esc(a.name)}&lt;/div&gt;&lt;div class=&quot;rd-small rd-muted&quot;&gt;${esc(a.size)} · ${a.status}&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;rd-msgmeta&quot;&gt;本地演示任务&lt;/div&gt;&lt;/div&gt;`).join(&#x27;&#x27;)}&lt;div class=&quot;rd-chatnote&quot;&gt;${icon(&#x27;lock-keyhole&#x27;)}消息与文件端到端加密&lt;/div&gt;&lt;/div&gt;&lt;form class=&quot;rd-composer&quot; id=&quot;rd-message-form&quot;&gt;&lt;label for=&quot;rd-message-input&quot; hidden&gt;给${d.name}发消息&lt;/label&gt;&lt;textarea id=&quot;rd-message-input&quot; rows=&quot;2&quot; placeholder=&quot;给${d.name}发消息或粘贴链接…&quot; aria-label=&quot;给${d.name}发消息&quot;&gt;&lt;/textarea&gt;&lt;div class=&quot;rd-composer-bottom&quot;&gt;&lt;div class=&quot;rd-row&quot;&gt;&lt;button type=&quot;button&quot; class=&quot;rd-button rd-ghost&quot; data-send=&quot;${d.id}&quot;&gt;${icon(&#x27;paperclip&#x27;)}文件&lt;/button&gt;&lt;span class=&quot;rd-composer-tip&quot;&gt;Enter 发送 · Shift + Enter 换行&lt;/span&gt;&lt;/div&gt;&lt;button type=&quot;submit&quot; class=&quot;rd-button rd-primary&quot;&gt;${icon(&#x27;arrow-up&#x27;)}发送&lt;/button&gt;&lt;/div&gt;&lt;/form&gt;&lt;/div&gt;&lt;/div&gt;`;}
+function renderTransfers(){const showActive=state.filter!==&#x27;done&#x27;,showDone=state.filter!==&#x27;active&#x27;;view.innerHTML=`&lt;div class=&quot;rd-filterbar&quot;&gt;${[[&#x27;all&#x27;,&#x27;全部&#x27;],[&#x27;active&#x27;,&#x27;进行中&#x27;],[&#x27;done&#x27;,&#x27;已完成&#x27;]].map(([id,label])=&gt;`&lt;button class=&quot;rd-filter ${state.filter===id?&#x27;active&#x27;:&#x27;&#x27;}&quot; data-filter=&quot;${id}&quot; aria-pressed=&quot;${state.filter===id}&quot;&gt;${label}&lt;/button&gt;`).join(&#x27;&#x27;)}&lt;span class=&quot;rd-visibility&quot;&gt;传输记录保存在本机&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;rd-transferlist&quot;&gt;${showActive?`&lt;article class=&quot;rd-transferitem&quot;&gt;&lt;div class=&quot;rd-between&quot;&gt;&lt;div class=&quot;rd-row&quot;&gt;&lt;div class=&quot;rd-fileicon&quot;&gt;${icon(&#x27;archive&#x27;)}&lt;/div&gt;&lt;div&gt;&lt;h3&gt;旅行素材_2026.zip&lt;/h3&gt;&lt;div class=&quot;rd-small rd-muted&quot;&gt;工作电脑 → 家里的 NAS · 100 GB&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;&lt;span class=&quot;rd-pill&quot;&gt;${icon(&#x27;globe&#x27;)}公网直连&lt;/span&gt;&lt;/div&gt;${progress()}&lt;div class=&quot;rd-transfermeta rd-num&quot;&gt;&lt;span&gt;${state.paused?&#x27;已暂停 · 64.8 GB 进度已保留&#x27;:&#x27;正在发送 · 64.8 / 100 GB&#x27;}&lt;/span&gt;&lt;span&gt;${state.paused?&#x27;等待继续&#x27;:&#x27;42.6 MB/s · 约 14 分钟&#x27;}&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;rd-actions&quot;&gt;&lt;button class=&quot;rd-button&quot; data-action=&quot;pause&quot;&gt;${icon(state.paused?&#x27;play&#x27;:&#x27;pause&#x27;)}${state.paused?&#x27;继续传输&#x27;:&#x27;暂停&#x27;}&lt;/button&gt;&lt;button class=&quot;rd-button rd-ghost&quot; data-chat=&quot;nas&quot;&gt;打开会话&lt;/button&gt;&lt;button class=&quot;rd-button rd-ghost&quot; data-route=&quot;nas&quot;&gt;连接详情&lt;/button&gt;&lt;button class=&quot;rd-button rd-ghost&quot; data-action=&quot;cancel&quot;&gt;取消&lt;/button&gt;&lt;/div&gt;&lt;/article&gt;&lt;article class=&quot;rd-transferitem&quot;&gt;&lt;div class=&quot;rd-row&quot;&gt;&lt;div class=&quot;rd-fileicon&quot;&gt;${icon(&#x27;folder&#x27;)}&lt;/div&gt;&lt;div class=&quot;rd-grow&quot;&gt;&lt;h3&gt;品牌素材&lt;/h3&gt;&lt;div class=&quot;rd-small rd-muted&quot;&gt;工作电脑 → 小林的 MacBook · 1.8 GB&lt;/div&gt;&lt;/div&gt;&lt;span class=&quot;rd-pill&quot;&gt;${icon(&#x27;waypoints&#x27;)}中继&lt;/span&gt;&lt;/div&gt;&lt;p class=&quot;rd-small rd-failed&quot; style=&quot;margin-top:15px&quot;&gt;${state.resumeFailed?&#x27;已重新连接 · 等待对方确认继续&#x27;:&#x27;连接中断 · 已保留 820 MB，下次从这里继续&#x27;}&lt;/p&gt;&lt;div class=&quot;rd-actions&quot;&gt;&lt;button class=&quot;rd-button&quot; data-action=&quot;retry&quot;&gt;${icon(&#x27;rotate-cw&#x27;)}${state.resumeFailed?&#x27;重新检查&#x27;:&#x27;重试&#x27;}&lt;/button&gt;&lt;button class=&quot;rd-button rd-ghost&quot; data-route=&quot;lin&quot;&gt;查看原因&lt;/button&gt;&lt;/div&gt;&lt;/article&gt;${state.added.map(a=&gt;`&lt;article class=&quot;rd-transferitem&quot;&gt;&lt;div class=&quot;rd-row&quot;&gt;&lt;div class=&quot;rd-fileicon&quot;&gt;${icon(&#x27;files&#x27;)}&lt;/div&gt;&lt;div&gt;&lt;h3&gt;${esc(a.name)}&lt;/h3&gt;&lt;div class=&quot;rd-small rd-muted&quot;&gt;发往 ${dev(a.device).name} · ${esc(a.size)}&lt;/div&gt;&lt;div class=&quot;rd-small rd-muted&quot;&gt;${a.status}&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;&lt;/article&gt;`).join(&#x27;&#x27;)}`:&#x27;&#x27;}${showDone?`&lt;article class=&quot;rd-transferitem&quot;&gt;&lt;div class=&quot;rd-between&quot;&gt;&lt;div class=&quot;rd-row&quot;&gt;&lt;div class=&quot;rd-fileicon&quot;&gt;${icon(&#x27;file-text&#x27;)}&lt;/div&gt;&lt;div&gt;&lt;h3&gt;项目说明.pdf&lt;/h3&gt;&lt;div class=&quot;rd-small rd-muted&quot;&gt;MacBook Pro → 工作电脑 · 8.6 MB&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;&lt;span class=&quot;rd-small rd-good&quot;&gt;${icon(&#x27;check&#x27;)} 已接收&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;rd-transfermeta&quot; style=&quot;margin-top:13px&quot;&gt;&lt;span&gt;今天 13:42 · 局域网直连 · 文件已校验&lt;/span&gt;&lt;button class=&quot;rd-link&quot; data-action=&quot;file-location&quot;&gt;查看保存位置 ${icon(&#x27;arrow-up-right&#x27;)}&lt;/button&gt;&lt;/div&gt;&lt;/article&gt;`:&#x27;&#x27;}&lt;/div&gt;`;}
+function render(){root.querySelector(&#x27;.rd-context-menu&#x27;)?.remove();root.querySelectorAll(&#x27;.rd-tab&#x27;).forEach(b=&gt;{b.classList.toggle(&#x27;active&#x27;,b.dataset.tab===state.tab);b.setAttribute(&#x27;aria-pressed&#x27;,String(b.dataset.tab===state.tab));});if(state.tab===&#x27;devices&#x27;)renderNetwork();if(state.tab===&#x27;chat&#x27;)renderChat();if(state.tab===&#x27;transfers&#x27;)renderTransfers();root.querySelector(&#x27;#rd-active-count&#x27;).textContent=String(1+state.added.length);icons();if(state.tab===&#x27;devices&#x27;)requestAnimationFrame(drawNetwork);}
+function close(){overlay.hidden=true;overlay.innerHTML=&#x27;&#x27;;state.modal=null;root.querySelector(&#x27;.rd-content&#x27;).inert=false;root.querySelector(&#x27;.rd-topbar&#x27;).inert=false;if(restoreFocus?.isConnected)restoreFocus.focus();}
+function show(content,modal=false){restoreFocus=document.activeElement;root.querySelector(&#x27;.rd-context-menu&#x27;)?.remove();state.menu=null;overlay.className=&#x27;rd-overlay&#x27;+(modal?&#x27; rd-modaloverlay&#x27;:&#x27;&#x27;);overlay.innerHTML=content;overlay.hidden=false;root.querySelector(&#x27;.rd-content&#x27;).inert=true;root.querySelector(&#x27;.rd-topbar&#x27;).inert=true;icons();overlay.querySelector(&#x27;button,input,select,textarea&#x27;)?.focus();}
+function head(title){return `&lt;div class=&quot;rd-sheet-head&quot;&gt;&lt;h2&gt;${title}&lt;/h2&gt;&lt;button class=&quot;rd-button rd-ghost rd-icon-button&quot; data-action=&quot;close&quot; aria-label=&quot;关闭&quot;&gt;${icon(&#x27;x&#x27;)}&lt;/button&gt;&lt;/div&gt;`;}
+function deviceMenu(d){return `&lt;div class=&quot;rd-menu&quot; aria-label=&quot;${d.name}操作&quot;&gt;&lt;button data-send=&quot;${d.id}&quot;&gt;${icon(&#x27;send&#x27;)}发送文件&lt;/button&gt;&lt;button data-folder=&quot;${d.id}&quot;&gt;${icon(&#x27;folder-up&#x27;)}发送文件夹&lt;/button&gt;&lt;button data-chat=&quot;${d.id}&quot;&gt;${icon(&#x27;message-circle&#x27;)}发送消息&lt;/button&gt;&lt;hr&gt;&lt;button data-history=&quot;${d.id}&quot;&gt;${icon(&#x27;arrow-right-left&#x27;)}传输记录&lt;/button&gt;&lt;button data-route=&quot;${d.id}&quot;&gt;${icon(&#x27;radio&#x27;)}连接详情&lt;/button&gt;&lt;/div&gt;`;}
+function networkNode(d,position){return `&lt;div class=&quot;rd-map-node ${position} ${state.device===d.id?&#x27;selected&#x27;:&#x27;&#x27;}&quot; data-drop-device=&quot;${d.id}&quot;&gt;&lt;button class=&quot;rd-node-select&quot; data-node=&quot;${d.id}&quot; aria-label=&quot;选择${d.name}，${d.route}&quot; aria-pressed=&quot;${state.device===d.id}&quot;&gt;&lt;span class=&quot;rd-node-visual&quot; data-port=&quot;${d.id}&quot;&gt;${art(d)}&lt;/span&gt;&lt;span class=&quot;rd-node-name&quot;&gt;${d.name}&lt;/span&gt;&lt;span class=&quot;rd-node-detail&quot;&gt;&lt;span class=&quot;rd-dot&quot;&gt;&lt;/span&gt;${d.route} · ${d.meta}&lt;/span&gt;&lt;/button&gt;&lt;button class=&quot;rd-button rd-ghost rd-icon-button rd-node-menu&quot; data-menu=&quot;${d.id}&quot; aria-label=&quot;${d.name}的操作菜单&quot; aria-expanded=&quot;${state.menu===d.id}&quot;&gt;${icon(&#x27;ellipsis&#x27;)}&lt;/button&gt;${state.menu===d.id?deviceMenu(d):&#x27;&#x27;}&lt;/div&gt;`;}
+function renderNetwork(){
+  const all=devices.filter(d=&gt;d.group===state.group),online=all.filter(d=&gt;d.online),offline=all.filter(d=&gt;!d.online);
+  if(!all.some(d=&gt;d.id===state.device))state.device=all[0]?.id||&#x27;nas&#x27;;
+  const selected=dev(),local=online.filter(d=&gt;d.route.includes(&#x27;局域网&#x27;)),remote=online.filter(d=&gt;!d.route.includes(&#x27;局域网&#x27;));
+  view.innerHTML=`&lt;div class=&quot;rd-filterbar&quot;&gt;${[[&#x27;mine&#x27;,&#x27;我的设备&#x27;],[&#x27;friend&#x27;,&#x27;好友设备&#x27;],[&#x27;nearby&#x27;,&#x27;附近&#x27;]].map(([id,label])=&gt;`&lt;button class=&quot;rd-filter ${state.group===id?&#x27;active&#x27;:&#x27;&#x27;}&quot; data-group=&quot;${id}&quot; aria-pressed=&quot;${state.group===id}&quot;&gt;${label}${id===&#x27;mine&#x27;?&#x27; · 4&#x27;:&#x27;&#x27;}&lt;/button&gt;`).join(&#x27;&#x27;)}&lt;button class=&quot;rd-link rd-visibility&quot; data-action=&quot;visibility&quot;&gt;${icon(&#x27;eye&#x27;)}仅联系人可见&lt;/button&gt;&lt;/div&gt;
+  &lt;div class=&quot;rd-network-top&quot;&gt;&lt;span&gt;以这台电脑为起点，查看设备间的连接&lt;/span&gt;&lt;div class=&quot;rd-legend&quot;&gt;&lt;span&gt;&lt;i class=&quot;lan&quot;&gt;&lt;/i&gt;局域网&lt;/span&gt;&lt;span&gt;&lt;i&gt;&lt;/i&gt;公网直连&lt;/span&gt;&lt;span&gt;&lt;i class=&quot;relay&quot;&gt;&lt;/i&gt;中继&lt;/span&gt;&lt;/div&gt;&lt;/div&gt;
+  ${state.group===&#x27;nearby&#x27;?&#x27;&lt;p class=&quot;rd-small rd-muted&quot; style=&quot;margin-top:12px&quot;&gt;附近设备尚未配对。首次发送前需双方核对身份。&lt;/p&gt;&#x27;:&#x27;&#x27;}
+  &lt;div class=&quot;rd-map&quot; aria-label=&quot;设备连接图，显示本机到局域网与远端设备的连接&quot;&gt;
+    &lt;svg class=&quot;rd-map-wires&quot; aria-hidden=&quot;true&quot;&gt;&lt;/svg&gt;
+    &lt;div class=&quot;rd-map-node origin&quot;&gt;&lt;div class=&quot;rd-node-select&quot;&gt;&lt;span class=&quot;rd-node-visual&quot; data-port=&quot;self&quot;&gt;${art({kind:&#x27;monitor&#x27;})}&lt;/span&gt;&lt;span class=&quot;rd-node-name&quot;&gt;工作电脑&lt;/span&gt;&lt;span class=&quot;rd-node-detail&quot;&gt;本机 · 当前网络&lt;/span&gt;&lt;/div&gt;&lt;/div&gt;
+    ${local.map(d=&gt;networkNode(d,&#x27;local&#x27;)).join(&#x27;&#x27;)}
+    ${remote.length?`&lt;div class=&quot;rd-map-node hub&quot;&gt;&lt;div class=&quot;rd-node-select&quot;&gt;&lt;span class=&quot;rd-node-visual&quot; data-port=&quot;internet&quot;&gt;&lt;span class=&quot;rd-node-hub&quot;&gt;${icon(&#x27;globe&#x27;)}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;rd-node-detail&quot;&gt;互联网&lt;/span&gt;&lt;/div&gt;&lt;/div&gt;`:&#x27;&#x27;}
+    ${remote.map((d,i)=&gt;networkNode(d,remote.length===1?&#x27;solo&#x27;:i?&#x27;remote-two&#x27;:&#x27;remote-one&#x27;)).join(&#x27;&#x27;)}
+  &lt;/div&gt;
+  &lt;div class=&quot;rd-selected-device&quot; aria-label=&quot;选中设备操作&quot;&gt;${art(selected)}&lt;div class=&quot;rd-grow&quot;&gt;&lt;strong&gt;${selected.name}&lt;/strong&gt;&lt;p&gt;${selected.os} · ${selected.online?selected.route+&#x27; · &#x27;+selected.meta:&#x27;离线 · &#x27;+selected.meta}${selected.id===&#x27;nas&#x27;?&#x27; · 正在接收旅行素材&#x27;:&#x27;&#x27;}&lt;/p&gt;&lt;/div&gt;&lt;div class=&quot;rd-selection-actions&quot;&gt;&lt;button class=&quot;rd-button rd-primary&quot; data-send=&quot;${selected.id}&quot;&gt;${icon(&#x27;send&#x27;)}发送文件&lt;/button&gt;&lt;button class=&quot;rd-link&quot; data-chat=&quot;${selected.id}&quot;&gt;${icon(&#x27;message-circle&#x27;)}发消息&lt;/button&gt;&lt;button class=&quot;rd-button rd-ghost rd-icon-button&quot; data-route=&quot;${selected.id}&quot; aria-label=&quot;选中设备连接详情&quot;&gt;${icon(&#x27;info&#x27;)}&lt;/button&gt;&lt;/div&gt;&lt;/div&gt;
+  ${offline.length?`&lt;div class=&quot;rd-offline-row&quot;&gt;&lt;span&gt;未连接&lt;/span&gt;${offline.map(d=&gt;`&lt;button class=&quot;rd-offline-device&quot; data-node=&quot;${d.id}&quot;&gt;${icon(&#x27;monitor&#x27;)}${d.name}&lt;/button&gt;&lt;span&gt;· ${d.meta}&lt;/span&gt;&lt;div class=&quot;rd-offline-menu-wrap&quot;&gt;&lt;button class=&quot;rd-button rd-ghost rd-icon-button&quot; data-menu=&quot;${d.id}&quot; aria-label=&quot;${d.name}的操作菜单&quot; aria-expanded=&quot;${state.menu===d.id}&quot;&gt;${icon(&#x27;ellipsis&#x27;)}&lt;/button&gt;${state.menu===d.id?deviceMenu(d):&#x27;&#x27;}&lt;/div&gt;`).join(&#x27;&#x27;)}&lt;/div&gt;`:&#x27;&#x27;}
+  &lt;div class=&quot;rd-sectiontitle rd-between&quot;&gt;&lt;span&gt;正在传输 · 家里的 NAS&lt;/span&gt;&lt;button class=&quot;rd-link&quot; data-tab=&quot;transfers&quot;&gt;全部传输 ${icon(&#x27;arrow-up-right&#x27;)}&lt;/button&gt;&lt;/div&gt;${transferCard(true)}`;
+}
+function drawNetwork(){
+  const map=view.querySelector(&#x27;.rd-map&#x27;);if(!map)return;
+  const svg=map.querySelector(&#x27;.rd-map-wires&#x27;),bounds=map.getBoundingClientRect();
+  if(!bounds.width)return;
+  svg.setAttribute(&#x27;viewBox&#x27;,`0 0 ${bounds.width} ${bounds.height}`);
+  const point=(id)=&gt;{const el=map.querySelector(`[data-port=&quot;${id}&quot;]`);if(!el)return null;const r=el.getBoundingClientRect();return {left:r.left-bounds.left,right:r.right-bounds.left,top:r.top-bounds.top,bottom:r.bottom-bounds.top,x:r.left+r.width/2-bounds.left,y:r.top+r.height/2-bounds.top};};
+  const mobile=bounds.width&lt;430,links=[];
+  const add=(from,to,kind,vertical=false)=&gt;{const a=point(from),b=point(to);if(!a||!b)return;let d;if(vertical){const mid=(a.bottom+b.top)/2;d=`M ${a.x} ${a.bottom+3} C ${a.x} ${mid} ${b.x} ${mid} ${b.x} ${b.top-5}`;}else{const mid=(a.right+b.left)/2;d=`M ${a.right+3} ${a.y} C ${mid} ${a.y} ${mid} ${b.y} ${b.left-4} ${b.y}`;}links.push(`&lt;path class=&quot;${kind} ${state.device===to?&#x27;selected&#x27;:&#x27;&#x27;}&quot; d=&quot;${d}&quot;/&gt;`);};
+  const online=devices.filter(d=&gt;d.group===state.group&amp;&amp;d.online),remote=online.filter(d=&gt;!d.route.includes(&#x27;局域网&#x27;));
+  online.filter(d=&gt;d.route.includes(&#x27;局域网&#x27;)).forEach(d=&gt;add(&#x27;self&#x27;,d.id,&#x27;lan&#x27;));
+  if(remote.length){add(&#x27;self&#x27;,&#x27;internet&#x27;,remote.every(d=&gt;d.route===&#x27;中继连接&#x27;)?&#x27;relay&#x27;:&#x27;public&#x27;,mobile);remote.forEach(d=&gt;add(&#x27;internet&#x27;,d.id,d.route===&#x27;中继连接&#x27;?&#x27;relay&#x27;:&#x27;public&#x27;));}
+  svg.innerHTML=links.join(&#x27;&#x27;);
+}
+root.addEventListener(&#x27;click&#x27;,e=&gt;{const b=e.target.closest(&#x27;[data-node]&#x27;);if(b){state.device=b.dataset.node;state.menu=null;render();}else if(state.menu&amp;&amp;!e.target.closest(&#x27;.rd-menu,[data-menu]&#x27;)){state.menu=null;if(state.tab===&#x27;devices&#x27;&amp;&amp;overlay.hidden)render();}});
+const networkResize=new ResizeObserver(()=&gt;{if(state.tab===&#x27;devices&#x27;)drawNetwork();});networkResize.observe(root);
+let contextDevice=null;
+function dismissContext(restore=false){const menu=root.querySelector(&#x27;.rd-context-menu&#x27;);if(!menu)return;menu.remove();state.menu=null;if(restore&amp;&amp;contextDevice)root.querySelector(`[data-node=&quot;${contextDevice}&quot;],.rd-thread[data-chat=&quot;${contextDevice}&quot;]`)?.focus();}
+function openDeviceContext(id,x,y){
+  dismissContext();state.menu=null;
+  if(state.tab===&#x27;devices&#x27;){state.device=id;render();}
+  contextDevice=id;
+  root.insertAdjacentHTML(&#x27;beforeend&#x27;,deviceMenu(dev(id)));
+  const menu=root.lastElementChild;menu.classList.add(&#x27;rd-context-menu&#x27;);menu.setAttribute(&#x27;role&#x27;,&#x27;menu&#x27;);
+  menu.insertAdjacentHTML(&#x27;afterbegin&#x27;,`&lt;div class=&quot;rd-context-title&quot;&gt;${esc(dev(id).name)}&lt;/div&gt;`);
+  menu.querySelectorAll(&#x27;button&#x27;).forEach(b=&gt;b.setAttribute(&#x27;role&#x27;,&#x27;menuitem&#x27;));
+  const bounds=root.getBoundingClientRect(),w=menu.offsetWidth,h=menu.offsetHeight;
+  const left=Math.max(bounds.left+8,Math.min(x,Math.min(bounds.right,innerWidth)-w-8));
+  const top=Math.max(Math.max(0,bounds.top)+8,Math.min(y,Math.min(bounds.bottom,innerHeight)-h-8));
+  menu.style.left=(left-bounds.left)+&#x27;px&#x27;;menu.style.top=(top-bounds.top)+&#x27;px&#x27;;
+  icons();menu.querySelector(&#x27;button&#x27;)?.focus({preventScroll:true});
+}
+function contextTarget(target){const el=target.closest(&#x27;[data-drop-device],[data-node],.rd-thread[data-chat]&#x27;);return el?{el,id:el.dataset.dropDevice||el.dataset.node||el.dataset.chat}:null;}
+root.addEventListener(&#x27;contextmenu&#x27;,e=&gt;{if(!overlay.hidden)return;const target=contextTarget(e.target);if(!target){dismissContext();return;}e.preventDefault();const r=target.el.getBoundingClientRect();openDeviceContext(target.id,e.clientX||r.left+r.width/2,e.clientY||r.top+30);});
+root.addEventListener(&#x27;keydown&#x27;,e=&gt;{
+  if(e.key===&#x27;ContextMenu&#x27;||(e.shiftKey&amp;&amp;e.key===&#x27;F10&#x27;)){const target=contextTarget(e.target);if(target&amp;&amp;overlay.hidden){e.preventDefault();e.stopImmediatePropagation();const r=target.el.getBoundingClientRect();openDeviceContext(target.id,r.left+r.width/2,r.top+30);}return;}
+  const menu=root.querySelector(&#x27;.rd-context-menu&#x27;);if(!menu)return;
+  if(e.key===&#x27;Escape&#x27;){e.preventDefault();e.stopImmediatePropagation();dismissContext(true);return;}
+  if(e.key===&#x27;Tab&#x27;){dismissContext(true);return;}
+  if([&#x27;ArrowDown&#x27;,&#x27;ArrowUp&#x27;,&#x27;Home&#x27;,&#x27;End&#x27;].includes(e.key)){e.preventDefault();e.stopImmediatePropagation();const items=[...menu.querySelectorAll(&#x27;button&#x27;)],current=items.indexOf(document.activeElement);const next=e.key===&#x27;Home&#x27;?0:e.key===&#x27;End&#x27;?items.length-1:(current+(e.key===&#x27;ArrowDown&#x27;?1:-1)+items.length)%items.length;items[next].focus();}
+},true);
+document.addEventListener(&#x27;pointerdown&#x27;,e=&gt;{if(!e.target.closest(&#x27;.rd-context-menu&#x27;))dismissContext();});
+window.addEventListener(&#x27;resize&#x27;,()=&gt;dismissContext());
+document.addEventListener(&#x27;scroll&#x27;,()=&gt;dismissContext(),true);
+function fileSize(bytes){return bytes&gt;=1e9?(bytes/1e9).toFixed(1)+&#x27; GB&#x27;:bytes&gt;=1e6?(bytes/1e6).toFixed(1)+&#x27; MB&#x27;:Math.max(1,Math.ceil(bytes/1000))+&#x27; KB&#x27;;}
+function sendSheet(id,folder=false){state.device=id;state.modal=&#x27;send&#x27;;const d=dev();if(folder)state.selectedFiles=[{name:&#x27;旅行素材 /&#x27;,size:&#x27;100 GB · 248 个文件&#x27;,bytes:100000000000,type:&#x27;folder&#x27;}];const sum=state.selectedFiles.reduce((s,f)=&gt;s+f.bytes,0);show(`&lt;section class=&quot;rd-sheet&quot; role=&quot;dialog&quot; aria-modal=&quot;true&quot; aria-label=&quot;发送文件&quot;&gt;${head(&#x27;发送&#x27;+(folder?&#x27;文件夹&#x27;:&#x27;文件&#x27;))}&lt;p class=&quot;rd-sheet-sub&quot;&gt;直接送到另一台设备。&lt;/p&gt;&lt;div class=&quot;rd-recipient&quot;&gt;${art(d)}&lt;div class=&quot;rd-grow&quot;&gt;&lt;strong&gt;${d.name}&lt;/strong&gt;&lt;p&gt;${d.group===&#x27;mine&#x27;?&#x27;我的设备&#x27;:d.group===&#x27;nearby&#x27;?&#x27;未配对设备&#x27;:&#x27;好友设备&#x27;} · ${d.os}&lt;/p&gt;&lt;/div&gt;${route(d)}&lt;/div&gt;&lt;div class=&quot;rd-between&quot;&gt;&lt;h3&gt;准备发送&lt;/h3&gt;&lt;span class=&quot;rd-small rd-muted&quot;&gt;${state.selectedFiles.length} 项 · ${fileSize(sum)}&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;rd-filelist&quot;&gt;${state.selectedFiles.map((f,i)=&gt;`&lt;div class=&quot;rd-fileline&quot;&gt;&lt;div class=&quot;rd-fileicon&quot;&gt;${icon(f.type)}&lt;/div&gt;&lt;div class=&quot;rd-grow&quot;&gt;&lt;div class=&quot;rd-filename&quot;&gt;${esc(f.name)}&lt;/div&gt;&lt;div class=&quot;rd-small&quot;&gt;${esc(f.size)}&lt;/div&gt;&lt;/div&gt;&lt;button class=&quot;rd-button rd-ghost rd-icon-button&quot; data-remove=&quot;${i}&quot; aria-label=&quot;移除${esc(f.name)}&quot;&gt;${icon(&#x27;x&#x27;)}&lt;/button&gt;&lt;/div&gt;`).join(&#x27;&#x27;)}&lt;/div&gt;&lt;div class=&quot;rd-droparea&quot; id=&quot;rd-droparea&quot;&gt;${icon(&#x27;plus&#x27;)}&lt;button class=&quot;rd-link&quot; data-action=&quot;pick-files&quot;&gt;添加文件&lt;/button&gt;&lt;span class=&quot;rd-muted&quot;&gt;或拖到这里&lt;/span&gt;&lt;/div&gt;&lt;input type=&quot;file&quot; multiple id=&quot;rd-file-input&quot; hidden&gt;&lt;label class=&quot;rd-field&quot; for=&quot;rd-caption&quot;&gt;附带一句话（可选）&lt;/label&gt;&lt;input class=&quot;rd-input&quot; id=&quot;rd-caption&quot; placeholder=&quot;例如：这次旅行的原片，记得备份。&quot;&gt;&lt;div class=&quot;rd-note&quot;&gt;${icon(d.online?&#x27;lock-keyhole&#x27;:&#x27;clock-3&#x27;)}&lt;div&gt;&lt;strong&gt;${!d.online?&#x27;设备离线，先保留在本机&#x27;:d.group===&#x27;nearby&#x27;?&#x27;先核对身份，再发送&#x27;:d.route===&#x27;中继连接&#x27;?&#x27;当前通过中继连接&#x27;:&#x27;直连发送，不设文件大小上限&#x27;}&lt;/strong&gt;${!d.online?&#x27;设备上线后重新连接。此时文件尚未上传或送达。&#x27;:d.group===&#x27;nearby&#x27;?&#x27;双方比对验证码，对方同意后才开始传输。&#x27;:d.route===&#x27;中继连接&#x27;?&#x27;中继额度与大小限制以实际服务为准。发送前检查可用额度。&#x27;:&#x27;端到端加密 · 支持断点续传。发送前会检查接收端可用空间。&#x27;}&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;rd-sheet-footer&quot;&gt;&lt;span class=&quot;rd-small rd-muted&quot;&gt;${d.group===&#x27;mine&#x27;?&#x27;按设备接收偏好处理&#x27;:&#x27;对方接受后开始传输&#x27;}&lt;/span&gt;&lt;button class=&quot;rd-button rd-primary&quot; data-action=&quot;confirm-send&quot; ${state.selectedFiles.length?&#x27;&#x27;:&#x27;disabled&#x27;}&gt;${icon(&#x27;send&#x27;)}${!d.online?&#x27;加入待发送&#x27;:d.group===&#x27;nearby&#x27;?&#x27;核对并发送&#x27;:&#x27;发送&#x27;}&lt;/button&gt;&lt;/div&gt;&lt;/section&gt;`);state.modal=&#x27;send&#x27;;}
+function incoming(){show(`&lt;section class=&quot;rd-modal&quot; role=&quot;dialog&quot; aria-modal=&quot;true&quot; aria-label=&quot;接收文件请求&quot;&gt;&lt;div class=&quot;rd-between&quot;&gt;&lt;div class=&quot;rd-modal-mark&quot;&gt;${icon(&#x27;download&#x27;)}&lt;/div&gt;&lt;button class=&quot;rd-button rd-ghost rd-icon-button&quot; data-action=&quot;close&quot; aria-label=&quot;稍后处理&quot;&gt;${icon(&#x27;x&#x27;)}&lt;/button&gt;&lt;/div&gt;&lt;h2&gt;${state.received?&#x27;文件已开始接收&#x27;:&#x27;小林想发给你一个文件&#x27;}&lt;/h2&gt;&lt;p&gt;小林的 MacBook · 已配对好友 · 中继连接&lt;/p&gt;&lt;div class=&quot;rd-fileline&quot;&gt;&lt;div class=&quot;rd-fileicon&quot;&gt;${icon(&#x27;folder&#x27;)}&lt;/div&gt;&lt;div&gt;&lt;div class=&quot;rd-filename&quot;&gt;品牌素材.zip&lt;/div&gt;&lt;div class=&quot;rd-small&quot;&gt;1.8 GB · 1 个文件&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;&lt;label class=&quot;rd-field&quot; for=&quot;rd-destination&quot;&gt;保存到&lt;/label&gt;&lt;select id=&quot;rd-destination&quot; class=&quot;rd-input&quot;&gt;&lt;option&gt;下载 / Ryn&lt;/option&gt;&lt;option&gt;桌面 / Ryn 收件箱&lt;/option&gt;&lt;/select&gt;&lt;p class=&quot;rd-small&quot;&gt;可用 286 GB · 接收后自动校验完整性&lt;/p&gt;&lt;label class=&quot;rd-check&quot;&gt;&lt;input type=&quot;checkbox&quot; id=&quot;rd-autoaccept&quot;&gt;&lt;span&gt;以后自动接收这台好友设备的文件&lt;br&gt;可在设备接收偏好中关闭&lt;/span&gt;&lt;/label&gt;&lt;div class=&quot;rd-modal-footer&quot;&gt;&lt;button class=&quot;rd-button&quot; data-action=&quot;decline&quot;&gt;拒绝&lt;/button&gt;&lt;button class=&quot;rd-button rd-primary&quot; data-action=&quot;accept&quot;&gt;${icon(&#x27;download&#x27;)}接收文件&lt;/button&gt;&lt;/div&gt;&lt;/section&gt;`,true);state.modal=&#x27;incoming&#x27;;}
+function routeSheet(id=state.device){state.device=id;const d=dev();show(`&lt;section class=&quot;rd-sheet&quot; role=&quot;dialog&quot; aria-modal=&quot;true&quot; aria-label=&quot;连接详情&quot;&gt;${head(&#x27;连接详情&#x27;)}&lt;p class=&quot;rd-sheet-sub&quot;&gt;${d.name}&lt;/p&gt;&lt;div class=&quot;rd-route-diagram&quot;&gt;&lt;div&gt;${icon(&#x27;monitor&#x27;)}&lt;div&gt;工作电脑&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;rd-route-line&quot;&gt;&lt;/div&gt;${d.route===&#x27;中继连接&#x27;?`&lt;div&gt;${icon(&#x27;waypoints&#x27;)}&lt;div&gt;加密中继&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;rd-route-line&quot;&gt;&lt;/div&gt;`:&#x27;&#x27;}&lt;div&gt;${icon(&#x27;server&#x27;)}&lt;div&gt;${d.name}&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;&lt;dl class=&quot;rd-kv&quot;&gt;&lt;dt&gt;连接方式&lt;/dt&gt;&lt;dd&gt;${d.route}&lt;/dd&gt;&lt;dt&gt;往返延迟&lt;/dt&gt;&lt;dd&gt;${d.online?d.meta:&#x27;—&#x27;}&lt;/dd&gt;&lt;dt&gt;加密状态&lt;/dt&gt;&lt;dd&gt;${d.online?&#x27;端到端加密&#x27;:&#x27;等待连接&#x27;}&lt;/dd&gt;&lt;dt&gt;设备关系&lt;/dt&gt;&lt;dd&gt;${d.group===&#x27;mine&#x27;?&#x27;我的设备 · 已配对&#x27;:d.group===&#x27;friend&#x27;?&#x27;好友设备 · 已配对&#x27;:&#x27;附近设备 · 尚未验证&#x27;}&lt;/dd&gt;&lt;dt&gt;直连大小限制&lt;/dt&gt;&lt;dd&gt;不设人为上限&lt;/dd&gt;&lt;dt&gt;中断后&lt;/dt&gt;&lt;dd&gt;保留进度，连接恢复后续传&lt;/dd&gt;&lt;/dl&gt;&lt;div class=&quot;rd-note&quot;&gt;${icon(&#x27;info&#x27;)}&lt;div&gt;${d.route===&#x27;中继连接&#x27;?&#x27;当前直连未建立，通过中继转发加密数据。中继额度、费用和大小限制需要单独提示。&#x27;:&#x27;连接路径由 Ryn 自动选择。大文件仍需足够的接收端空间；连接变化时保留已传进度。&#x27;}&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;rd-sheet-footer&quot;&gt;&lt;button class=&quot;rd-button&quot; data-chat=&quot;${d.id}&quot;&gt;${icon(&#x27;message-circle&#x27;)}打开设备会话&lt;/button&gt;&lt;/div&gt;&lt;/section&gt;`);state.modal=&#x27;route&#x27;;}
+function confirmSend(){const d=dev();if(d.group===&#x27;nearby&#x27;){show(`&lt;section class=&quot;rd-modal&quot; role=&quot;dialog&quot; aria-modal=&quot;true&quot; aria-label=&quot;确认附近设备身份&quot;&gt;${head(&#x27;核对设备身份&#x27;)}&lt;p&gt;请确认「附近的 MacBook」显示相同验证码。&lt;/p&gt;&lt;div style=&quot;font-size:30px;letter-spacing:8px;text-align:center;padding:24px;background:var(--rd-soft);border-radius:10px;margin-top:20px&quot;&gt;482 916&lt;/div&gt;&lt;p&gt;此验证码仅为交互演示。真实验证码须由加密握手产生。&lt;/p&gt;&lt;div class=&quot;rd-modal-footer&quot;&gt;&lt;button class=&quot;rd-button&quot; data-action=&quot;close&quot;&gt;取消&lt;/button&gt;&lt;button class=&quot;rd-button rd-primary&quot; data-action=&quot;verified-send&quot;&gt;一致，继续&lt;/button&gt;&lt;/div&gt;&lt;/section&gt;`,true);return;}commitSend();}
+function commitSend(){const d=dev(),caption=root.querySelector(&#x27;#rd-caption&#x27;)?.value.trim();if(caption)(state.messages[d.id]??=[]).push(caption);const sum=state.selectedFiles.reduce((s,f)=&gt;s+f.bytes,0);state.added.push({device:d.id,name:state.selectedFiles.length&gt;1?state.selectedFiles[0].name+&#x27; 等 &#x27;+state.selectedFiles.length+&#x27; 项&#x27;:state.selectedFiles[0].name,size:fileSize(sum),status:!d.online?&#x27;等待设备上线&#x27;:d.group===&#x27;nearby&#x27;?&#x27;身份已核对 · 等待对方接收&#x27;:&#x27;等待接收确认&#x27;});go(&#x27;chat&#x27;);toast(&#x27;已创建演示发送任务；此原型不会读取文件内容或上传。&#x27;);}
+function simpleModal(title,body,actions){show(`&lt;section class=&quot;rd-modal&quot; role=&quot;dialog&quot; aria-modal=&quot;true&quot; aria-label=&quot;${title}&quot;&gt;${head(title)}${body}&lt;div class=&quot;rd-modal-footer&quot;&gt;${actions||&#x27;&lt;button class=&quot;rd-button rd-primary&quot; data-action=&quot;close&quot;&gt;知道了&lt;/button&gt;&#x27;}&lt;/div&gt;&lt;/section&gt;`,true);}
+root.addEventListener(&#x27;click&#x27;,e=&gt;{const b=e.target.closest(&#x27;button&#x27;);if(!b)return;const a=b.dataset.action;if(b.dataset.tab){go(b.dataset.tab);return;}if(b.dataset.group){state.group=b.dataset.group;state.menu=null;render();return;}if(b.dataset.filter){state.filter=b.dataset.filter;render();return;}if(b.dataset.menu){state.menu=state.menu===b.dataset.menu?null:b.dataset.menu;state.device=b.dataset.menu;render();return;}if(b.dataset.chat){state.device=b.dataset.chat;go(&#x27;chat&#x27;);return;}if(b.dataset.send){sendSheet(b.dataset.send);return;}if(b.dataset.folder){sendSheet(b.dataset.folder,true);return;}if(b.dataset.history){state.device=b.dataset.history;go(&#x27;transfers&#x27;);toast(&#x27;当前展示全局传输记录，正式版应按设备筛选。&#x27;);return;}if(b.dataset.route){routeSheet(b.dataset.route);return;}if(b.dataset.remove!==undefined){state.selectedFiles.splice(Number(b.dataset.remove),1);sendSheet(state.device);return;}if(a===&#x27;close&#x27;)close();if(a===&#x27;pause&#x27;){state.paused=!state.paused;render();}if(a===&#x27;route&#x27;)routeSheet();if(a===&#x27;incoming&#x27;)incoming();if(a===&#x27;pick-files&#x27;)root.querySelector(&#x27;#rd-file-input&#x27;)?.click();if(a===&#x27;confirm-send&#x27;)confirmSend();if(a===&#x27;verified-send&#x27;)commitSend();if(a===&#x27;accept&#x27;){state.received=true;const auto=root.querySelector(&#x27;#rd-autoaccept&#x27;).checked,where=root.querySelector(&#x27;#rd-destination&#x27;).value;close();root.querySelector(&#x27;#rd-request-count&#x27;).textContent=&#x27;0&#x27;;toast(&#x27;演示：开始接收至 &#x27;+where+(auto?&#x27;，已选择仅信任这台设备。&#x27;:&#x27;。&#x27;));}if(a===&#x27;decline&#x27;){close();root.querySelector(&#x27;#rd-request-count&#x27;).textContent=&#x27;0&#x27;;toast(&#x27;已拒绝这次接收请求（演示）。&#x27;);}if(a===&#x27;retry&#x27;){state.resumeFailed=true;render();toast(&#x27;演示：已重新连接，将从 820 MB 处继续。&#x27;);}if(a===&#x27;file-location&#x27;)simpleModal(&#x27;保存位置&#x27;,&#x27;&lt;p&gt;下载 / Ryn / 项目说明.pdf&lt;/p&gt;&lt;p&gt;正式版由桌面客户端打开本地文件夹。&lt;/p&gt;&#x27;);if(a===&#x27;cancel&#x27;)simpleModal(&#x27;取消这次传输？&#x27;,&#x27;&lt;p&gt;当前已传 64.8 GB。取消后不会继续发送；接收端临时文件按清理策略处理。&lt;/p&gt;&#x27;,&#x27;&lt;button class=&quot;rd-button&quot; data-action=&quot;close&quot;&gt;继续传输&lt;/button&gt;&lt;button class=&quot;rd-button rd-primary&quot; data-action=&quot;cancel-confirm&quot;&gt;取消传输&lt;/button&gt;&#x27;);if(a===&#x27;cancel-confirm&#x27;){state.paused=true;close();render();toast(&#x27;演示取消确认完成。主示例保留为暂停状态，便于继续查看设计。&#x27;);}if(a===&#x27;pair&#x27;)simpleModal(&#x27;连接你的另一台设备&#x27;,&#x27;&lt;p&gt;在另一台设备打开 Ryn，进入「设备 → 添加设备」，使用双方配对码完成连接。&lt;/p&gt;&lt;label class=&quot;rd-field&quot; for=&quot;rd-pair-code&quot;&gt;另一台设备的配对码&lt;/label&gt;&lt;input id=&quot;rd-pair-code&quot; class=&quot;rd-input&quot; placeholder=&quot;输入配对码（演示）&quot;&gt;&lt;p&gt;手机 App 后续复用此流程，并加入扫码配对。&lt;/p&gt;&#x27;,&#x27;&lt;button class=&quot;rd-button rd-primary&quot; data-action=&quot;pair-demo&quot;&gt;连接设备&lt;/button&gt;&#x27;);if(a===&#x27;pair-demo&#x27;){close();toast(&#x27;这是配对入口示意，真实实现接入现有配对流程。&#x27;);}if(a===&#x27;visibility&#x27;)simpleModal(&#x27;谁能发现这台设备&#x27;,&#x27;&lt;p&gt;默认仅联系人和我的设备可见。开启附近发现后，未配对的局域网设备也能看到你。&lt;/p&gt;&lt;label class=&quot;rd-check&quot;&gt;&lt;input type=&quot;checkbox&quot; id=&quot;rd-nearby-visible&quot;&gt;&lt;span&gt;临时允许附近设备发现我（10 分钟）&lt;/span&gt;&lt;/label&gt;&#x27;,&#x27;&lt;button class=&quot;rd-button rd-primary&quot; data-action=&quot;visibility-save&quot;&gt;保存偏好&lt;/button&gt;&#x27;);if(a===&#x27;visibility-save&#x27;){const enabled=root.querySelector(&#x27;#rd-nearby-visible&#x27;).checked;close();toast(enabled?&#x27;演示：已开启附近发现，10 分钟后关闭。&#x27;:&#x27;演示：仅联系人和我的设备可见。&#x27;);}});
+function submitMessage(){const input=root.querySelector(&#x27;#rd-message-input&#x27;);if(!input?.value.trim())return;(state.messages[state.device]??=[]).push(input.value.trim());render();root.querySelector(&#x27;#rd-message-input&#x27;)?.focus();}
+root.addEventListener(&#x27;submit&#x27;,e=&gt;{e.preventDefault();if(e.target.id===&#x27;rd-message-form&#x27;)submitMessage();});
+root.addEventListener(&#x27;keydown&#x27;,e=&gt;{if(e.key===&#x27;Escape&#x27;){if(!overlay.hidden)close();else{state.menu=null;render();}}if(e.target.id===&#x27;rd-message-input&#x27;&amp;&amp;e.key===&#x27;Enter&#x27;&amp;&amp;!e.shiftKey&amp;&amp;!e.isComposing){e.preventDefault();submitMessage();}if(e.key===&#x27;Tab&#x27;&amp;&amp;!overlay.hidden){const items=[...overlay.querySelectorAll(&#x27;button:not([disabled]),input:not([hidden]),select,textarea&#x27;)].filter(x=&gt;x.offsetParent!==null);if(!items.length)return;const first=items[0],last=items[items.length-1];if(e.shiftKey&amp;&amp;document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&amp;&amp;document.activeElement===last){e.preventDefault();first.focus();}}});
+function addFiles(files){for(const f of files)state.selectedFiles.push({name:f.name,size:fileSize(f.size),bytes:f.size,type:&#x27;file&#x27;});sendSheet(state.device);}
+root.addEventListener(&#x27;change&#x27;,e=&gt;{if(e.target.id===&#x27;rd-file-input&#x27;)addFiles(e.target.files);});
+root.addEventListener(&#x27;dragover&#x27;,e=&gt;{const target=e.target.closest(&#x27;[data-drop-device],#rd-droparea&#x27;);if(target){e.preventDefault();target.classList.add(&#x27;dragging&#x27;);}});
+root.addEventListener(&#x27;dragleave&#x27;,e=&gt;e.target.closest(&#x27;.dragging&#x27;)?.classList.remove(&#x27;dragging&#x27;));
+root.addEventListener(&#x27;drop&#x27;,e=&gt;{const target=e.target.closest(&#x27;[data-drop-device],#rd-droparea&#x27;);if(!target)return;e.preventDefault();target.classList.remove(&#x27;dragging&#x27;);if(target.dataset.dropDevice){state.device=target.dataset.dropDevice;state.selectedFiles=[];}addFiles(e.dataTransfer.files);});
+overlay.addEventListener(&#x27;click&#x27;,e=&gt;{if(e.target===overlay)close();});
+window.addEventListener(&#x27;openai:set_globals&#x27;,e=&gt;{const tab=e.detail?.globals?.widgetState?.privateContent?.tab;if([&#x27;devices&#x27;,&#x27;chat&#x27;,&#x27;transfers&#x27;].includes(tab)){state.tab=tab;render();}});
+render();
+if(globalThis.Tweak){const design={layout:&#x27;自动&#x27;,theme:&#x27;跟随系统&#x27;,radius:14,screen:&#x27;设备&#x27;};const tweak=new Tweak({container:root,onChange:()=&gt;{root.style.maxWidth=design.layout===&#x27;手机&#x27;?&#x27;390px&#x27;:&#x27;none&#x27;;root.style.marginInline=&#x27;auto&#x27;;root.style.colorScheme=design.theme===&#x27;浅色&#x27;?&#x27;light&#x27;:design.theme===&#x27;深色&#x27;?&#x27;dark&#x27;:&#x27;light dark&#x27;;root.style.setProperty(&#x27;--rd-radius&#x27;,design.radius+&#x27;px&#x27;);const tabs={&#x27;设备&#x27;:&#x27;devices&#x27;,&#x27;设备会话&#x27;:&#x27;chat&#x27;,&#x27;传输记录&#x27;:&#x27;transfers&#x27;};if(tabs[design.screen]!==state.tab){state.tab=tabs[design.screen];state.menu=null;close();render();}}});tweak.addSelect(design,&#x27;layout&#x27;,{label:&#x27;预览设备&#x27;,options:[&#x27;自动&#x27;,&#x27;手机&#x27;]});tweak.addSelect(design,&#x27;theme&#x27;,{label:&#x27;外观&#x27;,options:[&#x27;跟随系统&#x27;,&#x27;浅色&#x27;,&#x27;深色&#x27;]});tweak.addSlider(design,&#x27;radius&#x27;,{label:&#x27;卡片圆角&#x27;,min:8,max:20,step:2,unit:&#x27;px&#x27;});tweak.addSelect(design,&#x27;screen&#x27;,{label:&#x27;起始界面&#x27;,options:[&#x27;设备&#x27;,&#x27;设备会话&#x27;,&#x27;传输记录&#x27;]});}
+})();
+&lt;/script&gt;
+
+&lt;script src=&quot;https://unpkg.com/@floating-ui/core@1.7.3/dist/floating-ui.core.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script src=&quot;https://unpkg.com/@floating-ui/dom@1.7.4/dist/floating-ui.dom.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  if (window.FloatingUIDOM == null) {
+    return;
+  }
+  const { autoUpdate, computePosition, flip, offset, shift, size } =
+    window.FloatingUIDOM;
+  const tooltipPlacements = new Set([&quot;top&quot;, &quot;right&quot;, &quot;bottom&quot;, &quot;left&quot;]);
+  const tooltipId = `codex-visualization-tooltip-${
+    window.crypto?.randomUUID?.() ?? Date.now().toString(36)
+  }`;
+  const tooltipGap = 5;
+  const hoverDelay = 700;
+  const skipDelay = 300;
+  let activeTrigger = null;
+  let pendingTrigger = null;
+  let tooltip = null;
+  let openTimeout = null;
+  let autoUpdateCleanup = null;
+  let positionRequest = 0;
+  let skipDelayUntil = 0;
+  let lastPointerWasTouch = false;
+  let pinnedByTouch = false;
+
+  const getTrigger = (event) =&gt; {
+    for (const target of event.composedPath()) {
+      if (target?.nodeType === Node.ELEMENT_NODE) {
+        const trigger = target.closest(&quot;[data-tooltip]&quot;);
+        if (trigger) return trigger;
+      }
+    }
+    return null;
+  };
+  const containsTarget = (trigger, target) =&gt;
+    target?.nodeType != null &amp;&amp; trigger.contains(target);
+  const getContent = (trigger) =&gt;
+    trigger.getAttribute(&quot;data-tooltip&quot;)?.trim() ?? &quot;&quot;;
+  const getPlacement = (trigger) =&gt; {
+    const placement = trigger.getAttribute(&quot;data-tooltip-placement&quot;);
+    return tooltipPlacements.has(placement) ? placement : &quot;top&quot;;
+  };
+  const getTooltip = () =&gt; {
+    if (tooltip == null) {
+      tooltip = document.createElement(&quot;div&quot;);
+      tooltip.id = tooltipId;
+      tooltip.className = &quot;tooltip&quot;;
+      tooltip.setAttribute(&quot;role&quot;, &quot;tooltip&quot;);
+    }
+    return tooltip;
+  };
+  const setDescribedBy = (trigger, described) =&gt; {
+    const ids = new Set(
+      (trigger.getAttribute(&quot;aria-describedby&quot;) ?? &quot;&quot;)
+        .split(/\s+/)
+        .filter(Boolean),
+    );
+    if (described) {
+      ids.add(tooltipId);
+    } else {
+      ids.delete(tooltipId);
+    }
+    if (ids.size === 0) {
+      trigger.removeAttribute(&quot;aria-describedby&quot;);
+    } else {
+      trigger.setAttribute(&quot;aria-describedby&quot;, [...ids].join(&quot; &quot;));
+    }
+  };
+  const clearOpenTimeout = () =&gt; {
+    if (openTimeout != null) {
+      window.clearTimeout(openTimeout);
+      openTimeout = null;
+    }
+    pendingTrigger = null;
+  };
+  const closeTooltip = (activateSkipDelay = true) =&gt; {
+    clearOpenTimeout();
+    pinnedByTouch = false;
+    positionRequest += 1;
+    autoUpdateCleanup?.();
+    autoUpdateCleanup = null;
+    if (activeTrigger == null) {
+      return;
+    }
+    setDescribedBy(activeTrigger, false);
+    activeTrigger = null;
+    tooltip?.remove();
+    if (activateSkipDelay) {
+      skipDelayUntil = Date.now() + skipDelay;
+    }
+  };
+  const updatePosition = (trigger, floating) =&gt; {
+    const request = ++positionRequest;
+    void computePosition(trigger, floating, {
+      middleware: [
+        offset(tooltipGap),
+        flip({ padding: tooltipGap }),
+        shift({ padding: tooltipGap }),
+        size({
+          padding: tooltipGap,
+          apply({ availableHeight, availableWidth, elements }) {
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-width&quot;,
+              `${Math.max(0, availableWidth)}px`,
+            );
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-height&quot;,
+              `${Math.max(0, availableHeight)}px`,
+            );
+          },
+        }),
+      ],
+      placement: getPlacement(trigger),
+      strategy: &quot;fixed&quot;,
+    })
+      .then(({ x, y }) =&gt; {
+        if (activeTrigger !== trigger || request !== positionRequest) {
+          return;
+        }
+        const scale = window.devicePixelRatio || 1;
+        floating.style.transform = `translate(${Math.round(x * scale) / scale}px, ${Math.round(y * scale) / scale}px)`;
+        floating.style.visibility = &quot;visible&quot;;
+      })
+      .catch(() =&gt; {
+        if (activeTrigger === trigger &amp;&amp; request === positionRequest) {
+          closeTooltip(false);
+        }
+      });
+  };
+  const openTooltip = (trigger) =&gt; {
+    const content = getContent(trigger);
+    if (!trigger.isConnected || content.length === 0) {
+      return;
+    }
+    clearOpenTimeout();
+    if (activeTrigger === trigger) {
+      return;
+    }
+    closeTooltip();
+    const floating = getTooltip();
+    floating.textContent = content;
+    floating.style.visibility = &quot;hidden&quot;;
+    floating.style.transform = &quot;translate(0, 0)&quot;;
+    document.body.appendChild(floating);
+    activeTrigger = trigger;
+    setDescribedBy(trigger, true);
+    autoUpdateCleanup = autoUpdate(trigger, floating, () =&gt; {
+      updatePosition(trigger, floating);
+    });
+  };
+  const requestOpen = (trigger, immediate = false) =&gt; {
+    if (
+      getContent(trigger).length === 0 ||
+      activeTrigger === trigger ||
+      pendingTrigger === trigger
+    ) {
+      return;
+    }
+    clearOpenTimeout();
+    pendingTrigger = trigger;
+    const delay =
+      immediate || activeTrigger != null || Date.now() &lt; skipDelayUntil
+        ? 0
+        : hoverDelay;
+    if (delay === 0) {
+      openTooltip(trigger);
+      return;
+    }
+    openTimeout = window.setTimeout(() =&gt; {
+      openTimeout = null;
+      pendingTrigger = null;
+      openTooltip(trigger);
+    }, delay);
+  };
+  const handlePointerOpen = (event) =&gt; {
+    if (event.pointerType === &quot;touch&quot;) {
+      return;
+    }
+    const trigger = getTrigger(event);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    requestOpen(trigger);
+  };
+  const handlePointer = (event) =&gt; {
+    lastPointerWasTouch =
+      event.type === &quot;pointerdown&quot; &amp;&amp; event.pointerType === &quot;touch&quot;;
+  };
+  const handleTouchClick = (event) =&gt; {
+    const isTouch = event.pointerType === &quot;touch&quot; || lastPointerWasTouch;
+    lastPointerWasTouch = false;
+    if (!isTouch || event.detail === 0) {
+      return;
+    }
+    const trigger = getTrigger(event);
+    if (
+      trigger == null ||
+      !trigger.isConnected ||
+      getContent(trigger).length === 0 ||
+      (pinnedByTouch &amp;&amp; activeTrigger === trigger)
+    ) {
+      if (pinnedByTouch) {
+        closeTooltip();
+      }
+      return;
+    }
+    openTooltip(trigger);
+    pinnedByTouch = activeTrigger === trigger;
+    window.setTimeout(() =&gt; {
+      if (activeTrigger === trigger &amp;&amp; !trigger.isConnected) {
+        closeTooltip(false);
+      }
+    }, 0);
+  };
+  const handleLeave = (event) =&gt; {
+    if (pinnedByTouch) {
+      return;
+    }
+    const trigger = getTrigger(event);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const handleFocusIn = (event) =&gt; {
+    const trigger = getTrigger(event);
+    if (trigger?.matches(&quot;:focus-visible&quot;)) {
+      requestOpen(trigger, true);
+    }
+  };
+  const handleKeyDown = (event) =&gt; {
+    if (event.key === &quot;Escape&quot;) {
+      closeTooltip();
+    }
+  };
+  const handleContextMenu = (event) =&gt; {
+    lastPointerWasTouch = false;
+    const trigger = getTrigger(event);
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const handlers = {
+    pointerover: handlePointerOpen,
+    pointerdown: handlePointer,
+    pointercancel: handlePointer,
+    click: handleTouchClick,
+    pointerout: handleLeave,
+    focusin: handleFocusIn,
+    focusout: handleLeave,
+    keydown: handleKeyDown,
+    contextmenu: handleContextMenu,
+  };
+  const roots = new Map();
+  const handledEvents = new WeakSet();
+  const handleEvent = (event) =&gt; {
+    if (handledEvents.has(event)) return;
+    handledEvents.add(event);
+    handlers[event.type](event);
+  };
+  const discoverRoots = (node) =&gt; {
+    if (node.shadowRoot) listen(node.shadowRoot);
+    for (const element of node.querySelectorAll(&quot;*&quot;)) {
+      if (element.shadowRoot) listen(element.shadowRoot);
+    }
+  };
+  const listen = (root) =&gt; {
+    if (roots.has(root)) return;
+    for (const type of Object.keys(handlers)) root.addEventListener(type, handleEvent);
+    const observer = new window.MutationObserver((records) =&gt; {
+      for (const { addedNodes } of records) {
+        for (const node of addedNodes) {
+          if (node.nodeType === Node.ELEMENT_NODE) discoverRoots(node);
+        }
+      }
+      for (const [root, cleanup] of roots) {
+        if (root.host &amp;&amp; !root.host.isConnected) {
+          cleanup();
+          roots.delete(root);
+        }
+      }
+      if (activeTrigger &amp;&amp; !activeTrigger.isConnected) closeTooltip(false);
+    });
+    observer.observe(root, { childList: true, subtree: true });
+    roots.set(root, () =&gt; {
+      observer.disconnect();
+      for (const type of Object.keys(handlers)) root.removeEventListener(type, handleEvent);
+    });
+    discoverRoots(root);
+  };
+  const destroy = () =&gt; {
+    closeTooltip(false);
+    lastPointerWasTouch = false;
+    for (const cleanup of roots.values()) cleanup();
+    roots.clear();
+    tooltip = null;
+  };
+
+  // Events between children of one shadow root never reach the document.
+  listen(document);
+  window.addEventListener(&quot;pagehide&quot;, destroy, { once: true });
+})();
+&lt;/script&gt;
+&lt;script id=&quot;codex-visualization-tabs&quot;&gt;
+(() =&gt; {
+  const selector = &#x27;.nav[role=&quot;tablist&quot;] [role=&quot;tab&quot;]&#x27;;
+  const disabled = &#x27;:disabled,[aria-disabled=&quot;true&quot;]&#x27;;
+  const selectTab = (selected) =&gt; {
+    const panelId = selected.getAttribute(&quot;aria-controls&quot;);
+    for (const tab of selected.closest(&#x27;[role=&quot;tablist&quot;]&#x27;).querySelectorAll(&#x27;[role=&quot;tab&quot;]&#x27;)) {
+      const active = tab === selected;
+      tab.classList.toggle(&quot;active&quot;, active);
+      tab.setAttribute(&quot;aria-selected&quot;, String(active));
+      const id = tab.getAttribute(&quot;aria-controls&quot;);
+      const panel = id &amp;&amp; document.getElementById(id);
+      if (panel != null) {
+        panel.hidden = id !== panelId;
+        if (!panel.hidden &amp;&amp; selected.id) {
+          panel.setAttribute(&quot;aria-labelledby&quot;, selected.id);
+        }
+      }
+    }
+  };
+  const interact = (event) =&gt; {
+    const tab = event.target?.closest?.(selector);
+    if (event.defaultPrevented || tab == null || tab.matches(disabled)) {
+      return;
+    }
+    if (event.type === &quot;click&quot;) {
+      selectTab(tab);
+      return;
+    }
+    const tabs = Array.from(
+      tab.closest(&#x27;[role=&quot;tablist&quot;]&#x27;).querySelectorAll(&#x27;[role=&quot;tab&quot;]&#x27;),
+    ).filter((candidate) =&gt; !candidate.matches(disabled));
+    const current = tabs.indexOf(tab);
+    let next;
+    if (event.key === &quot;ArrowRight&quot; || event.key === &quot;ArrowDown&quot;) {
+      next = (current + 1) % tabs.length;
+    } else if (event.key === &quot;ArrowLeft&quot; || event.key === &quot;ArrowUp&quot;) {
+      next = (current + tabs.length - 1) % tabs.length;
+    } else if (event.key === &quot;Home&quot;) {
+      next = 0;
+    } else if (event.key === &quot;End&quot;) {
+      next = tabs.length - 1;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    tabs[next].focus();
+    selectTab(tabs[next]);
+  };
+
+  for (const list of document.querySelectorAll(&#x27;.nav[role=&quot;tablist&quot;]&#x27;)) {
+    const selected =
+      list.querySelector(&#x27;[role=&quot;tab&quot;][aria-selected=&quot;true&quot;]&#x27;) ??
+      list.querySelector(&#x27;[role=&quot;tab&quot;].active&#x27;) ??
+      list.querySelector(&#x27;[role=&quot;tab&quot;]&#x27;);
+    if (selected != null) {
+      selectTab(selected);
+    }
+  }
+  document.addEventListener(&quot;click&quot;, interact);
+  document.addEventListener(&quot;keydown&quot;, interact);
+  window.addEventListener(&quot;pagehide&quot;, () =&gt; {
+    document.removeEventListener(&quot;click&quot;, interact);
+    document.removeEventListener(&quot;keydown&quot;, interact);
+  }, { once: true });
+})();
+&lt;/script&gt;
+&lt;script id=&quot;codex-visualization-carousel&quot;&gt;
+  (() =&gt; {
+    for (const root of document.querySelectorAll(&quot;.viz-carousel&quot;)) {
+      const panels = Array.from(
+        root.querySelectorAll(&quot;:scope &gt; [data-variant]&quot;),
+      );
+      if (panels.length === 0) {
+        continue;
+      }
+      root.setAttribute(&quot;role&quot;, &quot;group&quot;);
+      panels.forEach((panel, index) =&gt; {
+        panel.hidden = index !== 0;
+        panel.setAttribute(&quot;role&quot;, &quot;group&quot;);
+        if (!panel.hasAttribute(&quot;aria-label&quot;)) {
+          panel.setAttribute(&quot;aria-label&quot;, panel.dataset.variant);
+        }
+      });
+      root.dataset.activeVariant = panels[0].dataset.variant;
+      if (panels.length === 1) {
+        continue;
+      }
+
+      const controls = document.createElement(&quot;div&quot;);
+      controls.className = &quot;viz-carousel-controls&quot;;
+      // Portable copy of the settings dropdown&#x27;s legacy glyph; no 14px icon-package preset matches it.
+      // https://github.com/openai/openai/blob/master/codex/codex-apps/webview/src/icons/chevron.svg
+      controls.innerHTML = `
+      &lt;button type=&quot;button&quot; class=&quot;viz-carousel-previous cursor-interaction&quot;&gt;&lt;i data-lucide=&quot;chevron-left&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/button&gt;
+      &lt;details class=&quot;viz-carousel-picker&quot;&gt;
+        &lt;summary class=&quot;cursor-interaction&quot;&gt;
+          &lt;span class=&quot;viz-carousel-count tabular-nums&quot;&gt;&lt;/span&gt;
+          &lt;span class=&quot;viz-carousel-name&quot;&gt;&lt;/span&gt;
+          &lt;svg class=&quot;viz-carousel-caret&quot; width=&quot;14&quot; height=&quot;14&quot; viewBox=&quot;0 0 20 21&quot; fill=&quot;none&quot; aria-hidden=&quot;true&quot; focusable=&quot;false&quot;&gt;
+            &lt;path d=&quot;M15.2793 7.71101C15.539 7.45131 15.961 7.45131 16.2207 7.71101C16.4804 7.97071 16.4804 8.39272 16.2207 8.65242L10.4707 14.4024C10.211 14.6621 9.78902 14.6621 9.52932 14.4024L3.77932 8.65242L3.69436 8.54792C3.52385 8.28979 3.55205 7.93828 3.77932 7.71101C4.00659 7.48374 4.3581 7.45554 4.61623 7.62605L4.72073 7.71101L10 12.9903L15.2793 7.71101Z&quot; fill=&quot;currentColor&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;0.6&quot; /&gt;
+          &lt;/svg&gt;
+        &lt;/summary&gt;
+        &lt;div class=&quot;viz-carousel-options&quot;&gt;&lt;/div&gt;
+      &lt;/details&gt;
+      &lt;button type=&quot;button&quot; class=&quot;viz-carousel-next cursor-interaction&quot;&gt;&lt;i data-lucide=&quot;chevron-right&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/button&gt;`;
+      const previous = controls.querySelector(&quot;.viz-carousel-previous&quot;);
+      const next = controls.querySelector(&quot;.viz-carousel-next&quot;);
+      const picker = controls.querySelector(&quot;.viz-carousel-picker&quot;);
+      const summary = picker.querySelector(&quot;summary&quot;);
+      const count = controls.querySelector(&quot;.viz-carousel-count&quot;);
+      const name = controls.querySelector(&quot;.viz-carousel-name&quot;);
+      const options = controls.querySelector(&quot;.viz-carousel-options&quot;);
+      const status = document.createElement(&quot;span&quot;);
+      status.className = &quot;sr-only&quot;;
+      status.setAttribute(&quot;role&quot;, &quot;status&quot;);
+      status.setAttribute(&quot;aria-live&quot;, &quot;polite&quot;);
+      status.setAttribute(&quot;aria-atomic&quot;, &quot;true&quot;);
+      previous.setAttribute(
+        &quot;aria-label&quot;,
+        root.dataset.previousLabel ?? &quot;Previous variant&quot;,
+      );
+      next.setAttribute(&quot;aria-label&quot;, root.dataset.nextLabel ?? &quot;Next variant&quot;);
+
+      let active = 0;
+      let mousePointerId = null;
+      let summaryPointerHandled = false;
+      summary.addEventListener(&quot;pointerdown&quot;, (event) =&gt; {
+        summaryPointerHandled =
+          event.pointerType === &quot;mouse&quot; &amp;&amp; event.button === 0 &amp;&amp; !event.ctrlKey;
+        if (!summaryPointerHandled) {
+          return;
+        }
+        event.preventDefault();
+        summary.focus({ preventScroll: true });
+        picker.open = !picker.open;
+        mousePointerId = picker.open ? event.pointerId : null;
+      });
+      summary.addEventListener(&quot;click&quot;, (event) =&gt; {
+        if (summaryPointerHandled &amp;&amp; event.detail &gt; 0) {
+          event.preventDefault();
+        }
+      });
+      const choices = panels.map((panel, index) =&gt; {
+        const choice = document.createElement(&quot;button&quot;);
+        choice.type = &quot;button&quot;;
+        choice.className = &quot;cursor-interaction&quot;;
+        choice.textContent = panel.dataset.variant;
+        choice.addEventListener(&quot;click&quot;, () =&gt; {
+          select(index);
+          summary.focus();
+        });
+        choice.addEventListener(&quot;pointerup&quot;, (event) =&gt; {
+          if (
+            picker.open &amp;&amp;
+            event.pointerType === &quot;mouse&quot; &amp;&amp;
+            event.button === 0 &amp;&amp;
+            event.pointerId === mousePointerId
+          ) {
+            choice.click();
+          }
+        });
+        options.appendChild(choice);
+        return choice;
+      });
+      const select = (index) =&gt; {
+        const changed = active !== index;
+        active = index;
+        panels.forEach((panel, position) =&gt; {
+          panel.hidden = position !== active;
+          choices[position].setAttribute(
+            &quot;aria-current&quot;,
+            String(position === active),
+          );
+        });
+        root.dataset.activeVariant = panels[active].dataset.variant;
+        count.textContent = `${active + 1} / ${panels.length}`;
+        name.textContent = panels[active].dataset.variant;
+        picker.open = false;
+        mousePointerId = null;
+        if (changed) {
+          status.textContent = `${count.textContent}: ${name.textContent}`;
+        }
+      };
+      previous.addEventListener(&quot;click&quot;, () =&gt;
+        select((active + panels.length - 1) % panels.length),
+      );
+      next.addEventListener(&quot;click&quot;, () =&gt;
+        select((active + 1) % panels.length),
+      );
+      picker.addEventListener(&quot;keydown&quot;, (event) =&gt; {
+        if (event.key === &quot;Escape&quot; &amp;&amp; picker.open) {
+          event.preventDefault();
+          picker.open = false;
+          mousePointerId = null;
+          summary.focus();
+          return;
+        }
+        if (event.altKey || event.ctrlKey || event.metaKey) {
+          return;
+        }
+        const index = choices.indexOf(document.activeElement);
+        let nextIndex;
+        if (event.key === &quot;ArrowDown&quot;) {
+          nextIndex = index &lt; 0 ? active : (index + 1) % choices.length;
+        } else if (event.key === &quot;ArrowUp&quot;) {
+          nextIndex = index &lt; 0 ? active : (index + choices.length - 1) % choices.length;
+        } else if (picker.open &amp;&amp; event.key === &quot;Home&quot;) {
+          nextIndex = 0;
+        } else if (picker.open &amp;&amp; event.key === &quot;End&quot;) {
+          nextIndex = choices.length - 1;
+        } else {
+          return;
+        }
+        event.preventDefault();
+        picker.open = true;
+        choices[nextIndex].focus();
+      });
+      picker.addEventListener(&quot;focusout&quot;, (event) =&gt; {
+        if (!picker.contains(event.relatedTarget)) {
+          picker.open = false;
+          mousePointerId = null;
+        }
+      });
+      const dismiss = (event) =&gt; {
+        if (!summary.contains(event.target)) {
+          mousePointerId = null;
+        }
+        if (!picker.contains(event.target)) {
+          picker.open = false;
+        }
+      };
+      const endPointerSelection = () =&gt; {
+        mousePointerId = null;
+      };
+      const sizePicker = () =&gt; {
+        root.style.setProperty(
+          &quot;--viz-carousel-picker-height&quot;,
+          `${picker.open ? options.offsetHeight : 0}px`,
+        );
+      };
+      picker.addEventListener(&quot;toggle&quot;, sizePicker);
+      window.addEventListener(&quot;resize&quot;, sizePicker);
+      document.addEventListener(&quot;pointerdown&quot;, dismiss);
+      document.addEventListener(&quot;pointerup&quot;, endPointerSelection);
+      document.addEventListener(&quot;pointercancel&quot;, endPointerSelection);
+      window.addEventListener(&quot;blur&quot;, endPointerSelection);
+      window.addEventListener(
+        &quot;pagehide&quot;,
+        () =&gt; {
+          document.removeEventListener(&quot;pointerdown&quot;, dismiss);
+          document.removeEventListener(&quot;pointerup&quot;, endPointerSelection);
+          document.removeEventListener(&quot;pointercancel&quot;, endPointerSelection);
+          window.removeEventListener(&quot;blur&quot;, endPointerSelection);
+          window.removeEventListener(&quot;resize&quot;, sizePicker);
+        },
+        { once: true },
+      );
+      root.append(controls, status);
+      select(0);
+    }
+  })();
+&lt;/script&gt;
+&lt;script id=&quot;codex-visualization-lucide&quot; async src=&quot;https://unpkg.com/lucide@1.17.0/dist/umd/lucide.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  const initialize = () =&gt; {
+    globalThis.lucide?.createIcons({ attrs: { width: 16, height: 16 } });
+  };
+  if (globalThis.lucide != null) {
+    initialize();
+    return;
+  }
+  document
+    .getElementById(&quot;codex-visualization-lucide&quot;)
+    ?.addEventListener(&quot;load&quot;, initialize, { once: true });
+})();
+&lt;/script&gt;
+
+&lt;/body&gt;
+&lt;/html&gt;
+"></iframe>
+
+<script>(() => {
+  const frame = document.getElementById("codex-visualization");
+  if (!(frame instanceof HTMLIFrameElement)) {
+    return;
+  }
+  let viewportHeight = globalThis.innerHeight;
+  const storageKey = `codex:visualization-widget-state-v2:${JSON.stringify([
+    globalThis.location.pathname,
+    globalThis.location.search,
+  ])}`;
+  const parseState = (serializedState) => {
+    if (
+      typeof serializedState !== "string" ||
+      new TextEncoder().encode(serializedState).length > 16 * 1024
+    ) {
+      throw new TypeError(
+        "Widget state must be a JSON object of at most 16 KiB",
+      );
+    }
+    /** @type {unknown} */
+    const state = JSON.parse(serializedState);
+    if (
+      state == null ||
+      typeof state !== "object" ||
+      Array.isArray(state) ||
+      ("imageIds" in state &&
+        (!Array.isArray(state.imageIds) || state.imageIds.length > 0))
+    ) {
+      throw new TypeError("Widget state must be a JSON object");
+    }
+    const storedState = { modelContent: null, privateContent: null, ...state };
+    const canonicalState = JSON.stringify(
+      storedState,
+      (_key, /** @type {unknown} */ value) => {
+        if (typeof value === "number" && !Number.isFinite(value)) {
+          throw new TypeError("Widget state must contain finite numbers");
+        }
+        return value;
+      },
+    );
+    if (new TextEncoder().encode(canonicalState).length > 16 * 1024) {
+      throw new TypeError(
+        "Widget state must be a JSON object of at most 16 KiB",
+      );
+    }
+    return storedState;
+  };
+  let storage = null;
+  let state = null;
+  try {
+    const localStorage = globalThis.localStorage;
+    const probeKey = `${storageKey}:probe`;
+    localStorage.setItem(probeKey, "1");
+    localStorage.removeItem(probeKey);
+    storage = localStorage;
+    const savedState = storage.getItem(storageKey);
+    if (savedState != null) {
+      try {
+        state = parseState(savedState);
+      } catch {
+        // Invalid saved state does not disable future writes.
+      }
+    }
+  } catch {
+    storage = null;
+  }
+  const initialGlobals = {
+    widgetState: state,
+    statePersistence: storage == null ? "none" : "local",
+  };
+
+  const channel = new MessageChannel();
+  channel.port1.addEventListener("message", (event) => {
+    const data = event.data;
+    if (typeof data !== "object" || data == null) {
+      return;
+    }
+    if (data.type === "widget-state-write") {
+      if (!Number.isSafeInteger(data.id) || data.id <= 0) {
+        return;
+      }
+      let ok = false;
+      try {
+        if (storage != null) {
+          const state = parseState(data.state);
+          storage.setItem(storageKey, JSON.stringify(state));
+          ok = true;
+        }
+      } catch {
+        // Storage denial, quota limits, and invalid state return a failed receipt.
+      }
+      channel.port1.postMessage({
+        type: "widget-state-result",
+        id: data.id,
+        ok,
+      });
+      return;
+    }
+    if (data.type === "height") {
+      const height = data.height;
+      if (
+        typeof height === "number" &&
+        Number.isFinite(height) &&
+        height >= 0 &&
+        height <= 10_000
+      ) {
+        frame.style.height = Math.ceil(height) + "px";
+      }
+      return;
+    }
+    if (data.type === "scroll-to") {
+      const top = data.top;
+      if (
+        typeof top === "number" &&
+        Number.isFinite(top) &&
+        top >= 0 &&
+        globalThis.navigator.userActivation?.isActive === true
+      ) {
+        globalThis.scrollTo({
+          top: Math.ceil(
+            globalThis.scrollY + frame.getBoundingClientRect().top + top,
+          ),
+        });
+      }
+      return;
+    }
+    if (data.type === "open-external") {
+      const rawHref = data.href;
+      if (typeof rawHref !== "string") {
+        return;
+      }
+      let href;
+      try {
+        const url = new URL(rawHref, document.baseURI);
+        if (url.protocol !== "https:") {
+          return;
+        }
+        href = url.href;
+      } catch {
+        return;
+      }
+      if (globalThis.navigator.userActivation?.isActive === true) {
+        const anchor = document.createElement("a");
+        anchor.href = href;
+        anchor.rel = "noopener noreferrer";
+        anchor.target = "_blank";
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+      }
+      return;
+    }
+    if (data.type === "follow-up") {
+      const prompt = data.prompt;
+      if (
+        typeof prompt !== "string" ||
+        globalThis.navigator.userActivation?.isActive !== true
+      ) {
+        return;
+      }
+      const title = data.title;
+      globalThis.prompt(typeof title === "string" ? title : prompt, prompt);
+    }
+  });
+  channel.port1.start();
+  const srcdoc = frame.dataset.srcdoc;
+  if (srcdoc == null) {
+    return;
+  }
+  globalThis.addEventListener("resize", () => {
+    const height = Number.parseFloat(frame.style.height);
+    if (!Number.isFinite(height) || height <= viewportHeight) {
+      frame.style.removeProperty("height");
+    }
+    viewportHeight = globalThis.innerHeight;
+    channel.port1.postMessage({ type: "measure" });
+  });
+  frame.addEventListener(
+    "load",
+    () => {
+      frame.contentWindow?.postMessage(
+        { type: "codex-visualization-initialize" },
+        "*",
+        [channel.port2],
+      );
+    },
+    { once: true },
+  );
+  // Match the trusted bootstrap element, not the same text in an authored title.
+  frame.srcdoc = srcdoc.replace(
+    '<script type="application/json" id="codex-visualization-widget-state">__CODEX_VISUALIZATION_WIDGET_STATE__<\/script>',
+    () =>
+      '<script type="application/json" id="codex-visualization-widget-state">' +
+      JSON.stringify(initialGlobals).replaceAll("<", "\\u003c") +
+      "<\/script>",
+  );
+  delete frame.dataset.srcdoc;
+})();
+</script>
+</body>
+</html>

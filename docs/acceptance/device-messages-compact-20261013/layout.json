@@ -1,0 +1,122 @@
+[
+  {
+    "name": "conversation-1260",
+    "viewport": {
+      "width": 1260,
+      "height": 800
+    },
+    "body": {
+      "x": 500,
+      "y": 205,
+      "width": 736,
+      "height": 466,
+      "bottom": 671
+    },
+    "header": {
+      "x": 500,
+      "y": 131,
+      "width": 736,
+      "height": 74,
+      "bottom": 205
+    },
+    "composer": {
+      "x": 500,
+      "y": 679,
+      "width": 736,
+      "height": 105,
+      "bottom": 784
+    },
+    "horizontalOverflow": false,
+    "verticalOverflow": false
+  },
+  {
+    "name": "conversation-1440",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "body": {
+      "x": 500,
+      "y": 205,
+      "width": 916,
+      "height": 626,
+      "bottom": 831
+    },
+    "header": {
+      "x": 500,
+      "y": 131,
+      "width": 916,
+      "height": 74,
+      "bottom": 205
+    },
+    "composer": {
+      "x": 500,
+      "y": 839,
+      "width": 916,
+      "height": 105,
+      "bottom": 944
+    },
+    "horizontalOverflow": false,
+    "verticalOverflow": false
+  },
+  {
+    "name": "conversation-dark",
+    "viewport": {
+      "width": 1260,
+      "height": 800
+    },
+    "body": {
+      "x": 500,
+      "y": 205,
+      "width": 736,
+      "height": 466,
+      "bottom": 671
+    },
+    "header": {
+      "x": 500,
+      "y": 131,
+      "width": 736,
+      "height": 74,
+      "bottom": 205
+    },
+    "composer": {
+      "x": 500,
+      "y": 679,
+      "width": 736,
+      "height": 105,
+      "bottom": 784
+    },
+    "horizontalOverflow": false,
+    "verticalOverflow": false
+  },
+  {
+    "name": "conversation-mobile",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "body": {
+      "x": 14,
+      "y": 218,
+      "width": 362,
+      "height": 497,
+      "bottom": 715
+    },
+    "header": {
+      "x": 14,
+      "y": 146,
+      "width": 362,
+      "height": 72,
+      "bottom": 218
+    },
+    "composer": {
+      "x": 14,
+      "y": 723,
+      "width": 362,
+      "height": 109,
+      "bottom": 832
+    },
+    "horizontalOverflow": false,
+    "verticalOverflow": false
+  }
+]

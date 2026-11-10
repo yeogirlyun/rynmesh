@@ -1,0 +1,14 @@
+{
+  "reviewer": "root",
+  "verdict": "development_failed",
+  "independent_review": "independent-review.json",
+  "observed": {"task_status": "completed", "goal_outcome": "unverified", "model_calls": 5, "elapsed_seconds": 234.875, "mechanical_passed": 4, "semantic_status": "unknown", "write_dispatches": 1, "source_replacements": 1, "preapproval_writes": 0, "owner_source_unchanged": true, "code_unchanged": true},
+  "normalization": "normalized/grade.json: failed, goal_outcome assertion false; absent formal dependency/security/review wrappers remain pending.",
+  "root_cause_evidence": [
+    "Last checker call ends agent_inference_timeout after120.391s with no received usage; it does not return an empty length4096 response.",
+    "bridge local provider options impose min(manifest.timeout_seconds,120); SourceStore adapters and source provider manifests already use180. Per-round task cap600 and lifetime3600 were not exhausted.",
+    "Report accuracy issue independently confirmed: unknown persisted probe evidence cannot establish that a model has never been tested."
+  ],
+  "next": "Align single-request timeout with existing provider cap and actual remaining task/lifetime time for candidate/reference; add a general missing-record versus negative-fact rule to the main prompt. Preserve source settings, total budgets and prior failures; test and independently review before another live run.",
+  "formal_trial_registered": false
+}

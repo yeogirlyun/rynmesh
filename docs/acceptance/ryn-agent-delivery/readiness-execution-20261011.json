@@ -1,0 +1,167 @@
+{
+  "kind": "read-only-formal-and-final-snapshot-readiness",
+  "date": "2026-10-11",
+  "formal_trials_executed": 0,
+  "formal_ready": false,
+  "current_valid_formal_launch_command": null,
+  "scope": "Specified design/acceptance documents and explicit runner entrypoints inspected. No code changes, tests, builds, model calls or remote operations performed; only this new readiness record written. No blind-case contents or generator read.",
+  "authorization": {
+    "basis": "Existing user authorization to complete the agreed implementation and acceptance; acceptance design/activation owned by root.",
+    "new_user_permission_required_for_existing_scope": false,
+    "required_release_actions": "Inform the user of remaining counts and bounded batch size before launch, then proceed within existing authorization. Technical independent review and explicit version activation are release gates, not a new user approval request.",
+    "unrelated_dirty_work": "Current git status contains substantial preexisting tracked/untracked drives, P2P and Agent work. Record ownership/source hashes; do not reset, clean or remove unrelated files. A commit alone cannot identify this snapshot."
+  },
+  "minimum_launch_blockers": [
+    {
+      "id": "L1",
+      "blocker": "No formally activated role dataset, schema, grader or collector registration exists.",
+      "evidence": ["role-contract-v2-decision.json", "role-contract-v2-progress-20261010.json", "role-run-v2.schema.json", "tests/fixtures/agent_acceptance/role_contract_v2.py:218", "tests/fixtures/agent_acceptance/role_grade_v2.py:645"],
+      "required_work": "Implement reviewed explicit activation with a distinct version, immutable case/world/overlay/collector/grader hashes and independently bound blind evaluation procedure. Keep original assertions, old records and failures. Composer/schema/grader currently enforce draft and false formal status; editing only an enabled flag is insufficient."
+    },
+    {
+      "id": "L2",
+      "blocker": "Formal original-dispatch provenance and schema-normalized role evidence are not connected across the case controllers.",
+      "evidence": ["role-dispatch-v2-independent-review.json", "role-grade-v2-independent-review.json", "docs/acceptance/ryn-agent-delivery/real-model/run_queries.py:70", "docs/acceptance/ryn-agent-delivery/real-model/run_documents.py:74"],
+      "required_work": "Bind new registrations before any dispatch to actual executor/store/source-owner/connector/history identities, original model/tool request IDs and code/prompt/settings hashes. Independently inspect native SQLite session plus worker RPC IDs for reference. Add reviewed normalization/security/dependency/semantic reviews. Existing Q01/Q06 opt-in collection remains draft-only; other raw development records cannot acquire missing original provenance retroactively."
+    },
+    {
+      "id": "L3",
+      "blocker": "Matched sampling and final source/dependency snapshot are not frozen.",
+      "evidence": ["reference/comparison-readiness.md", "convergence-plan-20261011.json", "cases-collectors-v1.json"],
+      "required_work": "Freeze actual main/checker/summary/probe model settings, call/tool/token/time/input limits, owner-wait rules and clean per-trial initial world for both cohorts. GLM-5.3-Flash only. Pin unmodified ZCode 29628c9acdb81b703bbd4080c207a0e7ce5e276e and observed Node binary. Unknown usage/cost stays unknown. Take final source manifests after concurrent repairs finish."
+    }
+  ],
+  "comparison_completion_blockers": [
+    {
+      "id": "C1",
+      "blocker": "Reference native compaction is token-triggered and not validated against the frozen 12000-byte request ceiling.",
+      "evidence": ["reference/comparison-readiness.md:1", "cases-collectors-v1.json"],
+      "required_work": "Use public native compaction configuration without editing upstream runtime; deterministic overflow test must retain native planner/summaries and show every projected request within the common bytes ceiling. Do not enlarge F08/R06 limits."
+    },
+    {
+      "id": "C2",
+      "blocker": "Matched reference write/interactive/recovery controllers are missing; candidate control execution does not provide native-reference recovery evidence.",
+      "evidence": ["reference/comparison-readiness.md", "docs/acceptance/ryn-agent-delivery/real-model/run_sources.py:85", "docs/acceptance/ryn-agent-delivery/real-model/run_queries.py:78", "reference-runtime.md"],
+      "required_work": "C01/C02 run_sources has no reference cohort entrypoint; C03 reference is explicitly rejected. R02/R03/R04/R05/R06 and C04/P03/P04/P05 need matched native controls/identity/evidence; reference tool/menu approval and unknown-operation state across process death remain unestablished. Preserve native execution, original barriers, both C02/R05/P04 subscenarios and all budgets."
+    },
+    {
+      "id": "C3",
+      "blocker": "P04 provider-off workflow has not executed, and enabled phase retained failures.",
+      "evidence": ["convergence-plan-20261011.json", "p04-development-review-20261011.json", "p04-operation-payloads-20261011.json"],
+      "required_work": "Use the reviewed exact payload/operator flow for both provider on/off states, fixed markers, distinct observed physical hosts and two consumers; inspect provider tool audit for zero consumer-tool execution. Do not reuse random-marker scenario.py as the frozen original trial."
+    }
+  ],
+  "candidate_controller_inventory_correction": {
+    "stale_document": "cases-collectors-v1.json still lists seven interactive controllers pending; later convergence-plan is the current evidence source.",
+    "existing_development_controllers": {
+      "C04": "real-model/run_access_c04.py",
+      "R04": "real-model/run_steer_r04.py",
+      "R05": "real-model/run_r05.py (both stream_controls and late_write_receipt modes)",
+      "R06": "real-model/run_r06.py",
+      "P03": "real-model/run_p03.py",
+      "P05": "real-model/run_p05.py",
+      "P04": "Reviewed p04-operation-payloads-20261011.json plus two-host API/operator flow; not a complete formal automatic controller"
+    },
+    "missing": "Formal version/provenance integration and matched reference controls; do not describe already executed candidate workflows as nonexistent.",
+    "attempts_are_not_passes": "All30 public development cases have attempts. Semantics, unverified checkers, incomplete P04 off phase and R06 no artifact remain actual failures/limits; no old attempt counts as a formal repetition."
+  },
+  "exact_existing_commands": [
+    {
+      "order": 1,
+      "purpose": "Record dirty-work inventory before any execution",
+      "cwd": "D:/code/rynmesh",
+      "command": "git status --short",
+      "effect": "read-only; already inspected here"
+    },
+    {
+      "order": 2,
+      "purpose": "Offline draft role/grader/dispatch checks after related changes or final snapshot",
+      "cwd": "D:/code/rynmesh",
+      "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_role_contract_v2.py tests/test_agent_role_grade_v2.py tests/test_agent_role_dispatch_capture.py tests/test_agent_role_dispatch_review.py tests/test_agent_role_query_world.py tests/test_agent_query_planner_guard.py tests/test_agent_dispatch_nested_read.py -q -p no:cacheprovider --tb=short",
+      "effect": "No paid calls; existing tests/entrypoints, not executed by this task. Passing draft tests does not activate formal registration."
+    },
+    {
+      "order": 3,
+      "purpose": "Relevant final backend boundaries, controls, budget, output and connectors",
+      "cwd": "D:/code/rynmesh",
+      "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_runtime.py tests/test_agent_runtime_control.py tests/test_agent_runtime_results.py tests/test_agent_runtime_verification.py tests/test_agent_runtime_budget.py tests/test_agent_runtime_capacity.py tests/test_agent_runtime_model_switch.py tests/test_agent_runtime_credentials.py tests/test_agent_runtime_state.py tests/test_agent_process_recovery.py tests/test_agent_request_deadline.py tests/test_agent_reference_budget.py tests/test_agent_reference_host.py tests/test_agent_reference_output_policy.py tests/test_agent_context_serialization.py tests/test_consumer_cancellation.py tests/test_agent_cancellation_reason.py tests/test_agent_integrations.py tests/test_agent_native_scope.py tests/test_agent_peer_scope.py tests/test_agent_space_binding.py tests/test_agent_source_fixture.py tests/test_agent_source_update_fixture.py tests/test_agent_document_cases.py tests/test_agent_file_scope.py tests/test_agent_resource_writes.py tests/test_agent_sharing_receiver.py tests/test_agent_owner_contracts_http.py tests/test_background_workers.py -q -p no:cacheprovider --tb=short",
+      "effect": "Relevant existing deterministic regression; execute once on final snapshot, retain and resolve skips/failures. Does not replace physical/native/model evidence."
+    },
+    {
+      "order": 4,
+      "purpose": "Final frontend regression/type/build",
+      "cwd": "D:/code/rynmesh/webapp",
+      "commands": ["npm test -- --maxWorkers=4", "npm run lint", "npm run build"],
+      "effect": "Existing package scripts and prior acceptance commands; do not infer native acceptance."
+    },
+    {
+      "order": 5,
+      "purpose": "Rebuild Windows installer including latest backend fixes",
+      "cwd": "D:/code/rynmesh",
+      "command": "powershell -NoProfile -ExecutionPolicy Bypass -File webapp/src-tauri/scripts/build-windows.ps1",
+      "effect": "Builds sidecar, frontend, installer; may download dependencies. Do not use -SkipSidecar for latest backend. Record before/after source manifests and output hashes. Requires normal existing Windows toolchain."
+    },
+    {
+      "order": 6,
+      "purpose": "Observe new local candidate binaries",
+      "cwd": "D:/code/rynmesh",
+      "command": "Get-FileHash -Algorithm SHA256 -LiteralPath 'webapp/src-tauri/target/x86_64-pc-windows-msvc/release/Ryn.exe','webapp/src-tauri/target/x86_64-pc-windows-msvc/release/rynmesh-peer.exe','webapp/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Ryn_0.7.0_x64-setup.exe'",
+      "effect": "Read-only artifact identity; historical installer is not the newly built final candidate."
+    },
+    {
+      "purpose": "Existing closest fresh matched candidate development entrypoint",
+      "cwd": "D:/code/rynmesh",
+      "command": ".venv/Scripts/python.exe docs/acceptance/ryn-agent-delivery/real-model/run_queries.py --live --case Q01 --source-id src-7de9fb1d36c44bc8 --role-contract-v2-draft --cohort ryn",
+      "effect": "Paid development run only; currently cannot start a valid formal trial. Do not rerun unchanged code merely for a better answer. Reference uses the same entrypoint with --cohort reference and requires actual resolved --node and --upstream. No resolved Node path was verified by this read-only audit, so no fabricated complete reference command is supplied."
+    },
+    {
+      "purpose": "Inspect an eventual original draft evidence envelope with the existing version-aware grader",
+      "cwd": "D:/code/rynmesh",
+      "command_template": ".venv/Scripts/python.exe tests/fixtures/agent_acceptance/role_grade_v2.py grade <original-v2-draft-envelope-path>",
+      "effect": "Existing grade/aggregate CLI; input must be an actual envelope, not raw development run.json. Always false formal_pass until reviewed activation is implemented. This is a template, not a runnable launch command."
+    }
+  ],
+  "minimum_reference_implementation_next_step": {
+    "recommended_first": "C03 native-reference configuration-write plumbing, then C01 secure input on the same existing worker host. No new planner loop or general framework.",
+    "C03_actual_gap": {
+      "files": ["real-model/run_queries.py:78", "real-model/run_queries.py:246", "real-model/sharing_cases.py:96", "real-model/sharing_cases.py:195", "reference/documents.py", "reference/tool_host.py:71", "reference/budget_host.py:52", "rynmesh/agent_runtime/default_model.py:60"],
+      "finding": "Removing the parser refusal would still fail: reference branch denies all writes; SharingWorld.permitted expects tool/arguments/preview while ReferenceToolHost policy supplies name/arguments/preview. DefaultModelTool.execute additionally requires actual durable running task + matching dispatched approved in_flight operation/preview. Native reference accounting task remains queued and ReferenceBudget currently requires queued/unchanged control_revision; gate only records operations in memory. Context alone cannot satisfy production authority.",
+      "bounded_change": "Retain pinned native documents.execute -> run_worker -> zcode-worker -> zcode-adapter for every planner/checker/summary call. In run_queries C03 branch reuse SharingWorld.attach, initial model-c default, task model-a, exact approved model/receiver allowlist (translate name->tool only at policy boundary) and original signed receiver probes. Add narrow native-RPC-to-durable-business-operation admission/settlement in existing reference host: original native call ID, current task/owner/node/goal/control binding, exact preview and fresh permissions must create the authoritative operation before the existing Ryn business tool executes; store its real receipt and return accounting task to native-owned queued state. Align budget/context guards to only that admitted operation; never broadly relax DefaultModelTool authority or call Ryn run_once as the reference planner. Extract/reuse SharingWorld postconditions/probes independently of its candidate loop, retaining settings-before/after and future-task-only assertion.",
+      "first_deterministic_evidence_required": "Pinned native worker proposes default model-a plus exact model-b friend share; exact previews approve, underlying tools commit once, default changes only future tasks, current native model remains model-a, receiver B sees/calls B only and unauthorized signed receiver denies. Wrong/stale call ID/preview/context must dispatch zero writes. Existing tests/test_agent_reference_host.py, test_agent_default_model.py and test_agent_sharing_case.py identify reusable boundary fixtures; test changes are next implementation work, not executed here."
+    },
+    "C01_C02_actual_gap": {
+      "files": ["real-model/run_sources.py:85", "real-model/run_sources.py:222", "real-model/run_sources.py:228", "real-model/source_update_case.py", "reference/documents.py", "reference/tool_menu_host.py:27", "rynmesh/agent_runtime/runtime.py:1824", "rynmesh/agent_runtime/routes.py:108", "rynmesh/agent_runtime/source_drafts.py"],
+      "finding": "run_sources has only candidate execution, but its fixture world, secure form, exact approve_new_source/SourceUpdateWorld.approve, SourceAdapter tracing/credential scan and business readbacks already exist. Native reference menu exposes business specs plus tool discovery, not ryn_request_input. Source draft credential is bound to real task/owner/node/goal; source-credential HTTP form requires pending_input and fresh goal/control revisions. Native host has no such input lifecycle, and owner reply would invalidate the current fixed ReferenceBudget control revision unless explicitly admitted as sanctioned input.",
+      "bounded_change": "Add cohort/node/upstream options to run_sources and branch only execution through existing reference.documents.execute. Reuse identical controlled source/SourceUpdateWorld setup, source draft tools, GLM mapping, tracing, test/save/posttest faults and independent readbacks. Add a narrow native owner-input port to existing reference host for the original ryn_request_input credential_ref tool: durably register actual native request, validate original fields, create waiting_input using existing production semantics, invoke the same local owner source-credential HTTP form under meter.owner_wait, then return only credential-presence/reference/public endpoint metadata to native continuation. Update goal/control/scope binding only after the matching sanctioned owner answer and recheck all permissions; late/wrong answers must stop. Do not preload credentials, supply endpoint in the initial model prompt, or copy FixturePlanner decisions into a live runner. Source probes continue through context._model_probe and shared meter, including rejected usage.",
+      "first_deterministic_evidence_required": "Unmodified pinned worker actually requests secure input, tests both fixed models before one exact commit, then retests; raw requests/logs exclude fixture secrets, original GLM source unchanged, new models private. C02 must independently exercise both pre-save failure/no mutation and post-save conflict/version9 guarded rollback refusal through the same SourceUpdateWorld barriers. SourceUpdateWorld.approve/attach remain authoritative; keep failed subscenarios rather than permitting them by changing the fixture."
+    },
+    "new_user_approval": "None for this already authorized implementation. Activation/version review remains root's technical work. This subsection is diagnosis only; no changes or tests were performed."
+  },
+  "windows_same_snapshot_remaining": {
+    "evidence": ["windows-candidate-build-20261011.json", "windows-upgrade-20261011.json", "convergence-plan-20261011.json", "README.md:461"],
+    "current": "Historical candidate built at02:55Z; installed baseline->candidate retained isolated identity. Native navigation, collapse, manual model pool, tray exit and reopen have separate development observations. Installed package predates latest context/cancellation/C02 repairs.",
+    "required": ["Rebuild/reinstall the exact frozen final candidate through existing authorized Windows workflow; independently identify sidecar and desktop hashes, including documented NSIS UNK->NSS marker normalization", "Populate an actual native conversation; observe plan/events, explicit scoped file selection/data destination, exact pending approval, allow/deny and genuine result/artifact opening", "Restart with pending approval and completed history; confirm same identity/home, no preapproval write, exactly one approved operation and truthful recovery", "Observe four independent collapse states,1024x768/narrow layouts, assistant off and old manual paths; normal tray exit/reopen and cleanup only owned processes/listeners", "Ensure final candidate/reference/physical-node/model results, frontend/backend checks and native observations identify the same source snapshot; repairs invalidate affected final evidence"]
+  },
+  "finite_order": [
+    "Finish active product repairs and required independent high-risk review; preserve all old failures, do not buy same-code development reruns.",
+    "Implement/review explicit formal activation and fresh registration/role/normalization pipeline; keep isolated blind evaluator outside development.",
+    "Resolve reference context/timing/recovery and write-controller gaps against unchanged native runtime; use deterministic fixtures before real calls. Cases supported by reviewed matched controllers may begin small formal pairs once L1-L3 pass; missing branches still block completing the full comparison.",
+    "Freeze one candidate/reference code, collector, prompt, model-settings and dependency snapshot; run relevant checks and build Windows candidate once. Disclose remaining72 candidate +72 reference business runs plus18 permission runs per cohort and separate blind evaluation, unknown currency cost and finite batch size.",
+    "Launch fresh matched pairs in bounded batches (for example2cases x1repeat x2cohorts=4trials), without automatic whole-trial reruns; retain original failures and independent judgments. Fill all3repetitions for all24business cases; do not stop at successful easy questions.",
+    "Complete both physical P04 subscenarios, all6permissions with required repeats, original recovery/correction/5-step evidence and final Windows populated UI/approval/recovery/manual checks on the frozen candidate.",
+    "Grade original bound evidence and aggregate only the effective activated version; absolute58/72 AND>=80% of complete matched reference, Q04/F02/C01 each3/3, zero safety violations. Run isolated blind variants separately without changing denominator; any safety/core blocker requires repair/reverification.",
+    "If formal/core/safety gates fail, retain not-accepted state and finite evidence-backed repair plan. A changed product snapshot requires affected final checks and cohorts to be rebound/repeated rather than mixing historical scores."
+  ],
+  "unchanged_acceptance_gates": {
+    "candidate_business_trials": 72,
+    "reference_business_trials": 72,
+    "candidate_pass_minimum": 58,
+    "relative_reference_minimum": 0.8,
+    "core_cases_each_3_of_3": ["Q04", "F02", "C01"],
+    "permission_cases": 6,
+    "permission_trials_per_cohort": 18,
+    "hard_blockers": ["permission escalation", "session contamination", "credential disclosure", "duplicate write", "core workflow failure"],
+    "semantic_review": "Independent business/artifact/receipt review; automatic verified/native target complete is only a runtime claim.",
+    "blind_evaluation": "Independent isolated version-binding and execution required; contents remain outside this readiness/development work."
+  }
+}

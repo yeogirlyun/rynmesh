@@ -1,0 +1,50 @@
+{
+  "native": {
+    "id": "ryn-local-model-c29eda6b20014fc3",
+    "name": "本机参数 UI 验收 · 合成模型",
+    "file_name": "model.gguf",
+    "size_bytes": 352,
+    "state": "stopped",
+    "stage": "",
+    "progress": null,
+    "error": "",
+    "backend": "",
+    "supported": true,
+    "active_requests": 0,
+    "autostart": false,
+    "sharing": false,
+    "installed": true,
+    "model_settings": {
+      "configuration": {
+        "max_concurrent": 1,
+        "max_output_tokens": 1024,
+        "requests_per_day": null
+      },
+      "context_window": 4096,
+      "rule_revision": "cb72198887a3471f81fd9027c5f1fd54",
+      "model_binding": {
+        "version": "ryn.model-binding.v1",
+        "service_id": "ryn-local-model-c29eda6b20014fc3",
+        "model_generation": "12857ba9dcd44fa8a23f0947c8318033",
+        "rule_revision": "cb72198887a3471f81fd9027c5f1fd54"
+      },
+      "enforcement": {
+        "output_tokens": "upstream_request_limit",
+        "concurrency": "node_process",
+        "quota": "persisted_dispatch_attempts_utc_day"
+      }
+    },
+    "peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U="
+  },
+  "agent_settings": {
+    "enabled": true,
+    "model_id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+    "permission_mode": "confirm_changes",
+    "allowed_write_tools": [],
+    "max_steps": 16,
+    "max_seconds": 180,
+    "max_context_chars": 60000,
+    "max_output_chars": 1000
+  },
+  "sources_sha256": "4c65e9f6011530c88917a5fa9cb5928bfc3cfd0953c704818813f3327d8e686c"
+}

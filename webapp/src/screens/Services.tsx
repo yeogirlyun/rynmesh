@@ -1,9 +1,9 @@
 import { tr, useUILanguage, uiLocale } from "../uiI18n";
-import { CloudCog, RefreshCw, SendHorizontal } from "lucide-react";
+import { ArrowRight, CloudCog, Code2, RefreshCw, Search, SendHorizontal, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAppContext } from "../appContext";
-import { Button, Chip, Hash, LoadingPanel, PageHeader, Panel, PeerPill } from "../components/ui";
+import { Hash, LoadingPanel, PeerPill } from "../components/ui";
 import type {
   LLMHardwareReport,
   LLMOrderResult,
@@ -14,11 +14,15 @@ import type {
   LLMSetupRequest,
   TaskBalanceSummary,
 } from "../domain/nodeClient";
-import { LLM_TERMINAL_STATES, llmServiceAvailability, llmServiceRecordKey } from "../domain/llmOrders";
+import { isServiceUsable, LLM_TERMINAL_STATES, llmServiceAvailability, llmServiceRecordKey } from "../domain/llmOrders";
 import type { JobCapacity, WorkResult } from "../domain/types";
 import { useProviderDiscovery, useServiceOrder } from "../domain/serviceExperience";
 import { providerIdentity, serviceDescriptors } from "../domain/serviceDescriptors";
-import InferenceAccess from "./InferenceAccess";
+import { personalHref } from "../personal/model";
+import { DesktopGlyph, GlyphTile, SparkGlyph } from "./ServiceParts";
+import { Collapse, OptionCards, SegChoice, SetupTabs, SvPill, TabPane, type SetupTab } from "./ServiceSetupParts";
+import "./service-pages-refresh.css";
+import "./setup-refresh.css";
 
 const VEO_CAPABILITY = serviceDescriptors.video.capability;
 const VEO_OPERATION = serviceDescriptors.video.operation;
@@ -121,6 +125,7 @@ export default function Services() {
   useEffect(() => { if (llmLifecycleError) lifecycleErrorRef.current?.focus(); }, [llmLifecycleError]);
   const [llmHistoryQuery, setLlmHistoryQuery] = useState("");
   const [llmHistoryPage, setLlmHistoryPage] = useState(1);
+  const [tab, setTab] = useState<SetupTab>("local");
   const llmNetworkInitialized = useRef(false);
   const mountedRef = useRef(true);
   const trackedTaskRef = useRef("");
@@ -177,7 +182,7 @@ export default function Services() {
     || estimatedAmount <= selectedLlm.service.pricing.maximum_per_task;
   const contextWithinProviderLimit = !selectedLlm || !maxTokensValid
     || estimatedInputTokens + parsedMaxTokens <= selectedLlm.service.context_window;
-  const providerAvailable = Boolean(selectedLlm?.online)
+  const providerAvailable = Boolean(selectedLlm && isServiceUsable(selectedLlm))
     && (selectedLlm?.capacity?.available === undefined || selectedLlm.capacity.available > 0);
   const balanceAvailable = !llmBalance || llmBalance.available >= estimatedAmount;
   const canSubmitLlm = Boolean(selectedLlm && llmPrompt.trim() && maxTokensValid
@@ -535,136 +540,173 @@ export default function Services() {
 
   if (loading) return <LoadingPanel />;
 
+  const llmStatusText = llmProvider?.ready ? (llmProvider.capacity?.available === 0 ? "busy" : "ready on this device") : llmProvider?.online ? "online" : llmProvider?.configured === false ? "not configured" : "not ready";
+  const llmStatusTone = llmProvider?.ready || llmProvider?.online ? "ok" : llmProvider?.configured === false ? "off" : "bad";
+  const lifecycleBusy = Boolean(llmLifecycleAction);
+  const setupTabs = [["local", tr("Local model")], ["orders", tr("Orders & history")], ["video", tr("Video providers")]] as const;
+  const setupModes = [
+    { id: "openai-compatible" as const, title: tr("OpenAI-compatible local API"), desc: tr("A server already running on this device") },
+    { id: "ollama" as const, title: "Ollama", desc: tr("Use models you pulled with Ollama") },
+    { id: "import-gguf" as const, title: tr("Import a GGUF file"), desc: tr("Read-only; runs with the bundled runtime") },
+    { id: "managed" as const, title: tr("Managed local model"), desc: tr("Download a verified model and run it here") },
+  ];
+  const transportOptions = [
+    { id: "auto" as const, label: tr("Automatic") },
+    { id: "direct" as const, label: tr("Direct only") },
+    { id: "p2p" as const, label: tr("Strict P2P") },
+    { id: "relay" as const, label: tr("Encrypted relay") },
+  ];
+  const orderWarnings = [
+    !selectedLlm ? <SvPill key="provider" tone="warn">Choose a Provider</SvPill> : null,
+    selectedLlm && !isServiceUsable(selectedLlm) ? <SvPill key="usable" tone="warn">{llmServiceAvailability(selectedLlm)}</SvPill> : null,
+    selectedLlm?.capacity?.available === 0 ? <SvPill key="busy" tone="warn">Provider busy</SvPill> : null,
+    !maxTokensValid ? <SvPill key="tokens" tone="bad">Enter 1–{selectedLlm?.service.max_output_tokens || "provider max"} whole tokens</SvPill> : null,
+    !contextWithinProviderLimit ? <SvPill key="context" tone="bad">Prompt plus output exceeds the Provider context window</SvPill> : null,
+    !priceWithinProviderLimit ? <SvPill key="price" tone="bad">Estimated cost exceeds the Provider task maximum</SvPill> : null,
+    !balanceAvailable ? <SvPill key="balance" tone="bad">Insufficient DEV balance</SvPill> : null,
+  ].filter(Boolean);
+
   return (
-    <div className="screen-stack">
-      <PageHeader
-        eyebrow={tr("Services")}
-        title={tr("Service setup")}
-        context={tr("Set up and manage the services running on this device.")}
-        actions={<Button icon={RefreshCw} onClick={() => void refresh()}>{tr("Refresh")}</Button>}
-      />
+    <div className="rf rd-svc rd-setup">
+      <header className="sv-head">
+        <div className="sv-head-text"><h1 className="sv-title">{tr("Service setup")}</h1><p className="sv-lead">{tr("Set up and manage the services running on this device.")}</p></div>
+        <div className="sv-head-actions"><button type="button" className="rf-btn" onClick={() => void refresh()}><RefreshCw size={15} aria-hidden="true" />{tr("Refresh")}</button></div>
+      </header>
 
-      <section id="inference-api"><InferenceAccess /></section>
+      <SetupTabs tab={tab} tabs={setupTabs} onChange={setTab} />
 
-      <Panel>
-        <div className="panel-head">
-          <div>
-            <span className="eyebrow">{tr("Provider control")}</span>
-            <h2>{tr("Local LLM service")}</h2>
+      <TabPane id="local" on={tab === "local"}>
+        <Link className="sv-linkcard" to={personalHref("/services/api", client.mode === "fixture")}>
+          <Code2 size={16} aria-hidden="true" /><span>{tr("API keys and model aliases are on the API access page.")}</span><span className="rf-lnk">{tr("Open API access")} <ArrowRight size={14} aria-hidden="true" /></span>
+        </Link>
+
+        <section className="sv-card sv-llm rf-h-indigo" aria-labelledby="sv-llm-title">
+          <div className="sv-llm-head">
+            <GlyphTile hue="indigo" size="lg">{(px) => <SparkGlyph size={px} />}</GlyphTile>
+            <div className="sv-llm-id">
+              <small>{tr("Provider control")}</small>
+              <h2 id="sv-llm-title">{tr("Local LLM service")}</h2>
+              {llmProvider?.service ? <span className="sv-llm-meta">{llmProvider.service.model_alias} · {llmProvider.service.package_id} {tr("· context")} {llmProvider.service.context_window} · {tr("{{available}}/{{total}} slots", { available: llmProvider.capacity?.available ?? 0, total: llmProvider.capacity?.max_concurrent ?? 0 })}</span> : null}
+            </div>
+            <div className="sv-llm-pills">
+              <SvPill tone={llmStatusTone}>{llmStatusText}</SvPill>
+              {llmProvider?.service && llmProvider.publication_enabled ? <SvPill tone="self" line dot={false}>{tr("Shared with the network")}</SvPill> : null}
+            </div>
           </div>
-          <Chip tone={llmProvider?.ready || llmProvider?.online ? "ok" : llmProvider?.configured === false ? "info" : "danger"}>
-            {llmProvider?.ready ? (llmProvider.capacity?.available === 0 ? "busy" : "ready on this device") : llmProvider?.online ? "online" : llmProvider?.configured === false ? "not configured" : "not ready"}
-          </Chip>
-        </div>
-        {llmProvider?.service ? (
-          <div className="form-stack">
-            <div className="service-result">
-              <span>{llmProvider.service.model_alias}</span>
-              <small>
-                {llmProvider.service.package_id} {tr("· context")} {llmProvider.service.context_window} ·
-                {` ${tr("{{available}}/{{total}} slots", { available: llmProvider.capacity?.available ?? 0, total: llmProvider.capacity?.max_concurrent ?? 0 })}`}
-              </small>
-            </div>
-            <div className="button-row">
-              {llmProvider.ready ? <Link to={`/ask?peer=${encodeURIComponent(node.peer_id)}&service=${encodeURIComponent(llmProvider.service.package_id)}&network=${encodeURIComponent(llmNetwork)}`}>Ask using this device</Link> : null}
-              {!llmProvider.publication_enabled ? <Chip tone="info">Remote sharing is off. Local Ask Ryn remains available when ready.</Chip> : null}
-              <Button
-                variant="primary"
-                icon={CloudCog}
-                disabled={llmPublishing}
-                onClick={() => void publishLlm()}
-              >
-                {llmPublishing ? tr("Publishing…") : tr("Publish / refresh service")}
-              </Button>
-              {llmProvider.publication_enabled ? (
-                <Button disabled={llmPublishing} onClick={() => void pauseLlm()}>
-                  {llmPublishing ? tr("Pausing…") : tr("Pause new orders")}
-                </Button>
-              ) : null}
-              <Chip tone="info">{tr("Publishes metadata only — never prompts or model files")}</Chip>
-            </div>
-            <div className="button-row">
-              <Button disabled={Boolean(llmLifecycleAction)} onClick={() => void runLlmLifecycle("self-test")}>
-                {llmLifecycleAction === "self-test" ? tr("Testing…") : tr("Run self-test")}
-              </Button>
-              {llmProvider.lifecycle?.runtime?.managed !== false ? (
-                <>
-                  <Button disabled={Boolean(llmLifecycleAction)} onClick={() => void runLlmLifecycle("start")}>{tr("Start runtime")}</Button>
-                  <Button disabled={Boolean(llmLifecycleAction)} onClick={() => void runLlmLifecycle("stop")}>{tr("Stop runtime")}</Button>
-                  <Button disabled={Boolean(llmLifecycleAction)} onClick={() => void runLlmLifecycle("restart")}>{tr("Restart")}</Button>
-                  <Button disabled={Boolean(llmLifecycleAction)} onClick={() => void runLlmLifecycle("update")}>{tr("Update runtime")}</Button>
-                  <Button
-                    variant="danger"
-                    disabled={Boolean(llmLifecycleAction)}
-                    onClick={() => confirm({
-                      title: "Remove this model's runtime instance?",
-                      body: "This stops and removes this model's runtime instance. Shared native runtime files, model data, private configuration and conversations are preserved.",
-                      risk: "high",
-                      confirmLabel: tr("Uninstall runtime"),
-                      onConfirm: () => runLlmLifecycle("uninstall"),
-                    })}
-                  >
-                    {tr("Uninstall runtime")}
-                  </Button>
-                  {llmProvider.lifecycle?.mode === "managed" ? (
-                    <Button
-                      variant="danger"
-                      disabled={Boolean(llmLifecycleAction)}
-                      onClick={() => confirm({
-                        title: "Delete the managed model too?",
-                        body: "This removes the model's runtime instance and Rynmesh-owned model file. Shared native runtime files, private configuration and conversations are preserved. Imported or user-owned files are never deleted.",
-                        risk: "high",
-                        confirmLabel: tr("Delete managed model"),
-                        onConfirm: () => runLlmLifecycle("uninstall", {
-                          delete_environment: true,
-                          delete_model: true,
-                          confirm_model_delete: true,
-                        }),
-                      })}
-                    >
-                      {tr("Delete managed model")}
-                    </Button>
+          <div className="sv-llm-body">
+            {llmProvider?.service ? (
+              <>
+                <div className="sv-actions-row">
+                  <button type="button" className="rf-btn rf-btn-p" disabled={llmPublishing} onClick={() => void publishLlm()}>
+                    <CloudCog size={15} aria-hidden="true" />{llmPublishing ? tr("Publishing…") : tr("Publish / refresh service")}
+                  </button>
+                  {llmProvider.publication_enabled ? (
+                    <button type="button" className="rf-btn" disabled={llmPublishing} onClick={() => void pauseLlm()}>
+                      {llmPublishing ? tr("Pausing…") : tr("Pause new orders")}
+                    </button>
                   ) : null}
-                </>
-              ) : <Chip tone="info">{tr("External runtime is owner-managed")}</Chip>}
-              {llmProvider.lifecycle?.runtime?.status ? (
-                <Chip mono>{tr(llmProvider.lifecycle.runtime.status)}</Chip>
-              ) : null}
-            </div>
-            {llmLifecycleError ? <p ref={lifecycleErrorRef} tabIndex={-1} role="alert">{llmLifecycleError}</p> : null}
-            {llmProvider.lifecycle?.storage ? <p role="status">
-              Model file: {llmProvider.lifecycle.storage.model_present === false ? "missing · 0 MiB" : llmProvider.lifecycle.storage.model_bytes === null ? "size unavailable — refresh to check again" : `${(llmProvider.lifecycle.storage.model_bytes / 1024 / 1024).toFixed(1)} MiB`}
-              {llmProvider.lifecycle.storage.model_owned ? " · managed by Rynmesh" : " · externally managed"}. Shared runtime files are separate.
-            </p> : null}
+                  {llmProvider.ready ? <Link className="rf-lnk" to={`/ask?peer=${encodeURIComponent(node.peer_id)}&service=${encodeURIComponent(llmProvider.service.package_id)}&network=${encodeURIComponent(llmNetwork)}`}>Ask using this device</Link> : null}
+                  <small className="sv-actions-note">{tr("Publishes metadata only — never prompts or model files")}</small>
+                </div>
+                {!llmProvider.publication_enabled ? <p className="sv-note">Remote sharing is off. Local Ask Ryn remains available when ready.</p> : null}
+                <div className="sv-runtime">
+                  <b>{tr("Runtime")}</b>
+                  {llmProvider.lifecycle?.runtime?.status ? <code className="sv-code">{tr(llmProvider.lifecycle.runtime.status)}</code> : null}
+                  <span className="sv-grow" />
+                  <div className="sv-runtime-actions" role="group" aria-label={tr("Runtime actions")}>
+                    <button type="button" className="rf-btn rf-btn-sm" disabled={lifecycleBusy} onClick={() => void runLlmLifecycle("self-test")}>
+                      {llmLifecycleAction === "self-test" ? tr("Testing…") : tr("Run self-test")}
+                    </button>
+                    {llmProvider.lifecycle?.runtime?.managed !== false ? (
+                      <>
+                        <button type="button" className="rf-btn rf-btn-sm" disabled={lifecycleBusy} onClick={() => void runLlmLifecycle("start")}>{tr("Start runtime")}</button>
+                        <button type="button" className="rf-btn rf-btn-sm" disabled={lifecycleBusy} onClick={() => void runLlmLifecycle("stop")}>{tr("Stop runtime")}</button>
+                        <button type="button" className="rf-btn rf-btn-sm" disabled={lifecycleBusy} onClick={() => void runLlmLifecycle("restart")}>{tr("Restart")}</button>
+                        <button type="button" className="rf-btn rf-btn-sm" disabled={lifecycleBusy} onClick={() => void runLlmLifecycle("update")}>{tr("Update runtime")}</button>
+                      </>
+                    ) : <SvPill tone="off" dot={false}>{tr("External runtime is owner-managed")}</SvPill>}
+                  </div>
+                </div>
+                {llmLifecycleError ? <p ref={lifecycleErrorRef} tabIndex={-1} role="alert" className="sv-alert sv-alert-bad">{llmLifecycleError}</p> : null}
+                {llmProvider.lifecycle?.storage ? <p role="status" className="sv-note">
+                  Model file: {llmProvider.lifecycle.storage.model_present === false ? "missing · 0 MiB" : llmProvider.lifecycle.storage.model_bytes === null ? "size unavailable — refresh to check again" : `${(llmProvider.lifecycle.storage.model_bytes / 1024 / 1024).toFixed(1)} MiB`}
+                  {llmProvider.lifecycle.storage.model_owned ? " · managed by Rynmesh" : " · externally managed"}. Shared runtime files are separate.
+                </p> : null}
+                {llmProvider.lifecycle?.runtime?.managed !== false ? (
+                  <Collapse title={tr("Remove runtime or model")} icon={<TriangleAlert size={15} aria-hidden="true" />}>
+                    <div className="sv-remove-row">
+                      <div><b>{tr("Uninstall runtime")}</b><small>{tr("Stops and removes this model's runtime instance. Shared native runtime files, model data, private configuration and conversations are preserved.")}</small></div>
+                      <button
+                        type="button"
+                        className="rf-btn rf-btn-d rf-btn-sm"
+                        disabled={lifecycleBusy}
+                        onClick={() => confirm({
+                          title: "Remove this model's runtime instance?",
+                          body: "This stops and removes this model's runtime instance. Shared native runtime files, model data, private configuration and conversations are preserved.",
+                          risk: "high",
+                          confirmLabel: tr("Uninstall runtime"),
+                          onConfirm: () => runLlmLifecycle("uninstall"),
+                        })}
+                      >
+                        {tr("Uninstall runtime")}
+                      </button>
+                    </div>
+                    {llmProvider.lifecycle?.mode === "managed" ? (
+                      <div className="sv-remove-row">
+                        <div><b>{tr("Delete managed model")}</b><small>{tr("Also removes the Rynmesh-owned model file. Imported or user-owned files are never deleted.")}</small></div>
+                        <button
+                          type="button"
+                          className="rf-btn rf-btn-d rf-btn-sm"
+                          disabled={lifecycleBusy}
+                          onClick={() => confirm({
+                            title: "Delete the managed model too?",
+                            body: "This removes the model's runtime instance and Rynmesh-owned model file. Shared native runtime files, private configuration and conversations are preserved. Imported or user-owned files are never deleted.",
+                            risk: "high",
+                            confirmLabel: tr("Delete managed model"),
+                            onConfirm: () => runLlmLifecycle("uninstall", {
+                              delete_environment: true,
+                              delete_model: true,
+                              confirm_model_delete: true,
+                            }),
+                          })}
+                        >
+                          {tr("Delete managed model")}
+                        </button>
+                      </div>
+                    ) : null}
+                  </Collapse>
+                ) : null}
+              </>
+            ) : (
+              <div className="sv-empty sv-empty-plain">
+                <h3>{tr("No local provider configured")}</h3>
+                <p>{tr("This node can still discover and consume services from another Rynmesh node.")}</p>
+              </div>
+            )}
           </div>
-        ) : (
-          <div className="empty-state">
-            <h3>{tr("No local provider configured")}</h3>
-            <p>{tr("This node can still discover and consume services from another Rynmesh node.")}</p>
+        </section>
+
+        <section className="sv-card sv-setup" aria-labelledby="sv-setup-title">
+          <div className="sv-setup-head">
+            <div><h2 id="sv-setup-title" className="sv-h2 sv-h2-lg">{llmProvider?.configured ? tr("Change local model connection") : tr("Add a local model")}</h2><p className="sv-sub">{tr("Choose how this device runs its model.")}</p></div>
+            <SvPill tone="off">{tr("Publishing stays off after setup")}</SvPill>
           </div>
-        )}
-        <div className="form-stack">
-          <div className="panel-head">
-            <div>
-              <span className="eyebrow">{tr("Model setup")}</span>
-              <h3>{llmProvider?.configured ? tr("Change local model connection") : tr("Add a local model")}</h3>
-            </div>
-            <Chip tone="info">{tr("Publishing stays off after setup")}</Chip>
-          </div>
-          {llmResumeNotice ? <p>{llmResumeNotice}</p> : null}
-          <label className="field">
-            <span>{tr("Setup mode")}</span>
-            <select value={llmSetupMode} onChange={(event) => setLlmSetupMode(event.target.value as LLMSetupRequest["mode"])}>
-              <option value="" disabled>Choose setup mode</option>
-              <option value="openai-compatible">OpenAI-compatible local API</option>
-              <option value="ollama">Ollama</option>
-              <option value="import-gguf">Import a GGUF file read-only</option>
-              <option value="managed">Managed local model (bundled runtime)</option>
-            </select>
-          </label>
-          {llmHardware ? (
-            <div className="service-result">
-              <small>
+          {llmResumeNotice ? <p className="sv-notice">{llmResumeNotice}</p> : null}
+          <div className="sv-setup-modes">
+            <OptionCards label={tr("Setup mode choices")} value={llmSetupMode} options={setupModes} onChange={setLlmSetupMode} />
+            <label className="sv-field sv-sr">
+              <span>{tr("Setup mode")}</span>
+              <select value={llmSetupMode} onChange={(event) => setLlmSetupMode(event.target.value as LLMSetupRequest["mode"])}>
+                <option value="" disabled>Choose setup mode</option>
+                <option value="openai-compatible">OpenAI-compatible local API</option>
+                <option value="ollama">Ollama</option>
+                <option value="import-gguf">Import a GGUF file read-only</option>
+                <option value="managed">Managed local model (bundled runtime)</option>
+              </select>
+            </label>
+            {llmHardware ? (
+              <p className="sv-runtime-state">
+                <i aria-hidden="true" data-on={Boolean(llmHardware.hardware.native_runtime_present)} />
                 {/* `native_runtime_present`, not `native_runtime_available`:
                     the latter is true wherever the pinned release *could* be
                     downloaded, so it would claim "available" on a device that
@@ -672,118 +714,130 @@ export default function Services() {
                 {llmHardware.hardware.native_runtime_present
                   ? "Bundled runtime: available"
                   : "Bundled runtime: will be downloaded on first setup"}
-              </small>
-            </div>
-          ) : null}
-          <label className="field">
-            <span>{tr("Package ID")}</span>
-            <input value={llmPackageId} onChange={(event) => setLlmPackageId(event.target.value)} />
-          </label>
-          <label className="field">
-            <span>{tr("Public model alias")}</span>
-            <input value={llmAlias} onChange={(event) => setLlmAlias(event.target.value)} />
-          </label>
-          {llmSetupMode === "openai-compatible" || llmSetupMode === "ollama" ? (
-            <>
-              <label className="field">
-                <span>{tr("Local API URL")}</span>
-                <input value={llmBaseUrl} onChange={(event) => setLlmBaseUrl(event.target.value)} />
-              </label>
-              <label className="field">
-                <span>{tr("Model name (optional)")}</span>
-                <input value={llmModel} onChange={(event) => setLlmModel(event.target.value)} />
-              </label>
-              <label className="field">
-                <span>{tr("API key environment variable (optional)")}</span>
-                <input
-                  aria-label={tr("API key environment variable (optional)")}
-                  value={llmApiKeyEnv}
-                  onChange={(event) => setLlmApiKeyEnv(event.target.value)}
-                  placeholder={tr("For example: LOCAL_LLM_API_KEY")}
-                />
-                <small>{tr("Enter the environment-variable name, never the secret value.")}</small>
-              </label>
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={llmAllowNonLoopback}
-                  onChange={(event) => setLlmAllowNonLoopback(event.target.checked)}
-                />
-                {tr("Allow a trusted non-loopback API address. Only enable this for a network you control.")}
-              </label>
-            </>
-          ) : null}
-          {llmSetupMode === "import-gguf" ? (
-            <label className="field">
-              <span>{tr("GGUF file path")}</span>
-              <input value={llmModelPath} onChange={(event) => setLlmModelPath(event.target.value)} />
+              </p>
+            ) : null}
+          </div>
+          <div className="sv-setup-fields">
+            <label className="sv-field">
+              <span>{tr("Package ID")}</span>
+              <input className="sv-inp sv-mono" value={llmPackageId} onChange={(event) => setLlmPackageId(event.target.value)} />
             </label>
-          ) : null}
-          {llmSetupMode === "managed" || llmSetupMode === "import-gguf" ? (
-            <>
-              <div className="service-result">
-                <small>
+            <label className="sv-field">
+              <span>{tr("Public model alias")}</span>
+              <input className="sv-inp" value={llmAlias} onChange={(event) => setLlmAlias(event.target.value)} />
+            </label>
+            {llmSetupMode === "openai-compatible" || llmSetupMode === "ollama" ? (
+              <>
+                <label className="sv-field">
+                  <span>{tr("Local API URL")}</span>
+                  <input className="sv-inp sv-mono" value={llmBaseUrl} onChange={(event) => setLlmBaseUrl(event.target.value)} />
+                </label>
+                <label className="sv-field">
+                  <span>{tr("Model name (optional)")}</span>
+                  <input className="sv-inp" value={llmModel} onChange={(event) => setLlmModel(event.target.value)} />
+                </label>
+                <label className="sv-field sv-wide">
+                  <span>{tr("API key environment variable (optional)")}</span>
+                  <input
+                    className="sv-inp sv-mono"
+                    aria-label={tr("API key environment variable (optional)")}
+                    value={llmApiKeyEnv}
+                    onChange={(event) => setLlmApiKeyEnv(event.target.value)}
+                    placeholder={tr("For example: LOCAL_LLM_API_KEY")}
+                  />
+                  <small>{tr("Enter the environment-variable name, never the secret value.")}</small>
+                </label>
+                <label className="sv-check sv-wide">
+                  <input
+                    type="checkbox"
+                    checked={llmAllowNonLoopback}
+                    onChange={(event) => setLlmAllowNonLoopback(event.target.checked)}
+                  />
+                  {tr("Allow a trusted non-loopback API address. Only enable this for a network you control.")}
+                </label>
+              </>
+            ) : null}
+            {llmSetupMode === "import-gguf" ? (
+              <label className="sv-field sv-wide">
+                <span>{tr("GGUF file path")}</span>
+                <input className="sv-inp sv-mono" value={llmModelPath} onChange={(event) => setLlmModelPath(event.target.value)} />
+              </label>
+            ) : null}
+            {llmSetupMode === "managed" || llmSetupMode === "import-gguf" ? (
+              <>
+                <p className="sv-note sv-wide">
                   {llmSetupMode === "managed"
                     ? "Downloads a verified model and runs it with the bundled llama.cpp runtime on this device. Docker is only used on server nodes that choose it."
                     : "Runs the imported GGUF file with the bundled llama.cpp runtime on this device. Docker is only used on server nodes that choose it."}
-                </small>
-              </div>
-              {llmSetupMode === "managed" ? (
-                <label className="field">
-                  <span>Model profile</span>
-                  <select
-                    value={llmProfile}
-                    onChange={(event) => setLlmProfile(event.target.value as typeof llmProfile)}
-                  >
-                    <option value="auto">Automatic — recommended for this device</option>
-                    {/* A recommendation the device cannot run is not an
-                        option, and the no-fit sentinel the node returns has
-                        no profile name — either would render a blank entry. */}
-                    {(llmHardware?.recommendations ?? [])
-                      .filter((rec) => rec.can_run && rec.profile)
-                      .map((rec) => (
-                        <option key={rec.profile} value={rec.profile}>
-                          {(rec.display_name || rec.profile)}
-                          {rec.estimated_memory_mb ? ` · ~${rec.estimated_memory_mb} MB memory` : ""}
-                          {rec.estimated_disk_mb ? ` · ~${rec.estimated_disk_mb} MB disk` : ""}
-                          {rec.recommended ? " · recommended" : ""}
-                        </option>
-                      ))}
-                  </select>
+                </p>
+                {llmSetupMode === "managed" ? (
+                  <label className="sv-field sv-wide">
+                    <span>Model profile</span>
+                    <select
+                      className="sv-inp"
+                      value={llmProfile}
+                      onChange={(event) => setLlmProfile(event.target.value as typeof llmProfile)}
+                    >
+                      <option value="auto">Automatic — recommended for this device</option>
+                      {/* A recommendation the device cannot run is not an
+                          option, and the no-fit sentinel the node returns has
+                          no profile name — either would render a blank entry. */}
+                      {(llmHardware?.recommendations ?? [])
+                        .filter((rec) => rec.can_run && rec.profile)
+                        .map((rec) => (
+                          <option key={rec.profile} value={rec.profile}>
+                            {(rec.display_name || rec.profile)}
+                            {rec.estimated_memory_mb ? ` · ~${rec.estimated_memory_mb} MB memory` : ""}
+                            {rec.estimated_disk_mb ? ` · ~${rec.estimated_disk_mb} MB disk` : ""}
+                            {rec.recommended ? " · recommended" : ""}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                ) : null}
+                {llmSetupMode === "managed" && reviewedProfile ? <div className="sv-profile sv-wide">
+                  <b>{reviewedProfile.display_name || reviewedProfile.model_alias || reviewedProfile.profile}</b>
+                  <small>Model download: {reviewedProfile.download_bytes ? `${(reviewedProfile.download_bytes / 1024 / 1024).toFixed(0)} MiB` : "size unavailable"}; required disk: {reviewedProfile.estimated_disk_mb ?? "unknown"} MiB; memory: {reviewedProfile.estimated_memory_mb ?? "unknown"} MiB. The runtime may require an additional download.</small>
+                  <span className="sv-profile-links">
+                    {reviewedProfile.source_url?.startsWith("https://") ? <a className="rf-lnk" href={reviewedProfile.source_url} target="_blank" rel="noreferrer">Pinned model source</a> : null}
+                    {reviewedProfile.license_url?.startsWith("https://") ? <a className="rf-lnk" href={reviewedProfile.license_url} target="_blank" rel="noreferrer">License: {reviewedProfile.license_id}</a> : null}
+                  </span>
+                  <small>{reviewedProfile.license_notice || "Review the model source and license before installation."}</small>
+                </div> : null}
+                {llmSetupMode === "managed" && !reviewedProfile ? <p role="status" className="sv-note sv-wide">No verified profile is currently recommended. Refresh device information or free memory and disk space.</p> : null}
+                <label className="sv-field">
+                  <span>{tr("Local runtime port")}</span>
+                  <input className="sv-inp" value={llmPort} onChange={(event) => setLlmPort(event.target.value)} inputMode="numeric" />
                 </label>
-              ) : null}
-              {llmSetupMode === "managed" && reviewedProfile ? <div className="service-result">
-                <span>{reviewedProfile.display_name || reviewedProfile.model_alias || reviewedProfile.profile}</span>
-                <small>Model download: {reviewedProfile.download_bytes ? `${(reviewedProfile.download_bytes / 1024 / 1024).toFixed(0)} MiB` : "size unavailable"}; required disk: {reviewedProfile.estimated_disk_mb ?? "unknown"} MiB; memory: {reviewedProfile.estimated_memory_mb ?? "unknown"} MiB. The runtime may require an additional download.</small>
-                {reviewedProfile.source_url?.startsWith("https://") ? <a href={reviewedProfile.source_url} target="_blank" rel="noreferrer">Pinned model source</a> : null}
-                {reviewedProfile.license_url?.startsWith("https://") ? <a href={reviewedProfile.license_url} target="_blank" rel="noreferrer">License: {reviewedProfile.license_id}</a> : null}
-                <small>{reviewedProfile.license_notice || "Review the model source and license before installation."}</small>
-              </div> : null}
-              {llmSetupMode === "managed" && !reviewedProfile ? <p role="status">No verified profile is currently recommended. Refresh device information or free memory and disk space.</p> : null}
-              <label className="field">
-                <span>{tr("Local runtime port")}</span>
-                <input value={llmPort} onChange={(event) => setLlmPort(event.target.value)} inputMode="numeric" />
-              </label>
-              <label className="checkbox-row">
-                <input type="checkbox" checked={llmSetupConfirmed} onChange={(event) => setLlmSetupConfirmed(event.target.checked)} />
-                {tr("I understand this prepares a local runtime and may download software or model data.")}
-              </label>
-            </>
-          ) : null}
-          {llmSetupJob && llmSetupJob.state !== "idle" ? (
-            <div className="service-result" role="status" aria-live="polite">
-              <span>
-                {llmSetupJob.state === "failed"
-                  ? mapKnownLlmErrorText(llmSetupJob.message || "") || llmSetupJob.message || llmSetupJob.stage
-                  : llmSetupJob.message || llmSetupJob.stage}
-              </span>
-              <progress value={llmSetupJob.progress} max={100} aria-label="Model setup progress" />
-              <small>{llmSetupJob.progress}% · {llmSetupJob.state}</small>
-            </div>
-          ) : null}
-          <div className="button-row">
-            <Button
-              variant="primary"
+                <label className="sv-check sv-wide">
+                  <input type="checkbox" checked={llmSetupConfirmed} onChange={(event) => setLlmSetupConfirmed(event.target.checked)} />
+                  {tr("I understand this prepares a local runtime and may download software or model data.")}
+                </label>
+              </>
+            ) : null}
+            {llmSetupJob && llmSetupJob.state !== "idle" ? (
+              <div className="sv-job sv-wide" role="status" aria-live="polite">
+                <span>
+                  {llmSetupJob.state === "failed"
+                    ? mapKnownLlmErrorText(llmSetupJob.message || "") || llmSetupJob.message || llmSetupJob.stage
+                    : llmSetupJob.message || llmSetupJob.stage}
+                </span>
+                <progress className="sv-progress-bar" value={llmSetupJob.progress} max={100} aria-label="Model setup progress" />
+                <small>{llmSetupJob.progress}% · {llmSetupJob.state}</small>
+              </div>
+            ) : null}
+          </div>
+          <div className="sv-setup-foot">
+            <small>{tr("The compute node sees plaintext during inference")}</small>
+            {!packageIdValid ? <SvPill tone="bad">{tr("Package ID must be a lowercase slug")}</SvPill> : null}
+            {llmSetupJob?.job_id && ["queued", "running", "cancelling"].includes(llmSetupJob.state) ? (
+              <button type="button" className="rf-btn" disabled={llmSetupJob.state === "cancelling"} onClick={() => void cancelLlmSetup()}>
+                {llmSetupJob.state === "cancelling" ? tr("Cancelling…") : tr("Cancel setup")}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="rf-btn rf-btn-p rf-btn-lg"
               disabled={llmConfiguring || !llmSetupMode || !packageIdValid || !llmAlias.trim()
                 || (llmSetupMode === "managed" && !reviewedProfile)
                 || (llmSetupMode === "import-gguf" && !llmModelPath.trim())
@@ -793,335 +847,288 @@ export default function Services() {
             >
               {llmConfiguring ? tr("Configuring and self-testing…")
                 : llmSetupJob?.retryable ? tr("Retry configuration") : tr("Configure and run self-test")}
-            </Button>
-            {llmSetupJob?.job_id && ["queued", "running", "cancelling"].includes(llmSetupJob.state) ? (
-              <Button disabled={llmSetupJob.state === "cancelling"} onClick={() => void cancelLlmSetup()}>
-                {llmSetupJob.state === "cancelling" ? tr("Cancelling…") : tr("Cancel setup")}
-              </Button>
-            ) : null}
-            <Chip tone="info">{tr("The compute node sees plaintext during inference")}</Chip>
-            {!packageIdValid ? <Chip tone="danger">{tr("Package ID must be a lowercase slug")}</Chip> : null}
+            </button>
           </div>
-        </div>
-      </Panel>
+        </section>
+      </TabPane>
 
-      <Panel>
-        <div className="panel-head">
-          <div>
-            <span className="eyebrow">{tr("Private local inference")}</span>
-            <h2>{tr("LLM service order")}</h2>
-          </div>
-          <Chip tone={llmServices.length ? "ok" : "warn"}>
-            {llmServices.length} {tr("available ·")} {llmBalance?.available.toFixed(3) ?? "—"} {tr("DEV balance")}
-          </Chip>
-        </div>
-        <div className="form-stack">
-          <label className="field">
-            <span>{tr("Filter task history")}</span>
-            <input
-              value={llmHistoryQuery}
-              onChange={(event) => {
-                setLlmHistoryQuery(event.target.value);
-                setLlmHistoryPage(1);
-              }}
-              placeholder={tr("Task ID, state, transport, model, or error")}
-            />
-          </label>
-          <label className="field">
-            <span>{tr("Discovery network")}</span>
-            <input value={llmNetwork} onChange={(event) => setLlmNetwork(event.target.value)} />
-          </label>
-          <div className="button-row">
-            <Button onClick={() => void refresh()} icon={RefreshCw}>{tr("Discover services")}</Button>
-            <Chip tone="info">{tr("Ryn-to-Ryn encrypted path")}</Chip>
-          </div>
-          <label className="field">
-            <span>{tr("Provider service")}</span>
-            <select
-              value={selectedLlmServiceKey || (selectedLlm ? llmServiceKey(selectedLlm) : "")}
-              onChange={(event) => setSelectedLlmServiceKey(event.target.value)}
-            >
-              {llmServices.map((service) => (
-                <option key={llmServiceKey(service)} value={llmServiceKey(service)}>
-                  {service.service.model_alias} · {service.node_name || shortPeerId(service.peer_id)} · {service.service.package_id}
-                  {` · ${service.service.pricing.minimum} ${tr(service.service.pricing.currency)}`}
-                </option>
-              ))}
-            </select>
-          </label>
-          {selectedLlm ? (
-            <div className="service-result">
-              <Chip tone={selectedLlm.online ? "ok" : "warn"}>{llmServiceAvailability(selectedLlm)}</Chip>
-              <span>
-                {selectedLlm.node_name || shortPeerId(selectedLlm.peer_id)} · {selectedLlm.service.package_id}
-                {tr(" · Context {{v0}} · max output {{v1}}", { v0: selectedLlm.service.context_window, v1: selectedLlm.service.max_output_tokens })}
-                {selectedLlm.capacity ? ` · ${tr("{{available}}/{{total}} slots", { available: selectedLlm.capacity.available ?? 0, total: selectedLlm.capacity.max_concurrent ?? 0 })}` : ""}
-              </span>
-              <small>{selectedLlm.service.privacy.policy_text || tr("Provider compute node sees plaintext.")}</small>
+      <TabPane id="orders" on={tab === "orders"}>
+        <div className="sv-orders">
+          <section className="sv-card sv-order" aria-labelledby="sv-order-title">
+            <div className="sv-bar sv-bar-wrap">
+              <div><h2 id="sv-order-title" className="sv-h2 sv-h2-lg">{tr("Place a private order")}</h2><p className="sv-sub">{tr("Ryn-to-Ryn encrypted path")} · {llmServices.length} {tr("available ·")} {llmBalance?.available.toFixed(3) ?? "—"} {tr("DEV balance")}</p></div>
+              <label className="sv-net">
+                <span>{tr("Discovery network")}</span>
+                <input className="sv-inp sv-mono" value={llmNetwork} onChange={(event) => setLlmNetwork(event.target.value)} />
+              </label>
+              <button type="button" className="rf-btn rf-btn-sm" onClick={() => void refresh()}><RefreshCw size={13} aria-hidden="true" />{tr("Discover services")}</button>
             </div>
-          ) : (
-            <div className="empty-state">
-              <h3>{tr("No LLM service discovered")}</h3>
-              <p>{tr("Check the network name, then choose Discover services.")}</p>
+            <div className="sv-order-body">
+              <label className="sv-field">
+                <span>{tr("Provider service")}</span>
+                <select
+                  className="sv-inp"
+                  value={selectedLlmServiceKey || (selectedLlm ? llmServiceKey(selectedLlm) : "")}
+                  onChange={(event) => setSelectedLlmServiceKey(event.target.value)}
+                >
+                  {llmServices.map((service) => (
+                    <option key={llmServiceKey(service)} value={llmServiceKey(service)}>
+                      {service.service.model_alias} · {service.node_name || shortPeerId(service.peer_id)} · {service.service.package_id}
+                      {` · ${service.service.pricing.minimum} ${tr(service.service.pricing.currency)}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {selectedLlm ? (
+                <div className="sv-provider rf-h-violet">
+                  <GlyphTile hue="violet" size="xs">{(px) => <DesktopGlyph size={px} />}</GlyphTile>
+                  <div>
+                    <b>{selectedLlm.node_name || shortPeerId(selectedLlm.peer_id)} · {selectedLlm.service.package_id}</b>
+                    <small>
+                      {tr("Context {{v0}} · max output {{v1}}", { v0: selectedLlm.service.context_window, v1: selectedLlm.service.max_output_tokens })}
+                      {selectedLlm.capacity ? ` · ${tr("{{available}}/{{total}} slots", { available: selectedLlm.capacity.available ?? 0, total: selectedLlm.capacity.max_concurrent ?? 0 })}` : ""}
+                      {" · "}{selectedLlm.service.privacy.policy_text || tr("Provider compute node sees plaintext.")}
+                    </small>
+                  </div>
+                  <SvPill tone={isServiceUsable(selectedLlm) ? "ok" : "warn"}>{llmServiceAvailability(selectedLlm)}</SvPill>
+                </div>
+              ) : (
+                <div className="sv-empty sv-empty-plain">
+                  <h3>{tr("No LLM service discovered")}</h3>
+                  <p>{tr("Check the network name, then choose Discover services.")}</p>
+                </div>
+              )}
+              <label className="sv-field">
+                <span>{tr("Prompt")}</span>
+                <textarea className="sv-inp" rows={5} value={llmPrompt} onChange={(event) => setLlmPrompt(event.target.value)} />
+              </label>
+              <div className="sv-grid2">
+                <label className="sv-field">
+                  <span>{tr("Maximum output tokens")}</span>
+                  <input className="sv-inp" value={llmMaxTokens} onChange={(event) => setLlmMaxTokens(event.target.value)} inputMode="numeric" />
+                </label>
+                <div className="sv-field">
+                  <span>{tr("Transport policy")}</span>
+                  <SegChoice label={tr("Transport policy options")} value={llmTransport} options={transportOptions} onChange={setLlmTransport} />
+                  <label className="sv-field sv-sr">
+                    <span>{tr("Transport policy")}</span>
+                    <select value={llmTransport} onChange={(event) => setLlmTransport(event.target.value as typeof llmTransport)}>
+                      <option value="auto">{tr("Automatic — direct first, encrypted relay only if configured")}</option>
+                      <option value="direct">{tr("Direct Provider HTTP only")}</option>
+                      <option value="p2p">{tr("Strict ICE/UDP P2P — never relay")}</option>
+                      <option value="relay">{tr("End-to-end ciphertext relay")}</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+              <p className="sv-hint">
+                {tr("Strict P2P exchanges host and STUN candidates and may use a private route or NAT hairpin when both nodes share one public gateway. TURN and payload relay remain forbidden. The Provider sees plaintext during inference; Registry signaling never receives task bodies.")}
+              </p>
             </div>
-          )}
-          <label className="field">
-            <span>{tr("Prompt")}</span>
-            <textarea rows={5} value={llmPrompt} onChange={(event) => setLlmPrompt(event.target.value)} />
-          </label>
-          <label className="field">
-            <span>{tr("Maximum output tokens")}</span>
-            <input value={llmMaxTokens} onChange={(event) => setLlmMaxTokens(event.target.value)} inputMode="numeric" />
-          </label>
-          <label className="field">
-            <span>{tr("Transport policy")}</span>
-            <select value={llmTransport} onChange={(event) => setLlmTransport(event.target.value as typeof llmTransport)}>
-              <option value="auto">{tr("Automatic — direct first, encrypted relay only if configured")}</option>
-              <option value="direct">{tr("Direct Provider HTTP only")}</option>
-              <option value="p2p">{tr("Strict ICE/UDP P2P — never relay")}</option>
-              <option value="relay">{tr("End-to-end ciphertext relay")}</option>
-            </select>
-          </label>
-          <div className="service-result">
-            <small>
-              {tr("Strict P2P exchanges host and STUN candidates and may use a private route or NAT hairpin when both nodes share one public gateway. TURN and payload relay remain forbidden. The Provider sees plaintext during inference; Registry signaling never receives task bodies.")}
-            </small>
-          </div>
-          <div className="service-result">
-            <span>{tr("Estimated reservation:")} {estimatedAmount.toFixed(6)} {tr(selectedLlm?.service.pricing.currency || "DEV_TASK_BALANCE")}</span>
-            <small>
+          </section>
+
+          <aside className="sv-card sv-estimate" aria-labelledby="sv-est-title">
+            <h2 id="sv-est-title" className="sv-h2">{tr("Estimate")}</h2>
+            <div>
+              <small>{tr("Estimated reservation:")}</small>
+              <p className="sv-est-value"><b>{estimatedAmount.toFixed(6)}</b> <span>{tr(selectedLlm?.service.pricing.currency || "DEV_TASK_BALANCE")}</span></p>
+            </div>
+            <p className="sv-note">
               {tr("Based on approximately")} {estimatedInputTokens} {tr("input tokens and a")} {Number.isFinite(parsedMaxTokens) ? parsedMaxTokens : 0}{tr("-token output cap. Final settlement uses actual usage; unused reservation is released.")}
-            </small>
-            {!selectedLlm ? <Chip tone="warn">Choose a Provider</Chip> : null}
-            {selectedLlm && !selectedLlm.online ? <Chip tone="warn">{llmServiceAvailability(selectedLlm)}</Chip> : null}
-            {selectedLlm?.capacity?.available === 0 ? <Chip tone="warn">Provider busy</Chip> : null}
-            {!maxTokensValid ? <Chip tone="danger">Enter 1–{selectedLlm?.service.max_output_tokens || "provider max"} whole tokens</Chip> : null}
-            {!contextWithinProviderLimit ? <Chip tone="danger">Prompt plus output exceeds the Provider context window</Chip> : null}
-            {!priceWithinProviderLimit ? <Chip tone="danger">Estimated cost exceeds the Provider task maximum</Chip> : null}
-            {!balanceAvailable ? <Chip tone="danger">Insufficient DEV balance</Chip> : null}
-          </div>
-          <div className="button-row">
-            <Button
-              variant="primary"
-              icon={SendHorizontal}
+            </p>
+            {llmBalance ? <div className="sv-est-grid"><div><small>{tr("DEV balance")}</small><b>{llmBalance.available.toFixed(3)}</b></div><div><small>{tr("held")}</small><b>{llmBalance.held.toFixed(3)}</b></div></div> : null}
+            {orderWarnings.length ? <div className="sv-est-flags">{orderWarnings}</div> : null}
+            <button
+              type="button"
+              className="rf-btn rf-btn-p rf-btn-lg rf-btn-block"
               disabled={!canSubmitLlm}
               onClick={() => void submitLlm()}
             >
-              {llmSubmitting ? tr("Task running…") : tr("Place encrypted order")}
-            </Button>
+              <SendHorizontal size={15} aria-hidden="true" />{llmSubmitting ? tr("Task running…") : tr("Place encrypted order")}
+            </button>
             {llmActiveTaskId ? (
-              <Button disabled={llmCancelling} onClick={() => void cancelLlm()}>
+              <button type="button" className="rf-btn rf-btn-block" disabled={llmCancelling} onClick={() => void cancelLlm()}>
                 {llmCancelling ? tr("Cancelling…") : tr("Cancel task")}
-              </Button>
+              </button>
             ) : null}
-            {llmBalance ? <Chip mono>{tr("held")} {llmBalance.held.toFixed(3)}</Chip> : null}
-            {llmActiveTaskId ? <Chip mono>{tr("resumed")} {llmActiveTaskId}</Chip> : null}
-          </div>
-          {llmProgress ? (
-            <div className="service-result" role="status" aria-live="polite">
-              <Chip tone={llmProgress.tone}>{tr(llmSubmitting ? "running" : llmProgress.tone === "ok" ? "complete" : "failed")}</Chip>
-              <span>{llmProgress.text}</span>
-            </div>
-          ) : null}
+            {llmActiveTaskId ? <code className="sv-code sv-wrap">{tr("resumed")} {llmActiveTaskId}</code> : null}
+            {llmProgress ? (
+              <div className="sv-progressbox" role="status" aria-live="polite">
+                <SvPill tone={llmProgress.tone === "ok" ? "ok" : llmProgress.tone === "danger" ? "bad" : "sky"}>{tr(llmSubmitting ? "running" : llmProgress.tone === "ok" ? "complete" : "failed")}</SvPill>
+                <span>{llmProgress.text}</span>
+              </div>
+            ) : null}
+          </aside>
         </div>
-      </Panel>
 
-      {llmResult ? (
-        <Panel>
-          <div className="panel-head">
-            <div>
-              <span className="eyebrow">{tr("Latest private LLM result")}</span>
-              <h2>{llmResult.model_alias || tr("Local model")}</h2>
+        {llmResult ? (
+          <section className="sv-card sv-result" aria-labelledby="sv-result-title">
+            <div className="sv-bar sv-bar-wrap">
+              <div><small>{tr("Latest private LLM result")}</small><h2 id="sv-result-title" className="sv-h2">{llmResult.model_alias || tr("Local model")}</h2></div>
+              <SvPill tone={llmResult.state === "succeeded" ? "ok" : "bad"}>{tr(llmResult.state)}</SvPill>
+              {llmResult.output ? <button type="button" className="rf-btn rf-btn-sm" onClick={() => void copyLlmResult()}>{tr("Copy result")}</button> : null}
             </div>
-            <Chip tone={llmResult.state === "succeeded" ? "ok" : "danger"}>{tr(llmResult.state)}</Chip>
-          </div>
-          <div className="form-stack">
-            <div className="service-result">
-              <pre className="llm-output">
-                {llmResult.output || (llmResult.error_code ? llmErrorMessage(llmResult.error_code) : tr("No output"))}
-              </pre>
+            <pre className="sv-output llm-output">
+              {llmResult.output || (llmResult.error_code ? llmErrorMessage(llmResult.error_code) : tr("No output"))}
+            </pre>
+            <div className="sv-chips">
+              <code className="sv-code">{llmResult.task_id}</code>
+              <code className="sv-code">{llmResult.input_tokens ?? 0} {tr("in /")} {llmResult.output_tokens ?? 0} {tr("out")}</code>
+              <code className="sv-code">{llmResult.duration_ms ?? 0} ms</code>
+              <code className="sv-code">{llmResult.amount ?? 0} {tr("DEV_TASK_BALANCE")}</code>
+              {llmResult.transport ? <code className="sv-code">{tr(llmResult.transport)}</code> : null}
             </div>
-            <div className="button-row">
-              <Chip mono>{llmResult.task_id}</Chip>
-              <Chip mono>{llmResult.input_tokens ?? 0} {tr("in /")} {llmResult.output_tokens ?? 0} {tr("out")}</Chip>
-              <Chip mono>{llmResult.duration_ms ?? 0} ms</Chip>
-              <Chip mono>{llmResult.amount ?? 0} {tr("DEV_TASK_BALANCE")}</Chip>
-              {llmResult.transport ? <Chip mono>{tr(llmResult.transport)}</Chip> : null}
-              {llmResult.output ? <Button onClick={() => void copyLlmResult()}>{tr("Copy result")}</Button> : null}
-            </div>
-          </div>
-        </Panel>
-      ) : null}
+          </section>
+        ) : null}
 
-      <Panel>
-        <div className="panel-head">
-          <div>
-            <span className="eyebrow">{tr("Local task history & privacy")}</span>
-            <h2>{tr("Private LLM orders")}</h2>
-          </div>
-          <Chip tone="info">{tr("Prompt text is never written to task history")}</Chip>
-        </div>
-        <div className="form-stack">
-          <label className="field">
-            <span>{tr("Retain encrypted result bodies")}</span>
-            <select
-              aria-label={tr("Encrypted result retention")}
-              value={llmPrivacy?.result_retention_seconds ?? 3600}
-              onChange={(event) => void updateLlmRetention(Number(event.target.value) as LLMPrivacySettings["result_retention_seconds"])}
-            >
-              <option value={0}>{tr("Do not retain after first delivery")}</option>
-              <option value={3600}>{tr("1 hour")}</option>
-              <option value={86400}>{tr("24 hours")}</option>
-              <option value={604800}>{tr("7 days")}</option>
-            </select>
-          </label>
-          <div className="service-result">
-            <small>
-              Stored result bodies remain end-to-end encrypted. The selected Provider necessarily sees plaintext while computing;
-              task records exclude prompt text. Ask Ryn conversations are saved separately in encrypted node history.
-            </small>
+        <section className="sv-card sv-history" aria-labelledby="sv-hist-title">
+          <div className="sv-bar sv-bar-wrap">
+            <div><h2 id="sv-hist-title" className="sv-h2">{tr("Private LLM orders")}</h2><small>{tr("Prompt text is never written to task history")}</small></div>
+            <label className="sv-search">
+              <Search size={14} aria-hidden="true" />
+              <input
+                aria-label={tr("Filter task history")}
+                value={llmHistoryQuery}
+                onChange={(event) => {
+                  setLlmHistoryQuery(event.target.value);
+                  setLlmHistoryPage(1);
+                }}
+                placeholder={tr("Task ID, state, transport, model, or error")}
+              />
+            </label>
+            <label className="sv-keep">
+              <span>{tr("Retain encrypted result bodies")}</span>
+              <select
+                className="sv-inp"
+                aria-label={tr("Encrypted result retention")}
+                value={llmPrivacy?.result_retention_seconds ?? 3600}
+                onChange={(event) => void updateLlmRetention(Number(event.target.value) as LLMPrivacySettings["result_retention_seconds"])}
+              >
+                <option value={0}>{tr("Do not retain after first delivery")}</option>
+                <option value={3600}>{tr("1 hour")}</option>
+                <option value={86400}>{tr("24 hours")}</option>
+                <option value={604800}>{tr("7 days")}</option>
+              </select>
+            </label>
           </div>
           {visibleLlmOrders.length ? visibleLlmOrders.map((order) => (
-            <div className="service-result" key={order.task_id}>
-              <span>{tr(order.state)} · {order.task_id}</span>
-              <small>
+            <div className="sv-hrow" key={order.task_id}>
+              <SvPill tone={order.state === "succeeded" ? "ok" : order.state === "failed" ? "bad" : order.state === "running" ? "sky" : "off"}>{tr(order.state)}</SvPill>
+              <code className="sv-code">{order.task_id}</code>
+              <small className="sv-hmeta">
                 {order.transport ? tr(order.transport) : tr("transport pending")}
                 {order.amount !== undefined ? ` · ${order.amount} ${tr("DEV_TASK_BALANCE")}` : ""}
                 {order.updated_at ? ` · ${new Date(order.updated_at).toLocaleString(uiLocale())}` : ""}
               </small>
-              <Button onClick={() => void viewLlmOrder(order.task_id)}>{tr("View status / retained result")}</Button>
+              <button type="button" className="rf-btn rf-btn-sm" onClick={() => void viewLlmOrder(order.task_id)}>{tr("View status / retained result")}</button>
             </div>
           )) : (
-            <div className="empty-state"><p>{llmOrders.length ? tr("No task history matches this filter.") : tr("No local LLM task history yet.")}</p></div>
+            <p className="sv-empty sv-empty-plain sv-hempty">{llmOrders.length ? tr("No task history matches this filter.") : tr("No local LLM task history yet.")}</p>
           )}
-          <div className="button-row">
-            <Button
-              disabled={llmHistoryPage <= 1}
-              onClick={() => setLlmHistoryPage((page) => Math.max(1, page - 1))}
-            >
-              {tr("Previous")}
-            </Button>
-            <Chip mono>{tr("page")} {Math.min(llmHistoryPage, llmHistoryPages)} / {llmHistoryPages}</Chip>
-            <Button
-              disabled={llmHistoryPage >= llmHistoryPages}
-              onClick={() => setLlmHistoryPage((page) => Math.min(llmHistoryPages, page + 1))}
-            >
-              {tr("Next")}
-            </Button>
-            <Button variant="danger" disabled={!llmOrders.length} onClick={clearLlmHistory}>
-              {tr("Clear completed task history")}
-            </Button>
+          <div className="sv-hfoot">
+            <small>Stored result bodies remain end-to-end encrypted. The selected Provider necessarily sees plaintext while computing; task records exclude prompt text. Ask Ryn conversations are saved separately in encrypted node history.</small>
+            <button type="button" className="rf-btn rf-btn-sm" disabled={llmHistoryPage <= 1} onClick={() => setLlmHistoryPage((page) => Math.max(1, page - 1))}>{tr("Previous")}</button>
+            <span className="sv-page">{tr("page")} {Math.min(llmHistoryPage, llmHistoryPages)} / {llmHistoryPages}</span>
+            <button type="button" className="rf-btn rf-btn-sm" disabled={llmHistoryPage >= llmHistoryPages} onClick={() => setLlmHistoryPage((page) => Math.min(llmHistoryPages, page + 1))}>{tr("Next")}</button>
+            <button type="button" className="rf-btn rf-btn-d rf-btn-sm" disabled={!llmOrders.length} onClick={clearLlmHistory}>{tr("Clear completed task history")}</button>
           </div>
-        </div>
-      </Panel>
+        </section>
+      </TabPane>
 
-      <Panel className="table-panel">
-        <div className="panel-head">
-          <div>
-            <span className="eyebrow">{tr("Published capacity")}</span>
-            <h2>{tr("Signal50 Veo providers")}</h2>
+      <TabPane id="video" on={tab === "video"}>
+        <section className="sv-card sv-veo" aria-labelledby="sv-veo-title">
+          <div className="sv-bar">
+            <h2 id="sv-veo-title" className="sv-h2">{tr("Signal50 Veo providers")}</h2>
+            <SvPill tone={veoServices.length ? "ok" : "warn"} dot={false}>{veoServices.length} {tr("available")}</SvPill>
           </div>
-          <Chip tone={veoServices.length ? "ok" : "warn"}>{veoServices.length} {tr("available")}</Chip>
-        </div>
-        <div className="table-wrap">
-          <table className="peer-table">
-            <thead>
-              <tr>
-                <th>{tr("Provider")}</th>
-                <th>{tr("Capability")}</th>
-                <th>{tr("Price")}</th>
-                <th>{tr("Route")}</th>
-                <th>{tr("Updated")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {veoServices.map((service) => (
-                <tr key={service.peer_id}>
-                  <td>
-                    {peerById.get(service.peer_id) ? (
-                      <PeerPill peer={peerById.get(service.peer_id)!} />
-                    ) : (
-                      <span>{service.provider_name || service.node_name}</span>
-                    )}
-                    <Hash value={service.peer_id} />
-                  </td>
-                  <td className="mono">{VEO_CAPABILITY}</td>
-                  <td className="mono">{service.price_credits[VEO_CAPABILITY] ?? 0}</td>
-                  <td>{String(service.metadata.route ?? service.metadata.service ?? "")}</td>
-                  <td>{service.updated_at}</td>
+          <div className="sv-table-wrap">
+            <table className="sv-table">
+              <thead>
+                <tr>
+                  <th>{tr("Provider")}</th>
+                  <th>{tr("Capability")}</th>
+                  <th>{tr("Price")}</th>
+                  <th>{tr("Route")}</th>
+                  <th>{tr("Updated")}</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Panel>
-
-      <Panel>
-        <div className="panel-head">
-          <div>
-            <span className="eyebrow">{tr("Request form")}</span>
-            <h2>{tr("Signal50 Veo render")}</h2>
+              </thead>
+              <tbody>
+                {veoServices.map((service) => (
+                  <tr key={service.peer_id}>
+                    <td>
+                      {peerById.get(service.peer_id) ? (
+                        <PeerPill peer={peerById.get(service.peer_id)!} />
+                      ) : (
+                        <span>{service.provider_name || service.node_name}</span>
+                      )}
+                      <Hash value={service.peer_id} />
+                    </td>
+                    <td className="mono">{VEO_CAPABILITY}</td>
+                    <td className="mono">{service.price_credits[VEO_CAPABILITY] ?? 0}</td>
+                    <td>{String(service.metadata.route ?? service.metadata.service ?? "")}</td>
+                    <td>{service.updated_at}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-          <Chip tone="info" icon={CloudCog}>{tr("polling relay")}</Chip>
-        </div>
-        <div className="form-stack">
-          <label className="field">
-            <span>{tr("Provider")}</span>
-            <select value={selectedPeerId || selectedVeo?.peer_id || ""} onChange={(event) => setSelectedPeerId(event.target.value)}>
-              {veoServices.map((service) => (
-                <option key={service.peer_id} value={service.peer_id}>
-                  {service.provider_name || service.node_name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span>{tr("Signal50 video ID")}</span>
-            <input value={videoId} onChange={(event) => setVideoId(event.target.value)} placeholder="20260518__casefile__example-tt-deep-veo" />
-          </label>
-          <label className="field">
-            <span>{tr("Max scenes")}</span>
-            <input value={maxScenes} onChange={(event) => setMaxScenes(event.target.value)} inputMode="numeric" />
-          </label>
-          <label className="checkbox-row">
-            <input type="checkbox" checked={skipExisting} onChange={(event) => setSkipExisting(event.target.checked)} />
-            {tr("Skip existing clips")}
-          </label>
-          <div className="button-row">
-            <Button variant="primary" icon={SendHorizontal} onClick={() => void submit()}>
-              {tr("Submit request")}
-            </Button>
-            {lastOrderId ? <Chip mono>{lastOrderId}</Chip> : null}
-          </div>
-        </div>
-      </Panel>
-
-      {lastOrderId ? (
-        <Panel>
-          <div className="panel-head">
-            <h2>{tr("Latest result")}</h2>
-            <Button onClick={() => void refresh()}>{tr("Refresh result")}</Button>
-          </div>
-          {results.length ? (
-            <div className="form-stack">
-              {results.map((result) => (
-                <div className="service-result" key={`${result.work_order_id}-${result.created_at}`}>
-                  <Chip tone={result.status === "completed" ? "ok" : result.status === "failed" ? "danger" : "info"}>
-                    {tr(result.status)}
-                  </Chip>
-                  <span>{result.message || tr("No message")}</span>
-                  <small className="mono">{result.created_at}</small>
-                </div>
-              ))}
+          <div className="sv-veo-form" role="group" aria-label={tr("Signal50 Veo render")}>
+            <label className="sv-field">
+              <span>{tr("Provider")}</span>
+              <select className="sv-inp" value={selectedPeerId || selectedVeo?.peer_id || ""} onChange={(event) => setSelectedPeerId(event.target.value)}>
+                {veoServices.map((service) => (
+                  <option key={service.peer_id} value={service.peer_id}>
+                    {service.provider_name || service.node_name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="sv-field">
+              <span>{tr("Signal50 video ID")}</span>
+              <input className="sv-inp sv-mono" value={videoId} onChange={(event) => setVideoId(event.target.value)} placeholder="20260518__casefile__example-tt-deep-veo" />
+            </label>
+            <label className="sv-field">
+              <span>{tr("Max scenes")}</span>
+              <input className="sv-inp" value={maxScenes} onChange={(event) => setMaxScenes(event.target.value)} inputMode="numeric" />
+            </label>
+            <div className="sv-veo-submit">
+              <button type="button" className="rf-btn rf-btn-p" onClick={() => void submit()}>
+                <SendHorizontal size={14} aria-hidden="true" />{tr("Submit request")}
+              </button>
+              {lastOrderId ? <code className="sv-code">{lastOrderId}</code> : null}
             </div>
-          ) : (
-            <div className="empty-state">
-              <h3>{tr("No result yet")}</h3>
-              <p>{tr("The provider will post accepted, running, completed, or failed messages as it polls.")}</p>
+            <label className="sv-check sv-veo-skip">
+              <input type="checkbox" checked={skipExisting} onChange={(event) => setSkipExisting(event.target.checked)} />
+              {tr("Skip existing clips")}
+            </label>
+          </div>
+        </section>
+
+        {lastOrderId ? (
+          <section className="sv-card sv-card-pad" aria-labelledby="sv-latest-title">
+            <div className="sv-sec-head">
+              <div><h2 id="sv-latest-title" className="sv-h2">{tr("Latest result")}</h2></div>
+              <button type="button" className="rf-btn rf-btn-sm" onClick={() => void refresh()}>{tr("Refresh result")}</button>
             </div>
-          )}
-        </Panel>
-      ) : null}
+            {results.length ? (
+              <div className="sv-results">
+                {results.map((result) => (
+                  <div className="sv-hrow" key={`${result.work_order_id}-${result.created_at}`}>
+                    <SvPill tone={result.status === "completed" ? "ok" : result.status === "failed" ? "bad" : "sky"}>{tr(result.status)}</SvPill>
+                    <span className="sv-grow">{result.message === "Private AI connection established and first task completed" ? tr("Private AI connection established and first task completed") : result.message || tr("No message")}</span>
+                    <small className="sv-mono">{result.created_at}</small>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="sv-empty sv-empty-plain">
+                <h3>{tr("No result yet")}</h3>
+                <p>{tr("The provider will post accepted, running, completed, or failed messages as it polls.")}</p>
+              </div>
+            )}
+          </section>
+        ) : null}
+      </TabPane>
     </div>
   );
 }

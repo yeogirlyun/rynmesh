@@ -1,0 +1,52 @@
+[
+  {
+    "name": "short-message",
+    "id": "agent_043bf05cdd2a49ba84e864966e53523e",
+    "elapsed_ms": 72993,
+    "status": "completed",
+    "error": null,
+    "result": "您好，请问有什么可以帮您的？",
+    "model": "peer/6e61bf46e2d30890e7f02483b3260781a3eb837a5912e59ba12792ddea8b26b5/antigravity-cli/model/gemini-3.8-flash-medium",
+    "events": [
+      {
+        "at": "2026-10-13T16:59:26.060984+00:00",
+        "clamp_reasons": [],
+        "configured_cap": 4096,
+        "context_epoch": 0,
+        "effective_cap": 4096,
+        "estimated_input_tokens": 3045,
+        "policy_sha256": "b16a14e161e7a7d270d8074b53911e6a014403d6d1e5480667c3a31f9b59884a",
+        "seq": 4,
+        "type": "model_output_policy",
+        "version": "configured-output-v1"
+      },
+      {
+        "at": "2026-10-13T16:59:43.607790+00:00",
+        "context_epoch": 0,
+        "seq": 5,
+        "step": 1,
+        "text": "您好，请问有什么可以帮您的？",
+        "type": "text_delta"
+      },
+      {
+        "at": "2026-10-13T16:59:52.607561+00:00",
+        "clamp_reasons": [],
+        "configured_cap": 4096,
+        "context_epoch": 0,
+        "effective_cap": 4096,
+        "estimated_input_tokens": 1379,
+        "policy_sha256": "b16a14e161e7a7d270d8074b53911e6a014403d6d1e5480667c3a31f9b59884a",
+        "seq": 9,
+        "type": "model_output_policy",
+        "version": "configured-output-v1"
+      },
+      {
+        "at": "2026-10-13T17:00:24.810671+00:00",
+        "context_epoch": 0,
+        "outcome": "unverified",
+        "seq": 10,
+        "type": "verification_finished"
+      }
+    ]
+  }
+]

@@ -13,7 +13,7 @@ import { server } from "../test/server";
 import { NasPage, PluginsPage } from "./Nas";
 import { setLanguagePreference } from "../i18n";
 import { PersonalShell } from "./Shell";
-import type { NasStatus } from "../domain/nas";
+import { clearNasMemory, type NasStatus } from "../domain/nas";
 vi.mock("./model", () => ({
   usePersonal: () => ({
     demo: false,
@@ -33,6 +33,7 @@ vi.mock("../appContext", () => ({
 }));
 let state: NasStatus;
 beforeEach(() => {
+  clearNasMemory();
   HTMLDialogElement.prototype.showModal = function () {
     this.setAttribute("open", "");
   };
@@ -59,6 +60,7 @@ beforeEach(() => {
     ],
   };
   server.use(
+    http.put("*/api/local/plugins/nas/browser-location", () => HttpResponse.json({ ok: true })),
     http.get("*/api/local/plugins/nas", () => HttpResponse.json(state)),
     http.put("*/api/local/plugins/nas", async ({ request }) => {
       state = { ...state, ...((await request.json()) as { enabled: boolean }) };
@@ -106,12 +108,12 @@ it("hides NAS navigation until enabled and hides it again after disabling", asyn
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "Enable" })).toBeEnabled(),
   );
-  expect(screen.queryByRole("link", { name: "NAS" })).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Drives" })).toHaveAttribute("href", "/drives");
   fireEvent.click(screen.getByRole("button", { name: "Enable" }));
-  expect(await screen.findByRole("link", { name: "NAS" })).toBeInTheDocument();
+  expect(await screen.findByRole("link", { name: "Open NAS" })).toBeInTheDocument();
   fireEvent.click(await screen.findByRole("button", { name: "Disable" }));
   await waitFor(() =>
-    expect(screen.queryByRole("link", { name: "NAS" })).not.toBeInTheDocument(),
+    expect(screen.queryByRole("link", { name: "Open NAS" })).not.toBeInTheDocument(),
   );
 });
 it("guards direct navigation when the plugin is disabled", async () => {
@@ -191,7 +193,7 @@ it("shows failed add without inventing a connected source", async () => {
   }
   fireEvent.click(screen.getByRole("button", { name: "Test and add" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "nas access denied",
+    "Storage access was denied",
   );
   expect(state.sources).toHaveLength(0);
 });
@@ -214,6 +216,7 @@ it("navigates breadcrumbs and clears the previous folder search", async () => {
   server.use(
     http.get("*/api/local/plugins/nas/sources/:id/files", ({ request }) => {
       const path = new URL(request.url).searchParams.get("path") || "";
+      if (new URL(request.url).searchParams.has("cached")) return HttpResponse.json({ entries: null });
       paths.push(path);
       return HttpResponse.json({
         entries: path
@@ -258,7 +261,7 @@ it("navigates breadcrumbs and clears the previous folder search", async () => {
     ),
   );
   await screen.findByRole("button", { name: "Work" });
-  expect(paths).toEqual(["", "Work", ""]);
+  expect(paths).toEqual(["", "Work"]);
 });
 
 it("sorts files by size and recovers from an empty search", async () => {
@@ -470,7 +473,7 @@ it("keeps a failed image preview usable and does not expose image AI actions", a
   view();
   fireEvent.click(await screen.findByRole("button", { name: "broken.png" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "preview requires valid jpeg png or webp",
+    "Image preview supports valid JPEG, PNG and WebP files.",
   );
   expect(
     screen.queryByRole("img", { name: "broken.png" }),

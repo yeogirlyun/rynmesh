@@ -1,0 +1,584 @@
+{
+  "schema_version": 1,
+  "task_type": "historical-baseline-first-install",
+  "description": "Historical Ryn 0.7.0 baseline installed for subsequent upgrade acceptance; not the latest candidate or final delivery completion.",
+  "latest_candidate_installed": false,
+  "graphical_acceptance_performed": false,
+  "target": {
+    "ssh_alias": "personal-windows",
+    "host": "172.16.8.82",
+    "port": 2222,
+    "hostname": "DESKTOP-SQ6VA8I",
+    "identity": "DESKTOP-SQ6VA8I\\ziling",
+    "strict_host_key_checking": true,
+    "batch_mode": true
+  },
+  "source_installer": {
+    "path": "D:\\code\\rynmesh\\release\\windows\\Ryn-0.7.0-drives-p2p-windows-x64-setup.exe",
+    "sizeBytes": 37825046,
+    "sha256": "3F63D862CE1AC4EEA0D70EDBD3B86CB3F29D6D55F16B54C3F8FFCA5F2AD1BFAB"
+  },
+  "remote_installer": {
+    "path": "C:\\Users\\ziling\\rynmesh-desktop-acceptance-20261011\\installers\\baseline.exe",
+    "sha256": "3F63D862CE1AC4EEA0D70EDBD3B86CB3F29D6D55F16B54C3F8FFCA5F2AD1BFAB",
+    "timestampUtc": "2026-10-11T06:34:42.7980651Z",
+    "sizeBytes": 37825046
+  },
+  "transport": {
+    "scp_legacy_protocol": true,
+    "exit_code": 0,
+    "verified_hash_match": true
+  },
+  "preinstall": {
+    "timestampUtc": "2026-10-11T06:34:17.6172143Z",
+    "identity": "DESKTOP-SQ6VA8I\\ziling",
+    "paths": [
+      {
+        "exists": false,
+        "path": "C:\\Users\\ziling\\AppData\\Local\\Ryn"
+      },
+      {
+        "exists": false,
+        "path": "C:\\Users\\ziling\\AppData\\Roaming\\ai.rynmesh.desktop"
+      },
+      {
+        "exists": false,
+        "path": "C:\\Users\\ziling\\.rynmesh"
+      },
+      {
+        "exists": false,
+        "path": "C:\\Users\\ziling\\rynmesh-desktop-acceptance-20261011"
+      }
+    ],
+    "hostname": "DESKTOP-SQ6VA8I",
+    "processes": [],
+    "listeners": [
+      {
+        "LocalAddress": "::",
+        "LocalPort": 49699,
+        "OwningProcess": 804
+      },
+      {
+        "LocalAddress": "::1",
+        "LocalPort": 49684,
+        "OwningProcess": 4592
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 49681,
+        "OwningProcess": 3252
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 49668,
+        "OwningProcess": 2480
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 49667,
+        "OwningProcess": 1872
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 49666,
+        "OwningProcess": 1328
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 49665,
+        "OwningProcess": 664
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 49664,
+        "OwningProcess": 832
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 47001,
+        "OwningProcess": 4
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 7680,
+        "OwningProcess": 5644
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 5985,
+        "OwningProcess": 4
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 5357,
+        "OwningProcess": 4
+      },
+      {
+        "LocalAddress": "::1",
+        "LocalPort": 5002,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 3389,
+        "OwningProcess": 1088
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 2222,
+        "OwningProcess": 4572
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 445,
+        "OwningProcess": 4
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 135,
+        "OwningProcess": 604
+      },
+      {
+        "LocalAddress": "::1",
+        "LocalPort": 22,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 49699,
+        "OwningProcess": 804
+      },
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 49681,
+        "OwningProcess": 3252
+      },
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 49668,
+        "OwningProcess": 2480
+      },
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 49667,
+        "OwningProcess": 1872
+      },
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 49666,
+        "OwningProcess": 1328
+      },
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 49665,
+        "OwningProcess": 664
+      },
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 49664,
+        "OwningProcess": 832
+      },
+      {
+        "LocalAddress": "127.0.0.1",
+        "LocalPort": 33060,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "127.0.0.1",
+        "LocalPort": 18080,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "127.0.0.1",
+        "LocalPort": 13128,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "127.0.0.1",
+        "LocalPort": 9000,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "127.0.0.1",
+        "LocalPort": 8194,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "127.0.0.1",
+        "LocalPort": 6380,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "127.0.0.1",
+        "LocalPort": 6333,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 5040,
+        "OwningProcess": 4680
+      },
+      {
+        "LocalAddress": "127.0.0.1",
+        "LocalPort": 5003,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "127.0.0.1",
+        "LocalPort": 5001,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 3389,
+        "OwningProcess": 1088
+      },
+      {
+        "LocalAddress": "127.0.0.1",
+        "LocalPort": 3306,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "127.0.0.1",
+        "LocalPort": 3100,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "127.0.0.1",
+        "LocalPort": 3001,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 2222,
+        "OwningProcess": 4572
+      },
+      {
+        "LocalAddress": "172.22.96.1",
+        "LocalPort": 139,
+        "OwningProcess": 4
+      },
+      {
+        "LocalAddress": "172.16.8.82",
+        "LocalPort": 139,
+        "OwningProcess": 4
+      },
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 135,
+        "OwningProcess": 604
+      },
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 22,
+        "OwningProcess": 4792
+      }
+    ]
+  },
+  "installation": {
+    "startedUtc": "2026-10-11T06:34:58.5356718Z",
+    "exitCode": 0,
+    "explicitRynLaunch": false,
+    "installerProcessId": 5908,
+    "finishedUtc": "2026-10-11T06:35:03.2470514Z",
+    "arguments": [
+      "/S"
+    ],
+    "historicalBaseline": true,
+    "installerSha256": "3F63D862CE1AC4EEA0D70EDBD3B86CB3F29D6D55F16B54C3F8FFCA5F2AD1BFAB",
+    "upgrade": false,
+    "installerPath": "C:\\Users\\ziling\\rynmesh-desktop-acceptance-20261011\\installers\\baseline.exe",
+    "window_style": "Hidden",
+    "remote_result_path": "C:\\Users\\ziling\\rynmesh-desktop-acceptance-20261011\\baseline-install-result.json",
+    "install_process_repeated": false,
+    "connection_lost": false
+  },
+  "postinstall": {
+    "checked_at_utc": "2026-10-11T06:35:22.9118792Z",
+    "install_path": "C:\\Users\\ziling\\AppData\\Local\\Ryn",
+    "install_directory_exists": true,
+    "hkcu_uninstall_entries": [
+      {
+        "PSChildName": "Ryn",
+        "DisplayName": "Ryn",
+        "DisplayVersion": "0.7.0",
+        "Publisher": "rynmesh",
+        "InstallLocation": "\"C:\\Users\\ziling\\AppData\\Local\\Ryn\"",
+        "EstimatedSize": 45019
+      }
+    ],
+    "installed_files": [
+      {
+        "sizeBytes": 10885632,
+        "sha256": "EA26FE41A09C82E725568C36771CE93E821063A7702A4CA7C70375BF7CB63717",
+        "relativePath": "Ryn.exe"
+      },
+      {
+        "sizeBytes": 35133683,
+        "sha256": "914502527529E89531E4117B0E1CF36E623CFF057462BDEF5485C0F3573DC8C5",
+        "relativePath": "rynmesh-peer.exe"
+      },
+      {
+        "sizeBytes": 81335,
+        "sha256": "B86DA491E83EF34A2A2023AE3BA62EC1F8DC49254D6D7EBD450662A099F468E1",
+        "relativePath": "uninstall.exe"
+      }
+    ],
+    "separate_resource_files": [],
+    "resource_note": "Recursive installed-file inventory contained only Ryn.exe, rynmesh-peer.exe and uninstall.exe; no separate resource files were present to hash.",
+    "ryn_processes": [],
+    "ryn_owned_tcp_listeners": [],
+    "all_tcp_listeners": [
+      {
+        "LocalAddress": "::",
+        "LocalPort": 49699,
+        "OwningProcess": 804
+      },
+      {
+        "LocalAddress": "::1",
+        "LocalPort": 49684,
+        "OwningProcess": 4592
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 49681,
+        "OwningProcess": 3252
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 49668,
+        "OwningProcess": 2480
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 49667,
+        "OwningProcess": 1872
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 49666,
+        "OwningProcess": 1328
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 49665,
+        "OwningProcess": 664
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 49664,
+        "OwningProcess": 832
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 47001,
+        "OwningProcess": 4
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 7680,
+        "OwningProcess": 5644
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 5985,
+        "OwningProcess": 4
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 5357,
+        "OwningProcess": 4
+      },
+      {
+        "LocalAddress": "::1",
+        "LocalPort": 5002,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 3389,
+        "OwningProcess": 1088
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 2222,
+        "OwningProcess": 4572
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 445,
+        "OwningProcess": 4
+      },
+      {
+        "LocalAddress": "::",
+        "LocalPort": 135,
+        "OwningProcess": 604
+      },
+      {
+        "LocalAddress": "::1",
+        "LocalPort": 22,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 49699,
+        "OwningProcess": 804
+      },
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 49681,
+        "OwningProcess": 3252
+      },
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 49668,
+        "OwningProcess": 2480
+      },
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 49667,
+        "OwningProcess": 1872
+      },
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 49666,
+        "OwningProcess": 1328
+      },
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 49665,
+        "OwningProcess": 664
+      },
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 49664,
+        "OwningProcess": 832
+      },
+      {
+        "LocalAddress": "127.0.0.1",
+        "LocalPort": 33060,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "127.0.0.1",
+        "LocalPort": 18080,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "127.0.0.1",
+        "LocalPort": 13128,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "127.0.0.1",
+        "LocalPort": 9000,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "127.0.0.1",
+        "LocalPort": 8194,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "127.0.0.1",
+        "LocalPort": 6380,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "127.0.0.1",
+        "LocalPort": 6333,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 5040,
+        "OwningProcess": 4680
+      },
+      {
+        "LocalAddress": "127.0.0.1",
+        "LocalPort": 5003,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "127.0.0.1",
+        "LocalPort": 5001,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 3389,
+        "OwningProcess": 1088
+      },
+      {
+        "LocalAddress": "127.0.0.1",
+        "LocalPort": 3306,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "127.0.0.1",
+        "LocalPort": 3100,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "127.0.0.1",
+        "LocalPort": 3001,
+        "OwningProcess": 2956
+      },
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 2222,
+        "OwningProcess": 4572
+      },
+      {
+        "LocalAddress": "172.22.96.1",
+        "LocalPort": 139,
+        "OwningProcess": 4
+      },
+      {
+        "LocalAddress": "172.16.8.82",
+        "LocalPort": 139,
+        "OwningProcess": 4
+      },
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 135,
+        "OwningProcess": 604
+      },
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 22,
+        "OwningProcess": 4792
+      }
+    ],
+    "new_tcp_listeners": [],
+    "removed_tcp_listeners": [],
+    "desktop_config_directory_exists": false,
+    "rynmesh_directory_exists": false,
+    "headless_directory_exists": true,
+    "port_18782_listeners": []
+  },
+  "scope": {
+    "explicit_ryn_launch": false,
+    "run_argument_passed": false,
+    "upgrade_performed": false,
+    "uninstalled": false,
+    "changed_firewall": false,
+    "created_account": false,
+    "changed_production_services": false,
+    "read_configuration_contents": false,
+    "read_credentials_or_private_keys": false,
+    "read_heldout_build_cases": false,
+    "headless_environment_preserved": true,
+    "remote_artifacts_retained": true
+  },
+  "assessment": {
+    "installation_exit_code_zero": true,
+    "local_and_remote_installer_hash_equal": true,
+    "hkcu_version": "0.7.0",
+    "unexpected_ryn_or_node_processes_observed": false,
+    "new_tcp_listeners_observed": false,
+    "desktop_first_launch_still_outstanding": true,
+    "latest_candidate_upgrade_still_outstanding": true,
+    "graphical_acceptance_still_outstanding": true
+  }
+}

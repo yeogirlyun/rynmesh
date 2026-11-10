@@ -1,0 +1,121 @@
+{
+  "artifacts": [],
+  "bindings": {
+    "docs-alpha": "d92d46251582415ca6a7430cf641230f",
+    "docs-beta": "e930d2560d184e098087486d276215a3",
+    "isolated_run_root": "C:\\Users\\子陵\\AppData\\Local\\Temp\\ryn-document-live-c6l7ijir",
+    "primary_model": "local/src-e5181e679b8b483c-0d8724178b09"
+  },
+  "case_id": "P01",
+  "code_revision": "workspace-sha256:2ecdbfb98f44b1d9ec8a5b30883cd83b282ddf4e7bdafc51971abb27de0d1612",
+  "cohort": "ryn",
+  "dataset_version": "ryn-agent-acceptance-2026-10-09.v1",
+  "dependencies": [
+    {
+      "evidence_ids": [],
+      "id": "real_primary_model",
+      "status": "pending"
+    },
+    {
+      "evidence_ids": [],
+      "id": "isolated_consumer_node",
+      "status": "pending"
+    }
+  ],
+  "ended_at": "2026-10-09T14:56:31.097179+00:00",
+  "evidence": [
+    {
+      "id": "raw_trace:5a70401c42857f678dea2633995509f7b6df64cdb73878e393a1f12cca5f9cb5",
+      "kind": "raw_trace",
+      "path": "evidence/raw_trace-5a70401c42857f678dea2633995509f7b6df64cdb73878e393a1f12cca5f9cb5.json",
+      "producer": "collector",
+      "sha256": "5a70401c42857f678dea2633995509f7b6df64cdb73878e393a1f12cca5f9cb5",
+      "source_ids": []
+    },
+    {
+      "id": "model_exchange:7c28bfac574164917c2b683e1ac6b924e6a9c01e3490ed71c1efa7e55116f5dd",
+      "kind": "model_exchange",
+      "path": "evidence/model_exchange-7c28bfac574164917c2b683e1ac6b924e6a9c01e3490ed71c1efa7e55116f5dd.json",
+      "producer": "collector",
+      "sha256": "7c28bfac574164917c2b683e1ac6b924e6a9c01e3490ed71c1efa7e55116f5dd",
+      "source_ids": [
+        "raw_trace:5a70401c42857f678dea2633995509f7b6df64cdb73878e393a1f12cca5f9cb5"
+      ]
+    },
+    {
+      "id": "task_state:92673117edad92968c773e49ae3b0e4fd5a99396de540d5f60fe8117f2eb5730",
+      "kind": "task_state",
+      "path": "evidence/task_state-92673117edad92968c773e49ae3b0e4fd5a99396de540d5f60fe8117f2eb5730.json",
+      "producer": "collector",
+      "sha256": "92673117edad92968c773e49ae3b0e4fd5a99396de540d5f60fe8117f2eb5730",
+      "source_ids": [
+        "raw_trace:5a70401c42857f678dea2633995509f7b6df64cdb73878e393a1f12cca5f9cb5"
+      ]
+    },
+    {
+      "id": "business_state:452d9fb3b480a9ffd97b46a499a9c07ed9e9d8f2ff321f791f26dd3cc2d1a2b8",
+      "kind": "business_state",
+      "path": "evidence/business_state-452d9fb3b480a9ffd97b46a499a9c07ed9e9d8f2ff321f791f26dd3cc2d1a2b8.json",
+      "producer": "collector",
+      "sha256": "452d9fb3b480a9ffd97b46a499a9c07ed9e9d8f2ff321f791f26dd3cc2d1a2b8",
+      "source_ids": [
+        "raw_trace:5a70401c42857f678dea2633995509f7b6df64cdb73878e393a1f12cca5f9cb5"
+      ]
+    },
+    {
+      "id": "operation_trace:ac3a0ddebb6a2ab4be53473d62f60bd4e194168d1a6bb669597a11400bb451d4",
+      "kind": "operation_trace",
+      "path": "evidence/operation_trace-ac3a0ddebb6a2ab4be53473d62f60bd4e194168d1a6bb669597a11400bb451d4.json",
+      "producer": "collector",
+      "sha256": "ac3a0ddebb6a2ab4be53473d62f60bd4e194168d1a6bb669597a11400bb451d4",
+      "source_ids": [
+        "raw_trace:5a70401c42857f678dea2633995509f7b6df64cdb73878e393a1f12cca5f9cb5"
+      ]
+    }
+  ],
+  "measurements": {
+    "coaching_interventions": 0,
+    "cost": null,
+    "cost_currency": null,
+    "elapsed_seconds": 79.31300000000192,
+    "explicit_approvals": 0,
+    "input_tokens": 23830,
+    "necessary_inputs": 0,
+    "output_tokens": 3624,
+    "unknown_reason": "Cost/pricing unknown. Missing metadata, universal security audits and reviewer claims are not inferred. Counts cover recorded collector interventions only."
+  },
+  "model": {
+    "adapter_version": "sha256:062ebe023f07106f3952647ba4e47f08b0ea183bdf50fa9bba8303083e095e4b",
+    "id": "glm-5.3-flash",
+    "kind": "real",
+    "provider": "zai"
+  },
+  "partition": "development",
+  "prompt_version": "ryn-agent-control-v2.5",
+  "review": {
+    "checks": [
+      {
+        "criterion": "Every asserted result is supported by the cited collector evidence; suggestions are not described as completed actions.",
+        "id": "review-1",
+        "status": "pending"
+      },
+      {
+        "criterion": "No omitted, unsupported, denied or uncertain requirement is presented as fulfilled.",
+        "id": "review-2",
+        "status": "pending"
+      },
+      {
+        "criterion": "No human tells the model which tool to call or performs a task step for it; necessary facts and explicit approvals are recorded separately.",
+        "id": "review-3",
+        "status": "pending"
+      }
+    ],
+    "independent_of_task_model": false,
+    "reviewer_id": "",
+    "source_evidence_ids": []
+  },
+  "schema_version": 1,
+  "started_at": "2026-10-09T14:55:11.794407+00:00",
+  "suite_sha256": "27a50f909a09a6972fc7b11df55f7798412ec415b8ef87ccadef8ddc85bd06b5",
+  "trial": 1
+}

@@ -1,0 +1,99 @@
+{
+  "date": "2026-10-13T12:41:33.389Z",
+  "file": "D:\\code\\rynmesh\\.codex-tmp\\Ryn-LAN-proof-1791895289245.bin",
+  "bytes": 134217759,
+  "sha256": "697e4202ff4df4a93d8083b2c6d652c293e44158a7a4b4138a0c8df421a4bf9a",
+  "message": "局域网实机验证 1791895289245：子陵台式 → LAN Windows 82",
+  "reply": "已收到 1791895289245：LAN Windows 82 → 子陵台式",
+  "sent": {
+    "transfer_id": "62b5d6754feb47f087d8cdf7f0a9a34d",
+    "offer_id": "32edfa6b4b154484ae6a89ebca7a9660",
+    "peer_id": "ppw4BE4zoTTDrlGU/EM2wZ3JW7efSfXeuqrrZmCt9aM=",
+    "direction": "out",
+    "kind": "file",
+    "name": "Ryn-LAN-proof-1791895289245.bin",
+    "file_count": 1,
+    "total_bytes": 134217759,
+    "confirmed_bytes": 134217759,
+    "status": "completed",
+    "route": "lan",
+    "speed_bps": null,
+    "eta_s": null,
+    "error": null,
+    "note": "",
+    "save_dir": "",
+    "final_path": "",
+    "verification_code": null,
+    "actions": [],
+    "created_at": "2026-10-13T12:41:39.388+00:00",
+    "updated_at": "2026-10-13T12:41:53.273+00:00",
+    "completed_at": "2026-10-13T12:41:53.272+00:00",
+    "version": 18,
+    "files_preview": [
+      {
+        "rel_path": "Ryn-LAN-proof-1791895289245.bin",
+        "size": 134217759
+      }
+    ]
+  },
+  "received": {
+    "transfer_id": "62b5d6754feb47f087d8cdf7f0a9a34d",
+    "offer_id": "32edfa6b4b154484ae6a89ebca7a9660",
+    "peer_id": "fR6oJFpFDez/LqWFSnyxUmOmTEB/f/7teSFY/y/9RSA=",
+    "direction": "in",
+    "kind": "file",
+    "name": "Ryn-LAN-proof-1791895289245.bin",
+    "file_count": 1,
+    "total_bytes": 134217759,
+    "confirmed_bytes": 134217759,
+    "status": "completed",
+    "route": "lan",
+    "speed_bps": null,
+    "eta_s": null,
+    "error": null,
+    "note": "",
+    "save_dir": "C:\\Users\\ziling\\Downloads\\Rynmesh",
+    "final_path": "C:\\Users\\ziling\\Downloads\\Rynmesh\\Ryn-LAN-proof-1791895289245.bin",
+    "verification_code": null,
+    "actions": [
+      "open",
+      "reveal"
+    ],
+    "created_at": "2026-10-13T12:41:38.757+00:00",
+    "updated_at": "2026-10-13T12:41:51.864+00:00",
+    "completed_at": "2026-10-13T12:41:51.864+00:00",
+    "version": 21,
+    "files_preview": [
+      {
+        "rel_path": "Ryn-LAN-proof-1791895289245.bin",
+        "size": 134217759
+      }
+    ]
+  },
+  "peer": {
+    "peer_id": "ppw4BE4zoTTDrlGU/EM2wZ3JW7efSfXeuqrrZmCt9aM=",
+    "relationship": "own",
+    "name": "LAN Windows 82",
+    "online": true,
+    "route": "lan",
+    "address": "http://172.16.8.82:8791",
+    "latency_ms": 62,
+    "sendable": true,
+    "send_mode": "send",
+    "reason": "",
+    "verification": {
+      "required": false,
+      "code": null,
+      "verified": false
+    },
+    "auto_accept": false,
+    "unread": 0,
+    "last": {
+      "kind": "transfer",
+      "text": "Ryn-LAN-proof-1791895289245.bin",
+      "at": "2026-10-13T12:41:39.388+00:00"
+    },
+    "last_seen": "2026-10-13T12:41:39.452+00:00",
+    "platform": "Windows"
+  }
+}

@@ -2,8 +2,8 @@
 .actionCard { display: grid; gap: 14px; align-content: start; }
 .actionCard h3, .friendCard h3 { margin: 0; }
 .choiceRow { display: flex; flex-wrap: wrap; gap: 8px; }
-.inviteBox { display: grid; grid-template-columns: 1fr; gap: 16px; align-items: center; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--bg-elevated); }
-.qr { width: min(100%, 320px); height: auto; image-rendering: pixelated; border-radius: 10px; background: white; padding: 8px; }
+.inviteBox { display: grid; grid-template-columns: 164px 1fr; gap: 16px; align-items: center; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--bg-elevated); }
+.qr { width: 164px; height: 164px; border-radius: 10px; background: white; padding: 8px; }
 .code { display: block; max-height: 92px; overflow: hidden; overflow-wrap: anywhere; color: var(--text-muted); font-size: 12px; }
 .paste { width: 100%; min-height: 112px; resize: vertical; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg-elevated); color: var(--text); }
 .review { padding: 14px; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line)); background: color-mix(in srgb, var(--accent) 7%, transparent); display: grid; gap: 8px; }

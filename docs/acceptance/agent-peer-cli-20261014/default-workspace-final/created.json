@@ -1,0 +1,235 @@
+{
+  "id": "agent_9ca7a69fa2f84267af1e2230132b1a3c",
+  "client_request_id": "43ad0f94-eb46-42dc-89e1-0e6d500b2f65",
+  "title": "请直接新建 ryn-default-folder-check.txt，内容为“Ryn 默认文件夹实测成功”。使用默认保存位置，不要修改其他文件。",
+  "model_id": "local/codex-cli/model/gpt-6.1-sol",
+  "status": "queued",
+  "revision": 1,
+  "created_at": "2026-10-13T19:00:21.765102+00:00",
+  "updated_at": "2026-10-13T19:00:21.765102+00:00",
+  "messages": [
+    {
+      "role": "user",
+      "content": "请直接新建 ryn-default-folder-check.txt，内容为“Ryn 默认文件夹实测成功”。使用默认保存位置，不要修改其他文件。",
+      "message_id": "agent_9ca7a69fa2f84267af1e2230132b1a3c:owner:0"
+    }
+  ],
+  "events": [
+    {
+      "seq": 1,
+      "type": "created",
+      "at": "2026-10-13T19:00:21.765102+00:00",
+      "context_epoch": 0
+    }
+  ],
+  "pending_approval": null,
+  "steps": 0,
+  "result": "",
+  "error": null,
+  "limits": {
+    "max_steps": 16,
+    "max_seconds": 180,
+    "max_context_chars": 60000,
+    "max_output_chars": 20000
+  },
+  "permission_mode": "automatic",
+  "allowed_write_tools": [],
+  "model_destination": {
+    "catalog_model_id": "local/codex-cli/model/gpt-6.1-sol",
+    "provider_peer_id": "fR6oJFpFDez/LqWFSnyxUmOmTEB/f/7teSFY/y/9RSA=",
+    "source_id": "",
+    "destination_revision": ""
+  },
+  "local_execution": {
+    "workspace_root": "C:\\Users\\子陵\\.rynmesh\\agent\\files",
+    "desktop_access": false
+  },
+  "schema_version": 2,
+  "goal": {
+    "revision": 1,
+    "kind": "unclassified",
+    "original_message_id": "agent_9ca7a69fa2f84267af1e2230132b1a3c:owner:0",
+    "text": "请直接新建 ryn-default-folder-check.txt，内容为“Ryn 默认文件夹实测成功”。使用默认保存位置，不要修改其他文件。",
+    "constraints": [
+      {
+        "id": "constraint:agent_9ca7a69fa2f84267af1e2230132b1a3c:owner:0",
+        "text": "请直接新建 ryn-default-folder-check.txt，内容为“Ryn 默认文件夹实测成功”。使用默认保存位置，不要修改其他文件。",
+        "source": "user",
+        "message_id": "agent_9ca7a69fa2f84267af1e2230132b1a3c:owner:0",
+        "required": true
+      }
+    ]
+  },
+  "criteria": [
+    {
+      "id": "goal-coverage",
+      "goal_revision": 1,
+      "source": "user",
+      "source_ref": "agent_9ca7a69fa2f84267af1e2230132b1a3c:owner:0",
+      "required": true,
+      "kind": "semantic",
+      "description": "Satisfy the owner's complete current goal and constraints.",
+      "verifier": null,
+      "status": "pending",
+      "evidence_refs": []
+    }
+  ],
+  "plan": {
+    "revision": 0,
+    "goal_revision": 1,
+    "steps": []
+  },
+  "control_revision": 1,
+  "event_cursor": 1,
+  "run_state": "queued",
+  "pending_input": null,
+  "outcome": {
+    "status": "unverified",
+    "goal_revision": 1,
+    "criteria_results": [],
+    "summary": "",
+    "evidence_refs": [],
+    "uncertainties": [
+      "Independent goal verification is not available."
+    ]
+  },
+  "scope_revision": 1,
+  "archived": false,
+  "skills": [],
+  "budget": {
+    "limits": {
+      "max_total_model_calls": 128,
+      "max_total_tool_calls": 256,
+      "max_total_tokens": 2000000,
+      "max_total_seconds": 3600
+    },
+    "round": 1,
+    "lifetime": {
+      "model_calls": 0,
+      "tool_calls": 0,
+      "charged_model_calls": 0,
+      "charged_tool_calls": 0,
+      "known_input_tokens": 0,
+      "known_output_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "total_tokens": 0,
+      "charged_tokens": 0,
+      "charged_seconds": 0.0,
+      "active_seconds": 0,
+      "cost": null,
+      "cost_status": "unknown",
+      "usage_complete": true,
+      "legacy_usage_unknown": false,
+      "unsettled_operations": 0
+    },
+    "current_round": {
+      "model_calls": 0,
+      "tool_calls": 0,
+      "charged_model_calls": 0,
+      "charged_tool_calls": 0,
+      "known_input_tokens": 0,
+      "known_output_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "total_tokens": 0,
+      "charged_tokens": 0,
+      "charged_seconds": 0,
+      "active_seconds": 0,
+      "cost": null,
+      "cost_status": "unknown",
+      "usage_complete": true,
+      "legacy_usage_unknown": false,
+      "unsettled_operations": 0
+    },
+    "reservation_policy": "Unknown model usage retains the conservative dispatch reservation; cost is unknown without trusted pricing."
+  },
+  "run_timing": {
+    "recorded_seconds": 0.0,
+    "elapsed_seconds": 0.0,
+    "max_seconds": 180,
+    "measurement": "recorded"
+  },
+  "allowed_actions": {
+    "pause": {
+      "enabled": true,
+      "requires_control_revision": false,
+      "reason": null
+    },
+    "cancel": {
+      "enabled": true,
+      "requires_control_revision": false,
+      "reason": null
+    },
+    "resume": {
+      "enabled": false,
+      "requires_control_revision": true,
+      "reason": "agent_invalid_transition"
+    },
+    "approve": {
+      "enabled": false,
+      "requires_control_revision": true,
+      "reason": "agent_invalid_transition"
+    },
+    "deny": {
+      "enabled": false,
+      "requires_control_revision": true,
+      "reason": "agent_invalid_transition"
+    },
+    "answer": {
+      "enabled": false,
+      "requires_control_revision": true,
+      "reason": "agent_invalid_transition"
+    },
+    "steer": {
+      "enabled": true,
+      "requires_control_revision": true,
+      "reason": null
+    },
+    "information": {
+      "enabled": true,
+      "requires_control_revision": true,
+      "reason": null
+    },
+    "scope": {
+      "enabled": true,
+      "requires_control_revision": true,
+      "reason": null
+    },
+    "reconcile": {
+      "enabled": false,
+      "requires_control_revision": true,
+      "reason": "agent_invalid_transition"
+    },
+    "archive": {
+      "enabled": false,
+      "requires_control_revision": true,
+      "reason": "agent_invalid_transition"
+    },
+    "restore": {
+      "enabled": false,
+      "requires_control_revision": true,
+      "reason": "agent_invalid_transition"
+    },
+    "delete": {
+      "enabled": false,
+      "requires_control_revision": true,
+      "reason": "agent_invalid_transition"
+    },
+    "budget": {
+      "enabled": false,
+      "requires_control_revision": true,
+      "reason": "agent_invalid_transition"
+    },
+    "source_credential": {
+      "enabled": true,
+      "requires_control_revision": true,
+      "reason": null
+    },
+    "model": {
+      "enabled": false,
+      "requires_control_revision": true,
+      "reason": "agent_invalid_transition"
+    }
+  }
+}

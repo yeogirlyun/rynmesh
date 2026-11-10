@@ -1,0 +1,10 @@
+{
+  "pid": 49244,
+  "installed_at": "2026-10-13T12:34:42.8568838Z",
+  "app": "C:\\Users\\子陵\\AppData\\Local\\Ryn\\Ryn.exe",
+  "installer_exit_code": 0,
+  "host": "子陵台式",
+  "sidecar_sha256": "9A944E9B1B778967BC4FB093CC67BC77AF350CC87C070A209F5A4501CA910DB0",
+  "app_sha256": "FEBF5EB72A046069EEF020F0A12DA8CB6FC6B1DFE5D47D5E685028262354216E",
+  "identity_preserved": true
+}

@@ -1,0 +1,14 @@
+{
+  "finding": "Tool discovery reached the actual resource roots query. Two consecutive compaction requests returned unusable model responses; the single bounded retry was exhausted. No resource content was read and no file was written.",
+  "classification": "development failure; not formal score",
+  "formal_case_score": false,
+  "real_model_calls": 6,
+  "mechanical_checks": {
+    "exact_artifact_paths": false,
+    "source_files_unchanged": true,
+    "no_unexpected_writes": true
+  },
+  "owner_source_unchanged": true,
+  "code_unchanged": true,
+  "reviewer": "Root coordinator inspecting retained run and independent HTTP/artifact evidence; not a separate Astra reviewer."
+}

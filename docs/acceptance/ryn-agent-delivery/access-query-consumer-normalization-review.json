@@ -1,0 +1,29 @@
+{
+  "reviewers": [
+    "sharing_review / gpt-6-astra high",
+    "consumer_process_proof / gpt-6.1-sol high"
+  ],
+  "status": "reviewed_no_material_findings",
+  "implementation": "access-query-consumer-normalization.json",
+  "astra": {
+    "passed": 16,
+    "seconds": 1.76,
+    "scope": "Independent test suite and static review; frozen hashes matched."
+  },
+  "sol": {
+    "scope": "Independent new-fixture normalization and provenance assertions; did not repeat the same 16 tests.",
+    "source": "real-model/20261010T052709106597Z-Q06-ryn-fixture/run.json",
+    "source_sha256": "65f85e7160a5215820d5d8c3c5ce236367f2c52e2e189cf5fed880d6cc0a79c1",
+    "checks": [
+      "Twelve consumer evidence fields preserved verbatim; provider truth and scope separate.",
+      "All derived evidence links original raw bytes; input hash unchanged.",
+      "Original unverified yields failed goal_outcome; four dependencies, three review checks, universal security and unavailable_reasons remain pending.",
+      "Consumer role declaration affects explanatory notes only, not proof or grading."
+    ]
+  },
+  "limitations": [
+    "Reference-cohort normalization is still unsupported by this function.",
+    "Collector state isolation records do not alone prove every native reference SQLite session persistence property."
+  ],
+  "formal_executed_trials": 0
+}

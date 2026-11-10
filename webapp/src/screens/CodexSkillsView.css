@@ -1,0 +1,679 @@
+/* Codex Skills Page & Modal — 1:1 reverse-engineered from OpenAI Codex app.asar */
+
+.codex-skills-root {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  color: var(--pf-text, #111827);
+  width: 100%;
+}
+
+.codex-skills-root.codex-skills-embedded {
+  padding: 24px 32px 48px;
+  max-width: 1080px;
+  margin: 0 auto;
+  box-sizing: border-box;
+  overflow-y: auto;
+  height: 100%;
+}
+
+/* Sticky / Top Header Bar */
+.codex-skills-topbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.codex-skills-heading-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 220px;
+}
+
+.codex-skills-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.codex-skills-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--pf-text, #111827);
+  line-height: 1.25;
+}
+
+.codex-skills-subtitle {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--pf-muted, #6b7280);
+  line-height: 1.45;
+}
+
+.codex-skills-subtitle a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  margin-left: 5px;
+}
+
+.codex-skills-subtitle a:hover {
+  color: var(--pf-text, #111827);
+}
+
+/* Right Toolbar Controls */
+.codex-skills-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.codex-skills-search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 220px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid var(--pf-border, rgba(17, 24, 39, 0.12));
+  background: var(--pf-surface, #ffffff);
+  padding: 0 10px 0 12px;
+  gap: 7px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, width 0.18s ease;
+}
+
+.codex-skills-search-wrap:focus-within {
+  border-color: var(--pf-accent, #2563eb);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  width: 256px;
+}
+
+.codex-skills-search-icon {
+  color: var(--pf-muted, #6b7280);
+  flex-shrink: 0;
+}
+
+.codex-skills-search-input {
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--pf-text, #111827);
+  font-size: 13px;
+  width: 100%;
+  min-width: 0;
+}
+
+.codex-skills-search-input::placeholder {
+  color: var(--pf-muted, #9ca3af);
+}
+
+.codex-skills-search-clear {
+  border: none;
+  background: transparent;
+  color: var(--pf-muted, #6b7280);
+  padding: 2px;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.codex-skills-search-clear:hover {
+  color: var(--pf-text, #111827);
+  background: rgba(128, 128, 128, 0.12);
+}
+
+.codex-skills-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 13px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid var(--pf-border, rgba(17, 24, 39, 0.12));
+  background: var(--pf-surface, #ffffff);
+  color: var(--pf-text, #111827);
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease, transform 0.1s ease;
+  white-space: nowrap;
+}
+
+.codex-skills-btn:hover:not(:disabled) {
+  background: var(--pf-hover, rgba(17, 24, 39, 0.04));
+  border-color: rgba(17, 24, 39, 0.22);
+}
+
+.codex-skills-btn:disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+}
+
+.codex-skills-btn-primary {
+  background: var(--pf-text, #111827);
+  color: var(--pf-bg, #ffffff);
+  border-color: transparent;
+}
+
+.codex-skills-btn-primary:hover:not(:disabled) {
+  background: #1f2937;
+  border-color: transparent;
+  opacity: 0.92;
+}
+
+[data-theme="dark"] .codex-skills-btn-primary {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+[data-theme="dark"] .codex-skills-btn-primary:hover:not(:disabled) {
+  background: #e5e7eb;
+}
+
+/* Scope Filter Bar */
+.codex-skills-filterbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.codex-skills-scopes {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(128, 128, 128, 0.08);
+  border: 1px solid var(--pf-border, rgba(17, 24, 39, 0.08));
+}
+
+.codex-skills-scope-tab {
+  border: none;
+  background: transparent;
+  color: var(--pf-muted, #6b7280);
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 5px 11px;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+
+.codex-skills-scope-tab:hover {
+  color: var(--pf-text, #111827);
+}
+
+.codex-skills-scope-tab.active {
+  background: var(--pf-surface, #ffffff);
+  color: var(--pf-text, #111827);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.codex-skills-scope-count {
+  font-size: 11px;
+  opacity: 0.72;
+}
+
+/* Sections */
+.codex-skills-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.codex-skills-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.codex-skills-section-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--pf-muted, #6b7280);
+  letter-spacing: 0.01em;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.codex-skills-section-count {
+  font-size: 11.5px;
+  font-weight: 500;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(128, 128, 128, 0.1);
+  color: var(--pf-muted, #6b7280);
+}
+
+/* 2-Column Codex Skill Grid */
+.codex-skills-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 680px) {
+  .codex-skills-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Codex Skill Card Tile */
+.codex-skill-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--pf-border, rgba(17, 24, 39, 0.1));
+  background: var(--pf-surface, #ffffff);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  min-width: 0;
+}
+
+.codex-skill-card:hover {
+  border-color: rgba(17, 24, 39, 0.22);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="dark"] .codex-skill-card:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.codex-skill-card-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+}
+
+.codex-skill-card.is-dimmed .codex-skill-card-left {
+  opacity: 0.62;
+}
+
+.codex-skill-icon-box {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: rgba(128, 128, 128, 0.08);
+  border: 1px solid rgba(128, 128, 128, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+  color: var(--pf-text, #111827);
+}
+
+.codex-skill-icon-img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  display: block;
+}
+
+.codex-skill-card-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.codex-skill-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.codex-skill-card-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--pf-text, #111827);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+.codex-skill-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--pf-border, rgba(17, 24, 39, 0.14));
+  color: var(--pf-muted, #6b7280);
+  background: rgba(128, 128, 128, 0.05);
+  flex-shrink: 0;
+}
+
+.codex-skill-pill-warning {
+  color: #b45309;
+  border-color: rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.codex-skill-card-desc {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--pf-muted, #6b7280);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.35;
+}
+
+.codex-skill-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.codex-skill-icon-action {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--pf-muted, #6b7280);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+}
+
+.codex-skill-icon-action:hover:not(:disabled) {
+  background: rgba(128, 128, 128, 0.1);
+  color: var(--pf-text, #111827);
+}
+
+.codex-skill-icon-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.codex-skill-install-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  border: 1px solid var(--pf-border, rgba(17, 24, 39, 0.14));
+  background: var(--pf-surface, #ffffff);
+  color: var(--pf-text, #111827);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease, transform 0.1s ease;
+}
+
+.codex-skill-install-btn:hover:not(:disabled) {
+  background: var(--pf-text, #111827);
+  color: var(--pf-bg, #ffffff);
+  border-color: transparent;
+}
+
+/* See more / Show less toggle button */
+.codex-skills-collapse-btn {
+  align-self: flex-start;
+  border: none;
+  background: transparent;
+  color: var(--pf-muted, #6b7280);
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 4px 2px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.codex-skills-collapse-btn:hover {
+  color: var(--pf-text, #111827);
+}
+
+/* Codex Skill Contents Modal */
+.codex-skill-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(15, 23, 42, 0.48);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.codex-skill-modal {
+  width: 100%;
+  max-width: 680px;
+  max-height: min(84vh, 760px);
+  background: var(--pf-surface, #ffffff);
+  color: var(--pf-text, #111827);
+  border: 1px solid var(--pf-border, rgba(17, 24, 39, 0.14));
+  border-radius: 20px;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.codex-skill-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 18px 22px 14px;
+  border-bottom: 1px solid var(--pf-border, rgba(17, 24, 39, 0.08));
+}
+
+.codex-skill-modal-identity {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-width: 0;
+  flex: 1;
+}
+
+.codex-skill-modal-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: rgba(128, 128, 128, 0.08);
+  border: 1px solid rgba(128, 128, 128, 0.14);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.codex-skill-modal-icon img {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+}
+
+.codex-skill-modal-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.codex-skill-modal-title {
+  margin: 0;
+  font-size: 16.5px;
+  font-weight: 650;
+  color: var(--pf-text, #111827);
+  line-height: 1.25;
+}
+
+.codex-skill-modal-subtitle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  color: var(--pf-muted, #6b7280);
+}
+
+.codex-skill-modal-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.codex-skill-more-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 200px;
+  background: var(--pf-surface, #ffffff);
+  border: 1px solid var(--pf-border, rgba(17, 24, 39, 0.14));
+  border-radius: 12px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.16);
+  padding: 5px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.codex-skill-more-item {
+  border: none;
+  background: transparent;
+  color: var(--pf-text, #111827);
+  font-size: 13px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  width: 100%;
+}
+
+.codex-skill-more-item:hover {
+  background: rgba(128, 128, 128, 0.1);
+}
+
+.codex-skill-modal-body {
+  padding: 16px 22px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex: 1;
+}
+
+.codex-skill-modal-desc {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--pf-muted, #4b5563);
+}
+
+.codex-skill-files-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.codex-skill-file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  padding: 4px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--pf-border, rgba(17, 24, 39, 0.12));
+  background: rgba(128, 128, 128, 0.05);
+  color: var(--pf-text, #111827);
+  cursor: pointer;
+}
+
+.codex-skill-file-chip.active {
+  border-color: var(--pf-accent, #2563eb);
+  background: rgba(37, 99, 235, 0.08);
+}
+
+.codex-skill-markdown-box {
+  border-radius: 12px;
+  border: 1px solid var(--pf-border, rgba(17, 24, 39, 0.1));
+  background: rgba(128, 128, 128, 0.04);
+  padding: 14px 16px;
+  overflow-x: auto;
+}
+
+.codex-skill-markdown-pre {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--pf-text, #111827);
+}
+
+.codex-skill-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 22px 18px;
+  border-top: 1px solid var(--pf-border, rgba(17, 24, 39, 0.08));
+}
+
+.codex-skill-modal-footer-left,
+.codex-skill-modal-footer-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.codex-skills-btn-danger {
+  color: #dc2626;
+  border-color: rgba(220, 38, 38, 0.28);
+  background: rgba(220, 38, 38, 0.04);
+}
+
+.codex-skills-btn-danger:hover:not(:disabled) {
+  background: rgba(220, 38, 38, 0.1);
+  border-color: rgba(220, 38, 38, 0.45);
+}

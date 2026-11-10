@@ -1,0 +1,25 @@
+{
+  "task_id": "agent_7ad10a1387ec475bbef053db3cf4141a",
+  "bound_at": "2026-10-10T07:15:39.984483+00:00",
+  "registration_sha256": "2d397859c5c4f75a126080b7803728b2236f85c1d0d0602ed0a49fe07b8d5d31",
+  "created_task_readback_sha256": "de280714dfa3eaf2f69170fbad7e90022d6f4ad251c243c78c975f39e613ccec",
+  "role_proof": {
+    "kind": "task_binding",
+    "binding": {
+      "run_id": "9264bad9c83f4aff9d8f0b3eee7dc3b5",
+      "run_nonce": "f0b95b7bc2754dd798d65c428d57ca15",
+      "dataset_version": "ryn-agent-acceptance-2026-10-10.v2-draft.1",
+      "case_id": "Q06",
+      "cohort": "ryn",
+      "trial": 1,
+      "effective_case_sha256": "66acd085e14f3d8d7a338b7c3fa97e75bde762680243d69ffe502cb29869016e",
+      "overlay_sha256": "a90280553577ec075e6fe7e131a07c4ca830d4e60ea2600a2ae2c28b93e407e5"
+    },
+    "observations": {
+      "task_id": "agent_7ad10a1387ec475bbef053db3cf4141a",
+      "bound_at": "2026-10-10T07:15:39.984483+00:00",
+      "registration_sha256": "2d397859c5c4f75a126080b7803728b2236f85c1d0d0602ed0a49fe07b8d5d31",
+      "created_task_readback_sha256": "de280714dfa3eaf2f69170fbad7e90022d6f4ad251c243c78c975f39e613ccec"
+    }
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "model": "glm-5.3-flash",
+  "configuration": {
+    "overrides": {
+      "request_defaults": {
+        "thinking": {
+          "type": "disabled"
+        }
+      }
+    },
+    "rule_revision": "60c1574072f64f2fbf365afb9a4a991d",
+    "destination_revision": "95e528bd8aee4136a7b6055cbb2b2db0",
+    "evidence": {
+      "connection": {
+        "status": "passed",
+        "checked_at": "2026-10-13T19:16:24.010276+00:00",
+        "method": "two_turn_client_tool"
+      },
+      "model_exists": {
+        "status": "present",
+        "checked_at": "2026-10-13T19:16:24.010276+00:00",
+        "method": "two_turn_client_tool"
+      },
+      "tools": {
+        "status": "passed",
+        "checked_at": "2026-10-13T19:16:24.010276+00:00",
+        "method": "two_turn_client_tool"
+      }
+    },
+    "effective": {
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "request_defaults": {
+        "thinking": {
+          "type": "disabled"
+        }
+      },
+      "max_concurrent": 1,
+      "requests_per_day": null,
+      "share_scope": "personal_space"
+    },
+    "inherited_fields": [
+      "context_window",
+      "max_concurrent",
+      "max_output_tokens",
+      "requests_per_day",
+      "share_scope"
+    ]
+  }
+}

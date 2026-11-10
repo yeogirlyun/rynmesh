@@ -1,0 +1,31 @@
+{
+  "reviewer": "sharing_review / gpt-6-astra high",
+  "status": "reviewed_no_material_findings_with_development_scope_limits",
+  "implementation": "access-query-consumer-implementation.json",
+  "tests": {
+    "command": ".venv/Scripts/python.exe -m pytest -q -p no:cacheprovider tests/test_agent_access_query.py -k 'actual_gate or actual_consumer_provider_gate or only_protocol_nonces or refuses_provider_tools' --tb=short",
+    "passed": 9,
+    "deselected": 7,
+    "seconds": 36.17
+  },
+  "observations": [
+    "Actual node-b task home, tools and empty own SourceStore; authenticated peer model-a selected.",
+    "Original signed requests reach production provider; no expected_destination injected by the helper.",
+    "Model/permission drift and quota failures retain real admission checks.",
+    "Only top-level protocol nonces are excluded from relationship business hashes; relationship and key changes detected.",
+    "Independent decryption of both fixture consumer AgentStores confirms empty resource/egress grants; provider AgentStore absent, zero business writes.",
+    "Candidate fixture has seven successful signed requests; pinned reference fixture five. Both code snapshots unchanged."
+  ],
+  "limitations": [
+    "Reference AgentStore is the accounting host; one message does not establish full native worker SQLite conversation isolation. Those persistence properties were not audited.",
+    "One physical host with local signed wire; no ICE or remote cancellation delivery proof.",
+    "Synthetic outcomes unverified; no live effect or formal case pass inferred.",
+    "Consumer cannot access private B or third-party permission table; unchanged original assertions can honestly fail."
+  ],
+  "sample_sha256": {
+    "real-model/20261010T052709106597Z-Q06-ryn-fixture/run.json": "65f85e7160a5215820d5d8c3c5ce236367f2c52e2e189cf5fed880d6cc0a79c1",
+    "real-model/20261010T052716130664Z-Q06-reference-fixture/run.json": "a6dba06763ca7d4b8e0eeeca59ec45b8ee7893734c355f7c60088f30e9c0dc2a"
+  },
+  "hash_verification": "All six controller/test hashes matched the implementation record; runtime/models/tools/normalizer hashes matched their frozen reviews.",
+  "formal_executed_trials": 0
+}

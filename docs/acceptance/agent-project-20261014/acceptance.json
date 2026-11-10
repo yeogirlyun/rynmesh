@@ -1,0 +1,99 @@
+{
+  "date": "2026-10-14",
+  "status": "complete",
+  "scope": "Ryn Agent project loading and reliability improvements; no chat-backend business-code changes",
+  "project": {
+    "name": "chat-backend",
+    "path": "D:/code/chat-backend",
+    "registration": "encrypted owner-local registry, persisted selection, task-local binding, revocation generation",
+    "instructions": [
+      "AGENTS.md",
+      "README.md",
+      "AI_HANDOFF.md",
+      "PROJECT_MAP.md"
+    ],
+    "model_destination": "pinned for every project inference; default model switch revokes project access"
+  },
+  "changes": [
+    "Preload common project tools; lazy-load unused control schemas in small context windows",
+    "Three concurrent task workers with exclusive task claims and preserved registration gate",
+    "Store decrypted-cache invalidation and copy isolation",
+    "Bounded browser element/text pagination and same-origin frame scope",
+    "API-model pixel inspection with model/time/token metering; CLI image input rejected",
+    "General Windows shell no longer uses unrelated private-CLI memory/CPU/process caps; cancellation job remains",
+    "Command file changes are observations, never proof of creator",
+    "Project workflow guidance and lighter prompt/completion-review overhead",
+    "Local Codex/Antigravity CLI project inference bound to executable/configuration and exact upstream model; changed configuration blocks dispatch"
+  ],
+  "real_model_acceptance": {
+    "model": "owner-configured GLM glm-5.3-flash API",
+    "task_id": "agent_7b3b46c68c054613bc496b1ab6f4ae40",
+    "status": "completed",
+    "execution": "Ryn UI -> actual project tools -> approval -> isolated Jest invocation",
+    "entry": "node test/support/runIsolated.cjs node_modules/jest/bin/jest.js",
+    "arguments": "--config test/financeNext/transferHttpHook.jest.config.cjs --runInBand --runTestsByPath test/service/journalRecordRules.test.ts",
+    "discovery": "--listTests found exactly the specified test file, exit 0",
+    "suites_passed": 1,
+    "tests_passed": 7,
+    "exit_code": 0,
+    "jest_seconds": 13.337,
+    "initial_failure": "Root Jest configuration compiled the whole TypeScript project and exhausted Node heap; no silent-success claim",
+    "unverified": [
+      "TypeScript type checking (isolatedModules:true, diagnostics:false)",
+      "Integration behavior and production systems",
+      "API-model vision on this configured model",
+      "Codex/Dify comparative effectiveness and the 80 percent target"
+    ]
+  },
+  "fixture_repairs": "Deterministic test planners now perform actual schema discovery or establish schema exposure as a documented setup precondition. Existing permission, dispatch, recovery, cancellation and receipt assertions remain. Discovery calls are counted; these tests are not live-model effectiveness measurements.",
+  "checks": {
+    "ui": "88 passed",
+    "llm_boundary": "100 passed final subset; 110 other combined checks passed (including CLI background/frozen worker); the one outdated malformed-image error assertion was repaired and re-run",
+    "agent_suite": "1395 passed, 1 deselected (Windows accessibility test), 1088.43 seconds",
+    "frontend_build": "passed",
+    "responsive_ui": "1024x800 and 390x780 inspected; override reset",
+    "cli_project_binding": "130 passed after final CLI binding change; includes actual local catalog/bridge/configuration-race boundary (fake upstream inference), project grants, switches, API/peer/native binding and request deadlines",
+    "agent_suite_note": "Full 1395-pass run preceded final local CLI binding addition; related final boundary suite was rerun with 130 passes. No formal effectiveness score claimed.",
+    "logs": {
+      "full_agent_suite": "D:\\code\\rynmesh\\.codex-tmp\\agent-project-suite-final-20261014.log",
+      "final_cli_boundary": "D:\\code\\rynmesh\\.codex-tmp\\agent-project-cli-binding-final-20261014.log",
+      "ui_suite": "D:\\code\\rynmesh\\.codex-tmp\\agent-project-ui-final2-20261014.log",
+      "desktop_build": "D:\\code\\rynmesh\\.codex-tmp\\agent-project-desktop-cli-final-build.log"
+    }
+  },
+  "private_evidence": ".codex-tmp/agent-project-acceptance (local-only transcript and screenshot)",
+  "desktop_package": {
+    "status": "built_and_frozen_node_tested",
+    "manifest": {
+      "installer": {
+        "path": "D:\\code\\rynmesh\\webapp\\src-tauri\\target\\x86_64-pc-windows-msvc\\release\\bundle\\nsis\\Ryn_0.7.0_x64-setup.exe",
+        "bytes": 42089654,
+        "sha256": "60452e29f489e2a361a54a6251ee62ecadcd055fb1485bc48d2f312392de07ee"
+      },
+      "desktop": {
+        "path": "D:\\code\\rynmesh\\webapp\\src-tauri\\target\\x86_64-pc-windows-msvc\\release\\Ryn.exe",
+        "bytes": 11189248,
+        "sha256": "ecc5dd0370ad977b0080ac3155507fdfd9613469387c2c40243c4b2e689217c3"
+      },
+      "sidecar": {
+        "path": "D:\\code\\rynmesh\\.codex-tmp\\windows-package\\dist\\rynmesh-peer.exe",
+        "bytes": 40029387,
+        "sha256": "65c403f423a81fff0217de3407ff75d2006253b52a4f3d0339c3a9e9047e66db"
+      }
+    },
+    "native_transport": "compiled from repository and import verified",
+    "project_task_id": "agent_a236edaefbf245b3ae0e4dd117e11d3e",
+    "project_task": "completed, read-only; model caught incomplete AGENTS read and corrected it",
+    "goal_verification": "semantic assessment passed; mechanically unverified by policy, no registered mechanical goal check for narrative report",
+    "installed": {
+      "path": "C:\\Users\\子陵\\AppData\\Local\\Ryn",
+      "hashes_match": true,
+      "backup": "D:\\code\\rynmesh\\.codex-tmp\\agent-project-acceptance\\installed-before-update",
+      "method": "existing installation binaries replaced; owner data and preferences retained",
+      "node_health": 200,
+      "project_registered": "project_f8a2e03795a9dea8d3c5a932",
+      "final_health": 200,
+      "bound_local_cli_models": 22
+    }
+  }
+}

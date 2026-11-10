@@ -1,0 +1,56 @@
+{
+  "status": "implementation_frozen_independent_review_in_progress",
+  "author": "sharing_transaction / gpt-6-astra high",
+  "trigger": "real-model/20261010T042235345210Z-R02-ryn/review.json",
+  "changes": [
+    "Opt-in process-local monotonic deadline is min(provider manifest, remaining round time, durable lifetime time); removes bridge-only120 cap.",
+    "Source/native admission rechecks deadline after locks and tightens actual inner timeout without bypassing policy gates. Expired inner dispatch is rejected.",
+    "Safe duration request_policy is persisted before transport, including failures, with measurement=pre_admission_upper_bound; no absolute monotonic is persisted.",
+    "Reference host shares deadline and accounting semantics, excluding actual owner wait.",
+    "Cancelled/expired streaming deltas are suppressed; late full responses rejected while received sanitized usage remains accountable.",
+    "Prompt v2.9 states that unknown/missing records do not establish never happened, distinguishes task actions and unknown history, and limits evidence scope. No frozen case prompt changes."
+  ],
+  "author_validation": [
+    {
+      "scope": "combined budget/capacity/checker/permission/R02/native/planner/reference regression",
+      "passed": 217,
+      "failed": 2,
+      "note": "Both failures were new native test fixtures missing maximum; not represented as a fully green final combined run."
+    },
+    {
+      "scope": "final deadline专项 after fixture repair",
+      "passed": 24,
+      "failed": 0
+    },
+    {
+      "scope": "actual pinned JS reference host/source gate synthetic regression",
+      "passed": 4,
+      "note": "600-second task reached adapter with about180 seconds;30-second task with about30. Included in combined run; do not add overlapping counts."
+    },
+    {
+      "scope": "Ruff",
+      "status": "passed"
+    }
+  ],
+  "limitations": [
+    "Remote transport has no shortened timeout field. Watcher cancellation and late-result rejection are best effort; neither remote compute cessation nor immediate local return is guaranteed.",
+    "Legacy blocking custom adapters retain signatures and best-effort cancellation.",
+    "Expiry after admission may already consume an existing quota attempt, while inner transport remains undispatched.",
+    "Pre-bridge parse/4MiB failures retain unknown-usage reservations.",
+    "No live retry or formal acceptance in this implementation batch."
+  ],
+  "sha256": {
+    "rynmesh/agent_runtime/bridge.py": "ce737b0858e8746f05005dd2b02809a0c6962bab0dc1f8db205e78bb14d99d39",
+    "rynmesh/agent_runtime/runtime.py": "a2787b20d9151c77e5b2eb4dc3e23992ba69b05ed3c096891d7cbce431238d49",
+    "rynmesh/agent_runtime/budget.py": "ab63cc42cb4ce1485e14c4ed80afe0697398a5c92a6f0ab2af05ffbac50815b6",
+    "rynmesh/agent_runtime/prompt.py": "1dddff17cc3167a98c9b539e0502509d5a9e7bf93f9fe622363cc1449751c564",
+    "rynmesh/llm_package/adapters.py": "eca4597136e15312636992270917e615eb582178384e7448ae25e2ae38dfdff0",
+    "rynmesh/llm_package/model_dispatch.py": "69d6817e5c094523b0970745787a249fca3bbb91515187b8f8540b9c3a2dd8b4",
+    "rynmesh/llm_package/native_model.py": "20573370473ec8c684b18963de939e2475e78d02675e7196fc338310b3f24cf5",
+    "docs/acceptance/ryn-agent-delivery/reference/budget_host.py": "e83fb114e7440fd192040c02cc3a1170cd9795ec590eda05bc497c6353312cf3",
+    "docs/acceptance/ryn-agent-delivery/reference/documents.py": "d128f0922bebcdbdfbcfab36c11775dfb65081ba961ca4c54e093e7a04d348ff",
+    "tests/test_agent_request_deadline.py": "e22126e6d1c05970d377db4a4bf06b87a1edabf6b856ec6237d97d102c11604d",
+    "tests/test_agent_reference_output_policy.py": "d3ef3d09224a475a3d4eeb8c8f993a74a56a079b6d64575295e03531561eb5d0"
+  },
+  "formal_executed_trials": 0
+}

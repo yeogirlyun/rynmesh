@@ -1,0 +1,68 @@
+{
+  "req": {
+    "peer_id": "fR6oJFpFDez/LqWFSnyxUmOmTEB/f/7teSFY/y/9RSA=",
+    "paths": [
+      "C:\\Users\\ziling\\rynmesh-drop-lan-20261013\\LAN-folder-proof"
+    ],
+    "client_id": "de2f7341932c1bce1a4599c189804675"
+  },
+  "transfer": {
+    "transfer_id": "c4efe8e037694257b45b5f73b0a53e82",
+    "offer_id": "e238fe944ead4ed6990153163ef10a18",
+    "peer_id": "fR6oJFpFDez/LqWFSnyxUmOmTEB/f/7teSFY/y/9RSA=",
+    "direction": "out",
+    "kind": "folder",
+    "name": "LAN-folder-proof",
+    "file_count": 3,
+    "total_bytes": 16777302,
+    "confirmed_bytes": 0,
+    "status": "connecting",
+    "route": null,
+    "speed_bps": null,
+    "eta_s": null,
+    "error": null,
+    "note": "",
+    "save_dir": "",
+    "final_path": "",
+    "verification_code": null,
+    "actions": [
+      "cancel"
+    ],
+    "created_at": "2026-10-13T12:43:00.382+00:00",
+    "updated_at": "2026-10-13T12:43:00.382+00:00",
+    "completed_at": null,
+    "version": 1,
+    "files_preview": [
+      {
+        "rel_path": "LAN-folder-proof/empty-file.txt",
+        "size": 0
+      },
+      {
+        "rel_path": "LAN-folder-proof/中文说明.txt",
+        "size": 69
+      },
+      {
+        "rel_path": "LAN-folder-proof/subfolder/random-16MiB.bin",
+        "size": 16777233
+      }
+    ]
+  },
+  "preflight": {
+    "ok": true,
+    "route": "lan",
+    "send_mode": "send",
+    "file_count": 3,
+    "total_bytes": 16777302,
+    "receiver_free_bytes": null,
+    "issues": [],
+    "items": [
+      {
+        "name": "LAN-folder-proof",
+        "kind": "folder",
+        "file_count": 3,
+        "size": 16777302
+      }
+    ]
+  },
+  "initiated_via": "production desktop local-path API; receiver acceptance via UI"
+}

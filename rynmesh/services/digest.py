@@ -673,6 +673,19 @@ class DigestService:
             self._save("discovery-state.json", state)
         return True
 
+    def set_source_paused(self, source_id: str, paused: bool) -> dict[str, Any]:
+        sources = self.list_sources()
+        matched: dict[str, Any] | None = None
+        for source in sources:
+            if source.get("id") == source_id:
+                source["paused"] = bool(paused)
+                matched = source
+                break
+        if matched is None:
+            raise DigestError("source_not_found")
+        self._save("sources.json", sources)
+        return dict(matched)
+
     # -- read-it-later ------------------------------------------------------
     READLATER_ID = "readlater"
     WATCHERS_ID = "watchers"
@@ -756,6 +769,19 @@ class DigestService:
         self._save("watchers.json", remaining)
         return True
 
+    def set_watcher_paused(self, watcher_id: str, paused: bool) -> dict[str, Any]:
+        watchers = self.list_watchers()
+        matched: dict[str, Any] | None = None
+        for watcher in watchers:
+            if watcher.get("id") == watcher_id:
+                watcher["paused"] = bool(paused)
+                matched = watcher
+                break
+        if matched is None:
+            raise DigestError("watcher_not_found")
+        self._save("watchers.json", watchers)
+        return dict(matched)
+
     def check_watchers(self, *, now_unix: float, timeout_s: float = 8.0) -> int:
         """Re-fetch every watched page; changed pages become digest items."""
         watchers = self.list_watchers()
@@ -763,6 +789,8 @@ class DigestService:
             return 0
         changed = 0
         for watcher in watchers:
+            if watcher.get("paused"):
+                continue
             try:
                 page = self.fetcher(watcher["url"], timeout_s)
             except Exception:
@@ -825,6 +853,22 @@ class DigestService:
                 continue
             checked_at = time.time()
             previous = previous_health.get(source_id, {})
+            if source.get("paused"):
+                health.append(
+                    {
+                        "id": source_id,
+                        "title": source["title"],
+                        "ok": True,
+                        "paused": True,
+                        "error": "",
+                        "item_count": len(self._load("items.json", {}).get(source_id, [])),
+                        "last_checked_unix": float(previous.get("last_checked_unix", 0.0) or 0.0),
+                        "last_success_unix": float(previous.get("last_success_unix", 0.0) or 0.0),
+                        "consecutive_failures": 0,
+                        "using_cached_items": True,
+                    }
+                )
+                continue
             if str(source.get("feed_url", "")).startswith("local:"):
                 # read-later / watcher pseudo-sources have no feed to poll
                 health.append(

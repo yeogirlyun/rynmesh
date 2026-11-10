@@ -1,0 +1,214 @@
+{
+  "schema_version": 1,
+  "kind": "ryn.agent.role-overlay",
+  "dataset_version": "ryn-agent-acceptance-2026-10-10.v2-draft.1",
+  "partition": "development",
+  "status": "draft/not_formal_ready",
+  "enabled": false,
+  "formal_ready": false,
+  "required_grader": "ryn-agent-role-grader.v2",
+  "composition_version": "ryn.agent.role-composition.v1",
+  "base": {
+    "dataset_version": "ryn-agent-acceptance-2026-10-09.v1",
+    "cases": {
+      "path": "docs/acceptance/ryn-agent-delivery/cases-v1.json",
+      "sha256": "27a50f909a09a6972fc7b11df55f7798412ec415b8ef87ccadef8ddc85bd06b5"
+    },
+    "world": {
+      "path": "tests/fixtures/agent_acceptance/world.json",
+      "sha256": "fbeb1e3466870df1d65685ed11835a4cdf078817a3b922e912a83453be09ba82"
+    }
+  },
+  "cases": {
+    "Q01": {
+      "execution_role": "owner-admin",
+      "agent_execution_node": "node-a"
+    },
+    "Q02": {
+      "execution_role": "consumer",
+      "agent_execution_node": "node-b"
+    },
+    "Q03": {
+      "execution_role": "consumer",
+      "agent_execution_node": "node-b"
+    },
+    "Q04": {
+      "execution_role": "consumer",
+      "agent_execution_node": "node-b"
+    },
+    "Q05": {
+      "execution_role": "consumer",
+      "agent_execution_node": "node-b"
+    },
+    "Q06": {
+      "execution_role": "owner-admin",
+      "agent_execution_node": "node-a"
+    },
+    "F01": {
+      "execution_role": "consumer",
+      "agent_execution_node": "node-b"
+    },
+    "F02": {
+      "execution_role": "consumer",
+      "agent_execution_node": "node-b"
+    },
+    "F03": {
+      "execution_role": "consumer",
+      "agent_execution_node": "node-b"
+    },
+    "F04": {
+      "execution_role": "consumer",
+      "agent_execution_node": "node-b"
+    },
+    "F05": {
+      "execution_role": "consumer",
+      "agent_execution_node": "node-b"
+    },
+    "F06": {
+      "execution_role": "consumer",
+      "agent_execution_node": "node-b"
+    },
+    "F07": {
+      "execution_role": "consumer",
+      "agent_execution_node": "node-b"
+    },
+    "F08": {
+      "execution_role": "consumer",
+      "agent_execution_node": "node-b"
+    },
+    "C01": {
+      "execution_role": "consumer",
+      "agent_execution_node": "node-b"
+    },
+    "C02": {
+      "execution_role": "owner-admin",
+      "agent_execution_node": "node-a"
+    },
+    "C03": {
+      "execution_role": "owner-admin",
+      "agent_execution_node": "node-a"
+    },
+    "C04": {
+      "execution_role": "owner-admin",
+      "agent_execution_node": "node-a"
+    },
+    "R01": {
+      "execution_role": "consumer",
+      "agent_execution_node": "node-b"
+    },
+    "R02": {
+      "execution_role": "owner-admin",
+      "agent_execution_node": "node-a"
+    },
+    "R03": {
+      "execution_role": "consumer",
+      "agent_execution_node": "node-b"
+    },
+    "R04": {
+      "execution_role": "owner-admin",
+      "agent_execution_node": "node-a"
+    },
+    "R05": {
+      "execution_role": "consumer",
+      "agent_execution_node": "node-b"
+    },
+    "R06": {
+      "execution_role": "consumer",
+      "agent_execution_node": "node-b"
+    },
+    "P01": {
+      "execution_role": "consumer",
+      "agent_execution_node": "node-b"
+    },
+    "P02": {
+      "execution_role": "consumer",
+      "agent_execution_node": "node-b"
+    },
+    "P03": {
+      "execution_role": "owner-admin",
+      "agent_execution_node": "node-a"
+    },
+    "P04": {
+      "execution_role": "consumer",
+      "agent_execution_node": "node-b"
+    },
+    "P05": {
+      "execution_role": "consumer",
+      "agent_execution_node": "node-b"
+    },
+    "P06": {
+      "execution_role": "consumer",
+      "agent_execution_node": "node-b"
+    }
+  },
+  "authorization_changes": {
+    "Q01": {
+      "from": "node-b",
+      "to": "node-a"
+    },
+    "Q06": {
+      "from": "node-b",
+      "to": "node-a"
+    },
+    "C02": {
+      "from": "node-b",
+      "to": "node-a"
+    },
+    "C03": {
+      "from": "node-b",
+      "to": "node-a"
+    },
+    "C04": {
+      "from": "node-b",
+      "to": "node-a"
+    },
+    "R02": {
+      "from": "node-b",
+      "to": "node-a"
+    },
+    "R04": {
+      "from": "node-b",
+      "to": "node-a"
+    },
+    "P03": {
+      "from": "node-b",
+      "to": "node-a"
+    }
+  },
+  "deployment": {
+    "logical_nodes": [
+      "node-a",
+      "node-b",
+      "node-c",
+      "node-d"
+    ],
+    "source_owners": {
+      "source-alpha": "node-a",
+      "source-other": "node-a",
+      "source-broken": "node-a"
+    },
+    "source_owner_overrides": {
+      "Q02": {
+        "source-broken": "node-b"
+      }
+    },
+    "new_source_owners": {
+      "C01": {
+        "source-new": "node-b"
+      }
+    },
+    "connection_hosts": {
+      "docs-alpha": "node-b",
+      "docs-beta": "node-b",
+      "docs-offline": "node-b"
+    },
+    "history_owners": {
+      "task-failed-read": "node-b"
+    },
+    "default_agent_owners": {
+      "C03": "node-a"
+    },
+    "recipient_policy": "preserve_base_receivers_no_implicit_grant_changes",
+    "all_models_private_policy": "sharing_false_only_preserve_receivers"
+  }
+}

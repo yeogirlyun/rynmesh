@@ -1,6 +1,6 @@
 import { tr, useUILanguage } from "../uiI18n";
 import { personalHref } from "../personal/model";
-import { ArrowLeft, Film, Play, RotateCcw } from "lucide-react";
+import { ArrowLeft, ChevronDown, Play, RotateCcw } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAppContext } from "../appContext";
@@ -8,7 +8,8 @@ import type { JobCapacity, WorkOrder, WorkResult } from "../domain/types";
 import { useProviderDiscovery, useServiceOrder } from "../domain/serviceExperience";
 import { providerIdentity, serviceDescriptors } from "../domain/serviceDescriptors";
 import { NodeClientError } from "../domain/nodeClient";
-import styles from "./ServiceExperience.module.css";
+import { GlyphTile, VideoGlyph } from "./ServiceParts";
+import "./service-pages-refresh.css";
 
 const descriptor = serviceDescriptors.video;
 const CAPABILITY = descriptor.capability;
@@ -74,29 +75,32 @@ export default function VideoRendering() {
 
 
   return (
-    <div className={styles.page}>
-      <button type="button" className={styles.back} onClick={() => navigate(personalHref("/services", client.mode === "fixture"))}><ArrowLeft size={15} /> {tr("All services")}</button>
-      <header className={styles.hero}>
-        <div className={styles.heroTitle}><span className={styles.heroIcon}><Film size={25} /></span><div><h1>{tr("Video rendering")}</h1><p>{tr("Create motion clips through an available rendering service.")}</p></div></div>
-        <span className={styles.status}>{provider ? tr("Renderer ready") : tr("Finding renderer")}</span>
+    <div className="rf rd-svc rd-video sv-narrow">
+      <button type="button" className="rf-lnk sv-back" onClick={() => navigate(personalHref("/services", client.mode === "fixture"))}><ArrowLeft size={14} aria-hidden="true" /> {tr("All services")}</button>
+      <header className="sv-head-ident rf-h-rose">
+        <GlyphTile hue="rose" size="xl">{(px) => <VideoGlyph size={px} />}</GlyphTile>
+        <div className="sv-head-text"><h1 className="sv-title">{tr("Video rendering")}</h1><p className="sv-lead">{tr("Create motion clips through an available rendering service.")}</p></div>
+        <span className={`rf-pill rf-t-${provider ? "ok" : "warn"}`}><i aria-hidden="true" />{provider ? tr("Renderer ready") : tr("Finding renderer")}</span>
       </header>
-      <div className={styles.layout}>
-        <section className={styles.panel}>
-          <h2>{tr("Create a render")}</h2><p className={styles.panelLead}>{tr("Choose the project to render. Ryn selects the provider and route for you.")}</p>
-          <div className={styles.form}>
-            <label className={styles.field}>Video project ID<input aria-label="Video project ID" value={projectId} onChange={(event) => setProjectId(event.target.value)} placeholder="Enter a project ID" /></label>
-            <label className={styles.field}>Maximum scenes<input aria-label="Maximum scenes" type="number" min="0" value={maxScenes} onChange={(event) => setMaxScenes(event.target.value)} /></label>
-            <label className={styles.check}><input type="checkbox" checked={skipExisting} onChange={(event) => setSkipExisting(event.target.checked)} /> Skip clips that are already rendered</label>
-            {visibleError ? <span role="alert" className={styles.error}>{visibleError}</span> : null}
-            {uncertain ? <button type="button" className={styles.secondary} onClick={() => { setUncertain(false); setError(""); }}>I checked the original request; allow a new render</button> : null}
-            <button type="button" className={styles.primary} disabled={!provider || !projectId.trim() || busy || result.busy || unfinished || uncertain} onClick={() => void submit()}><Play size={16} /> {busy ? "Submitting…" : "Start rendering"}</button>
-            {orderId ? <div className={styles.result}><strong>Render request submitted</strong><p>{latest ? `${latest.status}: ${latest.message}` : "The node recorded the request. Waiting for provider progress."}</p><button type="button" className={styles.secondary} onClick={() => void refreshResult()}><RotateCcw size={14} /> Check progress</button></div> : null}
+      <div className="sv-cols">
+        <section className="sv-card sv-main" aria-labelledby="sv-create-title">
+          <div><h2 id="sv-create-title" className="sv-h2 sv-h2-lg">{tr("Create a render")}</h2><p className="sv-sub">{tr("Choose the project to render. Ryn selects the provider and route for you.")}</p></div>
+          <div className="sv-form">
+            <div className="sv-grid2 sv-video-fields">
+              <label className="sv-field"><span>Video project ID</span><input className="sv-inp sv-mono" aria-label="Video project ID" value={projectId} onChange={(event) => setProjectId(event.target.value)} placeholder="Enter a project ID" /></label>
+              <label className="sv-field"><span>Maximum scenes</span><input className="sv-inp" aria-label="Maximum scenes" type="number" min="0" value={maxScenes} onChange={(event) => setMaxScenes(event.target.value)} /><small>{tr("0 renders all scenes")}</small></label>
+            </div>
+            <label className="sv-check"><input type="checkbox" checked={skipExisting} onChange={(event) => setSkipExisting(event.target.checked)} /> Skip clips that are already rendered</label>
+            {visibleError ? <span role="alert" className="sv-alert sv-alert-bad">{visibleError}</span> : null}
+            {uncertain ? <button type="button" className="rf-btn" style={{ alignSelf: "flex-start" }} onClick={() => { setUncertain(false); setError(""); }}>I checked the original request; allow a new render</button> : null}
+            <button type="button" className="rf-btn rf-btn-p rf-btn-lg" style={{ alignSelf: "flex-start" }} disabled={!provider || !projectId.trim() || busy || result.busy || unfinished || uncertain} onClick={() => void submit()}><Play size={14} fill="currentColor" aria-hidden="true" /> {busy ? "Submitting…" : "Start rendering"}</button>
+            {orderId ? <div className="sv-progress rf-t-sky"><div><b>Render request submitted</b><p>{latest ? `${latest.status}: ${latest.message}` : "The node recorded the request. Waiting for provider progress."}</p></div><button type="button" className="rf-btn rf-btn-sm" onClick={() => void refreshResult()}><RotateCcw size={13} aria-hidden="true" /> Check progress</button></div> : null}
           </div>
         </section>
-        <aside className={styles.panel}>
-          <h2>Before you start</h2><p className={styles.panelLead}>The final cost will not exceed the amount shown here.</p>
-          <div className={styles.summary}><div className={styles.summaryRow}><span>Availability</span><strong>{provider ? "Ready" : "Unavailable"}</strong></div><div className={styles.summaryRow}><span>{descriptor.pricing.label}</span><strong>{provider ? `${price} credits` : "—"}</strong></div><div className={styles.summaryRow}><span>Capacity</span><strong>{provider ? `${provider.capacity_units} slot${provider.capacity_units === 1 ? "" : "s"}` : "—"}</strong></div></div>
-          {provider ? <details className={styles.details}><summary>Provider details</summary><div className={styles.detailBody}><span>{provider.provider_name || provider.node_name}</span><span>{provider.network_id}</span><span>{provider.peer_id}</span></div></details> : null}
+        <aside className="sv-card sv-aside" aria-labelledby="sv-before-title">
+          <h2 id="sv-before-title" className="sv-h2">Before you start</h2><p className="sv-note">The final cost will not exceed the amount shown here.</p>
+          <dl className="sv-rows"><div><dt>Availability</dt><dd>{provider ? "Ready" : "Unavailable"}</dd></div><div><dt>{descriptor.pricing.label}</dt><dd>{provider ? `${price} credits` : "—"}</dd></div><div><dt>Capacity</dt><dd>{provider ? `${provider.capacity_units} slot${provider.capacity_units === 1 ? "" : "s"}` : "—"}</dd></div></dl>
+          {provider ? <details className="sv-details"><summary><span>Provider details</span><ChevronDown size={14} aria-hidden="true" /></summary><div className="sv-details-body"><span>{provider.provider_name || provider.node_name}</span><span>{provider.network_id}</span><span>{provider.peer_id}</span></div></details> : null}
         </aside>
       </div>
     </div>

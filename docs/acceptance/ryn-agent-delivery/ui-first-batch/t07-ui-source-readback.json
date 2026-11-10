@@ -1,0 +1,984 @@
+{
+  "task": {
+    "id": "agent_737f9bb37a3b43ac8b9a9e389fe204ba",
+    "client_request_id": "e1ea1a8c-233e-4c23-b690-e0e99be6a296",
+    "title": "来源配置 UI 验收：使用本机合成来源 alpha，只在明确测试后保存私有模型 alpha/beta，不修改其他来源或分享设置。",
+    "model_id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+    "status": "completed",
+    "revision": 33,
+    "created_at": "2026-10-09T19:46:47.18443+08:00",
+    "updated_at": "2026-10-09T19:51:37.702719+08:00",
+    "messages": [
+      {
+        "content": "来源配置 UI 验收：使用本机合成来源 alpha，只在明确测试后保存私有模型 alpha/beta，不修改其他来源或分享设置。",
+        "message_id": "agent_737f9bb37a3b43ac8b9a9e389fe204ba:owner:0",
+        "role": "user"
+      },
+      {
+        "content": "隔离来源配置页面联调。",
+        "context_epoch": 0,
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\"fields\":[{\"id\":\"source\",\"label\":\"隔离来源凭据\",\"required\":true,\"type\":\"credential_ref\"}],\"goal_revision\":1,\"kind\":\"credential_ref\",\"prompt\":\"请通过安全表单配置隔离来源凭据，使用本机 19004 测试服务和合成测试密钥。\"}",
+              "name": "ryn_request_input"
+            },
+            "id": "source-ui-c8ec23bee1bd4d1a87231e635f454122",
+            "type": "function"
+          }
+        ]
+      },
+      {
+        "content": "{\"accepted\":true,\"pending_input_id\":\"input_201d5b8217954757a4ff5edc8a7d1624\",\"waiting_for_owner\":true}",
+        "context_epoch": 0,
+        "role": "tool",
+        "tool_call_id": "source-ui-c8ec23bee1bd4d1a87231e635f454122"
+      },
+      {
+        "content": "The owner supplied credentials through the secure local form. No new permissions were granted. Use the task-bound credential slot for this confirmed source endpoint: {\"base_url\":\"http://127.0.0.1:19004/v1\",\"credential_version\":\"c83b03d4cde54feba8900f62baed7c6a\",\"expires_at\":1791550067.1561494,\"has_credential\":true,\"kind\":\"local\",\"source_id\":\"\"}",
+        "message_id": "owner_8a28ad4be2024f6db237e92d688fe81a",
+        "role": "user",
+        "ui": {
+          "fields": [
+            {
+              "label": "Source endpoint",
+              "value": "http://127.0.0.1:19004/v1"
+            },
+            {
+              "label": "Credential",
+              "value": "Configured in secure storage"
+            }
+          ],
+          "kind": "input_answer",
+          "pending_input_id": "input_201d5b8217954757a4ff5edc8a7d1624",
+          "prompt": "请通过安全表单配置隔离来源凭据，使用本机 19004 测试服务和合成测试密钥。"
+        }
+      },
+      {
+        "content": "隔离来源配置页面联调。",
+        "context_epoch": 0,
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\"configuration\":{\"base_url\":\"http://127.0.0.1:19004/v1\",\"kind\":\"local\",\"models\":[\"alpha\",\"beta\"],\"name\":\"来源配置 UI 验收\"}}",
+              "name": "ryn_prepare_source_draft"
+            },
+            "id": "source-ui-0a2da50827054587a78e4478df567de8",
+            "type": "function"
+          }
+        ]
+      },
+      {
+        "content": "{\"committed_source_id\":null,\"configuration\":{\"base_url\":\"http://127.0.0.1:19004/v1\",\"context_window\":32768,\"enabled\":true,\"kind\":\"local\",\"max_output_tokens\":4096,\"models\":[\"alpha\",\"beta\"],\"name\":\"来源配置 UI 验收\",\"provider\":\"custom\",\"request_defaults\":{}},\"draft_id\":\"draft_19e080984226406ba98302f32ab6c0f6\",\"draft_only\":true,\"has_credential\":true,\"source_id\":\"\",\"test\":null,\"version\":1}",
+        "context_epoch": 0,
+        "role": "tool",
+        "tool_call_id": "source-ui-0a2da50827054587a78e4478df567de8"
+      },
+      {
+        "content": "隔离来源配置页面联调。",
+        "context_epoch": 0,
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\"draft_id\":\"draft_19e080984226406ba98302f32ab6c0f6\",\"expected_draft_version\":1,\"test_tools\":true}",
+              "name": "ryn_test_source_draft"
+            },
+            "id": "source-ui-61868b0921394b06af0d365f47fce3a0",
+            "type": "function"
+          }
+        ]
+      },
+      {
+        "content": "{\"committed_source_id\":null,\"configuration\":{\"base_url\":\"http://127.0.0.1:19004/v1\",\"context_window\":32768,\"enabled\":true,\"kind\":\"local\",\"max_output_tokens\":4096,\"models\":[\"alpha\",\"beta\"],\"name\":\"来源配置 UI 验收\",\"provider\":\"custom\",\"request_defaults\":{}},\"draft_id\":\"draft_19e080984226406ba98302f32ab6c0f6\",\"draft_only\":true,\"has_credential\":true,\"source_id\":\"\",\"test\":{\"chat_passed\":true,\"checked_at\":1791546469.894176,\"cost\":\"unknown\",\"draft_version\":1,\"models\":[{\"chat\":\"passed\",\"checked_at\":1791546469.4647996,\"model_id\":\"alpha\",\"tool_support\":\"supported\"},{\"chat\":\"passed\",\"checked_at\":1791546469.6553056,\"model_id\":\"beta\",\"tool_support\":\"supported\"}],\"probe_performed\":true,\"probe_requests\":6,\"usage\":\"unknown\"},\"version\":1}",
+        "context_epoch": 0,
+        "role": "tool",
+        "tool_call_id": "source-ui-61868b0921394b06af0d365f47fce3a0"
+      },
+      {
+        "content": "隔离来源配置页面联调。",
+        "context_epoch": 0,
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\"draft_id\":\"draft_19e080984226406ba98302f32ab6c0f6\",\"expected_draft_version\":1}",
+              "name": "ryn_commit_source_draft"
+            },
+            "id": "source-ui-7caf96975d964e8893a3c924b7ebb57a",
+            "type": "function"
+          }
+        ]
+      },
+      {
+        "content": "{\"draft_id\":\"draft_19e080984226406ba98302f32ab6c0f6\",\"models\":[\"alpha\",\"beta\"],\"ok\":true,\"post_save_retest\":\"pending\",\"shared_models\":[],\"source_id\":\"src-44516966ec61409c\",\"source_revision\":\"56490332a5034cbfbf5ddb661254fa44\",\"status\":\"ready\",\"version\":1}",
+        "context_epoch": 0,
+        "role": "tool",
+        "tool_call_id": "source-ui-7caf96975d964e8893a3c924b7ebb57a"
+      },
+      {
+        "content": "合成 UI 联调已提交两个模型来源；请用实际回执和模型目录核对保存及私有状态。这不是实际模型效果评测。",
+        "context_epoch": 0,
+        "role": "assistant"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-09T19:46:47.18543+08:00",
+        "context_epoch": 0,
+        "seq": 1,
+        "type": "created"
+      },
+      {
+        "at": "2026-10-09T19:46:47.651952+08:00",
+        "context_epoch": 0,
+        "seq": 2,
+        "step": 1,
+        "type": "model_started"
+      },
+      {
+        "at": "2026-10-09T19:46:47.872947+08:00",
+        "content": "隔离来源配置页面联调。",
+        "context_epoch": 0,
+        "seq": 3,
+        "tool_count": 1,
+        "type": "assistant"
+      },
+      {
+        "at": "2026-10-09T19:46:48.412742+08:00",
+        "context_epoch": 0,
+        "pending_input_id": "input_201d5b8217954757a4ff5edc8a7d1624",
+        "seq": 4,
+        "type": "input_requested"
+      },
+      {
+        "at": "2026-10-09T19:46:48.412742+08:00",
+        "call_id": "source-ui-c8ec23bee1bd4d1a87231e635f454122",
+        "context_epoch": 0,
+        "internal": true,
+        "operation_id": "op_a1d21227e70342fbb2d291bd61147e25",
+        "result": {
+          "accepted": true,
+          "pending_input_id": "input_201d5b8217954757a4ff5edc8a7d1624",
+          "waiting_for_owner": true
+        },
+        "seq": 5,
+        "tool": "ryn_request_input",
+        "type": "tool_result"
+      },
+      {
+        "at": "2026-10-09T19:47:47.163597+08:00",
+        "context_epoch": 0,
+        "metadata": {
+          "base_url": "http://127.0.0.1:19004/v1",
+          "credential_version": "c83b03d4cde54feba8900f62baed7c6a",
+          "expires_at": 1791550067.1561494,
+          "has_credential": true,
+          "kind": "local",
+          "source_id": ""
+        },
+        "seq": 6,
+        "type": "source_credential_saved"
+      },
+      {
+        "at": "2026-10-09T19:47:47.163597+08:00",
+        "context_epoch": 0,
+        "pending_input_id": "input_201d5b8217954757a4ff5edc8a7d1624",
+        "seq": 7,
+        "type": "input_answered"
+      },
+      {
+        "at": "2026-10-09T19:47:47.357856+08:00",
+        "context_epoch": 0,
+        "seq": 8,
+        "step": 2,
+        "type": "model_started"
+      },
+      {
+        "at": "2026-10-09T19:47:47.62276+08:00",
+        "content": "隔离来源配置页面联调。",
+        "context_epoch": 0,
+        "seq": 9,
+        "tool_count": 1,
+        "type": "assistant"
+      },
+      {
+        "at": "2026-10-09T19:47:48.143497+08:00",
+        "call_id": "source-ui-0a2da50827054587a78e4478df567de8",
+        "context_epoch": 0,
+        "effect": "read",
+        "operation_id": "op_952008b31fc54754ad4264486ba12532",
+        "seq": 10,
+        "tool": "ryn_prepare_source_draft",
+        "type": "tool_started"
+      },
+      {
+        "at": "2026-10-09T19:47:48.203837+08:00",
+        "call_id": "source-ui-0a2da50827054587a78e4478df567de8",
+        "context_epoch": 0,
+        "operation_id": "op_952008b31fc54754ad4264486ba12532",
+        "result": {
+          "committed_source_id": null,
+          "configuration": {
+            "base_url": "http://127.0.0.1:19004/v1",
+            "context_window": 32768,
+            "enabled": true,
+            "kind": "local",
+            "max_output_tokens": 4096,
+            "models": [
+              "alpha",
+              "beta"
+            ],
+            "name": "来源配置 UI 验收",
+            "provider": "custom",
+            "request_defaults": {}
+          },
+          "draft_id": "draft_19e080984226406ba98302f32ab6c0f6",
+          "draft_only": true,
+          "has_credential": true,
+          "source_id": "",
+          "test": null,
+          "version": 1
+        },
+        "seq": 11,
+        "tool": "ryn_prepare_source_draft",
+        "type": "tool_result"
+      },
+      {
+        "at": "2026-10-09T19:47:48.75583+08:00",
+        "context_epoch": 0,
+        "seq": 12,
+        "step": 3,
+        "type": "model_started"
+      },
+      {
+        "at": "2026-10-09T19:47:48.892444+08:00",
+        "content": "隔离来源配置页面联调。",
+        "context_epoch": 0,
+        "seq": 13,
+        "tool_count": 1,
+        "type": "assistant"
+      },
+      {
+        "at": "2026-10-09T19:47:49.4348+08:00",
+        "call_id": "source-ui-61868b0921394b06af0d365f47fce3a0",
+        "context_epoch": 0,
+        "effect": "read",
+        "operation_id": "op_46ee6d33943f4483b1ac942cf0c196a8",
+        "seq": 14,
+        "tool": "ryn_test_source_draft",
+        "type": "tool_started"
+      },
+      {
+        "at": "2026-10-09T19:47:49.926174+08:00",
+        "call_id": "source-ui-61868b0921394b06af0d365f47fce3a0",
+        "context_epoch": 0,
+        "operation_id": "op_46ee6d33943f4483b1ac942cf0c196a8",
+        "result": {
+          "committed_source_id": null,
+          "configuration": {
+            "base_url": "http://127.0.0.1:19004/v1",
+            "context_window": 32768,
+            "enabled": true,
+            "kind": "local",
+            "max_output_tokens": 4096,
+            "models": [
+              "alpha",
+              "beta"
+            ],
+            "name": "来源配置 UI 验收",
+            "provider": "custom",
+            "request_defaults": {}
+          },
+          "draft_id": "draft_19e080984226406ba98302f32ab6c0f6",
+          "draft_only": true,
+          "has_credential": true,
+          "source_id": "",
+          "test": {
+            "chat_passed": true,
+            "checked_at": 1791546469.894176,
+            "cost": "unknown",
+            "draft_version": 1,
+            "models": [
+              {
+                "chat": "passed",
+                "checked_at": 1791546469.4647996,
+                "model_id": "alpha",
+                "tool_support": "supported"
+              },
+              {
+                "chat": "passed",
+                "checked_at": 1791546469.6553056,
+                "model_id": "beta",
+                "tool_support": "supported"
+              }
+            ],
+            "probe_performed": true,
+            "probe_requests": 6,
+            "usage": "unknown"
+          },
+          "version": 1
+        },
+        "seq": 15,
+        "tool": "ryn_test_source_draft",
+        "type": "tool_result"
+      },
+      {
+        "at": "2026-10-09T19:47:50.484067+08:00",
+        "context_epoch": 0,
+        "seq": 16,
+        "step": 4,
+        "type": "model_started"
+      },
+      {
+        "at": "2026-10-09T19:47:50.632578+08:00",
+        "content": "隔离来源配置页面联调。",
+        "context_epoch": 0,
+        "seq": 17,
+        "tool_count": 1,
+        "type": "assistant"
+      },
+      {
+        "approval_id": "approval_3664fef5535047eba08e9afb38bc2407",
+        "at": "2026-10-09T19:47:51.246731+08:00",
+        "context_epoch": 0,
+        "seq": 18,
+        "tool": "ryn_commit_source_draft",
+        "type": "approval_requested"
+      },
+      {
+        "approval_id": "approval_3664fef5535047eba08e9afb38bc2407",
+        "at": "2026-10-09T19:51:33.469948+08:00",
+        "context_epoch": 0,
+        "seq": 19,
+        "tool": "ryn_commit_source_draft",
+        "type": "approved"
+      },
+      {
+        "at": "2026-10-09T19:51:33.658054+08:00",
+        "call_id": "source-ui-7caf96975d964e8893a3c924b7ebb57a",
+        "context_epoch": 0,
+        "effect": "write",
+        "operation_id": "op_c6ff50caaa1e40fc969afd52da7652cc",
+        "seq": 20,
+        "tool": "ryn_commit_source_draft",
+        "type": "tool_started"
+      },
+      {
+        "at": "2026-10-09T19:51:33.736166+08:00",
+        "call_id": "source-ui-7caf96975d964e8893a3c924b7ebb57a",
+        "context_epoch": 0,
+        "operation_id": "op_c6ff50caaa1e40fc969afd52da7652cc",
+        "result": {
+          "draft_id": "draft_19e080984226406ba98302f32ab6c0f6",
+          "models": [
+            "alpha",
+            "beta"
+          ],
+          "ok": true,
+          "post_save_retest": "pending",
+          "shared_models": [],
+          "source_id": "src-44516966ec61409c",
+          "source_revision": "56490332a5034cbfbf5ddb661254fa44",
+          "status": "ready",
+          "version": 1
+        },
+        "seq": 21,
+        "tool": "ryn_commit_source_draft",
+        "type": "tool_result"
+      },
+      {
+        "at": "2026-10-09T19:51:34.27034+08:00",
+        "context_epoch": 0,
+        "seq": 22,
+        "step": 5,
+        "type": "model_started"
+      },
+      {
+        "at": "2026-10-09T19:51:34.517573+08:00",
+        "content": "合成 UI 联调已提交两个模型来源；请用实际回执和模型目录核对保存及私有状态。这不是实际模型效果评测。",
+        "context_epoch": 0,
+        "seq": 23,
+        "tool_count": 0,
+        "type": "assistant"
+      },
+      {
+        "at": "2026-10-09T19:51:34.517573+08:00",
+        "context_epoch": 0,
+        "goal_revision": 1,
+        "seq": 24,
+        "type": "verification_started"
+      },
+      {
+        "at": "2026-10-09T19:51:35.090811+08:00",
+        "context_epoch": 0,
+        "criterion_id": "criterion_op_952008b31fc54754ad4264486ba12532",
+        "evidence_id": "evidence_99b8c083a1da4e29b0f93e08eca78d02",
+        "seq": 25,
+        "status": "passed",
+        "type": "criterion_checked"
+      },
+      {
+        "at": "2026-10-09T19:51:35.695909+08:00",
+        "context_epoch": 0,
+        "criterion_id": "criterion_op_46ee6d33943f4483b1ac942cf0c196a8",
+        "evidence_id": "evidence_7290fcf0bced478381083b7a556920a9",
+        "seq": 26,
+        "status": "passed",
+        "type": "criterion_checked"
+      },
+      {
+        "at": "2026-10-09T19:51:36.431176+08:00",
+        "context_epoch": 0,
+        "criterion_id": "criterion_op_c6ff50caaa1e40fc969afd52da7652cc",
+        "evidence_id": "evidence_71034926ab4d4dc1ac11f101c143af0c",
+        "seq": 27,
+        "status": "passed",
+        "type": "criterion_checked"
+      },
+      {
+        "at": "2026-10-09T19:51:36.977356+08:00",
+        "context_epoch": 0,
+        "seq": 28,
+        "step": 6,
+        "type": "verification_model_started"
+      },
+      {
+        "at": "2026-10-09T19:51:37.045354+08:00",
+        "context_epoch": 0,
+        "error": "agent_invalid_verification_response",
+        "response_sha256": "4e77c1d2a4675aff20fcc9a2f02963fd8e9c1f2c5677a07fd5e2e52e4588dbbd",
+        "seq": 29,
+        "type": "verification_response_rejected"
+      },
+      {
+        "at": "2026-10-09T19:51:37.055358+08:00",
+        "context_epoch": 0,
+        "error": "agent_invalid_verification_response",
+        "retry_count": 1,
+        "seq": 30,
+        "type": "verification_format_retry_scheduled"
+      },
+      {
+        "at": "2026-10-09T19:51:37.61624+08:00",
+        "context_epoch": 0,
+        "seq": 31,
+        "step": 7,
+        "type": "verification_model_started"
+      },
+      {
+        "at": "2026-10-09T19:51:37.692718+08:00",
+        "context_epoch": 0,
+        "error": "agent_invalid_verification_response",
+        "response_sha256": "4e77c1d2a4675aff20fcc9a2f02963fd8e9c1f2c5677a07fd5e2e52e4588dbbd",
+        "seq": 32,
+        "type": "verification_response_rejected"
+      },
+      {
+        "at": "2026-10-09T19:51:37.702719+08:00",
+        "context_epoch": 0,
+        "error": "agent_invalid_verification_response",
+        "outcome": "unverified",
+        "seq": 33,
+        "type": "verification_finished"
+      }
+    ],
+    "pending_approval": null,
+    "steps": 7,
+    "result": "合成 UI 联调已提交两个模型来源；请用实际回执和模型目录核对保存及私有状态。这不是实际模型效果评测。",
+    "error": null,
+    "limits": {
+      "max_context_chars": 60000,
+      "max_output_chars": 1000,
+      "max_seconds": 180,
+      "max_steps": 16
+    },
+    "permission_mode": "confirm_changes",
+    "allowed_write_tools": [],
+    "model_destination": {
+      "catalog_model_id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+      "destination_revision": "aabd71b4a4ef49dfb9c7654726d28d1d",
+      "provider_peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+      "source_id": "src-1fe50b9c7ce9432b"
+    },
+    "verification_evidence": [
+      {
+        "checked_at": 1791546695.0708144,
+        "criterion_id": "criterion_op_952008b31fc54754ad4264486ba12532",
+        "evidence": {
+          "coverage": "Task-bound configuration draft exists. This does not establish active source save or connectivity.",
+          "current_state_matches": true,
+          "current_version": 1,
+          "draft_id": "draft_19e080984226406ba98302f32ab6c0f6"
+        },
+        "goal_revision": 1,
+        "id": "evidence_99b8c083a1da4e29b0f93e08eca78d02",
+        "kind": "mechanical",
+        "receipt_id": "receipt_op_952008b31fc54754ad4264486ba12532",
+        "scope_revision": 1,
+        "status": "passed"
+      },
+      {
+        "checked_at": 1791546695.6729085,
+        "criterion_id": "criterion_op_46ee6d33943f4483b1ac942cf0c196a8",
+        "evidence": {
+          "chat_probe_evidence": {
+            "chat_passed": true,
+            "checked_at": 1791546469.894176,
+            "cost": "unknown",
+            "draft_version": 1,
+            "models": [
+              {
+                "chat": "passed",
+                "checked_at": 1791546469.4647996,
+                "model_id": "alpha",
+                "tool_support": "supported"
+              },
+              {
+                "chat": "passed",
+                "checked_at": 1791546469.6553056,
+                "model_id": "beta",
+                "tool_support": "supported"
+              }
+            ],
+            "probe_performed": true,
+            "probe_requests": 6,
+            "usage": "unknown"
+          },
+          "coverage": "Stored fixed-prompt draft probe result, not a fresh connectivity check or proof of saved configuration.",
+          "current_state_matches": true,
+          "draft_id": "draft_19e080984226406ba98302f32ab6c0f6"
+        },
+        "goal_revision": 1,
+        "id": "evidence_7290fcf0bced478381083b7a556920a9",
+        "kind": "mechanical",
+        "receipt_id": "receipt_op_46ee6d33943f4483b1ac942cf0c196a8",
+        "scope_revision": 1,
+        "status": "passed"
+      },
+      {
+        "checked_at": 1791546696.4111753,
+        "criterion_id": "criterion_op_c6ff50caaa1e40fc969afd52da7652cc",
+        "evidence": {
+          "coverage": "Exact saved source revision and fresh chat probes for every configured model; no automatic rollback.",
+          "current_state_matches": true,
+          "operation_attribution": "business_receipt_separate_from_current_state",
+          "post_save_retest": {
+            "chat_passed": true,
+            "checked_at": 1791546696.4111753,
+            "cost": "unknown",
+            "models": [
+              {
+                "chat": "passed",
+                "checked_at": 1791546696.2702208,
+                "model_id": "alpha",
+                "tool_support": "unknown"
+              },
+              {
+                "chat": "passed",
+                "checked_at": 1791546696.3432183,
+                "model_id": "beta",
+                "tool_support": "unknown"
+              }
+            ],
+            "probe_performed": true,
+            "probe_requests": 2,
+            "usage": "unknown"
+          },
+          "saved_configuration_retained": true,
+          "source_id": "src-44516966ec61409c",
+          "source_revision": "56490332a5034cbfbf5ddb661254fa44"
+        },
+        "goal_revision": 1,
+        "id": "evidence_71034926ab4d4dc1ac11f101c143af0c",
+        "kind": "mechanical",
+        "receipt_id": "receipt_op_c6ff50caaa1e40fc969afd52da7652cc",
+        "scope_revision": 1,
+        "status": "passed"
+      }
+    ],
+    "schema_version": 2,
+    "goal": {
+      "constraints": [
+        {
+          "id": "constraint:agent_737f9bb37a3b43ac8b9a9e389fe204ba:owner:0",
+          "message_id": "agent_737f9bb37a3b43ac8b9a9e389fe204ba:owner:0",
+          "required": true,
+          "source": "user",
+          "text": "来源配置 UI 验收：使用本机合成来源 alpha，只在明确测试后保存私有模型 alpha/beta，不修改其他来源或分享设置。"
+        }
+      ],
+      "kind": "unclassified",
+      "original_message_id": "agent_737f9bb37a3b43ac8b9a9e389fe204ba:owner:0",
+      "revision": 1,
+      "text": "来源配置 UI 验收：使用本机合成来源 alpha，只在明确测试后保存私有模型 alpha/beta，不修改其他来源或分享设置。"
+    },
+    "criteria": [
+      {
+        "description": "Satisfy the owner's complete current goal and constraints.",
+        "evidence_refs": [],
+        "goal_revision": 1,
+        "id": "goal-coverage",
+        "kind": "semantic",
+        "required": true,
+        "source": "user",
+        "source_ref": "agent_737f9bb37a3b43ac8b9a9e389fe204ba:owner:0",
+        "status": "unknown",
+        "verifier": null
+      },
+      {
+        "description": "Check that the task-bound source draft exists; this does not prove it was saved or tested.",
+        "evidence_refs": [
+          "evidence_99b8c083a1da4e29b0f93e08eca78d02"
+        ],
+        "goal_revision": 1,
+        "id": "criterion_op_952008b31fc54754ad4264486ba12532",
+        "kind": "mechanical",
+        "required": true,
+        "source": "tool",
+        "source_ref": "receipt_op_952008b31fc54754ad4264486ba12532",
+        "status": "passed",
+        "verifier": "source_draft_state"
+      },
+      {
+        "description": "Check the exact draft version's recorded chat probe evidence; not a current live connection test.",
+        "evidence_refs": [
+          "evidence_7290fcf0bced478381083b7a556920a9"
+        ],
+        "goal_revision": 1,
+        "id": "criterion_op_46ee6d33943f4483b1ac942cf0c196a8",
+        "kind": "mechanical",
+        "required": true,
+        "source": "tool",
+        "source_ref": "receipt_op_46ee6d33943f4483b1ac942cf0c196a8",
+        "status": "passed",
+        "verifier": "source_draft_test_state"
+      },
+      {
+        "description": "Verify the exact saved source revision and retest each configured model; never roll back concurrent edits.",
+        "evidence_refs": [
+          "evidence_71034926ab4d4dc1ac11f101c143af0c"
+        ],
+        "goal_revision": 1,
+        "id": "criterion_op_c6ff50caaa1e40fc969afd52da7652cc",
+        "kind": "mechanical",
+        "required": true,
+        "source": "tool",
+        "source_ref": "receipt_op_c6ff50caaa1e40fc969afd52da7652cc",
+        "status": "passed",
+        "verifier": "saved_source_state"
+      }
+    ],
+    "plan": {
+      "goal_revision": 1,
+      "revision": 0,
+      "steps": []
+    },
+    "control_revision": 6,
+    "event_cursor": 33,
+    "run_state": "ended",
+    "pending_input": null,
+    "outcome": {
+      "coverage_method": "independent_model_assessment",
+      "criteria_results": [
+        {
+          "criterion_id": "goal-coverage",
+          "evidence_refs": [],
+          "kind": "semantic",
+          "status": "unknown"
+        },
+        {
+          "criterion_id": "criterion_op_952008b31fc54754ad4264486ba12532",
+          "evidence_refs": [
+            "evidence_99b8c083a1da4e29b0f93e08eca78d02"
+          ],
+          "kind": "mechanical",
+          "status": "passed"
+        },
+        {
+          "criterion_id": "criterion_op_46ee6d33943f4483b1ac942cf0c196a8",
+          "evidence_refs": [
+            "evidence_7290fcf0bced478381083b7a556920a9"
+          ],
+          "kind": "mechanical",
+          "status": "passed"
+        },
+        {
+          "criterion_id": "criterion_op_c6ff50caaa1e40fc969afd52da7652cc",
+          "evidence_refs": [
+            "evidence_71034926ab4d4dc1ac11f101c143af0c"
+          ],
+          "kind": "mechanical",
+          "status": "passed"
+        }
+      ],
+      "evidence_refs": [
+        "evidence_71034926ab4d4dc1ac11f101c143af0c",
+        "evidence_7290fcf0bced478381083b7a556920a9",
+        "evidence_99b8c083a1da4e29b0f93e08eca78d02"
+      ],
+      "goal_revision": 1,
+      "mechanical_scope": [
+        {
+          "criterion_id": "criterion_op_952008b31fc54754ad4264486ba12532",
+          "description": "Check that the task-bound source draft exists; this does not prove it was saved or tested.",
+          "status": "passed"
+        },
+        {
+          "criterion_id": "criterion_op_46ee6d33943f4483b1ac942cf0c196a8",
+          "description": "Check the exact draft version's recorded chat probe evidence; not a current live connection test.",
+          "status": "passed"
+        },
+        {
+          "criterion_id": "criterion_op_c6ff50caaa1e40fc969afd52da7652cc",
+          "description": "Verify the exact saved source revision and retest each configured model; never roll back concurrent edits.",
+          "status": "passed"
+        }
+      ],
+      "semantic_assessment": null,
+      "status": "unverified",
+      "summary": "Verification did not establish the complete goal.",
+      "uncertainties": [
+        "agent_invalid_verification_response",
+        "One or more required conditions lack independent evidence."
+      ]
+    },
+    "scope_revision": 1,
+    "archived": false,
+    "skills": [],
+    "budget": {
+      "limits": {
+        "max_total_model_calls": 128,
+        "max_total_seconds": 3600,
+        "max_total_tokens": 2000000,
+        "max_total_tool_calls": 256
+      },
+      "round": 1,
+      "lifetime": {
+        "model_calls": 15,
+        "tool_calls": 6,
+        "charged_model_calls": 15,
+        "charged_tool_calls": 6,
+        "known_input_tokens": 600,
+        "known_output_tokens": 375,
+        "input_tokens": 600,
+        "output_tokens": 375,
+        "total_tokens": 975,
+        "charged_tokens": 975,
+        "charged_seconds": 1.702000000019325,
+        "active_seconds": 1.702000000019325,
+        "cost": null,
+        "cost_status": "unknown",
+        "usage_complete": true,
+        "legacy_usage_unknown": false,
+        "unsettled_operations": 0
+      },
+      "current_round": {
+        "model_calls": 15,
+        "tool_calls": 6,
+        "charged_model_calls": 15,
+        "charged_tool_calls": 6,
+        "known_input_tokens": 600,
+        "known_output_tokens": 375,
+        "input_tokens": 600,
+        "output_tokens": 375,
+        "total_tokens": 975,
+        "charged_tokens": 975,
+        "charged_seconds": 1.702000000019325,
+        "active_seconds": 1.702000000019325,
+        "cost": null,
+        "cost_status": "unknown",
+        "usage_complete": true,
+        "legacy_usage_unknown": false,
+        "unsettled_operations": 0
+      },
+      "reservation_policy": "Unknown model usage retains the conservative dispatch reservation; cost is unknown without trusted pricing."
+    },
+    "allowed_actions": {
+      "pause": {
+        "enabled": false,
+        "requires_control_revision": false,
+        "reason": "agent_invalid_transition"
+      },
+      "cancel": {
+        "enabled": false,
+        "requires_control_revision": false,
+        "reason": "agent_invalid_transition"
+      },
+      "resume": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "approve": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "deny": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "answer": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "steer": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "information": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "scope": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "reconcile": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "archive": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "restore": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "delete": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "budget": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "source_credential": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "model": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      }
+    }
+  },
+  "created_source": {
+    "id": "src-44516966ec61409c",
+    "kind": "local",
+    "name": "来源配置 UI 验收",
+    "provider": "custom",
+    "base_url": "http://127.0.0.1:19004/v1",
+    "models": [
+      "alpha",
+      "beta"
+    ],
+    "context_window": 32768,
+    "max_output_tokens": 4096,
+    "request_defaults": {},
+    "sharing": false,
+    "shared_models": [],
+    "enabled": true,
+    "status": "ready",
+    "tool_support": {
+      "alpha": "supported",
+      "beta": "supported"
+    },
+    "model_settings": {
+      "alpha": {
+        "overrides": {},
+        "rule_revision": "1455332436cc4d49bf3c5ffcf71580b5",
+        "destination_revision": "5a5e9b9389ee4ca99850befb32e7a3da",
+        "evidence": {
+          "connection": {
+            "status": "unknown",
+            "checked_at": null
+          },
+          "model_exists": {
+            "status": "unknown",
+            "checked_at": null
+          },
+          "tools": {
+            "status": "unknown",
+            "checked_at": null
+          }
+        },
+        "effective": {
+          "context_window": 32768,
+          "max_output_tokens": 4096,
+          "request_defaults": {},
+          "max_concurrent": 1,
+          "requests_per_day": null,
+          "share_scope": "personal_space"
+        },
+        "inherited_fields": [
+          "context_window",
+          "max_concurrent",
+          "max_output_tokens",
+          "request_defaults",
+          "requests_per_day",
+          "share_scope"
+        ]
+      },
+      "beta": {
+        "overrides": {},
+        "rule_revision": "2e03eec2caf64c16ba60d916b0947037",
+        "destination_revision": "3a9e2a064e194690aee86d3f6a1f8da1",
+        "evidence": {
+          "connection": {
+            "status": "unknown",
+            "checked_at": null
+          },
+          "model_exists": {
+            "status": "unknown",
+            "checked_at": null
+          },
+          "tools": {
+            "status": "unknown",
+            "checked_at": null
+          }
+        },
+        "effective": {
+          "context_window": 32768,
+          "max_output_tokens": 4096,
+          "request_defaults": {},
+          "max_concurrent": 1,
+          "requests_per_day": null,
+          "share_scope": "personal_space"
+        },
+        "inherited_fields": [
+          "context_window",
+          "max_concurrent",
+          "max_output_tokens",
+          "request_defaults",
+          "requests_per_day",
+          "share_scope"
+        ]
+      }
+    },
+    "destination_revision": "da8d3dad5088402388f5e6b736241373",
+    "source_revision": "56490332a5034cbfbf5ddb661254fa44",
+    "has_key": true
+  },
+  "original_source_unchanged": true,
+  "secret_in_task": false,
+  "secret_in_public_source": false,
+  "discarded_secret_in_task": false,
+  "secret_empty_after_returning": true
+}

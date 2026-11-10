@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "preflight_type": "read-only",
+  "checked_at_utc": "2026-10-11T06:32:41.5145396Z",
+  "target": {
+    "ssh_alias": "personal-windows",
+    "host": "172.16.8.82",
+    "port": 2222,
+    "hostname": "DESKTOP-SQ6VA8I",
+    "identity": "DESKTOP-SQ6VA8I\\ziling",
+    "strict_host_key_checking": true,
+    "batch_mode": true
+  },
+  "scope": {
+    "remote_mutations": false,
+    "installed_or_launched_ryn": false,
+    "terminated_processes": false,
+    "created_accounts": false,
+    "read_configuration_contents": false,
+    "read_credentials_or_private_keys": false,
+    "read_heldout_build_cases": false,
+    "existing_headless_environment_preserved": true,
+    "local_evidence_file_created": true
+  },
+  "paths": [
+    { "path": "C:\\Users\\ziling\\AppData\\Roaming\\ai.rynmesh.desktop\\desktop.json", "exists": false, "contents_read": false, "size_bytes": null, "sha256": null },
+    { "path": "C:\\Users\\ziling\\AppData\\Roaming\\ai.rynmesh.desktop", "exists": false },
+    { "path": "C:\\Users\\ziling\\AppData\\Local\\ai.rynmesh.desktop", "exists": false },
+    { "path": "C:\\Users\\ziling\\AppData\\Local\\Ryn", "exists": false },
+    { "path": "C:\\Users\\ziling\\AppData\\Local\\Programs\\Ryn", "exists": false },
+    { "path": "C:\\Program Files\\Ryn", "exists": false },
+    { "path": "C:\\Program Files (x86)\\Ryn", "exists": false },
+    { "path": "C:\\Users\\ziling\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Ryn.lnk", "exists": false },
+    { "path": "C:\\Users\\ziling\\Desktop\\Ryn.lnk", "exists": false },
+    { "path": "C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Ryn.lnk", "exists": false },
+    { "path": "C:\\Users\\ziling\\rynmesh-agent-test-20261010", "exists": true, "is_directory": true, "contents_read": false },
+    { "path": "C:\\Users\\ziling\\.rynmesh", "exists": false, "contents_read": false },
+    { "path": "C:\\Users\\ziling\\.rynmesh\\identity", "exists": false, "contents_read": false },
+    { "path": "C:\\Users\\ziling\\.rynmesh\\identity.json", "exists": false, "contents_read": false },
+    { "path": "C:\\Users\\ziling\\.rynmesh\\sources.enc", "exists": false, "contents_read": false }
+  ],
+  "uninstall_registry": {
+    "checked_roots": [
+      "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+      "HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+      "HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall"
+    ],
+    "ryn_entries": []
+  },
+  "ryn_processes": [],
+  "hkcu_ryn_startup_entry_exists": false,
+  "webview2": {
+    "installed": true,
+    "name": "Microsoft Edge WebView2 Runtime",
+    "version": "154.0.4258.62",
+    "registry_root": "HKLM:\\Software\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients",
+    "registry_key": "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+    "runtime_executable": "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\154.0.4258.62\\msedgewebview2.exe",
+    "runtime_executable_exists": true
+  },
+  "interactive_sessions": {
+    "quser_exit_code": 1,
+    "quser_result": "No User exists for *",
+    "computer_system_user": null,
+    "explorer_processes": [],
+    "query_session_output": "SESSIONNAME       USERNAME                 ID  STATE   TYPE        DEVICE\n>services                                    0  Disc\n console                                     1  Conn\n 31c5ce94259d4...                        65536  Listen\n rdp-tcp                                 65537  Listen",
+    "interactive_user_logged_on": false,
+    "rdp_listener_observed": true,
+    "graphical_acceptance_performed": false
+  },
+  "test_cleanup_state": {
+    "port_18782_listeners": [],
+    "firewall_rules_matching_ryn_or_18782": []
+  },
+  "repository_install_config": {
+    "product_name": "Ryn",
+    "version": "0.7.0",
+    "identifier": "ai.rynmesh.desktop",
+    "nsis_install_mode": "currentUser",
+    "desktop_preferences_source": "webapp/src-tauri/src/preferences.rs:25",
+    "desktop_preferences_path_definition": "app.path().app_config_dir().join(\"desktop.json\")"
+  },
+  "assessment": {
+    "first_desktop_install_into_existing_ziling_account": "No existing native installation or desktop configuration was observed at checked registry roots and standard paths.",
+    "configuration_overwrite_risk_at_checked_paths": "No existing target files were observed; recheck immediately before installation.",
+    "limits": [
+      "No exhaustive full-disk search for arbitrary portable Ryn binaries was performed.",
+      "No interactive user is currently logged on. SSH-created processes must not be reported as graphical acceptance.",
+      "No install or GUI acceptance was performed in this preflight."
+    ]
+  },
+  "suggested_next_steps_not_executed": [
+    "Keep C:\\Users\\ziling\\rynmesh-agent-test-20261010 unchanged. Recheck desktop.json and .rynmesh existence before the first desktop installation; stop and preserve any unexpectedly existing files.",
+    "Use the existing ziling account through the saved RDP entry for 172.16.8.82:3389 before attempting GUI acceptance.",
+    "Stage baseline and candidate installers under a separate desktop test directory, verify each SHA256 against the delivery manifest, then install the baseline and test the candidate upgrade in the same existing Windows account.",
+    "Treat first launch and GUI test as outstanding until observed in an interactive RDP session. Do not infer window visibility from SSH process existence."
+  ]
+}

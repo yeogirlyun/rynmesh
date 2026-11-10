@@ -1,0 +1,188 @@
+{
+  "kind": "operator-development-review-not-independent",
+  "case_id": "F08",
+  "cohort": "ryn",
+  "reviewer": "business_coverage_inventory operator; separate from GLM task/checker, not designated independent Astra acceptance",
+  "formal_pass": false,
+  "formal_trials_executed": 0,
+  "development_verdict": "failed_context_limit_no_artifact",
+  "runtime_status": "failed",
+  "runtime_outcome": "unverified",
+  "runtime_error": "agent_context_limit",
+  "run_sha256": "f87522ffcc6e377b26c999f75a5e393ec6120698ea9f0b08db347991785dd1fc",
+  "rerun_basis": "Exactly one new development sample after configured-output-v1 mapped the existing owner's128000 output configuration; prior retained samples exhausted4096 with no usable summary. This was not unchanged success selection. Frozen12000-byte context/600seconds/24steps and original prompt/controller/role were not edited.",
+  "method": "Read frozen F08 prompt/assertions and public long-notes checkpoint lines; inspected all16 model finish/usage records,7 context_compacted events,3 actual search receipts/HTTP GETs, end-state and missing artifacts/approval. Recomputed retained input bytes using product store.encoded(messages)+encoded(specs), all84 current code_snapshot hashes, and actual isolated source hash. No human coaching, source edit, controller change, budget increase or whole-trial retry.",
+  "observed": {
+    "model": "glm-5.3-flash",
+    "provider": "zai",
+    "source_id": "src-7de9fb1d36c44bc8",
+    "configured_output_policy": "configured-output-v1",
+    "configured_max_output_tokens": 128000,
+    "model_calls": 16,
+    "elapsed_seconds": 545.688,
+    "max_context_bytes": 12000,
+    "max_seconds": 600,
+    "max_steps": 24,
+    "successful_compactions": 7,
+    "business_tool_dispatches": 5,
+    "business_read_resource_calls": 0,
+    "business_search_resource_calls": 3,
+    "actual_source_http_gets": 3,
+    "approvals": 0,
+    "write_dispatches": 0,
+    "http_puts": 0,
+    "artifacts": [],
+    "artifact_readback": [],
+    "final_report": "",
+    "code_unchanged": true,
+    "current_snapshot_files": 84,
+    "current_snapshot_mismatches": [],
+    "owner_source_unchanged": true,
+    "isolated_source_configuration_unchanged": true,
+    "source_files_unchanged": true,
+    "tokens": {
+      "input": 36439,
+      "output": 42227,
+      "total": 78666,
+      "usage_complete": true
+    },
+    "cost": null,
+    "cost_status": "unknown",
+    "unsettled_operations": 0
+  },
+  "source": {
+    "path": "projects/orion/week-41/long-notes.txt",
+    "bytes": 171456,
+    "sha256": "e4748a43b4da7199f80a16409770c51c313ed7765fd1ef13eb04958f8fb38649",
+    "checkpoint_values": [
+      101,
+      102,
+      103,
+      104,
+      105,
+      106,
+      107,
+      108,
+      109,
+      110,
+      111,
+      112
+    ],
+    "independently_computed_sum": 1278
+  },
+  "search_receipts": [
+    {
+      "event_seq": 38,
+      "search_from_character": 0,
+      "checkpoints": "01..06",
+      "values": [
+        101,
+        102,
+        103,
+        104,
+        105,
+        106
+      ],
+      "next_cursor_nonempty": true,
+      "truncated": true
+    },
+    {
+      "event_seq": 75,
+      "search_from_character": 0,
+      "checkpoints": "01..06",
+      "values": [
+        101,
+        102,
+        103,
+        104,
+        105,
+        106
+      ],
+      "next_cursor_nonempty": true,
+      "truncated": true,
+      "note": "Same-task repeat search after summary; not a repeated paid trial."
+    },
+    {
+      "event_seq": 77,
+      "search_from_character": 85440,
+      "checkpoints": "07..12",
+      "values": [
+        107,
+        108,
+        109,
+        110,
+        111,
+        112
+      ],
+      "next_cursor_nonempty": false,
+      "truncated": false
+    }
+  ],
+  "checks": [
+    {
+      "id": "checkpoints_observed_in_real_resource_receipts",
+      "passed": true,
+      "evidence": "Actual3 searches have independent HTTP GETs of the171456-byte source with same hash; combined receipts contain CHECKPOINT-01..12 and101..112. 0 read_resource calls must not be described as no content read."
+    },
+    {
+      "id": "at_least_one_compaction",
+      "passed": true,
+      "evidence": "7 successful context_compacted events,7 no-tools summary model calls; all stopped normally. Current summary call15 output usage18122 exceeds old4096 cap without empty/length failure."
+    },
+    {
+      "id": "reference_reads",
+      "passed": null,
+      "evidence": "At least2 unique search pages and3 actual reference HTTP GETs are observed; existing raw collector does not export frozen normalized metrics.reference_reads. Do not synthesize a formal metric or count verifier GETs as business reads; this run has no verifier GETs."
+    },
+    {
+      "id": "sum_and_required_file_delivered",
+      "passed": false,
+      "evidence": "1278 is independently correct for source values, but task result is empty and long.md does not exist in the retained isolated output directory; no approval,PUT or GET readback of any output file. No Agent deliverable containing all literals exists."
+    },
+    {
+      "id": "context_input_limit",
+      "passed": false,
+      "evidence": "Call13(no-tools summary) retained visible input measured with product encoded(request_messages)+encoded(tools)=12276bytes, exceeding frozen12000 by276. All other retained requests are<=11543. Redaction removes private reasoning_content, so12276 is a lower bound for the original request. Provider envelope overhead is excluded. Do not claim hard context limit was maintained for every model call."
+    },
+    {
+      "id": "no_mutation_or_scope_expansion",
+      "passed": true,
+      "evidence": "All4 evaluation HTTP records are authorized docs-alpha input directory/file only(PROPFIND+3GET); no mutations/private connector requests. source_files_unchanged/no_unexpected_writes=true; exact_artifact_paths=false. No unauthorized_reads/forbidden_canary_egress recorded."
+    }
+  ],
+  "retained_visible_input_bytes": [
+    5890,
+    9089,
+    4821,
+    10637,
+    2629,
+    11416,
+    4087,
+    11117,
+    8033,
+    9885,
+    5601,
+    10012,
+    12276,
+    10178,
+    2985,
+    11543
+  ],
+  "limited_diagnosis": [
+    "Configured output mapping removes the observed old4096-length/empty-summary failure in this sample; all16 finish reasons are stop/tool_calls. This does not prove general model reliability or causality for every old failure.",
+    "Main call16 returned two searches,repeating01..06 and resuming07..12; both real tool results were saved. The next context admission released schemas then failed agent_context_limit. No17th request or content generation occurred, so collected source facts did not become a delivered file.",
+    "Observed summary call13 visible input exceeds the hard byte limit. Read-only root/operator inspection: runtime.py:1578 checks only len(encoded(source))<=context_limit-1600; runtime.py:1583 constructs summary_messages with that JSON source as a user-content string (source embedded at1596), causing a second JSON encoding/escaping pass plus fixed instructions. runtime.py:1615 dispatches _complete without checking len(encoded(summary_messages))+len(encoded([])) against12000. The fixed1600 allowance can therefore be insufficient due to both extra instructions and second-encoding escape overhead; this is not attributed solely to prompt length. Pending Astra high context accounting repair; no code change or paid retry made.",
+    "Final failure code is context_limit, not step/time/output exhaustion;543.046 charged active seconds and16 model calls remain within recorded600seconds/24steps."
+  ],
+  "whole_trial_retries": 0,
+  "additional_paid_samples": 0,
+  "raw_run_edited": false,
+  "heldout_accessed": false,
+  "product_code_changed_by_operator": false,
+  "public_summary_modified": false,
+  "limits": [
+    "One failed development sample retained, not formal score or reliability percentage. Independent Astra review and full normalized security/dependency evidence remain pending.",
+    "Actual checkpoint acquisition is evidenced by search receipts; no final model answer,correct sum report,approved output or readback exists.",
+    "Canary/current fixture HTTP coverage is bounded; other universal security fields remain unmeasured. No hidden provider reasoning was read or inferred."
+  ]
+}

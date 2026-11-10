@@ -1,0 +1,54 @@
+{
+  "kind": "independent_non_author_code_review",
+  "reviewer": "sharing_review",
+  "model": "gpt-6-astra",
+  "reasoning_effort": "high",
+  "status": "changes_requested",
+  "scope": "Atomic exact-recipient sharing and approval boundary; not full Agent acceptance",
+  "reviewed_sha256": {
+    "rynmesh/agent_runtime/sharing.py": "9254a7f0e835c16301bf044f2fc898fd0c86f36f62abe846392cd4ff2311d8a4",
+    "rynmesh/agent_runtime/prompt.py": "1ee43aa95d9d9a0b6748d702c0bdfd34cc4c7640e1068e6ee714cd6c8b69660b",
+    "rynmesh/agent_runtime/tools.py": "b1ddfa9627dc1e6c5bfc42cfbfcaea2ebd4db6d94e76b8ee1d7dfc90f3ce5fe7",
+    "rynmesh/llm_package/sources.py": "01e4f481d93c33e1d54d832fcf4b8cb088a2a514384bce20275d098086432efc",
+    "rynmesh/ai_access/store.py": "ca067be85d368da812c5a5692e859d188a7de4841b1179c2b3c69038f3d63637",
+    "rynmesh/ai_access/routes.py": "a1f9824f153b16ec234a4cb459420cd809f29ece27675a17714310f030f49697",
+    "rynmesh/llm_package/routes.py": "1ca077341fffbe8e5cdc40fc6019983a6c1d2aac7c9a97530cac1d0e0955ae8c"
+  },
+  "findings": [
+    {
+      "severity": "P2",
+      "file": "rynmesh/agent_runtime/sharing.py",
+      "receipt_line": 147,
+      "verification_line": 197,
+      "title": "Verifier accepts disabled or changed target",
+      "reproductions": [
+        "source enabled=False still passed",
+        "source status=untested still passed",
+        "endpoint changed still passed despite new destination/rule revisions",
+        "API credential changed still passed despite new destination/rule revisions",
+        "target max_concurrent changed still passed despite new rule revision"
+      ],
+      "dispatch_safety": "Current provider lookup returns none after disable; retained stale provider rejects signed request with model_configuration_changed and zero upstream requests.",
+      "requested_fix": "Co-commit exact per-model binding in receipt; verify destination/rule identity plus source enabled/ready. Whole-source revisions must not invalidate unrelated sibling or label changes."
+    }
+  ],
+  "validation": {
+    "tests": 15,
+    "elapsed_seconds": 16.19,
+    "groups": [
+      "atomic sharing",
+      "approval contract",
+      "signed receiver",
+      "process recovery"
+    ]
+  },
+  "other_observations": [
+    "No additional reproduced material flaw in grant precedence, model readdition/source identity, metadata preservation or runtime approval gating.",
+    "Separate relationship-store lock was inspected; no unauthorized-access reproduction established."
+  ],
+  "limits": [
+    "No paid model calls or repository edits from reviewer.",
+    "Not evidence of formal frozen-suite success.",
+    "Old concurrent binaries/downgrades unvalidated; Windows upgrade gate must establish old-process shutdown."
+  ]
+}

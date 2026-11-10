@@ -1,0 +1,65 @@
+{
+  "kind": "operator-development-review-not-independent",
+  "at": "2026-10-11T06:29:58.252234+00:00",
+  "formal_pass": false,
+  "semantic_verdict": "classification_correct_minor_factual_error_retained",
+  "classification": {
+    "model-a": [
+      "chat",
+      "agent",
+      "shared"
+    ],
+    "model-b": [
+      "chat"
+    ],
+    "model-c": [
+      "chat",
+      "agent"
+    ],
+    "model-d": []
+  },
+  "collection_verdict": "all_model_and_tool_dispatches",
+  "capture_errors": [],
+  "runtime_verdict": "verified",
+  "calls": 4,
+  "elapsed_seconds": 150.9369999999999,
+  "top_level_reads": [
+    "ryn_list_models",
+    "ryn_get_agent_configuration",
+    "ryn_inspect_services",
+    "ryn_get_system_diagnostics",
+    "ryn_list_devices"
+  ],
+  "findings": [
+    {
+      "id": "Q01-COUNT",
+      "quote": "共进行 4 次只读检查",
+      "reason": "Actual trace contains five distinct top-level model-requested read calls: list models, agent configuration, services, diagnostics and devices, plus nested diagnostic reads and mechanical verification. Grouping diagnostics/devices with a slash does not make five calls four. Core classification is correct; do not silently erase this factual discrepancy."
+    }
+  ],
+  "supported_observations": [
+    "Both distinct alpha stable IDs classified as Agent capable; default selection no longer downgrades the nondefault model.",
+    "Missing probe records explicitly not treated as never-tested; offline historical failure timestamp and method retained.",
+    "No source configuration writes; current invocation ability explicitly not established.",
+    "Nested read parent identities and complete capture present."
+  ],
+  "owner_source_unchanged": true,
+  "source_configuration_unchanged": true,
+  "writes": 0,
+  "code_unchanged": true,
+  "independent_review": "pending_Astra_usage_limit",
+  "limits": [
+    "One development sample; no reliability percentage, formal success or relative capability result.",
+    "Logical fixture nodes are not physical-host evidence.",
+    "No new user coaching or prompt edits during this run."
+  ],
+  "raw_sha256": {
+    "dispatch-audit.json": "8de4c4ccf8a5cc9c8dad0c01202de9772b2903dec5eec5755d52849da3c37270",
+    "dispatch-events.jsonl": "6781c3fcd75732505f2bae5d66dc0dd6e484a6556c200f2f69bfe0305ee678f0",
+    "effective-input.json": "9e73e80c0fcf48ce7fb5ec955c962ae98fe0584423f32f8edcafdbdd3295d61d",
+    "model-requests.json": "d6a0a4431ddbc44dc6d6fc31dc68d2b431d0f229fb6df4004427af4141f12721",
+    "registration.json": "41c633a32d427b01c9385e0514ec28768ab47dfa1498ed9a989cf02bd1fd2d53",
+    "run.json": "249c5719c70eff7060d86cefb990f67f8ea917c3d7b1b58489ee6a7116cfffda",
+    "task-binding.json": "68ffc8c1568201d42f9f37c9c0ed00155474943d7a127f5d51a756fd8549c8af"
+  }
+}

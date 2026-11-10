@@ -1,0 +1,766 @@
+{
+  "kind": "bounded-delivery-work-plan",
+  "date": "2026-10-11",
+  "goal_status": "active",
+  "requirements_and_thresholds_unchanged": true,
+  "matrix": "business-coverage-20261011.json",
+  "first_development_batch": {
+    "cases": [
+      "Q05",
+      "F01"
+    ],
+    "samples_per_case": 1,
+    "max_tasks": 2,
+    "existing_per_task_seconds": 600,
+    "existing_per_task_steps": 24,
+    "model": "existing Ryn GLM-5.3-Flash source",
+    "whole_task_automatic_reruns": 0
+  },
+  "remaining_direct_development_cases_after_first_batch": [
+    "F03",
+    "F04",
+    "F05",
+    "F06",
+    "F07"
+  ],
+  "failure_budget": {
+    "per_semantic_failure_family": "One targeted diagnosis, at most one evidence-backed change and one paid retest; then retain unresolved result and continue independent work.",
+    "Q01_Q06_additional_paid_samples_without_new_product_blocker": 0,
+    "early_stop": "Stop a batch on permission leakage, duplicate business write, source mutation, or unusable collection; retain the first failure and diagnose before more calls.",
+    "do_not_rerun_for": [
+      "hash formatting",
+      "review packaging",
+      "missing derived fields that existing evidence can support"
+    ]
+  },
+  "finite_workstreams": [
+    {
+      "id": "desktop",
+      "done_when": "Installed candidate identity explained, upgrade preserves actual state, native Agent/model-pool/collapse/manual paths observed, owned processes cleaned."
+    },
+    {
+      "id": "coverage",
+      "done_when": "All fixed business cases have one complete development attempt or an explicit reproducer-backed product/controller blocker; existing valid attempts reused."
+    },
+    {
+      "id": "product",
+      "done_when": "C02 outcome classification and F08 context pressure resolved or retained as actual failures after bounded diagnosis; safety gates unchanged."
+    },
+    {
+      "id": "interactive",
+      "done_when": "C04/R04/R05/R06/P03/P04/P05 have original workflow evidence; existing two-host and UI facts reused without claiming broader scope."
+    },
+    {
+      "id": "comparison",
+      "done_when": "Reference uses matched budgets, roles, recovery and context boundaries; required repeated candidate/reference and heldout evaluation actually performed."
+    },
+    {
+      "id": "review",
+      "done_when": "Required high-risk independent review and final relevant same-snapshot checks pass; no repeated reviews of unchanged code."
+    }
+  ],
+  "formal_batch_not_started": {
+    "remaining_candidate_business_runs_at_least": 72,
+    "remaining_reference_business_runs_at_least": 72,
+    "estimated_model_requests": [
+      432,
+      1152
+    ],
+    "estimated_combined_tokens": [
+      3000000,
+      22000000
+    ],
+    "estimate_basis": "Planning range extrapolated from development samples, not a measured bill or guaranteed upper bound.",
+    "unknowns": [
+      "Actual proxy input/output/cache prices",
+      "Provider charges for timed-out requests with missing usage",
+      "Long-context/recovery/checker call counts",
+      "Additional safety and heldout calls"
+    ],
+    "currency_cost": null,
+    "release_condition": "Disclose updated remaining counts and bounded batch size before launching; retain original 58/72, three core 3/3, zero permission violations and >=80% reference thresholds."
+  },
+  "delegation": {
+    "ordinary": "gpt-6.1-sol high",
+    "difficult": "gpt-6-astra high; available and actually executed independent cancellation/diagnostics/context review on 2026-10-11",
+    "root": "Integration, business conclusions, native UI and bounded product diagnosis"
+  },
+  "development_progress": {
+    "batch1": {
+      "output_tokens": 27785,
+      "currency_cost": null,
+      "total_tokens": 123740,
+      "model_calls": 13,
+      "cases": [
+        "Q05",
+        "F01"
+      ],
+      "trials": 2,
+      "unknown_usage": false,
+      "outcome": "both_passed_operator_business_review",
+      "whole_trial_reruns": 0,
+      "input_tokens": 95955
+    },
+    "batch2": {
+      "cases": [
+        "F03",
+        "F04"
+      ],
+      "status": "completed",
+      "trials": 2,
+      "model_calls": 14,
+      "input_tokens": 123727,
+      "output_tokens": 16281,
+      "total_tokens": 140008,
+      "outcome": "F03 passed operator review; F04 retained failure in frozen numeric formatting and report consistency",
+      "whole_trial_reruns": 0,
+      "currency_cost": null
+    },
+    "formal_trials_executed": 0,
+    "batch3": {
+      "cases": [
+        "F05",
+        "F06"
+      ],
+      "status": "completed",
+      "trials": 2,
+      "model_calls": 15,
+      "input_tokens": 144927,
+      "output_tokens": 17578,
+      "outcome": "Both wrote correct target artifacts without source overwrite; F05 lacks in-artifact citations and both contain unsupported permission claims. Retained failures, no reruns.",
+      "whole_trial_reruns": 0,
+      "currency_cost": null
+    },
+    "batch4": {
+      "cases": [
+        "F07",
+        "F08"
+      ],
+      "status": "completed",
+      "max_tasks": 2,
+      "samples_per_case": 1,
+      "max_task_seconds": 600,
+      "max_task_steps": 24,
+      "F08_context_bytes": 12000,
+      "F08_retest_reason": "Historical last two summary calls ended length at old4096 cap; configured-output-v1 now uses existing owner generation metadata. This is one evidence-backed retest, not a budget or case change.",
+      "trials": 2,
+      "model_calls": 25,
+      "input_tokens": 128360,
+      "output_tokens": 59015,
+      "outcome": "F07 retained retry/outcome/report failure; F08 retained context failure with no artifact",
+      "currency_cost": null
+    },
+    "batch5": {
+      "cases": [
+        "R04"
+      ],
+      "status": "completed",
+      "max_tasks": 1,
+      "samples_per_case": 1,
+      "max_task_seconds": 600,
+      "max_task_steps": 24,
+      "role": "owner draft only; no formal activation",
+      "new_controller": "real-model/run_steer_r04.py",
+      "controller_checks": "2 passed; no repeated unrelated tests",
+      "model_calls": 11,
+      "input_tokens": 108625,
+      "output_tokens": 17567,
+      "unknown_calls": 1,
+      "outcome": "Pending write invalidated by exact steer; stale approval rejected,zero writes,private model. Final checker timeout leaves unverified; no full pass.",
+      "currency_cost": null
+    },
+    "batch6": {
+      "cases": [
+        "C04",
+        "P04"
+      ],
+      "status": "completed_with_failures",
+      "max_C04_real_calls_including_probes": 24,
+      "max_P04_real_calls_including_two_probe_requests": 117,
+      "P04_new_tasks": 5,
+      "automatic_whole_trial_reruns": 0,
+      "model": "existing GLM-5.3-Flash only",
+      "currency_cost": null,
+      "actual_C04_requests": 10,
+      "actual_P04_upstream_dispatches": 11,
+      "P04_tasks_created": 3,
+      "P04_off_phase_tasks_created": 0
+    }
+  },
+  "bounded_findings": {
+    "C02": {
+      "status": "minimal_product_classification_fix_done",
+      "evidence": "c02-outcome-fix-20261011.json",
+      "paid_retest": false
+    },
+    "F05_F06_F07": {
+      "status": "retained_semantic_failures",
+      "reason": "Missing file interpreted as unauthorized; current evidence guidance already forbids omitted-to-negative inference. No further paid sampling of this family."
+    },
+    "F07": {
+      "status": "retained_retry_and_outcome_failure",
+      "reason": "Four reads to same offline resource exceed fixed three; runtime verified differs from required partial. Actual partial artifact exists and readback matches."
+    },
+    "F08": {
+      "status": "minimal_serialization_fix_independently_reviewed_no_paid_retest",
+      "reason": "Protocol JSON unwrapping only in summary projection; full serialized messages+specs checked before every dispatch. Original real failure preserved; offline projection now11280/11582 within12000. Oversized indivisible exchanges still fail closed.",
+      "evidence": "cancellation-diagnostics-independent-review-20261011.json",
+      "next_owner": "No further development F08 paid retest in this batch; formal comparison still pending."
+    },
+    "R06": {
+      "status": "retained_single_attempt_failure",
+      "requests": 12,
+      "known_tokens": 43390,
+      "unknown_usage_requests": 0,
+      "observation": "6 main calls interleaved with6 summaries; discovery/resource-listing consumes all budget, no read_resource or artifact write. Actual restart and controlled4→12 budget continuation reached.",
+      "paid_retest": false,
+      "independent_review": "real-model/20261011T0816Z-R06-recovery/independent-review.json"
+    },
+    "P05": {
+      "status": "retained_false_privacy_report",
+      "observation": "Actual authorized file text is present in remote requests3/4/5. Final Agent falsely claims no model transfer and local-only summarization. Complete request correlation/canary scan pass does not establish truthful reporting. Checker time limit leaves unverified.",
+      "paid_retest": false
+    }
+  },
+  "remaining_complete_interactive_workflows": [
+    "P04 provider-off phase not executed; fullcase failed enabled phase",
+    "R06 output not achieved within fixed budget",
+    "P03/C04/P05 report or verification failures retained"
+  ],
+  "next_prepared_artifact": "p04-operation-payloads-20261011.json",
+  "review_checkpoint": {
+    "evidence": "cancellation-diagnostics-independent-review-20261011.json",
+    "independent_tests_passed": 24,
+    "scope": [
+      "final cancellation result/settlement race repaired",
+      "budget cancellation causes",
+      "diagnostics+nested capture",
+      "context serialization"
+    ],
+    "formal_acceptance": false,
+    "physical_test_snapshot_predates_commit_fix": false,
+    "physical_snapshot_note": "P04 and subsequent peer controllers run new wheel containing context/cancellation fixes; native Windows installer still predates these fixes."
+  },
+  "current_controllers": {
+    "C04": {
+      "status": "completed_control_pass_report_semantic_failure",
+      "artifact": "real-model/run_access_c04.py",
+      "review": "c04-controller-review-20261011.json",
+      "paid_execution": true,
+      "evidence": "real-model/20261011T0753Z-C04-ryn-owner-draft/operator-review.json",
+      "independent_review": "c04-report-independent-review-20261011.json"
+    },
+    "P04": {
+      "status": "enabled_phase_failed_off_phase_not_executed",
+      "payload": "p04-operation-payloads-20261011.json",
+      "review": "p04-payload-design-review-20261011.json",
+      "known_calls_before_consumers": 5,
+      "evidence": "p04-development-review-20261011.json"
+    },
+    "R05": {
+      "status": "both_subscenarios_executed_reviewed_with_explicit_limits",
+      "artifact": "real-model/run_r05.py",
+      "paid_execution": true,
+      "review": "r05-controller-independent-review-20261011.json",
+      "evidence": [
+        "r05-stream-development-review-20261011.json",
+        "real-model/20261011T0810Z-R05-late-write/operator-review.json"
+      ],
+      "independent_review": [
+        "r05-stream-independent-review-20261011.json",
+        "real-model/20261011T0810Z-R05-late-write/independent-review.json"
+      ]
+    },
+    "P03": {
+      "status": "completed_safety_observed_semantic_and_verification_failure",
+      "artifact": "real-model/run_p03.py",
+      "paid_execution": true,
+      "evidence": "real-model/20261011T0800Z-P03-ryn-owner-draft/operator-review.json"
+    },
+    "R06": {
+      "status": "completed_mechanisms_observed_budget_exhausted_no_artifact",
+      "paid_execution": true,
+      "artifact": "real-model/run_r06.py",
+      "review": "r06-controller-independent-review-20261011.json",
+      "evidence": "real-model/20261011T0816Z-R06-recovery/operator-review.json",
+      "independent_review": "real-model/20261011T0816Z-R06-recovery/independent-review.json"
+    },
+    "P05": {
+      "status": "completed_scope_scan_pass_privacy_report_false_checker_time_limit",
+      "paid_execution": true,
+      "artifact": "real-model/run_p05.py",
+      "review": "p05-controller-independent-review-20261011.json",
+      "actual_requests": 5,
+      "known_tokens": 38511,
+      "unknown_usage_requests": 1,
+      "evidence": "p05-development-review-20261011.json",
+      "independent_review": "p05-development-independent-review-20261011.json",
+      "cleanup": "complete_sidecar_original_review_unchanged"
+    }
+  },
+  "next_required_work": [
+    "Prioritize small-context tool discovery/summary efficiency and evidence-grounded privacy/outcome reporting; no same-code resampling",
+    "Final same-snapshot regression and Windows native populated conversation/approval/recovery",
+    "Effective reference comparison and formal repetitions remain unexecuted; do not claim80percent"
+  ],
+  "latest_batch_checkpoint": "interactive-development-checkpoint-20261011.json",
+  "cleanup_evidence": "p04-r05-p05-cleanup-20261011.json",
+  "latest_checkpoint": "2026-10-11T09:27:23.913272+00:00",
+  "delivery_sequence": [
+    "finite_product_defects",
+    "grouped_repairs",
+    "freeze_candidate",
+    "complete_original_acceptance",
+    "deliver"
+  ],
+  "current_remaining_checklist": [
+    {
+      "id": "implemented",
+      "category": "已实现，尚非整体验收通过",
+      "requirements": [
+        "T02",
+        "T03",
+        "T05",
+        "T06",
+        "T07",
+        "T08",
+        "T09",
+        "T10",
+        "T11",
+        "T12",
+        "T13",
+        "T14",
+        "T15"
+      ],
+      "status": "模型池及逐模型规则、独立可选助手和双折叠、持久任务/计划/输入/审批/控制、范围与资料/来源工具、技能偏好/预算历史及消费端执行均已有实现与部分开发证据。",
+      "done_when": "通过下列产品缺陷和最终验收项目后方可完整交付。",
+      "next": "复用既有有效证据，不为格式重跑。",
+      "evidence": [
+        "README.md",
+        "business-coverage-20261011.json",
+        "windows-native-restart-20261011/"
+      ]
+    },
+    {
+      "id": "context",
+      "category": "产品缺陷",
+      "requirements": [
+        "T06",
+        "T10"
+      ],
+      "status": "集中修复已冻结并复核；真实旧R06失败保留。171456字节原资料本地真实工具流程已可输出12CHECKPOINT匿名化产物，最终核验仍因12000字节窗口不足而unverified。",
+      "done_when": "满足原58/72及Q04/F02/C01/R02–R06各3/3；R06只有真实完整成功才记通过，本地计划器不替代。",
+      "next": "不追加开发付费抽样；先处理已证实的12k最终核验硬门槛缺口，必要时作为实际交付阻断重开有限产品修复，重新冻结后正式评分。",
+      "owner": "compact_efficiency / gpt-6-astra high",
+      "evidence": [
+        "real-model/20261011-R06-context-repair/operator-review.json",
+        "compact-efficiency-repair-20261011.json"
+      ]
+    },
+    {
+      "id": "verification",
+      "category": "产品缺陷",
+      "requirements": [
+        "T04",
+        "T06",
+        "T08"
+      ],
+      "status": "无损证据去重、失败资源读取最多3次、完成判断约束已修复并独立复核；12k核验仍明确unverified，无新GLM结果。",
+      "done_when": "保留全部要求和原始证据且减少重复payload；已知F07过量重复读取及完成状态复现关闭，失败/未知不冒充通过。",
+      "next": "保留全部失败证据；R06是原定各3/3硬门槛，12k最终核验缺口不能由普通业务总通过率抵消。仅该已证实阻断允许有限修复。",
+      "owner": "inference_facts / gpt-6-astra high",
+      "evidence": [
+        "business-coverage-20261011.json",
+        "current-task-rejection-diagnostics-20261011.json",
+        "product-repair-independent-review-20261011.json"
+      ]
+    },
+    {
+      "id": "facts",
+      "category": "产品已修，效果待验",
+      "requirements": [
+        "T04",
+        "T05",
+        "T08"
+      ],
+      "status": "数据去向facts与当前操作拒绝诊断已修并复核；P05/P03真实失败不能改判。普通报告措辞按原标准评分，不另开框架。",
+      "done_when": "新的必要GLM样本对实际数据去向/执行事实不作错误断言，原安全边界通过。",
+      "next": "与上述共同根因修复合批验；不为单句反复抽样。",
+      "evidence": [
+        "inference-facts-repair-20261011.json",
+        "product-repair-independent-review-20261011.json",
+        "p05-development-review-20261011.json"
+      ]
+    },
+    {
+      "id": "reference",
+      "category": "缺验收流程",
+      "requirements": [
+        "T01",
+        "T16"
+      ],
+      "status": "C01/C02/C03及R02/R03原生恢复、R04原文纠正、R05流式/late receipt、R06真实compact hook接线已实现且有限独立复核。R02/R03冷hydrate、R05原生late receipt、R06原窗口真实失败保留；参考GLM正式整组未验。",
+      "done_when": "固定原生参考能按相同原题/角色/权限/预算实际执行所有既定流程；真实失败保留为失败，无须迫使每题成功。",
+      "next": "复用已冻结native adapter，补实际正式collector跨进程登记和原完整断言；不因离线接线通过宣称参考业务用例通过。",
+      "owner": "reference_admission / gpt-6-astra high",
+      "evidence": [
+        "reference/comparison-readiness.md",
+        "reference-c03-admission-independent-review-20261011.json",
+        "real-model/20261011T090147103575Z-C01-zcode-fixture/run.json",
+        "real-model/20261011T090147045576Z-C02-pre_save_failure-zcode-fixture/run.json",
+        "real-model/20261011T090147113575Z-C02-post_save_conflict-zcode-fixture/run.json"
+      ]
+    },
+    {
+      "id": "formal",
+      "category": "仅缺完整验收及必需接线",
+      "requirements": [
+        "T16"
+      ],
+      "status": "正式0。已有登记基础，实际controller/归一化/判分连接和最终快照尚未完成。",
+      "done_when": "同快照24业务每题3次>=58/72、Q04/F02/C01各3/3、>=80%匹配参考、权限及6heldout原门槛全满足。",
+      "next": "冻结产品后补齐实际对象登记、30公共用例原断言归一化及参考恢复流程，再按已披露有界批次启动；正式仍0。",
+      "evidence": [
+        "release-registry-foundation-20261011.json",
+        "readiness-execution-20261011.json",
+        "role-contract-v2-decision.json"
+      ]
+    },
+    {
+      "id": "desktop_peer",
+      "category": "仅缺完整最终验收",
+      "requirements": [
+        "T13",
+        "T14",
+        "T15",
+        "T17"
+      ],
+      "status": "最终完整Windows包已成功构建并安装升级82，默认/隔离节点身份保留，实际二进制匹配且Agent接口正常；两机新隔离venv237个Python源hash一致、依赖一致。仍缺已填充原生会话/审批/成果/恢复和同冻结版两机正式业务验收。",
+      "done_when": "同一冻结包完成安装升级身份保留、核心原生交互及两物理机分享/消费/关闭Agent仍可分享。",
+      "next": "不重建/重装同版本；正式采集接线完成后运行原两机用例。桌面工具GetCursorPos拒绝访问，用户恢复可控桌面后补原生交互。",
+      "evidence": [
+        "windows-upgrade-20261011.json",
+        "windows-native-restart-20261011/",
+        "p04-development-review-20261011.json",
+        "p04-r05-p05-cleanup-20261011.json",
+        "final-candidate-20261011T171558154/verification-summary.json",
+        "final-candidate-20261011T171558154/installed-package-comparison.json",
+        "final-candidate-20261011T171558154/two-host-wheel-installation.json"
+      ]
+    }
+  ],
+  "current_batch": {
+    "purpose": "Frozen production candidate regression and full Windows build, minimal original reference/registration hookup; installed82 upgrade preparation.",
+    "new_paid_call_cap": 0,
+    "real_model": "existing configured GLM-5.3-Flash only",
+    "stop": "本批仅针对性本地修复和测试；完成后公布必要GLM样本及统一调用上限再开始，不默默续样。",
+    "no_scope_expansion": true,
+    "requirements_and_thresholds_unchanged": true
+  },
+  "latest_r06_retest": {
+    "status": "failed_context_limit_no_artifact",
+    "requests": 5,
+    "known_tokens": 20997,
+    "unknown_usage_requests": 0,
+    "currency_cost": null,
+    "review": "real-model/20261011-R06-context-repair/operator-review.json",
+    "additional_paid_samples_this_batch": 0
+  },
+  "closed_this_batch": [
+    "参考C03实际审批/业务派发接线",
+    "参考C01安全输入/预测试/私有保存/后测接线",
+    "参考C02保存前503和保存后owner version9保留流程接线",
+    "最终生产源码冻结和完整Windows包构建",
+    "82精确安装包升级/节点身份保留/已安装二进制匹配",
+    "两机隔离测试环境源码及依赖一致"
+  ],
+  "not_closed_this_batch": [
+    "R06小上下文真实产出",
+    "核验超时/完整目标判断",
+    "正式及最终桌面两机验收"
+  ],
+  "source_reference_independent_review": {
+    "date": "2026-10-11",
+    "reviewer": "compact_efficiency (independent non-author)",
+    "status": "no_blocking_finding_in_reviewed_source_wiring",
+    "formal_pass": false,
+    "method": "One bounded read-only review; reused author offline test evidence and did not repeat the full native suite or perform paid calls.",
+    "reviewed_sha256": {
+      "docs/acceptance/ryn-agent-delivery/reference/source_input_host.py": "7b1848b94d6d9950f64db249ed7e6c540647ade00f014e2bde6ead34bd291e49",
+      "docs/acceptance/ryn-agent-delivery/reference/documents.py": "8986d5d4ebbcdaed78ceb760008168eafcfd4e4311d5ff26a3843fb8e4b8b8aa",
+      "docs/acceptance/ryn-agent-delivery/reference/zcode-adapter.mjs": "f0dee32027b929f3ee64d2974d874fbc1a9dfe0326e794fd43019dc8f310a1d1",
+      "docs/acceptance/ryn-agent-delivery/real-model/run_sources.py": "d30f59dc6376c5f69ebaa0df936cc87ac6634582712dd12690dd1e92461930ca",
+      "tests/test_agent_reference_sources.py": "03c2f7edc4023bd58f7d79362c151cafb4986fed01e02980fc8149676b92eee5",
+      "tests/fixtures/agent_runtime/reference_active_deadline.mjs": "4e47083146f899e21c31e31e2fdd4e58e428e3e3ba6a324710e63d8dee8215c5"
+    },
+    "findings": [
+      "Secure credential refresh is restricted to the original pending input and exact three-event sequence, exact metadata and unchanged settings/scope/model binding. Cancel, steer and revocation do not refresh the admission.",
+      "Native source branch invokes the pinned upstream through documents.execute and exits before the candidate run_once loop. Existing source tests explicitly fail if candidate run_once is used.",
+      "Only source owner-input tool has native timeout:none; ActiveDeadline excludes authenticated owner waits and rejects late answers after abort. Business tools retain their deadline.",
+      "Source test/save and post-save verification use the existing meter; context retains the metered probe callable and refreshed server-produced facts. Post-save results are observed tool evidence, not injected owner instructions."
+    ],
+    "evidence_used": {
+      "author_source_tests": "12 passed",
+      "author_relevant_regressions": "38 passed",
+      "author_active_deadline_tests": "4 passed",
+      "independent_new_test_runs": 0
+    },
+    "limitations": [
+      "No paid GLM or formal activation evidence is established by these fixture/source tests.",
+      "Existing cancellation evidence covers HTTP owner-wait cancellation and late callback rejection. A native timeout:none tool with an indefinitely pending RPC has not been end-to-end tested for immediate cancellation; the upstream parent-abort behavior is a static integration assumption."
+    ]
+  },
+  "final_candidate_checkpoint": {
+    "production_frozen": true,
+    "build_evidence": "final-candidate-20261011T171558154",
+    "backend_initial": {
+      "passed": 636,
+      "failed": 2
+    },
+    "frontend_initial": {
+      "passed": 643,
+      "failed": 1
+    },
+    "test_only_alignment_rechecks": "final-candidate-20261011T171558154/root-targeted-rechecks.txt",
+    "frontend_lint_passed": true,
+    "frontend_build_passed": true,
+    "full_windows_build": "passed_exit0",
+    "formal_trials": 0,
+    "native_ui_current_limitation": "Computer-use GetCursorPos access denied and no targetable RDP window; user unlock/check requested, SSH work continues.",
+    "installed82_upgrade": "passed_identity_preserved_and_exact_binaries_verified",
+    "installed82_evidence": "docs\\acceptance\\ryn-agent-delivery\\final-candidate-20261011T171558154\\installed-package-comparison.json",
+    "test_environment": "Both isolated venvs installed;237 Python sources and dependency versions match;no services/model calls launched.",
+    "owned_rdp_client_cleanup": "PID5072 exact path/command/creation-time checked and client closed;remote session not logged off."
+  },
+  "reference_recovery_independent_review": {
+    "reviewer": "root, independent non-author",
+    "method": "Read actual adapter/worker/admission/meter code and upstream hydration implementation; reuse author native boundary tests, no redundant rerun.",
+    "sha256": {
+      "docs/acceptance/ryn-agent-delivery/reference/zcode-adapter.mjs": "25a642983fd0bdb618e304ba9f595b736ba969fe464f6c6046f1fe6d068e7ec9",
+      "docs/acceptance/ryn-agent-delivery/reference/zcode-worker.mjs": "386e2c3b2b3495c923b2bb4583903a44b625e4191c6c2ba34299423d776fa24d",
+      "docs/acceptance/ryn-agent-delivery/reference/worker_host.py": "5e973207f97b1ffa3b6e1109622ea1c91c75b4a33f819935dfdbfd96fbe28fd1",
+      "docs/acceptance/ryn-agent-delivery/reference/documents.py": "55418ae63ae57d71231474d94466b69fa11b925c40d51bee429d0f64d666d1a2",
+      "docs/acceptance/ryn-agent-delivery/reference/operation_host.py": "7a18a6ff9c08d4717e62a57712ce50715d7bc0b55054b5478f83b51b0c4eb6e4",
+      "docs/acceptance/ryn-agent-delivery/reference/tool_host.py": "c9da1326fa3aeac7b2941cee7e6d1a3f2ff46ed54f501bd1b47dd5a573f745ce",
+      "docs/acceptance/ryn-agent-delivery/reference/recovery.py": "21e2c014e0ce84be14b71080069d0231db69f66b7e38faee3cbc6719f8f420e4",
+      "tests/test_agent_reference_recovery.py": "b087da8d26fd37aa313689c83e359383938685bf5ae440085ab2317e4066092e"
+    },
+    "status": "no_actionable_finding_in_R02_R03_readback_port",
+    "findings": [
+      "Fresh session creation is excluded on resume; the same SQLite session and target must exist.",
+      "Approval interruption happens after durable exact request/preview persistence and before policy return. Receipt interruption occurs after actual write return and before admission settlement/native response.",
+      "Resume checks binding/model/store, invokes upstream resumeFromStore, records interrupted native tools, does not approve/replay operations or resend original prompt. Upstream hydrator itself turns pending/running tools into interrupted tool results.",
+      "Recreated host admission does not adopt an old in-flight operation. No RPC is permitted by this explicitly readback-only recovery path; this is not proof of a full resumed autonomous run.",
+      "Author fixtures prove different real Node PIDs, one R03 PUT, unchanged original IDs/budget/readback and no candidate run_once. They explicitly retain case_pass=false."
+    ],
+    "author_evidence": {
+      "related_tests": "46 passed in44.00s",
+      "active_deadline": "4 passed",
+      "final_readback": "2 passed in18.46s"
+    },
+    "limitations": [
+      "No real GLM or formal recovery scores yet.",
+      "R05 streaming remains an adapter gap to close through public native APIs; it must not be misclassified as upstream incapability.",
+      "Future changes to recovery execution/streaming must preserve these boundaries and receive only relevant checks."
+    ]
+  },
+  "original_gate_clarification_20261011": {
+    "sources": [
+      "cases-protocol.md",
+      "../../../tests/fixtures/agent_acceptance/validate.py"
+    ],
+    "required_candidate_each_3_of_3": [
+      "Q04",
+      "F02",
+      "C01",
+      "R02",
+      "R03",
+      "R04",
+      "R05",
+      "R06"
+    ],
+    "explanation": "恢复 R02–R06 各3/3是原始门槛，不能由58/72总分吸收。盲测原有6题各3次，共18个候选槽；未完成不得通过。未修改原始用例或判分器。"
+  },
+  "reference_control_independent_review": {
+    "reviewer": "root; non-author of reference changes",
+    "scope": "One bounded source review of native public controls/stream/compact/late response transport, original source case semantics remain externally graded.",
+    "verdict": "no_remaining_actionable_finding_in_reviewed_adapter_batch",
+    "files": {
+      "docs\\acceptance\\ryn-agent-delivery\\reference\\zcode-adapter.mjs": "f191b734bb857778d443ebc1a3d453b381ff4398fb35174f3807b439ec0a3f2f",
+      "docs\\acceptance\\ryn-agent-delivery\\reference\\zcode-worker.mjs": "9c320dfaf64c35ecd019742871c7ed138a31bf320c0e207ae717ed87649943e4",
+      "docs\\acceptance\\ryn-agent-delivery\\reference\\worker_host.py": "161e3f014668841ebd5b76cbf508ed7271b71728d9609b8be041847525add8d1",
+      "docs\\acceptance\\ryn-agent-delivery\\reference\\documents.py": "9ff365f1d4404d615b24f51b69f40ecf38a09c8603fa42d4742861cdd187fc5e",
+      "tests\\test_agent_reference_controls.py": "27b3b057559971f62cd9dae78cb11869962fad42dbb6469403fa9769b7161c10",
+      "tests\\test_agent_reference_context.py": "0d153a569d32e0f063647193d44bf9a5043dc853a50d32de7a77dc0125d16fb1",
+      "tests\\test_agent_reference_late_receipt.py": "9eb1cdba5396833d1bb3ade76f7a42b8fe4e20a41ea2232e91752d18075ce068",
+      "tests\\fixtures\\agent_runtime\\reference_stream.mjs": "99b2f1c70dc5ce345e0b9c872dde28f334b16873a259b6fae56e9de84330953e"
+    },
+    "author_tests_inspected_not_repeated": [
+      {
+        "path": ".codex-tmp\\reviews\\native_public_controls_final_20261011.xml",
+        "sha256": "11de266aaf52d4764777ed7a9dac082f481c1944d2b2eafa663df3033f909e42",
+        "results": {
+          "tests": "6",
+          "failures": "0",
+          "errors": "0",
+          "time": "44.855"
+        }
+      },
+      {
+        "path": ".codex-tmp\\reviews\\native_compact_readback_final_20261011.xml",
+        "sha256": "2c12d7ac78fdc652d04a9c920553641978ac74e1aa57c5fee538831c2dd0f0bc",
+        "results": {
+          "tests": "1",
+          "failures": "0",
+          "errors": "0",
+          "time": "7.709"
+        }
+      },
+      {
+        "path": ".codex-tmp\\reviews\\native_late_and_stream_final_20261011.xml",
+        "sha256": "f58e4fbc1d0b774f5dd6286afffab8c299c1fd87407054d226bb62e49565dc55",
+        "results": {
+          "tests": "2",
+          "failures": "0",
+          "errors": "0",
+          "time": "17.541"
+        }
+      },
+      {
+        "path": ".codex-tmp\\reviews\\native_late_complete_final_20261011.xml",
+        "sha256": "3805c4126e1c557e53ded552ae974d53b2e03ea1e42f79731afc1b012552d0cf",
+        "results": {
+          "tests": "2",
+          "failures": "0",
+          "errors": "0",
+          "time": "11.961"
+        }
+      }
+    ],
+    "closed_finding": "When actual stream transport returns normally after native owner stop, settle original host audit/usage but do not inject a success into the cancelled RPC. Added original-response test passes.",
+    "observed": [
+      "R04 uses actual unapproved proposal boundary and exact original owner correction once in same persisted session; no write approval or synthetic denial.",
+      "R05 actual signed-provider deltas drive native public stop and same-session explicit continuation; no splitting completed text into fake deltas.",
+      "Compact hook requires actual completed status and persisted summary/boundary; skipped compact is not a checkpoint. Same database cold hydration dispatches nothing.",
+      "Late DAV receipt belongs to same admitted operation, one real PUT; host retains receipt while native cold hydration records tool error and paused target. No fabricated receipt is supplied to native."
+    ],
+    "limitations": [
+      "Offline fixtures do not count as GLM or formal samples.",
+      "R04 fixture captures next native model request; full original status-query completion untested.",
+      "Original R06 12k native request exceeds input limit before compact checkpoint; all original interventions not reached. Retain failure.",
+      "R05 native late-receipt case remains failure; host preserved ACK is not native successful recovery.",
+      "Synthetic compact hook uses separate capacities and is plumbing evidence only."
+    ],
+    "new_paid_calls": 0,
+    "formal_trials": 0
+  },
+  "blind_interface_progress": {
+    "implementation": "tests/fixtures/agent_acceptance/blind_binding.py",
+    "sha256": "04f0ccedcf56df6d058de8abe50f5025105d88cf28874e471adbb47067ca8ffe",
+    "tests": "3 synthetic passed in 0.56s; Ruff passed",
+    "status": "public binding independently reviewed; private executor/dispatch and 18 original held-out candidate trials still pending",
+    "private_suite_read_by_root": false,
+    "independent_review": {
+      "reviewer": "reference_admission / gpt-6-astra high",
+      "verdict": "no_blocker_within_public_binding_helper_boundary",
+      "test": "3 synthetic tests passed in 0.40s",
+      "scope_limitation": "_active mocked in tests; real activation and private execution not tested; caller grades/status are not independent proof",
+      "actual_hidden_read": false
+    }
+  },
+  "r06_checker_size_measurement": {
+    "evidence": ".codex-tmp/reviews/r06-checker-lossless-20261011/measurement.json",
+    "status": "single-call structure/value encoding cannot fit 12k; production unchanged",
+    "request_bytes_before": 29812,
+    "request_bytes_after": 24367,
+    "calls_used_before_checker": 11,
+    "original_lifetime_call_cap": 12,
+    "paid_calls": 0,
+    "final_exact_text_measurement": {
+      "evidence": ".codex-tmp/reviews/r06-checker-lossless-20261011/exact-text-measurement.json",
+      "request_bytes_after": 20729,
+      "fixed_codec_zero_multiline_text_bytes": 18077,
+      "interpretation": "Still over 12000. The latter is a lower bound only within the measured codec, not an information-theoretic bound. Full roundtrip preserved; no further codec exploration."
+    },
+    "next": "Approved early whole-goal verification plus bounded original-evidence parts encountered a measured final-window capacity blocker: 12468 bytes before required quoted operands. Runtime/verification not yet wired. One complete lossless reuse measurement is allowed; no new summary architecture, no evidence omission, no budget change or paid resampling."
+  },
+  "active_assignments": [
+    {
+      "agent": "inference_facts",
+      "model": "gpt-6-astra",
+      "reasoning": "high",
+      "scope": "Remaining explicit public controllers, fixed original subscenario slots, actual collector/normalizer, registry restore API; formal activation still pending"
+    },
+    {
+      "agent": "reference_admission",
+      "model": "gpt-6-astra",
+      "reasoning": "high",
+      "scope": "R02/R03/R06 actual worker collector install/restore at original registration/nonce/task; includes minimal sharing_recovery_worker hooks"
+    },
+    {
+      "agent": "release_wiring_review",
+      "model": "gpt-6-astra",
+      "reasoning": "high",
+      "scope": "One bounded complete R06 verification-window feasibility measurement; preserve original 12k/4+8. Do not wire infeasible production design."
+    },
+    {
+      "agent": "root",
+      "scope": "Native disabled/config/layout UI evidence captured on installed82 and owned processes cleaned; populated task UI and original P04/P05 physical formal execution remain pending."
+    }
+  ],
+  "native_ui_restored_20261011": {
+    "user_reply": "已恢复",
+    "status": "desktop reachable; installed unconfigured Agent/model configuration/layout paths observed",
+    "evidence": ".codex-tmp/native-ui-82-20261011/observation.json",
+    "sha256": "96fea3ce487974b277be4744f8b011294f614ab415cba7910970e4cfdcdbd24c",
+    "remaining": [
+      "Unconfigured/disabled Agent state only; populated task, approval, result and recovery UI remain pending."
+    ],
+    "temporary_task_removed": true,
+    "owned_processes_and_listener_cleaned": true,
+    "default_and_isolated_identities_preserved": true,
+    "formal_trials": 0
+  },
+  "physical_observation_helper_20261011": {
+    "path": "docs/acceptance/ryn-agent-delivery/two-host/release_observation.py",
+    "sha256": "32bd752154723cae0c7b46e4062524b5dc95098cd9fb5d220b65abf9bcf31547",
+    "status": "helper implemented; 3 offline tests passed 0.84s and Ruff passed; collector integration in progress",
+    "binding": "trusted actual peer signature, fresh request challenge/task/nonce/manifest; actual source/history/NAS/code readback",
+    "limits": "No remote deployment or model call yet; distinct physical machine requires separate SSH/install evidence",
+    "formal_trials": 0
+  },
+  "usable_delivery_priority_change": {
+    "at": "2026-10-11T11:08:53.020742+00:00",
+    "user_instruction": "那先不管这个，先能用再说啊",
+    "scope": "Prioritize usable installer and actual GLM workflows. Defer artificial 12000-byte stress and full comparison scoring; retain every original requirement and failed/unverified result.",
+    "canonical_usable_checklist": "docs/acceptance/ryn-agent-delivery/usable-release-20261011.json",
+    "formal_score_claimed": false,
+    "stopped_at_safe_checkpoint": [
+      "R06 further prompt/encoding/window work",
+      "Additional formal controller/score architecture"
+    ],
+    "release_blockers_still_apply": [
+      "Permission or credential leakage",
+      "Cross-session contamination",
+      "Duplicate writes",
+      "Misleading data-egress reports"
+    ],
+    "current_work": [
+      "Packaged native desktop GLM document workflow and restart",
+      "Physical Windows82 P05 privacy and basic session isolation, max 48 new inference calls including probes"
+    ],
+    "native_scope_setup_incident": {
+      "status": "initial harness request omitted list; actual production denial correct; same task scope revision 2 adds list through normal API only after waiting_input",
+      "evidence": ".codex-tmp/usable-desktop-20261011-v2/scope-setup-diagnosis.json",
+      "production_changed": false,
+      "business_success": "not established yet"
+    },
+    "observer_smoke": {
+      "status": "launcher exited before node identity, no model requests; retained as unsuccessful setup",
+      "evidence": ".codex-tmp/physical-observation-smoke-20261011/end-state.json",
+      "remote_owned_processes_remaining": 0,
+      "remote_port_18892_remaining": false,
+      "formal": false
+    }
+  }
+}

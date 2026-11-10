@@ -1,0 +1,28 @@
+{
+  "decision_version": 1,
+  "status": "design_accepted_draft_implementation_reviewed_not_activated",
+  "decision_owner": "root",
+  "authorization_basis": "The user authorized the execution team to define acceptance criteria and complete the agreed local Agent / stateless sharing functionality.",
+  "reason": "The execution team's v1 contract assigned owner-side model administration to a remote consumer without any corresponding remote administration capability. Correct the acceptance topology to match the original product requirements, without adding remote administration or weakening business assertions.",
+  "proposal": "role-contract-v2-proposal.md",
+  "design_review": "role-contract-v2-review.json",
+  "draft_implementation_review": "role-contract-v2-implementation-review.json",
+  "approved_direction": "Eight owner administration cases execute on node-a; the remaining twenty-two execute on node-b, with the explicit per-case ownership bindings in the reviewed proposal.",
+  "immutable_requirements": [
+    "Keep v1 inputs, original run bytes, failures and independent reviews.",
+    "Keep all prompts, business assertions, control barriers, scope limits and acceptance thresholds.",
+    "Do not retroactively register old samples as v2 trials or mix versions in scoring.",
+    "Use only the user's configured GLM-5.3-Flash for real model calls.",
+    "Keep held-out contents isolated from development and prompt tuning.",
+    "Actual identity, two physical hosts, reference comparisons and desktop acceptance still need their own evidence."
+  ],
+  "activation_blockers": [
+    "Implement and independently review version-aware evidence grading and aggregation.",
+    "Bind controllers to effective contracts and actual execution/storage/connection identities.",
+    "Verify owner-admin and consumer paths with unchanged business assertions and fault barriers.",
+    "Define the independent blind evaluation version-binding procedure without exposing held-out cases to development.",
+    "Freeze the effective dataset and collector versions before registering new formal trials."
+  ],
+  "formal_trials_registered": 0,
+  "complete_goal": false
+}

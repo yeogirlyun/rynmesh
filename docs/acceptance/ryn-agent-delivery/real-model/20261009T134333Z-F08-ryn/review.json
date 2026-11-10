@@ -1,0 +1,32 @@
+{
+  "finding": "After resource root discovery, both compaction requests returned no usable assistant text, with finish_reason=length and output_tokens=4096 each. This confirms exhaustion of the upstream completion ceiling, not the unobserved internal cause. No document content was read; the requested artifact does not exist.",
+  "rejected_completion_evidence": [
+    {
+      "call": 5,
+      "input_tokens": 1252,
+      "output_tokens": 4096,
+      "finish_reason": "length"
+    },
+    {
+      "call": 6,
+      "input_tokens": 1252,
+      "output_tokens": 4096,
+      "finish_reason": "length"
+    }
+  ],
+  "repair_pending_real_validation": [
+    "Loading tools without an explicit cursor now returns only the compact selection receipt, avoiding a repeated unrelated catalog page. The reference host uses the same tool implementation.",
+    "Compaction source now excludes opaque provider reasoning continuation and local message bookkeeping. Original encrypted history and normal provider continuation remain intact."
+  ],
+  "classification": "development failure; not formal score",
+  "formal_case_score": false,
+  "real_model_calls": 6,
+  "mechanical_checks": {
+    "exact_artifact_paths": false,
+    "source_files_unchanged": true,
+    "no_unexpected_writes": true
+  },
+  "owner_source_unchanged": true,
+  "code_unchanged": false,
+  "reviewer": "Root coordinator inspecting retained run and independent HTTP/artifact evidence; not a separate Astra reviewer."
+}

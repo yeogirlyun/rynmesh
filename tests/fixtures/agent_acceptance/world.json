@@ -1,0 +1,139 @@
+{
+  "dataset_version": "ryn-agent-acceptance-2026-10-09.v1",
+  "clock": "2026-10-09T08:00:00Z",
+  "synthetic_data_only": true,
+  "models": {
+    "model-a": {
+      "source_id": "source-alpha",
+      "upstream_id": "alpha",
+      "available": true,
+      "agent_supported": true,
+      "sharing": true,
+      "receivers": [
+        "node-b"
+      ]
+    },
+    "model-b": {
+      "source_id": "source-alpha",
+      "upstream_id": "beta",
+      "available": true,
+      "agent_supported": false,
+      "sharing": false,
+      "receivers": []
+    },
+    "model-c": {
+      "source_id": "source-other",
+      "upstream_id": "alpha",
+      "available": true,
+      "agent_supported": true,
+      "sharing": false,
+      "receivers": []
+    },
+    "model-d": {
+      "source_id": "source-broken",
+      "upstream_id": "offline",
+      "available": false,
+      "agent_supported": false,
+      "sharing": false,
+      "receivers": []
+    }
+  },
+  "sources": {
+    "source-alpha": {
+      "version": 7,
+      "models": [
+        "alpha",
+        "beta"
+      ],
+      "credential_ref": "fixture-vault:source-alpha"
+    },
+    "source-other": {
+      "version": 1,
+      "models": [
+        "alpha"
+      ],
+      "credential_ref": "fixture-vault:source-other"
+    },
+    "source-broken": {
+      "failure": "connection_refused",
+      "credential_validity": "unknown",
+      "balance": "unknown"
+    }
+  },
+  "devices": {
+    "node-a": {
+      "http_reachable": true,
+      "evidence_source": "http",
+      "checked_at": "2026-10-09T08:00:00Z"
+    },
+    "node-c": {
+      "http_reachable": false,
+      "evidence_source": "signed_registry",
+      "last_seen": "2026-10-09T07:50:00Z"
+    },
+    "node-d": {
+      "http_reachable": false,
+      "evidence_source": "unknown",
+      "last_seen": null
+    }
+  },
+  "tasks": {
+    "task-failed-read": {
+      "operation": "read:docs-offline",
+      "error": "resource_read_timeout",
+      "write_dispatched": false,
+      "redacted_error": "GET resource: timeout; Authorization=[redacted]"
+    }
+  },
+  "connectors": {
+    "docs-alpha": {
+      "formats": [
+        "text/plain",
+        "text/markdown",
+        "application/pdf:text-only"
+      ],
+      "actions": [
+        "list",
+        "search",
+        "read",
+        "create_directory",
+        "create_file"
+      ]
+    },
+    "docs-beta": {
+      "accessible": false
+    },
+    "docs-offline": {
+      "read_error": "timeout"
+    }
+  },
+  "orion": {
+    "completed": 35,
+    "total": 42,
+    "remaining": 7,
+    "launch": "2026-10-16"
+  },
+  "resource_mounts": [
+    {
+      "connection_id": "docs-alpha",
+      "resource_prefix": "projects/orion/week-41",
+      "fixture_directory": "documents/orion"
+    },
+    {
+      "connection_id": "docs-alpha",
+      "resource_prefix": "holdout",
+      "fixture_directory": "documents/holdout"
+    },
+    {
+      "connection_id": "docs-alpha",
+      "resource_prefix": "reports/acceptance",
+      "fixture_directory": "binding:empty_output_directory"
+    },
+    {
+      "connection_id": "docs-beta",
+      "resource_prefix": "private",
+      "fixture_directory": "documents/private"
+    }
+  ],
+  "binding_policy": "All runtime IDs/endpoints map through run bindings; do not rename or substitute expected facts. Never mount user directories."
+}

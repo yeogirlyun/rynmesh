@@ -1,0 +1,21 @@
+{
+  "reviewer": "root",
+  "verdict": "development_semantic_failure",
+  "independent_review": "independent-review.json",
+  "observed": {
+    "task_status": "completed",
+    "goal_outcome": "verified",
+    "model_calls": 5,
+    "elapsed_seconds": 98.406,
+    "mechanical_passed": 4,
+    "write_dispatches": 1,
+    "source_replacements": 1,
+    "preapproval_writes": 0,
+    "code_unchanged": true,
+    "owner_source_unchanged": true
+  },
+  "normalization": "normalized/grade.json is pending with no mechanical assertion failure;missing dependency/security/review wrappers are not synthesized. Independent prose semantic failure is recorded separately, without rewriting raw runtime output.",
+  "finding": "Main and checker still conflate missing current probe evidence with never tested. General prompt v2.9 did not prevent this model-quality error. Mechanical recovery and exact sharing remain correctly evidenced.",
+  "next": "Retain this failed development trial and advance remaining collection/coverage work. No unchanged resampling or claim that the prompt fixed semantic accuracy.",
+  "formal_trial_registered": false
+}

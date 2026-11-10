@@ -1,0 +1,33 @@
+{
+  "requirement": "DEV-04",
+  "date": "2026-09-04",
+  "status": "passed_with_final_cross_platform_check_pending",
+  "checks": {
+    "save_library_projection": "passed",
+    "progress_restart": "passed",
+    "cursor_consistency": "passed",
+    "source_pause_resume": "passed",
+    "watcher_pause_resume": "passed",
+    "txt_markdown_pdf_import": "passed",
+    "managed_preview": "passed",
+    "multi_item_ask_ryn": "passed",
+    "original_file_preserved_windows": "passed",
+    "privacy_export_erase": "passed",
+    "10000_metadata_scale": "passed"
+  },
+  "quality": {
+    "backend": "630 passed, 1 skipped",
+    "frontend": "14 files, 57 passed",
+    "ruff": "passed",
+    "typescript": "passed",
+    "production_build": "passed"
+  },
+  "pending_final_suite": ["macOS physical managed-file import/delete semantics"],
+  "screenshots": [
+    "screenshots/01-saved-library.png",
+    "screenshots/02-sources-monitors.png",
+    "screenshots/03-private-file-preview.png",
+    "screenshots/04-library-ask-ryn.png",
+    "screenshots/dev04-ui-annotated.png"
+  ]
+}

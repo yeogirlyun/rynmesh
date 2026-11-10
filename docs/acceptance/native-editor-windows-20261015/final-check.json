@@ -1,0 +1,19 @@
+{
+  "installed": 16,
+  "enabled": 16,
+  "native_office_windows_verified": [
+    "pdf",
+    "word",
+    "excel",
+    "ppt"
+  ],
+  "close_editor_keeps_ryn": true,
+  "repeated_pdf_reuses_window": true,
+  "node_identity_unchanged": true,
+  "backend_binary_unchanged": true,
+  "source_manifest_matches": true,
+  "screenshots_exist": true,
+  "frontend_tests_passed": 14,
+  "native_tests_passed": 3,
+  "windows_release_build": true
+}

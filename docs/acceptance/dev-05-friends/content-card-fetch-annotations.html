@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>DEV05 content-card fetch acceptance</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #07100d; color: #eef8f3; font: 16px Inter, "Segoe UI", sans-serif; }
+    main { width: 1500px; padding: 30px 36px 38px; }
+    header { display: flex; justify-content: space-between; align-items: end; margin-bottom: 18px; }
+    h1 { margin: 0; font-size: 30px; }
+    header p { margin: 0; color: #9eb3a9; }
+    .visuals { display: grid; grid-template-columns: 900px 506px; gap: 18px; align-items: start; }
+    .shot { position: relative; overflow: hidden; border: 1px solid #294039; border-radius: 12px; background: #0d1713; }
+    .shot.review { width: 900px; height: 506px; }
+    .shot.saved { width: 506px; height: 285px; }
+    .shot img { width: 100%; height: 100%; display: block; }
+    .pin { position: absolute; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: #00e28a; color: #032017; font-weight: 900; border: 4px solid #07100d; box-shadow: 0 4px 16px #000; }
+    .p1 { left: 290px; top: 205px; }
+    .p2 { left: 555px; top: 310px; }
+    .p3 { left: 463px; top: 58px; }
+    .p4 { left: 244px; top: 211px; }
+    .result { display: grid; gap: 14px; }
+    .result-callout { padding: 18px; border: 1px solid #176c4b; border-radius: 12px; background: #0d2018; }
+    .result-callout strong { display: block; color: #00e28a; font-size: 20px; margin-bottom: 8px; }
+    .result-callout span { color: #b8ccc2; line-height: 1.5; }
+    .notes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 18px; }
+    .note { padding: 15px; border: 1px solid #294039; border-radius: 12px; background: #101b17; }
+    .note b { display: flex; gap: 9px; align-items: center; margin-bottom: 7px; }
+    .n { width: 25px; height: 25px; border-radius: 50%; display: grid; place-items: center; background: #00e28a; color: #032017; }
+    .note span { color: #abc0b6; font-size: 14px; line-height: 1.45; }
+  </style>
+</head>
+<body>
+<main>
+  <header><h1>DEV05 · 内容卡片主动获取闭环</h1><p>UI acceptance · Windows browser · fixture data</p></header>
+  <section class="visuals">
+    <div class="shot review"><img src="screenshots/04-content-card-review.png" alt="Fetch review dialog"><i class="pin p1">1</i><i class="pin p2">2</i><i class="pin p3">3</i></div>
+    <div class="result">
+      <div class="shot saved"><img src="screenshots/05-content-card-fetched.png" alt="Verified and saved state"><i class="pin p4">4</i></div>
+      <div class="result-callout"><strong>用户确认后才传输正文</strong><span>收到卡片时只落元数据。确认后才向已配对设备请求密封内容；接收端以卡片承诺的大小和 SHA-256 校验正文，成功后写入 My Content。</span></div>
+    </div>
+  </section>
+  <section class="notes">
+    <div class="note"><b><i class="n">1</i>身份与来源可审阅</b><span>明确区分“发送设备”和“发布者”，同时展示来源，避免把好友转发误当成原创发布。</span></div>
+    <div class="note"><b><i class="n">2</i>完整文件边界</b><span>确认框展示文件名、MIME、大小及完整 SHA-256；用户能在联网拉取前判断对象与成本。</span></div>
+    <div class="note"><b><i class="n">3</i>正文尚未下载</b><span>卡片正文默认不进入本机。只有显式点击“Get and save”才触发经过好友鉴权的主动请求。</span></div>
+    <div class="note"><b><i class="n">4</i>校验后进入内容库</b><span>成功态同时表达“SHA-256 verified”和“Saved to My Content”；重复获取返回已有副本，不重复导入。</span></div>
+  </section>
+</main>
+</body>
+</html>

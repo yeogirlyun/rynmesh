@@ -1,0 +1,97 @@
+{
+  "kind": "read_only_remaining_interactive_case_preflight",
+  "date": "2026-10-11",
+  "scope": {
+    "case_ids": ["C04", "R04", "R05", "R06", "P03", "P04", "P05"],
+    "model_calls": 0,
+    "production_controller_or_frozen_input_changes": false,
+    "heldout_contents_read": false,
+    "formal_trials_registered": 0,
+    "execution_now": "deferred; F05/F06 paid snapshots are running"
+  },
+  "frozen_input": {
+    "path": "docs/acceptance/ryn-agent-delivery/cases-v1.json",
+    "sha256": "27a50f909a09a6972fc7b11df55f7798412ec415b8ef87ccadef8ddc85bd06b5",
+    "role_boundary": "Original prompts/assertions/barriers remain unchanged. Owner-admin execution for C04/R04/P03 follows only the reviewed draft role overlay; role-overlay-v2-draft.json is disabled and role-contract-v2-decision.json says not activated. This preflight does not activate it or certify formal readiness."
+  },
+  "shared_reuse": {
+    "node_launcher": "docs/acceptance/ryn-agent-delivery/two-host/node.py --role provider|consumer --home ISOLATED_HOME --bind HOST_IP --port LOCAL_PORT --registry-url SHARED_REGISTRY --stun off [--p2p-bind-port UDP_PORT]; provider also --owner-home LOCAL_OWNER_HOME, never copied to consumer",
+    "local_control": "docs/acceptance/ryn-agent-delivery/two-host/control.py --home ISOLATED_HOME --port LOCAL_PORT api METHOD /api/local/PATH [--body-file UTF8_JSON]; token loaded internally, control remains host-local",
+    "observation": "control.py snapshot --out FILE; GET /api/local/two-host/evidence; node.py two-host-audit.jsonl records consumer/provider requests, tool execution and order correlation",
+    "api": [
+      "POST /api/local/agent/tasks",
+      "GET /api/local/agent/tasks/{id}",
+      "GET /api/local/agent/tasks/{id}/events?after=CURSOR",
+      "POST /api/local/agent/tasks/{id}/messages",
+      "POST /api/local/agent/tasks/{id}/actions",
+      "PUT /api/local/agent/tasks/{id}/scope",
+      "PUT /api/local/agent/tasks/{id}/budget",
+      "PUT /api/local/agent/settings"
+    ],
+    "bodies": {
+      "steer": "message=exact frozen correction, intent=steer, expected_control_revision=current, expected_goal_revision=current, client_request_id=fresh UUID",
+      "action": "action=pause|resume|cancel|approve, expected_control_revision=current; approve additionally binds exact pending approval_id",
+      "budget": "limits.max_total_model_calls=old lifetime limit+8, expected_control_revision=current, client_request_id=fresh UUID; separate explicit resume after budget persistence"
+    },
+    "launcher_limits": "Two-host node maps glm-5.3-flash/private-boundary-canary and does not mount the frozen document world or model-a/model-b world automatically. Fresh isolated bootstrap and explicit logical-to-actual bindings are prerequisites. Existing generic scripts are development collectors, not seven complete frozen-case entrypoints."
+  },
+  "cases": [
+    {
+      "id": "R04",
+      "readiness": "existing_API_sequence; no_new_fault_barrier",
+      "reuse": ["two-host/control.py api", "real-model/sharing_cases.py SharingWorld fixture/approval binding patterns", "tests/test_agent_runtime_control.py steer"],
+      "next_actions": "Bootstrap isolated owner model-b private. Submit original task, wait pending write approval (not dispatched), send exact 不要分享，只检查 model-b 的状态。 with current goal/control revisions. Attempt stale approval and capture rejection; let latest read-only goal finish. Independently read model-b and dispatch ledger: zero writes, still private, latest goal applied.",
+      "missing": "Small owner-world launcher/binding payload; no R04 CLI case support or completed real-model frozen result.",
+      "existing_evidence": "ui-first-batch/steer-control.json demonstrates real UI steering with synthetic model and zero sharing writes; outcome unverified, not R04 business completion."
+    },
+    {
+      "id": "P04",
+      "readiness": "existing_two_host_API_sequence_plus_exact_frozen_payloads",
+      "reuse": ["two-host/node.py", "two-host/control.py api/snapshot", "two-host/scenario.py consumer-two-sessions pattern", "two-host/extra_scenarios.py provider-agent-history and agent-off"],
+      "next_actions": "Start isolated physical provider/consumer pair and production P2P signaling. Seed provider-only PROVIDER_ONLY_551 context. Create independent consumer tasks using SESSION_A_104 and SESSION_B_907 and the frozen prompt, then repeat both with provider Agent enabled and disabled. Read completed tasks, both sides' dispatch captures and actual consumer tool node identities.",
+      "missing": "Exact frozen marker/request JSON and two-subscenario operator loop. Existing scenario.py uses random CONSUMER markers; provider-agent-history uses a random private marker; do not run those unchanged as P04. Provider private-history seeding must finish before consumer requests; provider tools during consumer execution must be zero.",
+      "existing_evidence": "two-host/phase3-independent-review.json proves isolated actual histories and matched provider payloads for development runs; phase4-5-independent-review.json proves restart/settings/grant mechanisms. Neither is the complete frozen P04 enabled/disabled business trial."
+    },
+    {
+      "id": "C04",
+      "readiness": "minimal_owner_bootstrap_and_receiver_probe_control",
+      "reuse": ["real-model/sharing_cases.py SharingWorld.permitted/probe_receiver patterns", "two-host/node.py", "two-host/control.py invite/join/refresh/api"],
+      "next_actions": "Preserve frozen initial model-a grant to node-b and private model-b; do not invent a first grant mutation. Observe and approve each exact pending grant/revoke required by the frozen workflow, capture B allowed/C denied before revoke, send exact revoke follow-up only after probes, then capture B denied and unchanged model-b.",
+      "missing": "Live model-a/model-b bindings, separately signed unauthorized node-c identity, precise two approval/probe barriers. Existing SharingWorld supports C03/R02 and one-host authenticated probes; it cannot be relabeled C04 or two-physical-host evidence. Existing direct grant CLI is fixture setup/probe control, not an Agent-performed task step.",
+      "existing_evidence": "tests/test_agent_role_contract_v2.py locks C04 preexisting grant and approval barriers; two-host/phase4-5-independent-review.json shows revoke/regrant mechanisms only."
+    },
+    {
+      "id": "R05",
+      "readiness": "minimal_stream_observer_and_commit_response_barrier",
+      "reuse": ["two-host/control.py events/actions", "tests/test_agent_runtime_control.py test_stream_cursor_does_not_invalidate_pause_and_cancel_is_idempotent", "tests/test_agent_resource_writes.py committed-write/response-loss fixture patterns"],
+      "next_actions": "Run both frozen subscenarios. First count at least 10 real text deltas while control_revision stays stable; pause with last-seen control revision, resume only at paused safe checkpoint, cancel next active operation and count later dispatches. Reset world for late_write_receipt: create exact late-receipt.md/LATE_RECEIPT_508, hold original response after actual commit, cancel persistently, release original response and retain receipt/file hash with one write and zero new dispatches.",
+      "missing": "Real-stream event trigger and HTTP-fixture response hold after committed create. tests/test_agent_runtime.py test_cancel_during_write_retains_late_evidence delays tool execution, not the frozen after-commit HTTP response barrier.",
+      "existing_evidence": "two-host/phase6-cancellation-operator-review.json is manual inference cancellation, not Agent pause/resume/cancel plus late-write receipt; synthetic control tests are mechanism evidence only."
+    },
+    {
+      "id": "R06",
+      "readiness": "minimal_persisted_checkpoint_restart_and_budget_control",
+      "reuse": ["real-model/document_cases.py DocumentCase fixture/scope/settings patterns", "real-model/run_recovery.py child/run process persistence patterns", "two-host/control.py messages/budget/actions", "tests/test_agent_owner_contracts_http.py budget request contract"],
+      "next_actions": "Mount exact long-notes.txt and writable output parent in an isolated consumer; apply frozen 12000 context bound and initial lifetime model-call budget 4. At first committed context_compacted event submit exact anonymization correction, restart only at the post-correction safe checkpoint on the same home/identity, record persisted budget stop and zero intervening calls, add exactly 8 to the limit and explicitly resume. Read resumed.md hash, sum 1278, citations and no Aurora Demo Corp.",
+      "missing": "R06-specific thin startup/event control; document_cases.py excludes R06 and run_recovery.py hardcodes R03 recovery.md/RECOVERY_ONCE_731. Do not execute either unchanged as R06 or reuse R03 crash timing for its safe checkpoint.",
+      "existing_evidence": "Runtime compaction/budget/restart tests and two-host phase4-5 establish mechanisms; ui-first-batch/budget-readback.json demonstrates settings persistence only, not this 4+8 hard-stop workflow."
+    },
+    {
+      "id": "P03",
+      "readiness": "minimal_controlled_worker_prewrite_barrier",
+      "reuse": ["real-model/sharing_cases.py exact approval binding patterns", "two-host/control.py actions/settings", "tests/test_agent_runtime.py test_model_cannot_execute_write_without_exact_approval", "rynmesh/agent_runtime/runtime.py late prewrite permission check"],
+      "next_actions": "Wait exact model-b/node-b approval; submit tampered arguments and preserve rejection, approve the legitimate pending operation, hold after approval consumption before business write, set permission_mode=read_only through local settings API, then release. Read rejection/control timestamps, zero writes and private model-b; expected not_achieved.",
+      "missing": "Deterministic isolated worker/tick barrier before the actual business write; rapid UI/API setting changes alone cannot prove the required race order. Do not change production authorization or remove a guard to create this barrier.",
+      "existing_evidence": "Synthetic approval and live permission tests cover mechanisms; no complete real P03 frozen trial or native approval UI evidence."
+    },
+    {
+      "id": "P05",
+      "readiness": "minimal_document_scope_bootstrap_plus_existing_two_host_capture",
+      "reuse": ["real-model/document_cases.py DocumentCase WebDAV fixture/resource-scope patterns", "tests/fixtures/agent_acceptance/webdav_fixture.py", "two-host/node.py transport capture", "two-host/control.py tasks/scope/snapshot", "tests/test_agent_runtime_control.py set_scope request contract"],
+      "next_actions": "On isolated consumer mount frozen progress.md/private-canary fixtures and synthetic credential/other-session canaries without copying provider secrets. Select authenticated node-a peer model, show destination, authorize only exact progress.md with nonrecursive read-only scope and allow_model_data consent, submit frozen prompt. Verify actual file read and summary, then scan correlated consumer-to-provider payloads for excluded content and unapproved destinations.",
+      "missing": "Frozen P05 resource binding bootstrap and exact scope consent payload; document_cases.py excludes P05. Capture UI/API destination/consent and completed actual summary, not just an empty read-only model-list task.",
+      "existing_evidence": "ui-first-batch/exact-file-readback.json shows exact scope consent but only ryn_list_models executed and outcome unverified; two-host/phase3-independent-review.json proves known-marker payload isolation, not P05 exact file-only egress."
+    }
+  ],
+  "overall_boundary": "No existing dedicated CLI completes all seven frozen workflows. R04 and P04 need existing API actions with isolated bootstrap/exact payloads; C04/R05/R06/P03/P05 need only bounded case-specific startup or control layers identified above. Current desktop screenshots demonstrate empty-state navigation, not these populated business workflows. All future runs still require their original assertions, independent readback/review and version binding; existing mechanism evidence must not be counted as business passes. No execution, tests, services or remote state changed by this preflight."
+}

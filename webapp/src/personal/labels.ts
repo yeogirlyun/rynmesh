@@ -6,7 +6,7 @@ export const personalLabelKeys: Record<string, string> = {
   "Requested by me": "requestedByMe", "Running on this device": "runningOnThisDevice",
   "In progress": "inProgress", Completed: "completed", Failed: "failed",
   Cancelled: "cancelled", Processing: "processing", Ready: "ready", Offline: "offline",
-  Available: "available", "Access granted": "accessGranted",
+  Available: "available", "Access granted": "accessGranted", "Not connected": "notConnected",
   "Current network": "currentNetwork", "Network unconfirmed": "networkUnconfirmed",
   "Public endpoints": "publicEndpoints", "Home network": "homeNetwork", "Office network": "officeNetwork",
   "This device": "thisDevice", "LAN direct": "lanDirect", "Public direct": "publicDirect",

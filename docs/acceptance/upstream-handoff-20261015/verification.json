@@ -1,0 +1,56 @@
+{
+  "date": "2026-10-15",
+  "timezone": "Asia/Hong_Kong",
+  "repository": "yeogirlyun/rynmesh",
+  "branch": "feature/ryn-integrated-workspace",
+  "upstream_main": "e9cde6c8ce097efe02376692923850b44815fc79",
+  "source_snapshot": "63f9b97",
+  "frontend_tests": {
+    "command": "npm test -- --maxWorkers=4 --reporter=dot",
+    "exit_code": 0,
+    "files_passed": 114,
+    "tests_passed": 848,
+    "duration_seconds": 193.65,
+    "stderr_note": "MSW reports an unmatched context import request in one passing test; full log retained"
+  },
+  "frontend_build": {
+    "command": "npm run build",
+    "exit_code": 0,
+    "warnings": [
+      "notification module mixed static/dynamic import",
+      "chunks larger than 500 kB"
+    ]
+  },
+  "backend_targeted_previous_turn": {
+    "command": ".venv/Scripts/python.exe -m pytest -q tests/test_agent_codex_loop.py tests/test_agent_projects.py tests/test_agent_local_tools.py tests/test_agent_workspace_artifacts.py tests/test_codex_thread_reuse.py tests/test_craft_plugins.py tests/test_unified_plugins.py tests/test_peer_directory.py tests/test_drop_engine.py tests/test_drop_p2p.py tests/test_native_transport.py",
+    "passed": 188,
+    "skipped": 2,
+    "failed": 1,
+    "failed_test": "tests/test_agent_local_tools.py::test_windows_accessibility_write_and_readback",
+    "failure": "Final keyboard input readback assertion",
+    "rerun_in_this_turn": false
+  },
+  "credential_pattern_scan": {
+    "files_scanned": 2316,
+    "findings": 0,
+    "patterns": [
+      "private PEM keys",
+      "GitHub tokens",
+      "OpenAI project keys",
+      "Anthropic API keys",
+      "Slack tokens"
+    ],
+    "scope": "Named credential patterns in text files changed from upstream main; not a proof that every possible secret format is absent"
+  },
+  "ignored_artifacts": "output/ installers, copied runtime state, caches and private key files stay local",
+  "logs": {
+    "frontend-tests.log": {
+      "bytes": 2521,
+      "sha256": "ddcc83e590d426af3ecb0c387b57343916a5274ca7746f15fc62ef8ebba0794c"
+    },
+    "frontend-build.log": {
+      "bytes": 1932,
+      "sha256": "05ab726c07b283991640a5ad1f681169c0822df83de2103e2636ba22ed536964"
+    }
+  }
+}

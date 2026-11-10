@@ -1,0 +1,35 @@
+{
+  "classification": "reference classification correct; development semantic review failed",
+  "formal_case_score": false,
+  "reviewer": "Root compared frozen Q01, all three actual tool receipts, independent source readback, setup probes and final report.",
+  "real_model": true,
+  "planner_model": "glm-5.3-flash",
+  "real_model_calls": 3,
+  "elapsed_seconds": 67.14,
+  "native_target_status": "complete",
+  "code_unchanged": true,
+  "owner_source_unchanged": true,
+  "source_configuration_unchanged": true,
+  "observed_correct": [
+    "All four exact stable model IDs match chat/agent/shared classifications in actual saved source state.",
+    "Only three read-only tools executed; no approval or write dispatch occurred.",
+    "Report distinguishes configured availability from a fresh successful inference probe."
+  ],
+  "unsupported_claims": [
+    "The report calls source-broken/offline the only model that has undergone an actual connection probe. Missing probe timestamps for other models do not prove absence of historical probes; the controller actually performed successful setup probes on the other sources. The claim should be limited to the explicit failed-probe record visible in this tool result.",
+    "Being the saved default is described as the strongest configuration evidence of verified Agent capability. Default selection alone is not a capability test and does not strengthen the recorded tool-support result."
+  ],
+  "native_checker": "Returned passed=true despite the unsupported evidence-strength and exclusive historical claims; native target completion is not accepted as the independent verdict.",
+  "accounting": {
+    "all_model_calls_including_checker": 3,
+    "all_known_tokens": 20604,
+    "native_last_turn_model_calls": 2,
+    "native_last_turn_tokens": 13744,
+    "note": "Use the encrypted shared meter for full accounting; native last-turn usage omits the later target checker."
+  },
+  "limitations": [
+    "One development reference run, not matched final repetitions or an 80% comparison.",
+    "No designated non-author Astra review, normalized universal security evidence, second source or physical-node proof.",
+    "No upstream prompt/source changes, answer coaching or unchanged resampling were used after this result."
+  ]
+}

@@ -1,0 +1,128 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="stylesheet" href="common.css">
+<style>
+.wrap { display: grid; grid-template-columns: 420px 1fr; gap: 20px; margin-top: 18px; }
+.dcard { display: flex; gap: 14px; align-items: center; padding: 14px 14px 14px 16px; border-radius: 14px; background: #fff; border: 1px solid var(--line); margin-bottom: 10px; position: relative; }
+.dcard.sel { border-color: var(--blue-line); background: #f6f9ff; box-shadow: 0 0 0 3px #e3ecfc; }
+.dcard.drag { border: 2px dashed var(--blue); background: #eef4ff; }
+.dcard .name { font-weight: 700; font-size: 15.5px; }
+.dcard .meta { color: var(--muted); font-size: 12.5px; margin-top: 3px; display: flex; gap: 8px; align-items: center; }
+.dropbadge { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); background: var(--blue); color: #fff; border-radius: 9px; padding: 7px 11px; font-weight: 600; font-size: 13px; display: flex; gap: 6px; align-items: center; box-shadow: 0 6px 16px rgba(49,102,212,.35); }
+.ghostfile { position: absolute; right: 120px; top: 6px; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; box-shadow: 0 10px 24px rgba(15,27,45,.18); display: flex; gap: 8px; align-items: center; font-size: 12.5px; transform: rotate(-4deg); z-index: 5; }
+.detail { padding: 22px 24px; }
+.bigact { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-top: 20px; }
+.act { border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: flex; gap: 12px; align-items: center; }
+.act .ico { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; }
+.act.pri { background: var(--navy); border-color: var(--navy); color: #fff; }
+.act.pri .ico { background: rgba(255,255,255,.14); }
+.act .t { font-weight: 700; } .act .d { font-size: 12.5px; opacity: .75; margin-top: 2px; }
+.kv { display: grid; grid-template-columns: 110px 1fr; row-gap: 12px; margin-top: 8px; font-size: 13.5px; }
+.kv .k { color: var(--muted); }
+.box { border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin-top: 16px; }
+.box h3 { font-size: 15px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+.ev { display: flex; align-items: center; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line2); font-size: 13.5px; }
+.ev:first-of-type { border-top: 0; }
+.ev .fi { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; background: var(--line2); color: var(--ink2); }
+</style></head>
+<body class="withlegend"><div class="app">
+<div data-side="devices" data-badge="2"></div>
+<div class="main"><div data-top="<span>设备</span>"></div>
+<div class="content">
+  <div class="between">
+    <div><h1>设备</h1><div class="sub">你的设备、好友的设备和附近的设备。可以直接给它们发文件和消息。</div></div>
+    <div class="row">
+      <div class="btn"><span data-i="eye" class="s16"></span>谁能看到我：联系人和我的设备<span data-i="cd" class="s16"></span></div>
+      <div class="btn pri"><span data-i="plus" class="s16"></span>添加设备</div>
+    </div>
+  </div>
+  <div class="tabs">
+    <div class="tab on">我的设备 <span class="chip" style="height:20px">4</span></div>
+    <div class="tab">好友设备 <span class="chip" style="height:20px">2</span></div>
+    <div class="tab"><span data-i="radar" class="s16"></span>附近 <span class="chip near" style="height:20px">3</span></div>
+    <div class="tab">传输 <span class="badge">2</span></div>
+  </div>
+
+  <div class="wrap">
+    <div>
+      <div class="dcard sel">
+        <div class="dev laptop"></div>
+        <div class="grow"><div class="row"><span class="name">MacBook Pro</span><span class="st"><i class="dot"></i>在线</span></div>
+          <div class="meta"><span class="chip lan" style="height:20px"><span data-i="wifi" class="s14"></span>局域网</span>同一 Wi-Fi · 2 ms</div></div>
+        <div class="btn sm icon ghost"><span data-i="more" class="s16"></span></div>
+      </div>
+      <div class="dcard drag">
+        <div class="dev monitor"></div>
+        <div class="grow"><div class="row"><span class="name">书房台式机</span><span class="st"><i class="dot"></i>在线</span></div>
+          <div class="meta"><span class="chip lan" style="height:20px"><span data-i="wifi" class="s14"></span>局域网</span>有线 · 1 ms</div></div>
+        <div class="ghostfile"><span data-i="video" class="s16" style="color:var(--blue)"></span>旅行vlog_4K.mp4 <span class="faint">+2</span></div>
+        <div class="dropbadge"><span data-i="upload" class="s16"></span>松开发送 3 项</div>
+      </div>
+      <div class="dcard">
+        <div class="dev server"></div>
+        <div class="grow"><div class="row"><span class="name">家里 NAS</span><span class="st"><i class="dot"></i>在线</span></div>
+          <div class="meta"><span class="chip p2p" style="height:20px"><span data-i="globe" class="s14"></span>P2P 直连</span>公网 · 38 ms</div></div>
+        <div class="btn sm icon" style="background:#e3ecfc;border-color:var(--blue-line);color:var(--navy)"><span data-i="more" class="s16"></span></div>
+        <div class="menu" style="right:8px;top:58px;width:240px">
+          <div class="mi hl"><span data-i="send" class="s16"></span>发送文件…<kbd>Ctrl+Shift+S</kbd></div>
+          <div class="mi"><span data-i="folder" class="s16"></span>发送文件夹…</div>
+          <div class="mi"><span data-i="type" class="s16"></span>发送文字 / 链接</div>
+          <div class="mi"><span data-i="msg" class="s16"></span>打开会话</div>
+          <div class="sep"></div>
+          <div class="mi"><span data-i="activity" class="s16"></span>传输记录</div>
+          <div class="mi"><span data-i="route" class="s16"></span>连接详情</div>
+          <div class="mi"><span data-i="pencil" class="s16"></span>改名 / 备注</div>
+          <div class="sep"></div>
+          <div class="mi red"><span data-i="ban" class="s16"></span>移除设备</div>
+        </div>
+      </div>
+      <div class="dcard">
+        <div class="dev laptop"></div>
+        <div class="grow"><div class="row"><span class="name">公司笔记本</span><span class="st off"><i class="dot off"></i>离线 · 3 小时前</span></div>
+          <div class="meta"><span class="chip" style="height:20px"><span data-i="cloud" class="s14"></span>上线后送达</span>消息会排队</div></div>
+        <div class="btn sm icon ghost"><span data-i="more" class="s16"></span></div>
+      </div>
+      <div class="row small muted" style="margin-top:6px;padding:0 4px"><span data-i="info" class="s14"></span>可以把文件直接拖到设备卡片上发送</div>
+    </div>
+
+    <div class="card detail">
+      <div class="row" style="gap:18px">
+        <div class="dev laptop" style="transform:scale(1.5);margin:10px 16px"></div>
+        <div class="grow">
+          <div class="row"><span style="font-size:22px;font-weight:700">MacBook Pro</span><span class="st"><i class="dot"></i>在线</span><span class="chip mine">我的设备</span></div>
+          <div class="muted small" style="margin-top:6px">设备 ID <span class="mono">8b2f…c914</span> · macOS 15 · Ryn 0.8.0</div>
+        </div>
+      </div>
+      <div class="bigact">
+        <div class="act pri"><div class="ico"><span data-i="send" class="s20"></span></div><div><div class="t">发送文件</div><div class="d">或拖到这里</div></div></div>
+        <div class="act"><div class="ico" style="background:var(--blue-bg);color:var(--blue)"><span data-i="msg" class="s20"></span></div><div><div class="t">发消息</div><div class="d muted">端到端加密</div></div></div>
+        <div class="act"><div class="ico" style="background:var(--teal-bg);color:var(--teal)"><span data-i="type" class="s20"></span></div><div><div class="t">发剪贴板</div><div class="d muted">文字 / 链接</div></div></div>
+      </div>
+      <div class="box">
+        <h3><span data-i="route" class="s16"></span>当前连接</h3>
+        <div class="kv">
+          <div class="k">线路</div><div class="row"><span class="chip lan"><span data-i="wifi" class="s14"></span>局域网直连</span><span class="muted">192.168.1.24 · 预计 110 MB/s</span></div>
+          <div class="k">加密</div><div class="row"><span data-i="lock" class="s14" style="color:var(--green)"></span>端到端加密，指纹已验证</div>
+          <div class="k">自动接收</div><div class="row"><span class="toggle"></span><span class="muted">我自己的设备发来的文件自动保存到 下载\Ryn</span></div>
+        </div>
+      </div>
+      <div class="box">
+        <div class="between"><h3 style="margin:0">最近</h3><span class="small" style="color:var(--blue)">全部传输 ›</span></div>
+        <div class="ev"><div class="fi"><span data-i="folder" class="s16"></span></div><div class="grow"><b>照片_2026国庆/</b> <span class="muted">· 412 个文件 · 18.6 GB</span></div><span class="chip ok"><span data-i="check" class="s14"></span>已校验</span><span class="muted small">今天 14:02</span></div>
+        <div class="ev"><div class="fi"><span data-i="msg" class="s16"></span></div><div class="grow">“会议纪要我发你了，看完回我一下”</div><span class="muted small">今天 13:47</span></div>
+        <div class="ev"><div class="fi"><span data-i="file" class="s16"></span></div><div class="grow"><b>Q3报告.pdf</b> <span class="muted">· 4.2 MB · 收到</span></div><span class="chip ok"><span data-i="check" class="s14"></span>已校验</span><span class="muted small">昨天</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note" style="left:452px;top:396px">1</div>
+  <div class="note" style="left:4px;top:268px">2</div>
+  <div class="note" style="left:760px;top:8px">3</div>
+  <div class="note" style="left:1106px;top:352px">4</div>
+</div></div></div>
+<div class="legend">
+  <div class="k"><i>1</i><b>操作菜单</b><span class="muted">发送文件 / 文件夹 / 文字 / 会话</span></div>
+  <div class="k"><i>2</i><b>拖到卡片</b><span class="muted">松开直接发送</span></div>
+  <div class="k"><i>3</i><b>可见性</b><span class="muted">谁能在附近看到我</span></div>
+  <div class="k"><i>4</i><b>线路</b><span class="muted">局域网 / P2P / 中继 自动选择</span></div>
+  <span class="tag">01 设备 · 操作菜单 · 示例数据</span>
+</div>
+<script src="common.js"></script></body></html>

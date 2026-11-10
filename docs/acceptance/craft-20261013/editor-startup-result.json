@@ -1,0 +1,170 @@
+{
+  "source_commit": "946b35d25224b6e5c2c6317dda018883ef2679cf",
+  "headless": true,
+  "global_input_used": false,
+  "temporary_servers_stopped": true,
+  "web_editors_started": 12,
+  "clean_startups": 11,
+  "known_asset_issue": "PhotoCraft pinned archive does not include fonts/manifest.txt; HTTP 404; startup renders, font workflow not accepted",
+  "acceptance_level": "runtime startup and canvas only; document round trips not claimed",
+  "browser_configuration": "Chromium headless; initial nine clean Trunk apps used software GPU; EffectCraft, LightCraft and PhotoCraft follow-up used default headless GPU configuration",
+  "results": [
+    {
+      "app": "cadcraft",
+      "version": "v0.6.2",
+      "title": "CADCraft",
+      "canvas": 1,
+      "wasm_started": true,
+      "page_errors": [],
+      "console_errors": [],
+      "failed_requests": [],
+      "external_requests": [],
+      "result": "passed"
+    },
+    {
+      "app": "deckcraft",
+      "version": "v0.6.1",
+      "title": "DeckCraft",
+      "canvas": 1,
+      "wasm_started": true,
+      "page_errors": [],
+      "console_errors": [],
+      "failed_requests": [],
+      "external_requests": [],
+      "result": "passed"
+    },
+    {
+      "app": "designcraft",
+      "version": "v0.7.1",
+      "title": "DesignCraft",
+      "canvas": 1,
+      "wasm_started": true,
+      "page_errors": [],
+      "console_errors": [],
+      "failed_requests": [],
+      "external_requests": [],
+      "result": "passed"
+    },
+    {
+      "app": "effectcraft",
+      "version": "v0.9.2",
+      "title": "EffectCraft",
+      "canvas": 1,
+      "wasm_started": true,
+      "page_errors": [],
+      "console_errors": [],
+      "failed_requests": [],
+      "http_errors": [],
+      "startup_signal": "Number.isFinite(window.effectcraftLoad?.readyMs)",
+      "external_requests": [],
+      "result": "passed"
+    },
+    {
+      "app": "figcraft",
+      "version": "v0.5.1",
+      "title": "FigCraft",
+      "canvas": 1,
+      "wasm_started": true,
+      "page_errors": [],
+      "console_errors": [],
+      "failed_requests": [],
+      "external_requests": [],
+      "result": "passed"
+    },
+    {
+      "app": "gridcraft",
+      "version": "v0.6.1",
+      "title": "GridCraft",
+      "canvas": 1,
+      "wasm_started": true,
+      "page_errors": [],
+      "console_errors": [],
+      "failed_requests": [],
+      "external_requests": [],
+      "result": "passed"
+    },
+    {
+      "app": "lightcraft",
+      "version": "v0.7.1",
+      "title": "LightCraft",
+      "canvas": 1,
+      "wasm_started": true,
+      "page_errors": [],
+      "console_errors": [],
+      "failed_requests": [],
+      "http_errors": [],
+      "startup_signal": "typeof globalThis.lightcraft?.command === \"function\"",
+      "external_requests": [],
+      "result": "passed"
+    },
+    {
+      "app": "pdfcraft",
+      "version": "v0.7.1",
+      "title": "PdfCraft",
+      "canvas": 1,
+      "wasm_started": true,
+      "page_errors": [],
+      "console_errors": [],
+      "failed_requests": [],
+      "external_requests": [],
+      "result": "passed"
+    },
+    {
+      "app": "photocraft",
+      "version": "v0.8.2",
+      "title": "PhotoCraft",
+      "canvas": 1,
+      "wasm_started": true,
+      "page_errors": [],
+      "console_errors": [
+        "Failed to load resource: the server responded with a status of 404 (Not Found)"
+      ],
+      "failed_requests": [],
+      "http_errors": [
+        {
+          "url": "http://127.0.0.1:54924/fonts/manifest.txt",
+          "status": 404
+        }
+      ],
+      "startup_signal": "window.__craftStarted === true",
+      "external_requests": [],
+      "result": "needs_review"
+    },
+    {
+      "app": "soundcraft",
+      "version": "v0.6.1",
+      "title": "SoundCraft",
+      "canvas": 1,
+      "wasm_started": true,
+      "page_errors": [],
+      "console_errors": [],
+      "failed_requests": [],
+      "external_requests": [],
+      "result": "passed"
+    },
+    {
+      "app": "vectorcraft",
+      "version": "v0.10.0",
+      "title": "VectorCraft",
+      "canvas": 1,
+      "wasm_started": true,
+      "page_errors": [],
+      "console_errors": [],
+      "failed_requests": [],
+      "external_requests": [],
+      "result": "passed"
+    },
+    {
+      "app": "wordcraft",
+      "version": "v0.6.1",
+      "title": "WordCraft",
+      "canvas": 1,
+      "wasm_started": true,
+      "page_errors": [],
+      "console_errors": [],
+      "failed_requests": [],
+      "external_requests": [],
+      "result": "passed"
+    }
+  ]
+}

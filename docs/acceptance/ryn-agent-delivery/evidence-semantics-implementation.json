@@ -1,0 +1,152 @@
+{
+  "record_version": "evidence-semantics-implementation-v2",
+  "status": "revised_implementation_frozen_pending_independent_recheck_and_real_model_validation",
+  "scope": "Generic production observation semantics; no case IDs or node-name special cases.",
+  "implementation": [
+    {
+      "path": "rynmesh/agent_runtime/evidence_semantics.py",
+      "sha256": "cbb44fcfa0e223cc7c154a1d200d068bd9b9cd2d545768154af6da7aec2e443c",
+      "change": "Bounded checker-only observation metadata and shared detailed checker guidance; peer identity fields accept canonical 32-byte public-key base64, including plus/slash/padding, separately from safe legacy IDs and model references. Raw evidence remains the factual basis."
+    },
+    {
+      "path": "rynmesh/agent_runtime/prompt.py",
+      "sha256": "be76a77923418637ba6897f533adda509baaebd6c70b277f73e43d32760efad2",
+      "change": "Version v2.10; replaces the long main-loop guidance with a short subject/scope/time/unknown instruction comparable in size to the previous short instruction, preserving tight-context compaction behavior."
+    },
+    {
+      "path": "rynmesh/agent_runtime/verification.py",
+      "sha256": "e529df17c19113ca52c670fc947c568c246e72b8e1609afc19d9b4001f8d02c8",
+      "change": "Receipt-bound optional contracts are constrained by aggregate bytes and explicit effective context_limit supplied by the runtime; default callers remain compatible. Raw receipts, claims, evidence, mechanical states and assessment schema are retained."
+    },
+    {
+      "path": "rynmesh/agent_runtime/read_verification.py",
+      "sha256": "50b357c1509deaa97aa997f14eee6769862df83bfe601925b049cfe874047eb9",
+      "change": "Removes duplicated contract metadata from mechanical readback entirely; shorter coverage text clarifies observed provider/recipient scope and excludes global absence or causal proof. Original checked_facts remain unchanged."
+    },
+    {
+      "path": "rynmesh/agent_runtime/runtime.py",
+      "sha256": "af0bf85149cd5afd8262a295476a32196d746b99e13f2b3de20bce82f47a0612",
+      "change": "One-line integration passes self._context_limit(selected) to checker_messages; does not duplicate the model-window formula or expand persisted limits."
+    },
+    {
+      "path": "tests/test_agent_evidence_semantics.py",
+      "sha256": "b37df2d644c2aedcad0b7b9e594d90ed4ff1aa6f871f287e44f538eb420de98f",
+      "change": "Nine focused tests, including canonical and production-encoded public-key identities, free-text rejection, unchanged raw evidence under 1500/8000-byte read budgets, and the real runtime 4940-byte effective model-window limit."
+    }
+  ],
+  "validation_history": [
+    {
+      "stage": "initial_environment_attempt",
+      "command": "python -m pytest -q tests/test_agent_evidence_semantics.py tests/test_agent_read_verification.py tests/test_agent_runtime_verification.py tests/test_agent_observation_transitions.py",
+      "result": "The default Python 3.12 interpreter lacked pytest; no tests executed. Subsequent checks used the existing workspace .venv interpreter."
+    },
+    {
+      "stage": "initial_test_run",
+      "command": ".venv/Scripts/python.exe -m pytest -q tests/test_agent_evidence_semantics.py tests/test_agent_read_verification.py tests/test_agent_runtime_verification.py tests/test_agent_observation_transitions.py",
+      "result": "1 failed, 76 passed in 19.38s",
+      "failure": "The newly authored test_checker_contracts_are_bound_to_current_confirmed_read_receipts_and_bounded fixture omitted scope_revision; existing operation_permissions.projection raised KeyError when visiting its write receipt.",
+      "repair": "Added scope_revision=1 to that new test fixture. No existing validation requirement was relaxed. The subsequent six focused tests passed."
+    },
+    {
+      "stage": "final_regression",
+      "command": ".venv/Scripts/python.exe -m pytest -q tests/test_agent_evidence_semantics.py tests/test_agent_read_verification.py tests/test_agent_runtime_verification.py tests/test_agent_observation_transitions.py tests/test_agent_runtime_control.py tests/test_agent_runtime_budget.py tests/test_agent_diagnostics_integration.py",
+      "result": "98 passed in 23.95s",
+      "exit_code": 0
+    },
+    {
+      "stage": "final_static_check",
+      "command": ".venv/Scripts/python.exe -m ruff check rynmesh/agent_runtime/evidence_semantics.py rynmesh/agent_runtime/prompt.py rynmesh/agent_runtime/verification.py rynmesh/agent_runtime/read_verification.py tests/test_agent_evidence_semantics.py",
+      "result": "All checks passed!",
+      "exit_code": 0,
+      "earlier_repairs": "The first Ruff check reported three import-order findings; fixed only imports in the implementation files before final validation."
+    },
+    {
+      "stage": "revised_targeted_and_original_runtime",
+      "command": ".venv/Scripts/python.exe -m pytest -q tests/test_agent_evidence_semantics.py tests/test_agent_runtime.py",
+      "result": "43 passed in 7.01s",
+      "note": "This run preceded adding the ninth focused model-window test and included all 35 original runtime tests."
+    },
+    {
+      "stage": "revised_focused",
+      "command": ".venv/Scripts/python.exe -m pytest -q tests/test_agent_evidence_semantics.py",
+      "result": "9 passed in 2.08s"
+    },
+    {
+      "stage": "revised_final_regression",
+      "command": ".venv/Scripts/python.exe -m pytest -q tests/test_agent_evidence_semantics.py tests/test_agent_read_verification.py tests/test_agent_runtime.py tests/test_agent_runtime_verification.py tests/test_agent_observation_transitions.py tests/test_agent_runtime_control.py tests/test_agent_runtime_budget.py tests/test_agent_diagnostics_integration.py tests/test_agent_operation_permissions.py tests/test_agent_reference_host.py",
+      "result": "153 passed in 28.45s",
+      "exit_code": 0
+    },
+    {
+      "stage": "revised_final_static_check",
+      "command": ".venv/Scripts/python.exe -m ruff check rynmesh/agent_runtime/evidence_semantics.py rynmesh/agent_runtime/prompt.py rynmesh/agent_runtime/verification.py rynmesh/agent_runtime/read_verification.py rynmesh/agent_runtime/runtime.py tests/test_agent_evidence_semantics.py",
+      "result": "All checks passed!",
+      "exit_code": 0
+    }
+  ],
+  "boundaries": {
+    "real_model_api_called": false,
+    "owner_credentials_read": false,
+    "frozen_cases_modified": false,
+    "heldout_read_or_modified": false,
+    "generator_modified": false,
+    "historical_runs_or_reviews_modified": false,
+    "production_and_test_files_frozen": true,
+    "real_glm_validation_owner": "root",
+    "independent_review_status": "pending"
+  },
+  "limitations": [
+    "Deterministic tests establish projection and runtime budget behavior, not whether an LLM correctly grounds arbitrary natural-language claims. The checker remains model semantic assessment, not independent external fact verification.",
+    "No real GLM/API call has been made for this implementation. Semantic effectiveness, formal acceptance and aggregate success remain unestablished.",
+    "Optional checker contracts may omit rows or whole contracts under byte/count/effective-context constraints; omission counts are explicit and raw evidence is retained. If raw evidence and required instructions alone exceed the actual context budget, the existing strict limit still applies.",
+    "Contracts are schema-derived interpretation limits, not new external facts; raw observations and their original timestamps remain the basis for claims.",
+    "The independent reviewer is rechecking the revised frozen six-file snapshot. Initial implementation hashes, the 98-test result, first new-fixture failure, and initial review findings remain preserved in this record."
+  ],
+  "updated_at": "2026-10-10T06:01:11.898207+00:00",
+  "initial_frozen_implementation": [
+    {
+      "path": "rynmesh/agent_runtime/evidence_semantics.py",
+      "sha256": "03e2c54b42198a14c0f2ef47e198ea6f7e664722e9a83e9b5ab2aed1d332632a",
+      "change": "Shared evidence guidance and bounded registered-read observation_contract projection. Records subject, local grant direction, catalog scope, read time versus original evidence time, and unknown metadata. Projects whitelisted values rather than free-form notes or tool arguments; retains raw results. Each contract is bounded to 2048 encoded bytes by omitting duplicate metadata rows with explicit counts."
+    },
+    {
+      "path": "rynmesh/agent_runtime/prompt.py",
+      "sha256": "4c97b61f0aa208efdf7d2550564671fa18c132d2ba0c00ff9b37c19ea656fa51",
+      "change": "Replaces the previous short overlapping evidence instruction with shared subject/scope/time guidance and increments prompt version from ryn-agent-control-v2.9 to ryn-agent-control-v2.10."
+    },
+    {
+      "path": "rynmesh/agent_runtime/verification.py",
+      "sha256": "9f158ce53e4913e484249b6a167e1249f315b3ae99cc3ef6ea67866d6591dc03",
+      "change": "Supplies receipt-bound observation contracts for current confirmed registered reads and asks the checker to assess strongest claims against scope and raw evidence. Optional duplicate metadata has a 4096-byte aggregate budget and respects remaining configured checker context. Preserves raw evidence, assessment schema, mechanical statuses and bounded repair behavior. Outcome wording distinguishes mechanical coverage from model semantic assessment."
+    },
+    {
+      "path": "rynmesh/agent_runtime/read_verification.py",
+      "sha256": "2a70b72f046ce37fccb9dc7b6f79948e8f897c5c59c1a0f2fc58f36fc57c2231",
+      "change": "Attaches observation_contract to fresh read evidence and narrows model/service verification descriptions to observer-visible facts and local outgoing grants. Passing remains a comparison result, not proof of all answer claims or causality."
+    },
+    {
+      "path": "tests/test_agent_evidence_semantics.py",
+      "sha256": "9b7175886e64cd8639fae7c8b515312a946dd0c2932f9d581e2de278810d237c",
+      "change": "Six focused tests cover filtered catalog and authorization subjects, known local configuration and real changes, old heartbeat times and unperformed probes, missing legacy metadata, bounded injection-resistant projection, and current receipt binding with an 8000-character checker context case."
+    }
+  ],
+  "initial_limitations": [
+    "These deterministic tests establish projection behavior and regressions, not that an LLM will correctly ground arbitrary natural-language claims. The checker remains a model semantic assessment, not an independent external fact check.",
+    "No real GLM validation has been performed for this implementation, so it does not establish that either prior semantic failure has been solved, nor formal acceptance or a success rate.",
+    "Read evidence can gain up to 2048 encoded bytes. A raw read verification result already close to max_output_chars may hit the existing strict output limit; raw evidence is not silently truncated to make it fit.",
+    "Optional checker contracts may omit duplicate rows or whole contracts when their count/byte/context budgets are exhausted. Omission counts are explicit and raw evidence remains available.",
+    "Independent reviewer sharing_review has preliminarily identified that the current identity whitelist excludes plus and equals signs used by production base64 peer IDs, potentially projecting those subjects as unknown. This finding is recorded pending the reviewer's formal report; the five implementation/test files remain frozen and have not been repaired after the recorded 98-test run."
+  ],
+  "independent_review_followup": {
+    "source": "docs/acceptance/ryn-agent-delivery/evidence-semantics-independent-review.json",
+    "initial_findings_preserved": true,
+    "initial_test_result_reported_by_reviewer": "81 passed, 3 failed in 17.59s; three existing 8000-context runtime compaction/followup tests regressed.",
+    "repairs": [
+      "Production base64 peer identity characters are validated as canonical public keys rather than rejected by the generic ID whitelist.",
+      "Checker metadata respects the actual model-constrained context limit, not only the saved owner limit.",
+      "Main-loop authority carries a brief rule rather than the full detailed checker guidance; existing 8000-context tests pass without raising limits.",
+      "Mechanical readback no longer duplicates contracts, avoiding the independently reproduced raw-verification-fit versus metadata-overflow regression."
+    ],
+    "recheck_status": "Final six-file hashes sent to sharing_review; independent recheck pending."
+  }
+}

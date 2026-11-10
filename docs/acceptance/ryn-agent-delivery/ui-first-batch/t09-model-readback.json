@@ -1,0 +1,13 @@
+{
+  "sibling_effective_unchanged": true,
+  "sibling_rule_unchanged": true,
+  "sibling_destination_unchanged": true,
+  "second_output": 3000,
+  "second_tools": {
+    "status": "passed",
+    "checked_at": "2026-10-09T19:40:48.517669+08:00",
+    "method": "two_turn_client_tool"
+  },
+  "default_model": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+  "task_remains_paused": "paused"
+}

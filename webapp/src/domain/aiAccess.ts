@@ -17,7 +17,7 @@ async function request<T>(path = "", method = "GET", body?: unknown): Promise<T>
     const messages: Record<string, string> = {
       ai_permission_revision_conflict: "Permission changed in another view. Refresh before making another choice.",
       ai_friend_inactive: "This friendship is no longer active. Refresh your friends list.",
-      ai_friend_service_unreachable: "Could not reach this friend's AI service. Check the connection and refresh; access was not confirmed.",
+      ai_friend_service_unreachable: "Could not reach this friend's AI service. Check the connection and refresh. If their address changed, ask for a new ordinary friend invitation and review it in Friends to update their address; existing permissions are kept.",
     };
     throw new Error(messages[value.detail] ?? "Could not confirm the AI permission change. Refresh to check the current state before retrying.");
   }

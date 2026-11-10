@@ -1,0 +1,585 @@
+{
+  "task": {
+    "id": "agent_6f39202c8e344f2dbb7d5a9ba21f17de",
+    "client_request_id": "7cff9be5-e0c6-452a-8fa8-72187bafb653",
+    "title": "T09 Scope UI 验收：只读取 Orion week-41 的三份合成资料，禁止修改、分享或访问其他目录。",
+    "model_id": "local/src-1fe50b9c7ce9432b-fcda1814c7c9",
+    "status": "paused",
+    "revision": 22,
+    "created_at": "2026-10-09T19:35:30.408003+08:00",
+    "updated_at": "2026-10-09T19:44:49.161724+08:00",
+    "messages": [
+      {
+        "content": "T09 Scope UI 验收：只读取 Orion week-41 的三份合成资料，禁止修改、分享或访问其他目录。",
+        "message_id": "agent_6f39202c8e344f2dbb7d5a9ba21f17de:owner:0",
+        "role": "user"
+      },
+      {
+        "content": "只读取本任务授权的合成资料。",
+        "context_epoch": 0,
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{}",
+              "name": "ryn_list_resource_roots"
+            },
+            "id": "scope-roots-d39ce66479bf41b0b7eb5553d0313724",
+            "type": "function"
+          }
+        ]
+      },
+      {
+        "content": "{\"roots\":[{\"actions\":[\"list\",\"read_ai\"],\"connection_id\":\"76f367d62ab744db88727f5ab8d62ce8\",\"connection_name\":\"隔离资料库\",\"directory_name\":\"week-41\",\"recursive\":false,\"resource_ref\":\"gAAAAABqyNGCIXZM09lVvXRI_Zur0JgFyZmVmaoAkiiyZkLutQhDb5P66tdfpciss4lhlcTLZpgejHfHJL140zfgq52dHs3ckVJVObPZTPi3MO9ykPGwxP5YmAH53HNQrt3zQ6Y4TuwQt1LkvfZoThlBJTA2ay5M5yN-j2WqS-7Nb23gwYXomjyZNn5v244V--z4q82dJnuG-qy5M9eMO9WgNOFPvA0cmN1fvHKQ4Ge7THSNQnjOjjgREI1n5cAxsCq5i8bo2oMNHPp3xW6VpIOPNouR2-Fxt3h1eeqHXklQqIe2Tgql5-c2M61b1d-OA0jFK0wGfiDX\",\"scope_root_path\":\"projects/orion/week-41\"}],\"scope_revision\":1,\"untrusted_data\":true}",
+        "context_epoch": 0,
+        "role": "tool",
+        "tool_call_id": "scope-roots-d39ce66479bf41b0b7eb5553d0313724"
+      },
+      {
+        "content": "只读取本任务授权的合成资料。",
+        "context_epoch": 0,
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\"resource_ref\":\"gAAAAABqyNGCIXZM09lVvXRI_Zur0JgFyZmVmaoAkiiyZkLutQhDb5P66tdfpciss4lhlcTLZpgejHfHJL140zfgq52dHs3ckVJVObPZTPi3MO9ykPGwxP5YmAH53HNQrt3zQ6Y4TuwQt1LkvfZoThlBJTA2ay5M5yN-j2WqS-7Nb23gwYXomjyZNn5v244V--z4q82dJnuG-qy5M9eMO9WgNOFPvA0cmN1fvHKQ4Ge7THSNQnjOjjgREI1n5cAxsCq5i8bo2oMNHPp3xW6VpIOPNouR2-Fxt3h1eeqHXklQqIe2Tgql5-c2M61b1d-OA0jFK0wGfiDX\"}",
+              "name": "ryn_list_resources"
+            },
+            "id": "scope-list-50804a61554d45778735f292367eb1d7",
+            "type": "function"
+          }
+        ]
+      },
+      {
+        "content": "{\"bytes\":2370,\"note\":\"Full output is encrypted locally. Use ryn_read_result for bounded pages; this reference is not proof of the requested outcome.\",\"output_sha256\":\"a11280cecb1e8c02931477334b477415644004bac1be44ee63bd8ebaaa7fc12e\",\"result_ref\":\"result_a0d24ce465ab455ca5d8c6a82a95769b\"}",
+        "context_epoch": 0,
+        "role": "tool",
+        "tool_call_id": "scope-list-50804a61554d45778735f292367eb1d7"
+      },
+      {
+        "content": "确定性UI联调已收到 0 份读取回执。请根据回执核对内容；此响应不代表真实模型效果或独立目标核验。",
+        "context_epoch": 0,
+        "role": "assistant"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-09T19:35:30.408003+08:00",
+        "context_epoch": 0,
+        "seq": 1,
+        "type": "created"
+      },
+      {
+        "at": "2026-10-09T19:35:30.875518+08:00",
+        "context_epoch": 0,
+        "seq": 2,
+        "step": 1,
+        "type": "model_started"
+      },
+      {
+        "at": "2026-10-09T19:35:31.083697+08:00",
+        "content": "只读取本任务授权的合成资料。",
+        "context_epoch": 0,
+        "seq": 3,
+        "tool_count": 1,
+        "type": "assistant"
+      },
+      {
+        "at": "2026-10-09T19:35:31.625584+08:00",
+        "call_id": "scope-roots-d39ce66479bf41b0b7eb5553d0313724",
+        "context_epoch": 0,
+        "effect": "read",
+        "operation_id": "op_e783488acb0f4372b9c035c819da2bfb",
+        "seq": 4,
+        "tool": "ryn_list_resource_roots",
+        "type": "tool_started"
+      },
+      {
+        "at": "2026-10-09T19:35:31.650612+08:00",
+        "call_id": "scope-roots-d39ce66479bf41b0b7eb5553d0313724",
+        "context_epoch": 0,
+        "operation_id": "op_e783488acb0f4372b9c035c819da2bfb",
+        "result": {
+          "roots": [
+            {
+              "actions": [
+                "list",
+                "read_ai"
+              ],
+              "connection_id": "76f367d62ab744db88727f5ab8d62ce8",
+              "connection_name": "隔离资料库",
+              "directory_name": "week-41",
+              "recursive": false,
+              "resource_ref": "gAAAAABqyNGCIXZM09lVvXRI_Zur0JgFyZmVmaoAkiiyZkLutQhDb5P66tdfpciss4lhlcTLZpgejHfHJL140zfgq52dHs3ckVJVObPZTPi3MO9ykPGwxP5YmAH53HNQrt3zQ6Y4TuwQt1LkvfZoThlBJTA2ay5M5yN-j2WqS-7Nb23gwYXomjyZNn5v244V--z4q82dJnuG-qy5M9eMO9WgNOFPvA0cmN1fvHKQ4Ge7THSNQnjOjjgREI1n5cAxsCq5i8bo2oMNHPp3xW6VpIOPNouR2-Fxt3h1eeqHXklQqIe2Tgql5-c2M61b1d-OA0jFK0wGfiDX",
+              "scope_root_path": "projects/orion/week-41"
+            }
+          ],
+          "scope_revision": 1,
+          "untrusted_data": true
+        },
+        "seq": 5,
+        "tool": "ryn_list_resource_roots",
+        "type": "tool_result"
+      },
+      {
+        "at": "2026-10-09T19:35:32.201011+08:00",
+        "context_epoch": 0,
+        "seq": 6,
+        "step": 2,
+        "type": "model_started"
+      },
+      {
+        "at": "2026-10-09T19:35:32.327039+08:00",
+        "content": "只读取本任务授权的合成资料。",
+        "context_epoch": 0,
+        "seq": 7,
+        "tool_count": 1,
+        "type": "assistant"
+      },
+      {
+        "at": "2026-10-09T19:35:32.865401+08:00",
+        "call_id": "scope-list-50804a61554d45778735f292367eb1d7",
+        "context_epoch": 0,
+        "effect": "read",
+        "operation_id": "op_7a4bd8e4aab8482991cf382fd95e14f0",
+        "seq": 8,
+        "tool": "ryn_list_resources",
+        "type": "tool_started"
+      },
+      {
+        "at": "2026-10-09T19:35:32.946431+08:00",
+        "call_id": "scope-list-50804a61554d45778735f292367eb1d7",
+        "context_epoch": 0,
+        "operation_id": "op_7a4bd8e4aab8482991cf382fd95e14f0",
+        "result": {
+          "bytes": 2370,
+          "note": "Full output is encrypted locally. Use ryn_read_result for bounded pages; this reference is not proof of the requested outcome.",
+          "output_sha256": "a11280cecb1e8c02931477334b477415644004bac1be44ee63bd8ebaaa7fc12e",
+          "result_ref": "result_a0d24ce465ab455ca5d8c6a82a95769b"
+        },
+        "seq": 9,
+        "tool": "ryn_list_resources",
+        "type": "tool_result"
+      },
+      {
+        "at": "2026-10-09T19:35:33.467081+08:00",
+        "context_epoch": 0,
+        "seq": 10,
+        "step": 3,
+        "type": "model_started"
+      },
+      {
+        "at": "2026-10-09T19:35:33.609823+08:00",
+        "content": "确定性UI联调已收到 0 份读取回执。请根据回执核对内容；此响应不代表真实模型效果或独立目标核验。",
+        "context_epoch": 0,
+        "seq": 11,
+        "tool_count": 0,
+        "type": "assistant"
+      },
+      {
+        "at": "2026-10-09T19:35:33.609823+08:00",
+        "context_epoch": 0,
+        "goal_revision": 1,
+        "seq": 12,
+        "type": "verification_started"
+      },
+      {
+        "at": "2026-10-09T19:35:34.206019+08:00",
+        "context_epoch": 0,
+        "criterion_id": "criterion_op_e783488acb0f4372b9c035c819da2bfb",
+        "evidence_id": "evidence_41f1accda2244a87b211764b08d6f43d",
+        "seq": 13,
+        "status": "passed",
+        "type": "criterion_checked"
+      },
+      {
+        "at": "2026-10-09T19:35:34.809253+08:00",
+        "context_epoch": 0,
+        "criterion_id": "criterion_op_7a4bd8e4aab8482991cf382fd95e14f0",
+        "evidence_id": "evidence_65f4b4396c3043bd87d81e0dcb92f9db",
+        "seq": 14,
+        "status": "passed",
+        "type": "criterion_checked"
+      },
+      {
+        "at": "2026-10-09T19:35:35.360347+08:00",
+        "context_epoch": 0,
+        "seq": 15,
+        "step": 4,
+        "type": "verification_model_started"
+      },
+      {
+        "at": "2026-10-09T19:35:35.438304+08:00",
+        "context_epoch": 0,
+        "error": "agent_invalid_verification_response",
+        "response_sha256": "4e77c1d2a4675aff20fcc9a2f02963fd8e9c1f2c5677a07fd5e2e52e4588dbbd",
+        "seq": 16,
+        "type": "verification_response_rejected"
+      },
+      {
+        "at": "2026-10-09T19:35:35.446304+08:00",
+        "context_epoch": 0,
+        "error": "agent_invalid_verification_response",
+        "retry_count": 1,
+        "seq": 17,
+        "type": "verification_format_retry_scheduled"
+      },
+      {
+        "at": "2026-10-09T19:35:35.973566+08:00",
+        "context_epoch": 0,
+        "seq": 18,
+        "step": 5,
+        "type": "verification_model_started"
+      },
+      {
+        "at": "2026-10-09T19:35:36.048301+08:00",
+        "context_epoch": 0,
+        "error": "agent_invalid_verification_response",
+        "response_sha256": "4e77c1d2a4675aff20fcc9a2f02963fd8e9c1f2c5677a07fd5e2e52e4588dbbd",
+        "seq": 19,
+        "type": "verification_response_rejected"
+      },
+      {
+        "at": "2026-10-09T19:35:36.056302+08:00",
+        "context_epoch": 0,
+        "error": "agent_invalid_verification_response",
+        "outcome": "unverified",
+        "seq": 20,
+        "type": "verification_finished"
+      },
+      {
+        "at": "2026-10-09T19:36:31.157084+08:00",
+        "context_epoch": 1,
+        "data_policy": {
+          "automatic_resume": false,
+          "excluded": [
+            "previous_model_messages",
+            "previous_tool_results",
+            "previous_summaries",
+            "previous_resource_grants"
+          ],
+          "resources_require_explicit_transfer_or_new_authorization": true,
+          "sent_after_resume": [
+            "owner_messages",
+            "current_goal",
+            "selected_skills",
+            "current_saved_preferences"
+          ]
+        },
+        "destination": {
+          "catalog_model_id": "local/src-1fe50b9c7ce9432b-fcda1814c7c9",
+          "destination_revision": "e9eedc5ed97a414683b06b2b3c8a4697",
+          "provider_peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+          "source_id": "src-1fe50b9c7ce9432b"
+        },
+        "previous": {
+          "context_epoch": 0,
+          "destination": {
+            "catalog_model_id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+            "destination_revision": "aabd71b4a4ef49dfb9c7654726d28d1d",
+            "provider_peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+            "source_id": "src-1fe50b9c7ce9432b"
+          },
+          "model_id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+          "scope_revision": 1
+        },
+        "resource_scope_transferred": false,
+        "scope_revision": 2,
+        "seq": 21,
+        "type": "model_changed"
+      },
+      {
+        "at": "2026-10-09T19:44:49.161724+08:00",
+        "context_epoch": 2,
+        "data_policy": {
+          "automatic_resume": false,
+          "excluded": [
+            "previous_model_messages",
+            "previous_tool_results",
+            "previous_summaries",
+            "previous_resource_grants"
+          ],
+          "resources_require_explicit_transfer_or_new_authorization": true,
+          "sent_after_resume": [
+            "owner_messages",
+            "current_goal",
+            "selected_skills",
+            "current_saved_preferences"
+          ]
+        },
+        "destination": {
+          "catalog_model_id": "local/src-1fe50b9c7ce9432b-fcda1814c7c9",
+          "destination_revision": "0b32ff9e201e42b9a2104c20b32e36d7",
+          "provider_peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+          "source_id": "src-1fe50b9c7ce9432b"
+        },
+        "previous": {
+          "context_epoch": 1,
+          "destination": {
+            "catalog_model_id": "local/src-1fe50b9c7ce9432b-fcda1814c7c9",
+            "destination_revision": "e9eedc5ed97a414683b06b2b3c8a4697",
+            "provider_peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+            "source_id": "src-1fe50b9c7ce9432b"
+          },
+          "model_id": "local/src-1fe50b9c7ce9432b-fcda1814c7c9",
+          "scope_revision": 2
+        },
+        "resource_scope_transferred": false,
+        "scope_revision": 3,
+        "seq": 22,
+        "type": "model_changed"
+      }
+    ],
+    "pending_approval": null,
+    "steps": 5,
+    "result": "",
+    "error": null,
+    "limits": {
+      "max_context_chars": 60000,
+      "max_output_chars": 1000,
+      "max_seconds": 180,
+      "max_steps": 16
+    },
+    "permission_mode": "confirm_changes",
+    "allowed_write_tools": [],
+    "model_destination": {
+      "catalog_model_id": "local/src-1fe50b9c7ce9432b-fcda1814c7c9",
+      "destination_revision": "0b32ff9e201e42b9a2104c20b32e36d7",
+      "provider_peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+      "source_id": "src-1fe50b9c7ce9432b"
+    },
+    "verification_evidence": [],
+    "result_refs": [
+      {
+        "bytes": 2370,
+        "context_epoch": 0,
+        "goal_revision": 1,
+        "id": "result_a0d24ce465ab455ca5d8c6a82a95769b",
+        "operation_id": "op_7a4bd8e4aab8482991cf382fd95e14f0",
+        "scope_revision": 1,
+        "sha256": "a11280cecb1e8c02931477334b477415644004bac1be44ee63bd8ebaaa7fc12e",
+        "task_id": "agent_6f39202c8e344f2dbb7d5a9ba21f17de",
+        "tool": "ryn_list_resources"
+      }
+    ],
+    "schema_version": 2,
+    "goal": {
+      "constraints": [
+        {
+          "id": "constraint:agent_6f39202c8e344f2dbb7d5a9ba21f17de:owner:0",
+          "message_id": "agent_6f39202c8e344f2dbb7d5a9ba21f17de:owner:0",
+          "required": true,
+          "source": "user",
+          "text": "T09 Scope UI 验收：只读取 Orion week-41 的三份合成资料，禁止修改、分享或访问其他目录。"
+        }
+      ],
+      "kind": "unclassified",
+      "original_message_id": "agent_6f39202c8e344f2dbb7d5a9ba21f17de:owner:0",
+      "revision": 1,
+      "text": "T09 Scope UI 验收：只读取 Orion week-41 的三份合成资料，禁止修改、分享或访问其他目录。"
+    },
+    "criteria": [
+      {
+        "description": "Satisfy the owner's complete current goal and constraints.",
+        "evidence_refs": [],
+        "goal_revision": 1,
+        "id": "goal-coverage",
+        "kind": "semantic",
+        "required": true,
+        "source": "user",
+        "source_ref": "agent_6f39202c8e344f2dbb7d5a9ba21f17de:owner:0",
+        "status": "pending",
+        "verifier": null
+      }
+    ],
+    "plan": {
+      "goal_revision": 1,
+      "revision": 2,
+      "steps": []
+    },
+    "control_revision": 3,
+    "event_cursor": 22,
+    "run_state": "paused",
+    "pending_input": null,
+    "outcome": {
+      "criteria_results": [],
+      "evidence_refs": [],
+      "goal_revision": 1,
+      "status": "unverified",
+      "summary": "",
+      "uncertainties": [
+        "Model changed; resume explicitly and reauthorize any resource access."
+      ]
+    },
+    "scope_revision": 3,
+    "archived": false,
+    "skills": [],
+    "budget": {
+      "limits": {
+        "max_total_model_calls": 128,
+        "max_total_seconds": 3600,
+        "max_total_tokens": 2000000,
+        "max_total_tool_calls": 256
+      },
+      "round": 1,
+      "lifetime": {
+        "model_calls": 5,
+        "tool_calls": 4,
+        "charged_model_calls": 5,
+        "charged_tool_calls": 4,
+        "known_input_tokens": 200,
+        "known_output_tokens": 125,
+        "input_tokens": 200,
+        "output_tokens": 125,
+        "total_tokens": 325,
+        "charged_tokens": 325,
+        "charged_seconds": 0.6109999999898719,
+        "active_seconds": 0.6109999999898719,
+        "cost": null,
+        "cost_status": "unknown",
+        "usage_complete": true,
+        "legacy_usage_unknown": false,
+        "unsettled_operations": 0
+      },
+      "current_round": {
+        "model_calls": 5,
+        "tool_calls": 4,
+        "charged_model_calls": 5,
+        "charged_tool_calls": 4,
+        "known_input_tokens": 200,
+        "known_output_tokens": 125,
+        "input_tokens": 200,
+        "output_tokens": 125,
+        "total_tokens": 325,
+        "charged_tokens": 325,
+        "charged_seconds": 0.6109999999898719,
+        "active_seconds": 0.6109999999898719,
+        "cost": null,
+        "cost_status": "unknown",
+        "usage_complete": true,
+        "legacy_usage_unknown": false,
+        "unsettled_operations": 0
+      },
+      "reservation_policy": "Unknown model usage retains the conservative dispatch reservation; cost is unknown without trusted pricing."
+    },
+    "allowed_actions": {
+      "pause": {
+        "enabled": false,
+        "requires_control_revision": false,
+        "reason": "agent_invalid_transition"
+      },
+      "cancel": {
+        "enabled": true,
+        "requires_control_revision": false,
+        "reason": null
+      },
+      "resume": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "approve": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "deny": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "answer": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "steer": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "information": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "scope": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "reconcile": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "archive": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "restore": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "delete": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "budget": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "source_credential": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "model": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      }
+    }
+  },
+  "scope": {
+    "scope": {
+      "egress_grants": [],
+      "resource_grants": [],
+      "revision": 3,
+      "selection": {
+        "allow_model_data": false,
+        "resources": [
+          {
+            "actions": [
+              "list",
+              "read_ai"
+            ],
+            "connection_id": "76f367d62ab744db88727f5ab8d62ce8",
+            "recursive": false,
+            "root_path": "projects/orion/week-41"
+          }
+        ]
+      }
+    },
+    "scope_revision": 3,
+    "control_revision": 3,
+    "model_destination": {
+      "catalog_model_id": "local/src-1fe50b9c7ce9432b-fcda1814c7c9",
+      "destination_revision": "0b32ff9e201e42b9a2104c20b32e36d7",
+      "provider_peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+      "source_id": "src-1fe50b9c7ce9432b"
+    },
+    "current_model_destination": {
+      "catalog_model_id": "local/src-1fe50b9c7ce9432b-fcda1814c7c9",
+      "provider_peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+      "source_id": "src-1fe50b9c7ce9432b",
+      "destination_revision": "0b32ff9e201e42b9a2104c20b32e36d7"
+    }
+  },
+  "current_destination_matches_catalog": true,
+  "default_model": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09"
+}

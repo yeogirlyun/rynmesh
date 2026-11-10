@@ -1,0 +1,96 @@
+{
+  "signed_registry_evidence": [
+    {
+      "alg": "ed25519",
+      "payload": {
+        "capabilities": [
+          "publish",
+          "seed",
+          "verify"
+        ],
+        "endpoints": [],
+        "metadata": {},
+        "network_id": "rynmesh-main",
+        "node_name": "node-d",
+        "peer_id": "DLyyuPbYhuJHDcWkc/1zW+9lC3NVLMrueOdxLCzB6go=",
+        "safety_packs": [
+          "@rynmesh/safety-core@0.1.0"
+        ],
+        "updated_at": ""
+      },
+      "public_key": "DLyyuPbYhuJHDcWkc/1zW+9lC3NVLMrueOdxLCzB6go=",
+      "signature": "r55B+Vc/yPhaBIXuYUYJvW4J0BUxxsSXoFt5YpU+Sl3X3/RKxRrmvdQw+wBK7VnPrDwtjxJvigNT4wW6T4EcDg=="
+    },
+    {
+      "alg": "ed25519",
+      "payload": {
+        "capabilities": [
+          "publish",
+          "seed",
+          "verify"
+        ],
+        "endpoints": [
+          "http://127.0.0.1:56144"
+        ],
+        "metadata": {},
+        "network_id": "rynmesh-main",
+        "node_name": "node-a",
+        "peer_id": "0l39Ut6u8fRKCAn1VcLQWtE2OjsCdayxI0GxDjQEWLE=",
+        "safety_packs": [
+          "@rynmesh/safety-core@0.1.0"
+        ],
+        "updated_at": "2026-10-09T08:00:00Z"
+      },
+      "public_key": "0l39Ut6u8fRKCAn1VcLQWtE2OjsCdayxI0GxDjQEWLE=",
+      "signature": "yDUrp6rWnJ9xKGMiHeEy8/reHAvZdKOSiZcA8qmhqP+jiTgyuFtK2R33CmzS3m4YyveNZHjKqxpxeW31nO3FDQ=="
+    },
+    {
+      "alg": "ed25519",
+      "payload": {
+        "capabilities": [
+          "publish",
+          "seed",
+          "verify"
+        ],
+        "endpoints": [],
+        "metadata": {},
+        "network_id": "rynmesh-main",
+        "node_name": "node-c",
+        "peer_id": "88oLTCBMKFagPJ3gCH1GAGrFd7P07IxVw35UyiwaWSc=",
+        "safety_packs": [
+          "@rynmesh/safety-core@0.1.0"
+        ],
+        "updated_at": "2026-10-09T07:50:00Z"
+      },
+      "public_key": "88oLTCBMKFagPJ3gCH1GAGrFd7P07IxVw35UyiwaWSc=",
+      "signature": "n3SmDp8JrixcjJD175zucsE88T74m3vToVGi/Sm04z+QnoKqXSx1sp7x2qNFcx9upBfbmO3eCk7mHhFEyfnICQ=="
+    }
+  ],
+  "source_readback": {
+    "model-a": {
+      "agent": true,
+      "chat": true,
+      "id": "local/src-585ba285b6f248f5-8ed3f6ad685b",
+      "shared": true
+    },
+    "model-b": {
+      "agent": false,
+      "chat": true,
+      "id": "local/src-585ba285b6f248f5-f44e64e75f39",
+      "shared": false
+    },
+    "model-c": {
+      "agent": true,
+      "chat": true,
+      "id": "local/src-06caf9f8daa641b7-8ed3f6ad685b",
+      "shared": false
+    },
+    "model-d": {
+      "agent": false,
+      "chat": false,
+      "id": "local/src-12c4b5a684ae4dfb-8e2c7ac50813",
+      "shared": false
+    }
+  },
+  "source_readback_scope": "Provider business truth for collector review only; not consumer tool observations."
+}

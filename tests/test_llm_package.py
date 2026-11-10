@@ -86,7 +86,7 @@ class _OpenAIHandler(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(size))
         type(self).calls += 1
         type(self).last_messages = body.get("messages", [])
-        if body["stream"] is True:
+        if body.get("stream") is True:
             self._send({"choices": [{"delta": {"content": "stream supported"}}]})
             return
         self._send({
@@ -2209,3 +2209,42 @@ def test_fixed_port_failed_bind_releases_reservation(monkeypatch):
         finally:
             await connection.close()
     asyncio.run(retry())
+
+
+def test_owned_api_source_is_available_to_node_review_and_archive_without_publication(tmp_path, openai_server):
+    from rynmesh.ask_ryn.context import AskContextService
+    from rynmesh.ask_ryn.runs import AskRunService
+    from rynmesh.ask_ryn.store import ConversationStore
+    store = RynmeshStore(home=tmp_path / "node", network_dir=tmp_path / "network")
+    key = peer_box.load_or_create_messaging_key(store.home / "messaging.x25519")
+    app = FastAPI()
+    commands = install_llm_routes(app, store=store, home=store.home, messaging_key=key,
+        resolve_endpoint=lambda _: pytest.fail("Own source must never use peer transport"),
+        resolve_pubkey=lambda _: pytest.fail("Own source must never use peer transport"))
+    client = TestClient(app)
+    source = client.put("/api/local/llm/sources/new", json={"name": "Owned API", "kind": "local", "base_url": openai_server + "/v1", "models": ["test-real-api"]})
+    assert source.status_code == 200, source.text
+    assert client.post("/api/local/llm/sources/" + source.json()["id"] + "/test").status_code == 200
+    records = commands.discover("network")
+    assert records == client.get("/api/local/llm/services?network_id=network").json()["services"]
+    service = next(row for row in records if row.get("local_only") and row["service"]["adapter"] == "openai_compatible")
+    assert store.list_job_capacities(network_id="network", capability=llm_routes.CAPABILITY)["capacities"] == []
+    history = ConversationStore(store.home / "ask-ryn", key)
+    row = history.save({"id": "own-api", "title": "Owned source", "serviceKey": store.peer_id + "::" + service["service"]["package_id"],
+        "serviceName": "Owned API", "providerPeerId": store.peer_id, "networkId": "network", "createdAt": "2026-10-07T00:00:00Z", "updatedAt": "2026-10-07T00:00:00Z", "messages": []}, expected_revision=0)
+    context = AskContextService(lambda: None, commands.discover)
+    preview = context.preview(row, "Synthetic owner question")
+    runs = AskRunService(history, lambda: context, lambda: commands)
+    task = "task_" + "f" * 32
+    request = {"task_id": task, "conversation_id": row["id"], "expected_revision": row["revision"], "question": "Synthetic owner question", "prompt_sha256": preview["prompt_sha256"]}
+    before = _OpenAIHandler.calls
+    runs.begin(request)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and runs.get(task)["state"] != "succeeded":
+        runs.run_once()
+        time.sleep(0.02)
+    assert runs.get(task)["state"] == "succeeded", runs.get(task)
+    assert history.get(row["id"])["messages"][-1]["content"] == "test adapter completion"
+    restarted = AskRunService(ConversationStore(history.root, history.key), lambda: context, lambda: commands)
+    assert restarted.begin(request)["state"] == "succeeded"
+    assert _OpenAIHandler.calls == before + 1

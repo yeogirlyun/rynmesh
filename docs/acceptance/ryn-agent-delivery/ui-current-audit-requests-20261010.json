@@ -1,0 +1,794 @@
+[
+  {
+    "method": "GET",
+    "path": "/api/local/auth/status"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/auth/status"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/settings"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/models"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/settings"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/models"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/local/agent/settings",
+    "body": {
+      "enabled": true,
+      "model_id": "audit/model-a"
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/settings"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/models"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/resources"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/resources"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tools"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tools"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/local/agent/settings",
+    "body": {
+      "enabled": false,
+      "allowed_write_tools": []
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/settings"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/models"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/auth/status"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/auth/status"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/models"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/settings"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/models"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/settings"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/sources"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/sources"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/models"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/settings"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/models"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/settings"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/sources"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/local/llm/sources/audit-source",
+    "body": {
+      "shared_models": [
+        "model-b",
+        "model-a"
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/sources"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/models"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/settings"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/models"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/settings"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "POST",
+    "path": "/api/local/llm/sources/audit-source/models/test",
+    "body": {
+      "model_id": "model-b"
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/sources"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/models"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/settings"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/models"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/settings"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/local/agent/settings",
+    "body": {
+      "model_id": "audit/model-b"
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/llm/native"
+  }
+]

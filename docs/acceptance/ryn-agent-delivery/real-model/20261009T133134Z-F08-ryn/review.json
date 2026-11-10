@@ -1,0 +1,14 @@
+{
+  "finding": "The second compaction request returned an unusable model response. This older collector did not retain rejected response usage or finish reason; the cause cannot be inferred from this run.",
+  "classification": "development failure; not formal score",
+  "formal_case_score": false,
+  "real_model_calls": 5,
+  "mechanical_checks": {
+    "exact_artifact_paths": false,
+    "source_files_unchanged": true,
+    "no_unexpected_writes": true
+  },
+  "owner_source_unchanged": true,
+  "code_unchanged": true,
+  "reviewer": "Root coordinator inspecting retained run and independent HTTP/artifact evidence; not a separate Astra reviewer."
+}

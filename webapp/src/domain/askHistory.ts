@@ -3,6 +3,7 @@ import type { LLMConversation } from "./llmConversationStore";
 import { nodeControlUrl } from "./nodeUrl";
 
 const errors: Record<string, string> = {
+  ask_cli_model_unavailable: "This model selection is only available for this device's Codex CLI. Review the service and model before sending.",
   sync_recovery_not_deleted: "This conversation is still in history. Delete it there before discarding its recovery.",
   sync_recovery_busy: "The original task is still being checked. Wait for its outcome, then refresh recovery.",
   sync_revision_conflict: "These branches changed on another device. Refresh and review the current branches before choosing again.",
@@ -11,12 +12,14 @@ const errors: Record<string, string> = {
   sync_restore_new_identity_required: "Keep this branch as a new conversation; the original history cannot be overwritten.",
   sync_restore_copy_not_deleted: "That copy still exists. Open it from history, or refresh the branches before choosing again.",
   ask_run_busy: "This conversation already has an active task. Wait for it or cancel it before sending another question.",
-  ask_preview_changed: "The prepared input changed after review. Review the current question and sources again before sending.",
+  ask_preview_changed: "The input, model, price, or permission changed after review. Review the current question and service again before sending. Your input has been kept.",
   ask_run_identity_conflict: "This task ID belongs to a different request. Check its original result before continuing.",
   ask_run_not_found: "The node has no saved receipt for this task. Retry the same reviewed request to confirm it; do not create a different task.",
   ask_context_unavailable: "This source copy is missing, damaged or no longer readable. Reopen the article to prepare it again, or remove it from this conversation.",
   ask_context_changed: "This offline version changed or was cleared. Reopen the current copy and review it before asking.",
   ask_provider_unavailable: "The original provider is unavailable. Wait for it or start a separate conversation with another service.",
+  ask_provider_not_ready: "The original provider's model is not ready. Ask your friend to start it and run its self-test, then send again. Your input has been kept.",
+  ask_provider_busy: "The original provider is busy. Wait for its current request to finish, then send again. Your input has been kept.",
   ask_context_budget_unavailable: "This service has no usable context budget. Choose a service with a larger context window.",
   ask_question_too_large: "This question does not fit with the required prompt framing. Shorten it or choose a larger context window.",
   ask_revision_conflict: "This conversation changed in another view. Reload its history before continuing; your input has been kept.",
@@ -29,11 +32,14 @@ const errors: Record<string, string> = {
 };
 
 export interface AskSource {
+  nas?: { source_id: string; path: string; source_name: string };
   shared_by_peer_id?: string; publisher_peer_id?: string;
   library_id: string; title: string; source_url: string; sha256: string; extraction_truncated: boolean; text_bytes: number;
   source_number?: number; included_bytes?: number; budget_truncated?: boolean; text?: string;
 }
 export interface AskPreview {
+  cli_model?: string;
+  service_review: { token: string; model_alias: string; pricing: { input_per_1k: number; output_per_1k: number; minimum: number; maximum_per_task: number; currency: string } };
   ai_permission?: { relationship_id: string; revision: number };
   conversation_id: string; revision: number; provider_peer_id: string; service_id: string;
   prompt: string; prompt_sha256: string; context_window: number; input_token_upper_estimate: number;
@@ -43,6 +49,7 @@ export interface AskRun {
   task_id: string; conversation_id: string; state: string; cancel_requested: boolean; error_code?: string;
 }
 export interface AskRunRequest {
+  service_review_token: string;
   ai_permission?: { relationship_id: string; revision: number };
   task_id: string; conversation_id: string; expected_revision: number; question: string; prompt_sha256: string;
 }
@@ -126,6 +133,7 @@ export const askHistory = {
   run: (taskId: string) => request<AskRun>(`/runs/${encodeURIComponent(taskId)}`),
   cancelRun: (taskId: string) => request<AskRun>(`/runs/${encodeURIComponent(taskId)}/cancel`, "POST"),
   prepareContext: (item_id: string, offline_job_id?: string) => request<AskSource>("/contexts", "POST", { item_id, offline_job_id, prefer_source: !offline_job_id }),
+  prepareNas: (source_id: string, path: string) => request<AskSource>("/contexts/nas", "POST", { source_id, path }),
   context: (libraryId: string) => request<AskSource>(`/contexts/${encodeURIComponent(libraryId)}`),
   preview: (conversation: LLMConversation, question: string) => request<AskPreview>("/preview", "POST", { conversation_id: conversation.id, expected_revision: conversation.revision, question }),
   draft: () => request<{ text: string; revision: number }>("/draft"),
@@ -163,7 +171,7 @@ export function conversationRepository(mode: "live" | "fixture") {
     storageMode: async () => "node-encrypted" as const,
   };
   return {
-    list: legacy.listConversations,
+    list: (serviceKey?: string) => serviceKey ? legacy.listConversations(serviceKey) : legacy.readLegacyConversations().then(result => result.conversations),
     async save(conversation: LLMConversation) { await legacy.saveConversation(conversation); return conversation; },
     async remove(conversation: LLMConversation) { await legacy.deleteConversation(conversation.id); return { removed: 1 }; },
     async clear(serviceKey: string, networkId: string) {

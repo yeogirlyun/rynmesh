@@ -1,0 +1,28 @@
+{
+  "result": "passed",
+  "physical_hosts": [
+    "MS-1.local",
+    "MS-2.local"
+  ],
+  "provider_endpoint": "http://172.30.1.9:8795",
+  "consumer_ui": "http://127.0.0.1:8796/apps",
+  "source_commit": "916724512c02994453b807a36eb0b5cd192fcea0",
+  "python_modules_verified_per_host": 250,
+  "flows": [
+    "real peer pairing",
+    "explicit app grants",
+    "resume draft and export",
+    "job candidate pipeline",
+    "service ticket and resolution",
+    "exact retry without duplicate",
+    "temporary identity revocation"
+  ],
+  "owner_workspaces_empty": true,
+  "test_listener_stopped": true,
+  "temporary_identity_revoked": true,
+  "app_usage_ryncoin": "0",
+  "coin_ledger_created": false,
+  "model_calls": 0,
+  "background_workers": false,
+  "autostart_registered": false
+}

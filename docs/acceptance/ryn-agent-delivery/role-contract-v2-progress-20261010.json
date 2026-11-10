@@ -1,0 +1,28 @@
+{
+  "draft_implementation_reviews": [
+    "role-contract-v2-implementation-review.json",
+    "role-query-v2-controller-independent-review.json",
+    "role-grade-v2-independent-review.json",
+    "role-dispatch-v2-independent-review.json"
+  ],
+  "activation_progress": {
+    "loader": "reviewed",
+    "Q01_Q06_owner_controller": "reviewed_for_draft",
+    "v2_grader": "reviewed_for_draft",
+    "dispatch_registration_collection": "reviewed prior version; nested diagnostic read defect discovered in actual Q01 Ryn/reference; explicit child binding repaired with 43 regression and 6 targeted tests; new version independent review pending",
+    "two_physical_hosts": "installed_same_wheel_actual_ICE_history_isolation_agent_off_restart_and_revocation_exercised_semantic_failures_and_unverified_checkers_retained",
+    "formal_trials_registered": 0
+  },
+  "development_evidence": [
+    "two-host/installation-20261010.json",
+    "two-host/phase1-transport-failure.json",
+    "two-host/phase2-independent-review.json",
+    "two-host/phase3-independent-review.json",
+    "two-host/phase3-4-operator-notes.json",
+    "role-query-v2-dispatch-capture-implementation.json",
+    "two-host/phase6-cancellation-operator-review.json",
+    "diagnostic-probe-and-nested-capture-20261011.json",
+    "windows-candidate-build-20261011.json"
+  ],
+  "formal_activation": false
+}

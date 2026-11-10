@@ -3,6 +3,13 @@ mod preferences;
 mod desktop;
 mod localization;
 mod local_model;
+mod drop;
+mod drive_browser;
+mod mcp_auth_browser;
+mod craft_browser;
+mod system_apps;
+mod deployment;
+mod updates;
 use localization::tr;
 
 use node::NodeState;
@@ -10,11 +17,46 @@ use std::sync::{Mutex, atomic::{AtomicBool, Ordering}};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, RunEvent, WindowEvent};
+use tauri_plugin_deep_link::DeepLinkExt;
 
-fn focus_main(app: &tauri::AppHandle) {
+#[cfg(target_os = "linux")]
+static TERMINATION_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_os = "linux")]
+extern "C" fn request_termination(_signal: libc::c_int) {
+    TERMINATION_REQUESTED.store(true, Ordering::SeqCst);
+}
+
+#[cfg(target_os = "linux")]
+fn install_termination_handler() {
+    unsafe {
+        let _ = libc::signal(
+            libc::SIGTERM,
+            request_termination as libc::sighandler_t,
+        );
+        let _ = libc::signal(libc::SIGINT, request_termination as libc::sighandler_t);
+    }
+}
+
+pub(crate) fn focus_main(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show(); let _ = w.unminimize(); let _ = w.set_focus();
     }
+}
+fn invoice_pdf_url(target: &tauri::Url) -> bool {
+    target.scheme() == "https" && target.host_str() == Some("wework.gshopper.cn")
+        && target.port_or_known_default() == Some(443)
+        && target.username().is_empty() && target.password().is_none()
+        && target.path().starts_with("/files/invoices/") && target.path().ends_with(".pdf")
+}
+fn company_detail_url(target: &tauri::Url) -> bool {
+    let mut query = target.query_pairs();
+    target.scheme() == "https" && target.host_str() == Some("wework.gshopper.cn")
+        && target.port_or_known_default() == Some(443)
+        && target.username().is_empty() && target.password().is_none()
+        && target.path() == "/oa/companyDetail.php" && target.fragment().is_none()
+        && matches!(query.next(), Some((key, id)) if key == "id" && !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
+        && query.next().is_none()
 }
 fn open_requested_page(app: &tauri::AppHandle, args: &[String]) {
     if args.iter().any(|arg| arg == "--ai-sources") {
@@ -35,22 +77,89 @@ fn dispatch(app: &tauri::AppHandle, action: &str) {
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if let Err(error) = deployment::initialize() {
+        desktop::message(&format!("Ryn deployment configuration error\n\n{error}"), false);
+        return;
+    }
     let port = std::env::var("RYNMESH_PEER_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(8791);
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // "Ryn Excel" from the Start menu, a launcher or "Open with": only that app's window.
+            if let Some(request) = system_apps::from_args(&argv) { system_apps::launch(app, request); return; }
             open_requested_page(app, &argv);
             if !argv.iter().any(|arg| arg == "--background") { focus_main(app); }
         }))
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![preferences::get_desktop_preferences,
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .invoke_handler(|invoke| {
+            if !craft_browser::allows_native_commands(invoke.message.webview_ref().label()) {
+                invoke.resolver.reject("plugin_native_access_denied");
+                return true;
+            }
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![preferences::get_desktop_preferences,
             preferences::set_desktop_preferences, preferences::desktop_node_port,
+            updates::desktop_update_status, updates::desktop_update_check, updates::desktop_update_download,
+            updates::desktop_update_install, updates::desktop_update_preferences,
             desktop::desktop_status, desktop::desktop_action, localization::set_desktop_language,
-            local_model::choose_local_model])
+            local_model::choose_local_model, drive_browser::open_drive_browser,
+            mcp_auth_browser::open_mcp_auth_browser,
+            craft_browser::open_craft_browser, system_apps::sync_system_apps, system_apps::system_app_info,
+            system_apps::choose_default_system_app,
+            drop::choose_drop_paths, drop::choose_drop_dir, drop::drop_open_path, drop::drag_local_file];
+            handler(invoke)
+        })
         .manage(preferences::DesktopState::default())
         .manage(desktop::RuntimeState::default())
         .manage(localization::LocalizedMenu::default())
+        .manage(updates::UpdateState::default())
         .manage(NodeState { child: Mutex::new(None), port, stopping: AtomicBool::new(false), lifecycle: Mutex::new(()) })
         .setup(move |app| {
+            // Original legacy document links need a window outside the embedded page.
+            let main = app.config().app.windows.iter().find(|window| window.label == "main")
+                .ok_or("main window configuration missing")?;
+            let document_app = app.handle().clone();
+            tauri::WebviewWindowBuilder::from_config(app, main)?
+                .on_new_window(move |target, _| {
+                    let document: Option<(&str, &str, fn(&tauri::Url) -> bool)> = if invoice_pdf_url(&target) {
+                        Some(("invoice-pdf", "Invoice PDF", invoice_pdf_url))
+                    } else if company_detail_url(&target) {
+                        Some(("company-detail", "Company Details", company_detail_url))
+                    } else {
+                        None
+                    };
+                    if let Some((label, title, allowed_navigation)) = document {
+                        if let Some(window) = document_app.get_webview_window(label) {
+                            let _ = window.navigate(target);
+                            let _ = window.show().and_then(|_| window.set_focus());
+                        } else {
+                            let _ = tauri::WebviewWindowBuilder::new(&document_app, label, tauri::WebviewUrl::External(target))
+                                .title(title).inner_size(960.0, 760.0).devtools(false)
+                                .on_navigation(allowed_navigation)
+                                .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+                                .build();
+                        }
+                    }
+                    tauri::webview::NewWindowResponse::Deny
+                }).build()?;
+            #[cfg(target_os = "linux")]
+            {
+                install_termination_handler();
+                let handle = app.handle().clone();
+                std::thread::spawn(move || loop {
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                    if TERMINATION_REQUESTED.swap(false, Ordering::SeqCst) {
+                        node::stop(&handle.state::<NodeState>());
+                        handle.exit(0);
+                        break;
+                    }
+                });
+            }
+            let handle = app.handle().clone();
+            app.deep_link().on_open_url(move |_event| {
+                // The frontend reviews the payload. Never log the URL or argv.
+                focus_main(&handle);
+            });
             localization::initialize(app.handle());
             let prefs = preferences::load(app.handle());
             let silent = prefs.silent_start && std::env::args().any(|arg| arg == "--background");
@@ -79,16 +188,31 @@ pub fn run() {
                 action @ ("logs" | "restart" | "quit") => dispatch(app, action),
                 _ => {}
             }).build(app)?;
-            if !silent { focus_main(app.handle()); }
-            open_requested_page(app.handle(), &std::env::args().collect::<Vec<_>>());
+            let args = std::env::args().collect::<Vec<_>>();
+            if let Some(request) = system_apps::from_args(&args) { system_apps::launch(app.handle(), request); }
+            else if !silent { system_apps::show_main_at_start(app.handle()); }
+            open_requested_page(app.handle(), &args);
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 if let Err(e) = node::start(handle.state::<NodeState>().inner()) { log::error!("failed to start Ryn node: {e}"); }
             });
             desktop::watchdog(app.handle().clone(), status, sharing);
+            system_apps::sync_when_ready(app.handle());
+            updates::initialize(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| {
+            // Plugin windows close normally; only the main window owns tray/quit behavior.
+            if window.label() != "main" {
+                if (window.label().starts_with("craft-") || window.label().starts_with("starting-"))
+                    && matches!(event, WindowEvent::CloseRequested { .. }) {
+                    system_apps::clear_identity(window);
+                }
+                if window.label().starts_with("craft-") && matches!(event, WindowEvent::Destroyed) {
+                    system_apps::editor_closed(window.app_handle(), window.label());
+                }
+                return;
+            }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let prefs = window.state::<preferences::DesktopState>().prefs.lock().unwrap().clone();
@@ -103,6 +227,14 @@ pub fn run() {
         })
         .build(tauri::generate_context!()).expect("error while running tauri application");
     app.run(|handle, event| {
+        // Documents a launcher such as "Ryn Excel" passes on (open -b), or dropped on Ryn itself:
+        // each opens in the app for its type.
+        #[cfg(target_os = "macos")]
+        if let RunEvent::Opened { urls } = &event {
+            for path in urls.iter().filter_map(|url| url.to_file_path().ok()) {
+                if let Some(request) = system_apps::for_document(&path) { system_apps::launch(handle, request); }
+            }
+        }
         if let RunEvent::ExitRequested { .. } = event {
             // Only permanent shutdown sets this flag; manual restart never stops
             // the watchdog. After resume its next tick rechecks the node.

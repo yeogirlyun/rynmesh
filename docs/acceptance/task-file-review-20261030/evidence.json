@@ -1,0 +1,47 @@
+{
+  "task_id": "agent_5cd0ca0151f349d8a89d3abdb3940d86",
+  "workspace": "D:\\code\\ryn-review-tests\\ui3\\workspace",
+  "ui_actions": [
+    "view safe.txt diff",
+    "preview single file undo",
+    "confirm undo via task UI",
+    "edit conflict.txt outside Agent",
+    "preview conflict through task UI",
+    "restart backend with same home",
+    "read saved undo history"
+  ],
+  "disk_after_ui_and_restart": {
+    "safe.txt": {
+      "text": "original content\n",
+      "sha256": "516ad7b388b21e05e8c56229f063d112e70a2fea45fdd357e8ff44e6a5bce689",
+      "bytes": 17
+    },
+    "conflict.txt": {
+      "text": "USER CONTENT MUST SURVIVE\n",
+      "sha256": "a5d74994607380f2d6c0dc0d4ced53da3138a66759b936ffb60c587950876fbc",
+      "bytes": 26
+    }
+  },
+  "forced_api_undo_after_conflict": {
+    "status": "conflict",
+    "conflicts": [
+      {
+        "path": "conflict.txt",
+        "reason": "file_changed"
+      }
+    ],
+    "completed": []
+  },
+  "undo_history": [
+    {
+      "id": "3f7eca29-bcd5-4aba-bd7c-f07256f0b3df",
+      "status": "completed",
+      "completed": [
+        "safe.txt"
+      ],
+      "remaining": []
+    }
+  ],
+  "paid_model_calls": 0,
+  "packaged_desktop_tested": false
+}

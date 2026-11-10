@@ -1,0 +1,20 @@
+{
+  "task_id": "agent_66d97f94638c4c34a28e214ece127f5d",
+  "status": "completed",
+  "permission_mode": "workspace",
+  "model_id": "local/codex-cli/model/gpt-6.1-sol",
+  "approval_requests": 0,
+  "approval_decisions": 0,
+  "input_requests": 0,
+  "as_of_date": "2026-10-15",
+  "matched_rows": 16,
+  "tool_return_matches_final_amount": true,
+  "production_read_query_verified": true,
+  "persisted_default_mode": "workspace",
+  "persisted_independent_verifier": false,
+  "completed_at": "2026-10-15T03:18:13.334648+00:00",
+  "result_sha256": "e61e79764a8dde7619b852b29f846bfe992dac0622d1d9d88456abb4bbb52949",
+  "query_arguments_sha256": "2023bce7957e48f528bfb85681ac4e40a9f7246199d80bacd5fc128655206f88",
+  "financial_details": "Private ignored evidence under .codex-tmp/agent-loop-v4-live; omitted from repository report.",
+  "endpoint_correction": "First request found localhost:7001 unavailable. Confirmed existing production service and supplied its address as task information; no service changes or owner approval."
+}

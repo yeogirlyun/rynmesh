@@ -27,6 +27,14 @@ pub struct NodeState {
     pub lifecycle: Mutex<()>,
 }
 
+pub fn owned_child_running(state: &NodeState) -> bool {
+    let mut child = state.child.lock().unwrap();
+    match child.as_mut() {
+        Some(process) => matches!(process.try_wait(), Ok(None)),
+        None => false,
+    }
+}
+
 #[cfg(not(windows))]
 fn capture(program: &str, args: &[&str]) -> Option<String> {
     let out = hidden_command(program).args(args).output().ok()?;
@@ -189,14 +197,41 @@ fn open_log() -> std::io::Result<File> {
 /// `$RYNMESH_PYTHON|python3 -c ...` with PYTHONPATH=$RYNMESH_REPO_DIR.
 /// The bundled self-contained daemon: next to the app executable when
 /// packaged, or src-tauri/binaries/rynmesh-peer-<triple> in dev.
+fn installed_sidecar_path(exe: &std::path::Path) -> Option<std::path::PathBuf> {
+    let dir = exe.parent()?;
+    let path = dir.join(if cfg!(windows) { "rynmesh-peer.exe" } else { "rynmesh-peer" });
+    if !path.is_file() { return None; }
+    #[cfg(windows)]
+    {
+        // MSIX filesystem virtualization can redirect AppData/Local to the
+        // caller's package cache. Spawn the physical sidecar path so its
+        // frozen bundle root agrees with native file-handle verification.
+        // Python's native-worker guard still rejects reparse/foreign files.
+        let resolved = path.canonicalize().ok()?;
+        ordinary_windows_launch_path(&resolved)
+    }
+    #[cfg(not(windows))]
+    { Some(path) }
+}
+
+#[cfg(windows)]
+fn ordinary_windows_launch_path(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let text = path.to_str()?;
+    if let Some(local) = text.strip_prefix(r"\\?\") {
+        let bytes = local.as_bytes();
+        // Strip only the extended prefix of a local drive path; keep UNC and
+        // device paths out of the packaged sidecar launch route.
+        return (bytes.len() > 3 && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':' && bytes[2] == b'\\')
+            .then(|| std::path::PathBuf::from(local));
+    }
+    if text.starts_with(r"\\") { return None; }
+    Some(path.to_path_buf())
+}
+
 fn sidecar_path() -> Option<std::path::PathBuf> {
     if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let p = dir.join(if cfg!(windows) { "rynmesh-peer.exe" } else { "rynmesh-peer" });
-            if p.is_file() {
-                return Some(p);
-            }
-        }
+        if let Some(path) = installed_sidecar_path(&exe) { return Some(path); }
     }
     let bin_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries");
     let path = bin_dir.join(format!("rynmesh-peer-{}{}", env!("RYN_TARGET"), if cfg!(windows) { ".exe" } else { "" }));
@@ -302,6 +337,15 @@ pub fn stop(state: &NodeState) {
     stop_child(state);
 }
 
+/// The caller holds RuntimeState.action_busy, so the watchdog must not restart
+/// this child. Unlike permanent shutdown, a failed installer can resume it.
+pub fn stop_for_update(state: &NodeState) -> Result<(), String> {
+    let _operation = state.lifecycle.lock().unwrap();
+    if state.child.lock().unwrap().is_none() { return Err("update_node_not_owned".into()); }
+    stop_child(state);
+    Ok(())
+}
+
 pub fn restart(state: &NodeState) -> std::io::Result<()> {
     let _operation = state.lifecycle.lock().unwrap();
     if state.stopping.load(Ordering::SeqCst) { return Ok(()); }
@@ -314,9 +358,13 @@ pub fn restart(state: &NodeState) -> std::io::Result<()> {
 
 /// Control requests stay on loopback and honor an operator-provided local token.
 pub fn request(port: u16, method: &str, path: &str, body: &str) -> Result<serde_json::Value, String> {
+    request_within(port, method, path, body, Duration::from_secs(2))
+}
+/// `request` for slow operations such as starting an editor, which verifies its files first.
+pub fn request_within(port: u16, method: &str, path: &str, body: &str, read_timeout: Duration) -> Result<serde_json::Value, String> {
     let addr = format!("127.0.0.1:{port}").parse().map_err(|_| "invalid_port")?;
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(600)).map_err(|_| "node_unavailable")?;
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let _ = stream.set_read_timeout(Some(read_timeout));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
     let token = std::env::var("RYNMESH_LOCAL_TOKEN").unwrap_or_default();
     if token.contains(['\r', '\n']) { return Err("invalid_local_token".into()); }
@@ -326,12 +374,24 @@ pub fn request(port: u16, method: &str, path: &str, body: &str) -> Result<serde_
     let mut buf = String::new();
     stream.take(65536).read_to_string(&mut buf).map_err(|_| "node_unavailable")?;
     let (header, payload) = buf.split_once("\r\n\r\n").ok_or("invalid_response")?;
+    if header.lines().next().unwrap_or("").split_whitespace().nth(1) == Some("404") {
+        return Err("node_endpoint_not_found".into());
+    }
     if !header.lines().next().unwrap_or("").contains(" 200 ") { return Err("node_request_rejected".into()); }
     serde_json::from_str(payload).map_err(|_| "invalid_response".into())
 }
 pub fn health_ok(port: u16) -> bool {
-    request(port, "GET", "/api/local/desktop/status", "")
-        .map(|v| v["desktop_managed"] == true).unwrap_or(false)
+    managed_health(|path| request_within(port, "GET", path, "", Duration::from_secs(5)))
+}
+
+fn managed_health(mut read: impl FnMut(&str) -> Result<serde_json::Value, String>) -> bool {
+    let response = match read("/api/local/desktop/health") {
+        // An already-running older managed peer may not have the cheap route.
+        // Timeouts and invalid replies must never fall back to heavy metadata.
+        Err(error) if error == "node_endpoint_not_found" => read("/api/local/desktop/status"),
+        response => response,
+    };
+    response.map(|v| v["desktop_managed"] == true).unwrap_or(false)
 }
 
 /// Bound boot waiting by wall time, including socket timeouts.
@@ -344,4 +404,48 @@ pub fn wait_healthy(port: u16) -> bool {
         std::thread::sleep(Duration::from_millis(150));
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn packaged_sidecar_launch_uses_ordinary_physical_local_path() {
+        use std::path::{Path, PathBuf};
+        assert_eq!(ordinary_windows_launch_path(Path::new(r"\\?\C:\Users\子陵\AppData\Local\Packages\family\LocalCache\Local\Ryn\rynmesh-peer.exe")),
+            Some(PathBuf::from(r"C:\Users\子陵\AppData\Local\Packages\family\LocalCache\Local\Ryn\rynmesh-peer.exe")));
+        assert!(ordinary_windows_launch_path(Path::new(r"\\?\UNC\server\share\rynmesh-peer.exe")).is_none());
+        assert!(ordinary_windows_launch_path(Path::new(r"\\server\share\rynmesh-peer.exe")).is_none());
+    }
+
+    #[test]
+    fn liveness_uses_the_cheap_health_route() {
+        assert!(managed_health(|path| {
+            assert_eq!(path, "/api/local/desktop/health");
+            Ok(serde_json::json!({"desktop_managed": true}))
+        }));
+        assert!(!managed_health(|_| Ok(serde_json::json!({"desktop_managed": false}))));
+    }
+
+    #[test]
+    fn legacy_status_is_only_used_when_health_is_missing() {
+        let mut paths = Vec::new();
+        assert!(managed_health(|path| {
+            paths.push(path.to_owned());
+            if path.ends_with("/health") { Err("node_endpoint_not_found".into()) }
+            else { Ok(serde_json::json!({"desktop_managed": true})) }
+        }));
+        assert_eq!(paths, ["/api/local/desktop/health", "/api/local/desktop/status"]);
+        for error in ["node_unavailable", "invalid_response", "node_request_rejected"] {
+            let mut calls = 0;
+            assert!(!managed_health(|path| {
+                calls += 1;
+                assert_eq!(path, "/api/local/desktop/health");
+                Err(error.into())
+            }));
+            assert_eq!(calls, 1);
+        }
+    }
 }

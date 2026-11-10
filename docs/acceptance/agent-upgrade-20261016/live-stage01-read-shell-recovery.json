@@ -1,0 +1,80 @@
+{
+  "model": "gpt-6.1-sol",
+  "reasoning_effort": "low",
+  "fixture_only": true,
+  "injected_fault": "first_read_shell_wait_oserror_after_process_start",
+  "measured_at": "2026-10-16T03:49:04.320179+00:00",
+  "task_state": {
+    "status": "completed",
+    "error": null,
+    "steps": 3,
+    "elapsed_seconds": 18.499,
+    "in_flight": false
+  },
+  "tool_names": [
+    "ryn_shell_execute",
+    "ryn_file_read"
+  ],
+  "tool_errors": [
+    "agent_read_interrupted"
+  ],
+  "tool_results": [
+    {
+      "error": "agent_read_interrupted",
+      "not_executed": false,
+      "no_mutation": true
+    },
+    {
+      "path": "<isolated_workspace>/balance.py",
+      "text": "# Acceptance fixture, no network or real financial records.\r\n# balance_query sample balance: 123.45 CNY\r\ndef balance_query():\r\n    return {'balance': 123.45, 'currency': 'CNY'}\r\n",
+      "sha256": "541db29624c7a2941b05ba6a849f8452fc42bfe3894c73c1c0c3c8b2480ce293",
+      "bytes": 178,
+      "start_line": 1,
+      "end_line": 4,
+      "total_lines": 4,
+      "next_start_line": null,
+      "next_offset": null
+    }
+  ],
+  "model_calls": [
+    {
+      "step": 1,
+      "tool_names": [
+        "ryn_shell_execute"
+      ],
+      "input_tokens": 11136,
+      "output_tokens": 93,
+      "provider_ms": 10358,
+      "finish_reason": "tool_calls",
+      "wall_ms": 10890,
+      "deadline_cancelled": false
+    },
+    {
+      "step": 2,
+      "tool_names": [
+        "ryn_file_read"
+      ],
+      "input_tokens": 11937,
+      "output_tokens": 54,
+      "provider_ms": 4172,
+      "finish_reason": "tool_calls",
+      "wall_ms": 4235,
+      "deadline_cancelled": false
+    },
+    {
+      "step": 3,
+      "tool_names": [],
+      "input_tokens": 12370,
+      "output_tokens": 46,
+      "provider_ms": 2906,
+      "finish_reason": "stop",
+      "wall_ms": 2969,
+      "deadline_cancelled": false
+    }
+  ],
+  "result_has_fixture_amount": true,
+  "recovered": true,
+  "passed": true,
+  "approval_events": 0,
+  "wall_ms": 18781
+}

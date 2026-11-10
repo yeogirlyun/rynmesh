@@ -1,0 +1,43 @@
+{
+  "bindings": {
+    "consumer_peer_id": "TTXQ5sJpdO6YuRfgEbvrsPSSfoDxLRQhdr+HZxisAaY=",
+    "idempotency_key": "receiver-probe-5cb0d093933d4b74a6252ed0002d2e54",
+    "request_fingerprint": "hmac-sha256:e7280bfaf55c3e1de6a9ef56df83a4ce01d0db662796477278c23f396d079428",
+    "service_id": "src-37512d2730964068-8ed3f6ad685b"
+  },
+  "created_at": "2026-10-11T07:54:12.434925+00:00",
+  "history": [
+    {
+      "at": "2026-10-11T07:54:12.434925+00:00",
+      "state": "created"
+    },
+    {
+      "at": "2026-10-11T07:54:12.523481+00:00",
+      "consumer_peer_id": "TTXQ5sJpdO6YuRfgEbvrsPSSfoDxLRQhdr+HZxisAaY=",
+      "request_hash": "sha256:d322420c859ab7de871764d7dbd42308ee37dbb91387453aa22c25b3fcd77c51",
+      "service_id": "src-37512d2730964068-8ed3f6ad685b",
+      "state": "accepted"
+    },
+    {
+      "at": "2026-10-11T07:54:12.527483+00:00",
+      "consumer_peer_id": "TTXQ5sJpdO6YuRfgEbvrsPSSfoDxLRQhdr+HZxisAaY=",
+      "request_hash": "sha256:d322420c859ab7de871764d7dbd42308ee37dbb91387453aa22c25b3fcd77c51",
+      "service_id": "src-37512d2730964068-8ed3f6ad685b",
+      "state": "running"
+    },
+    {
+      "amount": 0.001,
+      "at": "2026-10-11T07:54:13.891590+00:00",
+      "consumer_peer_id": "TTXQ5sJpdO6YuRfgEbvrsPSSfoDxLRQhdr+HZxisAaY=",
+      "duration_ms": 1344,
+      "input_tokens": 17,
+      "output_tokens": 10,
+      "request_hash": "sha256:d322420c859ab7de871764d7dbd42308ee37dbb91387453aa22c25b3fcd77c51",
+      "service_id": "src-37512d2730964068-8ed3f6ad685b",
+      "state": "succeeded"
+    }
+  ],
+  "state": "succeeded",
+  "task_id": "receiver-probe-5cb0d093933d4b74a6252ed0002d2e54",
+  "updated_at": "2026-10-11T07:54:13.891590+00:00"
+}

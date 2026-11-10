@@ -1,0 +1,77 @@
+{
+  "scope": {
+    "egress_grants": [
+      {
+        "destination": {
+          "catalog_model_id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+          "destination_revision": "legacy-17231844e698e9e23b2f6025e8946614f39dd0674ca9695934a5915f0fa056bd",
+          "provider_peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+          "source_id": "src-1fe50b9c7ce9432b"
+        },
+        "origin_grant_ids": [
+          "4bf7e65a02c74cd8996b94fb2d82d634"
+        ]
+      }
+    ],
+    "resource_grants": [
+      {
+        "actions": [
+          "create_directory",
+          "create_file",
+          "list",
+          "read_ai"
+        ],
+        "allowed_formats": [
+          ".csv",
+          ".json",
+          ".log",
+          ".markdown",
+          ".md",
+          ".pdf",
+          ".tsv",
+          ".txt",
+          ".yaml",
+          ".yml"
+        ],
+        "byte_limit": 262144,
+        "connection_access_generation": "d03f50db332d938adc2ab8b090643bb23f9a401f89739bf4aafa9629ff134142",
+        "connection_id": "76f367d62ab744db88727f5ab8d62ce8",
+        "document_byte_limit": 8388608,
+        "grant_id": "4bf7e65a02c74cd8996b94fb2d82d634",
+        "recursive": false,
+        "root_resource_ref": "gAAAAABqyLyC70MtOr43RM4vtGo2o16z80aUWYOXwXu7OGgqKCLGKgarSCaitQsKSdXUu07e-Hgs2XJyMcGtN2YnBhDCqLmkxhIhqa10d1UrerAzd04aSJKjb28-HYEZ1KpBNavV6UwO_5jcJe7pw_SCvy-_-umQ4m4pwB1wtRK86sTDqz2CuKm_lBlYzZBLmhZexr7yMOYUOtNZ7GdGRMjRSd1la2oD_YFa5fVsdPbsu31I3z7y9uwr8H3godnPdqrrutdQBQuKEt_wCH1gMz0j-xB6AhjuLiUCIFoqgeP-8ga5cNBq1gqftncVlVsxNXaQ6TwsvaMW"
+      }
+    ],
+    "revision": 3,
+    "selection": {
+      "allow_model_data": true,
+      "resources": [
+        {
+          "actions": [
+            "list",
+            "read_ai",
+            "create_file",
+            "create_directory"
+          ],
+          "connection_id": "76f367d62ab744db88727f5ab8d62ce8",
+          "recursive": false,
+          "root_path": "projects/orion/week-41"
+        }
+      ]
+    }
+  },
+  "scope_revision": 3,
+  "control_revision": 4,
+  "model_destination": {
+    "catalog_model_id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+    "destination_revision": "legacy-17231844e698e9e23b2f6025e8946614f39dd0674ca9695934a5915f0fa056bd",
+    "provider_peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+    "source_id": "src-1fe50b9c7ce9432b"
+  },
+  "current_model_destination": {
+    "catalog_model_id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+    "provider_peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+    "source_id": "src-1fe50b9c7ce9432b",
+    "destination_revision": "legacy-17231844e698e9e23b2f6025e8946614f39dd0674ca9695934a5915f0fa056bd"
+  }
+}

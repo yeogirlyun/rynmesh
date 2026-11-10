@@ -1,0 +1,26 @@
+
+ RUN  v4.1.11 <repo>/webapp
+
+ ❯ src/screens/RynAgentSending.test.tsx (23 tests | 1 failed) 62893ms
+   × preserves a deliberately retyped identical next draft after followup retry succeeds 5025ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/screens/RynAgentSending.test.tsx > preserves a deliberately retyped identical next draft after followup retry succeeds
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ src/screens/RynAgentSending.test.tsx:245:73
+    243| });
+    244|
+    245| it.each(["create retry", "followup retry", "create discovery"] as cons…
+       |                                                                         ^
+    246|   const kind = recovery === "followup retry" ? "followup" : "create";
+    247|   const backend = api(kind === "followup" ? [task()] : []);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 20 passed (21)
+      Tests  1 failed | 259 passed (260)
+   Start at  09:43:55
+   Duration  121.56s (transform 4.76s, setup 33.21s, import 42.58s, tests 168.51s, environment 104.32s)

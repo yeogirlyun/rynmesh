@@ -1,0 +1,17 @@
+{
+  "registered_at": "2026-10-10T06:25:05.805885+00:00",
+  "registration_kind": "draft_development_collection_only",
+  "formal_trial_registered": false,
+  "case_id": "Q06",
+  "cohort": "ryn",
+  "trial": 1,
+  "dataset_version": "ryn-agent-acceptance-2026-10-10.v2-draft.1",
+  "collector_profile": "owner-admin-query-v2-draft.1",
+  "run_id": "e618779cf352439599b6bd845ea1c05e",
+  "run_nonce": "ac80f84f8dd648ec9f05caf05a7d35cf",
+  "effective_case_sha256": "520e0dbb7ab68a3c9ceb8421120c36ffd45721257728fb42e5f00fcbc2ebbeb7",
+  "effective_input_sha256": "775c5f22436606a54c8adcc3c0509187724a7137a3c67fa524d69af6a85dbe16",
+  "overlay_sha256": "a90280553577ec075e6fe7e131a07c4ca830d4e60ea2600a2ae2c28b93e407e5",
+  "base_cases_sha256": "27a50f909a09a6972fc7b11df55f7798412ec415b8ef87ccadef8ddc85bd06b5",
+  "base_world_sha256": "fbeb1e3466870df1d65685ed11835a4cdf078817a3b922e912a83453be09ba82"
+}

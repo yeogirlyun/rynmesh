@@ -1,0 +1,76 @@
+{
+  "kind": "frozen-candidate-two-host-isolated-wheel-installation",
+  "recorded_utc": "2026-10-11T09:43:03.7612293Z",
+  "wheel": {
+    "build_command": ".venv/Scripts/python.exe -m pip wheel . --no-deps --no-build-isolation --wheel-dir .codex-tmp/final-two-host-20261011/dist",
+    "path": "D:/code/rynmesh/.codex-tmp/final-two-host-20261011/dist/rynmesh-0.7.0-py3-none-any.whl",
+    "bytes": 850433,
+    "sha256": "E43CE8DF13E1EA22B61D0F4F80292947777C062D565815B47D769781215580AC",
+    "source_match": "237/237 rynmesh Python files match frozen production-source-after.json; no missing, extra or changed files"
+  },
+  "local": {
+    "install_log": "local-wheel-install.log",
+    "python": "D:\\code\\rynmesh\\.codex-tmp\\final-two-host-20261011\\local-test-venv\\Scripts\\python.exe",
+    "verification": "local-installed-verification.json",
+    "pip_check_observed_stdout": "No broken requirements found.",
+    "import_failures": 0,
+    "source_hashes_match": true,
+    "installed_package_root": "D:\\code\\rynmesh\\.codex-tmp\\final-two-host-20261011\\local-test-venv\\Lib\\site-packages\\rynmesh",
+    "import_probes": 16,
+    "python_version": "3.12.10",
+    "source_files": 237
+  },
+  "remote": {
+    "python": "C:\\Users\\ziling\\rynmesh-desktop-acceptance-20261011\\final-candidate\\test-venv\\Scripts\\python.exe",
+    "installation_mode": "no-index verified local wheelhouse",
+    "python_version": "3.12.10",
+    "source_hashes_match": true,
+    "source_files": 237,
+    "verify_exit": 0,
+    "installed_package_root": "C:\\Users\\ziling\\rynmesh-desktop-acceptance-20261011\\final-candidate\\test-venv\\Lib\\site-packages\\rynmesh",
+    "wheelhouse_files": 44,
+    "verification": "remote-installed-verification.json",
+    "import_failures": 0,
+    "pip_check_exit": 0,
+    "import_probes": 16,
+    "install_exit": 0,
+    "host": "personal-windows / DESKTOP-SQ6VA8I / 172.16.8.82:2222",
+    "report": "remote-install-result.json"
+  },
+  "local_remote_dependency_freeze_equal_excluding_local_wheel_path": true,
+  "constraints_source": "Exact versions observed in complete Windows sidecar build environment; supplemental pytest version also pinned from that environment",
+  "production_files_checked_after_wheel_installation": 535,
+  "production_source_changes_after_wheel_installation": 0,
+  "retained_attempt_failures": [
+    {
+      "attempt": "Remote online install",
+      "original_log": "remote-wheel-install-first-attempt.log",
+      "process_evidence": "pre-offline-pip-process-check.json",
+      "reason": "files.pythonhosted.org sspilib metadata read timeout warning was promoted to NativeCommandError by PowerShell5 ErrorActionPreference=Stop",
+      "next_step": "Confirmed zero original running target pip processes, transferred hash-verified public wheelhouse, then installed with --no-index",
+      "tool_output_chunk": "3082f6"
+    },
+    {
+      "next_step": "Corrected only helper-script array assignment; installer rerun verified 44 wheelhouse files before pip",
+      "tool_output_chunk": "f07e0c",
+      "reason": "PowerShell5 ConvertFrom-Json retained one nested array wrapper, causing count guard to reject before pip invocation",
+      "attempt": "Offline preinstall guard"
+    }
+  ],
+  "boundaries": {
+    "old_venvs_modified": false,
+    "credentials_read": false,
+    "production_config_changed": false,
+    "whole_pytest_suite_repeated": false,
+    "model_calls": 0,
+    "firewall_or_wsl_changed": false,
+    "native_installer_reinstalled": false,
+    "service_processes_started": 0
+  },
+  "formal_trials": 0,
+  "formal_pass": false,
+  "limitations": [
+    "This prepares package-consistent isolated test environments only; actual two-host/model/formal trials remain pending.",
+    "Reference 12000-byte checker ceiling remains unverified."
+  ]
+}

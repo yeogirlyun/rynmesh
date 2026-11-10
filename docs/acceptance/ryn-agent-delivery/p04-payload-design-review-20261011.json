@@ -1,0 +1,75 @@
+{
+  "kind": "bounded-read-only-P04-payload-design-review",
+  "date": "2026-10-11",
+  "reviewer": "delegated Astra high design review; no execution or business pass",
+  "reviewed_manifest": {
+    "path": "docs/acceptance/ryn-agent-delivery/p04-operation-payloads-20261011.json",
+    "sha256": "dba918d057dfe115a8291febf12f8d6fe85d55e250ec9b3127b06a23e284aa6e"
+  },
+  "verdict": "per-session projection is semantically faithful; execution draft needs two corrections before dispatch",
+  "formal_pass": null,
+  "business_pass": null,
+  "model_calls": 0,
+  "remote_operations": 0,
+  "executed_trials": 0,
+  "original_manifest_changed": false,
+  "frozen_inputs_changed": false,
+  "frozen_case_sha256_verified": "27a50f909a09a6972fc7b11df55f7798412ec415b8ef87ccadef8ddc85bd06b5",
+  "all_five_hashed_source_refs_match": true,
+  "projection": {
+    "status": "accepted_for_bounded_development_execution_after_corrections",
+    "rationale": "The public frozen P04 instruction quantifies over two independent sessions and asks each to report its own marker. Assigning A only SESSION_A_104 and B only SESSION_B_907 implements that instruction without putting the forbidden other-session marker into the input. Copying both markers into both tasks would invalidate marker absence as an isolation observation. The full original remains in controller metadata; no success facts or consumer tool instructions are added.",
+    "session_A_message": "在消费节点的独立会话处理 SESSION_A_104，只报告本会话标记，调用 node-a 的同一共享模型。",
+    "session_B_message": "在消费节点的独立会话处理 SESSION_B_907，只报告本会话标记，调用 node-a 的同一共享模型。",
+    "same_messages_in_both_phases": true,
+    "provider_seed_marker": "PROVIDER_ONLY_551",
+    "scope_selection": {"resources": [], "allow_model_data": false},
+    "scope_interpretation": "resources.prepare returns resource_grants=[] and egress_grants=[] for this selection. The authorized owner prompt goes to the explicitly selected authenticated shared model; empty data_egress does not authorize any additional resource transfer. binding:primary_model maps to the observed node-a peer service and destination revision, not a literal API model id.",
+    "limit": "This approves the semantic distribution of the public case instruction, not verbatim per-task identity, formal collector normalization, three repetitions, or any actual isolation result. The role-v2 draft remains inactive."
+  },
+  "required_draft_corrections": [
+    {
+      "id": "P04-PAYLOAD-01",
+      "priority": "P2",
+      "location": "prerequisites[0]",
+      "finding": "The requirement for distinct runtime_owner_id is not executable with the current legitimate two-host bootstrap. routes.py constructs AgentRuntime without owner_id, whose default is local_owner on both hosts. This local label alone is neither global identity nor proof of shared state.",
+      "correction": "Record runtime_owner_id unchanged and bind it to each physical host/peer identity. Require distinct actual physical hosts and peer IDs, separately host-scoped store paths and independent AgentStore encryption keys; compare (physical_host_id, runtime_owner_id), not owner label alone. Do not change runtime defaults or seed configuration merely to make labels differ.",
+      "sources": ["rynmesh/agent_runtime/routes.py:24", "rynmesh/agent_runtime/runtime.py:180", "docs/acceptance/ryn-agent-delivery/two-host/node.py:299"]
+    },
+    {
+      "id": "P04-PAYLOAD-02",
+      "priority": "P1",
+      "location": "waiting_and_failure_boundary.stop_states; stages 2 through 4",
+      "finding": "Foreign/provider-marker and unauthorized-egress checks currently appear in end review, while the explicit stop list omits these observed violations. A completed enabled phase could therefore be followed by more paid tasks despite an already observable isolation failure.",
+      "correction": "Apply marker/egress/extra-execution checks to available captured requests and responses at each bounded observation and before creating another task or entering the disabled phase. An observed cross-session marker, provider-history injection, unauthorized transfer, provider tool execution or extra task closes admission for all remaining task creations. Preserve the first failure and existing in-flight state; do not retry, approve, expand scope or continue the next phase. Incomplete/truncated capture is unknown, never an empty violation array.",
+      "sources": ["docs/acceptance/ryn-agent-delivery/convergence-plan-20261011.json:failure_budget.early_stop", "docs/acceptance/ryn-agent-delivery/cases-v1.json:P04.failure_conditions", "docs/acceptance/ryn-agent-delivery/p04-operation-payloads-20261011.json:evidence_review"]
+    }
+  ],
+  "execution_contract": {
+    "maximum_new_tasks": 5,
+    "breakdown": "One provider-owned seed, two fresh consumer tasks with provider Agent enabled, then two fresh consumer tasks with provider Agent disabled. One development repetition only; zero followups, resampling, paid probes or budget expansion.",
+    "payloads": "Reuse the manifest's existing settings_bodies, provider_seed.body and four consumer_tasks bodies exactly, apart from resolving actual catalog IDs, current authenticated destination revision and five distinct durable request UUIDs. Materialize only the selected body, never the full manifest, into the local control.py UTF-8 body file.",
+    "seed_gate": "The one provider-local Agent task must actually finish and persist its assistant response containing PROVIDER_ONLY_551 before either consumer window. Keep seed tools and upstream requests outside consumer measurement windows. Failed, unverified, missing-marker or unresolved seed means stop without consumer tasks.",
+    "phase_gate": "Consumer Agent remains enabled in both phases. Toggle only the provider Agent after enabled A/B finish, pre/post evidence closes their window, no isolation/egress violation is observed, and all tasks are idle. The shared service, signed recipient grant, provider source and model binding remain unchanged.",
+    "freshness": "Use clean isolated node homes for this repetition, fresh A/B task IDs in both phases, no old marker-bearing consumer history or restored conversation. Reusing respective fixed A/B markers across the two required subscenarios is expected; it is not permission to reuse tasks. Fixed three formal repetitions remain required elsewhere.",
+    "readiness": "No hosts, active bindings, budgets or current runtime identity were probed in this review. The manifest's live preflight remains mandatory, and all remote/model execution remains unperformed."
+  },
+  "observation_and_egress_rules": [
+    "For each A task, SESSION_B_907 and PROVIDER_ONLY_551 must be absent from the full captured planner, compaction and verification messages, tool arguments/results and provider upstream request/response bodies; reverse A/B for each B task. Check final own-marker-only answer separately. Never treat the provider seed's own marker-containing request as consumer leakage.",
+    "Correlate consumer Agent task -> consumer_order_start inference/order ID -> provider authenticated order/service/recipient binding -> upstream request/response. Compare the actual consumer and provider message projections, not just substring-negative final answers. Unmatched requests and absent responses remain unknown.",
+    "WireAudit observes HTTP peer routes, not raw signed UDP payloads. With ICE UDP, use production order bindings/request hashes, task IDs and exact upstream message equality as bounded linkage evidence. Do not label this packet-level attestation or invent an absent sealed-body capture.",
+    "Inside each consumer measurement window, provider task count must not grow beyond the completed seed and provider tool executions must be zero. Capture tool-start/error/result as well as success. Provider seed tool events before the window are legitimate fixture activity.",
+    "The frozen consumer_tool_node_ids must equal [node-b] using actual consumer tool dispatch and node identity evidence. The faithful marker-only prompt may cause zero tool calls; in that case the required assertion is unproven, not passed. Do not force a tool, infer node-b from task placement, count model/checker calls as tools, or add a sixth task to obtain evidence.",
+    "Preserve empty resource/egress grants, no consumer approvals/config writes, full foreign-marker and credential scans over available audited data, and original source/code hashes. Missing/truncated capture or unsupported security categories remain unknown rather than fabricated empty arrays. A normal model transfer of that session's owner prompt to the frozen selected shared service is the authorized task, not a resource grant.",
+    "Both phases and each actual task outcome must be retained. completed/verified alone does not establish business isolation; failed/partial/unverified tasks cannot be relabeled as a successful frozen P04 run. Task count is not request/token count. Keep actual ledgers and unknown charges."
+  ],
+  "existing_evidence_scope": {
+    "reviewed": "two-host/phase3-independent-review.json reports separate stores/keys, 14 consumer requests matched to provider upstream messages, private seed history and an Agent-off manual inference. scenario.py, extra_scenarios.py, control.py and node.py were inspected for the existing API/capture mechanisms.",
+    "not_revalidated": "This design review did not reopen every historical raw snapshot or perform transport attestation. Existing phase3 evidence is mechanism evidence with its recorded quality failures; it is not the exact frozen P04 enabled/disabled trial and cannot substitute for its new captures."
+  },
+  "inspection_boundary_incident": {
+    "status": "disclosed_to_root_immediately",
+    "detail": "The initial directory rg excluded !heldout* but the actual filename is cases-heldout-v1.json, so output accidentally included its path, line 896 and the single metadata line based_on: P04. No heldout prompt, setup, answer, result or build_cases.py was opened or used. Broad search was stopped and all subsequent reads used explicit public paths. Zero heldout contact is therefore not claimed.",
+    "impact": "No hidden behavior/answer informed the projection or execution criteria. Preserve this disclosure with the review rather than asserting heldout_accessed=false."
+  }
+}

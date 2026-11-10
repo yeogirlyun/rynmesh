@@ -1,0 +1,28 @@
+{
+  "reviewer": "sharing_review / gpt-6-astra high",
+  "status": "no_reproduced_blocker_for_development_GLM_R02_trial",
+  "tests": {"passed": 69, "skipped": 0, "seconds": 39.66},
+  "scope": ["output policy", "planner mapping", "actual pinned reference worker", "candidate/reference budgets", "storage capacity", "actual process recovery"],
+  "findings": [
+    "Shared generation ceiling is clamped by configured output,131072 transport,remaining context,explicit request and persistent task balance; unknown usage retains reservation.",
+    "Private reasoning is excluded from visible output limits but bounded by raw256KiB and reserved storage; encrypted restart continuation and checker/public-view separation pass.",
+    "Received structural/size rejections retain sanitized usage and finish metadata.",
+    "Source resolution, destination binding, ModelDispatchAdapter, quota and concurrency admission remain installed.",
+    "Candidate/reference share policy; actual pinned JS worker carries512/128000 across successive calls and lower requests remain effective.",
+    "Planner generation mapping precedes the first business snapshot; owner policy and isolated mapping are checked on reopen. Credential-free hashes exclude endpoint and secrets.",
+    "R02 still binds original actual worker, confirms terminal state, then launches replacement."
+  ],
+  "limitations": [
+    "Generation metadata changes in isolated fixtures are explicit; frozen identities, sharing and grants remain unchanged, but not all fixture facts are identical to previous runs.",
+    "Only Query candidate/reference, C03 candidate and R02 controllers migrated; other fixture4096 controllers remain pending.",
+    "Pre-bridge4MiB and HTTP parsing failures retain unknown-usage reservations.",
+    "No live calls or formal acceptance during review; greater generation allowance does not guarantee success, response size or completion within time budget."
+  ],
+  "production_sha256": {
+    "rynmesh/agent_runtime/output_policy.py": "fda6319d3e5fa1aeae3f1b4b6840f3a0ab61d14db02b94328dc260b6dfa1620c",
+    "rynmesh/agent_runtime/bridge.py": "f509e07142251a71893959adf60beaef2c4fc6449488e1d49098c02b03636b57",
+    "rynmesh/agent_runtime/runtime.py": "aba1404545bf8225af2ff0154686afad66ad7a6d472dab6a27b50228f4eeb9d8",
+    "rynmesh/agent_runtime/store.py": "77968d51d12309db2965c78ee50382e4294fa7f980c80fda31c6972ab72f81c6"
+  },
+  "formal_executed_trials": 0
+}

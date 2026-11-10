@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Rynmesh 本地验收截图证据</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #071018;
+      --panel: #0d1924;
+      --panel2: #111f2c;
+      --line: #274356;
+      --text: #ecf7ff;
+      --muted: #9db2c2;
+      --green: #23d18b;
+      --cyan: #32d7ff;
+      --yellow: #ffd166;
+      --red: #ff6b6b;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font-family: Inter, "Microsoft YaHei", "Segoe UI", sans-serif; }
+    .sheet { min-height: 900px; padding: 34px 44px 38px; background:
+      radial-gradient(circle at 85% 5%, rgba(50,215,255,.12), transparent 32%),
+      linear-gradient(145deg, #071018 0%, #09141e 60%, #071018 100%); }
+    .sheet[hidden] { display: none; }
+    header { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); padding-bottom: 20px; margin-bottom: 24px; }
+    h1 { font-size: 34px; margin: 0 0 7px; letter-spacing: -.5px; }
+    h2 { font-size: 21px; margin: 0; color: var(--muted); font-weight: 500; }
+    .badge { border: 1px solid rgba(35,209,139,.55); background: rgba(35,209,139,.12); color: #8dffd0; border-radius: 999px; padding: 10px 16px; font-weight: 800; font-size: 17px; white-space: nowrap; }
+    .grid { display: grid; grid-template-columns: 1.5fr .95fr; gap: 24px; }
+    .panel { background: rgba(13,25,36,.94); border: 1px solid var(--line); border-radius: 16px; padding: 22px; box-shadow: 0 18px 50px rgba(0,0,0,.25); }
+    .panel-title { color: var(--cyan); font-size: 17px; font-weight: 800; margin-bottom: 14px; text-transform: uppercase; letter-spacing: .7px; }
+    .raw { margin: 0; border-radius: 12px; background: #050b11; border: 1px solid #1e3747; padding: 18px; font: 15px/1.62 Consolas, "Cascadia Mono", monospace; color: #cde9f7; white-space: pre-wrap; }
+    .ok { color: #72f2b8; font-weight: 800; }
+    .key { color: #7ddfff; }
+    .num { color: var(--yellow); font-weight: 800; }
+    .callouts { display: grid; gap: 14px; }
+    .callout { position: relative; min-height: 110px; border: 2px solid var(--cyan); border-radius: 14px; padding: 17px 18px 15px 62px; background: rgba(8,24,35,.95); }
+    .callout::before { content: attr(data-n); position: absolute; left: 16px; top: 17px; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--cyan); color: #001018; font-weight: 900; font-size: 18px; }
+    .callout strong { display: block; font-size: 18px; margin-bottom: 7px; }
+    .callout span { color: var(--muted); line-height: 1.48; font-size: 14px; }
+    .meta { margin-top: 16px; padding: 13px 16px; color: var(--muted); background: rgba(6,13,20,.8); border: 1px solid var(--line); border-radius: 10px; font: 13px/1.55 Consolas, monospace; overflow-wrap: anywhere; }
+    .flow { display: flex; align-items: center; gap: 8px; margin: 18px 0; }
+    .node { flex: 1; text-align: center; background: var(--panel2); border: 1px solid #315267; padding: 14px 8px; border-radius: 12px; font-weight: 800; }
+    .arrow { color: var(--green); font-size: 24px; font-weight: 900; }
+    .shot { position: relative; background: #050b11; border: 1px solid #2b4a5e; border-radius: 14px; overflow: hidden; }
+    .shot img { display: block; width: 100%; height: auto; }
+    .mark { position: absolute; border: 4px solid var(--yellow); border-radius: 10px; box-shadow: 0 0 0 2px rgba(0,0,0,.55), 0 0 24px rgba(255,209,102,.35); }
+    .mark-label { position: absolute; background: var(--yellow); color: #161105; padding: 7px 11px; border-radius: 8px; font-weight: 900; font-size: 14px; box-shadow: 0 4px 14px rgba(0,0,0,.4); }
+    .wide-grid { display: grid; grid-template-columns: 1.8fr .8fr; gap: 22px; }
+    .two-shots { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .small-note { color: var(--muted); font-size: 13px; line-height: 1.5; margin-top: 12px; }
+    .terminal-line { display: block; }
+    .terminal-line.pass { background: rgba(35,209,139,.12); border-left: 4px solid var(--green); margin: 6px -8px; padding: 3px 8px; }
+    footer { margin-top: 18px; display: flex; justify-content: space-between; color: #7891a2; font-size: 12px; }
+    @media (max-width: 1100px) {
+      .grid, .wide-grid { grid-template-columns: 1fr; }
+      .two-shots { grid-template-columns: 1fr; }
+      .sheet { min-height: 0; }
+    }
+  </style>
+</head>
+<body>
+  <section class="sheet" data-issue="30">
+    <header><div><h1>#30 Friend Mesh 集成本地验收</h1><h2>两个真实节点进程 · stream-v1 · 撤销与离线收敛</h2></div><div class="badge">✓ 本地开发验收完成</div></header>
+    <div class="grid">
+      <div class="panel">
+        <div class="panel-title">脱敏运行证据（schema v2）</div>
+        <div class="flow"><div class="node">Node A<br/>Provider</div><div class="arrow">⇄</div><div class="node">本地 HTTP Registry</div><div class="arrow">⇄</div><div class="node">Node B<br/>Friend</div></div>
+        <pre class="raw"><span class="key">decision</span>: <span class="ok">development_acceptance_passed</span>
+<span class="key">node_process_count</span>: <span class="num">2</span>
+<span class="key">independent_homes / ports</span>: <span class="ok">true / true</span>
+
+<span class="key">online.private_ai_stream.status</span>: <span class="ok">succeeded</span>
+<span class="key">stream_protocol</span>: <span class="ok">rynmesh.llm.stream.v1</span>
+<span class="key">transport</span>: <span class="ok">peer_http_direct</span>
+
+<span class="key">online.next_order_denied_before_inference</span>: <span class="ok">true</span>
+<span class="key">offline_restart.retry_delivery</span>: <span class="ok">delivered</span>
+<span class="key">offline_restart.next_order_denied_before_inference</span>: <span class="ok">true</span>
+
+<span class="key">invite_link_occurrences</span>: <span class="ok">0</span>
+<span class="key">invite_secret_occurrences</span>: <span class="ok">0</span>
+<span class="key">all_child_processes_stopped</span>: <span class="ok">true</span></pre>
+        <div class="meta">Exact implementation: 4bd2b8b56df6f69bd4aac2b995245b1205e98e0a<br/>Evidence: docs/evidence/issue30-integration-two-node-e2e.json · 连续 3 次通过</div>
+      </div>
+      <div class="callouts">
+        <div class="callout" data-n="1"><strong>朋友可使用流式 Private AI</strong><span>真实 Node B 经 Friend HMAC 调用 Node A；证据明确记录 stream-v1 与 direct peer HTTP。</span></div>
+        <div class="callout" data-n="2"><strong>撤销立即阻断推理</strong><span>在线撤销和离线重启后的补偿撤销均收敛；下一次订单在模型调用计数变化前被拒绝。</span></div>
+        <div class="callout" data-n="3"><strong>密钥与进程清理完成</strong><span>邀请链接、邀请 secret 均为 0；双方关系密钥集合为空，所有子进程停止。</span></div>
+      </div>
+    </div>
+    <footer><span>Rynmesh local acceptance evidence</span><span>2026-09-03 · no remote Git used</span></footer>
+  </section>
+
+  <section class="sheet" data-issue="25">
+    <header><div><h1>#25 Ask about item 本地验收</h1><h2>真实浏览器：文章上下文、可见截断、回答与移除</h2></div><div class="badge">✓ 本地开发验收完成</div></header>
+    <div class="wide-grid">
+      <div>
+        <div class="shot">
+          <img src="../issue-25/02-grounded-truncation.png" alt="Issue 25 grounded truncation screenshot" />
+          <div class="mark" style="left:41.4%; top:71.1%; width:42.6%; height:9.6%"></div>
+          <div class="mark-label" style="left:67%; top:65.5%">① 可见截断说明</div>
+          <div class="mark" style="left:82.2%; top:10.2%; width:14.5%; height:6.2%"></div>
+          <div class="mark-label" style="left:75%; top:17%">② Provider/模型边界</div>
+        </div>
+        <div class="meta">截图原件 SHA-256: 3d0cd23f29c495d05982d9562df5556625507664310b65eec9b4d382f81a6022<br/>浏览器记录：1057 / 15600 字符，2 / 2 blocks；console warning/error = 0</div>
+      </div>
+      <div class="callouts">
+        <div class="callout" data-n="1"><strong>截断对用户可见</strong><span>发送前直接显示 “1057 of 15600 characters (2/2 blocks)”，不是静默丢失文章内容。</span></div>
+        <div class="callout" data-n="2"><strong>只经本机 Consumer</strong><span>路由最终只含 peer、service、network；文章 marker 不进入 URL、localStorage 或 sessionStorage。</span></div>
+        <div class="callout" data-n="3"><strong>完整浏览器流程已跑通</strong><span>Reader → Ask → grounded response → Remove context；四张截图、请求哈希和空 console 均已提交。</span></div>
+      </div>
+    </div>
+    <footer><span>Source: docs/evidence/issue-25/browser-session.json</span><span>Branch commit: 423c189</span></footer>
+  </section>
+
+  <section class="sheet" data-issue="24">
+    <header><div><h1>#24 Provider / 模型切换本地验收</h1><h2>可见比较 · 复合服务键隔离 · 历史不串线</h2></div><div class="badge">✓ 本地开发验收完成</div></header>
+    <div class="wide-grid">
+      <div>
+        <div class="shot">
+          <img src="../issue-24/provider-comparison.png" alt="Issue 24 provider comparison screenshot" />
+          <div class="mark" style="left:49%; top:18.6%; width:39%; height:20.5%"></div>
+          <div class="mark-label" style="left:51%; top:13%">① Provider / 模型比较面板</div>
+          <div class="mark" style="left:17.8%; top:29.5%; width:22.2%; height:10.5%"></div>
+          <div class="mark-label" style="left:17%; top:41%">② 会话历史独立保留</div>
+          <div class="mark" style="left:50%; top:40%; width:38%; height:10%"></div>
+          <div class="mark-label" style="left:56%; top:51%">③ 当前 Provider 回答</div>
+        </div>
+        <div class="meta">视觉证据：provider-comparison.png · 65,126 bytes<br/>自动化：Provider 精确键 peer_id + package_id；切换中禁用；刷新/存储失败恢复</div>
+      </div>
+      <div class="callouts">
+        <div class="callout" data-n="1"><strong>切换前信息足够</strong><span>面板展示 Provider、package、online/busy、context、output limit 和价格。</span></div>
+        <div class="callout" data-n="2"><strong>A/B 历史严格隔离</strong><span>相同 alias 仍按 peer_id + package_id 区分；往返切换不串消息、不丢草稿。</span></div>
+        <div class="callout" data-n="3"><strong>异常恢复已覆盖</strong><span>发现刷新失败保留上次快照；加密写入失败释放 switching 并保留原会话。</span></div>
+      </div>
+    </div>
+    <footer><span>Acceptance: docs/ISSUE_24_ACCEPTANCE.md</span><span>Branch commit: ff83509</span></footer>
+  </section>
+
+  <section class="sheet" data-issue="23">
+    <header><div><h1>#23 Private AI 流式传输本地验收</h1><h2>Registry + Adapter + Provider + Consumer 四个独立进程</h2></div><div class="badge">✓ 本地开发验收完成</div></header>
+    <div class="grid">
+      <div class="panel">
+        <div class="panel-title">local-run 实际结果</div>
+        <pre class="raw"><span class="terminal-line">$ python scripts/llm_e2e.py local-run</span>
+<span class="terminal-line pass">profile: local-stream              state: succeeded</span>
+<span class="key">process_count</span>: <span class="num">4</span>
+<span class="key">stream_event_count</span>: <span class="num">3</span>
+<span class="key">first_delta_ms</span>: <span class="ok">141</span>
+<span class="key">terminal_ms</span>: <span class="ok">922</span>
+<span class="key">first_delta_before_terminal</span>: <span class="ok">true</span>
+<span class="key">effective_response_mode</span>: <span class="ok">stream-v1</span>
+
+<span class="terminal-line pass">profile: local-fallback            state: succeeded</span>
+<span class="key">advertised protocols</span>: [<span class="ok">complete-v1</span>]
+<span class="key">requested</span>: stream-v1
+<span class="key">effective</span>: <span class="ok">complete-v1</span>
+<span class="key">stream_event_count</span>: <span class="ok">0</span>
+
+<span class="terminal-line pass">exactly-once + privacy              PASS</span>
+consumer hold / settlement: <span class="ok">1 / 1</span>
+provider earning: <span class="ok">1</span>
+persistent files scanned: <span class="num">20 + 20</span>
+prompt/output body absent: <span class="ok">true</span>
+all processes stopped: <span class="ok">true</span></pre>
+        <div class="meta">Exact implementation: 4bd2b8b56df6f69bd4aac2b995245b1205e98e0a<br/>Original feature branch acceptance commit: ac9676f</div>
+      </div>
+      <div class="callouts">
+        <div class="callout" data-n="1"><strong>是真流式，不是完成后拆包</strong><span>首段 141ms 到达，终态 922ms；共有 3 个有序 delta。</span></div>
+        <div class="callout" data-n="2"><strong>不支持流式时安全降级</strong><span>Provider 只声明 complete-v1，Consumer 自动使用完整响应，delta 为 0。</span></div>
+        <div class="callout" data-n="3"><strong>隐私与结算保持不变量</strong><span>两端任务、hold、settlement、earning 各一次；日志和持久文件无提示词/输出正文。</span></div>
+      </div>
+    </div>
+    <footer><span>Evidence: deploy/llm-e2e/results/local-*.json</span><span>Focused integration: 177 passed, 1 skipped</span></footer>
+  </section>
+
+  <section class="sheet" data-issue="20">
+    <header><div><h1>#20 Linux Desktop 本地开发验收</h1><h2>.deb 配置与打包契约 · Sidecar 闭包 · 生命周期脚本</h2></div><div class="badge">✓ 本地开发验收完成</div></header>
+    <div class="grid">
+      <div class="panel">
+        <div class="panel-title">本地可执行验证输出</div>
+        <pre class="raw"><span class="terminal-line">$ pytest -q tests/test_linux_desktop_artifacts.py</span>
+<span class="terminal-line pass">........                         [100%]</span>
+<span class="terminal-line pass">8 passed in 0.07s</span>
+
+<span class="terminal-line">$ "C:/Program Files/Git/bin/bash.exe" -n &lt;script&gt;</span>
+<span class="terminal-line pass">build-sidecar.sh                 PASS</span>
+<span class="terminal-line pass">verify-sidecar.sh                PASS</span>
+<span class="terminal-line pass">verify-linux-deb.sh              PASS</span>
+<span class="terminal-line pass">smoke-linux-desktop.sh           PASS</span>
+
+<span class="terminal-line pass">workflow-yaml:                   PASS</span>
+<span class="terminal-line pass">Webapp: 17 files / 85 tests      PASS</span>
+<span class="terminal-line pass">TypeScript lint + build          PASS</span>
+
+Selected format: <span class="ok">Ubuntu 24.04 x86_64 .deb</span>
+Sidecar contract: <span class="ok">one externalBin; no system Python/Node</span>
+Architecture contract: <span class="ok">amd64 package + x86-64 ELF</span>
+macOS verification wiring: <span class="ok">preserved</span></pre>
+        <div class="meta">Feature branch acceptance commit: 6c8ef4b7ccba3c93eaa4e32f84f94efc3f4059c8<br/>说明：CI 实跑和 Release 制品发布属于发布阶段，不属于本地开发验收。</div>
+      </div>
+      <div class="callouts">
+        <div class="callout" data-n="1"><strong>打包边界已锁定</strong><span>初始格式、目标架构、Tauri externalBin、PyInstaller 内嵌 Webapp 都有确定性契约测试。</span></div>
+        <div class="callout" data-n="2"><strong>生命周期检查已进入脚本</strong><span>健康、UI、重启、SIGTERM 清理和孤儿进程检查均由 smoke-linux-desktop.sh 实现，四个脚本语法通过。</span></div>
+        <div class="callout" data-n="3"><strong>文档与兼容性完成</strong><span>安装、更新、卸载、系统要求、数据保留和限制均已写明；macOS 校验流程保留。</span></div>
+      </div>
+    </div>
+    <footer><span>Acceptance: docs/ISSUE_20_ACCEPTANCE.md</span><span>Local development scope only</span></footer>
+  </section>
+
+  <script>
+    const issue = new URLSearchParams(location.search).get("issue") || "30";
+    document.querySelectorAll(".sheet").forEach((sheet) => {
+      sheet.hidden = sheet.dataset.issue !== issue;
+    });
+    document.title = `Issue ${issue} 本地验收截图证据`;
+  </script>
+</body>
+</html>
