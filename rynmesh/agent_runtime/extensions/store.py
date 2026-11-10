@@ -2320,6 +2320,10 @@ class ExtensionStore:
                 "read_only_sources": dict(existing.get("read_only_sources") or {}) if existing else {},
                 "owner_write_tools": list(existing.get("owner_write_tools") or []) if existing else [],
                 "installer_service_generation": existing.get("installer_service_generation") if existing else None,
+                "installer_config_sha256": existing.get("installer_config_sha256") if existing else None,
+                # Replaced below; lets the policy fields see whether the installer trusted
+                # the configuration this edit starts from.
+                "config_sha256": existing.get("config_sha256") if existing else None,
                 "discovery_revision": int(existing.get("discovery_revision", 0)) if existing else 0,
                 "discovered_tools": list(existing.get("discovered_tools") or []) if existing else [],
                 "status": existing.get("status", "NeedsTest") if existing else ("NeedsTest" if enabled else "disabled"),
@@ -2459,7 +2463,6 @@ class ExtensionStore:
                 sources = dict(server.get("read_only_sources") or {})
                 retained = set(server.get("read_only_tools") or [])
                 installer_trusted = self._installer_service_trusted(server)
-                name_counts = Counter(tool["name"] for tool in normalized)
                 for name in list(retained):
                     source = sources.get(name, "owner")
                     if source == "owner":
@@ -2473,15 +2476,7 @@ class ExtensionStore:
                             and matching[0]["schema_sha256"] != old_tools.get(name, {}).get("schema_sha256")):
                         retained.remove(name)
                 if installer_trusted:
-                    # The signed installer started this service, so its own read-only
-                    # declarations are trusted without a separate owner prompt.
-                    declined = set(server.get("owner_write_tools") or [])
-                    for tool in normalized:
-                        name = tool["name"]
-                        if (tool["annotations"]["readOnlyHint"] is True and name_counts[name] == 1
-                                and name not in declined and name not in retained):
-                            retained.add(name)
-                            sources[name] = "installer"
+                    self._grant_installer_read_only(server, normalized, retained, sources)
                 server["read_only_tools"] = sorted(retained)
                 server["read_only_sources"] = {name: sources.get(name, "owner") for name in sorted(retained)}
                 server["discovered_tools"] = normalized
@@ -2497,9 +2492,83 @@ class ExtensionStore:
 
     @staticmethod
     def _installer_service_trusted(server: dict[str, Any]) -> bool:
-        """True while the server still runs the configuration the installer's service bound."""
+        """True while the server keeps a configuration the signed installer vouched for.
+
+        A local service is bound by its start-up handshake (config generation). A
+        release's remote connection is bound by the configuration fingerprint the
+        installer checked against its declarations.
+        """
         generation = server.get("installer_service_generation")
-        return type(generation) is int and generation == server.get("config_generation")
+        if type(generation) is int and generation == server.get("config_generation"):
+            return True
+        digest = server.get("installer_config_sha256")
+        return type(digest) is str and bool(digest) and digest == server.get("config_sha256")
+
+    @staticmethod
+    def _grant_installer_read_only(
+        server: dict[str, Any], tools: list[dict[str, Any]], retained: set[str], sources: dict[str, str]
+    ) -> None:
+        """Trust the installer-shipped server's own read-only declarations without a prompt.
+
+        Skips duplicate names and tools the owner turned back into changes. A tool
+        confirmed earlier from the server's hint is now vouched for by the installer.
+        """
+        declined = set(server.get("owner_write_tools") or [])
+        counts = Counter(tool["name"] for tool in tools)
+        for tool in tools:
+            name = tool["name"]
+            if tool["annotations"].get("readOnlyHint") is not True or counts[name] != 1 or name in declined:
+                continue
+            if name not in retained or sources.get(name) == "server_hint":
+                retained.add(name)
+                sources[name] = "installer"
+
+    def trust_installer_connections(self, declarations: list[dict[str, Any]]) -> list[str]:
+        """Trust the release's own remote connections while they keep the shipped setup.
+
+        Only the verified installer calls this, after its migrations. A connection
+        the owner customized (address, sign-in, headers or tokens) stays with the
+        owner's confirmation. Local services are bound by their handshake instead.
+        """
+        trusted: list[str] = []
+        with file_transaction(self.lock):
+            state = self._read()
+            now = _now()
+            changed = False
+            for declared in declarations:
+                if not isinstance(declared, dict) or declared.get("local_service"):
+                    continue
+                server = state["mcp_servers"].get(str(declared.get("id") or ""))
+                if (not server or server.get("builtin") or not declared.get("plugin_id")
+                        or server.get("plugin_id") != declared.get("plugin_id")
+                        or (declared.get("transport") or "streamable_http") != "streamable_http"
+                        or server.get("transport") != "streamable_http"
+                        or not declared.get("url") or server.get("url") != declared.get("url")
+                        or normalize_mcp_auth(server.get("auth")) != normalize_mcp_auth(declared.get("auth"))
+                        or server.get("secret_headers") or server.get("bearer_token_env")
+                        or server.get("env_http_headers")):
+                    continue
+                digest = _mcp_config_fingerprint(server)
+                if server.get("config_sha256") != digest:
+                    continue
+                sources = dict(server.get("read_only_sources") or {})
+                retained = set(server.get("read_only_tools") or [])
+                self._grant_installer_read_only(server, server.get("discovered_tools") or [], retained, sources)
+                read_only = sorted(retained)
+                read_only_sources = {name: sources.get(name, "owner") for name in read_only}
+                if (server.get("installer_config_sha256") != digest or server.get("read_only_tools") != read_only
+                        or server.get("read_only_sources") != read_only_sources):
+                    server["installer_config_sha256"] = digest
+                    server["read_only_tools"] = read_only
+                    server["read_only_sources"] = read_only_sources
+                    server["revision"] = _alloc_generation(state)
+                    server["updated_at"] = now
+                    changed = True
+                trusted.append(server["id"])
+            if changed:
+                state["updated_at"] = now
+                self._write(state)
+        return trusted
 
     @staticmethod
     def _clear_server_hints(server: dict[str, Any]) -> None:
