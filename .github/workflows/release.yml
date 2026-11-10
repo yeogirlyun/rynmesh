@@ -3,6 +3,16 @@ name: Release package
 on:
   push:
     tags: ["v*"]
+  # Started by "Publish new Ryn version" (a tag it pushes starts nothing by itself).
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable version tag (for example v0.9.0)
+        required: true
+        type: string
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 permissions:
   contents: write
@@ -36,7 +46,7 @@ jobs:
           "$RUNNER_TEMP/verify/bin/python" -c 'from rynmesh.peer_http import webui_dir; assert (webui_dir() / "index.html").is_file()'
       - name: Prepare release metadata
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${RELEASE_TAG#v}"
           wheel="$(basename dist/rynmesh-${version}-*.whl)"
           sha="$(sha256sum "dist/$wheel" | awk '{print $1}')"
           cp scripts/install.sh dist/install.sh
@@ -47,11 +57,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" --json isDraft > release-state.json; then
+          if gh release view "$RELEASE_TAG" --json isDraft > release-state.json; then
             python -c 'import json; assert json.load(open("release-state.json"))["isDraft"], "Release already published"'
-            gh release upload "$GITHUB_REF_NAME" dist/*
+            gh release upload "$RELEASE_TAG" dist/*
           else
-            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes --draft
+            gh release create "$RELEASE_TAG" dist/* --verify-tag --generate-notes --draft
           fi
 
   macos-desktop:
@@ -96,23 +106,23 @@ jobs:
         run: |
           dmg="$(find webapp/src-tauri/target/release/bundle/dmg -name '*.dmg' -print -quit)"
           test -n "$dmg"
-          cp "$dmg" "Ryn-${GITHUB_REF_NAME#v}-macos-${{ matrix.arch }}.dmg"
+          cp "$dmg" "Ryn-${RELEASE_TAG#v}-macos-${{ matrix.arch }}.dmg"
       - name: Verify desktop signature and bundled daemon
         run: |
           mount_dir="$(mktemp -d)"
-          hdiutil attach "Ryn-${GITHUB_REF_NAME#v}-macos-${{ matrix.arch }}.dmg" -mountpoint "$mount_dir" -nobrowse -readonly >/dev/null
+          hdiutil attach "Ryn-${RELEASE_TAG#v}-macos-${{ matrix.arch }}.dmg" -mountpoint "$mount_dir" -nobrowse -readonly >/dev/null
           trap 'hdiutil detach "$mount_dir" >/dev/null' EXIT
           app="$mount_dir/Ryn.app"
           codesign --verify --deep --strict --verbose=2 "$app"
           test -x "$app/Contents/MacOS/rynmesh-peer"
-          test "$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")" = "${GITHUB_REF_NAME#v}"
+          test "$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")" = "${RELEASE_TAG#v}"
           "$app/Contents/Resources/llama/llama-server" --version
           RYNMESH_LLAMA_DIR="$app/Contents/Resources/llama" \
             ./webapp/src-tauri/scripts/verify-sidecar.sh "$app/Contents/MacOS/rynmesh-peer" --check-llm
       - name: Upload desktop artifact to release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" "Ryn-${GITHUB_REF_NAME#v}-macos-${{ matrix.arch }}.dmg" --clobber
+        run: gh release upload "$RELEASE_TAG" "Ryn-${RELEASE_TAG#v}-macos-${{ matrix.arch }}.dmg" --clobber
 
   linux-desktop:
     name: Linux desktop (Ubuntu 24.04 x86_64)
@@ -151,13 +161,13 @@ jobs:
         run: |
           mapfile -t packages < <(find webapp/src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' -print)
           test "${#packages[@]}" -eq 1
-          artifact="Ryn-${GITHUB_REF_NAME#v}-linux-x86_64.deb"
+          artifact="Ryn-${RELEASE_TAG#v}-linux-x86_64.deb"
           cp "${packages[0]}" "$artifact"
-          ./webapp/src-tauri/scripts/verify-linux-deb.sh "$artifact" "${GITHUB_REF_NAME#v}"
+          ./webapp/src-tauri/scripts/verify-linux-deb.sh "$artifact" "${RELEASE_TAG#v}"
           sha256sum "$artifact" > "$artifact.sha256"
       - name: Install and smoke-test release artifact
         run: |
-          artifact="Ryn-${GITHUB_REF_NAME#v}-linux-x86_64.deb"
+          artifact="Ryn-${RELEASE_TAG#v}-linux-x86_64.deb"
           sudo apt-get install -y "$PWD/$artifact"
           desktop_file="$(find /usr/share/applications -maxdepth 1 -iname '*ryn*.desktop' -print -quit)"
           test -n "$desktop_file"
@@ -166,5 +176,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          artifact="Ryn-${GITHUB_REF_NAME#v}-linux-x86_64.deb"
-          gh release upload "$GITHUB_REF_NAME" "$artifact" "$artifact.sha256"
+          artifact="Ryn-${RELEASE_TAG#v}-linux-x86_64.deb"
+          gh release upload "$RELEASE_TAG" "$artifact" "$artifact.sha256"

@@ -119,7 +119,8 @@ pub fn run() {
             let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![preferences::get_desktop_preferences,
             preferences::set_desktop_preferences, preferences::desktop_node_port,
             updates::desktop_update_status, updates::desktop_update_check, updates::desktop_update_download,
-            updates::desktop_update_install, updates::desktop_update_preferences,
+            updates::desktop_update_install, updates::desktop_update_cancel, updates::desktop_update_preferences,
+            updates::desktop_update_acknowledge,
             plugin_services::ensure_plugin_service,
             plugin_services::plugin_service_instance,
             desktop::desktop_status, desktop::desktop_action, localization::set_desktop_language,
@@ -266,6 +267,9 @@ pub fn run() {
             // the watchdog. After resume its next tick rechecks the node.
             handle.state::<NodeState>().stopping.store(true, Ordering::SeqCst);
             node::stop(handle.state::<NodeState>().inner());
+            // After everything has stopped: a ready update installs silently on an
+            // owner-chosen quit, so the next start is the new version.
+            updates::install_on_quit(handle);
         }
     });
 }

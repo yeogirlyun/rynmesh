@@ -5,13 +5,27 @@ export interface DesktopUpdateStatus {
   currentVersion: string; availableVersion: string | null; notes: string | null;
   state: string; configured: boolean; autoDownload: boolean; downloaded: number;
   total: number | null; lastCheck: number | null; lastError: string | null; endpoint: string;
+  /** Install a ready update when the owner quits Ryn. */
+  installOnQuit?: boolean;
+  /** Consecutive failures; background ones reach the app shell only from 3 on. */
+  failures?: number;
+  /** The owner asked to update while Ryn was busy; it installs once idle. */
+  installRequested?: boolean; waitingFor?: string | null;
+  /** First start after an update: the version Ryn was updated from. */
+  updatedFrom?: string | null;
 }
+export const VISIBLE_UPDATE_FAILURES = 3;
 export const desktopUpdates = {
   status: () => invoke<DesktopUpdateStatus>("desktop_update_status"),
   check: () => invoke<DesktopUpdateStatus>("desktop_update_check"),
   download: () => invoke<DesktopUpdateStatus>("desktop_update_download"),
-  install: () => invoke<void>("desktop_update_install"),
-  preferences: (autoDownload: boolean) => invoke<DesktopUpdateStatus>("desktop_update_preferences", { autoDownload }),
+  /** Installs now (Ryn closes and reopens) or, while busy, as soon as Ryn is idle.
+   *  `now` interrupts running work; open documents still wait. */
+  install: (now = false) => invoke<DesktopUpdateStatus>("desktop_update_install", { now }),
+  cancel: () => invoke<DesktopUpdateStatus>("desktop_update_cancel"),
+  acknowledge: () => invoke<DesktopUpdateStatus>("desktop_update_acknowledge"),
+  preferences: (value: { autoDownload?: boolean; installOnQuit?: boolean }) =>
+    invoke<DesktopUpdateStatus>("desktop_update_preferences", value),
 };
 export interface PluginUpdateSource {
   kind: "public" | "company"; url: string; public_key: string; auto_update: boolean; token_env?: string;

@@ -203,6 +203,9 @@ impl PluginServices {
         self.stopping.store(true, Ordering::SeqCst);
         self.children.lock().unwrap().clear();
     }
+
+    /// Lets services start again after a stop that did not end Ryn (a failed update).
+    pub fn resume(&self) { self.stopping.store(false, Ordering::SeqCst); }
 }
 
 #[tauri::command]

@@ -38,7 +38,7 @@ import {
 } from "./personal/model";
 import { DesktopPage } from "./personal/Desktop";
 import { isTauriDesktop } from "./domain/nodeUrl";
-import { DesktopUpdateNotice } from "./screens/UpdatesPanel";
+import { DesktopUpdateOverlay, SoftwareUpdatesPage } from "./screens/UpdatesPanel";
 import { PersonalShell } from "./personal/Shell";
 import { DropProvider } from "./personal/dropStore";
 import { IncomingTransferDialog } from "./personal/drop/IncomingTransferDialog";
@@ -289,7 +289,6 @@ export default function App() {
       <DropProvider mode={client.mode} notify={notify}>
       <KeptPluginPagesProvider>
       <PersonalShell>
-        {isTauriDesktop() ? <DesktopUpdateNotice /> : null}
         {offline ? <OfflineBanner onRetry={refreshShell} /> : null}
         <Outlet context={context} />
         <KeptPluginPages client={client} />
@@ -303,6 +302,7 @@ export default function App() {
         onCancel={() => setConfirmRequest(null)}
       />
       <Toast toast={toast} onDismiss={() => setToast(null)} />
+      {isTauriDesktop() ? <DesktopUpdateOverlay /> : null}
       {tourOpen ? (
         <OnboardingTour
           node={node}
@@ -423,6 +423,7 @@ export function AppRoutes() {
           <Route path="settings/extensions" element={<AgentExtensions />} />
           <Route path="settings/extensions/:section" element={<AgentExtensions />} />
           <Route path="settings/desktop" element={<DesktopPage />} />
+          <Route path="settings/updates" element={<SoftwareUpdatesPage />} />
           <Route path="settings/space" element={<PersonalSpacePage />} />
           <Route path="settings/advanced" element={<Settings />} />
         </Route>

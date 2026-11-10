@@ -8,11 +8,19 @@
 
 使用 Tauri updater 的签名安装包。前端、原生桌面壳和 Python sidecar 一起更新，不调用 pip。原来的 `latest.json` 和非打包 Python 节点更新流程保持独立。
 
-默认启动后 30–59 秒检查，之后每 6 小时（带偏移）检查并下载。自动下载偏好按桌面配置目录持久化；关闭后仍可手动检查、下载。下载完成显示全局提示和设置页状态。安装必须点击“重启并更新”并确认已保存；有原生编辑器窗口、插件调用、Agent 运行、文件传输、模型部署或共享 AI 任务时拒绝安装。安装前停止本机 sidecar，安装启动失败时尝试恢复 sidecar。下载文件按版本缓存，安装时 Tauri 再次验证签名。
+像 Codex 一样：启动后 30–59 秒第一次检查，之后每小时检查一次（失败 15 分钟后重试），发现新版本就在后台下载并核对签名，不打扰。
+
+- **下好后**：左上角 Ryn 标志旁出现蓝色「更新」。点开看更新说明，再点「重启并更新」：Ryn 退出、静默安装（Windows 按当前用户安装，无 UAC、无安装窗口）、自动重新打开。重新打开后右下角提示一次「已更新到 Ryn x.y.z」。
+- **正在忙**：Agent 任务、文件传输、插件调用或 AI 任务在跑时，按钮变成黄色「等任务完成」，空闲后自动安装；也可以点「立即更新」中断任务。打开的文档（编辑器窗口）永远不会被替用户关掉，只能等用户关闭。
+- **不点也行**：默认在用户退出 Ryn 时安装已下载的更新（不重新打开）。
+- **失败**：后台失败连续 3 次才在左上角显示红色「更新失败」（原因 + 重试）；用户点了更新后的失败立即显示。
+- 设置 → 软件更新（`/settings/updates`）：版本、状态、「自动下载更新」「退出 Ryn 时自动安装」两个开关、更新说明。偏好保存在桌面配置目录 `updates/preferences.json`。
+
+安装前停止本机 sidecar 和插件服务；安装启动失败时恢复它们。下载文件按版本缓存，安装时再次验证签名。Windows 更新只覆盖安装器自己的文件，`plugin-services`（公司插件）和用户数据不动。
 
 这不是全应用崩溃回滚器：尚未实现跨安装器的独立恢复启动器。新版本安装成功但运行异常时，使用前一版签名安装包修复。数据迁移仍须保持向后兼容；本更新流程不覆盖用户数据。
 
-入口：设置 → 高级设置 → 软件更新；也可打开 `/settings/advanced?section=updates`。
+端到端测试构建可在编译时设置 `RYN_DESKTOP_UPDATE_TEST_ENDPOINT`（本机清单地址，包必须同源，仍校验编译进去的公钥），配合测试专用密钥和 `dangerousInsecureTransportProtocol`。正式发布工作流从不设置它。
 
 ## 首次配置发布签名
 
@@ -23,18 +31,17 @@
 
 签名更新密钥不同于 Windows Authenticode / macOS 开发者签名。后者仍按平台发布流程配置。
 
-## 发布桌面版本
+## 发布桌面版本（一个按钮）
 
-更新 Python、Tauri JSON、Cargo 和 npm 的版本号并创建稳定版本 tag（如 `v0.8.0`）。Tag 工作流先生成草稿 Release，避免 Python 包先上传时更新地址已经切到不完整发布。
+在老板仓库 Actions 里运行 **Publish new Ryn version**，填版本号（例如 `0.9.0`，必须比已有 tag 新）和更新说明：
 
-在老板仓库手动运行 **Build signed desktop update**，指定该 tag：
+1. `scripts/set_release_version.py` 把版本号写进 Python、Tauri、Cargo、npm 所有文件，提交到 `develop` 并打 tag `v0.9.0`。
+2. 用填写的更新说明创建草稿 Release，然后启动 **Release package**（Python 包、macOS/Linux 安装包）和 **Build signed desktop update**（Windows x86_64、macOS Intel、macOS Apple Silicon 的签名更新包 + `desktop-latest.json`，更新说明写进清单）。
+3. 约 30–40 分钟后，在草稿里确认 `desktop-latest.json` 和安装包都在，点 **Publish release**（保持 Latest）。已安装的 Ryn 一小时内收到。
 
-- 构建 Windows x86_64、macOS Intel、macOS Apple Silicon。
-- 生成 `.exe` / `.app.tar.gz` 和对应 `.sig`；桌面更新不下载 DMG。
-- `scripts/prepare_desktop_update.py` 检查三个平台齐全、版本一致，生成 `desktop-latest.json`。
-- 上传到同一 tag 的草稿 Release；不会自动发布，不会覆盖已发布版本。
+不会自动发布，不会覆盖已发布版本。也可以手动更新版本、推 tag，或手动运行 **Build signed desktop update** 并指定 tag。尚未发布 `desktop-latest.json` 时检查失败是正常状态；不能用原来的 Python 清单替代。
 
-验证三个平台安装包后再在 GitHub 发布草稿并设置为 Latest。后续客户端使用同一个固定订阅地址。尚未发布 `desktop-latest.json` 时检查失败是正常状态；不能用原来的 Python 清单替代。
+**第一次**：之前本机打包的安装包（`build-windows.ps1` 不带 `-Updater`、`build_full_windows.ps1`）没有编译进更新公钥，收不到自动更新。每台需要手动装一次由上述工作流（或带 `-Updater` 和公钥环境变量的本地构建）产出的版本，之后全自动。
 
 ## 公共 / 公司插件
 

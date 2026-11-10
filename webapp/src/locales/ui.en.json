@@ -2256,5 +2256,8 @@
   "'s device. No model download or API key is needed here.": "'s device. No model download or API key is needed here.",
   "The model or price differs from the original invitation. Review these current details before accepting.": "The model or price differs from the original invitation. Review these current details before accepting.",
   "Verify this device at its new address. Keep the original relationship, AI permissions and history. This does not restore revoked access.": "Verify this device at its new address. Keep the original relationship, AI permissions and history. This does not restore revoked access.",
-  "The selected service changed. Open the current model before sharing.": "The selected service changed. Open the current model before sharing."
+  "The selected service changed. Open the current model before sharing.": "The selected service changed. Open the current model before sharing.",
+  "Ryn {{version}} will be installed as Ryn quits.": "Ryn {{version}} will be installed as Ryn quits.",
+  "Ryn downloads new versions in the background. When one is ready, click Update next to the Ryn logo.": "Ryn downloads new versions in the background. When one is ready, click Update next to the Ryn logo.",
+  "Update settings": "Update settings"
 }
