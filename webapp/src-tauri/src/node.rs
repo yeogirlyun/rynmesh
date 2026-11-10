@@ -85,14 +85,23 @@ fn lan_ip() -> String {
     "127.0.0.1".to_string()
 }
 
+#[cfg(not(any(windows, target_os = "macos")))]
+fn xdg_log_dir(state_home: Option<PathBuf>, home: PathBuf) -> PathBuf {
+    state_home.filter(|path| path.is_absolute())
+        .unwrap_or_else(|| home.join(".local/state")).join("rynmesh")
+}
+
 pub fn log_dir() -> PathBuf {
     #[cfg(windows)]
     let dir = PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap_or_else(|| std::env::temp_dir().into_os_string())).join("Ryn/logs");
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     let dir = {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
     PathBuf::from(home).join("Library/Logs/Rynmesh")
     };
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let dir = xdg_log_dir(std::env::var_os("XDG_STATE_HOME").map(PathBuf::from),
+        std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(std::env::temp_dir));
     let _ = create_dir_all(&dir);
     dir
 }
@@ -506,6 +515,16 @@ mod tests {
             Ok(serde_json::json!({"desktop_managed": true}))
         }));
         assert!(!managed_health(|_| Ok(serde_json::json!({"desktop_managed": false}))));
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
+    #[test]
+    fn linux_logs_follow_xdg_state_home_and_ignore_relative_overrides() {
+        let home = PathBuf::from("/home/owner");
+        assert_eq!(xdg_log_dir(Some("/tmp/ryn-state".into()), home.clone()), PathBuf::from("/tmp/ryn-state/rynmesh"));
+        for override_path in [None, Some(PathBuf::new()), Some("relative-state".into())] {
+            assert_eq!(xdg_log_dir(override_path, home.clone()), PathBuf::from("/home/owner/.local/state/rynmesh"));
+        }
     }
 
     #[test]

@@ -24,8 +24,7 @@ def test_linux_bundle_uses_one_target_named_sidecar() -> None:
     assert config["bundle"]["targets"] == "all"
 
     build = _text(TAURI / "scripts" / "build-sidecar.sh")
-    assert 'RUSTC="$(command -v rustc' in build
-    assert 'TRIPLE="$("$RUSTC" -Vv' in build
+    assert 'scripts/rust-host-triple.sh' in build
     assert 'rynmesh-peer-$TRIPLE' in build
     assert "production webapp is missing" in build
 
@@ -46,6 +45,13 @@ def test_sidecar_bundle_closure_is_built_and_verified_without_source_fallbacks()
     deb_verify = _text(TAURI / "scripts" / "verify-linux-deb.sh")
     assert "ldd \"$SIDECAR\"" in deb_verify
     assert "python|node" in deb_verify
+
+
+def test_linux_stages_pinned_resources_before_tauri_builds() -> None:
+    ci = _text(REPO / ".github/workflows/ci.yml").split("  linux-desktop-package:", 1)[1]
+    release = _text(REPO / ".github/workflows/release.yml").split("  linux-desktop:", 1)[1]
+    assert ci.index("scripts/fetch-llama-runtime.sh") < ci.index("cargo test")
+    assert release.index("scripts/fetch-llama-runtime.sh") < release.index("npm run tauri build")
 
 
 def test_linux_package_and_sidecar_architecture_contracts_agree() -> None:
@@ -82,7 +88,7 @@ def test_release_uploads_verified_deb_and_checksum_without_dropping_macos() -> N
         "npm run tauri build -- --bundles deb",
         "verify-linux-deb.sh",
         "sha256sum \"$artifact\" > \"$artifact.sha256\"",
-        "gh release upload \"$GITHUB_REF_NAME\" \"$artifact\" \"$artifact.sha256\"",
+        "gh release upload \"$RELEASE_TAG\" \"$artifact\" \"$artifact.sha256\"",
         "macos-desktop:",
         "runner: macos-15-intel",
         "runner: macos-15",
@@ -99,7 +105,9 @@ def test_installed_smoke_covers_health_ui_recovery_xdg_and_orphan_cleanup() -> N
         'curl -fsS "http://127.0.0.1:$PORT/health"',
         'curl -fsS "http://127.0.0.1:$PORT/"',
         'http://127.0.0.1:$PORT/digest',
-        'kill -KILL "$OLD_NODE"',
+        'kill -KILL "${CRASH_NODE:-$OLD_NODE}"',
+        'pgrep -P "$OLD_NODE"',
+        '"$SMOKE_ROOT/recovered-health.json"',
         '"$SMOKE_ROOT/state/rynmesh/ryn-node.log"',
         'kill -TERM "$APP_PID"',
         "managed sidecar remained after desktop exit",

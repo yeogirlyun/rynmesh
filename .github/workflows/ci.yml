@@ -243,6 +243,8 @@ jobs:
           sidecar="src-tauri/binaries/rynmesh-peer-$triple"
           file "$sidecar" | grep -Eq 'ELF 64-bit.*x86-64'
           ./src-tauri/scripts/verify-sidecar.sh "$sidecar"
+      - name: Fetch pinned llama.cpp runtime
+        run: ./src-tauri/scripts/fetch-llama-runtime.sh
       - name: Test desktop shell platform helpers
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
       - name: Build Debian package
