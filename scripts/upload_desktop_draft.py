@@ -3,13 +3,21 @@ import base64
 import hashlib
 import json
 import os
-from pathlib import Path
+import re
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-
 from prepare_desktop_update import PLATFORMS, assemble
+
+
+def release_version(release, expected_tag):
+    if not re.fullmatch(r"v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)", expected_tag):
+        raise ValueError("Canonical stable release tag required")
+    if not release.get("draft") or release.get("tag_name") != expected_tag:
+        raise ValueError("Expected matching existing draft; published releases cannot be changed")
+    return expected_tag[1:]
 
 
 def main():
@@ -31,8 +39,7 @@ def main():
     if run['head_sha'] != expected_sha or run['conclusion'] != 'success' or run['path'] != '.github/workflows/desktop-update.yml':
         raise ValueError('Expected successful desktop build at the exact source commit')
     release = get(f'releases/{release_id}')
-    if not release['draft'] or release['tag_name'] != 'v0.8.0':
-        raise ValueError('Expected existing v0.8.0 draft; published releases cannot be changed')
+    version = release_version(release, os.environ['RELEASE_TAG'])
     root = Path('update-assets')
     public = base64.b64decode(base64.b64decode(os.environ['RYN_DESKTOP_UPDATE_PUBLIC_KEY']).decode().splitlines()[1])
     if len(public) != 42:
@@ -41,8 +48,8 @@ def main():
     files = []
     for platform in sorted(PLATFORMS):
         row = json.loads((root / (platform + '.json')).read_text())
-        filename = 'Ryn-0.8.0-' + platform + ('.exe' if platform.startswith('windows') else '.app.tar.gz')
-        if row['version'] != '0.8.0' or row['platform'] != platform or row['url'] != f'https://github.com/{repository}/releases/download/v0.8.0/{filename}':
+        filename = f'Ryn-{version}-' + platform + ('.exe' if platform.startswith('windows') else '.app.tar.gz')
+        if row['version'] != version or row['platform'] != platform or row['url'] != f'https://github.com/{repository}/releases/download/v{version}/{filename}':
             raise ValueError('Invalid platform metadata')
         binary = root / filename
         sig_path = root / (filename + '.sig')
@@ -60,14 +67,14 @@ def main():
         verifier.verify(base64.b64decode(lines[3]), packet[10:] + lines[2][17:].encode())
         print('Verified update signature:', filename, flush=True)
         files.extend([binary, sig_path])
-    assemble(root, '0.8.0', 'Ryn 0.8.0 current workspace snapshot.')
+    assemble(root, version, release.get('body') or '')
     files.append(root / 'desktop-latest.json')
 
     def sha256(path):
         with path.open('rb') as source:
             return hashlib.file_digest(source, 'sha256').hexdigest()
 
-    checksums = root / 'SHA256SUMS'
+    checksums = root / 'SHA256SUMS-desktop'
     checksums.write_text(''.join(sha256(path) + '  ' + path.name + '\n' for path in sorted(files)))
     files.append(checksums)
     existing = {asset['name']: asset for asset in get(f'releases/{release_id}/assets')}
