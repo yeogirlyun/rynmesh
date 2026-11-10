@@ -19,6 +19,11 @@ WRAPPER_PID=""
 APP_PID=""
 
 cleanup() {
+  result=$?
+  if [ "$result" -ne 0 ]; then
+    cat "$SMOKE_ROOT/desktop.log" >&2 2>/dev/null || true
+    tail -n 100 "$SMOKE_ROOT/state/rynmesh/ryn-node.log" >&2 2>/dev/null || true
+  fi
   if [ -n "$APP_PID" ]; then
     kill -TERM "$APP_PID" 2>/dev/null || true
   fi
@@ -69,10 +74,16 @@ fi
 [ -n "$APP_PID" ] || { echo "could not identify desktop process" >&2; exit 1; }
 OLD_NODE="$(pgrep -P "$APP_PID" -f 'rynmesh-peer' | head -n 1 || true)"
 [ -n "$OLD_NODE" ] || { echo "could not identify managed sidecar" >&2; exit 1; }
-kill -KILL "$OLD_NODE"
+# A PyInstaller one-file launcher owns a Python worker. Crash the worker so
+# the launcher can reap it and exit; killing only the launcher orphans a live
+# HTTP server, which is not a node crash and cannot exercise recovery.
+CRASH_NODE="$(pgrep -P "$OLD_NODE" -f 'rynmesh-peer' | head -n 1 || true)"
+kill -KILL "${CRASH_NODE:-$OLD_NODE}"
 
 NEW_NODE=""
-for _ in $(seq 1 100); do
+# The desktop intentionally allows 120 seconds of startup grace. Preserve
+# that production policy and allow recovery plus extraction within 180s.
+for _ in $(seq 1 720); do
   NEW_NODE="$(pgrep -P "$APP_PID" -f 'rynmesh-peer' | head -n 1 || true)"
   if [ -n "$NEW_NODE" ] && [ "$NEW_NODE" != "$OLD_NODE" ] &&
       curl -fsS "http://127.0.0.1:$PORT/health" 2>/dev/null | grep -q '"desktop_managed":true'; then
@@ -84,6 +95,8 @@ done
   echo "managed sidecar did not restart" >&2
   exit 1
 }
+curl -fsS "http://127.0.0.1:$PORT/health" >"$SMOKE_ROOT/recovered-health.json"
+grep -q '"desktop_managed":true' "$SMOKE_ROOT/recovered-health.json"
 [ -f "$SMOKE_ROOT/state/rynmesh/ryn-node.log" ] || {
   echo "desktop log was not written beneath XDG_STATE_HOME" >&2
   exit 1
