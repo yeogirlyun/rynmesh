@@ -23,6 +23,7 @@ CONSUMER = "http://127.0.0.1:18892"
 TOKEN_HEADERS = {
     "Content-Type": "application/json",
     "Authorization": "Bearer rynmesh-e2e-browser-token",
+    "x-ryn-local-token": "rynmesh-e2e-browser-token",
 }
 TOKEN_HEADERS.update(network_key_header())
 
@@ -79,23 +80,26 @@ def up(mode: str) -> None:
     _wait(CONSUMER + "/health")
 
 
-def _authorize_consumer(provider_id: str, service_id: str) -> dict[str, Any]:
+def _authorize_consumer(
+    provider_id: str, service_id: str, *,
+    provider_base: str = PROVIDER, consumer_base: str = CONSUMER,
+) -> dict[str, Any]:
     """Exercise owner pairing/grant APIs; registry visibility grants no AI access."""
-    relationships = _json(CONSUMER + "/api/local/friends")["friends"]
+    relationships = _json(consumer_base + "/api/local/friends")["friends"]
     relationship = next((row for row in relationships
                          if row["peer_id"] == provider_id and row["status"] == "active"), None)
     if relationship is None:
-        invitation = _json(PROVIDER + "/api/local/friends/invites", {})
-        relationship = _json(CONSUMER + "/api/local/friends/join", {
+        invitation = _json(provider_base + "/api/local/friends/invites", {})
+        relationship = _json(consumer_base + "/api/local/friends/join", {
             "invite_uri": invitation["invite_uri"],
         })
     relationship_id = relationship["relationship_id"]
-    grants = _json(PROVIDER + "/api/local/ai-access")["grants"]
+    grants = _json(provider_base + "/api/local/ai-access")["grants"]
     prior = next((row for row in grants if row["service_id"] == service_id
                   and row["relationship_id"] == relationship_id), {})
-    _json(PROVIDER + "/api/local/ai-access/" + quote(service_id, safe="") + "/" + relationship_id,
+    _json(provider_base + "/api/local/ai-access/" + quote(service_id, safe="") + "/" + relationship_id,
           {"allowed": True, "expected_revision": prior.get("revision", 0)}, method="PUT")
-    catalog = _json(CONSUMER + "/api/local/ai-access/friend-services", {"peer_id": provider_id})
+    catalog = _json(consumer_base + "/api/local/ai-access/friend-services", {"peer_id": provider_id})
     if catalog.get("status") != "authorized":
         raise RuntimeError("E2E consumer did not receive explicit AI authorization")
     selected = next((row for row in catalog.get("services", [])
