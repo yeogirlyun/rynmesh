@@ -154,6 +154,8 @@ jobs:
         run: npm run build
       - name: Build self-contained Linux sidecar
         run: ./webapp/src-tauri/scripts/build-sidecar.sh
+      - name: Fetch pinned llama.cpp runtime
+        run: ./webapp/src-tauri/scripts/fetch-llama-runtime.sh
       - name: Build Debian package
         working-directory: webapp
         run: npm run tauri build -- --bundles deb
