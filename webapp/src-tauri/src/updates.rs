@@ -299,6 +299,22 @@ pub fn install_on_quit(app: &tauri::AppHandle) {
     }
 }
 
+fn numeric_version(value: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = value.split(['.', '-', '+']).map(|part| part.parse::<u64>().ok());
+    Some((parts.next()??, parts.next()??, parts.next()??))
+}
+/// Downloaded packages for this version or older are no longer needed once it runs.
+fn obsolete_package(name: &str, current: &str) -> bool {
+    let Some(stem) = name.strip_suffix(".update").or_else(|| name.strip_suffix(".part")) else { return false; };
+    match (numeric_version(stem), numeric_version(current)) { (Some(package), Some(running)) => package <= running, _ => false }
+}
+fn remove_obsolete_packages(app: &tauri::AppHandle, current: &str) {
+    let Ok(entries) = directory(app).and_then(|dir| std::fs::read_dir(dir).map_err(|e| e.to_string())) else { return; };
+    for entry in entries.flatten() {
+        if obsolete_package(&entry.file_name().to_string_lossy(), current) { let _ = std::fs::remove_file(entry.path()); }
+    }
+}
+
 /// The version this start was updated from, recording the current one for next time.
 fn updated_from(previous: Option<&str>, current: &str) -> Option<String> {
     previous.filter(|p| !p.is_empty() && *p != current).map(str::to_string)
@@ -308,6 +324,7 @@ pub fn initialize(app: &tauri::AppHandle) {
     let mut preferences = read_preferences(app);
     let current = app.package_info().version.to_string();
     let from = updated_from(preferences.last_version.as_deref(), &current);
+    remove_obsolete_packages(app, &current);
     if preferences.last_version.as_deref() != Some(current.as_str()) {
         preferences.last_version = Some(current.clone());
         if let Err(error) = write_preferences(app, &preferences) { log::warn!("could not record the running version: {error}"); }
@@ -396,6 +413,16 @@ mod tests {
         // The file written by earlier versions only had autoDownload.
         let old: Preferences = serde_json::from_str(r#"{"autoDownload":false}"#).unwrap();
         assert!(!old.auto_download && old.install_on_quit && old.last_version.is_none());
+    }
+    #[test]
+    fn removes_only_packages_this_version_has_reached() {
+        assert!(obsolete_package("0.8.91.update", "0.8.91"));
+        assert!(obsolete_package("0.8.90.update", "0.8.91"));
+        assert!(obsolete_package("0.8.9.part", "0.8.91"));
+        assert!(!obsolete_package("0.9.0.update", "0.8.91"));
+        assert!(!obsolete_package("0.8.100.update", "0.8.91"));
+        assert!(!obsolete_package("preferences.json", "0.8.91"));
+        assert!(!obsolete_package("notes.update", "0.8.91"));
     }
     #[test]
     fn notices_an_update_only_when_the_version_changed() {

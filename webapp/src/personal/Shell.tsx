@@ -115,7 +115,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
       : (location.pathname === "/peers" || location.pathname.startsWith("/devices/"))
         ? [["/devices", t("nav.myDevices")], ["/devices/sync", tr("Device sync")], ["/peers", t("nav.connectionDetails")]]
         : location.pathname.startsWith("/settings")
-          ? [["/settings", t("nav.preferences")], ["/settings/desktop", t("nav.desktop")], ["/settings/space", t("nav.personalSpace")], ["/settings/plugins", t("nav.plugins")], ["/settings/extensions", t("nav.agentExtensions")], ["/settings/advanced", t("nav.advancedSettings")]]
+          ? [["/settings", t("nav.preferences")], ["/settings/desktop", t("nav.desktop")], ...(isTauriDesktop() ? [["/settings/updates", tr("Software updates")]] : []), ["/settings/space", t("nav.personalSpace")], ["/settings/plugins", t("nav.plugins")], ["/settings/extensions", t("nav.agentExtensions")], ["/settings/advanced", t("nav.advancedSettings")]]
           : [];
   const title =
     (location.pathname.startsWith("/apps/plugins/")

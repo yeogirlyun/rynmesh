@@ -153,8 +153,15 @@ export function DesktopUpdateOverlay() {
   const updatedTo = !dismissed && status?.updatedFrom ? status.currentVersion : null;
   useEffect(() => {
     if (!updatedTo) return;
-    const timer = window.setTimeout(() => { setDismissed(true); void desktopUpdates.acknowledge().catch(() => undefined); }, 6000);
-    return () => window.clearTimeout(timer);
+    // Ryn may reopen hidden in the tray: the notice counts down only while it can be seen.
+    let timer = 0;
+    const start = () => {
+      if (timer || document.visibilityState !== "visible") return;
+      timer = window.setTimeout(() => { setDismissed(true); void desktopUpdates.acknowledge().catch(() => undefined); }, 6000);
+    };
+    start();
+    document.addEventListener("visibilitychange", start);
+    return () => { document.removeEventListener("visibilitychange", start); window.clearTimeout(timer); };
   }, [updatedTo]);
   if (status?.state === "installing") {
     return <div className="ryn-update-installing" role="status" aria-live="polite">

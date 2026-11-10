@@ -15,6 +15,8 @@
 .pf-brand-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 4px 18px 13px; }
 .pf-brand-row .pf-brand { margin: 0; }
 .ryn-update-entry { position: relative; z-index: 40; }
+/* The sticky sidebar is its own stacking layer: lift it while the popover is open. */
+.pf-sidebar:has(.ryn-update-popover) { z-index: 60; }
 .ryn-update-entry.floating { position: fixed; left: 16px; bottom: 16px; }
 .ryn-update-pill { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 12px 0 9px; border-radius: 15px; border: 1px solid transparent; font-family: inherit; font-size: 13px; font-weight: 600; line-height: 1; white-space: nowrap; cursor: pointer; }
 .ryn-update-pill.ready { color: #fff; background: #3e63dd; border-color: #3e63dd; }
