@@ -10,7 +10,7 @@ spec = importlib.util.spec_from_file_location("set_release_version", ROOT / "scr
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 FILES = ["pyproject.toml", "rynmesh/__init__.py", "webapp/src-tauri/Cargo.toml", "webapp/src-tauri/Cargo.lock",
-         "webapp/src-tauri/tauri.conf.json", "webapp/package.json", "webapp/package-lock.json"]
+         "webapp/src-tauri/tauri.conf.json", "webapp/package.json", "webapp/package-lock.json", "website/index.html"]
 
 
 def _copy(tmp_path):
@@ -35,7 +35,7 @@ def test_sets_every_release_version_and_nothing_else(tmp_path):
         old = before[name].decode().splitlines()
         new = (root / name).read_bytes().decode().splitlines()
         changed = [line for line in difflib.ndiff(old, new) if line.startswith(("+ ", "- "))]
-        expected = 4 if name == "webapp/package-lock.json" else 2
+        expected = 4 if name in {"webapp/package-lock.json", "website/index.html"} else 2
         assert len(changed) == expected, (name, changed)
         assert all("12.34.56" in line for line in changed if line.startswith("+ "))
         # Line endings are kept as they were.
