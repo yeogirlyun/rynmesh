@@ -143,3 +143,26 @@ def test_control_state_carries_todays_local_date_at_day_precision(monkeypatch):
     # Same day, later request: the control state is byte-identical, so caches and Codex threads stay valid.
     assert instruction_layers(row()) == messages
     assert "local_date" not in messages[0]["content"]  # control state layer only, never the pinned base
+
+
+def test_subagent_context_and_report_guidance_reach_only_their_agent():
+    from rynmesh.agent_runtime.subagents import (
+        MULTI_AGENT_COORDINATOR_GUIDANCE,
+        SUBAGENT_REPORT_GUIDANCE,
+        SUBAGENT_TOOL_SPECS,
+    )
+
+    # The context rule rides on the spawn schema, which small windows never receive,
+    # so it costs nothing where subagents cannot be spawned.
+    spawn = next(s for s in SUBAGENT_TOOL_SPECS if s["function"]["name"] == "ryn_spawn_agent")
+    assert "fork_turns=none (default) the child sees only this prompt" in spawn["function"]["description"]
+    root = instruction_layers(row())
+    assert MULTI_AGENT_COORDINATOR_GUIDANCE in root[1]["content"]
+    assert "sees only this prompt" not in root[1]["content"]
+    assert SUBAGENT_REPORT_GUIDANCE not in root[1]["content"]
+    assert "fork_turns" not in root[0]["content"]  # never in the pinned base
+    for role in ("default", "explorer", "worker", "awaiter"):
+        child = instruction_layers({**row(), "subagent_meta": {"role": role, "nickname": "Ada", "agent_path": "/root/ada"}})
+        assert SUBAGENT_REPORT_GUIDANCE in child[1]["content"]
+        assert MULTI_AGENT_COORDINATOR_GUIDANCE not in child[1]["content"]
+        assert child[0] == root[0]
