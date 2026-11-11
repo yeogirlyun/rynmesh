@@ -43,13 +43,18 @@ class Decision:
 # mode, where nothing asks) pays nothing for them. Attaching the next-step
 # rule to the rejection itself follows openai/codex rust-v0.167.0
 # (ext/guardian-reviewer/src/completion.rs, Apache-2.0); the text is Ryn's.
+# The refusal stays in the history after the owner speaks again, and a later
+# owner message does reopen the call (loop.py matches the denial by goal
+# revision), so the rule must not read as permanent. A subagent's reply goes
+# to its parent, so both texts say "in your reply" rather than "tell the owner".
 OWNER_DENIED_CORRECTION = (
-    "The owner declined this operation and nothing ran. Do not retry it or get the same effect another way "
-    "(a different tool, a shell command, a script or the browser). Finish the parts of the task that do not "
-    "depend on it, then say in your reply which action was declined and what is still waiting on the owner.")
+    "The owner declined this operation and nothing ran. Unless a later owner message asks for it, do not retry "
+    "it or get the same effect another way (a different tool, a shell command, a script or the browser). "
+    "Finish the parts of the task that do not depend on it, then say in your reply which action was declined "
+    "and what is still waiting on the owner.")
 PERMISSION_DENIED_CORRECTION = (
     "Current host permissions do not allow this operation and nothing ran. Do not work around the setting "
-    "with another tool. Continue with what the permissions allow and tell the owner which setting blocks the rest.")
+    "with another tool. Continue with what the permissions allow and say in your reply which setting blocks the rest.")
 
 
 def literal_command(command, shell):
