@@ -622,3 +622,25 @@ def test_codex_compaction_retention_and_receipt_slimming(tmp_path):
     assert pinned[0]["call_id"] == "c_old"
     assert "return_value" not in pinned[0]["result"]
     assert len(pinned[0]["result"]["output"]) <= 220
+
+
+def test_checkpoint_note_tells_the_main_model_the_task_continues(tmp_path):
+    from rynmesh.agent_runtime.context_compaction import CHECKPOINT_CONTINUATION
+    runtime, _, _, _ = make_runtime(tmp_path)
+    task = runtime.create({"message": "Long task"})
+    saved = runtime.store.read()["tasks"][task["id"]]
+    assert not any(CHECKPOINT_CONTINUATION.strip() in str(m.get("content")) for m in runtime._context(saved))
+
+    def seed_checkpoint(data):
+        row = data["tasks"][task["id"]]
+        row["messages"] = [{"role": "user", "content": "Long task", "context_epoch": 0},
+                           {"role": "assistant", "content": "Read a.py.", "context_epoch": 0},
+                           {"role": "assistant", "content": "Next: edit a.py.", "context_epoch": 0}]
+        row["context_checkpoint"] = {"through": 2, "content": "Next: edit a.py.", "references": {}}
+
+    runtime.store.transaction(seed_checkpoint)
+    ctx = runtime._context(runtime.store.read()["tasks"][task["id"]])
+    note = next(m["content"] for m in ctx if (m.get("content") or "").startswith("Historical checkpoint"))
+    assert ("encrypted history." + CHECKPOINT_CONTINUATION) in note
+    # Only the checkpoint note carries it: the shared base and the control state do not grow.
+    assert sum(CHECKPOINT_CONTINUATION.strip() in str(m.get("content")) for m in ctx) == 1
