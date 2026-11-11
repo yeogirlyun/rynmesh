@@ -26,10 +26,17 @@ Ryn（本仓库）：
 
 已核对现有插件不会因此丢信息：企业微信工具的文本就是 `data` 的 JSON；Dashboard 的文本表格由结构化 `display` 生成；身份工具的文本只是一句说明。
 
+## 提交
+
+- Ryn：分支 `claude/mcp-structured-only-20261111` 提交 210671d，已合并 develop 2be68f4（基于 a36a61c）。未推送。
+- 插件：分支 `claude/wecom-agent-freshness-20261111` 提交 1cbdd48，已合并 develop 8e21725（基于 c8395f7）。VM 无私有仓库凭据，需宿主推送。
+- 均未打包、未安装、未部署到现场。
+
 ## 验证（VM，合成数据）
 
 - Ryn：`tests/test_agent_mcp_structured_only.py` 5 项，其中 3 项在修改前失败；MCP、扩展、插件视图相关的现有测试全部通过。
-- 插件：`tests/test_wecom_agent_freshness.py` 7 项，覆盖报告第 7 节：索引过期时首次 Agent 查询自动刷新；刷新慢时可见进度且有界；源未变时不误报过期；刷新失败可诊断、可重试，且不报成完整；并发查询只刷新一次；账号隔离；日期边界与 UTC 等价；每页和读消息都在 Ryn 上限内；旧游标不吸收新数据。
+- 插件：`tests/test_wecom_agent_freshness.py` 7 项（修改前全部失败），覆盖报告第 7 节：索引过期时首次 Agent 查询自动刷新；刷新慢时可见进度且有界；源未变时不误报过期；刷新失败可诊断、可重试，且不报成完整；并发查询只刷新一次；账号隔离；日期边界与 UTC 等价；每页和读消息都在 Ryn 上限内；旧游标不吸收新数据。
+- 回归：插件非联盟营销测试 280 项通过；14 项失败在未修改的 develop 上同样失败。Ryn 的 MCP、插件、结果相关测试中，OAuth 测试在此 VM 上因本机回环超时失败，develop 上同样超时，且只用纯文本结果，不经过本次改动；另 2 项上下文压缩测试在 develop 上同样失败。
 - 插件：`tests/test_wecom_answer_evaluation.py` 和 `tests/wecom_answer_cases.json` 定义 6 类回答评测：混合历史与最新、扫描件无文字、只有缓存文件时间、索引过期返回空、同名群、has_more 未结束。每类都有正例和反例，按证据状态和引用的消息时间判定，而不是按固定措辞。`scripts/evaluate_wecom_answer.py` 也可以给现场真实回答打分。
 
 ## 现场核对（只读，由宿主 Codex 通过已有阿九 SSH 技能执行）
