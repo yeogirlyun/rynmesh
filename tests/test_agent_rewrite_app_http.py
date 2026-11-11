@@ -59,7 +59,7 @@ class DeskModel:
 def test_task_http_discovers_writes_real_desk_and_retries_without_duplicate(node, tmp_path, monkeypatch):
     app, store = node
     # install_node_apps normally selects a user cache; this fixture owns every path.
-    monkeypatch.setattr("rynmesh.node_apps.plugins.package_root", lambda _peer: tmp_path / "plugins")
+    monkeypatch.setattr("rynmesh.node_apps.plugins.package_root", lambda _peer, home=None: tmp_path / "plugins")
     key = peer_box.load_or_create_messaging_key(store.home / "messaging.x25519")
 
     def guard(request):

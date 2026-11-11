@@ -56,8 +56,8 @@ def test_expiry_before_inner_is_zero_upstream_dispatch(node, monkeypatch, during
         now[0] += 11
     if during == "admission":
         original = manager.adapter._start
-        def delayed():
-            policy = original()
+        def delayed(**admission):  # the adapter passes task_id/caller
+            policy = original(**admission)
             now[0] += 11
             return policy
         monkeypatch.setattr(manager.adapter, "_start", delayed)
@@ -73,8 +73,8 @@ def test_expiry_before_inner_is_zero_upstream_dispatch(node, monkeypatch, during
 def test_admission_delay_reduces_inner_timeout_without_bypassing_gate(node, monkeypatch):  # noqa: F811
     bridge, selected, manager, now, seen = local_bridge(node, monkeypatch)
     original = manager.adapter._start
-    def delayed():
-        policy = original()
+    def delayed(**admission):  # the adapter passes task_id/caller
+        policy = original(**admission)
         now[0] += 6
         return policy
     monkeypatch.setattr(manager.adapter, "_start", delayed)
@@ -232,8 +232,9 @@ def test_native_gate_rechecks_deadline_after_admission(monkeypatch, delay):
     gate = object.__new__(ManagedAdapter)
     gate.owner = SimpleNamespace(manifest=SimpleNamespace(max_output_tokens=4096))
     gate.maximum = 4096
+    gate.usage_store = None  # usage recording is optional and not under test
     @contextmanager
-    def admitted():
+    def admitted(**_admission):  # the gate passes task_id/caller
         now[0] += delay
         yield SimpleNamespace(chat=lambda body, **kwargs: seen.append(kwargs["timeout_s"]))
     monkeypatch.setattr(gate, "request", admitted)
