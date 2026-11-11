@@ -71,12 +71,15 @@ export interface LLMServiceRecord {
   // read `availability` (see isServiceUsable).
   online: boolean;
   ready?: boolean;
-  access?: "self" | "friend";
+  access?: "self" | "friend" | "provider";
+  /** Company-plugin share: the member who shares it and the plugin resource. */
+  provider_name?: string;
+  provider_resource?: string;
   // False for a registry advertisement; true once the provider's signed catalog response bound the model.
   binding_verified?: boolean;
   // View model computed by the local node (rynmesh/llm_package/service_view.py).
   online_claim?: boolean;
-  relationship?: "self" | "space_member" | "friend" | "discovered";
+  relationship?: "self" | "space_member" | "friend" | "discovered" | "provider";
   presence?: { state: "online" | "offline" | "unconfirmed"; basis: string };
   availability?: { state: ServiceAvailability; reason: string };
   capacity?: { available?: number; max_concurrent?: number; running?: number };

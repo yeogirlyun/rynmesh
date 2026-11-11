@@ -211,3 +211,19 @@ class CLIModelDispatchAdapter:
             except (ValueError, OSError):
                 raise AdapterError("ai_permission_denied", code="ai_permission_denied") from None
         return getattr(self.inner, method)(*args, **kwargs)
+
+
+class CLIDefaultModelBinding(CLIModelDispatchAdapter):
+    """Exact binding for a CLI without a model inventory (Claude Code CLI).
+
+    Only plugin peer-provider requests use it. Personal-space sharing of the
+    same CLI keeps its existing unbound admission.
+    """
+
+    def current_models(self, *, refresh=False):
+        _, fingerprint = self._configuration()
+        models = [{"id": "", "name": "CLI default", "default": True}]
+        with self._metadata_lock:
+            self._observe_models(models, fingerprint)
+            self._metadata_fingerprint = fingerprint
+        return models

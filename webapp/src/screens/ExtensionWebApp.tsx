@@ -203,6 +203,8 @@ export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true 
             return { models: value.models, targets: value.targets, aliases: value.aliases, keys: [] };
           } },
           'models.share': { permission: 'models', run: () => client.setCLISharing(args[0], args[1]) },
+          // Sharing and usage are managed in the model pool; a plugin can only link there.
+          'models.manage': { permission: 'models', run: () => { navigate('/services/sources'); return { opened: true }; } },
           'messages.list': { permission: 'messages', run: () => client.listMessages(args[0]) },
           'messages.send': { permission: 'messages', run: () => client.sendMessage(args[0]) },
           'peer.status': { permission: 'peer_provider', run: () => peerProviders.status(pluginId) },

@@ -17,7 +17,7 @@ The resource and its OAuth server must use HTTPS on the same origin. No token, c
 
 After sign-in, the host proves possession of its Ed25519 identity and binds its X25519 messaging key to the current login. The provider controls membership, devices and authorization. The host refreshes the directory and verifies device reachability with a signed challenge; a directory entry alone is not an online claim.
 
-In plugin settings, choose **Choose local models to publish**, select the models, then save. The first version publishes ready API/native model services with exact model bindings. CLI agent containers are excluded. Personal sharing settings are separate. Consumers select the resulting provider model in the existing model picker. The provider node checks both its explicit local selection and current remote authorization before dispatch and before returning a result; active streams recheck at least once per second. Model changes require a new publication selection. Previously delivered stream fragments cannot be recalled.
+In plugin settings, choose **Choose local models to publish**, select the models, then save. Ready API and native model services and CLI agent containers (Codex, Claude Code, Antigravity) can be published, each with an exact model binding. A CLI is published as its default model only; the directory carries no CLI model inventory. A shared CLI is text-only: the provider returns text and tool-call suggestions, the caller's own device executes them, and the provider runs no command for the caller. Claude Code has no model inventory, so its binding covers the executable and manifest and is used for provider requests only. The model pool shows the same choice as a per-model **Company colleagues** switch, and only to a member the provider reports as a publisher. Personal sharing settings are separate. Consumers select the resulting provider model in the existing model picker. The provider node checks both its explicit local selection and current remote authorization before dispatch and before returning a result; active streams recheck at least once per second. Model changes require a new publication selection. Previously delivered stream fragments cannot be recalled.
 
 Provider devices also appear in Device Drop. Open a device conversation to send text. Messages use the existing signed encrypted transport, with live authorization on both devices and a source-specific conversation key. Failed deliveries require an explicit retry. Files, synchronization, remote tools and device control are not granted. No new mailbox, group chat or relay is included.
 
@@ -37,6 +37,10 @@ All routes require the existing local-owner protection and return fixed errors w
 | `GET /{plugin_id}/models` | Eligible local model choices |
 | `POST /{plugin_id}/publish` | Set explicit `service_ids` |
 | `POST /{plugin_id}/logout` | Clear local access and attempt revocation |
+
+## Usage by caller
+
+The provider device records each provider-channel request under the calling device, per model, in its existing local usage ledger (`llm/model-usage.json`, field `by_peer`; 30 daily buckets, UTC days). `GET /api/local/llm/models/usage/company` lists requests and tokens for today and the retained 30 days, with member names resolved from the cached directory. This is reporting only: no quota is derived from it, nothing is uploaded, and each provider device sees only its own share of the traffic. Ledgers written before this field existed are read unchanged.
 
 ## Provider protocol
 

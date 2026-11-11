@@ -37,7 +37,8 @@ export default function RynAgentModelPicker({ models, value, onChange, disabled 
   const effortChoices = [...new Set(reasoningEfforts)];
   const displayEffort = effortLabel || (effort && effortChoices.includes(effort) ? effortName(effort) : undefined);
   const showEfforts = effortChoices.length > 0 && Boolean(onEffortChange);
-  const sourceName = (model: AgentModel) => model.cli_source ? model.source_name || model.cli_source : t(`source_${model.source}`, { defaultValue: model.source });
+  const companyShared = (model: AgentModel) => Boolean(model.provider_resource);
+  const sourceName = (model: AgentModel) => companyShared(model) ? text("公司共享", "Company shared") : model.cli_source ? model.source_name || model.cli_source : t(`source_${model.source}`, { defaultValue: model.source });
   const groups = [...new Set(models.map(sourceName))].map(name => ({ name, models: models.filter(model => sourceName(model) === name) }));
   const ordered = groups.flatMap(group => group.models);
   const selectable = canUseAgentModel;
@@ -117,7 +118,7 @@ export default function RynAgentModelPicker({ models, value, onChange, disabled 
         {groups.map(group => <div role="group" aria-label={group.name} key={group.name} className="ra-model-group">
           <div className="ra-model-group-label" aria-hidden="true">{group.name}</div>
           {group.models.map(model => { const note = status(model); const badge = usageBadge(model); return <div key={model.id} id={optionID(model.id)} data-model-id={model.id} role="option" aria-selected={model.id === value} aria-disabled={selectionLocked || !selectable(model)} aria-label={model.name} aria-describedby={note ? `${optionID(model.id)}-status` : undefined} className={`ra-model-option${activeID === model.id ? " active" : ""}`} title={canUseAgentModel(model) ? model.name : model.description || model.name} onPointerMove={() => setActiveID(model.id)} onMouseDown={event => event.preventDefault()} onClick={() => choose(model)}>
-            <span className="ra-model-option-text"><span>{model.name}{model.supports_image_input === true && <ImageIcon size={12} className={`ra-model-image${model.image_support === "supported" ? "" : " ra-model-image-unknown"}`} role="img" aria-label={model.image_support === "supported" ? text("可读图片", "Reads images") : text("可能可读图片（未确认）", "May read images (not confirmed)")} />}</span>{model.source === "peer" && model.source_name && <small className="ra-model-shared-from">{text(`共享自 ${model.source_name}`, `Shared by ${model.source_name}`)}</small>}{note && <small id={`${optionID(model.id)}-status`}>{note}</small>}</span>
+            <span className="ra-model-option-text"><span>{model.name}{model.supports_image_input === true && <ImageIcon size={12} className={`ra-model-image${model.image_support === "supported" ? "" : " ra-model-image-unknown"}`} role="img" aria-label={model.image_support === "supported" ? text("可读图片", "Reads images") : text("可能可读图片（未确认）", "May read images (not confirmed)")} />}</span>{companyShared(model) ? <small className="ra-model-shared-from">{text(`提供人 ${model.source_name || text("公司同事", "a colleague")} · ${model.available ? "在线" : "离线"}`, `Shared by ${model.source_name || "a colleague"} · ${model.available ? "online" : "offline"}`)}</small> : model.source === "peer" && model.source_name && <small className="ra-model-shared-from">{text(`共享自 ${model.source_name}`, `Shared by ${model.source_name}`)}</small>}{note && <small id={`${optionID(model.id)}-status`}>{note}</small>}</span>
             <span className="ra-model-option-right">{badge && <span className="ra-model-usage-pill" aria-hidden="true">{badge}</span>}{model.id === value && <Check size={15} aria-hidden="true" />}</span>
           </div>; })}
         </div>)}

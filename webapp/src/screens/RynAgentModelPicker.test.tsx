@@ -223,3 +223,26 @@ it("marks image-capable models and names the computer a shared model comes from"
   expect(within(list).getByText("Shared by Boss PC")).toBeInTheDocument();
   expect(within(list).getAllByRole("img").length).toBe(2);
 });
+
+it("groups company-shared models and names the colleague who provides each one", async () => {
+  const user = userEvent.setup();
+  const changed = vi.fn();
+  const company: AgentModel[] = [
+    { id: "provider/a/peer/b/codex-cli", name: "Codex", source: "peer", source_name: "Boss", provider_resource: "https://company.test/ryn/connect", available: true, agent_supported: true },
+    { id: "provider/a/peer/c/codex-cli", name: "Codex", source: "peer", source_name: "Admin", provider_resource: "https://company.test/ryn/connect", available: false, agent_supported: true },
+    { id: "peer/d/model", name: "Family model", source: "peer", source_name: "Home PC", available: true, agent_supported: true },
+  ];
+  render(<RynAgentModelPicker models={[...models, ...company]} value="alpha" onChange={changed} />);
+  await user.click(screen.getByRole("combobox", { name: "Model" }));
+  const group = within(screen.getByRole("listbox", { name: "Model" })).getByRole("group", { name: "Company shared" });
+  const options = within(group).getAllByRole("option");
+  expect(options).toHaveLength(2);
+  expect(options[0]).toHaveTextContent("Shared by Boss · online");
+  expect(options[1]).toHaveTextContent("Shared by Admin · offline");
+  // Personal-space and friend models keep their own group.
+  expect(within(screen.getByRole("group", { name: "Shared with me" })).getByRole("option", { name: "Family model" })).toHaveTextContent("Shared by Home PC");
+  await user.click(options[1]);
+  expect(changed).not.toHaveBeenCalled();
+  await user.click(options[0]);
+  expect(changed).toHaveBeenCalledWith("provider/a/peer/b/codex-cli");
+});
