@@ -46,7 +46,7 @@ from .native_computer_files import (
     exclusive_write_verified_png,
     safe_unlink_verified_file,
 )
-from .store import AgentError, AgentToolRejected, encoded
+from .store import TASK_NOT_RUNNING_CORRECTION, AgentError, AgentToolRejected, encoded
 
 MAX_TRACKED_TASKS = 64
 MAX_TASK_WINDOWS = 64
@@ -759,7 +759,8 @@ class NativeComputerFacade:
             if status is not None and status != "running":
                 if status in {"paused", "cancelled", "interrupted"}:
                     raise AgentToolRejected("agent_cancelled")
-                raise AgentToolRejected("agent_desktop_access_required")
+                # Same code as before; the text must not claim the setting is off.
+                raise AgentToolRejected("agent_desktop_access_required", correction=TASK_NOT_RUNNING_CORRECTION)
             if row.get("pending_control"):
                 raise AgentToolRejected("agent_cancelled")
             row_exec = row.get("local_execution") or {}
@@ -880,7 +881,8 @@ class NativeComputerFacade:
             if status is not None and status != "running":
                 if status in {"paused", "cancelled", "interrupted"}:
                     raise AgentToolRejected("agent_cancelled")
-                raise AgentToolRejected("agent_desktop_access_required")
+                # Same code as before; the text must not claim the setting is off.
+                raise AgentToolRejected("agent_desktop_access_required", correction=TASK_NOT_RUNNING_CORRECTION)
             if row.get("pending_control"):
                 raise AgentToolRejected("agent_cancelled")
             row_exec = row.get("local_execution") or {}

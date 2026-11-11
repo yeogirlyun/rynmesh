@@ -287,4 +287,4 @@ def test_new_model_cannot_repeat_confirmed_old_write_in_same_goal(tmp_path):
     assert len(tools.calls) == 1 and row["pending_approval"] is None
     refused = json.loads(row["messages"][-1]["content"])
     assert refused["error"] == "agent_operation_already_confirmed"
-    assert "Treat it as done" in refused["correction"]
+    assert "was not run again" in refused["correction"] and "Treat it as done" not in refused["correction"]
