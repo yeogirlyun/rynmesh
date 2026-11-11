@@ -494,6 +494,8 @@ def test_computer_access_permission_and_unknown_write_reconciliation(ext_env, tm
     receipts1 = _receipts(runtime, task1["id"])
     assert receipts1[-1]["status"] == "not_executed"
     assert receipts1[-1]["result"]["error"] == "agent_desktop_access_required"
+    # The refusal tells the model not to reach the desktop another way.
+    assert "Do not control the screen" in receipts1[-1]["result"]["correction"]
     assert not counter_file.exists()
     cancelled1 = runtime.action(task1["id"], {"action": "cancel"})
     assert cancelled1["status"] == "cancelled"

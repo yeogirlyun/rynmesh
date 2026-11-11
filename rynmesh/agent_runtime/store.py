@@ -85,6 +85,28 @@ class AgentModelResponseError(AgentError):
         self.detail = ""
 
 
+# Next step for host refusals that otherwise reach the model as a bare code.
+# Without one, the second identical refusal gets the generic repeated-error
+# hint, which suggests another tool: wrong when a setting is what blocks the
+# call. The text rides on the refused result only, so tasks that are never
+# refused pay nothing. Same idea as the owner/permission corrections in
+# execution_policy.py; raise sites may still pass their own text.
+REJECTION_CORRECTIONS = {
+    "agent_desktop_access_required": (
+        "Desktop access is turned off for this task and nothing ran. Do not control the screen, the browser or "
+        "other apps another way (a shell command, a script or a different tool). Continue with what needs no "
+        "desktop control and say in your reply that the rest needs desktop access turned on."),
+    "agent_operation_already_confirmed": (
+        "This exact operation already completed earlier in this task and was not run again. Treat it as done: "
+        "do not repeat it or redo it in another form. Read the current state if you need to check the result, "
+        "then go on with the remaining steps."),
+    "agent_read_retry_limit": (
+        "This read has failed three times and was not sent again; repeating it will not help. Use a different "
+        "source or a different query if one really covers the need. Otherwise go on with the rest and say in "
+        "your reply what could not be read."),
+}
+
+
 class AgentToolRejected(AgentError):
     """Business layer guarantees this operation caused no side effects.
 
@@ -94,7 +116,7 @@ class AgentToolRejected(AgentError):
 
     def __init__(self, code: str, *, correction: str | None = None, details: dict | None = None):
         super().__init__(code)
-        self.correction = correction if isinstance(correction, str) and correction else None
+        self.correction = correction if isinstance(correction, str) and correction else REJECTION_CORRECTIONS.get(code)
         self.details = copy.deepcopy(details) if isinstance(details, dict) and details else None
 
 

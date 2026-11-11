@@ -35,6 +35,9 @@ def test_three_actual_failures_block_fourth_after_restart_but_other_read_continu
     assert runtime.get(task["id"])["budget"]["lifetime"]["tool_calls"] == before
     last = row["receipts"][-1]
     assert last["status"] == "not_executed"
+    # The refusal says what to do next instead of leaving a bare code.
+    correction = last["result"].pop("correction")
+    assert "not sent again" in correction and "what could not be read" in correction
     assert last["result"] == {"error": "agent_read_retry_limit", "not_executed": True, "no_mutation": True}
     assert len([r for r in row["receipts"] if r["status"] == "failed"]) == 3
     advance(runtime, 3)
