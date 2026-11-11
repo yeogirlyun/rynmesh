@@ -26,7 +26,7 @@
 
 1. 在安全的发布机器运行 `npm run tauri signer generate -- -w <仓库外的密钥路径>`，保存私钥和密码。不得提交私钥。
 2. 老板仓库配置 Actions variable `RYN_DESKTOP_UPDATE_PUBLIC_KEY` 为生成的公钥文件内容，配置 secrets `TAURI_SIGNING_PRIVATE_KEY` 和 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。
-3. 编译时 `RYN_DESKTOP_UPDATE_PUBLIC_KEY` 被嵌入二进制；运行时不从网络或普通配置文件更换信任公钥。未配置公钥的开发构建仍可启动，但更新界面明确显示未配置，并禁止下载/安装。
+3. `webapp/src-tauri/desktop-update.pub` 固定官方**公开验签公钥**（不是签名私钥）。所有桌面构建，包括普通本地 Cargo/Tauri 构建，均由 `build.rs` 默认嵌入它；空环境变量也不会移除公钥。环境变量 `RYN_DESKTOP_UPDATE_PUBLIC_KEY` 如有设置，必须是有效且与固定公钥一致的 minisign 公钥；不同的测试公钥仅允许配合显式 `RYN_DESKTOP_UPDATE_TEST_ENDPOINT`。轮换官方公钥必须审查源码变更并安排兼容升级。运行时不从网络或普通配置文件更换信任公钥。
 4. Windows 本地签名构建：设置上述环境变量，运行 `webapp/src-tauri/scripts/build-windows.ps1 -Updater`。macOS 构建额外传 `--config src-tauri/tauri.updater.conf.json`。
 
 签名更新密钥不同于 Windows Authenticode / macOS 开发者签名。后者仍按平台发布流程配置。
@@ -41,7 +41,7 @@
 
 不会自动发布，不会覆盖已发布版本。也可以手动更新版本、推 tag，或手动运行 **Build signed desktop update** 并指定 tag。尚未发布 `desktop-latest.json` 时检查失败是正常状态；不能用原来的 Python 清单替代。
 
-**第一次**：之前本机打包的安装包（`build-windows.ps1` 不带 `-Updater`、`build_full_windows.ps1`）没有编译进更新公钥，收不到自动更新。每台需要手动装一次由上述工作流（或带 `-Updater` 和公钥环境变量的本地构建）产出的版本，之后全自动。
+**第一次**：旧的本地构建可能没有更新公钥，必须手动安装一次带官方公钥的版本。现在普通本地打包也保留官方验签公钥，无须签名私钥便可接收官方自动更新；`-Updater` 和签名私钥仅用于生成可分发的签名更新包。安装交付前必须核对构建提交，并在设置 → 软件更新实际检查更新，不能仅凭相同的版本号判断安装正确。
 
 ## 公共 / 公司插件
 
