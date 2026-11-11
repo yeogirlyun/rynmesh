@@ -202,6 +202,30 @@ def test_denial_result_tells_the_model_how_to_continue(tmp_path):
     assert tools.calls == []
 
 
+def test_declined_operation_reopens_when_the_owner_asks_again(tmp_path):
+    from rynmesh.agent_runtime.execution_policy import OWNER_DENIED_CORRECTION
+    share = {"service_id": "svc1"}
+    runtime, model, tools, _ = make_runtime(tmp_path, assistant(name="share_service", args=share), assistant("Declined; stopped."),
+                                            assistant(name="share_service", args=share), assistant("Shared."))
+    row = runtime.create({"message": "share"})
+    advance(runtime, 2)
+    waiting = runtime.get(row["id"])
+    runtime.action(row["id"], {"action": "deny", "approval_id": waiting["pending_approval"]["id"], "expected_revision": waiting["revision"]})
+    advance(runtime)
+    done = runtime.get(row["id"])
+    assert done["status"] == "completed"
+    # The refusal stays in the history, so its wording must leave room for the owner changing their mind.
+    assert "Unless a later owner message asks for it" in OWNER_DENIED_CORRECTION
+    runtime.add_message(row["id"], {"message": "I changed my mind, share it.", "expected_revision": done["revision"]})
+    advance(runtime, 2)
+    again = runtime.get(row["id"])
+    # The host asks again instead of refusing the identical call as already declined.
+    assert again["status"] == "waiting_approval", again["events"][-1]
+    approve(runtime, row["id"])
+    advance(runtime, 2)
+    assert [call[0] for call in tools.calls] == ["share_service"]
+
+
 def test_ambiguous_write_never_replayed_after_restart(tmp_path):
     runtime, model, tools, key = make_runtime(tmp_path, assistant(name="share_service", args={"service_id": "svc1"}))
     row = runtime.create({"message": "share"})

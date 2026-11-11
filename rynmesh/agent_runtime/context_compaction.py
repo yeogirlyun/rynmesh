@@ -53,9 +53,13 @@ LEDGER_WINDOW_SHARE = 32
 # Told to the main model after a checkpoint, so a summary is not read as the end
 # of the task or as a reason to start over. Codex gives its model the same rule
 # for compaction (openai/codex rust-v0.167.0 model instructions); wording is Ryn's.
+# The note is rebuilt on every later request and sits before the turns that came
+# after the checkpoint, so it points at those turns too: Next alone goes stale as
+# the work moves on, and "still open" is untrue once the task is done and the
+# owner sends a follow-up.
 CHECKPOINT_CONTINUATION = (
-    "\nOlder turns were condensed into this checkpoint; the task is still open. Continue from Next with the "
-    "recorded results, without redoing finished steps, earlier reports or orientation. "
+    "\nOlder turns were condensed into this checkpoint; that does not end or restart the task. Carry on from "
+    "Next and the messages after this note without redoing finished steps or reports. "
     "The latest owner message is the current direction.")
 
 _LEDGER_SKIP_TOOLS = frozenset({"ryn_update_plan"})

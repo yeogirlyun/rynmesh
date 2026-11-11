@@ -128,13 +128,14 @@ def test_malformed_checkpoint_or_ambiguous_call_ids_are_not_guessed():
 
 def test_control_state_carries_todays_local_date_at_day_precision(monkeypatch):
     import datetime as real
-    import types
 
     from rynmesh.agent_runtime import prompt
 
-    fixed = real.datetime(2026, 11, 11, 23, 59, tzinfo=real.timezone(real.timedelta(hours=8)))
-    clock = types.SimpleNamespace(datetime=types.SimpleNamespace(now=lambda: fixed))
-    monkeypatch.setattr(prompt, "datetime", clock)
+    def zone(hours, minutes=0):
+        return real.timezone(real.timedelta(hours=hours, minutes=minutes))
+
+    # The clock seam returns this computer's local time; the test must not depend on the machine's own zone.
+    monkeypatch.setattr(prompt, "_local_now", lambda: real.datetime(2026, 11, 11, 23, 59, tzinfo=zone(8)))
     messages = instruction_layers(row())
     assert messages[0]["content"] == SYSTEM
     context = json.loads(messages[1]["content"].split("Server control state: ")[1].split("\nOwner corrections")[0])
@@ -143,6 +144,16 @@ def test_control_state_carries_todays_local_date_at_day_precision(monkeypatch):
     # Same day, later request: the control state is byte-identical, so caches and Codex threads stay valid.
     assert instruction_layers(row()) == messages
     assert "local_date" not in messages[0]["content"]  # control state layer only, never the pinned base
+    # The date is the owner's local day, not the UTC day, on either side of midnight and for odd offsets.
+    for now, date, offset in ((real.datetime(2026, 11, 12, 0, 1, tzinfo=zone(8)), "2026-11-12 Thu", "+08:00"),
+                              (real.datetime(2026, 11, 11, 20, 0, tzinfo=zone(-5)), "2026-11-11 Wed", "-05:00"),
+                              (real.datetime(2026, 11, 12, 1, 0, tzinfo=zone(5, 30)), "2026-11-12 Thu", "+05:30"),
+                              (real.datetime(2026, 11, 11, 12, 0, tzinfo=real.timezone.utc), "2026-11-11 Wed", "+00:00")):
+        monkeypatch.setattr(prompt, "_local_now", lambda now=now: now)
+        assert prompt.local_date() == {"local_date": date, "utc_offset": offset}
+    monkeypatch.undo()
+    real_now = prompt._local_now()
+    assert real_now.utcoffset() is not None  # the real clock is zone-aware
 
 
 def test_subagent_context_and_report_guidance_reach_only_their_agent():

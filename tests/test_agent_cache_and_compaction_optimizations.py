@@ -644,3 +644,14 @@ def test_checkpoint_note_tells_the_main_model_the_task_continues(tmp_path):
     assert ("encrypted history." + CHECKPOINT_CONTINUATION) in note
     # Only the checkpoint note carries it: the shared base and the control state do not grow.
     assert sum(CHECKPOINT_CONTINUATION.strip() in str(m.get("content")) for m in ctx) == 1
+    # The note precedes the turns that followed the checkpoint and is resent on every later request,
+    # so it must point at them as well as at Next, and must not claim the task is unfinished.
+    assert "Next and the messages after this note" in CHECKPOINT_CONTINUATION
+    assert "still open" not in CHECKPOINT_CONTINUATION
+    assert len(CHECKPOINT_CONTINUATION.encode()) <= 234  # no larger than the text it replaces
+    later = {"role": "assistant", "content": "Edited a.py.", "context_epoch": 0}
+    runtime.store.transaction(lambda data: data["tasks"][task["id"]]["messages"].append(later))
+    ctx = runtime._context(runtime.store.read()["tasks"][task["id"]])
+    contents = [m.get("content") or "" for m in ctx]
+    position = next(i for i, text in enumerate(contents) if text.startswith("Historical checkpoint"))
+    assert any(text == "Edited a.py." for text in contents[position + 1:])
