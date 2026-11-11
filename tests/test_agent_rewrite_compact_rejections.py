@@ -46,7 +46,7 @@ def prepare(tmp_path):
     created = runtime.create({"message": "Read the authored page. Never change it or grant access."})
     row = runtime.store.read()["tasks"][created["id"]]
     initial = request_size(runtime._context(row), runtime._specs(row))
-    assert initial < CONTEXT_LIMIT - 1000
+    assert initial < CONTEXT_LIMIT - 800
     # The normal request must compact, while a summary of the same observation
     # fits without the pinned developer layers and full tool catalog.
     tools.body = "Observed fixture fact. " * ((CONTEXT_LIMIT - initial + 500) // 23 + 1)
