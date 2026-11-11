@@ -23,4 +23,13 @@
 
 ## Local deployment
 
-The installed program has not been replaced. Data relocation versus freeing C: is pending the user's choice. No conversations, credentials, plugins or user files were deleted or relocated. These tests establish pending-image UI behavior, not a measured improvement in model response latency or native desktop acceptance after installation.
+The user freed C: space (approximately 13 GiB initially). Data remains in its original location; no conversations, credentials, plugins or user files were deleted or relocated.
+
+- Built committed develop `3c48e5e42ad86c6d902e57bd77f9fb39cf41de9f` in an isolated checkout. Tauri changed only Cargo.toml line endings; Git reported no content diff. The first build lacked Cargo on PATH, and the next rejected the build-cache junction as an isolated-venv path mismatch. The successful build used the existing Rust toolchain and canonical cache paths, with the same committed source.
+- Core setup artifact: SHA256 `70febd1991bbb0bab6845eb96a3c675a60b6c492644ffec6d1c60fb79f098ac3`, 62,022,219 bytes. Core binaries were installed by verified file replacement, preserving the NSIS distribution marker; the setup executable was not run over the existing company installation.
+- Installation: `C:/Users/子陵/AppData/Local/Packages/OpenAI.Codex_2p2nqsd0c76g0/LocalCache/Local/Ryn`. Rollback: `D:/code/rynmesh/artifacts/local-release-20261111-storage-image/program-backup` and `rollback.ps1`; 913 backup files verified before replacement.
+- Desktop automation was unavailable (`failed to write kernel assets`, OS error 3). An initial compound process-stop/install command was rejected by automatic review. After the user explicitly instructed Codex to operate it, the three freshly inspected Ryn/peer process IDs were stopped successfully with a separate scoped command. There were no executing Agent tasks. This was a process stop, not a UI-driven normal exit.
+- Installed core `3c48e5e42ad86c6d902e57bd77f9fb39cf41de9f`; existing company runtime `ba1fc166f6640a5bb620aacb3b3fc5ff651375b0` retained and its manifest files verified. Desktop config and plugin service config checksums unchanged. Build-info and node release records updated; executable hashes match the new receipt.
+- Restarted installed Ryn. Node health reports desktop-managed; company health is `ok=true`, `status=ready`. C: still had approximately 13.9 GiB free after verification.
+- Live synthetic image test through the installed node: attachment persisted and acknowledged in **0.750 s**, task completed in **6.859 s**, correctly recognized `314159`, no error. This is one observed run, not a latency guarantee. The user's financial task was not replayed.
+- Pending-image rendering is covered by frontend tests, including the final two focused tests after recovery initialization changes. Native visual acceptance was not performed because the desktop automation runtime was unavailable.
