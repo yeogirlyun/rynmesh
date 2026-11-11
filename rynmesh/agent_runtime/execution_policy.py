@@ -38,6 +38,20 @@ class Decision:
     basis: str
 
 
+# What the model should do after a refusal. These ride on the refused tool
+# result only, so a task that is never refused (for example in automatic
+# mode, where nothing asks) pays nothing for them. Attaching the next-step
+# rule to the rejection itself follows openai/codex rust-v0.167.0
+# (ext/guardian-reviewer/src/completion.rs, Apache-2.0); the text is Ryn's.
+OWNER_DENIED_CORRECTION = (
+    "The owner declined this operation and nothing ran. Do not retry it or get the same effect another way "
+    "(a different tool, a shell command, a script or the browser). Finish the parts of the task that do not "
+    "depend on it, then say in your reply which action was declined and what is still waiting on the owner.")
+PERMISSION_DENIED_CORRECTION = (
+    "Current host permissions do not allow this operation and nothing ran. Do not work around the setting "
+    "with another tool. Continue with what the permissions allow and tell the owner which setting blocks the rest.")
+
+
 def literal_command(command, shell):
     """Recognize one literal invocation; reject shell syntax and interpolation.
 

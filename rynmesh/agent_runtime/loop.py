@@ -35,7 +35,7 @@ from . import (
     tool_menu,
     verification,
 )
-from .execution_policy import classify_operation, decide
+from .execution_policy import OWNER_DENIED_CORRECTION, PERMISSION_DENIED_CORRECTION, classify_operation, decide
 from .prompt import (
     INTERNAL_NAMES,
     INTERNAL_SPECS,
@@ -1515,7 +1515,7 @@ class AgentLoop:
                     raise AgentToolRejected("agent_read_retry_limit")
                 decision = decide(call, meta, row, data["settings"])
                 if decision.action == "deny":
-                    raise AgentToolRejected("agent_permission_denied")
+                    raise AgentToolRejected("agent_permission_denied", correction=PERMISSION_DENIED_CORRECTION)
                 if call["effect"] == "write":
                     if row.get("model_history") and any(
                         receipt["goal_revision"] == row["goal"]["revision"] and receipt["tool"] == call["name"]
@@ -1527,7 +1527,7 @@ class AgentLoop:
                     if any(receipt["goal_revision"] == row["goal"]["revision"] and receipt["tool"] == call["name"]
                            and receipt["arguments_sha256"] == digest(call["arguments"])
                            and receipt.get("result", {}).get("error") == "owner_denied_operation" for receipt in row.get("receipts", [])):
-                        raise AgentToolRejected("agent_owner_denied_operation")
+                        raise AgentToolRejected("agent_owner_denied_operation", correction=OWNER_DENIED_CORRECTION)
                     # A write the tool already answered with an error may have partly
                     # applied. Refuse the identical call until the owner speaks again;
                     # the model may check the state or change the arguments.

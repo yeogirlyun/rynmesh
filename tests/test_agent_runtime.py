@@ -155,7 +155,10 @@ def test_read_only_and_live_permission_change_enforced(tmp_path):
     # A later less-restrictive setting cannot silently elevate an existing task.
     runtime.update_settings({"permission_mode": "confirm_changes"})
     advance(runtime, 2)
-    assert runtime.get(row["id"])["events"][-1]["result"]["error"] == "agent_permission_denied"
+    result = runtime.get(row["id"])["events"][-1]["result"]
+    assert result["error"] == "agent_permission_denied"
+    from rynmesh.agent_runtime.execution_policy import PERMISSION_DENIED_CORRECTION
+    assert result["correction"] == PERMISSION_DENIED_CORRECTION
     assert tools.calls == []
 
 
@@ -179,6 +182,23 @@ def test_denial_becomes_tool_result_then_model_continues(tmp_path):
     advance(runtime)
     assert runtime.get(row["id"])["status"] == "completed"
     assert "owner_denied_operation" in model.calls[-1][1][-1]["content"]
+    assert tools.calls == []
+
+
+def test_denial_result_tells_the_model_how_to_continue(tmp_path):
+    from rynmesh.agent_runtime.execution_policy import OWNER_DENIED_CORRECTION
+    share = {"service_id": "svc1"}
+    runtime, model, tools, _ = make_runtime(tmp_path, assistant(name="share_service", args=share),
+                                            assistant(name="share_service", args=share), assistant("Declined; stopped."))
+    row = runtime.create({"message": "share"})
+    advance(runtime, 2)
+    waiting = runtime.get(row["id"])
+    runtime.action(row["id"], {"action": "deny", "approval_id": waiting["pending_approval"]["id"], "expected_revision": waiting["revision"]})
+    advance(runtime, 3)
+    results = [json.loads(m["content"]) for m in model.calls[-1][1] if m["role"] == "tool"]
+    # The declined call, then the identical retry the host refuses without asking again.
+    assert [r["error"] for r in results] == ["owner_denied_operation", "agent_owner_denied_operation"]
+    assert all(r["correction"] == OWNER_DENIED_CORRECTION for r in results)
     assert tools.calls == []
 
 
