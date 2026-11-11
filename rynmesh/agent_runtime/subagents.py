@@ -103,6 +103,13 @@ MULTI_AGENT_COORDINATOR_GUIDANCE: str = (
     "</multi_agent_mode>"
 )
 
+# Every role's final answer goes straight to the parent, which should not have
+# to redo the work to learn what happened.
+SUBAGENT_REPORT_GUIDANCE: str = (
+    "End with a self-contained report for your parent: what you found or changed (with paths), "
+    "what you checked and the result, and what is left undone."
+)
+
 ROLES: frozenset[str] = frozenset({"default", "explorer", "worker", "awaiter"})
 FORK_MODES: frozenset[str] = frozenset({"none", "all"})
 
@@ -125,7 +132,11 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
             "name": "ryn_spawn_agent",
             "description": (
                 "Spawn a background subagent (Turing, Curie, Feynman, etc.) to explore code, implement scoped file "
-                "changes, or run checks in parallel. Returns immediately with agent_id, nickname, and agent_path."
+                "changes, or run checks in parallel. Returns immediately with agent_id, nickname, and agent_path. "
+                # The parent decides how much context a child gets, as in openai/codex
+                # rust-v0.167.0 multi-agent roles (Apache-2.0); wording is Ryn's.
+                "With fork_turns=none (default) the child sees only this prompt: include the goal, "
+                "relevant paths, constraints and what to report."
             ),
             "parameters": {
                 "type": "object",
@@ -330,6 +341,7 @@ def role_guidance(meta: dict) -> str:
         parts.append(
             "Role=default: Complete the delegated task directly and report verified results to your parent agent."
         )
+    parts.append(SUBAGENT_REPORT_GUIDANCE)
     parts.append("</multi_agent_role>")
     parts.append("</subagent_identity>")
     return "\n".join(parts)

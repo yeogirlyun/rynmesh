@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import datetime
 import json
 import os
 import platform
@@ -162,6 +163,20 @@ def instruction_layers(row: dict, *, model_base=None, persisted_base=None, sessi
     return messages
 
 
+def local_date() -> dict:
+    """Today's date on this computer, for "today", deadlines and "latest" questions.
+
+    Day precision on purpose: the value changes once a day, so the control
+    state (and any cached prefix or Codex thread built on it) stays stable
+    between requests. Codex also gives its model the current date
+    (openai/codex rust-v0.167.0 core/src/session/world_state.rs, Apache-2.0).
+    """
+    now = datetime.datetime.now().astimezone()
+    offset = now.strftime("%z")  # "+0800"; never locale-dependent
+    weekday = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")[now.weekday()]
+    return {"local_date": f"{now:%Y-%m-%d} {weekday}", "utc_offset": f"{offset[:3]}:{offset[3:]}"}
+
+
 def authority(row: dict) -> str:
     goal = row["goal"]
     # Owner messages remain separately verbatim in the history. This layer pins
@@ -174,6 +189,7 @@ def authority(row: dict) -> str:
                "inference_context": inference_projection(row)}
     context["local_execution"] = row.get("local_execution") or {"workspace_root": "", "desktop_access": False}
     context["os"] = platform.system()
+    context.update(local_date())
     port = os.environ.get("RYNMESH_PEER_PORT", "")
     if 0 < len(port) <= 5 and port.isascii() and port.isdigit() and 0 < int(port) <= 65535:
         context["local_control_api"] = {"origin": f"http://127.0.0.1:{int(port)}", "schema_path": "/openapi.json"}

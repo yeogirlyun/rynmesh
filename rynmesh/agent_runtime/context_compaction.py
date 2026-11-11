@@ -50,6 +50,14 @@ LEDGER_MAX_BYTES = 3000
 LEDGER_MIN_BYTES = 600
 LEDGER_WINDOW_SHARE = 32
 
+# Told to the main model after a checkpoint, so a summary is not read as the end
+# of the task or as a reason to start over. Codex gives its model the same rule
+# for compaction (openai/codex rust-v0.167.0 model instructions); wording is Ryn's.
+CHECKPOINT_CONTINUATION = (
+    "\nOlder turns were condensed into this checkpoint; the task is still open. Continue from Next with the "
+    "recorded results, without redoing finished steps, earlier reports or orientation. "
+    "The latest owner message is the current direction.")
+
 _LEDGER_SKIP_TOOLS = frozenset({"ryn_update_plan"})
 _BODY_KEYS = frozenset({"content", "text", "patch", "code", "input", "data", "body", "script",
                         "old_string", "new_string", "replacement", "source"})

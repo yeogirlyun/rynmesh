@@ -2234,7 +2234,9 @@ class AgentRuntime(AgentLoop):
                     row["approved"] = {**approval, "revision": row["revision"]}
                     event(row, "approved", approval_id=approval["id"], tool=approval["tool"])
                 else:
-                    denied = {"error": "owner_denied_operation", "not_executed": True, "no_mutation": True}
+                    from .execution_policy import OWNER_DENIED_CORRECTION
+                    denied = {"error": "owner_denied_operation", "not_executed": True, "no_mutation": True,
+                              "correction": OWNER_DENIED_CORRECTION}
                     row["messages"].append({"role": "tool", "tool_call_id": call["call_id"], "content": encoded(denied).decode(), "context_epoch": call.get("context_epoch", 0)})
                     verification.record(row, call, "not_executed", now(), result=denied)
                     row["queue"].pop(0)
