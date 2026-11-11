@@ -3,6 +3,12 @@ param([switch]$SkipSidecar, [switch]$Updater, [switch]$CleanInstall)
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).Path
 $tauriRoot = Join-Path $repoRoot 'webapp/src-tauri'
+if ([string]::IsNullOrWhiteSpace($env:RYN_DESKTOP_UPDATE_PUBLIC_KEY)) {
+    $env:RYN_DESKTOP_UPDATE_PUBLIC_KEY = (Get-Content -LiteralPath (Join-Path $tauriRoot 'desktop-update.pub') -Raw).Trim()
+}
+if ($Updater -and -not $env:TAURI_SIGNING_PRIVATE_KEY) {
+    throw 'Signed update packages require TAURI_SIGNING_PRIVATE_KEY; ordinary builds retain the official verification public key without it.'
+}
 $buildRoot = Join-Path $repoRoot '.codex-tmp/windows-package'
 $venvRoot = Join-Path $buildRoot 'venv'
 $nativeCrateManifest = Join-Path $repoRoot 'native/ryn_computer_use/Cargo.toml'
@@ -167,9 +173,6 @@ Push-Location (Join-Path $repoRoot 'webapp')
 try {
     $updateArgs = @()
     if ($Updater) {
-        if (-not $env:RYN_DESKTOP_UPDATE_PUBLIC_KEY -or -not $env:TAURI_SIGNING_PRIVATE_KEY) {
-            throw 'Signed updates require RYN_DESKTOP_UPDATE_PUBLIC_KEY and TAURI_SIGNING_PRIVATE_KEY.'
-        }
         $updateArgs = @('--config', 'src-tauri/tauri.updater.conf.json')
     }
     # Tauri embeds the web UI into the app crate, so every release recompiled it from
