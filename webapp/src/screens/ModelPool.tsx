@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { Check, Cloud, Ellipsis, LockKeyhole, Monitor, RefreshCw, Search, Share2, Sparkles, Terminal } from "lucide-react";
 import { useAppContext } from "../appContext";
 import { formatTokenCount, sourceRequest, type AISource, type ModelTokenUsage } from "../domain/aiSources";
+import { loadCompanySharing, loadCompanyUsage, setCompanyShared, type CompanySharingState, type CompanyUsage } from "../domain/companySharing";
 import { canUseAgentModel, rynAgent, type AgentModel, type AgentSettings } from "../domain/rynAgent";
 import type { CLIServicesStatus, CLIServiceStatus, LLMServiceRecord } from "../domain/nodeClient";
 import type { NativeModelStatus } from "../domain/nativeModel";
@@ -14,6 +15,8 @@ import ModelPoolSettings, { buildDailySeries } from "./ModelPoolSettings";
 import ModelPoolSharing from "./ModelPoolSharing";
 
 type CatalogModel = AgentModel & { source_id?: string; model_id?: string; service_id?: string; peer_id?: string; adapter?: string; source_name?: string; sharing?: boolean; share_scope?: string };
+/** A model a colleague shares through the company plugin: who provides it and whether their device answers. */
+type CompanyOrigin = { provider: string; online: boolean };
 type PoolRow = {
   key: string;
   name: string;
@@ -26,6 +29,9 @@ type PoolRow = {
   sharing: boolean;
   usage?: ModelTokenUsage;
   usageKey?: string;
+  /** Local service id that the company sharing switch publishes. */
+  serviceId?: string;
+  company?: CompanyOrigin;
 };
 type Props = {
   sources: AISource[]; cli: CLIServicesStatus | null; native: NativeModelStatus | null; peers: LLMServiceRecord[];
@@ -50,6 +56,8 @@ export default function ModelPool({ sources, cli, native, peers, loading, error,
   const [usageModelFilter, setUsageModelFilter] = useState<string>("all");
   const [usageDays, setUsageDays] = useState<7 | 30>(7);
   const [shareEnabled, setShareEnabled] = useState(false);
+  const [company, setCompany] = useState<CompanySharingState | null>(null);
+  const [companyUsage, setCompanyUsage] = useState<CompanyUsage | null>(null);
   const mounted = useRef(true);
   const refreshRevision = useRef(0);
   const settingsWriteRevision = useRef(0);
@@ -68,6 +76,9 @@ export default function ModelPool({ sources, cli, native, peers, loading, error,
       rynAgent.settings().then(value => { if (currentSettings()) setSettings(value); })
         .catch(() => { if (currentSettings()) setAgentErrors(value => ({ ...value, settings: true })); })
         .finally(() => { if (currentSettings()) setAgentLoading(value => ({ ...value, settings: false })); }),
+      // Company sharing is optional: without a signed-in publisher there is simply no control.
+      loadCompanySharing().then(value => { if (current()) setCompany(value); }).catch(() => { if (current()) setCompany(null); }),
+      loadCompanyUsage().then(value => { if (current()) setCompanyUsage(value); }).catch(() => { if (current()) setCompanyUsage(null); }),
     ]);
   }, []);
   // Reload connection readiness and protocol support after configuration edits.
@@ -78,7 +89,7 @@ export default function ModelPool({ sources, cli, native, peers, loading, error,
       const usage = source.model_settings?.[model]?.usage || source.model_usage?.[model] || cat?.usage;
       return {
         key: `${source.id}:${model}`, name: model, origin: source.name, owner: "source" as const, source,
-        catalog: cat,
+        catalog: cat, serviceId: cat?.service_id,
         sharing: source.shared_models ? source.shared_models.includes(model) : source.sharing,
         usage,
         usageKey: usage?.usage_key || `source/${source.id}/${model}`,
@@ -89,7 +100,7 @@ export default function ModelPool({ sources, cli, native, peers, loading, error,
       const usage = entry.usage || cat?.usage;
       items.push({
         key: entry.kind, name: `${entry.title} · CLI 默认`, origin: entry.kind === "codex_cli" ? "Codex CLI" : entry.kind === "antigravity_cli" ? "Antigravity" : "Claude Code CLI", owner: "cli", cli: entry,
-        catalog: cat,
+        catalog: cat, serviceId: entry.service_id,
         sharing: entry.publication_enabled,
         usage,
         usageKey: usage?.usage_key || `local/${entry.service_id}`,
@@ -110,7 +121,7 @@ export default function ModelPool({ sources, cli, native, peers, loading, error,
       const usage = native.usage || native.model_settings?.usage || cat?.usage;
       items.push({
         key: `native:${native.id}`, name: native.name, origin: "Ryn", owner: "native", sharing: native.sharing,
-        catalog: cat,
+        catalog: cat, serviceId: native.id,
         usage,
         usageKey: usage?.usage_key || `local/${native.id}`,
       });
@@ -122,6 +133,7 @@ export default function ModelPool({ sources, cli, native, peers, loading, error,
         key: `${peer.peer_id}/${peer.service.package_id}`, name: peer.service.model_alias, origin: peer.node_name || peer.peer_id,
         owner: "peer", peer, sharing: true,
         catalog: cat,
+        ...(peer.access === "provider" || cat?.provider_resource ? { company: { provider: peer.provider_name || cat?.source_name || peer.node_name || "", online: cat ? cat.available : peer.online } } : {}),
         usage,
         usageKey: usage?.usage_key || cat?.id,
       });
@@ -131,6 +143,7 @@ export default function ModelPool({ sources, cli, native, peers, loading, error,
       items.push({
         key: row.id, name: row.name, origin: row.source_name || row.source, owner: row.source === "peer" ? "peer" : "native",
         catalog: row, sharing: Boolean(row.sharing),
+        ...(row.provider_resource ? { company: { provider: row.source_name || "", online: row.available } } : {}),
         usage: row.usage,
         usageKey: row.usage?.usage_key || row.id,
       });
@@ -167,7 +180,11 @@ export default function ModelPool({ sources, cli, native, peers, loading, error,
     () => Math.max(1, ...dailySeries.map(item => item.tokens)),
     [dailySeries],
   );
-  const originLabel = (row: PoolRow) => row.owner === "peer" ? text("其他设备提供", "From another device") : row.owner === "source" && row.source?.kind === "api" ? text("我接入的 API", "My API source") : text("本机运行", "Runs locally");
+  const companyRows = visible.filter(row => row.company);
+  const ownRows = visible.filter(row => !row.company);
+  const canShareWithCompany = (row: PoolRow) => Boolean(company && row.serviceId && !row.catalog?.cli_model && (company.eligible.includes(row.serviceId) || company.selected.includes(row.serviceId)));
+  const companyUsageRows = companyUsage && (companyUsage.sharing || companyUsage.rows.length > 0) ? companyUsage.rows : null;
+  const originLabel = (row: PoolRow) => row.company ? `${text("提供人", "Shared by")} ${row.company.provider || text("公司同事", "a colleague")} · ${row.company.online ? text("在线", "Online") : text("离线", "Offline")}` : row.owner === "peer" ? text("其他设备提供", "From another device") : row.owner === "source" && row.source?.kind === "api" ? text("我接入的 API", "My API source") : text("本机运行", "Runs locally");
   const renderUsageCounter = (row: PoolRow) => {
     const usage = row.usage;
     if (!usage) return null;
@@ -208,6 +225,41 @@ export default function ModelPool({ sources, cli, native, peers, loading, error,
   const editRow = (row: PoolRow) => {
     if (row.source) onEditSource(row.source); else if (row.cli) onCLI(row.cli.kind); else if (row.owner === "native") onNative();
   };
+  const toggleCompany = (row: PoolRow, shared: boolean) => void run(`company:${row.key}`, async () => {
+    if (!company || !row.serviceId) return;
+    let selected: string[];
+    try { selected = await setCompanyShared(company.pluginId, row.serviceId, shared); }
+    catch {
+      // Show what is actually saved, never the attempted value.
+      setCompany(await loadCompanySharing().catch(() => null));
+      throw new Error(text("公司同事共享没有保存，请稍后重试。", "Company sharing was not saved. Try again later."));
+    }
+    setCompany(value => value && { ...value, selected });
+    setCompanyUsage(await loadCompanyUsage().catch(() => null));
+    setFeedback(shared ? text(`已把 ${row.name} 共享给公司同事。家庭组和好友设置不变。`, `${row.name} is now shared with company colleagues. Personal space and friend settings are unchanged.`)
+      : text(`已停止向公司同事共享 ${row.name}。`, `${row.name} is no longer shared with company colleagues.`));
+  });
+  const renderRow = (row: PoolRow) => <div className="mp-model" key={row.key}>
+        <span className={`ais-brand ${row.source?.provider === "zai" ? "ais-mark ais-zai" : row.cli?.kind === "codex_cli" ? "ais-openai" : ""}`}>{row.source?.provider === "zai" || row.cli?.kind === "codex_cli" ? null : row.owner === "peer" ? <Monitor size={23} /> : row.cli ? <Terminal size={23} /> : <Cloud size={23} />}</span>
+        <div className="mp-model-name">
+          <strong>{row.name}</strong>
+          <div className="mp-model-meta">
+            <small>{row.company ? originLabel(row) : `${row.origin} · ${originLabel(row)}`}</small>
+            {renderUsageCounter(row)}
+          </div>
+          {row.catalog?.description && (!row.catalog.available || !row.catalog.agent_supported) && <span className="mp-capability">{row.catalog.description}</span>}
+        </div>
+        <div className="mp-model-actions">
+          {canShareWithCompany(row) && <label className="mp-company-share" title={text("公司同事只得到模型的文字回复和工具调用建议，命令在对方自己的电脑上执行。", "Colleagues receive text and tool-call suggestions only; commands run on their own computer.")}><input type="checkbox" aria-label={`${text("共享给公司同事", "Share with company colleagues")} ${row.name}`} checked={company!.selected.includes(row.serviceId!)} disabled={Boolean(busy)} onChange={event => toggleCompany(row, event.target.checked)} />{text("公司同事", "Company")}</label>}
+          {row.source ? <button className="mp-share" aria-label={`${text("分享", "Share")} ${row.name}`} disabled={Boolean(busy)} onClick={() => { setShareRow(row); setShareEnabled(row.sharing); setFeedback(""); }}>{row.sharing ? <Share2 size={14} /> : <LockKeyhole size={14} />}{row.sharing ? text("已分享", "Shared") : text("仅自己使用", "Private")}</button> : row.owner === "peer" ? <small>{row.company ? text("公司共享", "Company shared") : text("由对方分享", "Shared by provider")}</small> : <button className="mp-share" disabled={Boolean(busy)} onClick={() => editRow(row)}>{row.sharing ? <Share2 size={14} /> : <LockKeyhole size={14} />}{row.sharing ? text("已分享", "Shared") : text("仅自己使用", "Private")}</button>}
+          {settings?.model_id && settings.model_id === row.catalog?.id && <span className="mp-default"><Check size={14} />{text("助手默认", "Assistant default")}</span>}
+          {row.source?.model_settings?.[row.name] && (
+            <button className="ais-secondary" disabled={Boolean(busy)} onClick={() => setParameterRow(row)}>{text("此模型参数", "Model parameters")}</button>
+          )}
+          {row.catalog && canUseAgentModel(row.catalog) ? <button className="ais-secondary" disabled={Boolean(busy)} onClick={() => choose(row)}>{settings?.model_id === row.catalog.id ? text("重新确认用于助手", "Reconfirm for assistant") : text("用于助手", "Use for assistant")}</button> : <span className="mp-unavailable">{unavailableLabel(row)}</span>}
+        </div>
+        {row.owner !== "peer" && <button className="ais-icon" aria-label={`${text("配置", "Configure")} ${row.name}`} onClick={() => editRow(row)}><Ellipsis size={18} /></button>}
+      </div>;
   const saveShare = () => void run("share", async () => {
     if (!shareRow?.source) return;
     // Re-read so an unrelated model's latest share choice is preserved.
@@ -295,30 +347,26 @@ export default function ModelPool({ sources, cli, native, peers, loading, error,
         </div>
       </section>
     )}
+    {companyUsageRows && (
+      <section className="mp-company-usage" aria-label={text("公司同事用量", "Company colleague usage")}>
+        <header><strong>{text("公司同事用量", "Company colleague usage")}</strong><small>{text("只统计本机共享出去的模型，不设限额。其他同事电脑上的共享由各自电脑统计。", "Only models shared from this device, with no limits. Other devices keep their own records.")}</small></header>
+        {companyUsageRows.length ? <table>
+          <thead><tr><th>{text("同事", "Colleague")}</th><th>{text("模型", "Model")}</th><th>{text("今天请求", "Requests today")}</th><th>{text("今天 Token", "Tokens today")}</th><th>{text("近 30 天请求", "Requests, 30 days")}</th><th>{text("近 30 天 Token", "Tokens, 30 days")}</th></tr></thead>
+          <tbody>{companyUsageRows.map(row => <tr key={`${row.model_key}:${row.peer_id}`}>
+            <td title={row.peer_id}>{row.member_name || `${text("未知设备", "Unknown device")} ${row.peer_id.slice(0, 8)}`}</td><td>{row.model_name || row.model_key}</td>
+            <td>{row.today.requests}</td><td>{formatTokenCount(row.today.total_tokens)}</td>
+            <td>{row.last_30_days.requests}</td><td>{formatTokenCount(row.last_30_days.total_tokens)}</td>
+          </tr>)}</tbody>
+        </table> : <p>{text("还没有同事使用。", "No colleague has used these models yet.")}</p>}
+      </section>
+    )}
     <div className="mp-toolbar"><label className="ais-search"><Search size={17} /><input aria-label={text("搜索模型", "Search models")} placeholder={text("搜索模型或来源", "Search models or sources")} value={query} onChange={event => setQuery(event.target.value)} /><button aria-label={text("刷新模型", "Refresh models")} disabled={Boolean(busy)} onClick={() => void run("refresh", async () => { await onRefresh(); await refreshAgent(); })}><RefreshCw size={16} /></button></label><small>{rows.length} {text("个模型", "models")}</small></div>
     {(error || feedback) && <p role={error ? "alert" : "status"} className="mp-feedback">{error || feedback}</p>}
     {(agentErrors.models || agentErrors.settings) && <p className="mp-note" role="status">{text("暂时无法读取助手状态，模型配置和分享仍可使用。", "Assistant status is unavailable. Model configuration and sharing remain available.")}</p>}
     {loading ? <p role="status">{text("正在读取模型…", "Loading models…")}</p> : <div className="mp-list" aria-label={text("模型池", "Model pool")}>
-      {visible.map(row => <div className="mp-model" key={row.key}>
-        <span className={`ais-brand ${row.source?.provider === "zai" ? "ais-mark ais-zai" : row.cli?.kind === "codex_cli" ? "ais-openai" : ""}`}>{row.source?.provider === "zai" || row.cli?.kind === "codex_cli" ? null : row.owner === "peer" ? <Monitor size={23} /> : row.cli ? <Terminal size={23} /> : <Cloud size={23} />}</span>
-        <div className="mp-model-name">
-          <strong>{row.name}</strong>
-          <div className="mp-model-meta">
-            <small>{row.origin} · {originLabel(row)}</small>
-            {renderUsageCounter(row)}
-          </div>
-          {row.catalog?.description && (!row.catalog.available || !row.catalog.agent_supported) && <span className="mp-capability">{row.catalog.description}</span>}
-        </div>
-        <div className="mp-model-actions">
-          {row.source ? <button className="mp-share" aria-label={`${text("分享", "Share")} ${row.name}`} disabled={Boolean(busy)} onClick={() => { setShareRow(row); setShareEnabled(row.sharing); setFeedback(""); }}>{row.sharing ? <Share2 size={14} /> : <LockKeyhole size={14} />}{row.sharing ? text("已分享", "Shared") : text("仅自己使用", "Private")}</button> : row.owner === "peer" ? <small>{text("由对方分享", "Shared by provider")}</small> : <button className="mp-share" disabled={Boolean(busy)} onClick={() => editRow(row)}>{row.sharing ? <Share2 size={14} /> : <LockKeyhole size={14} />}{row.sharing ? text("已分享", "Shared") : text("仅自己使用", "Private")}</button>}
-          {settings?.model_id && settings.model_id === row.catalog?.id && <span className="mp-default"><Check size={14} />{text("助手默认", "Assistant default")}</span>}
-          {row.source?.model_settings?.[row.name] && (
-            <button className="ais-secondary" disabled={Boolean(busy)} onClick={() => setParameterRow(row)}>{text("此模型参数", "Model parameters")}</button>
-          )}
-          {row.catalog && canUseAgentModel(row.catalog) ? <button className="ais-secondary" disabled={Boolean(busy)} onClick={() => choose(row)}>{settings?.model_id === row.catalog.id ? text("重新确认用于助手", "Reconfirm for assistant") : text("用于助手", "Use for assistant")}</button> : <span className="mp-unavailable">{unavailableLabel(row)}</span>}
-        </div>
-        {row.owner !== "peer" && <button className="ais-icon" aria-label={`${text("配置", "Configure")} ${row.name}`} onClick={() => editRow(row)}><Ellipsis size={18} /></button>}
-      </div>)}
+      {ownRows.map(renderRow)}
+      {companyRows.length > 0 && <h3 className="mp-group-title">{text("公司共享", "Company shared")}<small>{text("由公司同事通过公司节点共享，命令只在你的电脑上执行", "Shared by colleagues through the company node; commands run only on your computer")}</small></h3>}
+      {companyRows.map(renderRow)}
       {!visible.length && <p className="ais-empty">{query ? text("没有找到匹配的模型。", "No matching models.") : text("添加来源并选择模型，即可在这里管理。", "Connect a source and choose models to manage them here.")}</p>}
     </div>}
     <p className="mp-note">{text("助手默认模型与对外分享分别设置。停用助手，不影响手动配置和模型调用。", "Assistant defaults and sharing are independent. Disabling the assistant leaves manual configuration and inference available.")}</p>

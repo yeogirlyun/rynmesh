@@ -262,6 +262,18 @@ def _open_provider_response(
     return outer, result
 
 
+def _provider_member_name(store: Any, permission: Any, peer_id: str) -> str:
+    """Best-effort member name from the cached provider directory; never a network call."""
+    try:
+        resource = permission.get("resource") if isinstance(permission, dict) else None
+        for row in store.peer_providers.cached_peers():
+            if row.get("peer_id") == peer_id and row.get("provider_resource") == resource:
+                return str(row.get("member_name") or "")[:80]
+    except Exception:
+        pass
+    return ""
+
+
 class ProviderService:
     def __init__(self, *, manifest: LLMPackageManifest, adapter: LLMAdapter,
                  store: RynmeshStore, task_store: TaskOrderStore,
@@ -276,6 +288,12 @@ class ProviderService:
         if isinstance(adapter, CLIAgentAdapter) and manifest.adapter in {"codex_cli", "antigravity_cli"}:
             from .cli_binding import CLIModelDispatchAdapter
             adapter = CLIModelDispatchAdapter(adapter, manifest, store.home)
+        # Claude Code CLI has no model inventory. A plugin peer provider still
+        # needs an exact binding; personal-space admission stays unbound.
+        self._external_binding = None
+        if isinstance(adapter, CLIAgentAdapter) and manifest.adapter == "claude_cli":
+            from .cli_binding import CLIDefaultModelBinding
+            self._external_binding = CLIDefaultModelBinding(adapter, manifest, store.home)
         self.adapter = adapter
         self.store = store
         if not hasattr(store, "personal_space"):
@@ -370,6 +388,16 @@ class ProviderService:
                 self._provider_record_count += 1
                 self._provider_records_by_peer[consumer_peer_id] += 1
             return record, claimed
+
+    def external_model_binding(self) -> dict[str, Any] | None:
+        """The default-model binding a plugin peer provider may publish."""
+        try:
+            if self._external_binding is not None:
+                return self._external_binding.binding_for_model("")
+            current = getattr(self.adapter, "binding_for_model", None)
+            return current("") if callable(current) else getattr(self.adapter, "model_binding", None)
+        except (AdapterError, OSError, ValueError):
+            return None
 
     def cli_models(self, *, cached_only=False) -> list[dict[str, Any]]:
         if self.manifest.adapter not in {"codex_cli", "antigravity_cli"}:
@@ -561,6 +589,10 @@ class ProviderService:
                 return self._sealed_failure(task_id, reply_pub, outer["from_peer_id"], "rejected", "cli_model_unavailable")
         actual_model_binding = (self.adapter.binding_for_model(cli_model)
             if callable(getattr(self.adapter, "binding_for_model", None)) else getattr(self.adapter, "model_binding", None))
+        bound_adapter = self.adapter
+        if external_request and self._external_binding is not None and not cli_model:
+            actual_model_binding = self.external_model_binding()
+            bound_adapter = self._external_binding
         expected_binding = body.get("expected_model_binding")
         if external_request and (expected_binding is None or "ai_permission" in body or "space_permission" in body):
             return self._sealed_failure(task_id, reply_pub, outer["from_peer_id"], "rejected", "ai_permission_denied")
@@ -693,17 +725,22 @@ class ProviderService:
                     check_external_output()
                     original_delta(value)
             caller_kind = "self" if own_request else "shared"
+            # Company-channel calls are also counted per colleague device.
+            usage_peer = ({"channel": "company", "peer_id": str(outer["from_peer_id"]),
+                           "name": _provider_member_name(self.store, external_permission, str(outer["from_peer_id"]))}
+                          if external_request else None)
             adapter_tracks_usage = (
                 getattr(self.adapter, "usage_store", None) is not None
                 or getattr(self.adapter, "_usage_store", None) is not None
             )
             local_model_key = "local/" + self.manifest.package_id
             if not adapter_tracks_usage:
-                self.usage_store.admit_and_record_dispatch(
-                    local_model_key, caller=caller_kind, task_id=task_id
-                )
+                with usage_caller_scope(caller_kind, peer=usage_peer):
+                    self.usage_store.admit_and_record_dispatch(
+                        local_model_key, caller=caller_kind, task_id=task_id
+                    )
             try:
-                with usage_caller_scope(caller_kind):
+                with usage_caller_scope(caller_kind, peer=usage_peer):
                     if chat:
                         if not hasattr(self.adapter, "chat"):
                             raise AdapterError("structured_chat_not_supported")
@@ -737,7 +774,7 @@ class ProviderService:
                             options["conversation_scope"] = codex_threads.scope(
                                 "local" if own_request else "peer:" + str(outer["from_peer_id"]), body.get("conversation_key"))
                         if bound_authorize is not None:
-                            result = self.adapter.call_bound("chat", expected_binding["model_binding"] if expected_binding else self.adapter.model_binding,
+                            result = bound_adapter.call_bound("chat", expected_binding["model_binding"] if expected_binding else self.adapter.model_binding,
                                 bound_authorize, chat, authority_lock=bound_authority_lock, **options)
                         else:
                             result = self.adapter.chat(chat, **options)
@@ -753,20 +790,22 @@ class ProviderService:
                             **({"model": cli_model} if cli_model else {}),
                         )
                         if bound_authorize is not None:
-                            result = self.adapter.call_bound("infer_stream" if on_delta is not None else "infer",
+                            result = bound_adapter.call_bound("infer_stream" if on_delta is not None else "infer",
                                 expected_binding["model_binding"] if expected_binding else self.adapter.model_binding,
                                 bound_authorize, authority_lock=bound_authority_lock, **infer_options)
                         else:
                             result = inference(**infer_options)
                 if not adapter_tracks_usage:
-                    self.usage_store.record_completion(
-                        local_model_key, result=result, caller=caller_kind, state="succeeded", task_id=task_id
-                    )
+                    with usage_caller_scope(caller_kind, peer=usage_peer):
+                        self.usage_store.record_completion(
+                            local_model_key, result=result, caller=caller_kind, state="succeeded", task_id=task_id
+                        )
             except Exception:
                 if not adapter_tracks_usage:
-                    self.usage_store.record_completion(
-                        local_model_key, result=None, caller=caller_kind, state="failed", task_id=task_id
-                    )
+                    with usage_caller_scope(caller_kind, peer=usage_peer):
+                        self.usage_store.record_completion(
+                            local_model_key, result=None, caller=caller_kind, state="failed", task_id=task_id
+                        )
                 raise
             if external_request:
                 bound_authorize()
@@ -2437,6 +2476,35 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 for key in sorted(snapshot.keys())
             }
         }
+
+    @app.get("/api/local/llm/models/usage/company")
+    def get_company_usage() -> dict[str, Any]:
+        """Per-colleague use of the models this device shares through a company plugin.
+
+        Local ledger only: other providers' devices keep their own records.
+        """
+        from .model_usage import company_usage, utc_day
+        rows = company_usage(source_store.usage_store.read_cached())
+        names: dict[str, str] = {}
+        published: set[str] = set()
+        providers = getattr(app.state, "peer_providers", None)
+        if providers is not None:
+            try:
+                for peer in providers.cached_peers():
+                    if peer.get("member_name"):
+                        names[peer["peer_id"]] = str(peer["member_name"])
+                for status in providers.status():
+                    published.update(status.get("selected_service_ids") or [])
+            except Exception:
+                pass  # Usage stays readable while the directory is unavailable.
+        for row in rows:
+            row["member_name"] = names.get(row["peer_id"]) or row.pop("name", "") or ""
+            row.pop("name", None)
+            service_id = row["model_key"].removeprefix("local/").split("/model/", 1)
+            manager = provider_for(service_id[0])
+            alias = manager.manifest.public_model_alias if manager is not None else service_id[0]
+            row["model_name"] = alias + (" · " + service_id[1] if len(service_id) > 1 else "")
+        return {"day": utc_day(), "sharing": bool(published), "published_service_ids": sorted(published), "rows": rows}
 
     @app.post("/api/local/llm/models/usage/reset")
     async def reset_model_usage_route(request: Request) -> dict[str, Any]:
@@ -4371,9 +4439,20 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             from .peer_binding import valid
             values = collect_services("rynmesh-main", cache_registry=True, local_only=True)
             fields = ("service", "capacity", "model_binding", "chat_protocol", "tool_support", "delivery_protocols")
-            return [{key: row[key] for key in fields if key in row} for row in values
-                    if row.get("ready") and valid(row.get("model_binding"), row["service"]["package_id"])
-                    and row["service"].get("adapter") not in {"codex_cli", "claude_cli", "antigravity_cli"}]
+            result = []
+            for row in values:
+                service_id = row["service"]["package_id"]
+                binding = row.get("model_binding")
+                if not binding and row["service"].get("adapter") in {"codex_cli", "claude_cli", "antigravity_cli"}:
+                    # Passive catalogs omit a cold CLI binding. Publication is an
+                    # explicit owner action, so read the current default binding.
+                    current = provider_for(service_id)
+                    binding = current.external_model_binding() if current is not None else None
+                if row.get("ready") and valid(binding, service_id):
+                    # A shared CLI stays text-only: the provider returns tool-call
+                    # suggestions and the caller's own device executes them.
+                    result.append({**{key: row[key] for key in fields if key in row}, "model_binding": binding})
+            return result
         peer_providers.model_status = provider_model_status
     # Trusted in-process integrations use the same services as owner inference.
     # No synthetic loopback requests, API keys, or provider-side Agent context.

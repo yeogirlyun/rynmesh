@@ -541,7 +541,7 @@ class PeerProviderService:
                 devs = [d for d in (member.get("devices") or []) if isinstance(d, dict) and d.get("peer_id") != local_peer_id]
                 if any(d.get("peer_id") == local_peer_id for d in (member.get("devices") or [])):
                     if not current_member:
-                        current_member = {"id": member["id"], "name": member["name"], "alias": "", "department": "财务部", "position": "认证员工", "role": "finance_admin", "can_publish_models": True}
+                        current_member = {"id": member["id"], "name": member["name"], "alias": "", "department": "财务部", "position": "认证员工", "role": "member", "can_publish_models": False}
                     if not devs:
                         continue
                 colleagues.append({

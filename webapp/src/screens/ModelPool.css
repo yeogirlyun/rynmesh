@@ -69,3 +69,18 @@
 .mp-model-sharing>button{align-self:flex-start}
 @media(max-width:1050px){.mp-model-actions{flex-direction:column;align-items:flex-end;gap:8px}.mp-share{padding:0}}
 @media(max-width:650px){.mp-agent-strip{flex-wrap:wrap;padding:15px}.mp-agent-strip>a{margin-left:auto}.mp-model{flex-wrap:wrap;padding:15px 14px;gap:11px}.mp-model .ais-brand{width:28px}.mp-model-name{flex-basis:calc(100% - 50px)}.mp-model-actions{flex-direction:row;justify-content:space-between;flex:1;align-items:center;gap:8px}.mp-model-actions>small{font-size:11px}.mp-toolbar{gap:10px}.mp-toolbar .ais-search{max-width:none}.ais-header-actions{flex-wrap:wrap}.mp-param-grid{grid-template-columns:1fr}.mp-codex-stats{gap:14px}.mp-codex-stat+.mp-codex-stat{padding-left:14px}}
+/* Company-node sharing: per-model switch, shared-model group and per-colleague usage */
+.mp-company-share{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--pf-text);white-space:nowrap;cursor:pointer}
+.mp-company-share input{margin:0}
+.mp-group-title{display:flex;align-items:baseline;gap:10px;margin:18px 0 4px;padding:0 4px;font-size:13px;font-weight:600;color:var(--pf-text)}
+.mp-group-title small{font-size:11px;font-weight:400;color:var(--pf-muted)}
+.mp-company-usage{margin:0 0 14px;padding:14px 16px;border:1px solid var(--pf-line);border-radius:12px;background:var(--pf-panel)}
+.mp-company-usage header{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;margin-bottom:8px}
+.mp-company-usage header strong{font-size:13px}
+.mp-company-usage header small,.mp-company-usage p{font-size:11px;color:var(--pf-muted);margin:0}
+.mp-company-usage table{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}
+.mp-company-usage th{font-weight:500;color:var(--pf-muted);text-align:right;padding:5px 8px;border-bottom:1px solid var(--pf-line);white-space:nowrap}
+.mp-company-usage td{text-align:right;padding:6px 8px;border-bottom:1px solid var(--pf-line)}
+.mp-company-usage th:nth-child(-n+2),.mp-company-usage td:nth-child(-n+2){text-align:left;overflow-wrap:anywhere}
+.mp-company-usage tr:last-child td{border-bottom:0}
+@media(max-width:650px){.mp-company-usage{overflow-x:auto}}

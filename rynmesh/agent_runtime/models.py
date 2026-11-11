@@ -112,7 +112,8 @@ class ModelCatalog:
                                    "friends" if value.get("access_policy") == "explicit_friends" else "none") if own else "unknown"}
             row.update(catalog_image_fields(row, service_record=value))
             if provider_resource:
-                row.update(provider_resource=provider_resource, source_name=value.get("provider_name", value.get("node_name", "")))
+                row.update(provider_resource=provider_resource, source_name=value.get("provider_name", value.get("node_name", "")),
+                           provider_device_name=value.get("node_name", ""))
             rows[model_ref] = row
             if own and manifest.get("runtime") == "native_llama_cpp":
                 native_binding = value.get("model_binding")

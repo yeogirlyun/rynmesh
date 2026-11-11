@@ -110,6 +110,9 @@ export interface AgentModel {
   source_id?: string;
   source_name?: string;
   peer_id?: string;
+  /** Set for a model shared through a company plugin; `source_name` is then the member who shares it. */
+  provider_resource?: string;
+  provider_device_name?: string;
   usage?: ModelTokenUsage;
   /** Server decision for this exact route: whether images reach the model. */
   supports_image_input?: boolean;

@@ -88,6 +88,12 @@ class ExternalModelCatalog:
 
     def records(self):
         rows = self.providers.cached_models()
+        # The directory names the member who owns each publishing device.
+        try:
+            owners = {(peer.get("provider_resource"), peer.get("peer_id")): peer
+                      for peer in self.providers.cached_peers()}
+        except Exception:
+            owners = {}
         result = []
         for row in rows:
             if row.get("peer_id") == self.store.peer_id:
@@ -95,7 +101,11 @@ class ExternalModelCatalog:
             with self._lock:
                 observed = self._observations.get(self._key(row))
             online = bool(observed and self.clock() - observed[0] <= 15 and observed[1])
+            owner = owners.get((row.get("provider_resource"), row.get("peer_id")), {})
             result.append({**row, "online": online, "ready": True, "access": "provider",
+                **({"provider_name": owner["member_name"], "provider_member_id": owner.get("member_id", "")}
+                   if owner.get("member_name") else {}),
+                **({"node_name": owner["display_name"]} if owner.get("display_name") and not row.get("node_name") else {}),
                 "node_messaging_pub": row.get("messaging_pub", ""),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "presence": {"state": "online" if online else "unconfirmed", "basis": "signed_device_probe"}})

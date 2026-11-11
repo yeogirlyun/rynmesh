@@ -18,8 +18,14 @@ MAX_MODEL_ENTRIES = 512
 MAX_RECENT_TASKS = 64
 MAX_DAILY_BUCKETS = 30
 QUOTA_FIELDS = ("requests_per_day", "tokens_per_day", "shared_tokens_per_day")
+# Shared usage is also kept per calling device for plugin peer providers
+# (company channel). Reporting only: no limit is derived from these buckets.
+MAX_PEER_ENTRIES = 200
+PEER_CHANNELS = ("company",)
+PEER_COUNTERS = ("requests", "input_tokens", "output_tokens", "total_tokens")
 
 _USAGE_CALLER: ContextVar[str] = ContextVar("ryn_model_usage_caller", default="self")
+_USAGE_PEER: ContextVar[dict[str, str] | None] = ContextVar("ryn_model_usage_peer", default=None)
 _READ_CACHE_LOCK = threading.Lock()
 _READ_CACHE: dict[str, tuple[tuple[int, int], dict[str, Any]]] = {}
 
@@ -29,13 +35,31 @@ def current_usage_caller() -> str:
     return "shared" if caller == "shared" else "self"
 
 
+def _clean_peer(peer: Any) -> dict[str, str] | None:
+    if not isinstance(peer, dict):
+        return None
+    peer_id, channel = peer.get("peer_id"), peer.get("channel")
+    if not isinstance(peer_id, str) or not 0 < len(peer_id) <= 128 or channel not in PEER_CHANNELS:
+        return None
+    name = peer.get("name")
+    name = "".join(c for c in name if ord(c) >= 32 and ord(c) != 127)[:80] if isinstance(name, str) else ""
+    return {"peer_id": peer_id, "channel": channel, "name": name}
+
+
+def current_usage_peer() -> dict[str, str] | None:
+    """The calling device of a shared request, when its channel records one."""
+    return _USAGE_PEER.get() if _USAGE_CALLER.get() == "shared" else None
+
+
 @contextmanager
-def usage_caller_scope(caller: str):
+def usage_caller_scope(caller: str, *, peer: dict[str, Any] | None = None):
     normalized = "shared" if caller == "shared" else "self"
     token = _USAGE_CALLER.set(normalized)
+    peer_token = _USAGE_PEER.set(_clean_peer(peer) if normalized == "shared" else None)
     try:
         yield normalized
     finally:
+        _USAGE_PEER.reset(peer_token)
         _USAGE_CALLER.reset(token)
 
 
@@ -134,9 +158,76 @@ def _empty_entry(day: str) -> dict[str, Any]:
             "shared_tokens_per_day": None,
         },
         "daily": [],
+        "by_peer": {},
         "dispatched_tasks": [],
         "completed_tasks": [],
     }
+
+
+def _normalize_peers(raw: Any) -> dict[str, dict[str, Any]]:
+    """Keep valid per-device buckets; absent in data written before this field existed."""
+    result: dict[str, dict[str, Any]] = {}
+    if not isinstance(raw, dict):
+        return result
+    for peer_id, value in raw.items():
+        if not isinstance(value, dict):
+            continue
+        clean = _clean_peer({"peer_id": peer_id, "channel": value.get("channel"), "name": value.get("name")})
+        if clean is None:
+            continue
+        days: dict[str, dict[str, Any]] = {}
+        for item in value.get("daily") or []:
+            if isinstance(item, dict) and isinstance(item.get("day"), str) and item["day"]:
+                days[item["day"]] = {"day": item["day"], **{k: _nonneg_int(item.get(k)) for k in PEER_COUNTERS}}
+        last = value.get("last_used_at")
+        result[peer_id] = {"channel": clean["channel"], "name": clean["name"],
+                           "last_used_at": last if isinstance(last, str) and last else None,
+                           "daily": [days[d] for d in sorted(days)[-MAX_DAILY_BUCKETS:]]}
+    return result
+
+
+def _record_peer(entry: dict[str, Any], peer: dict[str, str] | None, day: str, now_iso: str, **counts: int) -> None:
+    if peer is None:
+        return
+    peers = entry.setdefault("by_peer", {})
+    bucket = peers.get(peer["peer_id"])
+    if bucket is None:
+        if len(peers) >= MAX_PEER_ENTRIES:
+            oldest = min(peers, key=lambda key: str(peers[key].get("last_used_at") or ""))
+            peers.pop(oldest, None)
+        bucket = peers[peer["peer_id"]] = {"channel": peer["channel"], "name": "", "last_used_at": None, "daily": []}
+    bucket["channel"] = peer["channel"]
+    if peer["name"]:
+        bucket["name"] = peer["name"]
+    bucket["last_used_at"] = now_iso
+    today = next((item for item in bucket["daily"] if item.get("day") == day), None)
+    if today is None:
+        today = {"day": day, **{k: 0 for k in PEER_COUNTERS}}
+        bucket["daily"] = [*bucket["daily"], today][-MAX_DAILY_BUCKETS:]
+    for key, value in counts.items():
+        today[key] += value
+
+
+def company_usage(data: dict[str, dict[str, Any]], *, day: str | None = None) -> list[dict[str, Any]]:
+    """Per device and model: today and the retained 30 daily buckets (UTC days)."""
+    day = day or _utc_today()
+    keys = {key for key, entry in data.items() if isinstance(entry, dict) and entry.get("by_peer")}
+    rows = []
+    for key in sorted(keys):
+        # A CLI records its container and the concrete model. Report the
+        # concrete model only once: skip a child whose container is listed.
+        if "/model/" in key and key.split("/model/", 1)[0] in keys:
+            continue
+        for peer_id, bucket in _normalize_peers(data[key].get("by_peer")).items():
+            if bucket["channel"] != "company":
+                continue
+            window = {k: sum(item[k] for item in bucket["daily"]) for k in PEER_COUNTERS}
+            today = next((item for item in bucket["daily"] if item["day"] == day), None)
+            rows.append({"model_key": key, "peer_id": peer_id, "name": bucket["name"],
+                         "last_used_at": bucket["last_used_at"],
+                         "today": {k: (today or {}).get(k, 0) for k in PEER_COUNTERS},
+                         "last_30_days": window})
+    return rows
 
 
 def _sync_today_to_daily(entry: dict[str, Any]) -> None:
@@ -275,6 +366,8 @@ def _normalize_entry(raw: Any, day: str) -> dict[str, Any]:
         val = raw_limits.get(k)
         base["limits"][k] = val if type(val) is int and val >= 1 else None
 
+    base["by_peer"] = _normalize_peers(raw.get("by_peer"))
+
     for list_key in ("dispatched_tasks", "completed_tasks"):
         items = raw.get(list_key)
         if isinstance(items, list):
@@ -285,6 +378,8 @@ def _normalize_entry(raw: Any, day: str) -> dict[str, Any]:
 def _merge_legacy_and_canonical(existing: dict[str, Any], legacy: dict[str, Any], day: str) -> dict[str, Any]:
     norm_existing = _normalize_entry(existing, day)
     norm_legacy = _normalize_entry(legacy, day)
+    if not norm_existing["by_peer"]:
+        norm_existing["by_peer"] = norm_legacy["by_peer"]
     for k in (
         "requests",
         "succeeded_requests",
@@ -584,6 +679,8 @@ class ModelUsageStore:
             caller_bucket = entry["by_caller"][effective_caller]
             caller_bucket["requests"] += 1
             caller_bucket["today_requests"] += 1
+            if effective_caller == "shared":
+                _record_peer(entry, current_usage_peer(), day, now_iso, requests=1)
             _sync_today_to_daily(entry)
             data[canonical] = entry
             self._write_unlocked(data)
@@ -639,6 +736,8 @@ class ModelUsageStore:
                 entry["total"]["requests"] += 1
                 entry["by_caller"][effective_caller]["requests"] += 1
                 entry["by_caller"][effective_caller]["today_requests"] += 1
+                if effective_caller == "shared":
+                    _record_peer(entry, current_usage_peer(), day, now_iso, requests=1)
 
             if not entry["total"]["first_used_at"]:
                 entry["total"]["first_used_at"] = now_iso
@@ -677,6 +776,9 @@ class ModelUsageStore:
             caller_bucket["cached_tokens"] += add_cache
             caller_bucket["total_tokens"] += add_total
             caller_bucket["today_tokens"] += add_total
+            if effective_caller == "shared":
+                _record_peer(entry, current_usage_peer(), day, now_iso,
+                             input_tokens=add_in, output_tokens=add_out, total_tokens=add_total)
 
             _sync_today_to_daily(entry)
             data[canonical] = entry
@@ -702,6 +804,8 @@ class ModelUsageStore:
                     entry["by_caller"][caller]["day"] = day
                     entry["by_caller"][caller]["today_requests"] = 0
                     entry["by_caller"][caller]["today_tokens"] = 0
+                for bucket in (entry.get("by_peer") or {}).values():
+                    bucket["daily"] = [item for item in bucket.get("daily") or [] if item.get("day") != day]
                 entry["dispatched_tasks"] = []
                 entry["completed_tasks"] = []
             data[canonical] = entry
