@@ -91,15 +91,19 @@ class AgentModelResponseError(AgentError):
 # call. The text rides on the refused result only, so tasks that are never
 # refused pay nothing. Same idea as the owner/permission corrections in
 # execution_policy.py; raise sites may still pass their own text.
+TASK_NOT_RUNNING_CORRECTION = (
+    "This task is not in a running state, so desktop control was refused and nothing ran. This is not the "
+    "desktop access setting. Do not control the desktop another way; the action can be tried again once the "
+    "task is running.")
 REJECTION_CORRECTIONS = {
     "agent_desktop_access_required": (
         "Desktop access is turned off for this task and nothing ran. Do not control the screen, the browser or "
         "other apps another way (a shell command, a script or a different tool). Continue with what needs no "
         "desktop control and say in your reply that the rest needs desktop access turned on."),
     "agent_operation_already_confirmed": (
-        "This exact operation already completed earlier in this task and was not run again. Treat it as done: "
-        "do not repeat it or redo it in another form. Read the current state if you need to check the result, "
-        "then go on with the remaining steps."),
+        "This exact operation was already carried out earlier in this task and was not run again. Do not repeat "
+        "it or redo it in another form. Its earlier result may have reported an error, so read the current "
+        "state to see what took effect, then go on from what you find."),
     "agent_read_retry_limit": (
         "This read has failed three times and was not sent again; repeating it will not help. Use a different "
         "source or a different query if one really covers the need. Otherwise go on with the rest and say in "

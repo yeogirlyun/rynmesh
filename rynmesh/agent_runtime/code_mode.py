@@ -1170,6 +1170,7 @@ rl.on('line', (line) => {
       } else {
         const err = new Error(msg.error || 'Tool call failed');
         if (msg.details) err.details = msg.details;
+        if (msg.correction) err.correction = msg.correction;
         entry.reject(err);
       }
     }
@@ -1654,19 +1655,26 @@ class CodeModeRunner:
                     "result": res,
                 })
             except AgentToolRejected as exc:
+                # The host's next-step text must survive the nested call: the
+                # model reads tool_calls, and the script can read err.correction.
+                correction = getattr(exc, "correction", None)
+                record = {
+                    "ordinal": ordinal,
+                    "tool": raw_name,
+                    "status": "rejected",
+                    "error": str(exc),
+                }
+                if correction:
+                    record["correction"] = correction[:1600]
                 with child_calls_lock:
-                    child_call_records.append({
-                        "ordinal": ordinal,
-                        "tool": raw_name,
-                        "status": "rejected",
-                        "error": str(exc),
-                    })
+                    child_call_records.append(record)
                 worker.send({
                     "type": "tool_result",
                     "id": call_id,
                     "ok": False,
                     "error": str(exc),
                     "details": getattr(exc, "details", None),
+                    "correction": record.get("correction"),
                 })
             except Exception as exc:
                 with child_calls_lock:
