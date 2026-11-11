@@ -1,6 +1,6 @@
-"""Keep the active Agent store under its size and task ceilings.
+"""Keep the active task index bounded without imposing a history byte quota.
 
-When the active store nears its decrypted-size ceiling or task-count limit, the
+When the active store nears its task-count limit, the
 least recently updated finished tasks move to the existing per-task archive
 stores. Nothing is deleted and the on-disk format is unchanged: older Ryn
 versions already list, open and restore these archives.
@@ -8,12 +8,11 @@ versions already list, open and restore these archives.
 from __future__ import annotations
 
 from .lifecycle import eligible
-from .store import MAX_PLAINTEXT, encoded
+from .store import encoded
 
-# Start archiving at two thirds of the ceiling and stop at half, so one model
-# step (reserved output plus a bounded tool result) never meets the ceiling.
-HIGH_WATER_BYTES = MAX_PLAINTEXT * 2 // 3
-LOW_WATER_BYTES = MAX_PLAINTEXT // 2
+# History bytes are limited by disk capacity, never by an archive watermark.
+HIGH_WATER_BYTES = float("inf")
+LOW_WATER_BYTES = float("inf")
 # The store refuses a 201st active task.
 HIGH_WATER_TASKS = 190
 LOW_WATER_TASKS = 180

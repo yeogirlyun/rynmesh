@@ -327,3 +327,21 @@ it("deduplicates a follow-up accepted by a refreshed snapshot before POST resolv
   await act(async () => { pending.resolve(next); await pending.promise; });
   expect(bubbles(container, message)).toHaveLength(2);
 });
+
+
+it("shows the selected image with the pending message and restores it on rejection", async () => {
+  api();
+  const pending = pendingSend("create");
+  const user = userEvent.setup();
+  const { container } = await openComposer("create");
+  const picker = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+  await user.upload(picker, new File(["image bytes"], "receipt.png", { type: "image/png" }));
+  await user.type(screen.getByRole("textbox"), "Read receipt");
+  await user.click(screen.getByRole("button", { name: "Send task" }));
+  const bubble = container.querySelector<HTMLElement>(".ra-message-pending")!;
+  expect(within(bubble).getByRole("img", { name: "receipt.png" })).toBeInTheDocument();
+  expect(container.querySelector(".ra-composer-attachments")).toBeNull();
+  await act(async () => pending.reject(new AgentAPIError("agent_storage_limit", 409)));
+  await waitFor(() => expect(container.querySelector(".ra-composer-attachments")).not.toBeNull());
+  expect(screen.getByRole("textbox")).toHaveValue("Read receipt");
+});

@@ -140,13 +140,16 @@ def test_a_swapped_task_file_is_refused(tmp_path):
         AgentStore(tmp_path, store.key).read()
 
 
-def test_total_size_limit_still_applies(tmp_path, monkeypatch):
+def test_history_above_old_quota_roundtrips_and_can_grow(tmp_path):
     store = AgentStore(tmp_path, X25519PrivateKey.generate())
-    seed(store, "a")
-    monkeypatch.setattr(storage, "MAX_PLAINTEXT", len(encoded(store.read())) + 1000)
-    with pytest.raises(AgentError, match="agent_storage_limit"):
-        store.transaction(lambda data: data["tasks"].update(b=row("b", "x" * 5000)))
-    assert set(store.read()["tasks"]) == {"a"}
+    # One task also exceeds the former encrypted-file limit.
+    text = "x" * (26 * 1024 * 1024)
+    store.transaction(lambda data: data["tasks"].update(a=row("a", text)))
+    reopened = AgentStore(tmp_path, store.key)
+    assert reopened.read()["tasks"]["a"]["messages"][0]["content"] == text
+    reopened.transaction(lambda data: data["tasks"].update(b=row("b")))
+    assert set(AgentStore(tmp_path, store.key).read()["tasks"]) == {"a", "b"}
+    assert reopened.usage()["limit"] is None
 
 
 def test_inspect_detaches_its_result_without_copying_tasks(tmp_path):
@@ -245,3 +248,15 @@ def test_competing_prepared_writes_apply_each_callback_once(tmp_path, monkeypatc
     assert sorted(calls) == ["left", "right"]
     final = AgentStore(tmp_path, store.key).read()
     assert sorted(event["type"] for event in final["tasks"]["a"]["events"]) == ["left", "right"]
+
+
+def test_dispatch_does_not_reserve_a_second_copy_of_unrelated_history(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    store = AgentStore(tmp_path, X25519PrivateKey.generate())
+    store.transaction(lambda data: data["tasks"].update(a=row("a", "x" * 2_000_000), b=row("b")))
+    monkeypatch.setattr(storage.shutil, "disk_usage", lambda path: SimpleNamespace(free=512_000))
+    def dispatch(data):
+        data["tasks"]["b"]["in_flight"] = {"kind": "model"}
+        store.reserve(data, "b", 32_000)
+    store.transaction(dispatch)
+    assert store.read()["storage_reservations"]["b"]["bytes"] == 32_000

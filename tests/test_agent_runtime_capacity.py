@@ -17,7 +17,7 @@ def test_storage_headroom_failure_prevents_business_dispatch(tmp_path, monkeypat
     advance(runtime, 2)
     approve(runtime, row["id"])
     current = len(encoded(runtime.store.read()))
-    monkeypatch.setattr(storage, "MAX_PLAINTEXT", current + 64 * 1024)
+    monkeypatch.setattr(storage.shutil, "disk_usage", lambda path: SimpleNamespace(free=128 * 1024))
     advance(runtime)
     assert not tools.calls and not tools.shared
     stored = runtime.store.read()["tasks"][row["id"]]
@@ -29,7 +29,7 @@ def test_storage_headroom_failure_prevents_business_dispatch(tmp_path, monkeypat
 def test_disk_space_failure_prevents_model_dispatch(tmp_path, monkeypatch):
     runtime, model, _, _ = make_runtime(tmp_path, assistant("answer"))
     row = runtime.create({"message": "Explain"})
-    monkeypatch.setattr(storage.shutil, "disk_usage", lambda path: SimpleNamespace(free=0))
+    monkeypatch.setattr(storage.shutil, "disk_usage", lambda path: SimpleNamespace(free=128 * 1024))
     advance(runtime)
     assert not model.calls
     assert runtime.get(row["id"])["error"] == "agent_storage_limit"
@@ -50,9 +50,10 @@ def test_concurrent_create_cannot_spend_an_inflight_receipt_reservation(tmp_path
     data = runtime.store.read()
     reservation = data["storage_reservations"][row["id"]]
     remaining = reservation["bytes"] - (len(encoded(data["tasks"][row["id"]])) - reservation["baseline"])
-    monkeypatch.setattr(storage, "MAX_PLAINTEXT", len(encoded(data)) + remaining + 1000)
+    monkeypatch.setattr(storage.shutil, "disk_usage", lambda path: SimpleNamespace(free=3 * remaining + 64 * 1024 + 1000))
     with pytest.raises(AgentError, match="agent_storage_limit"):
         runtime.create({"message": "x" * 6000})
+    monkeypatch.undo()
     release.set()
     worker.join(3)
     done = runtime.get(row["id"])
