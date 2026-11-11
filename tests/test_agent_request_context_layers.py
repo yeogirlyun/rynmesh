@@ -144,6 +144,14 @@ def test_control_state_carries_todays_local_date_at_day_precision(monkeypatch):
     # Same day, later request: the control state is byte-identical, so caches and Codex threads stay valid.
     assert instruction_layers(row()) == messages
     assert "local_date" not in messages[0]["content"]  # control state layer only, never the pinned base
+    # The independent checker gets the same day, so it can audit "today" and deadline claims in the answer.
+    from rynmesh.agent_runtime.verification import CHECKER_SYSTEM, checker_messages
+
+    checker = checker_messages({**row(), "result": "Due tomorrow, 2026-11-12.", "events": [],
+                                "messages": [{"role": "user", "message_id": "m1", "content": "When is it due?"}]})
+    request = json.loads(checker[-1]["content"])
+    assert (request["local_date"], request["utc_offset"]) == ("2026-11-11 Wed", "+08:00")
+    assert "local_date" not in CHECKER_SYSTEM and checker[0]["content"].startswith(CHECKER_SYSTEM)
     # The date is the owner's local day, not the UTC day, on either side of midnight and for odd offsets.
     for now, date, offset in ((real.datetime(2026, 11, 12, 0, 1, tzinfo=zone(8)), "2026-11-12 Thu", "+08:00"),
                               (real.datetime(2026, 11, 11, 20, 0, tzinfo=zone(-5)), "2026-11-11 Wed", "-05:00"),

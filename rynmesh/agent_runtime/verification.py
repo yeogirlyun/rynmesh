@@ -14,6 +14,7 @@ from .inference_context import GUIDANCE as INFERENCE_GUIDANCE
 from .inference_context import projection as inference_projection
 from .operation_permissions import GUIDANCE as PERMISSION_GUIDANCE
 from .operation_permissions import projection as permission_projection
+from .prompt import local_date
 from .read_verification import READ_SPECS
 from .store import AgentError, encoded
 
@@ -196,6 +197,9 @@ def checker_messages(row, *, context_limit=None):
         and isinstance(receipt.get("result"), dict) and not receipt["result"].get("error")
         and not (receipt["result"].get("truncated") and "preview" in receipt["result"])
         and (contract := observation_contract(receipt["tool"], receipt.get("result"), read_at=receipt.get("confirmed_at"))) is not None]
+    # The worker knows today's date (prompt.authority); without it the checker cannot
+    # audit "today", deadline or days-left claims in the answer. Day precision, ~55 bytes.
+    payload.update(local_date())
     payload["observation_contracts"] = []
     payload["observation_contracts_omitted"] = len(contracts)
     payload["inference_context"] = inference_projection(row)
