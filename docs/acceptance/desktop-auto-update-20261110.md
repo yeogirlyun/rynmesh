@@ -88,3 +88,45 @@
 阻塞原因已核实：`release-tag-protection`（规则 ID `21416456`）对 `refs/tags/v*` 启用创建、修改、删除及非快进限制，且没有配置获准发布账号。当前 git 凭据与 Actions 均无法创建 tag。需要仓库管理员配置合法的 tag 创建权限，保留已有 tag 不可改写/删除的保护，并将 `v0.9.0` 创建在构建提交 `007fb4040c16be39bcff735efade83f19916f395` 上。未改规则或 secrets，也未尝试绕过限制。
 
 解除阻塞后，应先确认该 tag 精确指向上述提交、草稿附件完整且所有验证通过，若管理员创建 tag 触发新的打包运行，应等待其结束并重新核对全部附件，再公开 Release 并设为 Latest，核对公共清单和下载，然后使用已备份的本机执行首次安装及逐项验收，最后补全安装后版本/哈希和实际结果。不要直接重跑发版入口产生指向不同提交的同名 tag。
+
+### 2026-11-11 续验：正式发布与本机首次安装完成
+
+以下为权限开放后的最终状态；上一节的“阻塞 / 未安装”描述保留为 2026-11-10 历史记录。
+
+#### 发布版本与构建证据
+
+- 仓库管理员开放 tag 创建权限后，使用获准账号正常推送 `v0.9.0` 到老板仓库 `yeogirlyun/rynmesh`。annotated tag 对象为 `affc18385a63d4c072d4a784b153d24fff815d81`，解引用后的构建提交为 `007fb4040c16be39bcff735efade83f19916f395`。已通过 `git ls-remote` 核对；未改写或删除任何已有 tag。
+- tag 推送自动触发 [Build signed desktop update](https://github.com/yeogirlyun/rynmesh/actions/runs/42967306325)：Windows x86_64、macOS ARM、macOS Intel 及草稿上传全部成功。
+- [Release package](https://github.com/yeogirlyun/rynmesh/actions/runs/42967306335)：Python 包、Linux deb 及实装 smoke、两个 macOS DMG 的签名和内置服务验证全部成功。
+- [独立验签及附件一致性复核](https://github.com/yeogirlyun/rynmesh/actions/runs/42969111683)：三平台包均通过正式公钥验签。首次复核发现手工生成的附加校验清单使用 Windows 换行，统一为 LF 后重跑成功；没有更改安装包或签名密钥。
+- 最终检查 20 个 Release 附件，包含全部 13 项必需附件：桌面清单、Windows exe/.sig、两种 macOS app.tar.gz/.sig、两种 DMG、Linux deb、Python wheel/源码包、Python latest 清单。桌面清单版本、三平台固定 tag URL、签名及用户指定说明均符合要求。
+- **正式 Release：[Ryn v0.9.0](https://github.com/yeogirlyun/rynmesh/releases/tag/v0.9.0)**。公开发布时间为 **2026-11-11 14:04:57（Asia/Hong_Kong）**，已设为 Latest，非 draft、非 prerelease。
+- 匿名访问 `https://github.com/yeogirlyun/rynmesh/releases/latest/download/desktop-latest.json` 返回版本 `0.9.0`，内容与验收清单一致。Windows URL 返回 HTTP 200；从正式 Release 完整下载后再次校验签名、文件长度及 GitHub 提供的 SHA-256。
+- 本轮正式 Windows 安装包 SHA-256：`fd534bf5acedda5ef52d82a8636df492affc1f274fa8e1ec00920e0f5b808e0b`。它来自本轮 tag 构建，取代历史草稿构建的安装介质哈希。
+- 旧 0.8.0 草稿（ID `430732126`）的元数据、更新时间、全部附件 ID/名称/大小与原快照一致；未改动。未修改仓库规则或 secrets。
+
+#### 本机首次安装及回滚备份
+
+- 安装前版本 `0.8.0`；`Ryn.exe` SHA-256：`531A43D038B7707E2D0CACD9540C021C5C43CFF4D6E905CB62F5255096604B9F`。
+- 重新按 11 月 11 日的现状完整备份至 **`D:\codex-temp\ryn-rollback-20261111-1345\Ryn`**：19,172 个文件，约 7.188 GB；复制无失败、无不匹配，备份 exe 的哈希与原文件一致。之前 11 月 10 日的备份也保留。
+- 安装位置保持为 **`%USERPROFILE%\AppData\Local\Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Local\Ryn`**，使用实际进程路径核对，未误装到另一份用户目录。
+- 安装前 readiness 为 `ready=true`。通过 Ryn 设置 → 桌面端 → 退出 Ryn 执行与托盘退出相同的正常退出流程，确认主程序及安装目录内所有服务进程自行结束，没有强制结束进程。
+- 使用正式 Release 安装包 `/S` 静默安装，并用 `/D=` 明确保持原安装位置；安装器退出码为 `0`。
+- 安装后版本 **`0.9.0`**；`Ryn.exe` SHA-256：**`718BB64C017D5C5472E61B7427D2C76D8D3D05F877EC078CEDB820109E01C820`**。完成时间为 2026-11-11 14:15:41（Asia/Hong_Kong）。
+- 在旧程序退出后、安装前保存 `plugin-services` 基线，并在安装后、启动前逐文件复核：**18,426 个文件全部保留，长度与 SHA-256 全部相同，缺失/变化为 0**。没有手动修改用户数据、配置或插件服务文件；原始基线和日志仅保留在本机。
+
+#### 安装后逐项验收
+
+| 检查 | 结果 |
+|---|---|
+| 新版程序启动、节点健康 | 通过；节点 `/health` 返回 `status=ok`、`desktop_managed=true` |
+| 设置 → 软件更新 | 通过；显示 `Ryn 0.9.0`、`已是最新版本`；主动点击检查更新后完成并更新时间 |
+| 内置更新公钥 | 通过；缺少公钥提示消失；自动下载和退出时自动安装均为开启状态 |
+| 公司工作台 | 通过；页面正常加载，原公司账号登录状态和已启用插件保留 |
+| Dashboard | 通过打开及一次只读查询；首次访问出现 10 秒业务请求超时提示，清除旧提示后重新点击查询，观察到加载态后数据正常返回，未再出现错误。未做业务写入或全量报表验收 |
+| 联盟营销 | 通过；管理端、已认证账号和订单概览正常显示 |
+| 插件服务与安装目录 | 通过；服务从原 `plugin-services` 路径启动，安装前后的 18,426 个文件完全一致 |
+| Agent 打开、发送及回复 | 通过；从新版界面新建并发送合成验收消息，任务完成，实际回复 `RYN_090_INSTALL_OK`，无任务错误 |
+| 历史记录与配置 | 既有任务、项目、模型选项及公司登录仍可见；没有执行清空、重置或迁移用户配置的操作 |
+
+本次完成的是正式签名发布、公开下载、本机首次安装更新公钥及真实更新检查。**没有把“已是最新版本”当作跨版本自动安装已经实测**：当前没有高于 0.9.0 的正式版本，因此本机 0.9.0 → 下一版的自动下载、等待任务结束、静默安装及重启需要随下一次获准发布继续验证。真实传输、插件调用及未保存文档同时存在时的升级验收仍未完成；此前 VM 的测试签名升级证据继续有效，但不代替正式主机跨版本证据。历史全量 backend CI 的失败也未在本轮全部修复。
