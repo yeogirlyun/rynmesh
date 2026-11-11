@@ -1012,6 +1012,8 @@ class ExtensionToolAdapter:
         blocks = raw_blocks if isinstance(raw_blocks, list) else []
         text_parts: list[str] = []
         normalized_blocks: list[dict[str, Any]] = []
+        plain_text_blocks: list[dict[str, Any]] = []
+        resource_text_parts: list[str] = []
         artifacts: list[dict[str, Any]] = []
         files: list[dict[str, Any]] = []
         seen_b64: set[str] = set()
@@ -1030,7 +1032,9 @@ class ExtensionToolAdapter:
             if b_type == "text":
                 txt = str(block.get("text") or "")[:MAX_TEXT_BLOCK_CHARS]
                 text_parts.append(txt)
-                normalized_blocks.append({"type": "text", "text": txt})
+                block_entry = {"type": "text", "text": txt}
+                plain_text_blocks.append(block_entry)
+                normalized_blocks.append(block_entry)
             elif b_type == "image":
                 mime = str(block.get("mimeType") or block.get("mime_type") or "").strip().lower()
                 b64_data = block.get("data")
@@ -1139,6 +1143,7 @@ class ExtensionToolAdapter:
                 if isinstance(inline_text, str) and inline_text:
                     clipped = inline_text[:MAX_TEXT_BLOCK_CHARS]
                     text_parts.append(clipped)
+                    resource_text_parts.append(clipped)
                     normalized_blocks.append({"type": "text", "text": clipped})
 
         clean_structured = _strip_raw_images(
@@ -1146,6 +1151,13 @@ class ExtensionToolAdapter:
             known_b64=seen_b64,
             artifacts_by_b64=artifacts_by_b64,
         )
+        if isinstance(clean_structured, dict) and clean_structured and not is_error and plain_text_blocks:
+            # Like Codex, a successful result with structured content reaches the
+            # model once: MCP text blocks are its serialized copy. Images, saved
+            # files and embedded resources stay; error replies stay unchanged.
+            dropped = {id(b) for b in plain_text_blocks}
+            normalized_blocks = [b for b in normalized_blocks if id(b) not in dropped]
+            text_parts = resource_text_parts
         normalized: dict[str, Any] = {
             "server_id": binding["server_id"],
             "tool": binding["original_tool_name"],
