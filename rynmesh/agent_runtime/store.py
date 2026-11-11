@@ -7,6 +7,7 @@ import json
 import pickle
 import re
 import shutil
+import sys
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -30,8 +31,9 @@ TASK_CHANNEL = b"rynmesh-agent-task-v1"
 # Short names: archive paths on Windows must stay well under MAX_PATH.
 TASKS_DIR = "tasks"
 _BLOB_NAME = re.compile(r"[a-f0-9]{24}\.json")
-MAX_PLAINTEXT = 24 * 1024 * 1024
-MAX_BYTES = 34 * 1024 * 1024
+# Local history has no product quota. Atomic I/O still takes an integer guard;
+# the actual admission limit is free space on the store's volume.
+MAX_BYTES = sys.maxsize
 DEFAULT_SETTINGS = {
     "enabled": False, "model_id": "", "permission_mode": "workspace", "allowed_write_tools": [],
     "workspace_root": "", "desktop_access": False, "verify_text_responses": False,
@@ -175,8 +177,6 @@ class AgentStore:
             if not isinstance(envelope, dict) or envelope.get("version") not in {VERSION, ROOT_VERSION}:
                 raise AgentError("agent_state_version_unsupported")
             plaintext = peer_box.open_sealed(self.key, self.pub, envelope["nonce"], envelope["ciphertext"], info=CHANNEL)
-            if len(plaintext) > MAX_PLAINTEXT:
-                raise AgentError("agent_storage_limit")
             data = json.loads(plaintext)
             if not isinstance(data, dict):
                 raise AgentError("agent_state_unreadable")
@@ -192,8 +192,6 @@ class AgentStore:
                     tasks[task_id] = (_copy(previous[task_id]) if self._index.get(task_id) == entry and task_id in previous
                                       else self._load_task(task_id, entry))
                     total += entry["bytes"]
-                if total > MAX_PLAINTEXT:
-                    raise AgentError("agent_storage_limit")
                 data["tasks"] = tasks
             if data.get("version") != VERSION or not isinstance(data.get("tasks"), dict) or not isinstance(data.get("settings"), dict):
                 raise AgentError("agent_state_unreadable")
@@ -253,8 +251,9 @@ class AgentStore:
         total = len(root) + sum(entry["bytes"] for entry in index.values())
         remaining = sum(max(0, item["bytes"] - max(0, index[task_id]["bytes"] - item["baseline"]))
                         for task_id, item in reservations.items())
-        if total + remaining > MAX_PLAINTEXT:
-            raise AgentError("agent_storage_limit")
+        # Existing immutable blobs need no second copy. Include encrypted/base64
+        # overhead, the new root, and every outstanding receipt reservation.
+        self._require_disk(2 * (len(root) + sum(map(len, changed.values()))) + 3 * remaining + 64 * 1024)
         directory = self.root / TASKS_DIR
         if changed:
             directory.mkdir(parents=True, exist_ok=True)
@@ -288,17 +287,23 @@ class AgentStore:
         As this task's receipt/events grow, actual bytes replace reserved bytes.
         Clearing its in-flight marker releases the unused portion atomically.
         """
-        # The committed size is a sufficient headroom estimate; encoding the whole
-        # state here cost as much as the write itself.
-        current = self._total if self._cached_data is not None else len(encoded(data))
+        # Reserve only this task rewrite, not a second copy of all history.
+        current = len(encoded(data["tasks"][task_id]))
+        others = sum(max(0, item["bytes"] - max(0, len(encoded(data["tasks"][key])) - item["baseline"]))
+                     for key, item in data.get("storage_reservations", {}).items() if key != task_id)
+        self._require_disk(2 * current + 3 * (expected_growth + extra_disk + others) + 64 * 1024)
+        data.setdefault("storage_reservations", {})[task_id] = {"bytes": expected_growth, "baseline": current}
+
+    def _require_disk(self, required: int) -> None:
         root = self.root if self.root.exists() else self.root.parent
+        while not root.exists():
+            root = root.parent
         try:
             free = shutil.disk_usage(root).free
         except OSError:
             raise AgentError("agent_storage_unavailable") from None
-        if free < 2 * current + 3 * (expected_growth + extra_disk) + 64 * 1024:
+        if free < required:
             raise AgentError("agent_storage_limit")
-        data.setdefault("storage_reservations", {})[task_id] = {"bytes": expected_growth, "baseline": len(encoded(data["tasks"][task_id]))}
 
     def purge_orphan_snapshots(self) -> None:
         """Caller holds this store's transaction lock; no writer owns a temp."""
@@ -343,7 +348,7 @@ class AgentStore:
         """
         data = self._snapshot()
         total = self._total if self._index or not data.get("tasks") else len(encoded(data))
-        return {"total": total, "limit": MAX_PLAINTEXT, "count": len(data.get("tasks", {})),
+        return {"total": total, "limit": None, "count": len(data.get("tasks", {})),
                 "tasks": {task_id: entry["bytes"] for task_id, entry in self._index.items()}}
 
     def read_control(self, task_id: str) -> dict:

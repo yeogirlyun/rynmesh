@@ -69,8 +69,8 @@ const HELP: Record<string, ErrorHelp> = {
     en: "The selected protocol does not support these request parameters. Review the model source settings.",
     actions: ["open_sources", "switch_model"] },
   agent_storage_limit: {
-    zh: "本机的 Agent 存储已满。请归档或删除不再需要的任务后重试。",
-    en: "Agent storage on this device is full. Archive or delete tasks you no longer need, then try again.",
+    zh: "保存任务的磁盘可用空间不足。请释放该磁盘的空间后重试，对话已保留。",
+    en: "The disk holding your tasks has insufficient free space. Free space on that disk and retry; your conversation is preserved.",
     actions: ["retry"] },
   agent_cancelled: {
     zh: "任务已取消。发消息可以继续这个对话。",
