@@ -7,7 +7,11 @@ import pytest
 
 from rynmesh.agent_runtime import code_mode
 from rynmesh.agent_runtime.native_computer import NativeComputerFacade
-from rynmesh.agent_runtime.store import REJECTION_CORRECTIONS, TASK_NOT_RUNNING_CORRECTION, AgentToolRejected
+from rynmesh.agent_runtime.store import (
+    REJECTION_CORRECTIONS,
+    TASK_NOT_RUNNING_CORRECTION,
+    AgentToolRejected,
+)
 
 
 def test_default_text_follows_the_code_and_an_explicit_text_wins():
