@@ -180,4 +180,12 @@ def directory(value, *, issuer, resource):
             fail()
         seen.add(identity)
         safe_models.append({**row, "peer_id": peer, "messaging_pub": device["messaging_pub"], "endpoints": device["endpoints"][:]})
-    return {"version": "ryn.peer-directory.v1", "issuer": issuer, "resource": resource, "revision": revision(value.get("revision")), "members": safe_members, "models": safe_models}
+    safe = {"version": "ryn.peer-directory.v1", "issuer": issuer, "resource": resource, "revision": revision(value.get("revision")), "members": safe_members, "models": safe_models}
+    # Optional statement about the caller only: its company account id and
+    # whether the provider lets it publish models.
+    own = value.get("self")
+    if own is not None:
+        if not isinstance(own, dict) or type(own.get("can_publish_models")) is not bool:
+            fail()
+        safe["self"] = {"userid": text(own.get("userid")), "can_publish_models": own["can_publish_models"]}
+    return safe

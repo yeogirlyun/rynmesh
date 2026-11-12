@@ -2944,13 +2944,21 @@ def create_app(store: RynmeshStore | None = None):
     peer_providers.extension_source = lambda: app.state.agent_runtime.tools.extensions.store.list_peer_providers_internal()
 
     def _mcp_token_for_plugin(plugin_id: str):
+        from .agent_runtime.extensions.mcp_oauth import COMPANY_PLUGIN_IDS
+        from .peer_providers.service import companion_servers
         ext = app.state.agent_runtime.tools.extensions
-        for server in ext.store.list_mcp_servers_internal():
-            if server.get("plugin_id") == plugin_id and server.get("effective_enabled", False):
-                try:
-                    return ext.manager.oauth.access_token(server)
-                except Exception:
-                    continue
+        provider = next((row for row in ext.store.list_peer_providers_internal()
+                         if row.get("plugin_id") == plugin_id), None)
+        url = ((provider or {}).get("peer_provider") or {}).get("url")
+        # The company workspace plugin signs in to its local service; the
+        # company-issued sign-in may sit on a sibling company plugin.
+        for server in companion_servers(ext.store.list_mcp_servers_internal(), plugin_id, url, COMPANY_PLUGIN_IDS):
+            try:
+                token = ext.manager.oauth.access_token(server)
+            except Exception:
+                continue
+            if token:
+                return token
         return None
 
     peer_providers.mcp_token_source = _mcp_token_for_plugin

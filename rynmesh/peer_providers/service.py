@@ -24,6 +24,35 @@ from .validation import PeerProviderError
 company_member = ContextVar("peer_provider_company_member", default=None)
 
 
+def companion_servers(servers, plugin_id, provider_url, company_plugins=frozenset()):
+    """MCP servers whose sign-in may be exchanged for this plugin's peer session.
+
+    A plugin's own servers qualify. Company plugins share one company sign-in,
+    so a sibling company plugin's server also qualifies, but only when it
+    lives on the provider's own origin: a sign-in is never offered to a host
+    that did not issue it.
+    """
+    from urllib.parse import urlsplit
+
+    def origin(value):
+        try:
+            parts = urlsplit(str(value or ""))
+            return (parts.scheme, parts.netloc.lower()) if parts.scheme == "https" and parts.netloc else None
+        except ValueError:
+            return None
+    home = origin(provider_url)
+    shared = plugin_id in company_plugins
+    result = []
+    for server in servers:
+        if not server.get("effective_enabled", False):
+            continue
+        if server.get("plugin_id") == plugin_id and not shared:
+            result.append(server)
+        elif shared and server.get("plugin_id") in company_plugins and home and origin(server.get("url")) == home:
+            result.append(server)
+    return result
+
+
 class PeerProviderService:
     def __init__(self, home, store, messaging_key, *, transport=None, clock=time.time,
                  callback_factory=None, model_status=None, endpoints=None, extension_source=None,
@@ -39,7 +68,8 @@ class PeerProviderService:
         self._lock = threading.RLock()
         self._rows = self.storage.read()
         self._cache, self._pending, self._requests = {}, {}, {}
-        self._companion_failed: set[tuple[str, str]] = set()
+        # A refused exchange is retried later: the provider may gain the grant or the member approval.
+        self._companion_failed: dict[tuple[str, str], float] = {}
 
     def _save(self):
         self.storage.write(self._rows)
@@ -118,8 +148,13 @@ class PeerProviderService:
             if not row or not row["enabled"]:
                 v.fail("peer_provider_unavailable")
             member = company_member.get()
-            if member is not None and (not member or (row.get("binding") or {}).get("member_id") != member):
-                v.fail("peer_provider_login_required")
+            if member is not None:
+                # The plugin's signed-in company account must own this channel.
+                # Both sides are the company account id; the provider's internal
+                # member id is a different value and is never compared with it.
+                binding = row.get("binding")
+                if not member or (binding and binding.get("userid") != member):
+                    v.fail("peer_provider_login_required")
             if session and not row.get("session"):
                 v.fail("peer_provider_login_required")
             return copy.deepcopy(row)
@@ -374,6 +409,8 @@ class PeerProviderService:
         signature = Ed25519PrivateKey.from_private_bytes(self.store.private_key_bytes).sign(message.encode("utf-8"))
         result, current = await self._request(plugin_id, "POST", "/bind", {"challenge_id": challenge_id, "signature": base64.b64encode(signature).decode()})
         safe = {"peer_id": v.key(result.get("peer_id")), "member_id": v.text(result.get("member_id")), "revision": v.revision(result.get("revision"))}
+        if result.get("userid") is not None:
+            safe["userid"] = v.text(result.get("userid"))
         if safe["peer_id"] != fields["peer_id"] or current["epoch"] != row["epoch"]:
             v.fail()
         with self._lock:
@@ -393,7 +430,13 @@ class PeerProviderService:
             model.update(provider_resource=safe["resource"], plugin_id=plugin_id, binding_verified=True,
                          consumer_peer_id=self.store.peer_id, external_permission={"resource": safe["resource"]})
         with self._lock:
-            self._current(plugin_id, row["epoch"])
+            current = self._current(plugin_id, row["epoch"])
+            own = safe.get("self")
+            binding = current.get("binding")
+            if own and binding and binding.get("userid") != own["userid"]:
+                # A channel bound before the provider reported the account id.
+                binding["userid"] = own["userid"]
+                self._save()
             self._cache[plugin_id] = {"expires_at": self.clock() + 60, "epoch": row["epoch"], "directory": safe}
         return copy.deepcopy(safe)
 
@@ -437,11 +480,13 @@ class PeerProviderService:
         row = self._get(plugin_id)
         if not row.get("session") and self.mcp_token_source is not None:
             mcp_token = self.mcp_token_source(plugin_id)
-            if mcp_token and (plugin_id, mcp_token) not in self._companion_failed:
+            if mcp_token and self.clock() - self._companion_failed.get((plugin_id, mcp_token), float("-inf")) >= 300:
                 try:
                     session = await self.oauth.exchange_companion(row["config"], mcp_token)
                 except Exception:
-                    self._companion_failed.add((plugin_id, mcp_token))
+                    if len(self._companion_failed) >= 64:
+                        self._companion_failed.clear()
+                    self._companion_failed[(plugin_id, mcp_token)] = self.clock()
                     raise
                 with self._lock:
                     current = self._current(plugin_id, row["epoch"])
@@ -499,6 +544,7 @@ class PeerProviderService:
         if not status.get("bound") and ws_data is None:
             return {
                 **status,
+                "can_publish_models": False,
                 "current_member": None,
                 "colleagues": [],
                 "departments": [],
@@ -587,8 +633,15 @@ class PeerProviderService:
                     "online": len(devs) > 0,
                     "devices": devs,
                 })
+        # Only the provider's own statement, on a really bound channel, makes
+        # this member a publisher. Fallback views never do.
+        own = (dir_data or {}).get("self") if isinstance(dir_data, dict) else None
+        can_publish = bool(own and own.get("can_publish_models") is True and self.status(plugin_id).get("bound"))
+        if isinstance(current_member, dict):
+            current_member = {**current_member, "can_publish_models": can_publish}
         return {
             **status,
+            "can_publish_models": can_publish,
             "current_member": current_member,
             "colleagues": colleagues,
             "departments": (ws_data or {}).get("departments") or [],
