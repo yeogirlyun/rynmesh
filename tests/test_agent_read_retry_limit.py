@@ -3,7 +3,7 @@ import pytest
 from test_agent_runtime import Catalog, advance, assistant, make_runtime
 
 from rynmesh.agent_runtime.runtime import AgentRuntime
-from rynmesh.agent_runtime.store import AgentError, AgentStore
+from rynmesh.agent_runtime.store import READ_FAILED_THREE_TIMES_CORRECTION, AgentError, AgentStore
 
 
 def failing_reads(tools, *, successful_attempts=()):
@@ -39,7 +39,15 @@ def test_three_actual_failures_block_fourth_after_restart_but_other_read_continu
     correction = last["result"].pop("correction")
     assert "not sent again" in correction and "what could not be read" in correction
     assert last["result"] == {"error": "agent_read_retry_limit", "not_executed": True, "no_mutation": True}
-    assert len([r for r in row["receipts"] if r["status"] == "failed"]) == 3
+    failed = [r for r in row["receipts"] if r["status"] == "failed"]
+    assert len(failed) == 3
+    # The third failure itself says the read is used up: a model that turns to a
+    # shell loop instead of a fourth read would never meet the refusal above.
+    assert failed[2]["result"]["correction"] == READ_FAILED_THREE_TIMES_CORRECTION
+    assert "wait-and-retry loop" in READ_FAILED_THREE_TIMES_CORRECTION and "wait-and-retry loop" in correction
+    assert all(r["result"].get("correction") != READ_FAILED_THREE_TIMES_CORRECTION for r in failed[:2])
+    shown = [m["content"] for m in row["messages"] if m["role"] == "tool"]
+    assert sum("will not send it again" in content for content in shown) == 1
     advance(runtime, 3)
     assert runtime.get(task["id"])["status"] == "completed"
     assert [c[1]["service_id"] for c in tools.calls] == ["offline"] * 3 + ["available"]
