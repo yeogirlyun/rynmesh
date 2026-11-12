@@ -29,8 +29,9 @@ def test_approved_write_is_rejected_after_actual_owner_api_revocation(node, runn
         runtime, token = runner.install_runtime(app, store, store.home,
             peer_box.load_or_create_messaging_key(store.home / "messaging.x25519"),
             (runner.FixturePlanner(), tools, catalog), world.case["authorization"]["owner_id"])
+        # The approval path under test; the shipped default (automatic) has none.
         runtime.update_settings({"enabled": True, "model_id": selected, "max_steps": 24,
-            "max_seconds": 600, "max_context_chars": 100000})
+            "max_seconds": 600, "max_context_chars": 100000, "permission_mode": "confirm_changes"})
         with TestClient(app) as client:
             assert client.put("/api/local/agent/settings", json={"permission_mode": "read_only"}).status_code == 403
         result = runner.execute(runtime, world, token)
@@ -94,7 +95,8 @@ def test_settings_failure_cancels_before_releasing_approved_write(node, runner, 
         runtime, token = runner.install_runtime(app, store, store.home,
             peer_box.load_or_create_messaging_key(store.home / "messaging.x25519"),
             (runner.FixturePlanner(), tools, catalog), world.case["authorization"]["owner_id"])
-        runtime.update_settings({"enabled": True, "model_id": selected, "max_context_chars": 100000})
+        runtime.update_settings({"enabled": True, "model_id": selected, "max_context_chars": 100000,
+                                 "permission_mode": "confirm_changes"})
         def reject_settings(_):
             raise AgentError("agent_settings_conflict")
         monkeypatch.setattr(runtime, "update_settings", reject_settings)

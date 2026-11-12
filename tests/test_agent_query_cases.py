@@ -27,7 +27,9 @@ def test_real_encrypted_world_and_actual_presence_classifier(node, tmp_path, cas
         assert selected == rows["model-a"]["id"]
         for logical, expected in controller.world["models"].items():
             row = rows[logical]
-            assert (row["available"], row["agent_supported"], row["sharing"]) == (expected["available"], expected["agent_supported"], expected["sharing"])
+            # agent_supported is the adapter contract; the fixture's "agent" column is the tool probe.
+            assert row["agent_supported"] is True and row["agent_support_basis"] == "adapter_contract"
+            assert (row["available"], row["tool_support"] == "supported", row["sharing"]) == (expected["available"], expected["agent_supported"], expected["sharing"])
         result = tools.execute("ryn_list_models", {}, operation_id="identity-read", cancelled=lambda: False)
         identities = {row["fixture_identity"]: row for row in result["models"]}
         assert set(identities) == set(controller.world["models"])

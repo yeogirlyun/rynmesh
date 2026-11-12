@@ -4,7 +4,7 @@ import json
 
 import pytest
 from test_agent_resources import file_ref, invoke, resources  # noqa: F401
-from test_agent_runtime import advance, assistant, make_runtime
+from test_agent_runtime import advance, assistant, fit_window, make_runtime
 from test_agent_tool_menu import ManyTools
 
 from rynmesh.agent_runtime import checkpoint_refs
@@ -92,8 +92,8 @@ def test_schema_cache_yields_to_exact_references_without_dropping_evidence(tmp_p
         assistant(name="ryn_discover_tools", args={"load": names}),
         assistant("Three authorized resources were observed; no mutation occurred."), assistant("Inspection recorded."))
     runtime.tools = tools
-    runtime.update_settings({"max_context_chars": 12000})
     row = runtime.create({"message": "Inspect the documents. Never share or modify them."})
+    cap = fit_window(runtime, row["id"], 12000, small_window=True)  # historical 12000 plus prompt growth
     advance(runtime, 2)
     # The credential-input contract also occupies the fixed 12 KB context.
     # Leave room for that immutable schema while still forcing cache release.
@@ -109,4 +109,4 @@ def test_schema_cache_yields_to_exact_references_without_dropping_evidence(tmp_p
     assert saved["messages"][-3:-1] == history
     assert any(event["type"] == "tool_menu_changed" and event.get("reason") == "context_space" for event in saved["events"])
     assert not runtime.tools.calls
-    assert all(len(encoded(call[1])) + len(encoded(call[2])) <= 12000 for call in model.calls)
+    assert all(len(encoded(call[1])) + len(encoded(call[2])) <= cap for call in model.calls)

@@ -60,7 +60,9 @@ def test_mapping_precedes_snapshot_and_real_outer_gate_enforces_it(node, tmp_pat
         assert row["max_output_tokens"] == 128000 and row["context_window"] == 1000000
         for logical, expected in world.world["models"].items():
             actual = next(r for r in catalog.list_models() if r["id"] == world.bindings[logical])
-            assert tuple(actual[k] for k in ("available", "agent_supported", "sharing")) == tuple(expected[k] for k in ("available", "agent_supported", "sharing"))
+            # agent_supported is the adapter contract; the fixture's "agent" column is the tool probe.
+            assert actual["agent_supported"] is True and actual["agent_support_basis"] == "adapter_contract"
+            assert (actual["available"], actual["tool_support"] == "supported", actual["sharing"]) == tuple(expected[k] for k in ("available", "agent_supported", "sharing"))
         manager = app.state.llm_agent_services["provider_for"](selected[6:])
         assert isinstance(manager.adapter, ModelDispatchAdapter)
         gate = manager.adapter

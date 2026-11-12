@@ -16,6 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from agent_tool_fixtures import expose
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from PIL import Image, ImageDraw
 
@@ -419,6 +420,8 @@ def test_full_original_image_fidelity_and_small_chinese_ui_pixels_preserved_acro
     try:
         (workspace / "ui_1280x900.png").write_bytes(png_bytes)
         task = runtime.create({"message": "Inspect full resolution 1280x900 UI screenshot."})
+        # ryn_image_inspect is loaded on demand; load it through discovery first.
+        expose(runtime, task["id"], ["ryn_image_inspect"])
         for _ in range(6):
             runtime.run_once()
             if runtime.get(task["id"])["status"] in {"completed", "failed"}:

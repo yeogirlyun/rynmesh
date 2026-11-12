@@ -18,6 +18,13 @@ from rynmesh.llm_package.sources import SourceStore
 
 CONTEXT = {"task_id": "task-approved-share", "owner_id": "owner", "consumer_node_id": "consumer",
            "goal_revision": 1, "scope_revision": 1}
+
+
+def child_env():
+    """Child scripts start with tests/ as sys.path[0]; give them this checkout's package."""
+    root = str(Path(__file__).resolve().parents[1])
+    inherited = os.environ.get("PYTHONPATH")
+    return {**os.environ, "PYTHONPATH": os.pathsep.join([root, inherited] if inherited else [root])}
 RELATIONS = {name * 32: {"relationship_id": name * 32, "peer_id": "node-" + name,
                        "node_name": "Node " + name, "status": "active"} for name in ("a", "b", "c")}
 
@@ -121,7 +128,7 @@ def test_actual_process_death_reconciles_only_atomic_receipt_without_replay(tmp_
     request.write_text(json.dumps({"args": args, "preview": approved}), encoding="utf-8")
     before = sources.path.read_bytes()
     child = subprocess.run([sys.executable, str(Path(__file__).resolve()), str(tmp_path), stage], timeout=30,
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, env=child_env())
     assert child.returncode == (90 if stage == "before" else 91), child.stderr
     # Reopen every store in this independent process; no in-memory operation
     # cache or current-state equality is accepted as proof of attribution.
@@ -154,7 +161,7 @@ def test_other_process_owner_edit_serializes_after_atomic_commit(tmp_path):
     sources, _, tool, _, args = seed(tmp_path)
     with sources.lock:
         child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), str(tmp_path), "owner-edit"],
-                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=child_env())
         try:
             assert child.stdout.readline().strip() == "owner-started"
             result = execute(tool, args)

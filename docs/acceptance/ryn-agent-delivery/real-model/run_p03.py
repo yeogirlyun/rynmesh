@@ -204,6 +204,9 @@ class FixturePlanner(R04FixturePlanner):
         if discovery:
             return discovery
         messages = business_history(messages)
+        handoff = helper.checkpoint(messages, specs)
+        if handoff:
+            return handoff
         if not specs:
             refs = json.loads(messages[-1]["content"])["evidence"]
             message = {"role": "assistant", "content": json.dumps({"status": "failed",
@@ -320,8 +323,10 @@ def main():
                 bridge.complete = traced
                 runtime, owner_token = install_runtime(app, store, home, key, (bridge, tools, catalog),
                     world.case["authorization"]["owner_id"])
+                # P03 needs the owner-approval path; the shipped default is now
+                # automatic, which runs the share with no approval to revoke.
                 runtime.update_settings({"enabled": True, "model_id": selected, "max_steps": 24,
-                    "max_seconds": 600, "max_context_chars": 100000})
+                    "max_seconds": 600, "max_context_chars": 100000, "permission_mode": "confirm_changes"})
                 record.update(effective_input=world.effective_input, planner_policy_mapping=world.planner_policy_mapping,
                     actual_role_binding={"agent_execution_node": "node-a", "runtime_peer_id": runtime.consumer_node_id,
                         "tools_peer_id": tools.store.peer_id, "source_owner_peer_id": store.peer_id, "runtime_owner_id": runtime.owner_id})

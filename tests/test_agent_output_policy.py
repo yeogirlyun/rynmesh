@@ -173,3 +173,27 @@ def test_checker_private_reasoning_does_not_consume_visible_answer_limit(tmp_pat
     advance(runtime, 4)
     assert runtime.get(task["id"])["outcome"]["status"] == "verified"
     assert private not in encoded(runtime.store.read()).decode()
+
+
+def test_peer_models_are_budgeted_with_the_providers_own_admission_rule():
+    # A Ryn peer provider admits prompt UTF-8 bytes + output <= window (one
+    # token per byte). A request inside the Agent budget must pass it.
+    import json as _json
+
+    from rynmesh.agent_runtime import output_policy as policy_module
+    from rynmesh.llm_package.context_safety import context_request_fits
+
+    peer = {"context_window": 16000, "max_output_tokens": 2000, "context_admission_bytes_per_token": 1}
+    api = {"context_window": 16000, "max_output_tokens": 2000}
+    peer_budget = policy_module.context_budget(peer)
+    assert peer_budget["effective_max_context_bytes"] == 16000 - 2000 - 512
+    assert peer_budget["admission_bytes_per_token"] == 1
+    assert policy_module.context_budget(api)["effective_max_context_bytes"] == (16000 - 2000 - 512) * 3
+    filler = "x" * (peer_budget["effective_max_context_bytes"] - 200)
+    messages = [{"role": "user", "content": filler}]
+    selected = policy_module.select(peer, messages, [])
+    prompt = _json.dumps({"messages": messages}, ensure_ascii=False)
+    assert len(prompt.encode()) <= peer_budget["effective_max_context_bytes"]
+    assert context_request_fits(prompt, output_tokens=selected["effective_cap"], context_window=16000)
+    # The token estimate used for task budgets stays the realistic one.
+    assert selected["estimated_input_tokens"] == policy_module.select(api, messages, [])["estimated_input_tokens"]

@@ -82,7 +82,11 @@ def test_large_window_does_not_send_entire_tool_registry(tmp_path):
     advance(runtime)
     specs = model.calls[0][2]
     assert tool_menu.NAME in {s['function']['name'] for s in specs}
-    assert len(encoded(specs)) < len(encoded(runtime.tools.specs()))
+    # Fixed control tools are always sent; compare only the business registry part.
+    registry = runtime.tools.specs()
+    business = {s['function']['name'] for s in registry}
+    sent = [s for s in specs if s['function']['name'] in business]
+    assert len(sent) < len(registry) and len(encoded(sent)) < len(encoded(registry))
     saved = runtime.store.read()['tasks'][task['id']]
     assert saved['response_language'] == 'zh-CN'
     assert 'zh-CN' in authority(saved)

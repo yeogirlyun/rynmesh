@@ -27,8 +27,11 @@ def test_image_tool_sends_actual_bounded_pixels_without_putting_base64_in_receip
     def vision(request):
         part = request["messages"][-1]["content"][1]
         raw = base64.b64decode(part["image_url"]["url"].split(",", 1)[1])
+        # Within the source limits the original file is sent unchanged (no downscale).
+        assert part["image_url"]["url"].startswith("data:image/png;base64,")
+        assert raw == (tmp_path / "picture.png").read_bytes()
         with Image.open(io.BytesIO(raw)) as picture:
-            assert picture.size == (512, 341)
+            assert picture.size == (900, 600)
             red, green, blue = picture.getpixel((30, 30))
             assert red > 240 and green < 10 and blue < 10
         observed.append(True)
@@ -53,7 +56,7 @@ def test_image_tool_sends_actual_bounded_pixels_without_putting_base64_in_receip
 def test_image_tool_cannot_read_outside_workspace_or_invent_vision_support(local):
     tools, context, root, _ = local
     Image.new("RGB", (10, 10), "blue").save(root / "picture.png")
-    with pytest.raises(AgentToolRejected, match="requires_api_model"):
+    with pytest.raises(AgentToolRejected, match="agent_image_input_unsupported"):
         tools.perform("ryn_image_inspect", {"path": "picture.png"}, context, lambda: False)
     with pytest.raises(AgentToolRejected, match="outside_workspace"):
         tools.perform("ryn_image_inspect", {"path": "../picture.png"}, context, lambda: False)

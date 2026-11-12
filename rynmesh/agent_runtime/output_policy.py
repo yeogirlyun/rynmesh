@@ -25,6 +25,7 @@ UNKNOWN_CONTEXT_WINDOW_TOKENS = 32768
 FRAMING_RESERVE_TOKENS = 512
 ESTIMATED_BYTES_PER_TOKEN = 3
 ESTIMATE_BASIS = "serialized_utf8_bytes_div_3_ceil_plus_512_framing_heuristic"
+RYN_ADMISSION_ESTIMATE_BASIS = "serialized_utf8_bytes_as_tokens_ryn_provider_admission"
 IMAGE_ESTIMATE_BASIS = "text_utf8_div_3_ceil_plus_512_and_image_patch16_x3_plus_1024_heuristic"
 IMAGE_TOKEN_FORMULA_BASIS = "heuristic_3_times_ceil_w_16_times_ceil_h_16_plus_1024_not_provider_tokenizer"
 IMAGE_PATCH_SIZE = 16
@@ -50,6 +51,20 @@ def context_metadata(model):
     basis = model.get("context_window_basis")
     return {"context_window_tokens": window, "context_window_known": True,
             "context_window_basis": basis if isinstance(basis, str) and basis else "model_declared"}
+
+
+def admission_bytes_per_token(model):
+    """Request bytes one window token may hold at the route's admission check.
+
+    A Ryn peer provider admits an order only when its prompt's UTF-8 bytes plus
+    output fit the window, one token per byte. Budgeting peer models at the
+    default 3 bytes/token sent requests the provider refused instead of
+    compacting first. Other routes keep the default estimate.
+    """
+    value = (model or {}).get("context_admission_bytes_per_token")
+    if type(value) is int and 1 <= value < ESTIMATED_BYTES_PER_TOKEN:
+        return value
+    return ESTIMATED_BYTES_PER_TOKEN
 
 
 def configured_output(model):
@@ -247,7 +262,8 @@ def context_budget(model, manual_limit=None, *, provenance=None):
     """Derive a request-byte allowance while reserving the full output setting."""
     metadata = context_metadata(model)
     reserve = configured_output(model)
-    effective = max(0, metadata["context_window_tokens"] - reserve - FRAMING_RESERVE_TOKENS) * ESTIMATED_BYTES_PER_TOKEN
+    density = admission_bytes_per_token(model)
+    effective = max(0, metadata["context_window_tokens"] - reserve - FRAMING_RESERVE_TOKENS) * density
     if not metadata["context_window_known"]:
         effective = min(effective, UNKNOWN_WINDOW_CONTEXT_CHARS)
     if manual_limit is not None:
@@ -258,7 +274,8 @@ def context_budget(model, manual_limit=None, *, provenance=None):
             "provenance": provenance or ("default_auto" if manual_limit is None else "legacy_ambiguous_manual"),
             "manual_max_context_bytes": manual_limit, "effective_max_context_bytes": effective,
             "reserved_output_tokens": reserve, "framing_reserve_tokens": FRAMING_RESERVE_TOKENS,
-            "estimate_basis": ESTIMATE_BASIS, "token_count_is_estimate": True,
+            "estimate_basis": ESTIMATE_BASIS if density == ESTIMATED_BYTES_PER_TOKEN else RYN_ADMISSION_ESTIMATE_BASIS,
+            "admission_bytes_per_token": density, "token_count_is_estimate": True,
             "units": {"max_context_chars": "serialized_request_utf8_bytes", "context_window": "tokens"}}
 
 
@@ -325,6 +342,13 @@ def select(model, messages, specs, *, request_cap=None):
     _enforce_analysis_bounds(analysis)
     estimate = {k: v for k, v in analysis.items() if k not in {"images", "invalid_image_parts"}}
     limits = {"configured": configured, "transport": TRANSPORT_MAX_TOKENS, "context": window - estimate["estimated_input_tokens"]}
+    density = admission_bytes_per_token(model)
+    if density != ESTIMATED_BYTES_PER_TOKEN:
+        # The route admits bytes + output against the window; keep the output cap
+        # within that rule while the token estimate above stays realistic.
+        admitted_input = ((estimate["text_projection_utf8_bytes"] + density - 1) // density
+                          + FRAMING_RESERVE_TOKENS + estimate["estimated_image_tokens"])
+        limits["admission"] = window - admitted_input
     if request_cap is not None:
         limits["request"] = request_cap
     maximum = min(limits.values())

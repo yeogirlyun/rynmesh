@@ -4,7 +4,7 @@ import json
 
 import pytest
 from test_agent_peer_scope import consumer, paired, resources  # noqa: F401
-from test_agent_runtime import Tools, compaction_history
+from test_agent_runtime import Tools, compaction_history, fit_window
 from test_agent_runtime_model_switch import body
 from test_agent_space_binding import nodes, space_pair  # noqa: F401
 
@@ -132,8 +132,8 @@ def test_plain_peer_summary_and_following_main_keep_binding_and_deadline(consume
         return complete(*args, **options)
     runtime.model.complete = capture
     runtime.tools = Tools()  # Small synthetic local tool menu, actual signed peer transport.
-    runtime.update_settings({"max_context_chars": 8000})
     task_id = runtime.create({"message": "Inspect only"})["id"]
+    fit_window(runtime, task_id, 8000)  # the historical 8000 cap plus prompt growth
     compaction_history(runtime, task_id)
     runtime.run_once()
     current = runtime.get(task_id)

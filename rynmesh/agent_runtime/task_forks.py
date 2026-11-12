@@ -16,7 +16,7 @@ from pathlib import Path
 
 from fastapi import Request
 
-from ..atomic_io import atomic_write_bytes
+from ..atomic_io import atomic_write_bytes, fs_path
 from . import budget, lifecycle, results
 from .file_review import safe_path
 from .input_attachments import MAX_FILE_BYTES
@@ -138,12 +138,15 @@ def _history_payloads(message):
 def _write_copy(store, target, raw, boundary, plaintext_hash=None):
     """Publish immutable references without overwriting a file created meanwhile."""
     safe_path(boundary, str(target))
-    target.parent.mkdir(parents=True, exist_ok=True)
+    # Boundary checks use the plain path; file calls use the long-path form,
+    # because nested result/attachment targets can pass 260 chars on Windows.
+    native = fs_path(target)
+    native.parent.mkdir(parents=True, exist_ok=True)
     safe_path(boundary, str(target))
-    if target.exists():
-        if target.stat().st_size > (3 * results.MAX_RESULT_BYTES if plaintext_hash else MAX_FILE_BYTES):
+    if native.exists():
+        if native.stat().st_size > (3 * results.MAX_RESULT_BYTES if plaintext_hash else MAX_FILE_BYTES):
             raise AgentError("agent_fork_staging_changed")
-        saved = target.read_bytes()
+        saved = native.read_bytes()
         if plaintext_hash:
             from ..services import peer_box
             try:
@@ -157,15 +160,15 @@ def _write_copy(store, target, raw, boundary, plaintext_hash=None):
         if not matches:
             raise AgentError("agent_fork_staging_changed")
         return
-    temporary = target.with_name(target.name + ".fork-" + uuid.uuid4().hex + ".tmp")
+    temporary = fs_path(target.with_name(target.name + ".fork-" + uuid.uuid4().hex + ".tmp"))
     try:
         atomic_write_bytes(temporary, raw)
         safe_path(boundary, str(target))
         # Windows rename refuses to overwrite; POSIX link is also create-only.
         if os.name == "nt":
-            os.rename(temporary, target)
+            os.rename(temporary, native)
         else:
-            os.link(temporary, target)
+            os.link(temporary, native)
     finally:
         temporary.unlink(missing_ok=True)
 

@@ -417,6 +417,42 @@ def test_unsupported_catalog_model_rejected_by_backend(tmp_path):
         runtime.update_settings({"model_id": "local:test"})
 
 
+def authority_bytes(runtime, task_id):
+    """Bytes of the pinned prompt layers (developer authority + owner turns) for a task."""
+    from rynmesh.agent_runtime.store import encoded
+    row = runtime.store.read()["tasks"][task_id]
+    pinned = {**row, "messages": [m for m in row["messages"] if m["role"] == "user"],
+              "context_checkpoint": None, "_exclude_optional_memory": True}
+    return len(encoded(runtime._context(pinned)))
+
+
+# Base prompt size (developer layers + one short owner turn) when the fixed
+# small-window caps in these fixtures were chosen (f160665, 2026-10-12).
+CALIBRATED_PROMPT_BYTES = 2650
+
+
+def fit_window(runtime, task_id, calibrated_cap, *, small_window=False):
+    """Apply a fixture's historical cap plus the prompt growth since then; return it.
+
+    Fixed caps such as 8000 or 12000 were chosen when the prompt was ~2.65 KB;
+    the prompt alone now fills them. Adding the measured growth keeps each
+    scenario's original room for history, and follows later prompt changes.
+    """
+    cap = calibrated_cap + authority_bytes(runtime, task_id) - CALIBRATED_PROMPT_BYTES
+    if small_window:
+        # Stay in the tool menu's small-window regime (lazy control schemas)
+        # the fixture was written for, instead of crossing its 16000 bound.
+        from rynmesh.agent_runtime.tool_menu import SMALL_WINDOW_BYTES
+        cap = min(cap, SMALL_WINDOW_BYTES)
+
+    def apply(data):
+        row = data["tasks"][task_id]
+        row["limits"]["max_context_chars"] = cap
+        row["context_budget_provenance"] = "owner_manual"  # as if the owner saved this cap
+    runtime.store.transaction(apply)
+    return cap
+
+
 def compaction_history(runtime, task_id, *, extra_observation_chars=0):
     original = [
         {"role": "user", "content": "Inspect A. Never change B."},
@@ -433,8 +469,8 @@ def compaction_history(runtime, task_id, *, extra_observation_chars=0):
 
 def test_compaction_preserves_owner_constraints_closed_tool_groups_and_original_history(tmp_path):
     runtime, model, tools, _ = make_runtime(tmp_path, assistant("Inspected A; no changes made. Preserve constraint B."), assistant("A and D inspected. No changes made."))
-    runtime.update_settings({"max_context_chars": 8000})
     row = runtime.create({"message": "Inspect"})
+    fit_window(runtime, row["id"], 8000)
     original = compaction_history(runtime, row["id"])
     advance(runtime)
     done = runtime.get(row["id"])
@@ -458,8 +494,8 @@ def test_compaction_preserves_owner_constraints_closed_tool_groups_and_original_
 
 def test_compaction_fails_closed_on_tool_call_from_summary(tmp_path):
     runtime, model, tools, _ = make_runtime(tmp_path, assistant(name="share_service", args={"service_id": "A"}))
-    runtime.update_settings({"max_context_chars": 8000})
     row = runtime.create({"message": "Inspect"})
+    fit_window(runtime, row["id"], 8000)
     original = compaction_history(runtime, row["id"])
     advance(runtime)
     done = runtime.get(row["id"])
@@ -474,13 +510,13 @@ def test_followup_uses_compacted_projection_instead_of_archived_transcript_size(
                                       assistant("A and D inspected; keep all owner constraints."), assistant("Follow-up received."))
     # Leave room for the current credential schema and immutable owner turns,
     # while keeping the archive larger than this task's hard context cap.
-    runtime.update_settings({"max_context_chars": 10000})
     row = runtime.create({"message": "Inspect"})
-    original = compaction_history(runtime, row["id"], extra_observation_chars=2000)
+    cap = fit_window(runtime, row["id"], 10000)
+    original = compaction_history(runtime, row["id"], extra_observation_chars=2000 + cap - 10000)
     advance(runtime)
     done = runtime.get(row["id"])
     followup = "Next constraint: " + "x" * 1800
-    assert len(json.dumps(done["messages"]).encode()) + len(followup) > 10000
+    assert len(json.dumps(done["messages"]).encode()) + len(followup) > cap
     runtime.add_message(row["id"], {"message": followup, "expected_revision": done["revision"]})
     advance(runtime)
     updated = runtime.get(row["id"])

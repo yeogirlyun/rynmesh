@@ -17,6 +17,13 @@ ROOT = Path(__file__).resolve().parents[1]
 CONTROLLERS = ROOT / "docs/acceptance/ryn-agent-delivery/real-model"
 
 
+def child_env():
+    """Child scripts start with tests/ as sys.path[0]; give them this checkout's package."""
+    root = str(Path(__file__).resolve().parents[1])
+    inherited = os.environ.get("PYTHONPATH")
+    return {**os.environ, "PYTHONPATH": os.pathsep.join([root, inherited] if inherited else [root])}
+
+
 @pytest.fixture
 def worker_dependencies(cohort):
     executable = os.environ.get("RYN_REFERENCE_NODE") or shutil.which("node")
@@ -121,7 +128,7 @@ def test_document_roles_reopen_in_new_process_without_reseeding(tmp_path, monkey
         original_grants = grants.read_bytes()
         config_path = save(tmp_path / "worker.json", config)
         worker = subprocess.run([sys.executable, str(Path(__file__).resolve()), str(config_path)],
-            cwd=ROOT, capture_output=True, text=True, timeout=45)
+            cwd=ROOT, env=child_env(), capture_output=True, text=True, timeout=45)
         assert worker.returncode == 0, worker.stderr
         observed = json.loads(worker.stdout.strip().splitlines()[-1])
         assert observed["ids"] == config["release_world"]["node_ids"]
@@ -169,7 +176,7 @@ def test_r03_real_worker_restore_keeps_original_operation_and_one_put(prepared, 
         config_path = save(root / "worker.json", config)
         with (output / "crash.log").open("w", encoding="utf-8") as log:
             first = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), str(config_path), "R03"],
-                cwd=ROOT, stdout=log, stderr=log)
+                cwd=ROOT, env=child_env(), stdout=log, stderr=log)
             owned = proof.OwnedConsumerProcess(first)
             try:
                 deadline = time.monotonic() + 45
@@ -188,7 +195,7 @@ def test_r03_real_worker_restore_keeps_original_operation_and_one_put(prepared, 
         config["phase"] = "recover"
         save(config_path, config)
         second = subprocess.run([sys.executable, str(Path(__file__).resolve()), str(config_path), "R03"],
-            cwd=ROOT, capture_output=True, text=True, timeout=45)
+            cwd=ROOT, env=child_env(), capture_output=True, text=True, timeout=45)
         assert second.returncode == 0, second.stderr
         assert registry.read(home / "worker-recover.json")["worker_pid"] != pid
         assert registry.read(output / "release-worker-handoff.json") == handoff
@@ -283,7 +290,7 @@ def test_r06_real_collector_restart_keeps_compaction_and_original_4_plus_8(prepa
             config_path = save(root / (phase + ".json"), config)
             with (output / (phase + ".log")).open("w", encoding="utf-8") as log:
                 process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), str(config_path), "R06"],
-                    cwd=ROOT, stdout=log, stderr=log)
+                    cwd=ROOT, env=child_env(), stdout=log, stderr=log)
                 owned = controller.OwnedConsumerProcess(process)
                 try:
                     marker = controller.wait_file(home / ("worker-" + phase + ".json"), process, 10)

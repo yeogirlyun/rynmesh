@@ -4,7 +4,7 @@ import json
 
 import pytest
 from test_agent_integrations import node as node
-from test_agent_runtime import advance, assistant, make_runtime
+from test_agent_runtime import advance, assistant, fit_window, make_runtime
 from test_craft_plugins import manager as manager
 
 from rynmesh.agent_runtime import tool_menu
@@ -38,6 +38,8 @@ def test_current_apps_first_menu_and_discovered_info_use_live_read_only_tools(tm
         assistant("Word 文档应用已启用；当前接入仅支持查询编辑器信息。"),
         context_limit=context_limit)
     task = runtime.create({"message": "你查一下我目前有的应用，说一下你能做什么"})
+    if context_limit < 120000:  # the small case: historical cap plus prompt growth
+        context_limit = fit_window(runtime, task["id"], context_limit, small_window=True)
     advance(runtime, 10)
 
     first_names = [spec["function"]["name"] for spec in model.calls[0][2]]

@@ -441,3 +441,17 @@ def test_fresh_provider_conversation_key_and_nested_fork_references(env):
     for _ in range(3):e.runtime.run_once()
     assert conversations==[grandchild['id']]
     assert e.runtime.get(grandchild['id'])['result']=='Independent transport session'
+
+
+def test_copy_publishes_past_the_windows_path_limit_and_stays_create_only(tmp_path):
+    # Nested result/attachment targets can exceed 260 chars; the copy must still
+    # publish once and refuse to overwrite a different file created meanwhile.
+    target = tmp_path / ("a" * 90) / ("b" * 90) / ("result_" + "c" * 32 + ".json")
+    assert len(str(target)) > 260
+    task_forks._write_copy(None, target, b"first", tmp_path)
+    task_forks._write_copy(None, target, b"first", tmp_path)  # identical: idempotent
+    with pytest.raises(AgentError, match="agent_fork_staging_changed"):
+        task_forks._write_copy(None, target, b"other", tmp_path)
+    native = task_forks.fs_path(target)
+    assert native.read_bytes() == b"first"
+    assert [p.name for p in native.parent.iterdir()] == [target.name]

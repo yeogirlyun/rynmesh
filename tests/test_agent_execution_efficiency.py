@@ -46,12 +46,12 @@ def test_small_stream_chunks_are_coalesced_without_losing_first_or_final_text(
     model.complete = streaming
     runtime.run_once()
     done = AgentStore(tmp_path, key).read()["tasks"][created["id"]]
-    # Final assistant text is normalized by the turn controller; the deltas
-    # persisted while streaming (folded once the reply is final) kept every byte.
+    # The final answer keeps the model's text byte for byte (no trimming), and the
+    # deltas persisted while streaming (folded once the reply is final) match it.
     deltas = folded
     assert not [event for event in done["events"] if event["type"] == "text_delta"]
-    assert done["status"] == "completed" and done["result"] == text.strip()
-    assert done["messages"][-1]["content"] == text.strip()
+    assert done["status"] == "completed" and done["result"] == text
+    assert done["messages"][-1]["content"] == text
     assert "".join(event["text"] for event in deltas) == text
     assert 1 < len(deltas) <= max_commits
     timing = next(event["timing"] for event in done["events"] if event["type"] == "assistant")
@@ -166,7 +166,9 @@ def test_per_phase_timing_tracks_scheduler_wait_model_tool_and_store_persistence
     tool_timing = tool_events[0]["timing"]
     assert tool_timing["scheduler_wait_seconds"] == pytest.approx(0.60)
     assert tool_timing["preparation_seconds"] == pytest.approx(0.02)
-    assert tool_timing["tool_execution_seconds"] == pytest.approx(0.35)
+    # Dispatch reads metadata again to pick the parallel/serial gate; that lookup
+    # and any gate wait belong to the execution window.
+    assert tool_timing["tool_execution_seconds"] == pytest.approx(0.35 + 0.02)
     assert tool_timing["store_persistence_seconds"] == pytest.approx(0.20)
 
     second_model_timing = assistant_events[1]["timing"]
@@ -241,8 +243,16 @@ def test_model_timeout_retry_records_request_id_monotonic_timing_and_safe_diagno
         clock[0] += 0.3
         return assistant("Recovered on attempt 2.")
 
+    from rynmesh.agent_runtime import retry_policy
+
+    wall = [5000.0]
+    monkeypatch.setattr(retry_policy, "now", lambda: wall[0])
     model.complete = complete_timeout_then_succeed
     runtime.run_once()
+    scheduled = runtime.store.read()["tasks"][created["id"]]["connection_recovery"]
+    runtime.run_once()  # The durable backoff has not elapsed: no early retry.
+    assert attempts[0] == 1
+    wall[0] = scheduled["next_retry_at"]
     runtime.run_once()
 
     done = runtime.get(created["id"])

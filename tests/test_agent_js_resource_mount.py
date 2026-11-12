@@ -159,7 +159,8 @@ class _FakeSuspendedPopen:
                     self._idx += 1
                     return line
                 if wait_for_kill:
-                    parent._eof_event.wait(timeout=0.5)
+                    # A live worker keeps stdout open; EOF only after kill/close/exit.
+                    parent._eof_event.wait(timeout=30.0)
                 return b""
 
             def close(self) -> None:
@@ -390,7 +391,8 @@ def test_whole_closure_handle_pinning_and_windows_sharing_barriers(
         try:
             with pytest.raises(JsResourceError) as exc_dir_id:
                 dev_lease.revalidate_critical_files()
-            assert exc_dir_id.value.code == "ryn_js_resource_pinned_identity_mismatch"
+            # The handle check reports a changed volume/file id as a changed resource.
+            assert exc_dir_id.value.code == "ryn_js_resource_file_changed"
         finally:
             dev_lease._pinned_directories["package"] = orig_pkg_dir_pin
 
@@ -798,7 +800,8 @@ def test_unconfirmed_child_exit_retains_lease_pins_in_quarantine_until_exit_conf
     # 1. Closing stdout (EOF) while child is still alive (proc_1.poll() is None) must NOT close the lease
     session_1._on_stdout_eof()
     assert proc_1.poll() is None
-    assert session_1.status == "closed"
+    # Unexpected EOF from a live worker is a lost worker, not an orderly close.
+    assert session_1.status == "lost"
     assert session_1.actual_process_identity_verified is False
     assert session_1.runtime_handshake_verified is False
     assert lease_1.closed is False
@@ -948,7 +951,8 @@ def test_manager_live_status_tracks_active_sessions_and_rejects_relabelled_dev_l
 
     # Part B: Production manager rejects a relabelled source_dev lease and any custom hook BEFORE Popen
     install_dir = tmp_path / "InstallAppRoot"
-    installed_profile_dir = install_dir / "resources" / "js-runtime" / "win32-x64"
+    installed_profile_dir = install_dir / "computer-use" / "js-runtime" / "win32-x64"  # fixed installed sidecar root
+    installed_profile_dir.parent.mkdir(parents=True, exist_ok=False)
     prepare_js_runtime_profile(**fixture, output_profile_dir=installed_profile_dir)
 
     spawn_before_prod_checks = len(spawned_procs)
@@ -1051,13 +1055,18 @@ def test_manager_live_status_tracks_active_sessions_and_rejects_relabelled_dev_l
             expected_profile_root=installed_profile_dir,
             expected_spec=prep.expected_spec,
         ) is False
-        assert manager_mod._verify_host_installed_production_lease(external_prod_lease) is False
+        assert manager_mod._is_host_installed_production_lease(external_prod_lease) is False
+        # The enforcing form refuses (and closes) the lease instead of returning False.
+        with pytest.raises(JsResourceError) as exc_external:
+            manager_mod._verify_host_installed_production_lease(external_prod_lease)
+        assert exc_external.value.code == "ryn_js_resource_invalid_mode"
+        assert external_prod_lease.closed is True
 
     # 2. The private host loader opens from the fixed installed root and is admitted, but any
     #    dataclasses.replace mutation on lease.profile (preserving profile_digest) immediately
     #    invalidates both is_verified_production_lease and _verify_host_installed_production_lease!
     with manager_mod._open_production_lease_from_host() as host_prod_lease:
-        assert manager_mod._verify_host_installed_production_lease(host_prod_lease) is True
+        assert manager_mod._verify_host_installed_production_lease(host_prod_lease) is host_prod_lease
         orig_profile = host_prod_lease.profile
 
         for mutated_profile in (
@@ -1079,7 +1088,7 @@ def test_manager_live_status_tracks_active_sessions_and_rejects_relabelled_dev_l
             ),
             dataclasses.replace(
                 orig_profile,
-                total_files=orig_profile.total_files + 1,
+                node_bytes=orig_profile.node_bytes + 1,
             ),
         ):
             assert mutated_profile.profile_digest == orig_profile.profile_digest
@@ -1090,10 +1099,10 @@ def test_manager_live_status_tracks_active_sessions_and_rejects_relabelled_dev_l
                 expected_profile_root=installed_profile_dir,
                 expected_spec=prep.expected_spec,
             ) is False
-            assert manager_mod._verify_host_installed_production_lease(host_prod_lease) is False
+            assert manager_mod._is_host_installed_production_lease(host_prod_lease) is False
 
         object.__setattr__(host_prod_lease, "profile", orig_profile)
-        assert manager_mod._verify_host_installed_production_lease(host_prod_lease) is True
+        assert manager_mod._verify_host_installed_production_lease(host_prod_lease) is host_prod_lease
 
 
 def test_manager_session_lock_order_concurrent_startup_quarantine_and_single_flight(
@@ -1175,7 +1184,8 @@ def test_manager_session_lock_order_concurrent_startup_quarantine_and_single_fli
 
     def _status_observer() -> None:
         try:
-            while not stop_observer.is_set():
+            # Poll concurrently, but yield so the starter is not GIL-starved.
+            while not stop_observer.wait(0.001):
                 mgr1.get_status()
                 mgr1.get_session("task_startup_quarantine")
         except BaseException as exc:
@@ -1221,15 +1231,25 @@ def test_manager_session_lock_order_concurrent_startup_quarantine_and_single_fli
     case2_procs: list[_FakeSuspendedPopen] = []
 
     class _GatedStdoutPipe(io.BytesIO):
-        def __init__(self, line: bytes) -> None:
+        def __init__(self, line: bytes, proc: _FakeSuspendedPopen) -> None:
             super().__init__(line)
             self._gated = True
+            self._proc = proc
 
         def readline(self, size: int = -1) -> bytes:
             if self._gated:
                 self._gated = False
                 gate_ready.wait(timeout=5.0)
-            return super().readline(size)
+            line = super().readline(size)
+            if not line:
+                # Like a live worker, stay open after ready until killed or closed;
+                # an instant EOF would race the starter and read as a lost worker.
+                self._proc._eof_event.wait(timeout=30.0)
+            return line
+
+        def close(self) -> None:
+            self._proc._eof_event.set()
+            super().close()
 
     def _popen_case2(cmd: list[str], **kwargs: Any) -> _FakeSuspendedPopen:
         env = kwargs["env"]
@@ -1251,7 +1271,7 @@ def test_manager_session_lock_order_concurrent_startup_quarantine_and_single_fli
             + "\n"
         ).encode("utf-8")
         proc = _FakeSuspendedPopen(pid=pid_val, handle=0x2345, stdout_lines=[])
-        proc.stdout = _GatedStdoutPipe(ready_line)
+        proc.stdout = _GatedStdoutPipe(ready_line, proc)
         case2_procs.append(proc)
         popen_entered.set()
         return proc
@@ -1318,7 +1338,7 @@ def test_manager_session_lock_order_concurrent_startup_quarantine_and_single_fli
             + "\n"
         ).encode("utf-8")
         proc = _FakeSuspendedPopen(pid=pid_val, handle=0x3456, stdout_lines=[])
-        proc.stdout = _GatedStdoutPipe(ready_line)
+        proc.stdout = _GatedStdoutPipe(ready_line, proc)
         case3_procs.append(proc)
         popen_entered.set()
         return proc

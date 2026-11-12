@@ -752,9 +752,11 @@ def test_unknown_peer_adapter_requires_explicit_tools_contract(node, capabilitie
 def test_peer_bridge_keeps_tool_history_and_no_retention(node):
     app, store = node
     services = app.state.llm_agent_services
+    # The whole registry (~36 KB) is sent; a peer admits UTF-8 bytes as tokens,
+    # so the remote window must hold it (32768 would be refused by the provider).
     services["discover_agent"] = lambda _: [{"peer_id": "peer-other", "node_name": "Remote", "online": True, "ready": True,
         "chat_protocol": "rynmesh.chat.v1", "service": {"package_id": "remote-api", "model_alias": "Remote model",
-        "adapter": "openai_compatible", "capabilities": ["client-tools"], "context_window": 32768, "max_output_tokens": 4096}}]
+        "adapter": "openai_compatible", "capabilities": ["client-tools"], "context_window": 65536, "max_output_tokens": 4096}}]
     requests = []
 
     async def execute(body):
