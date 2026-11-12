@@ -3,7 +3,12 @@ import pytest
 from test_agent_runtime import Catalog, advance, assistant, make_runtime
 
 from rynmesh.agent_runtime.runtime import AgentRuntime
-from rynmesh.agent_runtime.store import READ_FAILED_THREE_TIMES_CORRECTION, AgentError, AgentStore
+from rynmesh.agent_runtime.store import (
+    READ_FAILED_THREE_TIMES_CORRECTION,
+    READ_FAILED_TWICE_CORRECTION,
+    AgentError,
+    AgentStore,
+)
 
 
 def failing_reads(tools, *, successful_attempts=()):
@@ -45,7 +50,11 @@ def test_three_actual_failures_block_fourth_after_restart_but_other_read_continu
     # shell loop instead of a fourth read would never meet the refusal above.
     assert failed[2]["result"]["correction"] == READ_FAILED_THREE_TIMES_CORRECTION
     assert "wait-and-retry loop" in READ_FAILED_THREE_TIMES_CORRECTION and "wait-and-retry loop" in correction
-    assert all(r["result"].get("correction") != READ_FAILED_THREE_TIMES_CORRECTION for r in failed[:2])
+    # The second failure already warns, in place of the generic "switch to an
+    # alternative tool" hint: in UI acceptance the loop came right after it.
+    assert "correction" not in failed[0]["result"]
+    assert failed[1]["result"]["correction"] == READ_FAILED_TWICE_CORRECTION
+    assert "wait-and-retry loop" in READ_FAILED_TWICE_CORRECTION and "alternative tool" not in READ_FAILED_TWICE_CORRECTION
     shown = [m["content"] for m in row["messages"] if m["role"] == "tool"]
     assert sum("will not send it again" in content for content in shown) == 1
     advance(runtime, 3)

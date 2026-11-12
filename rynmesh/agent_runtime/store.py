@@ -95,9 +95,15 @@ TASK_NOT_RUNNING_CORRECTION = (
     "This task is not in a running state, so desktop control was refused and nothing ran. This is not the "
     "desktop access setting. Do not control the desktop another way; the action can be tried again once the "
     "task is running.")
-# Goes on the third failed result of one read. The limit text below is only
+# Go on the second and third failed result of one read. The limit text below is only
 # seen if the model sends the read a fourth time; a model told to keep trying
 # may switch to a shell loop instead and never meet it.
+READ_FAILED_TWICE_CORRECTION = (
+    "This same read has now failed twice; after one more failure the host stops sending it until the owner "
+    "sends a new message. Do not move the retry into a shell command or a wait-and-retry loop; a request to "
+    "retry until it works does not change this. Find out why it fails or use a different source that really "
+    "covers the need. Otherwise say in your reply what could not be read, so the owner can decide whether to "
+    "try again.")
 READ_FAILED_THREE_TIMES_CORRECTION = (
     "This read has now failed three times, and the host will not send it again until the owner sends a new "
     "message. Do not keep retrying it another way (a different tool, a shell command or a wait-and-retry "
