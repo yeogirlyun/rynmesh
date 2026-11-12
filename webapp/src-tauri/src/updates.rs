@@ -19,6 +19,8 @@ const TEST_ENDPOINT: Option<&str> = option_env!("RYN_DESKTOP_UPDATE_TEST_ENDPOIN
 const CHECK_INTERVAL: Duration = Duration::from_secs(3600);
 const RETRY_INTERVAL: Duration = Duration::from_secs(15 * 60);
 const TICK: Duration = Duration::from_secs(15);
+const CHECK_TIMEOUT: Duration = Duration::from_secs(20);
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(600);
 /// Background failures reach the app shell only once they keep happening; a failure of
 /// an update the owner asked to install is shown at once.
 pub const VISIBLE_FAILURES: u32 = 3;
@@ -51,6 +53,7 @@ pub struct UpdateState {
     pending: Mutex<Option<Update>>,
     busy: AtomicBool,
     quitting: AtomicBool,
+    cancel_check: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -136,19 +139,53 @@ pub fn desktop_update_acknowledge(app: tauri::AppHandle) -> Status {
     status.clone()
 }
 
+// Dropping the request future aborts network work; no detached request can later
+// overwrite a cancelled check or keep the busy guard occupied.
+async fn bounded_check<T>(
+    request: impl std::future::Future<Output = Result<T, String>>,
+    cancel: tokio::sync::oneshot::Receiver<()>,
+    timeout: Duration,
+) -> Result<T, String> {
+    tokio::select! {
+        biased;
+        _ = cancel => Err("update_check_cancelled".into()),
+        result = tokio::time::timeout(timeout, request) =>
+            result.unwrap_or_else(|_| Err("update_check_timeout".into())),
+    }
+}
+
 async fn check(app: &tauri::AppHandle) -> Result<(), String> {
     if PUBLIC_KEY.trim().is_empty() { return Err("update_signing_key_not_configured".into()); }
     let state = app.state::<UpdateState>();
     let endpoint = endpoint();
+    let updater = app.updater_builder().pubkey(PUBLIC_KEY)
+        .endpoints(vec![endpoint.clone()]).map_err(|e| e.to_string())?
+        .timeout(CHECK_TIMEOUT).build().map_err(|e| e.to_string())?;
+    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+    *state.cancel_check.lock().unwrap() = Some(cancel_tx);
     {
         let mut status = state.status.lock().unwrap();
         status.state = "checking".into(); status.last_error = None;
         status.last_check = Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs());
     }
-    let updater = app.updater_builder().pubkey(PUBLIC_KEY)
-        .endpoints(vec![endpoint.clone()]).map_err(|e| e.to_string())?
-        .timeout(Duration::from_secs(600)).build().map_err(|e| e.to_string())?;
-    let update = updater.check().await.map_err(|e| e.to_string())?;
+    let started = Instant::now();
+    log::info!("desktop_update_check phase=manifest started timeout_seconds={}", CHECK_TIMEOUT.as_secs());
+    let result = bounded_check(async { updater.check().await.map_err(|e| match e {
+        tauri_plugin_updater::Error::Reqwest(ref error) if error.is_timeout() => "update_check_timeout".into(),
+        error => error.to_string(),
+    }) }, cancel_rx, CHECK_TIMEOUT).await;
+    state.cancel_check.lock().unwrap().take();
+    let outcome = match &result {
+        Ok(_) => "success", Err(e) if e == "update_check_cancelled" => "cancelled",
+        Err(e) if e == "update_check_timeout" => "timeout", Err(_) => "request_error",
+    };
+    log::info!("desktop_update_check phase=manifest outcome={outcome} elapsed_ms={}", started.elapsed().as_millis());
+    if outcome == "cancelled" {
+        state.status.lock().unwrap().state = "cancelled".into();
+        return Ok(());
+    }
+    let mut update = result?;
+    if let Some(ref mut update) = update { update.timeout = Some(DOWNLOAD_TIMEOUT); }
     if let Some(ref update) = update {
         if !allowed_package(&update.download_url, &endpoint) { return Err("update_download_origin_rejected".into()); }
     }
@@ -245,6 +282,10 @@ pub async fn desktop_update_install(app: tauri::AppHandle, now: Option<bool>) ->
 pub fn desktop_update_cancel(app: tauri::AppHandle) -> Status {
     let state = app.state::<UpdateState>();
     let mut status = state.status.lock().unwrap();
+    if status.state == "checking" {
+        if let Some(cancel) = state.cancel_check.lock().unwrap().take() { let _ = cancel.send(()); }
+        return status.clone();
+    }
     if status.state == "waiting" { status.state = "ready".into(); }
     status.install_requested = false; status.waiting_for = None;
     status.clone()
@@ -361,6 +402,41 @@ pub fn initialize(app: &tauri::AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn stalled_check_times_out_and_drops_request_and_releases_busy() {
+        let state = UpdateState::default();
+        let busy = acquire(&state).unwrap();
+        let dropped = AtomicBool::new(true);
+        let request_guard = Busy(&dropped);
+        let request = async move {
+            let _guard = request_guard;
+            std::future::pending::<Result<(), String>>().await
+        };
+        let (_tx, rx) = tokio::sync::oneshot::channel();
+        assert_eq!(bounded_check(request, rx, Duration::from_millis(10)).await.unwrap_err(), "update_check_timeout");
+        assert!(!dropped.load(Ordering::SeqCst));
+        drop(busy);
+        assert!(acquire(&state).is_ok());
+    }
+    #[tokio::test]
+    async fn cancellation_aborts_request_before_deadline_and_allows_next_check() {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            tx.send(()).unwrap();
+        });
+        let dropped = AtomicBool::new(true);
+        let guard = Busy(&dropped);
+        let request = async move {
+            let _guard = guard;
+            std::future::pending::<Result<(), String>>().await
+        };
+        let result = bounded_check(request, rx, CHECK_TIMEOUT).await;
+        assert_eq!(result.unwrap_err(), "update_check_cancelled");
+        assert!(!dropped.load(Ordering::SeqCst));
+        let (_tx, rx) = tokio::sync::oneshot::channel();
+        assert_eq!(bounded_check(async { Ok(42) }, rx, CHECK_TIMEOUT).await.unwrap(), 42);
+    }
     fn url(value: &str) -> Url { value.parse().unwrap() }
     #[test]
     fn development_configuration_can_initialize_without_a_publishing_key() {

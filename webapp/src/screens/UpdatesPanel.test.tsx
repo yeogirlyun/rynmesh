@@ -23,6 +23,35 @@ const routed = (node: ReactNode) => render(<MemoryRouter>{node}</MemoryRouter>);
 beforeEach(() => { vi.mocked(desktopUpdates.status).mockResolvedValue(ready); });
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
+it("allows cancelling a check while its original command is still pending", async () => {
+  const idle = { ...ready, state: "idle", availableVersion: null };
+  vi.mocked(desktopUpdates.status).mockResolvedValue(idle);
+  let finishCheck!: () => void;
+  vi.mocked(desktopUpdates.check).mockImplementation(() => {
+    vi.mocked(desktopUpdates.status).mockResolvedValue({ ...idle, state: "checking" });
+    return new Promise(resolve => { finishCheck = () => resolve({ ...idle, state: "cancelled" }); });
+  });
+  vi.mocked(desktopUpdates.cancel).mockImplementation(async () => {
+    vi.mocked(desktopUpdates.status).mockResolvedValue({ ...idle, state: "cancelled" });
+    finishCheck();
+    return { ...idle, state: "cancelled" };
+  });
+  routed(<DesktopUpdatesPanel />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Check for updates" }));
+  await user.click(await screen.findByRole("button", { name: "Cancel check" }, { timeout: 3000 }));
+  expect(desktopUpdates.cancel).toHaveBeenCalledTimes(1);
+  expect(await screen.findByText("Check cancelled")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Check for updates" })).toBeEnabled();
+});
+
+it("explains the bounded timeout and lets the owner retry", async () => {
+  vi.mocked(desktopUpdates.status).mockResolvedValue({ ...ready, state: "error", availableVersion: null, lastError: "update_check_timeout" });
+  routed(<DesktopUpdatesPanel />);
+  expect(await screen.findByText("Update check timed out after 20 seconds. Try again later.")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Check for updates" })).toBeEnabled();
+});
+
 it("stays hidden while nothing needs the owner", async () => {
   vi.mocked(desktopUpdates.status).mockResolvedValue({ ...ready, state: "downloading", availableVersion: "0.9.0" });
   const { container } = routed(<DesktopUpdateButton />);

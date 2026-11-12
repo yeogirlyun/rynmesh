@@ -19,6 +19,7 @@ function message(error: unknown) { return error instanceof Error ? error.message
 const RELEASES = "https://github.com/yeogirlyun/rynmesh/releases";
 const states: Record<string, [string, string]> = {
   idle: ["尚未检查", "Not checked"], checking: ["正在检查", "Checking"], available: ["发现新版本", "Update available"],
+  cancelled: ["已取消检查", "Check cancelled"],
   up_to_date: ["已是最新兼容版本", "Up to date"], downloading: ["正在下载并验证", "Downloading and verifying"],
   ready: ["已准备好，点击即可重启更新", "Ready — restart to update"], installing: ["正在安装，Ryn 将自动重新打开", "Installing; Ryn reopens automatically"],
   waiting: ["当前任务结束后自动更新", "Updates when current work finishes"],
@@ -39,6 +40,7 @@ function waitingText(tx: Text, status: DesktopUpdateStatus | null) {
 /** Plain words for the errors an owner can act on; the raw error stays in Settings. */
 export function updateErrorText(tx: Text, error: string | null | undefined) {
   const value = (error || "").toLowerCase();
+  if (value.includes("update_check_timeout")) return tx("检查更新超时（20 秒），请稍后重试。", "Update check timed out after 20 seconds. Try again later.");
   if (value.includes("signing_key_not_configured")) return tx("这个版本没有内置更新公钥，需要手动安装一次新版本。", "This build has no update key; install a new version manually once.");
   if (value.includes("origin_rejected")) return tx("更新地址不是官方发布页，已拒绝。", "The update did not come from the official release page and was rejected.");
   if (value.includes("signature")) return tx("更新包签名不对，已拒绝安装。", "The update's signature did not match, so it was not installed.");
@@ -210,12 +212,15 @@ export function DesktopUpdatesPanel() {
         <span role="status">{line}</span>
         {state === "downloading" && <progress aria-label={tx("下载进度", "Download progress")} max={status?.total || undefined} value={status?.total ? status.downloaded : undefined} />}
       </div>
-      {canInstall(status)
+      {state === "checking"
+        ? <Button onClick={() => void run(desktopUpdates.cancel)}>{tx("取消检查", "Cancel check")}</Button>
+        : canInstall(status)
         ? <Button variant="primary" disabled={working} onClick={() => void run(() => desktopUpdates.install())}>{tx("重启并更新", "Restart to update")}</Button>
         : status?.availableVersion && state === "available"
           ? <Button disabled={working} onClick={() => void run(desktopUpdates.download)}>{tx("下载更新", "Download update")}</Button>
           : <Button disabled={working || !status?.configured} onClick={() => void run(desktopUpdates.check)}>{tx("检查更新", "Check for updates")}</Button>}
     </section>
+    {state === "checking" && <p role="status">{tx("正在连接更新服务，最多等待 20 秒。", "Connecting to the update service; this takes at most 20 seconds.")}</p>}
     {status && !status.configured && <p role="alert">{tx("此构建尚未配置官方更新签名公钥，暂不能下载安装更新。需要手动安装一次正式版本。", "This build does not have the official update signing key configured. Install an official version manually once.")}</p>}
     {state === "waiting" && <div className="ryn-update-actions">
       {status?.waitingFor !== "editors_open" && <Button disabled={working} onClick={() => void run(() => desktopUpdates.install(true))}>{tx("立即更新", "Update now")}</Button>}
