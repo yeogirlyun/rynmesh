@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 
+from rynmesh.agent_runtime.checker_references import expand
+
 
 def test_r02_actual_restart_keeps_approval_and_performs_one_atomic_share(tmp_path, monkeypatch):
     folder = Path(__file__).resolve().parents[1] / "docs/acceptance/ryn-agent-delivery/real-model"
@@ -83,7 +85,8 @@ def test_r02_actual_restart_keeps_approval_and_performs_one_atomic_share(tmp_pat
     for call in records["model_calls"]:
         messages = call["request_messages"]
         for message in messages:
-            if message["role"] == "system" and "Server control state: " in message["content"]:
+            # Instructions now travel as developer messages (system on older providers).
+            if message["role"] in {"system", "developer"} and "Server control state: " in message["content"]:
                 state = json.loads(message["content"].split("Server control state: ", 1)[1].split("\n", 1)[0])
                 main_facts.extend(state.get("operation_permissions", []))
             elif message["role"] == "user":
@@ -92,7 +95,7 @@ def test_r02_actual_restart_keeps_approval_and_performs_one_atomic_share(tmp_pat
                 except (ValueError, TypeError):
                     continue
                 if isinstance(payload, dict):
-                    checker_facts.extend(payload.get("operation_permissions", []))
+                    checker_facts.extend(expand(payload).get("operation_permissions", []))
     assert main_facts and checker_facts
     for fact in main_facts + checker_facts:
         assert fact["permission_basis"] == "owner_approved"

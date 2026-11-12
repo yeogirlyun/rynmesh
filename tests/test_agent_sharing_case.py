@@ -30,8 +30,11 @@ def test_c03_frozen_prompt_exact_approvals_and_independent_receiver_readback(nod
         runtime = AgentRuntime(AgentStore(store.home / "agent", peer_box.load_or_create_messaging_key(store.home / "messaging.x25519")),
                                module.SharingFixturePlanner(), tools, catalog, consumer_node_id=store.peer_id)
         app.state.agent_runtime = runtime
+        # C03 checks four exact owner approvals and the optional independent
+        # checker; the shipped defaults (automatic, no checker) have neither.
         runtime.update_settings({"enabled": True, "model_id": world.bindings["model-c"], "max_steps": 24,
-                                 "max_seconds": 600, "max_context_chars": 100000})
+                                 "max_seconds": 600, "max_context_chars": 100000,
+                                 "permission_mode": "confirm_changes", "verify_text_responses": True})
         result = world.execute(runtime)
         assert result["prompt"] == world.case["prompt"] == result["task"]["messages"][0]["content"]
         assert result["initial_all_models_private"] and result["settings_before"]["model_id"] != selected

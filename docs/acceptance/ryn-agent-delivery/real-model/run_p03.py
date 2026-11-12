@@ -204,8 +204,9 @@ class FixturePlanner(R04FixturePlanner):
         if discovery:
             return discovery
         messages = business_history(messages)
-        if not specs and "evidence" not in json.loads(messages[-1]["content"]):
-            return super().complete(model_id, messages, specs, cancelled, on_event, **options)  # checkpoint request
+        handoff = helper.checkpoint(messages, specs)
+        if handoff:
+            return handoff
         if not specs:
             refs = json.loads(messages[-1]["content"])["evidence"]
             message = {"role": "assistant", "content": json.dumps({"status": "failed",

@@ -126,12 +126,10 @@ class FixturePlanner:
         if discovery:
             return discovery
         messages = business_history(messages)
-        if not specs and "evidence" not in json.loads(messages[-1]["content"]):
-            # A context checkpoint request (catalog and device listings fill the
-            # window), not the checker: hand off without any business claim.
-            message = {"role": "assistant", "content": "Goal: follow the owner's latest correction. "
-                       "Synthetic R04 checkpoint only; no business result is claimed."}
-        elif not specs:
+        handoff = helper.checkpoint(messages, specs)
+        if handoff:
+            return handoff
+        if not specs:
             evidence = json.loads(messages[-1]["content"])["evidence"]
             message = {"role": "assistant", "content": json.dumps({"status": "unknown",
                 "summary": "Synthetic R04 control check only.", "uncovered_requirements": ["real semantic review"],

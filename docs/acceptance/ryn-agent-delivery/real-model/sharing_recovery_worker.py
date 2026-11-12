@@ -45,6 +45,9 @@ class RecoveryFixturePlanner:
         if discovery:
             return discovery
         messages = business_history(messages)
+        handoff = helper.checkpoint(messages, specs)
+        if handoff:
+            return handoff
         def answer(content):
             return {"message": {"role": "assistant", "content": content},
                     "usage": {"input_tokens": 1, "output_tokens": 1}, "finish_reason": "stop"}
@@ -55,20 +58,20 @@ class RecoveryFixturePlanner:
         calls = {c["id"]: c["function"]["name"] for m in messages for c in m.get("tool_calls", [])}
         receipts = {calls.get(m.get("tool_call_id")): json.loads(m["content"]) for m in messages if m["role"] == "tool"}
         name, args = None, {}
+        # Progress survives a context checkpoint (shares via pinned receipts).
+        done = set(receipts) | helper.checkpoint_progress(messages)
+        if "ryn_share_model_with_friend" in done:
+            if "ryn_inspect_services" in done:
+                return answer("Synthetic recovery exercise ended. Real model quality is not assessed.")
+            name = "ryn_inspect_services"
         for read in ("ryn_list_models", "ryn_list_devices"):
-            if read not in receipts:
+            if name is None and read not in receipts:
                 name = read
-                break
         if name is None:
             model = next(r for r in receipts["ryn_list_models"]["models"] if r["fixture_identity"] == "model-b")
             friend = next(r for r in receipts["ryn_list_devices"]["friends"] if r["node_name"] == "node-b")
             name = "ryn_share_model_with_friend"
             args = {"model_id": model["id"], "relationship_id": friend["relationship_id"]}
-            if name in receipts:
-                if "ryn_inspect_services" not in receipts:
-                    name, args = "ryn_inspect_services", {}
-                else:
-                    return answer("Synthetic recovery exercise ended. Real model quality is not assessed.")
         result = answer(None)
         result["message"]["tool_calls"] = [{"id": uuid.uuid4().hex, "type": "function",
             "function": {"name": name, "arguments": json.dumps(args)}}]
@@ -179,8 +182,11 @@ def main():
     if phase == "start":
         if tasks:
             raise RuntimeError("fresh_consumer_required")
+        # R02 waits for the owner's specific approval and runs the optional
+        # checker; the shipped defaults (automatic, no checker) have neither.
         runtime.update_settings({"enabled": True, "model_id": selected, "max_steps": 24,
-                                 "max_seconds": 600, "max_context_chars": 100000})
+                                 "max_seconds": 600, "max_context_chars": 100000,
+                                 "permission_mode": "confirm_changes", "verify_text_responses": True})
         task = runtime.create({"message": world.case["prompt"], "model_id": selected})
     else:
         if len(tasks) != 1:

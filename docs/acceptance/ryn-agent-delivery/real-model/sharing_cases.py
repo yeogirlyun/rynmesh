@@ -251,6 +251,9 @@ class SharingFixturePlanner:
         if discovery:
             return discovery
         messages = business_history(messages)
+        handoff = helper.checkpoint(messages, specs)
+        if handoff:
+            return handoff
         def answer(text):
             return {"message": {"role": "assistant", "content": text}, "usage": {"input_tokens": 1, "output_tokens": 1}, "finish_reason": "stop"}
         if not specs:
@@ -281,7 +284,12 @@ class SharingFixturePlanner:
                 "relationship_id": friend["relationship_id"], "allowed": True, "expected_revision": 0})
         if not receipts["ryn_set_model_sharing"].get("sharing"):
             return call("ryn_set_model_sharing", {"model_id": models["model-b"]["id"], "enabled": True, "scope": "friends"})
+        # Read the state back once after the last write. Counting reads in the
+        # visible history would restart after every context checkpoint.
+        order = list(names.values())
+        writes = {"ryn_set_default_agent_model", "ryn_set_model_sharing", "ryn_set_friend_model_access"}
+        last_write = max((index for index, name in enumerate(order) if name in writes), default=-1)
         for name in ("ryn_list_models", "ryn_get_agent_configuration"):
-            if list(names.values()).count(name) < 2:
+            if name not in order[last_write + 1:]:
                 return call(name, {})
         return answer("Synthetic control flow finished. Receiver probes are separate evidence, not a real-model success claim.")
