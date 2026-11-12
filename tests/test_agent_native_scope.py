@@ -66,17 +66,23 @@ def test_native_authorized_http_resource_reaches_only_bound_adapter(native_scope
 
 def test_small_native_window_projects_tools_before_actual_dispatch(native):  # noqa: F811
     app, store, model, traces = native
+    # The fixture model declares 4096 tokens, which no longer holds today's base
+    # prompt plus the output reserve; 8192 is the smallest window that does and
+    # still needs the projected discovery menu instead of the full registry.
+    model.metadata["context_window"] = 8192
+    model._update_manifest()
+    store.llm_tool_capabilities.save(model.manifest, "supported")
     bridge, tools, catalog = build_agent_integrations(app, store, store.home)
     key = peer_box.load_or_create_messaging_key(store.home / "messaging.x25519")
     runtime = AgentRuntime(AgentStore(store.home / "small-agent", key), bridge, tools, catalog, consumer_node_id=store.peer_id)
     selected = next(row for row in catalog.list_models() if row["runtime"] == "native_llama_cpp")
-    assert selected["context_window"] == 4096
+    assert selected["context_window"] == 8192
     runtime.update_settings({"enabled": True, "model_id": selected["id"]})
     task = runtime.create({"message": "Check my model configuration."})
     runtime.run_once()
     assert len(traces) == 1, runtime.get(task["id"]).get("error")
     assert "ryn_discover_tools" in [tool["function"]["name"] for tool in traces[0]["tools"]]
-    assert len(json.dumps([traces[0]["messages"], traces[0]["tools"]], ensure_ascii=False)) // 3 + traces[0]["max_tokens"] <= 4096
+    assert len(json.dumps([traces[0]["messages"], traces[0]["tools"]], ensure_ascii=False)) // 3 + traces[0]["max_tokens"] <= 8192
     # The saved owner limit is the unchanged default; the 4K window is clamped only in the working projection.
     assert runtime.get(task["id"])["limits"]["max_context_chars"] == DEFAULT_SETTINGS["max_context_chars"]
 

@@ -13,6 +13,9 @@ NAME = "ryn_discover_tools"
 # Loads accumulate only with at least this much schema space; smaller windows
 # replace the loaded set, because every kept schema crowds out conversation.
 ADDITIVE_CAPACITY = 48000
+# Windows up to this many request bytes keep plan/input/result schemas behind
+# discovery and send only the slimmest menu.
+SMALL_WINDOW_BYTES = 16000
 # Exposed on every step while they fit, in priority order when space is tight.
 PLUGIN_DISCOVERY_TOOLS = ("ryn_list_plugins",)
 CORE_TOOLS = ("ryn_shell_execute", "ryn_file_read", "ryn_file_search", "ryn_apply_patch", "ryn_file_edit",
@@ -152,7 +155,7 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
             s for s in all_specs
             if s["function"]["name"] not in {"ryn_automation_update", "ryn_memory_search", "ryn_memory_propose", *SUBAGENT_TOOL_NAMES}
         ]
-        if max_context_bytes <= 16000
+        if max_context_bytes <= SMALL_WINDOW_BYTES
         else all_specs
     )
     limit = capacity(max_context_bytes, authority_bytes)
@@ -163,14 +166,14 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
     # Small windows keep control schemas lazy (see below), so their directory
     # costs only the discovery schema; comparing with every control schema
     # picked full mode there and spent kilobytes the history needed.
-    small_lazy_base = [directory_spec(all_specs)] if internal and max_context_bytes <= 16000 else base
+    small_lazy_base = [directory_spec(all_specs)] if internal and max_context_bytes <= SMALL_WINDOW_BYTES else base
     directory_useful = len(encoded(all_specs)) > len(encoded(small_lazy_base))
     mode = "directory" if (len(encoded(full_specs)) > limit or
                            directory_useful and (len(encoded(full_specs)) > target or prior.get("mode") == "directory")) else "full"
     # In a small window, unused plan/input/result schemas can occupy more
     # space than all usable conversation. Keep them discoverable instead of
     # repeatedly summarizing or unloading necessary business schemas.
-    lazy = bool(internal) and mode == "directory" and (max_context_bytes <= 16000 or len(encoded(base)) > limit)
+    lazy = bool(internal) and mode == "directory" and (max_context_bytes <= SMALL_WINDOW_BYTES or len(encoded(base)) > limit)
     catalog = [*business_specs, *internal] if lazy else business_specs
     revision = catalog_revision(catalog)
     binding = {"catalog_revision": revision, "context_epoch": epoch, "goal_revision": goal_revision, "lazy_controls": lazy}

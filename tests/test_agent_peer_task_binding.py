@@ -133,7 +133,7 @@ def test_plain_peer_summary_and_following_main_keep_binding_and_deadline(consume
     runtime.model.complete = capture
     runtime.tools = Tools()  # Small synthetic local tool menu, actual signed peer transport.
     task_id = runtime.create({"message": "Inspect only"})["id"]
-    fit_window(runtime, task_id, 4000)  # was a fixed 8000 cap, now below the prompt alone
+    fit_window(runtime, task_id, 8000)  # the historical 8000 cap plus prompt growth
     compaction_history(runtime, task_id)
     runtime.run_once()
     current = runtime.get(task_id)

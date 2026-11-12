@@ -426,14 +426,24 @@ def authority_bytes(runtime, task_id):
     return len(encoded(runtime._context(pinned)))
 
 
-def fit_window(runtime, task_id, headroom):
-    """Cap a task at its measured prompt plus ``headroom`` bytes and return the cap.
+# Base prompt size (developer layers + one short owner turn) when the fixed
+# small-window caps in these fixtures were chosen (f160665, 2026-10-12).
+CALIBRATED_PROMPT_BYTES = 2650
 
-    Small-window fixtures used fixed caps (8000, 10000...) calibrated to an older,
-    smaller base prompt; the prompt alone now fills those. Sizing from the
-    measured prompt keeps each scenario's pressure as the prompt changes.
+
+def fit_window(runtime, task_id, calibrated_cap, *, small_window=False):
+    """Apply a fixture's historical cap plus the prompt growth since then; return it.
+
+    Fixed caps such as 8000 or 12000 were chosen when the prompt was ~2.65 KB;
+    the prompt alone now fills them. Adding the measured growth keeps each
+    scenario's original room for history, and follows later prompt changes.
     """
-    cap = authority_bytes(runtime, task_id) + headroom
+    cap = calibrated_cap + authority_bytes(runtime, task_id) - CALIBRATED_PROMPT_BYTES
+    if small_window:
+        # Stay in the tool menu's small-window regime (lazy control schemas)
+        # the fixture was written for, instead of crossing its 16000 bound.
+        from rynmesh.agent_runtime.tool_menu import SMALL_WINDOW_BYTES
+        cap = min(cap, SMALL_WINDOW_BYTES)
 
     def apply(data):
         row = data["tasks"][task_id]
@@ -460,7 +470,7 @@ def compaction_history(runtime, task_id, *, extra_observation_chars=0):
 def test_compaction_preserves_owner_constraints_closed_tool_groups_and_original_history(tmp_path):
     runtime, model, tools, _ = make_runtime(tmp_path, assistant("Inspected A; no changes made. Preserve constraint B."), assistant("A and D inspected. No changes made."))
     row = runtime.create({"message": "Inspect"})
-    fit_window(runtime, row["id"], 4000)
+    fit_window(runtime, row["id"], 8000)
     original = compaction_history(runtime, row["id"])
     advance(runtime)
     done = runtime.get(row["id"])
@@ -485,7 +495,7 @@ def test_compaction_preserves_owner_constraints_closed_tool_groups_and_original_
 def test_compaction_fails_closed_on_tool_call_from_summary(tmp_path):
     runtime, model, tools, _ = make_runtime(tmp_path, assistant(name="share_service", args={"service_id": "A"}))
     row = runtime.create({"message": "Inspect"})
-    fit_window(runtime, row["id"], 4000)
+    fit_window(runtime, row["id"], 8000)
     original = compaction_history(runtime, row["id"])
     advance(runtime)
     done = runtime.get(row["id"])
@@ -501,8 +511,8 @@ def test_followup_uses_compacted_projection_instead_of_archived_transcript_size(
     # Leave room for the current credential schema and immutable owner turns,
     # while keeping the archive larger than this task's hard context cap.
     row = runtime.create({"message": "Inspect"})
-    cap = fit_window(runtime, row["id"], 4000)
-    original = compaction_history(runtime, row["id"], extra_observation_chars=4000)
+    cap = fit_window(runtime, row["id"], 10000)
+    original = compaction_history(runtime, row["id"], extra_observation_chars=2000 + cap - 10000)
     advance(runtime)
     done = runtime.get(row["id"])
     followup = "Next constraint: " + "x" * 1800

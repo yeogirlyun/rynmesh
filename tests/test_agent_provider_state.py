@@ -3,7 +3,7 @@ import importlib
 import json
 
 import pytest
-from test_agent_runtime import advance, assistant, compaction_history, make_runtime
+from test_agent_runtime import advance, assistant, compaction_history, fit_window, make_runtime
 
 from rynmesh.agent_runtime import checkpoint_refs, output_policy, projects
 from rynmesh.agent_runtime.model_events import ModelEventStream
@@ -100,8 +100,8 @@ def test_native_protocol_labels_declare_the_same_client_tool_contract(protocol):
 
 def test_native_state_is_removed_before_lossy_compaction(tmp_path):
     runtime, model, _, _ = make_runtime(tmp_path, assistant("Summary."), assistant("Done."))
-    runtime.update_settings({"max_context_chars": 8000})
     task = runtime.create({"message": "Inspect"})
+    fit_window(runtime, task["id"], 8000)  # historical 8000 plus prompt growth
     compaction_history(runtime, task["id"])
     def add_private(data):
         for message in data["tasks"][task["id"]]["messages"]:
