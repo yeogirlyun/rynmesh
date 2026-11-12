@@ -1,0 +1,11 @@
+# Local develop package — 2026-11-12
+
+- Built committed develop `cbdd869178ca49014cd3b9a696770d3957be9e3e` in isolated checkout `D:/code/_build-tools/ryn-develop-20261112`. Fetched official upstream develop; local develop contained upstream and was eight commits ahead. No source content changes in the build checkout; existing workspace edits preserved.
+- Windows version: 0.9.0. Installer: `D:/code/rynmesh/artifacts/local-release-20261112/Ryn_0.9.0_cbdd869_x64-setup.exe`. SHA256: `f57fc2e5f233e93dbd4aa235c837eb934afc202e2611289cda6f1503ceca8e75`.
+- Frontend TypeScript/Vite, native worker, frozen Python node and Tauri/NSIS builds passed. Build-only wrapper used canonical cache/toolchain paths; corrected its manifest-tool path and resumed packaging without source modifications.
+- Installation: `C:/Users/子陵/AppData/Local/Packages/OpenAI.Codex_2p2nqsd0c76g0/LocalCache/Local/Ryn`. Updated core binaries with verified hashes and NSIS bundle marker. Existing desktop configuration, plugin configuration and user data retained.
+- Rollback: `D:/code/rynmesh/artifacts/local-release-20261112/program-backup`, with `rollback.ps1` in its parent. Verified 913 backed-up program/plugin files before replacement. No active Agent tasks were reported before stopping only processes matching installed core executable paths.
+- Company runtime retained at `ba1fc166f6640a5bb620aacb3b3fc5ff651375b0`; runtime-manifest files verified. This package updates the main program, not the separately maintained company plugin source.
+- Isolated desktop smoke was initially blocked by the existing single-instance desktop. After stopping it, the new desktop/node started and health passed, but isolated first-success content discovery remained `checking_sources` after 90 seconds; the full isolated smoke therefore did not pass.
+- Actual installed restart passed: visible window title `Ryn`, node health `status=ok`, `desktop_managed=true`, first-success `phase=ready`, `content_ready=true`. Company runtime health became `ok=true`, `status=ready` after startup. Installed executable hashes match build receipts.
+- Build logs, installation metadata, health result and installer remain in the untracked local artifact directory; no credentials, databases or binary artifacts committed.
