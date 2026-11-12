@@ -56,10 +56,10 @@ def context_metadata(model):
 def admission_bytes_per_token(model):
     """Request bytes one window token may hold at the route's admission check.
 
-    Ryn-hosted routes (local services and peers) admit a request only when its
-    UTF-8 bytes plus output fit the window, one token per byte. Budgeting those
-    models at the default 3 bytes/token sent requests the provider refused
-    instead of compacting first. Other routes keep the default estimate.
+    A Ryn peer provider admits an order only when its prompt's UTF-8 bytes plus
+    output fit the window, one token per byte. Budgeting peer models at the
+    default 3 bytes/token sent requests the provider refused instead of
+    compacting first. Other routes keep the default estimate.
     """
     value = (model or {}).get("context_admission_bytes_per_token")
     if type(value) is int and 1 <= value < ESTIMATED_BYTES_PER_TOKEN:

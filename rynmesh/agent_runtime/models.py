@@ -105,14 +105,17 @@ class ModelCatalog:
                    "context_window_basis": "provider_manifest" if adapter not in {"codex_cli", "antigravity_cli"} and type(manifest.get("context_window")) is int else "unknown_fallback",
                    "streaming": "streaming" in capabilities or "buffered-streaming" in capabilities,
                    "max_output_tokens": manifest.get("max_output_tokens", 4096),
-                   # Ryn service routes admit prompt UTF-8 bytes + output <= window.
-                   "context_admission_bytes_per_token": 1,
                    "sharing": bool(value.get("accepting_orders", value.get("publication_enabled", False))) if own else True,
                    "sharing_basis": "local_service_advertisement" if own else "remote_catalog_advertisement",
                    "sharing_configuration_known": False,
                    "share_scope": ("personal_space" if "personal-space-only" in capabilities else
                                    "friends" if value.get("access_policy") == "explicit_friends" else "none") if own else "unknown"}
             row.update(catalog_image_fields(row, service_record=value))
+            if not own:
+                # The provider admits a peer order only when its prompt's UTF-8
+                # bytes plus output fit the window (one token per byte). Local
+                # services are called in-process without that check.
+                row["context_admission_bytes_per_token"] = 1
             if provider_resource:
                 row.update(provider_resource=provider_resource, source_name=value.get("provider_name", value.get("node_name", "")),
                            provider_device_name=value.get("node_name", ""))

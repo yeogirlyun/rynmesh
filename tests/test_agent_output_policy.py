@@ -175,9 +175,9 @@ def test_checker_private_reasoning_does_not_consume_visible_answer_limit(tmp_pat
     assert private not in encoded(runtime.store.read()).decode()
 
 
-def test_ryn_hosted_routes_are_budgeted_with_the_providers_own_admission_rule():
-    # Ryn local services and peers admit prompt UTF-8 bytes + output <= window
-    # (one token per byte). A request inside the Agent budget must pass it.
+def test_peer_models_are_budgeted_with_the_providers_own_admission_rule():
+    # A Ryn peer provider admits prompt UTF-8 bytes + output <= window (one
+    # token per byte). A request inside the Agent budget must pass it.
     import json as _json
 
     from rynmesh.agent_runtime import output_policy as policy_module
