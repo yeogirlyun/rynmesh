@@ -115,9 +115,16 @@ def calculate(raw, suffix, recipe, cancelled=lambda: False):
     if len(encoded(recipe)) > 24000:
         reject("agent_table_recipe_too_large")
     recipe = copy.deepcopy(recipe)
-    columns, derived, checks = recipe.get("columns"), recipe.get("derived", []), recipe.get("checks", [])
-    if not isinstance(columns, dict) or not 1 <= len(columns) <= 32 or not isinstance(derived, list) or len(derived) > 16 or not isinstance(checks, list) or len(checks) > 32:
+    definitions, derived, checks = recipe.get("columns"), recipe.get("derived", []), recipe.get("checks", [])
+    if not isinstance(definitions, list) or not 1 <= len(definitions) <= 32 or not isinstance(derived, list) or len(derived) > 16 or not isinstance(checks, list) or len(checks) > 32:
         reject()
+    columns = {}
+    for item in definitions:
+        if (not isinstance(item, dict) or set(item) - {"name", "type", "source"}
+                or not {"name", "type"} <= set(item) or not isinstance(item["name"], str)
+                or item["name"] in columns):
+            reject()
+        columns[item["name"]] = {"type": item["type"], "source": item.get("source", item["name"])}
     types, sources = {}, {}
     for key, spec in columns.items():
         if not isinstance(key, str) or not NAME.fullmatch(key):
@@ -136,7 +143,7 @@ def calculate(raw, suffix, recipe, cancelled=lambda: False):
     rounding = ROUNDING.get(recipe.get("rounding"))
     if "rounding" in recipe and rounding is None:
         reject()
-    names, formulas = sorted(columns), []
+    names, formulas = list(columns), []
     for item in derived:
         if not isinstance(item, dict) or set(item) != {"column", "expression"} or not isinstance(item["column"], str) or not NAME.fullmatch(item["column"]) or item["column"] in names:
             reject()

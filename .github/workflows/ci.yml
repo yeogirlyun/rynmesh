@@ -29,6 +29,7 @@ jobs:
           tests/test_agent_workspace_artifacts.py
           tests/test_agent_runtime_model_switch.py
           tests/test_agent_budget_dispatch.py
+          tests/test_codex_object_protocol.py
       - name: Lint reliability implementation
         run: >-
           python -m ruff check

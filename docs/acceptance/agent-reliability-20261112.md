@@ -56,11 +56,45 @@ Scope/design: [shared Agent reliability](../AGENT_RELIABILITY_20261112.md).
 - Changed Python files pass Ruff; `git diff --check` passes. Repository-wide
   Ruff was also inspected and has pre-existing failures outside this increment.
 
+## Full-suite findings and final protocol fix
+
+The first full backend CI run completed with **40 failed, 6,883 passed, 143
+skipped**. It exposed a regression in this increment: an open dictionary/`oneOf`
+table recipe could not use the Codex strict object protocol. The unreleased tool
+wire format now uses an ordered array of closed `{name,type,source?}` column
+definitions. The strict protocol test passes on the original base and now passes
+on this branch. Added nested optional-field restoration and duplicate-column
+tests, and included the complete object-protocol test module in focused CI.
+
+Final local expanded run after the schema correction: **420 passed, 1 failed,
+5 skipped, 2 GUI tests deselected**. The remaining failure was the existing
+shell exception/timeout cleanup test; it passes in isolation on both exact base
+and branch. No exception/retry authority was loosened to satisfy it.
+
+Additional exact-base comparisons:
+
+- All **36** core runtime tests pass on base and branch.
+- Of **16** selected non-platform failures from the full CI run, base and branch
+  reproduce exactly the same **15 failing test IDs**, with one passing case.
+  These cover usage accounting, subagents, consumer results, extension compaction
+  policy, model/service discovery, node-app approval and peer-directory cases.
+- Other full-CI failures include Windows-only native/QuickJS assumptions on
+  Linux, missing Codex installation, a version expectation and a floating-point
+  exact-equality assertion. Those are not claimed fixed by this increment.
+- Full frontend CI on `69770a0d` passed after the storage-note fixture correction,
+  including typecheck/build. The three unchanged files implicated in the local
+  frontend run also passed all **46** tests on a sequential rerun.
+
+This is evidence for integrating the bounded increment into `develop`, not a
+claim that the repository-wide backend suite or installed user workflows are
+fully accepted. Final head/check status remains attached to PR #130.
+
 ## One-time performance sample
 
 Synthetic CSV, 5,000 rows, amount/fee plus rounded derived total, one explicit
-totals check: calculation **0.055 s**, XLSX serialization and readback validation
-**0.060 s**, **76,385 bytes**, exact total **1500.00**. This is a local sample,
+totals check with the final ordered-column recipe: calculation **0.046 s**, XLSX
+serialization and readback validation **0.051 s**, **76,460 bytes**, exact total
+**1500.00**. This is a local sample,
 not an SLA or an end-to-end model/plugin/network benchmark. Output metadata and
 the recipe are included; model-facing previews are bounded separately.
 

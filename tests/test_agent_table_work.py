@@ -16,7 +16,11 @@ from rynmesh.agent_runtime.table_work import calculate, export_bytes, summary
 local = consumer_fixtures.local
 node = consumer_fixtures.node
 
-RECIPE = {"columns": {"name": "text", "amount": "decimal", "fee": "decimal"},
+def columns(**types):
+    return [{"name": name, "type": kind} for name, kind in types.items()]
+
+
+RECIPE = {"columns": columns(name="text", amount="decimal", fee="decimal"),
           "column_order": ["name", "amount", "fee", "total"],
           "derived": [{"column": "total", "expression": "round(amount + fee, 2)"}],
           "rounding": "half_even", "checks": [
@@ -66,8 +70,8 @@ def test_expressions_never_execute_general_code(bad):
 
 
 def test_rounding_and_day_count_are_explicit_and_aliases_support_real_headers():
-    recipe = {"columns": {"本金": {"type": "decimal", "source": "Principal amount"},
-                          "开始": "date", "结束": "date"}, "rounding": "half_up",
+    recipe = {"columns": [{"name": "本金", "type": "decimal", "source": "Principal amount"},
+                          {"name": "开始", "type": "date"}, {"name": "结束", "type": "date"}], "rounding": "half_up",
               "derived": [{"column": "利息", "expression": "round(本金 * 0.05 * days_between(开始, 结束) / 365, 2)"}]}
     report = calculate(json.dumps([{"Principal amount": "1000", "开始": "2026-01-01", "结束": "2026-01-31"}]).encode(), ".json", recipe)
     assert report["rows"][0]["利息"] == "4.11"
@@ -91,13 +95,13 @@ def test_xlsx_reopens_with_independent_reader_and_has_no_formula_gaps():
 
 
 def test_csv_text_is_protected_without_changing_negative_numbers():
-    report = calculate(b'name,amount\n=1+1,-2\n', ".csv", {"columns": {"name": "text", "amount": "decimal"}, "column_order": ["name", "amount"]})
+    report = calculate(b'name,amount\n=1+1,-2\n', ".csv", {"columns": columns(name="text", amount="decimal"), "column_order": ["name", "amount"]})
     raw = export_bytes(report, ".csv").decode("utf-8-sig")
     assert "'=1+1,-2" in raw
 
 
 def test_precision_not_silently_lost_in_excel():
-    report = calculate(b'amount\n1234567890123456\n', ".csv", {"columns": {"amount": "decimal"}})
+    report = calculate(b'amount\n1234567890123456\n', ".csv", {"columns": columns(amount="decimal")})
     with pytest.raises(AgentToolRejected, match="agent_table_xlsx_precision_limit"):
         export_bytes(report, ".xlsx")
 
@@ -106,7 +110,7 @@ def test_cancellation_and_row_limit():
     with pytest.raises(AgentToolRejected, match="agent_cancelled"):
         calculate(CSV, ".csv", RECIPE, lambda: True)
     with pytest.raises(AgentToolRejected, match="agent_table_input_invalid"):
-        calculate(b'amount\n' + b'1\n' * 5001, ".csv", {"columns": {"amount": "decimal"}})
+        calculate(b'amount\n' + b'1\n' * 5001, ".csv", {"columns": columns(amount="decimal")})
 
 
 def test_actual_tool_exports_then_verifies_and_never_overwrites(local):
@@ -145,8 +149,30 @@ def test_recipe_order_survives_canonical_storage_and_changed_rules_are_detected(
     assert calculate(CSV, ".csv", canonical)["calculation_sha256"] != original["calculation_sha256"]
 
 
+def test_table_recipe_uses_strict_object_protocol_and_restores_nested_omissions():
+    from jsonschema import Draft202012Validator
+
+    from rynmesh.agent_runtime.local_specs import SPECS
+    from rynmesh.llm_package.codex_tools import _response_schema, _validated
+
+    tools = {"ryn_table_calculate": {"name": "ryn_table_calculate", "parameters": SPECS["ryn_table_calculate"][3]}}
+    wire = {"content": "", "tool_calls": [{"name": "ryn_table_calculate", "arguments": {
+        "source_path": "source.csv", "recipe": {"columns": [{"name": "amount", "type": "decimal", "source": None}],
+        "derived": None, "checks": None, "rounding": None, "column_order": None}}}]}
+    Draft202012Validator(_response_schema(tools, strict=True)).validate(wire)
+    message = _validated({"text": json.dumps(wire)}, tools, False, restore_omitted=True)
+    restored = json.loads(message["tool_calls"][0]["function"]["arguments"])
+    assert restored["recipe"] == {"columns": [{"name": "amount", "type": "decimal"}]}
+    assert calculate(b'amount\n0.1\n', ".csv", restored["recipe"])["totals"] == {"amount": "0.1"}
+
+
+def test_duplicate_column_names_are_rejected():
+    with pytest.raises(AgentToolRejected):
+        calculate(CSV, ".csv", {"columns": columns(amount="decimal") * 2})
+
+
 @pytest.mark.parametrize("patch", [
-    {"columns": {"amount": {"type": [], "source": "amount"}}},
+    {"columns": [{"name": "amount", "type": [], "source": "amount"}]},
     {"rounding": []}, {"derived": [{"column": [], "expression": "1"}]},
     {"checks": [{"name": "invalid", "scope": [], "expression": "1 == 1"}]},
 ])
@@ -157,16 +183,16 @@ def test_malformed_recipe_is_a_clean_tool_rejection(patch):
 
 def test_ragged_csv_and_extreme_excel_precision_are_rejected():
     with pytest.raises(AgentToolRejected, match="agent_table_input_invalid"):
-        calculate(b'amount\n1,2\n', ".csv", {"columns": {"amount": "decimal"}})
+        calculate(b'amount\n1,2\n', ".csv", {"columns": columns(amount="decimal")})
     report = calculate(b'amount\n10000000000000000000000000000000000000000000000001\n',
-                       ".csv", {"columns": {"amount": "decimal"}})
+                       ".csv", {"columns": columns(amount="decimal")})
     with pytest.raises(AgentToolRejected, match="agent_table_xlsx_precision_limit"):
         export_bytes(report, ".xlsx")
 
 
 def test_large_text_is_complete_in_delivery_but_bounded_in_model_preview():
     value = "example" * 10000
-    report = calculate(json.dumps([{"name": value}]).encode(), ".json", {"columns": {"name": "text"}})
+    report = calculate(json.dumps([{"name": value}]).encode(), ".json", {"columns": columns(name="text")})
     preview = summary(report)
     assert preview["preview_cells_truncated"] and len(preview["preview_rows"][0]["name"]) == 160
     assert len(json.dumps(preview)) < 24000

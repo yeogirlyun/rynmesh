@@ -59,6 +59,11 @@ typed/aliased columns, derived columns, basic arithmetic, explicit rounding,
 ISO-date differences and declared row/total comparisons. No expression executes
 general Python, a shell, a network request or an Excel formula.
 
+Column definitions use an ordered array of closed `{name,type,source?}` objects,
+compatible with the existing Codex strict object protocol. Duplicate names are
+rejected. There is no open dictionary or `oneOf` in the new tool schema; adapter
+compatibility and nested optional-field restoration are regression-tested.
+
 Missing fields return `needs_input`, never invented zeroes. Failed checks prevent
 export. Source bytes and recipe have hashes; export recomputes both and requires
 the prior calculation fingerprint. Changed input/rules require recalculation.
@@ -101,7 +106,11 @@ Calculate with:
 {
   "source_path": "amounts.csv",
   "recipe": {
-    "columns": {"name": "text", "amount": "decimal", "fee": "decimal"},
+    "columns": [
+      {"name": "name", "type": "text"},
+      {"name": "amount", "type": "decimal"},
+      {"name": "fee", "type": "decimal"}
+    ],
     "column_order": ["name", "amount", "fee", "total"],
     "derived": [{"column": "total", "expression": "round(amount + fee, 2)"}],
     "rounding": "half_even",
