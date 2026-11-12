@@ -411,10 +411,11 @@ def test_small_window_with_small_registry_keeps_control_schemas_lazy():
     kwargs = {"max_context_bytes": 11600, "authority_bytes": 7600, "epoch": 0, "goal_revision": 1}
     exposed, state = tool_menu.project(business, ALL_INTERNAL_SPECS, None, **kwargs)
     assert state["mode"] == "directory" and state["lazy_controls"] is True
-    assert [spec["function"]["name"] for spec in exposed] == [tool_menu.NAME]
+    # Controls hide behind discovery; the whole small business registry stays callable.
+    assert [spec["function"]["name"] for spec in exposed] == [tool_menu.NAME, *(s["function"]["name"] for s in business)]
     full = [*business, *(spec for spec in ALL_INTERNAL_SPECS if spec["function"]["name"] in
                           {"ryn_update_plan", "ryn_request_input", "ryn_read_result"})]
-    assert len(encoded(exposed)) * 3 < len(encoded(full))  # ~0.9 KB instead of ~3.4 KB
+    assert len(encoded(exposed)) * 2 < len(encoded(full))  # ~1.4 KB instead of ~3.4 KB
     # Controls stay loadable through discovery.
     result, loaded = tool_menu.discover(business, ALL_INTERNAL_SPECS, lambda name: {"effect": "read"}, state,
                                         {"load": ["ryn_update_plan"]}, capacity_bytes=tool_menu.capacity(11600, 7600))

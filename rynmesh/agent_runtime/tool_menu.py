@@ -240,6 +240,13 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
                 candidate = [*base, *(by_name[item] for item in [*pinned, *loaded, name])]
                 if len(encoded(candidate)) <= seed_limit:
                     loaded.append(name)
+        if lazy:
+            # Lazy controls save the control schemas; a business registry that
+            # fits whole stays directly callable, as it was in full mode.
+            rest = [spec["function"]["name"] for spec in business_specs
+                    if spec["function"]["name"] not in loaded and spec["function"]["name"] not in pinned]
+            if len(encoded([*base, *(by_name[item] for item in [*pinned, *loaded, *rest])])) <= seed_limit:
+                loaded.extend(rest)
     def exposure(names):
         if mode == "full":
             return full_specs
