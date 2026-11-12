@@ -448,6 +448,10 @@ class AgentRuntime(AgentLoop):
 
     def _execution_context(self, row: dict, operation_id=None, *, cheap_only=False) -> dict:
         origins = {}
+        inherited = row.get("continuation_resource_origins") or {}
+        if inherited.get("context_epoch") == row.get("context_epoch", 0):
+            for origin in inherited.get("origins", []):
+                origins[digest(origin)] = copy.deepcopy(origin)
         for message in self._history(row):
             if message.get("role") == "tool" and isinstance(message.get("resource_origin"), dict) and "grant_id" in message["resource_origin"]:
                 origins[digest(message["resource_origin"])] = copy.deepcopy(message["resource_origin"])
@@ -1107,6 +1111,8 @@ class AgentRuntime(AgentLoop):
 
         def apply(data):
             row = task(data, task_id)
+            if row.get("continued_to"):
+                raise AgentError("agent_task_continued")
             if request_replayed(row, value):
                 return public_task(row, settings=data["settings"])
             check_version(row, value)
@@ -1706,7 +1712,7 @@ class AgentRuntime(AgentLoop):
         row = lifecycle.find(self.store, self.store.read(), task_id)
         return {"events": hydrated_events(row, [item for item in row["events"] if item["seq"] > after]), "cursor": row["event_cursor"], "status": row["status"], "revision": row["revision"], "control_revision": row["control_revision"]}
 
-    def create(self, value: dict) -> dict:
+    def create(self, value: dict, *, _continuation=None) -> dict:
         if set(value) - {"message", "model_id", "title", "client_request_id", "scope", "expected_destination_revision", "skill_ids", "budget_limits", "response_language", "project_id", "reasoning_effort", "attachments"}:
             raise AgentError("agent_invalid_request")
         if value.get("response_language") not in {None, "zh-CN", "en"}:
@@ -1722,7 +1728,7 @@ class AgentRuntime(AgentLoop):
                     raise ValueError
             except ValueError:
                 raise AgentError("agent_invalid_request") from None
-        fingerprint = digest(value)
+        fingerprint = digest({"request": value, "continuation_from": _continuation["id"]}) if _continuation else digest(value)
         if request_id:
             current = self.store.read()
             existing = lifecycle.duplicate(self.store, current, request_id, fingerprint)
@@ -1749,7 +1755,7 @@ class AgentRuntime(AgentLoop):
         title = value.get("title", content[:80].replace("\n", " "))
         if not isinstance(title, str) or not title.strip() or len(title) > 160:
             raise AgentError("agent_invalid_title")
-        self._relieve_storage("create", need_tasks=1)
+        self._relieve_storage("create", need_tasks=1, exclude={_continuation["id"]} if _continuation else set())
 
         def create(data):
             if request_id:
@@ -1763,6 +1769,21 @@ class AgentRuntime(AgentLoop):
                 raise AgentError("agent_settings_revision_conflict")
             if len(data["tasks"]) >= 200 or sum(row["status"] not in TERMINAL and not row.get("parent_task_id") for row in data["tasks"].values()) >= 16:
                 raise AgentError("agent_task_limit")
+            source = None
+            if _continuation:
+                source = lifecycle.find(self.store, data, _continuation["id"])
+                if source.get("continued_to"):
+                    child = lifecycle.find(self.store, data, source["continued_to"])
+                    if child.get("continuation_request_fingerprint") != _continuation["fingerprint"]:
+                        raise AgentError("agent_continuation_already_exists")
+                    return public_task(child, settings=settings, data=data)
+                pending = source.get("pending_control")
+                unsettled = pending and not (source["status"] == "cancelled" and pending.get("kind") == "cancel")
+                if (source["revision"] != _continuation["revision"] or not lifecycle.eligible(source)
+                        or source.get("pending_approval") or source.get("pending_input") or unsettled):
+                    raise AgentError("agent_operation_unresolved" if ambiguous(source) else "agent_task_busy")
+                if source.get("model_destination") != destination:
+                    raise AgentError("agent_model_destination_changed")
             row = {"id": "agent_" + uuid.uuid4().hex, "client_request_id": request_id,
                    "request_fingerprint": fingerprint, "title": title.strip(), "model_id": model_id,
                    "status": "queued", "revision": 0, "created_at": now(), "updated_at": now(),
@@ -1807,6 +1828,42 @@ class AgentRuntime(AgentLoop):
                 if authority_bytes + len(encoded(future_specs)) > self._context_limit(row):
                     raise AgentError("agent_context_limit")
             row["prompt_version"] = PROMPT_VERSION
+            if source is not None:
+                # Continuation is the same work, unlike an owner-created fork.
+                # Never import approvals, dispatch queues, processes or provider state.
+                for key in ("limits", "limits_source", "budget", "permission_mode", "allowed_write_tools",
+                            "local_execution", "project", "model_destination", "model_destination_required",
+                            "model_destination_confirmed", "scope", "scope_revision", "context_epoch",
+                            "data_policy_state", "base_instructions", "prompt_version", "skills",
+                            "reasoning_effort", "response_language", "context_budget_provenance",
+                            "verify_text_responses"):
+                    if key in source:
+                        row[key] = copy.deepcopy(source[key])
+                modes = {row["permission_mode"], settings["permission_mode"]}
+                row["permission_mode"] = next(mode for mode in ("read_only", "confirm_changes", "workspace", "automatic") if mode in modes)
+                row["local_execution"]["desktop_access"] = bool(row["local_execution"].get("desktop_access") and settings.get("desktop_access"))
+                row["skills"] = self._merge_task_skills(row.get("skills"), skills)
+                if effort is not None:
+                    row["reasoning_effort"] = effort
+                if not row["scope"].get("resource_grants"):
+                    row["scope"]["selection"] = {"resources": [], "allow_model_data": False}
+                row["continuation_resource_origins"] = {
+                    "context_epoch": row.get("context_epoch", 0),
+                    "origins": self._execution_context(source, cheap_only=True)["resource_origins"]}
+                # Retained summaries still carry source data. Validate the same
+                # grants/origins under the child ID; task-bound references fail
+                # closed, as in explicit forks, instead of losing provenance.
+                self._validate_context(row, control_state=data)
+                budget.new_round(row)
+                exhausted = budget.exhausted_hard_limit(row)
+                if exhausted:
+                    raise AgentError(exhausted)
+                row["continued_from"] = source["id"]
+                row["continuation_request_fingerprint"] = _continuation["fingerprint"]
+                row["continuation_root"] = source.get("continuation_root", source["id"])
+                source["continued_to"] = row["id"]
+                event(source, "continued_in_new_task", task_id=row["id"])
+                event(row, "continued_from", task_id=source["id"])
             memory_natural.stamp_task_owner_messages_in_tx(data, row)
             memory_integration.apply_owner_turn_memory_in_tx(self, data, row)
             event(row, "created")
@@ -1831,6 +1888,8 @@ class AgentRuntime(AgentLoop):
 
         def add(data):
             row = task(data, task_id)
+            if row.get("continued_to"):
+                raise ContinueInNewTask()
             if request_replayed(row, value):
                 return public_task(row, settings=data["settings"])
             check_version(row, value, goal=intent is not None)
@@ -2028,6 +2087,14 @@ class AgentRuntime(AgentLoop):
     def _continue_in_new_task(self, task_id: str, value: dict, content: str) -> dict:
         """The conversation is too large even after condensing: continue it in a new, linked one."""
         old = lifecycle.find(self.store, self.store.read(), task_id)
+        fingerprint = digest({"source_task_id": task_id, **{k: v for k, v in value.items()
+                              if k not in {"expected_revision", "expected_control_revision", "expected_goal_revision"}}})
+        if old.get("continued_to"):
+            data = self.store.read()
+            child = lifecycle.find(self.store, data, old["continued_to"])
+            if child.get("continuation_request_fingerprint") != fingerprint:
+                raise AgentError("agent_continuation_already_exists")
+            return public_task(child, settings=data["settings"], data=data)
         summary = event_compaction.continuation_summary(old)
         body = {"message": CONTINUATION_PREFIX + summary + CONTINUATION_SEPARATOR + content,
                 "model_id": old["model_id"],
@@ -2036,21 +2103,12 @@ class AgentRuntime(AgentLoop):
             body["client_request_id"] = value["client_request_id"]
         if value.get("attachments"):
             body["attachments"] = value["attachments"]
+        for key in ("skill_ids", "reasoning_effort"):
+            if key in value:
+                body[key] = value[key]
         if isinstance(old.get("project"), dict) and old["project"].get("id"):
             body["project_id"] = old["project"]["id"]
-        created = self.create(body)
-
-        def link(data):
-            previous = data["tasks"].get(task_id)
-            current = data["tasks"].get(created["id"])
-            if previous is not None and previous.get("continued_to") != created["id"]:
-                previous["continued_to"] = created["id"]
-                event(previous, "continued_in_new_task", task_id=created["id"])
-            if current is not None and current.get("continued_from") != task_id:
-                current["continued_from"] = task_id
-                event(current, "continued_from", task_id=task_id)
-            return public_task(current, settings=data["settings"], data=data) if current is not None else created
-        return self.store.transaction(link)
+        return self.create(body, _continuation={"id": task_id, "revision": old["revision"], "fingerprint": fingerprint})
 
     def _edit_message(self, task_id: str, value: dict, content: str, prepared=None, *, added_skills=None) -> dict:
         if value.get("intent") not in {None, "steer", "information"} or type(value["edit_message_index"]) is not int:
@@ -2109,6 +2167,8 @@ class AgentRuntime(AgentLoop):
 
         def apply(data):
             row = task(data, task_id)
+            if row.get("continued_to") and action in {"resume", "approve", "answer"}:
+                raise AgentError("agent_task_continued")
             if request_replayed(row, value):
                 return public_task(row, settings=data["settings"], data=data)
             if action not in {"pause", "stop", "cancel", "interrupt_subagent", "stop_all_subagents"}:

@@ -14,7 +14,7 @@ from .store import encoded
 MODES = frozenset({"workspace", "read_only", "confirm_changes", "automatic"})
 WORKSPACE_TOOLS = frozenset({
     "ryn_file_write", "ryn_file_edit", "ryn_file_manage", "ryn_apply_patch", "ryn_shell_execute",
-    "ryn_process_stop", "ryn_process_write", "ryn_browser_open",
+    "ryn_process_stop", "ryn_process_write", "ryn_browser_open", "ryn_table_export",
     "ryn_browser_action", "ryn_computer_action", "ryn_craft_action", "ryn_download_file", "ryn_image_generate",
 })
 SHELL_ARGUMENT_KEYS = frozenset({"command", "shell", "cwd", "timeout_seconds", "background", "yield_seconds"})

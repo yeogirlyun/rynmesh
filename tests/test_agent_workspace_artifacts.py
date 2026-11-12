@@ -1,6 +1,7 @@
 """Task files come only from confirmed file-tool receipts, keep one link per path and are served inert."""
 import hashlib
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -216,7 +217,9 @@ def test_concurrent_project_file_change_is_not_claimed_as_a_task_deliverable(tmp
     assert observed["created_by_task"] is False and observed["attribution"] == "observed_during_command"
 
 
-def test_owner_open_and_reveal_resolve_bound_file_and_reject_forged_ids(tmp_path, monkeypatch):
+@pytest.mark.parametrize("desktop_platform", ["linux", "darwin"])
+def test_owner_open_and_reveal_resolve_bound_file_and_reject_forged_ids(tmp_path, monkeypatch, desktop_platform):
+    monkeypatch.setattr(sys, "platform", desktop_platform)
     row, workspace = scenario(tmp_path)
     opened = []
     monkeypatch.setattr(os, "startfile", lambda path: opened.append(path), raising=False)
@@ -224,7 +227,13 @@ def test_owner_open_and_reveal_resolve_bound_file_and_reject_forged_ids(tmp_path
     ident = workspace_artifacts.artifact_id(workspace / "pelican.svg")
     assert workspace_artifacts.open_file(row, ident, "open")["opened"]
     assert workspace_artifacts.open_file(row, ident, "reveal")["opened"]
-    assert len(opened) == 2 and all(str(workspace / "pelican.svg") in (" ".join(value) if isinstance(value, list) else value) for value in opened)
+    target = str(workspace / "pelican.svg")
+    if os.name == "nt":
+        assert opened == [target, f'explorer.exe /select,"{target}"']
+    elif desktop_platform == "darwin":
+        assert opened == [["open", target], ["open", "-R", target]]
+    else:
+        assert opened == [["xdg-open", target], ["xdg-open", str(workspace)]]
     with pytest.raises(AgentError, match="agent_artifact_not_found"):
         workspace_artifacts.open_file(row, workspace_artifacts.artifact_id(workspace / "secret.txt"), "open")
     with pytest.raises(AgentError, match="agent_artifact_action_invalid"):
