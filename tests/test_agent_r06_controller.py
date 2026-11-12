@@ -65,7 +65,7 @@ import json, os, sys, threading
 from pathlib import Path
 from types import SimpleNamespace
 from test_agent_context_serialization import DocumentTools
-from test_agent_runtime import Model, Catalog, assistant
+from test_agent_runtime import Model, Catalog, assistant, fit_window
 from rynmesh.agent_runtime.runtime import AgentRuntime
 from rynmesh.agent_runtime.store import AgentStore
 from rynmesh.services import peer_box
@@ -78,10 +78,11 @@ tools = DocumentTools(home)
 model = Model()
 runtime = AgentRuntime(AgentStore(home / "agent", key), model, tools, Catalog())
 if phase == "before":
-    runtime.update_settings({"enabled": True, "model_id": "local:test", "max_context_chars": 12000,
+    runtime.update_settings({"enabled": True, "model_id": "local:test",
                              "max_steps": 24, "max_seconds": 600})
     task = runtime.create({"message": controller.load_case()["prompt"],
                            "budget_limits": {"max_total_model_calls": 4}})
+    fit_window(runtime, task["id"], 12000, small_window=True)  # historical 12000 plus prompt growth
 else:
     task = runtime.get(next(iter(runtime.store.read()["tasks"])))
     before = controller.checkpoint_state(runtime, task["id"])
