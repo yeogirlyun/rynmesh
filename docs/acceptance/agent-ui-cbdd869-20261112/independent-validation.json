@@ -1,0 +1,23 @@
+{
+  "case08": {
+    "completed_batches": 16,
+    "unique_batches": 16,
+    "rows_match_independent_expectations": true,
+    "record_count": 1600,
+    "amount_sum": 1440800,
+    "expected_final_record_count": 1600,
+    "expected_final_amount_sum": 1440800,
+    "report_exists": true,
+    "report_rows_match_progress": true,
+    "errors": []
+  },
+  "case10": {
+    "dir-a": 3,
+    "dir-b": 5
+  },
+  "case11": {
+    "filename": "RYN_DATE_SELF_CHECK_2026-11-12.txt",
+    "content_matches": true
+  },
+  "progress_sha256": "2f5946aaab809c8c52ac8a5ef916c54b95ff8e65ef173f2c8b0f9af9ff365db3"
+}

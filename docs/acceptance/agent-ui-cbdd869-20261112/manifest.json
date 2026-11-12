@@ -1,0 +1,192 @@
+[
+  {
+    "file": "01-date-result.png",
+    "sha256": "ba9b13c121b24ecec66192a2fa989917cd3d95c187b78438b7a33e9d0d723eff",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  },
+  {
+    "file": "02-approval-prompt.png",
+    "sha256": "4125b6090ed8e36bb5279757bc01992fad1a515e1e73a13f0b83652a2762585a",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  },
+  {
+    "file": "02-rejection-result.png",
+    "sha256": "846502d6fb084a686a31284f02f1ba46c2c6a28ba288ae61f5b9660376846181",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  },
+  {
+    "file": "03-second-prompt.png",
+    "sha256": "1832a7f0c639182baedc614f0d3e90bc6262ad556849bc8cace2abdc11279211",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  },
+  {
+    "file": "03-single-operation.png",
+    "sha256": "56d0c25e6236ab1109d7d41d0aa09c7b7542a1e452c8650ab3d25b16ee827318",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  },
+  {
+    "file": "04-desktop-disabled.png",
+    "sha256": "66f867d7806ea47c23bcda892c59d33dc762a6e6409aa55a7a3f2eed5357738b",
+    "crop": [
+      341,
+      48,
+      940,
+      815
+    ]
+  },
+  {
+    "file": "04-tools.png",
+    "sha256": "22a48c8d7ab9624e014920ed8e5f44568ab27feb843e43a5be122189e887b03b",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  },
+  {
+    "file": "05-retest-final.png",
+    "sha256": "015242ce20076dea8c0b668b66ea1448dbdba8542a037684128e9dd4d1ca0b2d",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  },
+  {
+    "file": "06-result.png",
+    "sha256": "415036d979f41def681d025ef68d0408ebf11757bee60429605ac37d6fe3a175",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  },
+  {
+    "file": "07-result.png",
+    "sha256": "4b671e6baa26c952de95a5ec658dd2b0421f2c8b580edd0d90fee1fea11eb19c",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  },
+  {
+    "file": "08-current-live.png",
+    "sha256": "8a29ea7db29044f5057d19594687a3a6d1bf5b27f14273b8b3bb076774b58c98",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  },
+  {
+    "file": "08-compaction-continued.png",
+    "sha256": "8885ae401c1aa8400fabac04eb708a4a4b6ee0bf11203ebd08cbb15bc6114752",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  },
+  {
+    "file": "10-final-summary.png",
+    "sha256": "78b390792296bca1910c5755bac653968129edea8bb1af33c5a41c184ad6c461",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  },
+  {
+    "file": "10-child-a-complete.png",
+    "sha256": "7d51c0be3ea432a9f9fe7912716fa11676a52bfdf5da9e1ff021ce420b10f61f",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  },
+  {
+    "file": "10-child-b-complete.png",
+    "sha256": "992d49d97c215088e46cb70203aa261098b1c462fe165c042bbe7069d57caffc",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  },
+  {
+    "file": "11-final.png",
+    "sha256": "1cb6f018f2cb1e42039b8822fc4e7ecc6275027866b052ea84360fcd49ec5210",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  },
+  {
+    "file": "08-final.png",
+    "sha256": "31841ffa40863c7c8fefc7b352368688c5c37e706c350c3212ab11f39734cc2c",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  },
+  {
+    "file": "09-final.png",
+    "sha256": "2c11e1583204962bece42cc331b36771a1a337b12b2d59a8022d1a5c05707314",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  },
+  {
+    "file": "settings-restored-final.png",
+    "sha256": "c5c59c1d9ad717af3b71f3dc4d404457ff435668e1dd85c4d057160c9a7ccbc1",
+    "crop": [
+      341,
+      48,
+      940,
+      815
+    ]
+  }
+]
