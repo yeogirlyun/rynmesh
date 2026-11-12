@@ -94,6 +94,20 @@ def test_xlsx_reopens_with_independent_reader_and_has_no_formula_gaps():
         assert b"<f>" not in archive.read("xl/worksheets/sheet1.xml")
 
 
+def test_raw_rate_sums_are_not_presented_as_aggregate_metrics_or_an_excel_total_row():
+    from xml.etree import ElementTree as ET
+    report = calculate(b'team,sales,profit,rate\nA,100,30,30\nB,900,90,10\n', '.csv',
+                       {"columns": columns(team="text", sales="decimal", profit="decimal", rate="decimal")})
+    shown = summary(report)
+    assert shown["totals"]["rate"] == "40"
+    assert "not necessarily additive business metrics" in shown["totals_semantics"]
+    assert "no automatic totals row" in shown["export_layout"]
+    with zipfile.ZipFile(io.BytesIO(export_bytes(report, ".xlsx"))) as archive:
+        sheet = ET.fromstring(archive.read("xl/worksheets/sheet1.xml"))
+        ns = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+        assert len(sheet.findall("s:sheetData/s:row", ns)) == 3  # Headers + 2 source rows; no invented 40% total.
+
+
 def test_csv_text_is_protected_without_changing_negative_numbers():
     report = calculate(b'name,amount\n=1+1,-2\n', ".csv", {"columns": columns(name="text", amount="decimal"), "column_order": ["name", "amount"]})
     raw = export_bytes(report, ".csv").decode("utf-8-sig")
