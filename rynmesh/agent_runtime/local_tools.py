@@ -949,12 +949,36 @@ class LocalTools:
                          "summary": change_summary(before_text, after_text)})
         return plan
 
+    def _table_export_arguments(self, args, context):
+        explicit = {"source_path", "recipe", "expected_calculation_sha256"}
+        rid = args.get("calculation_receipt_id")
+        if rid is None:
+            if not explicit <= args.keys():
+                raise AgentToolRejected("agent_table_export_arguments", correction="Supply calculation_receipt_id and path, or all source_path/recipe/expected_calculation_sha256 fields.")
+            return args
+        if explicit & args.keys() or self.store is None:
+            raise AgentToolRejected("agent_table_export_arguments", correction="Do not mix a receipt reference with explicit calculation arguments.")
+        def resolve(data):
+            row = data.get("tasks", {}).get(context["task_id"], {})
+            receipt = next((r for r in row.get("receipts", []) if r.get("id") == rid), {})
+            binding = ((row.get("goal") or {}).get("revision"), row.get("scope_revision"), row.get("context_epoch", 0))
+            result, original = receipt.get("result") or {}, receipt.get("arguments") or {}
+            if (receipt.get("tool") != "ryn_table_calculate" or receipt.get("status") != "confirmed"
+                    or tuple(receipt.get(k) for k in ("goal_revision", "scope_revision", "context_epoch")) != binding
+                    or not isinstance(result, dict) or result.get("status") != "passed"
+                    or not result.get("calculation_sha256") or not {"source_path", "recipe"} <= original.keys()):
+                raise AgentToolRejected("agent_table_calculation_receipt_invalid", correction="Use a passed calculation receipt from this task's current goal and resource scope; recalculate if the source or rules changed.")
+            return {"path": args["path"], "source_path": original["source_path"], "recipe": copy.deepcopy(original["recipe"]),
+                    "expected_calculation_sha256": result["calculation_sha256"]}
+        return self.store.inspect(resolve)
+
     def preview(self, name, args, context):
         policy = self.policy(context)
         preview = {"title": SPECS[name][0].split(".")[0], "workspace_root": policy["workspace_root"],
                    "desktop_access": policy["desktop_access"], "operation": copy.deepcopy(args)}
         if name == "ryn_table_export":
             from .table_work import calculate, export_bytes, summary
+            args = self._table_export_arguments(args, context)
             source = self.path(args["source_path"], context)
             report = calculate(self.raw(source), source.suffix, args["recipe"])
             if report["calculation_sha256"] != args["expected_calculation_sha256"]:
@@ -1429,6 +1453,8 @@ class LocalTools:
         task_id = context["task_id"]
         if name in {"ryn_table_calculate", "ryn_table_export"}:
             from .table_work import calculate, export_bytes, summary
+            if name == "ryn_table_export":
+                args = self._table_export_arguments(args, context)
             source = self.path(args["source_path"], context)
             report = calculate(self.raw(source), source.suffix, args["recipe"], cancelled)
             if name == "ryn_table_calculate":

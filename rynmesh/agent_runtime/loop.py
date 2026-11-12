@@ -28,6 +28,7 @@ from . import (
     memory_runtime,
     model_profiles,
     output_policy,
+    planning,
     projects,
     request_context,
     results,
@@ -668,6 +669,12 @@ class AgentLoop:
                 event_compaction.fold_stream_deltas(row)
                 effective_action = "complete" if wrap_up_reason else decision.action
                 effective_reason = f"budget_wrap_up:{wrap_up_reason}" if wrap_up_reason else decision.reason
+                if effective_action == "complete" and not wrap_up_reason and (reminder := planning.completion_reminder(row)):
+                    row["messages"].append({"role": "assistant", "content": reminder,
+                                            "context_epoch": row.get("context_epoch", 0)})
+                    row.update(status="queued")
+                    event(row, "turn_decision", action="continue", reason="plan_reconciliation", step=step)
+                    return
                 event(row, "turn_decision", action=effective_action, reason=effective_reason, step=step)
                 if wrap_up_reason:
                     event(row, "budget_wrap_up", reason=wrap_up_reason, step=step, skipped_tool_calls=len(pending))
@@ -726,6 +733,7 @@ class AgentLoop:
                     else:
                         row["outcome"].update(status="unverified", summary=answer, assessment_requested=False,
                             uncertainties=["No independent goal assessment was requested."])
+                        planning.note_incomplete(row)
                         event(row, "completed")
                         automations.settle_automation_turn_in_tx(self.store, data, row)
                         subagents.on_subagent_settled_in_tx(data, row)
@@ -800,6 +808,10 @@ class AgentLoop:
             if plan_updates_in_active_history > 0 and isinstance(row.get("plan"), dict)
             else row
         )
+        if row.get("plan", {}).get("track_execution"):
+            # Legacy prefix stabilization can hide steps/revisions already in
+            # history. Receipt IDs and actionable progress must still be current.
+            prefix_row = {**prefix_row, "_current_planning_state": planning.projection(row)}
         if not (row.get("scope") or {}).get("resource_grants") and "selection" not in (row.get("scope") or {}):
             exec_ctx = self._execution_context(row)
             if exec_ctx.get("resource_grants"):
@@ -2146,20 +2158,10 @@ class AgentLoop:
                     if result.get("applied") or result.get("deleted_ids"):
                         memory_integration.propagate_memory_revocation_in_tx(data)
             elif call["name"] == "ryn_update_plan":
-                steps = args["steps"]
-                seen = set()
-                criteria_ids = {item["id"] for item in row["criteria"]}
-                for step in steps:
-                    # Topologically ordered steps avoid cycles and unbounded graph work.
-                    if step["id"] in seen or not set(step["depends_on"]) <= seen or not set(step["criterion_ids"]) <= criteria_ids:
-                        raise AgentToolRejected("agent_invalid_control_proposal")
-                    seen.add(step["id"])
-                row["plan"] = {"revision": row["plan"]["revision"] + 1, "goal_revision": row["goal"]["revision"],
-                               "steps": [{**copy.deepcopy(step), "status": "pending"} for step in steps]}
+                result = planning.update(row, args)
                 row["criteria_proposals"] = [{**copy.deepcopy(proposal), "proposal_origin": "model", "accepted": False,
                                               "goal_revision": row["goal"]["revision"]} for proposal in args.get("criteria_proposals", [])]
                 event(row, "plan_updated", plan_revision=row["plan"]["revision"])
-                result = {"accepted": True, "plan_revision": row["plan"]["revision"], "criteria_proposals_accepted": False}
             else:
                 if row.get("parent_task_id"):
                     raise AgentToolRejected(

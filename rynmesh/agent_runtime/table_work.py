@@ -241,6 +241,10 @@ def summary(report):
     # Keep the durable operation result below its reserved receipt capacity.
     # Full values/rules remain in the export; previews must not flood context.
     result = {k: v for k, v in report.items() if k not in {"rows", "recipe", "decimal_columns", "checks"}}
+    result["totals_semantics"] = ("Unweighted arithmetic sums of every decimal column, for declared checks only. "
+                                  "Percentages, rates and repeated source summaries are not necessarily additive business metrics.")
+    result["export_layout"] = ("XLSX Data and CSV contain headers plus data rows only: no automatic totals row. "
+                               "The totals metadata is not rendered as company metrics. JSON retains arithmetic metadata.")
     result["checks"] = [{k: v for k, v in check.items() if k != "expression"} for check in report["checks"]]
     result.update(preview_rows=[], rows_truncated=len(report["rows"]) > 8, preview_cells_truncated=False)
     for row in report["rows"][:8]:

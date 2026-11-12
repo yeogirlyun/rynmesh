@@ -7,13 +7,14 @@ import json
 import os
 import platform
 
+from . import planning
 from .inference_context import GUIDANCE as INFERENCE_GUIDANCE
 from .inference_context import projection as inference_projection
 from .operation_permissions import GUIDANCE as PERMISSION_GUIDANCE
 from .operation_permissions import projection as permission_projection
 from .tool_menu import SPEC as TOOL_MENU_SPEC
 
-PROMPT_VERSION = "ryn-agent-loop-v13"
+PROMPT_VERSION = "ryn-agent-loop-v14"
 
 SYSTEM = (
     "You are Ryn, an autonomous coding and workstation agent on the user's computer. Reply concisely in their language. "
@@ -90,7 +91,9 @@ PLAN = obj({"goal_revision": {"type": "integer", "minimum": 1},
             "steps": {"type": "array", "maxItems": 12, "items": obj({"id": text(64), "text": text(),
                       "criterion_ids": {"type": "array", "maxItems": 16, "items": text(64)},
                       "depends_on": {"type": "array", "maxItems": 12, "items": text(64)}}, ["id", "text", "criterion_ids", "depends_on"])},
-            "criteria_proposals": {"type": "array", "maxItems": 8, "items": obj({"description": text(400), "kind": {"enum": ["mechanical", "semantic"]}, "evidence_hint": text(160)}, ["description", "kind"])}}, ["goal_revision", "steps"])
+            "criteria_proposals": {"type": "array", "maxItems": 8, "items": obj({"description": text(400), "kind": {"enum": ["mechanical", "semantic"]}, "evidence_hint": text(160)}, ["description", "kind"])}}, ["goal_revision"])
+PLAN["properties"].update(copy.deepcopy(planning.PLAN_PROPERTIES))
+PLAN["properties"]["steps"]["items"]["properties"].update(copy.deepcopy(planning.STEP_PROPERTIES))
 INPUT = obj({"goal_revision": {"type": "integer", "minimum": 1}, "prompt": text(800),
              "kind": {"enum": ["information", "choice", "credential_ref"]},
              "fields": {"type": "array", "minItems": 1, "maxItems": 4, "items": obj({"id": text(64), "label": text(),
@@ -102,7 +105,7 @@ INPUT["allOf"] = [{"if": {"properties": {"kind": {"const": "credential_ref"}}},
                    "else": {"properties": {"fields": {"items": {"properties": {"type": {"enum": ["text", "choice"]}}}}}}}]
 INTERNAL_SPECS = [
     TOOL_MENU_SPEC,
-    {"type": "function", "function": {"name": "ryn_update_plan", "description": "Propose a brief plan if useful; never changes owner goals, permissions or verified outcomes.", "parameters": PLAN}},
+    {"type": "function", "function": {"name": "ryn_update_plan", "description": "Plan multi-step work and track progress with track_execution=true, expected_plan_revision, output contracts, dependencies and current receipt IDs. Replan with a reason when the approach changes. Legacy brief proposals remain supported. Never changes owner goals, permissions or verified outcomes.", "parameters": PLAN}},
     {"type": "function", "function": {"name": "ryn_request_input", "description": "Structured input for essential missing work facts only; answers never authorize writes or external directories. kind=credential_ref opens a full Ryn source form (type, URL, ID, key); when only a key is missing, author/run a local input program instead. Never ask keys in chat.", "parameters": INPUT}},
     {"type": "function", "function": {"name": "ryn_read_result", "description": "Read a bounded page of this task's encrypted large tool result. Old resource-scope epochs cannot be read into the model.",
      "parameters": obj({"result_id": text(64), "offset": {"type": "integer", "minimum": 0}}, ["result_id"])}},
@@ -193,6 +196,9 @@ def authority(row: dict) -> str:
                "plan_revision": row["plan"]["revision"], "model_id": row["model_id"], "scope_revision": row["scope_revision"],
                "inference_context": inference_projection(row)}
     context["local_execution"] = row.get("local_execution") or {"workspace_root": "", "desktop_access": False}
+    if row.get("plan", {}).get("track_execution"):
+        context["planning_state"] = row.get("_current_planning_state") or planning.projection(row)
+        context["plan_revision"] = context["planning_state"]["plan_revision"]
     context["os"] = platform.system()
     context.update(local_date())
     port = os.environ.get("RYNMESH_PEER_PORT", "")
@@ -229,6 +235,7 @@ def authority(row: dict) -> str:
             "Claims need matching subject/scope/time: unknown/missing is not no/never; local grants are not remote policy."
             + " " + INFERENCE_GUIDANCE
             + " " + PERMISSION_GUIDANCE
+            + " " + planning.GUIDANCE
             + subagent_suffix)
 
 
