@@ -1,0 +1,42 @@
+[
+  {
+    "file": "01-original-prompt.png",
+    "sha256": "fc4a019aeed6f41efd8393df67186496f813c48876fb63814aad412b9468f2d5",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  },
+  {
+    "file": "02-unbounded-request.png",
+    "sha256": "18fe7b4025b3cfd4dc06f9327eb80fc3004f574101d6a5edd168da672a16e427",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  },
+  {
+    "file": "03-rejected-final.png",
+    "sha256": "bc33d5a0a036e62c7bb5af1958eb1377537d0c183423f494887e9ef6987b94b3",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  },
+  {
+    "file": "04-settings-restored.png",
+    "sha256": "7146bb53a6a0b3b81385d3cc8de4f911250be737ae707ef83500651f993b4dce",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  }
+]

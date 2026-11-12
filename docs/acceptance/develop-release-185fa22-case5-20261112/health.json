@@ -1,0 +1,18 @@
+{
+  "core_commit": "185fa22a98ecd395a97db9a85d4e8c25a464b407",
+  "company_commit": "410720e31c47400b7fa74877d02ebb609583cd2c",
+  "node": {
+    "status": "ok",
+    "desktop_managed": true
+  },
+  "company": {
+    "ok": true,
+    "status": "ready"
+  },
+  "first_success": {
+    "phase": "ready",
+    "content_ready": true
+  },
+  "binary_hashes_verified": true,
+  "verified_at": "2026-11-12T06:07:00.711421+00:00"
+}
