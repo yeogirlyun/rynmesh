@@ -24,12 +24,16 @@ def test_real_codex_exposes_no_environment_tools(monkeypatch, tmp_path, attack):
     captured = []
     marker = tmp_path / "must-not-exist.txt"
     persisted_content = []
+    downloaded_plugin_assets = []
     original_close = codex_session.CodexRPC.close
 
     def audited_close(rpc):
         try:
             terminate(rpc.process)
             rpc.reader.join(timeout=2)
+            downloaded_plugin_assets.extend(str(path.relative_to(rpc.root)) for path in rpc.root.rglob("*")
+                                            if path.is_file() and ("plugins/cache/" in path.as_posix()
+                                                                   or "plugins-clone-" in path.as_posix()))
             for file in rpc.root.rglob("*"):
                 if file.is_file() and file.stat().st_size <= 8 * 1024**2:
                     if b"RYN_PRIVACY_SENTINEL_LOCAL_TEST" in file.read_bytes():
@@ -107,3 +111,4 @@ def test_real_codex_exposes_no_environment_tools(monkeypatch, tmp_path, attack):
         server.server_close()
     assert all(not root.exists() for root in roots)
     assert not persisted_content, persisted_content
+    assert not downloaded_plugin_assets, downloaded_plugin_assets
