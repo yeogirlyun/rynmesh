@@ -1,10 +1,11 @@
 import pytest
+import test_agent_local_tools as consumer_fixtures
 from test_agent_runtime import advance, assistant, make_runtime
 
 from rynmesh.agent_runtime.read_reliability import check_shell_retry
 from rynmesh.agent_runtime.store import AgentToolRejected
 
-pytest_plugins = ["test_agent_local_tools"]
+local = consumer_fixtures.local
 
 
 def row(path, root="C:\\"):

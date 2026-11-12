@@ -51,5 +51,6 @@ it("shows its own wording for a recovered partial reply, new or legacy, and a cl
   render(<MemoryRouter><RynAgent /></MemoryRouter>);
   expect(await screen.findAllByText("The model's reply stopped partway. Completed read results were kept.")).toHaveLength(2);
   expect(screen.queryByText(NOTE)).toBeNull();
-  expect(screen.getByText(/Agent storage on this device is full/)).toBeVisible();
+  expect(screen.getByText(/The disk holding your tasks has insufficient free space/)).toBeVisible();
+  expect(screen.getByText(/Free space on that disk and retry; your conversation is preserved/)).toBeVisible();
 });

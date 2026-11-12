@@ -21,6 +21,22 @@ Scope/design: [shared Agent reliability](../AGENT_RELIABILITY_20261112.md).
   incorrectly required a file path when Linux opens its containing folder. The
   test now exercises mocked Linux/macOS dispatch and asserts exact platform
   commands, without changing application behavior or opening a native window.
+- The first broader webapp CI run had one failure (1,439 passed): an unchanged
+  storage-note test still expected fixed-capacity wording. Source inspection
+  confirms `AgentStore._require_disk` checks actual free disk space, and the
+  current UI already explains that correctly. Updated the test to require the
+  disk-space guidance and conversation-preservation message; no UI/runtime
+  storage policy was changed.
+- Storage/error-help tests: **4 passed** locally; typecheck and production web
+  build passed. The broader local frontend run under Node 25 (native webstorage
+  disabled for jsdom compatibility) had **1,435 passed, 5 failed** in unchanged
+  InviteDeepLinks, PrivateAIChat and RynAgentSending tests, including three
+  timeouts. These are not a green full-frontend result. Linux CI uses Node 22;
+  its first run's only failure was the stale storage-note assertion above.
+- The focused Linux/Python 3.12 CI job passed **118 tests, 1 skip**, plus changed
+  Python-file lint, on `806332dd`. Later fixture reuse is module-local, avoiding
+  global pytest plugin registration. Local focused revalidation: **118 passed,
+  1 skipped**. See PR #130 for final commit/check status.
 - New tests exercise three successive automatic rollovers and restart; retained
   language/skills/workspace and cumulative owner budget; exhausted-budget refusal;
   atomic failure/no orphan child; duplicate request reuse; unknown-write refusal;

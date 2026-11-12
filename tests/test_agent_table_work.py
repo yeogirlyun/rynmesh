@@ -6,12 +6,15 @@ import zipfile
 from decimal import Decimal
 
 import pytest
+import test_agent_local_tools as consumer_fixtures
 from test_agent_local_tools import execute
 
 from rynmesh.agent_runtime.store import AgentToolRejected
 from rynmesh.agent_runtime.table_work import calculate, export_bytes, summary
 
-pytest_plugins = ["test_agent_local_tools"]
+# Reuse fixtures only in this module, without registering a global test plugin.
+local = consumer_fixtures.local
+node = consumer_fixtures.node
 
 RECIPE = {"columns": {"name": "text", "amount": "decimal", "fee": "decimal"},
           "column_order": ["name", "amount", "fee", "total"],
