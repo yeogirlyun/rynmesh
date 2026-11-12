@@ -107,3 +107,72 @@ Web 包的健康验证是入口与文件完整性验证，并不等价于所有 
 - `POST /api/local/plugin-updates/{id}/rollback`
 
 配置存在节点数据目录 `plugin-updates.json`；活动/上一版记录存在 `craft-plugins.json`；代码位于原插件外置缓存目录。更新过程不删除插件用户数据。
+
+## 本地插件服务套件自动更新（`ryn.service.release`）
+
+由安装包提供的本地插件服务（如三合一公司插件共用的后台运行时）通过通用服务包更新器自动保持最新，不影响上面的桌面本体或静态 Craft 插件流程。
+
+### 本机信任与源配置
+
+安装包在安装目录写入 `plugin-services/updates.json`（Ryn 主程序与前端代码中不硬编码业务名称、域名或公钥）：
+
+- `name`：中英文显示名称（如 `{"zh-CN": "公司插件", "en": "Company plugins"}`）。
+- `plugins`：共用该本地服务的插件 ID 列表。
+- `url`：HTTPS 清单地址（如 `https://<origin>/ryn/updates/packs/company/latest.json`）。
+- `public_key`：发布者 32 字节 Ed25519 公钥（Base64），**仅从本机 `updates.json` 读取**，绝不采信远程清单自报公钥。
+- `publisher`：用于更新页来源说明的发布方名称。
+- `auth`：`peer_provider` 与账号标签；仅当设备已登录且令牌签发域与 `url` 完全同源时，才会携带 `Bearer` 令牌请求清单和文件块，任何跨域下载或重定向立即拒绝。
+
+未安装 `plugin-services/updates.json` 的 Ryn 在「设置 → 软件更新」页面整段隐藏「已安装的插件」。
+
+### 检查、增量下载与切换规则
+
+- **检查周期**：跟随桌面「自动下载更新」开关；每小时检查一次，失败后 15 分钟重试。
+- **增量下载**：清单为 `SignedPayload`（`kind: "ryn.service.release"`, `schema: 1`），列出运行时文件、插件声明（`ryn-declarations.json`）及外置技能包（`ryn-skills/`）的大小与 SHA-256。本机活动版本或已暂存目录中哈希相同的文件直接硬链接/复制复用，只下载哈希变化的 `blobs/<sha256>`（支持 HTTP `Range` 断点续传），逐文件校验字节数与 SHA-256。
+- **版本与宿主保护**：
+  - 清单 `min_host` 高于当前 Ryn 版本时**不下载任何文件**，卡片显示「需要先更新 Ryn」。
+  - 已装版本不低于清单版本时永不降级（包括用旧版整包重装后，自动保留已更新的新版运行时）。
+- **无感暂存与切换时机**：
+  - 新版下载到独立的版本目录，绝不改动正在运行的目录。
+  - 切换时机：Ryn 启动时、退出时（跟随「退出 Ryn 时自动安装」开关）、用户点击「立即更新」时。
+  - 若插件或 Agent 有任务正在运行，后台自动切换延后，卡片显示「等任务结束」；用户仍可主动点击「立即更新」立即切换。
+  - 点击「立即更新」时，桌面壳切换 `services.json`、同步更新插件声明与外置技能，并立即调用 `restart_plugin_service` 重启该插件服务；打开中的插件页显示「正在更新」并在新进程就绪后自动恢复，更新完成后右下角提示一次。
+- **状态保留**：切换前后保留登录态、插件本地用户数据、插件启用状态及安装包授予的只读工具信任（不会重复弹出只读工具确认提示）。
+- **健康检查与自动回退**：切换后轮询本地服务健康检查并核对返回的 `revision`；若 180 秒内未就绪或修订号不匹配，自动将运行时、插件声明和外置技能一并回退到上一正常版本，并将该失败 `revision` 永久隔离，后续检查不再重试，卡片显示「已退回旧版」。
+
+本地控制 API（均受 `local_control` 保护）：
+
+- `GET /api/local/service-updates`
+- `POST /api/local/service-updates/check`
+- `POST /api/local/service-updates/{id}/check`
+- `POST /api/local/service-updates/{id}/apply`
+- `POST /api/local/service-updates/{id}/verify`
+- `POST /api/local/service-updates/{id}/retry`
+- `POST /api/local/service-updates/{id}/acknowledge`
+- `POST /api/local/service-updates/quit`
+
+### 服务端接口与构建发布
+
+后端（`gshopper-ryn-node`）仅暴露两个认证接口，由环境变量 `RYN_UPDATES_DIR` 指定包根目录，并复用 `RynRateLimitService` 限流：
+
+- `GET /ryn/updates/packs/:id/latest.json`（`Cache-Control: private, no-cache`）
+- `GET /ryn/updates/packs/:id/blobs/:sha256`（`Cache-Control: private, max-age=31536000, immutable`，支持 `Range` `206`/`416`）
+
+请求必须携带有效的 `peer.connect` 登录令牌；未登录或令牌无效一律先返回 `401`，不泄露包是否存在或任何版本信息。
+
+发布私钥在发布机器上生成并保存在所有代码仓库之外（仓库仅存对应的 `.pub` 公钥）：
+
+```sh
+# 1. 首次在仓库外安全目录生成发布私钥（输出公钥写入安装包配置）
+python scripts/publish_service_pack.py --generate-key ~/.rynmesh-release-keys/publisher.key
+
+# 2. 在插件仓库一条命令构建服务、打包声明与技能并生成签名清单及去重文件块（不自动上传）
+python integrations/company-app/scripts/release_service_pack.py \
+  --ryn-repo /path/to/rynmesh \
+  --key ~/.rynmesh-release-keys/publisher.key \
+  --previous /path/to/last/latest.json \
+  --notes "更新说明" \
+  --output /path/to/ready-to-upload/company
+```
+
+版本号采用单调递增的 UTC `YYYY.M.D.HHMMSS` 规则（若与 `--previous` 相同或更早则自动递增尾号）。输出目录经人工确认后，先同步 `blobs/` 再原子替换服务器 `$RYN_UPDATES_DIR/packs/company/latest.json`。
