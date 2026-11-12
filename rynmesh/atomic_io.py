@@ -56,6 +56,12 @@ def _fs_path(path: Path) -> Path:
     return path
 
 
+def fs_path(path: str | Path) -> Path:
+    """Return ``path`` in a form Windows file APIs accept past the 260-char limit."""
+
+    return _fs_path(Path(path))
+
+
 def atomic_write_bytes(
     path: str | Path,
     data: bytes,
@@ -230,6 +236,7 @@ __all__ = [
     "MAX_RECORD_BYTES",
     "atomic_write_bytes",
     "atomic_write_json",
+    "fs_path",
     "migration_backup",
     "read_json",
 ]
