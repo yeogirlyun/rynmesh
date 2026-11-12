@@ -47,6 +47,7 @@ jobs:
           tests/test_agent_continuation_state.py
           tests/test_agent_read_reliability.py
           tests/test_agent_table_work.py
+          tests/test_agent_workspace_artifacts.py
 
   contribution-workflow:
     runs-on: ubuntu-latest

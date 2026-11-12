@@ -16,6 +16,11 @@ Scope/design: [shared Agent reliability](../AGENT_RELIABILITY_20261112.md).
   table pipeline and business/runtime/feedback verification. The excluded tests
   were the actual browser DOM and Windows accessibility tests; platform skips
   remain visible in pytest output.
+- Final focused CI-equivalent suite after preview/origin and platform-test changes: **118 passed,
+  1 skipped**. The first Linux CI run exposed an existing file-reveal test that
+  incorrectly required a file path when Linux opens its containing folder. The
+  test now exercises mocked Linux/macOS dispatch and asserts exact platform
+  commands, without changing application behavior or opening a native window.
 - New tests exercise three successive automatic rollovers and restart; retained
   language/skills/workspace and cumulative owner budget; exhausted-budget refusal;
   atomic failure/no orphan child; duplicate request reuse; unknown-write refusal;
