@@ -38,10 +38,10 @@ export async function loadCompanySharing(): Promise<CompanySharingState | null> 
     if (row?.status !== "connected" || row?.bound !== true || typeof row?.plugin_id !== "string") continue;
     try {
       const workspace = await peerProviders.workspace(row.plugin_id);
-      if (!workspace.bound || workspace.current_member?.can_publish_models !== true) continue;
+      if (!workspace.bound || !workspace.can_publish_models) continue;
       const [status, models] = await Promise.all([peerProviders.status(row.plugin_id), peerProviders.models(row.plugin_id)]);
       if (!status.bound) continue;
-      return { pluginId: row.plugin_id, memberName: workspace.current_member.name,
+      return { pluginId: row.plugin_id, memberName: workspace.current_member?.name || "",
         selected: status.selected_service_ids, eligible: models.map(model => model.service_id) };
     } catch { continue; }
   }

@@ -112,6 +112,8 @@ export interface PeerProviderWorkspace {
   bound: boolean;
   local_node_id?: string;
   selected_service_ids: string[];
+  /** The provider itself says this signed-in member may publish models. */
+  can_publish_models: boolean;
   current_member: PeerProviderCurrentMember | null;
   colleagues: PeerProviderColleagueEntry[];
   departments?: PeerProviderDepartmentEntry[];
@@ -196,6 +198,7 @@ function workspace(raw: Record<string, unknown>): PeerProviderWorkspace {
     selected_service_ids: Array.isArray(raw.selected_service_ids)
       ? raw.selected_service_ids.filter((x): x is string => typeof x === "string")
       : [],
+    can_publish_models: raw.can_publish_models === true,
     current_member,
     colleagues,
     departments,

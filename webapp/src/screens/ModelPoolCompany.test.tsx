@@ -31,7 +31,7 @@ function company({ publisher = true, signedIn = true, selected = [] as string[],
     http.get("*/api/local/agent/settings", () => HttpResponse.json({ enabled: false, model_id: "", permission_mode: "confirm_changes" })),
     http.get("*/api/local/peer-providers", () => HttpResponse.json({ providers: [status()] })),
     http.get(`*/api/local/peer-providers/${PLUGIN}/status`, () => HttpResponse.json(status())),
-    http.get(`*/api/local/peer-providers/${PLUGIN}/workspace`, () => HttpResponse.json({ ...status(), current_member: { id: "m1", name: "老板", role: "member", can_publish_models: publisher }, colleagues: [], models: [] })),
+    http.get(`*/api/local/peer-providers/${PLUGIN}/workspace`, () => HttpResponse.json({ ...status(), can_publish_models: publisher, current_member: { id: "m1", name: "老板", role: "member", can_publish_models: true }, colleagues: [], models: [] })),
     // Only model-a is eligible right now (model-b is, say, not ready).
     http.get(`*/api/local/peer-providers/${PLUGIN}/models`, () => HttpResponse.json({ models: [{ service_id: "svc-a", name: "model-a" }] })),
     http.post(`*/api/local/peer-providers/${PLUGIN}/publish`, async ({ request }) => {

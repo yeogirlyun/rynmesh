@@ -23,7 +23,9 @@ def install_peer_provider_routes(app, service, local_control):
                 if account.get("state") != "logged_in" or not member:
                     raise PeerProviderError("peer_provider_login_required")
                 token = company_member.set(member)
-                service._get(pid, session=True)
+                # Reading the workspace may first create the channel from the
+                # plugin sign-in; every other action needs it to exist already.
+                service._get(pid, session=request.url.path.rsplit("/", 1)[-1] not in {"workspace", "auto-sync"})
             result = action()
             if hasattr(result, "__await__"):
                 result = await result
