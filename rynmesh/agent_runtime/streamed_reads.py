@@ -241,6 +241,8 @@ class StreamedReads:
                     )
                 except AgentError as exc:
                     value.update(failed=True, result={"error": _safe_error(exc), "not_executed": False, "no_mutation": True})
+            if value["failed"]:
+                self.runtime._note_last_read_attempt(row, prepared["call"], value["result"])
             entry.update(value, state="complete")
             verification.record(row, prepared["call"], "failed" if value["failed"] else "confirmed", now(), result=value["result"])
             event(row, "tool_execution_completed", tool=prepared["call"]["name"], call_id=prepared["call"]["call_id"],

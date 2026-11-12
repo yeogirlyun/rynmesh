@@ -3048,6 +3048,8 @@ class AgentRuntime(AgentLoop):
                 row.update(in_flight=None, approved=None, pending_approval=None)
                 row["elapsed_seconds"] += time.monotonic() - started
                 consecutive_same_error = 0
+                if call["effect"] == "read" and record_status == "failed":
+                    self._note_last_read_attempt(row, call, result)
                 if record_status != "confirmed":
                     for prev_event in reversed(row.get("events", [])):
                         if prev_event.get("type") != "tool_result":

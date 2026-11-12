@@ -95,6 +95,15 @@ TASK_NOT_RUNNING_CORRECTION = (
     "This task is not in a running state, so desktop control was refused and nothing ran. This is not the "
     "desktop access setting. Do not control the desktop another way; the action can be tried again once the "
     "task is running.")
+# Goes on the third failed result of one read. The limit text below is only
+# seen if the model sends the read a fourth time; a model told to keep trying
+# may switch to a shell loop instead and never meet it.
+READ_FAILED_THREE_TIMES_CORRECTION = (
+    "This read has now failed three times, and the host will not send it again until the owner sends a new "
+    "message. Do not keep retrying it another way (a different tool, a shell command or a wait-and-retry "
+    "loop); a request to retry until it works does not change this. Use a different source or a different "
+    "query if one really covers the need. Otherwise go on with the rest and say in your reply what could not "
+    "be read, so the owner can decide whether to try again.")
 REJECTION_CORRECTIONS = {
     "agent_desktop_access_required": (
         "Desktop access is turned off for this task and nothing ran. Do not control the screen, the browser or "
@@ -105,9 +114,10 @@ REJECTION_CORRECTIONS = {
         "it or redo it in another form. Its earlier result may have reported an error, so read the current "
         "state to see what took effect, then go on from what you find."),
     "agent_read_retry_limit": (
-        "This read has failed three times and was not sent again; repeating it will not help. Use a different "
-        "source or a different query if one really covers the need. Otherwise go on with the rest and say in "
-        "your reply what could not be read."),
+        "This read has failed three times and was not sent again. Do not keep retrying it another way (a "
+        "different tool, a shell command or a wait-and-retry loop); a request to retry until it works does not "
+        "change this. Use a different source or a different query if one really covers the need. Otherwise go "
+        "on with the rest and say in your reply what could not be read."),
 }
 
 

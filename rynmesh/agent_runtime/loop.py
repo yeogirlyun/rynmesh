@@ -45,7 +45,7 @@ from .prompt import (
 )
 from . import event_compaction
 from .protocol import digest, event, event_result, model_retry_authority, now, sanitized, task
-from .store import AgentError, AgentToolRejected, encoded
+from .store import READ_FAILED_THREE_TIMES_CORRECTION, AgentError, AgentToolRejected, encoded
 from .stream_tools import StreamToolMismatch
 from .streamed_reads import NestedReadDispatch, StreamedReads
 from .tool_dispatch import MAX_PARALLEL_TOOLS, PARALLEL_READS, supports_parallel
@@ -1376,8 +1376,9 @@ class AgentLoop:
             {"role": "user", "content": encoded(source).decode()}]
 
     @staticmethod
-    def _read_retries_exhausted(row: dict, call: dict) -> bool:
-        failures = 0
+    def _read_retries_exhausted(row: dict, call: dict, pending: int = 0) -> bool:
+        # pending counts a failure of this same read that is not in the receipts yet.
+        failures = pending
         arguments_hash = digest(call["arguments"])
         # Paging cannot turn the same unavailable resource into a new read.
         resource_ref = call["arguments"].get("resource_ref") if call["name"] == "ryn_read_resource" else None
@@ -1396,6 +1397,17 @@ class AgentLoop:
                 if failures >= 3:
                     return True
         return False
+
+    @classmethod
+    def _note_last_read_attempt(cls, row: dict, call: dict, result) -> None:
+        """Say on the third failure itself that this read is used up.
+
+        The refusal text only reaches the model if it sends the read a fourth
+        time; a model that moves to a shell loop instead never sees it.
+        """
+        if (isinstance(result, dict) and result.get("error") and result.get("not_executed") is False
+                and "correction" not in result and cls._read_retries_exhausted(row, call, pending=1)):
+            result["correction"] = READ_FAILED_THREE_TIMES_CORRECTION
 
     @staticmethod
     def _apply_deferred_observed_files(row: dict, selected: dict, deferred: dict[str, str | None]) -> None:
@@ -1844,6 +1856,8 @@ class AgentLoop:
             notice = self._budget_notice(row)
             for index, (call, (result, failed, call_exec_seconds)) in enumerate(zip(batch, outcomes, strict=True)):
                 reference = None
+                if failed:
+                    self._note_last_read_attempt(row, call, result)
                 origin = (copy.deepcopy(result.get("origin")) if metas[call["call_id"]].get("scope_context_supported")
                           and isinstance(result.get("origin"), dict) and "grant_id" in result["origin"] else None)
                 size = len(encoded(result))
