@@ -105,6 +105,8 @@ class ModelCatalog:
                    "context_window_basis": "provider_manifest" if adapter not in {"codex_cli", "antigravity_cli"} and type(manifest.get("context_window")) is int else "unknown_fallback",
                    "streaming": "streaming" in capabilities or "buffered-streaming" in capabilities,
                    "max_output_tokens": manifest.get("max_output_tokens", 4096),
+                   # Ryn service routes admit prompt UTF-8 bytes + output <= window.
+                   "context_admission_bytes_per_token": 1,
                    "sharing": bool(value.get("accepting_orders", value.get("publication_enabled", False))) if own else True,
                    "sharing_basis": "local_service_advertisement" if own else "remote_catalog_advertisement",
                    "sharing_configuration_known": False,
