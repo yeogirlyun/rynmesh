@@ -26,3 +26,10 @@ it("uses reported progress only and puts waiting members before running members"
   expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
   expect(container.querySelector(".ra-subagent-card-nick")).toHaveTextContent("Turing");
 });
+
+it("shows the notification tag as text, not as HTML entities", () => {
+  const done = {...agent, status: "completed", final_reply: "Found 3 files.", notification_payload: {status: "completed"}} as AgentSubagentSummary;
+  const { container } = render(<SubagentRightDrawer subagents={[done]} selectedSubagentId="a" onSelectSubagent={vi.fn()} onClose={vi.fn()} onInterruptSubagent={vi.fn()} onMentionSubagent={vi.fn()} />);
+  expect(container.querySelector(".is-final-reply code")).toHaveTextContent("<subagent_notification>");
+  expect(container.textContent).not.toMatch(/&lt;|&gt;/);
+});

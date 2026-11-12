@@ -533,7 +533,7 @@ export function SubagentInlineGroup({
                 if (item.toolName === "ryn_list_agents") {
                   return <span className="ra-subagent-inline-action-verb">{tr("已列出当前线程树的子智能体")}</span>;
                 }
-                return <span className="ra-subagent-inline-action-verb">{tr("等待子智能体完成并收集 &lt;subagent_notification&gt;")}</span>;
+                return <span className="ra-subagent-inline-action-verb">{tr("等待子智能体完成并收集 <subagent_notification>")}</span>;
               };
 
               const running = sub ? isSubagentRunning(sub) : false;
@@ -933,7 +933,7 @@ export function SubagentRightDrawer({
                 <span className="ra-subagent-scope-pill is-readonly"> {tr("READ-ONLY · 只读探索沙盒")} </span>
               ) : selected.write_scope?.length ? (
                 selected.write_scope.map(scopePath => (
-                  <span key={scopePath} className="ra-subagent-scope-pill"> {tr("&lt;&gt; 负责：")}{scopePath}
+                  <span key={scopePath} className="ra-subagent-scope-pill"> {tr("<> 负责：")}{scopePath}
                   </span>
                 ))
               ) : (
@@ -1105,7 +1105,7 @@ export function SubagentRightDrawer({
             <div className="ra-subagent-detail-section is-final-reply">
               <div className="ra-subagent-detail-section-header">
                 <span>{tr("✓ 最终回复 · 已自动注入主智能体上下文")}</span>
-                <code>{tr("&lt;subagent_notification&gt;")}</code>
+                <code>{tr("<subagent_notification>")}</code>
               </div>
               {selected.final_reply && (
                 <div className="ra-subagent-final-reply-prose">
@@ -1114,7 +1114,7 @@ export function SubagentRightDrawer({
               )}
               {selected.notification_payload && (
                 <details className="ra-subagent-notif-details">
-                  <summary>{tr("查看原始 &lt;subagent_notification&gt; 结构化载荷")}</summary>
+                  <summary>{tr("查看原始 <subagent_notification> 结构化载荷")}</summary>
                   <pre className="ra-subagent-notif-pre">
                     {`<subagent_notification>\n${JSON.stringify(
                       selected.notification_payload,
