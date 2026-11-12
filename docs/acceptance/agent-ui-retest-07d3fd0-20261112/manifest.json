@@ -1,0 +1,62 @@
+[
+  {
+    "file": "01-prompt.png",
+    "sha256": "b50baee9ebfcd529b1da5f3ec28a44ec1461ede4c1f5f925d150d31ea108cd1a",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  },
+  {
+    "file": "02-result.png",
+    "sha256": "9bab423f1904bed0bd93b9233264449d48f5b0498d54bc0956e160a7229fc831",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  },
+  {
+    "file": "03-loop-running.png",
+    "sha256": "f1c3c878cf1597fe380988e5f1cce6aa14ee69a47492523034ce8d5848173d24",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  },
+  {
+    "file": "04-stopped.png",
+    "sha256": "d3143d85701e4e82d961a1e53ee86a92ccd2a7d4f5cff44e8c4914847f60440f",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  },
+  {
+    "file": "05-all-operations.png",
+    "sha256": "4c816e8617f2dea91bcc707bc000e050e8d97f4d5224a12a7c226cc93a6bb73c",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  },
+  {
+    "file": "06-restored.png",
+    "sha256": "13f77a0843a547ab0807d6b1723c5166f42ef21b1673ae3375c14c0d129b48b0",
+    "crop": [
+      490,
+      32,
+      1281,
+      831
+    ]
+  }
+]
