@@ -3085,8 +3085,9 @@ class AgentRuntime(AgentLoop):
                     "The secure form already collects the endpoint and credential. "
                     "Do not mix these field types or ask for secrets in chat."
                 )
-            if call["name"] == "ryn_update_plan" and code in {"agent_goal_revision_conflict", "agent_invalid_control_proposal"}:
+            if call["name"] == "ryn_update_plan" and code in {"agent_goal_revision_conflict", "agent_invalid_control_proposal", "agent_plan_revision_conflict"}:
                 result.update(expected_goal_revision=current["goal"]["revision"],
+                              expected_plan_revision=current["plan"]["revision"],
                               allowed_criterion_ids=[item["id"] for item in current["criteria"]])
             if call["effect"] == "read" and read_connection:
                 from .diagnostics import safe_label

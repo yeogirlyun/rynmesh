@@ -127,6 +127,48 @@ def test_actual_tool_exports_then_verifies_and_never_overwrites(local):
         tools.preview("ryn_table_export", export, context)
 
 
+def calculation_receipt(local, **override):
+    tools, context, workspace, state = local
+    (workspace / "source.csv").write_bytes(CSV)
+    args = {"source_path": "source.csv", "recipe": RECIPE}
+    report = tools.perform("ryn_table_calculate", args, context, lambda: False)
+    row = state.read()["tasks"][context["task_id"]]
+    receipt = {"id": "receipt_calc", "operation_id": "calc", "tool": "ryn_table_calculate", "status": "confirmed",
+               "goal_revision": row["goal"]["revision"], "scope_revision": row["scope_revision"],
+               "context_epoch": row.get("context_epoch", 0), "arguments": copy.deepcopy(args), "result": report, **override}
+    state.transaction(lambda data: data["tasks"][context["task_id"]].setdefault("receipts", []).append(receipt))
+    return report
+
+
+def test_export_reuses_exact_calculation_receipt_without_model_repeating_recipe(local):
+    tools, context, workspace, _ = local
+    report = calculation_receipt(local)
+    args = {"calculation_receipt_id": "receipt_calc", "path": "report.xlsx"}
+    result = execute(tools, context, "ryn_table_export", args, "receipt-export")
+    assert result["readback_verified"] and result["calculation"]["calculation_sha256"] == report["calculation_sha256"]
+    assert (workspace / "report.xlsx").read_bytes() == export_bytes(calculate(CSV, ".csv", RECIPE), ".xlsx")
+    (workspace / "source.csv").write_bytes(CSV.replace(b"0.1,0.2", b"0.1,0.3"))
+    with pytest.raises(AgentToolRejected):
+        tools.preview("ryn_table_export", {**args, "path": "changed.xlsx"}, context)
+    assert not (workspace / "changed.xlsx").exists()
+
+
+@pytest.mark.parametrize("override", [{"status": "failed"}, {"goal_revision": 99}, {"scope_revision": 99},
+                                      {"context_epoch": 99}, {"result": {"status": "failed"}}])
+def test_export_receipt_requires_success_and_current_task_binding(local, override):
+    tools, context, _, _ = local
+    calculation_receipt(local, **override)
+    with pytest.raises(AgentToolRejected, match="agent_table_calculation_receipt_invalid"):
+        tools.preview("ryn_table_export", {"calculation_receipt_id": "receipt_calc", "path": "report.xlsx"}, context)
+
+
+def test_export_rejects_unknown_receipt_mixed_modes_and_missing_explicit_fields(local):
+    tools, context, _, _ = local
+    for args in [{"calculation_receipt_id": "someone-elses-receipt"}, {"calculation_receipt_id": "receipt_calc", "recipe": RECIPE}, {}]:
+        with pytest.raises(AgentToolRejected):
+            tools.preview("ryn_table_export", {**args, "path": "report.xlsx"}, context)
+
+
 def test_changed_input_or_rules_invalidate_export_fingerprint(local):
     tools, context, workspace, _ = local
     source = workspace / "source.csv"
