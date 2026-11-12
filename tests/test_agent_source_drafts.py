@@ -296,7 +296,8 @@ def test_real_runtime_source_workflow_approvals_and_registered_verifiers(setup, 
     runtime = AgentRuntime(AgentStore(store.home / "source-agent", peer_box.load_or_create_messaging_key(store.home / "messaging.x25519")),
                            Model(), tools, catalog, consumer_node_id=initial_context["consumer_node_id"])
     app.state.agent_runtime = runtime
-    runtime.update_settings({"enabled": True, "model_id": "fixture"})
+    # This workflow tests the optional independent verification, which is off by default.
+    runtime.update_settings({"enabled": True, "model_id": "fixture", "verify_text_responses": True})
     task = runtime.create({"message": "Configure and test this source with both models; keep them private.",
                            "budget_limits": {"max_total_model_calls": model_budget}})
     expose(runtime, task["id"], ['ryn_prepare_source_draft', 'ryn_test_source_draft', 'ryn_commit_source_draft'])

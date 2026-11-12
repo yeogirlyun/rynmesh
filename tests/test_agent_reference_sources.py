@@ -144,12 +144,22 @@ def input_port(node, monkeypatch):  # noqa: F811
 
 def test_native_input_refreshes_only_sanctioned_binding_and_has_no_secret(input_port):
     runtime, task, gate, meter, call, state = input_port
-    context_before = copy.deepcopy(gate.context)
+    # Host callbacks (e.g. _admit_extension_policy) are compared as the same bound
+    # callables; a deepcopy would rebind them to a copied runtime.
+    callbacks_before = {k: v for k, v in gate.context.items() if callable(v)}
+    context_before = copy.deepcopy({k: v for k, v in gate.context.items() if not callable(v)})
     result = gate.execute(call)
     row = runtime.store.read()["tasks"][task["id"]]
     assert row["status"] == "queued" and not row["pending_input"] and state["http"] == [200]
     assert gate.context["control_revision"] == context_before["control_revision"] + 3 == meter.control_revision
-    assert {k: v for k, v in gate.context.items() if k != "control_revision"} == {k: v for k, v in context_before.items() if k != "control_revision"}
+    assert {k: v for k, v in gate.context.items() if k != "control_revision" and not callable(v)} == {k: v for k, v in context_before.items() if k != "control_revision"}
+    # The only callback, the extension-policy admitter, is re-bound to the refreshed
+    # control revision and nothing else.
+    assert set(callbacks_before) == {k for k, v in gate.context.items() if callable(v)} == {"_admit_extension_policy"}
+    admit, admit_before = gate.context["_admit_extension_policy"], callbacks_before["_admit_extension_policy"]
+    assert admit.runtime is admit_before.runtime and admit.row["id"] == admit_before.row["id"]
+    assert admit.selected["control_revision"] == gate.context["control_revision"]
+    assert {**admit.selected, "control_revision": None} == {**admit_before.selected, "control_revision": None}
     assert result["grants_permission"] is False and result["credential"]["has_credential"] is True
     assert state["secret"] not in json.dumps([result, gate.events, row])
     meter.guard()

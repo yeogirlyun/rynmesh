@@ -42,13 +42,13 @@ def test_reads_from_one_response_run_concurrently_in_one_step(tmp_path, monkeypa
     active, peak, original = [0], [0], local_tools.LocalTools.perform
     lock = threading.Lock()
 
-    def slow(self, name, args, context, cancelled):
+    def slow(self, name, args, context, cancelled, **options):
         with lock:
             active[0] += 1
             peak[0] = max(peak[0], active[0])
         time.sleep(0.3)
         try:
-            return original(self, name, args, context, cancelled)
+            return original(self, name, args, context, cancelled, **options)
         finally:
             with lock:
                 active[0] -= 1

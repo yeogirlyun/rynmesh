@@ -122,7 +122,11 @@ def stream_controls(request, model_id, *, timeout=240, poll=.1, settle_seconds=3
                 if events["control_revision"] != baseline:
                     result["unmet_trigger"] = "control_changed_before_pause"
                     break
-                if len(deltas) >= 10 and task["status"] == "running":
+                # Streamed text is persisted as coalesced checkpoints (the first
+                # delta at once, later ones at most every few seconds), so the
+                # trigger is "a durable delta of a still-running stream", not a
+                # count of raw provider chunks.
+                if deltas and task["status"] == "running":
                     # Use the observer's last seen control revision, not the
                     # changing event cursor or a freshly substituted revision.
                     paused = action(request, {**task, "control_revision": baseline}, "pause")
@@ -162,6 +166,7 @@ def stream_controls(request, model_id, *, timeout=240, poll=.1, settle_seconds=3
             result["cleanup_cancel_receipt"] = action(request, task, "cancel")
         result["task"] = request("GET", f"/api/local/agent/tasks/{task['id']}")
     result["text_delta_count_before_pause"] = len(deltas)
+    result["text_delta_chars_before_pause"] = sum(len(e["text"]) for e in deltas)
     result["stable_control_revision"] = baseline
     cancel_cursor = result.get("cancel_receipt", {}).get("event_cursor")
     result["metrics"] = {"dispatches_after_cancel": len(dispatches(result["task"], cancel_cursor)) if cancel_cursor is not None else None,

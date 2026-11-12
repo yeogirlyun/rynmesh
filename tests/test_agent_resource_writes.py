@@ -364,10 +364,14 @@ def test_baidu_netdisk_default_scope_creates_folder_and_uploads_workspace_file(t
 
     task = runtime.create({"message": "这个表格，能存到我的百度网盘吗？创建一个ryn文件夹，存进去"})
     runtime.store.transaction(lambda data: data["tasks"][task["id"]]["local_execution"].update(workspace_root=str(workspace)))
+    # Resource writes are loaded on demand: registered, then loaded through discovery.
+    needed = ["ryn_list_resource_roots", "ryn_list_resources", "ryn_create_directory", "ryn_upload_resource_file"]
+    assert set(needed) <= {spec["function"]["name"] for spec in runtime.tools.specs()}
+    expose(runtime, task["id"], needed)
     row = runtime.store.read()["tasks"][task["id"]]
 
     exposed_names = {spec["function"]["name"] for spec in runtime._specs(row)}
-    assert {"ryn_list_resource_roots", "ryn_list_resources", "ryn_create_directory", "ryn_upload_resource_file"} <= exposed_names
+    assert set(needed) <= exposed_names
 
     ctx = runtime._execution_context(row)
     assert len(ctx["resource_grants"]) == 1

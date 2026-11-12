@@ -30,18 +30,21 @@ def test_fitting_raw_discovery_evidence_does_not_spend_a_summary(tmp_path):
     evidence = json.loads(path.read_text(encoding="utf-8-sig"))["after"]["task"]
     runtime, model, _, _ = make_runtime(tmp_path, assistant("Discovery received; no business action yet."))
     runtime.tools = ManyTools()
-    runtime.update_settings({"max_context_chars": 12000})
+    # Today's prompt and control tools plus this exchange already take ~12.2 KB,
+    # so the cap is sized for the scenario rather than the historical 12000.
+    cap = 16000
+    runtime.update_settings({"max_context_chars": cap})
     task = runtime.create({"message": "Inspect the authorized resource; never change the source."})
     def seed(data):
         row = data["tasks"][task["id"]]
         row["messages"].extend(copy.deepcopy(evidence["messages"][1:3]))
         # Fill real owner-authority space until the complete request exceeds
         # the obsolete 80% trigger while staying strictly within the hard cap.
-        while request_size(runtime._context(row), runtime._specs(row)) <= 9700:
+        while request_size(runtime._context(row), runtime._specs(row)) <= cap * 0.8 + 100:
             row["messages"][0]["content"] += " Preserve the source."
     runtime.store.transaction(seed)
     before = runtime.store.read()["tasks"][task["id"]]
-    assert 9600 < request_size(runtime._context(before), runtime._specs(before)) < 12000
+    assert cap * 0.8 < request_size(runtime._context(before), runtime._specs(before)) < cap
     advance(runtime)
     assert len(model.calls) == 1 and model.calls[0][2]
     assert model.calls[0][1][-2:] == [{k: v for k, v in m.items() if k != "context_epoch"}

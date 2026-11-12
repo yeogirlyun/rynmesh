@@ -67,8 +67,10 @@ def test_production_peer_stream_reaches_runtime_deltas_without_catalog_override(
         folded = fold_spy(monkeypatch)
         runtime.run_once()
         saved = runtime.get(task["id"])
-        # All 12 streamed deltas were persisted, then folded into the final reply.
-        assert len(folded) == 12
+        # All 12 streamed deltas reached the runtime; small deltas are coalesced into
+        # fewer persisted events without losing a byte, then folded into the reply.
+        assert "".join(e["text"] for e in folded) == "x" * 6144
+        assert 1 <= len(folded) <= 12
         assert not [e for e in saved["events"] if e["type"] == "text_delta"]
         assert saved["control_revision"] == task["control_revision"]
         assert saved["event_cursor"] > task["event_cursor"] and len(observed) == 1
@@ -115,7 +117,7 @@ def test_stream_controller_observes_real_runtime_control_sequence(controller, tm
     try:
         result = controller.stream_controls(request, "local:test", timeout=5, poll=.005, settle_seconds=.04)
         assert "unmet_trigger" not in result
-        assert result["text_delta_count_before_pause"] >= 10
+        assert result["text_delta_count_before_pause"] >= 1 and result["text_delta_chars_before_pause"] >= 640
         assert result["control"] == {"pause_accepted": True, "resume_accepted": True,
             "cancel_accepted": True, "cancelled_run_resumed_automatically": False}
         assert result["safe_checkpoint"]["run_state"] == "paused"

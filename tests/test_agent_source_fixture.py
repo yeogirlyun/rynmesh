@@ -88,7 +88,10 @@ def test_secure_owner_form_actual_http_probes_and_saved_private_models(node):
         catalog = SimpleNamespace(list_models=lambda: [{"id": "fixture", "available": True, "agent_supported": True}])
         runtime = install_agent(app, store=store, home=store.home, workers=BackgroundWorkerRegistry(), local_control=owner,
             messaging_key=peer_box.load_or_create_messaging_key(store.home / "messaging.x25519"), integrations=(Model(), tools, catalog))
-        runtime.update_settings({"enabled": True, "model_id": "fixture", "max_steps": 24})
+        # The saved models are checked by the optional independent verification (off by default).
+        # C01 checks the owner approval of the commit, so ask before changes (default is automatic).
+        runtime.update_settings({"enabled": True, "model_id": "fixture", "max_steps": 24, "verify_text_responses": True,
+                                 "permission_mode": "confirm_changes"})
         case = next(c for c in json.loads((Path(__file__).resolve().parents[1] / "docs/acceptance/ryn-agent-delivery/cases-v1.json").read_text(encoding="utf-8"))["cases"] if c["id"] == "C01")
         task = runtime.create({"message": case["prompt"]})
         expose(runtime, task["id"], ['ryn_prepare_source_draft', 'ryn_test_source_draft', 'ryn_commit_source_draft'])
