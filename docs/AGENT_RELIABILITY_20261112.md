@@ -9,6 +9,10 @@ claim to fix every model reasoning failure or to replace the existing runtime.
 
 ## What is implemented
 
+The subsequent [shared planning increment](AGENT_PLANNING_20261112.md) adds tracked
+progress, dependency validation, reasoned replanning and receipt-based table export
+to the same runtime. It does not replace these recovery or verification contracts.
+
 ### Conversation continuation
 
 When existing compaction cannot fit another owner message, creation of the child
