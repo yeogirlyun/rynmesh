@@ -159,7 +159,8 @@ class _FakeSuspendedPopen:
                     self._idx += 1
                     return line
                 if wait_for_kill:
-                    parent._eof_event.wait(timeout=0.5)
+                    # A live worker keeps stdout open; EOF only after kill/close/exit.
+                    parent._eof_event.wait(timeout=30.0)
                 return b""
 
             def close(self) -> None:
@@ -1183,7 +1184,8 @@ def test_manager_session_lock_order_concurrent_startup_quarantine_and_single_fli
 
     def _status_observer() -> None:
         try:
-            while not stop_observer.is_set():
+            # Poll concurrently, but yield so the starter is not GIL-starved.
+            while not stop_observer.wait(0.001):
                 mgr1.get_status()
                 mgr1.get_session("task_startup_quarantine")
         except BaseException as exc:
@@ -1229,15 +1231,25 @@ def test_manager_session_lock_order_concurrent_startup_quarantine_and_single_fli
     case2_procs: list[_FakeSuspendedPopen] = []
 
     class _GatedStdoutPipe(io.BytesIO):
-        def __init__(self, line: bytes) -> None:
+        def __init__(self, line: bytes, proc: _FakeSuspendedPopen) -> None:
             super().__init__(line)
             self._gated = True
+            self._proc = proc
 
         def readline(self, size: int = -1) -> bytes:
             if self._gated:
                 self._gated = False
                 gate_ready.wait(timeout=5.0)
-            return super().readline(size)
+            line = super().readline(size)
+            if not line:
+                # Like a live worker, stay open after ready until killed or closed;
+                # an instant EOF would race the starter and read as a lost worker.
+                self._proc._eof_event.wait(timeout=30.0)
+            return line
+
+        def close(self) -> None:
+            self._proc._eof_event.set()
+            super().close()
 
     def _popen_case2(cmd: list[str], **kwargs: Any) -> _FakeSuspendedPopen:
         env = kwargs["env"]
@@ -1259,7 +1271,7 @@ def test_manager_session_lock_order_concurrent_startup_quarantine_and_single_fli
             + "\n"
         ).encode("utf-8")
         proc = _FakeSuspendedPopen(pid=pid_val, handle=0x2345, stdout_lines=[])
-        proc.stdout = _GatedStdoutPipe(ready_line)
+        proc.stdout = _GatedStdoutPipe(ready_line, proc)
         case2_procs.append(proc)
         popen_entered.set()
         return proc
@@ -1326,7 +1338,7 @@ def test_manager_session_lock_order_concurrent_startup_quarantine_and_single_fli
             + "\n"
         ).encode("utf-8")
         proc = _FakeSuspendedPopen(pid=pid_val, handle=0x3456, stdout_lines=[])
-        proc.stdout = _GatedStdoutPipe(ready_line)
+        proc.stdout = _GatedStdoutPipe(ready_line, proc)
         case3_procs.append(proc)
         popen_entered.set()
         return proc
