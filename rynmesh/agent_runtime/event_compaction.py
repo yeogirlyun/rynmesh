@@ -124,6 +124,8 @@ def continuation_summary(row: dict[str, Any], *, limit: int = 12000) -> str:
         parts.append("Earlier summary:\n" + checkpoint["content"].strip()[:limit // 2])
     exchanges: list[str] = []
     for message in row.get("messages", []):
+        if message.get("role") != "user" and message.get("context_epoch", 0) != row.get("context_epoch", 0):
+            continue
         content = message.get("content")
         if not isinstance(content, str) or not content.strip():
             continue

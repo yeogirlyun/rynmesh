@@ -22,6 +22,7 @@ from . import (
     checkpoint_refs,
     context_compaction,
     diagnostic_log,
+    event_compaction,
     image_capabilities,
     memory_integration,
     memory_runtime,
@@ -29,13 +30,18 @@ from . import (
     output_policy,
     projects,
     request_context,
-    retry_policy,
     results,
+    retry_policy,
     subagents,
     tool_menu,
     verification,
 )
-from .execution_policy import OWNER_DENIED_CORRECTION, PERMISSION_DENIED_CORRECTION, classify_operation, decide
+from .execution_policy import (
+    OWNER_DENIED_CORRECTION,
+    PERMISSION_DENIED_CORRECTION,
+    classify_operation,
+    decide,
+)
 from .prompt import (
     INTERNAL_NAMES,
     INTERNAL_SPECS,
@@ -43,7 +49,6 @@ from .prompt import (
     plan_message,
     provider_messages,
 )
-from . import event_compaction
 from .protocol import digest, event, event_result, model_retry_authority, now, sanitized, task
 from .store import (
     READ_FAILED_THREE_TIMES_CORRECTION,
@@ -422,9 +427,9 @@ class AgentLoop:
                             if isinstance(parsed_tool, dict):
                                 existing_note = parsed_tool.get("server_note")
                                 parsed_tool["server_note"] = f"{existing_note}\n{wrap_up_note}" if existing_note else wrap_up_note
-                                Candidate_msgs = [*messages[:idx], {**msg, "content": encoded(parsed_tool).decode()}, *messages[idx + 1:]]
-                                if self._request_context_bytes(selected, Candidate_msgs, specs) <= capacity:
-                                    messages = Candidate_msgs
+                                candidate_msgs = [*messages[:idx], {**msg, "content": encoded(parsed_tool).decode()}, *messages[idx + 1:]]
+                                if self._request_context_bytes(selected, candidate_msgs, specs) <= capacity:
+                                    messages = candidate_msgs
                                     injected = True
                                 break
                         except Exception:
@@ -1383,6 +1388,10 @@ class AgentLoop:
 
     @staticmethod
     def _read_retries_exhausted(row: dict, call: dict, pending: int = 0, limit: int = 3) -> bool:
+        from .read_reliability import failure_count, file_target
+        target = file_target(row, call)
+        if target is not None:
+            return failure_count(row, target) + pending >= limit
         # pending counts a failure of this same read that is not in the receipts yet.
         failures = pending
         arguments_hash = digest(call["arguments"])
@@ -1493,6 +1502,8 @@ class AgentLoop:
             except ValidationError:
                 raise AgentError("agent_invalid_tool_call") from None
             subagents.check_subagent_tool_policy(selected, call["name"], call["arguments"])
+            from .read_reliability import check_shell_retry
+            check_shell_retry(selected, call)
             preview = None
             if call["effect"] == "write" and hasattr(self.tools, "preview"):
                 preview_ctx = self._execution_context(selected, call["operation_id"]) if meta.get("scope_context_supported") else None
