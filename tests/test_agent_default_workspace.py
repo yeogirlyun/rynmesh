@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from test_agent_runtime import advance, assistant, make_runtime
@@ -37,7 +38,9 @@ def test_fresh_task_can_create_and_read_file_without_directory_setup(tmp_path):
     assert root.is_dir()
     assert runtime.settings()['workspace_root'] == ''
     context = runtime._execution_context(runtime.store.read()['tasks'][task['id']])
-    tools = LocalTools(runtime.store, lambda: OperationLedger(tmp_path))
+    # Integrations build LocalTools from the node store, whose home holds write-review baselines.
+    tools = LocalTools(SimpleNamespace(home=tmp_path / 'home'), lambda: OperationLedger(tmp_path))
+    tools.store = runtime.store  # AgentRuntime binds the agent store the same way.
     args = {'path': 'drawing.svg', 'content': '<svg xmlns="http://www.w3.org/2000/svg"/>'}
     tools.execute('ryn_file_write', args, operation_id='default-output', context=context,
                   expected_preview=tools.preview('ryn_file_write', args, context), cancelled=lambda: False)

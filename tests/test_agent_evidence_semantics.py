@@ -125,7 +125,8 @@ def test_effective_model_context_budget_omits_optional_metadata_before_raw_evide
 
     runtime, *_ = make_runtime(tmp_path)
     model = runtime.catalog.list_models()[0]
-    runtime.catalog.list_models = lambda: [{**model, "context_window": 2500}]
+    # The full output setting is reserved, so give the small window a small output cap.
+    runtime.catalog.list_models = lambda: [{**model, "context_window": 2500, "max_output_tokens": 342}]
     receipt = {"id": "read", "tool": "ryn_inspect_services", "effect": "read", "status": "confirmed",
                "goal_revision": 1, "context_epoch": 0, "result": remote_catalog()}
     row = {"goal": {"revision": 1, "constraints": []}, "model_id": "local:test",
@@ -133,7 +134,7 @@ def test_effective_model_context_budget_omits_optional_metadata_before_raw_evide
            "verification_evidence": [], "events": [], "receipts": [receipt],
            "limits": {"max_context_chars": 120000}}
     effective_limit = runtime._context_limit(row)
-    assert effective_limit == 4940
+    assert effective_limit == (2500 - 342 - 512) * 3 == 4938  # (window - output - framing) * bytes/token
     unrestricted = checker_messages(row)
     assert len(encoded(unrestricted)) > effective_limit
     bounded = checker_messages(row, context_limit=effective_limit)

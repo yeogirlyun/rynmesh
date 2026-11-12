@@ -390,7 +390,8 @@ def test_whole_closure_handle_pinning_and_windows_sharing_barriers(
         try:
             with pytest.raises(JsResourceError) as exc_dir_id:
                 dev_lease.revalidate_critical_files()
-            assert exc_dir_id.value.code == "ryn_js_resource_pinned_identity_mismatch"
+            # The handle check reports a changed volume/file id as a changed resource.
+            assert exc_dir_id.value.code == "ryn_js_resource_file_changed"
         finally:
             dev_lease._pinned_directories["package"] = orig_pkg_dir_pin
 
@@ -798,7 +799,8 @@ def test_unconfirmed_child_exit_retains_lease_pins_in_quarantine_until_exit_conf
     # 1. Closing stdout (EOF) while child is still alive (proc_1.poll() is None) must NOT close the lease
     session_1._on_stdout_eof()
     assert proc_1.poll() is None
-    assert session_1.status == "closed"
+    # Unexpected EOF from a live worker is a lost worker, not an orderly close.
+    assert session_1.status == "lost"
     assert session_1.actual_process_identity_verified is False
     assert session_1.runtime_handshake_verified is False
     assert lease_1.closed is False
@@ -948,7 +950,8 @@ def test_manager_live_status_tracks_active_sessions_and_rejects_relabelled_dev_l
 
     # Part B: Production manager rejects a relabelled source_dev lease and any custom hook BEFORE Popen
     install_dir = tmp_path / "InstallAppRoot"
-    installed_profile_dir = install_dir / "resources" / "js-runtime" / "win32-x64"
+    installed_profile_dir = install_dir / "computer-use" / "js-runtime" / "win32-x64"  # fixed installed sidecar root
+    installed_profile_dir.parent.mkdir(parents=True, exist_ok=False)
     prepare_js_runtime_profile(**fixture, output_profile_dir=installed_profile_dir)
 
     spawn_before_prod_checks = len(spawned_procs)
@@ -1051,13 +1054,18 @@ def test_manager_live_status_tracks_active_sessions_and_rejects_relabelled_dev_l
             expected_profile_root=installed_profile_dir,
             expected_spec=prep.expected_spec,
         ) is False
-        assert manager_mod._verify_host_installed_production_lease(external_prod_lease) is False
+        assert manager_mod._is_host_installed_production_lease(external_prod_lease) is False
+        # The enforcing form refuses (and closes) the lease instead of returning False.
+        with pytest.raises(JsResourceError) as exc_external:
+            manager_mod._verify_host_installed_production_lease(external_prod_lease)
+        assert exc_external.value.code == "ryn_js_resource_invalid_mode"
+        assert external_prod_lease.closed is True
 
     # 2. The private host loader opens from the fixed installed root and is admitted, but any
     #    dataclasses.replace mutation on lease.profile (preserving profile_digest) immediately
     #    invalidates both is_verified_production_lease and _verify_host_installed_production_lease!
     with manager_mod._open_production_lease_from_host() as host_prod_lease:
-        assert manager_mod._verify_host_installed_production_lease(host_prod_lease) is True
+        assert manager_mod._verify_host_installed_production_lease(host_prod_lease) is host_prod_lease
         orig_profile = host_prod_lease.profile
 
         for mutated_profile in (
@@ -1079,7 +1087,7 @@ def test_manager_live_status_tracks_active_sessions_and_rejects_relabelled_dev_l
             ),
             dataclasses.replace(
                 orig_profile,
-                total_files=orig_profile.total_files + 1,
+                node_bytes=orig_profile.node_bytes + 1,
             ),
         ):
             assert mutated_profile.profile_digest == orig_profile.profile_digest
@@ -1090,10 +1098,10 @@ def test_manager_live_status_tracks_active_sessions_and_rejects_relabelled_dev_l
                 expected_profile_root=installed_profile_dir,
                 expected_spec=prep.expected_spec,
             ) is False
-            assert manager_mod._verify_host_installed_production_lease(host_prod_lease) is False
+            assert manager_mod._is_host_installed_production_lease(host_prod_lease) is False
 
         object.__setattr__(host_prod_lease, "profile", orig_profile)
-        assert manager_mod._verify_host_installed_production_lease(host_prod_lease) is True
+        assert manager_mod._verify_host_installed_production_lease(host_prod_lease) is host_prod_lease
 
 
 def test_manager_session_lock_order_concurrent_startup_quarantine_and_single_flight(

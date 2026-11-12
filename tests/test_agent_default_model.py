@@ -197,8 +197,12 @@ def test_default_task_create_rejects_a_configuration_race(tmp_path):
     task, _ = waiting(runtime, model)
     approve(runtime, task["id"])
     advance(runtime)
+    raced = []
     def raced_catalog():
-        runtime.update_settings({"max_steps": 19})
+        # Race once: update_settings itself reads the catalog too.
+        if not raced:
+            raced.append(True)
+            runtime.update_settings({"max_steps": 19})
         return copy.deepcopy(rows)
     runtime.catalog.list_models = raced_catalog
     with pytest.raises(AgentError, match="settings_revision_conflict"):
