@@ -401,3 +401,21 @@ def test_search_indexes_canonical_camel_case_names():
     specs = {'mcp_financialdashboard': {'function': {'name': 'mcp_financialdashboard', 'description': '查询财务仪表盘汇总', 'parameters': {}}}}
     metadata = lambda _: {'extension_binding': {'original_tool_name': 'pl_financialDashboard'}}
     assert tool_menu._bm25_rank(specs, metadata, 'financial dashboard') == ['mcp_financialdashboard']
+
+
+def test_small_window_with_small_registry_keeps_control_schemas_lazy():
+    # Small windows hide plan/input/result schemas behind discovery. A registry
+    # smaller than those schemas must not pick full mode and send them all.
+    from rynmesh.agent_runtime.loop import ALL_INTERNAL_SPECS
+    business = Tools().specs()
+    kwargs = {"max_context_bytes": 11600, "authority_bytes": 7600, "epoch": 0, "goal_revision": 1}
+    exposed, state = tool_menu.project(business, ALL_INTERNAL_SPECS, None, **kwargs)
+    assert state["mode"] == "directory" and state["lazy_controls"] is True
+    assert [spec["function"]["name"] for spec in exposed] == [tool_menu.NAME]
+    full = [*business, *(spec for spec in ALL_INTERNAL_SPECS if spec["function"]["name"] in
+                          {"ryn_update_plan", "ryn_request_input", "ryn_read_result"})]
+    assert len(encoded(exposed)) * 3 < len(encoded(full))  # ~0.9 KB instead of ~3.4 KB
+    # Controls stay loadable through discovery.
+    result, loaded = tool_menu.discover(business, ALL_INTERNAL_SPECS, lambda name: {"effect": "read"}, state,
+                                        {"load": ["ryn_update_plan"]}, capacity_bytes=tool_menu.capacity(11600, 7600))
+    assert "ryn_update_plan" in loaded["loaded_names"], result

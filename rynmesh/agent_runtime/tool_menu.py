@@ -160,7 +160,11 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
     base = [*internal, directory_spec(business_specs)]
     target = min(8192, max_context_bytes // 2, max_context_bytes - authority_bytes - 2048)
     # For small registries a discovery schema would cost more than all tools.
-    directory_useful = len(encoded(all_specs)) > len(encoded(base))
+    # Small windows keep control schemas lazy (see below), so their directory
+    # costs only the discovery schema; comparing with every control schema
+    # picked full mode there and spent kilobytes the history needed.
+    small_lazy_base = [directory_spec(all_specs)] if internal and max_context_bytes <= 16000 else base
+    directory_useful = len(encoded(all_specs)) > len(encoded(small_lazy_base))
     mode = "directory" if (len(encoded(full_specs)) > limit or
                            directory_useful and (len(encoded(full_specs)) > target or prior.get("mode") == "directory")) else "full"
     # In a small window, unused plan/input/result schemas can occupy more
