@@ -74,8 +74,13 @@ fn parse(bytes: &[u8]) -> Result<Vec<Service>, String> {
 }
 
 fn installed() -> Result<(PathBuf, Vec<Service>), String> {
-    let exe = std::env::current_exe().map_err(|_| "plugin_service_directory_unavailable")?;
-    let root = exe.parent().ok_or("plugin_service_directory_unavailable")?.join("plugin-services");
+    let root = match std::env::var_os("RYN_PLUGIN_SERVICES_DIR").filter(|v| !v.is_empty()) {
+        Some(dir) => PathBuf::from(dir),
+        None => {
+            let exe = std::env::current_exe().map_err(|_| "plugin_service_directory_unavailable")?;
+            exe.parent().ok_or("plugin_service_directory_unavailable")?.join("plugin-services")
+        }
+    };
     let file = root.join("services.json");
     if !file.exists() { return Ok((root, vec![])); }
     if fs::metadata(&file).map_err(|_| "plugin_service_config_unreadable")?.len() > 65536 {
@@ -99,6 +104,17 @@ fn plugins(port: u16) -> Result<Vec<serde_json::Value>, String> {
 
 fn listening(port: u16) -> bool {
     TcpStream::connect_timeout(&([127,0,0,1], port).into(), Duration::from_millis(200)).is_ok()
+}
+
+fn wait_released(port: u16, limit: Duration) {
+    let deadline = Instant::now() + limit;
+    while listening(port) && Instant::now() < deadline { std::thread::sleep(Duration::from_millis(50)); }
+}
+
+/// The running process was started from another configuration (a switched update
+/// pack): restart it now rather than at the next periodic attempt.
+fn changed(state: &PluginServices, s: &Service) -> bool {
+    state.children.lock().unwrap().get(&s.id).is_some_and(|owned| owned.spec != *s)
 }
 
 fn healthy(s: &Service) -> bool {
@@ -163,6 +179,7 @@ impl PluginServices {
     fn ensure(&self, root: &Path, s: &Service, node_port: u16) -> Result<(), String> {
         let mut children = self.children.lock().unwrap();
         if self.stopping.load(Ordering::SeqCst) { return Err("plugin_service_stopping".into()); }
+        let mut replaced = false;
         if let Some(owned) = children.get_mut(&s.id) {
             if owned.spec == *s && matches!(owned.child.try_wait(), Ok(None)) {
                 let ready = healthy(s);
@@ -174,8 +191,12 @@ impl PluginServices {
                 }
                 log::warn!("plugin service {}: restarting unresponsive owned process", s.id);
             }
+            if owned.spec != *s { log::info!("plugin service {}: configuration changed, restarting", s.id); }
             children.remove(&s.id);
+            replaced = true;
         }
+        // Our own process releases its port a moment after it is stopped.
+        if replaced { wait_released(s.port, Duration::from_secs(5)); }
         // Never adopt/terminate a foreign listener just because it uses the desired port.
         if listening(s.port) { return Err("plugin_service_port_in_use".into()); }
         let credentials = if s.mcp_servers.is_empty() { None } else {
@@ -194,7 +215,7 @@ impl PluginServices {
                 }
                 children.insert(s.id.clone(), owned); return Ok(());
             }
-            std::thread::sleep(Duration::from_millis(200));
+            std::thread::sleep(Duration::from_millis(100));
         }
         Err("plugin_service_start_timeout".into())
     }
@@ -218,6 +239,28 @@ pub async fn ensure_plugin_service(app: tauri::AppHandle, plugin_id: String) -> 
             return Err("plugin_service_disabled".into());
         }
         app.state::<PluginServices>().ensure(&root, service, app.state::<crate::node::NodeState>().port).map_err(|error| {
+            log::warn!("plugin service {}: {error}", service.id);
+            error
+        })?;
+        Ok(true)
+    }).await.map_err(|_| "plugin_service_start_failed")?
+}
+
+/// Immediately restart an installer-provided plugin service after its update pack
+/// switches in, without waiting for the periodic supervisor poll.
+#[tauri::command]
+pub async fn restart_plugin_service(app: tauri::AppHandle, service_id: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (root, services) = installed()?;
+        let Some(service) = services.iter().find(|s| s.id == service_id) else { return Ok(false); };
+        let node_port = app.state::<crate::node::NodeState>().port;
+        let live = plugins(node_port)?;
+        let state = app.state::<PluginServices>();
+        if !live.iter().any(|p| plugin_matches(p, service)) {
+            state.children.lock().unwrap().remove(&service.id);
+            return Ok(false);
+        }
+        state.ensure(&root, service, node_port).map_err(|error| {
             log::warn!("plugin service {}: {error}", service.id);
             error
         })?;
@@ -250,6 +293,7 @@ pub async fn plugin_service_instance(app: tauri::AppHandle, plugin_id: String) -
 pub fn watch(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         let mut last_attempt = BTreeMap::<String, Instant>::new();
+        let mut last_spec = BTreeMap::<String, Service>::new();
         loop {
             let state = app.state::<PluginServices>();
             if state.stopping.load(Ordering::SeqCst) { break; }
@@ -258,18 +302,21 @@ pub fn watch(app: tauri::AppHandle) {
             if let Ok((root, services)) = installed() {
                 state.children.lock().unwrap().retain(|id, _| services.iter().any(|s| &s.id == id));
                 last_attempt.retain(|id, _| services.iter().any(|s| &s.id == id));
+                last_spec.retain(|id, _| services.iter().any(|s| &s.id == id));
                 if let Ok(live) = plugins(app.state::<crate::node::NodeState>().port) {
                     for service in &services {
                         if live.iter().any(|p| plugin_matches(p, service)) {
-                            if last_attempt.get(&service.id).is_none_or(|last| last.elapsed() >= Duration::from_secs(30)) {
+                            let spec_changed = last_spec.get(&service.id) != Some(service);
+                            if changed(&state, service) || spec_changed || last_attempt.get(&service.id).is_none_or(|last| last.elapsed() >= Duration::from_secs(30)) {
+                                last_spec.insert(service.id.clone(), service.clone());
                                 last_attempt.insert(service.id.clone(), Instant::now());
                                 if let Err(error) = state.ensure(&root, service, app.state::<crate::node::NodeState>().port) { log::warn!("plugin service {}: {error}", service.id); }
                             }
-                        } else { state.children.lock().unwrap().remove(&service.id); last_attempt.remove(&service.id); }
+                        } else { state.children.lock().unwrap().remove(&service.id); last_attempt.remove(&service.id); last_spec.remove(&service.id); }
                     }
                 }
             }
-            for _ in 0..50 { if state.stopping.load(Ordering::SeqCst) { return; } std::thread::sleep(Duration::from_millis(100)); }
+            for _ in 0..20 { if state.stopping.load(Ordering::SeqCst) { return; } std::thread::sleep(Duration::from_millis(100)); }
         }
     });
 }

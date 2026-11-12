@@ -76,6 +76,13 @@ fn directory(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
     Ok(path)
 }
+static PREFERENCES_PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+/// The node follows the same two switches for installer-provided plugin runtimes;
+/// it reads them from this file (see node_env).
+pub fn remember_preferences_path(app: &tauri::AppHandle) {
+    if let Ok(dir) = directory(app) { let _ = PREFERENCES_PATH.set(dir.join("preferences.json")); }
+}
+pub fn preferences_path() -> Option<&'static std::path::PathBuf> { PREFERENCES_PATH.get() }
 fn read_preferences(app: &tauri::AppHandle) -> Preferences {
     directory(app).ok().and_then(|p| std::fs::read(p.join("preferences.json")).ok())
         .and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default()

@@ -268,6 +268,39 @@ class PeerProviderService:
                 row["epoch"] = uuid.uuid4().hex
                 self._save()
 
+    async def access_token(self, plugin_id):
+        """Return ``(token, resource)`` of the provider's current sign-in.
+
+        For requests the provider's own server authorizes with this grant, such as
+        downloading its plugin runtime updates. Callers send the token only to the
+        resource's origin. A plugin signed in only through its connection gets
+        the provider session the same way the directory sync does."""
+        row = self._get(plugin_id)
+        if not row.get("session") and self.mcp_token_source is not None:
+            try:
+                await self.auto_sync(plugin_id)
+            except Exception:
+                pass
+        with self._lock:
+            lock = self._requests.setdefault(plugin_id, threading.Lock())
+        while not lock.acquire(blocking=False):
+            await asyncio.sleep(0.01)
+        try:
+            row = self._get(plugin_id, session=True)
+            session = row["session"]
+            if session["expires_at"] <= self.clock() + 60:
+                try:
+                    session = await self.oauth.refresh(session)
+                    with self._lock:
+                        self._current(plugin_id, row["epoch"])["session"] = session
+                        self._save()
+                except PeerProviderError:
+                    self._invalidate(plugin_id, row["epoch"])
+                    raise PeerProviderError("peer_provider_login_required") from None
+            return session["access_token"], row["config"]["url"]
+        finally:
+            lock.release()
+
     async def _request(self, plugin_id, method, suffix, body=None):
         # Calls can originate in independent worker event loops. A process lock
         # serializes refresh rotation, and epoch checks reject late old results.

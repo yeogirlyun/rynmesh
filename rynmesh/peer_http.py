@@ -2955,6 +2955,32 @@ def create_app(store: RynmeshStore | None = None):
 
     peer_providers.mcp_token_source = _mcp_token_for_plugin
 
+    # Installer-provided plugin runtimes update in the background; a runtime's
+    # downloads are authorized by its provider's sign-in.
+    from .node_apps.service_updates import install_service_update_routes
+
+    def _extension_store():
+        runtime = getattr(app.state, "agent_runtime", None)
+        return runtime.tools.extensions.store if runtime is not None else None
+
+    def _service_update_activity():
+        runtime = getattr(app.state, "agent_runtime", None)
+        if runtime is not None:
+            with runtime._active_lock:
+                if runtime._active_runs:
+                    return "agent_running"
+        return None
+
+    def _service_update_token(plugin_id: str):
+        import asyncio
+        return asyncio.run(peer_providers.access_token(plugin_id))
+
+    install_service_update_routes(
+        app, local_control=local_control,
+        token_source=_service_update_token,
+        extensions=_extension_store, activity=_service_update_activity,
+    )
+
     def refresh_peer_providers():
         import asyncio
         asyncio.run(peer_providers.refresh_directories())

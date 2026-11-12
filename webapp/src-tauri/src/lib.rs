@@ -122,6 +122,7 @@ pub fn run() {
             updates::desktop_update_install, updates::desktop_update_cancel, updates::desktop_update_preferences,
             updates::desktop_update_acknowledge,
             plugin_services::ensure_plugin_service,
+            plugin_services::restart_plugin_service,
             plugin_services::plugin_service_instance,
             desktop::desktop_status, desktop::desktop_action, localization::set_desktop_language,
             local_model::choose_local_model, drive_browser::open_drive_browser,
@@ -217,6 +218,7 @@ pub fn run() {
             if let Some(request) = system_apps::from_args(&args) { system_apps::launch(app.handle(), request); }
             else if !silent { system_apps::show_main_at_start(app.handle()); }
             open_requested_page(app.handle(), &args);
+            updates::remember_preferences_path(app.handle());
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 if let Err(e) = node::start(handle.state::<NodeState>().inner()) { log::error!("failed to start Ryn node: {e}"); }
@@ -263,6 +265,12 @@ pub fn run() {
         }
         if let RunEvent::ExitRequested { .. } = event {
             handle.state::<plugin_services::PluginServices>().stop();
+            // With "install when Ryn quits" on, a downloaded plugin runtime release
+            // becomes the one the next start runs (the node checks the switch).
+            if let Err(error) = node::request_within(handle.state::<NodeState>().port, "POST",
+                "/api/local/service-updates/quit", "{}", std::time::Duration::from_secs(20)) {
+                log::info!("plugin runtime updates on quit: {error}");
+            }
             // Only permanent shutdown sets this flag; manual restart never stops
             // the watchdog. After resume its next tick rechecks the node.
             handle.state::<NodeState>().stopping.store(true, Ordering::SeqCst);

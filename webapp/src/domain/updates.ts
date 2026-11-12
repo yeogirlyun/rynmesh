@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { nodeControlUrl } from "./nodeUrl";
+import { isTauriDesktop, nodeControlUrl } from "./nodeUrl";
 
 export interface DesktopUpdateStatus {
   currentVersion: string; availableVersion: string | null; notes: string | null;
@@ -27,6 +27,128 @@ export const desktopUpdates = {
   preferences: (value: { autoDownload?: boolean; installOnQuit?: boolean }) =>
     invoke<DesktopUpdateStatus>("desktop_update_preferences", value),
 };
+
+export type LocalizedLabel = string | Record<string, string> | null | undefined;
+
+export interface ServiceUpdateNotice {
+  version: string | null;
+  notes?: string | null;
+  at?: number | null;
+}
+
+export interface ServiceUpdateRow {
+  id: string;
+  name: LocalizedLabel;
+  plugins: string[];
+  plugin_names: string[];
+  auth_provider?: string | null;
+  auth_label?: LocalizedLabel;
+  publisher?: LocalizedLabel;
+  state: string;
+  current_version?: string | null;
+  available_version?: string | null;
+  notes?: string | null;
+  min_host?: string | null;
+  host_version?: string | null;
+  waiting_for?: string | null;
+  rolled_back_version?: string | null;
+  updated?: ServiceUpdateNotice | null;
+  downloaded: number;
+  total: number | null;
+  last_error?: string | null;
+  last_check?: number | null;
+}
+
+export interface ServiceUpdateStatus {
+  services: ServiceUpdateRow[];
+  auto_download?: boolean;
+  install_on_quit?: boolean;
+  last_error?: string | null;
+}
+
+export const SERVICE_UPDATE_CHANGED_EVENT = "ryn:service-update-changed";
+
+export function pickLocalizedLabel(value: LocalizedLabel, language: string, fallback = ""): string {
+  if (!value) return fallback;
+  if (typeof value === "string") return value;
+  const zh = language.toLowerCase().startsWith("zh");
+  if (zh) {
+    return value["zh-CN"] || value.zh || value.en || Object.values(value)[0] || fallback;
+  }
+  return value.en || value["en-US"] || value["zh-CN"] || Object.values(value)[0] || fallback;
+}
+
+function notifyServiceUpdateChanged(status: ServiceUpdateStatus) {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(SERVICE_UPDATE_CHANGED_EVENT, { detail: status }));
+  }
+}
+
+async function requestServiceUpdates(path = "", method: "GET" | "POST" = "GET"): Promise<ServiceUpdateStatus> {
+  const response = await fetch(nodeControlUrl(`/service-updates${path}`), {
+    method,
+    credentials: "include",
+    cache: "no-store",
+    headers: method === "POST" ? { "Content-Type": "application/json" } : undefined,
+    ...(method === "POST" ? { body: "{}" } : {}),
+  });
+  const value = await response.json();
+  if (!response.ok) throw new Error(typeof value.detail === "string" ? value.detail : "service_update_failed");
+  return value as ServiceUpdateStatus;
+}
+
+export const serviceUpdates = {
+  status: () => requestServiceUpdates(),
+  checkAll: async () => {
+    const status = await requestServiceUpdates("/check", "POST");
+    notifyServiceUpdateChanged(status);
+    return status;
+  },
+  check: async (id: string) => {
+    const status = await requestServiceUpdates(`/${encodeURIComponent(id)}/check`, "POST");
+    notifyServiceUpdateChanged(status);
+    return status;
+  },
+  /** Switch to the staged release immediately, restart only that plugin service,
+   *  and confirm the new revision is answering health checks. */
+  apply: async (id: string) => {
+    const switched = await requestServiceUpdates(`/${encodeURIComponent(id)}/apply?force=1`, "POST");
+    notifyServiceUpdateChanged(switched);
+    if (isTauriDesktop()) {
+      try {
+        await invoke<boolean>("restart_plugin_service", { serviceId: id });
+      } catch {
+        // Verification below still runs and rolls back if the new revision stays unhealthy.
+      }
+    }
+    const verified = await requestServiceUpdates(`/${encodeURIComponent(id)}/verify`, "POST");
+    if (isTauriDesktop() && verified.services.some((row) => row.id === id && row.state === "rolled_back")) {
+      try {
+        await invoke<boolean>("restart_plugin_service", { serviceId: id });
+      } catch {
+        // Supervisor loop will continue retrying the restored runtime if needed.
+      }
+    }
+    notifyServiceUpdateChanged(verified);
+    return verified;
+  },
+  verify: async (id: string) => {
+    const status = await requestServiceUpdates(`/${encodeURIComponent(id)}/verify`, "POST");
+    notifyServiceUpdateChanged(status);
+    return status;
+  },
+  retry: async (id: string) => {
+    const status = await requestServiceUpdates(`/${encodeURIComponent(id)}/retry`, "POST");
+    notifyServiceUpdateChanged(status);
+    return status;
+  },
+  acknowledge: async (id: string) => {
+    const status = await requestServiceUpdates(`/${encodeURIComponent(id)}/acknowledge`, "POST");
+    notifyServiceUpdateChanged(status);
+    return status;
+  },
+};
+
 export interface PluginUpdateSource {
   kind: "public" | "company"; url: string; public_key: string; auto_update: boolean; token_env?: string;
 }

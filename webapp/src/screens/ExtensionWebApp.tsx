@@ -4,6 +4,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAppContext } from '../appContext';
 import { agentExtensions, bootstrapCompanyBrowserSession, queryPluginTool, type ExtensionPlugin } from '../domain/agentExtensions';
 import { peerProviders } from '../domain/peerProviders';
+import { pickLocalizedLabel, SERVICE_UPDATE_CHANGED_EVENT, serviceUpdates, type ServiceUpdateRow, type ServiceUpdateStatus } from '../domain/updates';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { isTauriDesktop } from '../domain/nodeUrl';
@@ -28,7 +29,8 @@ export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true 
   pluginId: string; resolvedPlugin?: ExtensionPlugin; client: NodeClient; visible?: boolean;
 }) {
   const { i18n } = useTranslation();
-  const zh = (i18n.resolvedLanguage || i18n.language).startsWith('zh');
+  const language = i18n.resolvedLanguage || i18n.language || 'en';
+  const zh = language.startsWith('zh');
   const tx = (chinese: string, english: string) => zh ? chinese : english;
   const navigate = useNavigate();
   const [plugin, setPlugin] = useState<ExtensionPlugin | undefined>(resolvedPlugin);
@@ -37,6 +39,8 @@ export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true 
   const [reachable, setReachable] = useState(false);
   const [frameGeneration, setFrameGeneration] = useState(0);
   const [pageState, setPageState] = useState<'loading' | 'ready' | 'error' | 'timeout'>('loading');
+  const [updatingService, setUpdatingService] = useState<ServiceUpdateRow | null>(null);
+  const wasApplyingRef = useRef(false);
   const recoverableRoute = useRef('');
   const reportsLifecycle = COMPANY_PAGES.has(pluginId);
   // An open page is never replaced by an error for a slow or restarting service;
@@ -45,6 +49,46 @@ export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true 
   const frame = useRef<HTMLIFrameElement>(null);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
+
+  // Watch whether this plugin's shared local service pack is currently updating ("applying"),
+  // and reopen the plugin frame automatically as soon as the switch finishes.
+  useEffect(() => {
+    if (!isTauriDesktop() || !serviceUpdates?.status) return;
+    let active = true;
+    const applyStatus = (value: ServiceUpdateStatus | null | undefined) => {
+      if (!active || !value?.services) return;
+      const owned = value.services.find(row => row.plugins.includes(pluginId));
+      const applying = owned?.state === 'applying' ? owned : null;
+      setUpdatingService(applying);
+      if (applying) {
+        wasApplyingRef.current = true;
+        setError('');
+        setDegraded('');
+      } else if (wasApplyingRef.current) {
+        wasApplyingRef.current = false;
+        setError('');
+        setDegraded('');
+        setReachable(false);
+        setAttempt(v => v + 1);
+        setFrameGeneration(v => v + 1);
+      }
+    };
+    const poll = () => { serviceUpdates.status().then(applyStatus).catch(() => undefined); };
+    const onChanged = (event: Event) => {
+      const detail = (event as CustomEvent<ServiceUpdateStatus>).detail;
+      if (detail?.services) applyStatus(detail);
+      else poll();
+    };
+    poll();
+    const timer = window.setInterval(poll, 2000);
+    window.addEventListener(SERVICE_UPDATE_CHANGED_EVENT, onChanged);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener(SERVICE_UPDATE_CHANGED_EVENT, onChanged);
+    };
+  }, [pluginId]);
+
   const announceVisibility = () => {
     const target = frame.current?.contentWindow;
     if (!target || !plugin?.web_app) return;
@@ -52,11 +96,11 @@ export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true 
   };
   useEffect(announceVisibility, [visible]);
   useEffect(() => {
-    if (!reachable || !reportsLifecycle) return;
+    if (!reachable || !reportsLifecycle || updatingService) return;
     setPageState('loading');
     const timer = window.setTimeout(() => setPageState(state => state === 'loading' ? 'timeout' : state), 15000);
     return () => window.clearTimeout(timer);
-  }, [reachable, reportsLifecycle, frameGeneration]);
+  }, [reachable, reportsLifecycle, frameGeneration, updatingService]);
   useEffect(() => {
     if (!plugin?.web_app || !reportsLifecycle) return;
     const origin = new URL(plugin.web_app.url).origin;
@@ -92,12 +136,13 @@ export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true 
   }, [plugin?.web_app?.url, frameGeneration]);
   // Keep an already-open error page in sync with supervisor recovery.
   useEffect(() => {
+    if (updatingService) return;
     if (!['plugin_service_unhealthy', 'plugin_service_start_timeout', 'plugin_service_exited', 'connection'].includes(error)) return;
     const timer = window.setTimeout(() => {
       setError(''); setReachable(false); setAttempt(value => value + 1);
     }, 10000);
     return () => window.clearTimeout(timer);
-  }, [error, attempt]);
+  }, [error, attempt, updatingService]);
   useEffect(() => {
     let active = true;
     if (resolvedPlugin) {
@@ -115,7 +160,7 @@ export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true 
     return () => { active = false; controller.abort(); window.clearTimeout(timeout); };
   }, [pluginId, resolvedPlugin, attempt]);
   useEffect(() => {
-    if (!plugin?.enabled || !plugin.web_app) return;
+    if (!plugin?.enabled || !plugin.web_app || updatingService) return;
     let url: URL;
     try { url = new URL(plugin.web_app.url); } catch { setError('unavailable'); return; }
     if (url.origin === window.location.origin) { setError('origin'); return; }
@@ -170,7 +215,7 @@ export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true 
       .catch((reason) => { if (active) setError(typeof reason === 'string' && reason.startsWith('plugin_service_') ? reason : 'connection'); })
       .finally(() => window.clearTimeout(timeout));
     return () => { active = false; controller.abort(); window.clearTimeout(timeout); window.clearTimeout(monitor); };
-  }, [plugin, pluginId, attempt]);
+  }, [plugin, pluginId, attempt, updatingService]);
   useEffect(() => {
     if (!plugin?.enabled || !plugin.web_app) return;
     const origin = new URL(plugin.web_app.url).origin;
@@ -231,6 +276,20 @@ export function PluginWebApp({ pluginId, resolvedPlugin, client, visible = true 
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
   }, [plugin, pluginId, client, navigate]);
+
+  if (updatingService) {
+    const svcName = pickLocalizedLabel(updatingService.name, language, plugin?.title || updatingService.id);
+    const targetVersion = updatingService.available_version || updatingService.current_version || '';
+    return <div className="ryn-plugin-updating" role="status" aria-live="polite">
+      <span className="ryn-plugin-updating-ring" aria-hidden="true" />
+      <strong>{tx(`${svcName}正在更新到 ${targetVersion}…`, `Updating ${svcName} to ${targetVersion}…`)}</strong>
+      <p>{tx(
+        '大约 10 秒。更新完这个页面会自动重新打开，不用重新登录。Ryn 的其他功能可以照常使用。',
+        'Takes about 10 seconds. This page reopens automatically when done — no need to sign in again. Everything else in Ryn stays available.',
+      )}</p>
+    </div>;
+  }
+
   if (error) return <section style={{ padding: 24 }}>
     <p role="alert">{error === 'connection'
       ? tx('无法连接插件服务，请重试。', 'Could not connect to the plugin service. Please retry.')

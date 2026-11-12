@@ -178,6 +178,15 @@ fn node_env(port: u16) -> Vec<(String, String)> {
     if let Some(llama) = llama_runtime_dir() {
         env.push(("RYNMESH_LLAMA_DIR".into(), llama.to_string_lossy().into_owned()));
     }
+    // Installer-provided local plugin runtimes live next to the executable; the node
+    // keeps their update packs current (plugin_services.rs runs them) and follows
+    // the desktop's update switches.
+    if let Some(dir) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(|p| p.join("plugin-services"))) {
+        env.push(("RYN_PLUGIN_SERVICES_DIR".into(), env_or("RYN_PLUGIN_SERVICES_DIR", || dir.to_string_lossy().into_owned())));
+    }
+    if let Some(path) = crate::updates::preferences_path() {
+        env.push(("RYN_DESKTOP_UPDATE_PREFERENCES".into(), env_or("RYN_DESKTOP_UPDATE_PREFERENCES", || path.to_string_lossy().into_owned())));
+    }
     env
 }
 

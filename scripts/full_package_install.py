@@ -40,23 +40,8 @@ def migrate_finance_oauth_clients(store, declarations):
 
 def provision_skill_resources(store, payload, declarations):
     """Bind publisher assets only to matching inline defaults; preserve imported packages."""
-    current = store._read()['skills']
-    for declared in declarations['skills']:
-        sid = declared['id']
-        source = payload / 'company-skills' / sid
-        if not source.resolve().is_relative_to((payload / 'company-skills').resolve()):
-            raise ValueError('Invalid skill resource path')
-        skill = current.get(sid)
-        if (not source.is_dir() or not skill or skill.get('package_dir')
-                or skill.get('plugin_id') != declared.get('plugin_id')
-                or skill.get('content') != declared.get('content')):
-            continue
-        target = store.allocate_package_dir('skill', sid)
-        copy_new(source, target)
-        store.commit_imported_items(plugins=[], mcp_servers=[],
-            skills=[{**declared, 'package_dir': str(target)}])
-        if skill.get('enabled') or skill.get('explicitly_disabled'):
-            store.set_skill_enabled(sid, bool(skill.get('enabled')))
+    from rynmesh.node_apps.release_declarations import bind_skill_resources
+    return bind_skill_resources(store, declarations, payload / 'company-skills')
 
 
 def sha(path):
@@ -118,7 +103,7 @@ def copy_new(source, target):
                 stage.rename(target)
                 break
             except OSError as exc:
-                transient = os.name == 'nt' and (isinstance(exc, PermissionError) or getattr(exc, 'winerror', None) in {5,32,33})
+                transient = os.name == 'nt' and (isinstance(exc, PermissionError) or getattr(exc, 'winerror', None) in {5, 32, 33})
                 if not transient or attempt == 11:
                     raise
                 time.sleep(min(.05 * 2 ** attempt, 1.5))
@@ -265,32 +250,60 @@ Start-Sleep -Seconds 2;
 
 def configure_local_mcp_services(store, declarations, port):
     """Migrate only declared stock endpoints; never override customized URLs/auth."""
-    managed = []
-    for declaration in declarations.get('mcp_servers', []):
-        local = declaration.get('local_service') or {}
-        path = local.get('path', '')
-        if local.get('id') != 'company' or not path.startswith('/') or any(c in path for c in '?#\\'):
-            continue
-        endpoint = f'http://127.0.0.1:{port}{path}'
-        try:
-            server = store.get_mcp_server_internal(declaration['id'])
-        except Exception:
-            continue
-        if server.get('plugin_id') != declaration.get('plugin_id'):
-            continue
-        current = server.get('url')
-        # Any static bearer/auth customization is retained for owner review.
-        headers = server.get('secret_headers') or {}
-        if any(k.lower() == 'authorization' for k in headers) or server.get('bearer_token_env'):
-            continue
-        stock = set(local.get('legacy_urls', [])) | {declaration.get('url')}
-        if current != endpoint:
-            if current not in stock:
-                continue
-            store.upsert_mcp_server({'url': endpoint, 'auth': declaration.get('auth') or {}},
-                                    server_id=server['id'], expected_revision=server['revision'])
-        managed.append(server['id'])
-    return managed
+    from rynmesh.node_apps.release_declarations import configure_local_mcp_services as configure
+    return configure(store, declarations, 'company', port)
+
+
+def runtime_version(directory):
+    from rynmesh.node_apps.service_updates import RUNTIME_MANIFEST, parse_version
+    try:
+        manifest = json.loads((Path(directory) / RUNTIME_MANIFEST).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+    return parse_version(manifest.get('version')) if isinstance(manifest, dict) else None
+
+
+def make_self_contained(target, declarations_file, skills_root):
+    """Every runtime directory carries its own declarations and skill files, so a
+    background update can roll back to it with matching declarations."""
+    from rynmesh.node_apps.service_updates import DECLARATIONS, SKILLS
+    if not (target / DECLARATIONS).is_file():
+        shutil.copy2(declarations_file, target / DECLARATIONS)
+    if skills_root.is_dir() and not (target / SKILLS).exists():
+        shutil.copytree(skills_root, target / SKILLS)
+
+
+def install_update_sources(payload, services_root, installed_version):
+    """Point the company runtime's background updates at the package's source, and
+    drop a staged release that is not newer than what is installed now."""
+    from rynmesh.node_apps.service_updates import parse_version, validate_source
+    sources = payload / 'service-updates.json'
+    if sources.is_file():
+        value = json.loads(sources.read_text(encoding='utf-8'))
+        if set(value) != {'schema', 'services'} or value['schema'] != 1 or not isinstance(value['services'], dict):
+            raise ValueError('Invalid service update sources')
+        for service_id, source in value['services'].items():
+            validate_source(service_id, source)
+        atomic_json(services_root / 'updates.json', value)
+    state_path = services_root / 'update-state.json'
+    if not state_path.is_file():
+        return
+    try:
+        state = json.loads(state_path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return
+    row = state.get('company') if isinstance(state, dict) else None
+    if not isinstance(row, dict):
+        return
+    staged = parse_version((row.get('staged') or {}).get('version'))
+    if row.get('staged') and (staged is None or (installed_version is not None and staged <= installed_version)):
+        row.pop('staged', None)
+        row.pop('requested', None)
+    # A reinstall replaces the runtime; a pending confirmation is for the old one.
+    for key in ('verify', 'previous_program', 'waiting_for'):
+        row.pop(key, None)
+    row['state'] = 'ready' if row.get('staged') else 'idle'
+    atomic_json(state_path, state)
 
 
 def install(payload, destination, home):
@@ -336,9 +349,27 @@ def install(payload, destination, home):
         revision = manifest['company_commit']
         version = 'company-' + revision[:16]
         target = services_root / version
-        copy_new(payload / 'company', target)
-        allow_desktop_user(target)
-        runtime_manifest = json.loads((payload / 'company/runtime-manifest.json').read_text(encoding='utf-8'))
+        declarations_file, skills_root = payload / 'company-plugins.json', payload / 'company-skills'
+        # Never downgrade: a runtime that background updates moved past this
+        # package stays, with its own declarations and skills.
+        from rynmesh.node_apps.service_updates import DECLARATIONS, SKILLS
+        active = services_root / Path(previous['program']).parent if previous else None
+        package_version = runtime_version(payload / 'company')
+        active_version = runtime_version(active) if active is not None and active.is_dir() else None
+        newer_installed = (active is not None and active.is_dir() and active.name != version
+                           and active_version is not None
+                           and (package_version is None or active_version >= package_version)
+                           and (active / DECLARATIONS).is_file())
+        if newer_installed:
+            target, version = active, active.name
+            declarations_file, skills_root = active / DECLARATIONS, active / SKILLS
+            runtime_manifest_path = active / 'runtime-manifest.json'
+        else:
+            copy_new(payload / 'company', target)
+            make_self_contained(target, declarations_file, skills_root)
+            allow_desktop_user(target)
+            runtime_manifest_path = payload / 'company/runtime-manifest.json'
+        runtime_manifest = json.loads(runtime_manifest_path.read_text(encoding='utf-8'))
         for name, digest in runtime_manifest['files'].items():
             if sha(target / name) != digest:
                 raise ValueError('Installed company runtime integrity failure: ' + name)
@@ -358,9 +389,10 @@ def install(payload, destination, home):
         if config_path.exists():
             shutil.copy2(config_path, config_path.with_name('services.before-full-install.json'))
         atomic_json(config_path, config)
+        install_update_sources(payload, services_root, runtime_version(target))
 
     store = ExtensionStore(home / 'agent', load_or_create_messaging_key(home / 'messaging.x25519'))
-    declarations = json.loads((payload / 'company-plugins.json').read_text(encoding='utf-8'))
+    declarations = json.loads(declarations_file.read_text(encoding='utf-8'))
     existing = {p['id'] for p in store.overview()['plugins']}
     missing = set(COMPANY) - existing
     plugins = [p for p in declarations['plugins'] if p['id'] in missing]
@@ -371,8 +403,10 @@ def install(payload, destination, home):
         mcp_servers=[s for s in declarations['mcp_servers'] if s.get('plugin_id') in missing])
     for slug in sorted(missing):
         store.set_plugin_enabled(slug, True)
+    from rynmesh.node_apps.release_declarations import bind_skill_resources, refresh_released_skill_packages
+    refresh_released_skill_packages(store, declarations, skills_root)
     migration = store.migrate_release_defaults(declarations)
-    provision_skill_resources(store, payload, declarations)
+    bind_skill_resources(store, declarations, skills_root)
     migrate_finance_oauth_clients(store, declarations)
     managed_servers = configure_local_mcp_services(store, declarations, port)
     # The package's own remote connections (e.g. Dashboard) keep their read-only
@@ -385,7 +419,9 @@ def install(payload, destination, home):
             if service['id'] == 'company':
                 service['mcp_servers'] = managed_servers
         atomic_json(config_path, config)
-    receipt = {'schema': 1, 'ryn_commit': manifest['ryn_commit'], 'company_commit': revision,
+    receipt = {'schema': 1, 'ryn_commit': manifest['ryn_commit'],
+               'company_commit': runtime_manifest.get('source_commit') or revision,
+               'company_runtime': version, 'kept_newer_runtime': newer_installed,
                'plugins': list(selected_plugins), 'offline': True, 'installation': str(destination),
                'declaration_migration': migration, 'trusted_connections': trusted_connections}
     atomic_json(home / 'full-package-install.json', receipt)

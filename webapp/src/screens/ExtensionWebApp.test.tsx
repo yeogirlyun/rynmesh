@@ -219,6 +219,54 @@ describe('remote app capability boundary', () => {
     vi.mocked(agentExtensions.overview).mockResolvedValue({plugins:[{...plugin,enabled:false}]} as any); request(frame);
     await waitFor(() => expect(reply).toHaveBeenCalled()); expect(queryPluginTool).not.toHaveBeenCalled();
   });
+  it('replaces the plugin frame with an updating notice while its service pack switches and reopens automatically when done', async () => {
+    (window as any).__TAURI_INTERNALS__ = {};
+    vi.mocked(invoke).mockImplementation(async command => command === 'ensure_plugin_service' ? true : 201);
+    vi.mocked(agentExtensions.overview).mockResolvedValue({
+      plugins: [{ ...plugin, web_app: { ...plugin.web_app, url: 'http://127.0.0.1:18140/apps/reports' } }],
+    } as any);
+    render(<MemoryRouter initialEntries={['/apps/extensions/reports']}><Routes><Route path='/apps/extensions/:pluginId' element={<ExtensionWebApp />} /></Routes></MemoryRouter>);
+    const first = await screen.findByTitle('Reports');
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('ryn:service-update-changed', {
+        detail: {
+          services: [{
+            id: 'suite',
+            name: { 'zh-CN': '套件插件', en: 'Suite plugins' },
+            plugins: ['reports'],
+            plugin_names: ['Reports'],
+            state: 'applying',
+            current_version: '2026.11.12',
+            available_version: '2026.11.12',
+            downloaded: 0,
+            total: null,
+          }],
+        },
+      }));
+    });
+    expect(screen.queryByTitle('Reports')).not.toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Updating Suite plugins to 2026.11.12…');
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('ryn:service-update-changed', {
+        detail: {
+          services: [{
+            id: 'suite',
+            name: { 'zh-CN': '套件插件', en: 'Suite plugins' },
+            plugins: ['reports'],
+            plugin_names: ['Reports'],
+            state: 'up_to_date',
+            current_version: '2026.11.12',
+            available_version: null,
+            downloaded: 0,
+            total: null,
+          }],
+        },
+      }));
+    });
+    const reopened = await screen.findByTitle('Reports');
+    expect(reopened).toBeInTheDocument();
+    expect(reopened).not.toBe(first);
+  });
   it('rejects undeclared permissions', async () => {
     const frame=await mount(); const reply=vi.spyOn(frame.contentWindow!, 'postMessage');
     vi.mocked(agentExtensions.overview).mockResolvedValue({plugins:[{...plugin,web_app:{...plugin.web_app,permissions:[]}}]} as any); request(frame);
