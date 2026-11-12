@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 from test_agent_compact_efficiency import request_size
 from test_agent_resource_writes import writable as writable_fixture
-from test_agent_runtime import advance, approve, assistant
+from test_agent_runtime import advance, approve, assistant, fit_window
 
 from rynmesh.agent_runtime import tool_menu
 from rynmesh.agent_runtime.runtime import AgentRuntime
@@ -54,6 +54,7 @@ def test_public_long_notes_all_checkpoints_to_approved_anonymous_report(writable
     catalog = SimpleNamespace(list_models=lambda: [{"id": "fixture", "source": "local_api", "available": True,
         "agent_supported": True, "peer_id": "local", "source_id": "fixture", "destination_revision": "rev1"}])
     calls, summaries = [], []
+    cap = 12000  # replaced below by the historical 12000 plus prompt growth
     read_names = ["ryn_list_resource_roots", "ryn_list_resources", "ryn_search_resource"]
 
     class Model:
@@ -61,7 +62,7 @@ def test_public_long_notes_all_checkpoints_to_approved_anonymous_report(writable
 
         def complete(self, model_id, messages, specs, cancelled, on_event, *, expected_destination):
             calls.append((copy.deepcopy(messages), copy.deepcopy(specs)))
-            assert request_size(messages, specs) <= 12000
+            assert request_size(messages, specs) <= cap
             if not specs:
                 payload = json.loads(messages[-1]["content"])
                 if "history" in payload:
@@ -111,12 +112,13 @@ def test_public_long_notes_all_checkpoints_to_approved_anonymous_report(writable
     key = peer_box.load_or_create_messaging_key(store.home / "messaging.x25519")
     model = Model()
     runtime = AgentRuntime(AgentStore(store.home / "agent", key), model, tools, catalog, consumer_node_id="local")
-    runtime.update_settings({"enabled": True, "model_id": "fixture", "max_context_chars": 12000, "max_steps": 24, "max_seconds": 600, "verify_text_responses": True})
+    runtime.update_settings({"enabled": True, "model_id": "fixture", "max_steps": 24, "max_seconds": 600, "verify_text_responses": True})
     task = runtime.create({"message": owners[0], "budget_limits": {"max_total_model_calls": 12},
         "scope": {"resources": [{"connection_id": source["id"], "root_path": "allowed", "actions": ["list", "read_ai", "create_file"]}],
                   "allow_model_data": True}, "expected_destination_revision": "rev1"})
     task = runtime.add_message(task["id"], {"message": owners[1], "intent": "steer",
         "expected_control_revision": task["control_revision"], "expected_goal_revision": task["goal"]["revision"]})
+    cap = fit_window(runtime, task["id"], 12000, small_window=True)
     pressure, restarted, approved_content = [], False, None
     for _ in range(50):
         row = runtime.store.read()["tasks"][task["id"]]
@@ -144,8 +146,8 @@ def test_public_long_notes_all_checkpoints_to_approved_anonymous_report(writable
     assert f"Total: {sum(map(int, expected.values()))}" in report
     assert "orion" not in report.lower() and approved_content == report
     assert hashlib.sha256((root / "allowed/long-notes.txt").read_bytes()).digest() == hashlib.sha256(source_bytes).digest()
-    assert max(pressure) > 12000 and restarted and summaries
-    assert len(calls) <= 12 and done["limits"]["max_context_chars"] == 12000
+    assert max(pressure) > cap and restarted and summaries
+    assert len(calls) <= 12 and done["limits"]["max_context_chars"] == cap
     assert done["goal"]["revision"] == 2 and done["scope_revision"] == 1 and done.get("context_epoch", 0) == 0
     assert len([e for e in server.audit if e["method"] == "PUT"]) == 1
     assert any(e["method"] == "GET" and e["path"].endswith("long-notes.txt") for e in server.audit)

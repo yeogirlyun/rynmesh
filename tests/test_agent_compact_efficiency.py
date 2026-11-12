@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from test_agent_resource_writes import writable as writable_fixture
-from test_agent_runtime import advance, approve, assistant, make_runtime
+from test_agent_runtime import advance, approve, assistant, fit_window, make_runtime
 from test_agent_tool_menu import ManyTools
 
 from rynmesh.agent_runtime import tool_menu
@@ -86,6 +86,7 @@ def test_real_resource_tools_reach_body_and_approved_artifact_under_pressure(wri
     catalog = SimpleNamespace(list_models=lambda: [{"id": "fixture", "source": "local_api", "available": True,
         "agent_supported": True, "peer_id": "local", "source_id": "fixture", "destination_revision": "rev1"}])
     calls, summary_sources = [], []
+    cap = 12000  # replaced below by the historical 12000 plus prompt growth
     read_names = ["ryn_list_resource_roots", "ryn_list_resources", "ryn_read_resource"]
 
     class BoundModel:
@@ -93,7 +94,7 @@ def test_real_resource_tools_reach_body_and_approved_artifact_under_pressure(wri
 
         def complete(self, model_id, messages, specs, cancelled, on_event, *, expected_destination):
             calls.append((copy.deepcopy(messages), copy.deepcopy(specs)))
-            assert request_size(messages, specs) <= 12000
+            assert request_size(messages, specs) <= cap
             if not specs:
                 payload = json.loads(messages[-1]["content"])
                 if "history" in payload:
@@ -140,7 +141,7 @@ def test_real_resource_tools_reach_body_and_approved_artifact_under_pressure(wri
     key = peer_box.load_or_create_messaging_key(store.home / "messaging.x25519")
     model = BoundModel()
     runtime = AgentRuntime(AgentStore(store.home / "agent", key), model, tools, catalog, consumer_node_id="local")
-    runtime.update_settings({"enabled": True, "model_id": "fixture", "max_context_chars": 12000,
+    runtime.update_settings({"enabled": True, "model_id": "fixture",
                              "max_steps": 24, "max_seconds": 600, "verify_text_responses": True})
     task = runtime.create({"message": owners[0], "budget_limits": {"max_total_model_calls": 12},
         "scope": {"resources": [{"connection_id": source["id"], "root_path": "allowed",
@@ -148,6 +149,7 @@ def test_real_resource_tools_reach_body_and_approved_artifact_under_pressure(wri
         "expected_destination_revision": "rev1"})
     task = runtime.add_message(task["id"], {"message": owners[1], "intent": "steer",
         "expected_control_revision": task["control_revision"], "expected_goal_revision": task["goal"]["revision"]})
+    cap = fit_window(runtime, task["id"], 12000, small_window=True)
     pressure, restarted = [], False
     for _ in range(45):
         row = runtime.store.read()["tasks"][task["id"]]
@@ -179,11 +181,11 @@ def test_real_resource_tools_reach_body_and_approved_artifact_under_pressure(wri
     assert all(item["status"] == "passed" for item in done["outcome"]["mechanical_scope"])
     assert (root / "allowed/totals.md").read_text(encoding="utf-8") == "Observed total: 89\n"
     assert (root / "allowed/observations.txt").read_text(encoding="utf-8") == source_text
-    assert max(pressure) > 12000 and restarted and summary_sources
+    assert max(pressure) > cap and restarted and summary_sources
     assert len(summary_sources) < len([1 for _, specs in calls if specs])
     assert len(calls) <= 12 and runtime.get(task["id"])["budget"]["lifetime"]["model_calls"] == len(calls)
     assert done["goal"]["revision"] == 2 and done["scope_revision"] == 1 and done.get("context_epoch", 0) == 0
-    assert done["limits"]["max_context_chars"] == 12000
+    assert done["limits"]["max_context_chars"] == cap
     assert len([e for e in server.audit if e["method"] == "PUT"]) == 1
     assert any(e["method"] == "GET" and e["path"].endswith("observations.txt") for e in server.audit)
     # Every business result remains either verbatim in main input or in a
