@@ -949,10 +949,47 @@ class LocalTools:
                          "summary": change_summary(before_text, after_text)})
         return plan
 
+    def _table_export_arguments(self, args, context):
+        explicit = {"source_path", "recipe", "expected_calculation_sha256"}
+        rid = args.get("calculation_receipt_id")
+        if rid is None:
+            if not explicit <= args.keys():
+                raise AgentToolRejected("agent_table_export_arguments", correction="Supply calculation_receipt_id and path, or all source_path/recipe/expected_calculation_sha256 fields.")
+            return args
+        if explicit & args.keys() or self.store is None:
+            raise AgentToolRejected("agent_table_export_arguments", correction="Do not mix a receipt reference with explicit calculation arguments.")
+        def resolve(data):
+            row = data.get("tasks", {}).get(context["task_id"], {})
+            receipt = next((r for r in row.get("receipts", []) if r.get("id") == rid), {})
+            binding = ((row.get("goal") or {}).get("revision"), row.get("scope_revision"), row.get("context_epoch", 0))
+            result, original = receipt.get("result") or {}, receipt.get("arguments") or {}
+            if (receipt.get("tool") != "ryn_table_calculate" or receipt.get("status") != "confirmed"
+                    or tuple(receipt.get(k) for k in ("goal_revision", "scope_revision", "context_epoch")) != binding
+                    or not isinstance(result, dict) or result.get("status") != "passed"
+                    or not result.get("calculation_sha256") or not {"source_path", "recipe"} <= original.keys()):
+                raise AgentToolRejected("agent_table_calculation_receipt_invalid", correction="Use a passed calculation receipt from this task's current goal and resource scope; recalculate if the source or rules changed.")
+            return {"path": args["path"], "source_path": original["source_path"], "recipe": copy.deepcopy(original["recipe"]),
+                    "expected_calculation_sha256": result["calculation_sha256"]}
+        return self.store.inspect(resolve)
+
     def preview(self, name, args, context):
         policy = self.policy(context)
         preview = {"title": SPECS[name][0].split(".")[0], "workspace_root": policy["workspace_root"],
                    "desktop_access": policy["desktop_access"], "operation": copy.deepcopy(args)}
+        if name == "ryn_table_export":
+            from .table_work import calculate, export_bytes, summary
+            args = self._table_export_arguments(args, context)
+            source = self.path(args["source_path"], context)
+            report = calculate(self.raw(source), source.suffix, args["recipe"])
+            if report["calculation_sha256"] != args["expected_calculation_sha256"]:
+                raise AgentToolRejected("agent_table_input_changed", correction="Recalculate the changed source/rules and review the new checks before exporting.")
+            path = self.path(args["path"], context)
+            if path.exists() or not path.parent.is_dir():
+                raise AgentToolRejected("agent_table_new_output_required")
+            raw = export_bytes(report, path.suffix.lower())
+            if len(raw) > 8 * 1024 * 1024:
+                raise AgentToolRejected("agent_table_output_limit")
+            return {**preview, "path": str(path), "sha256": sha(raw), "bytes": len(raw), "calculation": summary(report)}
         if name == "ryn_image_generate":
             path = self.path(args["path"], context)
             if path.suffix.lower() != ".png" or path.exists() or not path.parent.is_dir():
@@ -1414,12 +1451,39 @@ class LocalTools:
 
     def perform(self, name, args, context, cancelled, *, prepared_shell=None, operation_id=None, approved_preview=None, on_ready_host_gate=None):
         task_id = context["task_id"]
+        if name == "ryn_schedule_validate":
+            from .schedule_work import summary, validate
+            source = self.path(args["source_path"], context)
+            return summary(validate(self.raw(source), source.suffix, args["rules"], cancelled))
+        if name in {"ryn_table_calculate", "ryn_table_export"}:
+            from .table_work import calculate, export_bytes, summary
+            if name == "ryn_table_export":
+                args = self._table_export_arguments(args, context)
+            source = self.path(args["source_path"], context)
+            report = calculate(self.raw(source), source.suffix, args["recipe"], cancelled)
+            if name == "ryn_table_calculate":
+                return summary(report)
+            if report["calculation_sha256"] != args["expected_calculation_sha256"]:
+                raise AgentToolRejected("agent_table_input_changed")
+            path = self.path(args["path"], context)
+            if path.exists() or not path.parent.is_dir():
+                raise AgentToolRejected("agent_table_new_output_required")
+            raw = export_bytes(report, path.suffix.lower())
+            if len(raw) > 8 * 1024 * 1024 or cancelled():
+                raise AgentToolRejected("agent_cancelled" if cancelled() else "agent_table_output_limit")
+            self.file_review(task_id, self.path(".", context)).apply([(path, None, raw, None)], operation_id=operation_id)
+            with path.open("rb") as output:
+                written = output.read(8 * 1024 * 1024 + 1)
+            if written != raw:
+                raise AgentError("agent_table_export_readback_failed")
+            return {"written": True, "path": str(path), "sha256": sha(written), "bytes": len(written),
+                    "calculation": summary(report), "readback_verified": True}
         if name == "ryn_download_file":
             from .downloads import save
             return save(self, args["source"], context, cancelled)
         if name == "ryn_image_generate":
-            from ..llm_package.codex_image import generate
             from ..llm_package.adapters import AdapterError
+            from ..llm_package.codex_image import generate
             path = self.path(args["path"], context)
             self.preview(name, args, context)
             try:
@@ -1620,6 +1684,34 @@ class LocalTools:
                                             width=args.get("width"), cancelled=cancelled)
             # The hash ties this observation to exact bytes: a later edit makes it stale.
             return {**result, "sha256": sha(raw), "bytes": len(raw)}
+        if name == "ryn_file_wait":
+            from .read_reliability import LIMIT, MISSING, failure_count, file_target
+            row = self.store.inspect(lambda data: copy.deepcopy(data["tasks"][task_id]))
+            target = file_target(row, {"name": name, "arguments": args})
+            remaining = max(0, LIMIT - failure_count(row, target))
+            requested = args.get("max_attempts", LIMIT)
+            delay = args.get("retry_delay_seconds", 0.25)
+            if type(requested) is not int or not 1 <= requested <= LIMIT or type(delay) not in (int, float) or not 0 <= delay <= 2:
+                raise AgentToolRejected("agent_invalid_tool_call")
+            attempts = min(requested, remaining)
+            for index in range(attempts):
+                if cancelled():
+                    raise AgentToolRejected("agent_cancelled")
+                try:
+                    result = self.perform("ryn_file_read", {"path": args["path"]}, context, cancelled)
+                    return {**result, "attempts": index + 1, "retry_limit": LIMIT}
+                except AgentToolRejected as exc:
+                    if str(exc) not in MISSING:
+                        raise
+                if index + 1 < attempts:
+                    deadline = time.monotonic() + delay
+                    while time.monotonic() < deadline:
+                        if cancelled():
+                            raise AgentToolRejected("agent_cancelled")
+                        time.sleep(min(0.02, max(0, deadline - time.monotonic())))
+            return {"error": "agent_file_retry_exhausted", "path": target, "attempts": attempts,
+                    "not_executed": attempts == 0, "no_mutation": True,
+                    "correction": "The bounded file-read attempts are exhausted. Report the missing input; do not move retries into a shell loop."}
         if name in {"ryn_file_list", "ryn_file_read", "ryn_file_search"}:
             path = self.path(args["path"], context)
             offset = args.get("offset", 0)
@@ -1945,7 +2037,7 @@ class LocalTools:
         matches = evidence["operation_confirmed"]
         if cancelled():
             raise AgentToolRejected("agent_cancelled")
-        if name in {"ryn_image_generate", "ryn_download_file"}:
+        if name in {"ryn_image_generate", "ryn_download_file", "ryn_table_export"}:
             path = self.path(result["path"], context)
             matches &= path.is_file() and path.stat().st_size == result.get("bytes") and sha(path.read_bytes()) == result.get("sha256")
             evidence.update(path=str(path), current_state_matches=matches)

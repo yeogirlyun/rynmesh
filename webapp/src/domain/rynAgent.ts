@@ -18,7 +18,11 @@ export interface AgentCriterion {
 }
 export interface AgentPlan {
   revision: number; goal_revision: number;
-  steps: Array<{ id: string; text: string; criterion_ids: string[]; depends_on: string[]; status: "pending" | "running" | "blocked" | "done" }>;
+  track_execution?: boolean;
+  deliverables?: string[]; constraints?: string[]; replan_reason?: string;
+  steps: Array<{ id: string; text: string; criterion_ids: string[]; depends_on: string[]; status: "pending" | "running" | "blocked" | "done";
+    expected_result?: string; verification?: string; result_summary?: string; blocker?: string;
+    evidence_refs?: string[]; evidence_status?: "linked_receipts" | "model_only" }>;
 }
 export interface AgentOutcome {
   assessment_requested?: boolean;

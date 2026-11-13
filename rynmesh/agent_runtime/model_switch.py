@@ -4,7 +4,14 @@ from __future__ import annotations
 import copy
 
 from . import projects, reasoning
-from .control import acknowledgeable, ambiguous, check_version, close_queue, remember_request, request_replayed
+from .control import (
+    acknowledgeable,
+    ambiguous,
+    check_version,
+    close_queue,
+    remember_request,
+    request_replayed,
+)
 from .store import AgentError
 
 SAFE_STATES = {"paused", "completed", "failed", "waiting_input", "waiting_approval", "interrupted", "cancelled"}
@@ -20,13 +27,13 @@ def available(row):
     control = row.get("pending_control")
     # A cancelled task keeps its settled cancel marker; that is not pending work.
     settled_cancel = row["status"] == "cancelled" and (control or {}).get("kind") == "cancel"
-    return (not row.get("archived") and row["status"] in SAFE_STATES
+    return (not row.get("archived") and not row.get("continued_to") and row["status"] in SAFE_STATES
             and not row.get("in_flight") and not ambiguous(row) and (not control or settled_cancel))
 
 
 def switchable(row):
     """Switching model never repeats an unconfirmed write; the switch acknowledges it."""
-    return available(row) or (not row.get("archived") and acknowledgeable(row))
+    return available(row) or (not row.get("archived") and not row.get("continued_to") and acknowledgeable(row))
 
 
 def resolve(runtime, model_id):

@@ -402,6 +402,8 @@ def finish(row, *, assessment=None, error=None):
                       "mechanical_scope": [{"criterion_id": c["id"], "description": c["description"], "status": c["status"]} for c in mechanical],
                       "evidence_refs": sorted({ref for c in required for ref in c["evidence_refs"]}), "uncertainties": uncertainties}
     row["status"] = "completed"
+    from . import planning
+    planning.note_incomplete(row)
     if "verification_cycle" in row:
         row["verification_cycle"].pop("feedback", None)
         if assessment and status != "verified" and (feedback := _feedback_evidence(row)) is not None:

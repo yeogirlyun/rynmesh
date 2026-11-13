@@ -152,6 +152,8 @@ def allowed_actions(row, settings):
         possible["edit_message"] = False
     if row.get("archived"):
         possible = {action: allowed if action in {"rename", "restore", "delete"} else False for action, allowed in possible.items()}
+    if row.get("continued_to"):
+        possible = {action: allowed if action in {"rename", "archive", "restore", "delete"} else False for action, allowed in possible.items()}
     return {action: {"enabled": bool(allowed), "requires_control_revision": action not in {"pause", "stop", "cancel"},
                      "reason": None if allowed else "agent_reconciliation_running" if held else "agent_operation_unresolved" if uncertain else "agent_disabled" if not enabled and action not in {"pause", "stop", "cancel"} else "agent_invalid_transition"}
             for action, allowed in possible.items()}
