@@ -127,6 +127,8 @@ export default function NodeSites() {
             <span className={`ns-pill${site.enabled ? " is-online" : ""}`}>
               {site.enabled ? t("sites.openState") : t("sites.closedState")}
             </span>
+            {site.site_id === "image-studio" && <button className="ns-button"
+              onClick={() => navigate("/apps/sites/image-studio")}>{t("sites.manage")}</button>}
           </div>
           <div className="ns-mine-row">
             <label>
