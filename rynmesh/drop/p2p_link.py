@@ -15,7 +15,8 @@ answer carry its info instead and the whole data plane runs natively, about
 Each QUIC stream carries one peer request
 to the other device's ``/api/peer/drop/*`` routes, dispatched in-process, so
 every signature, encryption, acceptance and resume rule of the HTTP path
-applies unchanged. Nothing outside ``/api/peer/drop/`` is reachable.
+applies unchanged. Node-site requests (``/api/peer/site/*``) share the link
+under their own handler's checks; nothing else is reachable.
 
 Wire format of a stream, both directions::
 
@@ -51,6 +52,8 @@ OPERATION = "drop.p2p_offer"
 ALPN = "ryn-drop/1"
 SCHEME = "ryn-p2p://"
 PATH_PREFIX = "/api/peer/drop/"
+# Node sites reuse the same device route; their own handler applies every check.
+SITE_PATH_PREFIX = "/api/peer/site/"
 
 GATHER_TIMEOUT_S = 10.0
 ANSWER_TIMEOUT_S = 15.0
@@ -103,7 +106,7 @@ def _route_for(host: str) -> str:
 
 def _allowed_target(method: str, target: str) -> bool:
     path = target.partition("?")[0]
-    return (method in {"GET", "POST", "PUT"} and path.startswith(PATH_PREFIX)
+    return (method in {"GET", "POST", "PUT"} and path.startswith((PATH_PREFIX, SITE_PATH_PREFIX))
             and re.fullmatch(r"[A-Za-z0-9/_\-.]+", path) is not None and ".." not in path)
 
 
