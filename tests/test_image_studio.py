@@ -233,6 +233,12 @@ def test_static_shell_and_traversal(studio, tmp_path, monkeypatch):
     monkeypatch.setattr(site_mod, "WEB_ROOT", web)
     status, hdrs, data = call(site, "GET", "/")
     assert status == 200 and hdrs["cache-control"] == "no-store" and "做图" in data.decode()
+    (web / "index.html").write_text('<script type="module" src="/app.js"></script>', encoding="utf-8")
+    (web / "app.js").write_text("console.log(2)", encoding="utf-8")
+    stamped = call(site, "GET", "/")[2].decode()
+    assert 'src="/app.js?v=' in stamped
+    assert call(site, "GET", "/app.js")[1]["cache-control"] == "no-cache"
+    assert "immutable" in call(site, "GET", "/app.js?v=abc")[1]["cache-control"]
     assert call(site, "GET", "/assets/app.js")[1]["content-type"].startswith("application/javascript") or \
         call(site, "GET", "/assets/app.js")[1]["content-type"].startswith("text/javascript")
     assert call(site, "GET", "/history")[0] == 200  # client route -> shell
@@ -324,3 +330,21 @@ def test_colleague_through_two_nodes(tmp_path, monkeypatch):
         studio.store.close()
         opener.stop()
         hosting.stop()
+
+
+def test_shipped_page_has_no_inline_script_and_ships_its_assets():
+    """The gateway CSP blocks inline scripts; every asset the page names must exist and be packaged."""
+    import re
+    import tomllib
+    from pathlib import Path
+
+    from rynmesh.image_studio.site import WEB_ROOT
+    html = (WEB_ROOT / "index.html").read_text(encoding="utf-8")
+    assert not re.search(r"<script(?![^>]*\bsrc=)[^>]*>", html), "inline script would be blocked"
+    assert not re.search(r"\son[a-z]+=", html), "inline event handlers would be blocked"
+    for asset in re.findall(r'(?:src|href)="/([^"?]+)', html):
+        assert (WEB_ROOT / asset).is_file(), asset
+    data = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8"))
+    assert data["tool"]["setuptools"]["package-data"]["rynmesh.image_studio"] == ["web/*"]
+    js = (WEB_ROOT / "app.js").read_text(encoding="utf-8")
+    assert "innerHTML" not in js and "eval(" not in js and "http://" not in js and "https://" not in js
