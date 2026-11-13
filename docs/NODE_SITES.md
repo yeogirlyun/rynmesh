@@ -16,6 +16,9 @@ POST /api/local/node-sites/mine   {"site_id": "image-studio", "title": "Image st
 PATCH /api/local/node-sites/mine/image-studio   {"enabled": true, "audience": {"mode": "all", "members": []}}
 ```
 
+Ryn can also host built-in sites in-process (no port or token, same checks
+and exposure switch); the first is the [image studio](IMAGE_STUDIO.md).
+
 `audience.mode` is `all` (every member of the provider directory) or
 `members` (listed member ids). Re-registering a site rotates its token and
 keeps its exposure.
