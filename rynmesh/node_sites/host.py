@@ -49,6 +49,7 @@ PER_CALLER_CONCURRENCY = 4
 PER_CALLER_PER_MINUTE = 300
 
 ForwardFn = Callable[[int, str, str, dict[str, str], bytes], tuple[int, list[list[str]], bytes]]
+ForwardHandler = Callable[[str, str, dict[str, str], bytes], tuple[int, list[list[str]], bytes]]
 
 
 def forward_loopback(port: int, method: str, path: str, headers: dict[str, str], body: bytes
@@ -93,6 +94,8 @@ class SiteHost:
         self._nonces: OrderedDict[tuple[str, str], float] = OrderedDict()
         self._active: dict[str, int] = {}
         self._recent: dict[str, deque[float]] = {}
+        # In-process sites: site id -> fn(method, path, headers, body) -> (status, headers, body).
+        self.builtins: dict[str, ForwardHandler] = {}
 
     # ---- shared checks ---------------------------------------------------------
     def _open(self, envelope: Any, kind: str, keys: set[str]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -205,7 +208,13 @@ class SiteHost:
             body = unb64(request["body"], MAX_REQUEST_BODY)
             headers = {name: value for name, value in clean_headers(request["headers"], REQUEST_HEADERS)}
             headers.update(identity_headers(token=row["token"], caller=sender, member=member, resource=resource))
-            status, raw_headers, data = self.forward(int(row["port"]), method, path, headers, body)
+            if row.get("builtin"):
+                handler = self.builtins.get(sid)
+                if handler is None:
+                    raise SiteError("site_denied", 403)
+                status, raw_headers, data = handler(method, path, headers, body)
+            else:
+                status, raw_headers, data = self.forward(int(row["port"]), method, path, headers, body)
             out_headers: list[list[str]] = []
             kept: list[list[str]] = []
             for pair in raw_headers[:64]:

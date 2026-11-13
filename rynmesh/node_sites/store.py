@@ -75,12 +75,18 @@ class SiteStore:
     def public(sid: str, row: dict[str, Any]) -> dict[str, Any]:
         """Owner view; never includes the backend token."""
         return {"site_id": sid, "title": row["title"], "port": row["port"], "entry": row["entry"],
-                "enabled": bool(row["enabled"]), "audience": row["audience"], "updated_at": row["updated_at"]}
+                "builtin": bool(row.get("builtin")), "enabled": bool(row["enabled"]), "audience": row["audience"],
+                "updated_at": row["updated_at"]}
 
-    def register(self, *, sid: Any, title: Any, port: Any, entry: Any = "/") -> tuple[dict[str, Any], str]:
-        """Add or replace a loopback site. New registrations start closed; a replace keeps exposure."""
+    def register(self, *, sid: Any, title: Any, port: Any = None, entry: Any = "/",
+                 builtin: bool = False) -> tuple[dict[str, Any], str]:
+        """Add or replace a site. New registrations start closed; a replace keeps exposure.
+
+        ``builtin`` sites are served in-process by Ryn (no port); others are a loopback backend.
+        """
         sid = site_id(sid)
-        row = {"title": _title(title), "port": _port(port), "entry": _entry(entry)}
+        row = {"title": _title(title), "port": 0 if builtin else _port(port), "entry": _entry(entry),
+               "builtin": bool(builtin)}
         with self._lock:
             data = self._sites()
             current = data["sites"].get(sid)
