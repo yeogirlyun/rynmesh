@@ -17,7 +17,7 @@ function safeEntry(value: string | null): string {
  * the page cannot fake which computer it comes from or whether it is online.
  */
 export default function NodeSiteWindow() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const { key = "" } = useParams();
   const [params] = useSearchParams();
@@ -49,7 +49,13 @@ export default function NodeSiteWindow() {
     return () => { alive = false; window.clearInterval(timer); };
   }, [key]);
 
-  const src = useMemo(() => state && ORIGIN.test(state.origin) ? `${state.origin}${entry}` : "", [state, entry]);
+  const src = useMemo(() => {
+    if (!state || !ORIGIN.test(state.origin)) return "";
+    // Tell the page which language Ryn is showing; the page may ignore it.
+    const url = new URL(entry, state.origin);
+    url.searchParams.set("lang", i18n.language || "zh-CN");
+    return url.href;
+  }, [state, entry, i18n.language]);
   const owner = state?.member_name ? t("sites.deviceOf", { name: state.member_name }) : state?.device_name || "";
   const title = params.get("title") || state?.site_id || "";
 

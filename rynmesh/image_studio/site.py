@@ -7,6 +7,7 @@ that caller; another colleague's job id answers 404, never 403.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import mimetypes
 import re
@@ -62,11 +63,12 @@ class StudioSite:
         parts = urlsplit(target)
         path, query = parts.path, parse_qs(parts.query)
         if not path.startswith("/api/"):
-            return self.static(method, path)
+            return self.static(method, path, versioned=bool(query.get("v")))
         caller, name, peer = self.identity(headers)
         if path == "/api/me" and method == "GET":
             queue = self.store.queue()
             return _json(200, {"name": name, "model": generator.readiness(), "queue_length": len(queue),
+                               "now": self.store.clock(),
                                "average_seconds": round(self.store.average_seconds()),
                                "purposes": {k: {"label": v["label"], "ratio": v["ratio"], "width": v["size"][0],
                                                 "height": v["size"][1]} for k, v in sizes.PURPOSES.items()}})
@@ -87,7 +89,8 @@ class StudioSite:
             except ValueError:
                 return _error("image_bad_request", 400)
             return _json(200, {"jobs": self.store.list(caller, state=state, limit=limit),
-                               "queue_length": len(self.store.queue())})
+                               "queue_length": len(self.store.queue()), "now": self.store.clock(),
+                               "average_seconds": round(self.store.average_seconds())})
         match = JOB_PATH.fullmatch(path)
         if match:
             job_id, action = match.groups()
@@ -110,7 +113,7 @@ class StudioSite:
                 return 200, headers_out, data
         return _error("image_not_found", 404)
 
-    def static(self, method: str, path: str) -> Response:
+    def static(self, method: str, path: str, *, versioned: bool = False) -> Response:
         """The page itself (built files only; inline scripts are blocked by the gateway CSP)."""
         if method not in ("GET", "HEAD"):
             return _error("image_not_found", 404)
@@ -126,5 +129,17 @@ class StudioSite:
         mime = mimetypes.guess_type(file.name)[0] or "application/octet-stream"
         if mime.startswith("text/") or mime in ("application/javascript", "image/svg+xml"):
             mime += "; charset=utf-8"
-        cache = "no-store" if file.name == "index.html" else "private, max-age=31536000, immutable"
-        return 200, [["content-type", mime], ["cache-control", cache]], file.read_bytes() if method == "GET" else b""
+        data = file.read_bytes()
+        if file.name == "index.html":
+            # Stamp each asset with its content hash, so an updated page is never served
+            # with a stale cached script; versioned URLs can then be cached for good.
+            text = data.decode("utf-8")
+            for asset in ("app.js", "app.css"):
+                target = WEB_ROOT / asset
+                if target.is_file():
+                    digest = hashlib.sha256(target.read_bytes()).hexdigest()[:12]
+                    text = text.replace(f'"/{asset}"', f'"/{asset}?v={digest}"')
+            data, cache = text.encode("utf-8"), "no-store"
+        else:
+            cache = "private, max-age=31536000, immutable" if versioned else "no-cache"
+        return 200, [["content-type", mime], ["cache-control", cache]], data if method == "GET" else b""

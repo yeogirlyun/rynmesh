@@ -41,7 +41,7 @@ it("shows the page in an isolated frame under a bar Ryn draws", async () => {
     expect(value).not.toBeNull();
     return value as HTMLIFrameElement;
   });
-  expect(frame.getAttribute("src")).toBe(`${ORIGIN}/studio?x=1`);
+  expect(frame.getAttribute("src")).toBe(`${ORIGIN}/studio?x=1&lang=en`);
   expect(frame.getAttribute("sandbox")).toBe("allow-scripts allow-forms allow-same-origin allow-downloads");
   expect(frame.getAttribute("referrerpolicy")).toBe("no-referrer");
   expect(screen.getByText("Ziling's computer · Image")).toBeInTheDocument();
@@ -65,7 +65,7 @@ it("shows an offline screen instead of the page, and never a foreign origin or e
 
   api.status.mockResolvedValue(status());
   const third = renderWindow(`/apps/sites/open/${KEY}?entry=%2F%2Fevil.example%2Fx`);
-  await waitFor(() => expect(third.container.querySelector("iframe")?.getAttribute("src")).toBe(`${ORIGIN}/`));
+  await waitFor(() => expect(third.container.querySelector("iframe")?.getAttribute("src")).toBe(`${ORIGIN}/?lang=en`));
 });
 
 it("lists colleagues' pages, opens one, and toggles a hosted page", async () => {
