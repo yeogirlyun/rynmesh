@@ -60,6 +60,7 @@ import RynAgent from "./screens/RynAgent";
 import NodeApps from "./screens/NodeApps";
 import NodeSites from "./screens/NodeSites";
 import NodeSiteWindow from "./screens/NodeSiteWindow";
+import ImageStudioOwner from "./screens/ImageStudioOwner";
 import ExtensionWebApp from "./screens/ExtensionWebApp";
 import CraftApps from "./screens/CraftApps";
 import PluginWorkspace from "./screens/PluginWorkspace";
@@ -414,6 +415,7 @@ export function AppRoutes() {
           <Route path="apps/workspaces" element={<NodeApps />} />
           <Route path="apps/sites" element={<NodeSites />} />
           <Route path="apps/sites/open/:key" element={<NodeSiteWindow />} />
+          <Route path="apps/sites/image-studio" element={<ImageStudioOwner />} />
           <Route path="ask" element={<LegacyAgentRedirect />} />
           <Route path="ask/history" element={<AskRyn />} />
           <Route path="friends" element={<Friends />} />
