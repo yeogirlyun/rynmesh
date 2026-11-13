@@ -30,6 +30,7 @@ jobs:
           tests/test_agent_runtime_model_switch.py
           tests/test_agent_budget_dispatch.py
           tests/test_agent_task_planning.py
+          tests/test_agent_schedule_work.py
           tests/test_codex_object_protocol.py
       - name: Lint reliability implementation
         run: >-
@@ -43,6 +44,7 @@ jobs:
           rynmesh/agent_runtime/loop.py
           rynmesh/agent_runtime/model_switch.py
           rynmesh/agent_runtime/planning.py
+          rynmesh/agent_runtime/schedule_work.py
           rynmesh/agent_runtime/prompt.py
           rynmesh/agent_runtime/read_reliability.py
           rynmesh/agent_runtime/runtime.py
@@ -51,6 +53,7 @@ jobs:
           tests/test_agent_continuation_state.py
           tests/test_agent_read_reliability.py
           tests/test_agent_table_work.py
+          tests/test_agent_schedule_work.py
           tests/test_agent_workspace_artifacts.py
 
   contribution-workflow:

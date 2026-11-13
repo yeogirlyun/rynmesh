@@ -1451,6 +1451,10 @@ class LocalTools:
 
     def perform(self, name, args, context, cancelled, *, prepared_shell=None, operation_id=None, approved_preview=None, on_ready_host_gate=None):
         task_id = context["task_id"]
+        if name == "ryn_schedule_validate":
+            from .schedule_work import summary, validate
+            source = self.path(args["source_path"], context)
+            return summary(validate(self.raw(source), source.suffix, args["rules"], cancelled))
         if name in {"ryn_table_calculate", "ryn_table_export"}:
             from .table_work import calculate, export_bytes, summary
             if name == "ryn_table_export":
