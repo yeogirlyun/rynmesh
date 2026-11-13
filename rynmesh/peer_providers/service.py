@@ -703,10 +703,12 @@ class PeerProviderService:
 
     async def authorize(self, resource, from_peer_id, to_peer_id, capability, service_id=None):
         plugin_id = self._resource(resource)
-        if capability not in {"model.invoke", "message.text"} or self.store.peer_id not in (from_peer_id, to_peer_id):
+        if (capability not in {"model.invoke", "message.text", "site.open"}
+                or self.store.peer_id not in (from_peer_id, to_peer_id)):
             v.fail("peer_provider_access_denied")
         request = {"from_peer_id": v.key(from_peer_id), "to_peer_id": v.key(to_peer_id), "capability": capability}
-        if capability == "model.invoke":
+        if capability in {"model.invoke", "site.open"}:
+            # site.open: service_id is the opened node-site id (to_peer_id hosts it).
             request["service_id"] = v.text(service_id)
         elif service_id is not None:
             v.fail("peer_provider_access_denied")

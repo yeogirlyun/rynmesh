@@ -363,6 +363,34 @@ class DropEngine:
         except Exception:
             raise DropError("provider_denied", "Message permission is unavailable.", 403) from None
 
+    # ---- provider channel shared with node sites -------------------------
+    def provider_members(self) -> list[dict[str, Any]]:
+        """The host's cached provider directory rows (no remote discovery)."""
+        return self._provider_rows()
+
+    def provider_member(self, resource: str, peer_id: str) -> dict[str, Any]:
+        return self._provider_row(resource, peer_id)
+
+    def provider_directory(self, resource: str) -> PeerDirectory:
+        return self._provider_directory(resource)
+
+    def provider_allows(self, resource: str, sender: str, receiver: str, capability: str,
+                        service_id: str | None = None) -> bool:
+        """Live provider authorization; any failure, malformed or mismatched answer is a denial."""
+        if self._provider_authorize is None:
+            return False
+        try:
+            if service_id is None:
+                result = self._provider_authorize(resource, sender, receiver, capability)
+            else:
+                result = self._provider_authorize(resource, sender, receiver, capability, service_id)
+        except Exception:
+            return False
+        return (isinstance(result, dict) and result.get("allowed") is True
+                and result.get("resource") == resource and result.get("from_peer_id") == sender
+                and result.get("to_peer_id") == receiver and result.get("capability") == capability
+                and (service_id is None or result.get("service_id") == service_id))
+
     def _provider_directory(self, resource: str) -> PeerDirectory:
         with self._lock:
             if resource not in self._provider_dirs:
@@ -1142,9 +1170,15 @@ class DropEngine:
     def _call(self, endpoint: str, kind: str, peer_id: str, payload: dict[str, Any], timeout: float = 20.0,
               directory: PeerDirectory | None = None
               ) -> dict[str, Any]:
+        return self.signed_call(endpoint, f"/api/peer/drop/{kind}", kind, peer_id, payload,
+                                timeout=timeout, directory=directory)
+
+    def signed_call(self, endpoint: str, path: str, kind: str, peer_id: str, payload: dict[str, Any],
+                    *, timeout: float = 20.0, directory: PeerDirectory | None = None) -> dict[str, Any]:
+        """POST one signed envelope over the device route (LAN/HTTP/P2P) and verify the signed reply."""
         envelope = codec.make_envelope(kind, payload, sender=self.me, to=peer_id,
                                        private_key_bytes=self.node.private_key_bytes)
-        status, body = (directory or self.dir).request(endpoint, "POST", f"/api/peer/drop/{kind}", envelope, timeout=timeout)
+        status, body = (directory or self.dir).request(endpoint, "POST", path, envelope, timeout=timeout)
         if status >= 500 or status == 0:
             raise ConnectionError(f"peer returned {status}")
         if status >= 400:

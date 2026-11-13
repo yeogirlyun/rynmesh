@@ -2773,8 +2773,13 @@ def create_app(store: RynmeshStore | None = None):
     active_store.peer_providers = peer_providers
     install_peer_provider_routes(app, peer_providers, local_control)
 
-    install_device_drop(app, store=active_store, messaging_key=_msg_priv, personal_space=personal_space,
-                        network_id=control_network_id, local_control=local_control, peer_providers=peer_providers)
+    drop_engine = install_device_drop(app, store=active_store, messaging_key=_msg_priv,
+                                      personal_space=personal_space, network_id=control_network_id,
+                                      local_control=local_control, peer_providers=peer_providers)
+
+    from .node_sites import install_node_sites
+
+    install_node_sites(app, engine=drop_engine, home=active_store.home, local_control=local_control)
 
     from .exchange.routes import install_exchange
 

@@ -11,6 +11,8 @@ import dropEn from "./locales/drop.en.json";
 import dropZh from "./locales/drop.zh-CN.json";
 import craftEn from "./locales/craft.en.json";
 import craftZh from "./locales/craft.zh-CN.json";
+import sitesEn from "./locales/sites.en.json";
+import sitesZh from "./locales/sites.zh-CN.json";
 
 export type LanguagePreference = "system" | "zh-CN" | "en";
 const STORAGE_KEY = "ryn.language";
@@ -33,6 +35,7 @@ export function resolveLanguage(preference: LanguagePreference, systemLanguage =
 
 const en = {
   craft: craftEn,
+  sites: sitesEn,
   drive: drivesEn,
   drop: dropEn,
   personal: personalEn,
@@ -82,6 +85,7 @@ const en = {
 
 const zh = {
   craft: craftZh,
+  sites: sitesZh,
   drive: drivesZh,
   drop: dropZh,
   personal: personalZh,

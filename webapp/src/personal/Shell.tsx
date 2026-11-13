@@ -8,6 +8,7 @@ import {
   CheckSquare,
   ChevronDown,
   Compass,
+  Globe,
   Home,
   HardDrive,
   Menu,
@@ -91,6 +92,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
     { to: "/chat", label: t("nav.messages"), icon: MessageCircle },
     { to: "/friends", label: tr("Friends"), icon: UserRound },
     { to: "/exchange", label: tr("Exchange"), icon: Box },
+    { to: "/apps/sites", label: t("sites.title"), icon: Globe },
   ];
   const explorePaths = ["/library", "/explore", "/digest", "/search-ask", "/publish", "/items/", "/reading", "/offline", "/search", "/shared-reading", "/friend-updates"];
   const inExplore = explorePaths.some((path) => location.pathname.startsWith(path));
