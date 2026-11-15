@@ -423,6 +423,21 @@ function getServerStatusNotice(
     };
   }
 
+  if (
+    server.oauth?.state !== "logged_in" &&
+    (server.oauth?.error === "agent_mcp_oauth_credentials_reset" ||
+      rawMessage === "agent_mcp_oauth_credentials_reset")
+  ) {
+    return {
+      text: tx(
+        "登录信息已损坏并重置，请重新登录",
+        "Sign-in credentials were corrupted and reset. Please sign in again.",
+      ),
+      tone: "warning",
+      showRetry: false,
+    };
+  }
+
   if (!rawMessage) {
     return null;
   }

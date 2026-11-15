@@ -243,8 +243,10 @@ def test_real_login_pkce_sealed_credentials_and_protocol_headers(tmp_path, autho
         wrong = ExtensionStore(tmp_path / "wrong", X25519PrivateKey.generate())
         sealed = McpOAuthStore(wrong)
         sealed.path = manager.credentials.path
-        with pytest.raises(McpOAuthError, match="storage_unavailable"):
-            sealed.read()
+        sealed.lock = manager.credentials.lock
+        recovered = sealed.read()
+        assert recovered["servers"] == {}
+        assert "recovered_at" in recovered
     finally:
         manager.close()
 

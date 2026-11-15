@@ -396,7 +396,12 @@ class ExtensionToolAdapter:
             state = oauth.public_status(str(server.get("instance_id") or ""))
             server["oauth"] = state
             if server.get("enabled") and state.get("state") in {"logged_out", "pending", "error"}:
-                server.update(status="NeedsAuth", status_message="agent_mcp_auth_required")
+                status_message = (
+                    "agent_mcp_oauth_credentials_reset"
+                    if state.get("error") == "agent_mcp_oauth_credentials_reset"
+                    else "agent_mcp_auth_required"
+                )
+                server.update(status="NeedsAuth", status_message=status_message)
             statuses[server["id"]] = {key: server.get(key) for key in ("oauth", "status", "status_message")}
         for plugin in value.get("plugins", []):
             for server in plugin.get("mcp_servers", []):
