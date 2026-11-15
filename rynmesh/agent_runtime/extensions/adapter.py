@@ -55,6 +55,8 @@ ALLOWLISTED_DIAGNOSTIC_ERROR_CODES = ALLOWLISTED_MCP_RPC_ERROR_CODES | frozenset
     "agent_mcp_tools_limit",
     "agent_mcp_url_required",
     "agent_mcp_auth_required",
+    "agent_mcp_http_forbidden",
+    "agent_mcp_session_expired",
     "agent_mcp_http_error",
     "agent_mcp_transport_error",
     "agent_mcp_server_not_found",
@@ -1658,7 +1660,7 @@ class ExtensionToolAdapter:
                     **dispatch_options,
                 )
             except BaseException as exc:
-                if not passed_pre_dispatch:
+                if not passed_pre_dispatch or getattr(exc, "dispatched", None) is False:
                     if isinstance(exc, (KeyboardInterrupt, SystemExit)):
                         ledger.update(
                             operation_id,

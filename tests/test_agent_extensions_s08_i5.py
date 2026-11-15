@@ -1183,7 +1183,12 @@ def test_http_401_and_403_do_not_read_response_body(
                     expected_instance_id=srv["instance_id"],
                 )
             elapsed = time.monotonic() - t0
-            assert str(exc_info.value) == "agent_mcp_auth_required"
+            expected_err = (
+                "agent_mcp_auth_required"
+                if code == 401
+                else "agent_mcp_http_forbidden"
+            )
+            assert str(exc_info.value) == expected_err
             assert exc_info.value.http_status == code
             assert elapsed < 1.0
             assert exc_info.value.details is None or "http_body" not in exc_info.value.details
