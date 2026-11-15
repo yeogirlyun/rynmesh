@@ -9,6 +9,7 @@ from __future__ import annotations
 import errno
 import io
 import json
+import logging
 import os
 import re
 import threading
@@ -19,7 +20,9 @@ from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 from xml.etree import ElementTree
 
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
+
+logger = logging.getLogger(__name__)
 
 MAX_FILE = 64 * 1024 * 1024
 MAX_PREVIEW = 256 * 1024
@@ -249,10 +252,34 @@ class NasPlugin:
         self.state = {"enabled": False, "sources": []}
         self.connectors = {"smb": SMBConnector, "webdav": WebDAVConnector}
         self.cipher = None
+        self.recovered_from_corruption = None
         state_path = self.directory / "state.enc"
         if state_path.exists():
-            self.cipher = Fernet((self.directory / "key").read_bytes())
-            self.state = json.loads(self.cipher.decrypt(state_path.read_bytes()))
+            key_loaded = False
+            try:
+                cipher = self._load_cipher()
+                key_loaded = True
+                loaded = json.loads(cipher.decrypt(state_path.read_bytes()))
+                if (
+                    not isinstance(loaded, dict)
+                    or not isinstance(loaded.get("enabled"), bool)
+                    or not isinstance(loaded.get("sources"), list)
+                ):
+                    raise ValueError("invalid_nas_state")
+                self.cipher = cipher
+                self.state = loaded
+            except (OSError, ValueError, InvalidToken, json.JSONDecodeError) as exc:
+                ts = int(time.time())
+                self._quarantine_file(state_path, ts)
+                if not key_loaded:
+                    self._quarantine_file(self.directory / "key", ts)
+                self.state = {"enabled": False, "sources": []}
+                self.cipher = None
+                self.recovered_from_corruption = {"at": ts, "reason": type(exc).__name__}
+                logger.warning(
+                    "NAS state corrupted (%s); isolated corrupt files and reset state",
+                    type(exc).__name__,
+                )
         from .cloud_drives import BaiduConnector, CloudDrives, GoogleConnector
         from .onedrive import OneDriveConnector
         self.cloud = CloudDrives(self)
@@ -261,6 +288,23 @@ class NasPlugin:
                                onedrive=lambda c: OneDriveConnector(c, self.save))
         from .drive_cache import DirectoryCache
         self.directory_cache = DirectoryCache(self)
+
+    def _load_cipher(self):
+        return Fernet((self.directory / "key").read_bytes())
+
+    @staticmethod
+    def _quarantine_file(path: Path, ts: int) -> None:
+        if not path.exists() and not path.is_symlink():
+            return
+        target = path.with_name(f"{path.name}.corrupt-{ts}")
+        counter = 1
+        while target.exists() or target.is_symlink():
+            target = path.with_name(f"{path.name}.corrupt-{ts}-{counter}")
+            counter += 1
+        try:
+            path.rename(target)
+        except OSError as exc:
+            logger.warning("Failed to isolate corrupt NAS file %s (%s)", path.name, type(exc).__name__)
 
     @staticmethod
     def public_source(source):
@@ -276,11 +320,23 @@ class NasPlugin:
     def _save(self):
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         if self.cipher is None:
-            key = Fernet.generate_key()
-            with (self.directory / "key").open("xb") as handle:
-                handle.write(key)
-            os.chmod(self.directory / "key", 0o600)
-            self.cipher = Fernet(key)
+            key_path = self.directory / "key"
+            if key_path.exists() or key_path.is_symlink():
+                try:
+                    self.cipher = self._load_cipher()
+                except (OSError, ValueError) as exc:
+                    ts = int(time.time())
+                    self._quarantine_file(key_path, ts)
+                    logger.warning(
+                        "NAS key corrupted (%s); isolated corrupt key and creating a new key",
+                        type(exc).__name__,
+                    )
+            if self.cipher is None:
+                key = Fernet.generate_key()
+                with key_path.open("xb") as handle:
+                    handle.write(key)
+                os.chmod(key_path, 0o600)
+                self.cipher = Fernet(key)
         data = self.cipher.encrypt(json.dumps(self.state).encode())
         temp = self.directory / (uuid.uuid4().hex + ".tmp")
         temp.write_bytes(data)
@@ -289,7 +345,7 @@ class NasPlugin:
 
     def status(self):
         with self.lock:
-            return {
+            result = {
                 "enabled": self.state["enabled"],
                 "systems": SYSTEMS + [
                     {"id": "google", "name": "Google Drive", "protocols": ["google"], "integration": "Official Drive API"},
@@ -303,6 +359,9 @@ class NasPlugin:
                     self.public_source(s) for s in self.state["sources"]
                 ],
             }
+            if self.recovered_from_corruption is not None:
+                result["recovered_from_corruption"] = dict(self.recovered_from_corruption)
+            return result
 
     def enable(self, enabled):
         if not isinstance(enabled, bool):
