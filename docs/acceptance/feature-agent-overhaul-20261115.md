@@ -2,6 +2,8 @@
 
 记录日期：2026-11-15（Asia/Hong_Kong）。
 
+后续同步见 [2026-11-16 增量说明](feature-agent-overhaul-20261116.md)。本文保留首次推送时的快照和验证记录。对外总结本轮 Agent 修复时，应使用下方“Agent 已纳入代码的改动”；节点网页、生图工作台属于此前基线功能，并非本轮 Agent 改造新增。
+
 ## 分支与交付范围
 
 - 交付仓库：<https://github.com/yeogirlyun/rynmesh>。
