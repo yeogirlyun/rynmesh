@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from jsonschema import ValidationError, validate
 
-from ..llm_package.chat import validate_provider_state
+from ..llm_package.chat import validate_provider_state, validate_tool_arguments
 from . import (
     automations,
     budget,
@@ -61,7 +61,7 @@ from .store import (
 from .stream_tools import StreamToolMismatch
 from .streamed_reads import NestedReadDispatch, StreamedReads
 from .tool_dispatch import MAX_PARALLEL_TOOLS, PARALLEL_READS, supports_parallel
-from .tool_router import assert_schema_unchanged, normalize_tool_calls
+from .tool_router import assert_schema_unchanged, normalize_tool_calls, schema_rejection_error
 from .turn_state import decide_turn
 
 ALL_INTERNAL_SPECS = (
@@ -1510,9 +1510,9 @@ class AgentLoop:
             if "schema_snapshot" in call:  # Old queued sessions retain their previous validation path.
                 assert_schema_unchanged(call, spec)
             try:
-                validate(call["arguments"], spec["parameters"])
-            except ValidationError:
-                raise AgentError("agent_invalid_tool_call") from None
+                validate_tool_arguments(spec["parameters"], call["arguments"])
+            except ValueError as exc:
+                raise schema_rejection_error(call["name"], exc) from None
             subagents.check_subagent_tool_policy(selected, call["name"], call["arguments"])
             from .read_reliability import check_shell_retry
             check_shell_retry(selected, call)

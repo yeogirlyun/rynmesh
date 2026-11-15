@@ -170,3 +170,178 @@ def test_internal_validation_stays_with_existing_internal_handler():
                                   internal_names={"internal"}, metadata=lambda _name: {"effect": "read"})[0]
     assert routed["error_result"] is None
     assert routed["arguments"] == {}
+
+
+def test_empty_or_whitespace_arguments_parse_as_empty_object():
+    optional_spec = {"type": "function", "function": {"name": "list_items", "parameters": {
+        "type": "object", "properties": {"cursor": {"type": "string"}}, "additionalProperties": False,
+    }}}
+    looked_up = []
+    routed = normalize_tool_calls(
+        [call("empty_str", "list_items", ""), call("ws_str", "list_items", "  \n\t ")],
+        [optional_spec],
+        metadata=lambda name: looked_up.append(name) or {"effect": "read"},
+    )
+    assert looked_up == ["list_items", "list_items"]
+    assert routed[0]["error_result"] is None
+    assert routed[0]["arguments"] == {}
+    assert routed[0]["arguments_json"] == ""
+    assert routed[1]["error_result"] is None
+    assert routed[1]["arguments"] == {}
+    assert routed[1]["arguments_json"] == "  \n\t "
+
+
+def test_malformed_json_and_non_object_arguments_report_specific_parse_reason():
+    bad_json = normalize_tool_calls([call("bad_json", arguments='{"a":')], [spec()])[0]
+    err = bad_json["error_result"]
+    assert err["error"] == "agent_tool_arguments_invalid"
+    assert err["message"].startswith("failed to parse function arguments:")
+    assert "line 1 column" in err["message"]
+
+    for raw_arg, expected_type in [("[]", "array"), ("null", "null"), (9, "number"), (True, "boolean")]:
+        routed = normalize_tool_calls([call("non_obj", arguments=raw_arg)], [spec()])[0]
+        assert routed["error_result"]["error"] == "agent_tool_arguments_invalid"
+        assert routed["error_result"]["message"] == f"arguments must be a JSON object, got {expected_type}"
+
+
+def test_schema_validation_reports_field_path_required_and_truncates_to_300_chars():
+    from rynmesh.llm_package.chat import validate_tool_arguments
+
+    missing_req = normalize_tool_calls([call("missing_req", arguments="{}")], [spec()])[0]
+    err = missing_req["error_result"]
+    assert err["error"] == "agent_tool_arguments_invalid"
+    assert "path" in err["message"] and "required" in err["message"]
+    assert err["details"] == {"field_path": "<root>", "validator": "required"}
+
+    nested_spec = {"type": "function", "function": {"name": "batch", "parameters": {
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"count": {"type": "integer"}},
+                    "required": ["count"],
+                },
+            }
+        },
+        "required": ["items"],
+    }}}
+    long_bad = "Bearer secret_tok_999 " + ("x" * 500)
+    with pytest.raises(ValueError) as exc_info:
+        validate_tool_arguments(nested_spec["function"]["parameters"], {"items": [{"count": long_bad}]})
+    assert exc_info.value.__cause__ is not None
+    assert exc_info.value.field_path == "$.items[0].count"
+    assert len(exc_info.value.detail) == 300
+
+    routed = normalize_tool_calls(
+        [call("nested_bad", "batch", json.dumps({"items": [{"count": long_bad}]}))],
+        [nested_spec],
+    )[0]
+    nested_err = routed["error_result"]
+    assert nested_err["error"] == "agent_tool_arguments_invalid"
+    assert nested_err["details"] == {"field_path": "items/0/count", "validator": "type"}
+    assert "items/0/count" in nested_err["message"]
+    assert "secret_tok_999" not in nested_err["message"]
+    assert "Bearer [redacted]" in nested_err["message"]
+    prefix = "Invalid arguments for 'batch' at field 'items/0/count' (type): "
+    assert nested_err["message"].startswith(prefix)
+    assert len(nested_err["message"][len(prefix):]) <= 300
+
+
+def test_namespace_resolves_prefixed_or_canonical_tool_and_rejects_unmatched_or_ambiguous():
+    mcp_spec = spec("mcp__x__y")
+    hit_prefixed = {
+        "type": "function_call", "call_id": "ns_prefixed", "namespace": "mcp__x", "name": "y",
+        "arguments": '{"path":"fixture.txt"}',
+    }
+    routed_prefixed = normalize_tool_calls([hit_prefixed], [mcp_spec], metadata=lambda name: {"effect": "read"})[0]
+    assert routed_prefixed["error_result"] is None
+    assert routed_prefixed["name"] == "mcp__x__y"
+
+    hit_functions = {
+        "type": "function_call", "call_id": "ns_functions", "namespace": "functions", "name": "read",
+        "arguments": '{"path":"fixture.txt"}',
+    }
+    routed_functions = normalize_tool_calls([hit_functions], [spec("read")], metadata=lambda name: {"effect": "read"})[0]
+    assert routed_functions["error_result"] is None
+    assert routed_functions["name"] == "read"
+
+    hit_direct = {
+        "type": "function_call", "call_id": "ns_direct", "namespace": "mcp__x", "name": "mcp__x__y",
+        "arguments": '{"path":"fixture.txt"}',
+    }
+    routed_direct = normalize_tool_calls([hit_direct], [mcp_spec], metadata=lambda name: {"effect": "read"})[0]
+    assert routed_direct["error_result"] is None
+    assert routed_direct["name"] == "mcp__x__y"
+
+    unoffered_flat = {
+        "type": "function_call", "call_id": "ns_unoffered", "namespace": "unoffered", "name": "read",
+        "arguments": '{"path":"fixture.txt"}',
+    }
+    routed_unoffered = normalize_tool_calls(
+        [unoffered_flat], [spec("read")], metadata=lambda _name: pytest.fail("must not resolve")
+    )[0]
+    assert routed_unoffered["error_result"]["error"] == "agent_unknown_tool"
+
+    miss = {
+        "type": "function_call", "call_id": "ns_miss", "namespace": "mcp__other", "name": "z",
+        "arguments": '{"path":"fixture.txt"}',
+    }
+    routed_miss = normalize_tool_calls([miss], [mcp_spec], metadata=lambda _name: pytest.fail("must not resolve"))[0]
+    assert routed_miss["error_result"]["error"] == "agent_unknown_tool"
+
+
+def test_additional_properties_rejection_does_not_leak_unexpected_key_or_value():
+    from rynmesh.llm_package.chat import validate_tool_arguments
+
+    payload = {"path": "fixture.txt", "private-secret": "never-export"}
+    with pytest.raises(ValueError) as exc_info:
+        validate_tool_arguments(spec()["function"]["parameters"], payload)
+    assert "unexpected properties are not allowed" in exc_info.value.detail
+    assert "private-secret" not in str(exc_info.value)
+    assert "never-export" not in str(exc_info.value)
+    assert "private-secret" not in json.dumps(list(exc_info.value.args))
+
+    routed = normalize_tool_calls([call("extra_key", "read", json.dumps(payload))], [spec()])[0]
+    err = routed["error_result"]
+    assert err["error"] == "agent_tool_arguments_invalid"
+    assert "unexpected properties are not allowed" in err["message"]
+    assert err["details"] == {"field_path": "<root>", "validator": "additionalProperties"}
+    dumped = json.dumps(err)
+    assert "private-secret" not in dumped
+    assert "never-export" not in dumped
+
+
+def test_loop_secondary_validation_rejects_legacy_queued_call_with_field_details():
+    from types import SimpleNamespace
+
+    from rynmesh.agent_runtime.loop import AgentLoop
+
+    class DummyHost(AgentLoop):
+        def __init__(self):
+            self.tools = SimpleNamespace(
+                metadata=lambda _name: {"effect": "read"},
+            )
+
+        def _reserve_output(self, _selected):
+            pass
+
+        def _business_specs(self, _selected):
+            return [spec("read")]
+
+    host = DummyHost()
+    legacy_call = {
+        "call_id": "legacy_bad",
+        "operation_id": "op_legacy",
+        "name": "read",
+        "effect": "read",
+        "arguments": {},
+    }
+    selected = {"id": "task_1", "queue": [legacy_call]}
+    with pytest.raises(AgentToolRejected) as exc_info:
+        host._tool(selected, lambda: False, 0.0)
+    assert exc_info.value.args[0] == "agent_tool_arguments_invalid"
+    assert "path" in (exc_info.value.correction or "") and "required" in (exc_info.value.correction or "")
+    assert exc_info.value.details == {"tool": "read", "field_path": "<root>", "validator": "required"}
+

@@ -158,12 +158,27 @@ def test_read_reports_lines_pages_on_line_boundaries_and_addresses_by_line(local
     assert "".join(pages) == body and len(pages) > 1
 
 
-@pytest.mark.parametrize(("bad_call", "expected_error", "expected_message"), [
-    (call("ryn_file_read", json.dumps({"start_line": 2}), "bad"), "agent_tool_arguments_invalid", "Tool arguments do not match the request-bound parameter schema."),
-    (call("ryn_file_read", "{not json", "bad"), "agent_tool_arguments_invalid", "Tool arguments must be a valid JSON object."),
-    (call("ryn_does_not_exist", "{}", "bad"), "agent_unknown_tool", "Choose a tool from the tools offered in this request."),
+@pytest.mark.parametrize(("bad_call", "expected_error", "expected_message_parts", "expected_details"), [
+    (
+        call("ryn_file_read", json.dumps({"start_line": 2}), "bad"),
+        "agent_tool_arguments_invalid",
+        ("Invalid arguments for 'ryn_file_read' at field '<root>' (required):", "'path' is a required property"),
+        {"field_path": "<root>", "validator": "required"},
+    ),
+    (
+        call("ryn_file_read", "{not json", "bad"),
+        "agent_tool_arguments_invalid",
+        ("failed to parse function arguments:", "line 1 column"),
+        None,
+    ),
+    (
+        call("ryn_does_not_exist", "{}", "bad"),
+        "agent_unknown_tool",
+        ("Choose a tool from the tools offered in this request.",),
+        None,
+    ),
 ])
-def test_invalid_tool_call_is_explained_on_the_retry_instead_of_repeated_blind(node, monkeypatch, tmp_path, bad_call, expected_error, expected_message):
+def test_invalid_tool_call_is_explained_on_the_retry_instead_of_repeated_blind(node, monkeypatch, tmp_path, bad_call, expected_error, expected_message_parts, expected_details):
     app, owner_store = node
     _, model_id = add_source(app)
     bridge, tools, catalog = build_agent_integrations(app, owner_store, owner_store.home)
@@ -182,9 +197,16 @@ def test_invalid_tool_call_is_explained_on_the_retry_instead_of_repeated_blind(n
         if current["status"] in {"completed", "failed"}:
             break
     assert current["status"] == "completed", (current.get("error"), [(e["type"], e.get("detail"), e.get("error")) for e in current["events"][-10:]])
-    expected_payload = {"error": expected_error, "message": expected_message, "not_executed": True, "no_mutation": True}
     rejection = next(e for e in current["events"] if e["type"] == "tool_rejected" and e.get("call_id") == "bad")
-    assert rejection["result"] == expected_payload
+    actual_result = rejection["result"]
+    assert actual_result["error"] == expected_error
+    assert actual_result["not_executed"] is True and actual_result["no_mutation"] is True
+    for part in expected_message_parts:
+        assert part in actual_result["message"]
+    if expected_details is None:
+        assert "details" not in actual_result
+    else:
+        assert actual_result.get("details") == expected_details
     assert not [e for e in current["events"] if e["type"] in {"tool_started", "tool_execution_completed", "tool_result"} and e.get("call_id") == "bad"]
     good_started = [e for e in current["events"] if e["type"] == "tool_started" and not e.get("internal")]
     good_results = [e for e in current["events"] if e["type"] == "tool_result" and not e.get("internal")]
@@ -203,7 +225,7 @@ def test_invalid_tool_call_is_explained_on_the_retry_instead_of_repeated_blind(n
     assert assistant_bad["function"]["arguments"] == raw_args
     paired = requests[2]["messages"][-1]
     assert paired["role"] == "tool" and paired["tool_call_id"] == "bad"
-    assert json.loads(paired["content"]) == expected_payload
+    assert json.loads(paired["content"]) == actual_result
     good_tool = next(m for m in requests[3]["messages"] if m.get("role") == "tool" and m.get("tool_call_id") == "good")
     assert json.loads(good_tool["content"])["text"] == "alpha\n"
 
@@ -249,16 +271,16 @@ def test_mixed_valid_and_invalid_tool_calls_execute_valid_sibling_once_and_pair_
     assert receipts[0]["tool"] == "ryn_file_read" and receipts[0]["status"] == "confirmed" and receipts[0]["arguments"] == {"path": "a.txt"}
     rejections = [e for e in current["events"] if e["type"] == "tool_rejected"]
     assert len(rejections) == 1 and rejections[0]["call_id"] == "bad"
-    assert rejections[0]["result"] == {
-        "error": "agent_tool_arguments_invalid",
-        "message": "Tool arguments must be a valid JSON object.",
-        "not_executed": True,
-        "no_mutation": True,
-    }
+    bad_result = rejections[0]["result"]
+    assert bad_result["error"] == "agent_tool_arguments_invalid"
+    assert bad_result["not_executed"] is True and bad_result["no_mutation"] is True
+    assert "failed to parse function arguments:" in bad_result["message"]
+    assert "line 1 column" in bad_result["message"]
+    assert "details" not in bad_result
     followup = requests[2]["messages"]
     tool_msgs = {m["tool_call_id"]: json.loads(m["content"]) for m in followup if m.get("role") == "tool" and m.get("tool_call_id") in {"good", "bad"}}
     assert tool_msgs["good"]["text"] == "alpha\n"
-    assert tool_msgs["bad"] == rejections[0]["result"]
+    assert tool_msgs["bad"] == bad_result
 
 
 def test_search_ranks_matching_files_so_a_broad_term_can_be_narrowed(local):

@@ -11,7 +11,7 @@ import time
 from typing import Any
 
 from jsonschema import Draft202012Validator
-from jsonschema.exceptions import SchemaError, ValidationError
+from jsonschema.exceptions import SchemaError, ValidationError, best_match
 from referencing import Registry
 
 from .adapters import actual_usage, cached_input_tokens
@@ -83,11 +83,52 @@ def validate_tool_schema(schema):
         raise ValueError("invalid tool parameter schema") from exc
 
 
+def _additional_properties_detail(err: Exception) -> str:
+    instance = getattr(err, "instance", None)
+    schema = getattr(err, "schema", None)
+    if isinstance(instance, dict) and isinstance(schema, dict):
+        props = schema.get("properties")
+        allowed_keys = set(props.keys()) if isinstance(props, dict) else set()
+        patterns = schema.get("patternProperties")
+        extra_count = 0
+        for key in instance:
+            if key in allowed_keys:
+                continue
+            if isinstance(patterns, dict) and any(
+                re.search(pat, str(key)) for pat in patterns if isinstance(pat, str)
+            ):
+                continue
+            extra_count += 1
+        if extra_count > 0:
+            return f"unexpected properties are not allowed ({extra_count} unexpected)"
+    return "unexpected properties are not allowed"
+
+
 def validate_tool_arguments(schema, arguments):
     try:
-        Draft202012Validator(schema, registry=Registry()).validate(arguments)
+        validator = Draft202012Validator(schema, registry=Registry())
+        errors = list(validator.iter_errors(arguments))
     except (ValidationError, RecursionError) as exc:
-        raise ValueError("client tool arguments do not match its schema") from exc
+        json_path = str(getattr(exc, "json_path", "$") or "$")
+        if getattr(exc, "validator", None) == "additionalProperties":
+            detail = _additional_properties_detail(exc)
+        else:
+            detail = str(getattr(exc, "message", str(exc)) or "")[:300]
+        err = ValueError(f"client tool arguments do not match its schema at {json_path}: {detail}", json_path, detail)
+        err.field_path = json_path
+        err.detail = detail
+        raise err from exc
+    if errors:
+        matched = best_match(errors)
+        json_path = str(getattr(matched, "json_path", "$") or "$")
+        if getattr(matched, "validator", None) == "additionalProperties":
+            detail = _additional_properties_detail(matched)
+        else:
+            detail = str(getattr(matched, "message", "") or "")[:300]
+        err = ValueError(f"client tool arguments do not match its schema at {json_path}: {detail}", json_path, detail)
+        err.field_path = json_path
+        err.detail = detail
+        raise err from matched
 
 
 def validate_chat(value: dict[str, Any]) -> dict[str, Any]:
