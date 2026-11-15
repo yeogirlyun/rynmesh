@@ -16,13 +16,14 @@ import os
 import threading
 import time
 import uuid
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from .crypto import SignedPayload
+from .friends.store import FriendStore
 from .llm_package.p2p import (
     IceSignal,
     _close_connection,
@@ -49,6 +50,7 @@ from .peer_transit import (
     validate_ice_hop,
     verify_session_open,
 )
+from .personal_space import PersonalSpace
 from .services.peer_box import load_or_create_messaging_key
 from .store import RynmeshStore
 
@@ -65,7 +67,7 @@ WORKER_ERROR_LOG_INTERVAL_S = 30.0
 # Keep a reliable-message burst below typical UDP socket receive buffers.  The
 # lower layer fragments this again into ~900-byte datagrams.
 DEFAULT_CHUNK_BYTES = 64 * 1024
-DEFAULT_MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024
+DEFAULT_MAX_FILE_BYTES = 512 * 1024 * 1024
 DEFAULT_RESUME_SEGMENT_BYTES = 64 * 1024 * 1024
 DEFAULT_MAX_RESUME_ATTEMPTS = 3
 
@@ -568,6 +570,33 @@ class _TargetFileSink:
         self._release_claim()
 
 
+def _default_trusted_source(store: RynmeshStore) -> Callable[[str], bool]:
+    def is_trusted(source_peer_id: str) -> bool:
+        peer_id = str(source_peer_id or "").strip()
+        if not peer_id:
+            return False
+        if peer_id == store.peer_id:
+            return True
+        try:
+            status = PersonalSpace(store).status()
+            if status.get("membership") == "active":
+                for member in status.get("members", []):
+                    if (
+                        isinstance(member, dict)
+                        and str(member.get("peer_id") or "") == peer_id
+                        and not member.get("removed")
+                    ):
+                        return True
+        except Exception:
+            pass
+        try:
+            return FriendStore(store.home).relationship_for_peer(peer_id) is not None
+        except Exception:
+            return False
+
+    return is_trusted
+
+
 class PeerTransitWorker:
     def __init__(
         self,
@@ -582,6 +611,7 @@ class PeerTransitWorker:
         audit_frame: Any | None = None,
         audit_session: Any | None = None,
         capacity_refresh_s: float = DEFAULT_CAPACITY_REFRESH_S,
+        trusted_source: Callable[[str], bool] | None = None,
     ) -> None:
         if role not in {"target", "transit", "both"}:
             raise ValueError("peer transit role must be target, transit, or both")
@@ -599,6 +629,9 @@ class PeerTransitWorker:
         if capacity_refresh_s <= 0:
             raise ValueError("peer transit capacity refresh interval must be positive")
         self.capacity_refresh_s = float(capacity_refresh_s)
+        self.trusted_source: Callable[[str], bool] = (
+            trusted_source if trusted_source is not None else _default_trusted_source(store)
+        )
         self._control_error_lock = threading.Lock()
         self._control_error_count = 0
         self._first_control_error = ""
@@ -745,11 +778,17 @@ class PeerTransitWorker:
         try:
             asyncio.run(handler(order))
         except Exception as exc:
+            result_refs = (
+                {"error_code": "transit_source_not_trusted"}
+                if isinstance(exc, PeerTransitError) and str(exc) == "transit_source_not_trusted"
+                else None
+            )
             self.store.publish_work_result(
                 work_order_id=str(order["work_order_id"]),
                 requester_peer_id=str(order["requester_peer_id"]),
                 status="failed",
                 message=f"{type(exc).__name__}: {exc}",
+                result_refs=result_refs,
                 network_id=self.network_id,
             )
         finally:
@@ -874,6 +913,8 @@ class PeerTransitWorker:
             signed_open,
             expected_target_peer_id=self.store.peer_id,
         )
+        if not self.trusted_source(session.source_peer_id):
+            raise PeerTransitError("transit_source_not_trusted")
         direct = str(order.get("operation") or "") == DIRECT_OPERATION
         if direct and not self.allow_direct:
             raise PeerTransitError("direct path disabled by target policy")
@@ -1684,6 +1725,7 @@ def main() -> int:
     worker.add_argument("--inbox", default="")
     worker.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_S)
     worker.add_argument("--deny-direct", action="store_true")
+    worker.add_argument("--allow-any-source", action="store_true")
 
     send = subparsers.add_parser("send-file", help="send a file through another P2P peer")
     send.add_argument("path")
@@ -1735,6 +1777,7 @@ def main() -> int:
             inbox=args.inbox or None,
             timeout_s=args.timeout,
             allow_direct=not args.deny_direct,
+            trusted_source=(lambda _peer_id: True) if args.allow_any_source else None,
         ).serve_forever()
         return 0
     if args.command == "send-file-direct":

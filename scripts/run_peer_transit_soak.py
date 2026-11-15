@@ -14,8 +14,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from rynmesh.friends.store import FriendStore
+from rynmesh.peer_transit import messaging_public_key
 from rynmesh.peer_transit_service import PeerTransitWorker, send_file_via_peer
 from rynmesh.registry import FilePeerRegistry
+from rynmesh.services.peer_box import load_or_create_messaging_key
 from rynmesh.store import RynmeshStore
 
 try:
@@ -90,6 +93,19 @@ def run_soak(
     target = RynmeshStore(home=work_root / "target", network_dir=work_root / "target-net")
     for store in (source, relay, target):
         store.registry = registry
+    source_box = load_or_create_messaging_key(source.home / "messaging.x25519")
+    FriendStore(target.home).put_relationship(
+        {
+            "relationship_id": f"soak-{source.peer_id[:16]}",
+            "peer_id": source.peer_id,
+            "node_name": source.node_name,
+            "messaging_pub": messaging_public_key(source_box),
+            "endpoint": "https://soak-peer.example.invalid",
+            "status": "active",
+            "created_at": "2026-11-15T00:00:00+00:00",
+        },
+        b"\x33" * 32,
+    )
 
     network_id = "peer-transit-soak"
     frame_audit = _FrameAudit()
