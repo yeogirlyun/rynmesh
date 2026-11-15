@@ -141,6 +141,8 @@ class AgentModelBridge:
                 raise ValueError
             calls = response_calls(message)
             if not message.get("content") and not calls:
+                if finish == "content_filter":
+                    raise AgentError("agent_model_content_filtered")
                 detail = "the response had neither text nor a tool call"
                 raise ValueError
             for key in ("end_turn", "needs_follow_up"):
@@ -156,7 +158,7 @@ class AgentModelBridge:
                 for call in calls]}
             validate_chat({"messages": [envelope, *[
                 {"role": "tool", "tool_call_id": call["id"], "content": ""} for call in calls]]})
-        except AgentModelResponseError:
+        except AgentError:
             raise
         except (ValueError, TypeError, KeyError, AttributeError, RecursionError):
             error = AgentModelResponseError(usage, finish)
@@ -492,8 +494,10 @@ class AgentModelBridge:
             code = {"inference_timeout": "agent_inference_timeout",
                     "runtime_connection_failed": "agent_model_connection_failed",
                     "upstream_http_failed": "agent_model_upstream_failed",
+                    "upstream_stream_error": "agent_model_upstream_failed",
                     "upstream_stream_truncated": "agent_model_stream_interrupted",
                     "upstream_image_rejected": "agent_model_image_rejected",
+                    "upstream_request_rejected": "agent_model_request_rejected",
                     "source_protocol_parameters_unsupported": "agent_model_protocol_unsupported",
                     "source_protocol_response_invalid": "agent_model_protocol_invalid",
                     "runtime_busy": "agent_model_busy",

@@ -16,7 +16,7 @@ from typing import Any, Callable, Protocol
 from urllib.parse import urlparse
 
 from .data_release import urlopen as model_urlopen
-from .transport_failure import describe, read_http_failure
+from .transport_failure import classify_stream_error, describe, read_http_failure
 
 
 def actual_usage(result: Any) -> dict[str, int | None]:
@@ -76,6 +76,8 @@ RUNTIME_ERROR_CODES = frozenset({
     "source_protocol_parameters_unsupported",
     "source_protocol_response_invalid",
     "upstream_image_rejected",
+    "upstream_stream_error",
+    "upstream_request_rejected",
 })
 
 
@@ -207,23 +209,23 @@ class OpenAICompatibleAdapter:
                         with self._lock:
                             self._active_responses.pop(task_id, None)
         except urllib.error.HTTPError as exc:
-            code = "upstream_http_failed" if classify_errors else "inference_failed"
-            value = None
-            # Read only a bounded error envelope. Never expose runtime body text,
-            # which can contain prompts, paths, or credentials.
+            # Read only a bounded error envelope via the shared reader. Never expose
+            # runtime body text, which can contain prompts, paths, or credentials.
             try:
-                raw_error = exc.read(16 * 1024 + 1)
-                value = json.loads(raw_error) if len(raw_error) <= 16 * 1024 else None
-                detail = value.get("detail") if isinstance(value, dict) else None
-                if isinstance(detail, str) and detail in RUNTIME_ERROR_CODES:
-                    code = detail
-            except (OSError, ValueError):
-                pass
+                diagnostics, runtime_detail = read_http_failure(exc, phase, detail_codes=RUNTIME_ERROR_CODES)
             finally:
                 exc.close()
-            diagnostics = describe(exc, phase, value)
             if classify_errors and diagnostics.get("image_rejected"):
                 code = "upstream_image_rejected"  # The model refused the image, not the request.
+            elif runtime_detail in RUNTIME_ERROR_CODES:
+                code = runtime_detail
+            elif classify_errors:
+                if diagnostics.get("network_reason") in {"request_rejected", "auth_rejected"}:
+                    code = "upstream_request_rejected"
+                else:
+                    code = "upstream_http_failed"
+            else:
+                code = "inference_failed"
             raise AdapterError(f"local API request failed: {code}", code=code, diagnostics=diagnostics) from None
         except OSError as exc:
             timed_out = isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)
@@ -475,8 +477,9 @@ class OpenAICompatibleAdapter:
                         if data == b"[DONE]":
                             break
                         chunk = json.loads(data)
-                        if "error" in chunk:
-                            raise AdapterError("upstream_stream_error")
+                        if isinstance(chunk, dict) and chunk.get("error") is not None:
+                            err_code, err_diag = classify_stream_error(chunk["error"], phase)
+                            raise failure(err_code, err_diag)
                         if isinstance(chunk, dict):
                             if "usage" in chunk:
                                 fresh_usage = observed_usage(chunk["usage"])
@@ -503,7 +506,7 @@ class OpenAICompatibleAdapter:
                 raise AdapterError("task_cancelled")
             if deadline is not None and time.monotonic() > deadline:
                 raise AdapterError("inference timed out", code="inference_timeout")
-            if not message.get("content") and not message.get("tool_calls") and not message.get("reasoning_content"):
+            if finish != "content_filter" and not message.get("content") and not message.get("tool_calls") and not message.get("reasoning_content"):
                 raise AdapterError("upstream_empty_completion")
             counts = observed_usage(usage)
             cached = cached_input_tokens(usage)
@@ -526,8 +529,13 @@ class OpenAICompatibleAdapter:
         except urllib.error.HTTPError as exc:
             diagnostics = read_http_failure(exc, phase)
             exc.close()
-            raise failure("upstream_image_rejected" if diagnostics.get("image_rejected") else "upstream_http_failed",
-                          diagnostics) from None
+            if diagnostics.get("image_rejected"):
+                err_code = "upstream_image_rejected"
+            elif diagnostics.get("network_reason") in {"request_rejected", "auth_rejected"}:
+                err_code = "upstream_request_rejected"
+            else:
+                err_code = "upstream_http_failed"
+            raise failure(err_code, diagnostics) from None
         except OSError as exc:
             timed_out = isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)
             diagnostics = describe(exc, phase)
@@ -691,20 +699,16 @@ class OpenAICompatibleAdapter:
                 raise AdapterError("task_cancelled") from None
             code = "runtime_connection_failed"
             if isinstance(exc, urllib.error.HTTPError):
-                code = "inference_failed"
                 try:
-                    raw_error = exc.read(16 * 1024 + 1)
-                    value = json.loads(raw_error) if len(raw_error) <= 16 * 1024 else None
-                    detail = value.get("detail") if isinstance(value, dict) else None
-                    if isinstance(detail, str) and detail in RUNTIME_ERROR_CODES:
-                        code = detail
-                except (OSError, ValueError):
-                    pass
+                    diagnostics, runtime_detail = read_http_failure(exc, detail_codes=RUNTIME_ERROR_CODES)
                 finally:
                     exc.close()
-            elif isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError):
-                code = "inference_timeout"
-            raise AdapterError("local API streaming request failed", code=code, diagnostics=describe(exc)) from None
+                code = runtime_detail if runtime_detail in RUNTIME_ERROR_CODES else "inference_failed"
+            else:
+                diagnostics = describe(exc)
+                if isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError):
+                    code = "inference_timeout"
+            raise AdapterError("local API streaming request failed", code=code, diagnostics=diagnostics) from None
         finally:
             with self._lock:
                 self._active_responses.pop(task_id, None)

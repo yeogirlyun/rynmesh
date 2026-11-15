@@ -2949,6 +2949,7 @@ class AgentRuntime(AgentLoop):
         read_cleanup_ok: bool | None = None,
         read_recovery: dict | None = None,
         error_details: str | None = None,
+        diagnostics: dict | None = None,
     ) -> None:
         def fail(data):
             from .execution_policy import verified_read_classification
@@ -3022,8 +3023,17 @@ class AgentRuntime(AgentLoop):
                 elif row["status"] in {"running", "queued"} and code in budget.LIMIT_CODES:
                     budget.stop_for_limit(row, code)
                 elif row["status"] in {"running", "queued"}:
+                    safe_diag = diagnostic_log.safe_diagnostics(diagnostics)
+                    if row.get("connection_recovery"):
+                        retry_policy.reset(row)
                     row.update(status="failed", error=code, approved=None)
-                    event(row, "failed", error=code)
+                    event(
+                        row,
+                        "failed",
+                        error=code,
+                        **({"http_status": safe_diag["http_status"]} if "http_status" in safe_diag else {}),
+                        **({"diagnostics": safe_diag} if safe_diag else {}),
+                    )
                 subagents.on_subagent_settled_in_tx(data, row)
         self.store.transaction(fail)
 
@@ -3370,6 +3380,7 @@ class AgentRuntime(AgentLoop):
                 read_cleanup_ok=read_cleanup_ok,
                 read_recovery=read_recovery,
                 error_details=fail_details,
+                diagnostics=diagnostics,
             )
 
     def run_continuously(self) -> WorkerRunResult:
