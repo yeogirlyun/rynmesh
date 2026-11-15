@@ -68,6 +68,14 @@ const HELP: Record<string, ErrorHelp> = {
     zh: "所选协议不支持当前请求参数，请检查模型来源设置。",
     en: "The selected protocol does not support these request parameters. Review the model source settings.",
     actions: ["open_sources", "switch_model"] },
+  agent_model_request_rejected: {
+    zh: "模型服务拒绝了这次请求（例如模型名不存在、密钥权限不足或参数不被接受）。请检查模型来源设置，或换一个模型继续。",
+    en: "The model service rejected this request (for example an unknown model name, rejected credentials, or unsupported parameters). Check the model source settings, or pick another model.",
+    actions: ["open_sources", "switch_model"] },
+  agent_model_content_filtered: {
+    zh: "模型因内容安全策略中断或拒答了这次回复。请调整表述后继续，或换一个模型。",
+    en: "The model stopped or refused this reply due to its content safety filter. Rephrase your message to continue, or pick another model.",
+    actions: ["continue", "switch_model"] },
   agent_storage_limit: {
     zh: "保存任务的磁盘可用空间不足。请释放该磁盘的空间后重试，对话已保留。",
     en: "The disk holding your tasks has insufficient free space. Free space on that disk and retry; your conversation is preserved.",

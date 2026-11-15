@@ -20,9 +20,19 @@ from .image_input_profile import (
     verify_messages_against_profile,
 )
 from .safety import MAX_REQUEST
+from .transport_failure import classify_stream_error
 
 RESPONSES = "openai_responses"
 MESSAGES = "anthropic_messages"
+
+
+class NativeStreamError(ValueError):
+    """Closed native stream/response error classification carrying body-free diagnostics."""
+
+    def __init__(self, code: str, diagnostics: dict[str, Any] | None = None) -> None:
+        super().__init__(code)
+        self.code = code
+        self.diagnostics = dict(diagnostics or {})
 _LIMIT = 4 * 1024 * 1024
 _NAME = re.compile(r"[A-Za-z0-9_-]{1,64}\Z")
 _ID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
@@ -454,8 +464,10 @@ def _finish(raw, protocol):
         if reason not in mapping:
             raise ValueError("unsupported native Messages stop reason")
         return mapping[reason]
-    if raw.get("error"):
-        raise ValueError("native Responses returned an error")
+    if raw.get("error") or raw.get("status") == "failed":
+        code, diag = classify_stream_error(raw.get("error") if raw.get("error") is not None else raw)
+        mapped = code if code != "inference_failed" else "source_protocol_response_invalid"
+        raise NativeStreamError(mapped, diag)
     status = raw.get("status")
     if status == "completed":
         return "stop"
@@ -494,7 +506,7 @@ def parse_response(raw: dict[str, Any], protocol: str, model: str, scope: str) -
         finish = "tool_calls"
     elif finish == "tool_calls":
         raise ValueError("native tool stop has no tool calls")
-    if not message.get("content") and not calls:
+    if finish != "content_filter" and not message.get("content") and not calls:
         raise ValueError("native response has no assistant output")
     message["provider_state"] = {"protocol": protocol, "scope": scope, "data": data}
     return {"message": message, "finish_reason": finish, "usage": _usage(raw.get("usage"), protocol)}
@@ -746,9 +758,14 @@ class StreamDecoder:
             raise ValueError("native stream is invalid")
         if self._final is not None:
             raise ValueError("native stream continued after termination")
-        if not isinstance(event, dict) or event.get("type") == "error":
+        if not isinstance(event, dict):
             self._failed = True
             raise ValueError("native stream returned an error")
+        if event.get("type") == "error":
+            self._failed = True
+            code, diag = classify_stream_error(event)
+            mapped = code if code != "inference_failed" else "source_protocol_response_invalid"
+            raise NativeStreamError(mapped, diag)
         try:
             return self._response_event(event) if self.protocol == RESPONSES else self._message_event(event)
         except ValueError:

@@ -570,7 +570,9 @@ class AgentLoop:
                 raise AgentError("agent_invalid_model_response")
             raw = response["message"]
             finish_reason = response.get("finish_reason", "stop")
-            if finish_reason in {"content_filter", "cancelled"}:
+            if finish_reason == "content_filter":
+                raise AgentError("agent_model_content_filtered")
+            if finish_reason == "cancelled":
                 raise AgentError("agent_model_response_stopped")
             content = raw.get("content") or ""
             calls = raw.get("tool_calls") or []

@@ -26,7 +26,7 @@ def limit(code, diagnostics):
         return 1  # Existing malformed response / compaction recovery.
     reason = diagnostics.get("network_reason")
     status = diagnostics.get("http_status")
-    if reason in {"tls_certificate", "tls", "dns_not_found", "quota"}:
+    if reason in {"tls_certificate", "tls", "dns_not_found", "quota", "request_rejected", "auth_rejected", "context_overflow"}:
         return 0
     if status is not None and status not in RETRYABLE_HTTP_STATUSES:
         return 0

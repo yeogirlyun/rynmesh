@@ -75,7 +75,7 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
 
     def chat(self, body, *, task_id, timeout_s=None, on_event=None, deadline=None):
         from .chat import validate_chat
-        from .protocol_codecs import StreamDecoder, _finish, _usage, make_request, parse_response
+        from .protocol_codecs import NativeStreamError, StreamDecoder, _finish, _usage, make_request, parse_response
 
         started = time.monotonic()
         if timeout_s is not None and (
@@ -161,6 +161,8 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                         received_cached = cached_input_tokens(decoded.get("usage"))
                         try:
                             received_finish = _finish(decoded, self.protocol)
+                        except NativeStreamError:
+                            raise
                         except ValueError:
                             received_finish = None
                     check()
@@ -219,7 +221,7 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
             received_usage = _openai_usage(result.get("usage"))
             received_finish = result.get("finish_reason")
             message = result["message"]
-            if not message.get("content") and not message.get("tool_calls"):
+            if received_finish != "content_filter" and not message.get("content") and not message.get("tool_calls"):
                 raise ValueError("empty completion")
             duration = int((time.monotonic() - started) * 1000)
             with self._lock:
@@ -236,7 +238,13 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
         except DataReleaseError:
             raise
         except Exception as exc:
-            diag = getattr(exc, "diagnostics", None) if isinstance(exc, AdapterError) else describe(exc, phase) if isinstance(exc, OSError) else None
+            diag = (
+                getattr(exc, "diagnostics", None)
+                if isinstance(exc, (AdapterError, NativeStreamError))
+                else describe(exc, phase)
+                if isinstance(exc, OSError)
+                else None
+            )
             if decoder is not None:
                 received_usage = _openai_usage(decoder.usage)
                 received_finish = decoder.finish_reason
@@ -246,13 +254,17 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                 code, text = "inference_failed", "task_cancelled"
             elif isinstance(exc, AdapterError):
                 code, text = exc.code, str(exc)
+            elif isinstance(exc, NativeStreamError):
+                code = text = exc.code
             elif isinstance(exc, urllib.error.HTTPError):
-                status = exc.code
                 diag = read_http_failure(exc, phase)
                 exc.close()
-                code = text = ("upstream_image_rejected" if diag.get("image_rejected")
-                               else "source_protocol_parameters_unsupported" if status in {400, 422}
-                               else "upstream_http_failed")
+                if diag.get("image_rejected"):
+                    code = text = "upstream_image_rejected"
+                elif diag.get("network_reason") in {"request_rejected", "auth_rejected"}:
+                    code = text = "upstream_request_rejected"
+                else:
+                    code = text = "upstream_http_failed"
             elif isinstance(exc, OSError):
                 timeout = isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)
                 if timeout and phase == "read" and is_sse and not (deadline is not None and time.monotonic() >= deadline):
