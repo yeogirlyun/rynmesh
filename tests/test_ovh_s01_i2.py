@@ -518,7 +518,7 @@ def test_t6_chat_stream_midstream_pause_raises_idle_timeout_and_retryable():
     assert caught.value.diagnostics.get("network_reason") == "idle_timeout"
     cleaned = safe_diagnostics(caught.value.diagnostics)
     assert cleaned.get("network_reason") == "idle_timeout"
-    assert retry_policy.limit("agent_inference_timeout", cleaned) == 3
+    assert retry_policy.limit("agent_inference_timeout", cleaned) == 5
     assert retry_policy.limit("agent_inference_timeout", {"network_reason": "timeout"}) == 1
 
 
@@ -575,7 +575,7 @@ def test_t7_native_both_protocols_idle_behavior_and_bridge_ignores_manifest_time
                 assert caught.value.code == "inference_timeout"
                 assert caught.value.diagnostics.get("network_reason") == "idle_timeout"
                 assert safe_diagnostics(caught.value.diagnostics).get("network_reason") == "idle_timeout"
-                assert retry_policy.limit("agent_inference_timeout", caught.value.diagnostics) == 3
+                assert retry_policy.limit("agent_inference_timeout", caught.value.diagnostics) == 5
         finally:
             stop_writer.set()
 

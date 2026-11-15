@@ -18,6 +18,7 @@ FIELDS = {
     "image_input",
     "stream_idle_seconds",
     "max_request_seconds",
+    "stream_max_retries",
 }
 IMAGE_INPUT_VALUES = ("auto", "supported", "unsupported")
 # Model-name prefixes whose image input was confirmed with the owner's image test.
@@ -139,8 +140,10 @@ def defaults(record, model=None):
         max_output = source_output if type(source_output) is int else 4096
     source_idle = record.get("stream_idle_seconds")
     source_max_request = record.get("max_request_seconds")
+    source_stream_retries = record.get("stream_max_retries")
     stream_idle = source_idle if type(source_idle) is int and 1 <= source_idle <= 86400 else 120
     max_request = source_max_request if type(source_max_request) is int and 1 <= source_max_request <= 86400 else 1800
+    stream_max_retries = source_stream_retries if type(source_stream_retries) is int and 0 <= source_stream_retries <= 20 else 5
     return {"context_window": window,
             "max_output_tokens": max_output,
             "request_defaults": copy.deepcopy(record.get("request_defaults", {})),
@@ -151,7 +154,8 @@ def defaults(record, model=None):
             "share_scope": "personal_space",
             "image_input": "auto",
             "stream_idle_seconds": stream_idle,
-            "max_request_seconds": max_request}
+            "max_request_seconds": max_request,
+            "stream_max_retries": stream_max_retries}
 
 
 def validate(values):
@@ -163,6 +167,7 @@ def validate(values):
         ("max_concurrent", 1, 2500),
         ("stream_idle_seconds", 1, 86400),
         ("max_request_seconds", 1, 86400),
+        ("stream_max_retries", 0, 20),
     ):
         if key in values and (type(values[key]) is not int or not low <= values[key] <= high):
             raise ValueError("model_" + key + "_invalid")

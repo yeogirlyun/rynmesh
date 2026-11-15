@@ -462,7 +462,19 @@ class AgentModelBridge:
             raise AgentError("agent_model_destination_changed" if exc.detail == "model_configuration_changed" else "agent_inference_failed") from None
         except AdapterError as exc:
             from .diagnostic_log import safe_diagnostics
-            diag = safe_diagnostics(getattr(exc, "diagnostics", None))
+            raw_diag = dict(getattr(exc, "diagnostics", None) or {})
+            effective_settings = (
+                (target.get("model_settings") or {}).get("effective")
+                if isinstance(target.get("model_settings"), dict)
+                else None
+            )
+            if not isinstance(effective_settings, dict) and target.get("source") == "local_api" and "source_store" in self.services:
+                src_record = self.services["source_store"].read().get(target.get("source_id"), {})
+                if src_record:
+                    effective_settings = model_settings.effective(src_record, target.get("model_id", ""))
+            if isinstance(effective_settings, dict) and type(effective_settings.get("stream_max_retries")) is int:
+                raw_diag.setdefault("stream_max_retries", effective_settings["stream_max_retries"])
+            diag = safe_diagnostics(raw_diag)
             if exc.code == "upstream_response_invalid" and not cancelled() and not expired():
                 rejected = AgentModelResponseError(exc.reported_usage, exc.finish_reason)
                 rejected.request_id = task_id
