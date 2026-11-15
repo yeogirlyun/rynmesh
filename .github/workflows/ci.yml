@@ -32,6 +32,9 @@ jobs:
           tests/test_agent_task_planning.py
           tests/test_agent_schedule_work.py
           tests/test_codex_object_protocol.py
+          tests/test_ovh_s01_i1.py
+          tests/test_native_protocol_transport.py
+          tests/test_agent_connection_recovery.py
           tests/test_nas_state_recovery.py
           tests/test_nas.py
           tests/test_cloud_drives.py
