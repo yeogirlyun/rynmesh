@@ -2446,8 +2446,114 @@ class AgentRuntime(AgentLoop):
         except AgentError:
             pass
 
-    def _acknowledge_unknown_in_tx(self, row: dict) -> None:
-        """The owner continues past an unconfirmed write.
+    def _truncate_unknown_error_details(self, text: str | None) -> str | None:
+        if not isinstance(text, str) or not text.strip():
+            return None
+        cleaned = "".join(ch if ch in ("\n", "\t") or ord(ch) >= 0x20 else " " for ch in sanitized(text))
+        cleaned = re.sub(r"(?i)\bBasic\s+[A-Za-z0-9._~+/-]+=*", "Basic [redacted]", cleaned).strip()
+        if not cleaned:
+            return None
+        raw = cleaned.encode("utf-8")
+        if len(raw) <= 900:
+            return cleaned
+        return raw[:900].decode("utf-8", errors="ignore")
+
+    def _prior_unknown_count(self, row: dict, flight: dict) -> int:
+        def _is_owner_boundary(ev: dict) -> bool:
+            ev_type = ev.get("type")
+            if ev_type == "unknown_outcome_acknowledged":
+                return not bool(ev.get("auto_acknowledged"))
+            return ev_type in OWNER_TURN_EVENTS
+
+        epoch = flight.get("context_epoch", row.get("context_epoch", 0))
+        tool_name = flight.get("name")
+        consecutive = 0
+        last_owner_at = ""
+        for prev_event in reversed(row.get("events", [])):
+            if _is_owner_boundary(prev_event):
+                last_owner_at = str(prev_event.get("at") or "")
+                break
+        for prev_event in reversed(row.get("events", [])):
+            if _is_owner_boundary(prev_event):
+                break
+            if prev_event.get("type") != "tool_result":
+                continue
+            if prev_event.get("context_epoch", 0) != epoch:
+                break
+            prev_res = prev_event.get("result")
+            prev_err = prev_res.get("error") if isinstance(prev_res, dict) else None
+            if prev_event.get("tool") == tool_name and prev_err == "agent_write_outcome_unknown":
+                consecutive += 1
+            else:
+                break
+        same_call = 0
+        if "arguments" in flight and tool_name:
+            arg_hash = digest(flight["arguments"])
+            op_id = flight.get("operation_id")
+            goal_rev = row["goal"]["revision"]
+            for receipt in row.get("receipts", []):
+                if (
+                    receipt.get("operation_id") != op_id
+                    and receipt.get("goal_revision") == goal_rev
+                    and receipt.get("context_epoch", 0) == epoch
+                    and str(receipt.get("started_at") or "") > last_owner_at
+                    and receipt.get("tool") == tool_name
+                    and receipt.get("arguments_sha256") == arg_hash
+                    and receipt.get("status") == "unknown"
+                ):
+                    same_call += 1
+        return max(consecutive, same_call)
+
+    def _auto_acknowledge_allowed(self, row: dict, data: dict, flight: dict | None) -> bool:
+        if not isinstance(flight, dict) or not flight:
+            return False
+        settings = data.get("settings") or {}
+        if (
+            not settings.get("enabled")
+            or row.get("permission_mode") != "automatic"
+            or settings.get("permission_mode") != "automatic"
+            or flight.get("authorization") != "automatic"
+            or row.get("pending_control")
+            or row.get("pending_approval")
+            or row.get("pending_input")
+            or row.get("status") in {"cancelled", "paused"}
+            or budget.hard_run_limit(row)
+            or budget.exhausted_hard_limit(row)
+            or budget.time_remaining(row) <= 0
+        ):
+            return False
+        budget_state = budget.public(row)
+        limits = budget_state["limits"]
+        lifetime = budget_state["lifetime"]
+        if (
+            (budget.is_hard(row, "max_total_tool_calls") and lifetime["charged_tool_calls"] >= limits["max_total_tool_calls"])
+            or lifetime["charged_model_calls"] >= budget.RANGES["max_total_model_calls"][1]
+            or lifetime["charged_tokens"] >= budget.RANGES["max_total_tokens"][1]
+        ):
+            return False
+        op_id = flight.get("operation_id")
+        if isinstance(op_id, str) and op_id in (row.get("auto_acknowledged_operations") or []):
+            return False
+        if self._prior_unknown_count(row, flight) >= 2:
+            return False
+        return True
+
+    def _record_auto_acknowledged_operation(self, row: dict, operation_id: Any) -> None:
+        if not isinstance(operation_id, str) or not operation_id:
+            return
+        prior = [item for item in (row.get("auto_acknowledged_operations") or []) if isinstance(item, str) and item != operation_id]
+        prior.append(operation_id)
+        row["auto_acknowledged_operations"] = prior[-20:]
+
+    def _acknowledge_unknown_in_tx(
+        self,
+        row: dict,
+        *,
+        resume: bool = False,
+        error_details: str | None = None,
+        repeated_unknown: bool = False,
+    ) -> None:
+        """The owner (or automatic mode) continues past an unconfirmed write.
 
         The model is told the step may have run; the operation itself is never
         queued or dispatched again, and its receipt stays "unknown".
@@ -2455,8 +2561,21 @@ class AgentRuntime(AgentLoop):
         flight = row.get("in_flight") or {}
         call_id = flight.get("call_id")
         epoch = flight.get("context_epoch", row.get("context_epoch", 0))
-        result = {"error": "agent_write_outcome_unknown", "outcome": "unknown", "not_executed": False,
-                  "note": UNKNOWN_OUTCOME_NOTE}
+        result: dict[str, Any] = {
+            "error": "agent_write_outcome_unknown",
+            "outcome": "unknown",
+            "not_executed": False,
+            "note": UNKNOWN_OUTCOME_NOTE,
+        }
+        truncated_details = self._truncate_unknown_error_details(error_details)
+        if truncated_details is not None:
+            result["details"] = truncated_details
+        if repeated_unknown:
+            result["correction"] = (
+                "This tool already produced an unconfirmed outcome on the previous attempt. "
+                "Inspect the actual state with read-only tools or report the uncertainty "
+                "instead of repeating the unconfirmed write."
+            )
         if call_id and not any(item.get("role") == "tool" and item.get("tool_call_id") == call_id
                                for item in row["messages"]):
             row["messages"].append({"role": "tool", "tool_call_id": call_id, "content": encoded(result).decode(),
@@ -2469,9 +2588,18 @@ class AgentRuntime(AgentLoop):
             row.pop("pending_control", None)
         row["acknowledged_unknown"] = {"operation_id": flight.get("operation_id"), "tool": flight.get("name"), "at": now()}
         row.update(in_flight=None, approved=None, pending_approval=None, error=None)
-        if row["status"] not in {"interrupted", "cancelled"}:
+        if resume:
+            if row["status"] != "cancelled":
+                row["status"] = "queued"
+        elif row["status"] not in {"interrupted", "cancelled"}:
             row["status"] = "interrupted"
-        event(row, "unknown_outcome_acknowledged", operation_id=flight.get("operation_id"), tool=flight.get("name"))
+        event(
+            row,
+            "unknown_outcome_acknowledged",
+            operation_id=flight.get("operation_id"),
+            tool=flight.get("name"),
+            **({"auto_acknowledged": True} if resume else {}),
+        )
 
     def _settle_interrupted_read(
         self, row: dict, flight: dict, error_code: str, *, recovery: dict | None = None
@@ -2669,6 +2797,28 @@ class AgentRuntime(AgentLoop):
                             ledger_outcome=settled_outcome,
                         )
                         continue
+                    if (
+                        ambiguous_write
+                        and not was_cancelled
+                        and not was_paused
+                        and not was_editing
+                        and self._auto_acknowledge_allowed(row, data, flight)
+                    ):
+                        repeated = self._prior_unknown_count(row, flight) >= 1
+                        op_id = flight.get("operation_id")
+                        verification.record(row, flight, "unknown", now(), flight=flight)
+                        self._acknowledge_unknown_in_tx(row, resume=True, repeated_unknown=repeated)
+                        self._record_auto_acknowledged_operation(row, op_id)
+                        row.update(status="queued", error=None)
+                        event(
+                            row,
+                            "interrupted",
+                            ambiguous_write=True,
+                            continued=True,
+                            reason="node_restarted",
+                            auto_acknowledged=True,
+                        )
+                        continue
                     row.update(status="interrupted", approved=None, error="agent_write_outcome_unknown" if ambiguous_write else "agent_node_restarted")
                     if ambiguous_write:
                         verification.record(row, flight, "unknown", now(), flight=flight)
@@ -2790,7 +2940,16 @@ class AgentRuntime(AgentLoop):
             event(row, "reconciliation_finished", outcome=result["outcome"], operation_id=operation_id, continued=may_continue)
         self.store.transaction(save)
 
-    def _fail(self, task_id: str, code: str, *, elapsed: float = 0.0, read_cleanup_ok: bool | None = None, read_recovery: dict | None = None) -> None:
+    def _fail(
+        self,
+        task_id: str,
+        code: str,
+        *,
+        elapsed: float = 0.0,
+        read_cleanup_ok: bool | None = None,
+        read_recovery: dict | None = None,
+        error_details: str | None = None,
+    ) -> None:
         def fail(data):
             from .execution_policy import verified_read_classification
             row = task(data, task_id)
@@ -2809,6 +2968,20 @@ class AgentRuntime(AgentLoop):
                 and not is_verified_read
             )
             if ambiguous_write:
+                if code not in budget.LIMIT_CODES and self._auto_acknowledge_allowed(row, data, flight):
+                    repeated = self._prior_unknown_count(row, flight) >= 1
+                    op_id = flight.get("operation_id")
+                    verification.record(row, flight, "unknown", now(), flight=flight)
+                    self._acknowledge_unknown_in_tx(
+                        row,
+                        resume=True,
+                        error_details=error_details or code,
+                        repeated_unknown=repeated,
+                    )
+                    self._record_auto_acknowledged_operation(row, op_id)
+                    row.update(status="queued", error=None)
+                    event(row, "interrupted", ambiguous_write=True, continued=True, auto_acknowledged=True)
+                    return
                 if (row.get("pending_control") or {}).get("kind") == "permissions":
                     row.pop("pending_control", None)
                 verification.record(row, flight, "unknown", now(), flight=flight)
@@ -2865,6 +3038,7 @@ class AgentRuntime(AgentLoop):
         correction=None,
         details=None,
         diagnostics=None,
+        error_text: str | None = None,
     ) -> None:
         try:
             self._handle_operation_error(
@@ -2876,6 +3050,7 @@ class AgentRuntime(AgentLoop):
                 correction=None if code == "agent_owner_changed" else correction,
                 details=details,
                 diagnostics=diagnostics,
+                error_text=error_text,
             )
         except AgentError as exc:
             if str(exc) not in {"agent_task_not_found", "agent_task_deleted"}:
@@ -2894,6 +3069,7 @@ class AgentRuntime(AgentLoop):
         correction=None,
         details=None,
         diagnostics=None,
+        error_text: str | None = None,
     ) -> None:
         """Only proven no-side-effect failures may return to the correction loop."""
         if selected.get("verification"):
@@ -3171,7 +3347,24 @@ class AgentRuntime(AgentLoop):
             if can_continue_cleanly:
                 self._step.clean = True
         else:
-            self._fail(selected["id"], code, elapsed=time.monotonic() - started, read_cleanup_ok=read_cleanup_ok, read_recovery=read_recovery)
+            fail_details = error_text
+            if not fail_details:
+                if isinstance(details, str) and details:
+                    fail_details = f"{code}: {details}"
+                elif isinstance(details, dict) and details:
+                    fail_details = f"{code}: {encoded(sanitized(details)).decode()}"
+                elif isinstance(diagnostics, dict) and diagnostics:
+                    fail_details = f"{code}: {encoded(sanitized(diagnostics)).decode()}"
+                else:
+                    fail_details = code
+            self._fail(
+                selected["id"],
+                code,
+                elapsed=time.monotonic() - started,
+                read_cleanup_ok=read_cleanup_ok,
+                read_recovery=read_recovery,
+                error_details=fail_details,
+            )
 
     def run_continuously(self) -> WorkerRunResult:
         """Worker entry point: consecutive steps without a scheduler interval between them.
@@ -3358,6 +3551,10 @@ class AgentRuntime(AgentLoop):
                 code = cancellation_reason(cancelled) if str(exc) == "agent_cancelled" else str(exc)
                 if code == "agent_inference_failed" and exc.__context__ is not None:
                     self._record_runtime_fault(selected, exc.__context__)
+                err_text = None
+                if selected["queue"] and exc.__cause__ is not None:
+                    cause_msg = str(exc.__cause__).strip()
+                    err_text = f"{code}: {type(exc.__cause__).__name__}: {cause_msg}" if cause_msg else f"{code}: {type(exc.__cause__).__name__}"
                 self._operation_error(
                     selected,
                     code,
@@ -3365,6 +3562,7 @@ class AgentRuntime(AgentLoop):
                     read_connection=exc.connection if isinstance(exc, AgentReadFailure) else None,
                     details=getattr(exc, "details", None),
                     diagnostics=getattr(exc, "diagnostics", None),
+                    error_text=err_text,
                 )
             return WorkerRunResult(activity=bool(selected))
         except ValueError as exc:
@@ -3382,12 +3580,14 @@ class AgentRuntime(AgentLoop):
                     self._record_runtime_fault(selected, exc)
                 if str(exc) == "agent_cancelled":
                     code = getattr(cancelled, "reason", None) or ("agent_time_limit" if (budget.segment_is_hard(selected, "max_seconds") and selected["elapsed_seconds"] + time.monotonic() - started >= selected["limits"]["max_seconds"]) else "agent_cancelled")
-                self._operation_error(selected, code, started)
+                err_text = f"{type(exc).__name__}: {exc}" if selected["queue"] and str(exc).strip() else None
+                self._operation_error(selected, code, started, error_text=err_text)
             return WorkerRunResult(activity=bool(selected))
         except Exception as exc:
             if selected:
                 self._record_runtime_fault(selected, exc)
-                self._operation_error(selected, "agent_operation_failed", started)
+                err_text = f"{type(exc).__name__}: {exc}" if selected["queue"] and str(exc).strip() else None
+                self._operation_error(selected, "agent_operation_failed", started, error_text=err_text)
             return WorkerRunResult(activity=bool(selected))
         finally:
             if selected is not None:
