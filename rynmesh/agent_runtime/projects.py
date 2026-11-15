@@ -126,10 +126,26 @@ def selected(data, ident, *, refresh=False):
         raise AgentError("agent_project_path_changed")
     result = {**value, **overview(root), "name": value["name"]} if refresh else dict(value)
     if refresh and inside_file(root, "AGENTS.md"):
+        hasher = hashlib.sha256()
+        head = bytearray()
+        total_bytes = 0
         with (root / "AGENTS.md").open("rb") as stream:
-            raw = stream.read(64 * 1024 + 1)
-        result["instructions"] = {"path": "AGENTS.md", "text": raw[:64 * 1024].decode("utf-8-sig", errors="replace"),
-                                  "incomplete": len(raw) > 64 * 1024}
+            while True:
+                chunk = stream.read(64 * 1024)
+                if not chunk:
+                    break
+                total_bytes += len(chunk)
+                hasher.update(chunk)
+                if len(head) < 64 * 1024 + 1:
+                    head.extend(chunk[:64 * 1024 + 1 - len(head)])
+        raw = bytes(head)
+        result["instructions"] = {
+            "path": "AGENTS.md",
+            "text": raw[:64 * 1024].decode("utf-8-sig", errors="replace"),
+            "incomplete": len(raw) > 64 * 1024,
+            "bytes": total_bytes,
+            "sha256": hasher.hexdigest(),
+        }
     return result
 
 
@@ -386,6 +402,52 @@ def inspect(root, *, read_file=None, cancelled=lambda: False, validate=None):
     return result
 
 
+INSTRUCTIONS_MAX_BYTES = 32768
+
+
+def _instructions_slice(row):
+    project = row.get("project")
+    if not project:
+        return None
+    instructions = project.get("instructions") or {}
+    if not instructions.get("text"):
+        return None
+    limit = row.get("limits", {}).get("max_context_chars")
+    maximum = min(INSTRUCTIONS_MAX_BYTES, limit // 4) if type(limit) is int else INSTRUCTIONS_MAX_BYTES
+    raw = instructions["text"].encode()
+    incomplete = bool(instructions.get("incomplete"))
+    truncated = len(raw) > maximum or incomplete
+    prefix = raw[:maximum]
+    if len(raw) > maximum and b"\n" in prefix:
+        prefix = prefix[:prefix.rfind(b"\n") + 1]
+    text = prefix.decode("utf-8", errors="ignore").rstrip("\n")
+    shown_bytes = len(text.encode("utf-8"))
+    start_line = len(text.splitlines()) + 1
+    total_bytes = instructions["bytes"] if type(instructions.get("bytes")) is int else len(raw)
+    return {
+        "text": text,
+        "raw_bytes": len(raw),
+        "shown_bytes": shown_bytes,
+        "total_bytes": total_bytes,
+        "maximum": maximum,
+        "incomplete": incomplete,
+        "truncated": truncated,
+        "start_line": start_line,
+    }
+
+
+def instructions_truncation(row):
+    info = _instructions_slice(row)
+    if not info or not info["truncated"]:
+        return None
+    return {
+        "injected_bytes": info["shown_bytes"],
+        "total_bytes": info["total_bytes"],
+        "max_bytes": info["maximum"],
+        "incomplete": info["incomplete"],
+    }
+
+
 def guidance(row):
     project = row.get("project")
     if not project:
@@ -398,21 +460,29 @@ def guidance(row):
         f"  <project>{json.dumps(info, ensure_ascii=False, separators=(',', ':'))}</project>\n"
         "</environment_context>"
     )
-    instructions = project.get("instructions") or {}
-    limit = row.get("limits", {}).get("max_context_chars")
-    maximum = min(4000, limit // 4) if type(limit) is int else 4000
-    if not instructions.get("text"):
+    sliced = _instructions_slice(row)
+    if sliced is None:
         return env_block
-    raw = instructions["text"].encode()
-    prefix = raw[:maximum]
-    if len(raw) > maximum and b"\n" in prefix:
-        prefix = prefix[:prefix.rfind(b"\n") + 1]
-    text = prefix.decode("utf-8", errors="ignore").rstrip("\n")
+    text = sliced["text"]
+    if not sliced["truncated"]:
+        return (
+            f"{env_block}\n\n"
+            f"# AGENTS.md instructions for {path}\n\n"
+            "<INSTRUCTIONS>\n"
+            f"{text}\n"
+            "</INSTRUCTIONS>"
+        )
+    total_display = ">64 KiB" if sliced["incomplete"] else f"{sliced['raw_bytes']} bytes"
+    marker = (
+        f"[AGENTS.md truncated: showing {sliced['shown_bytes']} of {total_display}; "
+        f"read the rest with ryn_file_read path=AGENTS.md start_line={sliced['start_line']}]"
+    )
+    body = f"{text}\n{marker}" if text else marker
     return (
         f"{env_block}\n\n"
         f"# AGENTS.md instructions for {path}\n\n"
         "<INSTRUCTIONS>\n"
-        f"{text}\n"
+        f"{body}\n"
         "</INSTRUCTIONS>"
     )
 

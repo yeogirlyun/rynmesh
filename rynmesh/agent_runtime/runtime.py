@@ -1804,6 +1804,9 @@ class AgentRuntime(AgentLoop):
                 row["project"] = copy.deepcopy(projects.selected(data, value["project_id"], refresh=True))
                 row["local_execution"].update(workspace_root=row["project"]["path"],
                                               project_id=row["project"]["id"], project_generation=row["project"]["generation"])
+                truncation = projects.instructions_truncation(row)
+                if truncation is not None:
+                    event(row, "project_instructions_truncated", **truncation)
             row["skills"] = skills
             row["verify_text_responses"] = settings.get("verify_text_responses", False)
             row["response_language"] = value.get("response_language") or "en"
