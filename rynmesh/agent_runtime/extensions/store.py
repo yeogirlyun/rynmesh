@@ -41,6 +41,11 @@ MAX_SKILL_TOTAL_BYTES = 4 * 1024 * 1024
 MAX_SKILL_PACKAGE_DEPTH = 8
 STREAM_CHUNK_BYTES = 64 * 1024
 
+DEFAULT_STARTUP_TIMEOUT_MS = 30000
+MAX_STARTUP_TIMEOUT_MS = 300000
+DEFAULT_TOOL_TIMEOUT_MS = 300000
+MAX_TOOL_TIMEOUT_MS = 3600000
+
 
 def validate_peer_provider(value: Any) -> dict[str, Any]:
     """Validate a non-secret declaration; importing it does not grant peer access."""
@@ -452,8 +457,8 @@ class ExtensionStore:
             "url": None,
             "bearer_token_env": None,
             "secret_headers": {},
-            "startup_timeout_ms": 10000,
-            "tool_timeout_ms": 30000,
+            "startup_timeout_ms": DEFAULT_STARTUP_TIMEOUT_MS,
+            "tool_timeout_ms": DEFAULT_TOOL_TIMEOUT_MS,
             "enabled_tools": None,
             "disabled_tools": [],
             "read_only_tools": ["computer_observe_windows", "computer_read_window"],
@@ -1002,8 +1007,10 @@ class ExtensionStore:
             "auth": normalize_mcp_auth(server.get("auth")),
             "data_policy": normalize_policy(server.get("data_policy")),
             "has_secrets": bool(masked_env or masked_headers),
-            "startup_timeout_ms": int(server.get("startup_timeout_ms", 10000)),
-            "tool_timeout_ms": int(server.get("tool_timeout_ms", 30000)),
+            "startup_timeout_ms": int(
+                server.get("startup_timeout_ms", DEFAULT_STARTUP_TIMEOUT_MS)
+            ),
+            "tool_timeout_ms": int(server.get("tool_timeout_ms", DEFAULT_TOOL_TIMEOUT_MS)),
             "enabled_tools": list(enabled_tools) if isinstance(enabled_tools, list) else None,
             "disabled_tools": sorted(disabled_tools),
             "read_only_tools": sorted(read_only_tools),
@@ -2312,8 +2319,16 @@ class ExtensionStore:
                 "oauth_client_registration": oauth_client_registration,
                 "auth": normalize_mcp_auth(payload.get("auth") if "auth" in payload else (existing or {}).get("auth")),
                 "data_policy": normalize_policy((existing or {}).get("data_policy")),
-                "startup_timeout_ms": int(existing.get("startup_timeout_ms", 10000) if existing else 10000),
-                "tool_timeout_ms": int(existing.get("tool_timeout_ms", 30000) if existing else 30000),
+                "startup_timeout_ms": int(
+                    existing.get("startup_timeout_ms", DEFAULT_STARTUP_TIMEOUT_MS)
+                    if existing
+                    else DEFAULT_STARTUP_TIMEOUT_MS
+                ),
+                "tool_timeout_ms": int(
+                    existing.get("tool_timeout_ms", DEFAULT_TOOL_TIMEOUT_MS)
+                    if existing
+                    else DEFAULT_TOOL_TIMEOUT_MS
+                ),
                 "enabled_tools": existing.get("enabled_tools") if existing else None,
                 "disabled_tools": list(existing.get("disabled_tools") or []) if existing else [],
                 "read_only_tools": list(existing.get("read_only_tools") or []) if existing else [],
@@ -2361,10 +2376,10 @@ class ExtensionStore:
     def _apply_mcp_policy_fields(self, record: dict[str, Any], payload: dict[str, Any]) -> None:
         if "startup_timeout_ms" in payload and payload["startup_timeout_ms"] is not None:
             val = int(payload["startup_timeout_ms"])
-            record["startup_timeout_ms"] = max(1000, min(60000, val))
+            record["startup_timeout_ms"] = max(1000, min(MAX_STARTUP_TIMEOUT_MS, val))
         if "tool_timeout_ms" in payload and payload["tool_timeout_ms"] is not None:
             val = int(payload["tool_timeout_ms"])
-            record["tool_timeout_ms"] = max(1000, min(120000, val))
+            record["tool_timeout_ms"] = max(1000, min(MAX_TOOL_TIMEOUT_MS, val))
         if "enabled_tools" in payload:
             et = payload["enabled_tools"]
             record["enabled_tools"] = [str(x) for x in et] if isinstance(et, list) else None
@@ -2962,8 +2977,10 @@ class ExtensionStore:
                     "oauth_client_registration": str(srv.get("oauth_client_registration") or "auto"),
                     "auth": normalize_mcp_auth(srv.get("auth")),
                     "data_policy": normalize_policy(srv.get("data_policy", plugin_policies.get(srv.get("plugin_id")))),
-                    "startup_timeout_ms": int(srv.get("startup_timeout_ms", 10000)),
-                    "tool_timeout_ms": int(srv.get("tool_timeout_ms", 30000)),
+                    "startup_timeout_ms": int(
+                        srv.get("startup_timeout_ms", DEFAULT_STARTUP_TIMEOUT_MS)
+                    ),
+                    "tool_timeout_ms": int(srv.get("tool_timeout_ms", DEFAULT_TOOL_TIMEOUT_MS)),
                     "enabled_tools": enabled_tools,
                     "disabled_tools": disabled_tools,
                     "read_only_tools": [],

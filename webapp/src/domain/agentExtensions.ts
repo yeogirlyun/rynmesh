@@ -16,6 +16,7 @@ export type ExtensionMcpOauthClientRegistration = "auto" | "cimd" | "dcr";
 export type ExtensionMcpStatus =
   | "disabled"
   | "ready"
+  | "Degraded"
   | "NeedsTest"
   | "NeedsAuth"
   | "NeedsPermission"
@@ -24,6 +25,11 @@ export type ExtensionMcpStatus =
   | "error"
   | string;
 export type ExtensionImportKind = "plugin" | "skill" | "mcp";
+
+export const DEFAULT_MCP_STARTUP_TIMEOUT_MS = 30000;
+export const MAX_MCP_STARTUP_TIMEOUT_MS = 300000;
+export const DEFAULT_MCP_TOOL_TIMEOUT_MS = 300000;
+export const MAX_MCP_TOOL_TIMEOUT_MS = 3600000;
 
 export const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 export const HEADER_KEY_RE = /^[A-Za-z0-9-]{1,128}$/;
@@ -782,8 +788,8 @@ export function normalizeMcpServer(raw: Record<string, unknown>): ExtensionMcpSe
         && typeof value.schema_sha256 === "string" && /^[0-9a-f]{64}$/.test(value.schema_sha256)))
       .map(value => ({ name: value.name, title: typeof value.title === "string" ? value.title : value.name, schema_sha256: value.schema_sha256 })) : [],
     has_secrets: typeof raw.has_secrets === "boolean" ? raw.has_secrets : Boolean(Object.keys(maskedEnvRaw).length || Object.keys(maskedHeadersRaw).length),
-    startup_timeout_ms: typeof raw.startup_timeout_ms === "number" ? raw.startup_timeout_ms : 10000,
-    tool_timeout_ms: typeof raw.tool_timeout_ms === "number" ? raw.tool_timeout_ms : 30000,
+    startup_timeout_ms: typeof raw.startup_timeout_ms === "number" ? raw.startup_timeout_ms : DEFAULT_MCP_STARTUP_TIMEOUT_MS,
+    tool_timeout_ms: typeof raw.tool_timeout_ms === "number" ? raw.tool_timeout_ms : DEFAULT_MCP_TOOL_TIMEOUT_MS,
     enabled_tools: enabledTools,
     disabled_tools: Array.isArray(raw.disabled_tools) ? raw.disabled_tools.map(String) : [],
     read_only_tools: Array.isArray(raw.read_only_tools) ? raw.read_only_tools.map(String) : [],

@@ -3363,6 +3363,7 @@ class AgentRuntime(AgentLoop):
                     code,
                     started,
                     read_connection=exc.connection if isinstance(exc, AgentReadFailure) else None,
+                    details=getattr(exc, "details", None),
                     diagnostics=getattr(exc, "diagnostics", None),
                 )
             return WorkerRunResult(activity=bool(selected))

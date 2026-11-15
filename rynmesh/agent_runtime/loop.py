@@ -1858,8 +1858,8 @@ class AgentLoop:
                     if isinstance(exc, AgentToolRejected):
                         if getattr(exc, "correction", None):
                             extra["correction"] = sanitized(exc.correction[:1600])
-                        if getattr(exc, "details", None):
-                            extra["details"] = sanitized(copy.deepcopy(exc.details))
+                    if isinstance(getattr(exc, "details", None), dict) and exc.details:
+                        extra["details"] = sanitized(copy.deepcopy(exc.details))
                     return {"error": code, "not_executed": isinstance(exc, AgentToolRejected), "no_mutation": True, **extra}, True, max(0.0, time.monotonic() - call_started)
                 except Exception:
                     code = "agent_operation_failed"
