@@ -18,7 +18,7 @@ WORKSPACE_TOOLS = frozenset({
     "ryn_browser_action", "ryn_computer_action", "ryn_craft_action", "ryn_download_file", "ryn_image_generate",
 })
 SHELL_ARGUMENT_KEYS = frozenset({"command", "shell", "cwd", "timeout_seconds", "background", "yield_seconds"})
-GIT_SAFE_SUBCOMMANDS = frozenset({"status", "diff", "log", "show", "rev-parse"})
+GIT_SAFE_SUBCOMMANDS = frozenset({"status", "diff", "log", "show", "rev-parse", "merge-base"})
 GIT_UNSAFE_FLAGS = (
     "--output",
     "-o",

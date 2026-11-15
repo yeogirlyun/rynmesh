@@ -9,6 +9,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from .git_safety import SAFE_GIT_CONFIG, safe_git_env
 from .store import AgentError, AgentToolRejected, encoded
 
 ENTRY_FILES = ("AGENTS.md", "README.md", "AI_HANDOFF.md", "PROJECT_MAP.md")
@@ -303,9 +304,15 @@ def inspect(root, *, read_file=None, cancelled=lambda: False, validate=None):
                                  ("changes", ["status", "--porcelain", "--untracked-files=no"])):
             check()
             try:
-                run = subprocess.run(["git", "-C", str(root), *arguments], capture_output=True,
-                                     timeout=3, encoding="utf-8", errors="replace",
-                                     creationflags=0x08000000 if os.name == "nt" else 0)
+                run = subprocess.run(
+                    ["git", *SAFE_GIT_CONFIG, "-C", str(root), *arguments],
+                    capture_output=True,
+                    timeout=5,
+                    encoding="utf-8",
+                    errors="replace",
+                    env=safe_git_env(os.environ),
+                    creationflags=0x08000000 if os.name == "nt" else 0,
+                )
                 if run.returncode == 0:
                     lines = run.stdout.splitlines()
                     if field == "changes":
