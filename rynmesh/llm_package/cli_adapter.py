@@ -148,8 +148,8 @@ class CLIAgentAdapter:
 
     @staticmethod
     def _prompt(messages: list[dict[str, Any]]) -> str:
-        lines = ["Answer the conversation below. Return only the assistant answer. "
-                 "Do not inspect files, run commands, or use tools."]
+        lines = ["下面每行是一条 JSON 消息，字段 role、content；只回答最后的助手内容。"
+                 "不要查看文件、运行命令或使用工具。"]
         for message in messages:
             role = message.get("role")
             if role not in {"system", "developer", "user", "assistant"}:
@@ -159,8 +159,13 @@ class CLIAgentAdapter:
             content = message.get("content")
             if not isinstance(content, str):
                 raise AdapterError("CLI API mode supports text messages only")
-            lines.append(f"<{role}>\n{content}\n</{role}>")
-        return "\n\n".join(lines)
+            encoded = (
+                json.dumps({"role": role, "content": content}, ensure_ascii=False)
+                .replace("\u2028", "\\u2028")
+                .replace("\u2029", "\\u2029")
+            )
+            lines.append(encoded)
+        return "\n".join(lines)
 
     def _run(self, prompt: str, *, task_id: str, timeout_s: float,
              max_tokens: int) -> dict[str, Any]:
@@ -295,10 +300,18 @@ class CLIAgentAdapter:
 
     def _chat_inner(self, body: dict[str, Any], *, task_id: str, timeout_s: float,
                     on_event: Any = None, model: str = "", conversation_scope: dict | None = None) -> dict[str, Any]:
+        from .cli_images import normalize_cli_messages
+        from .codex_session import _proxy_configured
+
         with self._lock:
             if task_id in self._cancelled:
                 self._cancelled.discard(task_id)
                 raise AdapterError("task_cancelled")
+        omitted_attachments = 0
+        if isinstance(body, dict) and isinstance(body.get("messages"), list):
+            normalized_messages, omitted_attachments = normalize_cli_messages(body["messages"])
+            if omitted_attachments > 0:
+                body = {**body, "messages": normalized_messages}
         body = validate_chat(body)
         for message in body["messages"]:
             # Native API continuation belongs only to its bound HTTP adapter.
@@ -309,40 +322,56 @@ class CLIAgentAdapter:
             raise AdapterError("CLI API mode does not support reasoning_effort for this CLI")
         if self.kind != "codex_cli" and any(isinstance(message.get("content"), list) for message in body["messages"]):
             raise AdapterError("CLI API mode does not support image input")
-        if self.kind in {"codex_cli", "antigravity_cli"}:
-            if self.kind == "codex_cli":
-                from .codex_session import chat
+        try:
+            if self.kind in {"codex_cli", "antigravity_cli"}:
+                if self.kind == "codex_cli":
+                    from .codex_session import chat
+                else:
+                    from .antigravity_session import chat
+                for key in ("temperature", "top_p", "stop", "enable_thinking"):
+                    if key in body:
+                        raise AdapterError(f"CLI API mode does not support {key}")
+                if self.kind == "codex_cli":
+                    # Codex forwards assistant text as it streams; proposals stay
+                    # buffered until validated, then end the stream.
+                    result = chat(self, body, task_id=task_id, timeout_s=min(timeout_s, 300), model=model,
+                                  on_event=on_event if body.get("stream") else None, scope=conversation_scope)
+                else:
+                    result = chat(self, body, task_id=task_id, timeout_s=min(timeout_s, 300), model=model)
+                    if body.get("stream") and on_event:
+                        # Buffered SSE: no provider turn remains alive awaiting tools.
+                        delta = dict(result["message"])
+                        if delta.get("tool_calls"):
+                            delta["tool_calls"] = [{"index": i, **call} for i, call in enumerate(delta["tool_calls"])]
+                        on_event({"choices": [{"index": 0, "delta": delta, "finish_reason": None}]})
+                        on_event({"choices": [{"index": 0, "delta": {}, "finish_reason": result["finish_reason"]}],
+                                  "usage": {"prompt_tokens": result["input_tokens"], "completion_tokens": result["output_tokens"],
+                                            "total_tokens": (result["input_tokens"] + result["output_tokens"]
+                                                             if result["input_tokens"] is not None and result["output_tokens"] is not None else None)}})
             else:
-                from .antigravity_session import chat
-            for key in ("temperature", "top_p", "stop", "enable_thinking"):
-                if key in body:
-                    raise AdapterError(f"CLI API mode does not support {key}")
-            if self.kind == "codex_cli":
-                # Codex forwards assistant text as it streams; proposals stay
-                # buffered until validated, then end the stream.
-                return chat(self, body, task_id=task_id, timeout_s=min(timeout_s, 300), model=model,
-                            on_event=on_event if body.get("stream") else None, scope=conversation_scope)
-            result = chat(self, body, task_id=task_id, timeout_s=min(timeout_s, 300), model=model)
-            if body.get("stream") and on_event:
-                # Buffered SSE: no provider turn remains alive awaiting tools.
-                delta = dict(result["message"])
-                if delta.get("tool_calls"):
-                    delta["tool_calls"] = [{"index": i, **call} for i, call in enumerate(delta["tool_calls"])]
-                on_event({"choices": [{"index": 0, "delta": delta, "finish_reason": None}]})
-                on_event({"choices": [{"index": 0, "delta": {}, "finish_reason": result["finish_reason"]}],
-                          "usage": {"prompt_tokens": result["input_tokens"], "completion_tokens": result["output_tokens"],
-                                    "total_tokens": (result["input_tokens"] + result["output_tokens"]
-                                                     if result["input_tokens"] is not None and result["output_tokens"] is not None else None)}})
-            return result
-        if body.get("tools") or body.get("tool_choice", "auto") not in ("auto", "none"):
-            raise AdapterError("CLI API mode does not support client tool calls")
-        for key in ("temperature", "top_p", "stop", "enable_thinking"):
-            if key in body:
-                raise AdapterError(f"CLI API mode does not support {key}")
-        if body.get("stream"):
-            raise AdapterError("CLI API mode does not support streaming yet")
-        return self._run(self._prompt(body["messages"]), task_id=task_id,
-                         timeout_s=timeout_s, max_tokens=int(body.get("max_tokens") or 512))
+                if body.get("tools") or body.get("tool_choice", "auto") not in ("auto", "none"):
+                    raise AdapterError("CLI API mode does not support client tool calls")
+                for key in ("temperature", "top_p", "stop", "enable_thinking"):
+                    if key in body:
+                        raise AdapterError(f"CLI API mode does not support {key}")
+                if body.get("stream"):
+                    raise AdapterError("CLI API mode does not support streaming yet")
+                result = self._run(self._prompt(body["messages"]), task_id=task_id,
+                                   timeout_s=timeout_s, max_tokens=int(body.get("max_tokens") or 512))
+        except AdapterError as exc:
+            diag = dict(getattr(exc, "diagnostics", None) or {})
+            if exc.code == "runtime_connection_failed" and "proxy_configured" not in diag:
+                diag["proxy_configured"] = _proxy_configured()
+            if omitted_attachments > 0:
+                diag["omitted_attachments"] = int(diag.get("omitted_attachments") or 0) + omitted_attachments
+            if diag:
+                exc.diagnostics = diag
+            raise
+        if omitted_attachments > 0:
+            diag = dict(result.get("diagnostics") or {})
+            diag["omitted_attachments"] = int(diag.get("omitted_attachments") or 0) + omitted_attachments
+            result["diagnostics"] = diag
+        return result
 
     def cancel(self, task_id: str) -> bool:
         with self._lock:
