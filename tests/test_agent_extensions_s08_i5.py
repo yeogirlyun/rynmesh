@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import socket
+import socketserver
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -10,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
@@ -172,6 +175,42 @@ class _HarnessTools:
         self.extensions.close()
 
 
+class _LoopbackHTTPServer(ThreadingHTTPServer):
+    """Loopback test HTTP server that skips reverse-DNS getfqdn stalls on Windows VMs."""
+
+    daemon_threads = True
+
+    def server_bind(self) -> None:
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = str(host)
+        self.server_port = int(port)
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        pass
+
+
+class _QuietHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *_args) -> None:
+        pass
+
+    def address_string(self) -> str:
+        return str(self.client_address[0])
+
+    def handle(self) -> None:
+        try:
+            super().handle()
+        except OSError:
+            self.close_connection = True
+
+
+@pytest.fixture(autouse=True)
+def _fast_loopback_fqdn(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(socket, "getfqdn", lambda _host="": "localhost")
+
+
 @pytest.fixture
 def s08_env(tmp_path: Path):
     home = tmp_path / "node_home"
@@ -300,12 +339,9 @@ url = "http://127.0.0.1:8766/mcp"
 
 
 def test_manager_call_tool_timeout_ms_takes_min_of_server_and_request(tmp_path: Path) -> None:
-    class SlowHttpHandler(BaseHTTPRequestHandler):
-        protocol_version = "HTTP/1.1"
+    stop_event = threading.Event()
 
-        def log_message(self, *_args) -> None:
-            pass
-
+    class SlowHttpHandler(_QuietHandler):
         def do_POST(self) -> None:
             length = int(self.headers.get("Content-Length", "0"))
             req = json.loads(self.rfile.read(length))
@@ -325,22 +361,21 @@ def test_manager_call_tool_timeout_ms_takes_min_of_server_and_request(tmp_path: 
             elif method == "tools/call":
                 sleep_s = float(((req.get("params") or {}).get("arguments") or {}).get("sleep", 0.0))
                 if sleep_s > 0:
-                    time.sleep(sleep_s)
+                    stop_event.wait(sleep_s)
                 res = {"content": [{"type": "text", "text": "ok"}]}
             else:
                 res = {"tools": [{"name": "wait_op", "inputSchema": {"type": "object"}}]}
             body = json.dumps({"jsonrpc": "2.0", "id": ident, "result": res}).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
             try:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
                 self.wfile.write(body)
             except OSError:
-                pass
+                self.close_connection = True
 
-    http_server = ThreadingHTTPServer(("127.0.0.1", 0), SlowHttpHandler)
-    http_server.daemon_threads = True
+    http_server = _LoopbackHTTPServer(("127.0.0.1", 0), SlowHttpHandler)
     thread = threading.Thread(target=http_server.serve_forever, daemon=True)
     thread.start()
 
@@ -387,20 +422,24 @@ def test_manager_call_tool_timeout_ms_takes_min_of_server_and_request(tmp_path: 
         )
         manager.invalidate_server("min-timeout-srv")
         srv2 = store.get_mcp_server_internal("min-timeout-srv", require_enabled=True)
+        t1 = time.monotonic()
         with pytest.raises(McpTransportError) as exc_srv:
             manager.call_tool(
                 "min-timeout-srv",
                 "wait_op",
-                {"sleep": 1.5},
+                {"sleep": 2.0},
                 expected_revision=srv2["revision"],
                 expected_config_generation=srv2["config_generation"],
                 expected_instance_id=srv2["instance_id"],
                 timeout_ms=10000,
             )
+        elapsed2 = time.monotonic() - t1
         assert str(exc_srv.value) == "agent_mcp_timeout"
+        assert elapsed2 < 1.8
         assert exc_srv.value.details is not None
         assert exc_srv.value.details["timeout_seconds"] == pytest.approx(1.0, abs=0.05)
     finally:
+        stop_event.set()
         manager.close()
         http_server.shutdown()
         http_server.server_close()
@@ -412,12 +451,7 @@ def test_http_rpc_error_timeout_and_500_body_in_tool_result_details(s08_env) -> 
     secret_auth_header = "Bearer mock-secret-credential-xyz987"
     long_b64_secret = "dGhpcyBpcyBhIHZlcnkgbG9uZyBiYXNlNjQgc2VjcmV0IHRva2VuIDEyMzQ1Ng=="
 
-    class ErrorModesHandler(BaseHTTPRequestHandler):
-        protocol_version = "HTTP/1.1"
-
-        def log_message(self, *_args) -> None:
-            pass
-
+    class ErrorModesHandler(_QuietHandler):
         def do_POST(self) -> None:
             length = int(self.headers.get("Content-Length", "0"))
             req = json.loads(self.rfile.read(length))
@@ -509,8 +543,7 @@ def test_http_rpc_error_timeout_and_500_body_in_tool_result_details(s08_env) -> 
                 except OSError:
                     pass
 
-    http_server = ThreadingHTTPServer(("127.0.0.1", 0), ErrorModesHandler)
-    http_server.daemon_threads = True
+    http_server = _LoopbackHTTPServer(("127.0.0.1", 0), ErrorModesHandler)
     thread = threading.Thread(target=http_server.serve_forever, daemon=True)
     thread.start()
 
@@ -604,12 +637,7 @@ def test_list_all_tools_pagination_20s_pages_and_degraded_catalog_preserved(
 
     monkeypatch.setattr(transport_mod.time, "monotonic", _controlled_monotonic)
 
-    class PaginatedHttpHandler(BaseHTTPRequestHandler):
-        protocol_version = "HTTP/1.1"
-
-        def log_message(self, *_args) -> None:
-            pass
-
+    class PaginatedHttpHandler(_QuietHandler):
         def do_POST(self) -> None:
             length = int(self.headers.get("Content-Length", "0"))
             req = json.loads(self.rfile.read(length))
@@ -666,8 +694,7 @@ def test_list_all_tools_pagination_20s_pages_and_degraded_catalog_preserved(
             except OSError:
                 pass
 
-    http_server = ThreadingHTTPServer(("127.0.0.1", 0), PaginatedHttpHandler)
-    http_server.daemon_threads = True
+    http_server = _LoopbackHTTPServer(("127.0.0.1", 0), PaginatedHttpHandler)
     thread = threading.Thread(target=http_server.serve_forever, daemon=True)
     thread.start()
 
@@ -849,3 +876,324 @@ def test_non_allowlisted_error_code_populates_details_cause_and_ledger(
     assert ledger_row is not None
     assert ledger_row["status"] == "not_executed"
     assert ledger_row["error_result"]["cause"] == "agent_mcp_foo"
+
+
+def test_env_http_headers_redacted_in_500_body_results_and_ledger(
+    s08_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime, model, tools, _workspace, home = s08_env
+    monkeypatch.setenv("TEST_S08_SHORT_API_KEY", "abc123")
+
+    class EchoEnvHeader500Handler(_QuietHandler):
+        def do_POST(self) -> None:
+            length = int(self.headers.get("Content-Length", "0"))
+            req = json.loads(self.rfile.read(length))
+            ident = req.get("id")
+            method = req.get("method")
+            if ident is None:
+                self.send_response(202)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            if method == "initialize":
+                body = json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": ident,
+                        "result": {
+                            "protocolVersion": "2025-03-26",
+                            "capabilities": {"tools": {}},
+                            "serverInfo": {"name": "env-hdr-http", "version": "1"},
+                        },
+                    }
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if method == "tools/list":
+                body = json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": ident,
+                        "result": {
+                            "tools": [
+                                {"name": "read_echo", "inputSchema": {"type": "object"}},
+                                {"name": "write_echo", "inputSchema": {"type": "object"}},
+                            ]
+                        },
+                    }
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            api_key_val = self.headers.get("X-Api-Key", "")
+            raw = f"500 Internal Error: rejected header X-Api-Key: {api_key_val}".encode("utf-8")
+            self.send_response(500)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+    http_server = _LoopbackHTTPServer(("127.0.0.1", 0), EchoEnvHeader500Handler)
+    thread = threading.Thread(target=http_server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        ext_store = tools.extensions.store
+        ov = ext_store.overview()
+        srv = ext_store.upsert_mcp_server(
+            {
+                "id": "env-hdr-srv",
+                "name": "Env Header Server",
+                "transport": "streamable_http",
+                "url": f"http://127.0.0.1:{http_server.server_port}/mcp",
+                "enabled": True,
+                "startup_timeout_ms": 3000,
+                "tool_timeout_ms": 3000,
+                "env_http_headers": {"X-Api-Key": "TEST_S08_SHORT_API_KEY"},
+                "read_only_tools": ["read_echo"],
+            },
+            expected_revision=ov["revision"],
+        )
+        probed = tools.extensions.manager.test_server("env-hdr-srv", expected_revision=srv["revision"])
+        by_name = {t["name"]: t["model_tool_name"] for t in probed["server"]["tools"]}
+        read_tool = by_name["read_echo"]
+        write_tool = by_name["write_echo"]
+
+        model.responses = [
+            _assistant_calls(("ryn_discover_tools", {"load": [read_tool, write_tool]}, "c_disc_env")),
+            _assistant_calls((read_tool, {}, "c_read_env")),
+            _assistant_calls((write_tool, {}, "c_write_env")),
+            _assistant_text("Done env header check."),
+        ]
+        task = runtime.create({"message": "Test env_http_headers redaction on 500"})
+        for _ in range(12):
+            if runtime.store.read()["tasks"][task["id"]]["status"] == "completed":
+                break
+            runtime.run_once()
+
+        receipts = _receipts(runtime, task["id"])
+        read_rec = next(r for r in receipts if r["tool"] == read_tool)
+        write_rec = next(r for r in receipts if r["tool"] == write_tool)
+
+        assert read_rec["result"]["error"] == "agent_mcp_http_error"
+        assert read_rec["result"]["details"]["http_status"] == 500
+        assert "X-Api-Key: [REDACTED]" in read_rec["result"]["details"]["http_body"]
+        assert "abc123" not in json.dumps(read_rec)
+
+        assert "abc123" not in json.dumps(write_rec)
+        ledger_row = tools.ledger.get(write_rec["operation_id"])
+        assert ledger_row is not None
+        assert "abc123" not in json.dumps(ledger_row)
+        for p in home.rglob("*.json"):
+            assert "abc123" not in p.read_text(encoding="utf-8", errors="replace")
+    finally:
+        http_server.shutdown()
+        http_server.server_close()
+        thread.join(timeout=2)
+
+
+def test_rpc_error_message_redacts_bearer_token_and_request_header_values(
+    s08_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime, model, tools, _workspace, _home = s08_env
+    monkeypatch.setenv("TEST_S08_RPC_HDR_KEY", "hdrSecret9")
+    bearer_tok = "rpc-bearer-tok-987654"
+
+    class RpcLeakHandler(_QuietHandler):
+        def do_POST(self) -> None:
+            length = int(self.headers.get("Content-Length", "0"))
+            req = json.loads(self.rfile.read(length))
+            ident = req.get("id")
+            method = req.get("method")
+            if ident is None:
+                self.send_response(202)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            if method == "initialize":
+                res: dict[str, Any] = {
+                    "protocolVersion": "2025-03-26",
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "rpc-leak", "version": "1"},
+                }
+                body = json.dumps({"jsonrpc": "2.0", "id": ident, "result": res}).encode("utf-8")
+            elif method == "tools/list":
+                res = {"tools": [{"name": "rpc_op", "inputSchema": {"type": "object"}}]}
+                body = json.dumps({"jsonrpc": "2.0", "id": ident, "result": res}).encode("utf-8")
+            else:
+                hdr_echo = self.headers.get("X-Custom-Auth", "")
+                msg = f"Downstream denied Bearer {bearer_tok} and header={hdr_echo}"
+                body = json.dumps(
+                    {"jsonrpc": "2.0", "id": ident, "error": {"code": -32000, "message": msg}}
+                ).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    http_server = _LoopbackHTTPServer(("127.0.0.1", 0), RpcLeakHandler)
+    thread = threading.Thread(target=http_server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        ext_store = tools.extensions.store
+        ov = ext_store.overview()
+        srv = ext_store.upsert_mcp_server(
+            {
+                "id": "rpc-leak-srv",
+                "name": "RPC Leak Server",
+                "transport": "streamable_http",
+                "url": f"http://127.0.0.1:{http_server.server_port}/mcp",
+                "enabled": True,
+                "startup_timeout_ms": 3000,
+                "tool_timeout_ms": 3000,
+                "env_http_headers": {"X-Custom-Auth": "TEST_S08_RPC_HDR_KEY"},
+                "read_only_tools": ["rpc_op"],
+            },
+            expected_revision=ov["revision"],
+        )
+        probed = tools.extensions.manager.test_server("rpc-leak-srv", expected_revision=srv["revision"])
+        tool_name = probed["server"]["tools"][0]["model_tool_name"]
+
+        model.responses = [
+            _assistant_calls(("ryn_discover_tools", {"load": [tool_name]}, "c_disc_rpc")),
+            _assistant_calls((tool_name, {}, "c_call_rpc")),
+            _assistant_text("Done rpc leak check."),
+        ]
+        task = runtime.create({"message": "Test rpc error message redaction"})
+        for _ in range(10):
+            if runtime.store.read()["tasks"][task["id"]]["status"] == "completed":
+                break
+            runtime.run_once()
+
+        rec = next(r for r in _receipts(runtime, task["id"]) if r["tool"] == tool_name)
+        assert rec["result"]["error"] == "agent_mcp_rpc_error"
+        cleaned_msg = rec["result"]["details"]["message"]
+        assert "Bearer [REDACTED]" in cleaned_msg
+        assert "header=[REDACTED]" in cleaned_msg
+        dumped = json.dumps(rec)
+        assert bearer_tok not in dumped
+        assert "hdrSecret9" not in dumped
+    finally:
+        http_server.shutdown()
+        http_server.server_close()
+        thread.join(timeout=2)
+
+
+def test_http_401_and_403_do_not_read_response_body(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stop_event = threading.Event()
+    body_reads_by_status: list[int] = []
+    orig_iter_bytes = httpx.Response.iter_bytes
+    orig_read = httpx.Response.read
+
+    def _spy_iter_bytes(self: httpx.Response, *args: Any, **kwargs: Any):
+        body_reads_by_status.append(int(self.status_code))
+        return orig_iter_bytes(self, *args, **kwargs)
+
+    def _spy_read(self: httpx.Response, *args: Any, **kwargs: Any):
+        body_reads_by_status.append(int(self.status_code))
+        return orig_read(self, *args, **kwargs)
+
+    monkeypatch.setattr(httpx.Response, "iter_bytes", _spy_iter_bytes)
+    monkeypatch.setattr(httpx.Response, "read", _spy_read)
+
+    class AuthStatusNoBodyHandler(_QuietHandler):
+        def do_POST(self) -> None:
+            length = int(self.headers.get("Content-Length", "0"))
+            req = json.loads(self.rfile.read(length))
+            ident = req.get("id")
+            method = req.get("method")
+            if ident is None:
+                self.send_response(202)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            if method == "initialize":
+                body = json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": ident,
+                        "result": {
+                            "protocolVersion": "2025-03-26",
+                            "capabilities": {"tools": {}},
+                            "serverInfo": {"name": "auth-no-body", "version": "1"},
+                        },
+                    }
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            status_code = int(((req.get("params") or {}).get("arguments") or {}).get("status", 401))
+            canary = b"UNREAD_401_403_BODY_CANARY"
+            try:
+                self.send_response(status_code)
+                self.send_header("WWW-Authenticate", 'Bearer error="invalid_token"')
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(canary)))
+                self.end_headers()
+                self.wfile.flush()
+                # Delay body write: if client tried to read 401/403 body it would stall here
+                stop_event.wait(2.0)
+                self.wfile.write(canary)
+            except OSError:
+                self.close_connection = True
+
+    http_server = _LoopbackHTTPServer(("127.0.0.1", 0), AuthStatusNoBodyHandler)
+    thread = threading.Thread(target=http_server.serve_forever, daemon=True)
+    thread.start()
+
+    key = peer_box.load_or_create_messaging_key(tmp_path / "messaging.key")
+    store = ExtensionStore(tmp_path / "agent", key)
+    store.upsert_mcp_server(
+        {
+            "id": "auth-nobody-srv",
+            "transport": "streamable_http",
+            "url": f"http://127.0.0.1:{http_server.server_port}/mcp",
+            "enabled": True,
+            "startup_timeout_ms": 3000,
+            "tool_timeout_ms": 5000,
+            "auth": {"mode": "none"},
+        }
+    )
+    srv = store.get_mcp_server_internal("auth-nobody-srv", require_enabled=True)
+    manager = McpSessionManager(store)
+    try:
+        for code in (401, 403):
+            t0 = time.monotonic()
+            with pytest.raises(McpTransportError) as exc_info:
+                manager.call_tool(
+                    "auth-nobody-srv",
+                    "check_auth",
+                    {"status": code},
+                    expected_revision=srv["revision"],
+                    expected_config_generation=srv["config_generation"],
+                    expected_instance_id=srv["instance_id"],
+                )
+            elapsed = time.monotonic() - t0
+            assert str(exc_info.value) == "agent_mcp_auth_required"
+            assert exc_info.value.http_status == code
+            assert elapsed < 1.0
+            assert exc_info.value.details is None or "http_body" not in exc_info.value.details
+            assert "UNREAD_401_403_BODY_CANARY" not in json.dumps(exc_info.value.details)
+
+        assert 401 not in body_reads_by_status
+        assert 403 not in body_reads_by_status
+    finally:
+        stop_event.set()
+        manager.close()
+        http_server.shutdown()
+        http_server.server_close()
+        thread.join(timeout=2)

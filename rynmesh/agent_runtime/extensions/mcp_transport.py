@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import queue
@@ -15,6 +16,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -103,6 +105,46 @@ _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]+")
 _AUTH_SCHEME_RE = re.compile(r"(?i)\b(Bearer|Basic)\s+[^\s,;\"'<>]+")
 _AUTH_KV_RE = re.compile(r"(?i)(authorization\s*[:=]\s*)[^\s,;\"'<>]+")
 _LONG_TOKEN_RE = re.compile(r"[A-Za-z0-9+/=_-]{40,}(?:\.[A-Za-z0-9+/=_-]+)*")
+_NON_SECRET_REQUEST_HEADERS = frozenset({"accept", "content-type", "user-agent"})
+
+
+def _http_timeout(seconds: float) -> httpx.Timeout:
+    bounded = max(0.05, float(seconds))
+    return httpx.Timeout(bounded, connect=bounded, read=bounded, write=bounded, pool=bounded)
+
+
+def _extract_request_redact_values(
+    headers: dict[str, str] | None,
+    extra_values: list[str] | None = None,
+) -> list[str]:
+    vals: list[str] = []
+    if isinstance(headers, dict):
+        for key, val in headers.items():
+            if isinstance(key, str) and key.strip().lower() in _NON_SECRET_REQUEST_HEADERS:
+                continue
+            if isinstance(val, str) and len(val.strip()) >= 4:
+                vals.append(val)
+    for item in extra_values or []:
+        if isinstance(item, str) and len(item.strip()) >= 4:
+            vals.append(item)
+    return vals
+
+
+def _redact_secret_values(text: str, redact_values: list[str] | None) -> str:
+    if not redact_values:
+        return text
+    cleaned = text
+    candidates: list[str] = []
+    for secret in redact_values:
+        if isinstance(secret, str) and len(secret.strip()) >= 4:
+            s_trim = secret.strip()
+            candidates.append(s_trim)
+            parts = s_trim.split(None, 1)
+            if len(parts) == 2 and len(parts[1].strip()) >= 4:
+                candidates.append(parts[1].strip())
+    for tok in sorted(set(candidates), key=len, reverse=True):
+        cleaned = cleaned.replace(tok, "[REDACTED]")
+    return cleaned
 
 
 def _redact_long_tokens(text: str) -> str:
@@ -117,12 +159,18 @@ def _redact_long_tokens(text: str) -> str:
     return _LONG_TOKEN_RE.sub(_sub, text)
 
 
-def _clean_mcp_error_message(raw: Any, *, limit: int = 500) -> str:
+def _clean_mcp_error_message(
+    raw: Any,
+    *,
+    redact_values: list[str] | None = None,
+    limit: int = 500,
+) -> str:
     if not isinstance(raw, str):
         return ""
     cleaned = _CONTROL_CHARS_RE.sub(" ", raw).strip()
     if not cleaned:
         return ""
+    cleaned = _redact_secret_values(cleaned, redact_values)
     cleaned = _AUTH_SCHEME_RE.sub(r"\1 [REDACTED]", cleaned)
     cleaned = _AUTH_KV_RE.sub(r"\1[REDACTED]", cleaned)
     cleaned = _redact_long_tokens(cleaned)
@@ -141,13 +189,7 @@ def _sanitize_http_error_body(
     cleaned = _CONTROL_CHARS_RE.sub(" ", text).strip()
     if not cleaned:
         return ""
-    for secret in redact_values or []:
-        if isinstance(secret, str) and len(secret.strip()) >= 4:
-            s_trim = secret.strip()
-            cleaned = cleaned.replace(s_trim, "[REDACTED]")
-            parts = s_trim.split(None, 1)
-            if len(parts) == 2 and len(parts[1].strip()) >= 4:
-                cleaned = cleaned.replace(parts[1].strip(), "[REDACTED]")
+    cleaned = _redact_secret_values(cleaned, redact_values)
     cleaned = _AUTH_SCHEME_RE.sub(r"\1 [REDACTED]", cleaned)
     cleaned = _AUTH_KV_RE.sub(r"\1[REDACTED]", cleaned)
     cleaned = _redact_long_tokens(cleaned)
@@ -337,6 +379,15 @@ class StdioMcpSession:
             server.get("secret_env"),
             server.get("env_vars"),
         )
+        stdio_secrets: list[str] = []
+        for s_val in (server.get("secret_env") or {}).values():
+            if isinstance(s_val, str) and len(s_val.strip()) >= 4:
+                stdio_secrets.append(s_val)
+        for env_k in server.get("env_vars") or []:
+            env_v = env.get(str(env_k))
+            if isinstance(env_v, str) and len(env_v.strip()) >= 4:
+                stdio_secrets.append(env_v)
+        self._redact_env_values = stdio_secrets
         if (
             getattr(sys, "frozen", False)
             and self.server_id == COMPUTER_USE_SERVER_ID
@@ -605,7 +656,11 @@ class StdioMcpSession:
                     code = err_obj.get("code") if isinstance(err_obj, dict) else None
                     rpc_code = code if type(code) is int else None
                     raw_msg = err_obj.get("message") if isinstance(err_obj, dict) else None
-                    cleaned_msg = _clean_mcp_error_message(raw_msg, limit=500)
+                    cleaned_msg = _clean_mcp_error_message(
+                        raw_msg,
+                        redact_values=self._redact_env_values,
+                        limit=500,
+                    )
                     rpc_details: dict[str, Any] = {}
                     if cleaned_msg:
                         rpc_details["message"] = cleaned_msg
@@ -906,10 +961,30 @@ class StreamableHttpMcpSession:
         }
         headers.update(connector_headers(server))
         self._base_headers = headers
-        self._client = httpx.Client(follow_redirects=False, timeout=self.tool_timeout)
+        parsed_url = urlsplit(self.url)
+        host = (parsed_url.hostname or "").strip().lower()
+        is_loopback = host == "localhost"
+        if not is_loopback and host:
+            try:
+                is_loopback = ipaddress.ip_address(host).is_loopback
+            except ValueError:
+                pass
+        trust_env = not is_loopback
+        mounts = (
+            {"all://127.0.0.1": None, "all://[::1]": None, "all://localhost": None}
+            if trust_env
+            else None
+        )
+        self._client = httpx.Client(
+            follow_redirects=False,
+            timeout=_http_timeout(self.tool_timeout),
+            trust_env=trust_env,
+            verify=(parsed_url.scheme == "https"),
+            mounts=mounts,
+        )
 
     def is_usable(self) -> bool:
-        return not self.closed.is_set()
+        return not self.closed.is_set() and not self._client.is_closed
 
     def _is_cancelled(self, cancelled: Callable[[], bool] | None) -> bool:
         try:
@@ -976,11 +1051,45 @@ class StreamableHttpMcpSession:
 
         def _watchdog() -> None:
             while not done.wait(0.05):
-                if self.closed.is_set() or self._is_cancelled(cancelled) or time.monotonic() >= deadline:
+                if self.closed.is_set() or time.monotonic() >= deadline or self._is_cancelled(cancelled):
                     try:
                         response.close()
                     except Exception:
                         pass
+                    return
+
+        watcher = threading.Thread(
+            target=_watchdog, daemon=True, name=f"ryn-mcp-http-watch-{self.server_id}"
+        )
+        watcher.start()
+        try:
+            yield
+        finally:
+            done.set()
+
+    @contextmanager
+    def _watch_request(
+        self,
+        deadline: float,
+        cancelled: Callable[[], bool] | None,
+        response_box: list[httpx.Response | None],
+    ):
+        done = threading.Event()
+
+        def _watchdog() -> None:
+            while not done.wait(0.05):
+                if self.closed.is_set() or time.monotonic() >= deadline or self._is_cancelled(cancelled):
+                    resp = response_box[0]
+                    if resp is not None:
+                        try:
+                            resp.close()
+                        except Exception:
+                            pass
+                    else:
+                        try:
+                            self._client.close()
+                        except Exception:
+                            pass
                     return
 
         watcher = threading.Thread(
@@ -1147,74 +1256,28 @@ class StreamableHttpMcpSession:
             timeout_seconds=timeout,
             method=method,
         )
+        redact_vals = _extract_request_redact_values(
+            headers,
+            [
+                v
+                for v in (self._server.get("secret_headers") or {}).values()
+                if isinstance(v, str)
+            ],
+        )
         dispatched = False
         message: dict[str, Any] | None = None
+        resp_box: list[httpx.Response | None] = [None]
         try:
             dispatched = True
-            with self._client.stream(
-                "POST",
-                self.url,
-                content=body,
-                headers=headers,
-                timeout=req_timeout,
-            ) as response, self._watch_response(response, deadline, cancelled):
-                self._check_deadline(
-                    deadline,
-                    cancelled,
-                    dispatched=True,
-                    phase="await_response",
-                    timeout_seconds=timeout,
-                    method=method,
-                )
-                if response.status_code in (401, 403):
-                    raise self._auth_error(response, dispatched=True, request_id=ident)
-                if response.status_code >= 300:
-                    err_buf = bytearray()
-                    try:
-                        for err_chunk in response.iter_bytes():
-                            if self._is_cancelled(cancelled):
-                                raise McpTransportError("agent_cancelled", dispatched=True)
-                            err_buf.extend(err_chunk[: max(0, 2048 - len(err_buf))])
-                            if len(err_buf) >= 2048 or time.monotonic() >= deadline:
-                                break
-                    except McpTransportError:
-                        raise
-                    except (httpx.HTTPError, OSError):
-                        pass
-                    redact_vals: list[str] = []
-                    if headers.get("Authorization"):
-                        redact_vals.append(headers["Authorization"])
-                    for secret_val in (self._server.get("secret_headers") or {}).values():
-                        if isinstance(secret_val, str) and secret_val:
-                            redact_vals.append(secret_val)
-                    http_body = _sanitize_http_error_body(
-                        bytes(err_buf),
-                        redact_values=redact_vals,
-                        limit=1000,
-                    )
-                    http_details: dict[str, Any] = {"http_status": int(response.status_code)}
-                    if http_body:
-                        http_details["http_body"] = http_body
-                    raise McpTransportError(
-                        "agent_mcp_http_error",
-                        dispatched=True,
-                        phase="http_status",
-                        request_id=ident,
-                        http_status=int(response.status_code),
-                        details=http_details,
-                    )
-                self._check_content_length(response, dispatched=True)
-                sess_hdr = response.headers.get("Mcp-Session-Id") or response.headers.get("mcp-session-id")
-                if sess_hdr:
-                    self.session_id = sess_hdr.strip()
-
-                ctype = (response.headers.get("Content-Type") or "").lower()
-                is_sse = "text/event-stream" in ctype
-                sse_buffer = bytearray()
-                chunks: list[bytes] = []
-                total = 0
-
-                for chunk in response.iter_bytes():
+            with self._watch_request(deadline, cancelled, resp_box):
+                with self._client.stream(
+                    "POST",
+                    self.url,
+                    content=body,
+                    headers=headers,
+                    timeout=_http_timeout(req_timeout),
+                ) as response:
+                    resp_box[0] = response
                     self._check_deadline(
                         deadline,
                         cancelled,
@@ -1223,51 +1286,102 @@ class StreamableHttpMcpSession:
                         timeout_seconds=timeout,
                         method=method,
                     )
-                    total += len(chunk)
-                    if total > MAX_OUTPUT_BYTES:
+                    if response.status_code in (401, 403):
+                        raise self._auth_error(response, dispatched=True, request_id=ident)
+                    if response.status_code >= 300:
+                        err_buf = bytearray()
+                        try:
+                            for err_chunk in response.iter_bytes():
+                                if self._is_cancelled(cancelled):
+                                    raise McpTransportError("agent_cancelled", dispatched=True)
+                                err_buf.extend(err_chunk[: max(0, 2048 - len(err_buf))])
+                                if len(err_buf) >= 2048 or time.monotonic() >= deadline:
+                                    break
+                        except McpTransportError:
+                            raise
+                        except (httpx.HTTPError, OSError):
+                            pass
+                        http_body = _sanitize_http_error_body(
+                            bytes(err_buf),
+                            redact_values=redact_vals,
+                            limit=1000,
+                        )
+                        http_details: dict[str, Any] = {"http_status": int(response.status_code)}
+                        if http_body:
+                            http_details["http_body"] = http_body
                         raise McpTransportError(
-                            "agent_mcp_output_limit",
+                            "agent_mcp_http_error",
+                            dispatched=True,
+                            phase="http_status",
+                            request_id=ident,
+                            http_status=int(response.status_code),
+                            details=http_details,
+                        )
+                    self._check_content_length(response, dispatched=True)
+                    sess_hdr = response.headers.get("Mcp-Session-Id") or response.headers.get("mcp-session-id")
+                    if sess_hdr:
+                        self.session_id = sess_hdr.strip()
+
+                    ctype = (response.headers.get("Content-Type") or "").lower()
+                    is_sse = "text/event-stream" in ctype
+                    sse_buffer = bytearray()
+                    chunks: list[bytes] = []
+                    total = 0
+
+                    for chunk in response.iter_bytes():
+                        self._check_deadline(
+                            deadline,
+                            cancelled,
                             dispatched=True,
                             phase="await_response",
-                            request_id=ident,
+                            timeout_seconds=timeout,
+                            method=method,
                         )
-                    if is_sse:
-                        sse_buffer.extend(chunk)
-                        message = self._extract_sse_message(sse_buffer, ident, flush_final=False)
-                        if message is not None:
-                            break
-                    else:
-                        chunks.append(chunk)
+                        total += len(chunk)
+                        if total > MAX_OUTPUT_BYTES:
+                            raise McpTransportError(
+                                "agent_mcp_output_limit",
+                                dispatched=True,
+                                phase="await_response",
+                                request_id=ident,
+                            )
+                        if is_sse:
+                            sse_buffer.extend(chunk)
+                            message = self._extract_sse_message(sse_buffer, ident, flush_final=False)
+                            if message is not None:
+                                break
+                        else:
+                            chunks.append(chunk)
 
-                self._check_deadline(
-                    deadline,
-                    cancelled,
-                    dispatched=True,
-                    phase="await_response",
-                    timeout_seconds=timeout,
-                    method=method,
-                )
-                if is_sse:
-                    if message is None:
-                        message = self._extract_sse_message(sse_buffer, ident, flush_final=True)
-                    if message is None:
-                        raise McpTransportError(
-                            "agent_mcp_protocol_invalid",
-                            dispatched=True,
-                            phase="response_parse",
-                            request_id=ident,
-                        )
-                else:
-                    raw = b"".join(chunks)
-                    try:
-                        message = json.loads(raw.decode("utf-8"))
-                    except Exception as exc:
-                        raise McpTransportError(
-                            "agent_mcp_protocol_invalid",
-                            dispatched=True,
-                            phase="response_parse",
-                            request_id=ident,
-                        ) from exc
+                    self._check_deadline(
+                        deadline,
+                        cancelled,
+                        dispatched=True,
+                        phase="await_response",
+                        timeout_seconds=timeout,
+                        method=method,
+                    )
+                    if is_sse:
+                        if message is None:
+                            message = self._extract_sse_message(sse_buffer, ident, flush_final=True)
+                        if message is None:
+                            raise McpTransportError(
+                                "agent_mcp_protocol_invalid",
+                                dispatched=True,
+                                phase="response_parse",
+                                request_id=ident,
+                            )
+                    else:
+                        raw = b"".join(chunks)
+                        try:
+                            message = json.loads(raw.decode("utf-8"))
+                        except Exception as exc:
+                            raise McpTransportError(
+                                "agent_mcp_protocol_invalid",
+                                dispatched=True,
+                                phase="response_parse",
+                                request_id=ident,
+                            ) from exc
         except McpTransportError as exc:
             if (exc.http_status == 401 and self.oauth and headers.get("Authorization")
                     and method in {"initialize", "tools/list"} and not refresh_state[0]):
@@ -1340,7 +1454,11 @@ class StreamableHttpMcpSession:
             code = err_obj.get("code") if isinstance(err_obj, dict) else None
             rpc_code = code if type(code) is int else None
             raw_msg = err_obj.get("message") if isinstance(err_obj, dict) else None
-            cleaned_msg = _clean_mcp_error_message(raw_msg, limit=500)
+            cleaned_msg = _clean_mcp_error_message(
+                raw_msg,
+                redact_values=redact_vals,
+                limit=500,
+            )
             rpc_details: dict[str, Any] = {}
             if cleaned_msg:
                 rpc_details["message"] = cleaned_msg
@@ -1432,37 +1550,46 @@ class StreamableHttpMcpSession:
                         method="notifications/initialized",
                     )
                     retry = False
-                    with self._client.stream("POST", self.url, content=notif, headers=headers, timeout=req_timeout) as resp, self._watch_response(resp, deadline, cancelled):
-                        self._check_deadline(
-                            deadline,
-                            cancelled,
-                            dispatched=False,
-                            phase="initialize",
-                            timeout_seconds=self.startup_timeout,
-                            method="notifications/initialized",
-                        )
-                        if resp.status_code in (401, 403):
-                            auth_error = self._auth_error(resp, dispatched=True)
-                            retry = bool(resp.status_code == 401 and self.oauth and headers.get("Authorization") and attempt == 0 and not refresh_state[0])
+                    notif_box: list[httpx.Response | None] = [None]
+                    with self._watch_request(deadline, cancelled, notif_box):
+                        with self._client.stream(
+                            "POST",
+                            self.url,
+                            content=notif,
+                            headers=headers,
+                            timeout=_http_timeout(req_timeout),
+                        ) as resp:
+                            notif_box[0] = resp
+                            self._check_deadline(
+                                deadline,
+                                cancelled,
+                                dispatched=False,
+                                phase="initialize",
+                                timeout_seconds=self.startup_timeout,
+                                method="notifications/initialized",
+                            )
+                            if resp.status_code in (401, 403):
+                                auth_error = self._auth_error(resp, dispatched=True)
+                                retry = bool(resp.status_code == 401 and self.oauth and headers.get("Authorization") and attempt == 0 and not refresh_state[0])
+                                if not retry:
+                                    raise auth_error
+                            elif resp.status_code >= 300:
+                                raise McpTransportError("agent_mcp_http_error", dispatched=False)
                             if not retry:
-                                raise auth_error
-                        elif resp.status_code >= 300:
-                            raise McpTransportError("agent_mcp_http_error", dispatched=False)
-                        if not retry:
-                            self._check_content_length(resp, dispatched=False)
-                            notif_total = 0
-                            for chunk in resp.iter_bytes():
-                                self._check_deadline(
-                                    deadline,
-                                    cancelled,
-                                    dispatched=False,
-                                    phase="initialize",
-                                    timeout_seconds=self.startup_timeout,
-                                    method="notifications/initialized",
-                                )
-                                notif_total += len(chunk)
-                                if notif_total > MAX_OUTPUT_BYTES:
-                                    raise McpTransportError("agent_mcp_output_limit", dispatched=False)
+                                self._check_content_length(resp, dispatched=False)
+                                notif_total = 0
+                                for chunk in resp.iter_bytes():
+                                    self._check_deadline(
+                                        deadline,
+                                        cancelled,
+                                        dispatched=False,
+                                        phase="initialize",
+                                        timeout_seconds=self.startup_timeout,
+                                        method="notifications/initialized",
+                                    )
+                                    notif_total += len(chunk)
+                                    if notif_total > MAX_OUTPUT_BYTES:
+                                        raise McpTransportError("agent_mcp_output_limit", dispatched=False)
                     if not retry:
                         break
                     try:

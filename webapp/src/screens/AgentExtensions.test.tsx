@@ -1912,6 +1912,75 @@ describe("AgentExtensions UI", () => {
     });
   });
 
+  it("renders Degraded status badge for MCP servers with cached tools", async () => {
+    const baseOverview = makeOverviewFixture();
+    const degradedOverview = {
+      ...baseOverview,
+      mcp_servers: [
+        ...baseOverview.mcp_servers,
+        {
+          id: "degraded-analytics",
+          instance_id: "mcp-degraded-analytics",
+          name: "Degraded Analytics",
+          title: "Degraded Analytics",
+          description: "Remote analytics server keeping cached tools.",
+          transport: "streamable_http",
+          builtin: false,
+          deletable: true,
+          plugin_id: null,
+          computer_access: false,
+          enabled: true,
+          component_enabled: true,
+          parent_enabled: true,
+          command: "",
+          args: [],
+          cwd: "",
+          env_keys: [],
+          masked_env: {},
+          url: "http://127.0.0.1:8777/mcp",
+          bearer_token_env: "",
+          header_keys: [],
+          masked_headers: {},
+          has_secrets: false,
+          startup_timeout_ms: 30000,
+          tool_timeout_ms: 300000,
+          enabled_tools: null,
+          disabled_tools: [],
+          read_only_tools: ["query_metrics"],
+          tools: [
+            {
+              name: "query_metrics",
+              model_tool_name: "mcp__degraded_analytics__query_metrics",
+              title: "Query Metrics",
+              description: "Run metrics query.",
+              enabled: true,
+              component_enabled: true,
+              owner_read_only: true,
+              effective_effect: "read",
+              effective_risk: "low",
+              annotations: { readOnlyHint: true },
+            },
+          ],
+          tools_count: 3,
+          enabled_tools_count: 3,
+          status: "Degraded",
+          status_message: "agent_mcp_timeout",
+          last_tested_at: "2026-11-15T10:00:00Z",
+          revision: 7,
+        },
+      ],
+    };
+
+    server.use(
+      http.get("*/api/local/agent/extensions", () => HttpResponse.json(degradedOverview)),
+    );
+
+    renderExtensions("/settings/extensions/mcp");
+    await screen.findByRole("heading", { name: "Servers" });
+    expect(await screen.findByText("Degraded Analytics")).toBeInTheDocument();
+    expect(await screen.findByText("Degraded · 3 cached tools")).toBeInTheDocument();
+  });
+
   it("renders Codex Skills page with Scope filter tabs, Recommended skills one-click install, Refresh discovery, and reference file preview", async () => {
     const user = userEvent.setup();
     let currentOverview = makeOverviewFixture();
