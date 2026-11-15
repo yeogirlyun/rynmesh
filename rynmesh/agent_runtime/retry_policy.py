@@ -19,8 +19,11 @@ def limit(code, diagnostics):
     if status is not None and status not in {408, 429, 500, 502, 503, 504}:
         return 0
     # urllib cannot distinguish connect from waiting for response headers.
-    # Treat an ambiguous timeout conservatively as a slow model response.
-    return 1 if code == "agent_inference_timeout" else 3
+    # Treat an ambiguous timeout conservatively as a slow model response, while
+    # mid-stream idle timeouts are retryable stream transport stalls.
+    if code == "agent_inference_timeout":
+        return 3 if reason == "idle_timeout" else 1
+    return 3
 
 
 def delay(count, diagnostics):

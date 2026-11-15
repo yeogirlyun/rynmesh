@@ -41,6 +41,8 @@ SOURCE_HTTP_SCHEMA = {
         "context_window_mode": {"type": "string", "enum": ["auto", "manual"]},
         "context_window": {"type": "integer", "minimum": 256, "maximum": 2000000},
         "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 393216},
+        "stream_idle_seconds": {"type": "integer", "minimum": 1, "maximum": 86400, "default": 120},
+        "max_request_seconds": {"type": "integer", "minimum": 1, "maximum": 86400, "default": 1800},
         "request_defaults": {"type": "object"},
     },
 }
@@ -197,6 +199,15 @@ class SourceStore:
                 "sharing": bool(shared), "shared_models": shared,
                 "enabled": bool(body.get("enabled", old.get("enabled", True))),
                 "status": "needs_key" if kind == "api" and not key else "untested"}
+        for timeout_key in ("stream_idle_seconds", "max_request_seconds"):
+            if timeout_key in body:
+                if body[timeout_key] is not None:
+                    timeout_val = integer(body[timeout_key])
+                    if not 1 <= timeout_val <= 86400:
+                        raise ValueError("model_" + timeout_key + "_invalid")
+                    record[timeout_key] = timeout_val
+            elif timeout_key in old:
+                record[timeout_key] = old[timeout_key]
         record["_context_window_mode_explicit"] = "context_window_mode" in body
         same_endpoint = _same_configuration(record, old, ("kind", "provider", "base_url", "api_key", "protocol"))
         metadata = copy.deepcopy(old.get("model_metadata", {})) if same_endpoint else {}
@@ -257,6 +268,13 @@ class SourceStore:
 
     @staticmethod
     def adapter(record, model=""):
+        """Build an upstream HTTP adapter for a configured source/model.
+
+        ``timeout_s`` on the returned adapter is the per-read stream idle
+        timeout (default 120 s from ``stream_idle_seconds``), not a wall-clock
+        cap on the whole response; total request duration is bounded by the
+        caller's ``deadline`` budget.
+        """
         if record["kind"] == "api" and not record.get("api_key"):
             raise ValueError("请先填写 API Key")
         protocol = source_protocol(record)
@@ -266,10 +284,12 @@ class SourceStore:
         if protocol != "openai_chat":
             from .protocol_adapter import NativeProtocolAdapter
             adapter, protocol_kwargs = NativeProtocolAdapter, {"protocol": protocol}
+        selected_model = model or next(iter(record["models"]), "")
+        policy = model_settings.effective(record, selected_model)
         return adapter(base_url=record["base_url"], api_prefix="", api_key=record.get("api_key", ""),
-                             model=model or next(iter(record["models"]), ""),
-                             allow_non_loopback=record["kind"] == "api", timeout_s=180,
-                             request_defaults=model_settings.effective(record, model or next(iter(record["models"]), ""))["request_defaults"],
+                             model=selected_model,
+                             allow_non_loopback=record["kind"] == "api", timeout_s=policy["stream_idle_seconds"],
+                             request_defaults=policy["request_defaults"],
                              **protocol_kwargs)
 
     def configure_model(self, source_id, body):

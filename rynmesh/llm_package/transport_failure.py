@@ -8,7 +8,7 @@ import time
 from email.utils import parsedate_to_datetime
 from urllib.error import HTTPError
 
-REASONS = {"dns_temporary", "dns_not_found", "tls_certificate", "tls", "reset", "refused", "timeout", "http", "connection", "quota"}
+REASONS = {"dns_temporary", "dns_not_found", "tls_certificate", "tls", "reset", "refused", "timeout", "idle_timeout", "total_timeout", "http", "connection", "quota"}
 
 
 _IMAGE_WORDS = ("image", "vision", "multimodal", "picture")

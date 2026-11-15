@@ -16,6 +16,8 @@ FIELDS = {
     "shared_tokens_per_day",
     "share_scope",
     "image_input",
+    "stream_idle_seconds",
+    "max_request_seconds",
 }
 IMAGE_INPUT_VALUES = ("auto", "supported", "unsupported")
 # Model-name prefixes whose image input was confirmed with the owner's image test.
@@ -135,6 +137,10 @@ def defaults(record, model=None):
         max_output = vendor_output
     else:
         max_output = source_output if type(source_output) is int else 4096
+    source_idle = record.get("stream_idle_seconds")
+    source_max_request = record.get("max_request_seconds")
+    stream_idle = source_idle if type(source_idle) is int and 1 <= source_idle <= 86400 else 120
+    max_request = source_max_request if type(source_max_request) is int and 1 <= source_max_request <= 86400 else 1800
     return {"context_window": window,
             "max_output_tokens": max_output,
             "request_defaults": copy.deepcopy(record.get("request_defaults", {})),
@@ -143,13 +149,21 @@ def defaults(record, model=None):
             "tokens_per_day": None,
             "shared_tokens_per_day": None,
             "share_scope": "personal_space",
-            "image_input": "auto"}
+            "image_input": "auto",
+            "stream_idle_seconds": stream_idle,
+            "max_request_seconds": max_request}
 
 
 def validate(values):
     if not isinstance(values, dict) or set(values) - FIELDS:
         raise ValueError("model_configuration_invalid")
-    for key, low, high in (("context_window", 256, 2000000), ("max_output_tokens", 1, 393216), ("max_concurrent", 1, 2500)):
+    for key, low, high in (
+        ("context_window", 256, 2000000),
+        ("max_output_tokens", 1, 393216),
+        ("max_concurrent", 1, 2500),
+        ("stream_idle_seconds", 1, 86400),
+        ("max_request_seconds", 1, 86400),
+    ):
         if key in values and (type(values[key]) is not int or not low <= values[key] <= high):
             raise ValueError("model_" + key + "_invalid")
     quota = values.get("requests_per_day")

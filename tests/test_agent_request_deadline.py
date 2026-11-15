@@ -29,14 +29,14 @@ def local_bridge(node, monkeypatch, provider=180):  # noqa: F811
     monkeypatch.setattr("rynmesh.agent_runtime.bridge.time", clock)
     monkeypatch.setattr("rynmesh.llm_package.adapters.time", clock)
     seen = []
-    def chat(body, *, task_id, timeout_s, on_event):
+    def chat(body, *, task_id, timeout_s, on_event, deadline=None):
         seen.append(timeout_s)
         return {"message": {"role": "assistant", "content": "ok"}, "input_tokens": 7, "output_tokens": 3, "finish_reason": "stop"}
     monkeypatch.setattr(manager.adapter.inner, "chat", chat)
     return bridge, selected, manager, now, seen
 
 
-@pytest.mark.parametrize("provider,remaining,want", [(180, 600, 180), (180, 17, 17), (25, 600, 25)])
+@pytest.mark.parametrize("provider,remaining,want", [(180, 600, 600), (180, 17, 17), (25, 600, 600)])
 def test_manifest_and_task_bounds_reach_real_source_gate(node, monkeypatch, provider, remaining, want):  # noqa: F811
     bridge, selected, _, now, seen = local_bridge(node, monkeypatch, provider)
     policies = []
