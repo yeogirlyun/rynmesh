@@ -207,13 +207,16 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
         for name in requested_pins
     )
     has_resource_pins = "ryn_list_resource_roots" in requested_pins
-    has_subagent_internal = any(s["function"]["name"] in SUBAGENT_TOOL_NAMES for s in internal)
-    subagent_Allowance = 3600 if has_subagent_internal else 0
+    # ``candidate`` below includes ``base`` (control + directory schemas), so
+    # additive pin/seed budgets reserve ``len(encoded(base))`` on top of the
+    # business-tool schema allowance instead of a stale fixed estimate.
+    base_bytes = len(encoded(base)) if max_context_bytes >= ADDITIVE_CAPACITY else 0
+    resource_allowance = 3000 if has_resource_pins else 0
     pinned = []
-    seed_cap = (26000 if has_browser_pins and max_context_bytes >= ADDITIVE_CAPACITY else 17000) + (2500 if has_resource_pins else 0) + subagent_Allowance
-    pin_floor = (24000 if has_browser_pins else 15000) + (2500 if has_resource_pins else 0) + subagent_Allowance
+    pin_floor = base_bytes + (24000 if has_browser_pins else 15000) + resource_allowance
+    seed_cap = (pin_floor + 2000) if max_context_bytes >= ADDITIVE_CAPACITY else (17000 + resource_allowance)
     seed_limit = min(limit, max(target, min(seed_cap, max_context_bytes // 3)))
-    if has_browser_pins and max_context_bytes >= ADDITIVE_CAPACITY:
+    if max_context_bytes >= ADDITIVE_CAPACITY:
         seed_limit = min(limit, max(seed_limit, pin_floor))
     # Pins use at most a tenth of the window in small contexts where they would
     # crowd out conversation; normal additive windows (>= ADDITIVE_CAPACITY)

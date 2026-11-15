@@ -6,8 +6,9 @@ import os
 import runpy
 from pathlib import Path
 
-from rynmesh.agent_runtime import execution_policy, local_specs
+from rynmesh.agent_runtime import code_mode, execution_policy, local_specs, tool_menu
 from rynmesh.agent_runtime.local_specs import SPECS
+from rynmesh.agent_runtime.loop import ALL_INTERNAL_SPECS
 from rynmesh.llm_package import codex_tools
 
 
@@ -94,3 +95,42 @@ def test_t3_schema_projection_consistency_and_automatic_mode_never_asks(tmp_path
         decision = execution_policy.decide(call, {"effect": effect, "risk": risk}, row, settings)
         assert decision.action == "execute"
         assert decision.basis == "automatic"
+
+    # Expanded shell description must not crowd CORE_TOOLS (such as ryn_file_write)
+    # out of additive-window tool menu projections alongside ALL_INTERNAL_SPECS.
+    business = [
+        {"type": "function", "function": {"name": name, "description": desc, "parameters": schema}}
+        for name, (desc, _eff, _risk, schema) in SPECS.items()
+    ]
+    business.append(code_mode.SPEC)
+    business.append(
+        {
+            "type": "function",
+            "function": {
+                "name": "ryn_list_plugins",
+                "description": "List installed plugins.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    )
+    pinned_request = (
+        tool_menu.PLUGIN_DISCOVERY_TOOLS
+        + ("ryn_project_inspect",)
+        + tool_menu.CORE_TOOLS
+        + ("ryn_code_exec",)
+    )
+    for window_bytes in (60000, 84480):
+        exposed, menu_state = tool_menu.project(
+            business,
+            ALL_INTERNAL_SPECS,
+            {},
+            max_context_bytes=window_bytes,
+            authority_bytes=8856,
+            epoch=0,
+            goal_revision=1,
+            pinned_names=pinned_request,
+        )
+        exposed_names = {spec["function"]["name"] for spec in exposed}
+        assert set(tool_menu.CORE_TOOLS) <= set(menu_state["pinned_names"])
+        assert "ryn_file_write" in exposed_names
+        assert "ryn_shell_execute" in exposed_names
