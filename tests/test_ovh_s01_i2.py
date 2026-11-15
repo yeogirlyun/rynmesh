@@ -57,7 +57,14 @@ def _write_sse_data(wfile, payload: dict | str) -> None:
     wfile.flush()
 
 
-def _write_responses_stream(wfile, *, deltas: list[str], interval_s: float, pause_after_first_s: float = 0.0) -> None:
+def _write_responses_stream(
+    wfile,
+    *,
+    deltas: list[str],
+    interval_s: float,
+    pause_after_first_s: float = 0.0,
+    stop_event: threading.Event | None = None,
+) -> None:
     _write_sse_data(wfile, {"type": "response.created", "response": {"id": "resp_1", "status": "in_progress"}})
     _write_sse_data(
         wfile,
@@ -91,7 +98,10 @@ def _write_responses_stream(wfile, *, deltas: list[str], interval_s: float, paus
             },
         )
         if idx == 0 and pause_after_first_s > 0:
-            time.sleep(pause_after_first_s)
+            if stop_event is not None:
+                stop_event.wait(pause_after_first_s)
+            else:
+                time.sleep(pause_after_first_s)
             return
     _write_sse_data(
         wfile,
@@ -138,7 +148,14 @@ def _write_responses_stream(wfile, *, deltas: list[str], interval_s: float, paus
     )
 
 
-def _write_messages_stream(wfile, *, deltas: list[str], interval_s: float, pause_after_first_s: float = 0.0) -> None:
+def _write_messages_stream(
+    wfile,
+    *,
+    deltas: list[str],
+    interval_s: float,
+    pause_after_first_s: float = 0.0,
+    stop_event: threading.Event | None = None,
+) -> None:
     _write_sse_data(
         wfile,
         {
@@ -165,7 +182,10 @@ def _write_messages_stream(wfile, *, deltas: list[str], interval_s: float, pause
             {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": piece}},
         )
         if idx == 0 and pause_after_first_s > 0:
-            time.sleep(pause_after_first_s)
+            if stop_event is not None:
+                stop_event.wait(pause_after_first_s)
+            else:
+                time.sleep(pause_after_first_s)
             return
     _write_sse_data(wfile, {"type": "content_block_stop", "index": 0})
     _write_sse_data(
@@ -193,15 +213,16 @@ def _configure_local_p2p(monkeypatch) -> None:
 def test_t1_p2p_session_deltas_exceed_three_idle_windows_succeeds(monkeypatch):
     """T1: P2P session receives a delta every 1 s and succeeds beyond 3x stream_idle_seconds."""
     _configure_local_p2p(monkeypatch)
-    idle_s = 1.3
+    idle_s = 2.0
     pool = SessionPool()
+    stop_bg = threading.Event()
     events = []
 
     async def publish(offer):
         answer = asyncio.get_running_loop().create_future()
 
         def handler(body, emit):
-            for idx in range(5):
+            for idx in range(8):
                 if idx > 0:
                     time.sleep(1.0)
                 emit({"payload": {"kind": "llm_stream"}, "n": idx})
@@ -214,7 +235,9 @@ def test_t1_p2p_session_deltas_exceed_three_idle_windows_succeeds(monkeypatch):
                 publish_answer=answer.set_result,
                 handle_request=handler,
                 handle_stream_request=handler,
-                timeout_s=20.0,
+                timeout_s=30.0,
+                connect_timeout_s=15.0,
+                stop_event=stop_bg,
             )
         )
         return await answer
@@ -225,7 +248,8 @@ def test_t1_p2p_session_deltas_exceed_three_idle_windows_succeeds(monkeypatch):
             p2p.consumer_exchange(
                 signed_request={"task": "long-stream"},
                 publish_offer=publish,
-                timeout_s=20.0,
+                timeout_s=30.0,
+                connect_timeout_s=15.0,
                 stream_idle_seconds=idle_s,
                 on_event=events.append,
                 session_pool=pool,
@@ -233,21 +257,21 @@ def test_t1_p2p_session_deltas_exceed_three_idle_windows_succeeds(monkeypatch):
             )
         )
     finally:
+        stop_bg.set()
         pool.close()
 
     elapsed = time.monotonic() - started
     assert elapsed > 3 * idle_s
     assert response["ok"] is True and response["task"] == "long-stream"
-    assert [item["n"] for item in events] == [0, 1, 2, 3, 4]
-    assert evidence["stream_events"] == 5
+    assert [item["n"] for item in events] == list(range(8))
+    assert evidence["stream_events"] == 8
 
 
-def test_t2_p2p_session_midstream_silence_raises_idle_timeout_and_total_timeout(monkeypatch):
-    """T2: P2P session silence exceeding stream_idle_seconds raises idle_timeout (distinct from total_timeout)."""
+def test_t2_p2p_session_midstream_silence_raises_idle_timeout(monkeypatch):
+    """T2: P2P session midstream silence exceeding stream_idle_seconds raises idle_timeout."""
     _configure_local_p2p(monkeypatch)
-    idle_s = 1.0
+    idle_s = 2.5
     pool = SessionPool()
-
     stop_bg = threading.Event()
 
     async def publish_idle_stall(offer):
@@ -255,7 +279,7 @@ def test_t2_p2p_session_midstream_silence_raises_idle_timeout_and_total_timeout(
 
         def handler(_body, emit):
             emit({"payload": {"kind": "llm_stream"}, "n": 0})
-            stop_bg.wait(idle_s + 1.0)
+            stop_bg.wait(idle_s * 3.0)
             return {"payload": {"kind": "llm_response"}}
 
         asyncio.create_task(
@@ -264,17 +288,48 @@ def test_t2_p2p_session_midstream_silence_raises_idle_timeout_and_total_timeout(
                 publish_answer=answer.set_result,
                 handle_request=handler,
                 handle_stream_request=handler,
-                timeout_s=15.0,
+                timeout_s=30.0,
+                connect_timeout_s=15.0,
+                stop_event=stop_bg,
             )
         )
         return await answer
+
+    try:
+        seen = []
+        with pytest.raises(p2p.P2PTimeoutError) as idle_err:
+            asyncio.run(
+                p2p.consumer_exchange(
+                    signed_request={"task": "stall"},
+                    publish_offer=publish_idle_stall,
+                    timeout_s=30.0,
+                    connect_timeout_s=15.0,
+                    stream_idle_seconds=idle_s,
+                    on_event=seen.append,
+                    session_pool=pool,
+                    session_key="peer-t2-idle",
+                )
+            )
+        assert seen and seen[0]["n"] == 0
+        assert idle_err.value.reason == "idle_timeout"
+        assert _delivery_error_code(idle_err.value, transport="p2p") == "p2p_idle_timeout"
+    finally:
+        stop_bg.set()
+        pool.close()
+
+
+def test_t2b_p2p_session_total_budget_exceeded_raises_total_timeout(monkeypatch):
+    """T2b: P2P session active stream exceeding total timeout_s raises total_timeout (distinct from idle_timeout)."""
+    _configure_local_p2p(monkeypatch)
+    pool = SessionPool()
+    stop_bg = threading.Event()
 
     async def publish_total_exceeded(offer):
         answer = asyncio.get_running_loop().create_future()
 
         def handler(_body, emit):
-            for idx in range(8):
-                if stop_bg.wait(0.35):
+            for idx in range(25):
+                if idx > 0 and stop_bg.wait(0.4):
                     break
                 try:
                     emit({"payload": {"kind": "llm_stream"}, "n": idx})
@@ -288,41 +343,29 @@ def test_t2_p2p_session_midstream_silence_raises_idle_timeout_and_total_timeout(
                 publish_answer=answer.set_result,
                 handle_request=handler,
                 handle_stream_request=handler,
-                timeout_s=15.0,
+                timeout_s=30.0,
+                connect_timeout_s=15.0,
+                stop_event=stop_bg,
             )
         )
         return await answer
 
     try:
         seen = []
-        with pytest.raises(p2p.P2PTimeoutError) as idle_err:
-            asyncio.run(
-                p2p.consumer_exchange(
-                    signed_request={"task": "stall"},
-                    publish_offer=publish_idle_stall,
-                    timeout_s=15.0,
-                    stream_idle_seconds=idle_s,
-                    on_event=seen.append,
-                    session_pool=pool,
-                    session_key="peer-t2-idle",
-                )
-            )
-        assert seen and seen[0]["n"] == 0
-        assert idle_err.value.reason == "idle_timeout"
-        assert _delivery_error_code(idle_err.value, transport="p2p") == "p2p_idle_timeout"
-
         with pytest.raises(p2p.P2PTimeoutError) as total_err:
             asyncio.run(
                 p2p.consumer_exchange(
                     signed_request={"task": "over-budget"},
                     publish_offer=publish_total_exceeded,
-                    timeout_s=1.1,
-                    stream_idle_seconds=5.0,
-                    on_event=lambda _: None,
+                    timeout_s=3.5,
+                    connect_timeout_s=15.0,
+                    stream_idle_seconds=12.0,
+                    on_event=seen.append,
                     session_pool=pool,
                     session_key="peer-t2-total",
                 )
             )
+        assert seen and seen[0]["n"] == 0
         assert total_err.value.reason == "total_timeout"
         assert _delivery_error_code(total_err.value, transport="p2p") == "p2p_total_timeout"
     finally:
@@ -372,10 +415,10 @@ def test_t3_shared_service_manifest_timeout_comes_from_source_settings(node):  #
 
 def test_t4_chat_stream_deltas_every_second_past_three_idle_windows_succeeds():
     """T4: OpenAICompatibleAdapter.chat succeeds when SSE deltas arrive every 1 s for > 3x idle_s."""
-    idle_s = 1.3
+    idle_s = 2.0
 
     def writer(wfile):
-        for idx in range(5):
+        for idx in range(8):
             if idx > 0:
                 time.sleep(1.0)
             _write_sse_data(
@@ -395,7 +438,7 @@ def test_t4_chat_stream_deltas_every_second_past_three_idle_windows_succeeds():
             wfile,
             {
                 "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 4, "completion_tokens": 5},
+                "usage": {"prompt_tokens": 4, "completion_tokens": 8},
             },
         )
         _write_sse_data(wfile, "[DONE]")
@@ -412,17 +455,17 @@ def test_t4_chat_stream_deltas_every_second_past_three_idle_windows_succeeds():
         )
     elapsed = time.monotonic() - started
     assert elapsed > 3 * idle_s
-    assert result["text"] == "c0c1c2c3c4"
+    assert result["text"] == "c0c1c2c3c4c5c6c7"
     assert result["finish_reason"] == "stop"
-    assert len(seen) == 6
+    assert len(seen) == 9
 
 
 def test_t5_native_responses_stream_deltas_every_second_past_three_idle_windows_succeeds():
     """T5: NativeProtocolAdapter (openai_responses) succeeds when SSE deltas arrive every 1 s for > 3x idle_s."""
-    idle_s = 1.3
+    idle_s = 2.0
 
     def writer(wfile):
-        _write_responses_stream(wfile, deltas=["r0", "r1", "r2", "r3", "r4"], interval_s=1.0)
+        _write_responses_stream(wfile, deltas=[f"r{i}" for i in range(8)], interval_s=1.0)
 
     seen = []
     started = time.monotonic()
@@ -442,29 +485,34 @@ def test_t5_native_responses_stream_deltas_every_second_past_three_idle_windows_
         )
     elapsed = time.monotonic() - started
     assert elapsed > 3 * idle_s
-    assert result["text"] == "r0r1r2r3r4"
+    assert result["text"] == "r0r1r2r3r4r5r6r7"
     assert seen
 
 
 def test_t6_chat_stream_midstream_pause_raises_idle_timeout_and_retryable():
     """T6: OpenAICompatibleAdapter.chat midstream pause of idle+1 s raises inference_timeout with network_reason=idle_timeout."""
-    idle_s = 1.0
+    idle_s = 1.5
+    stop_writer = threading.Event()
 
     def writer(wfile):
         _write_sse_data(
             wfile,
             {"choices": [{"index": 0, "delta": {"role": "assistant", "content": "partial"}, "finish_reason": None}]},
         )
-        time.sleep(idle_s + 1.0)
+        stop_writer.wait(idle_s + 2.5)
 
-    with _sse_server(writer) as base_url:
-        adapter = OpenAICompatibleAdapter(base_url=base_url, api_prefix="", model="chat-m", timeout_s=idle_s)
-        with pytest.raises(AdapterError) as caught:
-            adapter.chat(
-                {"messages": [{"role": "user", "content": "hi"}], "stream": True},
-                task_id="t6-chat-idle",
-                timeout_s=idle_s,
-            )
+    try:
+        with _sse_server(writer) as base_url:
+            adapter = OpenAICompatibleAdapter(base_url=base_url, api_prefix="", model="chat-m", timeout_s=idle_s)
+            with pytest.raises(AdapterError) as caught:
+                adapter.chat(
+                    {"messages": [{"role": "user", "content": "hi"}], "stream": True},
+                    task_id="t6-chat-idle",
+                    timeout_s=idle_s,
+                )
+            stop_writer.set()
+    finally:
+        stop_writer.set()
 
     assert caught.value.code == "inference_timeout"
     assert caught.value.diagnostics.get("network_reason") == "idle_timeout"
@@ -477,9 +525,9 @@ def test_t6_chat_stream_midstream_pause_raises_idle_timeout_and_retryable():
 def test_t7_native_both_protocols_idle_behavior_and_bridge_ignores_manifest_timeout(node, monkeypatch):  # noqa: F811
     """T7: Both native protocols cover >3x idle success + idle+1 s idle_timeout, and bridge does not expire at manifest.timeout_seconds."""
     # 1) anthropic_messages > 3x idle_s (1 s per delta) succeeds
-    idle_long = 1.3
+    idle_long = 2.0
     started = time.monotonic()
-    with _sse_server(lambda wfile: _write_messages_stream(wfile, deltas=["m0", "m1", "m2", "m3", "m4"], interval_s=1.0)) as url:
+    with _sse_server(lambda wfile: _write_messages_stream(wfile, deltas=[f"m{i}" for i in range(8)], interval_s=1.0)) as url:
         msg_adapter = NativeProtocolAdapter(
             protocol="anthropic_messages",
             base_url=url,
@@ -494,33 +542,42 @@ def test_t7_native_both_protocols_idle_behavior_and_bridge_ignores_manifest_time
             on_event=lambda _: None,
         )
     assert time.monotonic() - started > 3 * idle_long
-    assert msg_res["text"] == "m0m1m2m3m4"
+    assert msg_res["text"] == "m0m1m2m3m4m5m6m7"
 
     # 2) Both openai_responses and anthropic_messages midstream pause idle + 1 s -> inference_timeout + idle_timeout
-    idle_short = 1.0
-    for protocol, writer in (
-        ("openai_responses", lambda w: _write_responses_stream(w, deltas=["a", "b"], interval_s=0.1, pause_after_first_s=idle_short + 1.0)),
-        ("anthropic_messages", lambda w: _write_messages_stream(w, deltas=["a", "b"], interval_s=0.1, pause_after_first_s=idle_short + 1.0)),
+    idle_short = 1.5
+    for protocol, writer_fn in (
+        ("openai_responses", _write_responses_stream),
+        ("anthropic_messages", _write_messages_stream),
     ):
-        with _sse_server(writer) as url:
-            nat_adapter = NativeProtocolAdapter(
-                protocol=protocol,
-                base_url=url,
-                api_prefix="",
-                model="nat-m",
-                timeout_s=idle_short,
-            )
-            with pytest.raises(AdapterError) as caught:
-                nat_adapter.chat(
-                    {"messages": [{"role": "user", "content": "hi"}], "stream": True},
-                    task_id=f"t7-{protocol}-idle",
-                    timeout_s=idle_short,
-                    on_event=lambda _: None,
+        stop_writer = threading.Event()
+        try:
+            with _sse_server(
+                lambda w, fn=writer_fn, ev=stop_writer: fn(
+                    w, deltas=["a", "b"], interval_s=0.1, pause_after_first_s=idle_short + 2.5, stop_event=ev
                 )
-            assert caught.value.code == "inference_timeout"
-            assert caught.value.diagnostics.get("network_reason") == "idle_timeout"
-            assert safe_diagnostics(caught.value.diagnostics).get("network_reason") == "idle_timeout"
-            assert retry_policy.limit("agent_inference_timeout", caught.value.diagnostics) == 3
+            ) as url:
+                nat_adapter = NativeProtocolAdapter(
+                    protocol=protocol,
+                    base_url=url,
+                    api_prefix="",
+                    model="nat-m",
+                    timeout_s=idle_short,
+                )
+                with pytest.raises(AdapterError) as caught:
+                    nat_adapter.chat(
+                        {"messages": [{"role": "user", "content": "hi"}], "stream": True},
+                        task_id=f"t7-{protocol}-idle",
+                        timeout_s=idle_short,
+                        on_event=lambda _: None,
+                    )
+                stop_writer.set()
+                assert caught.value.code == "inference_timeout"
+                assert caught.value.diagnostics.get("network_reason") == "idle_timeout"
+                assert safe_diagnostics(caught.value.diagnostics).get("network_reason") == "idle_timeout"
+                assert retry_policy.limit("agent_inference_timeout", caught.value.diagnostics) == 3
+        finally:
+            stop_writer.set()
 
     # 3) Bridge unit test: manifest.timeout_seconds smaller than actual stream duration does NOT trigger expired()
     app, store = node

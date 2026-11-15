@@ -81,11 +81,7 @@ class ModelDispatchAdapter:
         try:
             body = {**body, "max_tokens": min(body.get("max_tokens", policy["max_output_tokens"]), policy["max_output_tokens"])}
             inner_kwargs = deadline_options(kwargs, deadline)
-            if (
-                deadline is not None
-                and getattr(self.inner, "supports_request_deadline", False) is True
-                and "chat" not in getattr(self.inner, "__dict__", {})
-            ):
+            if deadline is not None and getattr(self.inner, "supports_request_deadline", False) is True:
                 inner_kwargs = {**inner_kwargs, "deadline": deadline}
             result = self.inner.chat(body, **inner_kwargs)
             self.usage_store.record_completion(
