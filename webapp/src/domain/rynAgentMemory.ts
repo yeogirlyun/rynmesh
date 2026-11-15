@@ -119,6 +119,13 @@ export interface AgentMemoryCandidate {
   [key: string]: unknown;
 }
 
+export interface AgentMemoryLedgerDegraded {
+  at: number;
+  code: string;
+  task_id: string;
+  operation: string;
+}
+
 export interface AgentMemorySnapshot {
   schema_version: number;
   generation: number;
@@ -128,6 +135,8 @@ export interface AgentMemorySnapshot {
   entries: AgentMemoryEntry[];
   candidates: AgentMemoryCandidate[];
   tombstone_count: number;
+  suppressed_slot_count?: number;
+  memory_ledger_degraded?: AgentMemoryLedgerDegraded | null;
   [key: string]: unknown;
 }
 
@@ -448,6 +457,16 @@ export function validateMemorySnapshot(raw: unknown): AgentMemorySnapshot {
   for (const item of raw.candidates) {
     if (!isRecord(item) || typeof item.status !== "string") invalidContract("agent_memory_invalid_candidate");
   }
+  const degradedRaw = raw.memory_ledger_degraded;
+  const memory_ledger_degraded: AgentMemoryLedgerDegraded | null = isRecord(degradedRaw)
+    && typeof degradedRaw.code === "string"
+    ? {
+        at: typeof degradedRaw.at === "number" ? degradedRaw.at : 0,
+        code: degradedRaw.code,
+        task_id: typeof degradedRaw.task_id === "string" ? degradedRaw.task_id : "",
+        operation: typeof degradedRaw.operation === "string" ? degradedRaw.operation : "",
+      }
+    : null;
   return {
     ...raw,
     schema_version: typeof raw.schema_version === "number" ? raw.schema_version : 1,
@@ -458,6 +477,8 @@ export function validateMemorySnapshot(raw: unknown): AgentMemorySnapshot {
     entries,
     candidates,
     tombstone_count: typeof raw.tombstone_count === "number" ? raw.tombstone_count : 0,
+    suppressed_slot_count: typeof raw.suppressed_slot_count === "number" ? raw.suppressed_slot_count : 0,
+    memory_ledger_degraded,
   };
 }
 

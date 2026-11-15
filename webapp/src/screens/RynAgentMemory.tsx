@@ -553,6 +553,30 @@ export function MemoryEditor({ projects = [], currentProject, initialOpen = fals
 
           {snapshot && (
             <>
+              {snapshot.memory_ledger_degraded && (
+                <p role="status">
+                  {text(
+                    "记忆账本已满，部分删除记录未登记",
+                    "Memory ledger is full; some deletion records were not logged.",
+                  )}
+                </p>
+              )}
+              {(() => {
+                const maxTombstones = typeof snapshot.settings.budgets?.max_tombstones === "number"
+                  ? snapshot.settings.budgets.max_tombstones
+                  : 256;
+                const suppressedCount = snapshot.suppressed_slot_count ?? 0;
+                const nearSuppressionLimit = suppressedCount >= Math.floor(4096 * 0.8)
+                  || snapshot.tombstone_count >= Math.ceil(maxTombstones * 0.8);
+                return nearSuppressionLimit ? (
+                  <p role="status">
+                    {text(
+                      `已删除记录接近折叠上限（当前墓碑 ${snapshot.tombstone_count}/${maxTombstones}，已折叠 ${suppressedCount}/4096），旧记录会自动压缩；如需释放空间可清空长期记忆。`,
+                      `Deleted memory suppression slots are approaching capacity (${snapshot.tombstone_count}/${maxTombstones} tombstones, ${suppressedCount}/4096 compacted); older records compact automatically, or clear long-term memory to reclaim space.`,
+                    )}
+                  </p>
+                ) : null;
+              })()}
               <fieldset className="ra-tool-permissions">
                 <legend>{text("记忆开关", "Memory controls")}</legend>
                 <label className="ra-setting">

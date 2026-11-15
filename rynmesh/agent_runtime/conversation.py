@@ -5,6 +5,7 @@ import copy
 
 from . import budget
 from .state import record_goal_history
+from .store import AgentError
 
 
 def rewrite(row: dict, control: dict, emit, *, data: dict | None = None) -> None:
@@ -45,13 +46,37 @@ def rewrite(row: dict, control: dict, emit, *, data: dict | None = None) -> None
                 "project_inspection", "pending_user_messages", "turn_stopped"):
         row.pop(key, None)
     if isinstance(data, dict):
-        memory.record_branch_rewrite_fence(
-            data,
-            task_id=row["id"],
-            previous_conversation_revision=previous_revision,
-            new_conversation_revision=row["conversation_revision"],
-            retired_messages=retired_messages,
-        )
+        try:
+            memory.record_branch_rewrite_fence(
+                data,
+                task_id=row["id"],
+                previous_conversation_revision=previous_revision,
+                new_conversation_revision=row["conversation_revision"],
+                retired_messages=retired_messages,
+            )
+        except AgentError:
+            try:
+                if isinstance(data.get("memory"), dict):
+                    memory.compact_for_lifecycle(data["memory"])
+                memory.record_branch_rewrite_fence(
+                    data,
+                    task_id=row["id"],
+                    previous_conversation_revision=previous_revision,
+                    new_conversation_revision=row["conversation_revision"],
+                    retired_messages=retired_messages,
+                )
+            except AgentError as exc:
+                memory.record_branch_rewrite_fence_minimal(
+                    data,
+                    task_id=row["id"],
+                    retired_messages=retired_messages,
+                )
+                data["memory_ledger_degraded"] = {
+                    "at": memory._now(),
+                    "code": str(exc),
+                    "task_id": row["id"],
+                    "operation": "branch_rewrite",
+                }
         memory_integration.propagate_memory_revocation_in_tx(data, exclude_task_id=row.get("id"))
         if row.get("memory_projection_watermark") is not None or row.get("memory_disclosed_in_epoch"):
             from . import memory_runtime
