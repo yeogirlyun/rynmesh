@@ -3148,7 +3148,7 @@ class AgentRuntime(AgentLoop):
                 run_limit = budget.hard_run_limit(row)
                 error = ("agent_permission_denied" if authority != selected.get("_model_retry_authority") else
                          run_limit if run_limit else
-                         code if not network and count >= maximum else None)
+                         code if not network and maximum is not None and count >= maximum else None)
                 row.pop("pending_control", None)
                 extra_event = {
                     "step": row["steps"],
@@ -3166,22 +3166,26 @@ class AgentRuntime(AgentLoop):
                     event(row, "failed", error=error, **extra_event)
                     subagents.on_subagent_settled_in_tx(data, row)
                     return True
+                waiting_for_network = network and maximum is None
                 if network:
                     recovery = {"state": "retrying", "retry_count": count, "max_retries": maximum,
-                                "error_code": code, "diagnostics": safe_diag}
+                                "error_code": code, "diagnostics": safe_diag,
+                                **({"waiting_for_network": True} if waiting_for_network else {})}
                     row["connection_recovery"] = recovery
-                    if count >= maximum:
+                    if maximum is not None and count >= maximum:
                         recovery["state"] = "disconnected"
+                        recovery.pop("waiting_for_network", None)
                         row.update(status="paused", error=None)
                         event(row, "connection_paused", error=code, retry_count=count, **extra_event)
                         subagents.on_subagent_settled_in_tx(data, row)
                         return True
-                    wait = retry_policy.delay(count + 1, safe_diag)
+                    wait = retry_policy.delay(count + 1, safe_diag, code)
                     remaining = budget.run_seconds_left(row, budget.time_remaining(row))
                     if wait >= remaining:
                         # Honor long Retry-After without exceeding time budgets or retrying early.
                         recovery["state"] = "disconnected"
                         recovery["reason"] = "retry_wait_exceeds_budget"
+                        recovery.pop("waiting_for_network", None)
                         row.update(status="paused", error=None)
                         event(row, "connection_paused", error=code, retry_count=count, **extra_event)
                         subagents.on_subagent_settled_in_tx(data, row)
@@ -3189,7 +3193,9 @@ class AgentRuntime(AgentLoop):
                     recovery.update(retry_count=count + 1, wait_started_at=retry_policy.now(),
                                     next_retry_at=retry_policy.now() + wait)
                 row.update(status="queued", error=None, model_retry_count=count + 1, model_retry_authority=authority)
-                event(row, "model_retry_scheduled", error=code, retry_count=count + 1, **extra_event)
+                event(row, "model_retry_scheduled", error=code, retry_count=count + 1,
+                      **({"waiting_for_network": True} if waiting_for_network else {}),
+                      **extra_event)
                 return True
             if self.store.transaction(retry_model):
                 return

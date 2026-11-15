@@ -27,6 +27,7 @@ from ...services import peer_box
 from ..data_policy import normalize_policy
 from ..knowledge import SKILLS as BUILTIN_SKILLS
 from ..store import AgentError, AgentToolRejected, encoded
+from .schema_normalize import normalize_mcp_input_schema
 from .views import normalize_views
 from .web_app import validate_web_app
 
@@ -920,32 +921,35 @@ class ExtensionStore:
                 (enabled_tools is None or t_name in enabled_tools)
                 and t_name not in disabled_tools
             )
-            t_enabled = effective_enabled and comp_enabled
+            schema_invalid = bool(tool.get("schema_invalid", False))
+            t_enabled = effective_enabled and comp_enabled and not schema_invalid
             annotations = tool.get("annotations") if isinstance(tool.get("annotations"), dict) else {}
             owner_read_only = t_name in read_only_tools
             model_name = compute_model_tool_name(server["id"], t_name)
-            tools_view.append(
-                {
-                    "name": t_name,
-                    "model_tool_name": model_name,
-                    "title": tool.get("title") or t_name,
-                    "description": tool.get("description") or "",
-                    "enabled": bool(t_enabled),
-                    "component_enabled": bool(comp_enabled),
-                    "owner_read_only": bool(owner_read_only),
-                    "effective_effect": "read" if owner_read_only else "write",
-                    "effective_risk": "low" if owner_read_only else "high",
-                    "annotations": {
-                        "readOnlyHint": annotations.get("readOnlyHint") is True,
-                        "destructiveHint": bool(annotations.get("destructiveHint", False)),
-                        "idempotentHint": bool(annotations.get("idempotentHint", False)),
-                        "openWorldHint": bool(annotations.get("openWorldHint", False)),
-                    },
-                    "schema_sha256": tool.get("schema_sha256")
-                    or _canon_sha256(tool.get("input_schema") or {}),
-                    "input_schema": tool.get("input_schema") or {"type": "object"},
-                }
-            )
+            tool_entry: dict[str, Any] = {
+                "name": t_name,
+                "model_tool_name": model_name,
+                "title": tool.get("title") or t_name,
+                "description": tool.get("description") or "",
+                "enabled": bool(t_enabled),
+                "component_enabled": bool(comp_enabled),
+                "schema_invalid": schema_invalid,
+                "owner_read_only": bool(owner_read_only),
+                "effective_effect": "read" if owner_read_only else "write",
+                "effective_risk": "low" if owner_read_only else "high",
+                "annotations": {
+                    "readOnlyHint": annotations.get("readOnlyHint") is True,
+                    "destructiveHint": bool(annotations.get("destructiveHint", False)),
+                    "idempotentHint": bool(annotations.get("idempotentHint", False)),
+                    "openWorldHint": bool(annotations.get("openWorldHint", False)),
+                },
+                "schema_sha256": tool.get("schema_sha256")
+                or _canon_sha256(tool.get("input_schema") or {}),
+                "input_schema": tool.get("input_schema") if isinstance(tool.get("input_schema"), dict) else {"type": "object"},
+            }
+            if isinstance(tool.get("output_schema"), dict):
+                tool_entry["output_schema"] = copy.deepcopy(tool["output_schema"])
+            tools_view.append(tool_entry)
         tool_name_counts = Counter(tool["name"] for tool in tools_view)
         bearer_env = server.get("bearer_token_env")
         bearer_env_present = bool(bearer_env and os.environ.get(bearer_env))
@@ -2494,9 +2498,34 @@ class ExtensionStore:
                     name = str(item.get("name") or "").strip()
                     if not name:
                         continue
-                    schema = item.get("inputSchema") or item.get("input_schema") or {"type": "object"}
-                    if not isinstance(schema, dict):
-                        schema = {"type": "object"}
+                    if "inputSchema" in item and item["inputSchema"] is not None:
+                        provided_schema = item["inputSchema"]
+                    elif "input_schema" in item and item["input_schema"] is not None:
+                        provided_schema = item["input_schema"]
+                    else:
+                        provided_schema = {"type": "object"}
+                    schema = (
+                        copy.deepcopy(provided_schema)
+                        if isinstance(provided_schema, dict)
+                        else {"type": "object"}
+                    )
+                    candidate_for_model = copy.deepcopy(provided_schema)
+                    if isinstance(candidate_for_model, dict):
+                        candidate_for_model.pop("x-ryn-artifact", None)
+                        candidate_for_model.pop("x-ryn-operation", None)
+                        candidate_for_model.pop("x-ryn-result", None)
+                    model_schema = normalize_mcp_input_schema(candidate_for_model)
+                    schema_invalid = model_schema is None
+                    raw_output_schema = (
+                        item.get("outputSchema")
+                        if "outputSchema" in item
+                        else item.get("output_schema")
+                    )
+                    output_schema = (
+                        copy.deepcopy(raw_output_schema)
+                        if isinstance(raw_output_schema, dict)
+                        else None
+                    )
                     annotations = item.get("annotations") if isinstance(item.get("annotations"), dict) else {}
                     normalized.append(
                         {
@@ -2504,6 +2533,9 @@ class ExtensionStore:
                             "title": str(item.get("title") or name),
                             "description": str(item.get("description") or "")[:1000],
                             "input_schema": schema,
+                            "model_schema": model_schema,
+                            "schema_invalid": schema_invalid,
+                            "output_schema": output_schema,
                             "schema_sha256": _canon_sha256(schema),
                             "annotations": {
                                 "readOnlyHint": annotations.get("readOnlyHint") is True,

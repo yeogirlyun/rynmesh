@@ -503,6 +503,206 @@ def test_subagent_tree_resolution_list_resume_fork_and_eviction(tmp_path: Path):
     runtime.store.transaction(_tx)
 
 
+def test_s07_i7_t1_subagent_tool_specs_within_quota_and_complete_descriptions():
+    from rynmesh.agent_runtime.store import encoded
+
+    # Current SUBAGENT_TOOL_SPECS serializes to 4661 UTF-8 bytes; cap at 5130 (~10% headroom).
+    total_bytes = len(encoded(subagents.SUBAGENT_TOOL_SPECS))
+    assert total_bytes <= 5130
+
+    by_name = {s["function"]["name"]: s["function"] for s in subagents.SUBAGENT_TOOL_SPECS}
+    spawn_fn = by_name["ryn_spawn_agent"]
+    spawn_desc = spawn_fn["description"]
+    assert "critical-path" in spawn_desc
+    assert "blocking your immediate next step" in spawn_desc
+    assert "fork_turns=none (default) the child sees only this prompt" in spawn_desc
+    assert "goal" in spawn_desc and "paths" in spawn_desc and "constraints" in spawn_desc and "what to report" in spawn_desc
+    assert "disjoint" in spawn_desc and "write_scope" in spawn_desc
+    assert "Do not redo" in spawn_desc
+    assert "ryn_wait_agent sparingly" in spawn_desc
+    assert "model_id" in spawn_desc and "reasoning_effort" in spawn_desc and "explicitly" in spawn_desc
+    assert "Available roles:" in spawn_desc
+    for r_name in ("explorer:", "worker:", "awaiter:", "default:"):
+        assert r_name in spawn_desc
+
+    spawn_props = spawn_fn["parameters"]["properties"]
+    assert "omit" in spawn_props["role"].get("description", "").lower()
+    fork_desc = spawn_props["fork_turns"].get("description", "")
+    assert "none" in fork_desc and "prompt" in fork_desc and "all" in fork_desc
+
+    for reuse_tool in ("ryn_send_message", "ryn_followup_task"):
+        desc = by_name[reuse_tool]["description"]
+        assert "Reuse an existing subagent" in desc
+
+
+def test_s07_i7_t2_coordinator_guidance_uses_constants_and_workspace_explorer_rules(monkeypatch):
+    guidance = subagents.MULTI_AGENT_COORDINATOR_GUIDANCE
+    assert str(subagents.MAX_OPEN_SUBAGENTS) in guidance
+    assert str(subagents.MAX_SUBAGENT_DEPTH) in guidance
+    monkeypatch.setattr(subagents, "MAX_OPEN_SUBAGENTS", 11)
+    monkeypatch.setattr(subagents, "MAX_SUBAGENT_DEPTH", 4)
+    custom = subagents.build_coordinator_guidance()
+    assert "11" in custom and "4" in custom
+
+    assert "share the same workspace" in guidance
+    assert "immediately visible" in guidance
+    assert "earliest settled" in guidance
+    assert "Trust explorer" in guidance
+    assert "reuse an existing explorer" in guidance
+    assert "blocking your immediate next step" not in guidance
+    assert "Call ryn_wait_agent sparingly" not in guidance
+
+
+def test_s07_i7_t3_awaiter_role_guidance_includes_three_new_rules():
+    text = subagents.role_guidance(
+        {"role": "awaiter", "nickname": "Turing", "agent_path": "/root/waiter"}
+    )
+    assert "Do not change, reinterpret or optimize the task; keep waiting until a terminal state or an explicit stop." in text
+    assert "Keep calling ryn_process_read; never report completion without an exit status." in text
+    assert "If asked for status, report it and keep waiting." in text
+
+
+def test_s07_i7_t4_spawn_prompt_accepts_20000_chars_and_rejects_32001_chars(tmp_path: Path):
+    by_name = {s["function"]["name"]: s["function"] for s in subagents.SUBAGENT_TOOL_SPECS}
+    assert by_name["ryn_spawn_agent"]["parameters"]["properties"]["prompt"]["maxLength"] == 32000
+    assert by_name["ryn_send_message"]["parameters"]["properties"]["message"]["maxLength"] == 32000
+    assert by_name["ryn_followup_task"]["parameters"]["properties"]["prompt"]["maxLength"] == 32000
+    assert by_name["ryn_resume_agent"]["parameters"]["properties"]["prompt"]["maxLength"] == 32000
+
+    valid_20k = "x" * 20000
+    parsed = subagents.validate_subagent_tool(
+        "ryn_spawn_agent",
+        {"task_name": "long_valid", "prompt": valid_20k, "role": "explorer"},
+    )
+    assert len(parsed["prompt"]) == 20000
+
+    with pytest.raises(AgentToolRejected):
+        subagents.validate_subagent_tool(
+            "ryn_spawn_agent",
+            {"task_name": "too_long", "prompt": "y" * 32001, "role": "explorer"},
+        )
+
+    _, runtime, model, _ = _build_env(tmp_path)
+    model.parent_responses.append(
+        {
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_spawn_20k",
+                        "type": "function",
+                        "function": {
+                            "name": "ryn_spawn_agent",
+                            "arguments": json.dumps(
+                                {"task_name": "ok_20k", "prompt": valid_20k, "role": "explorer"}
+                            ),
+                        },
+                    },
+                ],
+            },
+            "finish_reason": "tool_calls",
+            "usage": {"input_tokens": 50, "output_tokens": 30},
+        }
+    )
+    model.parent_responses.append(
+        {
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_spawn_32001",
+                        "type": "function",
+                        "function": {
+                            "name": "ryn_spawn_agent",
+                            "arguments": json.dumps(
+                                {"task_name": "bad_32001", "prompt": "z" * 32001, "role": "explorer"}
+                            ),
+                        },
+                    },
+                ],
+            },
+            "finish_reason": "tool_calls",
+            "usage": {"input_tokens": 50, "output_tokens": 30},
+        }
+    )
+    model.parent_responses.append(
+        {
+            "message": {"role": "assistant", "content": "Done testing prompt bounds."},
+            "finish_reason": "stop",
+            "usage": {"input_tokens": 30, "output_tokens": 10},
+        }
+    )
+    created = runtime.create(
+        {
+            "message": "Test long subagent spawn prompts.",
+            "model_id": "local/gpt-4o",
+            "client_request_id": str(uuid.uuid4()),
+        }
+    )
+    parent_id = created["id"]
+    for _ in range(8):
+        if runtime.get(parent_id)["status"] == "completed":
+            break
+        runtime.run_once()
+
+    snap = runtime.get(parent_id)
+    assert len(snap.get("subagents") or []) == 1
+    assert snap["subagents"][0]["agent_path"] == "/root/ok_20k"
+
+    raw_parent = runtime.store.read()["tasks"][parent_id]
+    tool_msgs = [m for m in raw_parent["messages"] if isinstance(m, dict) and m.get("role") == "tool"]
+    by_call = {m["tool_call_id"]: json.loads(m["content"]) for m in tool_msgs}
+    assert by_call["call_spawn_20k"]["ok"] is True
+    assert by_call["call_spawn_32001"]["not_executed"] is True
+
+
+def test_s07_i7_t5_all_internal_specs_size_cap_and_core_tools_pinned():
+    from rynmesh.agent_runtime import code_mode, local_specs, tool_menu
+    from rynmesh.agent_runtime.loop import ALL_INTERNAL_SPECS
+    from rynmesh.agent_runtime.store import encoded
+
+    # Current ALL_INTERNAL_SPECS serializes to 12579 UTF-8 bytes; cap at 13840 (~10% headroom).
+    all_internal_bytes = len(encoded(ALL_INTERNAL_SPECS))
+    assert all_internal_bytes <= 13840
+
+    business = [
+        {"type": "function", "function": {"name": name, "description": desc, "parameters": schema}}
+        for name, (desc, _eff, _risk, schema) in local_specs.SPECS.items()
+    ]
+    business.append(code_mode.SPEC)
+    business.append(
+        {
+            "type": "function",
+            "function": {
+                "name": "ryn_list_plugins",
+                "description": "List installed plugins.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    )
+    pinned_request = (
+        tool_menu.PLUGIN_DISCOVERY_TOOLS
+        + ("ryn_project_inspect",)
+        + tool_menu.CORE_TOOLS
+        + ("ryn_code_exec",)
+    )
+    exposed, state = tool_menu.project(
+        business,
+        ALL_INTERNAL_SPECS,
+        {},
+        max_context_bytes=60000,
+        authority_bytes=8856,
+        epoch=0,
+        goal_revision=1,
+        pinned_names=pinned_request,
+    )
+    exposed_names = {s["function"]["name"] for s in exposed}
+    assert set(tool_menu.CORE_TOOLS) <= set(state["pinned_names"])
+    assert set(tool_menu.CORE_TOOLS) <= exposed_names
+
+
 def test_s07_i1_t1_ten_unread_notifications_summarized_and_persisted(tmp_path: Path):
     _, runtime, model, _ = _build_env(tmp_path)
     created = runtime.create(

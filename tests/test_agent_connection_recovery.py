@@ -59,10 +59,10 @@ def test_backoff_persists_and_other_tasks_can_run(tmp_path, clock):
 
 def test_four_attempts_then_pause_and_manual_continue(tmp_path, clock):
     runtime, model, _, _ = make_runtime(tmp_path)
-    failing_model(model, *[fail() for _ in range(4)], assistant("Done"))
+    failing_model(model, *[fail(stream_max_retries=3) for _ in range(4)], assistant("Done"))
     row = runtime.create({"message": "Inspect"})
     advance(runtime)
-    for count, wait in enumerate((2, 5, 10), 1):
+    for count, wait in enumerate((2, 4, 8), 1):
         recovery = runtime.get(row["id"])["connection_recovery"]
         assert recovery["retry_count"] == count
         assert recovery["next_retry_at"] == clock[0] + wait

@@ -7,6 +7,7 @@ export function hasConnectionRecovery(task: AgentTaskSummary) {
   const state = task.connection_recovery?.state;
   if (!state || task.error || task.archived) return false;
   if (state === "stopped" || state === "disconnected") return task.status === "paused";
+  if (state === "retrying" && (task.connection_recovery?.retry_count ?? 0) < 2) return false;
   return (state === "retrying" ? ["queued", "running"] : ["queued", "running", "completed", "waiting_approval", "waiting_input"]).includes(task.status);
 }
 
@@ -48,7 +49,9 @@ export default function RynAgentConnection({ task, modelName, busy, enabled, onA
     <div className="ra-connection-body">
       <div role="status" aria-live="polite">
         <div className="ra-connection-heading"><strong>{retrying ? (zh ? `正在重新连接 ${modelName}` : `Reconnecting to ${modelName}`) : stopped ? (zh ? "已停止重连" : "Reconnection stopped") : (zh ? `暂时无法连接 ${modelName}` : `Unable to connect to ${modelName}`)}</strong>
-          {retrying && recovery.retry_count > 0 && <small>{zh ? "重试" : "Retry"} {recovery.retry_count} / {recovery.max_retries}</small>}</div>
+          {retrying && recovery.retry_count > 0 && <small>{recovery.max_retries === null
+            ? (zh ? `重试 ${recovery.retry_count} · 等待网络恢复` : `Retry ${recovery.retry_count} · Waiting for network`)
+            : `${zh ? "重试" : "Retry"} ${recovery.retry_count} / ${recovery.max_retries}`}</small>}</div>
         <p>{description}</p>
       </div>
       <button type="button" className={retrying ? "ra-connection-stop" : "ra-primary"}

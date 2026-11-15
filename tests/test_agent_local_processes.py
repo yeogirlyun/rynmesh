@@ -37,7 +37,7 @@ def pending_process():
 
 
 def test_missing_ripgrep_is_recoverable_before_any_process_starts(monkeypatch):
-    monkeypatch.setattr(local_processes.shutil, "which", lambda name: None if name.lower() in {"rg", "rg.exe"} else "/available/shell")
+    monkeypatch.setattr(local_processes.shutil, "which", lambda name, path=None: None if name.lower() in {"rg", "rg.exe"} else "/available/shell")
     spawned = []
     monkeypatch.setattr(local_processes.subprocess, "Popen", lambda *args, **kwargs: spawned.append(args))
     with pytest.raises(AgentToolRejected, match="agent_ripgrep_unavailable_use_file_search"):
@@ -46,7 +46,7 @@ def test_missing_ripgrep_is_recoverable_before_any_process_starts(monkeypatch):
 
 
 def test_ripgrep_preparation_preserves_arguments_without_a_shell(monkeypatch):
-    monkeypatch.setattr(local_processes.shutil, "which", lambda name: "/available/rg")
+    monkeypatch.setattr(local_processes.shutil, "which", lambda name, path=None: "/available/rg")
     assert prepare_shell_command({"command": "rg -n -C 4 'balance|query_balance' 'src with spaces'", "shell": "powershell"}) == [
         "/available/rg", "--no-config", "-n", "-C", "4", "balance|query_balance", "src with spaces"]
 

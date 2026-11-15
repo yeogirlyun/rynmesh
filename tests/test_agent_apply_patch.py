@@ -466,7 +466,7 @@ def test_resolve_rg_executable_prefers_bundled_binary_and_falls_back_to_path(tmp
 
     # Fallback to shutil.which when no bundled binary exists
     monkeypatch.setattr(local_processes, "_rg_candidate_dirs", lambda: [tmp_path / "empty_bin"])
-    monkeypatch.setattr(local_processes.shutil, "which", lambda name: "/usr/bin/rg" if name in {"rg", "rg.exe"} else None)
+    monkeypatch.setattr(local_processes.shutil, "which", lambda name, path=None: "/usr/bin/rg" if name in {"rg", "rg.exe"} else None)
     assert local_processes.resolve_rg_executable() == "/usr/bin/rg"
 
 
