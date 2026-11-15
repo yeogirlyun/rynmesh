@@ -401,6 +401,8 @@ class LocalTools:
         self.lock = threading.RLock()
         self._operation_guard = threading.Lock()
         self._operation_locks = {}
+        self._path_guard = threading.Lock()
+        self._path_locks = {}
         self.processes = Processes()
         self._browser = None
         self._desktop = None
@@ -415,17 +417,61 @@ class LocalTools:
     def _operation_lock(self, operation_id):
         # Independent shell commands may wait concurrently, but the same durable
         # operation must never pass the dispatch boundary twice.
+        ident = threading.get_ident()
         with self._operation_guard:
-            entry = self._operation_locks.setdefault(operation_id, [threading.Lock(), 0])
+            entry = self._operation_locks.get(operation_id)
+            if entry is not None and entry[2] == ident:
+                raise AgentToolRejected("agent_operation_id_conflict")
+            if entry is None:
+                entry = [threading.Lock(), 0, None]
+                self._operation_locks[operation_id] = entry
             entry[1] += 1
         try:
             with entry[0]:
-                yield
+                with self._operation_guard:
+                    entry[2] = ident
+                try:
+                    yield
+                finally:
+                    with self._operation_guard:
+                        entry[2] = None
         finally:
             with self._operation_guard:
                 entry[1] -= 1
                 if not entry[1]:
                     self._operation_locks.pop(operation_id, None)
+
+    @staticmethod
+    def _norm_lock_path(path: Path | str) -> str:
+        resolved = path.resolve() if isinstance(path, Path) else Path(path).resolve()
+        return os.path.normcase(os.path.abspath(str(resolved)))
+
+    @contextmanager
+    def _path_lock(self, *paths):
+        keys = sorted({self._norm_lock_path(p) for p in paths if p is not None})
+        if not keys:
+            yield
+            return
+        entries = []
+        with self._path_guard:
+            for key in keys:
+                entry = self._path_locks.setdefault(key, [threading.Lock(), 0])
+                entry[1] += 1
+                entries.append((key, entry))
+        acquired = []
+        try:
+            for _, entry in entries:
+                entry[0].acquire()
+                acquired.append(entry[0])
+            yield
+        finally:
+            for lock_obj in reversed(acquired):
+                lock_obj.release()
+            with self._path_guard:
+                for key, entry in entries:
+                    entry[1] -= 1
+                    if not entry[1]:
+                        self._path_locks.pop(key, None)
 
     def _command_artifacts(self, result, task_id):
         from . import workspace_artifacts
@@ -696,29 +742,32 @@ class LocalTools:
     def browser(self, context):
         if not self.policy(context)["desktop_access"]:
             raise AgentToolRejected("agent_desktop_access_required")
-        if self._browser is None:
-            from .local_browser import Browser
-            self._browser = Browser(self.home, self.processes)
-        return self._browser
+        with self.lock:
+            if self._browser is None:
+                from .local_browser import Browser
+                self._browser = Browser(self.home, self.processes)
+            return self._browser
 
     def web_search(self, context=None):
-        if self._web_search is None:
-            from .web_search import WebSearchEngine
-            base = Path(self.home) if self.home else (Path.cwd() / ".ryn_agent")
-            self._web_search = WebSearchEngine(base / "web_search_cache")
-        return self._web_search
+        with self.lock:
+            if self._web_search is None:
+                from .web_search import WebSearchEngine
+                base = Path(self.home) if self.home else (Path.cwd() / ".ryn_agent")
+                self._web_search = WebSearchEngine(base / "web_search_cache")
+            return self._web_search
 
     def desktop(self, context):
         if not self.policy(context)["desktop_access"]:
             raise AgentToolRejected("agent_desktop_access_required")
         owner = self.store if self.store is not None else self
-        if self.native_computer is None or self.native_computer._owner is not owner:
-            from .native_computer import bind_owner_native_computer
-            self.native_computer = bind_owner_native_computer(owner, local_tools=self)
-        if self._desktop is None or getattr(self._desktop, "native_computer", None) is not self.native_computer:
-            from .local_desktop import Desktop
-            self._desktop = Desktop(native_computer=self.native_computer)
-        return self._desktop
+        with self.lock:
+            if self.native_computer is None or self.native_computer._owner is not owner:
+                from .native_computer import bind_owner_native_computer
+                self.native_computer = bind_owner_native_computer(owner, local_tools=self)
+            if self._desktop is None or getattr(self._desktop, "native_computer", None) is not self.native_computer:
+                from .local_desktop import Desktop
+                self._desktop = Desktop(native_computer=self.native_computer)
+            return self._desktop
 
     def allowed(self, context):
         def projection(data):
@@ -1147,111 +1196,114 @@ class LocalTools:
         # Durable intent prevents a repeated shell command or input event after restart.
         binding = {"operation_id": operation_id, "tool": name, "task_id": context["task_id"],
                    "arguments_sha256": sha(encoded(args)), "local_execution": context["local_execution"]}
-        with self._operation_lock(operation_id), (nullcontext() if name == "ryn_shell_execute" else self.lock):
-            if self.processes.running_for_operation(context["task_id"], operation_id):
-                raise AgentToolRejected("agent_process_already_running")
-            ledger = self.ledger_factory()
-            prior = ledger.get(operation_id)
-            if prior:
-                if prior["binding"] != binding:
-                    raise AgentToolRejected("agent_operation_id_conflict")
-                if prior["status"] == "confirmed":
-                    return prior["result"]
-                if prior["status"] == "not_executed":
-                    raise AgentToolRejected(prior.get("error", "agent_local_operation_not_executed"))
-                if (
-                    prior["status"] == "failed"
-                    and prior.get("no_mutation") is True
-                    and prior.get("cleanup_confirmed") is True
-                    and is_read_shell
-                    and verified_read_classification(
-                        prior,
-                        task_id=context["task_id"],
-                        workspace_root=policy["workspace_root"],
-                        operation_id=operation_id,
-                        tool=name,
-                        arguments=args,
-                    )
-                ):
-                    raise AgentError(prior.get("error", "agent_read_interrupted"))
-                unknown_err = AgentError("agent_write_outcome_unknown")
-                if isinstance(prior.get("error_result"), dict):
-                    unknown_err.diagnostics = copy.deepcopy(prior["error_result"])
-                raise unknown_err
-            preview = self.preview(name, args, context)
-            if preview != expected_preview:
-                raise AgentToolRejected("agent_approval_preview_changed")
-            prepared_shell = None
-            if name == "ryn_shell_execute":
-                from . import workspace_artifacts
+        ledger_guard = nullcontext if name == "ryn_shell_execute" else (lambda: self.lock)
+        with self._operation_lock(operation_id):
+            with ledger_guard():
+                if self.processes.running_for_operation(context["task_id"], operation_id):
+                    raise AgentToolRejected("agent_process_already_running")
+                ledger = self.ledger_factory()
+                prior = ledger.get(operation_id)
+                if prior:
+                    if prior["binding"] != binding:
+                        raise AgentToolRejected("agent_operation_id_conflict")
+                    if prior["status"] == "confirmed":
+                        return prior["result"]
+                    if prior["status"] == "not_executed":
+                        raise AgentToolRejected(prior.get("error", "agent_local_operation_not_executed"))
+                    if (
+                        prior["status"] == "failed"
+                        and prior.get("no_mutation") is True
+                        and prior.get("cleanup_confirmed") is True
+                        and is_read_shell
+                        and verified_read_classification(
+                            prior,
+                            task_id=context["task_id"],
+                            workspace_root=policy["workspace_root"],
+                            operation_id=operation_id,
+                            tool=name,
+                            arguments=args,
+                        )
+                    ):
+                        raise AgentError(prior.get("error", "agent_read_interrupted"))
+                    unknown_err = AgentError("agent_write_outcome_unknown")
+                    if isinstance(prior.get("error_result"), dict):
+                        unknown_err.diagnostics = copy.deepcopy(prior["error_result"])
+                    raise unknown_err
+                preview = self.preview(name, args, context)
+                if preview != expected_preview:
+                    raise AgentToolRejected("agent_approval_preview_changed")
+                prepared_shell = None
+                if name == "ryn_shell_execute":
+                    from . import workspace_artifacts
 
-                # Resolve optional executables and read-only preparation before
-                # recording dispatch. A missing rg is a correctable tool error.
-                command = prepare_shell_command(args)
-                cwd = self.path(args.get("cwd", "."), context, policy)
-                root = self.path(".", context, policy)
-                before = None if is_read_shell else workspace_artifacts.snapshot(root)
-                prepared_shell = (command, cwd, root, before)
-            is_browser_write = name.startswith("ryn_browser_")
-            if is_browser_write:
-                prior, created = ledger.begin_dispatched(
-                    binding,
-                    preview,
-                    operation_classification=host_classification,
-                    host_pid=os.getpid(),
-                    receipt_reserve=32768,
-                )
-            else:
-                prior, created = ledger.begin(binding, preview, receipt_reserve=32768)
-            if not created:
-                # Another controller may share the on-disk ledger. Its atomic
-                # begin wins even though this instance's earlier lookup was empty.
-                if prior.get("binding") != binding:
-                    raise AgentToolRejected("agent_operation_id_conflict")
-                if prior["status"] == "confirmed":
-                    return prior["result"]
-                if prior["status"] == "not_executed":
-                    raise AgentToolRejected(prior.get("error", "agent_local_operation_not_executed"))
-                if (
-                    prior["status"] == "failed"
-                    and prior.get("no_mutation") is True
-                    and prior.get("cleanup_confirmed") is True
-                    and is_read_shell
-                    and verified_read_classification(
-                        prior,
-                        task_id=context["task_id"],
-                        workspace_root=policy["workspace_root"],
-                        operation_id=operation_id,
-                        tool=name,
-                        arguments=args,
-                    )
-                ):
-                    raise AgentError(prior.get("error", "agent_read_interrupted"))
-                unknown_err = AgentError("agent_write_outcome_unknown")
-                if isinstance(prior.get("error_result"), dict):
-                    unknown_err.diagnostics = copy.deepcopy(prior["error_result"])
-                raise unknown_err
-            if cancelled():
-                ledger.update(operation_id, "not_executed", error="agent_cancelled", operation_classification=host_classification)
-                raise AgentToolRejected("agent_cancelled")
-            if not is_browser_write and name != "ryn_computer_action":
-                ledger.update(operation_id, "dispatched", operation_classification=host_classification, host_pid=os.getpid())
-
-            computer_ready_gate = None
-            if name == "ryn_computer_action":
-                def _computer_ready_gate(_validated_ready):
-                    if cancelled():
-                        raise AgentToolRejected(getattr(cancelled, "reason", None) or "agent_cancelled")
-                    if not self.allowed(context)() or not self.policy(context)["desktop_access"]:
-                        raise AgentToolRejected("agent_desktop_access_required")
-                    ledger.update(
-                        operation_id,
-                        "dispatched",
+                    # Resolve optional executables and read-only preparation before
+                    # recording dispatch. A missing rg is a correctable tool error.
+                    command = prepare_shell_command(args)
+                    cwd = self.path(args.get("cwd", "."), context, policy)
+                    root = self.path(".", context, policy)
+                    before = None if is_read_shell else workspace_artifacts.snapshot(root)
+                    prepared_shell = (command, cwd, root, before)
+                is_browser_write = name.startswith("ryn_browser_")
+                if is_browser_write:
+                    prior, created = ledger.begin_dispatched(
+                        binding,
+                        preview,
                         operation_classification=host_classification,
                         host_pid=os.getpid(),
                         receipt_reserve=32768,
                     )
-                computer_ready_gate = _computer_ready_gate
+                else:
+                    prior, created = ledger.begin(binding, preview, receipt_reserve=32768)
+                if not created:
+                    # Another controller may share the on-disk ledger. Its atomic
+                    # begin wins even though this instance's earlier lookup was empty.
+                    if prior.get("binding") != binding:
+                        raise AgentToolRejected("agent_operation_id_conflict")
+                    if prior["status"] == "confirmed":
+                        return prior["result"]
+                    if prior["status"] == "not_executed":
+                        raise AgentToolRejected(prior.get("error", "agent_local_operation_not_executed"))
+                    if (
+                        prior["status"] == "failed"
+                        and prior.get("no_mutation") is True
+                        and prior.get("cleanup_confirmed") is True
+                        and is_read_shell
+                        and verified_read_classification(
+                            prior,
+                            task_id=context["task_id"],
+                            workspace_root=policy["workspace_root"],
+                            operation_id=operation_id,
+                            tool=name,
+                            arguments=args,
+                        )
+                    ):
+                        raise AgentError(prior.get("error", "agent_read_interrupted"))
+                    unknown_err = AgentError("agent_write_outcome_unknown")
+                    if isinstance(prior.get("error_result"), dict):
+                        unknown_err.diagnostics = copy.deepcopy(prior["error_result"])
+                    raise unknown_err
+                if cancelled():
+                    ledger.update(operation_id, "not_executed", error="agent_cancelled", operation_classification=host_classification)
+                    raise AgentToolRejected("agent_cancelled")
+                if not is_browser_write and name != "ryn_computer_action":
+                    ledger.update(operation_id, "dispatched", operation_classification=host_classification, host_pid=os.getpid())
+
+                computer_ready_gate = None
+                if name == "ryn_computer_action":
+                    def _computer_ready_gate(_validated_ready):
+                        if cancelled():
+                            raise AgentToolRejected(getattr(cancelled, "reason", None) or "agent_cancelled")
+                        if not self.allowed(context)() or not self.policy(context)["desktop_access"]:
+                            raise AgentToolRejected("agent_desktop_access_required")
+                        with self.lock:
+                            ledger.update(
+                                operation_id,
+                                "dispatched",
+                                operation_classification=host_classification,
+                                host_pid=os.getpid(),
+                                receipt_reserve=32768,
+                            )
+                    computer_ready_gate = _computer_ready_gate
 
             # Only a known pre-spawn rejection proves a dispatched shell did
             # nothing. Write failures after process creation remain uncertain;
@@ -1282,43 +1334,46 @@ class LocalTools:
                 )
             except AgentProcessStartRejected as exc:
                 failure("shell_start", exc)
-                ledger.update(operation_id, "not_executed", error=str(exc), operation_classification=host_classification)
+                with ledger_guard():
+                    ledger.update(operation_id, "not_executed", error=str(exc), operation_classification=host_classification)
                 raise
             except AgentToolRejected as exc:
                 if name.startswith("ryn_browser_") and not getattr(exc, "after_side_effect", False):
                     failure("browser_rejected", exc)
-                    ledger.update(operation_id, "not_executed", error=str(exc), operation_classification=host_classification)
+                    with ledger_guard():
+                        ledger.update(operation_id, "not_executed", error=str(exc), operation_classification=host_classification)
                     raise
                 if name == "ryn_computer_action":
-                    cur_row = ledger.get(operation_id) or {}
-                    if (
-                        cur_row.get("status") == "intent"
-                        and getattr(exc, "pre_dispatch", True)
-                        and not getattr(exc, "dispatched", False)
-                        and not getattr(exc, "commit_attempted", False)
-                    ):
+                    with ledger_guard():
+                        cur_row = ledger.get(operation_id) or {}
+                        if (
+                            cur_row.get("status") == "intent"
+                            and getattr(exc, "pre_dispatch", True)
+                            and not getattr(exc, "dispatched", False)
+                            and not getattr(exc, "commit_attempted", False)
+                        ):
+                            ledger.update(
+                                operation_id,
+                                "not_executed",
+                                error=str(exc),
+                                error_result=getattr(exc, "diagnostics", None) if isinstance(getattr(exc, "diagnostics", None), dict) else None,
+                                operation_classification=host_classification,
+                                receipt_reserve=0,
+                            )
+                            raise
+                        diag = (
+                            copy.deepcopy(getattr(exc, "diagnostics", None))
+                            if isinstance(getattr(exc, "diagnostics", None), dict)
+                            else {"error": str(exc), "phase": "post_dispatch", "dispatched": True}
+                        )
                         ledger.update(
                             operation_id,
-                            "not_executed",
+                            "dispatched",
                             error=str(exc),
-                            error_result=getattr(exc, "diagnostics", None) if isinstance(getattr(exc, "diagnostics", None), dict) else None,
+                            error_result=diag,
                             operation_classification=host_classification,
                             receipt_reserve=0,
                         )
-                        raise
-                    diag = (
-                        copy.deepcopy(getattr(exc, "diagnostics", None))
-                        if isinstance(getattr(exc, "diagnostics", None), dict)
-                        else {"error": str(exc), "phase": "post_dispatch", "dispatched": True}
-                    )
-                    ledger.update(
-                        operation_id,
-                        "dispatched",
-                        error=str(exc),
-                        error_result=diag,
-                        operation_classification=host_classification,
-                        receipt_reserve=0,
-                    )
                     unknown_err = AgentError("agent_write_outcome_unknown")
                     unknown_err.diagnostics = copy.deepcopy(diag)
                     raise unknown_err from exc
@@ -1327,7 +1382,8 @@ class LocalTools:
                     and not getattr(exc, "after_side_effect", False)
                 ):
                     failure("local_rejected", exc)
-                    ledger.update(operation_id, "not_executed", error=str(exc), operation_classification=host_classification)
+                    with ledger_guard():
+                        ledger.update(operation_id, "not_executed", error=str(exc), operation_classification=host_classification)
                     raise
                 failure("local_execute", exc)
                 raise AgentError("agent_local_operation_unconfirmed") from exc
@@ -1339,25 +1395,26 @@ class LocalTools:
                         else {"error": str(getattr(exc, "cause_code", None) or exc), "phase": "post_dispatch", "dispatched": True}
                     )
                     cause_code = str(getattr(exc, "cause_code", None) or diag.get("error") or exc)
-                    cur_row = ledger.get(operation_id) or {}
-                    if not getattr(exc, "callback_uncertain", False):
-                        ledger.update(
-                            operation_id,
-                            "dispatched",
-                            error=cause_code,
-                            error_result=diag,
-                            operation_classification=host_classification,
-                            receipt_reserve=0,
-                        )
-                    elif cur_row.get("status") in {"intent", "dispatched"}:
-                        ledger.update(
-                            operation_id,
-                            str(cur_row["status"]),
-                            error=cause_code,
-                            error_result=diag,
-                            operation_classification=host_classification,
-                            receipt_reserve=0,
-                        )
+                    with ledger_guard():
+                        cur_row = ledger.get(operation_id) or {}
+                        if not getattr(exc, "callback_uncertain", False):
+                            ledger.update(
+                                operation_id,
+                                "dispatched",
+                                error=cause_code,
+                                error_result=diag,
+                                operation_classification=host_classification,
+                                receipt_reserve=0,
+                            )
+                        elif cur_row.get("status") in {"intent", "dispatched"}:
+                            ledger.update(
+                                operation_id,
+                                str(cur_row["status"]),
+                                error=cause_code,
+                                error_result=diag,
+                                operation_classification=host_classification,
+                                receipt_reserve=0,
+                            )
                     unknown_err = AgentError("agent_write_outcome_unknown")
                     unknown_err.diagnostics = copy.deepcopy(diag)
                     raise unknown_err from exc
@@ -1434,13 +1491,14 @@ class LocalTools:
                         )
                         raise AgentError(err_code)
                     raise AgentError("agent_local_operation_unconfirmed")
-            ledger.update(
-                operation_id,
-                "confirmed",
-                result=result,
-                confirmed_at=datetime.now(timezone.utc).isoformat(),
-                operation_classification=host_classification,
-            )
+            with ledger_guard():
+                ledger.update(
+                    operation_id,
+                    "confirmed",
+                    result=result,
+                    confirmed_at=datetime.now(timezone.utc).isoformat(),
+                    operation_classification=host_classification,
+                )
             if name == "ryn_shell_execute":
                 # File delivery cannot change the confirmed execution outcome into an uncertain write.
                 try:
@@ -1466,14 +1524,15 @@ class LocalTools:
             if report["calculation_sha256"] != args["expected_calculation_sha256"]:
                 raise AgentToolRejected("agent_table_input_changed")
             path = self.path(args["path"], context)
-            if path.exists() or not path.parent.is_dir():
-                raise AgentToolRejected("agent_table_new_output_required")
-            raw = export_bytes(report, path.suffix.lower())
-            if len(raw) > 8 * 1024 * 1024 or cancelled():
-                raise AgentToolRejected("agent_cancelled" if cancelled() else "agent_table_output_limit")
-            self.file_review(task_id, self.path(".", context)).apply([(path, None, raw, None)], operation_id=operation_id)
-            with path.open("rb") as output:
-                written = output.read(8 * 1024 * 1024 + 1)
+            with self._path_lock(path):
+                if path.exists() or not path.parent.is_dir():
+                    raise AgentToolRejected("agent_table_new_output_required")
+                raw = export_bytes(report, path.suffix.lower())
+                if len(raw) > 8 * 1024 * 1024 or cancelled():
+                    raise AgentToolRejected("agent_cancelled" if cancelled() else "agent_table_output_limit")
+                self.file_review(task_id, self.path(".", context)).apply([(path, None, raw, None)], operation_id=operation_id)
+                with path.open("rb") as output:
+                    written = output.read(8 * 1024 * 1024 + 1)
             if written != raw:
                 raise AgentError("agent_table_export_readback_failed")
             return {"written": True, "path": str(path), "sha256": sha(written), "bytes": len(written),
@@ -1485,19 +1544,20 @@ class LocalTools:
             from ..llm_package.adapters import AdapterError
             from ..llm_package.codex_image import generate
             path = self.path(args["path"], context)
-            self.preview(name, args, context)
-            try:
-                raw, info = generate(args["prompt"], transparent_background=args.get("transparent_background", False), cancelled=cancelled)
-            except AdapterError as exc:
-                raise AgentError("agent_image_generation_failed: " + str(exc)) from exc
-            if cancelled():
-                raise AgentToolRejected("agent_cancelled")
-            if self.path(args["path"], context) != path:
-                raise AgentToolRejected("agent_approval_preview_changed")
-            # Exclusive creation protects files created by another process while
-            # generation was pending. No image bytes enter the model transcript.
-            with path.open("xb") as output:
-                output.write(raw)
+            with self._path_lock(path):
+                self.preview(name, args, context)
+                try:
+                    raw, info = generate(args["prompt"], transparent_background=args.get("transparent_background", False), cancelled=cancelled)
+                except AdapterError as exc:
+                    raise AgentError("agent_image_generation_failed: " + str(exc)) from exc
+                if cancelled():
+                    raise AgentToolRejected("agent_cancelled")
+                if self.path(args["path"], context) != path:
+                    raise AgentToolRejected("agent_approval_preview_changed")
+                # Exclusive creation protects files created by another process while
+                # generation was pending. No image bytes enter the model transcript.
+                with path.open("xb") as output:
+                    output.write(raw)
             return {"written": True, "path": str(path), "sha256": sha(raw), "bytes": len(raw), **info}
         if name == "ryn_project_inspect":
             from .projects import inspect
@@ -1678,10 +1738,12 @@ class LocalTools:
             if not path.is_file() or path.stat().st_size > MAX_RENDER_BYTES:
                 raise AgentToolRejected("agent_local_file_missing_or_too_large")
             raw = path.read_bytes()
-            if self._renderer is None:
-                self._renderer = Renderer(self.home)
-            result = self._renderer.inspect(path, raw, times=args.get("times"), track=args.get("track"),
-                                            width=args.get("width"), cancelled=cancelled)
+            with self.lock:
+                if self._renderer is None:
+                    self._renderer = Renderer(self.home)
+                renderer = self._renderer
+            result = renderer.inspect(path, raw, times=args.get("times"), track=args.get("track"),
+                                      width=args.get("width"), cancelled=cancelled)
             # The hash ties this observation to exact bytes: a later edit makes it stale.
             return {**result, "sha256": sha(raw), "bytes": len(raw)}
         if name == "ryn_file_wait":
@@ -1865,28 +1927,57 @@ class LocalTools:
                     "incomplete": incomplete, "stopped_reason": stopped,
                     "pruned_directories": pruned[:20], "pruned_count": len(pruned)}
         if name == "ryn_apply_patch":
+            from . import local_patch
+            from .file_review import safe_path
             policy = self.policy(context)
-            plan = self._patch_plan(args, context, policy)
-            changes = []
-            for item in plan:
-                path, destination = item["path"], item["destination"]
-                group = uuid.uuid4().hex if destination is not None else None
-                if destination is not None:
-                    changes.extend([(destination, None, item["after"], group), (path, item["before"], None, group)])
-                else:
-                    changes.append((path, item["before"], item["after"], None))
-            self.file_review(task_id, policy["workspace_root"]).apply(changes, operation_id=operation_id)
-            files = []
-            observed_updates = {path: sha(after) if after is not None else None for path, _, after, _ in changes}
-            for item in plan:
-                path, target = item["path"], item["destination"] or item["path"]
-                files.append({"path": str(target), "action": item["action"],
-                              **({"from": str(path)} if item["destination"] is not None else {}),
-                              **({"sha256": sha(item["after"]), "bytes": len(item["after"])} if item["after"] is not None else {}),
-                              "removed_lines": item["summary"].get("removed_lines", 0),
-                              "added_lines": item["summary"].get("added_lines", 0)})
-            self._record_observed_files(context, observed_updates)
-            return {"applied": True, "files": files}
+            parsed_ops = local_patch.parse(args["patch"])
+            lock_targets = []
+            for op in parsed_ops:
+                safe_path(policy["workspace_root"], op["path"])
+                lock_targets.append(self.path(op["path"], context, policy))
+                if op.get("move_to"):
+                    safe_path(policy["workspace_root"], op["move_to"])
+                    lock_targets.append(self.path(op["move_to"], context, policy))
+            with self._path_lock(*lock_targets):
+                if isinstance(approved_preview, dict) and isinstance(approved_preview.get("files"), list):
+                    for pf in approved_preview["files"]:
+                        pf_path = Path(pf["path"])
+                        disk_sha = sha(self.raw(pf_path)) if pf_path.is_file() else None
+                        if disk_sha != pf.get("before_sha256"):
+                            raise AgentToolRejected(
+                                "agent_local_file_changed_read_again",
+                                correction=f"File '{pf_path.name}' changed on disk since last read in this task. Call ryn_file_read on '{pf_path.name}' to inspect the latest version before patching.",
+                                details={"path": str(pf_path), "expected_sha256": pf.get("before_sha256"), "actual_sha256": disk_sha, "field_path": "patch"},
+                            )
+                        if pf.get("destination"):
+                            dest_path = Path(pf["destination"])
+                            if dest_path.exists():
+                                raise AgentToolRejected(
+                                    "agent_local_file_changed_read_again",
+                                    correction=f"Destination '{dest_path.name}' changed on disk since preview/read. Call ryn_file_read first.",
+                                    details={"path": str(dest_path), "expected_sha256": None, "actual_sha256": sha(self.raw(dest_path)) if dest_path.is_file() else None, "field_path": "patch"},
+                                )
+                plan = self._patch_plan(args, context, policy)
+                changes = []
+                for item in plan:
+                    path, destination = item["path"], item["destination"]
+                    group = uuid.uuid4().hex if destination is not None else None
+                    if destination is not None:
+                        changes.extend([(destination, None, item["after"], group), (path, item["before"], None, group)])
+                    else:
+                        changes.append((path, item["before"], item["after"], None))
+                self.file_review(task_id, policy["workspace_root"]).apply(changes, operation_id=operation_id)
+                files = []
+                observed_updates = {path: sha(after) if after is not None else None for path, _, after, _ in changes}
+                for item in plan:
+                    path, target = item["path"], item["destination"] or item["path"]
+                    files.append({"path": str(target), "action": item["action"],
+                                  **({"from": str(path)} if item["destination"] is not None else {}),
+                                  **({"sha256": sha(item["after"]), "bytes": len(item["after"])} if item["after"] is not None else {}),
+                                  "removed_lines": item["summary"].get("removed_lines", 0),
+                                  "added_lines": item["summary"].get("added_lines", 0)})
+                self._record_observed_files(context, observed_updates)
+                return {"applied": True, "files": files}
         if name in {"ryn_file_write", "ryn_file_edit", "ryn_file_manage"}:
             from .file_review import safe_path
             root = self.policy(context)["workspace_root"]
@@ -1894,62 +1985,99 @@ class LocalTools:
             if args.get("destination"):
                 safe_path(root, args["destination"])
             path = self.path(args["path"], context)
-            preview_before_sha = approved_preview.get("before_sha256") if isinstance(approved_preview, dict) else None
-            if name in {"ryn_file_write", "ryn_file_edit"}:
-                before_bytes = self.raw(path) if path.exists() else None
-                expected_sha = args.get("expected_sha256") or self._get_observed_sha256(context, path) or preview_before_sha
-                if before_bytes is not None and expected_sha is not None and expected_sha != sha(before_bytes):
-                    raise AgentToolRejected(
-                        "agent_local_file_changed_read_again",
-                        correction=f"File '{args['path']}' on disk does not match expected_sha256 (or changed since last read in this task). Call ryn_file_read on '{args['path']}' first.",
-                        details={"path": str(path), "expected_sha256": expected_sha, "actual_sha256": sha(before_bytes), "field_path": "expected_sha256"},
-                    )
-                if before_bytes is None and args.get("expected_sha256"):
-                    raise AgentToolRejected(
-                        "agent_local_file_missing",
-                        correction=f"File '{args['path']}' does not exist. Omit expected_sha256 when creating a new file.",
-                        details={"path": str(path), "field_path": "path"},
-                    )
-            elif args["action"] in {"delete", "move", "copy"} and path.is_file():
-                before_bytes = self.raw(path)
-                expected_sha = args.get("expected_sha256") or self._get_observed_sha256(context, path) or preview_before_sha
-                if expected_sha is not None and expected_sha != sha(before_bytes):
-                    raise AgentToolRejected(
-                        "agent_local_file_changed_read_again",
-                        correction=f"File '{args['path']}' on disk does not match expected_sha256 (or changed since last read in this task). Call ryn_file_read on '{args['path']}' first.",
-                        details={"path": str(path), "expected_sha256": expected_sha, "actual_sha256": sha(before_bytes), "field_path": "expected_sha256"},
-                    )
-            if name in {"ryn_file_write", "ryn_file_edit"}:
-                previous = self.text(path)[1] if path.exists() else ""
-                content = args["content"] if name == "ryn_file_write" else apply_edit(previous, args, path=args["path"])
-                raw = content.encode("utf-8")
-                self.file_review(task_id, root).apply([(path, before_bytes, raw, None)], operation_id=operation_id)
-                new_sha = sha(raw)
-                self._record_observed_files(context, {path: new_sha})
-                return {"path": str(path), "sha256": new_sha, "bytes": len(raw), "written": True,
-                        **change_summary(previous, content)}
-            action = args["action"]
-            if action == "mkdir":
-                path.mkdir()
-                return {"path": str(path), "directory_created": True}
-            if action == "delete":
-                was_file = path.is_file()
-                if was_file:
-                    self.file_review(task_id, root).apply([(path, before_bytes, None, None)], operation_id=operation_id)
-                else:
-                    path.rmdir()
-                if was_file:
-                    self._record_observed_files(context, {path: None})
-                return {"path": str(path), "deleted": True}
-            destination = self.path(args["destination"], context)
-            group = uuid.uuid4().hex if action == "move" else None
-            changes = [(destination, None, before_bytes, group)]
-            if action == "move":
-                changes.append((path, before_bytes, None, group))
-            self.file_review(task_id, root).apply(changes, operation_id=operation_id)
-            dest_sha = sha(self.raw(destination))
-            self._record_observed_files(context, {destination: dest_sha, **({path: None} if action == "move" else {})})
-            return {"path": str(path), "destination": str(destination), "sha256": dest_sha, "action": action}
+            dest_lock = self.path(args["destination"], context) if args.get("destination") else None
+            with self._path_lock(path, dest_lock):
+                has_preview_before = isinstance(approved_preview, dict) and "before_sha256" in approved_preview
+                preview_before_sha = approved_preview.get("before_sha256") if has_preview_before else None
+                if name in {"ryn_file_write", "ryn_file_edit"}:
+                    if not path.parent.is_dir() or path.is_dir():
+                        raise AgentToolRejected(
+                            "agent_local_parent_missing_or_directory",
+                            correction=f"Parent directory for '{args['path']}' does not exist or target is a directory.",
+                            details={"path": str(path), "field_path": "path"},
+                        )
+                    before_bytes = self.raw(path) if path.exists() else None
+                    expected_sha = args.get("expected_sha256") or self._get_observed_sha256(context, path) or preview_before_sha
+                    if before_bytes is not None and (
+                        (expected_sha is not None and expected_sha != sha(before_bytes))
+                        or (expected_sha is None and has_preview_before and preview_before_sha is None)
+                    ):
+                        raise AgentToolRejected(
+                            "agent_local_file_changed_read_again",
+                            correction=f"File '{args['path']}' on disk does not match expected_sha256 (or changed since last read in this task). Call ryn_file_read on '{args['path']}' first.",
+                            details={"path": str(path), "expected_sha256": expected_sha, "actual_sha256": sha(before_bytes), "field_path": "expected_sha256"},
+                        )
+                    if before_bytes is None and has_preview_before and preview_before_sha is not None:
+                        raise AgentToolRejected(
+                            "agent_local_file_changed_read_again",
+                            correction=f"File '{args['path']}' changed on disk since last read in this task. Call ryn_file_read on '{args['path']}' first.",
+                            details={"path": str(path), "expected_sha256": expected_sha, "actual_sha256": None, "field_path": "expected_sha256"},
+                        )
+                    if before_bytes is None and args.get("expected_sha256"):
+                        raise AgentToolRejected(
+                            "agent_local_file_missing",
+                            correction=f"File '{args['path']}' does not exist. Omit expected_sha256 when creating a new file.",
+                            details={"path": str(path), "field_path": "path"},
+                        )
+                    if name == "ryn_file_edit" and before_bytes is None:
+                        raise AgentToolRejected(
+                            "agent_local_file_missing",
+                            correction=f"File '{args['path']}' does not exist. Use ryn_file_write or ryn_apply_patch to create new files.",
+                            details={"path": str(path), "field_path": "path"},
+                        )
+                elif args["action"] in {"delete", "move", "copy"}:
+                    if path.is_file():
+                        before_bytes = self.raw(path)
+                        expected_sha = args.get("expected_sha256") or self._get_observed_sha256(context, path) or preview_before_sha
+                        if expected_sha is not None and expected_sha != sha(before_bytes):
+                            raise AgentToolRejected(
+                                "agent_local_file_changed_read_again",
+                                correction=f"File '{args['path']}' on disk does not match expected_sha256 (or changed since last read in this task). Call ryn_file_read on '{args['path']}' first.",
+                                details={"path": str(path), "expected_sha256": expected_sha, "actual_sha256": sha(before_bytes), "field_path": "expected_sha256"},
+                            )
+                    elif has_preview_before and preview_before_sha is not None:
+                        raise AgentToolRejected(
+                            "agent_local_file_changed_read_again",
+                            correction=f"File '{args['path']}' changed on disk since last read in this task. Call ryn_file_read on '{args['path']}' first.",
+                            details={"path": str(path), "expected_sha256": preview_before_sha, "actual_sha256": None, "field_path": "path"},
+                        )
+                    elif args["action"] != "delete" or not path.is_dir() or any(path.iterdir()):
+                        raise AgentToolRejected("agent_local_file_or_empty_directory_required")
+                if name in {"ryn_file_write", "ryn_file_edit"}:
+                    previous = self.text(path)[1] if path.exists() else ""
+                    content = args["content"] if name == "ryn_file_write" else apply_edit(previous, args, path=args["path"])
+                    raw = content.encode("utf-8")
+                    self.file_review(task_id, root).apply([(path, before_bytes, raw, None)], operation_id=operation_id)
+                    new_sha = sha(raw)
+                    self._record_observed_files(context, {path: new_sha})
+                    return {"path": str(path), "sha256": new_sha, "bytes": len(raw), "written": True,
+                            **change_summary(previous, content)}
+                action = args["action"]
+                if action == "mkdir":
+                    if path.exists() or not path.parent.is_dir():
+                        raise AgentToolRejected("agent_local_destination_exists_or_parent_missing")
+                    path.mkdir()
+                    return {"path": str(path), "directory_created": True}
+                if action == "delete":
+                    was_file = path.is_file()
+                    if was_file:
+                        self.file_review(task_id, root).apply([(path, before_bytes, None, None)], operation_id=operation_id)
+                    else:
+                        path.rmdir()
+                    if was_file:
+                        self._record_observed_files(context, {path: None})
+                    return {"path": str(path), "deleted": True}
+                destination = dest_lock
+                if destination.exists() or not destination.parent.is_dir():
+                    raise AgentToolRejected("agent_local_destination_exists_or_parent_missing")
+                group = uuid.uuid4().hex if action == "move" else None
+                changes = [(destination, None, before_bytes, group)]
+                if action == "move":
+                    changes.append((path, before_bytes, None, group))
+                self.file_review(task_id, root).apply(changes, operation_id=operation_id)
+                dest_sha = sha(self.raw(destination))
+                self._record_observed_files(context, {destination: dest_sha, **({path: None} if action == "move" else {})})
+                return {"path": str(path), "destination": str(destination), "sha256": dest_sha, "action": action}
         if name == "ryn_shell_execute":
             from . import workspace_artifacts
             if prepared_shell is None:
