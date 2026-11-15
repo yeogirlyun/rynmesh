@@ -48,6 +48,135 @@ def sha(raw):
     return hashlib.sha256(raw).hexdigest()
 
 
+def _control_char_ratio(text: str, *, include_pua: bool = False) -> float:
+    if not text:
+        return 0.0
+    suspicious = 0
+    for ch in text:
+        cp = ord(ch)
+        if (cp < 32 and ch not in ("\t", "\n", "\r", "\f", "\b", "\x1b")) or cp == 0x7F or (0x80 <= cp <= 0x9F):
+            suspicious += 1
+        elif include_pua and ((0xE000 <= cp <= 0xF8FF) or cp >= 0xF0000):
+            suspicious += 1
+    return suspicious / len(text)
+
+
+def decode_text(raw: bytes) -> tuple[str, str]:
+    """Decode text bytes: UTF-8 BOM -> UTF-16 BOM -> strict UTF-8 -> gb18030 -> UnicodeDecodeError."""
+    if not isinstance(raw, (bytes, bytearray, memoryview)):
+        raise TypeError("decode_text requires a bytes-like object")
+    data = bytes(raw)
+    if not data:
+        return "", "utf-8"
+    if data.startswith(b"\xef\xbb\xbf"):
+        text = data[3:].decode("utf-8", errors="strict")
+        if "\x00" in text or "\ufffd" in text or _control_char_ratio(text) > 0.05:
+            raise UnicodeDecodeError("utf-8-sig", data, 0, len(data), "binary control bytes")
+        return text, "utf-8-sig"
+    if data.startswith(b"\xff\xfe") and not data.startswith(b"\xff\xfe\x00\x00"):
+        text = data[2:].decode("utf-16-le", errors="strict")
+        if "\x00" in text or "\ufffd" in text or _control_char_ratio(text) > 0.02:
+            raise UnicodeDecodeError("utf-16-le", data, 0, len(data), "binary control bytes")
+        return text, "utf-16-le"
+    if data.startswith(b"\xfe\xff"):
+        text = data[2:].decode("utf-16-be", errors="strict")
+        if "\x00" in text or "\ufffd" in text or _control_char_ratio(text) > 0.02:
+            raise UnicodeDecodeError("utf-16-be", data, 0, len(data), "binary control bytes")
+        return text, "utf-16-be"
+    try:
+        text = data.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        pass
+    else:
+        if "\x00" in text or "\ufffd" in text or _control_char_ratio(text) > 0.05:
+            raise UnicodeDecodeError("utf-8", data, 0, len(data), "binary control bytes")
+        return text, "utf-8"
+    text = data.decode("gb18030", errors="strict")
+    if "\x00" in text or "\ufffd" in text or _control_char_ratio(text, include_pua=True) > 0.02:
+        raise UnicodeDecodeError("gb18030", data, 0, len(data), "binary or excessive control/PUA characters")
+    return text, "gb18030"
+
+
+def encode_text(
+    text: str,
+    encoding: str,
+    *,
+    original_raw: bytes | None = None,
+    path: str | Path | None = None,
+) -> bytes:
+    """Encode text back to its original encoding (preserving BOM); reject unrepresentable characters."""
+    enc = (encoding or "utf-8").lower()
+    prefix = b""
+    if enc == "utf-8":
+        codec = "utf-8"
+    elif enc == "utf-8-sig":
+        codec, prefix = "utf-8", b"\xef\xbb\xbf"
+    elif enc == "utf-16-le":
+        codec, prefix = "utf-16-le", b"\xff\xfe"
+    elif enc == "utf-16-be":
+        codec, prefix = "utf-16-be", b"\xfe\xff"
+    elif enc == "utf-16":
+        codec = "utf-16"
+    elif enc in {"gb18030", "gbk", "gb2312"}:
+        uses_gb18030_ext = False
+        if enc == "gb18030" and original_raw is not None:
+            try:
+                original_raw.decode("gbk", errors="strict")
+            except UnicodeDecodeError:
+                uses_gb18030_ext = True
+        codec = "gb18030" if uses_gb18030_ext else "gbk"
+        if uses_gb18030_ext:
+            orig_chars = set(original_raw.decode("gb18030", errors="ignore")) if original_raw else set()
+            for idx, ch in enumerate(text):
+                if 0x1F000 <= ord(ch) <= 0x1FAFF and ch not in orig_chars:
+                    raise _unrepresentable_rejection(text, idx, encoding, path)
+    else:
+        codec = enc
+    try:
+        return prefix + text.encode(codec, errors="strict")
+    except UnicodeEncodeError as exc:
+        pos = max(0, min(exc.start, len(text) - 1)) if text else 0
+        raise _unrepresentable_rejection(text, pos, encoding, path) from None
+
+
+def _unrepresentable_rejection(
+    text: str,
+    pos: int,
+    encoding: str,
+    path: str | Path | None,
+) -> AgentToolRejected:
+    bad_char = text[pos] if text and 0 <= pos < len(text) else ""
+    codepoint = f"U+{ord(bad_char):04X}" if bad_char else "unknown"
+    line_no = text.count("\n", 0, pos) + 1
+    col_no = pos - text.rfind("\n", 0, pos)
+    target = str(path) if path is not None else "file"
+    return AgentToolRejected(
+        "agent_local_encoding_unrepresentable",
+        correction=(
+            f"Character {bad_char!r} ({codepoint}) on line {line_no} (column {col_no}) "
+            f"cannot be represented in file encoding '{encoding}' for '{target}'. "
+            f"Replace or remove that character instead of silently converting the file to UTF-8."
+        ),
+        details={
+            "path": str(path) if path is not None else None,
+            "encoding": encoding,
+            "character": bad_char,
+            "codepoint": codepoint,
+            "line": line_no,
+            "column": col_no,
+        },
+    )
+
+
+def _decode_for_diff(raw: bytes | None) -> str:
+    if not raw:
+        return ""
+    try:
+        return decode_text(raw)[0]
+    except UnicodeError:
+        return raw.decode("utf-8-sig", errors="replace")
+
+
 def apply_edit(text, args, *, path: str | None = None):
     """Exact-string edit that tolerates the file's line-ending convention.
 
@@ -600,12 +729,17 @@ class LocalTools:
             raise AgentToolRejected("agent_local_file_too_large")
         return raw
 
-    def text(self, path):
+    def text(self, path, *, with_encoding: bool = True):
         raw = self.raw(path)
         try:
-            return raw, raw.decode("utf-8-sig")
+            decoded, encoding = decode_text(raw)
         except UnicodeError:
             raise AgentToolRejected("agent_local_file_not_utf8") from None
+        return (raw, decoded, encoding) if with_encoding else (raw, decoded)
+
+    def text_pair(self, path):
+        raw, decoded, _ = self.text(path)
+        return raw, decoded
 
     def _baseline_dir(self, task_id):
         if self.home is None:
@@ -713,8 +847,8 @@ class LocalTools:
                 status = "modified"
             if status is None:
                 continue
-            before_text = (original or b"").decode("utf-8-sig", errors="replace")
-            after_text = (current or b"").decode("utf-8-sig", errors="replace")
+            before_text = _decode_for_diff(original)
+            after_text = _decode_for_diff(current)
             relative = str(path)
             if root is not None and path.is_relative_to(root):
                 relative = os.path.relpath(path, root)
@@ -961,9 +1095,9 @@ class LocalTools:
                         details={"path": str(path), "field_path": "patch"},
                     )
                 after_text = "".join(line + "\n" for line in operation["lines"])
-                after = after_text.encode()
+                after = encode_text(after_text, "utf-8", path=operation["path"])
             elif operation["kind"] == "delete":
-                before, before_text = self.text(path)
+                before, before_text, _ = self.text(path)
                 observed_sha = self._get_observed_sha256(context, path)
                 if observed_sha is not None and observed_sha != sha(before):
                     raise AgentToolRejected(
@@ -972,7 +1106,7 @@ class LocalTools:
                         details={"path": str(path), "expected_sha256": observed_sha, "actual_sha256": sha(before), "field_path": "patch"},
                     )
             else:
-                before, before_text = self.text(path)
+                before, before_text, before_encoding = self.text(path)
                 observed_sha = self._get_observed_sha256(context, path)
                 if observed_sha is not None and observed_sha != sha(before):
                     raise AgentToolRejected(
@@ -982,7 +1116,7 @@ class LocalTools:
                     )
                 if operation["hunks"]:
                     after_text = local_patch.apply_hunks(before_text, operation["hunks"], path=operation["path"])
-                    after = (b"\xef\xbb\xbf" if before.startswith(b"\xef\xbb\xbf") else b"") + after_text.encode()
+                    after = encode_text(after_text, before_encoding, original_raw=before, path=operation["path"])
                 else:  # A pure move keeps the exact bytes.
                     after, after_text = before, before_text
                 if destination is not None and destination.exists():
@@ -1093,15 +1227,23 @@ class LocalTools:
                             correction=f"File '{args['path']}' does not exist. Use ryn_file_write or ryn_apply_patch to create new files.",
                             details={"path": str(path), "field_path": "path"},
                         )
-                    _, text = self.text(path)
-                    content = apply_edit(text, args, path=args["path"])
+                    _, before_text, target_encoding = self.text(path)
+                    content = apply_edit(before_text, args, path=args["path"])
                 else:
+                    if before is not None:
+                        try:
+                            before_text, target_encoding = decode_text(before)
+                        except UnicodeError:
+                            before_text, target_encoding = before.decode("utf-8-sig", errors="replace"), "utf-8"
+                    else:
+                        before_text, target_encoding = "", "utf-8"
                     content = args["content"]
-                if len(content.encode()) > MAX_FILE:
+                after_raw = encode_text(content, target_encoding, original_raw=before, path=args["path"])
+                if len(after_raw) > MAX_FILE:
                     raise AgentToolRejected("agent_local_file_too_large")
                 preview.update(before_sha256=sha(before) if before is not None else None,
-                               after_sha256=sha(content.encode()), bytes=len(content.encode()),
-                               **change_summary(before.decode("utf-8-sig", errors="replace") if before is not None else "", content))
+                               after_sha256=sha(after_raw), bytes=len(after_raw), encoding=target_encoding,
+                               **change_summary(before_text, content))
             elif name == "ryn_file_manage":
                 action = args["action"]
                 if action == "mkdir":
@@ -1778,7 +1920,7 @@ class LocalTools:
             path = self.path(args["path"], context)
             offset = args.get("offset", 0)
             if name == "ryn_file_read":
-                raw, text = self.text(path)
+                raw, text, encoding = self.text(path)
                 file_sha = sha(raw)
                 total_lines = text.count("\n") + (0 if not text or text.endswith("\n") else 1)
                 if args.get("mode") == "indentation":
@@ -1788,6 +1930,7 @@ class LocalTools:
                     self._record_observed_files(context, {path: file_sha})
                     return self._repeat_note(task_id, {
                         "path": str(path), "text": "".join(chunk), "sha256": file_sha, "bytes": len(raw),
+                        "encoding": encoding,
                         "mode": "indentation", "anchor_line": args.get("anchor_line") or args.get("start_line") or 1,
                         "start_line": (first + 1) if lines else 1, "end_line": max(first + 1, end_line) if lines else 1,
                         "total_lines": total_lines,
@@ -1812,6 +1955,7 @@ class LocalTools:
                     self._record_observed_files(context, {path: file_sha})
                     return self._repeat_note(task_id, {
                         "path": str(path), "text": "".join(chunk), "sha256": file_sha, "bytes": len(raw),
+                        "encoding": encoding,
                         "start_line": first + 1, "end_line": end_line, "total_lines": total_lines,
                         "next_start_line": end_line + 1 if end_line < len(lines) else None, "next_offset": None})
                 if offset > len(text):
@@ -1831,6 +1975,7 @@ class LocalTools:
                 self._record_observed_files(context, {path: file_sha})
                 return self._repeat_note(task_id, {
                     "path": str(path), "text": text[offset:end], "sha256": file_sha, "bytes": len(raw),
+                    "encoding": encoding,
                     "start_line": start_line, "end_line": end_line, "total_lines": total_lines,
                     "next_start_line": end_line + 1 if end < len(text) else None,
                     "next_offset": end if end < len(text) else None})
@@ -1861,6 +2006,7 @@ class LocalTools:
             pattern_norm = file_pattern.replace("\\", "/") if isinstance(file_pattern, str) and file_pattern else None
             pattern_has_sep = bool(pattern_norm and "/" in pattern_norm)
             matches, scanned, skipped, binary, incomplete = [], 0, 0, 0, False
+            non_text, non_text_paths, too_large = 0, [], 0
             per_file = {}
             # The start path was validated once above and the walk never follows links, so
             # per-file path revalidation is unnecessary. Authorization is instead re-read
@@ -1901,8 +2047,34 @@ class LocalTools:
                     skipped += 1
                     continue
                 try:
-                    _, text = self.text(candidate)
-                except (AgentToolRejected, OSError):
+                    st = candidate.stat()
+                except OSError:
+                    skipped += 1
+                    continue
+                if st.st_size > MAX_FILE:
+                    too_large += 1
+                    continue
+                try:
+                    text = self.text(candidate)[1]
+                except AgentToolRejected as exc:
+                    code = str(exc)
+                    if code == "agent_local_file_not_utf8":
+                        non_text += 1
+                        if len(non_text_paths) < 10:
+                            non_text_paths.append(str(candidate))
+                    elif code in {"agent_local_file_too_large", "agent_local_file_missing_or_too_large"}:
+                        try:
+                            is_oversized = candidate.is_file() and candidate.stat().st_size > MAX_FILE
+                        except OSError:
+                            is_oversized = False
+                        if is_oversized:
+                            too_large += 1
+                        else:
+                            skipped += 1
+                    else:
+                        raise
+                    continue
+                except OSError:
                     skipped += 1
                     continue
                 for number, line in enumerate(text.splitlines(), 1):
@@ -1924,6 +2096,8 @@ class LocalTools:
                     "total_matches": len(matches), "files_matched": [{"path": p, "matches": c, "first_line": f} for p, (c, f) in ranked[:25]],
                     "files_matched_total": len(per_file),
                     "scanned_files": scanned, "skipped_files": skipped, "binary_files_skipped": binary,
+                    "non_text_files": non_text, "non_text_file_paths": non_text_paths,
+                    "too_large_files": too_large,
                     "incomplete": incomplete, "stopped_reason": stopped,
                     "pruned_directories": pruned[:20], "pruned_count": len(pruned)}
         if name == "ryn_apply_patch":
@@ -2044,13 +2218,25 @@ class LocalTools:
                     elif args["action"] != "delete" or not path.is_dir() or any(path.iterdir()):
                         raise AgentToolRejected("agent_local_file_or_empty_directory_required")
                 if name in {"ryn_file_write", "ryn_file_edit"}:
-                    previous = self.text(path)[1] if path.exists() else ""
-                    content = args["content"] if name == "ryn_file_write" else apply_edit(previous, args, path=args["path"])
-                    raw = content.encode("utf-8")
+                    if name == "ryn_file_edit":
+                        _, previous, target_encoding = self.text(path)
+                        content = apply_edit(previous, args, path=args["path"])
+                    else:
+                        if before_bytes is not None:
+                            try:
+                                previous, target_encoding = decode_text(before_bytes)
+                            except UnicodeError:
+                                previous, target_encoding = before_bytes.decode("utf-8-sig", errors="replace"), "utf-8"
+                        else:
+                            previous, target_encoding = "", "utf-8"
+                        content = args["content"]
+                    raw = encode_text(content, target_encoding, original_raw=before_bytes, path=args["path"])
+                    if len(raw) > MAX_FILE:
+                        raise AgentToolRejected("agent_local_file_too_large")
                     self.file_review(task_id, root).apply([(path, before_bytes, raw, None)], operation_id=operation_id)
                     new_sha = sha(raw)
                     self._record_observed_files(context, {path: new_sha})
-                    return {"path": str(path), "sha256": new_sha, "bytes": len(raw), "written": True,
+                    return {"path": str(path), "sha256": new_sha, "bytes": len(raw), "encoding": target_encoding, "written": True,
                             **change_summary(previous, content)}
                 action = args["action"]
                 if action == "mkdir":
