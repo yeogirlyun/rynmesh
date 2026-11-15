@@ -107,7 +107,10 @@ export function McpAuthSettings({ server, onRefresh }: { server: ExtensionMcpSer
     <h3>{tx("登录状态", "Sign-in status")}</h3>
     <p role="status">{pending ? tx("等待浏览器授权…", "Waiting for browser authorization…") : loggedIn ? tx("已登录", "Signed in") : tx("未登录", "Signed out")}</p>
     {company && account?.state === "logged_in" && <p>{tx("当前公司账号", "Company account")} · {account.displayName}{scopedStatus === "needs_authorization" ? tx(" · 需要授权", " · Authorization required") : ""}</p>}
-    {error ? <p role="alert">{tx("操作未完成。请检查服务器登录配置后重试。", "The operation could not be completed. Check the server sign-in settings and retry.")}</p> : null}
+    {error ? <p role="alert">{tx("操作未完成。请检查服务器登录配置后重试。", "The operation could not be completed. Check the server sign-in settings and retry.")}</p>
+      : (!loggedIn && !pending && server.oauth?.error === "agent_mcp_oauth_credentials_reset")
+        ? <p role="alert">{tx("登录信息已损坏并重置，请重新登录", "Sign-in credentials were corrupted and reset. Please sign in again.")}</p>
+        : null}
     <details className="ae-auth-advanced">
       <summary>{tx("登录配置", "Sign-in settings")}</summary>
       {server.oauth?.issuer_host ? <p>{tx("授权服务：", "Authorization server: ")}{server.oauth.issuer_host}</p> : null}
