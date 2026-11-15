@@ -72,6 +72,7 @@ RUNTIME_ERROR_CODES = frozenset({
     "model_configuration_changed", "model_daily_quota_exhausted",
     "ai_permission_denied",
     "stream_delivery_failed", "upstream_http_failed", "upstream_response_invalid",
+    "upstream_stream_truncated",
     "source_protocol_parameters_unsupported",
     "source_protocol_response_invalid",
     "upstream_image_rejected",
@@ -496,7 +497,7 @@ class OpenAICompatibleAdapter:
                                 raise failure("stream_delivery_failed") from None
                 if is_sse:
                     if not accumulator.finished:
-                        raise AdapterError("upstream_stream_truncated")
+                        raise AdapterError("upstream_stream_truncated", code="upstream_stream_truncated")
                     message, usage, finish = accumulator.message(), accumulator.usage, accumulator.finish_reason
             if task_id in self._cancelled:
                 raise AdapterError("task_cancelled")
