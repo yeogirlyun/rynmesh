@@ -486,7 +486,7 @@ def test_recovery_checks_old_process_and_prevents_duplicate_running_operation(lo
 
 def test_genuine_write_shell_unknown_outcome_still_enters_reconciliation(node, monkeypatch, tmp_path):
     runtime, store, bridge, tools, catalog, _ = _make_node_runtime(node, tmp_path, "write-shell-unknown")
-    runtime.update_settings({"permission_mode": "automatic", "allowed_write_tools": ["ryn_shell_execute"]})
+    runtime.update_settings({"permission_mode": "workspace", "allowed_write_tools": ["ryn_shell_execute"]})
     write_cmd = "Add-Content out.txt hi" if os.name == "nt" else "echo hi >> out.txt"
 
     def fail_wait(*_args, **_kwargs):
