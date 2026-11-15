@@ -228,12 +228,14 @@ def test_large_output_is_drained_and_bounded(sessions, tmp_path, monkeypatch):
     from rynmesh.agent_runtime import local_processes
     # ConPTY emits screen updates and can coalesce one huge repetitive write.
     # Use spaced updates to exercise transport draining beyond the output cap.
-    monkeypatch.setattr(local_processes, "MAX_OUTPUT", 4096)
+    monkeypatch.setattr(local_processes, "HEAD_KEEP_CHARS", 2048)
+    monkeypatch.setattr(local_processes, "TAIL_KEEP_CHARS", 2048)
     args = [sys.executable, "-u", "-c", "import time; [(print(str(i)*2000, flush=True), time.sleep(.03)) for i in range(30)]"]
     ident = sessions.start(args, tmp_path, "task", 20, lambda: True, lambda: False, tty=True)
     result = finished(sessions, ident)
-    assert result["exit_code"] == 0 and result["truncated"]
-    assert len(sessions.get(ident, "task")["output"]) == 4096
+    item = sessions.get(ident, "task")
+    assert result["exit_code"] == 0 and result["truncated"] and result["dropped_chars"] > 0
+    assert len(item["head"]) + item["tail_chars"] == 4096
 
 
 @WINDOWS

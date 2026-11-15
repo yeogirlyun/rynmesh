@@ -1,6 +1,8 @@
 """Command startup boundaries and process polling without model busy loops."""
 from __future__ import annotations
 
+import codecs
+import collections
 import os
 import sys
 import threading
@@ -13,6 +15,7 @@ from rynmesh.agent_runtime import local_processes
 from rynmesh.agent_runtime.local_processes import (
     AgentProcessStartRejected,
     Processes,
+    _append_output,
     prepare_shell_command,
 )
 from rynmesh.agent_runtime.store import AgentToolRejected
@@ -23,8 +26,10 @@ def pending_process():
     processes = Processes()
     state = SimpleNamespace(exit_code=None)
     item = {"process": SimpleNamespace(poll=lambda: state.exit_code), "task_id": "task",
-            "output": bytearray(), "truncated": False, "reason": None,
-            "reader_done": threading.Event()}
+            "head": "", "tail": collections.deque(), "tail_chars": 0,
+            "total_chars": 0, "dropped_chars": 0,
+            "decoder": codecs.getincrementaldecoder("utf-8")(errors="replace"),
+            "reason": None, "reader_done": threading.Event()}
     processes.items["process_test"] = item
     yield processes, state, item
     state.exit_code = 0
@@ -105,7 +110,7 @@ def test_read_waits_for_new_output_and_releases_the_process_lock(pending_process
     assert waiting.wait(1)
     # An unrelated operation can inspect the table while this read is waiting.
     with processes.changed:
-        item["output"].extend(b"new output")
+        _append_output(item, "new output")
         processes.changed.notify_all()
     reader.join(1)
     assert not reader.is_alive()
@@ -114,7 +119,7 @@ def test_read_waits_for_new_output_and_releases_the_process_lock(pending_process
 
 def test_read_returns_immediately_for_unread_output_or_zero_wait(pending_process):
     processes, state, item = pending_process
-    item["output"].extend(b"ready")
+    _append_output(item, "ready")
     started = time.monotonic()
     assert processes.read("process_test", "task", wait_seconds=20)["output"] == "ready"
     assert processes.read("process_test", "task", 5, wait_seconds=0)["output"] == ""
@@ -123,7 +128,7 @@ def test_read_returns_immediately_for_unread_output_or_zero_wait(pending_process
 
 def test_read_waits_at_the_consumed_offset_and_wakes_when_complete(pending_process):
     processes, state, item = pending_process
-    item["output"].extend(b"old")
+    _append_output(item, "old")
     results = []
     reader = threading.Thread(target=lambda: results.append(processes.read("process_test", "task", 3, wait_seconds=2)))
     reader.start()
