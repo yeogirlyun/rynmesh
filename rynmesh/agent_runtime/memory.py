@@ -22,6 +22,7 @@ MAX_ENTRIES = 128
 MAX_CANDIDATES = 64
 MAX_JOBS = 64
 MAX_TOMBSTONES = 256
+MAX_SUPPRESSED_SLOTS = 4096
 MAX_FENCED_SOURCES = 512
 MAX_CONTROL_REQUESTS = 128
 MAX_FACT_TEXT_CHARS = 1000
@@ -380,6 +381,7 @@ def default_memory_state() -> dict[str, Any]:
         "candidates": {},
         "jobs": {},
         "tombstones": {},
+        "suppressed_slots": [],
         "processed_sources": {},
         "source_fences": {
             "deleted_tasks": {},
@@ -412,6 +414,8 @@ def _validate_memory_containers(mem: dict[str, Any]) -> None:
     for dict_key in ("entries", "candidates", "jobs", "tombstones", "source_fences", "settings"):
         if dict_key in mem and not isinstance(mem[dict_key], dict):
             raise AgentError("agent_memory_corrupted_state")
+    if "suppressed_slots" in mem and not isinstance(mem["suppressed_slots"], list):
+        raise AgentError("agent_memory_corrupted_state")
 
 
 def read_memory_state(data: dict[str, Any]) -> dict[str, Any]:
@@ -527,6 +531,188 @@ def _compact_source_fences_into_watermarks(mem: dict[str, Any], max_fenced: int)
         retired_branches[:overflow] = kept
 
 
+def _suppressed_scope_matches(suppressed_scope: Any, scope: dict[str, Any] | None) -> bool:
+    if not isinstance(suppressed_scope, dict) or not isinstance(scope, dict):
+        return False
+    kind = suppressed_scope.get("kind")
+    if kind != scope.get("kind"):
+        return False
+    if kind == "project":
+        return bool(suppressed_scope.get("project_id")) and suppressed_scope.get("project_id") == scope.get("project_id")
+    return True
+
+
+def _compact_tombstones(mem: dict[str, Any], *, fold_all: bool = False, force_half: bool = False) -> int:
+    """Fold oldest tombstones into compact suppressed_slots (16-hex HMAC prefixes) when at/above budget."""
+    tombstones = mem.setdefault("tombstones", {})
+    suppressed = mem.setdefault("suppressed_slots", [])
+    if not isinstance(suppressed, list):
+        suppressed = []
+        mem["suppressed_slots"] = suppressed
+    if not tombstones:
+        if len(suppressed) > MAX_SUPPRESSED_SLOTS:
+            suppressed.sort(key=lambda item: float(item.get("deleted_at") or 0.0) if isinstance(item, dict) else 0.0)
+            del suppressed[: len(suppressed) - MAX_SUPPRESSED_SLOTS]
+        return 0
+
+    max_tombstones = int(mem.get("settings", {}).get("budgets", {}).get("max_tombstones", MAX_TOMBSTONES))
+    folded_total = 0
+
+    did_force_half = False
+    while tombstones and (
+        fold_all
+        or (force_half and not did_force_half)
+        or max_tombstones <= 0
+        or len(tombstones) >= max_tombstones
+    ):
+        did_force_half = True
+        ordered = sorted(
+            tombstones.items(),
+            key=lambda item: (
+                float(item[1].get("deleted_at") or 0.0) if isinstance(item[1], dict) else 0.0,
+                str(item[0]),
+            ),
+        )
+        fold_count = len(ordered) if (fold_all or max_tombstones <= 0) else max(1, len(ordered) // 2)
+        for tid, tomb in ordered[:fold_count]:
+            tombstones.pop(tid, None)
+            if not isinstance(tomb, dict):
+                continue
+            if tomb.get("suppression_mode", "block_background_relearn_until_explicit_owner_restore") != "block_background_relearn_until_explicit_owner_restore":
+                continue
+            t_scope = tomb.get("scope") if isinstance(tomb.get("scope"), dict) else {}
+            s_kind = str(t_scope.get("kind") or "personal")
+            compact_scope = {
+                "kind": s_kind,
+                "project_id": t_scope.get("project_id") if s_kind == "project" else None,
+            }
+            fk_prefix = str(tomb.get("fact_key_hmac") or "")[:16]
+            alias_prefixes: list[str] = []
+            for alias_mac in tomb.get("aliases_hmac") or []:
+                if isinstance(alias_mac, str) and alias_mac:
+                    prefix = alias_mac[:16]
+                    if prefix not in alias_prefixes:
+                        alias_prefixes.append(prefix)
+            tomb_deleted_at = float(tomb.get("deleted_at") or 0.0)
+            tomb_seq = int(tomb.get("deleted_at_source_seq") or 0)
+            existing_slot = None
+            for item in suppressed:
+                if (
+                    isinstance(item, dict)
+                    and item.get("scope") == compact_scope
+                    and item.get("fact_key_hmac") == fk_prefix
+                ):
+                    existing_slot = item
+                    break
+            if existing_slot is not None:
+                merged_aliases = list(existing_slot.get("aliases_hmac") or [])
+                for prefix in alias_prefixes:
+                    if prefix not in merged_aliases:
+                        merged_aliases.append(prefix)
+                existing_slot["aliases_hmac"] = merged_aliases
+                existing_slot["deleted_at"] = max(
+                    float(existing_slot.get("deleted_at") or 0.0), tomb_deleted_at
+                )
+                existing_slot["deleted_at_source_seq"] = max(
+                    int(existing_slot.get("deleted_at_source_seq") or 0), tomb_seq
+                )
+            else:
+                suppressed.append(
+                    {
+                        "scope": compact_scope,
+                        "fact_key_hmac": fk_prefix,
+                        "aliases_hmac": alias_prefixes,
+                        "deleted_at": tomb_deleted_at,
+                        "deleted_at_source_seq": tomb_seq,
+                    }
+                )
+            folded_total += 1
+        if fold_all:
+            break
+
+    if len(suppressed) > MAX_SUPPRESSED_SLOTS:
+        suppressed.sort(key=lambda item: float(item.get("deleted_at") or 0.0) if isinstance(item, dict) else 0.0)
+        del suppressed[: len(suppressed) - MAX_SUPPRESSED_SLOTS]
+    return folded_total
+
+
+def compact_for_lifecycle(mem: dict[str, Any]) -> None:
+    """Reclaim compactable ledger overhead (tombstones, terminal job texts, fences, resolved records) before lifecycle retry."""
+    if not isinstance(mem, dict):
+        return
+    if isinstance(mem.get("tombstones"), dict) and mem["tombstones"]:
+        _compact_tombstones(mem, fold_all=True)
+
+    jobs = mem.get("jobs")
+    if isinstance(jobs, dict):
+        terminal_ids: list[tuple[str, float]] = []
+        for jid, job in jobs.items():
+            if not isinstance(job, dict):
+                continue
+            if job.get("state") in {"committed", "no_op", "stale", "failed"}:
+                manifest = job.get("source_manifest")
+                if isinstance(manifest, list):
+                    for item in manifest:
+                        if isinstance(item, dict):
+                            item.pop("text", None)
+                job.pop("dispatch_usage", None)
+                terminal_ids.append((jid, float(job.get("updated_at") or 0.0)))
+        terminal_ids.sort(key=lambda pair: pair[1])
+        keep_jobs = MAX_JOBS // 2
+        while len(jobs) > keep_jobs and terminal_ids:
+            jid, _ = terminal_ids.pop(0)
+            jobs.pop(jid, None)
+
+    fences = mem.get("source_fences")
+    if isinstance(fences, dict):
+        max_fenced = int(mem.get("settings", {}).get("budgets", {}).get("max_fenced_sources", MAX_FENCED_SOURCES))
+        _compact_source_fences_into_watermarks(mem, max(1, max_fenced // 2))
+        watermarks = fences.setdefault("fenced_task_watermarks", {})
+        for map_key in ("deleted_tasks", "archived_tasks"):
+            tmap = fences.get(map_key)
+            if isinstance(tmap, dict) and len(tmap) > 2048:
+                ordered_tasks = sorted(
+                    tmap.items(),
+                    key=lambda item: float(item[1].get("at") or 0.0) if isinstance(item[1], dict) else 0.0,
+                )
+                while len(tmap) > 2048 and ordered_tasks:
+                    tid, _ = ordered_tasks.pop(0)
+                    tmap.pop(tid, None)
+                    watermarks[tid] = max(int(watermarks.get(tid, 0)), 0)
+        boundaries = fences.get("reset_task_boundaries")
+        if isinstance(boundaries, dict):
+            for binfo in boundaries.values():
+                if isinstance(binfo, dict):
+                    binfo.pop("fenced_message_ids", None)
+
+    reqs = mem.get("control_requests")
+    if isinstance(reqs, dict) and len(reqs) > MAX_CONTROL_REQUESTS // 2:
+        keep_reqs = MAX_CONTROL_REQUESTS // 2
+        ordered_reqs = sorted(
+            enumerate(reqs.items()),
+            key=lambda pair: (
+                float(pair[1][1].get("at") or 0.0) if isinstance(pair[1][1], dict) else 0.0,
+                pair[0],
+            ),
+        )
+        for _, (req_id, _) in ordered_reqs[: len(reqs) - keep_reqs]:
+            reqs.pop(req_id, None)
+    if isinstance(mem.get("processed_sources"), dict) and len(mem["processed_sources"]) > MAX_FENCED_SOURCES // 2:
+        keys = list(mem["processed_sources"].keys())
+        for k in keys[: len(keys) - MAX_FENCED_SOURCES // 2]:
+            mem["processed_sources"].pop(k, None)
+
+    entries = mem.get("entries")
+    if isinstance(entries, dict):
+        for eid in [k for k, v in entries.items() if isinstance(v, dict) and v.get("status") in {"deleted", "superseded"}]:
+            entries.pop(eid, None)
+
+    candidates = mem.get("candidates")
+    if isinstance(candidates, dict):
+        for cid in [k for k, v in candidates.items() if isinstance(v, dict) and v.get("status") != "pending"]:
+            candidates.pop(cid, None)
+
+
 def _enforce_memory_bounds(mem: dict[str, Any]) -> None:
     # Prune oldest terminal jobs and control requests first to keep state compact.
     jobs = mem.get("jobs", {})
@@ -554,10 +740,12 @@ def _enforce_memory_bounds(mem: dict[str, Any]) -> None:
             oldest_ps = next(iter(processed))
             processed.pop(oldest_ps, None)
 
-    # Security invariant: NEVER silently evict tombstones!
+    # Fold oldest tombstones into compact suppressed_slots when over budget; only raise if still over after folding.
     tombstones = mem.get("tombstones", {})
     max_tombstones = int(mem["settings"]["budgets"].get("max_tombstones", MAX_TOMBSTONES))
     if len(tombstones) > max_tombstones:
+        _compact_tombstones(mem)
+    if len(mem.get("tombstones", {})) > max_tombstones:
         raise AgentError("agent_memory_tombstone_limit")
 
     # Security invariant: NEVER silently drop source fences without folding into monotonic task revision watermarks.
@@ -604,6 +792,10 @@ def _enforce_memory_bounds(mem: dict[str, Any]) -> None:
             cid, _ = resolved.pop(0)
             candidates.pop(cid, None)
     max_bytes = int(mem["settings"]["budgets"].get("max_memory_bytes", MAX_MEMORY_BYTES))
+    if len(encoded(mem)) > max_bytes and mem.get("tombstones"):
+        _compact_tombstones(mem, force_half=True)
+    if len(encoded(mem)) > max_bytes and mem.get("tombstones"):
+        _compact_tombstones(mem, fold_all=True)
     if len(encoded(mem)) > max_bytes:
         raise AgentError("agent_memory_byte_limit")
 
@@ -778,6 +970,18 @@ def is_slot_tombstoned(mem: dict[str, Any], scope: dict[str, Any], fact_key: str
         aliases = tomb.get("aliases_hmac") or []
         if key_mac in aliases or (text_mac and text_mac in aliases):
             return True
+    key_prefix = key_mac[:16]
+    text_prefix = text_mac[:16] if text_mac else ""
+    for item in mem.get("suppressed_slots") or []:
+        if not isinstance(item, dict):
+            continue
+        if not _suppressed_scope_matches(item.get("scope"), scope):
+            continue
+        if item.get("fact_key_hmac") == key_prefix:
+            return True
+        aliases = item.get("aliases_hmac") or []
+        if key_prefix in aliases or (text_prefix and text_prefix in aliases):
+            return True
     return False
 
 
@@ -794,6 +998,23 @@ def _clear_tombstone_for_explicit_restore(mem: dict[str, Any], scope: dict[str, 
             to_remove.append(tid)
     for tid in to_remove:
         mem["tombstones"].pop(tid, None)
+    key_prefix = key_mac[:16]
+    text_prefix = text_mac[:16] if text_mac else ""
+    suppressed = mem.get("suppressed_slots")
+    if isinstance(suppressed, list) and suppressed:
+        mem["suppressed_slots"] = [
+            item
+            for item in suppressed
+            if not (
+                isinstance(item, dict)
+                and _suppressed_scope_matches(item.get("scope"), scope)
+                and (
+                    item.get("fact_key_hmac") == key_prefix
+                    or key_prefix in (item.get("aliases_hmac") or [])
+                    or (text_prefix and text_prefix in (item.get("aliases_hmac") or []))
+                )
+            )
+        ]
 
 
 def _fence_sources_in_state(mem: dict[str, Any], sources: list[dict[str, Any]], *, reason: str) -> None:
@@ -829,7 +1050,7 @@ def _write_tombstone(
 ) -> dict[str, Any]:
     max_tombstones = int(mem["settings"]["budgets"].get("max_tombstones", MAX_TOMBSTONES))
     if entry["id"] not in mem["tombstones"] and len(mem["tombstones"]) >= max_tombstones:
-        raise AgentError("agent_memory_tombstone_limit")
+        _compact_tombstones(mem)
     scope = entry["scope"]
     fact_key = entry["fact_key"]
     text = entry.get("text", "")
@@ -1017,6 +1238,7 @@ def update_memory_settings(
 
 def get_memory_settings_snapshot(data: dict[str, Any]) -> dict[str, Any]:
     mem = read_memory_state(data)
+    degraded = data.get("memory_ledger_degraded") if isinstance(data, dict) else None
     return {
         "schema_version": mem["schema_version"],
         "generation": mem["generation"],
@@ -1024,6 +1246,9 @@ def get_memory_settings_snapshot(data: dict[str, Any]) -> dict[str, Any]:
         "policy_revision": mem["policy_revision"],
         "settings": copy.deepcopy(mem["settings"]),
         "daily_usage": copy.deepcopy(mem["daily_usage"]),
+        "tombstone_count": len(mem.get("tombstones") or {}),
+        "suppressed_slot_count": len(mem.get("suppressed_slots") or []),
+        "memory_ledger_degraded": copy.deepcopy(degraded) if isinstance(degraded, dict) else None,
     }
 
 
@@ -1431,7 +1656,7 @@ def forget_by_slot_or_query(
         max_tombstones = int(mem["settings"]["budgets"].get("max_tombstones", MAX_TOMBSTONES))
         new_tombstones = sum(1 for eid in matched_ids if eid not in mem["tombstones"])
         if len(mem["tombstones"]) + new_tombstones > max_tombstones:
-            raise AgentError("agent_memory_tombstone_limit")
+            _compact_tombstones(mem)
 
         from . import memory_natural
 
@@ -1551,6 +1776,12 @@ def reset_memory(
                 cleared_candidates += 1
             for tomb_id in [k for k, v in mem["tombstones"].items() if _scope_filter_matches(v.get("scope"), norm_scope)]:
                 mem["tombstones"].pop(tomb_id, None)
+            if isinstance(mem.get("suppressed_slots"), list):
+                mem["suppressed_slots"] = [
+                    item
+                    for item in mem["suppressed_slots"]
+                    if not (isinstance(item, dict) and _suppressed_scope_matches(item.get("scope"), norm_scope))
+                ]
             for tid, row in (data.get("tasks") or {}).items():
                 if isinstance(row, dict) and isinstance(row.get("project"), dict) and row["project"].get("id") == pid:
                     _record_task_reset_boundary(mem, tid, row)
@@ -1572,6 +1803,12 @@ def reset_memory(
                 cleared_candidates += 1
             for tomb_id in [k for k, v in mem["tombstones"].items() if (v.get("scope") or {}).get("kind") == "personal"]:
                 mem["tombstones"].pop(tomb_id, None)
+            if isinstance(mem.get("suppressed_slots"), list):
+                mem["suppressed_slots"] = [
+                    item
+                    for item in mem["suppressed_slots"]
+                    if not (isinstance(item, dict) and (item.get("scope") or {}).get("kind") == "personal")
+                ]
             for tid, row in (data.get("tasks") or {}).items():
                 if isinstance(row, dict) and not (isinstance(row.get("project"), dict) and row["project"].get("id")):
                     _record_task_reset_boundary(mem, tid, row)
@@ -1599,8 +1836,10 @@ def reset_memory(
             mem["entries"] = {}
             mem["candidates"] = {}
             mem["tombstones"] = {}
+            mem["suppressed_slots"] = []
             mem["processed_sources"] = {}
             mem["hmac_salt"] = uuid.uuid4().hex + uuid.uuid4().hex
+            data.pop("memory_ledger_degraded", None)
             for job in mem["jobs"].values():
                 if job.get("state") in {"queued", "leased", "extracted"}:
                     job["state"] = "stale"
@@ -2274,6 +2513,88 @@ def record_branch_rewrite_fence(
         }
 
 
+def record_branch_rewrite_fence_minimal(
+    data: dict[str, Any],
+    *,
+    task_id: str,
+    retired_messages: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Minimal shrink-only fallback when full branch-rewrite fencing exceeds ledger bounds."""
+    raw_mem = data.get("memory") if isinstance(data, dict) else None
+    if not isinstance(raw_mem, dict):
+        return {"fenced_message_ids": [], "invalidated_candidates": 0, "invalidated_entries": 0}
+    now = _now()
+    retired_ids = {
+        msg["message_id"]
+        for msg in retired_messages
+        if isinstance(msg, dict) and isinstance(msg.get("message_id"), str) and msg["message_id"]
+    }
+    invalidated_candidates = 0
+    invalidated_entries = 0
+
+    candidates = raw_mem.get("candidates")
+    if isinstance(candidates, dict):
+        for cand in candidates.values():
+            if not isinstance(cand, dict) or cand.get("status") != "pending":
+                continue
+            for src in cand.get("sources") or []:
+                if not isinstance(src, dict):
+                    continue
+                if (src.get("task_id") == task_id and src.get("message_id") in retired_ids) or (
+                    not verify_source_ref_against_state(data, src, for_background_job=False)[0]
+                ):
+                    cand["status"] = "stale"
+                    cand["stale_reason"] = "branch_edited"
+                    cand["revision"] = int(cand.get("revision") or 1) + 1
+                    cand["updated_at"] = now
+                    invalidated_candidates += 1
+                    break
+
+    entries = raw_mem.get("entries")
+    if isinstance(entries, dict):
+        for eid, entry in list(entries.items()):
+            if not isinstance(entry, dict) or entry.get("status") != "active":
+                continue
+            sources = entry.get("sources") or []
+            task_sources = [s for s in sources if isinstance(s, dict) and s.get("source_type") == "task_message"]
+            if not task_sources:
+                continue
+            if all(
+                (s.get("task_id") == task_id and s.get("message_id") in retired_ids)
+                or not verify_source_ref_against_state(data, s, for_background_job=False, for_active_entry=True)[0]
+                for s in task_sources
+            ):
+                entries.pop(eid, None)
+                invalidated_entries += 1
+
+    jobs = raw_mem.get("jobs")
+    if isinstance(jobs, dict):
+        for job in jobs.values():
+            if not isinstance(job, dict):
+                continue
+            if job.get("task_id") == task_id and job.get("state") in {"queued", "leased", "extracted"}:
+                if any(
+                    isinstance(s, dict)
+                    and (
+                        (s.get("task_id") == task_id and s.get("message_id") in retired_ids)
+                        or not verify_source_ref_against_state(data, s, for_background_job=True)[0]
+                    )
+                    for s in (job.get("source_manifest") or [])
+                ):
+                    job["state"] = "stale"
+                    job["error_code"] = "source_branch_retired"
+                    job["updated_at"] = now
+
+    raw_mem["generation"] = int(raw_mem.get("generation") or 0) + 1
+    if invalidated_entries:
+        raw_mem["policy_revision"] = int(raw_mem.get("policy_revision") or 0) + 1
+    return {
+        "fenced_message_ids": sorted(retired_ids),
+        "invalidated_candidates": invalidated_candidates,
+        "invalidated_entries": invalidated_entries,
+    }
+
+
 def record_task_lifecycle_fence(
     data: dict[str, Any],
     *,
@@ -2888,6 +3209,7 @@ def list_memories_snapshot(
         candidates.append(copy.deepcopy(cand))
     candidates.sort(key=lambda c: (-float(c.get("updated_at") or 0.0), c["id"]))
 
+    degraded = data.get("memory_ledger_degraded") if isinstance(data, dict) else None
     return {
         "schema_version": mem["schema_version"],
         "generation": mem["generation"],
@@ -2897,5 +3219,7 @@ def list_memories_snapshot(
         "entries": entries,
         "candidates": candidates,
         "tombstone_count": len(mem.get("tombstones") or {}),
+        "suppressed_slot_count": len(mem.get("suppressed_slots") or []),
+        "memory_ledger_degraded": copy.deepcopy(degraded) if isinstance(degraded, dict) else None,
         "manual_preference_exposure_overrides": copy.deepcopy(mem.get("manual_preference_exposure_overrides") or {}),
     }

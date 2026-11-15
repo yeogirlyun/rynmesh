@@ -1362,4 +1362,50 @@ it("displays accurate labels for manual, accepted_extraction, explicit_owner_cha
   expect(captureCheckbox).toBeChecked();
 });
 
+it("shows near-capacity suppression notice and ledger degraded notice in memory editor", async () => {
+  const i18nMod = await import("../i18n");
+  const prevLang = i18nMod.default.language;
+  await i18nMod.default.changeLanguage("zh-CN");
+  try {
+    server.use(
+      http.get("*/api/local/agent/memory/destinations", () => HttpResponse.json({
+        destinations: [],
+        default_destination: null,
+      })),
+      http.get("*/api/local/agent/memory", () => HttpResponse.json({
+        schema_version: 1,
+        generation: 12,
+        reset_epoch: 0,
+        policy_revision: 3,
+        settings: {
+          capture_enabled: false,
+          use_enabled: true,
+          activation_policy: "automatic",
+          extraction_model_id: "",
+          extraction_destination: null,
+          default_exposure: { mode: "selected_models", allowed_destinations: [] },
+          budgets: { max_tombstones: 256 },
+        },
+        entries: [],
+        candidates: [],
+        tombstone_count: 220,
+        suppressed_slot_count: 3500,
+        memory_ledger_degraded: {
+          at: 1700000000,
+          code: "agent_memory_byte_limit",
+          task_id: "task-1",
+          operation: "delete",
+        },
+      })),
+    );
+
+    render(<MemoryEditor initialOpen />);
+    await screen.findByText(/记忆账本已满，部分删除记录未登记/);
+    expect(screen.getByText(/接近.*上限/)).toBeInTheDocument();
+  } finally {
+    await i18nMod.default.changeLanguage(prevLang);
+  }
+});
+
+
 

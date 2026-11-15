@@ -552,7 +552,20 @@ def on_task_lifecycle_in_tx(data: dict[str, Any], task_id: str, operation: str) 
     """Hook called inside the same store transaction when a task is archived, restored, or deleted."""
     if operation in {"archive", "restore", "delete"}:
         if "memory" in data or operation == "delete":
-            memory.record_task_lifecycle_fence(data, task_id=task_id, operation=operation)
+            try:
+                memory.record_task_lifecycle_fence(data, task_id=task_id, operation=operation)
+            except AgentError:
+                try:
+                    if isinstance(data.get("memory"), dict):
+                        memory.compact_for_lifecycle(data["memory"])
+                    memory.record_task_lifecycle_fence(data, task_id=task_id, operation=operation)
+                except AgentError as exc:
+                    data["memory_ledger_degraded"] = {
+                        "at": memory._now(),
+                        "code": str(exc),
+                        "task_id": task_id,
+                        "operation": operation,
+                    }
             propagate_memory_revocation_in_tx(data, exclude_task_id=task_id)
 
 

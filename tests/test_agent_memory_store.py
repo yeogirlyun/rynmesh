@@ -926,7 +926,7 @@ def test_tombstone_limit_preserves_protection_and_watermark_compaction_blocks_ol
         for eid in created_ids:
             memory.delete_memory_entry(data, eid)
 
-        # Create a 5th entry; deleting it must fail with agent_memory_tombstone_limit and keep all 4 tombstones
+        # Create a 5th entry; deleting it folds the oldest half (2 tombstones) into suppressed_slots instead of failing
         fifth = memory.upsert_active_entry(
             data,
             {
@@ -937,8 +937,7 @@ def test_tombstone_limit_preserves_protection_and_watermark_compaction_blocks_ol
             },
             origin="manual",
         )
-        with pytest.raises(AgentError, match="agent_memory_tombstone_limit"):
-            memory.delete_memory_entry(data, fifth["entry"]["id"])
+        memory.delete_memory_entry(data, fifth["entry"]["id"])
 
         # Overflow fenced_messages and retired_branches (>8) to trigger watermark compaction
         for rev in range(1, 12):
@@ -973,7 +972,8 @@ def test_tombstone_limit_preserves_protection_and_watermark_compaction_blocks_ol
 
     def verify_after_restart(data):
         mem = memory.read_memory_state(data)
-        assert len(mem["tombstones"]) == 4
+        assert len(mem["tombstones"]) == 3
+        assert len(mem["suppressed_slots"]) == 2
         assert len(mem["source_fences"]["fenced_messages"]) <= 8
         assert len(mem["source_fences"]["retired_branches"]) <= 8
         assert mem["source_fences"]["fenced_task_watermarks"].get("task-bound-1", 0) >= 3
@@ -1094,5 +1094,436 @@ def test_attempt_lease_token_prevents_expired_attempt_pollution_and_schema_corru
 
     with pytest.raises(AgentError, match="agent_memory_corrupted_state"):
         memory.ensure_memory_state({"memory": {"schema_version": 1, "tombstones": "corrupted-not-a-dict"}})
+
+
+def test_s09_i25_300_consecutive_deletions_fold_tombstones_preserve_suppression_restore_and_reset(tmp_path):
+    store, key = _make_store(tmp_path)
+    dest = {
+        "catalog_model_id": "local/codex-cli",
+        "provider_peer_id": "self",
+        "source_id": "codex-cli",
+        "destination_revision": "rev-1",
+    }
+
+    def run_300_deletions_and_checks(data):
+        # Legacy state without suppressed_slots must load cleanly
+        legacy_mem = memory.default_memory_state()
+        legacy_mem.pop("suppressed_slots", None)
+        data["memory"] = legacy_mem
+        loaded_legacy = memory.read_memory_state(data)
+        assert loaded_legacy.get("suppressed_slots") == []
+        ensured_legacy = memory.ensure_memory_state(data)
+        assert ensured_legacy.get("suppressed_slots") == []
+
+        memory.update_memory_settings(
+            data,
+            {"capture_enabled": True, "use_enabled": True, "extraction_destination": dest},
+        )
+        row = _seed_task(
+            data,
+            task_id="task-300",
+            message_id="msg-300-base",
+            text="整理器材清单",
+            conversation_revision=1,
+            destination=dest,
+        )
+
+        # Consecutively create and delete 300 entries (exceeding MAX_TOMBSTONES=256)
+        for idx in range(300):
+            mid = f"msg-300-{idx:03d}"
+            mtext = f"请记住测试器材槽位编号 {idx:03d}"
+            row["messages"].append({"role": "user", "message_id": mid, "content": mtext, "context_epoch": 0})
+            msg_src = memory.build_source_ref(
+                source_type="task_message",
+                task_id=row["id"],
+                message_id=mid,
+                conversation_revision=1,
+                context_epoch=0,
+                content=mtext,
+            )
+            upserted = memory.upsert_active_entry(
+                data,
+                {
+                    "scope": {"kind": "personal"},
+                    "category": "equipment",
+                    "fact_key": f"personal.gear.slot_{idx:03d}",
+                    "text": f"测试器材槽位编号 {idx:03d}",
+                    "sources": [msg_src],
+                },
+                origin="explicit_owner_chat",
+            )
+            if idx % 25 == 24:
+                memory.forget_by_slot_or_query(
+                    data,
+                    scope={"kind": "personal"},
+                    fact_keys=[f"personal.gear.slot_{idx:03d}"],
+                )
+            else:
+                memory.delete_memory_entry(data, upserted["entry"]["id"])
+
+        mem = data["memory"]
+        assert len(mem["tombstones"]) <= memory.MAX_TOMBSTONES
+        assert len(mem.get("suppressed_slots") or []) > 0
+        # Verify folded items only keep compact scope + 16-hex prefixes + deleted_at + deleted_at_source_seq (no source_fences)
+        sample_folded = mem["suppressed_slots"][0]
+        assert set(sample_folded.keys()) <= {"scope", "fact_key_hmac", "aliases_hmac", "deleted_at", "deleted_at_source_seq"}
+        assert "source_fences" not in sample_folded
+        assert set(sample_folded["scope"].keys()) == {"kind", "project_id"}
+        assert len(sample_folded["fact_key_hmac"]) == 16
+        assert all(len(a) == 16 for a in sample_folded["aliases_hmac"])
+
+        # Settings snapshot includes tombstone_count and suppressed_slot_count
+        settings_snap = memory.get_memory_settings_snapshot(data)
+        assert settings_snap["tombstone_count"] == len(mem["tombstones"])
+        assert settings_snap["suppressed_slot_count"] == len(mem["suppressed_slots"])
+
+        # Oldest slot (idx=0) must have been folded out of tombstones into suppressed_slots
+        tomb_fks = {t["fact_key_hmac"] for t in mem["tombstones"].values()}
+        slot0_mac = memory._slot_hmac(mem, {"kind": "personal", "owner_id": "local_owner", "project_id": None, "project_generation": None}, "personal.gear.slot_000", mutate=False)
+        assert slot0_mac not in tomb_fks
+        assert memory.is_slot_tombstoned(
+            mem,
+            {"kind": "personal", "owner_id": "local_owner", "project_id": None, "project_generation": None},
+            "personal.gear.slot_000",
+            "测试器材槽位编号 000",
+        ) is True
+
+        # Background extraction on a brand-new task proposing the folded slot_000 must still be blocked
+        _seed_task(
+            data,
+            task_id="task-relearn-attempt",
+            message_id="msg-relearn-1",
+            text="我又提到了测试器材槽位编号 000",
+            conversation_revision=1,
+            destination=dest,
+        )
+        enq = memory.enqueue_extraction_job(data, task_id="task-relearn-attempt")
+        leased = memory.claim_extraction_job(data, worker_id="w-300", job_id=enq["job"]["id"])
+        committed = memory.commit_extraction_job(
+            data,
+            job_id=leased["id"],
+            worker_id="w-300",
+            lease_token=leased["lease_token"],
+            proposals=[
+                {
+                    "category": "equipment",
+                    "fact_key": "personal.gear.slot_000",
+                    "text": "测试器材槽位编号 000",
+                    "source_message_ids": ["msg-relearn-1"],
+                }
+            ],
+        )
+        assert committed["committed_candidates"] == []
+        assert "tombstone_suppressed" in committed["skipped_reasons"]
+        assert committed["job"]["error_code"] == "tombstone_suppressed"
+
+        # Explicit owner restore clears the folded item from suppressed_slots
+        suppressed_before_restore = len(mem["suppressed_slots"])
+        restored = memory.upsert_active_entry(
+            data,
+            {
+                "scope": {"kind": "personal"},
+                "category": "equipment",
+                "fact_key": "personal.gear.slot_000",
+                "text": "测试器材槽位编号 000",
+            },
+            origin="manual",
+        )
+        assert restored["entry"]["fact_key"] == "personal.gear.slot_000"
+        assert len(mem["suppressed_slots"]) < suppressed_before_restore
+        assert memory.is_slot_tombstoned(
+            mem,
+            {"kind": "personal", "owner_id": "local_owner", "project_id": None, "project_generation": None},
+            "personal.gear.slot_000",
+            "测试器材槽位编号 000",
+        ) is False
+
+        # Total memory bytes within MAX_MEMORY_BYTES
+        from rynmesh.agent_runtime.store import encoded
+
+        assert len(encoded(mem)) <= memory.MAX_MEMORY_BYTES
+
+        # Reset clears both tombstones and suppressed_slots
+        memory.reset_memory(data)
+        assert data["memory"]["tombstones"] == {}
+        assert data["memory"]["suppressed_slots"] == []
+
+    store.transaction(run_300_deletions_and_checks)
+    reloaded = AgentStore(tmp_path, key)
+    snap = reloaded.inspect(memory.get_memory_settings_snapshot)
+    assert snap["tombstone_count"] == 0
+    assert snap["suppressed_slot_count"] == 0
+
+
+def test_s09_i25_suppressed_slots_cap_at_4096_evicts_oldest_by_deleted_at(tmp_path):
+    store, _ = _make_store(tmp_path)
+
+    def run_cap_check(data):
+        memory.update_memory_settings(data, {"budgets": {"max_tombstones": 4}})
+        mem = memory.ensure_memory_state(data)
+        mem["settings"]["budgets"]["max_memory_bytes"] = 1024 * 1024
+        mem["suppressed_slots"] = [
+            {
+                "scope": {"kind": "personal", "project_id": None},
+                "fact_key_hmac": f"{idx:016x}",
+                "aliases_hmac": [f"{idx:016x}"],
+                "deleted_at": float(1000 + idx),
+            }
+            for idx in range(4095)
+        ]
+        for idx in range(5):
+            e = memory.upsert_active_entry(
+                data,
+                {
+                    "scope": {"kind": "personal"},
+                    "category": "general",
+                    "fact_key": f"personal.general.cap_{idx}",
+                    "text": f"容量测试 {idx}",
+                },
+                origin="manual",
+            )
+            memory.delete_memory_entry(data, e["entry"]["id"])
+
+        assert len(mem["suppressed_slots"]) == 4096
+        remaining_prefixes = {item["fact_key_hmac"] for item in mem["suppressed_slots"]}
+        # Oldest deleted_at (idx=0 -> 1000.0) must be evicted when 2 folded items push 4095 -> 4097 -> 4096
+        assert f"{0:016x}" not in remaining_prefixes
+        assert f"{1:016x}" in remaining_prefixes
+
+    store.transaction(run_cap_check)
+
+
+def test_s09_i25_lifecycle_hooks_never_block_task_delete_archive_or_branch_rewrite_when_ledger_full(tmp_path):
+    from rynmesh.agent_runtime import conversation, lifecycle, memory_integration, state
+
+    store, _ = _make_store(tmp_path)
+    dest = {
+        "catalog_model_id": "local/codex-cli",
+        "provider_peer_id": "self",
+        "source_id": "codex-cli",
+        "destination_revision": "rev-1",
+    }
+
+    def emit(row, kind, **extra):
+        seq = int(row.get("event_cursor", 0)) + 1
+        row["event_cursor"] = seq
+        row.setdefault("events", []).append({"seq": seq, "kind": kind, **extra})
+
+    def seed_stuffed_state(data):
+        memory.update_memory_settings(
+            data,
+            {
+                "capture_enabled": True,
+                "use_enabled": True,
+                "activation_policy": "owner_review",
+                "extraction_destination": dest,
+                "budgets": {
+                    "max_tombstones": 4,
+                    "max_fenced_sources": 8,
+                    "max_memory_bytes": 16384,
+                },
+            },
+        )
+        # Seed 3 tasks: one to delete, one to archive, one to branch-rewrite (edit message)
+        del_row = _seed_task(
+            data,
+            task_id="task-full-del",
+            message_id="msg-del-1",
+            text="请记住我的镜头滤镜是 B+W UV",
+            conversation_revision=1,
+            destination=dest,
+        )
+        state.initialize(del_row)
+        del_row["control_revision"] = 1
+        del_row["in_flight"] = False
+
+        arch_row = copy.deepcopy(del_row)
+        arch_row["id"] = "task-full-arch"
+        arch_row["messages"][0]["message_id"] = "msg-arch-1"
+        arch_row["messages"][0]["content"] = "归档对话消息"
+        data["tasks"]["task-full-arch"] = arch_row
+
+        edit_row = copy.deepcopy(del_row)
+        edit_row["id"] = "task-full-edit"
+        edit_row["messages"][0]["message_id"] = "msg-edit-old"
+        edit_row["messages"][0]["content"] = "请记住我的闪光灯品牌是保荣摄影灯"
+        edit_row["goal"]["text"] = edit_row["messages"][0]["content"]
+        edit_row["goal"]["original_message_id"] = "msg-edit-old"
+        data["tasks"]["task-full-edit"] = edit_row
+
+        del_src = memory.build_source_ref(
+            source_type="task_message",
+            task_id="task-full-del",
+            message_id="msg-del-1",
+            conversation_revision=1,
+            context_epoch=0,
+            content=del_row["messages"][0]["content"],
+        )
+        edit_src = memory.build_source_ref(
+            source_type="task_message",
+            task_id="task-full-edit",
+            message_id="msg-edit-old",
+            conversation_revision=1,
+            context_epoch=0,
+            content=edit_row["messages"][0]["content"],
+        )
+        memory.upsert_active_entry(
+            data,
+            {
+                "scope": {"kind": "personal"},
+                "category": "photography",
+                "fact_key": "personal.photo.filter",
+                "text": "镜头滤镜是 B+W UV",
+                "sources": [del_src],
+                "exposure_policy": {"mode": "all_selected", "allowed_destinations": []},
+            },
+            origin="explicit_owner_chat",
+        )
+        memory.upsert_active_entry(
+            data,
+            {
+                "scope": {"kind": "personal"},
+                "category": "photography",
+                "fact_key": "personal.photo.strobe",
+                "text": "摄影闪光灯品牌是保荣摄影灯",
+                "sources": [edit_src],
+                "exposure_policy": {"mode": "all_selected", "allowed_destinations": []},
+            },
+            origin="explicit_owner_chat",
+        )
+        # Add a pending candidate derived from msg-edit-old
+        mem = data["memory"]
+        mem["candidates"]["cand-edit-old"] = {
+            "id": "cand-edit-old",
+            "scope": {"kind": "personal", "owner_id": "local_owner", "project_id": None, "project_generation": None},
+            "category": "photography",
+            "fact_key": "personal.photo.strobe_cand",
+            "text": "候选闪光灯保荣",
+            "kind": "owner_fact",
+            "status": "pending",
+            "revision": 1,
+            "origin": "background_extraction",
+            "job_id": None,
+            "reset_epoch": 0,
+            "sources": [edit_src],
+            "target_entry_id": None,
+            "expected_entry_revision": None,
+            "exposure_policy": {"mode": "all_selected", "allowed_destinations": [], "revision": 1},
+            "created_at": 1.0,
+            "updated_at": 1.0,
+        }
+
+        # Stuff tombstones, watermarks (> max_fenced*2 = 16), and bytes (> 16384) so even after compaction bounds fail
+        for idx in range(6):
+            mem["tombstones"][f"tomb-full-{idx}"] = {
+                "entry_id": f"tomb-full-{idx}",
+                "scope": {"kind": "personal", "owner_id": "local_owner", "project_id": None, "project_generation": None},
+                "fact_key_hmac": f"{idx + 100:064x}",
+                "aliases_hmac": [f"{idx + 100:064x}"],
+                "deleted_revision": 1,
+                "deletion_generation": 1,
+                "deleted_at_source_seq": 0,
+                "reset_epoch": 0,
+                "source_fences": [],
+                "suppression_mode": "block_background_relearn_until_explicit_owner_restore",
+                "owner_action_id": f"act-{idx}",
+                "deleted_at": float(10 + idx),
+                "reason": "owner_deleted",
+            }
+        for idx in range(25):
+            mem["source_fences"]["fenced_task_watermarks"][f"old-fenced-task-{idx}"] = 99
+        for idx in range(20):
+            mem["entries"][f"stuffed-active-{idx}"] = {
+                "id": f"stuffed-active-{idx}",
+                "scope": {"kind": "personal", "owner_id": "local_owner", "project_id": None, "project_generation": None},
+                "category": "general",
+                "fact_key": f"personal.stuffed.k_{idx}",
+                "text": ("填充记忆字节内容_" * 60) + str(idx),
+                "kind": "owner_fact",
+                "status": "active",
+                "revision": 1,
+                "origin": "manual",
+                "sources": [],
+                "supersedes": [],
+                "superseded_by": None,
+                "exposure_policy": {"mode": "local_only", "allowed_destinations": [], "revision": 1},
+                "created_at": 1.0,
+                "updated_at": 1.0,
+                "last_used_at": None,
+                "reviewed_by_owner_at": 1.0,
+            }
+        return del_src
+
+    del_src = store.transaction(seed_stuffed_state)
+
+    # 1. Task delete succeeds despite stuffed ledger; degraded marker recorded; deleted task source fails verification
+    del_res = lifecycle.change(
+        store,
+        "task-full-del",
+        {"expected_control_revision": 1, "client_request_id": "00000000-0000-4000-8000-000000000001"},
+        "delete",
+        emit,
+        lambda: "2026-11-15T12:00:00Z",
+        on_mutate=memory_integration.on_task_lifecycle_in_tx,
+    )
+    assert del_res["deleted"] is True
+
+    after_del = store.read()
+    assert "task-full-del" not in after_del["tasks"]
+    assert after_del.get("memory_ledger_degraded", {}).get("task_id") == "task-full-del"
+    assert after_del["memory_ledger_degraded"]["operation"] == "delete"
+    assert after_del["memory_ledger_degraded"]["code"]
+    valid_del, reason_del = memory.verify_source_ref_against_state(after_del, del_src, for_background_job=False)
+    assert valid_del is False
+    assert reason_del == "source_task_missing"
+
+    # 2. Task archive succeeds despite stuffed ledger
+    arch_res = lifecycle.change(
+        store,
+        "task-full-arch",
+        {"expected_control_revision": 1, "client_request_id": "00000000-0000-4000-8000-000000000002"},
+        "archive",
+        emit,
+        lambda: "2026-11-15T12:00:01Z",
+        on_mutate=memory_integration.on_task_lifecycle_in_tx,
+    )
+    assert arch_res["archived"] is True
+    after_arch = store.read()
+    assert after_arch["memory_ledger_degraded"]["task_id"] == "task-full-arch"
+    assert after_arch["memory_ledger_degraded"]["operation"] == "archive"
+
+    # 3. Message edit / branch rewrite succeeds via minimal fallback and stops retired-message entries from selection
+    def perform_branch_rewrite(data):
+        row = data["tasks"]["task-full-edit"]
+        replacement = {
+            "role": "user",
+            "message_id": "msg-edit-new",
+            "content": "推荐摄影闪光灯配置",
+            "ui": {"kind": "message", "text": "推荐摄影闪光灯配置"},
+        }
+        conversation.rewrite(
+            row,
+            {"kind": "edit_message", "message_index": 0, "message": replacement},
+            emit,
+            data=data,
+        )
+        selected = memory.select_memories_for_task(
+            data,
+            row,
+            query_text="摄影 闪光灯 保荣摄影灯",
+            remaining_context_bytes=48000,
+        )
+        return selected
+
+    selected_after_edit = store.transaction(perform_branch_rewrite)
+    after_edit = store.read()
+    assert after_edit["memory_ledger_degraded"]["task_id"] == "task-full-edit"
+    assert after_edit["memory_ledger_degraded"]["operation"] == "branch_rewrite"
+    assert after_edit["memory"]["candidates"]["cand-edit-old"]["status"] == "stale"
+    selected_keys = [item["fact_key"] for item in selected_after_edit["selected"]]
+    assert "personal.photo.strobe" not in selected_keys
+    settings_snap = memory.get_memory_settings_snapshot(after_edit)
+    assert settings_snap["memory_ledger_degraded"]["operation"] == "branch_rewrite"
+
 
 
