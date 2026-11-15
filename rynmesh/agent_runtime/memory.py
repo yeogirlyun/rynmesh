@@ -593,14 +593,39 @@ def _compact_tombstones(mem: dict[str, Any], *, fold_all: bool = False, force_ha
                     prefix = alias_mac[:16]
                     if prefix not in alias_prefixes:
                         alias_prefixes.append(prefix)
-            suppressed.append(
-                {
-                    "scope": compact_scope,
-                    "fact_key_hmac": fk_prefix,
-                    "aliases_hmac": alias_prefixes,
-                    "deleted_at": float(tomb.get("deleted_at") or 0.0),
-                }
-            )
+            tomb_deleted_at = float(tomb.get("deleted_at") or 0.0)
+            tomb_seq = int(tomb.get("deleted_at_source_seq") or 0)
+            existing_slot = None
+            for item in suppressed:
+                if (
+                    isinstance(item, dict)
+                    and item.get("scope") == compact_scope
+                    and item.get("fact_key_hmac") == fk_prefix
+                ):
+                    existing_slot = item
+                    break
+            if existing_slot is not None:
+                merged_aliases = list(existing_slot.get("aliases_hmac") or [])
+                for prefix in alias_prefixes:
+                    if prefix not in merged_aliases:
+                        merged_aliases.append(prefix)
+                existing_slot["aliases_hmac"] = merged_aliases
+                existing_slot["deleted_at"] = max(
+                    float(existing_slot.get("deleted_at") or 0.0), tomb_deleted_at
+                )
+                existing_slot["deleted_at_source_seq"] = max(
+                    int(existing_slot.get("deleted_at_source_seq") or 0), tomb_seq
+                )
+            else:
+                suppressed.append(
+                    {
+                        "scope": compact_scope,
+                        "fact_key_hmac": fk_prefix,
+                        "aliases_hmac": alias_prefixes,
+                        "deleted_at": tomb_deleted_at,
+                        "deleted_at_source_seq": tomb_seq,
+                    }
+                )
             folded_total += 1
         if fold_all:
             break
@@ -660,8 +685,18 @@ def compact_for_lifecycle(mem: dict[str, Any]) -> None:
                 if isinstance(binfo, dict):
                     binfo.pop("fenced_message_ids", None)
 
-    if isinstance(mem.get("control_requests"), dict):
-        mem["control_requests"].clear()
+    reqs = mem.get("control_requests")
+    if isinstance(reqs, dict) and len(reqs) > MAX_CONTROL_REQUESTS // 2:
+        keep_reqs = MAX_CONTROL_REQUESTS // 2
+        ordered_reqs = sorted(
+            enumerate(reqs.items()),
+            key=lambda pair: (
+                float(pair[1][1].get("at") or 0.0) if isinstance(pair[1][1], dict) else 0.0,
+                pair[0],
+            ),
+        )
+        for _, (req_id, _) in ordered_reqs[: len(reqs) - keep_reqs]:
+            reqs.pop(req_id, None)
     if isinstance(mem.get("processed_sources"), dict) and len(mem["processed_sources"]) > MAX_FENCED_SOURCES // 2:
         keys = list(mem["processed_sources"].keys())
         for k in keys[: len(keys) - MAX_FENCED_SOURCES // 2]:

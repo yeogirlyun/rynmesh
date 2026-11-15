@@ -1164,9 +1164,9 @@ def test_s09_i25_300_consecutive_deletions_fold_tombstones_preserve_suppression_
         mem = data["memory"]
         assert len(mem["tombstones"]) <= memory.MAX_TOMBSTONES
         assert len(mem.get("suppressed_slots") or []) > 0
-        # Verify folded items only keep compact scope + 16-hex prefixes + deleted_at (no source_fences)
+        # Verify folded items only keep compact scope + 16-hex prefixes + deleted_at + deleted_at_source_seq (no source_fences)
         sample_folded = mem["suppressed_slots"][0]
-        assert set(sample_folded.keys()) <= {"scope", "fact_key_hmac", "aliases_hmac", "deleted_at"}
+        assert set(sample_folded.keys()) <= {"scope", "fact_key_hmac", "aliases_hmac", "deleted_at", "deleted_at_source_seq"}
         assert "source_fences" not in sample_folded
         assert set(sample_folded["scope"].keys()) == {"kind", "project_id"}
         assert len(sample_folded["fact_key_hmac"]) == 16

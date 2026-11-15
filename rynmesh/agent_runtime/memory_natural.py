@@ -1029,24 +1029,43 @@ def _matching_tombstones_for_slot(
     text: str,
 ) -> list[dict[str, Any]]:
     """Return only tombstones matching the target scope and either fact_key HMAC or text HMAC."""
-    tombstones = mem.get("tombstones")
-    if not isinstance(tombstones, dict):
-        return []
     fk_hmac = memory._slot_hmac(mem, job_scope, fact_key, mutate=False) if fact_key else ""
     txt_hmac = memory._slot_hmac(mem, job_scope, text, mutate=False) if text else ""
     matched: list[dict[str, Any]] = []
-    for tomb in tombstones.values():
-        if not isinstance(tomb, dict):
-            continue
-        if tomb.get("suppression_mode") != "block_background_relearn_until_explicit_owner_restore":
-            continue
-        tomb_scope = tomb.get("scope") if isinstance(tomb.get("scope"), dict) else {}
-        if not memory._scopes_equal(tomb_scope, job_scope):
-            continue
-        tomb_fk = str(tomb.get("fact_key_hmac") or "")
-        tomb_aliases = tomb.get("aliases_hmac") if isinstance(tomb.get("aliases_hmac"), list) else []
-        if (fk_hmac and (tomb_fk == fk_hmac or fk_hmac in tomb_aliases)) or (txt_hmac and txt_hmac in tomb_aliases):
-            matched.append(tomb)
+    tombstones = mem.get("tombstones")
+    if isinstance(tombstones, dict):
+        for tomb in tombstones.values():
+            if not isinstance(tomb, dict):
+                continue
+            if tomb.get("suppression_mode") != "block_background_relearn_until_explicit_owner_restore":
+                continue
+            tomb_scope = tomb.get("scope") if isinstance(tomb.get("scope"), dict) else {}
+            if not memory._scopes_equal(tomb_scope, job_scope):
+                continue
+            tomb_fk = str(tomb.get("fact_key_hmac") or "")
+            tomb_aliases = tomb.get("aliases_hmac") if isinstance(tomb.get("aliases_hmac"), list) else []
+            if (fk_hmac and (tomb_fk == fk_hmac or fk_hmac in tomb_aliases)) or (txt_hmac and txt_hmac in tomb_aliases):
+                matched.append(tomb)
+    if not matched:
+        suppressed = mem.get("suppressed_slots")
+        if isinstance(suppressed, list) and suppressed:
+            fk_prefix = fk_hmac[:16]
+            txt_prefix = txt_hmac[:16]
+            max_seq: int | None = None
+            for item in suppressed:
+                if not isinstance(item, dict):
+                    continue
+                if not memory._suppressed_scope_matches(item.get("scope"), job_scope):
+                    continue
+                item_fk = str(item.get("fact_key_hmac") or "")
+                item_aliases = item.get("aliases_hmac") if isinstance(item.get("aliases_hmac"), list) else []
+                if (fk_prefix and (item_fk == fk_prefix or fk_prefix in item_aliases)) or (
+                    txt_prefix and txt_prefix in item_aliases
+                ):
+                    seq_val = int(item.get("deleted_at_source_seq") or 0)
+                    max_seq = seq_val if max_seq is None else max(max_seq, seq_val)
+            if max_seq is not None:
+                matched.append({"deleted_at_source_seq": max_seq})
     return matched
 
 
