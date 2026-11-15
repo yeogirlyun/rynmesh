@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import atexit
+import codecs
+import collections
 import math
 import os
 import shutil
@@ -17,11 +19,107 @@ from .local_pty import COMPLETED, ConPtyProcess, check_pty_support, validate_siz
 from .local_pty import terminate_session as terminate
 from .store import AgentToolRejected
 
-MAX_OUTPUT = 512 * 1024
+HEAD_KEEP_CHARS = 512 * 1024
+TAIL_KEEP_CHARS = 512 * 1024
 PAGE_CHARS = 6000
 HEAD_CHARS = 2000
 DEFAULT_READ_WAIT = 10
 MAX_READ_WAIT = 20
+
+
+def _append_output(item: dict, text: str) -> None:
+    if not text:
+        return
+    item["total_chars"] += len(text)
+    head_keep = HEAD_KEEP_CHARS
+    tail_keep = TAIL_KEEP_CHARS
+    head_room = max(0, head_keep - len(item["head"]))
+    if head_room > 0:
+        take = min(head_room, len(text))
+        item["head"] += text[:take]
+        text = text[take:]
+    if not text:
+        return
+    tail = item["tail"]
+    tail_chars = item.get("tail_chars", 0)
+    if tail_keep <= 0:
+        if tail_chars:
+            tail.clear()
+            item["tail_chars"] = 0
+            item["dropped_chars"] += tail_chars
+        item["dropped_chars"] += len(text)
+        return
+    if len(text) >= tail_keep:
+        item["dropped_chars"] += tail_chars + (len(text) - tail_keep)
+        tail.clear()
+        tail.append(text[-tail_keep:])
+        item["tail_chars"] = tail_keep
+        return
+    tail.append(text)
+    tail_chars += len(text)
+    while tail_chars > tail_keep:
+        excess = tail_chars - tail_keep
+        oldest = tail[0]
+        if len(oldest) <= excess:
+            tail.popleft()
+            tail_chars -= len(oldest)
+            item["dropped_chars"] += len(oldest)
+        else:
+            tail[0] = oldest[excess:]
+            tail_chars -= excess
+            item["dropped_chars"] += excess
+    item["tail_chars"] = tail_chars
+
+
+def _slice_tail(item: dict, rel_start: int, rel_end: int) -> str:
+    if rel_start >= rel_end:
+        return ""
+    tail = item["tail"]
+    tail_chars = item.get("tail_chars", 0)
+    rel_start = max(0, rel_start)
+    rel_end = min(tail_chars, rel_end)
+    if rel_start >= rel_end:
+        return ""
+    if rel_start > tail_chars // 2:
+        pos = tail_chars
+        parts = []
+        for chunk in reversed(tail):
+            chunk_start = pos - len(chunk)
+            if chunk_start < rel_end:
+                s = max(0, rel_start - chunk_start)
+                e = min(len(chunk), rel_end - chunk_start)
+                parts.append(chunk[s:e])
+                if chunk_start <= rel_start:
+                    break
+            pos = chunk_start
+        parts.reverse()
+        return "".join(parts)
+    pos = 0
+    parts = []
+    for chunk in tail:
+        chunk_end = pos + len(chunk)
+        if chunk_end > rel_start:
+            s = max(0, rel_start - pos)
+            e = min(len(chunk), rel_end - pos)
+            parts.append(chunk[s:e])
+            if chunk_end >= rel_end:
+                break
+        pos = chunk_end
+    return "".join(parts)
+
+
+def _read_contiguous(item: dict, start: int, end: int) -> str:
+    if start >= end:
+        return ""
+    head = item["head"]
+    head_end = len(head)
+    tail_start = head_end + item["dropped_chars"]
+    parts = []
+    if start < head_end:
+        parts.append(head[start:min(head_end, end)])
+    if end > tail_start:
+        parts.append(_slice_tail(item, max(0, start - tail_start), end - tail_start))
+    return "".join(parts)
 
 
 class AgentProcessStartRejected(AgentToolRejected):
@@ -142,21 +240,39 @@ class Processes:
                     process.wait(timeout=5)
                     raise
             ident = "process_" + uuid.uuid4().hex
-            item = {"process": process, "task_id": task_id, "operation_id": operation_id, "output": bytearray(),
-                    "truncated": False, "reason": None, "reader_done": threading.Event(),
+            decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+            item = {"process": process, "task_id": task_id, "operation_id": operation_id,
+                    "head": "", "tail": collections.deque(), "tail_chars": 0,
+                    "total_chars": 0, "dropped_chars": 0, "decoder": decoder,
+                    "reason": None, "reader_done": threading.Event(),
                     "last_empty_offset": None, "empty_poll_count": 0, "tty": tty,
                     "input_lock": None if tty else threading.Lock(), "stdin_closed": False, "cleanup_done": threading.Event()}
             self.items[ident] = item
 
         def read():
+            flushed_done = False
             try:
                 while chunk := (process.read_output() if tty else os.read(process.stdout.fileno(), 8192)):
+                    text = item["decoder"].decode(chunk, final=False)
+                    if text:
+                        with self.changed:
+                            _append_output(item, text)
+                            self.changed.notify_all()
+                flushed = item["decoder"].decode(b"", final=True)
+                flushed_done = True
+                if flushed:
                     with self.changed:
-                        room = max(0, MAX_OUTPUT - len(item["output"]))
-                        item["output"].extend(chunk[:room])
-                        item["truncated"] |= len(chunk) > room
+                        _append_output(item, flushed)
                         self.changed.notify_all()
             finally:
+                if not flushed_done:
+                    try:
+                        flushed = item["decoder"].decode(b"", final=True)
+                    except Exception:
+                        flushed = ""
+                    if flushed:
+                        with self.changed:
+                            _append_output(item, flushed)
                 if not tty:
                     process.stdout.close()
                 elif item["cleanup_done"].wait(5):
@@ -263,10 +379,16 @@ class Processes:
             return item
 
     def read(self, ident, task_id, offset=0, *, wait_seconds=DEFAULT_READ_WAIT, cancelled=None,
-             coalesce_empty_poll=False):
+             coalesce_empty_poll=False, tail=False):
         if (type(wait_seconds) not in {int, float} or not math.isfinite(wait_seconds)
                 or not 0 <= wait_seconds <= MAX_READ_WAIT):
             raise AgentToolRejected("agent_invalid_process_wait")
+        if type(tail) is not bool or type(offset) is not int:
+            raise AgentToolRejected("agent_invalid_process_offset")
+        if tail:
+            if offset not in (0, -1):
+                raise AgentToolRejected("agent_invalid_process_offset")
+            offset = -1
         item = self.get(ident, task_id)
         effective_wait = float(wait_seconds)
         if coalesce_empty_poll and item.get("last_empty_offset") == offset and effective_wait < 1.0:
@@ -278,20 +400,46 @@ class Processes:
             if cancelled is not None and cancelled():
                 raise AgentToolRejected("agent_cancelled")
             with self.changed:
-                output = bytes(item["output"]).decode("utf-8", errors="replace")
-                if type(offset) is not int or not 0 <= offset <= len(output):
+                total_chars = item["total_chars"]
+                if offset < -1 or offset > total_chars:
                     raise AgentToolRejected("agent_invalid_process_offset")
                 running = item["process"].poll() is None
                 remaining = deadline - time.monotonic()
-                if (offset < len(output) and running) or (not running and item["reader_done"].is_set()) or remaining <= 0:
-                    end = min(len(output), offset + PAGE_CHARS)
-                    text = output[offset:end]
-                    if offset == 0 and not running and len(output) > PAGE_CHARS:
+                has_unread = (total_chars > 0) if offset == -1 else (offset < total_chars)
+                if (has_unread and running) or (not running and item["reader_done"].is_set()) or remaining <= 0:
+                    head = item["head"]
+                    head_end = len(head)
+                    dropped = item["dropped_chars"]
+                    tail_start = head_end + dropped
+                    if offset == -1:
+                        min_start = tail_start if dropped > 0 else 0
+                        start = max(min_start, total_chars - PAGE_CHARS)
+                        end = total_chars
+                        text = _read_contiguous(item, start, end)
+                    elif offset == 0 and not running and total_chars > PAGE_CHARS and (dropped == 0 or head_end > 0):
                         # Failures and summaries are usually at the end of a finished
                         # command: show its head and tail; the middle stays pageable.
-                        end, tail = HEAD_CHARS, len(output) - (PAGE_CHARS - HEAD_CHARS)
-                        text = (output[:end] + f"\n... [{tail - end} characters omitted; ryn_process_read offset={end} reads them] ...\n"
-                                + output[tail:])
+                        if dropped == 0:
+                            end = min(HEAD_CHARS, total_chars)
+                            head_part = _read_contiguous(item, 0, end)
+                            tail_pos = max(end, total_chars - (PAGE_CHARS - len(head_part)))
+                        else:
+                            end = min(HEAD_CHARS, head_end)
+                            head_part = head[:end]
+                            tail_pos = max(tail_start, total_chars - (PAGE_CHARS - len(head_part)))
+                        tail_part = _read_contiguous(item, tail_pos, total_chars)
+                        text = (head_part
+                                + f"\n... [{tail_pos - end} characters omitted; ryn_process_read offset={end} reads them] ...\n"
+                                + tail_part)
+                    elif dropped > 0 and offset < head_end:
+                        end = min(head_end, offset + PAGE_CHARS)
+                        text = head[offset:end]
+                    elif dropped > 0 and offset < tail_start:
+                        end = tail_start
+                        text = f"[{tail_start - offset} characters dropped]\n"
+                    else:
+                        end = min(total_chars, offset + PAGE_CHARS)
+                        text = _read_contiguous(item, offset, end)
                     exit_code = item["process"].poll()
                     stop_reason = item["reason"] or (
                         None if running else ("exited" if exit_code == 0 else "exited_nonzero" if exit_code is not None else "terminated")
@@ -308,8 +456,8 @@ class Processes:
                             item["empty_poll_count"] = 0
                     payload = {"process_id": ident, "running": running,
                                "exit_code": exit_code, "output": text,
-                               "next_offset": end if end < len(output) else None, "output_length": len(output),
-                               "truncated": item["truncated"], "stop_reason": stop_reason,
+                               "next_offset": end if end < total_chars else None, "output_length": total_chars,
+                               "dropped_chars": dropped, "truncated": dropped > 0, "stop_reason": stop_reason,
                                "empty_poll_count": int(item.get("empty_poll_count", 0))}
                     if item.get("tty"):
                         payload.update(tty=True, terminal_backend=item["process"].backend,
