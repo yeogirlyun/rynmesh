@@ -37,8 +37,8 @@ const HELP: Record<string, ErrorHelp> = {
     en: "The selected model is unavailable right now (offline or removed). Pick another model or check the model sources.",
     actions: ["switch_model", "open_sources"] },
   agent_model_connection_failed: {
-    zh: "连不上模型服务。请检查网络或模型来源后重试。",
-    en: "Could not reach the model service. Check the network or model source, then retry.",
+    zh: "连不上模型服务。请检查网络或模型来源后重试；终端能用而 Ryn 不能用时，检查代理设置。",
+    en: "Could not reach the model service. Check the network or model source, then retry; if it works in your terminal but not in Ryn, check proxy settings.",
     actions: ["retry", "switch_model", "open_sources"] },
   agent_inference_timeout: {
     zh: "模型长时间没有回应。可以重试，或换一个更快的模型。",

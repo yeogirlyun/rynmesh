@@ -16,16 +16,30 @@ import threading
 import time
 import uuid
 from collections import deque
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from functools import lru_cache
 from pathlib import Path
 
-from . import codex_threads
+import rynmesh
+
+from . import codex_threads, process_guard
 from .adapters import AdapterError
 from .chat import reported_token_count, validate_tool_arguments
 from .process_guard import spawn, terminate
 from .reasoning import metadata as reasoning_metadata
 from .safety import MAX_OUTPUT, MAX_TEMP, check_disk, private_storage_bytes
+
+STORAGE_CHECK_INTERVAL = getattr(process_guard, "STORAGE_CHECK_INTERVAL", 1.0)
+_PROXY_ENV_KEYS = frozenset({"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"})
+
+
+def _proxy_configured(environ=None) -> bool:
+    source = os.environ if environ is None else environ
+    return any(
+        isinstance(key, str) and key.upper() in _PROXY_ENV_KEYS
+        and isinstance(value, str) and bool(value.strip())
+        for key, value in source.items()
+    )
 
 
 def cleanup_stale_workspaces(base: Path):
@@ -121,7 +135,9 @@ skip_host_skill_discovery = true
             config = config.replace("code_mode_host = false", "code_mode_host = true")
         (home / "config.toml").write_text(config, encoding="utf-8")
         keep = {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "LANG", "LC_ALL",
-                "OPENAI_API_KEY", "SSL_CERT_FILE", "SSL_CERT_DIR"}
+                "OPENAI_API_KEY", "SSL_CERT_FILE", "SSL_CERT_DIR",
+                "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+                "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE"}
         env = {k: v for k, v in os.environ.items() if k.upper() in keep}
         env.update(CODEX_HOME=str(home), HOME=directory, USERPROFILE=directory,
                    TMP=directory, TEMP=directory, TMPDIR=directory,
@@ -165,7 +181,10 @@ class CodexRPC:
     cancelled = None
     output_bytes = 0
     _delta_signalled = False
-    _checked_at = 0.0
+    deadline: float | None = None
+    _storage_error: BaseException | None = None
+    proxy_configured = False
+    omitted_attachments = 0
     stage = "init"
     session_mode = "stateless"
     events_received = 0
@@ -179,6 +198,9 @@ class CodexRPC:
         self.output_limit = 40 * 1024 * 1024 if image_generation else MAX_OUTPUT
         self.cancelled = cancelled
         self.root, env = self.workspace.__enter__()
+        self.proxy_configured = _proxy_configured(env)
+        self.omitted_attachments = 0
+        self._storage_error = None
         try:
             self.process = spawn([executable, "app-server", "--stdio", "--strict-config"],
                                  cwd=str(self.root), env=env, timeout=cpu_seconds or timeout)
@@ -186,8 +208,8 @@ class CodexRPC:
             self.workspace.__exit__(None, None, None)
             raise
         self.deadline = time.monotonic() + timeout
-        self.queue = queue.Queue(maxsize=256)
-        self.pending = deque(maxlen=256)
+        self.queue = queue.Queue(maxsize=4096)
+        self.pending = deque(maxlen=4096)
         self.deltas = []
         self.delta_lock = threading.Lock()
         self.sequence = 0
@@ -198,25 +220,66 @@ class CodexRPC:
         self.events_received = 0
         self.deltas_received = 0
         self.last_event_at = None
+        self.storage_watcher = threading.Thread(target=self._watch_storage, daemon=True)
+        self.storage_watcher.start()
         self.reader = threading.Thread(target=self._read, daemon=True)
         self.reader.start()
 
     def diagnostics(self) -> dict:
         now_mono = time.monotonic()
         last_at = self.last_event_at
-        return {
+        diag = {
             "rpc_stage": self.stage,
             "session_mode": self.session_mode,
             "events_received": self.events_received,
             "deltas_received": self.deltas_received,
             "last_event_age_seconds": round(max(0.0, now_mono - last_at), 3) if last_at is not None else None,
             "process_alive": self.process.poll() is None,
+            "proxy_configured": bool(self.proxy_configured),
         }
+        if self.omitted_attachments > 0:
+            diag["omitted_attachments"] = int(self.omitted_attachments)
+        return diag
 
     def _raise_with_diagnostics(self, message: str, *, code: str | None = None):
         err = AdapterError(message, code=code) if code is not None else AdapterError(message)
         err.diagnostics = self.diagnostics()
         raise err
+
+    def _enqueue(self, item) -> bool:
+        while not self.closed.is_set():
+            deadline = self.deadline
+            remaining = 1.0 if deadline is None else (deadline - time.monotonic())
+            if remaining <= 0:
+                raise queue.Full
+            try:
+                self.queue.put(item, timeout=min(0.1, remaining))
+                return True
+            except queue.Full:
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise
+        return False
+
+    def _watch_storage(self):
+        while not self.closed.wait(max(0.01, float(STORAGE_CHECK_INTERVAL))):
+            try:
+                check_disk(self.root)
+                if private_storage_bytes(self.root) > MAX_TEMP:
+                    self.failure = "CLI temporary storage limit exceeded"
+                else:
+                    continue
+            except BaseException as exc:
+                self._storage_error = exc
+            terminate(self.process)
+            with suppress(queue.Full):
+                self.queue.put_nowait(None)
+            break
+
+    def _check_storage_failure(self):
+        if self._storage_error is not None:
+            raise self._storage_error
+        if self.failure:
+            self._raise_with_diagnostics(self.failure)
 
     def _read(self):
         try:
@@ -232,10 +295,8 @@ class CodexRPC:
                 self.last_event_at = time.monotonic()
                 self.events_received += 1
                 # Queuing every token delta can overwhelm the bounded queue while
-                # receive() checks disk and private storage, notably in the
-                # installed Windows build during large tool proposals. A streaming
-                # turn buffers assistant text beside the queue and queues at most
-                # one wake-up signal; the caller thread forwards it.
+                # a streaming turn buffers assistant text beside the queue and
+                # queues at most one wake-up signal; the caller thread forwards it.
                 # Preserve ALL requests/responses and execution-boundary events;
                 # provider tool requests must still be rejected by the caller.
                 if isinstance(value, dict) and "id" not in value:
@@ -245,13 +306,14 @@ class CodexRPC:
                         with self.delta_lock:
                             self.deltas.append(value["params"])
                             signal, self._delta_signalled = not self._delta_signalled, True
-                        if signal:
-                            self.queue.put(DELTA_SIGNAL, timeout=1)
+                        if signal and not self._enqueue(DELTA_SIGNAL):
+                            break
                         continue
                     if method not in {"item/started", "item/completed",
                                       "thread/tokenUsage/updated", "turn/completed", "error"}:
                         continue
-                self.queue.put(value, timeout=1)
+                if not self._enqueue(value):
+                    break
         except (ValueError, OSError, queue.Full):
             self.failure = "CLI protocol output invalid or excessive"
         finally:
@@ -284,21 +346,14 @@ class CodexRPC:
         while True:
             if self.cancelled and self.cancelled():
                 self._raise_with_diagnostics("Image generation cancelled", code="cancelled")
-            if self.failure:
-                self._raise_with_diagnostics(self.failure)
+            self._check_storage_failure()
             if time.monotonic() >= self.deadline:
                 self._raise_with_diagnostics("Codex app-server timed out", code="inference_timeout")
-            # Walking private storage per streamed event would dominate a turn.
-            if time.monotonic() - self._checked_at >= 0.25:
-                check_disk(self.root)
-                size = private_storage_bytes(self.root)
-                if size > MAX_TEMP:
-                    self._raise_with_diagnostics("CLI temporary storage limit exceeded")
-                self._checked_at = time.monotonic()
             try:
                 value = self.queue.get(timeout=min(0.25, max(0.01, self.deadline - time.monotonic())))
             except queue.Empty:
                 continue
+            self._check_storage_failure()
             if value is None:
                 self._raise_with_diagnostics("Codex app-server disconnected", code="runtime_connection_failed")
             if not isinstance(value, dict):
@@ -329,7 +384,7 @@ class CodexRPC:
 
     def initialize(self):
         self.stage = "initialize"
-        self.call("initialize", {"clientInfo": {"name": "rynmesh", "version": "0.6.2"},
+        self.call("initialize", {"clientInfo": {"name": "rynmesh", "version": rynmesh.__version__},
                                  "capabilities": {"experimentalApi": True}})
         self.send({"method": "initialized"})
 
@@ -347,8 +402,8 @@ class CodexRPC:
         return measured if measured is not None else estimate
 
     def alive(self) -> bool:
-        return (not self.closed.is_set() and not self.failure and self.reader.is_alive()
-                and self.process.poll() is None)
+        return (not self.closed.is_set() and not self.failure and self._storage_error is None
+                and self.reader.is_alive() and self.process.poll() is None)
 
     def settle(self) -> bool:
         """Drop an idle thread's stale notifications; any server request voids it."""
@@ -376,6 +431,8 @@ class CodexRPC:
     def close(self):
         self.closed.set()
         terminate(self.process)
+        if hasattr(self, "storage_watcher"):
+            self.storage_watcher.join(timeout=2)
         self.reader.join(timeout=2)
         for pipe in (self.process.stdin, self.process.stdout):
             try:
@@ -547,7 +604,7 @@ def _start_thread(rpc, *, model, dynamic, instructions):
     return session["thread"]["id"]
 
 
-def _prompt(body, output_schema, choice):
+def _prompt_with_omitted(body, output_schema, choice) -> tuple[str, int]:
     # Structured client-tool proposals already contain the complete role
     # transcript, schemas and tool_choice in their trusted framing. Wrapping
     # that single user string in another JSON envelope double-escapes every
@@ -555,9 +612,15 @@ def _prompt(body, output_schema, choice):
     messages = body["messages"]
     if ((output_schema is not None or body.get("_client_proposals")) and len(messages) == 1
             and messages[0].get("role") == "user" and isinstance(messages[0].get("content"), str)):
-        return messages[0]["content"]
+        return messages[0]["content"], 0
     from .cli_images import text_messages
-    return json.dumps({"messages": text_messages(messages), "tool_choice": choice}, ensure_ascii=False)
+    projected = text_messages(messages)
+    return json.dumps({"messages": projected, "tool_choice": choice}, ensure_ascii=False), projected.omitted_count
+
+
+def _prompt(body, output_schema, choice):
+    prompt, _ = _prompt_with_omitted(body, output_schema, choice)
+    return prompt
 
 
 def _raise_rpc_error(rpc, message: str, *, code: str | None = None):
@@ -686,6 +749,7 @@ def _stateless_chat(adapter, body, *, task_id, timeout_s, model="", output_schem
     choice, names, schemas, dynamic = _client_tools(body)
     rpc = CodexRPC(adapter._command_path(), timeout_s)
     rpc.session_mode = "stateless"
+    rpc.omitted_attachments = 0
     with adapter._lock:
         adapter._running[task_id] = rpc.process
         cancelled = task_id in adapter._cancelled
@@ -694,12 +758,16 @@ def _stateless_chat(adapter, body, *, task_id, timeout_s, model="", output_schem
             raise AdapterError("task_cancelled")
         rpc.initialize()
         thread_id = _start_thread(rpc, model=model, dynamic=dynamic, instructions=_instructions(body, output_schema))
-        prompt = _prompt(body, output_schema, choice)
+        prompt, omitted = _prompt_with_omitted(body, output_schema, choice)
+        rpc.omitted_attachments = omitted
         answer, usage, calls = _turn(rpc, thread_id, body, prompt, deadline=started + timeout_s,
                                      output_schema=output_schema, names=names, schemas=schemas, on_text=on_text)
-        return _result(answer, usage, calls, choice, prompt, started)
+        result = _result(answer, usage, calls, choice, prompt, started)
+        if omitted > 0:
+            result["diagnostics"] = {**(result.get("diagnostics") or {}), "omitted_attachments": omitted}
+        return result
     except AdapterError as exc:
-        if not getattr(exc, "diagnostics", None):
+        if not getattr(exc, "diagnostics", None) and hasattr(rpc, "diagnostics"):
             exc.diagnostics = rpc.diagnostics()
         raise
     finally:
@@ -729,6 +797,7 @@ def _pooled_chat(adapter, body, conversation, *, task_id, timeout_s, model, outp
         session = pool.session(CodexRPC(command, timeout_s, codex_threads.SESSION_CPU_SECONDS), key)
     rpc = session.rpc
     rpc.session_mode = "resumed" if resumed else "started"
+    rpc.omitted_attachments = 0
     with adapter._lock:
         adapter._running[task_id] = rpc.process
         cancelled = task_id in adapter._cancelled
@@ -737,6 +806,7 @@ def _pooled_chat(adapter, body, conversation, *, task_id, timeout_s, model, outp
         if cancelled:
             raise AdapterError("task_cancelled")
         turn_body = body
+        omitted = 0
         if resumed:
             prompt = conversation.render(conversation.update)
             from .cli_images import image_inputs
@@ -745,7 +815,8 @@ def _pooled_chat(adapter, body, conversation, *, task_id, timeout_s, model, outp
             rpc.initialize()
             session.thread_id = _start_thread(rpc, model=model, dynamic=[],
                                               instructions=_instructions(body, output_schema, persistent=True))
-            prompt = _prompt(body, output_schema, "auto")
+            prompt, omitted = _prompt_with_omitted(body, output_schema, "auto")
+            rpc.omitted_attachments = omitted
         turn_started = time.monotonic()
         try:
             answer, usage, calls = _turn(rpc, session.thread_id, turn_body, prompt, deadline=deadline,
@@ -754,11 +825,13 @@ def _pooled_chat(adapter, body, conversation, *, task_id, timeout_s, model, outp
             session.busy_seconds += time.monotonic() - turn_started
         session.turns += 1
         result = _result(answer, usage, calls, "auto", prompt, started)
+        if omitted > 0:
+            result["diagnostics"] = {**(result.get("diagnostics") or {}), "omitted_attachments": omitted}
         conversation.session = session
         pool.stats["resumed" if resumed else "started"] += 1
         return result
     except AdapterError as exc:
-        if not getattr(exc, "diagnostics", None):
+        if not getattr(exc, "diagnostics", None) and hasattr(rpc, "diagnostics"):
             exc.diagnostics = rpc.diagnostics()
         session.close()
         with adapter._lock:

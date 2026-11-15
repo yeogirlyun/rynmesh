@@ -72,16 +72,17 @@ def safe_diagnostics(raw) -> dict:
         val = raw.get(key)
         if isinstance(val, str) and _SAFE_ENUM.fullmatch(val):
             out[key] = val
-    for key in ("events_received", "deltas_received"):
+    for key in ("events_received", "deltas_received", "omitted_attachments"):
         val = raw.get(key)
         if type(val) is int and val >= 0:
             out[key] = val
     age = raw.get("last_event_age_seconds")
     if type(age) in (int, float) and age >= 0:
         out["last_event_age_seconds"] = round(float(age), 3)
-    alive = raw.get("process_alive")
-    if isinstance(alive, bool):
-        out["process_alive"] = alive
+    for key in ("process_alive", "proxy_configured"):
+        flag = raw.get(key)
+        if isinstance(flag, bool):
+            out[key] = flag
     from ..llm_package.transport_failure import REASONS
     if isinstance(raw.get("network_reason"), str) and raw["network_reason"] in REASONS:
         out["network_reason"] = raw["network_reason"]
