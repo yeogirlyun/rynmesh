@@ -30,13 +30,16 @@ from .mcp_oauth import (
     parse_auth_challenge,
 )
 from .store import (
+    COMPUTER_USE_PLUGIN_ID,
     COMPUTER_USE_SERVER_ID,
     DEFAULT_STARTUP_TIMEOUT_MS,
     DEFAULT_TOOL_TIMEOUT_MS,
+    EXTENSION_ID_RE,
     MAX_STARTUP_TIMEOUT_MS,
     MAX_TOOL_TIMEOUT_MS,
     ExtensionStore,
     _canon_sha256,
+    _slugify,
 )
 
 # A remote plugin can add tools at any time (for example a new company data
@@ -229,10 +232,29 @@ class McpTransportError(AgentError):
         )
 
 
+_STDIO_CA_FILE_VARS = frozenset(
+    {"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"}
+)
+
+
+def _host_env_case_insensitive(name: str) -> str | None:
+    target = name.upper()
+    for key, val in os.environ.items():
+        if key.upper() == target and val:
+            return val
+    return None
+
+
 def _stdio_environment(
     private_dir: str,
     secret_env: dict[str, str] | None,
     env_vars: list[str] | None = None,
+    *,
+    home_dir: str | None = None,
+    cache_dir: str | None = None,
+    inherit_user_home: bool = False,
+    plugin_root: str | None = None,
+    plugin_data: str | None = None,
 ) -> dict[str, str]:
     keep = {
         "PATH",
@@ -245,19 +267,76 @@ def _stdio_environment(
         "PYTHONPATH",
         "VIRTUAL_ENV",
         "SYSTEMDRIVE",
+        "USERNAME",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "TERM",
+        "TZ",
+        "PROGRAMFILES",
+        "PROGRAMFILES(X86)",
+        "PROGRAMDATA",
+        "ALLUSERSPROFILE",
+        "NUMBER_OF_PROCESSORS",
+        "PROCESSOR_ARCHITECTURE",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "ALL_PROXY",
+        "NODE_PATH",
     }
-    env = {key: value for key, value in os.environ.items() if key.upper() in keep}
+    env: dict[str, str] = {}
+    for key, value in os.environ.items():
+        upper = key.upper()
+        if upper in keep:
+            env[key] = value
+        elif upper in _STDIO_CA_FILE_VARS and value.strip():
+            env[key] = os.path.abspath(os.path.expanduser(value.strip()))
+        elif upper == "SSL_CERT_DIR" and value.strip():
+            parts = [
+                os.path.abspath(os.path.expanduser(p.strip()))
+                for p in value.split(os.pathsep)
+                if p.strip()
+            ]
+            if parts:
+                env[key] = os.pathsep.join(parts)
+
+    if inherit_user_home:
+        real_home = (
+            _host_env_case_insensitive("HOME")
+            or _host_env_case_insensitive("USERPROFILE")
+            or str(Path.home())
+        )
+        real_profile = _host_env_case_insensitive("USERPROFILE") or real_home
+        real_appdata = _host_env_case_insensitive("APPDATA") or real_home
+        real_localappdata = _host_env_case_insensitive("LOCALAPPDATA") or real_home
+        env.update(
+            HOME=real_home,
+            USERPROFILE=real_profile,
+            APPDATA=real_appdata,
+            LOCALAPPDATA=real_localappdata,
+        )
+    else:
+        effective_home = home_dir or private_dir
+        env.update(
+            HOME=effective_home,
+            USERPROFILE=effective_home,
+            APPDATA=effective_home,
+            LOCALAPPDATA=effective_home,
+        )
+
     env.update(
-        HOME=private_dir,
-        USERPROFILE=private_dir,
-        APPDATA=private_dir,
-        LOCALAPPDATA=private_dir,
         TMP=private_dir,
         TEMP=private_dir,
         TMPDIR=private_dir,
         PYTHONIOENCODING="utf-8",
         PYTHONUTF8="1",
     )
+    if cache_dir:
+        env["npm_config_cache"] = cache_dir
+        env["UV_CACHE_DIR"] = cache_dir
+        env["PIP_CACHE_DIR"] = cache_dir
+
     if isinstance(env_vars, list):
         for var_name in env_vars:
             if isinstance(var_name, str) and var_name in os.environ:
@@ -266,6 +345,18 @@ def _stdio_environment(
         for k, v in secret_env.items():
             if isinstance(k, str) and k and v is not None:
                 env[k] = str(v)
+
+    if plugin_root is not None or plugin_data is not None:
+        protected = {
+            *(["PLUGIN_ROOT"] if plugin_root is not None else []),
+            *(["PLUGIN_DATA"] if plugin_data is not None else []),
+        }
+        for existing_key in [ek for ek in env if ek.upper() in protected]:
+            env.pop(existing_key, None)
+        if plugin_root is not None:
+            env["PLUGIN_ROOT"] = plugin_root
+        if plugin_data is not None:
+            env["PLUGIN_DATA"] = plugin_data
     return env
 
 
@@ -323,6 +414,7 @@ class StdioMcpSession:
         server: dict[str, Any],
         *,
         fallback_cwd: str | Path,
+        store_root: str | Path | None = None,
         cancelled: Callable[[], bool] = lambda: False,
     ) -> None:
         self.server_id = str(server["id"])
@@ -365,22 +457,84 @@ class StdioMcpSession:
         if self._is_cancelled():
             raise McpTransportError("agent_cancelled", dispatched=False)
 
+        fallback_path = Path(fallback_cwd).resolve()
+        if store_root is not None:
+            root_path = Path(store_root).resolve()
+        elif fallback_path.name == "mcp_runtime":
+            root_path = fallback_path.parent
+        else:
+            root_path = fallback_path
+
+        runtime_dir = (root_path / "mcp_runtime").resolve()
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+
+        safe_sid = (
+            self.server_id
+            if EXTENSION_ID_RE.match(self.server_id)
+            else _slugify(self.server_id, "mcp-server")
+        )
+        cache_dir = (root_path / "mcp_cache" / safe_sid).resolve()
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        inherit_user_home = bool(server.get("inherit_user_home", False))
+        home_dir: Path | None = None
+        if not inherit_user_home:
+            home_dir = (root_path / "mcp_home" / safe_sid).resolve()
+            home_dir.mkdir(parents=True, exist_ok=True)
+
+        plugin_id = str(server.get("plugin_id") or "").strip()
+        is_builtin_plugin = bool(server.get("builtin", False)) or plugin_id == COMPUTER_USE_PLUGIN_ID
+        raw_pkg_dir = server.get("plugin_package_dir") or server.get("package_dir")
+        plugin_root_path = Path(str(raw_pkg_dir)).resolve() if raw_pkg_dir else None
+        plugin_data_path: Path | None = None
+        if plugin_id and not is_builtin_plugin:
+            raw_data_dir = server.get("plugin_data_dir")
+            safe_pid = (
+                plugin_id
+                if EXTENSION_ID_RE.match(plugin_id)
+                else _slugify(plugin_id, "plugin")
+            )
+            plugin_data_path = (
+                Path(str(raw_data_dir)).resolve()
+                if raw_data_dir
+                else (root_path / "plugin_data" / safe_pid).resolve()
+            )
+            plugin_data_path.mkdir(parents=True, exist_ok=True)
+            if plugin_root_path is None and server.get("cwd"):
+                plugin_root_path = Path(str(server["cwd"])).resolve()
+
         cwd_raw = server.get("cwd")
-        cwd_path = Path(cwd_raw).resolve() if cwd_raw else Path(fallback_cwd).resolve()
+        if cwd_raw and str(cwd_raw).strip():
+            cwd_path = Path(str(cwd_raw)).resolve()
+        elif plugin_root_path is not None:
+            cwd_path = plugin_root_path
+        else:
+            cwd_path = fallback_path
         cwd_path.mkdir(parents=True, exist_ok=True)
         exe = _resolve_executable(str(server.get("command") or ""), str(cwd_path))
         args = [exe, *[str(a) for a in (server.get("args") or [])]]
 
         self.private_dir = tempfile.TemporaryDirectory(
-            prefix=".ryn-mcp-", dir=str(cwd_path), ignore_cleanup_errors=True
+            prefix=".ryn-mcp-", dir=str(runtime_dir), ignore_cleanup_errors=True
         )
         env = _stdio_environment(
             self.private_dir.name,
             server.get("secret_env"),
             server.get("env_vars"),
+            home_dir=str(home_dir) if home_dir is not None else None,
+            cache_dir=str(cache_dir),
+            inherit_user_home=inherit_user_home,
+            plugin_root=str(plugin_root_path) if plugin_root_path is not None else None,
+            plugin_data=str(plugin_data_path) if plugin_data_path is not None else None,
         )
         stdio_secrets: list[str] = []
-        for s_val in (server.get("secret_env") or {}).values():
+        for s_key, s_val in (server.get("secret_env") or {}).items():
+            if (
+                plugin_id
+                and not is_builtin_plugin
+                and str(s_key).upper() in {"PLUGIN_ROOT", "PLUGIN_DATA"}
+            ):
+                continue
             if isinstance(s_val, str) and len(s_val.strip()) >= 4:
                 stdio_secrets.append(s_val)
         for env_k in server.get("env_vars") or []:
@@ -1900,7 +2054,12 @@ class McpSessionManager:
         if transport == "streamable_http":
             session = StreamableHttpMcpSession(server, cancelled=cancelled, oauth=self.oauth)
         else:
-            session = StdioMcpSession(server, fallback_cwd=self._fallback_cwd, cancelled=cancelled)
+            session = StdioMcpSession(
+                server,
+                fallback_cwd=self._fallback_cwd,
+                store_root=self.store.root,
+                cancelled=cancelled,
+            )
         session.on_tools_changed = lambda sid=str(server["id"]): self.catalog_changed(sid)  # type: ignore[attr-defined]
         return session
 

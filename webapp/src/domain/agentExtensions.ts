@@ -98,6 +98,7 @@ export interface ExtensionMcpServer {
   deletable: boolean;
   plugin_id: string | null;
   computer_access: boolean;
+  inherit_user_home?: boolean;
   /** Effective state: true only when both component_enabled and parent_enabled are true. */
   enabled: boolean;
   /** Individual server enabled preference (retained even when parent plugin is disabled). */
@@ -363,6 +364,7 @@ export interface ExtensionMcpServerCreateInput {
   startup_timeout_ms?: number;
   tool_timeout_ms?: number;
   computer_access?: boolean;
+  inherit_user_home?: boolean;
   enabled_tools?: string[] | null;
   disabled_tools?: string[];
   read_only_tools?: string[];
@@ -388,6 +390,7 @@ export interface ExtensionMcpServerUpdateInput {
   startup_timeout_ms?: number;
   tool_timeout_ms?: number;
   computer_access?: boolean;
+  inherit_user_home?: boolean;
   enabled_tools?: string[] | null;
   disabled_tools?: string[];
   read_only_tools?: string[];
@@ -761,6 +764,7 @@ export function normalizeMcpServer(raw: Record<string, unknown>): ExtensionMcpSe
     deletable: raw.deletable !== undefined ? Boolean(raw.deletable) : !raw.builtin,
     plugin_id: typeof raw.plugin_id === "string" && raw.plugin_id ? raw.plugin_id : null,
     computer_access: Boolean(raw.computer_access),
+    inherit_user_home: Boolean(raw.inherit_user_home),
     enabled,
     component_enabled: componentEnabled,
     parent_enabled: parentEnabled,

@@ -3211,6 +3211,9 @@ function McpServerFormModal({
   const [computerAccess, setComputerAccess] = useState(
     Boolean(initialServer?.computer_access ?? false),
   );
+  const [inheritUserHome, setInheritUserHome] = useState(
+    Boolean(initialServer?.inherit_user_home ?? false),
+  );
 
   const [envEntries, setEnvEntries] = useState<SecretEntryDraft[]>(() =>
     initialServer
@@ -3275,6 +3278,7 @@ function McpServerFormModal({
     setStartupTimeout(String(srv.startup_timeout_ms));
     setToolTimeout(String(srv.tool_timeout_ms));
     setComputerAccess(Boolean(srv.computer_access));
+    setInheritUserHome(Boolean(srv.inherit_user_home));
   };
 
   const addSecretRow = (kind: "env" | "header") => {
@@ -3456,6 +3460,7 @@ function McpServerFormModal({
           startup_timeout_ms: startupMs,
           tool_timeout_ms: toolMs,
           computer_access: computerAccess,
+          ...(transport === "stdio" ? { inherit_user_home: inheritUserHome } : {}),
           expected_revision: expectedRevision,
         });
       } else {
@@ -3497,6 +3502,7 @@ function McpServerFormModal({
           startup_timeout_ms: startupMs,
           tool_timeout_ms: toolMs,
           computer_access: computerAccess,
+          ...(transport === "stdio" ? { inherit_user_home: inheritUserHome } : {}),
           expected_revision: expectedRevision,
         });
       }
@@ -3621,6 +3627,13 @@ function McpServerFormModal({
           Boolean(base.computer_access),
           Boolean(latest.computer_access),
           setComputerAccess,
+        );
+        rebaseField(
+          "inherit_user_home",
+          inheritUserHome,
+          Boolean(base.inherit_user_home),
+          Boolean(latest.inherit_user_home),
+          setInheritUserHome,
         );
 
         const baseEnvKeys =
@@ -4393,6 +4406,38 @@ function McpServerFormModal({
             )}
           </span>
         </label>
+        {transport === "stdio" ? (
+          <div style={{ marginTop: 8 }}>
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={inheritUserHome}
+                disabled={submitting || replacedOrDeleted}
+                onChange={event => setInheritUserHome(event.target.checked)}
+              />
+              <span>
+                {tx(
+                  "使用本机真实用户主目录 (inherit_user_home)",
+                  "Use real host user home directory (inherit_user_home)",
+                )}
+              </span>
+            </label>
+            <small style={{ display: "block", marginTop: 4, marginLeft: 24, color: "var(--pf-muted)" }}>
+              {tx(
+                "风险提示：默认使用每服务器独立的私有主目录与真实 HOME 隔离；开启后该子进程可直接读写您真实 HOME / APPDATA 下的个人配置与登录凭据。",
+                "Risk: By default each server gets an isolated private home directory; enabling this allows the subprocess to read and write personal configs and credentials under your real HOME / APPDATA.",
+              )}
+            </small>
+          </div>
+        ) : null}
       </details>
     </AccessibleModal>
   );

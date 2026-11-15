@@ -375,6 +375,8 @@ def _mcp_config_fingerprint(server: dict[str, Any]) -> str:
         "data_policy": normalize_policy(server.get("data_policy")),
         "computer_access": bool(server.get("computer_access", False)),
     }
+    if bool(server.get("inherit_user_home", False)):
+        relevant["inherit_user_home"] = True
     return _canon_sha256(relevant)
 
 
@@ -988,6 +990,7 @@ class ExtensionStore:
             "deletable": bool(server.get("deletable", not server.get("builtin", False))),
             "plugin_id": server.get("plugin_id"),
             "computer_access": bool(server.get("computer_access", False)),
+            "inherit_user_home": bool(server.get("inherit_user_home", False)),
             "enabled": effective_enabled,
             "component_enabled": bool(server.get("enabled", False)),
             "parent_enabled": parent_enabled,
@@ -1416,6 +1419,14 @@ class ExtensionStore:
             )
             out["identity_group_id"] = comp["id"] if comp else None
             out["identity_group_origin"] = comp.get("origin") if comp else None
+            plugin_rec = state["plugins"].get(pid) if pid else None
+            pkg_dir = plugin_rec.get("package_dir") if isinstance(plugin_rec, dict) else None
+            out["plugin_package_dir"] = str(pkg_dir) if pkg_dir else None
+            out["plugin_data_dir"] = (
+                str(self.plugin_data_dir(str(pid)))
+                if pid and isinstance(plugin_rec, dict) and not plugin_rec.get("builtin")
+                else None
+            )
             return out
 
     def list_mcp_servers_internal(self, *, include_tools: bool = True) -> list[dict[str, Any]]:
@@ -1439,6 +1450,14 @@ class ExtensionStore:
                 )
                 item["identity_group_id"] = comp["id"] if comp else None
                 item["identity_group_origin"] = comp.get("origin") if comp else None
+                plugin_rec = state["plugins"].get(pid) if pid else None
+                pkg_dir = plugin_rec.get("package_dir") if isinstance(plugin_rec, dict) else None
+                item["plugin_package_dir"] = str(pkg_dir) if pkg_dir else None
+                item["plugin_data_dir"] = (
+                    str(self.plugin_data_dir(str(pid)))
+                    if pid and isinstance(plugin_rec, dict) and not plugin_rec.get("builtin")
+                    else None
+                )
                 result.append(item)
             return result
 
@@ -1465,6 +1484,14 @@ class ExtensionStore:
                     )
                     item["identity_group_id"] = comp["id"] if comp else None
                     item["identity_group_origin"] = comp.get("origin") if comp else None
+                    plugin_rec = state["plugins"].get(pid) if pid else None
+                    pkg_dir = plugin_rec.get("package_dir") if isinstance(plugin_rec, dict) else None
+                    item["plugin_package_dir"] = str(pkg_dir) if pkg_dir else None
+                    item["plugin_data_dir"] = (
+                        str(self.plugin_data_dir(str(pid)))
+                        if pid and isinstance(plugin_rec, dict) and not plugin_rec.get("builtin")
+                        else None
+                    )
                     result.append(item)
             return result
 
@@ -2291,6 +2318,11 @@ class ExtensionStore:
                 if "computer_access" in payload
                 else (existing.get("computer_access", False) if existing else False)
             )
+            inherit_user_home = bool(
+                payload["inherit_user_home"]
+                if "inherit_user_home" in payload
+                else (existing.get("inherit_user_home", False) if existing else False)
+            ) if transport == "stdio" else False
 
             gen = _alloc_generation(state)
             record: dict[str, Any] = {
@@ -2303,6 +2335,7 @@ class ExtensionStore:
                 "deletable": True,
                 "plugin_id": existing.get("plugin_id") if existing else payload.get("plugin_id"),
                 "computer_access": computer_access,
+                "inherit_user_home": inherit_user_home,
                 "enabled": enabled,
                 "explicitly_disabled": not enabled if "enabled" in payload else (
                     existing.get("explicitly_disabled", False) if existing else False
@@ -2403,6 +2436,12 @@ class ExtensionStore:
             record["owner_write_tools"] = sorted(declined - current)
         if "computer_access" in payload and not record.get("builtin"):
             record["computer_access"] = bool(payload["computer_access"])
+        if "inherit_user_home" in payload and not record.get("builtin"):
+            record["inherit_user_home"] = (
+                bool(payload["inherit_user_home"])
+                if record.get("transport", "stdio") == "stdio"
+                else False
+            )
 
     def record_mcp_discovery(
         self,
@@ -2961,6 +3000,7 @@ class ExtensionStore:
                     "deletable": True,
                     "plugin_id": srv.get("plugin_id"),
                     "computer_access": bool(srv.get("computer_access", False)),
+                    "inherit_user_home": False,
                     "enabled": False,
                     "explicitly_disabled": False,
                     "command": srv.get("command"),
@@ -3096,6 +3136,17 @@ class ExtensionStore:
                 "overview": view,
             }
 
+
+    def plugin_data_dir(self, plugin_id: str, *, create: bool = False) -> Path:
+        raw_id = str(plugin_id or "").strip()
+        safe_id = raw_id if EXTENSION_ID_RE.match(raw_id) else _slugify(raw_id, "plugin")
+        base_dir = (self.root / "plugin_data").resolve()
+        dest = (base_dir / safe_id).resolve()
+        if base_dir not in dest.parents:
+            raise AgentError("agent_extension_invalid_package_path")
+        if create:
+            dest.mkdir(parents=True, exist_ok=True)
+        return dest
 
     def allocate_package_dir(self, category: str, item_id: str) -> Path:
         safe_cat = _slugify(category, "pkg")
