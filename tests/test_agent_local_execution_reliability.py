@@ -62,7 +62,7 @@ def test_missing_rg_is_recoverable_before_dispatch_and_does_not_snapshot(local, 
     from rynmesh.agent_runtime import local_processes, workspace_artifacts
     tools, context, _, _ = local
     real_which = local_processes.shutil.which
-    monkeypatch.setattr(local_processes.shutil, "which", lambda name: None if name.lower() in {"rg", "rg.exe"} else real_which(name))
+    monkeypatch.setattr(local_processes.shutil, "which", lambda name, path=None: None if name.lower() in {"rg", "rg.exe"} else real_which(name, path=path))
     monkeypatch.setattr(workspace_artifacts, "snapshot", lambda *_: pytest.fail("read-only rg must not inventory workspace"))
     with pytest.raises(AgentToolRejected, match="agent_ripgrep_unavailable_use_file_search"):
         execute(tools, context, "ryn_shell_execute", {"command": "rg -n 'balance_query' ."}, "missing-rg")
@@ -80,7 +80,7 @@ def test_agent_continues_with_native_search_after_rg_is_missing(node, monkeypatc
     runtime.update_settings({"enabled": True, "model_id": model_id, "workspace_root": str(tmp_path)})
     (tmp_path / "balance.py").write_text("balance_query = 1\n", encoding="utf-8")
     real_which = local_processes.shutil.which
-    monkeypatch.setattr(local_processes.shutil, "which", lambda name: None if name.lower() in {"rg", "rg.exe"} else real_which(name))
+    monkeypatch.setattr(local_processes.shutil, "which", lambda name, path=None: None if name.lower() in {"rg", "rg.exe"} else real_which(name, path=path))
     requests = fake_upstream(monkeypatch, [
         call("ryn_shell_execute", json.dumps({"command": "rg -n balance_query ."}), "rg"),
         call("ryn_file_search", json.dumps({"path": ".", "query": "balance_query"}), "native"),

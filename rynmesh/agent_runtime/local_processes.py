@@ -6,6 +6,7 @@ import codecs
 import collections
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -16,6 +17,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from ..llm_package.process_guard import _windows_job
+from . import login_environment
 from .git_safety import (
     GIT_READONLY_DIFF_FLAGS,
     GIT_READONLY_DIFF_SUBCOMMANDS,
@@ -25,6 +27,21 @@ from .git_safety import (
 from .local_pty import COMPLETED, ConPtyProcess, check_pty_support, validate_size
 from .local_pty import terminate_session as terminate
 from .store import AgentToolRejected
+
+try:
+    import winreg
+except ImportError:
+    winreg = None
+
+_WINDOWS_SYSTEM_ENV_KEY = r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+_WINDOWS_WARMUP_LOCK = threading.Lock()
+_WINDOWS_WARMUP_STARTED = False
+_POWERSHELL_PROFILE_LOCK = threading.Lock()
+_POWERSHELL_PROFILE_DISABLED = False
+POWERSHELL_PROFILE_FALLBACK_NOTICE = (
+    "PowerShell profile failed to load (PSSecurityException); "
+    "switched to -NoProfile for subsequent commands in this process."
+)
 
 HEAD_KEEP_CHARS = 512 * 1024
 TAIL_KEEP_CHARS = 512 * 1024
@@ -158,24 +175,122 @@ def _bundled_rg_executable() -> str | None:
     return None
 
 
-def resolve_rg_executable() -> str | None:
-    """Resolve bundled ripgrep binary first, falling back to system PATH."""
+def _which(name: str, path: str | None = None) -> str | None:
+    return shutil.which(name, path=path) if path is not None else shutil.which(name)
+
+
+_PS_PROFILE_PATH_RE = re.compile(r"(?:^|[\\/ _])profile\.ps1\b", re.IGNORECASE)
+
+
+def _is_powershell_profile_security_error(head_text: str) -> bool:
+    """Detect startup $PROFILE execution-policy failures without matching user script errors."""
+    if not head_text or "PSSecurityException" not in head_text:
+        return False
+    leading = "\n".join(head_text[:4096].splitlines()[:20])
+    exc_idx = leading.find("PSSecurityException")
+    if exc_idx < 0:
+        return False
+    before_exc = re.sub(r"\r?\n\s*", "", leading[:exc_idx])
+    return bool(_PS_PROFILE_PATH_RE.search(before_exc))
+
+
+def resolve_rg_executable(path: str | None = None) -> str | None:
+    """Resolve bundled ripgrep binary first, falling back to merged system PATH."""
     bundled = _bundled_rg_executable()
     if bundled:
         return bundled
-    return shutil.which("rg") or (shutil.which("rg.exe") if os.name == "nt" else None)
+    search_path = path if path is not None else child_environment().get("PATH")
+    return _which("rg", path=search_path) or (_which("rg.exe", path=search_path) if os.name == "nt" else None)
 
 
 class PreparedCommand(list):
-    """Argv list carrying optional per-invocation environment overrides."""
+    """Argv list carrying optional per-invocation environment overrides and launch flags."""
 
-    def __init__(self, iterable=(), *, env_overrides: Mapping[str, str] | None = None):
+    def __init__(
+        self,
+        iterable=(),
+        *,
+        env_overrides: Mapping[str, str] | None = None,
+        powershell_login_profile: bool = False,
+    ):
         super().__init__(iterable)
         self.env_overrides = (
             {str(k): str(v) for k, v in env_overrides.items() if not str(k).upper().startswith("RYNMESH_")}
             if env_overrides
             else None
         )
+        self.powershell_login_profile = bool(powershell_login_profile)
+
+
+def _expand_windows_vars(raw: str, env: Mapping[str, str]) -> str:
+    env_upper = {k.upper(): v for k, v in env.items()}
+    expanded = re.sub(
+        r"%([^%]+)%",
+        lambda m: env_upper.get(m.group(1).upper(), m.group(0)),
+        raw,
+    )
+    return os.path.expandvars(expanded)
+
+
+def _read_windows_registry_paths() -> list[str]:
+    reg = winreg
+    if reg is None:
+        return []
+    values: list[str] = []
+    for hive, subkey in (
+        (reg.HKEY_CURRENT_USER, "Environment"),
+        (reg.HKEY_LOCAL_MACHINE, _WINDOWS_SYSTEM_ENV_KEY),
+    ):
+        try:
+            with reg.OpenKey(hive, subkey) as key_handle:
+                raw_val, _ = reg.QueryValueEx(key_handle, "Path")
+                if isinstance(raw_val, str) and raw_val.strip():
+                    values.append(raw_val)
+        except OSError:
+            continue
+    return values
+
+
+def _merge_windows_registry_path(env: dict[str, str]) -> None:
+    path_keys = [k for k in env if k.upper() == "PATH"]
+    current_path = env.get("PATH")
+    if current_path is None and path_keys:
+        current_path = env[path_keys[0]]
+    for key in path_keys:
+        if key != "PATH":
+            env.pop(key, None)
+    sources = [current_path or ""]
+    for raw_reg_path in _read_windows_registry_paths():
+        sources.append(_expand_windows_vars(raw_reg_path, env))
+    seen: set[str] = set()
+    merged: list[str] = []
+    for source in sources:
+        for segment in source.split(";"):
+            cleaned = segment.strip().strip('"')
+            if not cleaned:
+                continue
+            norm = cleaned.rstrip("\\/").lower()
+            if norm not in seen:
+                seen.add(norm)
+                merged.append(cleaned)
+    if merged or current_path is not None:
+        env["PATH"] = ";".join(merged)
+
+
+def _start_environment_warmup() -> None:
+    global _WINDOWS_WARMUP_STARTED
+    if os.name != "nt":
+        login_environment.start_warmup()
+        return
+    with _WINDOWS_WARMUP_LOCK:
+        if _WINDOWS_WARMUP_STARTED:
+            return
+        _WINDOWS_WARMUP_STARTED = True
+    threading.Thread(
+        target=_read_windows_registry_paths,
+        daemon=True,
+        name="ryn-win-env-warmup",
+    ).start()
 
 
 def child_environment():
@@ -186,13 +301,27 @@ def child_environment():
     false "pre-existing" failures because of them).
     """
     env = strip_rynmesh_env(os.environ)
+    if os.name != "nt":
+        for volatile_key in login_environment.IGNORED_KEYS:
+            env.pop(volatile_key, None)
+        captured = login_environment.captured_for_child()
+        for key, value in captured.items():
+            if key not in login_environment.IGNORED_KEYS and not key.upper().startswith("RYNMESH_"):
+                env[key] = value
+    else:
+        _merge_windows_registry_path(env)
     bundled = _bundled_rg_executable()
     if bundled:
-        bundled_dir = str(Path(bundled).parent)
+        sep = ";" if os.name == "nt" else ":"
+        bundled_dir = os.path.dirname(bundled)
+        norm_bundled = bundled_dir.rstrip("\\/").lower() if os.name == "nt" else bundled_dir.rstrip("/")
         current_path = env.get("PATH", "")
-        parts = current_path.split(os.pathsep) if current_path else []
-        if bundled_dir not in parts:
-            env["PATH"] = bundled_dir + (os.pathsep + current_path if current_path else "")
+        parts = [
+            p
+            for p in (current_path.split(sep) if current_path else [])
+            if p and ((p.rstrip("\\/").lower() if os.name == "nt" else p.rstrip("/")) != norm_bundled)
+        ]
+        env["PATH"] = sep.join([bundled_dir, *parts]) if parts else bundled_dir
     return env
 
 
@@ -202,6 +331,7 @@ class Processes:
         self.changed = threading.Condition(self.lock)
         self.items = {}
         atexit.register(self.close)
+        _start_environment_warmup()
 
     def close(self):
         with self.lock:
@@ -279,6 +409,7 @@ class Processes:
                     "total_chars": 0, "dropped_chars": 0, "decoder": decoder,
                     "reason": None, "reader_done": threading.Event(),
                     "last_empty_offset": None, "empty_poll_count": 0, "tty": tty,
+                    "powershell_login_profile": bool(getattr(args, "powershell_login_profile", False)),
                     "input_lock": None if tty else threading.Lock(), "stdin_closed": False, "cleanup_done": threading.Event()}
             self.items[ident] = item
 
@@ -506,6 +637,14 @@ class Processes:
                             "No new output at this offset yet; pass a larger wait_seconds (e.g. 10-20) "
                             "or stop the process instead of rapid polling at the same offset."
                         )
+                    if item.get("powershell_login_profile") and _is_powershell_profile_security_error(head):
+                        global _POWERSHELL_PROFILE_DISABLED
+                        with _POWERSHELL_PROFILE_LOCK:
+                            if not _POWERSHELL_PROFILE_DISABLED:
+                                _POWERSHELL_PROFILE_DISABLED = True
+                                item["profile_fallback_triggered"] = True
+                        if item.get("profile_fallback_triggered"):
+                            payload["profile_notice"] = POWERSHELL_PROFILE_FALLBACK_NOTICE
                     return payload
                 self.changed.wait(min(0.1, remaining))
 
@@ -593,13 +732,23 @@ class Processes:
         return self.read(ident, task_id, wait_seconds=0)
 
 
-def shell_command(shell, command, *, tty=False):
+def shell_command(shell, command, *, tty=False, login=True, env: Mapping[str, str] | None = None):
     if os.name == "nt":
         if shell == "powershell":
-            executable = shutil.which("pwsh") or shutil.which("powershell")
+            search_path = (env if env is not None else child_environment()).get("PATH")
+            executable = _which("pwsh", path=search_path) or _which("powershell", path=search_path)
             if executable:
+                use_profile = bool(login) and not _POWERSHELL_PROFILE_DISABLED
                 prefix = "[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new(); $OutputEncoding=[Console]::OutputEncoding; "
-                return [executable, "-NoLogo", "-NoProfile", *([] if tty else ["-NonInteractive"]), "-Command", prefix + command]
+                argv = [
+                    executable,
+                    "-NoLogo",
+                    *([] if use_profile else ["-NoProfile"]),
+                    *([] if tty else ["-NonInteractive"]),
+                    "-Command",
+                    prefix + command,
+                ]
+                return PreparedCommand(argv, powershell_login_profile=True) if use_profile else argv
         elif shell == "cmd":
             return [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/s", "/c", "chcp 65001 >nul & " + command]
     elif shell == "sh":
@@ -607,7 +756,7 @@ def shell_command(shell, command, *, tty=False):
     raise AgentToolRejected("agent_shell_unavailable")
 
 
-def literal_read_command(arguments):
+def literal_read_command(arguments, *, env: Mapping[str, str] | None = None):
     """Execute recognized reads without shell expansion or ripgrep preprocessors."""
     from .execution_policy import POWERSHELL_NON_ASCII_SYNTAX_CHARS, literal_command, shell_read
     if not shell_read(arguments):
@@ -615,8 +764,10 @@ def literal_read_command(arguments):
     shell = arguments.get("shell", "powershell" if os.name == "nt" else "sh")
     words = literal_command(arguments["command"], shell)
     program = words[0].lower()
+    resolved_env = env if env is not None else child_environment()
+    search_path = resolved_env.get("PATH")
     if program in {"git", "git.exe"}:
-        executable = shutil.which("git") or (shutil.which("git.exe") if os.name == "nt" else None)
+        executable = _which("git", path=search_path) or (_which("git.exe", path=search_path) if os.name == "nt" else None)
         if not executable:
             raise AgentToolRejected("agent_shell_unavailable")
         subcommand = words[1].lower()
@@ -630,7 +781,7 @@ def literal_read_command(arguments):
             env_overrides={"GIT_OPTIONAL_LOCKS": "0"},
         )
     if program in {"rg", "rg.exe"} or shell == "sh":
-        executable = resolve_rg_executable() if program in {"rg", "rg.exe"} else shutil.which(program)
+        executable = resolve_rg_executable() if program in {"rg", "rg.exe"} else _which(program, path=search_path)
         if not executable:
             if program in {"rg", "rg.exe"}:
                 raise AgentToolRejected("agent_ripgrep_unavailable_use_file_search")
@@ -639,13 +790,12 @@ def literal_read_command(arguments):
     # Resolve built-ins explicitly; no user profile, aliases or module with the
     # same command name can replace the intended cmdlet. Quote argument values
     # again so the permission check and actual interpretation agree.
-    import re
     module = "Microsoft.PowerShell.Utility" if program == "select-string" else "Microsoft.PowerShell.Management"
     if any(ch in POWERSHELL_NON_ASCII_SYNTAX_CHARS for word in words for ch in word):
         raise AgentToolRejected("agent_invalid_operation_classification")
     args = [word if re.fullmatch(r"-[A-Za-z]+", word) else "'" + word.replace("'", "''") + "'"
             for word in words[1:]]
-    return shell_command(shell, module + "\\" + program + " " + " ".join(args))
+    return shell_command(shell, module + "\\" + program + " " + " ".join(args), login=False, env=resolved_env)
 
 
 def _contains_unavailable_rg_segment(command: str) -> bool:
@@ -702,16 +852,25 @@ def _contains_unavailable_rg_segment(command: str) -> bool:
 
 def prepare_shell_command(arguments):
     """Resolve the actual executable before recording a durable dispatch intent."""
+    login = arguments.get("login", True)
+    if type(login) is not bool:
+        raise AgentToolRejected("agent_invalid_login_mode")
     if arguments.get("tty"):
         check_pty_support()
         validate_size(arguments.get("rows", 24), arguments.get("cols", 80))
     elif "rows" in arguments or "cols" in arguments:
         raise AgentToolRejected("agent_terminal_size_requires_tty")
-    literal = literal_read_command(arguments)
+    env = child_environment()
+    literal = literal_read_command(arguments, env=env)
     if literal is not None:
         return literal
     command = arguments["command"]
     if not resolve_rg_executable() and _contains_unavailable_rg_segment(command):
         raise AgentToolRejected("agent_ripgrep_unavailable_use_file_search")
     return shell_command(
-        arguments.get("shell", "powershell" if os.name == "nt" else "sh"), command, tty=arguments.get("tty", False))
+        arguments.get("shell", "powershell" if os.name == "nt" else "sh"),
+        command,
+        tty=arguments.get("tty", False),
+        login=login,
+        env=env,
+    )
