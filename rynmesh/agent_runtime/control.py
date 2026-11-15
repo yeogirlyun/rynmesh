@@ -5,7 +5,10 @@ import hashlib
 import uuid
 from datetime import datetime, timezone
 
+from .protocol import now
 from .store import AgentError, encoded
+
+MAX_CONTROL_REQUESTS = 256
 
 # A reconciliation holds owner input only while it can still finish. Local
 # commands never produce a completion receipt, so an "unknown" result must not
@@ -33,17 +36,23 @@ def request_replayed(row, value):
     except ValueError:
         raise AgentError("agent_invalid_request") from None
     prior = row.get("control_requests", {}).get(request_id)
+    if prior is None:
+        return False
+    prior_sha = prior.get("sha") if isinstance(prior, dict) else prior
     fingerprint = hashlib.sha256(encoded(value)).hexdigest()
-    if prior and prior != fingerprint:
+    if prior_sha != fingerprint:
         raise AgentError("agent_request_conflict")
-    if not prior and len(row.get("control_requests", {})) >= 256:
-        raise AgentError("agent_task_limit")
-    return prior is not None
+    return True
 
 
 def remember_request(row, value):
-    if value.get("client_request_id"):
-        row.setdefault("control_requests", {})[value["client_request_id"]] = hashlib.sha256(encoded(value)).hexdigest()
+    request_id = value.get("client_request_id")
+    if request_id:
+        requests = row.setdefault("control_requests", {})
+        requests.pop(request_id, None)
+        requests[request_id] = {"sha": hashlib.sha256(encoded(value)).hexdigest(), "at": now()}
+        while len(requests) > MAX_CONTROL_REQUESTS:
+            requests.pop(next(iter(requests)))
 
 
 def recoverable_read_in_flight(row):
