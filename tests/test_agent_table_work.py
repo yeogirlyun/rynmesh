@@ -9,8 +9,8 @@ import pytest
 import test_agent_local_tools as consumer_fixtures
 from test_agent_local_tools import execute
 
-from rynmesh.agent_runtime.store import AgentToolRejected
-from rynmesh.agent_runtime.table_work import calculate, export_bytes, summary
+from rynmesh.agent_runtime.store import AgentToolRejected, encoded
+from rynmesh.agent_runtime.table_work import calculate, export_bytes, export_summary, summary
 
 # Reuse fixtures only in this module, without registering a global test plugin.
 local = consumer_fixtures.local
@@ -135,6 +135,7 @@ def test_actual_tool_exports_then_verifies_and_never_overwrites(local):
     export = {**args, "expected_calculation_sha256": report["calculation_sha256"], "path": "report.xlsx"}
     result = execute(tools, context, "ryn_table_export", export, "table-export")
     assert result["readback_verified"] and (workspace / "report.xlsx").is_file()
+    assert result["calculation"]["preview_rows"] == report["preview_rows"]
     receipt = {"tool": "ryn_table_export", "status": "confirmed", "result": result, "arguments": export}
     assert tools.verify(receipt, context, lambda: False)["status"] == "passed"
     with pytest.raises(AgentToolRejected, match="agent_table_new_output_required"):
@@ -160,6 +161,11 @@ def test_export_reuses_exact_calculation_receipt_without_model_repeating_recipe(
     args = {"calculation_receipt_id": "receipt_calc", "path": "report.xlsx"}
     result = execute(tools, context, "ryn_table_export", args, "receipt-export")
     assert result["readback_verified"] and result["calculation"]["calculation_sha256"] == report["calculation_sha256"]
+    assert result["calculation_receipt_id"] == "receipt_calc"
+    for key in ("status", "input_sha256", "recipe_sha256", "row_count", "declared_check_count", "failed_check_count"):
+        assert result["calculation"][key] == report[key]
+    assert "preview_rows" not in result["calculation"] and "checks" not in result["calculation"]
+    assert report["preview_rows"]  # The original calculation detail remains available.
     assert (workspace / "report.xlsx").read_bytes() == export_bytes(calculate(CSV, ".csv", RECIPE), ".xlsx")
     (workspace / "source.csv").write_bytes(CSV.replace(b"0.1,0.2", b"0.1,0.3"))
     with pytest.raises(AgentToolRejected):
@@ -316,3 +322,23 @@ def test_runtime_discovers_calculates_approves_delivers_and_verifies(node, monke
     assert file["status"] == "current" and file["preview"] == "download"
     assert runtime.read_file_artifact(task["id"], file["id"])["status"] == "current"
     assert (tmp_path / "source.csv").read_bytes() == CSV
+
+
+def test_receipt_export_summary_avoids_echoing_wide_data_without_changing_artifact():
+    fields = ["note_" + str(i) for i in range(6)]
+    rows = [{"amount": "0.10", **dict.fromkeys(fields, "context " * 20)} for _ in range(8)]
+    recipe = {"columns": columns(amount="decimal", **dict.fromkeys(fields, "text")),
+              "checks": [{"name": "complete total", "scope": "totals", "expression": "sum_amount == 0.80"}]}
+    report = calculate(json.dumps(rows).encode(), ".json", recipe)
+    full, compact = summary(report), export_summary(report)
+    assert len(encoded(compact)) < len(encoded(full)) / 2
+    assert compact["row_count"] == 8 and compact["declared_check_count"] == 1
+    assert compact["failed_check_count"] == 0 and compact["calculation_sha256"] == full["calculation_sha256"]
+    assert compact["totals"] == full["totals"] and compact["totals_semantics"] == full["totals_semantics"]
+    workbook = pytest.importorskip("openpyxl").load_workbook(io.BytesIO(export_bytes(report, ".xlsx")), data_only=True)
+    assert workbook["Data"].max_row == 9
+    assert workbook["Data"]["A2"].value == .1
+    assert workbook["Data"]["B2"].value == rows[0][fields[0]]
+    assert dict(workbook["Checks"].values)["Calculation"] == "passed"
+    with pytest.raises(AgentToolRejected):
+        export_summary({**report, "status": "failed"})
