@@ -259,6 +259,14 @@ def test_namespace_resolves_prefixed_or_canonical_tool_and_rejects_unmatched_or_
     assert routed_prefixed["error_result"] is None
     assert routed_prefixed["name"] == "mcp__x__y"
 
+    hit_functions = {
+        "type": "function_call", "call_id": "ns_functions", "namespace": "functions", "name": "read",
+        "arguments": '{"path":"fixture.txt"}',
+    }
+    routed_functions = normalize_tool_calls([hit_functions], [spec("read")], metadata=lambda name: {"effect": "read"})[0]
+    assert routed_functions["error_result"] is None
+    assert routed_functions["name"] == "read"
+
     hit_direct = {
         "type": "function_call", "call_id": "ns_direct", "namespace": "mcp__x", "name": "mcp__x__y",
         "arguments": '{"path":"fixture.txt"}',
@@ -267,6 +275,15 @@ def test_namespace_resolves_prefixed_or_canonical_tool_and_rejects_unmatched_or_
     assert routed_direct["error_result"] is None
     assert routed_direct["name"] == "mcp__x__y"
 
+    unoffered_flat = {
+        "type": "function_call", "call_id": "ns_unoffered", "namespace": "unoffered", "name": "read",
+        "arguments": '{"path":"fixture.txt"}',
+    }
+    routed_unoffered = normalize_tool_calls(
+        [unoffered_flat], [spec("read")], metadata=lambda _name: pytest.fail("must not resolve")
+    )[0]
+    assert routed_unoffered["error_result"]["error"] == "agent_unknown_tool"
+
     miss = {
         "type": "function_call", "call_id": "ns_miss", "namespace": "mcp__other", "name": "z",
         "arguments": '{"path":"fixture.txt"}',
@@ -274,14 +291,26 @@ def test_namespace_resolves_prefixed_or_canonical_tool_and_rejects_unmatched_or_
     routed_miss = normalize_tool_calls([miss], [mcp_spec], metadata=lambda _name: pytest.fail("must not resolve"))[0]
     assert routed_miss["error_result"]["error"] == "agent_unknown_tool"
 
-    ambiguous = {
-        "type": "function_call", "call_id": "ns_ambig", "namespace": "mcp__x", "name": "y",
-        "arguments": '{"path":"fixture.txt"}',
-    }
-    routed_ambig = normalize_tool_calls(
-        [ambiguous], [spec("mcp__x__y"), spec("y")], metadata=lambda _name: pytest.fail("must not resolve")
-    )[0]
-    assert routed_ambig["error_result"]["error"] == "agent_unknown_tool"
+
+def test_additional_properties_rejection_does_not_leak_unexpected_key_or_value():
+    from rynmesh.llm_package.chat import validate_tool_arguments
+
+    payload = {"path": "fixture.txt", "private-secret": "never-export"}
+    with pytest.raises(ValueError) as exc_info:
+        validate_tool_arguments(spec()["function"]["parameters"], payload)
+    assert "unexpected properties are not allowed" in exc_info.value.detail
+    assert "private-secret" not in str(exc_info.value)
+    assert "never-export" not in str(exc_info.value)
+    assert "private-secret" not in json.dumps(list(exc_info.value.args))
+
+    routed = normalize_tool_calls([call("extra_key", "read", json.dumps(payload))], [spec()])[0]
+    err = routed["error_result"]
+    assert err["error"] == "agent_tool_arguments_invalid"
+    assert "unexpected properties are not allowed" in err["message"]
+    assert err["details"] == {"field_path": "<root>", "validator": "additionalProperties"}
+    dumped = json.dumps(err)
+    assert "private-secret" not in dumped
+    assert "never-export" not in dumped
 
 
 def test_loop_secondary_validation_rejects_legacy_queued_call_with_field_details():

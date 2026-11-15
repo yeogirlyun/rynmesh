@@ -105,7 +105,10 @@ def format_schema_rejection(name: str, exc: Exception) -> tuple[str, dict[str, s
     field_path = "/".join(p for p in path_parts if p) or "<root>"
     validator = re.sub(r"[^A-Za-z0-9_]", "", str(getattr(cause, "validator", "schema")))[:24] or "schema"
     raw_detail = getattr(exc, "detail", None)
-    if not isinstance(raw_detail, str):
+    if getattr(cause, "validator", None) == "additionalProperties":
+        if not (isinstance(raw_detail, str) and raw_detail.startswith("unexpected properties are not allowed")):
+            raw_detail = "unexpected properties are not allowed"
+    elif not isinstance(raw_detail, str):
         raw_detail = getattr(cause, "message", None) if hasattr(cause, "message") else ""
     detail = re.sub(r"[\x00-\x1f\x7f]+", " ", sanitized(str(raw_detail or ""))).strip()[:MAX_SCHEMA_ERROR_DETAIL_CHARS]
     detail = sanitized(detail)[:MAX_SCHEMA_ERROR_DETAIL_CHARS]
@@ -198,20 +201,16 @@ def normalize_tool_calls(calls, specs, *, existing_call_ids=(), metadata=None,
             name = raw_name if valid_name else INVALID_TOOL_NAME
             snapshot = None
         elif namespace not in (None, ""):
+            name = raw_name if valid_name else INVALID_TOOL_NAME
+            snapshot = None
             if isinstance(namespace, str) and valid_name:
-                candidates = [
-                    candidate
-                    for candidate in dict.fromkeys((f"{namespace}__{raw_name}", raw_name))
-                    if TOOL_NAME.fullmatch(candidate) and candidate in catalog
-                ]
-            else:
-                candidates = []
-            if len(candidates) == 1:
-                name = candidates[0]
-                snapshot = catalog[name]
-            else:
-                name = raw_name if valid_name else INVALID_TOOL_NAME
-                snapshot = None
+                prefixed = f"{namespace}__{raw_name}"
+                if TOOL_NAME.fullmatch(prefixed) and prefixed in catalog:
+                    name = prefixed
+                    snapshot = catalog[name]
+                elif (namespace == "functions" or raw_name.startswith(f"{namespace}__")) and raw_name in catalog:
+                    name = raw_name
+                    snapshot = catalog[name]
         else:
             name = raw_name if valid_name else INVALID_TOOL_NAME
             snapshot = catalog.get(name) if valid_name else None
