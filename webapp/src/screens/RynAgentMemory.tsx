@@ -44,6 +44,34 @@ type PendingMemoryMutation =
   | { kind: "decide_candidate"; id: string; body: AgentMemoryCandidateDecisionInput }
   | { kind: "reset"; body: AgentMemoryResetInput };
 
+interface AgentMemoryCaptureStatus {
+  today_day?: string;
+  timezone_basis?: string;
+  daily_calls_used?: number;
+  daily_calls_budget?: number;
+  daily_tokens_used?: number;
+  daily_tokens_budget?: number;
+  queued_count?: number;
+  failed_count?: number;
+  last_error?: string | null;
+  next_retry_at?: number | null;
+}
+
+function formatRetryTimestamp(
+  retryAtSeconds: number | null | undefined,
+  text: (cn: string, en: string) => string,
+): string {
+  if (typeof retryAtSeconds !== "number" || !Number.isFinite(retryAtSeconds) || retryAtSeconds <= 0) {
+    return text("无", "none");
+  }
+  const dt = new Date(retryAtSeconds * 1000);
+  if (Number.isNaN(dt.getTime())) {
+    return text("无", "none");
+  }
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+}
+
 function formatOriginLabel(
   origin: string | undefined,
   text: (cn: string, en: string) => string,
@@ -599,6 +627,27 @@ export function MemoryEditor({ projects = [], currentProject, initialOpen = fals
                 </label>
 
                 <div className="ra-memory-capture-controls">
+                  {(() => {
+                    const rawStatus = (snapshot as AgentMemorySnapshot & { capture_status?: AgentMemoryCaptureStatus }).capture_status;
+                    if (!rawStatus || typeof rawStatus !== "object") return null;
+                    const callsUsed = typeof rawStatus.daily_calls_used === "number" ? rawStatus.daily_calls_used : 0;
+                    const callsBudget = typeof rawStatus.daily_calls_budget === "number" ? rawStatus.daily_calls_budget : 32;
+                    const tokensUsed = typeof rawStatus.daily_tokens_used === "number" ? rawStatus.daily_tokens_used : 0;
+                    const tokensBudget = typeof rawStatus.daily_tokens_budget === "number" ? rawStatus.daily_tokens_budget : 65536;
+                    const queuedCount = typeof rawStatus.queued_count === "number" ? rawStatus.queued_count : 0;
+                    const lastErrorLabel = typeof rawStatus.last_error === "string" && rawStatus.last_error.trim()
+                      ? rawStatus.last_error.trim()
+                      : text("无", "none");
+                    const nextRetryLabel = formatRetryTimestamp(rawStatus.next_retry_at, text);
+                    return (
+                      <p className="ra-memory-capture-status">
+                        {text(
+                          `后台学习：今日 ${callsUsed}/${callsBudget}（按本机时区计日，Token ${tokensUsed}/${tokensBudget}，排队 ${queuedCount}），最近失败原因 ${lastErrorLabel}，下次重试 ${nextRetryLabel}`,
+                          `Background learning: today ${callsUsed}/${callsBudget} (counted by local time zone, tokens ${tokensUsed}/${tokensBudget}, queued ${queuedCount}), recent failure reason ${lastErrorLabel}, next retry ${nextRetryLabel}`,
+                        )}
+                      </p>
+                    );
+                  })()}
                   <p>
                     {snapshot.settings.capture_enabled
                       ? `${text("当前已保存激活模式", "Saved activation policy")}: ${

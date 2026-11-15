@@ -810,5 +810,6 @@ def test_pre_consent_automatic_frontier_and_stage2_failure_never_auto_activates(
     assert snap["memory"]["entries"] == {}
     jobs = list(snap["memory"]["jobs"].values())
     assert len(jobs) == 1
-    assert jobs[0]["state"] == "failed"
-    assert jobs[0]["error_code"] == "invalid_consolidation_json"
+    assert jobs[0]["state"] == "queued"
+    assert jobs[0]["last_error"] == "invalid_consolidation_json"
+    assert float(jobs[0]["retry_at"]) > 0.0
