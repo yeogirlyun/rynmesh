@@ -33,6 +33,7 @@ MAX_SOURCES_PER_ITEM = 8
 DEFAULT_DAILY_EXTRACTION_CALLS = 32
 DEFAULT_DAILY_EXTRACTION_TOKENS = 65536
 DEFAULT_LEASE_SECONDS = 60.0
+MAX_EXTRACTION_ATTEMPTS = 3
 
 VALID_SCOPE_KINDS = {"personal", "project"}
 VALID_ENTRY_KINDS = {"owner_fact", "owner_preference", "project_fact", "reusable_lesson"}
@@ -71,6 +72,27 @@ _SECRET_PATTERN = re.compile(
 
 def _now() -> float:
     return round(time.time(), 6)
+
+
+def local_day_string(ts: float | None = None) -> str:
+    ref = _now() if ts is None else float(ts)
+    return time.strftime("%Y-%m-%d", time.localtime(ref))
+
+
+def next_local_midnight(ts: float | None = None) -> float:
+    ref = _now() if ts is None else float(ts)
+    lt = time.localtime(ref)
+    today_str = time.strftime("%Y-%m-%d", lt)
+    elapsed = lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec
+    candidate = float(int(ref) - elapsed + 86400)
+    cand_lt = time.localtime(candidate)
+    cand_day = time.strftime("%Y-%m-%d", cand_lt)
+    cand_elapsed = cand_lt.tm_hour * 3600 + cand_lt.tm_min * 60 + cand_lt.tm_sec
+    if cand_day <= today_str:
+        candidate += float(86400 - cand_elapsed)
+    elif cand_elapsed > 0:
+        candidate -= float(cand_elapsed)
+    return round(max(ref + 1.0, candidate), 6)
 
 
 def _clean_text(value: Any, *, field: str, max_chars: int = MAX_FACT_TEXT_CHARS, allow_empty: bool = False) -> str:
@@ -434,12 +456,18 @@ def read_memory_state(data: dict[str, Any]) -> dict[str, Any]:
     for key, val in defaults["settings"].items():
         if key not in mem["settings"]:
             mem["settings"][key] = copy.deepcopy(val)
+    if not isinstance(mem["settings"].get("budgets"), dict):
+        mem["settings"]["budgets"] = copy.deepcopy(defaults["settings"]["budgets"])
     for key, val in defaults["settings"]["budgets"].items():
-        if key not in mem["settings"]["budgets"]:
+        if key not in mem["settings"]["budgets"] or mem["settings"]["budgets"][key] is None:
             mem["settings"]["budgets"][key] = val
     for key, val in defaults["source_fences"].items():
         if key not in mem["source_fences"] or not isinstance(mem["source_fences"][key], type(val)):
             mem["source_fences"][key] = copy.deepcopy(val)
+    for job in mem["jobs"].values():
+        if isinstance(job, dict):
+            job.setdefault("retry_at", None)
+            job.setdefault("last_error", None)
     return mem
 
 
@@ -460,12 +488,28 @@ def ensure_memory_state(data: dict[str, Any]) -> dict[str, Any]:
     for key, val in defaults["settings"].items():
         if key not in mem["settings"]:
             mem["settings"][key] = copy.deepcopy(val)
+    if not isinstance(mem["settings"].get("budgets"), dict):
+        mem["settings"]["budgets"] = copy.deepcopy(defaults["settings"]["budgets"])
     for key, val in defaults["settings"]["budgets"].items():
-        if key not in mem["settings"]["budgets"]:
+        if key not in mem["settings"]["budgets"] or mem["settings"]["budgets"][key] is None:
             mem["settings"]["budgets"][key] = val
     for key, val in defaults["source_fences"].items():
         if key not in mem["source_fences"] or not isinstance(mem["source_fences"][key], type(val)):
             mem["source_fences"][key] = copy.deepcopy(val)
+    for job in mem["jobs"].values():
+        if not isinstance(job, dict):
+            continue
+        job.setdefault("retry_at", None)
+        job.setdefault("last_error", None)
+        if job.get("state") == "failed" and job.get("error_code") == "daily_extraction_budget_exhausted":
+            job["state"] = "queued"
+            job["last_error"] = "daily_extraction_budget_exhausted"
+            job["error_code"] = None
+            job["retry_at"] = None
+            job["attempts"] = 0
+            job["lease_owner"] = None
+            job["lease_token"] = None
+            job["lease_until"] = 0.0
     _hmac_key(mem, mutate=True)
     return mem
 
@@ -697,10 +741,7 @@ def compact_for_lifecycle(mem: dict[str, Any]) -> None:
         )
         for _, (req_id, _) in ordered_reqs[: len(reqs) - keep_reqs]:
             reqs.pop(req_id, None)
-    if isinstance(mem.get("processed_sources"), dict) and len(mem["processed_sources"]) > MAX_FENCED_SOURCES // 2:
-        keys = list(mem["processed_sources"].keys())
-        for k in keys[: len(keys) - MAX_FENCED_SOURCES // 2]:
-            mem["processed_sources"].pop(k, None)
+    _prune_processed_sources(mem, MAX_FENCED_SOURCES // 2)
 
     entries = mem.get("entries")
     if isinstance(entries, dict):
@@ -711,6 +752,70 @@ def compact_for_lifecycle(mem: dict[str, Any]) -> None:
     if isinstance(candidates, dict):
         for cid in [k for k, v in candidates.items() if isinstance(v, dict) and v.get("status") != "pending"]:
             candidates.pop(cid, None)
+
+
+def _prune_processed_sources(mem: dict[str, Any], limit: int) -> None:
+    processed = mem.get("processed_sources")
+    if not isinstance(processed, dict) or len(processed) <= limit:
+        return
+    fences = mem.get("source_fences") if isinstance(mem.get("source_fences"), dict) else {}
+    deleted_tasks = fences.get("deleted_tasks") if isinstance(fences.get("deleted_tasks"), dict) else {}
+    archived_tasks = fences.get("archived_tasks") if isinstance(fences.get("archived_tasks"), dict) else {}
+    evictable_inactive = [tid for tid in list(processed.keys()) if tid in deleted_tasks or tid in archived_tasks]
+    while len(processed) > limit and evictable_inactive:
+        processed.pop(evictable_inactive.pop(0), None)
+    while len(processed) > limit:
+        oldest_ps = next(iter(processed))
+        processed.pop(oldest_ps, None)
+
+
+def _record_processed_watermark(
+    mem: dict[str, Any],
+    job: dict[str, Any],
+    live_row: dict[str, Any] | None = None,
+) -> None:
+    tid = job.get("task_id")
+    if not isinstance(tid, str) or not tid.strip():
+        return
+    tid = tid.strip()
+    job_crev = int(job.get("conversation_revision") or 0)
+    max_seq = 0
+    for item in job.get("source_manifest") or []:
+        if isinstance(item, dict):
+            max_seq = max(max_seq, int(item.get("source_seq") or 0))
+    if max_seq == 0 and isinstance(live_row, dict) and int(live_row.get("conversation_revision") or 0) == job_crev:
+        for msg in live_row.get("messages") or []:
+            if isinstance(msg, dict) and msg.get("role") == "user":
+                max_seq = max(max_seq, int(msg.get("owner_source_seq") or 0))
+    processed = mem.setdefault("processed_sources", {})
+    prev = processed.get(tid) if isinstance(processed.get(tid), dict) else None
+    prev_seq = (
+        int(prev.get("through_seq") or 0)
+        if prev
+        and prev.get("reset_epoch") == mem["reset_epoch"]
+        and int(prev.get("conversation_revision", -1)) <= job_crev
+        else 0
+    )
+    processed[tid] = {
+        "through_seq": max(prev_seq, max_seq),
+        "conversation_revision": job_crev,
+        "reset_epoch": int(mem["reset_epoch"]),
+    }
+
+
+def _task_processed_through_seq(
+    mem: dict[str, Any],
+    task_id: str,
+    conversation_revision: int,
+) -> tuple[bool, int]:
+    processed = mem.get("processed_sources")
+    if not isinstance(processed, dict):
+        return False, 0
+    wm = processed.get(task_id)
+    if not isinstance(wm, dict) or wm.get("reset_epoch") != mem["reset_epoch"]:
+        return False, 0
+    same_rev = int(wm.get("conversation_revision", -1)) == int(conversation_revision)
+    return same_rev, max(0, int(wm.get("through_seq") or 0))
 
 
 def _enforce_memory_bounds(mem: dict[str, Any]) -> None:
@@ -734,11 +839,7 @@ def _enforce_memory_bounds(mem: dict[str, Any]) -> None:
         oldest_key = next(iter(requests))
         requests.pop(oldest_key, None)
 
-    processed = mem.get("processed_sources", {})
-    if isinstance(processed, dict):
-        while len(processed) > MAX_FENCED_SOURCES:
-            oldest_ps = next(iter(processed))
-            processed.pop(oldest_ps, None)
+    _prune_processed_sources(mem, MAX_FENCED_SOURCES)
 
     # Fold oldest tombstones into compact suppressed_slots when over budget; only raise if still over after folding.
     tombstones = mem.get("tombstones", {})
@@ -1236,6 +1337,71 @@ def update_memory_settings(
         return _save_idempotency(mem, client_request_id, cached, result)
 
 
+def _build_capture_status(mem: dict[str, Any]) -> dict[str, Any]:
+    today = local_day_string()
+    usage = mem.get("daily_usage") if isinstance(mem.get("daily_usage"), dict) else {}
+    is_today = str(usage.get("day") or "") == today
+    daily_calls_used = int(usage.get("extraction_calls") or 0) if is_today else 0
+    daily_tokens_used = int(usage.get("extraction_tokens") or 0) if is_today else 0
+
+    settings = mem.get("settings") if isinstance(mem.get("settings"), dict) else {}
+    budgets = settings.get("budgets") if isinstance(settings.get("budgets"), dict) else {}
+    raw_calls_budget = budgets.get("max_daily_extraction_calls")
+    raw_tokens_budget = budgets.get("max_daily_extraction_tokens")
+    daily_calls_budget = int(raw_calls_budget if raw_calls_budget is not None else DEFAULT_DAILY_EXTRACTION_CALLS)
+    daily_tokens_budget = int(raw_tokens_budget if raw_tokens_budget is not None else DEFAULT_DAILY_EXTRACTION_TOKENS)
+
+    jobs_map = mem.get("jobs") if isinstance(mem.get("jobs"), dict) else {}
+    job_rows = [j for j in jobs_map.values() if isinstance(j, dict)]
+    queued_count = sum(1 for j in job_rows if j.get("state") == "queued")
+    failed_count = sum(1 for j in job_rows if j.get("state") == "failed")
+    ordered_jobs = sorted(
+        job_rows,
+        key=lambda j: (-float(j.get("updated_at") or 0.0), str(j.get("id") or "")),
+    )
+    recent_jobs = [
+        {
+            "id": j.get("id"),
+            "state": j.get("state"),
+            "last_error": (
+                j.get("last_error")
+                if j.get("last_error") is not None
+                else (j.get("error_code") if j.get("state") in {"failed", "queued"} else None)
+            ),
+            "retry_at": j.get("retry_at"),
+            "updated_at": float(j.get("updated_at") or 0.0),
+        }
+        for j in ordered_jobs[:5]
+    ]
+    last_error: str | None = None
+    for j in ordered_jobs:
+        err = j.get("last_error")
+        if not err and j.get("state") in {"failed", "queued"}:
+            err = j.get("error_code")
+        if isinstance(err, str) and err.strip():
+            last_error = err.strip()
+            break
+    retry_times = [
+        float(j["retry_at"])
+        for j in job_rows
+        if j.get("state") == "queued" and isinstance(j.get("retry_at"), (int, float))
+    ]
+    next_retry_at = min(retry_times) if retry_times else None
+    return {
+        "today_day": today,
+        "timezone_basis": "local",
+        "daily_calls_used": daily_calls_used,
+        "daily_calls_budget": daily_calls_budget,
+        "daily_tokens_used": daily_tokens_used,
+        "daily_tokens_budget": daily_tokens_budget,
+        "queued_count": queued_count,
+        "failed_count": failed_count,
+        "last_error": last_error,
+        "next_retry_at": next_retry_at,
+        "recent_jobs": recent_jobs,
+    }
+
+
 def get_memory_settings_snapshot(data: dict[str, Any]) -> dict[str, Any]:
     mem = read_memory_state(data)
     degraded = data.get("memory_ledger_degraded") if isinstance(data, dict) else None
@@ -1246,6 +1412,7 @@ def get_memory_settings_snapshot(data: dict[str, Any]) -> dict[str, Any]:
         "policy_revision": mem["policy_revision"],
         "settings": copy.deepcopy(mem["settings"]),
         "daily_usage": copy.deepcopy(mem["daily_usage"]),
+        "capture_status": _build_capture_status(mem),
         "tombstone_count": len(mem.get("tombstones") or {}),
         "suppressed_slot_count": len(mem.get("suppressed_slots") or []),
         "memory_ledger_degraded": copy.deepcopy(degraded) if isinstance(degraded, dict) else None,
@@ -1782,10 +1949,18 @@ def reset_memory(
                     for item in mem["suppressed_slots"]
                     if not (isinstance(item, dict) and _suppressed_scope_matches(item.get("scope"), norm_scope))
                 ]
+            reset_project_tids: set[str] = set()
             for tid, row in (data.get("tasks") or {}).items():
                 if isinstance(row, dict) and isinstance(row.get("project"), dict) and row["project"].get("id") == pid:
+                    reset_project_tids.add(tid)
                     _record_task_reset_boundary(mem, tid, row)
                     mem["source_fences"].get("relearn_tasks", {}).pop(tid, None)
+            if isinstance(mem.get("processed_sources"), dict):
+                for tid in list(mem["processed_sources"].keys()):
+                    if tid in reset_project_tids:
+                        mem["processed_sources"].pop(tid, None)
+                    elif isinstance(mem["processed_sources"].get(tid), dict):
+                        mem["processed_sources"][tid]["reset_epoch"] = mem["reset_epoch"]
             for job in mem["jobs"].values():
                 if job.get("project_id") == pid and job.get("state") in {"queued", "leased", "extracted"}:
                     job["state"] = "stale"
@@ -1809,10 +1984,18 @@ def reset_memory(
                     for item in mem["suppressed_slots"]
                     if not (isinstance(item, dict) and (item.get("scope") or {}).get("kind") == "personal")
                 ]
+            reset_personal_tids: set[str] = set()
             for tid, row in (data.get("tasks") or {}).items():
                 if isinstance(row, dict) and not (isinstance(row.get("project"), dict) and row["project"].get("id")):
+                    reset_personal_tids.add(tid)
                     _record_task_reset_boundary(mem, tid, row)
                     mem["source_fences"].get("relearn_tasks", {}).pop(tid, None)
+            if isinstance(mem.get("processed_sources"), dict):
+                for tid in list(mem["processed_sources"].keys()):
+                    if tid in reset_personal_tids:
+                        mem["processed_sources"].pop(tid, None)
+                    elif isinstance(mem["processed_sources"].get(tid), dict):
+                        mem["processed_sources"][tid]["reset_epoch"] = mem["reset_epoch"]
             for job in mem["jobs"].values():
                 if not job.get("project_id") and job.get("state") in {"queued", "leased", "extracted"}:
                     job["state"] = "stale"
@@ -1913,6 +2096,8 @@ def enqueue_extraction_job(
 
         if force_relearn:
             mem["source_fences"].setdefault("relearn_tasks", {})[task_id] = mem["reset_epoch"]
+            if isinstance(mem.get("processed_sources"), dict):
+                mem["processed_sources"].pop(task_id, None)
 
         from . import memory_natural
 
@@ -1930,6 +2115,7 @@ def enqueue_extraction_job(
         if not ext_dest:
             raise AgentError("agent_memory_destination_consent_required")
 
+        same_rev_processed, through_seq = (False, 0) if force_relearn else _task_processed_through_seq(mem, task_id, conv_rev)
         wanted_ids = set(message_ids) if message_ids else None
         manifest: list[dict[str, Any]] = []
         for msg in row.get("messages") or []:
@@ -1940,6 +2126,12 @@ def enqueue_extraction_job(
                 continue
             if wanted_ids is not None and mid not in wanted_ids:
                 continue
+            msg_seq = int(msg.get("owner_source_seq") or 0)
+            if not force_relearn:
+                if through_seq > 0 and 0 < msg_seq <= through_seq:
+                    continue
+                if same_rev_processed and through_seq == 0 and msg_seq == 0:
+                    continue
             ui_kind = (msg.get("ui") or {}).get("kind") if isinstance(msg.get("ui"), dict) else None
             if ui_kind in {"source_credential"}:
                 continue
@@ -1960,7 +2152,7 @@ def enqueue_extraction_job(
                 project_id=project_id,
                 excerpt=text,
             )
-            src["source_seq"] = int(msg.get("owner_source_seq") or 0)
+            src["source_seq"] = msg_seq
             ok, _ = verify_source_ref_against_state(data, src, for_background_job=not force_relearn)
             if ok:
                 manifest.append({**src, "text": sanitized(text).strip()[:MAX_FACT_TEXT_CHARS]})
@@ -1978,11 +2170,30 @@ def enqueue_extraction_job(
                 "activation_policy": mem["settings"].get("activation_policy", "owner_review"),
             }
         )
-        for existing in mem["jobs"].values():
-            if existing.get("idempotency_key") == idempotency_key and existing.get("state") in {"queued", "leased", "extracted", "committed", "no_op"}:
-                return {"queued": True, "deduplicated": True, "job": copy.deepcopy(existing)}
-
         now = _now()
+        if not force_relearn:
+            ordered_existing = sorted(
+                (j for j in mem["jobs"].values() if isinstance(j, dict)),
+                key=lambda j: (-float(j.get("created_at") or 0.0), str(j.get("id") or "")),
+            )
+            for existing in ordered_existing:
+                if existing.get("idempotency_key") == idempotency_key and existing.get("state") in {
+                    "queued",
+                    "leased",
+                    "extracted",
+                    "committed",
+                    "no_op",
+                    "failed",
+                }:
+                    return {"queued": True, "deduplicated": True, "job": copy.deepcopy(existing)}
+        else:
+            for existing in mem["jobs"].values():
+                if isinstance(existing, dict) and existing.get("task_id") == task_id and existing.get("state") == "queued":
+                    existing["state"] = "stale"
+                    existing["error_code"] = "superseded_by_relearn"
+                    existing["retry_at"] = None
+                    existing["updated_at"] = now
+
         job_id = "mjob_" + uuid.uuid4().hex[:16]
         job = {
             "id": job_id,
@@ -2003,6 +2214,8 @@ def enqueue_extraction_job(
             "lease_token": None,
             "lease_until": 0.0,
             "attempts": 0,
+            "retry_at": None,
+            "last_error": None,
             "output_hash": None,
             "error_code": None,
             "created_at": now,
@@ -2029,12 +2242,34 @@ def claim_extraction_job(
             if job_id and jid != job_id:
                 continue
             state = job.get("state")
-            if state == "queued" or (state == "leased" and float(job.get("lease_until") or 0.0) <= now):
+            if state == "queued":
+                retry_at = job.get("retry_at")
+                if isinstance(retry_at, (int, float)) and float(retry_at) > now:
+                    continue
+                candidates.append(job)
+            elif state == "leased" and float(job.get("lease_until") or 0.0) <= now:
                 candidates.append(job)
         if not candidates:
             return None
-        candidates.sort(key=lambda j: j.get("created_at", 0.0))
-        selected = candidates[0]
+        candidates.sort(key=lambda j: (float(j.get("created_at") or 0.0), str(j.get("id") or "")))
+
+        selected = None
+        for cand in candidates:
+            if int(cand.get("attempts") or 0) >= MAX_EXTRACTION_ATTEMPTS:
+                cand["state"] = "failed"
+                cand["last_error"] = cand.get("last_error") or cand.get("error_code") or "retry_exhausted"
+                cand["error_code"] = "retry_exhausted"
+                cand["retry_at"] = None
+                cand["lease_owner"] = None
+                cand["lease_token"] = None
+                cand["lease_until"] = 0.0
+                cand["updated_at"] = now
+                mem["generation"] += 1
+                continue
+            selected = cand
+            break
+        if selected is None:
+            return None
 
         if selected.get("reset_epoch") != mem["reset_epoch"]:
             selected["state"] = "stale"
@@ -2054,6 +2289,7 @@ def claim_extraction_job(
         selected["lease_owner"] = worker_id
         selected["lease_token"] = "lease_" + uuid.uuid4().hex
         selected["lease_until"] = round(now + max(1.0, float(lease_seconds)), 6)
+        selected["retry_at"] = None
         selected["attempts"] = int(selected.get("attempts", 0)) + 1
         selected["updated_at"] = now
         return copy.deepcopy(selected)
@@ -2118,7 +2354,7 @@ def commit_extraction_job(
                 job["updated_at"] = now
                 return {"state": "stale", "job": copy.deepcopy(job), "committed_candidates": []}
 
-        day = time.strftime("%Y-%m-%d", time.gmtime(now))
+        day = local_day_string(now)
         usage = mem["daily_usage"]
         if usage.get("day") != day:
             usage["day"] = day
@@ -2130,8 +2366,16 @@ def commit_extraction_job(
         if not proposals:
             job["state"] = "no_op"
             job["output_hash"] = digest([])
+            job["error_code"] = None
+            job["last_error"] = None
+            job["retry_at"] = None
+            job["lease_owner"] = None
+            job["lease_token"] = None
+            job["lease_until"] = 0.0
             job["updated_at"] = now
+            _record_processed_watermark(mem, job, live_row)
             mem["generation"] += 1
+            _enforce_memory_bounds(mem)
             return {"state": "no_op", "job": copy.deepcopy(job), "committed_candidates": []}
 
         bound_dest = normalize_destination(job.get("destination_binding"))
@@ -2282,9 +2526,16 @@ def commit_extraction_job(
                 committed_candidates.append(copy.deepcopy(cand))
 
         job["output_hash"] = digest(proposals)
+        job["error_code"] = None
+        job["last_error"] = None
+        job["retry_at"] = None
+        job["lease_owner"] = None
+        job["lease_token"] = None
+        job["lease_until"] = 0.0
         job["updated_at"] = now
         if committed_candidates:
             job["state"] = "committed"
+            _record_processed_watermark(mem, job, live_row)
         elif skipped_reasons and all(r in {"tombstone_suppressed", "active_entry_revision_changed", "active_entry_newer_than_job"} for r in skipped_reasons):
             job["state"] = "stale"
             job["error_code"] = skipped_reasons[0]
@@ -2292,6 +2543,7 @@ def commit_extraction_job(
             job["state"] = "no_op"
             if skipped_reasons:
                 job["error_code"] = skipped_reasons[0]
+            _record_processed_watermark(mem, job, live_row)
 
         mem["generation"] += 1
         _enforce_memory_bounds(mem)
@@ -3216,6 +3468,7 @@ def list_memories_snapshot(
         "reset_epoch": mem["reset_epoch"],
         "policy_revision": mem["policy_revision"],
         "settings": copy.deepcopy(mem["settings"]),
+        "capture_status": _build_capture_status(mem),
         "entries": entries,
         "candidates": candidates,
         "tombstone_count": len(mem.get("tombstones") or {}),

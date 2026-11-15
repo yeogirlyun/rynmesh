@@ -3,7 +3,6 @@ from __future__ import annotations
 import copy
 import json
 import re
-import time
 from typing import Any
 
 from . import memory
@@ -573,17 +572,24 @@ def parse_phase1_source_analysis_response(
         if not isinstance(raw_obs, list):
             raise ValueError("invalid_extraction_json")
         verified: list[dict[str, Any]] = []
-        rejected_reasons: list[str] = []
+        rejected_observations: list[dict[str, Any]] = []
         seen_ids: set[str] = set()
         for idx, item in enumerate(raw_obs, start=1):
             if not isinstance(item, dict):
-                raise ValueError("invalid_extraction_json")
+                rejected_observations.append({"observation_id": f"obs_{idx}", "reason": "not_object"})
+                continue
             item_copy = dict(item)
             if not str(item_copy.get("observation_id") or "").strip():
                 item_copy["observation_id"] = f"obs_{idx}"
+            obs_raw_id = str(item_copy.get("observation_id"))
             ok, _reason, norm = verify_natural_observation_grounding(item_copy, job)
             if not ok or norm is None:
-                rejected_reasons.append(_reason)
+                rejected_observations.append(
+                    {
+                        "observation_id": obs_raw_id,
+                        "reason": str(_reason or "schema"),
+                    }
+                )
                 continue
             obs_id = str(norm["observation_id"])
             if obs_id in seen_ids:
@@ -591,10 +597,15 @@ def parse_phase1_source_analysis_response(
                 norm["observation_id"] = obs_id
             seen_ids.add(obs_id)
             verified.append(norm)
-        if rejected_reasons:
+        if rejected_observations:
+            job["rejected_observations"] = list(rejected_observations)
+        if raw_obs and not verified:
+            first_reason = str((rejected_observations[0] if rejected_observations else {}).get("reason") or "schema")
+            if first_reason == "not_object":
+                raise ValueError("invalid_extraction_json")
             # Invalid evidence is observably different from the model finding
-            # no durable information. Never label a rejected batch a valid no-op.
-            raise ValueError("invalid_observation:" + str(rejected_reasons[0] or "schema")[:160])
+            # no durable information. Never label an all-rejected batch a valid no-op.
+            raise ValueError("invalid_observation:" + first_reason[:160])
         return "observations", verified
 
     activation_policy = str(job.get("activation_policy") or "owner_review")
@@ -1223,7 +1234,7 @@ def commit_natural_consolidation_job(
         job["calls_used"] = max(1, int(calls_used or 1))
         if not usage_accounted:
             # 2. Record daily usage for dispatched calls
-            day = time.strftime("%Y-%m-%d", time.gmtime(now))
+            day = memory.local_day_string(now)
             usage = mem["daily_usage"]
             if usage.get("day") != day:
                 usage["day"] = day
@@ -1440,10 +1451,17 @@ def commit_natural_consolidation_job(
         job["updated_entry_ids"] = list(updated_entry_ids)
         job["retracted_entry_ids"] = list(retracted_entry_ids)
         job["skipped_reasons"] = list(skipped_reasons)
+        job["error_code"] = None
+        job["last_error"] = None
+        job["retry_at"] = None
+        job["lease_owner"] = None
+        job["lease_token"] = None
+        job["lease_until"] = 0.0
         job["updated_at"] = now
 
         if has_changes:
             job["state"] = "committed"
+            memory._record_processed_watermark(mem, job, live_row)
             memory_integration.propagate_memory_revocation_in_tx(data)
         elif skipped_reasons and all(
             r in {"tombstone_suppressed", "active_entry_revision_changed", "stale_source_order"}
@@ -1455,6 +1473,7 @@ def commit_natural_consolidation_job(
             job["state"] = "no_op"
             if skipped_reasons:
                 job["error_code"] = skipped_reasons[0]
+            memory._record_processed_watermark(mem, job, live_row)
 
         mem["generation"] += 1
         memory._enforce_memory_bounds(mem)
