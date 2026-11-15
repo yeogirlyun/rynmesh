@@ -185,3 +185,32 @@ def test_subagent_context_and_report_guidance_reach_only_their_agent():
         assert SUBAGENT_REPORT_GUIDANCE in child[1]["content"]
         assert MULTI_AGENT_COORDINATOR_GUIDANCE not in child[1]["content"]
         assert child[0] == root[0]
+
+
+def test_s03_i4_project_guidance_rules_live_in_user_instruction_layer(tmp_path):
+    from rynmesh.agent_runtime import projects
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    (repo / "AGENTS.md").write_text("Follow local test helper.", encoding="utf-8")
+
+    data = {}
+    registered = projects.register(data, {"path": str(repo)})
+    selected_proj = projects.selected(data, registered["id"], refresh=True)
+    task_row = {**row(), "project": selected_proj}
+
+    rendered = projects.guidance(task_row)
+    layers = instruction_layers(task_row, project_guidance=rendered)
+    assert layers[-1]["role"] == "user"
+    assert "Git repository: do not commit, amend, create or switch branches" in layers[-1]["content"]
+    assert "Fix the cause, not the symptom;" in layers[-1]["content"]
+    assert "AGENTS.md rules apply to their directory tree;" in layers[-1]["content"]
+    for msg in layers[:-1]:
+        assert msg["role"] == "developer"
+        assert "Git repository: do not commit" not in msg["content"]
+        assert "Fix the cause, not the symptom;" not in msg["content"]
+        assert "AGENTS.md rules apply to their directory tree;" not in msg["content"]
+
+    plain_layers = instruction_layers(row(), project_guidance=projects.guidance(row()))
+    assert all(msg["role"] == "developer" for msg in plain_layers)
