@@ -67,6 +67,29 @@ ALLOWLISTED_DIAGNOSTIC_ERROR_CODES = ALLOWLISTED_MCP_RPC_ERROR_CODES | frozenset
     "agent_operation_id_conflict",
 })
 
+_SAFE_CAUSE_CODE_RE = re.compile(r"^[a-z0-9_]{1,80}$")
+_SAFE_PHASE_RE = re.compile(r"^[a-z0-9_]{1,40}$")
+
+
+def _extract_mcp_error_details(
+    exc: BaseException,
+    *,
+    is_allowlisted: bool,
+    raw_code: str,
+) -> dict[str, Any]:
+    raw_details = getattr(exc, "details", None)
+    details: dict[str, Any] = (
+        copy.deepcopy(raw_details) if isinstance(raw_details, dict) else {}
+    )
+    if not is_allowlisted:
+        details["cause"] = raw_code if _SAFE_CAUSE_CODE_RE.fullmatch(raw_code) else "other"
+        if isinstance(exc, McpTransportError):
+            if isinstance(exc.phase, str) and _SAFE_PHASE_RE.fullmatch(exc.phase):
+                details.setdefault("phase", exc.phase)
+            if type(exc.http_status) is int:
+                details.setdefault("http_status", exc.http_status)
+    return details
+
 READ_SKILL_FILE_TOOL = "ryn_read_skill_file"
 
 READ_SKILL_FILE_SPEC: dict[str, Any] = {
@@ -435,6 +458,7 @@ class ExtensionToolAdapter:
                     continue
                 raw_state = server.get("status", "")
                 state = {"ready": "available", "Ready": "available", "connected": "available",
+                         "Degraded": "service_unreachable",
                          "NeedsTest": "pending_connection", "NeedsAuth": "authentication_required",
                          "NeedsPermission": "permission_denied", "disabled": "disabled"}.get(raw_state, "discovery_failed")
                 code = server.get("status_message", "")
@@ -450,7 +474,10 @@ class ExtensionToolAdapter:
                     auth_state = oauth.public_status(server.get("instance_id", "")).get("state")
                     if auth_state in {"logged_out", "pending", "error"}:
                         state = "authentication_required"
-                available = state == "available" and server.get("discovery_revision", 0) > 0
+                available = (
+                    state == "available"
+                    or (raw_state == "Degraded" and state not in {"disabled", "authentication_required", "permission_denied"})
+                ) and server.get("discovery_revision", 0) > 0
                 if state == "available" and not available:
                     state = "pending_connection"
                 connections.append({"server_id": server["id"], "state": state,
@@ -520,7 +547,7 @@ class ExtensionToolAdapter:
         out: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] = {}
         oauth = getattr(self.manager, "oauth", None)
         for server in self.store.list_enabled_mcp_servers_internal():
-            if server.get("status") not in {"ready", "Ready", "connected"}:
+            if server.get("status") not in {"ready", "Ready", "connected", "Degraded"}:
                 continue
             if oauth is not None and oauth.public_status(str(server.get("instance_id") or "")).get("state") in {"logged_out", "pending", "error"}:
                 continue
@@ -1302,16 +1329,19 @@ class ExtensionToolAdapter:
                 raise
             except (McpTransportError, AgentError) as exc:
                 raw_code = str(exc)
-                code = (
-                    raw_code
-                    if raw_code in ALLOWLISTED_DIAGNOSTIC_ERROR_CODES
-                    else "agent_mcp_transport_error"
+                allowlisted = raw_code in ALLOWLISTED_DIAGNOSTIC_ERROR_CODES
+                code = raw_code if allowlisted else "agent_mcp_transport_error"
+                details = _extract_mcp_error_details(
+                    exc, is_allowlisted=allowlisted, raw_code=raw_code
                 )
                 if getattr(exc, "dispatched", None) is False:
                     if code == "agent_stale_revision":
                         code = "agent_tool_definition_changed"
-                    raise AgentToolRejected(code) from None
-                raise AgentError(code) from None
+                    raise AgentToolRejected(code, details=details or None) from None
+                err = AgentError(code)
+                if details:
+                    err.details = details  # type: ignore[attr-defined]
+                raise err from None
 
             return self._normalize_mcp_result(
                 raw_res,
@@ -1559,21 +1589,31 @@ class ExtensionToolAdapter:
                         )
                         raise
                     raw_code = str(exc) if isinstance(exc, AgentError) else ""
-                    code = (
-                        raw_code
-                        if raw_code in ALLOWLISTED_DIAGNOSTIC_ERROR_CODES
-                        else "agent_mcp_operation_not_executed"
-                    )
+                    allowlisted = raw_code in ALLOWLISTED_DIAGNOSTIC_ERROR_CODES
+                    code = raw_code if allowlisted else "agent_mcp_operation_not_executed"
                     if code == "agent_stale_revision":
                         code = "agent_tool_definition_changed"
-                    ledger.update(operation_id, "not_executed", error=code)
-                    raise AgentToolRejected(code) from None
+                    details = _extract_mcp_error_details(
+                        exc, is_allowlisted=allowlisted, raw_code=raw_code
+                    )
+                    ledger_err_result: dict[str, Any] = {}
+                    if "cause" in details:
+                        ledger_err_result["cause"] = details["cause"]
+                    if isinstance(details.get("phase"), str):
+                        ledger_err_result["phase"] = details["phase"]
+                    if type(details.get("http_status")) is int:
+                        ledger_err_result["http_status"] = details["http_status"]
+                    ledger_kwargs: dict[str, Any] = {"error": code}
+                    if ledger_err_result:
+                        ledger_kwargs["error_result"] = ledger_err_result
+                    ledger.update(operation_id, "not_executed", **ledger_kwargs)
+                    raise AgentToolRejected(code, details=details or None) from None
 
                 raw_code = str(exc) if isinstance(exc, AgentError) else ""
-                safe_code = (
-                    raw_code
-                    if raw_code in ALLOWLISTED_DIAGNOSTIC_ERROR_CODES
-                    else "agent_mcp_transport_error"
+                allowlisted_post = raw_code in ALLOWLISTED_DIAGNOSTIC_ERROR_CODES
+                safe_code = raw_code if allowlisted_post else "agent_mcp_transport_error"
+                post_details = _extract_mcp_error_details(
+                    exc, is_allowlisted=allowlisted_post, raw_code=raw_code
                 )
                 raw_stage = getattr(exc, "phase", None)
                 safe_stage = (
@@ -1614,6 +1654,8 @@ class ExtensionToolAdapter:
                     val = getattr(exc, int_key, None)
                     if type(val) is int:
                         diagnostic[int_key] = val
+                if "cause" in post_details:
+                    diagnostic["cause"] = post_details["cause"]
                 ledger.update(
                     operation_id,
                     "dispatched",

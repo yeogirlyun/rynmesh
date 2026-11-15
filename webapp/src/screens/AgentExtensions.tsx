@@ -28,9 +28,13 @@ import {
 } from "lucide-react";
 import {
   AgentExtensionError,
+  DEFAULT_MCP_STARTUP_TIMEOUT_MS,
+  DEFAULT_MCP_TOOL_TIMEOUT_MS,
   ENV_KEY_RE,
   HEADER_KEY_RE,
   MASKED_SECRET_PLACEHOLDER,
+  MAX_MCP_STARTUP_TIMEOUT_MS,
+  MAX_MCP_TOOL_TIMEOUT_MS,
   agentExtensions,
   buildNewSecretMap,
   buildSecretPatch,
@@ -370,6 +374,12 @@ function getServerObservedBadge(
   }
   if (st === "Error" || st === "error") {
     return { label: tx("连接错误", "Connection error"), tone: "danger" };
+  }
+  if (st === "Degraded") {
+    return {
+      label: tx(`已降级 · ${server.tools_count} 个缓存工具`, `Degraded · ${server.tools_count} cached tools`),
+      tone: "warning",
+    };
   }
   if (st === "NeedsTest") {
     return { label: tx("未测试", "Not tested"), tone: "neutral" };
@@ -3193,10 +3203,10 @@ function McpServerFormModal({
   const [url, setUrl] = useState(initialServer?.url ?? "");
   const [bearerTokenEnv, setBearerTokenEnv] = useState(initialServer?.bearer_token_env ?? "");
   const [startupTimeout, setStartupTimeout] = useState(
-    String(initialServer?.startup_timeout_ms ?? 10000),
+    String(initialServer?.startup_timeout_ms ?? DEFAULT_MCP_STARTUP_TIMEOUT_MS),
   );
   const [toolTimeout, setToolTimeout] = useState(
-    String(initialServer?.tool_timeout_ms ?? 30000),
+    String(initialServer?.tool_timeout_ms ?? DEFAULT_MCP_TOOL_TIMEOUT_MS),
   );
   const [computerAccess, setComputerAccess] = useState(
     Boolean(initialServer?.computer_access ?? false),
@@ -3351,8 +3361,14 @@ function McpServerFormModal({
       return;
     }
 
-    const startupMs = Math.max(1000, Math.min(60000, Number(startupTimeout) || 10000));
-    const toolMs = Math.max(1000, Math.min(120000, Number(toolTimeout) || 30000));
+    const startupMs = Math.max(
+      1000,
+      Math.min(MAX_MCP_STARTUP_TIMEOUT_MS, Number(startupTimeout) || DEFAULT_MCP_STARTUP_TIMEOUT_MS),
+    );
+    const toolMs = Math.max(
+      1000,
+      Math.min(MAX_MCP_TOOL_TIMEOUT_MS, Number(toolTimeout) || DEFAULT_MCP_TOOL_TIMEOUT_MS),
+    );
     const currentBase = baselineServer ?? initialServer ?? null;
     const resolvedCommand =
       mode === "edit" && currentBase && command === currentBase.command
@@ -4333,7 +4349,7 @@ function McpServerFormModal({
               id="ae-mcp-startup-timeout"
               type="number"
               min={1000}
-              max={60000}
+              max={MAX_MCP_STARTUP_TIMEOUT_MS}
               value={startupTimeout}
               disabled={submitting || replacedOrDeleted}
               onChange={event => setStartupTimeout(event.target.value)}
@@ -4347,7 +4363,7 @@ function McpServerFormModal({
               id="ae-mcp-tool-timeout"
               type="number"
               min={1000}
-              max={120000}
+              max={MAX_MCP_TOOL_TIMEOUT_MS}
               value={toolTimeout}
               disabled={submitting || replacedOrDeleted}
               onChange={event => setToolTimeout(event.target.value)}

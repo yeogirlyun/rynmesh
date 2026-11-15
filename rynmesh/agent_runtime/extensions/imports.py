@@ -23,6 +23,8 @@ from ..store import AgentError
 from .store import (
     COMPUTER_USE_PLUGIN_ID,
     COMPUTER_USE_SERVER_ID,
+    DEFAULT_STARTUP_TIMEOUT_MS,
+    DEFAULT_TOOL_TIMEOUT_MS,
     ENV_KEY_RE,
     EXTENSION_ID_RE,
     HEADER_KEY_RE,
@@ -30,6 +32,8 @@ from .store import (
     MAX_SKILL_PACKAGE_DEPTH,
     MAX_SKILL_PACKAGE_FILES,
     MAX_SKILL_TOTAL_BYTES,
+    MAX_STARTUP_TIMEOUT_MS,
+    MAX_TOOL_TIMEOUT_MS,
     ExtensionStore,
     _slugify,
     compute_directory_manifest,
@@ -1037,11 +1041,19 @@ class ExtensionImportManager:
 
             startup_timeout_ms = int(
                 cfg.get("startup_timeout_ms")
-                or (int(cfg["startup_timeout_sec"]) * 1000 if "startup_timeout_sec" in cfg else 10000)
+                or (
+                    int(cfg["startup_timeout_sec"]) * 1000
+                    if "startup_timeout_sec" in cfg
+                    else DEFAULT_STARTUP_TIMEOUT_MS
+                )
             )
             tool_timeout_ms = int(
                 cfg.get("tool_timeout_ms")
-                or (int(cfg["tool_timeout_sec"]) * 1000 if "tool_timeout_sec" in cfg else 30000)
+                or (
+                    int(cfg["tool_timeout_sec"]) * 1000
+                    if "tool_timeout_sec" in cfg
+                    else DEFAULT_TOOL_TIMEOUT_MS
+                )
             )
 
             raw_enabled_tools = cfg.get("enabled_tools")
@@ -1086,8 +1098,8 @@ class ExtensionImportManager:
                     "oauth_client_registration": str(cfg.get("oauth_client_registration") or cfg.get("oauthClientRegistration") or "auto"),
                     "secret_headers": secret_headers,
                     "env_http_headers": env_http_headers if transport == "streamable_http" else {},
-                    "startup_timeout_ms": max(1000, min(60000, startup_timeout_ms)),
-                    "tool_timeout_ms": max(1000, min(120000, tool_timeout_ms)),
+                    "startup_timeout_ms": max(1000, min(MAX_STARTUP_TIMEOUT_MS, startup_timeout_ms)),
+                    "tool_timeout_ms": max(1000, min(MAX_TOOL_TIMEOUT_MS, tool_timeout_ms)),
                     "enabled_tools": enabled_tools,
                     "disabled_tools": disabled_tools,
                     "read_only_tools": [],
