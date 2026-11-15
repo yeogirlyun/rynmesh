@@ -247,17 +247,26 @@ class CodexRPC:
         raise err
 
     def _enqueue(self, item) -> bool:
+        fallback_deadline: float | None = None
         while not self.closed.is_set():
-            deadline = self.deadline
-            remaining = 1.0 if deadline is None else (deadline - time.monotonic())
-            if remaining <= 0:
-                raise queue.Full
             try:
-                self.queue.put(item, timeout=min(0.1, remaining))
+                self.queue.put_nowait(item)
                 return True
             except queue.Full:
-                if deadline is not None and time.monotonic() >= deadline:
+                deadline = self.deadline
+                if deadline is None:
+                    if fallback_deadline is None:
+                        fallback_deadline = time.monotonic() + 1.0
+                    deadline = fallback_deadline
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
                     raise
+                try:
+                    self.queue.put(item, timeout=min(0.1, remaining))
+                    return True
+                except queue.Full:
+                    if time.monotonic() >= deadline:
+                        raise
         return False
 
     def _watch_storage(self):

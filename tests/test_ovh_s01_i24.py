@@ -401,3 +401,102 @@ def test_t7_cli_prompt_preserves_role_order_and_validation_guards():
         CLIAgentAdapter._prompt([{"role": "user", "content": "x", "tool_call_id": "1"}])
     with pytest.raises(AdapterError, match="CLI API mode supports text messages only"):
         CLIAgentAdapter._prompt([{"role": "user", "content": ["not-a-string"]}])
+
+
+def test_t3_rework_expired_deadline_non_full_queue_enqueues_and_keeps_session_alive(tmp_path, monkeypatch):
+    monkeypatch.setattr(codex_session, "_check_protocol", lambda executable, mtime: None)
+    pooled_exe = _write_fake_codex_script(
+        tmp_path,
+        """
+        import json, sys, time
+
+        for raw in sys.stdin:
+            msg = json.loads(raw)
+            method = msg.get("method")
+            req_id = msg.get("id")
+            if method == "initialize":
+                print(json.dumps({"id": req_id, "result": {"serverInfo": {"name": "fake"}}}), flush=True)
+            elif method == "thread/start":
+                print(json.dumps({"id": req_id, "result": {"thread": {"id": "th-pooled"}}}), flush=True)
+            elif method == "turn/start":
+                turn_id = f"tu-{req_id}"
+                print(json.dumps({"id": req_id, "result": {"turn": {"id": turn_id}}}), flush=True)
+                print(json.dumps({"method": "item/completed", "params": {"threadId": "th-pooled", "turnId": turn_id, "item": {"id": "m", "type": "agentMessage", "text": f"ok-{req_id}"}}}), flush=True)
+                print(json.dumps({"method": "turn/completed", "params": {"threadId": "th-pooled", "turnId": turn_id, "turn": {"id": turn_id, "status": "completed"}}}), flush=True)
+            elif method == "ryn/emitIdleNotifications":
+                for idx in range(2):
+                    print(json.dumps({"method": "thread/tokenUsage/updated", "params": {"threadId": "th-pooled", "idx": idx}}), flush=True)
+        """,
+    )
+    rpc = codex_session.CodexRPC(str(pooled_exe), timeout=10)
+    try:
+        rpc.initialize()
+        thread_id = codex_session._start_thread(rpc, model="", dynamic=[], instructions="test")
+        answer_1, _, _ = codex_session._turn(
+            rpc,
+            thread_id,
+            {"messages": [{"role": "user", "content": "turn-1"}]},
+            "turn-1",
+            deadline=time.monotonic() + 5,
+        )
+        assert answer_1 == "ok-3"
+
+        # Simulate pooled session sitting idle past the previous turn's deadline.
+        rpc.deadline = time.monotonic() - 5.0
+        assert not rpc.queue.full()
+
+        # Subprocess emits idle notifications while deadline is expired and queue has room.
+        rpc.process.stdin.write((json.dumps({"method": "ryn/emitIdleNotifications"}) + "\n").encode("utf-8"))
+        rpc.process.stdin.flush()
+
+        wait_until = time.monotonic() + 3.0
+        while rpc.queue.qsize() < 2 and not rpc.failure and time.monotonic() < wait_until:
+            time.sleep(0.02)
+
+        assert rpc.failure == ""
+        assert rpc.alive() is True
+        assert rpc.process.poll() is None
+        assert rpc.queue.qsize() == 2
+        assert rpc.settle() is True
+        assert rpc.alive() is True
+
+        # Next turn on the same pooled session succeeds without cold restart.
+        answer_2, _, _ = codex_session._turn(
+            rpc,
+            thread_id,
+            {"messages": [{"role": "user", "content": "turn-2"}]},
+            "turn-2",
+            deadline=time.monotonic() + 5,
+        )
+        assert answer_2 == "ok-4"
+        assert rpc.alive() is True
+    finally:
+        rpc.close()
+
+
+def test_t3_rework_expired_deadline_full_queue_raises_full_only_when_full():
+    import threading as _threading
+
+    rpc = object.__new__(codex_session.CodexRPC)
+    rpc.queue = queue.Queue(maxsize=2)
+    rpc.closed = _threading.Event()
+    rpc.failure = ""
+    rpc.deadline = time.monotonic() - 5.0
+
+    # Non-full slots still succeed via put_nowait even with expired deadline.
+    assert rpc._enqueue({"seq": 1}) is True
+    assert rpc._enqueue({"seq": 2}) is True
+    assert rpc.queue.full() is True
+
+    # Once the queue is genuinely full AND deadline is expired, _enqueue raises queue.Full.
+    with pytest.raises(queue.Full):
+        rpc._enqueue({"seq": 3})
+    assert [rpc.queue.get_nowait(), rpc.queue.get_nowait()] == [{"seq": 1}, {"seq": 2}]
+
+    # Also verify starting directly from a pre-populated full queue with expired deadline raises queue.Full.
+    pre_full = queue.Queue(maxsize=1)
+    pre_full.put_nowait({"already": "full"})
+    rpc.queue = pre_full
+    rpc.deadline = time.monotonic() - 10.0
+    with pytest.raises(queue.Full):
+        rpc._enqueue({"overflow": True})
