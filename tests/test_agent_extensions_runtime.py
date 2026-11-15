@@ -505,8 +505,7 @@ def test_computer_access_permission_and_unknown_write_reconciliation(ext_env, tm
     runtime.update_settings(
         {
             "desktop_access": True,
-            "permission_mode": "automatic",
-            "allowed_write_tools": [crash_tool],
+            "permission_mode": "confirm_changes",
         }
     )
     model.responses = [
@@ -517,6 +516,17 @@ def test_computer_access_permission_and_unknown_write_reconciliation(ext_env, tm
     runtime.run_once()  # discover model step
     runtime.run_once()  # discover tool step
     runtime.run_once()  # crash_tool model step
+    runtime.run_once()  # crash_tool pauses at waiting_approval under confirm_changes
+    waiting2 = runtime.get(task2["id"])
+    assert waiting2["status"] == "waiting_approval"
+    runtime.action(
+        task2["id"],
+        {
+            "action": "approve",
+            "approval_id": waiting2["pending_approval"]["id"],
+            "expected_control_revision": waiting2["control_revision"],
+        },
+    )
     runtime.run_once()  # crash_tool tool step -> crashes after dispatch
     state2 = runtime.get(task2["id"])
     assert state2["status"] == "interrupted"
@@ -699,8 +709,7 @@ def test_post_send_rpc_error_and_inference_window_binding_change_regressions(ext
     # reconcile to 'unknown', and NEVER re-execute or retry on subsequent ticks.
     runtime.update_settings(
         {
-            "permission_mode": "automatic",
-            "allowed_write_tools": [crash_tool, mutate_tool],
+            "permission_mode": "confirm_changes",
         }
     )
     model.responses = [
@@ -712,6 +721,17 @@ def test_post_send_rpc_error_and_inference_window_binding_change_regressions(ext
     runtime.run_once()  # discover model step
     runtime.run_once()  # discover tool step
     runtime.run_once()  # crash_tool model step
+    runtime.run_once()  # crash_tool pauses at waiting_approval under confirm_changes
+    s_waiting = runtime.get(t_rpc["id"])
+    assert s_waiting["status"] == "waiting_approval"
+    runtime.action(
+        t_rpc["id"],
+        {
+            "action": "approve",
+            "approval_id": s_waiting["pending_approval"]["id"],
+            "expected_control_revision": s_waiting["control_revision"],
+        },
+    )
     runtime.run_once()  # crash_tool tool step -> server bumps counter to 1 then returns -32602
     s_rpc = runtime.get(t_rpc["id"])
     assert s_rpc["status"] == "interrupted"
@@ -725,6 +745,13 @@ def test_post_send_rpc_error_and_inference_window_binding_change_regressions(ext
     assert s_rpc_after["reconciliation"]["state"] == "unknown"
     counts_after_rpc = json.loads(counter1.read_text(encoding="utf-8"))
     assert counts_after_rpc["crash_after_dispatch"] == 1
+
+    runtime.update_settings(
+        {
+            "permission_mode": "automatic",
+            "allowed_write_tools": [crash_tool, mutate_tool],
+        }
+    )
 
     # 2. Binding change DURING model.complete inference window (same server_id, tool name, and schema,
     # but server args updated to point at script2 while model.complete is running):
