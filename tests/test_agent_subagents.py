@@ -503,3 +503,474 @@ def test_subagent_tree_resolution_list_resume_fork_and_eviction(tmp_path: Path):
     runtime.store.transaction(_tx)
 
 
+def test_s07_i1_t1_ten_unread_notifications_summarized_and_persisted(tmp_path: Path):
+    _, runtime, model, _ = _build_env(tmp_path)
+    created = runtime.create(
+        {
+            "message": "Summarize all finished subagent reports.",
+            "model_id": "local/gpt-4o",
+            "client_request_id": str(uuid.uuid4()),
+        }
+    )
+    parent_id = created["id"]
+
+    def _seed_notifications(data: dict):
+        parent_row = data["tasks"][parent_id]
+        queue = parent_row.setdefault("subagent_notifications", [])
+        queue.append(
+            {
+                "id": "subnotif_already_delivered",
+                "agent_id": "child_old",
+                "agent_path": "/root/old_worker",
+                "nickname": "OldWorker",
+                "role": "explorer",
+                "status": "completed",
+                "summary": "Old summary that must not be resent.",
+                "delivered": True,
+            }
+        )
+        for idx in range(10):
+            queue.append(
+                {
+                    "id": f"subnotif_{idx:02d}",
+                    "agent_id": f"child_{idx:02d}",
+                    "agent_path": f"/root/worker_{idx:02d}",
+                    "nickname": f"Nick{idx:02d}",
+                    "role": "explorer",
+                    "status": "failed" if idx == 1 else "completed",
+                    "summary": f"Full body for subagent {idx:02d}",
+                    "delivered": False,
+                }
+            )
+
+    runtime.store.transaction(_seed_notifications)
+
+    model.parent_responses.append(
+        {
+            "message": {"role": "assistant", "content": "Processed all 10 subagent notifications."},
+            "finish_reason": "stop",
+            "usage": {"input_tokens": 60, "output_tokens": 20},
+        }
+    )
+    runtime.run_once()
+
+    row = runtime.store.read()["tasks"][parent_id]
+    assert row["status"] == "completed"
+
+    notif_indices = [
+        idx
+        for idx, msg in enumerate(row["messages"])
+        if isinstance(msg, dict) and (msg.get("ui") or {}).get("kind") == "subagent_notification"
+    ]
+    assistant_indices = [
+        idx
+        for idx, msg in enumerate(row["messages"])
+        if isinstance(msg, dict) and msg.get("role") == "assistant"
+    ]
+    assert len(notif_indices) == 1
+    assert len(assistant_indices) == 1
+    assert notif_indices[0] < assistant_indices[0]
+
+    notif_msg = row["messages"][notif_indices[0]]
+    assert notif_msg["role"] == "user"
+    assert notif_msg["ui"] == {"kind": "subagent_notification"}
+    assert "context_epoch" in notif_msg
+
+    text = notif_msg["content"]
+    assert "OldWorker" not in text
+    assert "Old summary that must not be resent." not in text
+    assert text.count("<subagent_notification>") == 8
+    assert text.count("</subagent_notification>") == 8
+    for early_idx, expected_status in ((0, "completed"), (1, "failed")):
+        assert f"Nick{early_idx:02d}" in text
+        assert f"/root/worker_{early_idx:02d}" in text
+        assert expected_status in text
+        assert f"Full body for subagent {early_idx:02d}" not in text
+    for full_idx in range(2, 10):
+        assert f"Full body for subagent {full_idx:02d}" in text
+
+    unread_after = [n for n in row["subagent_notifications"] if not n.get("delivered")]
+    assert unread_after == []
+    assert all(n["delivered"] is True for n in row["subagent_notifications"])
+
+    # Compatibility: ui.kind == "subagent_notification" is NOT an owner turn start
+    refresh_hits: list[int] = []
+
+    class _SpyExtensions:
+        def refresh_catalogs_for_turn(self):
+            refresh_hits.append(1)
+
+        def plugin_context_note(self, _ctx, *, selected_skill_ids=()):
+            return ""
+
+    orig_extensions = getattr(runtime, "extensions", None)
+    runtime.extensions = _SpyExtensions()
+    try:
+        probe_row = {
+            **row,
+            "messages": [
+                {"role": "user", "content": "Owner turn", "message_id": "owner_1"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_plan_1",
+                            "type": "function",
+                            "function": {"name": "ryn_update_plan", "arguments": "{}"},
+                        }
+                    ],
+                    "context_epoch": 0,
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_plan_1",
+                    "content": "{\"ok\":true}",
+                    "context_epoch": 0,
+                },
+                {
+                    "role": "user",
+                    "content": text,
+                    "ui": {"kind": "subagent_notification"},
+                    "context_epoch": 0,
+                },
+            ],
+            "plan": {"revision": 1, "goal_revision": 1, "steps": [{"title": "Step 1", "status": "in_progress"}]},
+        }
+        runtime._refresh_plugin_catalogs_at_turn_start(probe_row)
+        assert refresh_hits == []
+        ctx_msgs = runtime._context(probe_row)
+        assert isinstance(ctx_msgs, list) and len(ctx_msgs) > 0
+    finally:
+        runtime.extensions = orig_extensions
+
+
+def test_s07_i1_t2_mid_request_notification_stays_unread_and_requeues_parent(tmp_path: Path):
+    _, runtime, model, _ = _build_env(tmp_path)
+    created = runtime.create(
+        {
+            "message": "Coordinate and finish only when all notifications are seen.",
+            "model_id": "local/gpt-4o",
+            "client_request_id": str(uuid.uuid4()),
+        }
+    )
+    parent_id = created["id"]
+
+    runtime.store.transaction(
+        lambda data: data["tasks"][parent_id].setdefault("subagent_notifications", []).append(
+            {
+                "id": "subnotif_before",
+                "agent_id": "child_before",
+                "agent_path": "/root/before",
+                "nickname": "Turing",
+                "role": "explorer",
+                "status": "completed",
+                "summary": "Initial notification before model call.",
+                "delivered": False,
+            }
+        )
+    )
+
+    step_calls = 0
+
+    def _custom_complete(model_id, messages, specs, cancelled, on_event, **options):
+        nonlocal step_calls
+        step_calls += 1
+        if step_calls == 1:
+            runtime.store.transaction(
+                lambda data: data["tasks"][parent_id].setdefault("subagent_notifications", []).append(
+                    {
+                        "id": "subnotif_during",
+                        "agent_id": "child_during",
+                        "agent_path": "/root/during",
+                        "nickname": "Curie",
+                        "role": "explorer",
+                        "status": "completed",
+                        "summary": "Arrived mid-request while model was thinking.",
+                        "delivered": False,
+                    }
+                )
+            )
+            return {
+                "message": {"role": "assistant", "content": "First attempt to finish."},
+                "finish_reason": "stop",
+                "usage": {"input_tokens": 30, "output_tokens": 12},
+            }
+        return {
+            "message": {"role": "assistant", "content": "Final answer incorporating Curie."},
+            "finish_reason": "stop",
+            "usage": {"input_tokens": 45, "output_tokens": 15},
+        }
+
+    model.complete = _custom_complete
+
+    # Step 1: mid-request notification arrives; parent must NOT complete and must leave it unread
+    runtime.run_once()
+    after_step_1 = runtime.store.read()["tasks"][parent_id]
+    by_id_1 = {item["id"]: item for item in after_step_1["subagent_notifications"]}
+    assert by_id_1["subnotif_before"]["delivered"] is True
+    assert by_id_1["subnotif_during"]["delivered"] is False
+    assert after_step_1["status"] == "queued"
+    assert any(
+        ev.get("type") == "turn_decision"
+        and ev.get("action") == "continue"
+        and ev.get("reason") == "subagent_notification"
+        for ev in after_step_1["events"]
+    )
+
+    # Step 2: queued parent runs immediately, injects subnotif_during, persists & marks delivered, and completes
+    runtime.run_once()
+    after_step_2 = runtime.store.read()["tasks"][parent_id]
+    by_id_2 = {item["id"]: item for item in after_step_2["subagent_notifications"]}
+    assert by_id_2["subnotif_during"]["delivered"] is True
+    assert after_step_2["status"] == "completed"
+    notif_msgs = [
+        msg["content"]
+        for msg in after_step_2["messages"]
+        if isinstance(msg, dict) and (msg.get("ui") or {}).get("kind") == "subagent_notification"
+    ]
+    assert len(notif_msgs) == 2
+    assert "Initial notification before model call." in notif_msgs[0]
+    assert "Arrived mid-request while model was thinking." in notif_msgs[1]
+
+
+def test_s07_i1_t3_persisted_notification_retained_in_history_for_compaction(tmp_path: Path):
+    _, runtime, model, _ = _build_env(tmp_path)
+    created = runtime.create(
+        {
+            "message": "Read target file after subagent reports back.",
+            "model_id": "local/gpt-4o",
+            "client_request_id": str(uuid.uuid4()),
+        }
+    )
+    parent_id = created["id"]
+
+    runtime.store.transaction(
+        lambda data: data["tasks"][parent_id].setdefault("subagent_notifications", []).append(
+            {
+                "id": "subnotif_for_compact",
+                "agent_id": "child_compact",
+                "agent_path": "/root/compact_explorer",
+                "nickname": "Feynman",
+                "role": "explorer",
+                "status": "completed",
+                "summary": "UNIQUE_COMPACTION_MARKER_S07_I1: module layout verified.",
+                "delivered": False,
+            }
+        )
+    )
+
+    compaction_payloads: list[dict[str, Any]] = []
+    normal_turn = 0
+
+    orig_execute = runtime.tools.execute
+    runtime.tools.execute = lambda name, arguments, **options: {
+        "ok": True,
+        "path": arguments.get("path"),
+        "blob": "EVIDENCE_" + ("x" * 5200),
+    }
+    try:
+        def _complete_with_compaction(model_id, messages, specs, cancelled, on_event, **options):
+            nonlocal normal_turn
+            if specs == []:
+                compaction_payloads.append(json.loads(messages[-1]["content"]))
+                return {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Summary: Feynman verified module layout; file read completed.",
+                    },
+                    "finish_reason": "stop",
+                    "usage": {"input_tokens": 50, "output_tokens": 20},
+                }
+            normal_turn += 1
+            if normal_turn == 1:
+                return {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Reading file based on Feynman report.",
+                        "tool_calls": [
+                            {
+                                "id": "call_read_after_notif",
+                                "type": "function",
+                                "function": {
+                                    "name": "ryn_file_read",
+                                    "arguments": json.dumps({"path": "README.md"}),
+                                },
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                    "usage": {"input_tokens": 40, "output_tokens": 20},
+                }
+            return {
+                "message": {"role": "assistant", "content": "Completed after compaction."},
+                "finish_reason": "stop",
+                "usage": {"input_tokens": 40, "output_tokens": 15},
+            }
+
+        model.complete = _complete_with_compaction
+
+        # Step 1 (model call -> persists subagent_notification + tool call) & Step 2 (executes ryn_file_read)
+        runtime.run_once()
+        runtime.run_once()
+
+        # Tighten max_context_chars so Step 3 must run _compact before dispatching the next model turn
+        from rynmesh.agent_runtime.store import encoded
+
+        snap_row = runtime.store.read()["tasks"][parent_id]
+        pinned_probe = {
+            **snap_row,
+            "messages": [m for m in snap_row["messages"] if m.get("role") == "user" and (m.get("ui") or {}).get("kind") != "subagent_notification"],
+            "context_checkpoint": None,
+            "_exclude_optional_memory": True,
+        }
+        tight_cap = len(encoded(runtime._context(pinned_probe))) + 5200
+
+        def _tighten(data: dict):
+            r = data["tasks"][parent_id]
+            r["limits"]["max_context_chars"] = tight_cap
+            r["context_budget_provenance"] = "owner_manual"
+
+        runtime.store.transaction(_tighten)
+
+        # Step 3 compacts closed prefix (including persisted notification) and finishes
+        runtime.run_once()
+    finally:
+        runtime.tools.execute = orig_execute
+
+    final_row = runtime.store.read()["tasks"][parent_id]
+    assert final_row["status"] == "completed"
+    checkpoint = final_row.get("context_checkpoint")
+    assert isinstance(checkpoint, dict)
+    notif_idx = next(
+        idx
+        for idx, msg in enumerate(final_row["messages"])
+        if isinstance(msg, dict) and (msg.get("ui") or {}).get("kind") == "subagent_notification"
+    )
+    assert checkpoint["through"] > notif_idx
+    assert len(compaction_payloads) == 1
+    summarized_history = compaction_payloads[0]["history"]
+    assert any(
+        isinstance(item, dict)
+        and "UNIQUE_COMPACTION_MARKER_S07_I1" in str(item.get("content") or "")
+        for item in summarized_history
+    )
+
+
+def test_s07_i1_t4_model_messages_exclude_subagent_notification_ids(tmp_path: Path):
+    from rynmesh.agent_runtime.prompt import provider_messages
+
+    _, runtime, model, _ = _build_env(tmp_path)
+    created = runtime.create(
+        {
+            "message": "Check wire format of subagent notifications.",
+            "model_id": "local/gpt-4o",
+            "client_request_id": str(uuid.uuid4()),
+        }
+    )
+    parent_id = created["id"]
+
+    runtime.store.transaction(
+        lambda data: data["tasks"][parent_id].setdefault("subagent_notifications", []).append(
+            {
+                "id": "subnotif_wire_01",
+                "agent_id": "child_wire_01",
+                "agent_path": "/root/wire_01",
+                "nickname": "Lovelace",
+                "role": "explorer",
+                "status": "completed",
+                "summary": "Wire payload verification text.",
+                "delivered": False,
+            }
+        )
+    )
+
+    raw_row = runtime.store.read()["tasks"][parent_id]
+    pending_tail = subagents.pending_for_request(raw_row)
+    assert len(pending_tail) == 1
+    assert pending_tail[0]["subagent_notification_ids"] == ["subnotif_wire_01"]
+    projected_tail = provider_messages(pending_tail)
+    assert "subagent_notification_ids" not in projected_tail[0]
+
+    captured_wire_messages: list[list[dict[str, Any]]] = []
+
+    def _capture_complete(model_id, messages, specs, cancelled, on_event, **options):
+        captured_wire_messages.append([dict(m) for m in messages])
+        return {
+            "message": {"role": "assistant", "content": "Verified wire messages."},
+            "finish_reason": "stop",
+            "usage": {"input_tokens": 25, "output_tokens": 10},
+        }
+
+    model.complete = _capture_complete
+    runtime.run_once()
+
+    assert len(captured_wire_messages) == 1
+    wire_msgs = captured_wire_messages[0]
+    assert all("subagent_notification_ids" not in msg for msg in wire_msgs)
+    assert any("Wire payload verification text." in str(msg.get("content") or "") for msg in wire_msgs)
+
+
+def test_s07_i1_t5_wait_agent_marks_settled_parent_notification_delivered(tmp_path: Path):
+    _, runtime, model, _ = _build_env(tmp_path)
+    created = runtime.create(
+        {
+            "message": "Wait on paused child without leaving duplicate unread notifications.",
+            "model_id": "local/gpt-4o",
+            "client_request_id": str(uuid.uuid4()),
+        }
+    )
+    parent_id = created["id"]
+
+    def _spawn_and_pause_without_prior_settle(data: dict):
+        parent_row = data["tasks"][parent_id]
+        spawned = subagents.spawn_agent_in_tx(
+            data,
+            parent_row,
+            {"task_name": "wait_target", "prompt": "Check wait settle delivery", "role": "explorer"},
+        )
+        child_row = data["tasks"][spawned["agent_id"]]
+        child_row["status"] = "paused"
+        child_row["result"] = "Paused checkpoint report."
+
+    runtime.store.transaction(_spawn_and_pause_without_prior_settle)
+
+    model.parent_responses.append(
+        {
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_wait_settle_sync",
+                        "type": "function",
+                        "function": {
+                            "name": "ryn_wait_agent",
+                            "arguments": json.dumps({"targets": ["Turing"], "timeout_seconds": 10}),
+                        },
+                    }
+                ],
+            },
+            "finish_reason": "tool_calls",
+            "usage": {"input_tokens": 30, "output_tokens": 15},
+        }
+    )
+    model.parent_responses.append(
+        {
+            "message": {"role": "assistant", "content": "Done waiting."},
+            "finish_reason": "stop",
+            "usage": {"input_tokens": 30, "output_tokens": 10},
+        }
+    )
+
+    # Step 1: model issues ryn_wait_agent; Step 2: executes ryn_wait_agent
+    runtime.run_once()
+    runtime.run_once()
+
+    after_wait = runtime.store.read()["tasks"][parent_id]
+    parent_notifs = after_wait.get("subagent_notifications") or []
+    assert len(parent_notifs) == 1
+    assert parent_notifs[0]["delivered"] is True
+
+
+

@@ -1036,18 +1036,64 @@ def resume_agent_in_tx(data: dict, parent_row: dict, args: dict) -> dict:
     }
 
 
+def _notification_id(notif: dict, index: int) -> str:
+    raw_id = notif.get("id")
+    if isinstance(raw_id, str) and raw_id:
+        return raw_id
+    return f"legacy_{index}:{notif.get('agent_id') or ''}:{notif.get('created_at') or ''}"
+
+
 def drain_subagent_notifications_in_tx(data: dict, parent_row: dict, target_ids: set[str] | None = None) -> list[dict]:
     """Mark matching unread notifications on parent_row as delivered and return them."""
     queue = parent_row.get("subagent_notifications") or []
     delivered: list[dict] = []
-    for item in queue:
+    tasks = (data.get("tasks") or {}) if isinstance(data, dict) else {}
+    for index, item in enumerate(queue):
         if not isinstance(item, dict) or item.get("delivered"):
             continue
-        if target_ids and item.get("agent_id") not in target_ids:
+        notif_id = _notification_id(item, index)
+        if target_ids is not None and notif_id not in target_ids and item.get("agent_id") not in target_ids:
             continue
         item["delivered"] = True
+        child_row = tasks.get(item.get("agent_id"))
+        if isinstance(child_row, dict):
+            last_notif = (child_row.get("subagent_meta") or {}).get("last_notification")
+            if isinstance(last_notif, dict) and last_notif.get("id") == item.get("id"):
+                last_notif["delivered"] = True
         delivered.append(copy.deepcopy(item))
     return delivered
+
+
+def pending_for_request(row: dict) -> list[dict]:
+    """Build pending tail message(s) for unread subagent notifications on row."""
+    queue = row.get("subagent_notifications") or []
+    unread: list[tuple[str, dict]] = []
+    for index, item in enumerate(queue):
+        if isinstance(item, dict) and not item.get("delivered"):
+            unread.append((_notification_id(item, index), item))
+    if not unread:
+        return []
+    shown_ids = [nid for nid, _ in unread]
+    sections: list[str] = ["Runtime subagent notifications:"]
+    if len(unread) > 8:
+        earlier = unread[:-8]
+        recent = unread[-8:]
+        sections.append(f"Earlier subagent notifications ({len(earlier)} summarized):")
+        for _, notif in earlier:
+            nickname = str(notif.get("nickname") or "")
+            agent_path = str(notif.get("agent_path") or "")
+            status = str(notif.get("status") or "")
+            sections.append(f"- {nickname} | {agent_path} | {status}")
+    else:
+        recent = unread
+    sections.extend(format_notification_tag(notif) for _, notif in recent)
+    return [
+        {
+            "role": "user",
+            "content": "\n".join(sections),
+            "subagent_notification_ids": shown_ids,
+        }
+    ]
 
 
 def format_notification_tag(notif: dict) -> str:
