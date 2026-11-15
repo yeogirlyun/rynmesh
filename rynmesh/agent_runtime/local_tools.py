@@ -1482,7 +1482,7 @@ class LocalTools:
                       "readback_verified": True}
             if calculation_receipt_id:
                 result.update(calculation_receipt_id=calculation_receipt_id,
-                              calculation_details="Full rows and per-check details are in the original calculation receipt and exported file; this export recomputed the same fingerprint and verified written bytes.")
+                              calculation_details="Full calculation and check details remain in the original calculation receipt; the file retains its existing format. This export recomputed the same fingerprint and verified written bytes.")
             return result
         if name == "ryn_download_file":
             from .downloads import save
