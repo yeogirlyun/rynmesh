@@ -57,6 +57,13 @@ PERMISSION_DENIED_CORRECTION = (
     "with another tool. Continue with what the permissions allow and say in your reply which setting blocks the rest.")
 
 
+POWERSHELL_NON_ASCII_SYNTAX_CHARS = frozenset({
+    "\u2018", "\u2019", "\u201a", "\u201b",
+    "\u201c", "\u201d", "\u201e", "\u201f",
+    "\u2013", "\u2014", "\u2015",
+})
+
+
 def literal_command(command, shell):
     """Recognize one literal invocation; reject shell syntax and interpolation.
 
@@ -64,6 +71,8 @@ def literal_command(command, shell):
     sessions. It is not a general command safety classifier or a sandbox.
     """
     if not isinstance(command, str) or shell not in {"powershell", "sh"}:
+        return None
+    if shell == "powershell" and any(ch in POWERSHELL_NON_ASCII_SYNTAX_CHARS for ch in command):
         return None
     words, word, quote = [], [], None
     index = 0

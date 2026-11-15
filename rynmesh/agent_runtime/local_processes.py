@@ -428,7 +428,7 @@ def shell_command(shell, command, *, tty=False):
 
 def literal_read_command(arguments):
     """Execute recognized reads without shell expansion or ripgrep preprocessors."""
-    from .execution_policy import literal_command, shell_read
+    from .execution_policy import POWERSHELL_NON_ASCII_SYNTAX_CHARS, literal_command, shell_read
     if not shell_read(arguments):
         return None
     shell = arguments.get("shell", "powershell" if os.name == "nt" else "sh")
@@ -451,6 +451,8 @@ def literal_read_command(arguments):
     # again so the permission check and actual interpretation agree.
     import re
     module = "Microsoft.PowerShell.Utility" if program == "select-string" else "Microsoft.PowerShell.Management"
+    if any(ch in POWERSHELL_NON_ASCII_SYNTAX_CHARS for word in words for ch in word):
+        raise AgentToolRejected("agent_invalid_operation_classification")
     args = [word if re.fullmatch(r"-[A-Za-z]+", word) else "'" + word.replace("'", "''") + "'"
             for word in words[1:]]
     return shell_command(shell, module + "\\" + program + " " + " ".join(args))
