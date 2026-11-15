@@ -312,7 +312,12 @@ def test_t7_powershell_profile_pssecurity_exception_falls_back_to_noprofile_with
             [
                 sys.executable,
                 "-c",
-                "import sys; sys.stderr.write('File profile.ps1 cannot be loaded. + CategoryInfo : SecurityError: (:) [], PSSecurityException\\n'); print('BODY_OK')",
+                (
+                    "import sys; sys.stderr.write("
+                    "'. : File C:\\\\Docs\\\\WindowsPowerShell\\\\Microsoft.PowerShell_profile.ps1 cannot be loaded.\\n"
+                    "    + CategoryInfo          : SecurityError: (:) [], PSSecurityException\\n'"
+                    "); print('BODY_OK')"
+                ),
             ],
             powershell_login_profile=True,
         )
@@ -330,6 +335,128 @@ def test_t7_powershell_profile_pssecurity_exception_falls_back_to_noprofile_with
             {"command": "Write-Output 'after-fallback'", "shell": "powershell", "login": True}
         )
         assert "-NoProfile" in next_cmd
+    finally:
+        monkeypatch.setattr(local_processes, "_POWERSHELL_PROFILE_DISABLED", False, raising=False)
+        processes.close()
+
+
+def test_t8_rework_hung_warmup_caps_total_command_prep_wait_under_2_5s(monkeypatch):
+    from rynmesh.agent_runtime import login_environment
+
+    login_environment.reset_cache()
+    monkeypatch.setattr(login_environment.os, "name", "posix", raising=False)
+    monkeypatch.setattr(local_processes.os, "name", "posix", raising=False)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setattr(local_processes, "_bundled_rg_executable", lambda: None)
+    monkeypatch.setattr(local_processes.shutil, "which", lambda name, path=None: "/usr/bin/rg" if name == "rg" else "/bin/sh")
+    monkeypatch.setattr(login_environment, "default_posix_shell", lambda env=None: "/bin/zsh")
+
+    release_warmup = threading.Event()
+    warmup_entered = threading.Event()
+
+    def hung_run(cmd, **kwargs):
+        warmup_entered.set()
+        release_warmup.wait(8.0)
+        return SimpleNamespace(returncode=0, stdout=b"PATH=/late/homebrew/bin:/usr/bin\x00", stderr=b"")
+
+    monkeypatch.setattr(login_environment.subprocess, "run", hung_run)
+    # Keep default WARMUP_WAIT_SECONDS = 2.0 to test real wall-clock ceiling (< 2.5s).
+    assert login_environment.WARMUP_WAIT_SECONDS == 2.0
+
+    try:
+        t0 = time.monotonic()
+        argv = local_processes.prepare_shell_command({"command": "rg -n needle src", "shell": "sh"})
+        follow_env = local_processes.child_environment()
+        elapsed = time.monotonic() - t0
+
+        assert warmup_entered.is_set()
+        assert argv[0] == "/usr/bin/rg"
+        assert follow_env["PATH"] == "/usr/bin:/bin"
+        assert elapsed < 2.5, f"expected <= 2.5s total wait across command prep + env, got {elapsed:.2f}s"
+
+        # Once background warmup eventually finishes, subsequent calls pick up cached login env.
+        release_warmup.set()
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            if "/late/homebrew/bin" in local_processes.child_environment()["PATH"]:
+                break
+            time.sleep(0.02)
+        assert "/late/homebrew/bin" in local_processes.child_environment()["PATH"]
+    finally:
+        release_warmup.set()
+        login_environment.reset_cache()
+
+
+def test_t9_rework_user_command_pssecurity_exception_does_not_disable_profile(tmp_path, monkeypatch):
+    monkeypatch.setattr(local_processes, "_POWERSHELL_PROFILE_DISABLED", False, raising=False)
+    processes = local_processes.Processes()
+    try:
+        # 1. User script blocked by ExecutionPolicy on line 1 (not a *profile.ps1 file) must NOT disable profile.
+        user_script_cmd = local_processes.PreparedCommand(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import sys; sys.stderr.write("
+                    "'.\\\\deploy.ps1 : File C:\\\\repo\\\\deploy.ps1 cannot be loaded because running scripts is disabled.\\n"
+                    "    + CategoryInfo          : SecurityError: (:) [], PSSecurityException\\n'"
+                    "); print('USER_SCRIPT_DONE')"
+                ),
+            ],
+            powershell_login_profile=True,
+        )
+        ident1 = processes.start(user_script_cmd, tmp_path, "task", 10, lambda: True, lambda: False)
+        res1 = processes.wait(ident1, "task", lambda: False)
+        assert "USER_SCRIPT_DONE" in res1["output"]
+        assert "profile_notice" not in res1
+        assert local_processes._POWERSHELL_PROFILE_DISABLED is False
+
+        # 2. Late output mentioning profile.ps1 + PSSecurityException after 25 lines of user output must NOT disable profile.
+        late_output_cmd = local_processes.PreparedCommand(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "for i in range(25): print(f'build step {i}')\n"
+                    "print('File Microsoft.PowerShell_profile.ps1 PSSecurityException in test log')"
+                ),
+            ],
+            powershell_login_profile=True,
+        )
+        ident2 = processes.start(late_output_cmd, tmp_path, "task", 10, lambda: True, lambda: False)
+        res2 = processes.wait(ident2, "task", lambda: False)
+        assert "profile_notice" not in res2
+        assert local_processes._POWERSHELL_PROFILE_DISABLED is False
+
+        monkeypatch.setattr(local_processes.os, "name", "nt", raising=False)
+        monkeypatch.setattr(local_processes.shutil, "which", lambda name, path=None: r"C:\Program Files\PowerShell\7\pwsh.exe")
+        still_login = local_processes.prepare_shell_command(
+            {"command": "Write-Output 'still-with-profile'", "shell": "powershell", "login": True}
+        )
+        assert "-NoProfile" not in still_login
+
+        # 3. Genuine startup profile load failure DOES disable profile and emit profile_notice.
+        real_profile_err = local_processes.PreparedCommand(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import sys; sys.stderr.write("
+                    "'. : File C:\\\\Docs\\\\PowerShell\\\\profile.ps1 cannot be loaded.\\n"
+                    "    + CategoryInfo          : SecurityError: (:) [], PSSecurityException\\n'"
+                    "); print('AFTER_PROFILE_ERR')"
+                ),
+            ],
+            powershell_login_profile=True,
+        )
+        ident3 = processes.start(real_profile_err, tmp_path, "task", 10, lambda: True, lambda: False)
+        res3 = processes.wait(ident3, "task", lambda: False)
+        assert "profile_notice" in res3
+        assert local_processes._POWERSHELL_PROFILE_DISABLED is True
+        after_fallback = local_processes.prepare_shell_command(
+            {"command": "Write-Output 'now-noprofile'", "shell": "powershell", "login": True}
+        )
+        assert "-NoProfile" in after_fallback
     finally:
         monkeypatch.setattr(local_processes, "_POWERSHELL_PROFILE_DISABLED", False, raising=False)
         processes.close()

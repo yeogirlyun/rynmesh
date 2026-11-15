@@ -21,6 +21,7 @@ _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _LOCK = threading.Lock()
 _CACHE: dict[tuple[str], dict[str, str]] = {}
 _INFLIGHT: dict[tuple[str], threading.Event] = {}
+_WARMUP_TIMED_OUT: set[tuple[str]] = set()
 
 
 def default_posix_shell(env: Mapping[str, str] | None = None) -> str | None:
@@ -108,6 +109,7 @@ def capture(shell_path: str | None = None) -> dict[str, str]:
         with _LOCK:
             _CACHE[cache_key] = result
             _INFLIGHT.pop(cache_key, None)
+            _WARMUP_TIMED_OUT.discard(cache_key)
             inflight.set()
     return dict(result)
 
@@ -157,6 +159,7 @@ def start_warmup(shell_path: str | None = None) -> threading.Thread | None:
             with _LOCK:
                 _CACHE[cache_key] = result
                 _INFLIGHT.pop(cache_key, None)
+                _WARMUP_TIMED_OUT.discard(cache_key)
                 inflight.set()
 
     thread = threading.Thread(target=_worker, daemon=True, name="ryn-login-env-warmup")
@@ -165,7 +168,7 @@ def start_warmup(shell_path: str | None = None) -> threading.Thread | None:
 
 
 def captured_for_child(shell_path: str | None = None, *, wait_seconds: float | None = None) -> dict[str, str]:
-    """Return cached login environment, waiting at most *wait_seconds* for background warmup."""
+    """Return cached login environment, waiting at most *wait_seconds* once for background warmup."""
     if os.name == "nt":
         return {}
     resolved = shell_path or default_posix_shell()
@@ -176,6 +179,8 @@ def captured_for_child(shell_path: str | None = None, *, wait_seconds: float | N
     with _LOCK:
         if cache_key in _CACHE:
             return dict(_CACHE[cache_key])
+        if cache_key in _WARMUP_TIMED_OUT:
+            return {}
         inflight = _INFLIGHT.get(cache_key)
     if inflight is None:
         start_warmup(resolved)
@@ -184,6 +189,10 @@ def captured_for_child(shell_path: str | None = None, *, wait_seconds: float | N
                 return dict(_CACHE[cache_key])
             inflight = _INFLIGHT.get(cache_key)
     if inflight is not None and not inflight.wait(budget):
+        with _LOCK:
+            if cache_key in _CACHE:
+                return dict(_CACHE[cache_key])
+            _WARMUP_TIMED_OUT.add(cache_key)
         return {}
     with _LOCK:
         return dict(_CACHE.get(cache_key, {}))
@@ -194,3 +203,4 @@ def reset_cache() -> None:
     with _LOCK:
         _CACHE.clear()
         _INFLIGHT.clear()
+        _WARMUP_TIMED_OUT.clear()

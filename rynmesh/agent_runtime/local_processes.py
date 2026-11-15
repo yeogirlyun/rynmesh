@@ -176,12 +176,22 @@ def _bundled_rg_executable() -> str | None:
 
 
 def _which(name: str, path: str | None = None) -> str | None:
-    if path is not None:
-        try:
-            return shutil.which(name, path=path)
-        except TypeError:
-            return shutil.which(name)
-    return shutil.which(name)
+    return shutil.which(name, path=path) if path is not None else shutil.which(name)
+
+
+_PS_PROFILE_PATH_RE = re.compile(r"(?:^|[\\/ _])profile\.ps1\b", re.IGNORECASE)
+
+
+def _is_powershell_profile_security_error(head_text: str) -> bool:
+    """Detect startup $PROFILE execution-policy failures without matching user script errors."""
+    if not head_text or "PSSecurityException" not in head_text:
+        return False
+    leading = "\n".join(head_text[:4096].splitlines()[:20])
+    exc_idx = leading.find("PSSecurityException")
+    if exc_idx < 0:
+        return False
+    before_exc = re.sub(r"\r?\n\s*", "", leading[:exc_idx])
+    return bool(_PS_PROFILE_PATH_RE.search(before_exc))
 
 
 def resolve_rg_executable(path: str | None = None) -> str | None:
@@ -627,9 +637,7 @@ class Processes:
                             "No new output at this offset yet; pass a larger wait_seconds (e.g. 10-20) "
                             "or stop the process instead of rapid polling at the same offset."
                         )
-                    if item.get("powershell_login_profile") and (
-                        "PSSecurityException" in text or "PSSecurityException" in head
-                    ):
+                    if item.get("powershell_login_profile") and _is_powershell_profile_security_error(head):
                         global _POWERSHELL_PROFILE_DISABLED
                         with _POWERSHELL_PROFILE_LOCK:
                             if not _POWERSHELL_PROFILE_DISABLED:
@@ -724,10 +732,10 @@ class Processes:
         return self.read(ident, task_id, wait_seconds=0)
 
 
-def shell_command(shell, command, *, tty=False, login=True):
+def shell_command(shell, command, *, tty=False, login=True, env: Mapping[str, str] | None = None):
     if os.name == "nt":
         if shell == "powershell":
-            search_path = child_environment().get("PATH")
+            search_path = (env if env is not None else child_environment()).get("PATH")
             executable = _which("pwsh", path=search_path) or _which("powershell", path=search_path)
             if executable:
                 use_profile = bool(login) and not _POWERSHELL_PROFILE_DISABLED
@@ -748,7 +756,7 @@ def shell_command(shell, command, *, tty=False, login=True):
     raise AgentToolRejected("agent_shell_unavailable")
 
 
-def literal_read_command(arguments):
+def literal_read_command(arguments, *, env: Mapping[str, str] | None = None):
     """Execute recognized reads without shell expansion or ripgrep preprocessors."""
     from .execution_policy import POWERSHELL_NON_ASCII_SYNTAX_CHARS, literal_command, shell_read
     if not shell_read(arguments):
@@ -756,7 +764,8 @@ def literal_read_command(arguments):
     shell = arguments.get("shell", "powershell" if os.name == "nt" else "sh")
     words = literal_command(arguments["command"], shell)
     program = words[0].lower()
-    search_path = child_environment().get("PATH")
+    resolved_env = env if env is not None else child_environment()
+    search_path = resolved_env.get("PATH")
     if program in {"git", "git.exe"}:
         executable = _which("git", path=search_path) or (_which("git.exe", path=search_path) if os.name == "nt" else None)
         if not executable:
@@ -786,7 +795,7 @@ def literal_read_command(arguments):
         raise AgentToolRejected("agent_invalid_operation_classification")
     args = [word if re.fullmatch(r"-[A-Za-z]+", word) else "'" + word.replace("'", "''") + "'"
             for word in words[1:]]
-    return shell_command(shell, module + "\\" + program + " " + " ".join(args), login=False)
+    return shell_command(shell, module + "\\" + program + " " + " ".join(args), login=False, env=resolved_env)
 
 
 def _contains_unavailable_rg_segment(command: str) -> bool:
@@ -851,7 +860,8 @@ def prepare_shell_command(arguments):
         validate_size(arguments.get("rows", 24), arguments.get("cols", 80))
     elif "rows" in arguments or "cols" in arguments:
         raise AgentToolRejected("agent_terminal_size_requires_tty")
-    literal = literal_read_command(arguments)
+    env = child_environment()
+    literal = literal_read_command(arguments, env=env)
     if literal is not None:
         return literal
     command = arguments["command"]
@@ -862,4 +872,5 @@ def prepare_shell_command(arguments):
         command,
         tty=arguments.get("tty", False),
         login=login,
+        env=env,
     )
