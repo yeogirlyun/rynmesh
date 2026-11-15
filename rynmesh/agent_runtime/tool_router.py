@@ -13,11 +13,13 @@ import re
 
 from ..llm_package.chat import validate_tool_arguments, validate_tool_schema
 from .output_policy import MAX_RAW_RESPONSE_BYTES, MAX_TOOL_CALL_ARGUMENT_BYTES
+from .protocol import sanitized
 from .store import AgentError, AgentToolRejected
 
 CALL_ID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 TOOL_NAME = re.compile(r"[A-Za-z0-9_.-]{1,64}\Z")
 INVALID_TOOL_NAME = "__invalid_tool_name"
+MAX_SCHEMA_ERROR_DETAIL_CHARS = 300
 
 
 class ToolCallProtocolError(AgentError):
@@ -81,9 +83,54 @@ def assert_schema_unchanged(call, current_spec):
         raise AgentToolRejected("agent_tool_definition_changed") from None
 
 
-def _reject(call, code, message):
-    call["error_result"] = {"error": code, "message": message,
-                            "not_executed": True, "no_mutation": True}
+def _json_type_name(value) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    return type(value).__name__
+
+
+def format_schema_rejection(name: str, exc: Exception) -> tuple[str, dict[str, str]]:
+    cause = getattr(exc, "__cause__", None) or exc
+    path_parts = [re.sub(r"[^A-Za-z0-9_]", "", str(part))[:40] for part in getattr(cause, "absolute_path", ())]
+    field_path = "/".join(p for p in path_parts if p) or "<root>"
+    validator = re.sub(r"[^A-Za-z0-9_]", "", str(getattr(cause, "validator", "schema")))[:24] or "schema"
+    raw_detail = getattr(exc, "detail", None)
+    if not isinstance(raw_detail, str):
+        raw_detail = getattr(cause, "message", None) if hasattr(cause, "message") else ""
+    detail = re.sub(r"[\x00-\x1f\x7f]+", " ", sanitized(str(raw_detail or ""))).strip()[:MAX_SCHEMA_ERROR_DETAIL_CHARS]
+    detail = sanitized(detail)[:MAX_SCHEMA_ERROR_DETAIL_CHARS]
+    if detail:
+        message = f"Invalid arguments for '{name}' at field '{field_path}' ({validator}): {detail}"
+    else:
+        message = f"Invalid arguments for '{name}' at field '{field_path}' ({validator}). Check the tool parameter schema and retry."
+    return message, {"field_path": field_path, "validator": validator}
+
+
+def schema_rejection_error(name: str, exc: Exception) -> AgentToolRejected:
+    message, details = format_schema_rejection(name, exc)
+    return AgentToolRejected(
+        "agent_tool_arguments_invalid",
+        correction=message,
+        details={"tool": name, **details},
+    )
+
+
+def _reject(call, code, message, *, details=None):
+    error_result = {"error": code, "message": sanitized(message),
+                    "not_executed": True, "no_mutation": True}
+    if isinstance(details, dict) and details:
+        error_result["details"] = sanitized(details)
+    call["error_result"] = error_result
     # This read classification is only a queue placeholder. It is never passed
     # to authorization or a handler; error_result is checked first by the host.
     call["effect"] = "read"
@@ -143,31 +190,81 @@ def normalize_tool_calls(calls, specs, *, existing_call_ids=(), metadata=None,
     internal_names = frozenset(internal_names)
     normalized = []
     for raw, function, call_id, original_arguments, arguments_json in entries:
-        name = function.get("name")
-        valid_name = isinstance(name, str) and TOOL_NAME.fullmatch(name)
-        name = name if valid_name else INVALID_TOOL_NAME
-        snapshot = catalog.get(name) if valid_name else None
+        raw_name = function.get("name")
+        valid_name = isinstance(raw_name, str) and bool(TOOL_NAME.fullmatch(raw_name))
+        namespace = raw.get("namespace")
+        bad_type = raw.get("type", "function") not in ("function", "function_call")
+        if bad_type:
+            name = raw_name if valid_name else INVALID_TOOL_NAME
+            snapshot = None
+        elif namespace not in (None, ""):
+            if isinstance(namespace, str) and valid_name:
+                candidates = [
+                    candidate
+                    for candidate in dict.fromkeys((f"{namespace}__{raw_name}", raw_name))
+                    if TOOL_NAME.fullmatch(candidate) and candidate in catalog
+                ]
+            else:
+                candidates = []
+            if len(candidates) == 1:
+                name = candidates[0]
+                snapshot = catalog[name]
+            else:
+                name = raw_name if valid_name else INVALID_TOOL_NAME
+                snapshot = None
+        else:
+            name = raw_name if valid_name else INVALID_TOOL_NAME
+            snapshot = catalog.get(name) if valid_name else None
         call = {"call_id": call_id, "name": name, "arguments": {},
                 "arguments_json": arguments_json, "raw_arguments_json": arguments_json,
                 "arguments_sha256": hashlib.sha256(arguments_json.encode()).hexdigest(),
                 "schema_snapshot": copy.deepcopy(snapshot),
                 "schema_sha256": _schema_digest(snapshot) if snapshot is not None else None,
                 "effect": None, "error_result": None}
-        if (raw.get("type", "function") not in ("function", "function_call")
-                or raw.get("namespace") not in (None, "")):
+        if bad_type:
             normalized.append(_reject(call, "agent_unknown_tool", "This tool payload is not in the request's function catalog."))
             continue
         if snapshot is None:
             normalized.append(_reject(call, "agent_unknown_tool", "Choose a tool from the tools offered in this request."))
             continue
         try:
-            arguments = (json.loads(original_arguments, parse_constant=_invalid_json_constant)
-                         if isinstance(original_arguments, str) else copy.deepcopy(original_arguments))
-            if not isinstance(arguments, dict):
-                raise ValueError
+            if isinstance(original_arguments, str):
+                arguments = (
+                    {}
+                    if not original_arguments.strip()
+                    else json.loads(original_arguments, parse_constant=_invalid_json_constant)
+                )
+            else:
+                arguments = copy.deepcopy(original_arguments)
+        except json.JSONDecodeError as exc:
+            normalized.append(_reject(
+                call,
+                "agent_tool_arguments_invalid",
+                f"failed to parse function arguments: {exc.msg} at line {exc.lineno} column {exc.colno}",
+            ))
+            continue
+        except (ValueError, TypeError, RecursionError) as exc:
+            normalized.append(_reject(
+                call,
+                "agent_tool_arguments_invalid",
+                f"failed to parse function arguments: {str(exc)[:MAX_SCHEMA_ERROR_DETAIL_CHARS]}",
+            ))
+            continue
+        if not isinstance(arguments, dict):
+            normalized.append(_reject(
+                call,
+                "agent_tool_arguments_invalid",
+                f"arguments must be a JSON object, got {_json_type_name(arguments)}",
+            ))
+            continue
+        try:
             _json(arguments)  # Reject non-finite/unserializable values consistently.
-        except (ValueError, TypeError, RecursionError):
-            normalized.append(_reject(call, "agent_tool_arguments_invalid", "Tool arguments must be a valid JSON object."))
+        except (ValueError, TypeError, RecursionError) as exc:
+            normalized.append(_reject(
+                call,
+                "agent_tool_arguments_invalid",
+                f"failed to parse function arguments: {str(exc)[:MAX_SCHEMA_ERROR_DETAIL_CHARS]}",
+            ))
             continue
         try:
             validate_tool_schema(snapshot.get("parameters", {}))
@@ -176,8 +273,9 @@ def normalize_tool_calls(calls, specs, *, existing_call_ids=(), metadata=None,
         if name not in internal_names:
             try:
                 validate_tool_arguments(snapshot.get("parameters", {}), arguments)
-            except ValueError:
-                normalized.append(_reject(call, "agent_tool_arguments_invalid", "Tool arguments do not match the request-bound parameter schema."))
+            except ValueError as exc:
+                message, details = format_schema_rejection(name, exc)
+                normalized.append(_reject(call, "agent_tool_arguments_invalid", message, details=details))
                 continue
         call["arguments"] = arguments
         if metadata is not None:

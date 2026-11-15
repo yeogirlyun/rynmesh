@@ -54,6 +54,7 @@ from .sharing import FriendSharingTool
 from .source_drafts import NAMES as SOURCE_NAMES
 from .source_drafts import SourceDrafts
 from .store import AgentError, AgentToolRejected, encoded
+from .tool_router import schema_rejection_error
 
 
 def _schema(properties=None, required=None):
@@ -418,15 +419,7 @@ class RynTools:
 
     @staticmethod
     def _schema_rejection(name: str, exc: Exception) -> AgentToolRejected:
-        cause = getattr(exc, "__cause__", None) or exc
-        path_parts = [re.sub(r"[^A-Za-z0-9_]", "", str(part))[:40] for part in getattr(cause, "absolute_path", ())]
-        field_path = "/".join(p for p in path_parts if p) or "<root>"
-        validator = re.sub(r"[^A-Za-z]", "", str(getattr(cause, "validator", "schema")))[:24] or "schema"
-        return AgentToolRejected(
-            "agent_tool_arguments_invalid",
-            correction=f"Invalid arguments for '{name}' at field '{field_path}' ({validator}). Check the tool parameter schema and retry.",
-            details={"tool": name, "field_path": field_path, "validator": validator},
-        )
+        return schema_rejection_error(name, exc)
 
     def _validate(self, name, arguments):
         self.metadata(name)
