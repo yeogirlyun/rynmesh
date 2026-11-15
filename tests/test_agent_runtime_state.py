@@ -143,3 +143,69 @@ def test_legacy_multiple_owner_constraints_keep_unique_ids_after_followup(tmp_pa
     updated = runtime.add_message(row["id"], {"message": "Fourth", "expected_revision": current["revision"]})
     ids = [c["id"] for c in updated["goal"]["constraints"]]
     assert len(ids) == len(set(ids)) == 4
+
+
+def test_control_requests_bounded_eviction_replay_and_legacy_strings(tmp_path):
+    import hashlib
+    import uuid
+    from rynmesh.agent_runtime.store import AgentError
+
+    runtime, _, _, _ = make_runtime(tmp_path)
+    current = runtime.create({"message": "Start"})
+    requests = []
+    for i in range(300):
+        req = {
+            "message": f"Info {i}",
+            "intent": "information",
+            "expected_revision": current["revision"],
+            "expected_goal_revision": current["goal"]["revision"],
+            "client_request_id": str(uuid.UUID(int=i + 1)),
+        }
+        requests.append(req)
+        current = runtime.add_message(current["id"], req)
+
+    stored_requests = runtime.store.read()["tasks"][current["id"]]["control_requests"]
+    assert len(stored_requests) == 256
+    assert list(stored_requests.keys()) == [r["client_request_id"] for r in requests[44:]]
+    sample_entry = stored_requests[requests[-1]["client_request_id"]]
+    assert isinstance(sample_entry, dict) and set(sample_entry.keys()) == {"sha", "at"}
+    assert isinstance(sample_entry["sha"], str) and isinstance(sample_entry["at"], str)
+
+    # Replaying a recent request returns the current public task without adding another message
+    replayed = runtime.add_message(current["id"], requests[-1])
+    assert replayed["revision"] == current["revision"]
+    assert len(replayed["messages"]) == len(current["messages"])
+
+    with pytest.raises(AgentError) as conflict_exc:
+        runtime.add_message(current["id"], {**requests[-1], "message": "Different payload"})
+    assert str(conflict_exc.value) == "agent_request_conflict"
+
+    # Replaying an evicted old request with stale expected_revision is rejected by check_version
+    with pytest.raises(AgentError) as stale_exc:
+        runtime.add_message(current["id"], requests[0])
+    assert str(stale_exc.value) == "agent_revision_conflict"
+
+    # Legacy string sha entries remain recognized as replays
+    legacy_id = str(uuid.UUID(int=9999))
+    legacy_req = {
+        "message": "Legacy message",
+        "intent": "information",
+        "expected_revision": 1,
+        "expected_goal_revision": 1,
+        "client_request_id": legacy_id,
+    }
+    legacy_sha = hashlib.sha256(encoded(legacy_req)).hexdigest()
+
+    def inject_legacy(data):
+        data["tasks"][current["id"]]["control_requests"][legacy_id] = legacy_sha
+
+    runtime.store.transaction(inject_legacy)
+    current_after_inject = runtime.get(current["id"])
+    legacy_replayed = runtime.add_message(current["id"], legacy_req)
+    assert legacy_replayed["revision"] == current_after_inject["revision"]
+    assert len(legacy_replayed["messages"]) == len(current_after_inject["messages"])
+
+    with pytest.raises(AgentError) as legacy_conflict:
+        runtime.add_message(current["id"], {**legacy_req, "message": "Tampered legacy"})
+    assert str(legacy_conflict.value) == "agent_request_conflict"
+
