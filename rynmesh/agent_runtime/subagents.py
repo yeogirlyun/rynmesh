@@ -96,14 +96,11 @@ FORK_ISOLATION_PROMPT: str = (
 )
 
 
-def build_coordinator_guidance(
-    max_open: int = MAX_OPEN_SUBAGENTS,
-    max_depth: int = MAX_SUBAGENT_DEPTH,
-) -> str:
+def build_coordinator_guidance() -> str:
     return (
         "<multi_agent_mode>"
-        f"Up to {max_open} subagents may remain open concurrently (settled subagents still count until closed with "
-        f"ryn_close_agent; when full, the earliest settled open subagent is closed automatically), with a maximum nesting depth of {max_depth}. "
+        f"Up to {MAX_OPEN_SUBAGENTS} subagents may remain open concurrently (settled subagents still count until closed with "
+        f"ryn_close_agent; when full, the earliest settled open subagent is closed automatically), with a maximum nesting depth of {MAX_SUBAGENT_DEPTH}. "
         "All subagents share the same workspace with you, so file edits are immediately visible across agents. "
         "Trust explorer findings without re-reading the same files, and reuse an existing explorer for related follow-up questions. "
         "Completed subagents emit <subagent_notification>."

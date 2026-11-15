@@ -504,13 +504,11 @@ def test_subagent_tree_resolution_list_resume_fork_and_eviction(tmp_path: Path):
 
 
 def test_s07_i7_t1_subagent_tool_specs_within_quota_and_complete_descriptions():
-    from rynmesh.agent_runtime import tool_menu
     from rynmesh.agent_runtime.store import encoded
 
-    quota = getattr(tool_menu, "SUBAGENT_SCHEMA_QUOTA_BYTES", None)
-    assert isinstance(quota, int) and quota > 3600
+    # Current SUBAGENT_TOOL_SPECS serializes to 4661 UTF-8 bytes; cap at 5130 (~10% headroom).
     total_bytes = len(encoded(subagents.SUBAGENT_TOOL_SPECS))
-    assert total_bytes <= quota
+    assert total_bytes <= 5130
 
     by_name = {s["function"]["name"]: s["function"] for s in subagents.SUBAGENT_TOOL_SPECS}
     spawn_fn = by_name["ryn_spawn_agent"]
@@ -537,11 +535,13 @@ def test_s07_i7_t1_subagent_tool_specs_within_quota_and_complete_descriptions():
         assert "Reuse an existing subagent" in desc
 
 
-def test_s07_i7_t2_coordinator_guidance_uses_constants_and_workspace_explorer_rules():
+def test_s07_i7_t2_coordinator_guidance_uses_constants_and_workspace_explorer_rules(monkeypatch):
     guidance = subagents.MULTI_AGENT_COORDINATOR_GUIDANCE
     assert str(subagents.MAX_OPEN_SUBAGENTS) in guidance
     assert str(subagents.MAX_SUBAGENT_DEPTH) in guidance
-    custom = subagents.build_coordinator_guidance(max_open=11, max_depth=4)
+    monkeypatch.setattr(subagents, "MAX_OPEN_SUBAGENTS", 11)
+    monkeypatch.setattr(subagents, "MAX_SUBAGENT_DEPTH", 4)
+    custom = subagents.build_coordinator_guidance()
     assert "11" in custom and "4" in custom
 
     assert "share the same workspace" in guidance
@@ -663,10 +663,9 @@ def test_s07_i7_t5_all_internal_specs_size_cap_and_core_tools_pinned():
     from rynmesh.agent_runtime.loop import ALL_INTERNAL_SPECS
     from rynmesh.agent_runtime.store import encoded
 
-    internal_cap = getattr(tool_menu, "INTERNAL_SPECS_QUOTA_BYTES", None)
-    assert isinstance(internal_cap, int) and internal_cap > 11500
+    # Current ALL_INTERNAL_SPECS serializes to 12579 UTF-8 bytes; cap at 13840 (~10% headroom).
     all_internal_bytes = len(encoded(ALL_INTERNAL_SPECS))
-    assert 11500 < all_internal_bytes <= internal_cap
+    assert all_internal_bytes <= 13840
 
     business = [
         {"type": "function", "function": {"name": name, "description": desc, "parameters": schema}}

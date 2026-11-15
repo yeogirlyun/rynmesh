@@ -16,9 +16,6 @@ ADDITIVE_CAPACITY = 48000
 # Windows up to this many request bytes keep plan/input/result schemas behind
 # discovery and send only the slimmest menu.
 SMALL_WINDOW_BYTES = 16000
-# Bounded schema quotas for subagent tools (raised from 3600 after S07-I7) and ALL_INTERNAL_SPECS.
-SUBAGENT_SCHEMA_QUOTA_BYTES = 5000
-INTERNAL_SPECS_QUOTA_BYTES = 13200
 # Exposed on every step while they fit, in priority order when space is tight.
 PLUGIN_DISCOVERY_TOOLS = ("ryn_list_plugins",)
 CORE_TOOLS = ("ryn_shell_execute", "ryn_file_read", "ryn_file_search", "ryn_apply_patch", "ryn_file_edit",
@@ -210,9 +207,9 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
         for name in requested_pins
     )
     has_resource_pins = "ryn_list_resource_roots" in requested_pins
-    # ``candidate`` below includes ``base`` (control + directory schemas, including
-    # up to SUBAGENT_SCHEMA_QUOTA_BYTES of subagent schemas), so additive pin/seed
-    # budgets reserve ``len(encoded(base))`` on top of business-tool allowances.
+    # ``candidate`` below includes ``base`` (control + directory schemas), so
+    # additive pin/seed budgets reserve ``len(encoded(base))`` on top of the
+    # business-tool schema allowance instead of a stale fixed estimate.
     base_bytes = len(encoded(base)) if max_context_bytes >= ADDITIVE_CAPACITY else 0
     resource_allowance = 3000 if has_resource_pins else 0
     pinned = []
