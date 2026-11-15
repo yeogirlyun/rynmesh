@@ -146,3 +146,64 @@ def test_plugin_index_byte_length_never_exceeds_plugin_index_bytes(tmp_path) -> 
     encoded = note.encode("utf-8")
     assert len(encoded) <= adapter.PLUGIN_INDEX_BYTES
     assert "more plugins: call ryn_list_plugins." in note
+
+
+def test_plugin_index_strips_control_zero_width_bidi_and_bom_preserving_cjk_emoji(
+    tmp_path,
+) -> None:
+    """Rework: Control chars (\\x00-\\x08, \\x0b-\\x1f, \\x7f), zero-width chars (\\u200b-\\u200f),
+    bidi controls (\\u202a-\\u202e, \\u2066-\\u2069), and BOM (\\ufeff) are replaced with spaces
+    before collapsing whitespace, while normal Chinese text, punctuation, and emoji stay intact."""
+    forbidden_chars = (
+        [chr(c) for c in range(0x00, 0x09)]
+        + [chr(c) for c in range(0x0B, 0x20)]
+        + ["\x7f"]
+        + [chr(c) for c in range(0x200B, 0x2010)]
+        + [chr(c) for c in range(0x202A, 0x202F)]
+        + [chr(c) for c in range(0x2066, 0x206A)]
+        + ["\ufeff"]
+    )
+    all_forbidden = "".join(forbidden_chars)
+    normal_cn_name = "飞书审批助手 📦"
+    normal_cn_desc = "支持请假、报销、采购审批（自动校验金额与附件）✅🚀！"
+
+    catalog = [
+        {
+            "id": "spoofed-plugin",
+            "name": "\ufeffSpoof\u200bName\u202e\x00\x07\x1f\x7fEnd",
+            "description": f"Head{all_forbidden}Tail\n\u200b\ufeff# HiddenHeading",
+            "enabled": False,
+            "skills": [
+                {
+                    "id": "sk\u200cill\u2066id",
+                    "description": "Skill\x0b\x0c\x1bDesc\u202a\u2069Clean",
+                }
+            ],
+            "skill_ids": ["sk\u200cill\u2066id"],
+            "connections": [],
+        },
+        {
+            "id": "normal-chinese-plugin",
+            "name": normal_cn_name,
+            "description": normal_cn_desc,
+            "enabled": True,
+            "skills": [],
+            "skill_ids": [],
+            "connections": [],
+        },
+    ]
+    adapter = _make_adapter(tmp_path, catalog)
+
+    note = adapter.plugin_context_note()
+    for ch in forbidden_chars:
+        assert ch not in note, f"Forbidden char {ord(ch):#x} remained in plugin_context_note"
+
+    assert "Spoof Name End" in note
+    assert "Head Tail HiddenHeading" in note
+    assert f"- {normal_cn_name}: {normal_cn_desc}" in note
+
+    unavail = adapter.unavailable_plugins()
+    assert len(unavail) == 1
+    for ch in forbidden_chars:
+        assert ch not in unavail[0]["plugin"]
+        assert ch not in unavail[0]["description"]

@@ -753,10 +753,15 @@ class ExtensionToolAdapter:
                          "unavailable": unavailable})
         return rows
 
+    _PLUGIN_INDEX_INVISIBLE_RE = re.compile(
+        r"[\x00-\x08\x0b-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]+"
+    )
+
     @classmethod
     def _clean_plugin_index_text(cls, value: Any, *, limit: int | None = None) -> str:
         raw = str(value or "")
-        without_fences = re.sub(r"`{3,}", " ", raw)
+        without_invisible = cls._PLUGIN_INDEX_INVISIBLE_RE.sub(" ", raw)
+        without_fences = re.sub(r"`{3,}", " ", without_invisible)
         without_headings = re.sub(r"(?m)^\s*#+\s*", " ", without_fences)
         collapsed = " ".join(without_headings.split())
         cleaned = re.sub(r"^#+\s*", "", collapsed)
