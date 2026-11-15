@@ -72,4 +72,4 @@ def test_catalog_module_has_no_network_or_subprocess_imports():
             imported.update(alias.name.split(".")[0] for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported.add(node.module.split(".")[0])
-    assert imported <= {"dataclasses", "__future__", "os", "re"}
+    assert imported <= {"dataclasses", "__future__", "logging", "os", "re"}

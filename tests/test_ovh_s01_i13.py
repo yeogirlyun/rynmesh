@@ -126,8 +126,15 @@ def _install_fake_ml_modules(
     *,
     free_vram_bytes: int = 24 * 1024**3,
     total_vram_bytes: int = 24 * 1024**3,
+    allocated_vram_bytes: int = 4 * 1024**3,
+    reserved_vram_bytes: int = 4 * 1024**3,
 ):
-    state = {"free": free_vram_bytes, "total": total_vram_bytes}
+    state = {
+        "free": free_vram_bytes,
+        "total": total_vram_bytes,
+        "allocated": allocated_vram_bytes,
+        "reserved": reserved_vram_bytes,
+    }
     fake_torch = SimpleNamespace(
         __version__="2.5.0-fake",
         float16="float16",
@@ -136,6 +143,8 @@ def _install_fake_ml_modules(
             is_available=lambda: True,
             get_device_name=lambda _idx: "Fake GPU",
             mem_get_info=lambda: (state["free"], state["total"]),
+            memory_allocated=lambda *_a, **_k: state["allocated"],
+            memory_reserved=lambda *_a, **_k: state["reserved"],
         ),
     )
     fake_transformers = SimpleNamespace(
@@ -157,13 +166,21 @@ def _make_scripted_runtime(
     *,
     max_position_embeddings: int = 32768,
     free_vram_bytes: int = 24 * 1024**3,
+    allocated_vram_bytes: int = 4 * 1024**3,
+    reserved_vram_bytes: int = 4 * 1024**3,
     prompt_tokens: int = 12,
     step_delay: float = 0.0,
     entered_event: threading.Event | None = None,
     hold_event: threading.Event | None = None,
     raise_in_generate: Exception | None = None,
+    on_generate: Any = None,
 ):
-    vram_state = _install_fake_ml_modules(monkeypatch, free_vram_bytes=free_vram_bytes)
+    vram_state = _install_fake_ml_modules(
+        monkeypatch,
+        free_vram_bytes=free_vram_bytes,
+        allocated_vram_bytes=allocated_vram_bytes,
+        reserved_vram_bytes=reserved_vram_bytes,
+    )
     tokenizer = _FakeTokenizer(prompt_tokens=prompt_tokens)
     piece_ids = tokenizer.register_pieces(pieces)
     stats = {"generated_steps": 0}
@@ -174,6 +191,8 @@ def _make_scripted_runtime(
             entered_event.set()
         if hold_event is not None:
             hold_event.wait(timeout=5)
+        if on_generate is not None:
+            on_generate(vram_state)
         if raise_in_generate is not None:
             raise raise_in_generate
         emitted: list[int] = list(input_ids._ids)
@@ -191,12 +210,17 @@ def _make_scripted_runtime(
             streamer.end()
         return _FakeTensor(emitted)
 
+    class _FakeModel:
+        def __init__(self) -> None:
+            self.config = SimpleNamespace(max_position_embeddings=max_position_embeddings)
+            self.generate = fake_generate
+
+        def __call__(self, **_kwargs: Any) -> Any:
+            return SimpleNamespace(past_key_values="fake-kv")
+
     runtime = TransformersChatRuntime("unused", model_id="fake-qwen")
     runtime._tokenizer = tokenizer
-    runtime._model = SimpleNamespace(
-        config=SimpleNamespace(max_position_embeddings=max_position_embeddings),
-        generate=fake_generate,
-    )
+    runtime._model = _FakeModel()
     return runtime, tokenizer, stats, vram_state
 
 
@@ -365,24 +389,30 @@ def test_t3_incomplete_tool_call_returns_content_with_length_finish_reason(monke
 def test_t4_v1_models_reports_context_window_from_model_and_vram(monkeypatch):
     monkeypatch.delenv("RYNMESH_TRANSFORMERS_CONTEXT", raising=False)
     monkeypatch.delenv("RYNMESH_TRANSFORMERS_MAX_OUTPUT", raising=False)
-    # 2.5 GiB free VRAM -> (2560 - 512) MiB / 256 KiB = 8192 context window (< 32768 native)
-    runtime, _, _, vram_state = _make_scripted_runtime(
+    # 2.5 GiB free VRAM at model load -> (2560 - 512) MiB / 256 KiB = 8192 context window (< 32768 native)
+    runtime_low, _, _, _ = _make_scripted_runtime(
         monkeypatch,
         ["ok"],
         max_position_embeddings=32768,
         free_vram_bytes=2560 * 1024**2,
     )
-    with TestClient(create_app(runtime=runtime)) as client:
-        models_low = client.get("/v1/models")
+    with TestClient(create_app(runtime=runtime_low)) as client_low:
+        models_low = client_low.get("/v1/models")
         assert models_low.status_code == 200
         item_low = models_low.json()["data"][0]
         assert item_low["id"] == "fake-qwen"
-        assert 4096 < item_low["context_window"] < 32768
-        assert item_low["max_output_tokens"] == min(item_low["context_window"] // 4, 8192)
+        assert item_low["context_window"] == 8192
+        assert item_low["max_output_tokens"] == 2048
 
-        # 24 GiB free VRAM -> capped by model's native max_position_embeddings (32768)
-        vram_state["free"] = 24 * 1024**3
-        models_high = client.get("/v1/models")
+    # Separate runtime loaded on 24 GiB free VRAM -> capped by model's native max_position_embeddings (32768)
+    runtime_high, _, _, _ = _make_scripted_runtime(
+        monkeypatch,
+        ["ok"],
+        max_position_embeddings=32768,
+        free_vram_bytes=24 * 1024**3,
+    )
+    with TestClient(create_app(runtime=runtime_high)) as client_high:
+        models_high = client_high.get("/v1/models")
         assert models_high.status_code == 200
         item_high = models_high.json()["data"][0]
         assert item_high["context_window"] == 32768
@@ -660,7 +690,9 @@ def test_t9_history_with_malformed_json_tool_arguments_succeeds(monkeypatch):
         assert tokenizer.last_messages[2]["content"] == '{"error": "invalid_json_arguments"}'
 
 
-def test_t13_hf_mirror_host_only_https_and_agent_capable_recommendation(monkeypatch):
+def test_t13_hf_mirror_host_only_https_and_agent_capable_recommendation(monkeypatch, caplog):
+    import logging
+
     monkeypatch.delenv("RYNMESH_HF_MIRROR", raising=False)
     monkeypatch.delenv("RYNMESH_DOWNLOAD_MIRROR", raising=False)
 
@@ -684,7 +716,16 @@ def test_t13_hf_mirror_host_only_https_and_agent_capable_recommendation(monkeypa
     assert mirrored_profile.sha256 == default_light_sha
     assert llm_catalog._pinned_url("Qwen/Test", "abc1234", "f.gguf") == "https://hf-mirror.com/Qwen/Test/resolve/abc1234/f.gguf"
 
-    # Non-https or path/credential mirrors must be rejected.
+    low_mem_report = llm_hardware.HardwareReport(
+        os="Linux", architecture="x86_64", cpu="test", logical_cpus=8,
+        ram_total_mb=8000, ram_available_mb=6000, disk_free_mb=32_000,
+        nvidia_gpus=[], nvidia_probe="none", container_runtime="", container_available=False,
+        native_runtime_available=True, native_runtime_present=True, warnings=[],
+    )
+
+    # Non-https or path/credential mirrors must be rejected:
+    # explicit `set_hf_mirror` / `_pinned_url` raise ValueError, while reading `.url` and `hardware.recommend`
+    # fall back to the canonical https://huggingface.co URL and record a warning diagnostic without leaking secrets.
     for bad_mirror in (
         "http://hf-mirror.com",
         "hf-mirror.com",
@@ -695,19 +736,22 @@ def test_t13_hf_mirror_host_only_https_and_agent_capable_recommendation(monkeypa
     ):
         monkeypatch.setenv("RYNMESH_HF_MIRROR", bad_mirror)
         with pytest.raises(ValueError):
-            _ = llm_catalog.profile_by_name("light").url
+            llm_catalog.set_hf_mirror(bad_mirror)
         with pytest.raises(ValueError):
             llm_catalog._pinned_url("Qwen/Test", "abc1234", "f.gguf")
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger=llm_catalog.__name__):
+            fallback_url = llm_catalog.profile_by_name("light").url
+            recs_under_bad_mirror = llm_hardware.recommend(low_mem_report)
+        assert fallback_url == default_light_url
+        assert len(recs_under_bad_mirror) >= 1
+        assert recs_under_bad_mirror[0]["source_url"] == default_light_url
+        assert any("invalid_hf_mirror" in rec.message for rec in caplog.records)
+        assert "secret" not in caplog.text
 
     monkeypatch.delenv("RYNMESH_HF_MIRROR", raising=False)
 
     # `agent_capable` profile only appears in `hardware.recommend` when memory & disk fit.
-    low_mem_report = llm_hardware.HardwareReport(
-        os="Linux", architecture="x86_64", cpu="test", logical_cpus=8,
-        ram_total_mb=8000, ram_available_mb=6000, disk_free_mb=32_000,
-        nvidia_gpus=[], nvidia_probe="none", container_runtime="", container_available=False,
-        native_runtime_available=True, native_runtime_present=True, warnings=[],
-    )
     low_recs = llm_hardware.recommend(low_mem_report)
     assert all(rec.get("can_run") is True for rec in low_recs)
     assert all("agent_capable" in rec for rec in low_recs)
@@ -723,3 +767,76 @@ def test_t13_hf_mirror_host_only_https_and_agent_capable_recommendation(monkeypa
     assert any(rec["agent_capable"] is True for rec in high_recs)
     agent_rec = next(rec for rec in high_recs if rec["agent_capable"] is True)
     assert agent_rec["recommended"] is True
+
+
+def test_t14_context_window_stays_stable_after_long_generation_reserves_vram(monkeypatch):
+    monkeypatch.delenv("RYNMESH_TRANSFORMERS_CONTEXT", raising=False)
+    monkeypatch.delenv("RYNMESH_TRANSFORMERS_MAX_OUTPUT", raising=False)
+
+    def simulate_caching_allocator_growth(state: dict[str, int]) -> None:
+        # Simulate PyTorch's CUDA caching allocator holding 1.5 GiB of freed KV/activation blocks:
+        # driver-level free VRAM drops by 1.5 GiB while `memory_reserved()` rises by 1.5 GiB.
+        if state["free"] > 1024 * 1024**2:
+            delta = 1536 * 1024**2
+            state["free"] -= delta
+            state["reserved"] += delta
+
+    runtime, _, _, vram_state = _make_scripted_runtime(
+        monkeypatch,
+        ["long_generation_ok"],
+        max_position_embeddings=32768,
+        free_vram_bytes=2560 * 1024**2,
+        allocated_vram_bytes=4096 * 1024**2,
+        reserved_vram_bytes=4096 * 1024**2,
+        prompt_tokens=5000,
+        on_generate=simulate_caching_allocator_growth,
+    )
+
+    with TestClient(create_app(runtime=runtime)) as client:
+        before_models = client.get("/v1/models")
+        assert before_models.status_code == 200
+        before_item = before_models.json()["data"][0]
+        assert before_item["context_window"] == 8192
+        assert before_item["max_output_tokens"] == 2048
+
+        first = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "fake-qwen",
+                "messages": [{"role": "user", "content": "first long prompt"}],
+                "max_tokens": 1024,
+                "temperature": 0,
+            },
+        )
+        assert first.status_code == 200
+        # Confirm driver-reported free VRAM dropped while PyTorch reserved pool grew.
+        assert vram_state["free"] == 1024 * 1024**2
+        assert vram_state["reserved"] - vram_state["allocated"] == 1536 * 1024**2
+
+        after_models = client.get("/v1/models")
+        assert after_models.status_code == 200
+        after_item = after_models.json()["data"][0]
+        assert after_item["context_window"] == 8192
+        assert after_item["max_output_tokens"] == 2048
+
+        second = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "fake-qwen",
+                "messages": [{"role": "user", "content": "second identical-length prompt"}],
+                "max_tokens": 1024,
+                "temperature": 0,
+            },
+        )
+        assert second.status_code == 200
+
+        second_stream = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "fake-qwen",
+                "messages": [{"role": "user", "content": "third identical-length streaming prompt"}],
+                "max_tokens": 1024,
+                "stream": True,
+            },
+        )
+        assert second_stream.status_code == 200

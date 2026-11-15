@@ -9,10 +9,12 @@ read from `PROFILES` instead of hardcoding model details themselves.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from dataclasses import dataclass
 
+_LOGGER = logging.getLogger(__name__)
 _APACHE_NOTICE = "Qwen2.5 and llama.cpp are Apache-2.0; review their notices before use."
 _DEFAULT_HF_ORIGIN = "https://huggingface.co"
 _HOST_PORT_RE = re.compile(
@@ -87,7 +89,11 @@ class ModelProfile:
     def __getattribute__(self, name: str):
         value = object.__getattribute__(self, name)
         if name == "url" and isinstance(value, str):
-            return _apply_hf_mirror(value)
+            try:
+                return _apply_hf_mirror(value)
+            except ValueError:
+                _LOGGER.warning("invalid_hf_mirror_ignored: falling back to default Hugging Face origin")
+                return value
         return value
 
 

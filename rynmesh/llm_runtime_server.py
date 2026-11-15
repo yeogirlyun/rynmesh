@@ -10,7 +10,6 @@ Weights are validated at startup; inference is admitted one request at a time.
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
 import os
 import queue
@@ -135,34 +134,54 @@ class TransformersChatRuntime:
         self._load_lock = threading.Lock()
         self._generation_lock = threading.Lock()
         self._load_error = ""
+        self._cached_default_context: tuple[int, int] | None = None
+
+    def _native_context_window(self) -> int | None:
+        raw_native = getattr(getattr(self._model, "config", None), "max_position_embeddings", None)
+        return raw_native if type(raw_native) is int and raw_native > 0 else None
+
+    def _default_context_window(self, native: int | None) -> int:
+        if (
+            self._model is not None
+            and self._cached_default_context is not None
+            and self._cached_default_context[0] == id(self._model)
+        ):
+            return self._cached_default_context[1]
+        context = native if native is not None else 8192
+        try:
+            import torch
+
+            cuda = getattr(torch, "cuda", None)
+            if (
+                cuda is not None
+                and callable(getattr(cuda, "mem_get_info", None))
+                and (not callable(getattr(cuda, "is_available", None)) or cuda.is_available())
+            ):
+                free_bytes, _ = cuda.mem_get_info()
+                reclaimable = 0
+                if callable(getattr(cuda, "memory_reserved", None)) and callable(getattr(cuda, "memory_allocated", None)):
+                    reclaimable = max(0, int(cuda.memory_reserved()) - int(cuda.memory_allocated()))
+                usable_free = int(free_bytes) + reclaimable
+                vram_cap = max(
+                    min(context, 2048),
+                    max(0, usable_free - 512 * 1024**2) // (256 * 1024),
+                )
+                context = min(context, vram_cap)
+        except ImportError:
+            context = context
+        if self._model is not None:
+            self._cached_default_context = (id(self._model), context)
+        return context
 
     def generation_limits(self) -> tuple[int, int, float]:
-        raw_native = getattr(getattr(self._model, "config", None), "max_position_embeddings", None)
-        native = raw_native if type(raw_native) is int and raw_native > 0 else None
+        native = self._native_context_window()
         env_ctx = os.environ.get("RYNMESH_TRANSFORMERS_CONTEXT")
         if env_ctx is not None and env_ctx.strip() != "":
             context = int(env_ctx)
             if native is not None:
                 context = min(context, native)
         else:
-            context = native if native is not None else 8192
-            try:
-                import torch
-
-                cuda = getattr(torch, "cuda", None)
-                if (
-                    cuda is not None
-                    and callable(getattr(cuda, "mem_get_info", None))
-                    and (not callable(getattr(cuda, "is_available", None)) or cuda.is_available())
-                ):
-                    free_bytes, _ = cuda.mem_get_info()
-                    vram_cap = max(
-                        min(context, 2048),
-                        max(0, int(free_bytes) - 512 * 1024**2) // (256 * 1024),
-                    )
-                    context = min(context, vram_cap)
-            except ImportError:
-                context = context
+            context = self._default_context_window(native)
         env_out = os.environ.get("RYNMESH_TRANSFORMERS_MAX_OUTPUT")
         if env_out is not None and env_out.strip() != "":
             output = min(context, int(env_out))
@@ -237,6 +256,8 @@ class TransformersChatRuntime:
             model.eval()
             self._tokenizer = tokenizer
             self._model = model
+            self._cached_default_context = None
+            self._default_context_window(self._native_context_window())
             self._load_error = ""
 
     def health(self) -> dict[str, Any]:
@@ -580,16 +601,6 @@ def _stream_error_code(exc: BaseException, stopped: threading.Event) -> str:
     return "generation_failed"
 
 
-def _invoke_stream_chat(runtime: Any, validated: dict[str, Any], *, stopped: threading.Event, lock_acquired: bool):
-    params = inspect.signature(runtime.stream_chat).parameters
-    kwargs: dict[str, Any] = {}
-    if "stopped" in params:
-        kwargs["stopped"] = stopped
-    if "_lock_acquired" in params:
-        kwargs["_lock_acquired"] = lock_acquired
-    return runtime.stream_chat(validated, **kwargs)
-
-
 def create_app(*, runtime: TransformersChatRuntime | None = None):
     try:
         from fastapi import FastAPI, HTTPException
@@ -674,8 +685,8 @@ def create_app(*, runtime: TransformersChatRuntime | None = None):
                 stopped = threading.Event()
                 try:
                     stream_iter = await run_in_threadpool(
-                        lambda: _invoke_stream_chat(
-                            runtime, validated, stopped=stopped, lock_acquired=pre_acquired
+                        lambda: runtime.stream_chat(
+                            validated, stopped=stopped, _lock_acquired=pre_acquired
                         )
                     )
                 except ContextLengthError as exc:
@@ -730,7 +741,7 @@ def create_app(*, runtime: TransformersChatRuntime | None = None):
 
             def complete_chat():
                 accumulator = ChatAccumulator()
-                for value in _invoke_stream_chat(runtime, validated, stopped=stopped, lock_acquired=False):
+                for value in runtime.stream_chat(validated, stopped=stopped, _lock_acquired=False):
                     accumulator.add(value)
                 return {
                     "id": "chatcmpl-" + uuid.uuid4().hex,
