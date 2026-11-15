@@ -12,9 +12,16 @@ import sys
 import threading
 import time
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
 
 from ..llm_package.process_guard import _windows_job
+from .git_safety import (
+    GIT_READONLY_DIFF_FLAGS,
+    GIT_READONLY_DIFF_SUBCOMMANDS,
+    SAFE_GIT_CONFIG,
+    strip_rynmesh_env,
+)
 from .local_pty import COMPLETED, ConPtyProcess, check_pty_support, validate_size
 from .local_pty import terminate_session as terminate
 from .store import AgentToolRejected
@@ -159,6 +166,18 @@ def resolve_rg_executable() -> str | None:
     return shutil.which("rg") or (shutil.which("rg.exe") if os.name == "nt" else None)
 
 
+class PreparedCommand(list):
+    """Argv list carrying optional per-invocation environment overrides."""
+
+    def __init__(self, iterable=(), *, env_overrides: Mapping[str, str] | None = None):
+        super().__init__(iterable)
+        self.env_overrides = (
+            {str(k): str(v) for k, v in env_overrides.items() if not str(k).upper().startswith("RYNMESH_")}
+            if env_overrides
+            else None
+        )
+
+
 def child_environment():
     """The node's own configuration and secrets must not reach model-driven commands.
 
@@ -166,7 +185,7 @@ def child_environment():
     runs, and RYNMESH_HOME & co. change how a project's own tests behave (a run reported five
     false "pre-existing" failures because of them).
     """
-    env = {key: value for key, value in os.environ.items() if not key.upper().startswith("RYNMESH_")}
+    env = strip_rynmesh_env(os.environ)
     bundled = _bundled_rg_executable()
     if bundled:
         bundled_dir = str(Path(bundled).parent)
@@ -193,7 +212,7 @@ class Processes:
             if item.get("cleanup_done"):
                 item["cleanup_done"].wait(5)
 
-    def start(self, args, cwd, task_id, timeout, allowed, cancelled, *, operation_id=None, tty=False, rows=24, cols=80):
+    def start(self, args, cwd, task_id, timeout, allowed, cancelled, *, operation_id=None, tty=False, rows=24, cols=80, env_overrides=None):
         # Task-state callbacks can acquire the Agent store lock; never call one
         # while holding the process-table lock (preview takes them in reverse).
         if type(tty) is not bool:
@@ -217,11 +236,25 @@ class Processes:
                     break
                 if self.items[key]["process"].poll() is not None:
                     self.items.pop(key)
+            proc_env = child_environment()
+            for extra_env in (getattr(args, "env_overrides", None), env_overrides):
+                if isinstance(extra_env, Mapping):
+                    for key, value in extra_env.items():
+                        if not str(key).upper().startswith("RYNMESH_"):
+                            proc_env[str(key)] = str(value)
+            cmd_args = list(args)
             flags = 0x4 | 0x08000000 if os.name == "nt" else 0
             try:
-                process = ConPtyProcess(args, cwd, child_environment(), rows, cols) if tty else subprocess.Popen(args, cwd=str(cwd), stdin=subprocess.PIPE,
-                                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=child_environment(),
-                                           creationflags=flags, start_new_session=os.name != "nt")
+                process = ConPtyProcess(cmd_args, cwd, proc_env, rows, cols) if tty else subprocess.Popen(
+                    cmd_args,
+                    cwd=str(cwd),
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    env=proc_env,
+                    creationflags=flags,
+                    start_new_session=os.name != "nt",
+                )
             except OSError:
                 if tty:
                     # The host may have started the command before IPC failed.
@@ -586,7 +619,16 @@ def literal_read_command(arguments):
         executable = shutil.which("git") or (shutil.which("git.exe") if os.name == "nt" else None)
         if not executable:
             raise AgentToolRejected("agent_shell_unavailable")
-        return [executable, "--no-pager", *words[1:]]
+        subcommand = words[1].lower()
+        tail_args = (
+            [words[1], *GIT_READONLY_DIFF_FLAGS, *words[2:]]
+            if subcommand in GIT_READONLY_DIFF_SUBCOMMANDS
+            else list(words[1:])
+        )
+        return PreparedCommand(
+            [executable, "--no-pager", *SAFE_GIT_CONFIG, *tail_args],
+            env_overrides={"GIT_OPTIONAL_LOCKS": "0"},
+        )
     if program in {"rg", "rg.exe"} or shell == "sh":
         executable = resolve_rg_executable() if program in {"rg", "rg.exe"} else shutil.which(program)
         if not executable:
