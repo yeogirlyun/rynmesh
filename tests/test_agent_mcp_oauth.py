@@ -271,3 +271,81 @@ def test_company_authorization_init_failure_logged_without_failing_manager(
         assert "company sync exploded" not in joined
     finally:
         manager.close()
+
+
+def test_company_plugin_server_without_oauth_or_token_stays_not_required(
+    tmp_path: Path,
+) -> None:
+    """Rework: Company plugin server without auth.mode=oauth, without stored token,
+    and without recovered_at must remain state='not_required' (not 'logged_out')."""
+    store = ExtensionStore(tmp_path / "store")
+    store.upsert_mcp_server(
+        {
+            "id": "company-ws-mcp",
+            "name": "Company Workspace MCP",
+            "plugin_id": "company-workspace",
+            "transport": "streamable_http",
+            "url": "http://127.0.0.1:19997/mcp",
+            "enabled": True,
+        }
+    )
+    manager = McpSessionManager(store)
+    try:
+        srv = store.get_mcp_server_internal("company-ws-mcp")
+        status = manager.oauth.public_status(srv["instance_id"])
+        assert status["state"] == "not_required"
+        assert status["error"] is None
+
+        adapter = ExtensionToolAdapter(
+            SimpleNamespace(),
+            lambda: None,
+            extension_store=store,
+            session_manager=manager,
+        )
+        overview = adapter.overview()
+        view = next(s for s in overview["mcp_servers"] if s["id"] == "company-ws-mcp")
+        assert view["oauth"]["state"] == "not_required"
+        assert view["status"] != "NeedsAuth"
+    finally:
+        manager.close()
+
+
+def test_recover_corrupt_write_failure_retries_persist_on_next_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Optional rework: If persisting recovered_at fails transiently during recovery,
+    subsequent reads retain recovered_at and retry persisting it to disk."""
+    from rynmesh.agent_runtime.extensions import mcp_oauth as mcp_oauth_mod
+
+    store = ExtensionStore(tmp_path / "store")
+    cred = McpOAuthStore(store)
+    cred.path.write_bytes(b"corrupt-bytes-before-transient-write-failure")
+
+    real_atomic_write = mcp_oauth_mod.atomic_write_json
+    fail_writes = True
+
+    def flaky_atomic_write(path: Path, payload: object, **kwargs: object) -> None:
+        if fail_writes and path == cred.path:
+            raise OSError("transient disk full")
+        real_atomic_write(path, payload, **kwargs)
+
+    monkeypatch.setattr(mcp_oauth_mod, "atomic_write_json", flaky_atomic_write)
+
+    doc1 = cred.read()
+    recovered_at = doc1.get("recovered_at")
+    assert isinstance(recovered_at, str) and recovered_at
+    assert not cred.path.exists()
+
+    # Still failing to write on second read -> still preserves recovered_at in memory
+    doc2 = cred.read()
+    assert doc2.get("recovered_at") == recovered_at
+
+    # Once disk write recovers, next read flushes recovered_at to disk for future restarts
+    fail_writes = False
+    doc3 = cred.read()
+    assert doc3.get("recovered_at") == recovered_at
+    assert cred.path.exists()
+
+    restarted_cred = McpOAuthStore(store)
+    assert restarted_cred.read().get("recovered_at") == recovered_at

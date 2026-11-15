@@ -195,6 +195,7 @@ class McpOAuthStore:
         self.key, self.pub = store.key, store.pub
         self._cached_stamp = None
         self._cached_value = None
+        self._pending_recovered = None
 
     def _recover_corrupt(self, reason: str):
         now = datetime.now(timezone.utc)
@@ -233,10 +234,19 @@ class McpOAuthStore:
         try:
             self._write(recovered)
         except McpOAuthError:
-            self._cached_value = copy.deepcopy(recovered)
+            self._pending_recovered = copy.deepcopy(recovered)
         return copy.deepcopy(recovered)
 
     def _read(self):
+        if self._pending_recovered is not None:
+            pending = copy.deepcopy(self._pending_recovered)
+            if not self.path.exists():
+                try:
+                    self._write(pending)
+                except McpOAuthError:
+                    return pending
+                return pending
+            self._pending_recovered = None
         try:
             st = self.path.stat()
         except FileNotFoundError:
@@ -294,6 +304,7 @@ class McpOAuthStore:
                 raise ValueError
             nonce, ciphertext = peer_box.seal(self.key, self.pub, raw, info=CHANNEL)
             atomic_write_json(self.path, {"version": VERSION, "nonce": nonce, "ciphertext": ciphertext}, max_bytes=MAX_STORAGE)
+            self._pending_recovered = None
             if (
                 isinstance(value, dict)
                 and value.get("version") == VERSION
@@ -1184,7 +1195,6 @@ class McpOAuthManager:
         tokens = row.get("tokens") or {}
         needs_login = (
             (server.get("auth") or {}).get("mode") == "oauth"
-            or server.get("plugin_id") in COMPANY_PLUGIN_IDS
             or bool(row.get("challenge"))
         )
         state = "error" if row.get("error") else "logged_in" if tokens else "logged_out" if needs_login else "not_required"
