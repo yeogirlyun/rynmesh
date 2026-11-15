@@ -85,6 +85,7 @@ from .p2p import (
     IceSignal,
     P2PCapacityError,
     P2PError,
+    P2PTimeoutError,
     consumer_exchange,
     provider_exchange,
     signal_poll_idle_max_s,
@@ -135,6 +136,9 @@ def _positive_env(name: str, default: int) -> int:
 def _delivery_error_code(exc: Exception, *, transport: str) -> str:
     if isinstance(exc, P2PCapacityError):
         return "p2p_capacity_exhausted"
+    reason = getattr(exc, "reason", None)
+    if isinstance(exc, P2PTimeoutError) and reason in {"idle_timeout", "total_timeout"}:
+        return "p2p_" + reason
     message = str(exc).strip().lower()
     if transport == "p2p" or isinstance(exc, P2PError) or "p2p" in message:
         if "distinct public egress" in message:
@@ -433,10 +437,13 @@ class ProviderService:
                 self.manifest.adapter, self.manifest.capabilities),
             "cancel": "best_effort",
         }
+        service_dict = self.manifest.public_dict()
+        if getattr(self.manifest, "stream_idle_seconds", None) is not None:
+            service_dict["stream_idle_seconds"] = self.manifest.stream_idle_seconds
         result: dict[str, Any] = {
             "configured": True,
             "ready": bool(health.get("ok")),
-            "service": self.manifest.public_dict(),
+            "service": service_dict,
             "online": bool(health.get("ok")) and self.accepting_orders,
             "accepting_orders": self.accepting_orders,
             "access_policy": "personal_space" if (
@@ -768,6 +775,8 @@ class ProviderService:
                         options = {"task_id": task_id, "timeout_s": self.manifest.timeout_seconds,
                                    "on_event": emit if chat.get("stream") else None,
                                    **({"model": cli_model} if cli_model else {})}
+                        if getattr(self.adapter, "supports_request_deadline", False) is True:
+                            options["deadline"] = time.monotonic() + self.manifest.timeout_seconds
                         if getattr(self.adapter, "supports_conversation_scope", False) is True:
                             # The signed sender is the requester; its window key only
                             # labels a conversation inside that sender's own group.
@@ -1498,12 +1507,13 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                             public_model_alias=record["name"] + " · " + model, adapter="openai_compatible",
                             model=model, base_url=record["base_url"], allow_non_loopback=record["kind"] == "api",
                             context_window=policy["context_window"], max_output_tokens=policy["max_output_tokens"], max_concurrent=policy["max_concurrent"],
-                            timeout_seconds=180, capabilities=["text-generation", "streaming", "client-tools",
+                            timeout_seconds=policy["max_request_seconds"], capabilities=["text-generation", "streaming", "client-tools",
                                 "explicit-friends" if policy["share_scope"] == "friends" else "personal-space-only",
                                 *(["protocol:" + record["protocol"]] if record.get("protocol") in
                                   {"openai_responses", "anthropic_messages"} else []),
                                 *({"supported": ["image-input"], "unsupported": ["image-unsupported"]}.get(image_state, [])),
                                 "image-carrier:" + SHARED_V2_CARRIER])
+                        manifest.stream_idle_seconds = policy["stream_idle_seconds"]
                         adapter = source_store.adapter(record, model)
                         if model in record.get("model_settings", {}):
                             adapter = ModelDispatchAdapter(source_store, record, model, adapter)
@@ -3816,11 +3826,18 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                         await asyncio.sleep(0.25)
                     raise TaskProtocolError("timed out waiting for provider ICE answer")
 
+                raw_idle = public_manifest.get("stream_idle_seconds")
+                p2p_stream_idle_s = (
+                    float(raw_idle)
+                    if isinstance(raw_idle, (int, float)) and not isinstance(raw_idle, bool) and raw_idle > 0
+                    else 120.0
+                )
                 try:
                     encrypted_response, transport_evidence = await cancellable_exchange(lambda: consumer_exchange(
                         signed_request=signed.to_dict(),
                         publish_offer=publish_offer,
                         timeout_s=manifest.timeout_seconds + 30,
+                        stream_idle_seconds=p2p_stream_idle_s,
                         connect_timeout_s=min(60, _positive_env("RYNMESH_P2P_CONNECT_TIMEOUT_S", 60)),
                         on_connected=lambda evidence: progress("p2p", evidence),
                         session_pool=ai_connections,

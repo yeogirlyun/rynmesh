@@ -137,8 +137,20 @@ class AdapterMetrics:
     total_duration_ms: int = 0
 
 
+def _set_response_timeout(response: Any, timeout_s: float) -> None:
+    try:
+        fp = getattr(response, "fp", None)
+        raw = getattr(fp, "raw", None)
+        sock = getattr(raw, "_sock", None)
+        if sock is not None and hasattr(sock, "settimeout"):
+            sock.settimeout(timeout_s)
+    except Exception:
+        return None
+
+
 class OpenAICompatibleAdapter:
     supports_chat_messages = True
+    supports_request_deadline = True
 
     def __init__(self, *, base_url: str, model: str = "", api_key_env: str = "",
                  allow_non_loopback: bool = False, timeout_s: float = 120.0,
@@ -317,11 +329,25 @@ class OpenAICompatibleAdapter:
         finally:
             self._cancelled.discard(task_id)
 
-    def chat(self, body: dict[str, Any], *, task_id: str, timeout_s: float,
-             on_event: Any = None) -> dict[str, Any]:
+    def chat(self, body: dict[str, Any], *, task_id: str, timeout_s: float | None = None,
+             on_event: Any = None, deadline: float | None = None) -> dict[str, Any]:
         # Runtime staging reads package metadata with stdlib-only Python.
         # Load structured-chat dependencies only when a chat is requested.
         from .chat import ChatAccumulator, validate_chat
+
+        if timeout_s is not None and (
+            isinstance(timeout_s, bool)
+            or not isinstance(timeout_s, (int, float))
+            or not math.isfinite(timeout_s)
+            or timeout_s <= 0
+        ):
+            raise AdapterError("invalid request timeout", code="inference_timeout")
+        if deadline is not None and (
+            isinstance(deadline, bool)
+            or not isinstance(deadline, (int, float))
+            or not math.isfinite(deadline)
+        ):
+            raise AdapterError("invalid_request_deadline")
 
         body = {**self.request_defaults, **validate_chat(body)}
         model_id = str(body.get("model") or self.model or "").lower()
@@ -349,8 +375,21 @@ class OpenAICompatibleAdapter:
         if streaming:
             body["stream_options"] = {"include_usage": True}
         started = time.monotonic()
-        deadline = started + timeout_s
+        if deadline is not None and started >= deadline:
+            raise AdapterError("inference timed out", code="inference_timeout")
+        idle_s = (
+            float(self.timeout_s)
+            if deadline is not None
+            else (min(float(timeout_s), float(self.timeout_s)) if timeout_s is not None else float(self.timeout_s))
+        )
+        last_byte = started
+        is_sse = False
         received_usage, received_finish = None, None
+
+        def read_timeout() -> float:
+            if deadline is None:
+                return idle_s
+            return min(idle_s, max(0.001, deadline - time.monotonic()))
 
         def observed_usage(usage):
             # Reported zero is real; estimates, booleans and malformed counters
@@ -366,7 +405,7 @@ class OpenAICompatibleAdapter:
         phase = "request"
         try:
             if not streaming:
-                raw = self._json("/v1/chat/completions", body, timeout_s, task_id=task_id, classify_errors=True)
+                raw = self._json("/v1/chat/completions", body, read_timeout(), task_id=task_id, classify_errors=True)
                 choice = raw["choices"][0]
                 message = choice["message"]
                 usage = raw.get("usage") or {}
@@ -376,9 +415,10 @@ class OpenAICompatibleAdapter:
                 request = urllib.request.Request(self._endpoint("/v1/chat/completions"),
                                                  data=json.dumps(body).encode(), headers=self._headers())
                 accumulator = ChatAccumulator()
-                with model_urlopen(request, timeout=timeout_s) as response:
+                with model_urlopen(request, timeout=read_timeout()) as response:
                     phase = "read"
-                    is_sse = "text/event-stream" in response.headers.get("content-type", "")
+                    last_byte = time.monotonic()
+                    is_sse = "text/event-stream" in response.headers.get("content-type", "").lower()
                     with self._lock:
                         self._active_responses[task_id] = response
                     if not is_sse:
@@ -395,18 +435,39 @@ class OpenAICompatibleAdapter:
                         received_usage, received_finish = observed_usage(usage), choice.get("finish_reason")
                     total = 0
                     while is_sse:
+                        if task_id in self._cancelled:
+                            raise AdapterError("task_cancelled")
+                        now = time.monotonic()
+                        if deadline is not None and now >= deadline:
+                            raise AdapterError("inference timed out", code="inference_timeout")
+                        if now - last_byte > idle_s:
+                            raise AdapterError(
+                                "inference timed out",
+                                code="inference_timeout",
+                                diagnostics={"network_reason": "idle_timeout", "network_phase": "read"},
+                            )
+                        if deadline is not None:
+                            _set_response_timeout(response, read_timeout())
                         line = response.readline(1024 * 1024 + 1)
+                        now = time.monotonic()
+                        if task_id in self._cancelled:
+                            raise AdapterError("task_cancelled")
+                        if deadline is not None and now >= deadline:
+                            raise AdapterError("inference timed out", code="inference_timeout")
+                        if now - last_byte > idle_s:
+                            raise AdapterError(
+                                "inference timed out",
+                                code="inference_timeout",
+                                diagnostics={"network_reason": "idle_timeout", "network_phase": "read"},
+                            )
                         if not line:
                             break
+                        last_byte = now
                         if len(line) > 1024 * 1024:
                             raise AdapterError("stream line exceeds 1 MiB")
                         total += len(line)
                         if total > 32 * 1024 * 1024:
                             raise AdapterError("stream exceeds 32 MiB")
-                        if task_id in self._cancelled:
-                            raise AdapterError("task_cancelled")
-                        if time.monotonic() > deadline:
-                            raise AdapterError("inference timed out", code="inference_timeout")
                         if not line.startswith(b"data:"):
                             continue
                         data = line[5:].strip()
@@ -439,7 +500,7 @@ class OpenAICompatibleAdapter:
                     message, usage, finish = accumulator.message(), accumulator.usage, accumulator.finish_reason
             if task_id in self._cancelled:
                 raise AdapterError("task_cancelled")
-            if time.monotonic() > deadline:
+            if deadline is not None and time.monotonic() > deadline:
                 raise AdapterError("inference timed out", code="inference_timeout")
             if not message.get("content") and not message.get("tool_calls") and not message.get("reasoning_content"):
                 raise AdapterError("upstream_empty_completion")
@@ -468,7 +529,10 @@ class OpenAICompatibleAdapter:
                           diagnostics) from None
         except OSError as exc:
             timed_out = isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)
-            raise failure("inference_timeout" if timed_out else "runtime_connection_failed", describe(exc, phase)) from None
+            diagnostics = describe(exc, phase)
+            if timed_out and phase == "read" and streaming and is_sse and not (deadline is not None and time.monotonic() >= deadline):
+                diagnostics = {**diagnostics, "network_reason": "idle_timeout"}
+            raise failure("inference_timeout" if timed_out else "runtime_connection_failed", diagnostics) from None
         except (ValueError, KeyError, IndexError, TypeError, AttributeError):
             raise failure("upstream_response_invalid") from None
         finally:

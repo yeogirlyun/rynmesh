@@ -48,9 +48,10 @@ class P2PCapacityError(P2PError):
 _FIXED_PORTS: set[int] = set()
 _FIXED_PORTS_LOCK = threading.Lock()
 class P2PTimeoutError(asyncio.TimeoutError):
-    def __init__(self, stage: str):
+    def __init__(self, stage: str, *, reason: str | None = None):
         super().__init__(f"P2P {stage} timed out")
         self.stage = stage
+        self.reason = reason or stage
 
 
 async def _connection_phase(awaitable, *, stage: str, timeout_s: float):
@@ -851,33 +852,58 @@ async def _send_ack(connection: Any, ack: bytes) -> None:
         await sender(ack)
 
 
-async def _legacy_exchange_connected(connection, signed_request, evidence, timeout_s, on_event):
+async def _legacy_exchange_connected(
+    connection,
+    signed_request,
+    evidence,
+    timeout_s,
+    on_event,
+    stream_idle_seconds: float = 120.0,
+):
     pending: list[bytes] = []
     evidence["request_bytes"] = await send_json(
         connection, signed_request, timeout_s=timeout_s, pending_out=pending
     )
     seen: set[bytes] = set()
     deadline = time.monotonic() + timeout_s
+    idle_s = float(stream_idle_seconds) if stream_idle_seconds and stream_idle_seconds > 0 else 120.0
+    idle_deadline = time.monotonic() + idle_s
     evidence["response_bytes"] = 0
     while True:
+        now = time.monotonic()
+        if now >= deadline:
+            raise P2PTimeoutError("total_timeout", reason="total_timeout")
+        if now >= idle_deadline:
+            raise P2PTimeoutError("idle_timeout", reason="idle_timeout")
         response_id: list[bytes] = []
-        response, response_bytes = await receive_json(
-            connection, timeout_s=max(0.01, deadline - time.monotonic()),
-            initial_packets=pending, message_id_out=response_id,
-        )
+        try:
+            response, response_bytes = await receive_json(
+                connection, timeout_s=max(0.01, min(deadline - now, idle_deadline - now)),
+                initial_packets=pending, message_id_out=response_id,
+            )
+        except P2PError as exc:
+            if isinstance(exc.__cause__, asyncio.TimeoutError) or "timed out receiving p2p message" in str(exc).lower():
+                if time.monotonic() >= deadline:
+                    raise P2PTimeoutError("total_timeout", reason="total_timeout") from exc
+                raise P2PTimeoutError("idle_timeout", reason="idle_timeout") from exc
+            raise
         pending = []
+        idle_deadline = time.monotonic() + idle_s
         if response_id and response_id[0] in seen:
             continue
         if response_id:
             seen.add(response_id[0])
-        if len(seen) > 131072 or time.monotonic() > deadline:
+        if len(seen) > 131072:
             raise P2PError("stream limit exceeded")
+        if time.monotonic() > deadline:
+            raise P2PTimeoutError("total_timeout", reason="total_timeout")
         evidence["response_bytes"] += response_bytes
         if response.get("payload", {}).get("kind") not in {"llm_stream", "llm_stream_delta"}:
             break
         if on_event is None:
             raise P2PError("unexpected stream event")
         await asyncio.to_thread(on_event, response)
+        idle_deadline = time.monotonic() + idle_s
     # Linger briefly re-ACKing response retransmits: if our assembly ACKs
     # were all lost, the provider is still resending and would otherwise
     # time out and misrecord the exchange as failed.
@@ -908,11 +934,12 @@ async def consumer_exchange(
     on_connected: Any = None,
     session_pool: Any = None,
     session_key: str = "",
+    stream_idle_seconds: float = 120.0,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     if session_pool is not None and session_key and not _bind_port_from_env():
         return await _pooled_consumer_exchange(
             session_pool, session_key, signed_request, publish_offer, timeout_s,
-            on_event, connect_timeout_s, on_connected,
+            on_event, connect_timeout_s, on_connected, stream_idle_seconds,
         )
     connection = new_connection(controlling=True)
     try:
@@ -927,7 +954,9 @@ async def consumer_exchange(
         evidence = selected_pair(connection)
         if on_connected is not None:
             on_connected(evidence)
-        return await _legacy_exchange_connected(connection, signed_request, evidence, timeout_s, on_event)
+        return await _legacy_exchange_connected(
+            connection, signed_request, evidence, timeout_s, on_event, stream_idle_seconds
+        )
     finally:
         await _close_connection(connection)
 
@@ -1008,7 +1037,8 @@ async def provider_exchange(
 
 
 async def _pooled_consumer_exchange(pool, key, signed_request, publish_offer,
-                                    timeout_s, on_event, connect_timeout_s, on_connected):
+                                    timeout_s, on_event, connect_timeout_s, on_connected,
+                                    stream_idle_seconds: float = 120.0):
     from .p2p_session import PROTOCOL, SessionChannel
     started = time.monotonic()
 
@@ -1054,7 +1084,9 @@ async def _pooled_consumer_exchange(pool, key, signed_request, publish_offer,
                 if on_connected:
                     on_connected(evidence)
                 try:
-                    result = await _legacy_exchange_connected(connection, signed_request, evidence, timeout_s, on_event)
+                    result = await _legacy_exchange_connected(
+                        connection, signed_request, evidence, timeout_s, on_event, stream_idle_seconds
+                    )
                     return None, result
                 finally:
                     await _close_connection(connection)
@@ -1074,10 +1106,23 @@ async def _pooled_consumer_exchange(pool, key, signed_request, publish_offer,
             on_connected(evidence)
         evidence["request_bytes"] = await channel.send(signed_request, timeout_s)
         deadline = time.monotonic() + timeout_s
+        idle_s = float(stream_idle_seconds) if stream_idle_seconds and stream_idle_seconds > 0 else 120.0
+        idle_deadline = time.monotonic() + idle_s
         count = 0
         first = True
         while True:
-            response = await channel.receive(max(.01, deadline - time.monotonic()))
+            now = time.monotonic()
+            if now >= deadline:
+                raise P2PTimeoutError("total_timeout", reason="total_timeout")
+            if now >= idle_deadline:
+                raise P2PTimeoutError("idle_timeout", reason="idle_timeout")
+            try:
+                response = await channel.receive(max(.01, min(deadline - now, idle_deadline - now)))
+            except asyncio.TimeoutError as exc:
+                if time.monotonic() >= deadline:
+                    raise P2PTimeoutError("total_timeout", reason="total_timeout") from exc
+                raise P2PTimeoutError("idle_timeout", reason="idle_timeout") from exc
+            idle_deadline = time.monotonic() + idle_s
             if first:
                 evidence["first_event_ms"] = round((time.monotonic() - started) * 1000)
                 first = False
@@ -1091,6 +1136,7 @@ async def _pooled_consumer_exchange(pool, key, signed_request, publish_offer,
             if on_event is None:
                 raise P2PError("unexpected stream event")
             await asyncio.to_thread(on_event, response)
+            idle_deadline = time.monotonic() + idle_s
     return await pool.run(key, factory, exchange)
 
 

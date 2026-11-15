@@ -313,13 +313,11 @@ class AgentModelBridge:
             for message in chat["messages"]:
                 message.pop("provider_state", None)
         chat["messages"] = project_leading_developer(chat["messages"], supports_developer=supports_developer)
-        # Local providers expose an authoritative manifest limit. Remote orders
-        # enforce their own manifest/transport limits; no shorter remote timeout
-        # field exists. Our watcher requests cancellation and rejects late data.
+        # Total duration on the Agent path is bounded solely by the caller's
+        # task budget `deadline` (stream progress is guarded by adapter idle
+        # timeouts). `provider_limit` is retained in `request_policy` for diagnostics.
         provider_limit = manager.manifest.timeout_seconds if manager else None
-        request_deadline = time.monotonic() + provider_limit if provider_limit is not None else deadline
-        if deadline is not None:
-            request_deadline = min(request_deadline, deadline) if request_deadline is not None else deadline
+        request_deadline = deadline
         done = threading.Event()
 
         def expired():
@@ -393,11 +391,17 @@ class AgentModelBridge:
                 raise AgentError("agent_inference_timeout")
             check_data_release()
             if manager:
-                options = {"task_id": task_id, "timeout_s": request_policy["effective_timeout_seconds"], "on_event": emit if streaming else None}
+                effective_timeout = request_policy["effective_timeout_seconds"]
+                if effective_timeout is None:
+                    adapter_idle = getattr(manager.adapter, "timeout_s", None)
+                    fallback_timeout = float(adapter_idle) if isinstance(adapter_idle, (int, float)) and adapter_idle > 0 else float(provider_limit or 120.0)
+                else:
+                    if effective_timeout <= 0:
+                        raise AgentError("agent_inference_timeout")
+                    fallback_timeout = effective_timeout
+                options = {"task_id": task_id, "timeout_s": fallback_timeout, "on_event": emit if streaming else None}
                 if target.get("cli_model"):
                     options["model"] = target["cli_model"]
-                if options["timeout_s"] <= 0:
-                    raise AgentError("agent_inference_timeout")
                 if getattr(manager.adapter, "supports_request_deadline", False) is True:
                     options["deadline"] = request_deadline
                 if getattr(manager.adapter, "supports_conversation_scope", False) is True:

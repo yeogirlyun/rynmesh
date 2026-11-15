@@ -12,7 +12,7 @@ import time
 import urllib.error
 import urllib.request
 
-from .adapters import AdapterError, OpenAICompatibleAdapter, _openai_usage, cached_input_tokens
+from .adapters import AdapterError, OpenAICompatibleAdapter, _openai_usage, _set_response_timeout, cached_input_tokens
 from .data_release import DataReleaseError
 from .data_release import urlopen as model_urlopen
 from .transport_failure import describe, read_http_failure
@@ -73,24 +73,52 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
             on_delta(result["text"])
         return result
 
-    def chat(self, body, *, task_id, timeout_s, on_event=None):
+    def chat(self, body, *, task_id, timeout_s=None, on_event=None, deadline=None):
         from .chat import validate_chat
         from .protocol_codecs import StreamDecoder, _finish, _usage, make_request, parse_response
 
         started = time.monotonic()
-        if (isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float))
-                or not math.isfinite(timeout_s) or timeout_s <= 0):
+        if timeout_s is not None and (
+            isinstance(timeout_s, bool)
+            or not isinstance(timeout_s, (int, float))
+            or not math.isfinite(timeout_s)
+            or timeout_s <= 0
+        ):
             raise AdapterError("invalid request timeout", code="inference_timeout")
-        deadline = started + min(timeout_s, self.timeout_s)
+        if deadline is not None and (
+            isinstance(deadline, bool)
+            or not isinstance(deadline, (int, float))
+            or not math.isfinite(deadline)
+        ):
+            raise AdapterError("invalid_request_deadline")
+        idle_s = (
+            float(self.timeout_s)
+            if deadline is not None
+            else (min(float(timeout_s), float(self.timeout_s)) if timeout_s is not None else float(self.timeout_s))
+        )
+        last_byte = started
+        is_sse = False
         received_usage = received_finish = received_cached = None
         phase = "request"
         decoder = None
 
+        def read_timeout():
+            if deadline is None:
+                return idle_s
+            return min(idle_s, max(.001, deadline - time.monotonic()))
+
         def check():
             if task_id in self._cancelled:
                 raise AdapterError("task_cancelled")
-            if time.monotonic() >= deadline:
+            now = time.monotonic()
+            if deadline is not None and now >= deadline:
                 raise AdapterError("inference timed out", code="inference_timeout")
+            if now - last_byte > idle_s:
+                raise AdapterError(
+                    "inference timed out",
+                    code="inference_timeout",
+                    diagnostics={"network_reason": "idle_timeout", "network_phase": phase},
+                )
 
         def deliver(chunk):
             if on_event:
@@ -116,8 +144,9 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
             path = "/v1/responses" if self.protocol == "openai_responses" else "/v1/messages"
             request = urllib.request.Request(self._endpoint(path), data=json.dumps(payload).encode("utf-8"),
                                              headers=self._headers(), method="POST")
-            with model_urlopen(request, timeout=max(.001, deadline-time.monotonic())) as response:
+            with model_urlopen(request, timeout=read_timeout()) as response:
                 phase = "read"
+                last_byte = time.monotonic()
                 with self._lock:
                     self._active_responses[task_id] = response
                 check()
@@ -133,8 +162,9 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                         try:
                             received_finish = _finish(decoded, self.protocol)
                         except ValueError:
-                            pass
+                            received_finish = None
                     check()
+                    last_byte = time.monotonic()
                     result = parse_response(decoded, self.protocol, self.model, scope)
                 else:
                     decoder = StreamDecoder(self.protocol, self.model, scope)
@@ -159,11 +189,15 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
 
                     while True:
                         check()
+                        if deadline is not None:
+                            _set_response_timeout(response, read_timeout())
                         line = response.readline(1024 * 1024 + 1)
+                        check()
                         if not line:
                             if data:
                                 frame()
                             break
+                        last_byte = time.monotonic()
                         total += len(line)
                         frame_size += len(line)
                         if len(line) > 1024 * 1024 or frame_size > 4 * 1024 * 1024 or total > 32 * 1024 * 1024:
@@ -219,6 +253,8 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                                else "upstream_http_failed")
             elif isinstance(exc, OSError):
                 timeout = isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)
+                if timeout and phase == "read" and is_sse and not (deadline is not None and time.monotonic() >= deadline):
+                    diag = {**(diag or {}), "network_reason": "idle_timeout"}
                 code = text = "inference_timeout" if timeout else "runtime_connection_failed"
             else:
                 # Wire/continuation failures are adapter errors, not a prompt
