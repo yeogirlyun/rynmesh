@@ -261,6 +261,8 @@ class HttpPeerClient:
         except TransportError as exc:
             if exc.reason == "too_large":
                 raise PeerTransportError("peer_media_too_large") from exc
+            if exc.reason == "unsupported_encoding":
+                raise PeerTransportError("peer_unsupported_encoding") from exc
             raise PeerTransportError(f"peer_http_error: {exc}") from exc
 
     def _json(self, path: str) -> dict[str, Any]:
@@ -297,6 +299,8 @@ class HttpPeerClient:
         except TransportError as exc:
             if exc.reason == "too_large":
                 raise PeerTransportError("peer_response_too_large") from None
+            if exc.reason == "unsupported_encoding":
+                raise PeerTransportError("peer_unsupported_encoding") from None
             # Keep plugin exception text out of the public error surface: a
             # third-party transport may include request/response bytes there.
             # The HTTP status is metadata, not body — carry it so a keyed
@@ -376,10 +380,16 @@ class HttpPeerClient:
         except UnicodeDecodeError:
             raise PeerTransportError("peer_stream_utf8_invalid") from None
         except TransportError as exc:
-            code = "peer_stream_too_large" if exc.reason == "too_large" else (
-                "peer_stream_limit_invalid" if exc.reason == "invalid_limit" else "peer_stream_failed"
-            )
+            if exc.reason == "too_large":
+                code = "peer_stream_too_large"
+            elif exc.reason == "invalid_limit":
+                code = "peer_stream_limit_invalid"
+            elif exc.reason == "unsupported_encoding":
+                code = "peer_unsupported_encoding"
+            else:
+                code = "peer_stream_failed"
             raise PeerTransportError(code) from None
+
         tail = buffered.rstrip("\r")
         if tail:
             yield decode_line(tail)
@@ -392,6 +402,8 @@ class HttpPeerClient:
         except TransportError as exc:
             if exc.reason == "too_large":
                 raise PeerTransportError("peer_response_too_large") from exc
+            if exc.reason == "unsupported_encoding":
+                raise PeerTransportError("peer_unsupported_encoding") from exc
             raise PeerTransportError(f"peer_http_error: {exc}") from exc
 
 
