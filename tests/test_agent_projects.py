@@ -448,9 +448,27 @@ def _legacy_untruncated_guidance(row: dict, full_text: str) -> str:
         f"  <project>{json.dumps(info, ensure_ascii=False, separators=(',', ':'))}</project>\n"
         "</environment_context>"
     )
+    rules = []
+    if project.get("is_git"):
+        rules.append(
+            "Git repository: do not commit, amend, create or switch branches, or discard changes "
+            "(reset --hard, checkout --, clean) unless the owner asks. Changes you did not make "
+            "belong to the owner; keep them."
+        )
+    rules.append(
+        "Fix the cause, not the symptom; follow the repository's existing patterns; keep the change "
+        "to what was asked; mention unrelated problems instead of fixing them."
+    )
+    rules_block = "\n".join(rules)
+    scope_rule = (
+        "AGENTS.md rules apply to their directory tree; a deeper file wins over a higher one, "
+        "and the owner's direct instructions win over both."
+    )
     return (
         f"{env_block}\n\n"
+        f"{rules_block}\n\n"
         f"# AGENTS.md instructions for {path}\n\n"
+        f"{scope_rule}\n\n"
         "<INSTRUCTIONS>\n"
         f"{full_text.rstrip(chr(10))}\n"
         "</INSTRUCTIONS>"
@@ -466,6 +484,7 @@ def _legacy_untruncated_guidance(row: dict, full_text: str) -> str:
 def test_agents_md_32kib_budget_truncation_marker_and_task_event(tmp_path, size_kb, expect_truncated, expect_incomplete):
     import hashlib
     import re
+
     from rynmesh.agent_runtime import projects
 
     target_bytes = size_kb * 1024
@@ -544,3 +563,84 @@ def test_agents_md_small_context_window_respects_quarter_limit(tmp_path):
     assert trunc_events[0]["injected_bytes"] == injected_bytes
     assert trunc_events[0]["total_bytes"] == 4096
 
+
+
+def test_s03_i4_project_guidance_git_non_git_and_no_project(tmp_path):
+    from rynmesh.agent_runtime import projects
+
+    git_rule = (
+        "Git repository: do not commit, amend, create or switch branches, or discard changes "
+        "(reset --hard, checkout --, clean) unless the owner asks. Changes you did not make "
+        "belong to the owner; keep them."
+    )
+    eng_rule = (
+        "Fix the cause, not the symptom; follow the repository's existing patterns; keep the change "
+        "to what was asked; mention unrelated problems instead of fixing them."
+    )
+    scope_rule = (
+        "AGENTS.md rules apply to their directory tree; a deeper file wins over a higher one, "
+        "and the owner's direct instructions win over both."
+    )
+
+    runtime, _, _, _ = project_runtime(tmp_path / "state")
+
+    # 1. No project -> empty guidance and rules never injected
+    no_proj_task = runtime.create({"message": "Plain task"})
+    no_proj_row = runtime.store.read()["tasks"][no_proj_task["id"]]
+    assert projects.guidance(no_proj_row) == ""
+    no_proj_ctx = json.dumps(runtime._context(no_proj_row))
+    assert git_rule not in no_proj_ctx
+    assert eng_rule not in no_proj_ctx
+    assert scope_rule not in no_proj_ctx
+
+    # 2. Non-git directory with AGENTS.md -> engineering + scope rules, no git rule
+    non_git_root = project_folder(tmp_path / "non_git")
+    non_git_sel = runtime.load_project({"path": str(non_git_root)})
+    non_git_task = runtime.create({"message": "Inspect non-git", "project_id": non_git_sel["id"]})
+    non_git_row = runtime.store.read()["tasks"][non_git_task["id"]]
+    assert non_git_row["project"]["is_git"] is False
+    non_git_guidance = projects.guidance(non_git_row)
+    assert git_rule not in non_git_guidance
+    assert eng_rule in non_git_guidance
+    assert scope_rule in non_git_guidance
+    assert (
+        non_git_guidance.index("</environment_context>")
+        < non_git_guidance.index(eng_rule)
+        < non_git_guidance.index("# AGENTS.md instructions for ")
+        < non_git_guidance.index(scope_rule)
+        < non_git_guidance.index("<INSTRUCTIONS>")
+    )
+
+    # 3. Git repository (.git dir) with AGENTS.md -> git + engineering + scope rules in order
+    git_root = project_folder(tmp_path / "git_repo")
+    (git_root / ".git").mkdir()
+    git_sel = runtime.load_project({"path": str(git_root)})
+    git_task = runtime.create({"message": "Inspect git repo", "project_id": git_sel["id"]})
+    git_row = runtime.store.read()["tasks"][git_task["id"]]
+    assert git_row["project"]["is_git"] is True
+    git_guidance = projects.guidance(git_row)
+    assert git_rule in git_guidance
+    assert eng_rule in git_guidance
+    assert scope_rule in git_guidance
+    assert (
+        git_guidance.index("</environment_context>")
+        < git_guidance.index(git_rule)
+        < git_guidance.index(eng_rule)
+        < git_guidance.index("# AGENTS.md instructions for ")
+        < git_guidance.index(scope_rule)
+        < git_guidance.index("<INSTRUCTIONS>")
+    )
+
+    # 4. Git worktree (.git file) without AGENTS.md -> git + engineering rules, no AGENTS.md block
+    wt_root = tmp_path / "git_worktree_no_agents"
+    wt_root.mkdir()
+    (wt_root / ".git").write_text("gitdir: ../.git/worktrees/wt\n", encoding="utf-8")
+    wt_sel = runtime.load_project({"path": str(wt_root)})
+    wt_task = runtime.create({"message": "Inspect worktree", "project_id": wt_sel["id"]})
+    wt_row = runtime.store.read()["tasks"][wt_task["id"]]
+    assert wt_row["project"]["is_git"] is True
+    wt_guidance = projects.guidance(wt_row)
+    assert git_rule in wt_guidance
+    assert eng_rule in wt_guidance
+    assert scope_rule not in wt_guidance
+    assert "<INSTRUCTIONS>" not in wt_guidance

@@ -125,6 +125,7 @@ def selected(data, ident, *, refresh=False):
     if str(root) != value["path"]:
         raise AgentError("agent_project_path_changed")
     result = {**value, **overview(root), "name": value["name"]} if refresh else dict(value)
+    result["is_git"] = (root / ".git").exists()
     if refresh and inside_file(root, "AGENTS.md"):
         hasher = hashlib.sha256()
         head = bytearray()
@@ -448,6 +449,34 @@ def instructions_truncation(row):
     }
 
 
+GIT_SAFETY_RULE = (
+    "Git repository: do not commit, amend, create or switch branches, or discard changes "
+    "(reset --hard, checkout --, clean) unless the owner asks. Changes you did not make "
+    "belong to the owner; keep them."
+)
+ENGINEERING_RULE = (
+    "Fix the cause, not the symptom; follow the repository's existing patterns; keep the change "
+    "to what was asked; mention unrelated problems instead of fixing them."
+)
+AGENTS_MD_SCOPE_RULE = (
+    "AGENTS.md rules apply to their directory tree; a deeper file wins over a higher one, "
+    "and the owner's direct instructions win over both."
+)
+
+
+def _project_is_git(project: dict) -> bool:
+    if "is_git" in project:
+        return bool(project["is_git"])
+    path = project.get("path")
+    if not isinstance(path, str) or not path:
+        return False
+    try:
+        candidate = Path(path)
+        return candidate.is_absolute() and (candidate / ".git").exists()
+    except OSError:
+        return False
+
+
 def guidance(row):
     project = row.get("project")
     if not project:
@@ -460,14 +489,17 @@ def guidance(row):
         f"  <project>{json.dumps(info, ensure_ascii=False, separators=(',', ':'))}</project>\n"
         "</environment_context>"
     )
+    rules = [GIT_SAFETY_RULE, ENGINEERING_RULE] if _project_is_git(project) else [ENGINEERING_RULE]
+    prefix = f"{env_block}\n\n" + "\n".join(rules)
     sliced = _instructions_slice(row)
     if sliced is None:
-        return env_block
+        return prefix
     text = sliced["text"]
     if not sliced["truncated"]:
         return (
-            f"{env_block}\n\n"
+            f"{prefix}\n\n"
             f"# AGENTS.md instructions for {path}\n\n"
+            f"{AGENTS_MD_SCOPE_RULE}\n\n"
             "<INSTRUCTIONS>\n"
             f"{text}\n"
             "</INSTRUCTIONS>"
@@ -479,8 +511,9 @@ def guidance(row):
     )
     body = f"{text}\n{marker}" if text else marker
     return (
-        f"{env_block}\n\n"
+        f"{prefix}\n\n"
         f"# AGENTS.md instructions for {path}\n\n"
+        f"{AGENTS_MD_SCOPE_RULE}\n\n"
         "<INSTRUCTIONS>\n"
         f"{body}\n"
         "</INSTRUCTIONS>"
