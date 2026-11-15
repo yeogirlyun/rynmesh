@@ -70,6 +70,7 @@ export interface ExtensionMcpTool {
   description: string;
   enabled: boolean;
   component_enabled: boolean;
+  schema_invalid?: boolean;
   owner_read_only: boolean;
   effective_effect: "read" | "write";
   effective_risk?: "low" | "high";
@@ -718,6 +719,7 @@ function normalizeMcpTool(raw: Record<string, unknown>): ExtensionMcpTool {
     description: typeof raw.description === "string" ? raw.description : "",
     enabled,
     component_enabled: componentEnabled,
+    schema_invalid: Boolean(raw.schema_invalid),
     owner_read_only: ownerReadOnly,
     effective_effect: raw.effective_effect === "read" || ownerReadOnly ? "read" : "write",
     effective_risk: raw.effective_risk === "low" || ownerReadOnly ? "low" : "high",
