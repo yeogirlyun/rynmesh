@@ -413,3 +413,134 @@ def test_project_destination_change_rebinds_same_or_new_model_and_resumes_explic
     assert runtime.preview_model_switch(task_id, "local:test")["current_scope_authorized"] is False
     with pytest.raises(AgentError, match="agent_project_unavailable"):
         runtime.switch_model(task_id, body(runtime, task_id, "local:test", transfer_resource_scope=True))
+
+
+def _make_agents_md_bytes(target_bytes: int) -> bytes:
+    lines = []
+    size = 0
+    idx = 1
+    while size < target_bytes:
+        remaining = target_bytes - size
+        if remaining <= 32:
+            line = ("rule-" + ("x" * max(0, remaining - 6)) + "\n")[:remaining]
+            if not line.endswith("\n") and remaining >= 1:
+                line = line[:-1] + "\n"
+        else:
+            line = f"Rule {idx:04d}: keep deterministic module boundaries and tests.\n"
+            if len(line) > remaining:
+                line = ("x" * (remaining - 1)) + "\n"
+        raw_line = line.encode("utf-8")
+        lines.append(raw_line)
+        size += len(raw_line)
+        idx += 1
+    result = b"".join(lines)
+    assert len(result) == target_bytes
+    return result
+
+
+def _legacy_untruncated_guidance(row: dict, full_text: str) -> str:
+    project = row["project"]
+    path = project.get("path") or ""
+    info = {key: project[key] for key in ("name", "path", "entry_files", "manifests", "directories") if key in project}
+    env_block = (
+        "<environment_context>\n"
+        f"  <cwd>{path}</cwd>\n"
+        f"  <project>{json.dumps(info, ensure_ascii=False, separators=(',', ':'))}</project>\n"
+        "</environment_context>"
+    )
+    return (
+        f"{env_block}\n\n"
+        f"# AGENTS.md instructions for {path}\n\n"
+        "<INSTRUCTIONS>\n"
+        f"{full_text.rstrip(chr(10))}\n"
+        "</INSTRUCTIONS>"
+    )
+
+
+@pytest.mark.parametrize("size_kb,expect_truncated,expect_incomplete", [
+    (4, False, False),
+    (20, False, False),
+    (40, True, False),
+    (70, True, True),
+])
+def test_agents_md_32kib_budget_truncation_marker_and_task_event(tmp_path, size_kb, expect_truncated, expect_incomplete):
+    import hashlib
+    import re
+    from rynmesh.agent_runtime import projects
+
+    target_bytes = size_kb * 1024
+    raw_bytes = _make_agents_md_bytes(target_bytes)
+    root = project_folder(tmp_path / f"proj_{size_kb}k")
+    (root / "AGENTS.md").write_bytes(raw_bytes)
+
+    runtime, _, _, _ = project_runtime(tmp_path / f"state_{size_kb}k")
+    selected = runtime.load_project({"path": str(root)})
+    created = runtime.create({"message": "Check instructions", "project_id": selected["id"]})
+    row = runtime.store.read()["tasks"][created["id"]]
+
+    instructions = row["project"]["instructions"]
+    assert instructions["bytes"] == target_bytes
+    assert instructions["sha256"] == hashlib.sha256(raw_bytes).hexdigest()
+    assert instructions["incomplete"] is expect_incomplete
+
+    rendered = projects.guidance(row)
+    trunc_events = [e for e in row["events"] if e["type"] == "project_instructions_truncated"]
+
+    if not expect_truncated:
+        assert "[AGENTS.md truncated:" not in rendered
+        assert rendered == _legacy_untruncated_guidance(row, raw_bytes.decode("utf-8"))
+        assert trunc_events == []
+    else:
+        inner = rendered.split("<INSTRUCTIONS>\n", 1)[1].rsplit("\n</INSTRUCTIONS>", 1)[0]
+        injected_text, marker_tail = inner.rsplit("\n[AGENTS.md truncated: ", 1)
+        marker = "[AGENTS.md truncated: " + marker_tail
+        injected_bytes = len(injected_text.encode("utf-8"))
+        expected_start_line = len(injected_text.splitlines()) + 1
+        assert 32000 < injected_bytes <= 32768
+
+        m = re.fullmatch(
+            r"\[AGENTS\.md truncated: showing (\d+) of (>64 KiB|\d+ bytes); "
+            r"read the rest with ryn_file_read path=AGENTS\.md start_line=(\d+)\]",
+            marker,
+        )
+        assert m is not None, marker
+        assert int(m.group(1)) == injected_bytes
+        assert m.group(2) == (">64 KiB" if expect_incomplete else f"{target_bytes} bytes")
+        assert int(m.group(3)) == expected_start_line
+
+        assert len(trunc_events) == 1
+        ev = trunc_events[0]
+        assert ev["injected_bytes"] == injected_bytes
+        assert ev["total_bytes"] == target_bytes
+        assert ev["incomplete"] is expect_incomplete
+        assert "Rule 0001" not in json.dumps(ev)
+
+
+def test_agents_md_small_context_window_respects_quarter_limit(tmp_path):
+    from rynmesh.agent_runtime import projects
+
+    raw_bytes = _make_agents_md_bytes(4 * 1024)
+    root = project_folder(tmp_path / "proj_small_win")
+    (root / "AGENTS.md").write_bytes(raw_bytes)
+
+    runtime, _, _, _ = project_runtime(tmp_path / "state_small_win")
+    runtime.update_settings({"max_context_chars": 12000})
+    selected = runtime.load_project({"path": str(root)})
+    created = runtime.create({"message": "Check small window", "project_id": selected["id"]})
+    row = runtime.store.read()["tasks"][created["id"]]
+
+    rendered = projects.guidance(row)
+    inner = rendered.split("<INSTRUCTIONS>\n", 1)[1].rsplit("\n</INSTRUCTIONS>", 1)[0]
+    injected_text, marker_tail = inner.rsplit("\n[AGENTS.md truncated: ", 1)
+    injected_bytes = len(injected_text.encode("utf-8"))
+    expected_start_line = len(injected_text.splitlines()) + 1
+    assert injected_bytes <= 3000
+    assert (
+        "[AGENTS.md truncated: " + marker_tail
+        == f"[AGENTS.md truncated: showing {injected_bytes} of 4096 bytes; read the rest with ryn_file_read path=AGENTS.md start_line={expected_start_line}]"
+    )
+    trunc_events = [e for e in row["events"] if e["type"] == "project_instructions_truncated"]
+    assert len(trunc_events) == 1
+    assert trunc_events[0]["injected_bytes"] == injected_bytes
+    assert trunc_events[0]["total_bytes"] == 4096
+
