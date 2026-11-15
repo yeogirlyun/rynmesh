@@ -21,7 +21,7 @@ from pathlib import Path, PurePosixPath
 
 from .adapters import AdapterError, OpenAICompatibleAdapter, deadline_options
 from .gguf_import import NativeModelError, inspect_model
-from .hardware import _memory, _nvidia
+from .hardware import _memory, _nvidia, cap_local_context_window, default_local_output_tokens
 from .manifest import LLMPackageManifest
 from .model_usage import ModelUsageStore, current_usage_caller
 from .native_policy import NativeModelPolicy
@@ -334,17 +334,31 @@ class NativeModel:
     def _update_manifest(self):
         sha = self.metadata.get("sha256", "")
         name = self.metadata.get("name", "Local model")
-        context = self.metadata.get("context_window", 4096)
+        if self.metadata:
+            declared = int(self.metadata.get("context_window", 8192))
+            _, available_ram = _memory()
+            gpus, _ = _nvidia()
+            usable_mb = max(
+                int(available_ram * 0.75),
+                max((int(gpu.memory_free_mb * 0.85) for gpu in gpus), default=0),
+            )
+            weights_mb = int(self.metadata.get("size_bytes", 0) / 1024**2)
+            context = cap_local_context_window(declared, usable_mb, weights_mb=weights_mb)
+        else:
+            context = 8192
+        output_tokens = default_local_output_tokens(context)
         self.manifest = LLMPackageManifest(
             package_id=MODEL_ID + ("-" + sha[:16] if sha else ""), mode="managed", public_model_alias=name,
             runtime="native_llama_cpp", model=name, context_window=context,
-            max_output_tokens=min(1024, context // 2), timeout_seconds=300,
+            max_output_tokens=output_tokens, timeout_seconds=300,
             model_fingerprint="sha256:" + sha if sha else "", license_id=self.metadata.get("license_id", "unknown"),
             capabilities=["text-generation", "streaming", "personal-space-only"],
         )
         if sha:
             policy = self.policies.ensure(self.manifest, self.config["sharing"])
-            self.manifest.max_output_tokens = policy["configuration"]["max_output_tokens"]
+            self.manifest.max_output_tokens = min(
+                policy["configuration"]["max_output_tokens"], self.manifest.context_window
+            )
             self.manifest.max_concurrent = policy["configuration"]["max_concurrent"]
         self.adapter = ManagedAdapter(self)
 

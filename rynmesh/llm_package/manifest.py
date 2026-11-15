@@ -48,8 +48,8 @@ class LLMPackageManifest:
     version: str = PACKAGE_VERSION
     protocol_version: str = PROTOCOL_VERSION
     capabilities: list[str] = field(default_factory=lambda: ["text-generation"])
-    context_window: int = 4096
-    max_output_tokens: int = 512
+    context_window: int = 8192
+    max_output_tokens: int = 2048
     max_concurrent: int = 1
     queue_limit: int = 0
     timeout_seconds: float = 120.0

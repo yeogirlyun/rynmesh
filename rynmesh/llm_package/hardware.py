@@ -204,11 +204,32 @@ def detect_hardware(path: str | Path | None = None, *, runtime_root: str | Path 
     )
 
 
+MAX_LOCAL_CONTEXT_WINDOW = 32768
+MAX_LOCAL_OUTPUT_TOKENS = 8192
+
+
 def usable_memory_mb(report: HardwareReport) -> int:
     """Conservative available memory in MiB — the same cap `recommend` checks."""
     usable_ram = int(report.ram_available_mb * 0.75)
     usable_vram = max((gpu.memory_free_mb for gpu in report.nvidia_gpus), default=0)
     return max(usable_ram, int(usable_vram * 0.85))
+
+
+def cap_local_context_window(declared_context: int, usable_mb: int, *, weights_mb: int = 0) -> int:
+    """Bound runtime context window to `min(declared, memory_cap, 32768)`."""
+    ceiling = max(256, min(int(declared_context), MAX_LOCAL_CONTEXT_WINDOW))
+    if usable_mb <= 0:
+        return ceiling
+    kv_kb_per_token = 64 if 0 < weights_mb < 2500 else 128
+    headroom_mb = max(0, int(usable_mb) - max(0, int(weights_mb)) - 256)
+    memory_cap = max(min(ceiling, 2048), (headroom_mb * 1024) // kv_kb_per_token)
+    return min(ceiling, memory_cap)
+
+
+def default_local_output_tokens(context_window: int) -> int:
+    """Bound default output tokens to `min(window // 4, 8192)` within `[1, window]`."""
+    window = max(1, int(context_window))
+    return min(window, max(1, min(window // 4, MAX_LOCAL_OUTPUT_TOKENS)))
 
 
 def recommend(report: HardwareReport) -> list[dict[str, Any]]:
@@ -240,6 +261,7 @@ def recommend(report: HardwareReport) -> list[dict[str, Any]]:
                 "license_url": "https://www.apache.org/licenses/LICENSE-2.0" if profile.license_id == "Apache-2.0" else "",
                 "context_window": profile.context_window,
                 "max_concurrent": profile.max_concurrent,
+                "agent_capable": profile.agent_capable,
                 # The managed llama.cpp image is the portable CPU build. GPU
                 # data is still reported so an advanced owner can override it,
                 # but the safe default must describe what we actually launch.
