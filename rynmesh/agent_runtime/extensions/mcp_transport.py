@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import math
 import os
 import queue
 import re
@@ -14,6 +15,7 @@ import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit
@@ -214,6 +216,7 @@ class McpTransportError(AgentError):
         request_id: int | None = None,
         rpc_code: int | None = None,
         http_status: int | None = None,
+        retry_after: float | None = None,
         transport: str | None = None,
         server_id: str | None = None,
         session_scope: str | None = None,
@@ -226,6 +229,7 @@ class McpTransportError(AgentError):
         self.request_id = request_id
         self.rpc_code = rpc_code
         self.http_status = http_status
+        self.retry_after = retry_after
         self.transport = transport
         self.server_id = server_id
         self.session_scope = session_scope
@@ -233,6 +237,40 @@ class McpTransportError(AgentError):
         self.details: dict[str, Any] | None = (
             dict(details) if isinstance(details, dict) and details else None
         )
+
+
+_RETRYABLE_HTTP_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
+_HTTP_RETRY_DELAYS = (0.25, 1.0)
+
+
+def _parse_retry_after(value: str | None) -> float | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw = value.strip()
+    try:
+        seconds = float(raw)
+    except (ValueError, TypeError):
+        try:
+            seconds = parsedate_to_datetime(raw).timestamp() - time.time()
+        except (ValueError, TypeError, OverflowError):
+            return None
+    if math.isfinite(seconds) and seconds >= 0:
+        return min(seconds, 86400.0)
+    return None
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    if isinstance(exc, McpTransportError):
+        if str(exc) == "agent_mcp_auth_required":
+            return False
+        if exc.http_status in _RETRYABLE_HTTP_STATUSES:
+            return True
+        if str(exc) == "agent_mcp_process_disconnected" and exc.dispatched is False:
+            return True
+        return False
+    if isinstance(exc, (httpx.ConnectError, OSError)) and getattr(exc, "dispatched", False) is False:
+        return True
+    return False
 
 
 _STDIO_CA_FILE_VARS = frozenset(
@@ -966,16 +1004,19 @@ class StdioMcpSession:
                     d.setdefault("timeout_seconds", round(float(timeout), 3))
                     d.setdefault("method", method)
                     exc.details = d
-                keep_open_after_line_overflow = (
+                keep_open_after_recoverable_error = (
                     isinstance(exc, McpTransportError)
-                    and str(exc) == "agent_mcp_output_limit"
+                    and (
+                        exc.phase == "rpc_error"
+                        or str(exc) == "agent_mcp_output_limit"
+                    )
                     and self.initialized
                     and not self.closed.is_set()
                     and not self._eof
                     and self.failure is None
                     and self.process.poll() is None
                 )
-                if keep_open_after_line_overflow:
+                if keep_open_after_recoverable_error:
                     self._renew_idle_deadline()
                 else:
                     self.close()
@@ -1489,8 +1530,14 @@ class StreamableHttpMcpSession:
                 "agent_mcp_request_too_large", dispatched=False, phase="pre_dispatch"
             )
 
+        auth_refresh_eligible = method in {
+            "initialize",
+            "tools/list",
+            "tools/call",
+            "tools/prepare",
+        }
         refresh_state = [_auth_retry]
-        headers = self._headers(refresh_on_error=method in {"initialize", "tools/list"}, refresh_state=refresh_state)
+        headers = self._headers(refresh_on_error=auth_refresh_eligible, refresh_state=refresh_state)
         # Refresh can block. Authenticate before marking a tool dispatched,
         # then recheck cancellation/configuration immediately before sending.
         self._check_deadline(
@@ -1549,14 +1596,37 @@ class StreamableHttpMcpSession:
                         timeout_seconds=timeout,
                         method=method,
                     )
-                    if response.status_code in (401, 403):
-                        raise self._auth_error(response, dispatched=True, request_id=ident)
+                    if response.status_code == 401:
+                        raise self._auth_error(response, dispatched=False, request_id=ident)
+                    if response.status_code == 403:
+                        challenge = parse_auth_challenge(
+                            response.headers.get("WWW-Authenticate", "")
+                        )
+                        if challenge.get("error") == "insufficient_scope":
+                            raise self._auth_error(response, dispatched=False, request_id=ident)
+                        raise McpTransportError(
+                            "agent_mcp_http_forbidden",
+                            dispatched=False,
+                            phase="http_status",
+                            request_id=ident,
+                            http_status=403,
+                            details={"http_status": 403},
+                        )
                     if response.status_code >= 300:
+                        status_code = int(response.status_code)
+                        status_dispatched = not (
+                            400 <= status_code < 500 and status_code not in (408, 429)
+                        )
+                        retry_after_sec = _parse_retry_after(
+                            response.headers.get("Retry-After")
+                        )
                         err_buf = bytearray()
                         try:
                             for err_chunk in response.iter_bytes():
                                 if self._is_cancelled(cancelled):
-                                    raise McpTransportError("agent_cancelled", dispatched=True)
+                                    raise McpTransportError(
+                                        "agent_cancelled", dispatched=status_dispatched
+                                    )
                                 err_buf.extend(err_chunk[: max(0, 2048 - len(err_buf))])
                                 if len(err_buf) >= 2048 or time.monotonic() >= deadline:
                                     break
@@ -1569,15 +1639,25 @@ class StreamableHttpMcpSession:
                             redact_values=redact_vals,
                             limit=1000,
                         )
-                        http_details: dict[str, Any] = {"http_status": int(response.status_code)}
+                        http_details: dict[str, Any] = {"http_status": status_code}
                         if http_body:
                             http_details["http_body"] = http_body
+                        err_code = (
+                            "agent_mcp_session_expired"
+                            if (
+                                status_code == 404
+                                and bool(self.session_id)
+                                and method != "initialize"
+                            )
+                            else "agent_mcp_http_error"
+                        )
                         raise McpTransportError(
-                            "agent_mcp_http_error",
-                            dispatched=True,
+                            err_code,
+                            dispatched=status_dispatched,
                             phase="http_status",
                             request_id=ident,
-                            http_status=int(response.status_code),
+                            http_status=status_code,
+                            retry_after=retry_after_sec,
                             details=http_details,
                         )
                     self._check_content_length(response, dispatched=True)
@@ -1646,15 +1726,34 @@ class StreamableHttpMcpSession:
                                 request_id=ident,
                             ) from exc
         except McpTransportError as exc:
-            if (exc.http_status == 401 and self.oauth and headers.get("Authorization")
-                    and method in {"initialize", "tools/list"} and not refresh_state[0]):
+            if (
+                exc.http_status == 401
+                and self.oauth
+                and headers.get("Authorization")
+                and auth_refresh_eligible
+                and not refresh_state[0]
+            ):
                 try:
                     self.oauth.access_token(self._server, force_refresh=True, refresh_state=refresh_state)
                 except McpOAuthError as auth_exc:
-                    raise McpTransportError(str(auth_exc), dispatched=True, phase="http_status",
-                        request_id=ident, http_status=401, transport="streamable_http", server_id=self.server_id) from None
-                return self._exchange(method, params, timeout, before_dispatch=before_dispatch,
-                    cancelled=cancelled, _deadline=deadline, _auth_retry=True)
+                    raise McpTransportError(
+                        str(auth_exc),
+                        dispatched=False,
+                        phase="http_status",
+                        request_id=ident,
+                        http_status=401,
+                        transport="streamable_http",
+                        server_id=self.server_id,
+                    ) from None
+                return self._exchange(
+                    method,
+                    params,
+                    timeout,
+                    before_dispatch=before_dispatch,
+                    cancelled=cancelled,
+                    _deadline=deadline,
+                    _auth_retry=True,
+                )
             if exc.request_id is None:
                 exc.request_id = ident
             if exc.phase is None:
@@ -1671,10 +1770,15 @@ class StreamableHttpMcpSession:
                 exc.details = d
             raise
         except httpx.TimeoutException as exc:
-            eff_phase = "await_response" if dispatched else "pre_dispatch"
+            timeout_dispatched = (
+                False
+                if isinstance(exc, (httpx.ConnectTimeout, httpx.PoolTimeout))
+                else dispatched
+            )
+            eff_phase = "await_response" if timeout_dispatched else "pre_dispatch"
             raise McpTransportError(
                 "agent_mcp_timeout",
-                dispatched=dispatched,
+                dispatched=timeout_dispatched,
                 phase=eff_phase,
                 request_id=ident,
                 transport="streamable_http",
@@ -1686,18 +1790,19 @@ class StreamableHttpMcpSession:
                 },
             ) from exc
         except (httpx.HTTPError, OSError) as exc:
+            conn_dispatched = False if isinstance(exc, httpx.ConnectError) else dispatched
             self._check_deadline(
                 deadline,
                 cancelled,
-                dispatched=dispatched,
-                phase="await_response" if dispatched else "pre_dispatch",
+                dispatched=conn_dispatched,
+                phase="await_response" if conn_dispatched else "pre_dispatch",
                 timeout_seconds=timeout,
                 method=method,
             )
             raise McpTransportError(
                 "agent_mcp_process_disconnected",
-                dispatched=dispatched,
-                phase="await_response" if dispatched else "pre_dispatch",
+                dispatched=conn_dispatched,
+                phase="await_response" if conn_dispatched else "pre_dispatch",
                 request_id=ident,
                 transport="streamable_http",
                 server_id=self.server_id,
@@ -1765,6 +1870,72 @@ class StreamableHttpMcpSession:
             )
         return result
 
+    def _sleep_before_retry(
+        self,
+        delay_seconds: float,
+        *,
+        deadline: float,
+        cancelled: Callable[[], bool] | None,
+        timeout_seconds: float,
+        method: str,
+    ) -> bool:
+        now_mono = time.monotonic()
+        if now_mono + delay_seconds >= deadline:
+            return False
+        target = now_mono + delay_seconds
+        while True:
+            self._check_deadline(
+                deadline,
+                cancelled,
+                dispatched=False,
+                phase="pre_dispatch",
+                timeout_seconds=timeout_seconds,
+                method=method,
+            )
+            rem = target - time.monotonic()
+            if rem <= 0:
+                return True
+            time.sleep(min(0.05, rem))
+
+    def _exchange_with_retry(
+        self,
+        method: str,
+        params: dict[str, Any],
+        timeout: float,
+        *,
+        deadline: float,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> dict[str, Any]:
+        max_attempts = 1 + len(_HTTP_RETRY_DELAYS)
+        for attempt in range(max_attempts):
+            try:
+                return self._exchange(
+                    method,
+                    params,
+                    timeout,
+                    cancelled=cancelled,
+                    _deadline=deadline,
+                )
+            except BaseException as exc:
+                if attempt >= len(_HTTP_RETRY_DELAYS) or not _is_retryable(exc):
+                    raise
+                base_delay = _HTTP_RETRY_DELAYS[attempt]
+                retry_after = getattr(exc, "retry_after", None)
+                wait_sec = (
+                    max(base_delay, float(retry_after))
+                    if type(retry_after) in (int, float)
+                    else base_delay
+                )
+                if not self._sleep_before_retry(
+                    wait_sec,
+                    deadline=deadline,
+                    cancelled=cancelled,
+                    timeout_seconds=timeout,
+                    method=method,
+                ):
+                    raise
+        raise AssertionError("unreachable")
+
     def initialize(self, *, cancelled: Callable[[], bool] | None = None) -> dict[str, Any]:
         with self.lock:
             deadline = time.monotonic() + self.startup_timeout
@@ -1778,7 +1949,7 @@ class StreamableHttpMcpSession:
                     method="initialize",
                 )
                 return self.server_info
-            result = self._exchange(
+            result = self._exchange_with_retry(
                 "initialize",
                 {
                     "protocolVersion": STREAMABLE_HTTP_PROTOCOL_VERSION,
@@ -1786,8 +1957,8 @@ class StreamableHttpMcpSession:
                     "clientInfo": {"name": "Ryn", "version": "1.0"},
                 },
                 self.startup_timeout,
+                deadline=deadline,
                 cancelled=cancelled,
-                _deadline=deadline,
             )
             if (
                 result.get("protocolVersion") not in SUPPORTED_PROTOCOL_VERSIONS
@@ -1831,13 +2002,28 @@ class StreamableHttpMcpSession:
                                 timeout_seconds=self.startup_timeout,
                                 method="notifications/initialized",
                             )
-                            if resp.status_code in (401, 403):
-                                auth_error = self._auth_error(resp, dispatched=True)
-                                retry = bool(resp.status_code == 401 and self.oauth and headers.get("Authorization") and attempt == 0 and not refresh_state[0])
+                            if resp.status_code == 401:
+                                auth_error = self._auth_error(resp, dispatched=False)
+                                retry = bool(self.oauth and headers.get("Authorization") and attempt == 0 and not refresh_state[0])
                                 if not retry:
                                     raise auth_error
+                            elif resp.status_code == 403:
+                                if parse_auth_challenge(resp.headers.get("WWW-Authenticate", "")).get("error") == "insufficient_scope":
+                                    raise self._auth_error(resp, dispatched=False)
+                                raise McpTransportError(
+                                    "agent_mcp_http_forbidden",
+                                    dispatched=False,
+                                    phase="http_status",
+                                    http_status=403,
+                                    details={"http_status": 403},
+                                )
                             elif resp.status_code >= 300:
-                                raise McpTransportError("agent_mcp_http_error", dispatched=False)
+                                raise McpTransportError(
+                                    "agent_mcp_http_error",
+                                    dispatched=False,
+                                    phase="http_status",
+                                    http_status=int(resp.status_code),
+                                )
                             if not retry:
                                 self._check_content_length(resp, dispatched=False)
                                 notif_total = 0
@@ -1858,7 +2044,7 @@ class StreamableHttpMcpSession:
                     try:
                         self.oauth.access_token(self._server, force_refresh=True, refresh_state=refresh_state)
                     except McpOAuthError as exc:
-                        raise McpTransportError(str(exc), dispatched=True, phase="http_status", http_status=401) from None
+                        raise McpTransportError(str(exc), dispatched=False, phase="http_status", http_status=401) from None
             except McpTransportError:
                 self.close()
                 raise
@@ -1912,9 +2098,14 @@ class StreamableHttpMcpSession:
                         },
                     )
                 page_timeout = min(self.startup_timeout, remaining_total)
+                page_deadline = time.monotonic() + page_timeout
                 params = {"cursor": cursor} if cursor else {}
-                res = self._exchange(
-                    "tools/list", params, page_timeout, cancelled=cancelled
+                res = self._exchange_with_retry(
+                    "tools/list",
+                    params,
+                    page_timeout,
+                    deadline=page_deadline,
+                    cancelled=cancelled,
                 )
                 page_tools = res.get("tools")
                 if not isinstance(page_tools, list):
@@ -2648,107 +2839,148 @@ class McpSessionManager:
             self.invalidate_server(server_id)
             raise
 
-        session = self._get_or_connect_enabled_session(
-            server, session_scope=session_scope, cancelled=cancelled
-        )
-
         scope = key[1]
-        with self._lock:
-            call_mgr_gen = self._manager_generation
-            call_srv_gen = self._server_generations.get(server_id, 0)
-            call_scope_gen = self._scope_generations.get(scope, 0) if scope is not None else 0
-
-        def _locked_pre_dispatch() -> None:
-            self._revalidate_tool_call(
-                server_id,
-                tool_name,
-                expected_revision=expected_revision,
-                expected_config_generation=expected_config_generation,
-                expected_instance_id=expected_instance_id,
-                expected_schema_hash=expected_schema_hash,
-                session=session,
+        for attempt in range(2):
+            session = self._get_or_connect_enabled_session(
+                server, session_scope=session_scope, cancelled=cancelled
             )
-            if before_dispatch is not None:
-                before_dispatch()
 
-        def _call_cancelled() -> bool:
-            if cancelled():
-                return True
-            if self._is_generation_stale(
-                server_id, scope, call_mgr_gen, call_srv_gen, call_scope_gen
-            ):
-                return True
-            try:
-                srv = self._revalidate_tool_call(
+            with self._lock:
+                call_mgr_gen = self._manager_generation
+                call_srv_gen = self._server_generations.get(server_id, 0)
+                call_scope_gen = self._scope_generations.get(scope, 0) if scope is not None else 0
+
+            def _locked_pre_dispatch(
+                _sess: StdioMcpSession | StreamableHttpMcpSession = session,
+            ) -> None:
+                self._revalidate_tool_call(
                     server_id,
                     tool_name,
                     expected_revision=expected_revision,
                     expected_config_generation=expected_config_generation,
                     expected_instance_id=expected_instance_id,
                     expected_schema_hash=expected_schema_hash,
-                    session=None,
+                    session=_sess,
                 )
-                return bool(
-                    session.instance_id != srv["instance_id"]
-                    or session.config_generation != int(srv["config_generation"])
-                    or session.revision != int(srv["revision"])
-                )
-            except BaseException:
-                return True
+                if before_dispatch is not None:
+                    before_dispatch()
 
-        try:
-            extra: dict[str, Any] = {}
-            if timeout_ms is not None:
-                extra["timeout"] = min(
-                    session.tool_timeout,
-                    max(0.05, float(timeout_ms) / 1000.0),
+            def _call_cancelled(
+                _sess: StdioMcpSession | StreamableHttpMcpSession = session,
+                _mgr_g: int = call_mgr_gen,
+                _srv_g: int = call_srv_gen,
+                _scp_g: int = call_scope_gen,
+            ) -> bool:
+                if cancelled():
+                    return True
+                if self._is_generation_stale(
+                    server_id, scope, _mgr_g, _srv_g, _scp_g
+                ):
+                    return True
+                try:
+                    srv = self._revalidate_tool_call(
+                        server_id,
+                        tool_name,
+                        expected_revision=expected_revision,
+                        expected_config_generation=expected_config_generation,
+                        expected_instance_id=expected_instance_id,
+                        expected_schema_hash=expected_schema_hash,
+                        session=None,
+                    )
+                    return bool(
+                        _sess.instance_id != srv["instance_id"]
+                        or _sess.config_generation != int(srv["config_generation"])
+                        or _sess.revision != int(srv["revision"])
+                    )
+                except BaseException:
+                    return True
+
+            try:
+                extra: dict[str, Any] = {}
+                if timeout_ms is not None:
+                    extra["timeout"] = min(
+                        session.tool_timeout,
+                        max(0.05, float(timeout_ms) / 1000.0),
+                    )
+                if trusted_operation is not None or prepare:
+                    from urllib.parse import urlsplit
+                    url = urlsplit(server.get("url") or "")
+                    local = url.scheme == "http" and url.hostname == "127.0.0.1" and (server.get("secret_headers") or {}).get("X-Ryn-Service-Token")
+                    remote = (url.scheme == "https" and (server.get("auth") or {}).get("mode") == "oauth"
+                              and any(tool.get("name") == tool_name and (tool.get("input_schema") or {}).get("x-ryn-operation") == "1"
+                                      for tool in server.get("discovered_tools") or []))
+                    if not isinstance(session, StreamableHttpMcpSession) or not (local or remote):
+                        raise AgentError("agent_local_service_binding_invalid")
+                    extra["trusted_operation"] = trusted_operation
+                    extra["prepare"] = prepare
+                return session.call_tool(
+                    tool_name,
+                    arguments,
+                    before_dispatch=_locked_pre_dispatch,
+                    cancelled=_call_cancelled,
+                    **extra,
                 )
-            if trusted_operation is not None or prepare:
-                from urllib.parse import urlsplit
-                url = urlsplit(server.get("url") or "")
-                local = url.scheme == "http" and url.hostname == "127.0.0.1" and (server.get("secret_headers") or {}).get("X-Ryn-Service-Token")
-                remote = (url.scheme == "https" and (server.get("auth") or {}).get("mode") == "oauth"
-                          and any(tool.get("name") == tool_name and (tool.get("input_schema") or {}).get("x-ryn-operation") == "1"
-                                  for tool in server.get("discovered_tools") or []))
-                if not isinstance(session, StreamableHttpMcpSession) or not (local or remote):
-                    raise AgentError("agent_local_service_binding_invalid")
-                extra["trusted_operation"] = trusted_operation
-                extra["prepare"] = prepare
-            return session.call_tool(
-                tool_name,
-                arguments,
-                before_dispatch=_locked_pre_dispatch,
-                cancelled=_call_cancelled,
-                **extra,
-            )
-        except BaseException as exc:
-            if getattr(exc, "server_id", None) is None:
-                exc.server_id = server_id  # type: ignore[attr-defined]
-            if getattr(exc, "session_scope", None) is None and session_scope:
-                exc.session_scope = session_scope  # type: ignore[attr-defined]
-            if getattr(exc, "transport", None) is None:
-                exc.transport = (  # type: ignore[attr-defined]
-                    "streamable_http"
-                    if isinstance(session, StreamableHttpMcpSession)
-                    else "stdio"
+            except BaseException as exc:
+                if getattr(exc, "server_id", None) is None:
+                    exc.server_id = server_id  # type: ignore[attr-defined]
+                if getattr(exc, "session_scope", None) is None and session_scope:
+                    exc.session_scope = session_scope  # type: ignore[attr-defined]
+                if getattr(exc, "transport", None) is None:
+                    exc.transport = (  # type: ignore[attr-defined]
+                        "streamable_http"
+                        if isinstance(session, StreamableHttpMcpSession)
+                        else "stdio"
+                    )
+                proc = getattr(session, "process", None)
+                pid = getattr(proc, "pid", None)
+                if getattr(exc, "session_pid", None) is None and type(pid) is int:
+                    exc.session_pid = pid  # type: ignore[attr-defined]
+
+                session_expired = (
+                    isinstance(exc, McpTransportError)
+                    and str(exc) == "agent_mcp_session_expired"
                 )
-            proc = getattr(session, "process", None)
-            pid = getattr(proc, "pid", None)
-            if getattr(exc, "session_pid", None) is None and type(pid) is int:
-                exc.session_pid = pid  # type: ignore[attr-defined]
-            keep_stdio_after_line_overflow = (
-                isinstance(session, StdioMcpSession)
-                and isinstance(exc, McpTransportError)
-                and str(exc) == "agent_mcp_output_limit"
-                and session.is_usable()
-            )
-            if not keep_stdio_after_line_overflow and (
-                session.closed.is_set()
-                or not session.is_usable()
-                or getattr(exc, "dispatched", False)
-            ):
-                with self._lock:
-                    if self._sessions.get(key) is session:
-                        self._sessions.pop(key, None)
-                session.close()
-            raise
+                if session_expired and getattr(exc, "dispatched", True) is False and attempt == 0:
+                    with self._lock:
+                        if self._sessions.get(key) is session:
+                            self._sessions.pop(key, None)
+                    session.close()
+                    try:
+                        server = self._revalidate_tool_call(
+                            server_id,
+                            tool_name,
+                            expected_revision=expected_revision,
+                            expected_config_generation=expected_config_generation,
+                            expected_instance_id=expected_instance_id,
+                            expected_schema_hash=expected_schema_hash,
+                        )
+                    except BaseException as reval_exc:
+                        if not hasattr(reval_exc, "dispatched"):
+                            reval_exc.dispatched = False  # type: ignore[attr-defined]
+                        self.invalidate_server(server_id)
+                        raise
+                    continue
+
+                recoverable_phase = getattr(exc, "phase", None) in {"rpc_error", "http_status"}
+                keep_stdio_after_line_overflow = (
+                    isinstance(session, StdioMcpSession)
+                    and isinstance(exc, McpTransportError)
+                    and str(exc) == "agent_mcp_output_limit"
+                    and session.is_usable()
+                )
+                if (
+                    session.closed.is_set()
+                    or not session.is_usable()
+                    or session_expired
+                    or (
+                        bool(getattr(exc, "dispatched", False))
+                        and not recoverable_phase
+                        and not keep_stdio_after_line_overflow
+                    )
+                ):
+                    with self._lock:
+                        if self._sessions.get(key) is session:
+                            self._sessions.pop(key, None)
+                    session.close()
+                raise
+        raise AssertionError("unreachable")
