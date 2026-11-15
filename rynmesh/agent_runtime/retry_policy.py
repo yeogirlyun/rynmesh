@@ -30,7 +30,7 @@ def limit(code, diagnostics):
         return 0
     if status is not None and status not in RETRYABLE_HTTP_STATUSES:
         return 0
-    if code == "agent_model_connection_failed" and status is None and (reason is None or reason in CONNECTION_REASONS):
+    if code == "agent_model_connection_failed" and status is None and reason in CONNECTION_REASONS:
         return None
     # urllib cannot distinguish connect from waiting for response headers.
     # Treat an ambiguous timeout conservatively as a slow model response, while
@@ -42,13 +42,9 @@ def limit(code, diagnostics):
     return _stream_max_retries(diagnostics)
 
 
-def delay(count, diagnostics=None, code=None):
+def delay(count, diagnostics, code):
     diagnostics = diagnostics if isinstance(diagnostics, dict) else {}
-    unlimited = (
-        limit(code, diagnostics) is None
-        if code is not None
-        else (diagnostics.get("http_status") is None and diagnostics.get("network_reason") in CONNECTION_REASONS)
-    )
+    unlimited = limit(code, diagnostics) is None
     overloaded = diagnostics.get("overloaded") is True
     step = max(1, count)
     start, cap = ((10 if overloaded else 5), 60) if unlimited else ((4 if overloaded else 2), 32)

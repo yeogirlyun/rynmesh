@@ -39,7 +39,7 @@ def test_backoff_persists_and_other_tasks_can_run(tmp_path, clock):
     row = runtime.create({"message": "Inspect"})
     advance(runtime)
     recovery = runtime.get(row["id"])["connection_recovery"]
-    assert recovery["next_retry_at"] == 1005
+    assert recovery["next_retry_at"] == 1002
     advance(runtime, 4)
     assert len(model.calls) == 1
     other = runtime.create({"message": "Other task"})
@@ -49,17 +49,17 @@ def test_backoff_persists_and_other_tasks_can_run(tmp_path, clock):
     restarted.reconcile()
     advance(restarted)
     assert len(model.calls) == 2
-    clock[0] = 1005
+    clock[0] = 1002
     advance(restarted)
     done = restarted.get(row["id"])
     assert done["status"] == "completed"
     assert done["connection_recovery"]["state"] == "recovered"
-    assert restarted.store.read()["tasks"][row["id"]]["retry_wait_seconds"] == 5
+    assert restarted.store.read()["tasks"][row["id"]]["retry_wait_seconds"] == 2
 
 
 def test_four_attempts_then_pause_and_manual_continue(tmp_path, clock):
     runtime, model, _, _ = make_runtime(tmp_path)
-    failing_model(model, *[fail("agent_model_upstream_failed", http_status=503, stream_max_retries=3) for _ in range(4)], assistant("Done"))
+    failing_model(model, *[fail(stream_max_retries=3) for _ in range(4)], assistant("Done"))
     row = runtime.create({"message": "Inspect"})
     advance(runtime)
     for count, wait in enumerate((2, 4, 8), 1):
@@ -90,7 +90,7 @@ def test_stop_survives_restart_and_late_failure(tmp_path, clock):
         raise fail()
     failing_model(model, fail(), stop_during_request, assistant("Done"))
     advance(runtime)
-    clock[0] += 5
+    clock[0] += 2
     advance(runtime)
     assert runtime.get(row["id"])["connection_recovery"]["state"] == "stopped"
     restarted = AgentRuntime(AgentStore(tmp_path, key), model, tools, Catalog())

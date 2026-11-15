@@ -73,13 +73,15 @@ def _anthropic_status_server(responses: list[tuple[int, dict[str, str], bytes]])
 @pytest.mark.parametrize(
     "code,diagnostics,expected_limit",
     [
-        # Connection failures without http_status -> None (unlimited)
-        ("agent_model_connection_failed", {}, None),
+        # Connection failures WITH explicit network_reason and without http_status -> None (unlimited)
         ("agent_model_connection_failed", {"network_reason": "reset"}, None),
         ("agent_model_connection_failed", {"network_reason": "refused"}, None),
         ("agent_model_connection_failed", {"network_reason": "connection"}, None),
         ("agent_model_connection_failed", {"network_reason": "dns_temporary"}, None),
         ("agent_model_connection_failed", {"network_reason": "timeout"}, None),
+        # Connection failures WITHOUT network_reason (unknown reason) -> finite stream_max_retries (default 5)
+        ("agent_model_connection_failed", {}, 5),
+        ("agent_model_connection_failed", {"stream_max_retries": 4}, 4),
         # Connection code WITH http_status falls back to finite HTTP rules, not unlimited
         ("agent_model_connection_failed", {"network_reason": "http", "http_status": 503}, 5),
         # TLS / DNS not found / quota remain 0
@@ -503,3 +505,48 @@ def test_t6_first_retry_emits_only_internal_scheduled_event_with_waiting_for_net
     assert scheduled_ev["type"] == "model_retry_scheduled"
     assert scheduled_ev["retry_count"] == 1
     assert scheduled_ev["waiting_for_network"] is True
+
+
+def test_rework_unknown_reason_connection_failure_is_finite_and_delay_requires_code(tmp_path, fake_clock):
+    # Point 1: code is required on retry_policy.delay
+    with pytest.raises(TypeError):
+        retry_policy.delay(1, {})  # type: ignore[call-arg]
+
+    # Point 2: unknown reason (no network_reason) -> finite limit & finite delay; network_reason="reset" -> None & 5s delay
+    assert retry_policy.limit("agent_model_connection_failed", {}) == 5
+    assert retry_policy.limit("agent_model_connection_failed", {"stream_max_retries": 2}) == 2
+    assert retry_policy.delay(1, {}, "agent_model_connection_failed") == pytest.approx(2)
+    assert retry_policy.limit("agent_model_connection_failed", {"network_reason": "reset"}) is None
+    assert retry_policy.delay(1, {"network_reason": "reset"}, "agent_model_connection_failed") == pytest.approx(5)
+
+    # Runtime integration: unknown-reason connection failure pauses after finite retries instead of looping forever
+    runtime, model, _, _ = make_runtime(tmp_path)
+    failing_model(
+        model,
+        *[_err("agent_model_connection_failed", stream_max_retries=2) for _ in range(3)],
+    )
+    unknown_task = runtime.create({"message": "Unknown connection error must not loop forever"})
+    advance(runtime)
+    for idx, wait in enumerate((2, 4), start=1):
+        snap = runtime.get(unknown_task["id"])
+        assert snap["status"] == "queued"
+        assert snap["connection_recovery"]["max_retries"] == 2
+        assert snap["connection_recovery"]["retry_count"] == idx
+        assert snap["connection_recovery"]["next_retry_at"] == pytest.approx(fake_clock[0] + wait)
+        fake_clock[0] += wait
+        advance(runtime)
+    paused = runtime.get(unknown_task["id"])
+    assert paused["status"] == "paused"
+    assert paused["connection_recovery"]["state"] == "disconnected"
+    assert paused["connection_recovery"]["max_retries"] == 2
+
+    # Whereas explicit network_reason="reset" remains unlimited (max_retries is None)
+    reset_runtime, reset_model, _, _ = make_runtime(tmp_path / "reset")
+    failing_model(reset_model, _err("agent_model_connection_failed", network_reason="reset"))
+    reset_task = reset_runtime.create({"message": "Reset connection error stays unlimited"})
+    advance(reset_runtime)
+    reset_snap = reset_runtime.get(reset_task["id"])
+    assert reset_snap["status"] == "queued"
+    assert reset_snap["connection_recovery"]["max_retries"] is None
+    assert reset_snap["connection_recovery"]["next_retry_at"] == pytest.approx(fake_clock[0] + 5)
+
