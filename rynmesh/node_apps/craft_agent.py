@@ -36,6 +36,13 @@ NAMES = {TOOLS, READ, ACTION, INSTALL}
 MAX_FILE = 64 * 1024 * 1024
 MAX_RESULT = 12000
 SESSION_SECONDS = 240
+TOOL_TIMEOUTS = {"read": 60.0, "output": 300.0}
+
+
+def tool_timeout(app, tool):
+    if (app, tool) in TOOL_TIMEOUTS:
+        return float(TOOL_TIMEOUTS[(app, tool)])
+    return float(TOOL_TIMEOUTS["output" if (app, tool) in OUTPUT_TOOLS else "read"])
 
 
 def spec(name, description, properties, required):
@@ -318,26 +325,41 @@ class CraftTools:
             raise AgentToolRejected(str(exc)) from None
 
     def _reopen(self, app, path, session, cancelled):
-        if path.suffix.lower() == ".pdf":
-            try:
-                from pypdf import PdfReader
+        process = None
+        try:
+            if path.suffix.lower() == ".pdf":
+                try:
+                    from pypdf import PdfReader
+                except ImportError:
+                    return {"status": "unverified", "reason": "pdf_reopen_unavailable"}
                 reader = PdfReader(path)
                 return {"status": "reopened", "parser": "pypdf", "pages": len(reader.pages)}
-            except Exception:
-                return {"status": "unverified", "reason": "pdf_reopen_unavailable_or_failed"}
-        process = craft_native.McpProcess(session["executable"], session["root"], app, cancelled=cancelled)
-        try:
-            process.initialize()
-            opened = data_result(process.tools_call(OPEN_TOOLS[app], {"path": str(path)}))
+            process = craft_native.McpProcess(session["executable"], session["root"], app, cancelled=cancelled)
+            process.initialize(cancelled=cancelled)
+            opened = data_result(process.tools_call(
+                OPEN_TOOLS[app], {"path": str(path)}, timeout=tool_timeout(app, OPEN_TOOLS[app]), cancelled=cancelled
+            ))
             if not opened["ok"]:
                 return {"status": "failed", "reason": "native_reopen_failed"}
-            inspected = data_result(process.tools_call(INSPECT_TOOLS[app], {}))
+            inspected = data_result(process.tools_call(
+                INSPECT_TOOLS[app], {}, timeout=tool_timeout(app, INSPECT_TOOLS[app]), cancelled=cancelled
+            ))
             return {"status": "reopened" if inspected["ok"] else "failed", "parser": app,
                     "summary": json.dumps(inspected.get("data"), ensure_ascii=False)[:2500]}
-        except CraftError:
-            return {"status": "failed", "reason": "native_reopen_failed"}
+        except Exception:
+            return {"status": "failed", "reason": "pdf_reopen_failed" if path.suffix.lower() == ".pdf" else "native_reopen_failed"}
         finally:
-            process.close()
+            if process is not None:
+                try:
+                    process.close()
+                except Exception:
+                    process = None
+
+    def _safe_reopen(self, app, path, session, cancelled):
+        try:
+            return self._reopen(app, path, session, cancelled)
+        except Exception:
+            return {"status": "failed", "reason": "native_reopen_failed"}
 
     @staticmethod
     def _bounded(result, offset=0):
@@ -394,7 +416,14 @@ class CraftTools:
             with source.open("rb") as src, destination.open("xb") as dst:
                 shutil.copyfileobj(src, dst, length=1024 * 1024)
 
-    def _invoke_action(self, app, tool, normalized, preview, session, context, cancelled):
+    @staticmethod
+    def _record_not_executed(ledger, binding, preview, error_code):
+        operation_id = binding["operation_id"]
+        if ledger.get(operation_id) is None:
+            ledger.begin(binding, preview or {}, receipt_reserve=4096)
+        ledger.update(operation_id, "not_executed", binding=binding, preview=preview or {}, error=error_code)
+
+    def _invoke_action(self, app, tool, normalized, preview, session, context, cancelled, *, operation_id=None):
         with tempfile.TemporaryDirectory(prefix=".ryn-craft-output-", dir=session["root"], ignore_cleanup_errors=True) as directory:
             prepared = copy.deepcopy(normalized)
             aliases = session.setdefault("path_aliases", {})
@@ -422,17 +451,50 @@ class CraftTools:
                 staged_outputs.append(staged)
                 prepared["path"] = str(staged)
                 aliases[str(staged)] = output
-            result = data_result(session["process"].tools_call(tool, prepared, cancelled=cancelled))
+            try:
+                raw_call = session["process"].tools_call(
+                    tool, prepared, timeout=tool_timeout(app, tool), cancelled=cancelled
+                )
+            except CraftError as exc:
+                if (
+                    str(exc) == "craft_mcp_timeout"
+                    and staged_outputs
+                    and all(p.is_file() and 0 < p.stat().st_size <= MAX_FILE for p in staged_outputs)
+                ):
+                    staged_manifest = [
+                        {"path": output, "sha256": file_hash(staged_outputs[index])}
+                        for index, output in enumerate(preview["new_outputs"])
+                    ]
+                    if all(
+                        file_hash(staged_outputs[index]) == staged_manifest[index]["sha256"]
+                        for index in range(len(staged_outputs))
+                    ):
+                        if operation_id is not None:
+                            self.ledger().update(operation_id, "published", staged_outputs=staged_manifest)
+                        for index, item in enumerate(staged_manifest):
+                            try:
+                                self._publish(staged_outputs[index], Path(item["path"]))
+                            except OSError:
+                                break
+                raise
+            result = data_result(raw_call)
             session["revision"] += 1
             result = self._aliases(result, aliases)
             result.update(app=app, session_id=session["id"], session_revision=session["revision"],
                           session_kind="task_headless_document")
             if result["ok"] and preview["new_outputs"]:
                 result["files"] = []
-                for index, output in enumerate(preview["new_outputs"]):
+                staged_manifest = [
+                    {"path": output, "sha256": file_hash(staged_outputs[index])}
+                    for index, output in enumerate(preview["new_outputs"])
+                ]
+                if operation_id is not None:
+                    self.ledger().update(operation_id, "published", staged_outputs=staged_manifest)
+                for index, item in enumerate(staged_manifest):
+                    output = item["path"]
                     path = Path(output)
                     staged = staged_outputs[index]
-                    checksum = file_hash(staged)
+                    checksum = item["sha256"]
                     try:
                         self._publish(staged, path)
                     except FileExistsError:
@@ -440,13 +502,14 @@ class CraftTools:
                     if file_hash(path) != checksum:
                         raise AgentError("agent_write_outcome_unknown")
                     result["files"].append({"path": output, "sha256": checksum, "bytes": path.stat().st_size,
-                                            "validation": self._reopen(app, path, session, cancelled)})
+                                            "validation": self._safe_reopen(app, path, session, cancelled)})
             return result
 
-    def execute(self, name, args, *, context, operation_id, expected_preview, cancelled):
+    def execute(self, name, args, *, context, operation_id, expected_preview=None, cancelled):
         if cancelled():
             raise AgentToolRejected("agent_cancelled")
         with self.lock:
+            engine_dispatched = False
             try:
                 app = args["app"]
                 row = self._enabled(app)
@@ -483,29 +546,62 @@ class CraftTools:
                                 details={"app": app, "tool": args["tool"], "read_tools": sorted(READ_TOOLS[app])},
                             )
                         normalized, _, _ = self._arguments(app, args["tool"], args["arguments"], session, context)
-                        result = self._aliases(data_result(session["process"].tools_call(args["tool"], normalized, cancelled=cancelled)),
-                                               session.get("path_aliases", {}))
+                        result = self._aliases(
+                            data_result(session["process"].tools_call(
+                                args["tool"], normalized, timeout=tool_timeout(app, args["tool"]), cancelled=cancelled
+                            )),
+                            session.get("path_aliases", {}),
+                        )
                         return self._bounded({"app": app, "session_id": session["id"], "session_revision": session["revision"], **result}, args.get("offset", 0))
                 binding = {"operation_id": operation_id, "tool": name, "task_id": context["task_id"],
                            "arguments_sha256": fingerprint(args), "local_execution": context["local_execution"]}
                 ledger = self.ledger()
                 prior = ledger.get(operation_id)
                 if prior:
-                    if prior["binding"] != binding:
-                        raise AgentToolRejected("agent_operation_id_conflict")
-                    if prior["status"] == "confirmed":
-                        return prior["result"]
-                    raise AgentError("agent_write_outcome_unknown")
-                preview = self.preview(name, args, context)
+                    if prior.get("status") == "retired":
+                        raise AgentToolRejected("agent_operation_retired")
+                    if prior["status"] == "not_executed":
+                        prior_binding = prior.get("binding") or {}
+                        if (
+                            prior_binding.get("operation_id") != operation_id
+                            or prior_binding.get("tool") != name
+                            or prior_binding.get("task_id") != context["task_id"]
+                            or prior_binding.get("local_execution") != context["local_execution"]
+                        ):
+                            raise AgentToolRejected("agent_operation_id_conflict")
+                    else:
+                        if prior["binding"] != binding:
+                            raise AgentToolRejected("agent_operation_id_conflict")
+                        if prior["status"] == "confirmed":
+                            return prior["result"]
+                        if prior["status"] == "published":
+                            reconciled = self.reconcile(
+                                operation_id,
+                                {**context, "operation": {"operation_id": operation_id, "tool": name, "arguments_sha256": binding["arguments_sha256"]}},
+                            )
+                            if reconciled.get("outcome") == "executed":
+                                result = self._bounded(reconciled["receipt"]["result"])
+                                ledger.update(operation_id, "confirmed", result=result, confirmed_at=datetime.now(timezone.utc).isoformat())
+                                return result
+                        raise AgentError("agent_write_outcome_unknown")
+                try:
+                    preview = self.preview(name, args, context)
+                except AgentToolRejected as exc:
+                    self._record_not_executed(ledger, binding, None, str(exc))
+                    raise
                 if preview != expected_preview:
                     raise AgentToolRejected("agent_approval_preview_changed")
-                ledger.begin(binding, preview, receipt_reserve=32768)
+                if prior is None:
+                    ledger.begin(binding, preview, receipt_reserve=32768)
+                else:
+                    ledger.update(operation_id, "intent", binding=binding, preview=preview, receipt_reserve=32768, error=None)
                 if cancelled():
                     ledger.update(operation_id, "not_executed", error="agent_cancelled")
                     raise AgentToolRejected("agent_cancelled")
-                ledger.update(operation_id, "dispatched")
                 try:
                     if name == INSTALL:
+                        engine_dispatched = True
+                        ledger.update(operation_id, "dispatched")
                         self.manager.install_automation(app)
                         result = {"app": app, "installed": True, "version": CRAFT[app]["tag"], "tools_discovery": TOOLS}
                     else:
@@ -514,31 +610,148 @@ class CraftTools:
                             normalized, _, outputs = self._arguments(app, args["tool"], args["arguments"], session, context)
                             for output in outputs:
                                 self.local.baseline(context["task_id"], Path(output))
-                            result = self._invoke_action(app, args["tool"], normalized, preview, session, context, cancelled)
+                            engine_dispatched = True
+                            ledger.update(operation_id, "dispatched")
+                            result = self._invoke_action(
+                                app, args["tool"], normalized, preview, session, context, cancelled, operation_id=operation_id
+                            )
                     result = self._bounded(result)
                     ledger.update(operation_id, "confirmed", result=result, confirmed_at=datetime.now(timezone.utc).isoformat())
                     return result
-                except CraftError as exc:
+                except AgentToolRejected as exc:
+                    if not engine_dispatched:
+                        ledger.update(operation_id, "not_executed", error=str(exc))
+                        raise
                     self.close_task(context["task_id"])
-                    if name == INSTALL:
+                    raise AgentError("agent_write_outcome_unknown") from exc
+                except CraftError as exc:
+                    if not engine_dispatched:
                         ledger.update(operation_id, "not_executed", error=str(exc))
                         raise AgentToolRejected(str(exc)) from None
+                    if name == INSTALL:
+                        self.close_task(context["task_id"])
+                        ledger.update(operation_id, "not_executed", error=str(exc))
+                        raise AgentToolRejected(str(exc)) from None
+                    if str(exc) == "craft_mcp_timeout":
+                        reconciled = self.reconcile(
+                            operation_id,
+                            {**context, "operation": {"operation_id": operation_id, "tool": name, "arguments_sha256": binding["arguments_sha256"]}},
+                        )
+                        if reconciled.get("outcome") == "executed":
+                            session["revision"] += 1
+                            result = self._bounded({
+                                **reconciled["receipt"]["result"],
+                                "session_revision": session["revision"],
+                                "reconciled_after_timeout": True,
+                            })
+                            ledger.update(operation_id, "confirmed", result=result, confirmed_at=datetime.now(timezone.utc).isoformat())
+                            return result
+                    self.close_task(context["task_id"])
                     raise AgentError("agent_write_outcome_unknown") from None
                 except Exception as exc:
+                    if engine_dispatched:
+                        reconciled = self.reconcile(
+                            operation_id,
+                            {**context, "operation": {"operation_id": operation_id, "tool": name, "arguments_sha256": binding["arguments_sha256"]}},
+                        )
+                        if reconciled.get("outcome") == "executed":
+                            result = self._bounded(reconciled["receipt"]["result"])
+                            ledger.update(operation_id, "confirmed", result=result, confirmed_at=datetime.now(timezone.utc).isoformat())
+                            return result
                     self.close_task(context["task_id"])
                     raise AgentError("agent_write_outcome_unknown") from exc
             except CraftError as exc:
-                if name in {ACTION, INSTALL} and self.ledger().get(operation_id):
+                if name in {ACTION, INSTALL} and engine_dispatched and self.ledger().get(operation_id):
                     self.close_task(context["task_id"])
                     raise AgentError("agent_write_outcome_unknown") from None
                 raise AgentToolRejected(str(exc)) from None
 
     def reconcile(self, operation_id, context):
-        operation = context.get("operation") or {}
+        context = context or {}
+        operation = context.get("operation")
         row = self.ledger().get(operation_id)
-        if row and row["status"] == "confirmed" and row["binding"]["tool"] == operation.get("tool") and row["binding"]["task_id"] == context.get("task_id") and row["binding"]["arguments_sha256"] == operation.get("arguments_sha256"):
-            return {"outcome": "executed", "receipt": {"operation_id": operation_id, "tool": operation["tool"],
-                    "arguments_sha256": operation["arguments_sha256"], "result": row["result"]}}
+        if not row:
+            return {"outcome": "unknown"}
+        binding = row.get("binding") or {}
+        if binding.get("task_id") != context.get("task_id"):
+            return {"outcome": "unknown"}
+        if isinstance(operation, dict) and operation:
+            if (
+                binding.get("tool") != operation.get("tool")
+                or binding.get("arguments_sha256") != operation.get("arguments_sha256")
+            ):
+                return {"outcome": "unknown"}
+            tool_name = operation["tool"]
+            args_sha = operation["arguments_sha256"]
+        else:
+            tool_name = binding.get("tool")
+            args_sha = binding.get("arguments_sha256")
+        if row["status"] == "confirmed":
+            return {
+                "outcome": "executed",
+                "receipt": {
+                    "operation_id": operation_id,
+                    "tool": tool_name,
+                    "arguments_sha256": args_sha,
+                    "result": row["result"],
+                },
+            }
+        if row["status"] == "not_executed":
+            return {
+                "outcome": "not_executed",
+                "receipt": {
+                    "operation_id": operation_id,
+                    "tool": tool_name,
+                    "arguments_sha256": args_sha,
+                    "result": {
+                        "error": row.get("error", "agent_craft_operation_not_executed"),
+                        "not_executed": True,
+                        "no_mutation": True,
+                    },
+                },
+            }
+        if row["status"] == "published":
+            staged_outputs = row.get("staged_outputs")
+            if not isinstance(staged_outputs, list) or not staged_outputs:
+                return {"outcome": "unknown"}
+            files = []
+            for item in staged_outputs:
+                if (
+                    not isinstance(item, dict)
+                    or not isinstance(item.get("path"), str)
+                    or not isinstance(item.get("sha256"), str)
+                ):
+                    return {"outcome": "unknown"}
+                target = Path(item["path"])
+                try:
+                    if target.is_symlink() or bool(getattr(target, "is_junction", lambda: False)()):
+                        return {"outcome": "unknown"}
+                    actual_sha = file_hash(target)
+                    size = target.stat().st_size
+                except (AgentToolRejected, OSError):
+                    return {"outcome": "unknown"}
+                if actual_sha != item["sha256"]:
+                    return {"outcome": "unknown"}
+                files.append({"path": item["path"], "sha256": actual_sha, "bytes": size})
+            preview = row.get("preview") if isinstance(row.get("preview"), dict) else {}
+            reconciled_result = {
+                "ok": True,
+                "app": preview.get("app"),
+                "session_id": preview.get("session_id"),
+                "session_revision": preview.get("session_revision"),
+                "session_kind": preview.get("session_kind", "task_headless_document"),
+                "files": files,
+            }
+            return {
+                "outcome": "executed",
+                "files": copy.deepcopy(files),
+                "receipt": {
+                    "operation_id": operation_id,
+                    "tool": tool_name,
+                    "arguments_sha256": args_sha,
+                    "result": reconciled_result,
+                },
+            }
         return {"outcome": "unknown"}
 
     def close_task(self, task_id):
