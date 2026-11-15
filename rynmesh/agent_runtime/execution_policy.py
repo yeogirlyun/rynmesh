@@ -17,7 +17,7 @@ WORKSPACE_TOOLS = frozenset({
     "ryn_process_stop", "ryn_process_write", "ryn_browser_open", "ryn_table_export",
     "ryn_browser_action", "ryn_computer_action", "ryn_craft_action", "ryn_download_file", "ryn_image_generate",
 })
-SHELL_ARGUMENT_KEYS = frozenset({"command", "shell", "cwd", "timeout_seconds", "background", "yield_seconds"})
+SHELL_ARGUMENT_KEYS = frozenset({"command", "shell", "cwd", "timeout_seconds", "background", "yield_seconds", "login"})
 GIT_SAFE_SUBCOMMANDS = frozenset({"status", "diff", "log", "show", "rev-parse", "merge-base"})
 GIT_UNSAFE_FLAGS = (
     "--output",
@@ -113,6 +113,8 @@ def literal_command(command, shell):
 
 def shell_read(arguments):
     if not isinstance(arguments, dict) or set(arguments) - SHELL_ARGUMENT_KEYS:
+        return False
+    if "login" in arguments and type(arguments["login"]) is not bool:
         return False
     if arguments.get("background") or arguments.get("yield_seconds") is not None:
         return False
