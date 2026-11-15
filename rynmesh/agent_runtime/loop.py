@@ -91,6 +91,25 @@ OWNER_TURN_EVENTS = frozenset({"created", "message_added", "information_added", 
                                "input_answered", "unknown_outcome_acknowledged", "message_edited"})
 
 
+def _is_owner_user_message(message: dict) -> bool:
+    return (
+        isinstance(message, dict)
+        and message.get("role") == "user"
+        and (message.get("ui") or {}).get("kind") != "subagent_notification"
+    )
+
+
+def _extract_pending_subagent_notifications(messages: list[dict]) -> list[dict]:
+    attached = getattr(messages, "subagent_notifications", None)
+    if isinstance(attached, list):
+        return attached
+    return [
+        msg
+        for msg in messages
+        if isinstance(msg, dict) and isinstance(msg.get("subagent_notification_ids"), list)
+    ]
+
+
 class AgentLoop:
     def _execute_business_tool(self, selected, name, arguments, **options):
         if name == "ryn_code_exec":
@@ -414,6 +433,8 @@ class AgentLoop:
                 ):
                     wrap_up_reason = "step_budget_low"
             if wrap_up_reason:
+                prior_disclosed = bool(getattr(messages, "disclosed_memory", False))
+                prior_subagent_notifs = copy.deepcopy(_extract_pending_subagent_notifications(messages))
                 wrap_up_note = (
                     f"Server budget wrap-up notice ({wrap_up_reason}): Remaining task budget is only sufficient for this final response. "
                     "Do NOT call any tools in this turn. Summarize all progress, findings, URLs/paths discovered so far, "
@@ -430,7 +451,10 @@ class AgentLoop:
                                 parsed_tool["server_note"] = f"{existing_note}\n{wrap_up_note}" if existing_note else wrap_up_note
                                 candidate_msgs = [*messages[:idx], {**msg, "content": encoded(parsed_tool).decode()}, *messages[idx + 1:]]
                                 if self._request_context_bytes(selected, candidate_msgs, specs) <= capacity:
-                                    messages = candidate_msgs
+                                    wrapped_candidate = memory_integration.ContextMessages(candidate_msgs)
+                                    wrapped_candidate.disclosed_memory = prior_disclosed
+                                    wrapped_candidate.subagent_notifications = prior_subagent_notifs
+                                    messages = wrapped_candidate
                                     injected = True
                                 break
                         except Exception:
@@ -438,7 +462,10 @@ class AgentLoop:
                 if not injected:
                     candidate_msgs = [*messages, {"role": "user", "content": wrap_up_note}]
                     if self._request_context_bytes(selected, candidate_msgs, specs) <= capacity:
-                        messages = candidate_msgs
+                        wrapped_candidate = memory_integration.ContextMessages(candidate_msgs)
+                        wrapped_candidate.disclosed_memory = prior_disclosed
+                        wrapped_candidate.subagent_notifications = prior_subagent_notifs
+                        messages = wrapped_candidate
 
             router_specs = [
                 *specs,
@@ -635,6 +662,21 @@ class AgentLoop:
                     row["memory_projection_watermark"] = memory_runtime.memory_projection_watermark(data, row).get("watermark", "")
                 event(row, "model_response_completed", step=step, request_id=request_id,
                       finish_reason=finish_reason, tool_count=len(pending))
+                shown_notifs = _extract_pending_subagent_notifications(messages)
+                shown_ids = {
+                    str(nid)
+                    for item in shown_notifs
+                    for nid in (item.get("subagent_notification_ids") or [])
+                    if nid
+                }
+                for notif_item in shown_notifs:
+                    if notif_item.get("subagent_notification_ids"):
+                        row["messages"].append({
+                            "role": "user",
+                            "content": notif_item["content"],
+                            "ui": {"kind": "subagent_notification"},
+                            "context_epoch": selected.get("context_epoch", 0),
+                        })
                 row["messages"].append({**message, "context_epoch": selected.get("context_epoch", 0)})
                 if wrap_up_reason:
                     for call in pending:
@@ -663,7 +705,7 @@ class AgentLoop:
                 row["model_retry_count"] = 0
                 row.pop("model_retry_authority", None)
                 row.pop("rejected_response_note", None)
-                subagents.drain_subagent_notifications_in_tx(data, row)
+                subagents.drain_subagent_notifications_in_tx(data, row, target_ids=shown_ids)
                 event(row, "assistant", content=message["content"], tool_count=len(pending),
                       step=step, request_id=request_id, attempt=attempt, timing=timing)
                 event_compaction.fold_stream_deltas(row)
@@ -674,6 +716,10 @@ class AgentLoop:
                                             "context_epoch": row.get("context_epoch", 0)})
                     row.update(status="queued")
                     event(row, "turn_decision", action="continue", reason="plan_reconciliation", step=step)
+                    return
+                if effective_action == "complete" and not wrap_up_reason and subagents.pending_for_request(row):
+                    row.update(status="queued")
+                    event(row, "turn_decision", action="continue", reason="subagent_notification", step=step)
                     return
                 event(row, "turn_decision", action=effective_action, reason=effective_reason, step=step)
                 if wrap_up_reason:
@@ -768,7 +814,7 @@ class AgentLoop:
         if extensions is None:
             return
         messages = [message for message in row.get("messages") or [] if isinstance(message, dict)]
-        last_user = max((index for index, message in enumerate(messages) if message.get("role") == "user"), default=-1)
+        last_user = max((index for index, message in enumerate(messages) if _is_owner_user_message(message)), default=-1)
         if last_user < 0 or any(message.get("role") == "assistant" for message in messages[last_user + 1:]):
             return
         extensions.refresh_catalogs_for_turn()
@@ -786,7 +832,7 @@ class AgentLoop:
         through = int((checkpoint or {}).get("through") or 0)
         uncompacted_history = history[through:] if through > 0 else history
         last_user_idx = max(
-            (idx for idx, msg in enumerate(uncompacted_history) if isinstance(msg, dict) and msg.get("role") == "user"),
+            (idx for idx, msg in enumerate(uncompacted_history) if _is_owner_user_message(msg)),
             default=-1,
         )
         active_turn_history = uncompacted_history[last_user_idx + 1:] if last_user_idx >= 0 else uncompacted_history
@@ -840,16 +886,8 @@ class AgentLoop:
         rejection = row.get("rejected_response_note")
         tail = ([{"role": "assistant", "content": "Server note about the previous response: "
                   + rejection + ". Continue with a valid tool call or a plain answer, using recorded results."}] if rejection else [])
-        unread_subagents = [
-            n for n in (row.get("subagent_notifications") or [])
-            if isinstance(n, dict) and not n.get("delivered")
-        ]
-        if unread_subagents:
-            tags_str = "\n".join(subagents.format_notification_tag(n) for n in unread_subagents[-8:])
-            tail.append({
-                "role": "user",
-                "content": f"Runtime subagent notifications:\n{tags_str}",
-            })
+        pending_subagent_messages = subagents.pending_for_request(row)
+        tail.extend(pending_subagent_messages)
         has_history_reasoning = any(
             isinstance(m, dict) and m.get("role") == "assistant" and "reasoning_content" in m
             for m in history
@@ -944,6 +982,7 @@ class AgentLoop:
             disclosed = bool(has_memory or row.get("_disclosed_restricted_prefs"))
             wrapped = memory_integration.ContextMessages(msgs)
             wrapped.disclosed_memory = disclosed
+            wrapped.subagent_notifications = copy.deepcopy(pending_subagent_messages)
             if not row.get("_exclude_optional_memory"):
                 row["_context_disclosed_memory"] = disclosed
             return wrapped
@@ -1010,7 +1049,7 @@ class AgentLoop:
         # Loading schemas can make the latest completed tool exchange too large
         # to keep verbatim. The complete closed suffix is also a legal cut;
         # owner constraints and mutation receipts remain pinned by _context.
-        if messages and not open_calls and messages[-1]["role"] != "user" and len(messages) > prior_through:
+        if messages and not open_calls and not _is_owner_user_message(messages[-1]) and len(messages) > prior_through:
             boundaries.append(len(messages))
         return boundaries
 
@@ -1021,10 +1060,10 @@ class AgentLoop:
         if len(messages) <= prior_through:
             return False
         uncompacted = messages[prior_through:]
-        if sum(1 for m in uncompacted if isinstance(m, dict) and m.get("role") != "user") < min_non_user:
+        if sum(1 for m in uncompacted if isinstance(m, dict) and not _is_owner_user_message(m)) < min_non_user:
             return False
         return any(
-            any(m.get("role") != "user" for m in messages[prior_through:cut])
+            any(not _is_owner_user_message(m) for m in messages[prior_through:cut])
             for cut in self._closed_boundaries(messages, prior_through)
         )
 
@@ -1104,7 +1143,7 @@ class AgentLoop:
         prior = selected.get("context_checkpoint") or {"through": 0, "content": ""}
         prior_through = int(prior.get("through") or 0)
         boundaries = [cut for cut in self._closed_boundaries(messages, prior_through)
-                      if any(message["role"] != "user" for message in messages[prior_through:cut])]
+                      if any(not _is_owner_user_message(message) for message in messages[prior_through:cut])]
         if not boundaries:
             return None
         last = boundaries[-1]
@@ -1217,7 +1256,7 @@ class AgentLoop:
                 -index,
             ),
         ):
-            if not any(message["role"] != "user" for message in messages[prior["through"]:cut]):
+            if not any(not _is_owner_user_message(message) for message in messages[prior["through"]:cut]):
                 continue
             if cut == len(messages) and trailing_has_images:
                 raise AgentError("agent_context_limit")
@@ -2117,6 +2156,13 @@ class AgentLoop:
                                 settled_notif = subagents.on_subagent_settled_in_tx(data, c)
                                 if settled_notif:
                                     settled_notif["delivered"] = True
+                                    settled_id = settled_notif.get("id")
+                                    if settled_id:
+                                        subagents.drain_subagent_notifications_in_tx(
+                                            data,
+                                            row,
+                                            target_ids={str(settled_id)},
+                                        )
                                     notifications_xml.append(subagents.format_notification_tag(settled_notif))
                     steered_now = bool(wait_steered or row.get("pending_user_messages"))
                     result = {
