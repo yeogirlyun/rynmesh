@@ -351,6 +351,8 @@ def test_cdn_ws_transport_tunnels_request_over_websocket(monkeypatch) -> None:
         """Implement just enough of RFC 6455 to accept an upgrade, receive one
         binary request frame, and send back a binary response frame."""
 
+        protocol_version = "HTTP/1.1"
+
         def do_GET(self):  # noqa: N802
             # WebSocket upgrade
             key = self.headers.get("Sec-WebSocket-Key", "")
