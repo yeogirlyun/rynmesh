@@ -1,9 +1,15 @@
 """Regression coverage for permission changes, response retention and usage estimates."""
 import pytest
 from test_agent_runtime import make_runtime, assistant, advance
-from rynmesh.agent_runtime.execution_policy import literal_command, shell_read
-from rynmesh.agent_runtime import budget
-from rynmesh.agent_runtime.store import AgentStore, encoded
+from rynmesh.agent_runtime.execution_policy import (
+    Decision,
+    decide,
+    literal_command,
+    shell_read,
+    verified_read_classification,
+)
+from rynmesh.agent_runtime import budget, execution_policy, local_processes
+from rynmesh.agent_runtime.store import AgentStore, AgentToolRejected, encoded
 
 
 def test_powershell_paths_preserve_shell_interpolation_guards():
@@ -77,3 +83,87 @@ def test_partial_usage_estimate_preserves_cached_discount_and_known_output():
     rec = budget.reserve(row, "model", "main", input_bound=1000, output_bound=393216)
     budget.settle(row, rec["id"], usage={"input_tokens": 10, "output_tokens": 0}, response_bytes=300)
     assert row["budget"]["records"][1]["charged_tokens"] == 10
+
+
+def test_powershell_smart_quotes_and_dashes_rejected_as_read():
+    exploit_cmd = 'Get-Content "x\u2019;Remove-Item y;\u2019"'
+    assert literal_command(exploit_cmd, "powershell") is None
+    assert not shell_read({"command": exploit_cmd, "shell": "powershell"})
+    decision = decide(
+        {"name": "ryn_shell_execute", "arguments": {"command": exploit_cmd, "shell": "powershell"}},
+        {"effect": "write"},
+        {"permission_mode": "read_only"},
+        {"permission_mode": "read_only"},
+    )
+    assert decision == Decision("deny", "read_only")
+
+    # U+2014 em-dash and all non-ASCII quote/dash aliases rejected inside or outside quotes
+    assert literal_command("Get-ChildItem \u2014Recurse", "powershell") is None
+    assert not shell_read({"command": "Get-ChildItem \u2014Recurse", "shell": "powershell"})
+
+    non_ascii_chars = (
+        "\u2018", "\u2019", "\u201a", "\u201b",
+        "\u201c", "\u201d", "\u201e", "\u201f",
+        "\u2013", "\u2014", "\u2015",
+    )
+    for ch in non_ascii_chars:
+        assert literal_command(f'Get-Content "note{ch}name.txt"', "powershell") is None
+        assert literal_command(f"Get-ChildItem {ch}Name", "powershell") is None
+        assert not shell_read({"command": f'Get-Content "note{ch}name.txt"', "shell": "powershell"})
+
+    # Ordinary ASCII-quoted reads remain read-only
+    assert shell_read({"command": "Get-Content 'readme.md'", "shell": "powershell"})
+    assert shell_read({"command": 'Get-Content "readme.md"', "shell": "powershell"})
+    assert shell_read({"command": "Get-ChildItem -Recurse", "shell": "powershell"})
+
+
+def test_verified_read_classification_rejects_legacy_smart_quote_records():
+    import hashlib
+
+    args = {"command": 'Get-Content "x\u2019;Remove-Item y;\u2019"', "shell": "powershell"}
+    args_sha = hashlib.sha256(encoded(args)).hexdigest()
+    legacy_record = {
+        "name": "ryn_shell_execute",
+        "arguments": args,
+        "arguments_sha256": args_sha,
+        "authorization": "read",
+        "operation_id": "op_legacy_smart_quote",
+        "task_id": "task_1",
+        "operation_classification": {
+            "version": 1,
+            "effect_class": "read",
+            "basis": "literal_shell_read",
+            "operation_id": "op_legacy_smart_quote",
+            "task_id": "task_1",
+            "tool": "ryn_shell_execute",
+            "arguments_sha256": args_sha,
+            "workspace_root": "",
+            "goal_revision": 1,
+            "scope_revision": 1,
+            "context_epoch": 0,
+            "control_revision": 1,
+        },
+    }
+    assert not verified_read_classification(legacy_record)
+
+    ascii_args = {"command": 'Get-Content "readme.md"', "shell": "powershell"}
+    ascii_sha = hashlib.sha256(encoded(ascii_args)).hexdigest()
+    valid_record = {
+        **legacy_record,
+        "arguments": ascii_args,
+        "arguments_sha256": ascii_sha,
+        "operation_classification": {
+            **legacy_record["operation_classification"],
+            "arguments_sha256": ascii_sha,
+        },
+    }
+    assert verified_read_classification(valid_record)
+
+
+def test_literal_read_command_double_guard_rejects_smart_quotes(monkeypatch):
+    monkeypatch.setattr(execution_policy, "shell_read", lambda arguments: True)
+    monkeypatch.setattr(execution_policy, "literal_command", lambda command, shell: ["Get-Content", "x\u2019y"])
+    with pytest.raises(AgentToolRejected) as exc_info:
+        local_processes.literal_read_command({"command": 'Get-Content "x\u2019y"', "shell": "powershell"})
+    assert exc_info.value.args[0] == "agent_invalid_operation_classification"
+
