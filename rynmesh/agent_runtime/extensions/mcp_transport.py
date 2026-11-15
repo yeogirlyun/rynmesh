@@ -441,13 +441,11 @@ class StdioMcpSession:
         self.cancelled = cancelled
         self._request_cancelled: Callable[[], bool] | None = None
         now = time.monotonic()
-        self.idle_seconds: float | None = None
         self.max_deadline = now + float(SESSION_MAX_SECONDS)
-        self.deadline = min(self.max_deadline, now + self._effective_idle_seconds())
+        self.deadline = min(self.max_deadline, now + max(0.01, float(SESSION_IDLE_SECONDS)))
         self._in_flight = 0
         self._active_method: str | None = None
         self._active_request_id: int | None = None
-        self._draining_overflow_since: tuple[float, int | None] | None = None
         self._eof = False
         self.sequence = 0
         self.notifications = 0
@@ -591,15 +589,10 @@ class StdioMcpSession:
         finally:
             self._request_cancelled = None
 
-    def _effective_idle_seconds(self) -> float:
-        if self.idle_seconds is not None:
-            return max(0.01, float(self.idle_seconds))
-        return max(0.01, float(SESSION_IDLE_SECONDS))
-
     def _renew_idle_deadline(self) -> None:
         self.deadline = min(
             self.max_deadline,
-            time.monotonic() + self._effective_idle_seconds(),
+            time.monotonic() + max(0.01, float(SESSION_IDLE_SECONDS)),
         )
 
     @contextmanager
@@ -637,35 +630,29 @@ class StdioMcpSession:
         total = len(first)
         overflow = total > limit
         overflow_req_id = self._active_request_id if overflow else None
-        if overflow:
-            self._draining_overflow_since = (time.monotonic(), overflow_req_id)
-        else:
+        if not overflow:
             parts.append(first)
 
-        try:
-            while not self.closed.is_set():
-                chunk = self.process.stdout.readline(65536)
-                if not chunk:
-                    if overflow:
-                        return None, True, overflow_req_id or self._active_request_id
-                    return b"".join(parts), False, None
-                total += len(chunk)
-                if not overflow:
-                    limit = self._current_line_limit()
-                    if total > limit:
-                        overflow = True
-                        overflow_req_id = self._active_request_id
-                        self._draining_overflow_since = (time.monotonic(), overflow_req_id)
-                        parts.clear()
-                    else:
-                        parts.append(chunk)
-                if chunk.endswith(b"\n"):
-                    if overflow:
-                        return None, True, overflow_req_id or self._active_request_id
-                    return b"".join(parts), False, None
-            return None, False, None
-        finally:
-            self._draining_overflow_since = None
+        while not self.closed.is_set():
+            chunk = self.process.stdout.readline(65536)
+            if not chunk:
+                if overflow:
+                    return None, True, overflow_req_id or self._active_request_id
+                return b"".join(parts), False, None
+            total += len(chunk)
+            if not overflow:
+                limit = self._current_line_limit()
+                if total > limit:
+                    overflow = True
+                    overflow_req_id = self._active_request_id
+                    parts.clear()
+                else:
+                    parts.append(chunk)
+            if chunk.endswith(b"\n"):
+                if overflow:
+                    return None, True, overflow_req_id or self._active_request_id
+                return b"".join(parts), False, None
+        return None, False, None
 
     def _read_loop(self) -> None:
         try:
@@ -695,7 +682,7 @@ class StdioMcpSession:
             try:
                 self.messages.put_nowait(None)
             except queue.Full:
-                _ = None
+                pass
 
     def _watch_loop(self) -> None:
         while not self.closed.wait(0.05):
@@ -715,7 +702,7 @@ class StdioMcpSession:
             try:
                 process_guard.terminate(self.process)
             except Exception:
-                _ = None
+                pass
 
     def is_usable(self) -> bool:
         now = time.monotonic()
@@ -872,19 +859,6 @@ class StdioMcpSession:
                         timeout_seconds=timeout,
                         method=method,
                     )
-                    overflow_state = self._draining_overflow_since
-                    if (
-                        overflow_state is not None
-                        and overflow_state[1] == ident
-                        and time.monotonic() - overflow_state[0] >= 1.0
-                    ):
-                        self.failure = "agent_mcp_output_limit"
-                        raise McpTransportError(
-                            "agent_mcp_output_limit",
-                            dispatched=True,
-                            phase="await_response",
-                            request_id=ident,
-                        )
                     try:
                         message = self.messages.get(timeout=0.05)
                     except queue.Empty:

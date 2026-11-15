@@ -80,8 +80,29 @@ for raw in sys.stdin:
                 + str(pad_bytes)
                 + "}}}\\n"
             ).encode("utf-8")
-            sys.stdout.buffer.write(prefix + (b"x" * pad_bytes) + suffix)
-            sys.stdout.buffer.flush()
+            slow_chunks = int(args.get("slow_tail_chunks") or 0)
+            slow_sleep_s = float(args.get("slow_tail_sleep_s") or 0.0)
+            if slow_chunks > 0 and slow_sleep_s > 0:
+                tail_chunk_size = 128 * 1024
+                tail_total = min(pad_bytes // 2, slow_chunks * tail_chunk_size)
+                head_total = pad_bytes - tail_total
+                sys.stdout.buffer.write(prefix + (b"x" * head_total))
+                sys.stdout.buffer.flush()
+                rem = tail_total
+                for _ in range(slow_chunks):
+                    time.sleep(slow_sleep_s)
+                    step = min(rem, tail_chunk_size)
+                    if step > 0:
+                        sys.stdout.buffer.write(b"x" * step)
+                        sys.stdout.buffer.flush()
+                        rem -= step
+                if rem > 0:
+                    sys.stdout.buffer.write(b"x" * rem)
+                sys.stdout.buffer.write(suffix)
+                sys.stdout.buffer.flush()
+            else:
+                sys.stdout.buffer.write(prefix + (b"x" * pad_bytes) + suffix)
+                sys.stdout.buffer.flush()
         else:
             res = {
                 "content": [{"type": "text", "text": json.dumps({"pid": pid, "tag": args.get("tag", "")})}],
@@ -345,3 +366,54 @@ def test_t3_per_line_limits_5mib_readable_9mib_rejected_and_method_scoped_isolat
     finally:
         sess.close()
         manager.close()
+
+
+def test_t4_slow_oversize_line_over_1s_fails_only_that_request(
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "srv_t4.py"
+    ctrl = tmp_path / "ctrl_t4"
+    _write_stdio_fixture_server(script)
+
+    mib = 1024 * 1024
+    sess = StdioMcpSession(
+        {
+            "id": "srv-t4-direct",
+            "command": sys.executable,
+            "args": ["-u", str(script), str(ctrl)],
+            "startup_timeout_ms": 8000,
+            "tool_timeout_ms": 10000,
+        },
+        fallback_cwd=tmp_path,
+    )
+    try:
+        sess.initialize()
+        warm = sess.call_tool("echo", {"tag": "before-slow-overflow"})
+        worker_pid = int(warm["structuredContent"]["pid"])
+        proc_pid = sess.process.pid
+
+        # Server crosses 40 MiB immediately, then drips 768 KiB over ~1.5s (> 1s) before newline
+        t0 = time.monotonic()
+        with pytest.raises(McpTransportError) as exc_slow:
+            sess.call_tool(
+                "echo",
+                {
+                    "pad_bytes": 41 * mib,
+                    "slow_tail_chunks": 6,
+                    "slow_tail_sleep_s": 0.25,
+                },
+            )
+        elapsed = time.monotonic() - t0
+        assert str(exc_slow.value) == "agent_mcp_output_limit"
+        assert sess.failure is None
+        assert sess.is_usable() is True
+        assert elapsed >= 1.2
+        assert sess.process.pid == proc_pid
+
+        # Next request on the exact same session and process must still succeed
+        after = sess.call_tool("echo", {"tag": "after-slow-overflow"})
+        assert after["structuredContent"]["tag"] == "after-slow-overflow"
+        assert int(after["structuredContent"]["pid"]) == worker_pid
+        assert not hasattr(sess, "idle_seconds")
+    finally:
+        sess.close()
