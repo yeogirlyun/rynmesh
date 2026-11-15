@@ -54,3 +54,12 @@ native/ryn_transport/target/
 native/ryn_computer_use/target/
 /outputs/
 /work/
+
+# Local agent state, diagnostics, packages, and environment credentials.
+/.weagent/
+/artifacts/
+/releases/
+.env
+.env.*
+!.env.example
+!.env.*.example
