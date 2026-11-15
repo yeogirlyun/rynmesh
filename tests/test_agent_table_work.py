@@ -155,10 +155,11 @@ def calculation_receipt(local, **override):
     return report
 
 
-def test_export_reuses_exact_calculation_receipt_without_model_repeating_recipe(local):
+@pytest.mark.parametrize("suffix", [".xlsx", ".csv", ".json"])
+def test_export_reuses_exact_calculation_receipt_without_model_repeating_recipe(local, suffix):
     tools, context, workspace, _ = local
     report = calculation_receipt(local)
-    args = {"calculation_receipt_id": "receipt_calc", "path": "report.xlsx"}
+    args = {"calculation_receipt_id": "receipt_calc", "path": "report" + suffix}
     result = execute(tools, context, "ryn_table_export", args, "receipt-export")
     assert result["readback_verified"] and result["calculation"]["calculation_sha256"] == report["calculation_sha256"]
     assert result["calculation_receipt_id"] == "receipt_calc"
@@ -166,7 +167,7 @@ def test_export_reuses_exact_calculation_receipt_without_model_repeating_recipe(
         assert result["calculation"][key] == report[key]
     assert "preview_rows" not in result["calculation"] and "checks" not in result["calculation"]
     assert report["preview_rows"]  # The original calculation detail remains available.
-    assert (workspace / "report.xlsx").read_bytes() == export_bytes(calculate(CSV, ".csv", RECIPE), ".xlsx")
+    assert (workspace / ("report" + suffix)).read_bytes() == export_bytes(calculate(CSV, ".csv", RECIPE), suffix)
     (workspace / "source.csv").write_bytes(CSV.replace(b"0.1,0.2", b"0.1,0.3"))
     with pytest.raises(AgentToolRejected):
         tools.preview("ryn_table_export", {**args, "path": "changed.xlsx"}, context)
