@@ -95,7 +95,7 @@ def test_native_sse_requires_terminal_and_preserves_usage(truncated):
             with pytest.raises(AdapterError) as caught:
                 adapter.chat({"messages": [{"role": "user", "content": "go"}], "stream": True},
                              task_id="a", timeout_s=3, on_event=seen.append)
-            assert caught.value.code == "source_protocol_response_invalid"
+            assert caught.value.code == "upstream_stream_truncated"
             assert caught.value.reported_usage["output_tokens"] == 4
         else:
             result = adapter.chat({"messages": [{"role": "user", "content": "go"}], "stream": True},

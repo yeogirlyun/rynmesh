@@ -210,6 +210,8 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                             frame_size = 0
                         elif line.startswith("data:"):
                             data.append(line[5:].removeprefix(" "))
+                    if decoder._final is None and not decoder._failed:
+                        raise AdapterError("upstream_stream_truncated", code="upstream_stream_truncated")
                     result = decoder.result()
                     if received_cached is None:
                         received_cached = decoder.cached_tokens
