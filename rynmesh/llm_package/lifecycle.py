@@ -13,7 +13,15 @@ from typing import Any
 from . import catalog, runtime_docker, runtime_native
 from .adapters import AdapterError, adapter_from_manifest
 from .errors import LifecycleError
-from .hardware import HardwareReport, detect_hardware, recommend, usable_memory_mb
+from .gguf_import import NativeModelError, inspect_model
+from .hardware import (
+    HardwareReport,
+    cap_local_context_window,
+    default_local_output_tokens,
+    detect_hardware,
+    recommend,
+    usable_memory_mb,
+)
 from .manifest import (
     LLMPackageManifest,
     PrivacyPolicy,
@@ -27,7 +35,7 @@ from .model_download import download as _download
 # The "light" catalog profile, kept available under its historical names:
 # existing tests/docs/CLI callers reference these three module constants.
 _LIGHT_PROFILE = catalog.profile_by_name("light")
-DEFAULT_MODEL_URL = _LIGHT_PROFILE.url
+DEFAULT_MODEL_URL = object.__getattribute__(_LIGHT_PROFILE, "url")
 DEFAULT_MODEL_SHA256 = _LIGHT_PROFILE.sha256
 DEFAULT_MODEL_REVISION = DEFAULT_MODEL_URL.split("/resolve/", 1)[1].split("/", 1)[0]
 GGUF_MAGIC = b"GGUF"
@@ -146,8 +154,18 @@ def validate_gguf(path: str | Path, *, report: HardwareReport | None = None,
             f"model needs about {estimated_memory} MiB but the conservative available limit is "
             f"{safe_memory} MiB; pass --accept-risk to override"
         )
+    declared_context = 8192
+    try:
+        inspected = inspect_model(source)
+        declared_context = int(inspected.get("context_window", 8192))
+    except NativeModelError:
+        declared_context = 8192
+    runtime_window = cap_local_context_window(
+        declared_context, safe_memory, weights_mb=int(size / 2**20)
+    )
     return {"path": str(source), "format": "GGUF", "size_bytes": size,
             "estimated_memory_mb": estimated_memory, "fits": fits,
+            "context_window": runtime_window,
             "fingerprint": fingerprint_file(source)}
 
 
@@ -218,6 +236,7 @@ def _resolve_install_profile(
             "context_window": metadata["context_window"],
             "max_concurrent": metadata["max_concurrent"],
             "estimated_memory_mb": metadata["estimated_memory_mb"],
+            "agent_capable": bool(metadata.get("agent_capable", False)),
             "license_id": "unknown",
             "license_notice": "Operator must review and comply with the model and runtime licenses.",
         }
@@ -246,7 +265,8 @@ def _resolve_install_profile(
         "name": resolved.profile, "url": resolved.url, "sha256": resolved.sha256,
         "size_bytes": resolved.size_bytes, "alias": resolved.model_alias,
         "context_window": resolved.context_window, "max_concurrent": resolved.max_concurrent,
-        "estimated_memory_mb": resolved.estimated_memory_mb, "license_id": resolved.license_id,
+        "estimated_memory_mb": resolved.estimated_memory_mb, "agent_capable": resolved.agent_capable,
+        "license_id": resolved.license_id,
         "license_notice": resolved.license_notice,
     }
 
@@ -290,13 +310,18 @@ def install_managed(*, package_id: str = "local-small", root: str | Path | None 
         )
     _progress(progress, cancel_check, "pull_runtime", 65, "Preparing the local inference runtime")
     backend.prepare(progress=progress, cancel_check=cancel_check, root=base)
+    weights_mb = int((selected.get("size_bytes") or 0) / 2**20)
+    runtime_window = cap_local_context_window(
+        int(selected["context_window"]), usable_memory_mb(report), weights_mb=weights_mb
+    )
+    runtime_output = default_local_output_tokens(runtime_window)
     manifest = LLMPackageManifest(
         package_id=package_id, mode="managed", public_model_alias=selected["alias"],
         adapter="openai_compatible", runtime=backend.RUNTIME_ID, model=selected["alias"],
         model_path=str(model_path), model_owned=True, base_url=f"http://127.0.0.1:{port}",
         runtime_dir=str(base) if backend.RUNTIME_ID == RUNTIME_NATIVE else "",
         checksum=checksum, model_fingerprint=checksum,
-        context_window=int(selected["context_window"]), max_output_tokens=256,
+        context_window=runtime_window, max_output_tokens=runtime_output,
         max_concurrent=int(selected["max_concurrent"]),
         hardware_requirements={"estimated_memory_mb": int(selected["estimated_memory_mb"])},
         install_source={"model_url": selected["url"], "profile": selected["name"],
@@ -336,12 +361,15 @@ def import_gguf(*, source: str | Path, package_id: str, alias: str,
     backend = select_runtime(runtime, root=base)
     _progress(progress, cancel_check, "pull_runtime", 40, "Preparing the local inference runtime")
     backend.prepare(progress=progress, cancel_check=cancel_check, root=base)
+    imported_window = int(details.get("context_window", 8192))
+    imported_output = default_local_output_tokens(imported_window)
     manifest = LLMPackageManifest(
         package_id=package_id, mode="import_gguf", public_model_alias=alias,
         adapter="openai_compatible", runtime=backend.RUNTIME_ID, model=alias,
         model_path=details["path"], model_owned=False, base_url=f"http://127.0.0.1:{port}",
         runtime_dir=str(base) if backend.RUNTIME_ID == RUNTIME_NATIVE else "",
         checksum=details["fingerprint"], model_fingerprint=details["fingerprint"],
+        context_window=imported_window, max_output_tokens=imported_output,
         hardware_requirements={"estimated_memory_mb": details["estimated_memory_mb"]},
         install_source={**backend.install_source(None), "kind": "user_owned_read_only_gguf"},
     )
@@ -362,6 +390,52 @@ def import_gguf(*, source: str | Path, package_id: str, alias: str,
     _progress(progress, cancel_check, "completed", 100, "Imported model is ready")
     return {"manifest": str(path), "import": {k: v for k, v in details.items() if k != "path"},
             "self_test": result}
+
+
+def _probe_local_api_limits(active: Any, model_name: str, timeout_s: float) -> tuple[int | None, int | None]:
+    """Read `context_window` / `max_output_tokens` from `/v1/models` or llama.cpp `/props`."""
+    detected_window: int | None = None
+    detected_output: int | None = None
+    try:
+        entries = active.models() if hasattr(active, "models") else []
+    except Exception:
+        entries = []
+    if isinstance(entries, list) and entries:
+        matched = next(
+            (
+                item for item in entries
+                if isinstance(item, dict)
+                and str(item.get("id") or item.get("name") or item.get("model") or "") == model_name
+            ),
+            entries[0] if len(entries) == 1 and isinstance(entries[0], dict) else None,
+        )
+        if isinstance(matched, dict):
+            for key in ("context_window", "context_length", "max_model_len"):
+                val = matched.get(key)
+                if type(val) is int and 256 <= val <= 2_000_000:
+                    detected_window = val
+                    break
+            for key in ("max_output_tokens", "max_completion_tokens"):
+                val = matched.get(key)
+                if type(val) is int and 1 <= val <= 393_216:
+                    detected_output = val
+                    break
+    if detected_window is None and hasattr(active, "_json"):
+        try:
+            props = active._json("/props", None, min(5.0, float(timeout_s)))
+        except Exception:
+            props = None
+        if isinstance(props, dict):
+            gen_settings = props.get("default_generation_settings")
+            candidates = [
+                gen_settings.get("n_ctx") if isinstance(gen_settings, dict) else None,
+                props.get("n_ctx"),
+            ]
+            for val in candidates:
+                if type(val) is int and 256 <= val <= 2_000_000:
+                    detected_window = val
+                    break
+    return detected_window, detected_output
 
 
 def connect_local_api(*, base_url: str, package_id: str, alias: str, model: str = "",
@@ -387,6 +461,18 @@ def connect_local_api(*, base_url: str, package_id: str, alias: str, model: str 
         raise LifecycleError(f"local API health check failed: {health.get('error', 'unknown error')}")
     if not manifest.model:
         manifest.model = str(health.get("model") or "")
+    detected_window, detected_output = _probe_local_api_limits(
+        active, manifest.model, manifest.timeout_seconds
+    )
+    if detected_window is not None:
+        manifest.context_window = detected_window
+        manifest.max_output_tokens = (
+            min(detected_output, detected_window)
+            if detected_output is not None
+            else default_local_output_tokens(detected_window)
+        )
+    elif detected_output is not None:
+        manifest.max_output_tokens = min(detected_output, manifest.context_window)
     capabilities = active.capabilities()
     if capabilities.get("streaming") and "streaming" not in manifest.capabilities:
         manifest.capabilities.append("streaming")
