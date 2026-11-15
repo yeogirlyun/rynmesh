@@ -208,15 +208,19 @@ def normalize_unicode_punctuation(value: str) -> str:
     return value.translate(_UNICODE_PUNCT_TABLE).rstrip()
 
 
+def _normalize_unicode_stripped(value: str) -> str:
+    return normalize_unicode_punctuation(value).strip()
+
+
 def _find_matches(
     lines: list[str],
     pattern: list[str],
     start: int,
     eof: bool,
     *,
-    normalizers=(lambda value: value, str.rstrip, normalize_unicode_punctuation),
+    normalizers=(lambda value: value, str.rstrip, str.strip, _normalize_unicode_stripped),
 ) -> list[int]:
-    """All matches at or after start on the immutable file lines: exact first, then trailing-whitespace, then Unicode-normalized."""
+    """All matches at or after start on the immutable file lines across the 4 fuzzy levels."""
     last = len(lines) - len(pattern)
     if last < start:
         return []
@@ -284,111 +288,184 @@ def _reject_hunk(
     reject("context_not_found", correction=full_correction, details=details)
 
 
+def _trim_trailing_empty_line(
+    old: list[str],
+    new: list[str],
+    ops: list[tuple[str, str]],
+) -> tuple[list[str], list[str], list[tuple[str, str]]]:
+    trimmed_old = old[:-1]
+    trimmed_new = new[:-1] if new and new[-1] == "" else list(new)
+    trimmed_ops = list(ops)
+    removed_marker = None
+    for idx in range(len(trimmed_ops) - 1, -1, -1):
+        marker, value = trimmed_ops[idx]
+        if marker in (" ", "-") and value == "":
+            removed_marker = marker
+            trimmed_ops.pop(idx)
+            break
+    if removed_marker == "-" and new and new[-1] == "":
+        for idx in range(len(trimmed_ops) - 1, -1, -1):
+            marker, value = trimmed_ops[idx]
+            if marker != "-":
+                if marker == "+" and value == "":
+                    trimmed_ops.pop(idx)
+                break
+    return trimmed_old, trimmed_new, trimmed_ops
+
+
+def _match_old_with_trailing_retry(
+    lines: list[str],
+    old: list[str],
+    new: list[str],
+    ops: list[tuple[str, str]],
+    start: int,
+    eof: bool,
+) -> tuple[list[int], list[str], list[str], list[tuple[str, str]]]:
+    matches = _find_matches(lines, old, start, eof)
+    if matches or not old or old[-1] != "":
+        return matches, old, new, ops
+    trimmed_old, trimmed_new, trimmed_ops = _trim_trailing_empty_line(old, new, ops)
+    if trimmed_old:
+        retry_matches = _find_matches(lines, trimmed_old, start, eof)
+        if retry_matches:
+            return retry_matches, trimmed_old, trimmed_new, trimmed_ops
+    elif not lines and start == 0:
+        return [0], trimmed_old, trimmed_new, trimmed_ops
+    return [], old, new, ops
+
+
+def _narrow_by_anchor(matches: list[int], anchor_matches: list[int], total_lines: int) -> list[int]:
+    if anchor_matches and len(matches) > 1:
+        contiguous = [a_pos + 1 for a_pos in anchor_matches if (a_pos + 1) in matches]
+        if len(contiguous) == 1:
+            return contiguous
+        scoped = []
+        for a_idx, a_pos in enumerate(anchor_matches):
+            next_a = anchor_matches[a_idx + 1] if a_idx + 1 < len(anchor_matches) else total_lines
+            in_scope = [m for m in matches if a_pos < m < next_a]
+            if in_scope:
+                scoped.extend(in_scope)
+        if len(scoped) == 1:
+            return scoped
+    return matches
+
+
 def apply_hunks(text: str, hunks: list[dict], *, path: str | None = None) -> str:
-    """Locate all hunks on the immutable original snapshot, verify uniqueness and non-overlap, then apply in reverse order."""
+    """Locate all hunks on the immutable original snapshot using a sequential cursor, verify non-overlap, then apply in reverse order."""
     eol = "\r\n" if "\r\n" in text and text.count("\r\n") * 2 >= text.count("\n") else "\n"
     trailing = text.endswith("\n") or not text
     lines = text.replace("\r\n", "\n").split("\n") if text else []
     if text.endswith("\n"):
         lines.pop()
 
+    cursor = 0
     located: list[tuple[int, int, int, list[str]]] = []
     for hunk_index, hunk in enumerate(hunks):
-        anchor_matches: list[int] = []
-        search_start = 0
-        if hunk["anchor"]:
-            anchor_matches = _find_matches(
-                lines,
-                [hunk["anchor"]],
-                0,
-                False,
-                normalizers=(
-                    lambda value: value,
-                    str.rstrip,
-                    str.strip,
-                    lambda value: normalize_unicode_punctuation(value).lstrip(),
-                ),
-            )
-            if not anchor_matches:
-                hint = _best_hint_line(lines, [hunk["anchor"], *hunk["old"]], 0)
-                _reject_hunk(
-                    path=path,
-                    hunk_index=hunk_index,
-                    match_count=0,
-                    reason="context_not_found",
-                    lines=lines,
-                    hint_start=hint,
-                    span=max(1, len(hunk["old"])),
-                    correction=f"Hunk {hunk_index} anchor '@@ {hunk['anchor']}' was not found in the file.",
-                )
-            search_start = anchor_matches[0] + 1
+        anchor = hunk["anchor"]
+        eof = hunk["eof"]
+        old = list(hunk["old"])
+        new = list(hunk["new"])
+        ops = list(hunk["ops"])
 
-        if hunk["old"]:
-            matches = _find_matches(lines, hunk["old"], search_start, hunk["eof"])
-            if hunk["anchor"] and len(matches) > 1:
-                contiguous = [a_pos + 1 for a_pos in anchor_matches if (a_pos + 1) in matches]
-                if len(contiguous) == 1:
-                    matches = contiguous
+        if old:
+            anchor_matches: list[int] = []
+            forward_matches: list[int] = []
+            f_old, f_new, f_ops = old, new, ops
+            if anchor:
+                anchor_matches = _find_matches(lines, [anchor], cursor, False)
+                if anchor_matches:
+                    search_start = anchor_matches[0] + 1
+                    forward_matches, f_old, f_new, f_ops = _match_old_with_trailing_retry(
+                        lines, old, new, ops, search_start, eof
+                    )
+                    forward_matches = _narrow_by_anchor(forward_matches, anchor_matches, len(lines))
+            else:
+                forward_matches, f_old, f_new, f_ops = _match_old_with_trailing_retry(
+                    lines, old, new, ops, cursor, eof
+                )
+
+            if forward_matches:
+                position = forward_matches[0]
+                old, new, ops = f_old, f_new, f_ops
+            else:
+                full_anchor_matches: list[int] = []
+                if anchor:
+                    full_anchor_matches = _find_matches(lines, [anchor], 0, False)
+                    if not full_anchor_matches:
+                        hint = _best_hint_line(lines, [anchor, *old], 0)
+                        _reject_hunk(
+                            path=path,
+                            hunk_index=hunk_index,
+                            match_count=0,
+                            reason="context_not_found",
+                            lines=lines,
+                            hint_start=hint,
+                            span=max(1, len(old)),
+                            correction=f"Hunk {hunk_index} anchor '@@ {anchor}' was not found in the file.",
+                        )
+                    full_search_start = full_anchor_matches[0] + 1
                 else:
-                    # Also check if each anchor scopes to at most one match before the next anchor.
-                    scoped = []
-                    for a_idx, a_pos in enumerate(anchor_matches):
-                        next_a = anchor_matches[a_idx + 1] if a_idx + 1 < len(anchor_matches) else len(lines)
-                        in_scope = [m for m in matches if a_pos < m < next_a]
-                        if in_scope:
-                            scoped.extend(in_scope)
-                    if len(scoped) == 1:
-                        matches = scoped
-            if not matches:
-                strip_matches = _find_matches(lines, hunk["old"], search_start, hunk["eof"], normalizers=(str.strip,))
-                if strip_matches:
+                    full_search_start = 0
+
+                full_matches, fb_old, fb_new, fb_ops = _match_old_with_trailing_retry(
+                    lines, old, new, ops, full_search_start, eof
+                )
+                full_matches = _narrow_by_anchor(full_matches, full_anchor_matches, len(lines))
+                if not full_matches:
+                    default_hint = (
+                        full_anchor_matches[0]
+                        if full_anchor_matches
+                        else (max(0, len(lines) - 10) if eof else 0)
+                    )
+                    hint = _best_hint_line(lines, old, default_hint)
                     _reject_hunk(
                         path=path,
                         hunk_index=hunk_index,
                         match_count=0,
-                        reason="indentation_mismatch",
+                        reason="context_not_found",
                         lines=lines,
-                        hint_start=strip_matches[0],
-                        span=len(hunk["old"]),
+                        hint_start=hint,
+                        span=len(old),
                         correction=(
-                            f"Hunk {hunk_index} context lines match only if leading indentation is ignored. "
-                            "Preserve the file's exact leading indentation in context, '-', and '+' lines."
+                            f"Hunk {hunk_index} context lines were not found in the file. "
+                            "Use the actual file lines below to update your hunk context."
                         ),
                     )
-                default_hint = anchor_matches[0] if anchor_matches else (max(0, len(lines) - 10) if hunk["eof"] else 0)
-                hint = _best_hint_line(lines, hunk["old"], default_hint)
-                _reject_hunk(
-                    path=path,
-                    hunk_index=hunk_index,
-                    match_count=0,
-                    reason="context_not_found",
-                    lines=lines,
-                    hint_start=hint,
-                    span=len(hunk["old"]),
-                    correction=(
-                        f"Hunk {hunk_index} context lines were not found in the file. "
-                        "Use the actual file lines below to update your hunk context."
-                    ),
-                )
-            if len(matches) > 1:
-                _reject_hunk(
-                    path=path,
-                    hunk_index=hunk_index,
-                    match_count=len(matches),
-                    reason="ambiguous_context",
-                    lines=lines,
-                    hint_start=matches[0],
-                    span=len(hunk["old"]),
-                    correction=(
-                        f"Hunk {hunk_index} matched {len(matches)} locations in the file (lines "
-                        + ", ".join(str(m + 1) for m in matches[:6])
-                        + "). Include more surrounding context lines or a unique '@@' anchor so the hunk matches uniquely."
-                    ),
-                    extra_details={"match_lines": [m + 1 for m in matches[:10]]},
-                )
-            position = matches[0]
+                if len(full_matches) > 1:
+                    _reject_hunk(
+                        path=path,
+                        hunk_index=hunk_index,
+                        match_count=len(full_matches),
+                        reason="ambiguous_context",
+                        lines=lines,
+                        hint_start=full_matches[0],
+                        span=len(fb_old),
+                        correction=(
+                            f"Hunk {hunk_index} matched {len(full_matches)} locations in the file (lines "
+                            + ", ".join(str(m + 1) for m in full_matches[:6])
+                            + "). Include more surrounding context lines or a unique '@@' anchor so the hunk matches uniquely."
+                        ),
+                        extra_details={"match_lines": [m + 1 for m in full_matches[:10]]},
+                    )
+                position = full_matches[0]
+                old, new, ops = fb_old, fb_new, fb_ops
         else:
-            if hunk["anchor"] and not hunk["eof"]:
+            if anchor and not eof:
+                anchor_matches = _find_matches(lines, [anchor], cursor, False)
+                if not anchor_matches and cursor > 0:
+                    anchor_matches = _find_matches(lines, [anchor], 0, False)
+                if not anchor_matches:
+                    hint = _best_hint_line(lines, [anchor], 0)
+                    _reject_hunk(
+                        path=path,
+                        hunk_index=hunk_index,
+                        match_count=0,
+                        reason="context_not_found",
+                        lines=lines,
+                        hint_start=hint,
+                        span=1,
+                        correction=f"Hunk {hunk_index} anchor '@@ {anchor}' was not found in the file.",
+                    )
                 if len(anchor_matches) > 1:
                     _reject_hunk(
                         path=path,
@@ -399,7 +476,7 @@ def apply_hunks(text: str, hunks: list[dict], *, path: str | None = None) -> str
                         hint_start=anchor_matches[0],
                         span=1,
                         correction=(
-                            f"Pure addition hunk {hunk_index} anchor '@@ {hunk['anchor']}' matched "
+                            f"Pure addition hunk {hunk_index} anchor '@@ {anchor}' matched "
                             f"{len(anchor_matches)} locations. Include context lines to disambiguate."
                         ),
                         extra_details={"match_lines": [m + 1 for m in anchor_matches[:10]]},
@@ -408,11 +485,12 @@ def apply_hunks(text: str, hunks: list[dict], *, path: str | None = None) -> str
             else:
                 position = len(lines)
 
+        cursor = position + len(old)
         start_pos = position
-        end_pos = position + len(hunk["old"])
+        end_pos = position + len(old)
         # Matched context keeps the file's own text, while '+' lines keep their exact supplied indentation.
         original, replacement = iter(lines[start_pos:end_pos]), []
-        for marker, value in hunk["ops"]:
+        for marker, value in ops:
             if marker == " ":
                 replacement.append(next(original))
             elif marker == "-":

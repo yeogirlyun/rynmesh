@@ -177,19 +177,24 @@ def test_duplicate_anchor_with_unique_context_succeeds_and_duplicate_full_contex
         "        return 1\n\n"
         "class Beta:\n"
         "    def run(self):\n"
-        "        return 1\n"
+        "        return 1\n\n"
+        "class Tail:\n"
+        "    done = False\n"
     )
     ambiguous_target = workspace / "service_ambiguous.py"
     ambiguous_target.write_text(ambiguous_content, encoding="utf-8")
     with pytest.raises(AgentToolRejected, match="agent_patch_context_not_found") as exc_info:
         tools.preview("ryn_apply_patch", {"patch": patch(
             "*** Update File: service_ambiguous.py",
+            "@@ class Tail:",
+            "-    done = False",
+            "+    done = True",
             "@@ def run(self):",
             "-        return 1",
             "+        return 10",
         )}, context)
     assert exc_info.value.details["match_count"] == 2
-    assert exc_info.value.details["hunk_index"] == 0
+    assert exc_info.value.details["hunk_index"] == 1
     assert ambiguous_target.read_text(encoding="utf-8") == ambiguous_content
 
 
@@ -250,7 +255,7 @@ def test_patch_preserves_added_indentation_verbatim_and_reports_bounded_diagnost
         tools.preview("ryn_apply_patch", {"patch": patch(
             "*** Update File: indent.py",
             "@@ def calc():",
-            "-  x = 1",
+            "-  x = 999",
             "+  x = 2",
         )}, context)
     assert exc_info.value.correction
