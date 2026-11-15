@@ -3119,6 +3119,11 @@ function McpServerDetailsModal({
                           {tx("服务端提示：readOnlyHint", "Hint: readOnlyHint")}
                         </span>
                       ) : null}
+                      {tool.schema_invalid ? (
+                        <span className="ae-badge ae-badge-danger">
+                          {tx("schema 不合规，未提供给模型", "Schema invalid, not provided to model")}
+                        </span>
+                      ) : null}
                     </div>
                     {tool.description ? <small>{tool.description}</small> : null}
                   </div>

@@ -19,7 +19,7 @@ from jsonschema import ValidationError
 from jsonschema import validate as jsonschema_validate
 
 from ...atomic_io import atomic_write_bytes
-from ...llm_package.chat import validate_tool_arguments
+from ...llm_package.chat import validate_tool_arguments, validate_tool_schema
 from ...services import peer_box
 from .. import data_policy
 from ..native_computer import NativeComputerFacade, bind_owner_native_computer
@@ -30,6 +30,7 @@ from .mcp_transport import (
     McpSessionManager,
     McpTransportError,
 )
+from .schema_normalize import normalize_mcp_input_schema, sanitize
 from .store import (
     COMPUTER_USE_SERVER_ID,
     ExtensionStore,
@@ -566,6 +567,8 @@ class ExtensionToolAdapter:
                     continue
                 if not tool.get("enabled", True):
                     continue
+                if tool.get("schema_invalid"):
+                    continue
                 model_name = str(
                     tool.get("model_tool_name") or compute_model_tool_name(server["id"], t_name)
                 )
@@ -607,14 +610,33 @@ class ExtensionToolAdapter:
             server, tool, _binding = active[model_name]
             if not data_policy.allows(server.get("data_policy"), context):
                 continue
-            schema = (
-                copy.deepcopy(tool["input_schema"])
-                if isinstance(tool.get("input_schema"), dict)
-                else {"type": "object"}
-            )
+            if "model_schema" in tool:
+                if not isinstance(tool["model_schema"], dict):
+                    continue
+                schema = copy.deepcopy(tool["model_schema"])
+            else:
+                raw_candidate = (
+                    copy.deepcopy(tool["input_schema"])
+                    if isinstance(tool.get("input_schema"), dict)
+                    else None
+                )
+                if isinstance(raw_candidate, dict):
+                    raw_candidate.pop("x-ryn-artifact", None)
+                    raw_candidate.pop("x-ryn-operation", None)
+                    raw_candidate.pop("x-ryn-result", None)
+                computed_schema = normalize_mcp_input_schema(raw_candidate)
+                tool["model_schema"] = computed_schema
+                if not isinstance(computed_schema, dict):
+                    tool["schema_invalid"] = True
+                    continue
+                schema = copy.deepcopy(computed_schema)
             schema.pop("x-ryn-artifact", None)
             schema.pop("x-ryn-operation", None)
             schema.pop("x-ryn-result", None)
+            try:
+                validate_tool_schema(schema)
+            except ValueError:
+                continue
             prefix = f"[{server.get('name') or server['id']}] "
             raw_desc = str(tool.get("description") or tool.get("title") or tool.get("name") or "").strip()
             result.append(
@@ -840,7 +862,7 @@ class ExtensionToolAdapter:
         if not isinstance(arguments, dict):
             raise ValueError("Tool arguments must be a JSON object.")
         if name == READ_SKILL_FILE_TOOL:
-            jsonschema_validate(arguments, READ_SKILL_FILE_SPEC["function"]["parameters"])
+            validate_tool_arguments(READ_SKILL_FILE_SPEC["function"]["parameters"], arguments)
             return
         entry = self._active_mcp_tools().get(name)
         if entry is None:
@@ -851,8 +873,12 @@ class ExtensionToolAdapter:
             if isinstance(tool.get("input_schema"), dict)
             else {"type": "object"}
         )
-        validate_tool_arguments(schema, arguments)
-        jsonschema_validate(arguments, schema)
+        try:
+            validate_tool_arguments(schema, arguments)
+        except ValueError:
+            raise
+        except Exception:
+            validate_tool_arguments(sanitize(schema), arguments)
 
     def verify_binding(self, call_or_binding: dict[str, Any]) -> dict[str, Any]:
         """Verify that a queued MCP tool call's extension_binding still matches current state."""
