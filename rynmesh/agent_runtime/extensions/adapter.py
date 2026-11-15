@@ -658,7 +658,7 @@ class ExtensionToolAdapter:
     # A signed-in plugin left without a tool list is reconnected at most this often.
     TURN_REDISCOVER_SECONDS = 300.0
     PLUGIN_INDEX_LINE_CHARS = 200
-    PLUGIN_INDEX_BYTES = 3000
+    PLUGIN_INDEX_BYTES = 3400
     # Model-facing recovery advice; the model answers in the owner's language.
     PLUGIN_RECOVERY = {
         "authentication_required": "sign-in needed: ask the owner to sign in again on the Plugins page",
@@ -753,6 +753,17 @@ class ExtensionToolAdapter:
                          "unavailable": unavailable})
         return rows
 
+    @classmethod
+    def _clean_plugin_index_text(cls, value: Any, *, limit: int | None = None) -> str:
+        raw = str(value or "")
+        without_fences = re.sub(r"`{3,}", " ", raw)
+        without_headings = re.sub(r"(?m)^\s*#+\s*", " ", without_fences)
+        collapsed = " ".join(without_headings.split())
+        cleaned = re.sub(r"^#+\s*", "", collapsed)
+        if limit is not None:
+            return cleaned[:limit]
+        return cleaned
+
     def plugin_context_note(self, context: dict[str, Any] | None = None, *, selected_skill_ids=()) -> str:
         """A short, stable index of plugins for the model's developer context.
 
@@ -768,20 +779,31 @@ class ExtensionToolAdapter:
             return ""
         chosen = {str(skill_id) for skill_id in selected_skill_ids or ()}
         rows.sort(key=lambda row: not chosen.intersection(row["skill_ids"]))  # stable: selected first
-        header = ("Installed plugins. Load their tools with ryn_discover_tools. A plugin marked unavailable still has "
-                  "the feature: tell the owner what to fix, never that the feature is unsupported.")
+        header = (
+            "Installed plugins. Load their tools with ryn_discover_tools. A plugin marked unavailable still has "
+            "the feature: tell the owner what to fix, never that the feature is unsupported. "
+            "Send messages to other people (chats, emails, approvals) only when the owner asked; otherwise prepare a draft for the owner to review. "
+            "For write actions that require owner approval, finish the draft and every check first so approval is the final step. "
+            "When a plugin named by the owner is not installed and ryn_discover_tools finds no match, tell the owner which plugin to install on the Plugins page without suggesting adjacent plugins, and do not keep prompting if the owner leaves it uninstalled."
+        )
         lines, used, omitted = [header], len(header.encode("utf-8")), 0
+        line_cap = self.PLUGIN_INDEX_LINE_CHARS
         for row in rows:
-            text = row["description"].strip()
+            plugin_name = self._clean_plugin_index_text(row["name"], limit=line_cap)
+            text = self._clean_plugin_index_text(row["description"], limit=line_cap)
             skills = []
             for skill in row["skills"]:
-                description = str(skill.get("description") or "").strip()
-                skills.append(str(skill.get("id") or "") + (f" ({description})" if description and description != text else ""))
+                skill_id = self._clean_plugin_index_text(skill.get("id"), limit=line_cap)
+                description = self._clean_plugin_index_text(skill.get("description"), limit=line_cap)
+                skills.append(skill_id + (f" ({description})" if description and description != text else ""))
             if skills:
                 text += " Skills: " + "; ".join(skills)
-            text = text[:self.PLUGIN_INDEX_LINE_CHARS]
-            notes = "; ".join(f"{item['name']} {item['recovery']}" for item in row["unavailable"])
-            line = f"- {row['name']}: {text}" + (f" [Unavailable now: {notes}]" if notes else "")
+            text = text[:line_cap]
+            notes = "; ".join(
+                f"{self._clean_plugin_index_text(item['name'], limit=line_cap)} {item['recovery']}"
+                for item in row["unavailable"]
+            )
+            line = f"- {plugin_name}: {text}" + (f" [Unavailable now: {notes}]" if notes else "")
             size = len(line.encode("utf-8")) + 1
             if used + size > self.PLUGIN_INDEX_BYTES:
                 omitted += 1
@@ -789,7 +811,16 @@ class ExtensionToolAdapter:
             lines.append(line)
             used += size
         if omitted:
-            lines.append(f"- {omitted} more plugins: call ryn_list_plugins.")
+            while len(lines) > 1:
+                footer = f"- {omitted} more plugins: call ryn_list_plugins."
+                if used + 1 + len(footer.encode("utf-8")) <= self.PLUGIN_INDEX_BYTES:
+                    break
+                removed = lines.pop()
+                used -= len(removed.encode("utf-8")) + 1
+                omitted += 1
+            footer = f"- {omitted} more plugins: call ryn_list_plugins."
+            if used + 1 + len(footer.encode("utf-8")) <= self.PLUGIN_INDEX_BYTES:
+                lines.append(footer)
         return "\n".join(lines)
 
     def unavailable_plugins(self, context: dict[str, Any] | None = None) -> list[dict[str, Any]]:
@@ -798,8 +829,19 @@ class ExtensionToolAdapter:
             rows = self.plugin_overview_for_model(context)
         except Exception:
             return []
-        return [{"plugin": row["name"], "description": row["description"][:self.PLUGIN_INDEX_LINE_CHARS],
-                 "unavailable": row["unavailable"]} for row in rows if row["unavailable"]][:12]
+        line_cap = self.PLUGIN_INDEX_LINE_CHARS
+        return [
+            {
+                "plugin": self._clean_plugin_index_text(row["name"], limit=line_cap),
+                "description": self._clean_plugin_index_text(row["description"], limit=line_cap),
+                "unavailable": [
+                    {**item, "name": self._clean_plugin_index_text(item.get("name"), limit=line_cap)}
+                    for item in row["unavailable"]
+                ],
+            }
+            for row in rows
+            if row["unavailable"]
+        ][:12]
 
     def metadata(self, name: str) -> dict[str, Any]:
         if name == READ_SKILL_FILE_TOOL:
