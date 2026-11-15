@@ -174,7 +174,7 @@ def test_t3_bridge_and_runtime_schedule_retry_and_block_partial_tools(node, monk
     """T3 (end-to-end HTTP SSE + bridge + runtime): truncated stream -> agent_model_stream_interrupted -> model_retry_scheduled without dispatching partial tool."""
     assert "agent_model_stream_interrupted" in RETRYABLE_MODEL_ERRORS
     assert "agent_model_stream_interrupted" in retry_policy.NETWORK_ERRORS
-    assert retry_policy.limit("agent_model_stream_interrupted", {}) == 3
+    assert retry_policy.limit("agent_model_stream_interrupted", {}) == 5
 
     monkeypatch.setattr(retry_policy, "delay", lambda *_: 0)
     app, store = node
@@ -239,7 +239,7 @@ def test_t3_bridge_and_runtime_schedule_retry_and_block_partial_tools(node, monk
         assert len(retry_events) == 1
         assert retry_events[0]["error"] == "agent_model_stream_interrupted"
         assert after_first["connection_recovery"]["error_code"] == "agent_model_stream_interrupted"
-        assert after_first["connection_recovery"]["max_retries"] == 3
+        assert after_first["connection_recovery"]["max_retries"] == 5
         assert not any(ev["type"] == "tool_call" for ev in after_first["events"])
 
         runtime.run_once()

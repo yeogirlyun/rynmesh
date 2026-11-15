@@ -3,32 +3,57 @@ import random
 import time
 
 NETWORK_ERRORS = {"agent_inference_timeout", "agent_model_connection_failed", "agent_model_busy", "agent_model_upstream_failed", "agent_model_stream_interrupted"}
+CONNECTION_REASONS = frozenset({"reset", "refused", "connection", "dns_temporary", "timeout"})
+RETRYABLE_HTTP_STATUSES = frozenset({408, 429, 500, 502, 503, 504, 529})
+DEFAULT_STREAM_MAX_RETRIES = 5
+MAX_STREAM_MAX_RETRIES = 20
 
 
 def now():
     return time.time()
 
 
+def _stream_max_retries(diagnostics):
+    raw = diagnostics.get("stream_max_retries")
+    if type(raw) is int:
+        return max(0, min(raw, MAX_STREAM_MAX_RETRIES))
+    return DEFAULT_STREAM_MAX_RETRIES
+
+
 def limit(code, diagnostics):
+    diagnostics = diagnostics if isinstance(diagnostics, dict) else {}
     if code not in NETWORK_ERRORS:
         return 1  # Existing malformed response / compaction recovery.
     reason = diagnostics.get("network_reason")
     status = diagnostics.get("http_status")
     if reason in {"tls_certificate", "tls", "dns_not_found", "quota"}:
         return 0
-    if status is not None and status not in {408, 429, 500, 502, 503, 504}:
+    if status is not None and status not in RETRYABLE_HTTP_STATUSES:
         return 0
+    if code == "agent_model_connection_failed" and status is None and (reason is None or reason in CONNECTION_REASONS):
+        return None
     # urllib cannot distinguish connect from waiting for response headers.
     # Treat an ambiguous timeout conservatively as a slow model response, while
     # mid-stream idle timeouts are retryable stream transport stalls.
-    if code == "agent_inference_timeout":
-        return 3 if reason == "idle_timeout" else 1
-    return 3
+    if code == "agent_inference_timeout" and reason != "idle_timeout":
+        return 1
+    if code == "agent_model_busy":
+        return DEFAULT_STREAM_MAX_RETRIES
+    return _stream_max_retries(diagnostics)
 
 
-def delay(count, diagnostics):
-    return max((2, 5, 10)[min(count - 1, 2)] * random.uniform(0.9, 1.1),
-               diagnostics.get("retry_after_seconds", 0))
+def delay(count, diagnostics=None, code=None):
+    diagnostics = diagnostics if isinstance(diagnostics, dict) else {}
+    unlimited = (
+        limit(code, diagnostics) is None
+        if code is not None
+        else (diagnostics.get("http_status") is None and diagnostics.get("network_reason") in CONNECTION_REASONS)
+    )
+    overloaded = diagnostics.get("overloaded") is True
+    step = max(1, count)
+    start, cap = ((10 if overloaded else 5), 60) if unlimited else ((4 if overloaded else 2), 32)
+    base = min(cap, start * (2 ** (step - 1)))
+    return max(base * random.uniform(0.9, 1.1), diagnostics.get("retry_after_seconds", 0) or 0)
 
 
 def ready(row):
@@ -70,7 +95,9 @@ def resume(row):
     previous = row.get("connection_recovery")
     reset(row)
     if previous and previous["state"] in {"stopped", "disconnected"}:
-        row["connection_recovery"] = {"state": "retrying", "retry_count": 0, "max_retries": 3}
+        code = previous.get("error_code") or "agent_model_connection_failed"
+        max_retries = limit(code, previous.get("diagnostics") or {})
+        row["connection_recovery"] = {"state": "retrying", "retry_count": 0, "max_retries": max_retries}
 
 
 def recovered(row):
