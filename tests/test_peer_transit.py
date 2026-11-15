@@ -17,6 +17,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from rynmesh import peer_transit_service
 from rynmesh import registry as registry_module
 from rynmesh.crypto import SignedPayload
+from rynmesh.friends.store import FriendStore
 from rynmesh.jobs import WorkOrder, WorkResult, sign_work_order, sign_work_result
 from rynmesh.llm_package.p2p import (
     apply_remote_signal,
@@ -48,6 +49,7 @@ from rynmesh.peer_transit_service import (
     send_file_direct,
 )
 from rynmesh.registry import FilePeerRegistry, RegistryError
+from rynmesh.services.peer_box import load_or_create_messaging_key
 from rynmesh.store import RynmeshStore
 from scripts import audit_peer_transit as audit_module
 from scripts import finalize_peer_transit_soak as finalize_soak_module
@@ -70,6 +72,22 @@ from scripts.run_peer_transit_acceptance import (
 
 def _future(seconds: float = 300) -> str:
     return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+
+
+def _trust_source_on_target(target: RynmeshStore, source: RynmeshStore) -> None:
+    source_box = load_or_create_messaging_key(source.home / "messaging.x25519")
+    FriendStore(target.home).put_relationship(
+        {
+            "relationship_id": f"test-friend-{source.peer_id[:16]}",
+            "peer_id": source.peer_id,
+            "node_name": source.node_name,
+            "messaging_pub": messaging_public_key(source_box),
+            "endpoint": "https://test-friend.example.invalid",
+            "status": "active",
+            "created_at": "2026-11-15T00:00:00+00:00",
+        },
+        b"\x44" * 32,
+    )
 
 
 def test_acceptance_cli_persists_runtime_failure_without_polluting_stale_root(
@@ -1707,6 +1725,7 @@ def test_registry_signaling_carries_no_file_body_and_workers_stream_via_peer(
     source.registry = registry
     relay.registry = registry
     target.registry = registry
+    _trust_source_on_target(target, source)
 
     marker = b"RYNMESH-TRANSIT-PLAINTEXT-CHECK-2026"
     source_file = tmp_path / "large-secret.bin"
@@ -1815,6 +1834,7 @@ def test_direct_file_path_uses_one_non_turn_ice_pair(tmp_path, monkeypatch) -> N
     target = RynmeshStore(home=tmp_path / "target", network_dir=tmp_path / "target-net")
     source.registry = registry
     target.registry = registry
+    _trust_source_on_target(target, source)
     target_worker = PeerTransitWorker(
         target,
         role="target",
@@ -1866,6 +1886,7 @@ def test_transit_resumes_from_verified_boundary_after_ice_disconnect(
     target = RynmeshStore(home=tmp_path / "target", network_dir=tmp_path / "target-net")
     for store in (source, relay, target):
         store.registry = registry
+    _trust_source_on_target(target, source)
     inbox = tmp_path / "target-inbox"
     relay_worker = PeerTransitWorker(
         relay,
@@ -1977,6 +1998,7 @@ def test_direct_resumes_from_verified_boundary_after_ice_disconnect(
     target = RynmeshStore(home=tmp_path / "target", network_dir=tmp_path / "target-net")
     source.registry = registry
     target.registry = registry
+    _trust_source_on_target(target, source)
     inbox = tmp_path / "inbox"
     worker = PeerTransitWorker(
         target,
