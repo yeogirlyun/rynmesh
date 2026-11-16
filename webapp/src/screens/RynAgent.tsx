@@ -22,7 +22,7 @@ import { ExtensionModelAvailability } from "./ExtensionModelAvailability";
 import RynAgentComposer from "./RynAgentComposer";
 import RynAgentMessageEditor from "./RynAgentMessageEditor";
 import AgentMessageAttachments from "./AgentMessageAttachments";
-import { agentAttachmentInputs, type AgentAttachmentInput, type AgentDraftAttachment } from "../domain/agentAttachments";
+import { agentAttachmentInputs, applyAgentAttachmentLimits, attachmentLimitTranslation, type AgentAttachmentInput, type AgentDraftAttachment, type AgentAttachmentLimitDetails } from "../domain/agentAttachments";
 import RynAgentProject from "./RynAgentProject";
 import { useAgentTaskMenu } from "./RynAgentTaskMenu";
 import { useAgentTaskAttention } from "./useAgentTaskAttention";
@@ -78,7 +78,13 @@ function mutationErrorKey(reason: unknown): string {
   if (reason.code === "agent_model_destination_unverifiable") return "modelDestinationUnavailable";
   if (reason.code === "agent_model_destination_changed") return "modelDestinationChanged";
   if (reason.code === "agent_model_unavailable") return "selectedModelUnavailable";
-  if (["agent_attachment_limit", "agent_attachment_image_limit"].includes(reason.code)) return "attachmentLimit";
+  if (reason.code === "agent_attachment_directory") return "attachmentDirectoryError";
+  if (["agent_attachment_limit", "agent_attachment_image_limit"].includes(reason.code)) {
+    if (reason.code === "agent_attachment_limit" && reason.details && typeof reason.details.limit === "string") {
+      return "attachmentLimitDetail:" + JSON.stringify(reason.details);
+    }
+    return "attachmentLimit";
+  }
   if (reason.code.startsWith("agent_attachment_") || reason.code === "agent_invalid_attachment") return "attachmentReadError";
   if (reason.status < 500 && SEND_ERROR_CODES.has(reason.code)) return "agentError:" + reason.code;
   if (reason.status === 409 && /(?:revision_conflict|invalid_transition)$/.test(reason.code)) return "conflict";
@@ -216,7 +222,11 @@ export default function RynAgent() {
   const nav = useContext(AgentNavigationContext);
   const taskCache = useRef(agentTaskCache());
   const taskListLoaded = useRef(false);
-  const [cachedWorkspace] = useState(readAgentWorkspace);
+  const [cachedWorkspace] = useState(() => {
+    const ws = readAgentWorkspace();
+    applyAgentAttachmentLimits(ws.settings?.attachment_limits);
+    return ws;
+  });
   const [settings, setSettings] = useState<AgentSettings | null>(cachedWorkspace.settings);
   const [models, setModels] = useState<AgentModel[]>(cachedWorkspace.models);
   const [tasks, setTasks] = useState<AgentTaskSummary[]>(() => cachedAgentTaskList(taskCache.current));
@@ -457,7 +467,10 @@ export default function RynAgent() {
         setResourceErrors(current => ({ ...current, settings: "" }));
       }).catch(reason => {
         if (refreshID !== refreshRevision.current) return;
-        if (!cachedSettingsRef.current) setResourceErrors(current => ({ ...current, settings: reason instanceof AgentAPIError && [404, 501].includes(reason.status) ? "unavailable" : "settingsLoadError" }));
+        if (!cachedSettingsRef.current) {
+          applyAgentAttachmentLimits(null);
+          setResourceErrors(current => ({ ...current, settings: reason instanceof AgentAPIError && [404, 501].includes(reason.status) ? "unavailable" : "settingsLoadError" }));
+        }
       }).finally(() => { if (refreshID === refreshRevision.current) setLoading(false); }),
       rynAgent.models(controller.signal).then(nextModels => {
         if (refreshID !== refreshRevision.current) return;
@@ -1137,7 +1150,24 @@ export default function RynAgent() {
     </header>
     {taskMenu.dialogs}
     {pendingMessage?.phase === "rejected" && <div className="ra-banner ra-unsent-message" role="alert"><CircleAlert size={17} /><details><summary>{t("unsentMessage")}</summary><p>{pendingMessage.message}</p></details><button className="ra-icon" aria-label={t("close")} onClick={() => setPendingMessage(null)}><X size={16} /></button></div>}
-    {error && <div role="alert" className="ra-banner"><CircleAlert size={17} /><span>{error.startsWith("agentError:") ? agentErrorHelp(error.slice("agentError:".length), i18n.language.startsWith("zh")).text : t(error)}</span><button onClick={() => void reload()} disabled={busy}>{t("retry")}</button></div>}
+    {error && <div role="alert" className="ra-banner"><CircleAlert size={17} /><span>{(() => {
+      if (error.startsWith("agentError:")) return agentErrorHelp(error.slice("agentError:".length), i18n.language.startsWith("zh")).text;
+      if (error.startsWith("attachmentLimitDetail:")) {
+        try {
+          const parsed = JSON.parse(error.slice("attachmentLimitDetail:".length)) as Partial<AgentAttachmentLimitDetails>;
+          const msg = attachmentLimitTranslation(parsed);
+          return t(msg.key, msg.values);
+        } catch {
+          const fallback = attachmentLimitTranslation(null);
+          return t(fallback.key, fallback.values);
+        }
+      }
+      if (error === "attachmentLimit") {
+        const msg = attachmentLimitTranslation(null);
+        return t(msg.key, msg.values);
+      }
+      return t(error);
+    })()}</span><button onClick={() => void reload()} disabled={busy}>{t("retry")}</button></div>}
     {Object.values(resourceErrors).filter(Boolean).map(key => <div key={key} role="alert" className="ra-banner"><CircleAlert size={17} /><span>{t(key)}</span><button onClick={() => void reload()} disabled={busy}>{t("retry")}</button></div>)}
     {enabled && <RynAgentReadOnlyHints />}
     {uncertain && <div role="alert" className="ra-banner">{t("uncertain")}{autoRecoveryExhausted && <> {t("autoRecoveryStopped")}</>}<button disabled={busy} onClick={() => void recoverRequest()}>{t("recoverRequest")}</button></div>}

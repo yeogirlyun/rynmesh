@@ -63,6 +63,10 @@ UNKNOWN_WINDOW_CONTEXT_CHARS = 120000
 class AgentError(ValueError):
     """Stable public error code, never an external exception's raw message."""
 
+    def __init__(self, code: str = "", *, details: dict | None = None):
+        super().__init__(code)
+        self.details = dict(details) if isinstance(details, dict) else None
+
 
 def cancellation_reason(cancelled) -> str:
     """Distinguish budget exhaustion from cancellation; never export callback text."""

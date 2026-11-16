@@ -50,8 +50,10 @@ def test_native_drop_reads_real_file_and_rejects_directories(tmp_path):
     source = tmp_path / "native.txt"
     source.write_text("native content", encoding="utf-8")
     assert parse_attachments([{"name": source.name, "path": str(source)}])[0]["raw"] == b"native content"
-    with pytest.raises(AgentError, match="agent_attachment_unavailable"):
+    with pytest.raises(AgentError, match="agent_attachment_directory"):
         parse_attachments([{"name": "folder", "path": str(tmp_path)}])
+    with pytest.raises(AgentError, match="agent_attachment_unavailable"):
+        parse_attachments([{"name": "missing.txt", "path": str(tmp_path / "missing.txt")}])
 
 
 @pytest.mark.parametrize("files", [

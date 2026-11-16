@@ -1,5 +1,5 @@
 import { nodeControlUrl } from "./nodeUrl";
-import type { AgentAttachmentInput, AgentMessageAttachment } from "./agentAttachments";
+import { applyAgentAttachmentLimits, type AgentAttachmentInput, type AgentMessageAttachment, type ServerAttachmentLimits } from "./agentAttachments";
 import type { ModelTokenUsage } from "./aiSources";
 
 export type AgentStatus = "queued" | "running" | "waiting_approval" | "waiting_input" | "pausing" | "reconciling" | "paused" | "completed" | "cancelled" | "failed" | "interrupted";
@@ -90,6 +90,7 @@ export interface AgentSettings {
   max_context_chars: number | null;
   context_budget_policy?: AgentContextBudgetPolicy;
   max_output_chars: number;
+  attachment_limits?: ServerAttachmentLimits;
 }
 export interface AgentModel {
   context_window?: number;
@@ -346,7 +347,13 @@ export interface AgentTask extends AgentTaskSummary {
 export type AgentAction = "pause" | "resume" | "stop" | "cancel" | "approve" | "deny";
 
 export class AgentAPIError extends Error {
-  constructor(public code: string, public status: number) { super(code); }
+  constructor(
+    public code: string,
+    public status: number,
+    public details?: Record<string, unknown>,
+  ) {
+    super(code);
+  }
 }
 
 const READ_TIMEOUT_MS = 10000;
@@ -461,7 +468,8 @@ async function request<T>(path: string, method = "GET", body?: unknown, signal?:
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
       const code = typeof data.detail === "string" ? data.detail : typeof data.error === "string" ? data.error : "agent_request_failed";
-      throw new AgentAPIError(code, response.status);
+      const details = data.details && typeof data.details === "object" ? (data.details as Record<string, unknown>) : undefined;
+      throw new AgentAPIError(code, response.status, details);
     }
     return response.json() as Promise<T>;
   };
@@ -490,8 +498,8 @@ export const rynAgent = {
   loadProject: (path: string) => request<AgentProject>("/projects", "POST", { path }),
   renameProject: (id: string, name: string) => request<AgentProject>(`/projects/${encodeURIComponent(id)}`, "PATCH", { name }),
   removeProject: (id: string) => request<{ removed: boolean }>(`/projects/${encodeURIComponent(id)}`, "DELETE"),
-  settings: (signal?: AbortSignal) => request<AgentSettings>("/settings", "GET", undefined, signal),
-  updateSettings: (settings: Partial<AgentSettings>) => request<AgentSettings>("/settings", "PUT", settings),
+  settings: (signal?: AbortSignal) => request<AgentSettings>("/settings", "GET", undefined, signal).then(s => { applyAgentAttachmentLimits(s.attachment_limits); return s; }),
+  updateSettings: (settings: Partial<AgentSettings>) => request<AgentSettings>("/settings", "PUT", settings).then(s => { applyAgentAttachmentLimits(s.attachment_limits); return s; }),
   models: (signal?: AbortSignal) => request<{ models: AgentModel[] }>("/models", "GET", undefined, signal),
   tools: (signal?: AbortSignal) => request<{ tools: AgentTool[] }>("/tools", "GET", undefined, signal),
   tasks: (signal?: AbortSignal) => request<{ tasks: AgentTaskSummary[] }>("/tasks", "GET", undefined, signal),
