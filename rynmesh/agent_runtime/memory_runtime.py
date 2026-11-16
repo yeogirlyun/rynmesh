@@ -773,6 +773,8 @@ def _derive_new_explicit_entry_exposure_policy(
                 valid_dests.append(norm)
     if valid_dests:
         return {"mode": "destinations", "allowed_destinations": valid_dests}
+    if isinstance(mem, dict) and mem.get("default_exposure_configured") is True:
+        return {"mode": "local_only", "allowed_destinations": []}
     task_dest = _verified_task_destination(row)
     if task_dest is not None:
         return {"mode": "destinations", "allowed_destinations": [task_dest]}

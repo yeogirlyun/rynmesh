@@ -397,6 +397,7 @@ def default_memory_state() -> dict[str, Any]:
         "source_seq": 0,
         "consent_generation": 0,
         "automatic_capture_frontier_seq": 0,
+        "default_exposure_configured": False,
         "hmac_salt": uuid.uuid4().hex + uuid.uuid4().hex,
         "settings": _default_settings(),
         "entries": {},
@@ -1291,6 +1292,7 @@ def update_memory_settings(
                 raise AgentError("agent_memory_invalid_exposure_policy")
             dests = [d for d in (normalize_destination(x) for x in raw_dests) if d]
             settings["default_exposure"] = {"mode": mode, "allowed_destinations": dests}
+            mem["default_exposure_configured"] = True
             policy_changed = True
 
         if "budgets" in patch:
