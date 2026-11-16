@@ -171,11 +171,73 @@ class StreamFormat:
         self.sequence = 0
         self.blocks: dict[str, int] = {}
         self.calls: dict[int, dict[str, Any]] = {}
+        self._tool_slots: list[int] = []
+        self._id_to_block: dict[str, int] = {}
+        self._upstream_index_to_block: dict[Any, int] = {}
         self.text = ""
         self.text_emitted = 0
         self.text_started = False
         self.chat_streamed = False
         self.chat_id = "chatcmpl-" + task_id
+
+    def _open_tool_slot(self, call_id: str = "") -> int:
+        slot_num = len(self._tool_slots)
+        key = f"tool:{slot_num}"
+        block_index = self.blocks[key] = len(self.blocks)
+        self._tool_slots.append(block_index)
+        self.calls[block_index] = {"id": call_id, "name": "", "arguments": ""}
+        if call_id:
+            self._id_to_block[call_id] = block_index
+        return block_index
+
+    def _resolve_delta_tool_block(self, call: dict[str, Any]) -> int:
+        raw_id = call.get("id")
+        call_id = raw_id if isinstance(raw_id, str) and raw_id != "" else ""
+        has_index = "index" in call and call.get("index") is not None
+        raw_index = call.get("index") if has_index else None
+
+        if call_id:
+            if call_id in self._id_to_block:
+                block_index = self._id_to_block[call_id]
+                if has_index:
+                    self._upstream_index_to_block[raw_index] = block_index
+                else:
+                    self._upstream_index_to_block[None] = block_index
+                return block_index
+            candidate = (
+                self._upstream_index_to_block.get(raw_index)
+                if has_index
+                else (self._tool_slots[0] if len(self._tool_slots) == 1 else self._upstream_index_to_block.get(0))
+            )
+            if candidate is not None and not self.calls[candidate]["id"]:
+                self.calls[candidate]["id"] = call_id
+                self._id_to_block[call_id] = candidate
+                return candidate
+            block_index = self._open_tool_slot(call_id)
+            if has_index:
+                self._upstream_index_to_block[raw_index] = block_index
+            else:
+                self._upstream_index_to_block[None] = block_index
+                self._upstream_index_to_block[0] = block_index
+            return block_index
+
+        if has_index:
+            if raw_index in self._upstream_index_to_block:
+                return self._upstream_index_to_block[raw_index]
+            block_index = self._open_tool_slot("")
+            self._upstream_index_to_block[raw_index] = block_index
+            return block_index
+
+        if None in self._upstream_index_to_block:
+            return self._upstream_index_to_block[None]
+        if len(self._tool_slots) == 1:
+            return self._tool_slots[0]
+        if 0 in self._upstream_index_to_block:
+            return self._upstream_index_to_block[0]
+        block_index = self._open_tool_slot("")
+        self._upstream_index_to_block[None] = block_index
+        self._upstream_index_to_block[0] = block_index
+        return block_index
 
     def event(self, kind: str, **values: Any) -> str:
         value = {"type": kind, **values}
@@ -217,16 +279,8 @@ class StreamFormat:
                     output.append(self.event("content_block_delta", index=index, delta={"type": "text_delta", "text": text}) if self.protocol == "messages" else
                                   self.event("response.output_text.delta", item_id="msg_" + self.chat_id, output_index=index, content_index=0, delta=text))
             for call in delta.get("tool_calls") or []:
-                key = "tool:" + str(call["index"])
-                function = call.get("function", {})
-                if key not in self.blocks:
-                    index = self.blocks[key] = len(self.blocks)
-                    self.calls[index] = {"id": "", "name": "", "arguments": ""}
-                index = self.blocks[key]
-                if call.get("id"):
-                    if self.calls[index]["id"] and self.calls[index]["id"] != call["id"]:
-                        raise ValueError("tool identity changed")
-                    self.calls[index]["id"] = call["id"]
+                function = call.get("function") or {}
+                index = self._resolve_delta_tool_block(call)
                 self.calls[index]["name"] += function.get("name") or ""
                 args = function.get("arguments") or ""
                 self.calls[index]["arguments"] += args
@@ -254,11 +308,21 @@ class StreamFormat:
         if text and "text" not in self.blocks:
             self.blocks["text"] = len(self.blocks)
         calls = message.get("tool_calls") or []
-        for ordinal, call in enumerate(calls):
-            key = "tool:" + str(ordinal)
-            if key not in self.blocks:
-                self.blocks[key] = len(self.blocks)
-            index = self.blocks[key]
+        unmatched_slots = list(self._tool_slots)
+        for call in calls:
+            cid = call["id"]
+            if cid in self._id_to_block and self._id_to_block[cid] in unmatched_slots:
+                index = self._id_to_block[cid]
+                unmatched_slots.remove(index)
+            else:
+                no_id_slot = next((s for s in unmatched_slots if not self.calls[s]["id"]), None)
+                if no_id_slot is not None:
+                    index = no_id_slot
+                    unmatched_slots.remove(no_id_slot)
+                else:
+                    slot_num = len(self._tool_slots)
+                    index = self.blocks[f"tool:{slot_num}"] = len(self.blocks)
+                    self._tool_slots.append(index)
             seen = self.calls.get(index)
             if seen:
                 if ((seen["id"] and seen["id"] != call["id"])
@@ -271,7 +335,7 @@ class StreamFormat:
                 if not arguments_match:
                     raise ValueError("final tool arguments disagree with stream")
             self.calls[index] = {"id": call["id"], **call["function"]}
-        if sum(key.startswith("tool:") for key in self.blocks) != len(calls):
+        if unmatched_slots:
             raise ValueError("streamed tool missing from final response")
         for key, index in self.blocks.items():
             if key == "text":

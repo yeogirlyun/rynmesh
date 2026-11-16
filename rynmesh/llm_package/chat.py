@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 import re
+import secrets
 import time
 from typing import Any
 
@@ -132,6 +133,49 @@ def validate_tool_arguments(schema, arguments):
 
 
 PROMPT_CACHE_KEY_RE = re.compile(r"[A-Za-z0-9:_-]{1,64}\Z")
+CALL_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
+
+
+def new_call_id_nonce() -> str:
+    return secrets.token_hex(6)
+
+
+def normalize_call_id(raw: Any, index: int, nonce: str) -> str:
+    if raw is None or (isinstance(raw, str) and raw == ""):
+        safe_nonce = (
+            nonce
+            if isinstance(nonce, str) and nonce and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", nonce)
+            else hashlib.sha256(str(nonce).encode("utf-8", errors="surrogatepass")).hexdigest()[:12]
+        )
+        return f"call_{safe_nonce}_{index}"
+    text = raw if isinstance(raw, str) else str(raw)
+    if CALL_ID_RE.fullmatch(text):
+        return text
+    digest = hashlib.sha256(text.encode("utf-8", errors="surrogatepass")).hexdigest()[:24]
+    return f"call_{digest}"
+
+
+def normalize_message_tool_calls(message: dict[str, Any], nonce: str | None = None) -> dict[str, Any]:
+    if not isinstance(message, dict):
+        raise TypeError("message must be an object")
+    calls = message.get("tool_calls")
+    if not isinstance(calls, list) or not calls:
+        return copy.deepcopy(message)
+    active_nonce = nonce or new_call_id_nonce()
+    normalized_msg = copy.deepcopy(message)
+    normalized_calls: list[Any] = []
+    for idx, call in enumerate(normalized_msg["tool_calls"]):
+        if not isinstance(call, dict):
+            normalized_calls.append(call)
+            continue
+        raw_id = call.get("id")
+        if raw_id is not None and not isinstance(raw_id, str):
+            raise ValueError("invalid tool call id")
+        updated = dict(call)
+        updated["id"] = normalize_call_id(raw_id, idx, active_nonce)
+        normalized_calls.append(updated)
+    normalized_msg["tool_calls"] = normalized_calls
+    return normalized_msg
 
 
 def validate_prompt_cache_key(value: Any) -> str:
@@ -312,39 +356,138 @@ def validate_chat(value: dict[str, Any]) -> dict[str, Any]:
 class ChatAccumulator:
     """Assemble actual upstream deltas without losing tool arguments or usage."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, nonce: str | None = None) -> None:
+        self.nonce = nonce or new_call_id_nonce()
         self.text = ""
         self.reasoning = ""
         self.calls: dict[int, dict[str, Any]] = {}
+        self._index_to_slot: dict[int, int] = {}
+        self._id_to_slot: dict[str, int] = {}
         self.usage: dict[str, Any] = {}
         self.finish_reason = "stop"
         self.finished = False
 
-    def add(self, chunk: dict[str, Any]) -> None:
-        if chunk.get("usage"):
-            self.usage = chunk["usage"]
-        for choice in chunk.get("choices", []):
-            if choice.get("index", 0) != 0:
+    def _resolve_slot(self, raw_index: Any, raw_id: str | None) -> tuple[int, str | None]:
+        has_id = isinstance(raw_id, str) and raw_id != ""
+        provisional_norm_id = normalize_call_id(raw_id, 0, self.nonce) if has_id else None
+        if raw_index is None:
+            if provisional_norm_id is not None and provisional_norm_id in self._id_to_slot:
+                return self._id_to_slot[provisional_norm_id], provisional_norm_id
+            if not has_id and len(self.calls) == 1:
+                only_slot = next(iter(self.calls))
+                return only_slot, None
+            effective_index = 0
+        else:
+            if type(raw_index) is not int or raw_index < 0:
+                raise ValueError("invalid tool call index")
+            effective_index = raw_index
+
+        if effective_index not in self._index_to_slot:
+            slot = len(self.calls)
+            self._index_to_slot[effective_index] = slot
+        else:
+            current_slot = self._index_to_slot[effective_index]
+            current_id = self.calls[current_slot]["id"]
+            if provisional_norm_id is not None and current_id and current_id != provisional_norm_id:
+                slot = len(self.calls)
+                self._index_to_slot[effective_index] = slot
+            else:
+                slot = current_slot
+
+        norm_id = normalize_call_id(raw_id, slot, self.nonce) if has_id else None
+        return slot, norm_id
+
+    def add(self, chunk: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(chunk, dict):
+            raise TypeError("chunk must be an object")
+        normalized_chunk = copy.deepcopy(chunk)
+        if normalized_chunk.get("usage"):
+            self.usage = normalized_chunk["usage"]
+        choices = normalized_chunk.get("choices", [])
+        if not isinstance(choices, list):
+            raise TypeError("choices must be a list")
+        for choice in choices:
+            if not isinstance(choice, dict) or choice.get("index", 0) != 0:
                 raise ValueError("only one completion is supported")
-            delta = choice.get("delta", {})
+            delta = choice.get("delta")
+            if delta is None:
+                delta = {}
+            elif not isinstance(delta, dict):
+                raise TypeError("delta must be an object")
             self.text += delta.get("content") or ""
             self.reasoning += delta.get("reasoning_content") or ""
-            for item in delta.get("tool_calls") or []:
-                call = self.calls.setdefault(item["index"], {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
-                if item.get("id"):
-                    call["id"] = item["id"]
+            raw_fragments = delta.get("tool_calls")
+            if raw_fragments is not None and not isinstance(raw_fragments, list):
+                raise TypeError("tool_calls must be a list")
+            norm_fragments: list[dict[str, Any]] = []
+            slots_in_choice: dict[int, dict[str, Any]] = {}
+            for item in raw_fragments or []:
+                if not isinstance(item, dict):
+                    raise TypeError("invalid tool fragment")
+                raw_id = item.get("id")
+                if raw_id is not None and not isinstance(raw_id, str):
+                    raise ValueError("invalid tool fragment id")
+                slot, norm_id = self._resolve_slot(item.get("index"), raw_id)
+                call = self.calls.setdefault(
+                    slot,
+                    {"id": "", "type": "function", "function": {"name": "", "arguments": ""}},
+                )
+                if norm_id:
+                    call["id"] = norm_id
+                    self._id_to_slot[norm_id] = slot
+                for extra_field in ("type", "namespace"):
+                    if extra_field in item and item[extra_field] is not None:
+                        call[extra_field] = item[extra_field]
+                function = item.get("function")
+                if function is not None and not isinstance(function, dict):
+                    raise TypeError("invalid tool fragment function")
+                function = function or {}
                 for field in ("name", "arguments"):
-                    call["function"][field] += item.get("function", {}).get(field) or ""
+                    val = function.get(field)
+                    if val is not None:
+                        if not isinstance(val, str):
+                            raise TypeError("invalid tool fragment value")
+                        call["function"][field] += val
+                norm_item = dict(item)
+                norm_item["index"] = slot
+                if norm_id:
+                    norm_item["id"] = norm_id
+                else:
+                    norm_item.pop("id", None)
+                norm_fragments.append(norm_item)
+                slots_in_choice[slot] = norm_item
+            if raw_fragments is not None:
+                delta["tool_calls"] = norm_fragments
             if choice.get("finish_reason"):
                 self.finish_reason = choice["finish_reason"]
                 self.finished = True
+                for slot in sorted(self.calls):
+                    call = self.calls[slot]
+                    if not call["id"]:
+                        generated_id = normalize_call_id("", slot, self.nonce)
+                        call["id"] = generated_id
+                        self._id_to_slot[generated_id] = slot
+                        if slot in slots_in_choice:
+                            slots_in_choice[slot]["id"] = generated_id
+                        else:
+                            if "tool_calls" not in delta or delta["tool_calls"] is None:
+                                delta["tool_calls"] = norm_fragments
+                                choice["delta"] = delta
+                            norm_fragments.append({"index": slot, "id": generated_id})
+        return normalized_chunk
 
     def message(self) -> dict[str, Any]:
         message: dict[str, Any] = {"role": "assistant", "content": self.text or None}
         if self.reasoning:
             message["reasoning_content"] = self.reasoning
         if self.calls:
-            message["tool_calls"] = [self.calls[i] for i in sorted(self.calls)]
+            ordered: list[dict[str, Any]] = []
+            for i in sorted(self.calls):
+                call = copy.deepcopy(self.calls[i])
+                if not call["id"]:
+                    call["id"] = normalize_call_id("", i, self.nonce)
+                ordered.append(call)
+            message["tool_calls"] = ordered
         return message
 
 
