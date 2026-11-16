@@ -61,6 +61,67 @@ def synchronize(row: dict) -> None:
         row["outcome"].update(status="unknown", uncertainties=["A dispatched write has no confirmed outcome."])
 
 
+class TaskMigrationError(ValueError):
+    """Per-task schema or completeness failure with a stable isolation reason."""
+
+    def __init__(self, reason: str, message: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+def _apply_context_mode(container: dict, limits: dict, key: str) -> None:
+    # Numeric defaults and owner overrides were saved in the same field. Neither
+    # 120000, 600000 nor the old migration marker proves automatic intent. Keep
+    # ambiguous numeric settings/task limits, and label that uncertainty. Only
+    # an explicit automatic provenance can retire a former numeric default.
+    provenance = container.get(key)
+    if provenance in {"default_auto", "owner_auto"}:
+        limits["max_context_chars"] = None
+    elif "max_context_chars" not in limits or limits["max_context_chars"] is None:
+        limits["max_context_chars"] = None
+        provenance = "default_auto"
+    elif provenance != "owner_manual":
+        provenance = "legacy_ambiguous_manual"
+    container[key] = provenance
+
+
+def migrate_task(row: dict) -> dict:
+    if not isinstance(row, dict):
+        raise TaskMigrationError("incomplete", "incomplete Agent task state")
+    row_version = row.get("schema_version", 1)
+    if type(row_version) is int and row_version > SCHEMA_VERSION:
+        raise TaskMigrationError("schema_newer", "unsupported Agent task schema")
+    if type(row_version) is not int or row_version not in {1, SCHEMA_VERSION}:
+        raise TaskMigrationError("schema_unsupported", "unsupported Agent task schema")
+    if row_version == 1:
+        if (
+            "id" not in row
+            or "status" not in row
+            or not isinstance(row.get("messages"), list)
+            or not isinstance(row.get("events"), list)
+        ):
+            raise TaskMigrationError("incomplete", "incomplete Agent task state")
+        initialize(row, legacy=True)
+    else:
+        for required in (
+            "goal",
+            "criteria",
+            "plan",
+            "control_revision",
+            "event_cursor",
+            "pending_input",
+            "outcome",
+            "scope_revision",
+            "scope",
+        ):
+            if required not in row:
+                raise TaskMigrationError("incomplete", "incomplete Agent task state")
+        row.setdefault("observed_files", {})
+        synchronize(row)
+    _apply_context_mode(row, row.setdefault("limits", {}), "context_budget_provenance")
+    return row
+
+
 def migrate(data: dict) -> dict:
     version = data.get("schema_version", 1)
     revision = data.setdefault("settings_revision", 0)
@@ -69,34 +130,8 @@ def migrate(data: dict) -> dict:
     if type(version) is not int or version not in {1, SCHEMA_VERSION}:
         raise ValueError("unsupported Agent payload schema")
     for row in data["tasks"].values():
-        row_version = row.get("schema_version", 1)
-        if type(row_version) is not int or row_version not in {1, SCHEMA_VERSION}:
-            raise ValueError("unsupported Agent task schema")
-        if row_version == 1:
-            initialize(row, legacy=True)
-        else:
-            for required in ("goal", "criteria", "plan", "control_revision", "event_cursor", "pending_input", "outcome", "scope_revision", "scope"):
-                if required not in row:
-                    raise ValueError("incomplete Agent task state")
-            row.setdefault("observed_files", {})
-            synchronize(row)
-    # Numeric defaults and owner overrides were saved in the same field. Neither
-    # 120000, 600000 nor the old migration marker proves automatic intent. Keep
-    # ambiguous numeric settings/task limits, and label that uncertainty. Only
-    # an explicit automatic provenance can retire a former numeric default.
-    def context_mode(container, limits, key):
-        provenance = container.get(key)
-        if provenance in {"default_auto", "owner_auto"}:
-            limits["max_context_chars"] = None
-        elif "max_context_chars" not in limits or limits["max_context_chars"] is None:
-            limits["max_context_chars"] = None
-            provenance = "default_auto"
-        elif provenance != "owner_manual":
-            provenance = "legacy_ambiguous_manual"
-        container[key] = provenance
-    context_mode(data, data["settings"], "settings_context_budget_provenance")
-    for row in data["tasks"].values():
-        context_mode(row, row.setdefault("limits", {}), "context_budget_provenance")
+        migrate_task(row)
+    _apply_context_mode(data, data["settings"], "settings_context_budget_provenance")
     from . import memory
     memory.ensure_memory_state(data)
     from . import automations
