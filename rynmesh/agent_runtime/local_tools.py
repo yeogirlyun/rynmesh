@@ -538,6 +538,12 @@ class LocalTools:
         self._renderer = None
         self._web_search = None
         self._reads = {}
+        if self.home is not None:
+            try:
+                from .local_browser import sweep_orphan_profiles
+                sweep_orphan_profiles(self.home)
+            except Exception:
+                pass
         self.native_computer = bind_owner_native_computer(
             store if store is not None else self, local_tools=self
         )
@@ -787,10 +793,17 @@ class LocalTools:
                         directory.rmdir()
                     except OSError:
                         pass
+        if getattr(self, "_browser", None) is not None:
+            self._browser.close_task(task_id)
         if getattr(self, "native_computer", None) is not None:
             self.native_computer.forget_task(task_id)
         if getattr(self, "_web_search", None) is not None:
             self._web_search.forget_task(task_id)
+
+    def close(self):
+        if getattr(self, "_browser", None) is not None:
+            self._browser.close()
+        self.processes.close()
 
     def file_review(self, task_id, workspace_root):
         from .file_review import FileReview
@@ -1285,6 +1298,8 @@ class LocalTools:
             if name == "ryn_browser_open":
                 preview["url"] = browser.validate_url(args["url"], lambda v: self.path(v, context))
             else:
+                if args.get("action") == "new_tab" and args.get("url"):
+                    preview["url"] = browser.validate_url(args["url"], lambda v: self.path(v, context))
                 preview.update(browser.preview(args, context["task_id"]))
                 if args.get("action") == "upload":
                     if not args.get("files") or any(not self.path(p, context).is_file() for p in args["files"]):
