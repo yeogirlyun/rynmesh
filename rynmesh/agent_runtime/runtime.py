@@ -2740,6 +2740,8 @@ class AgentRuntime(AgentLoop):
                     raise AgentError(exhausted)  # A new turn never bypasses a hard budget.
             if intent != "information" or ended:
                 owner_update(row, message)
+            # Clearing automation_run_id switches off unattended developer instructions
+            # and post-turn automation settlement while keeping source/automation_id for UI provenance.
             row.update(approved=None, pending_approval=None, pending_input=None, result="",
                        latest_turn_is_silent_heartbeat=False, automation_run_id=None)
             if row.get("fork"):
@@ -2883,6 +2885,7 @@ class AgentRuntime(AgentLoop):
             if "reasoning_effort" in value:
                 row["reasoning_effort"] = reasoning.validate(self._model_metadata(row["model_id"]), value["reasoning_effort"])
             row.update(status="paused", approved=None, pending_approval=None, pending_input=None,
+                       latest_turn_is_silent_heartbeat=False, automation_run_id=None,
                        pending_control={"kind": "edit_message", "message_index": index, "message": replacement})
             event(row, "message_edit_requested", message_index=index, operation_in_flight=bool(row["in_flight"]))
             close_queue(row, event, "agent_owner_changed")

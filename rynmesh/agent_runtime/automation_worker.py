@@ -9,7 +9,7 @@ import uuid
 from typing import Any
 
 from ..background_workers import WorkerRunResult
-from . import automations, budget
+from . import automations, budget, control, lifecycle
 from .data_policy import merge_state
 from .memory import invalidate_task_policy_in_tx
 from .prompt import PROMPT_VERSION, select_base_instructions
@@ -99,6 +99,67 @@ def _find_active_cron_task_id(
     return None
 
 
+_SKIP_REASON_SUMMARIES = {
+    "owner_paused": "目标对话已由主人暂停，跳过本次心跳",
+    "interrupted": "目标对话处于中断状态，跳过本次心跳",
+    "outcome_unknown": "目标对话存在未确认结果的写操作，跳过本次心跳",
+    "fork_pending": "分叉对话正在等待主人指令，跳过本次心跳",
+}
+
+
+def _advance_schedule(
+    item: dict[str, Any],
+    current_ms: int,
+    *,
+    store: Any = None,
+    run_count: int | None = None,
+) -> int | None:
+    salt = automations.ensure_jitter_salt(store) if store is not None else ""
+    eff_run_count = int(run_count if run_count is not None else (item.get("run_count") or 0))
+    next_ms = automations.compute_next_run_at(
+        str(item.get("rrule") or ""),
+        after_ms=current_ms,
+        salt=salt,
+        automation_id=str(item.get("id") or ""),
+        run_count=eff_run_count,
+    )
+    if next_ms is None:
+        item["status"] = "PAUSED"
+        item["next_run_at"] = None
+        item["next_run_at_iso"] = ""
+    elif str(item.get("status") or "ACTIVE") == "ACTIVE":
+        item["next_run_at"] = next_ms
+        item["next_run_at_iso"] = automations.ms_to_iso(next_ms)
+    return next_ms
+
+
+def _resolve_heartbeat_target(
+    store: Any,
+    data: dict[str, Any],
+    initial_task_id: str,
+) -> tuple[str, dict[str, Any] | None]:
+    tasks = data.get("tasks") or {}
+    archives = data.get("archives") or {}
+    deleted_tasks = data.get("deleted_tasks") or {}
+    curr_id = initial_task_id
+    visited: set[str] = set()
+    while curr_id and curr_id not in visited and len(visited) < 64:
+        visited.add(curr_id)
+        try:
+            curr_row = lifecycle.find(store, data, curr_id)
+        except AgentError:
+            return curr_id, None
+        next_id = str(curr_row.get("continued_to") or "").strip()
+        if next_id:
+            curr_id = next_id
+            continue
+        if curr_id in archives or curr_id in deleted_tasks or curr_id not in tasks:
+            return curr_id, None
+        row = tasks.get(curr_id)
+        return (curr_id, row) if isinstance(row, dict) else (curr_id, None)
+    return curr_id, None
+
+
 def trigger_automation_in_tx(
     runtime: Any,
     data: dict[str, Any],
@@ -137,8 +198,14 @@ def trigger_automation_in_tx(
     deleted_tasks = data.get("deleted_tasks") or {}
     now_str = now()
 
+    target_row: dict[str, Any] | None = None
     if kind == "heartbeat" and target_task_id:
-        if (target_task_id in archives or target_task_id in deleted_tasks or target_task_id not in tasks) and not force:
+        resolved_tid, resolved_row = _resolve_heartbeat_target(runtime.store, data, target_task_id)
+        if resolved_tid != target_task_id:
+            target_task_id = resolved_tid
+            item["target_task_id"] = target_task_id
+        target_row = resolved_row
+        if target_row is None and not force:
             item["status"] = "PAUSED"
             item["next_run_at"] = None
             item["next_run_at_iso"] = ""
@@ -151,13 +218,19 @@ def trigger_automation_in_tx(
                 "automation": automations.public_automation(runtime.store, item),
             }
 
-    if kind == "heartbeat" and target_task_id and isinstance(tasks.get(target_task_id), dict):
-        target_row = tasks[target_task_id]
+    if kind == "heartbeat" and target_task_id and isinstance(target_row, dict):
+        is_ambiguous = control.ambiguous(target_row)
+        if force and is_ambiguous:
+            raise AgentError("agent_operation_unresolved")
+        reconciling = control.reconciliation_active(target_row)
         is_busy = (
-            target_row.get("status") in {"queued", "running", "stopping", "waiting_approval", "waiting_input"}
-            or bool(target_row.get("in_flight"))
+            reconciling
+            or target_row.get("status") in {"queued", "running", "stopping", "waiting_approval", "waiting_input"}
             or bool(target_row.get("pending_approval"))
             or bool(target_row.get("pending_input"))
+            or (bool(target_row.get("pending_control")) and not is_ambiguous)
+            or bool(target_row.get("pending_user_messages"))
+            or (bool(target_row.get("in_flight")) and target_row.get("status") != "interrupted" and not is_ambiguous)
         )
         if is_busy and not force:
             defer_ms = current_ms + 60_000
@@ -166,6 +239,54 @@ def trigger_automation_in_tx(
             return {
                 "triggered": False,
                 "deferred": True,
+                "automation": automations.public_automation(runtime.store, item),
+            }
+
+        skip_reason: str | None = None
+        if not force:
+            if is_ambiguous:
+                skip_reason = "outcome_unknown"
+            elif bool((target_row.get("fork") or {}).get("awaiting_instruction")):
+                skip_reason = "fork_pending"
+            elif target_row.get("status") == "paused":
+                skip_reason = "owner_paused"
+            elif target_row.get("status") == "interrupted":
+                skip_reason = "interrupted"
+
+        if skip_reason is not None:
+            _advance_schedule(item, current_ms, store=runtime.store)
+            item["last_run_at"] = current_ms
+            item["last_run_at_iso"] = automations.ms_to_iso(current_ms)
+            item["last_run_status"] = "SKIPPED"
+            item["missed_runs"] = effective_missed
+            item["updated_at"] = now_str
+            automations.write_automation_files(runtime.store, item)
+
+            skip_record = {
+                "id": run_id,
+                "automation_id": target_id,
+                "automation_name": str(item.get("name") or ""),
+                "kind": "heartbeat",
+                "task_id": target_task_id,
+                "status": "SKIPPED",
+                "skip_reason": skip_reason,
+                "decision": "",
+                "inbox_title": str(item.get("name") or ""),
+                "inbox_summary": _SKIP_REASON_SUMMARIES.get(skip_reason, skip_reason),
+                "missed_runs": effective_missed,
+                "created_at": now_str,
+                "completed_at": now_str,
+                "updated_at": now_str,
+            }
+            data["automation_runs"][run_id] = skip_record
+            automations.prune_automation_runs_in_tx(data, target_id)
+            return {
+                "triggered": False,
+                "skipped": True,
+                "reason": skip_reason,
+                "deferred": False,
+                "run": skip_record,
+                "task_id": None,
                 "automation": automations.public_automation(runtime.store, item),
             }
 
@@ -218,21 +339,7 @@ def trigger_automation_in_tx(
     else:
         active_prev_tid = _find_active_cron_task_id(data, target_id, item) if not force else None
         if active_prev_tid:
-            salt = automations.ensure_jitter_salt(runtime.store)
-            next_ms = automations.compute_next_run_at(
-                str(item.get("rrule") or ""),
-                after_ms=current_ms,
-                salt=salt,
-                automation_id=target_id,
-                run_count=int(item.get("run_count") or 0),
-            )
-            if next_ms is None:
-                item["status"] = "PAUSED"
-                item["next_run_at"] = None
-                item["next_run_at_iso"] = ""
-            elif str(item.get("status") or "ACTIVE") == "ACTIVE":
-                item["next_run_at"] = next_ms
-                item["next_run_at_iso"] = automations.ms_to_iso(next_ms)
+            _advance_schedule(item, current_ms, store=runtime.store)
             item["last_run_at"] = current_ms
             item["last_run_at_iso"] = automations.ms_to_iso(current_ms)
             item["last_run_status"] = "SKIPPED_OVERLAP"
@@ -333,21 +440,7 @@ def trigger_automation_in_tx(
     item["last_task_id"] = spawned_task_id
     item["updated_at"] = now_str
 
-    salt = automations.ensure_jitter_salt(runtime.store)
-    next_ms = automations.compute_next_run_at(
-        str(item.get("rrule") or ""),
-        after_ms=current_ms,
-        salt=salt,
-        automation_id=target_id,
-        run_count=run_count,
-    )
-    if next_ms is None:
-        item["status"] = "PAUSED"
-        item["next_run_at"] = None
-        item["next_run_at_iso"] = ""
-    elif str(item.get("status") or "ACTIVE") == "ACTIVE":
-        item["next_run_at"] = next_ms
-        item["next_run_at_iso"] = automations.ms_to_iso(next_ms)
+    _advance_schedule(item, current_ms, store=runtime.store, run_count=run_count)
     automations.write_automation_files(runtime.store, item)
 
     run_record = {
@@ -404,6 +497,8 @@ class AutomationSchedulerWorker:
                 continue
             task = tasks.get(str(run.get("task_id") or ""))
             if isinstance(task, dict):
+                if str(task.get("automation_run_id") or "") != str(run.get("id") or ""):
+                    return True
                 t_status = task.get("status")
                 if t_status in automations.TERMINAL_TASK_STATUSES:
                     return True
@@ -441,6 +536,13 @@ class AutomationSchedulerWorker:
                     tid = str(run_rec.get("task_id") or "")
                     t_row = tasks.get(tid)
                     if isinstance(t_row, dict):
+                        if str(t_row.get("automation_run_id") or "") != str(run_rec.get("id") or ""):
+                            now_s = now()
+                            run_rec["status"] = "CANCELLED"
+                            run_rec["completed_at"] = now_s
+                            run_rec["updated_at"] = now_s
+                            changed = True
+                            continue
                         t_status = t_row.get("status")
                         if t_status in automations.TERMINAL_TASK_STATUSES:
                             automations.settle_automation_turn_in_tx(self.runtime.store, data, t_row)
