@@ -568,7 +568,7 @@ class ProviderService:
             raise TaskProtocolError(str(exc)) from None
         if messages is not None and not getattr(self.adapter, "supports_chat_messages", False):
             raise TaskProtocolError("requested prompt format is not supported by this adapter")
-        max_tokens = min(int(body.get("max_tokens") or 64), self.manifest.max_output_tokens)
+        max_tokens = min(int(body.get("max_tokens") or self.manifest.max_output_tokens), self.manifest.max_output_tokens)
         if max_tokens < 1:
             raise TaskProtocolError("max_tokens is invalid")
         if not context_request_fits(prompt, output_tokens=max_tokens, context_window=self.context_window_for_model(body.get("cli_model", ""))):
@@ -3338,18 +3338,28 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             decode_chat_prompt(prompt, prompt_format)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
-        try:
-            max_tokens = int(body.get("max_tokens") or 64)
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail="max_tokens must be a positive integer") from exc
-        if max_tokens < 1:
+        raw_max_tokens = body.get("max_tokens")
+        if isinstance(raw_max_tokens, bool):
             raise HTTPException(status_code=400, detail="max_tokens must be a positive integer")
+        if raw_max_tokens is None or raw_max_tokens == 0:
+            requested_max_tokens: int | None = None
+        else:
+            try:
+                requested_max_tokens = int(raw_max_tokens)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail="max_tokens must be a positive integer") from exc
+            if requested_max_tokens < 1:
+                raise HTTPException(status_code=400, detail="max_tokens must be a positive integer")
         if not provider_peer_id or not service_id or not prompt:
             raise HTTPException(status_code=400, detail="provider_peer_id, service_id, and prompt are required")
         if provider_peer_id == store.peer_id:
             local = provider_for(service_id)
             if local and (local.manifest.adapter in {"codex_cli", "claude_cli", "antigravity_cli"} or service_id in active_source_managers()):
-                return await execute_local_cli(body, local, prompt, max_tokens, chat)
+                local_max_tokens = min(
+                    int(requested_max_tokens or local.manifest.max_output_tokens),
+                    local.manifest.max_output_tokens,
+                )
+                return await execute_local_cli(body, local, prompt, local_max_tokens, chat)
         records = await asyncio.to_thread(discover, network_id, cache_registry=True,
                                          passive_registry="expected_model_binding" in body)
         external_resource = resource_of(body.get("expected_model_binding"))
@@ -3469,7 +3479,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 status_code=409,
                 detail="provider discovery record is missing required manifest fields",
             ) from exc
-        max_tokens = min(max_tokens, manifest.max_output_tokens)
+        max_tokens = min(int(requested_max_tokens or manifest.max_output_tokens), manifest.max_output_tokens)
         if not context_request_fits(prompt, output_tokens=max_tokens, context_window=manifest.context_window):
             raise HTTPException(
                 status_code=400,
@@ -4184,13 +4194,27 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 status_code=400,
                 detail="provider_peer_id, service_id, and prompt are required",
             )
-        try:
-            max_tokens = int(body.get("max_tokens") or 64)
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail="max_tokens must be a positive integer") from exc
-        if max_tokens < 1:
+        raw_max_tokens = body.get("max_tokens")
+        if isinstance(raw_max_tokens, bool):
             raise HTTPException(status_code=400, detail="max_tokens must be a positive integer")
-        body["max_tokens"] = max_tokens
+        if raw_max_tokens is None or raw_max_tokens == 0:
+            local_svc = (
+                provider_for(str(body.get("service_id") or ""))
+                if str(body.get("provider_peer_id") or "") == store.peer_id
+                else None
+            )
+            if local_svc is not None:
+                body["max_tokens"] = int(raw_max_tokens or local_svc.manifest.max_output_tokens)
+            else:
+                body.pop("max_tokens", None)
+        else:
+            try:
+                max_tokens = int(raw_max_tokens)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail="max_tokens must be a positive integer") from exc
+            if max_tokens < 1:
+                raise HTTPException(status_code=400, detail="max_tokens must be a positive integer")
+            body["max_tokens"] = max_tokens
         task_id = str(body.get("task_id") or ("task_" + uuid.uuid4().hex))
         try:
             existing = consumer_orders.get(task_id)

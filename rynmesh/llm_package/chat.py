@@ -184,13 +184,15 @@ def validate_prompt_cache_key(value: Any) -> str:
     return value
 
 
-def validate_chat(value: dict[str, Any]) -> dict[str, Any]:
-    allowed = {"messages", "max_tokens", "temperature", "top_p", "stop", "tools", "tool_choice", "stream", "enable_thinking", "chat_template_kwargs", "reasoning_effort", "prompt_cache_key"}
+def validate_chat(value: dict[str, Any], *, default_max_tokens: int | None = 512) -> dict[str, Any]:
+    allowed = {"messages", "max_tokens", "temperature", "top_p", "stop", "tools", "tool_choice", "stream", "enable_thinking", "chat_template_kwargs", "reasoning_effort", "prompt_cache_key", "parallel_tool_calls"}
     if set(value) - allowed:
         raise ValueError("unsupported chat parameters: " + ", ".join(sorted(set(value) - allowed)))
     body = copy.deepcopy(value)
     if "prompt_cache_key" in body:
         validate_prompt_cache_key(body["prompt_cache_key"])
+    if "parallel_tool_calls" in body and type(body["parallel_tool_calls"]) is not bool:
+        raise ValueError("parallel_tool_calls must be boolean")
     if "reasoning_effort" in body:
         validate_effort(body["reasoning_effort"])
     if "chat_template_kwargs" in body:
@@ -310,10 +312,11 @@ def validate_chat(value: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("missing tool results")
     if active_profile is not None:
         verify_messages_against_profile(messages, active_profile)
-    tokens = body.get("max_tokens", 512)
-    if type(tokens) is not int or not 1 <= tokens <= 393216:
-        raise ValueError("max_tokens must be a positive integer <= 393216")
-    body["max_tokens"] = tokens
+    if "max_tokens" in body or default_max_tokens is not None:
+        tokens = body.get("max_tokens", default_max_tokens)
+        if type(tokens) is not int or not 1 <= tokens <= 393216:
+            raise ValueError("max_tokens must be a positive integer <= 393216")
+        body["max_tokens"] = tokens
     if type(body.get("stream", False)) is not bool:
         raise ValueError("stream must be boolean")
     for key, limit in (("temperature", 2), ("top_p", 1)):
@@ -496,6 +499,31 @@ def reported_token_count(value: Any) -> int | None:
     return value if type(value) is int and value >= 0 else None
 
 
+def _reasoning_tokens(result: dict[str, Any]) -> int | None:
+    if not isinstance(result, dict):
+        return None
+    direct = reported_token_count(result.get("reasoning_tokens"))
+    if direct is not None:
+        return direct
+    rep = result.get("reported_usage")
+    if isinstance(rep, dict):
+        from_rep = reported_token_count(rep.get("reasoning_tokens"))
+        if from_rep is not None:
+            return from_rep
+    raw_usage = result.get("usage")
+    if isinstance(raw_usage, dict):
+        for detail_key in ("completion_tokens_details", "output_tokens_details"):
+            details = raw_usage.get(detail_key)
+            if isinstance(details, dict):
+                val = reported_token_count(details.get("reasoning_tokens"))
+                if val is not None:
+                    return val
+        from_usage = reported_token_count(raw_usage.get("reasoning_tokens"))
+        if from_usage is not None:
+            return from_usage
+    return None
+
+
 def completion(result: dict[str, Any], model: str, request_id: str) -> dict[str, Any]:
     counts = actual_usage(result)
     usage: dict[str, Any] = {"prompt_tokens": counts["input_tokens"], "completion_tokens": counts["output_tokens"]}
@@ -504,6 +532,9 @@ def completion(result: dict[str, Any], model: str, request_id: str) -> dict[str,
     cached = cached_input_tokens(result)
     if cached is not None and usage["prompt_tokens"] is not None:
         usage["prompt_tokens_details"] = {"cached_tokens": cached}
+    reasoning = _reasoning_tokens(result)
+    if reasoning is not None and usage["completion_tokens"] is not None:
+        usage["completion_tokens_details"] = {"reasoning_tokens": reasoning}
     message = copy.deepcopy(result.get("message") or {"role": "assistant", "content": result.get("output", result.get("text", ""))})
     message.pop("provider_state", None)
     return {"id": "chatcmpl-" + request_id, "object": "chat.completion", "created": int(time.time()),
