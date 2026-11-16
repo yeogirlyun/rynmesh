@@ -459,6 +459,9 @@ def _legacy_untruncated_guidance(row: dict, full_text: str) -> str:
         "Fix the cause, not the symptom; follow the repository's existing patterns; keep the change "
         "to what was asked; mention unrelated problems instead of fixing them."
     )
+    rules.append(
+        "Batch independent final checks in one response; repeat only after changes, failure or unresolved uncertainty."
+    )
     rules_block = "\n".join(rules)
     scope_rule = (
         "AGENTS.md rules apply to their directory tree; a deeper file wins over a higher one, "

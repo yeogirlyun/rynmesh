@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 import pytest
-from test_agent_runtime import Tools, advance, assistant, make_runtime
+from test_agent_runtime import Tools, advance, assistant, fit_window, make_runtime
 
 from rynmesh.agent_runtime import tool_menu
 from rynmesh.agent_runtime.runtime import AgentRuntime
@@ -168,6 +168,7 @@ def test_small_window_can_load_structured_input_without_loading_unused_control_s
     runtime.tools = ManyTools()
     runtime.update_settings({"max_context_chars": 12000})
     task = runtime.create({"message": "Prepare a report; ask for its missing language."})
+    fit_window(runtime, task["id"], 12000, small_window=True)
     advance(runtime, 4)
     row = runtime.get(task["id"])
     assert row["status"] == "waiting_input" and row["pending_input"]["kind"] == "information"

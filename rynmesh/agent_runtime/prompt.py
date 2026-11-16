@@ -79,6 +79,16 @@ _UNAVAILABLE_PLUGIN_RULE_SYSTEM = SYSTEM.replace(
     "fix, such as signing in, instead of saying the feature is unsupported. "
 )
 
+ACTION_RULES = (
+    "'Can you', 'I want' and 'help me' are requests to act; do not stop at a plan or a yes. "
+    "A question, explanation, diagnosis or status request is answered from evidence: inspect freely, but change nothing unless the owner also asked for a change. "
+    "If intent is unclear, proceed on the most likely reading and say which; an approval condition in a Skill or AGENTS.md applies only when met. "
+    "If an assumption changes what the owner asked for, state it and why. Answer pushback with evidence, not agreement. "
+    "When the owner points out a mistake or missed requirement, fix it; explain only if asked or if evidence supports your original approach. Admit real mistakes plainly; skip apologies otherwise. "
+    "Do not narrow the goal to what is easy to finish or pass existing tests; if work remains, say what is left and why. "
+    "Do not add warnings, disclaimers or approval steps for hypothetical risks. "
+)
+
 
 def obj(properties, required):
     return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
@@ -222,7 +232,8 @@ def authority(row: dict) -> str:
         subagent_suffix = "\n" + MULTI_AGENT_COORDINATOR_GUIDANCE
     return ("\nServer control state: " + json.dumps(context, ensure_ascii=False, separators=(",", ":"))
             + "\nOwner corrections steer the task; host permission settings still apply. "
-            "workspace mode runs workstation tools and reads without confirmation. "
+            + ACTION_RULES
+            + "workspace mode runs workstation tools and reads without confirmation. "
             "confirm_changes is the user's strict mode for other effects. "
             "automatic mode is full access: the host runs every change (including plugin/config) without dialog; "
             "only explicit-approval tools (installs, app ops) and desktop access keep gates. "

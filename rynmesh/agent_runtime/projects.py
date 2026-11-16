@@ -465,6 +465,9 @@ ENGINEERING_RULE = (
     "Fix the cause, not the symptom; follow the repository's existing patterns; keep the change "
     "to what was asked; mention unrelated problems instead of fixing them."
 )
+TEST_HYGIENE_RULE = (
+    "Batch independent final checks in one response; repeat only after changes, failure or unresolved uncertainty."
+)
 AGENTS_MD_SCOPE_RULE = (
     "AGENTS.md rules apply to their directory tree; a deeper file wins over a higher one, "
     "and the owner's direct instructions win over both."
@@ -496,7 +499,11 @@ def guidance(row):
         f"  <project>{json.dumps(info, ensure_ascii=False, separators=(',', ':'))}</project>\n"
         "</environment_context>"
     )
-    rules = [GIT_SAFETY_RULE, ENGINEERING_RULE] if _project_is_git(project) else [ENGINEERING_RULE]
+    rules = (
+        [GIT_SAFETY_RULE, ENGINEERING_RULE, TEST_HYGIENE_RULE]
+        if _project_is_git(project)
+        else [ENGINEERING_RULE, TEST_HYGIENE_RULE]
+    )
     prefix = f"{env_block}\n\n" + "\n".join(rules)
     sliced = _instructions_slice(row)
     if sliced is None:

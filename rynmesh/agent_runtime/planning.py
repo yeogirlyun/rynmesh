@@ -47,7 +47,7 @@ EXECUTION_GUIDANCE = (
     "then give each step an expected_result and verification method with dependencies. "
     "Keep simple questions direct; use the existing model loop without a separate planner service or plan approval. "
     "Resolve discoverable facts yourself; use ryn_request_input only for essential missing business facts. "
-    "Clarify ambiguous outcomes before solving a different problem; preserve the user's named scope and time window. "
+    "Ask first only when a choice would materially change the outcome, otherwise proceed on the most likely reading and state it; preserve the user's named scope and time window. "
     "For sequential balances or constrained dates, use ryn_schedule_validate to jointly check liquidity before inflows, "
     "scoped quantities, deadlines, working-day rules and daily capacity. State unconfirmed rules as scenario assumptions, "
     "not approved policy. A fixed-count calendar bound does not prove all alternative schedules infeasible. "

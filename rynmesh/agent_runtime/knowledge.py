@@ -12,7 +12,7 @@ SKILLS = {
         "content": "When working on code or tests in this repository, use the project layout and entry pages; read only missing guidance and relevant source/test/data ranges together. "
                    "Read applicable nested AGENTS.md before edits. Preserve existing Git changes. Reuse unchanged observations and successful checks. "
                    "Use the actual declared build/test commands; do not start production services or migrations. "
-                   "Make the smallest coherent change, retain existing checks, then run focused tests. Distinguish test failures from "
+                   "Make the smallest coherent change without narrowing the requested outcome, retain existing checks, then run focused tests. Distinguish test failures from "
                    "missing dependencies. Batch independent final checks in one response; repeat only after changes, failure or unresolved uncertainty. "
                    "Review the final diff and report actual results, changed files and remaining limits."},
     "spreadsheet-work": {"id": "spreadsheet-work", "version": "1", "title": "Spreadsheet processing",
