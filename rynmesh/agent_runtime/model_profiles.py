@@ -84,12 +84,14 @@ class Profile:
     revision: int
     routes: frozenset | None  # None fits every route
     notes: tuple  # ((note_id, text), ...)
+    progress_placement: str = "tail"
 
 
 PROFILES = {
-    "generic": Profile("generic", 1, None, ()),
+    "generic": Profile("generic", 1, None, (), progress_placement="tail"),
     "codex-cli": Profile("codex-cli", 1, frozenset({"codex_cli"}),
-                         (("codex_backend_tools", CODEX_BACKEND_TOOLS),)),
+                         (("codex_backend_tools", CODEX_BACKEND_TOOLS),),
+                         progress_placement="header"),
 }
 
 
@@ -146,7 +148,8 @@ def resolve(model: dict | None, *, override=None) -> dict:
     text = HEADER + "".join("\n- " + body for _, body in notes) if notes else ""
     return {"catalog": CATALOG, "profile": profile.id, "revision": profile.revision, "basis": basis,
             "route": route, "fallback_reason": fallback_reason, "override_status": override_status,
-            "notes": [note_id for note_id, _ in notes], "instructions": text}
+            "notes": [note_id for note_id, _ in notes], "instructions": text,
+            "progress_placement": profile.progress_placement}
 
 
 def overrides_from(settings) -> dict:

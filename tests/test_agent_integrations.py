@@ -273,7 +273,7 @@ def test_real_bridge_invalid_control_proposal_is_rejected_and_model_can_correct(
         {key: item[key] for key in authority_fields} for item in row["criteria"]]
     assert done["criteria"][0]["status"] == "unknown" and not done["plan"]["steps"]
     assert len(requests) == 5
-    assert "agent_invalid_control_proposal" in requests[1]["messages"][-1]["content"]
+    assert "agent_invalid_control_proposal" in requests[1]["messages"][-2]["content"]
 
 
 def test_real_bridge_keeps_business_tool_argument_validation(node, monkeypatch):
@@ -402,7 +402,7 @@ def test_runtime_real_tools_preview_approval_change_and_verify(node, monkeypatch
     done = runtime.get(task["id"])
     assert done["status"] == "completed", done
     assert sources.read()[record["id"]]["shared_models"] == ["model-a"]
-    evidence = json.loads(requests[-2]["messages"][-1]["content"])
+    evidence = json.loads(requests[-2]["messages"][-2]["content"])
     assert [row["sharing"] for row in evidence["models"]] == [True, False]
     assert "secret-do-not-export" not in json.dumps(done)
     assert all(not request.get("stream") for request in requests)

@@ -209,8 +209,8 @@ def test_t7_prefix_reuse_compaction_request_matches_previous_normal_request_byte
     assert compact_msgs[-1]["role"] == "user"
     assert "Do not call tools" in compact_msgs[-1]["content"]
     assert compact_specs == normal_specs and len(compact_specs) > 0
-    prefix_n = min(len(normal_msgs), len(compact_msgs) - 1)
-    assert prefix_n == len(normal_msgs) or prefix_n > 2
+    prefix_n = min(len(normal_msgs) - 1, len(compact_msgs) - 1)
+    assert prefix_n == len(normal_msgs) - 1 or prefix_n > 2
     assert encoded(compact_msgs[:prefix_n]) == encoded(normal_msgs[:prefix_n])
 
 

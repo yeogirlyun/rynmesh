@@ -50,6 +50,7 @@ from .prompt import (
     INTERNAL_SPECS,
     instruction_layers,
     plan_message,
+    progress_message,
     provider_messages,
 )
 from .protocol import digest, event, event_result, model_retry_authority, now, sanitized, task
@@ -933,33 +934,39 @@ class AgentLoop:
         history = self._history(row)
         through = int((checkpoint or {}).get("through") or 0)
         uncompacted_history = history[through:] if through > 0 else history
-        last_user_idx = max(
-            (idx for idx, msg in enumerate(uncompacted_history) if _is_owner_user_message(msg)),
-            default=-1,
-        )
-        active_turn_history = uncompacted_history[last_user_idx + 1:] if last_user_idx >= 0 else uncompacted_history
-        plan_updates_in_active_history = sum(
-            1
-            for msg in active_turn_history if isinstance(msg, dict) and msg.get("role") == "assistant"
-            for tc in (msg.get("tool_calls") or [])
-            if isinstance(tc, dict) and (tc.get("function") or {}).get("name") == "ryn_update_plan"
-        )
-        prefix_row = (
-            {
-                **row,
-                "plan": {
-                    **(row.get("plan") or {}),
-                    "revision": max(0, int((row.get("plan") or {}).get("revision") or 0) - plan_updates_in_active_history),
-                    "steps": [],
-                },
-            }
-            if plan_updates_in_active_history > 0 and isinstance(row.get("plan"), dict)
-            else row
-        )
-        if row.get("plan", {}).get("track_execution"):
-            # Legacy prefix stabilization can hide steps/revisions already in
-            # history. Receipt IDs and actionable progress must still be current.
-            prefix_row = {**prefix_row, "_current_planning_state": planning.projection(row)}
+        # Resolved per request from the current model, never pinned in the task.
+        profile = model_profiles.for_task(self, row)
+        placement = profile["progress_placement"]
+        if placement == "header":
+            last_user_idx = max(
+                (idx for idx, msg in enumerate(uncompacted_history) if _is_owner_user_message(msg)),
+                default=-1,
+            )
+            active_turn_history = uncompacted_history[last_user_idx + 1:] if last_user_idx >= 0 else uncompacted_history
+            plan_updates_in_active_history = sum(
+                1
+                for msg in active_turn_history if isinstance(msg, dict) and msg.get("role") == "assistant"
+                for tc in (msg.get("tool_calls") or [])
+                if isinstance(tc, dict) and (tc.get("function") or {}).get("name") == "ryn_update_plan"
+            )
+            prefix_row = (
+                {
+                    **row,
+                    "plan": {
+                        **(row.get("plan") or {}),
+                        "revision": max(0, int((row.get("plan") or {}).get("revision") or 0) - plan_updates_in_active_history),
+                        "steps": [],
+                    },
+                }
+                if plan_updates_in_active_history > 0 and isinstance(row.get("plan"), dict)
+                else row
+            )
+            if row.get("plan", {}).get("track_execution"):
+                # Legacy prefix stabilization can hide steps/revisions already in
+                # history. Receipt IDs and actionable progress must still be current.
+                prefix_row = {**prefix_row, "_current_planning_state": planning.projection(row)}
+        else:
+            prefix_row = row
         if not (row.get("scope") or {}).get("resource_grants") and "selection" not in (row.get("scope") or {}):
             exec_ctx = self._execution_context(row)
             if exec_ctx.get("resource_grants"):
@@ -976,12 +983,12 @@ class AgentLoop:
         auto_note = automations.automation_developer_instructions(self.store, row)
         plugin_note = self._plugin_note(row)
         host_memory_note = "\n".join(note for note in (host_memory_note, capture_note, auto_note, plugin_note) if note) or None
-        # Resolved per request from the current model, never pinned in the task.
-        model_notes = model_profiles.for_task(self, row)["instructions"]
+        model_notes = profile["instructions"]
         instructions = instruction_layers(prefix_row, persisted_base=row.get("base_instructions"),
                                           model_notes=model_notes,
                                           developer_instructions=host_memory_note,
-                                          project_guidance=projects.guidance(row))
+                                          project_guidance=projects.guidance(row),
+                                          progress_placement=placement)
         guidance, memory_selection = memory_integration.select_guidance_and_memory(self, row)
         # The retry after a structurally invalid response is told what was wrong, once, so that the
         # identical invalid call is not simply generated again (nothing in it was executed).
@@ -994,6 +1001,9 @@ class AgentLoop:
                       + rejection + ". Continue with a valid tool call or a plain answer, using recorded results."}] if rejection else [])
             pending_subagent_messages = subagents.pending_for_request(row)
             tail.extend(pending_subagent_messages)
+            if placement == "tail":
+                tail.extend(plan_message(row))
+                tail.append(progress_message(row))
         has_history_reasoning = any(
             isinstance(m, dict) and m.get("role") == "assistant" and "reasoning_content" in m
             for m in history
@@ -1082,12 +1092,13 @@ class AgentLoop:
 
         def build(extra_mem: list[dict]) -> list[dict]:
             combined_guidance = [*(guidance or []), *extra_mem]
+            prefix_plan = plan_message(prefix_row) if placement == "header" else ()
             if not checkpoint:
                 built = provider_messages(request_context.build_context(instructions, history, guidance=combined_guidance,
-                                                                        plan=plan_message(prefix_row), tail=tail))
+                                                                        plan=prefix_plan, tail=tail))
             else:
                 built = provider_messages(request_context.build_context(instructions, history, guidance=combined_guidance,
-                                                                        plan=plan_message(prefix_row), checkpoint=checkpoint,
+                                                                        plan=prefix_plan, checkpoint=checkpoint,
                                                                         checkpoint_note=note, tail=tail,
                                                                         owner_budget=owner_budget))
             if has_history_reasoning:
