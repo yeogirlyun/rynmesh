@@ -24,6 +24,12 @@ MAX_FILES = 8
 MAX_IMAGES = 4
 MAX_FILE_BYTES = 10 * 1024 * 1024
 MAX_TOTAL_BYTES = 20 * 1024 * 1024
+ATTACHMENT_LIMITS = {
+    "count": MAX_FILES,
+    "images": MAX_IMAGES,
+    "file_bytes": MAX_FILE_BYTES,
+    "total_bytes": MAX_TOTAL_BYTES,
+}
 MAX_IMAGE_BYTES = 96 * 1024
 MAX_EXCERPT = 12000
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff"}
@@ -60,7 +66,11 @@ def parse_attachments(value):
     if value is None:
         return None
     if not isinstance(value, list) or len(value) > MAX_FILES:
-        raise AgentError("agent_attachment_limit")
+        offending = ""
+        if isinstance(value, list) and len(value) > MAX_FILES and isinstance(value[MAX_FILES], dict):
+            raw_name = value[MAX_FILES].get("name")
+            offending = raw_name if isinstance(raw_name, str) else ""
+        raise AgentError("agent_attachment_limit", details={"limit": "count", "name": offending, "max": MAX_FILES})
     result, total, images = [], 0, 0
     for item in value:
         if not isinstance(item, dict) or set(item) - {"name", "media_type", "data_base64", "path"}:
@@ -79,30 +89,46 @@ def parse_attachments(value):
                 raise AgentError("agent_invalid_attachment")
             source = Path(path)
             try:
-                if not source.is_absolute() or not source.is_file():
+                if not source.is_absolute():
                     raise AgentError("agent_attachment_unavailable")
-                if source.stat().st_size > MAX_FILE_BYTES:
-                    raise AgentError("agent_attachment_limit")
+                if source.is_dir():
+                    raise AgentError("agent_attachment_directory")
+                if not source.is_file():
+                    raise AgentError("agent_attachment_unavailable")
+                stat_size = source.stat().st_size
+                if stat_size > MAX_FILE_BYTES:
+                    result.append({
+                        "name": name,
+                        "media_type": mime,
+                        "path": str(source.resolve()),
+                        "size": stat_size,
+                        "reference_only": True,
+                    })
+                    continue
                 with source.open("rb") as stream:
                     raw = stream.read(MAX_FILE_BYTES + 1)
             except OSError:
                 raise AgentError("agent_attachment_unavailable") from None
         else:
             data = item["data_base64"]
-            if not isinstance(data, str) or len(data) > (MAX_FILE_BYTES + 2) // 3 * 4:
-                raise AgentError("agent_attachment_limit")
+            if not isinstance(data, str):
+                raise AgentError("agent_invalid_attachment")
+            if len(data) > (MAX_FILE_BYTES + 2) // 3 * 4:
+                raise AgentError("agent_attachment_limit", details={"limit": "file_bytes", "name": name, "max": MAX_FILE_BYTES})
             try:
                 raw = base64.b64decode(data, validate=True)
             except (ValueError, binascii.Error):
                 raise AgentError("agent_invalid_attachment") from None
+        if len(raw) > MAX_FILE_BYTES:
+            raise AgentError("agent_attachment_limit", details={"limit": "file_bytes", "name": name, "max": MAX_FILE_BYTES})
         total += len(raw)
-        if len(raw) > MAX_FILE_BYTES or total > MAX_TOTAL_BYTES:
-            raise AgentError("agent_attachment_limit")
+        if total > MAX_TOTAL_BYTES:
+            raise AgentError("agent_attachment_limit", details={"limit": "total_bytes", "name": name, "max": MAX_TOTAL_BYTES})
         image = mime.startswith("image/") or Path(name).suffix.lower() in IMAGE_SUFFIXES
         if image:
             images += 1
             if images > MAX_IMAGES:
-                raise AgentError("agent_attachment_limit")
+                raise AgentError("agent_attachment_limit", details={"limit": "images", "name": name, "max": MAX_IMAGES})
         result.append({"name": name, "media_type": mime, "raw": raw,
                        **({"image_url": _image(raw)} if image else {})})
     return result
@@ -170,18 +196,44 @@ def _directory(store, row):
     return directory
 
 
+def _in_allowed_roots(store, row, target_path: str) -> bool:
+    local_exec = row.get("local_execution") or {}
+    roots = [local_exec.get("workspace_root") or store.default_workspace()]
+    for extra in local_exec.get("extra_roots") or ():
+        extra_path = extra.get("path") if isinstance(extra, dict) else extra
+        if isinstance(extra_path, str) and extra_path:
+            roots.append(extra_path)
+    resolved_target = Path(target_path).resolve()
+    for root_str in roots:
+        if root_str and resolved_target.is_relative_to(Path(root_str).resolve()):
+            return True
+    return False
+
+
 def attach_to_message(store, row, message, prepared):
     """Mutate a new owner message; None reuses its existing attachment records."""
     content = message["content"]
     message.setdefault("ui", {"kind": "message", "text": content})
     if prepared is not None:
         files = []
+        needs_copy = any(not item.get("reference_only") for item in prepared)
         try:
-            directory = _directory(store, row) if prepared else None
+            directory = _directory(store, row) if needs_copy else None
         except OSError:
             raise AgentError("agent_attachment_storage_unavailable") from None
         for item in prepared:
             attachment_id = "attachment_" + uuid.uuid4().hex
+            if item.get("reference_only"):
+                files.append({
+                    "id": attachment_id,
+                    "name": item["name"],
+                    "media_type": item["media_type"],
+                    "size": item["size"],
+                    "path": item["path"],
+                    "sha256": "",
+                    "reference_only": True,
+                })
+                continue
             safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", item["name"]).rstrip(" .")[:160] or "file"
             path = directory / (attachment_id[11:23] + "_" + safe_name)
             try:
@@ -199,7 +251,13 @@ def attach_to_message(store, row, message, prepared):
     left = MAX_EXCERPT
     for index, file in enumerate(files):
         lines.append(f'{index + 1}. {file["name"]} ({file["media_type"]}, {file["size"]} bytes), local path: {file["path"]}')
-        raw = next((item["raw"] for item in prepared or [] if item["name"] == file["name"] and hashlib.sha256(item["raw"]).hexdigest() == file["sha256"]), None)
+        if file.get("reference_only"):
+            note = f'大文件未复制，原路径: {file["path"]}，请用文件/命令工具按需读取'
+            if row.get("permission_mode") != "automatic" and not _in_allowed_roots(store, row, file["path"]):
+                note += "；该路径不在工作区且任务非自动档，需切到自动处理或添加额外工作目录后才能读取。"
+            lines.append(note)
+            continue
+        raw = next((item["raw"] for item in prepared or [] if not item.get("reference_only") and item["name"] == file["name"] and hashlib.sha256(item["raw"]).hexdigest() == file["sha256"]), None)
         if raw is None and not file.get("image_url"):
             try:
                 path = Path(file["path"])

@@ -125,7 +125,12 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
                     failure("api_conflict_snapshot", current_error)
                     pass
                 else:
-                    return JSONResponse({"detail": code, "current": current}, status_code=409)
+                    return JSONResponse(
+                        {"detail": code, "current": current, **({"details": exc.details} if getattr(exc, "details", None) else {})},
+                        status_code=409,
+                    )
+            if getattr(exc, "details", None):
+                return JSONResponse({"detail": code, "details": exc.details}, status_code=status)
             raise HTTPException(status, detail=code) from None
         except Exception as exc:
             failure("api_" + method, exc, elapsed_seconds=time.monotonic() - started)
@@ -152,10 +157,13 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
     from .file_review_routes import install_file_review_routes
     install_file_review_routes(app, runtime, local_control, body)
 
+    from .input_attachments import ATTACHMENT_LIMITS
+
     @app.get("/api/local/agent/settings")
     async def settings(request: Request):
         local_control(request)
-        return await call("settings")
+        result = await call("settings")
+        return {**result, "attachment_limits": dict(ATTACHMENT_LIMITS)} if isinstance(result, dict) else result
 
     @app.get("/api/local/agent/computer/status")
     async def computer_status(request: Request):
@@ -164,7 +172,8 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
 
     @app.put("/api/local/agent/settings")
     async def update_settings(request: Request):
-        return await call("update_settings", await body(request))
+        result = await call("update_settings", await body(request))
+        return {**result, "attachment_limits": dict(ATTACHMENT_LIMITS)} if isinstance(result, dict) else result
 
     @app.post("/api/local/agent/tasks/{task_id}/workspace")
     async def bind_workspace(task_id: str, request: Request):

@@ -184,6 +184,8 @@ def _copy_references(runtime, source, child):
             _check_portable(payload, runtime)
             todo.update(_result_ids(payload))
         for attachment in message.get("attachments", []):
+            if attachment.get("reference_only"):
+                continue
             old = str(attachment.get("path", ""))
             if old in paths:
                 continue
