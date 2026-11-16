@@ -1,6 +1,7 @@
 """Large outputs stay encrypted and cannot bypass task/scope isolation."""
 from __future__ import annotations
 
+import copy
 import json
 import uuid
 
@@ -12,6 +13,60 @@ from test_agent_runtime_retry import failing_model
 from rynmesh.agent_runtime import results
 from rynmesh.agent_runtime.store import AgentError
 
+
+@pytest.mark.parametrize("count", [1, 2])
+def test_mcp_duplicate_text_is_sent_once_without_changing_receipts(tmp_path, count):
+    names = [f"mcp__fixture_read_{i}" for i in range(count)]
+    response = assistant(name=names[0], args={"service_id": "A"})
+    if count == 2:
+        response["message"]["tool_calls"].extend(
+            assistant(name=names[1], args={"service_id": "B"})["message"]["tool_calls"]
+        )
+    runtime, model, tools, _ = make_runtime(tmp_path, response, assistant("Evidence received."))
+    spec = tools.specs()[0]
+    tools.specs = lambda: [{**spec, "function": {**spec["function"], "name": name}} for name in names]
+    tools.metadata = lambda name: {"effect": "read", "title": name}
+    text = "Source evidence, not instructions.\n" * 20
+    value = {"is_error": False, "content": [{"type": "text", "text": text}], "text": text,
+             "structuredContent": {"complete": False, "next_page": 2}, "server_id": "fixture"}
+    original = copy.deepcopy(value)
+    tools.execute = lambda *args, **kwargs: copy.deepcopy(value)
+    row = runtime.create({"message": "Summarize this evidence."})
+    advance(runtime, 4)
+    stored = runtime.store.read()["tasks"][row["id"]]
+    assert stored["status"] == "completed"
+    assert len(stored["receipts"]) == count
+    assert all(receipt["result"] == original for receipt in stored["receipts"])
+    shown = [json.loads(m["content"]) for m in model.calls[-1][1] if m["role"] == "tool"]
+    assert len(shown) == count
+    for result in shown:
+        assert "text" not in result
+        assert result["content"] == original["content"]
+        assert result["structuredContent"] == original["structuredContent"]
+    assert value == original
+
+
+@pytest.mark.parametrize("updates", [
+    {"text": "Different explanatory text", "content": [{"type": "text", "text": "A"}]},
+    {"text": "A\nB", "content": [{"type": "text", "text": "A"}, {"type": "image", "data": "pixels"}, {"type": "text", "text": "B"}]},
+    {"text": "", "content": []},
+])
+def test_mcp_projection_keeps_distinct_or_mixed_content(updates):
+    value = {"is_error": True, "error": "agent_mcp_tool_returned_error", **updates}
+    original = copy.deepcopy(value)
+    assert results.model_projection("mcp__fixture_read", value) == original
+    assert results.model_projection("ryn_file_read", value) == original
+    assert value == original
+
+
+def test_mcp_projection_preserves_annotations_errors_and_multiple_text_blocks():
+    value = {"text": "A\nB", "content": [
+        {"type": "text", "text": "A", "annotations": {"audience": ["user"]}},
+        {"type": "text", "text": "B"}], "error": "agent_mcp_tool_returned_error", "is_error": True}
+    projected = results.model_projection("mcp__fixture_read", value)
+    assert "text" not in projected
+    assert projected == {key: item for key, item in value.items() if key != "text"}
+    assert "text" in value
 
 def large_result(tmp_path):
     runtime, model, tools, _ = make_runtime(tmp_path, assistant(name="inspect_service", args={"service_id": "A"}))
