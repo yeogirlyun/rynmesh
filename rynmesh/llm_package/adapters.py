@@ -355,7 +355,7 @@ class OpenAICompatibleAdapter:
              _probe_prompt_cache_key: bool = False) -> dict[str, Any]:
         # Runtime staging reads package metadata with stdlib-only Python.
         # Load structured-chat dependencies only when a chat is requested.
-        from .chat import ChatAccumulator, validate_chat
+        from .chat import ChatAccumulator, new_call_id_nonce, normalize_message_tool_calls, validate_chat
 
         if timeout_s is not None and (
             isinstance(timeout_s, bool)
@@ -427,18 +427,19 @@ class OpenAICompatibleAdapter:
                                 reported_usage=received_usage, finish_reason=received_finish, diagnostics=diagnostics)
 
         phase = "request"
+        call_id_nonce = new_call_id_nonce()
         try:
             if not streaming:
                 raw = self._json("/v1/chat/completions", body, read_timeout(), task_id=task_id, classify_errors=True)
                 choice = raw["choices"][0]
-                message = choice["message"]
+                message = normalize_message_tool_calls(choice["message"], call_id_nonce)
                 usage = raw.get("usage") or {}
                 finish = choice.get("finish_reason") or "stop"
                 received_usage, received_finish = observed_usage(usage), choice.get("finish_reason")
             else:
                 request = urllib.request.Request(self._endpoint("/v1/chat/completions"),
                                                  data=json.dumps(body).encode(), headers=self._headers())
-                accumulator = ChatAccumulator()
+                accumulator = ChatAccumulator(nonce=call_id_nonce)
                 with model_urlopen(request, timeout=read_timeout()) as response:
                     phase = "read"
                     last_byte = time.monotonic()
@@ -454,7 +455,8 @@ class OpenAICompatibleAdapter:
                             raise AdapterError("local API response exceeded 4 MiB")
                         payload = json.loads(raw)
                         choice = payload["choices"][0]
-                        message, usage = choice["message"], payload.get("usage") or {}
+                        message = normalize_message_tool_calls(choice["message"], call_id_nonce)
+                        usage = payload.get("usage") or {}
                         finish = choice.get("finish_reason") or "stop"
                         received_usage, received_finish = observed_usage(usage), choice.get("finish_reason")
                     total = 0
@@ -509,10 +511,10 @@ class OpenAICompatibleAdapter:
                             choices = chunk.get("choices")
                             if isinstance(choices, list) and choices and isinstance(choices[0], dict):
                                 received_finish = choices[0].get("finish_reason") or received_finish
-                        accumulator.add(chunk)
+                        normalized_chunk = accumulator.add(chunk)
                         if on_event:
                             try:
-                                on_event(chunk)
+                                on_event(normalized_chunk)
                             except AdapterError:
                                 raise
                             except Exception:

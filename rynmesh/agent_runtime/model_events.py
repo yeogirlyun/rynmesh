@@ -197,6 +197,8 @@ class ModelEventStream:
                 call = self.calls.setdefault(index, {"id": "", "type": "function",
                                                       "function": {"name": "", "arguments": ""}})
                 if fragment.get("id"):
+                    if call["id"] and call["id"] != fragment["id"]:
+                        raise ModelEventError("tool fragment id changed")
                     call["id"] = fragment["id"]
                 for field in ("type", "namespace"):
                     if field in fragment:

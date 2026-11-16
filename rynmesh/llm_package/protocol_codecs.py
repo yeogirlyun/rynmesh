@@ -14,6 +14,7 @@ import math
 import re
 from typing import Any
 
+from .chat import new_call_id_nonce, normalize_call_id
 from .image_input_profile import (
     current_internal_image_profile,
     project_protocol_request_without_admitted_images,
@@ -126,24 +127,32 @@ def _text(content):
     return "".join(part["text"] for part in _parts(content))
 
 
-def _call(call):
+def _call(call, index=0, nonce="", *, canonical=False):
     if not isinstance(call, dict) or call.get("type", "function") != "function" or "namespace" in call:
         raise ValueError("unsupported native tool call")
     function = call.get("function")
     if not isinstance(function, dict) or not isinstance(function.get("name"), str) or not _NAME.fullmatch(function["name"]):
         raise ValueError("invalid native tool name")
-    if not isinstance(call.get("id"), str) or not _ID.fullmatch(call["id"]):
-        raise ValueError("invalid native tool identity")
+    raw_id = call.get("id")
+    if canonical:
+        if not isinstance(raw_id, str) or not _ID.fullmatch(raw_id):
+            raise ValueError("invalid native tool identity")
+        call_id = raw_id
+    else:
+        if raw_id is not None and not isinstance(raw_id, str):
+            raise ValueError("invalid native tool identity")
+        call_id = normalize_call_id(raw_id, index, nonce or new_call_id_nonce())
     if not isinstance(function.get("arguments"), str):
         raise ValueError("invalid native tool arguments")
-    return {"id": call["id"], "type": "function", "function": {"name": function["name"], "arguments": function["arguments"]}}
+    return {"id": call_id, "type": "function", "function": {"name": function["name"], "arguments": function["arguments"]}}
 
 
-def _calls(message):
+def _calls(message, *, canonical=False):
     calls = message.get("tool_calls", [])
     if not isinstance(calls, list) or len(calls) > 128:
         raise ValueError("invalid native tool call batch")
-    result = [_call(call) for call in calls]
+    nonce = "" if canonical else new_call_id_nonce()
+    result = [_call(call, index=idx, nonce=nonce, canonical=canonical) for idx, call in enumerate(calls)]
     if len({call["id"] for call in result}) != len(result):
         raise ValueError("duplicate native tool identity")
     return result
@@ -182,9 +191,10 @@ def _projection(message):
     return (_text(message.get("content")), [(call["id"], call["function"]["name"], _argument_identity(call["function"]["arguments"])) for call in _calls(message)])
 
 
-def _from_responses(output):
+def _from_responses(output, *, nonce=""):
     if not isinstance(output, list) or len(output) > 512:
         raise ValueError("invalid native Responses output")
+    active_nonce = nonce or new_call_id_nonce()
     texts, calls, refused = [], [], False
     for item in output:
         if not isinstance(item, dict):
@@ -208,7 +218,7 @@ def _from_responses(output):
         elif kind == "function_call":
             if item.get("status") not in {None, "completed"}:
                 raise ValueError("unfinished native tool call")
-            calls.append(_call({"id": item.get("call_id"), "function": {"name": item.get("name"), "arguments": item.get("arguments")}}))
+            calls.append(_call({"id": item.get("call_id"), "function": {"name": item.get("name"), "arguments": item.get("arguments")}}, index=len(calls), nonce=active_nonce))
         elif kind == "reasoning":
             # This opaque native item, including encrypted_content, is private.
             if "encrypted_content" in item and item["encrypted_content"] is not None and not isinstance(item["encrypted_content"], str):
@@ -218,13 +228,14 @@ def _from_responses(output):
     message = {"role": "assistant", "content": "".join(texts) or None}
     if calls:
         message["tool_calls"] = calls
-    _calls(message)
+    _calls(message, canonical=True)
     return message, refused
 
 
-def _from_messages(content):
+def _from_messages(content, *, nonce=""):
     if not isinstance(content, list) or len(content) > 512:
         raise ValueError("invalid native Messages content")
+    active_nonce = nonce or new_call_id_nonce()
     texts, calls = [], []
     for block in content:
         if not isinstance(block, dict):
@@ -234,7 +245,7 @@ def _from_messages(content):
             texts.append(block["text"])
         elif kind == "tool_use" and isinstance(block.get("input"), dict):
             arguments = json.dumps(block["input"], ensure_ascii=False, allow_nan=False, separators=(",", ":"))
-            calls.append(_call({"id": block.get("id"), "function": {"name": block.get("name"), "arguments": arguments}}))
+            calls.append(_call({"id": block.get("id"), "function": {"name": block.get("name"), "arguments": arguments}}, index=len(calls), nonce=active_nonce))
         elif kind == "thinking" and isinstance(block.get("thinking"), str):
             if "signature" in block and not isinstance(block["signature"], str):
                 raise ValueError("invalid native thinking signature")
@@ -245,7 +256,7 @@ def _from_messages(content):
     message = {"role": "assistant", "content": "".join(texts) or None}
     if calls:
         message["tool_calls"] = calls
-    _calls(message)
+    _calls(message, canonical=True)
     return message
 
 
@@ -309,7 +320,8 @@ def _messages(body, protocol, scope):
     history = body.get("messages")
     if not isinstance(history, list) or not history:
         raise ValueError("native messages must be a nonempty array")
-    output, system, pending = [], [], set()
+    output, system = [], []
+    pending: dict[str, str] = {}
     seen_conversation = False
     for message in history:
         if not isinstance(message, dict):
@@ -321,12 +333,12 @@ def _messages(body, protocol, scope):
             call_id = message.get("tool_call_id")
             if call_id not in pending:
                 raise ValueError("native tool result must match a pending call")
-            pending.remove(call_id)
+            wire_call_id = pending.pop(call_id)
             text = _text(message.get("content"))
             if protocol == RESPONSES:
-                output.append({"type": "function_call_output", "call_id": call_id, "output": text})
+                output.append({"type": "function_call_output", "call_id": wire_call_id, "output": text})
             else:
-                block = {"type": "tool_result", "tool_use_id": call_id, "content": text}
+                block = {"type": "tool_result", "tool_use_id": wire_call_id, "content": text}
                 if "is_error" in message:
                     if type(message["is_error"]) is not bool:
                         raise ValueError("invalid native tool error flag")
@@ -344,12 +356,17 @@ def _messages(body, protocol, scope):
             system.extend(_parts(message.get("content")))
             continue
         seen_conversation = True
-        calls = _calls(message)
+        calls = _calls(message, canonical=True)
         if calls and role != "assistant":
             raise ValueError("native tool calls require assistant role")
-        pending.update(call["id"] for call in calls)
         native = _continuation(message, protocol, scope) if role == "assistant" else None
         if native is not None:
+            if protocol == RESPONSES:
+                raw_ids = [item.get("call_id") for item in native if isinstance(item, dict) and item.get("type") == "function_call"]
+            else:
+                raw_ids = [block.get("id") for block in native if isinstance(block, dict) and block.get("type") == "tool_use"]
+            for call, raw_id in zip(calls, raw_ids):
+                pending[call["id"]] = raw_id if isinstance(raw_id, str) and raw_id else call["id"]
             if protocol == RESPONSES:
                 output.extend(native)
             elif output and output[-1]["role"] == "assistant":
@@ -359,6 +376,8 @@ def _messages(body, protocol, scope):
             else:
                 output.append({"role": "assistant", "content": native})
             continue
+        for call in calls:
+            pending[call["id"]] = call["id"]
         content = _parts(message.get("content"), images=role == "user")
         if protocol == RESPONSES:
             parts = [{"type": "input_image", "image_url": part["url"], "detail": part["detail"]} if part["type"] == "image" else
@@ -527,15 +546,24 @@ def parse_response(raw: dict[str, Any], protocol: str, model: str, scope: str) -
         raise ValueError("invalid native response")
     raw = _copy(raw)
     finish = _finish(raw, protocol)
+    nonce = new_call_id_nonce()
     if protocol == RESPONSES:
-        message, refused = _from_responses(raw.get("output"))
+        message, refused = _from_responses(raw.get("output"), nonce=nonce)
         if refused:
             finish = "content_filter"
+        fn_items = [item for item in raw["output"] if isinstance(item, dict) and item.get("type") == "function_call"]
+        for item, norm_call in zip(fn_items, message.get("tool_calls", [])):
+            if not item.get("call_id"):
+                item["call_id"] = norm_call["id"]
         data = {"output": raw["output"]}
     else:
         if raw.get("role") != "assistant" or raw.get("type", "message") != "message":
             raise ValueError("invalid native Messages response")
-        message = _from_messages(raw.get("content"))
+        message = _from_messages(raw.get("content"), nonce=nonce)
+        tool_blocks = [b for b in raw["content"] if isinstance(b, dict) and b.get("type") == "tool_use"]
+        for block, norm_call in zip(tool_blocks, message.get("tool_calls", [])):
+            if not block.get("id"):
+                block["id"] = norm_call["id"]
         data = {"content": raw["content"]}
     calls = message.get("tool_calls", [])
     if calls:
