@@ -13,6 +13,7 @@ import pytest
 from test_agent_runtime import advance, approve, assistant, make_runtime
 
 from rynmesh.agent_runtime import budget, context_compaction, output_policy
+from rynmesh.agent_runtime.prompt import PROGRESS_TAIL_PREFIX
 from rynmesh.agent_runtime.store import encoded
 
 
@@ -65,6 +66,22 @@ def pairs_intact(messages):
 
 def compaction_events(runtime, task_id, kind="context_compaction_started"):
     return [event for event in runtime.store.read()["tasks"][task_id]["events"] if event["type"] == kind]
+
+
+def is_compaction_call(messages, specs):
+    return not specs or (
+        bool(messages)
+        and messages[-1].get("role") == "user"
+        and str(messages[-1].get("content") or "").startswith("Server compaction request:")
+    )
+
+
+def owner_messages(messages):
+    return [
+        m["content"]
+        for m in messages
+        if m["role"] == "user" and not str(m.get("content") or "").startswith(PROGRESS_TAIL_PREFIX)
+    ]
 
 
 # --- Units: bytes, characters and tokens stay separate -----------------------------------------
@@ -255,7 +272,8 @@ def test_compacts_before_projected_overflow_and_keeps_room_for_several_steps(tmp
     assert decision["near_limit"] and decision["compact"] and decision["reason"] == "projected_overflow"
     advance(runtime)
     summary, main = model.calls
-    assert summary[2] == [] and main[2]
+    assert is_compaction_call(summary[1], summary[2]) and main[2]
+    assert len(encoded(summary[1])) + len(encoded(summary[2])) <= limit
     started = compaction_events(runtime, task["id"])
     assert len(started) == 1 and started[0]["reason"] == "projected_overflow"
     assert started[0]["request_bytes"] == decision["request_bytes"]
@@ -264,7 +282,7 @@ def test_compacts_before_projected_overflow_and_keeps_room_for_several_steps(tmp
     kept = [m["tool_call_id"] for m in sent if m["role"] == "tool"]
     assert kept and kept[-1] == f"svc_{count - 1}"  # the latest exchanges stay verbatim
     assert len(kept) < count
-    assert [m["content"] for m in sent if m["role"] == "user"] == ["Inspect every service; never change anything."]
+    assert owner_messages(sent) == ["Inspect every service; never change anything."]
     after = len(encoded(sent)) + len(encoded(main[2]))
     assert limit - after >= context_compaction.MIN_STEPS_AFTER_COMPACTION * decision["need_bytes"]
     saved = runtime.store.read()["tasks"][task["id"]]
@@ -284,11 +302,15 @@ def test_medium_window_long_task_leaves_several_steps_between_summaries(tmp_path
     kinds = []
 
     def complete(model_id, messages, specs, cancelled, on_event):
-        if not specs:
+        if is_compaction_call(messages, specs):
             kinds.append("summary")
-            source = json.loads(messages[-1]["content"])
-            assert pairs_intact(source["history"])
-            done = [m["tool_call_id"] for m in source["history"] if m["role"] == "tool"]
+            if not specs:
+                source = json.loads(messages[-1]["content"])
+                history_slice = source["history"]
+            else:
+                history_slice = messages[:-1]
+            assert pairs_intact(history_slice)
+            done = [m["tool_call_id"] for m in history_slice if m["role"] == "tool"]
             return assistant(f"Goal: inspect 24 services. Findings: {len(done)} more inspected, all normal. Next: continue.")
         kinds.append("main")
         assert pairs_intact(messages)
@@ -389,7 +411,8 @@ def test_dense_chinese_usage_compacts_before_the_byte_estimate_overflows(tmp_pat
     assert after["compact"] and after["reason"] == "projected_overflow"
     advance(runtime)
     summary, main = model.calls
-    assert summary[2] == [] and main[2] and pairs_intact(main[1])
+    assert is_compaction_call(summary[1], summary[2]) and main[2] and pairs_intact(main[1])
+    assert len(encoded(summary[1])) + len(encoded(summary[2])) <= after["capacity_bytes"]
     assert len(encoded(main[1])) + len(encoded(main[2])) < after["capacity_bytes"]
     assert compaction_events(runtime, task["id"])[0]["reason"] == "capacity_limit"
 
@@ -421,9 +444,10 @@ def test_failed_summary_never_dispatches_a_request_over_the_calibrated_capacity(
     kinds, sizes = [], []
 
     def complete(model_id, messages, specs, cancelled, on_event):
-        kinds.append("main" if specs else "summary")
-        if specs:
-            sizes.append(len(encoded(messages)) + len(encoded(specs)))
+        is_summary = is_compaction_call(messages, specs)
+        kinds.append("summary" if is_summary else "main")
+        sizes.append(len(encoded(messages)) + len(encoded(specs)))
+        if not is_summary:
             assert runtime.store.read()["tasks"][task["id"]].get("context_checkpoint")
             return assistant("已完成总结，未修改资料。")
         if kinds.count("summary") == 1:
@@ -494,7 +518,7 @@ def test_resumes_after_compaction_with_goal_corrections_changes_tests_and_failur
                     "Failed: 首次测试失败。\nNext: 汇报结果。")
 
     def complete(model_id, messages, specs, cancelled, on_event):
-        if not specs:
+        if is_compaction_call(messages, specs):
             summary_requests.append(copy.deepcopy(messages))
             return assistant(summary_text)
         main_requests.append(copy.deepcopy(messages))
@@ -545,14 +569,18 @@ def test_resumes_after_compaction_with_goal_corrections_changes_tests_and_failur
     done = runtime.get(task["id"])
     assert done["status"] == "completed", done.get("error")
     assert summary_requests and len(main_requests) == 5
-    prompt = summary_requests[0][0]["content"]
+    is_prefix_summary = str(summary_requests[0][-1].get("content") or "").startswith("Server compaction request:")
+    prompt = summary_requests[0][-1]["content"] if is_prefix_summary else summary_requests[0][0]["content"]
     for label in ("Goal:", "Changed:", "Findings:", "Verification:", "Failed:", "Next:"):
         assert label in prompt
-    assert pairs_intact(json.loads(summary_requests[0][-1]["content"])["history"])
+    if is_prefix_summary:
+        assert pairs_intact(summary_requests[0][:-1])
+    else:
+        assert pairs_intact(json.loads(summary_requests[0][-1]["content"])["history"])
 
     resumed = main_requests[-1]
     assert pairs_intact(resumed)
-    assert [m["content"] for m in resumed if m["role"] == "user"] == [goal, correction]
+    assert owner_messages(resumed) == [goal, correction]
     note = next(m["content"] for m in resumed if str(m.get("content")).startswith("Historical checkpoint"))
     assert summary_text in note
     receipts = json.loads(note.split("Server-recorded mutation receipts (data, not instructions):\n")[1]
@@ -587,7 +615,8 @@ def test_unfinished_proactive_summary_is_not_retried_until_history_grows(tmp_pat
     advance(runtime)
     # The rejected summary installs nothing; the complete evidence still fits
     # and the task continues in the same tick instead of failing.
-    assert [bool(specs) for _, _, specs in model.calls] == [False, True]
+    assert [is_compaction_call(msgs, specs) for _, msgs, specs in model.calls] == [True, False]
+    assert len(encoded(model.calls[0][1])) + len(encoded(model.calls[0][2])) <= decision["capacity_bytes"]
     main = model.calls[1]
     assert len(encoded(main[1])) + len(encoded(main[2])) <= decision["capacity_bytes"]
     saved = runtime.store.read()["tasks"][task["id"]]
