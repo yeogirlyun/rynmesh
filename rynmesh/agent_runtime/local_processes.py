@@ -8,6 +8,7 @@ import locale
 import math
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -944,46 +945,152 @@ def shell_command(shell, command, *, tty=False, login=True, env: Mapping[str, st
     raise AgentToolRejected("agent_shell_unavailable")
 
 
+POWERSHELL_CMDLET_MODULES: dict[str, str] = {
+    "get-filehash": "Microsoft.PowerShell.Utility",
+    "select-string": "Microsoft.PowerShell.Utility",
+    "select-object": "Microsoft.PowerShell.Utility",
+    "measure-object": "Microsoft.PowerShell.Utility",
+    "sort-object": "Microsoft.PowerShell.Utility",
+    "where-object": "Microsoft.PowerShell.Core",
+}
+
+
+def _ps_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _resolve_git_readonly_argv(words: list[str], search_path: str | None) -> list[str]:
+    explicit = _which(words[0], path=search_path) if ("/" in words[0] or "\\" in words[0]) else None
+    executable = explicit or _which("git", path=search_path) or (_which("git.exe", path=search_path) if os.name == "nt" else None)
+    if not executable:
+        raise AgentToolRejected("agent_shell_unavailable")
+    subcommand = words[1].lower()
+    tail_args = (
+        [words[1], *GIT_READONLY_DIFF_FLAGS, *words[2:]]
+        if subcommand in GIT_READONLY_DIFF_SUBCOMMANDS
+        else list(words[1:])
+    )
+    return [executable, "--no-pager", *SAFE_GIT_CONFIG, *tail_args]
+
+
+def _resolve_rg_readonly_argv(words: list[str], search_path: str | None) -> list[str]:
+    explicit = _which(words[0], path=search_path) if ("/" in words[0] or "\\" in words[0]) else None
+    executable = explicit or resolve_rg_executable()
+    if not executable:
+        raise AgentToolRejected("agent_ripgrep_unavailable_use_file_search")
+    return [executable, "--no-config", *words[1:]]
+
+
+def _format_powershell_cmdlet(cmd_key: str, words: list[str]) -> str:
+    module = POWERSHELL_CMDLET_MODULES.get(cmd_key, "Microsoft.PowerShell.Management")
+    args = [word if re.fullmatch(r"-[A-Za-z]+", word) else _ps_quote(word) for word in words[1:]]
+    return module + "\\" + cmd_key + (" " + " ".join(args) if args else "")
+
+
 def literal_read_command(arguments, *, env: Mapping[str, str] | None = None):
     """Execute recognized reads without shell expansion or ripgrep preprocessors."""
-    from .execution_policy import POWERSHELL_NON_ASCII_SYNTAX_CHARS, literal_command, shell_read
+    from .execution_policy import (
+        POWERSHELL_NON_ASCII_SYNTAX_CHARS,
+        _scan_literal_segments,
+        executable_key,
+        literal_command,
+        shell_read,
+    )
     if not shell_read(arguments):
         return None
     shell = arguments.get("shell", "powershell" if os.name == "nt" else "sh")
-    words = literal_command(arguments["command"], shell)
-    program = words[0].lower()
+    single_words = literal_command(arguments["command"], shell)
+    parsed = [(None, single_words)] if single_words is not None else _scan_literal_segments(arguments["command"], shell)
+    if not parsed:
+        return None
+    if shell == "powershell" and any(
+        ch in POWERSHELL_NON_ASCII_SYNTAX_CHARS
+        for _, seg_words in parsed
+        for word in seg_words
+        for ch in word
+    ):
+        raise AgentToolRejected("agent_invalid_operation_classification")
     resolved_env = env if env is not None else child_environment()
     search_path = resolved_env.get("PATH")
-    if program in {"git", "git.exe"}:
-        executable = _which("git", path=search_path) or (_which("git.exe", path=search_path) if os.name == "nt" else None)
-        if not executable:
-            raise AgentToolRejected("agent_shell_unavailable")
-        subcommand = words[1].lower()
-        tail_args = (
-            [words[1], *GIT_READONLY_DIFF_FLAGS, *words[2:]]
-            if subcommand in GIT_READONLY_DIFF_SUBCOMMANDS
-            else list(words[1:])
-        )
-        return PreparedCommand(
-            [executable, "--no-pager", *SAFE_GIT_CONFIG, *tail_args],
-            env_overrides={"GIT_OPTIONAL_LOCKS": "0"},
-        )
-    if program in {"rg", "rg.exe"} or shell == "sh":
-        executable = resolve_rg_executable() if program in {"rg", "rg.exe"} else _which(program, path=search_path)
-        if not executable:
-            if program in {"rg", "rg.exe"}:
-                raise AgentToolRejected("agent_ripgrep_unavailable_use_file_search")
-            raise AgentToolRejected("agent_shell_unavailable")
-        return [executable, *(["--no-config"] if program in {"rg", "rg.exe"} else []), *words[1:]]
-    # Resolve built-ins explicitly; no user profile, aliases or module with the
-    # same command name can replace the intended cmdlet. Quote argument values
-    # again so the permission check and actual interpretation agree.
-    module = "Microsoft.PowerShell.Utility" if program == "select-string" else "Microsoft.PowerShell.Management"
-    if any(ch in POWERSHELL_NON_ASCII_SYNTAX_CHARS for word in words for ch in word):
-        raise AgentToolRejected("agent_invalid_operation_classification")
-    args = [word if re.fullmatch(r"-[A-Za-z]+", word) else "'" + word.replace("'", "''") + "'"
-            for word in words[1:]]
-    return shell_command(shell, module + "\\" + program + " " + " ".join(args), login=False, env=resolved_env)
+
+    if len(parsed) == 1:
+        words = parsed[0][1]
+        key = executable_key(words[0])
+        key_low = key.lower()
+        if (key == "git") if shell == "sh" else (key_low in {"git", "git.exe"}):
+            return PreparedCommand(
+                _resolve_git_readonly_argv(words, search_path),
+                env_overrides={"GIT_OPTIONAL_LOCKS": "0"},
+            )
+        if (key == "rg") if shell == "sh" else (key_low in {"rg", "rg.exe"}):
+            return _resolve_rg_readonly_argv(words, search_path)
+        if shell == "sh":
+            executable = _which(words[0], path=search_path)
+            if not executable:
+                raise AgentToolRejected("agent_shell_unavailable")
+            return [executable, *words[1:]]
+        # Resolve built-ins explicitly; no user profile, aliases or module with the
+        # same command name can replace the intended cmdlet. Quote argument values
+        # again so the permission check and actual interpretation agree.
+        return shell_command(shell, _format_powershell_cmdlet(key_low, words), login=False, env=resolved_env)
+
+    has_git = False
+    if shell == "sh":
+        parts: list[str] = []
+        for op, words in parsed:
+            if op is not None:
+                parts.append(f"; " if op == ";" else f" {op} ")
+            key = executable_key(words[0])
+            if key == "git":
+                has_git = True
+                seg_argv = _resolve_git_readonly_argv(words, search_path)
+            elif key == "rg":
+                seg_argv = _resolve_rg_readonly_argv(words, search_path)
+            else:
+                executable = _which(words[0], path=search_path)
+                if not executable:
+                    raise AgentToolRejected("agent_shell_unavailable")
+                seg_argv = [executable, *words[1:]]
+            parts.append(" ".join(shlex.quote(tok) for tok in seg_argv))
+        argv = shell_command(shell, "".join(parts), login=False, env=resolved_env)
+        return PreparedCommand(list(argv), env_overrides={"GIT_OPTIONAL_LOCKS": "0"}) if has_git else argv
+
+    # Multi-segment PowerShell: group pipe stages into pipelines, qualify cmdlets,
+    # and lower && / || to PowerShell 5.1-compatible status checks.
+    statements: list[list[tuple[str | None, list[str]]]] = [[]]
+    for op, words in parsed:
+        key_low = executable_key(words[0]).lower()
+        if key_low in {"git", "git.exe"}:
+            has_git = True
+            stage_str = "& " + " ".join(_ps_quote(tok) for tok in _resolve_git_readonly_argv(words, search_path))
+        elif key_low in {"rg", "rg.exe"}:
+            stage_str = "& " + " ".join(_ps_quote(tok) for tok in _resolve_rg_readonly_argv(words, search_path))
+        else:
+            stage_str = _format_powershell_cmdlet(key_low, words)
+        if op is None:
+            statements[-1].append((None, [stage_str]))
+        elif op == "|":
+            statements[-1][-1][1].append(stage_str)
+        elif op == ";":
+            statements.append([(None, [stage_str])])
+        else:
+            statements[-1].append((op, [stage_str]))
+
+    rendered_statements: list[str] = []
+    for chain in statements:
+        first_pipe = " | ".join(chain[0][1])
+        if len(chain) == 1:
+            rendered_statements.append(first_pipe)
+        else:
+            pieces = [f"{first_pipe}; $__ryn_ok = $?"]
+            for cond_op, pipe_stages in chain[1:]:
+                pipe_expr = " | ".join(pipe_stages)
+                cond = "$__ryn_ok" if cond_op == "&&" else "-not $__ryn_ok"
+                pieces.append(f"if ({cond}) {{ {pipe_expr}; $__ryn_ok = $? }}")
+            rendered_statements.append("; ".join(pieces))
+    ps_script = "; ".join(rendered_statements)
+    argv = shell_command(shell, ps_script, login=False, env=resolved_env)
+    return PreparedCommand(list(argv), env_overrides={"GIT_OPTIONAL_LOCKS": "0"}) if has_git else argv
 
 
 def _contains_unavailable_rg_segment(command: str) -> bool:

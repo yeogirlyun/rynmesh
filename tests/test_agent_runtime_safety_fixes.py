@@ -178,3 +178,229 @@ def test_literal_read_command_double_guard_rejects_smart_quotes(monkeypatch):
         local_processes.literal_read_command({"command": 'Get-Content "x\u2019y"', "shell": "powershell"})
     assert exc_info.value.args[0] == "agent_invalid_operation_classification"
 
+
+def test_s04_i8_t1_git_status_and_git_diff_read_only_and_executes(tmp_path):
+    import os
+    import subprocess
+
+    assert execution_policy.literal_segments("git status && git diff", "sh") == [
+        ["git", "status"],
+        ["git", "diff"],
+    ]
+    assert execution_policy.literal_segments("git status || git diff; git log", "powershell") == [
+        ["git", "status"],
+        ["git", "diff"],
+        ["git", "log"],
+    ]
+    for bad in ("git status & git diff", "git status > out", "git status < in", "git status `id`", "git $(id)", "git (status)", "git {status}", "git #c", "git status\ngit diff"):
+        assert execution_policy.literal_segments(bad, "sh") is None
+
+    assert shell_read({"command": "git status && git diff", "shell": "sh"}) is True
+    assert shell_read({"command": "git status && git diff", "shell": "powershell"}) is True
+    assert "merge-base" in execution_policy.GIT_SAFE_SUBCOMMANDS
+
+    if os.name == "nt":
+        prepared = local_processes.literal_read_command({"command": "git status && git diff", "shell": "powershell"})
+        assert prepared is not None
+        assert "-NoProfile" in list(prepared)
+        subprocess.run(["git", "init"], cwd=str(tmp_path), check=True, capture_output=True)
+        proc = subprocess.run(list(prepared), cwd=str(tmp_path), capture_output=True, text=True, timeout=10)
+        assert proc.returncode == 0
+    else:
+        prepared_sh = local_processes.literal_read_command({"command": "git status && git diff", "shell": "sh"})
+        assert prepared_sh is not None
+        assert list(prepared_sh)[:2] == ["/bin/sh", "-c"]
+
+
+def test_s04_i8_t2_git_status_semicolon_rm_rejected():
+    assert shell_read({"command": "git status; rm x", "shell": "sh"}) is False
+    assert shell_read({"command": "git status; rm x", "shell": "powershell"}) is False
+
+
+def test_s04_i8_t3_rg_pipe_remove_item_and_non_filter_downstream_rejected():
+    assert shell_read({"command": "rg x | Remove-Item", "shell": "powershell"}) is False
+    assert shell_read({"command": "Get-ChildItem | Get-Content", "shell": "powershell"}) is False
+    assert shell_read({"command": "git status | git diff", "shell": "sh"}) is False
+    for pipe_only in ("Select-Object -First 5", "Measure-Object", "Sort-Object", "Where-Object Name -Like '*.py'"):
+        assert shell_read({"command": pipe_only, "shell": "powershell"}) is False
+
+
+def test_s04_i8_t4_get_childitem_pipe_select_object_read_only_and_qualified(tmp_path):
+    import os
+    import subprocess
+
+    assert shell_read({"command": "Get-ChildItem | Select-Object -First 5", "shell": "powershell"}) is True
+    assert shell_read({"command": "Get-ChildItem | Sort-Object Name | Measure-Object", "shell": "powershell"}) is True
+    assert shell_read({"command": "Get-ChildItem | Where-Object Name -Like '*.py'", "shell": "powershell"}) is True
+
+    if os.name == "nt":
+        for idx in range(7):
+            (tmp_path / f"item_{idx}.py").write_text("x", encoding="utf-8")
+        argv = local_processes.literal_read_command(
+            {"command": "Get-ChildItem -Name | Select-Object -First 5", "shell": "powershell"}
+        )
+        assert argv is not None
+        assert "-NoProfile" in argv
+        script = argv[-1]
+        assert r"Microsoft.PowerShell.Management\get-childitem" in script
+        assert r"Microsoft.PowerShell.Utility\select-object" in script
+        proc = subprocess.run(list(argv), cwd=str(tmp_path), capture_output=True, text=True, timeout=10)
+        assert proc.returncode == 0
+        lines = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+        assert len(lines) == 5
+
+
+def test_s04_i8_t5_workspace_boundary_rejects_escape_and_propagates_call_chain(tmp_path):
+    import hashlib
+
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    outside = tmp_path / "secret.txt"
+    outside.write_text("secret", encoding="utf-8")
+
+    assert shell_read({"command": r"Get-Content ..\..\x", "shell": "powershell"}, workspace_root=str(ws)) is False
+    assert shell_read({"command": r"Get-Content ..\..\x", "shell": "powershell"}) is False
+    assert shell_read({"command": f'Get-Content "{outside}"', "shell": "powershell"}, workspace_root=str(ws)) is False
+    assert shell_read({"command": r"Get-Content sub\..\readme.md", "shell": "powershell"}, workspace_root=str(ws)) is True
+    assert shell_read({"command": f'Get-Content "{ws / "readme.md"}"', "shell": "powershell"}, workspace_root=str(ws)) is True
+
+    escape_args = {"command": r"Get-Content ..\secret.txt", "shell": "powershell"}
+    cls = execution_policy.classify_operation(
+        "ryn_shell_execute",
+        escape_args,
+        {"effect": "write"},
+        operation_id="op_ws",
+        task_id="task_ws",
+        workspace_root=str(ws),
+    )
+    assert cls["effect_class"] == "write"
+
+    decision = decide(
+        {"name": "ryn_shell_execute", "arguments": {"command": f'Get-Content "{outside}"', "shell": "powershell"}},
+        {"effect": "write"},
+        {"permission_mode": "read_only", "local_execution": {"workspace_root": str(ws)}},
+        {"permission_mode": "read_only"},
+    )
+    assert decision == Decision("deny", "read_only")
+
+    outside_args = {"command": f'Get-Content "{outside}"', "shell": "powershell"}
+    outside_sha = hashlib.sha256(encoded(outside_args)).hexdigest()
+    legacy_record = {
+        "name": "ryn_shell_execute",
+        "arguments": outside_args,
+        "arguments_sha256": outside_sha,
+        "authorization": "read",
+        "operation_id": "op_legacy_outside",
+        "task_id": "task_ws",
+        "operation_classification": {
+            "version": 1,
+            "effect_class": "read",
+            "basis": "literal_shell_read",
+            "operation_id": "op_legacy_outside",
+            "task_id": "task_ws",
+            "tool": "ryn_shell_execute",
+            "arguments_sha256": outside_sha,
+            "workspace_root": str(ws),
+            "goal_revision": 1,
+            "scope_revision": 1,
+            "context_epoch": 0,
+            "control_revision": 1,
+        },
+    }
+    assert verified_read_classification(legacy_record) is False
+
+
+def test_s04_i8_t6_executable_key_and_windows_git_exe_path_read_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(execution_policy.os, "name", "nt", raising=False)
+    assert execution_policy.executable_key(r"C:\Program Files\Git\cmd\git.exe") == "git"
+    assert execution_policy.executable_key("/usr/local/bin/rg") == "rg"
+    assert execution_policy.executable_key(r"D:\tools\Run.CMD") == "run"
+    assert execution_policy.executable_key(r"D:\tools\Check.BAT") == "check"
+    assert execution_policy.executable_key(r"D:\tools\Legacy.COM") == "legacy"
+
+    assert shell_read(
+        {"command": r'"C:\Program Files\Git\cmd\git.exe" status', "shell": "powershell"},
+        workspace_root=str(tmp_path),
+    ) is True
+
+
+def test_s04_i8_t7_smart_quotes_still_rejected_in_multi_segment_and_expanded_posix_programs():
+    assert shell_read(
+        {"command": 'Get-ChildItem | Select-String "x\u2019;Remove-Item y;\u2019"', "shell": "powershell"}
+    ) is False
+
+    for cmd in (
+        "grep -rn x .",
+        "egrep -n foo a.txt",
+        "fgrep bar a.txt",
+        "find . -name '*.py'",
+        "sed -n '1,20p' f",
+        "sed -n '1,5p;10,15p' f",
+        "git log | head",
+        "sort a.txt | uniq -c",
+        "cut -d: -f1 a.txt",
+        "stat a.txt",
+        "file a.txt",
+        "du -sh .",
+        "tree src",
+        "which git",
+        "basename src/a.py",
+        "dirname src/a.py",
+        "realpath a.py",
+    ):
+        assert shell_read({"command": cmd, "shell": "sh"}) is True, cmd
+
+    for ps_cmd in ("Resolve-Path readme.md", "Split-Path readme.md"):
+        assert shell_read({"command": ps_cmd, "shell": "powershell"}) is True, ps_cmd
+
+
+def test_s04_i8_t8_posix_program_unsafe_flags_and_arguments_rejected():
+    for bad_cmd in (
+        "find . -delete",
+        "find . -exec rm {} +",
+        "find . -execdir rm x ;",
+        "find . -ok rm x ;",
+        "find . -okdir rm x ;",
+        "find . -fprint out.txt",
+        "find . -fprint0 out.txt",
+        "find . -fprintf out.txt %p",
+        "find . -fls out.txt",
+        "sed '1,20p' f",
+        "sed -n '1w out' f",
+        "sed -n '1e id' f",
+        "sed -n '1r other' f",
+        "sed -i 's/a/b/' f",
+        "sed --in-place -n '1p' f",
+        "sed -ni '1,20p' f",
+        "sed -n -f evil.sed f",
+        "sort -o f f",
+        "sort --output=f f",
+        "sort -ro f f",
+        "uniq a b",
+    ):
+        assert shell_read({"command": bad_cmd, "shell": "sh"}) is False, bad_cmd
+
+
+def test_s04_i8_t9_get_filehash_read_only_and_uses_utility_module():
+    assert shell_read({"command": "Get-FileHash x", "shell": "powershell"}) is True
+    argv = local_processes.literal_read_command({"command": "Get-FileHash x", "shell": "powershell"})
+    assert argv is not None
+    assert "-NoProfile" in argv
+    assert r"Microsoft.PowerShell.Utility\get-filehash 'x'" in argv[-1]
+
+    mgmt_argv = local_processes.literal_read_command({"command": "Resolve-Path x", "shell": "powershell"})
+    assert mgmt_argv is not None
+    assert r"Microsoft.PowerShell.Management\resolve-path 'x'" in mgmt_argv[-1]
+
+
+def test_s04_i8_t10_rg_zip_decompression_flags_rejected():
+    for cmd in ("rg -z x", "rg --search-zip x", "rg -iz x", "rg -uz x"):
+        assert shell_read({"command": cmd, "shell": "powershell"}) is False, cmd
+        assert shell_read({"command": cmd, "shell": "sh"}) is False, cmd
+
+
+def test_s04_i8_t11_rg_case_insensitive_still_read_only():
+    assert shell_read({"command": "rg -i x", "shell": "powershell"}) is True
+    assert shell_read({"command": "rg -i x", "shell": "sh"}) is True
+
+
