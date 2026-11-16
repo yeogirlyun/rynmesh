@@ -230,3 +230,203 @@ def test_t4_replica_auth_deleted_even_when_temp_directory_cleanup_fails(
             import shutil
 
             shutil.rmtree(captured_root, ignore_errors=True)
+
+
+class _InMemoryPipe:
+    def __init__(self):
+        self._lines: list[bytes | None] = []
+        self._cond = threading.Condition()
+        self.closed = False
+
+    def write(self, data: bytes) -> int:
+        with self._cond:
+            if self.closed:
+                raise OSError("pipe closed")
+            for chunk in data.splitlines(keepends=True):
+                self._lines.append(chunk)
+            self._cond.notify_all()
+        return len(data)
+
+    def flush(self) -> None:
+        return None
+
+    def readline(self, limit: int = -1) -> bytes:
+        with self._cond:
+            while not self._lines and not self.closed:
+                self._cond.wait(timeout=0.5)
+            if not self._lines:
+                return b""
+            line = self._lines.pop(0)
+            return b"" if line is None else line
+
+    def close(self) -> None:
+        with self._cond:
+            self.closed = True
+            self._lines.append(None)
+            self._cond.notify_all()
+
+
+class _FakeAppServerProcess:
+    """In-memory stdio Codex app-server that inspects and rotates CODEX_HOME/auth.json on each turn."""
+
+    def __init__(self, env: dict[str, str], on_turn_auth):
+        self.env = dict(env)
+        self._on_turn_auth = on_turn_auth
+        self.stdin = _InMemoryPipe()
+        self.stdout = _InMemoryPipe()
+        self.pid = os.getpid()
+        self._rc: int | None = None
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
+
+    def _emit(self, obj: dict) -> None:
+        self.stdout.write((json.dumps(obj) + "\n").encode("utf-8"))
+
+    def _serve(self) -> None:
+        turn_seq = 0
+        while self._rc is None:
+            raw = self.stdin.readline()
+            if not raw:
+                break
+            msg = json.loads(raw.decode("utf-8"))
+            req_id = msg.get("id")
+            method = msg.get("method")
+            if method == "initialize" and req_id is not None:
+                self._emit({"id": req_id, "result": {"serverInfo": {"name": "fake-codex"}}})
+            elif method == "thread/start" and req_id is not None:
+                self._emit({"id": req_id, "result": {"thread": {"id": "th-pooled-1"}}})
+            elif method == "turn/start" and req_id is not None:
+                turn_seq += 1
+                turn_id = f"turn-{turn_seq}"
+                auth_replica = Path(self.env["CODEX_HOME"]) / "auth.json"
+                reply_obj = self._on_turn_auth(turn_seq, auth_replica)
+                self._emit({"id": req_id, "result": {"turn": {"id": turn_id}}})
+                self._emit({
+                    "method": "item/completed",
+                    "params": {
+                        "threadId": "th-pooled-1",
+                        "turnId": turn_id,
+                        "item": {"type": "agentMessage", "text": json.dumps(reply_obj)},
+                    },
+                })
+                self._emit({
+                    "method": "thread/tokenUsage/updated",
+                    "params": {
+                        "threadId": "th-pooled-1",
+                        "turnId": turn_id,
+                        "tokenUsage": {"last": {"inputTokens": 8, "outputTokens": 4}},
+                    },
+                })
+                self._emit({
+                    "method": "turn/completed",
+                    "params": {"threadId": "th-pooled-1", "turn": {"id": turn_id, "status": "completed"}},
+                })
+        self.stdout.close()
+
+    def poll(self) -> int | None:
+        return self._rc
+
+    def kill(self) -> None:
+        self._rc = -9
+        self.stdin.close()
+        self.stdout.close()
+
+    def wait(self, timeout: float | None = None) -> int | None:
+        self._rc = 0 if self._rc is None else self._rc
+        self.stdin.close()
+        self.stdout.close()
+        return self._rc
+
+
+def test_t6_pooled_session_releases_auth_lock_writes_back_and_deletes_replica_between_turns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from rynmesh.llm_package import codex_threads
+    from rynmesh.llm_package.cli_adapter import CLIAgentAdapter
+
+    codex_dir = tmp_path / "user_codex_pool"
+    codex_dir.mkdir()
+    auth_file = codex_dir / "auth.json"
+    auth_file.write_text(json.dumps({"refresh_token": "ref_init"}), encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(codex_dir))
+    monkeypatch.setenv("RYN_CODEX_SESSION_REUSE", "1")
+
+    fake_exe = tmp_path / "fake_codex.exe"
+    fake_exe.write_bytes(b"stub")
+    monkeypatch.setattr(codex_session, "_check_protocol", lambda executable, mtime: None)
+    monkeypatch.setattr(codex_session, "terminate", lambda proc: proc.kill())
+
+    seen_turn_tokens: list[str] = []
+
+    def _on_turn_auth(turn_seq: int, replica: Path) -> dict:
+        assert replica.is_file(), f"Turn {turn_seq} expected staged auth.json replica"
+        current = json.loads(replica.read_text(encoding="utf-8"))["refresh_token"]
+        seen_turn_tokens.append(current)
+        replica.write_text(json.dumps({"refresh_token": f"ref_turn_{turn_seq}"}), encoding="utf-8")
+        return {"content": f"done-{turn_seq}", "tool_calls": []}
+
+    monkeypatch.setattr(
+        codex_session,
+        "spawn",
+        lambda args, *, cwd, env, timeout: _FakeAppServerProcess(env, _on_turn_auth),
+    )
+
+    adapter = CLIAgentAdapter("codex_cli", executable=str(fake_exe))
+    monkeypatch.setattr(adapter, "_command_path", lambda: str(fake_exe))
+    scope = codex_threads.scope("local-owner", codex_threads.window_key("conv-1"))
+    tools_spec = [
+        {
+            "type": "function",
+            "function": {
+                "name": "noop_tool",
+                "description": "No-op",
+                "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+            },
+        }
+    ]
+    messages = [{"role": "user", "content": "turn one"}]
+
+    try:
+        res1 = adapter.chat(
+            {"messages": list(messages), "tools": tools_spec, "max_tokens": 64},
+            task_id="pool_t1",
+            timeout_s=5.0,
+            conversation_scope=scope,
+        )
+        assert res1["message"]["content"] == "done-1"
+
+        pool = codex_threads.pool_for(adapter)
+        assert len(pool) == 1, "Expected pooled session to remain idle in pool"
+        idle_session = pool.idle[0]
+        idle_replica = idle_session.rpc.root / "codex" / "auth.json"
+
+        # 1. Replica must already be deleted while session sits idle in pool!
+        assert not idle_replica.exists(), "Idle pooled session left auth.json replica in %TEMP%!"
+        # 2. Refreshed token from Turn 1 must already be written back to source auth.json!
+        assert json.loads(auth_file.read_text(encoding="utf-8")) == {"refresh_token": "ref_turn_1"}
+
+        # 3. Another Codex request while pooled session is idle must acquire the lock immediately (no cli_auth_busy)!
+        with codex_session.private_workspace(auth_timeout=0.15) as (_other_root, other_env):
+            other_rep = Path(other_env["CODEX_HOME"]) / "auth.json"
+            assert json.loads(other_rep.read_text(encoding="utf-8")) == {"refresh_token": "ref_turn_1"}
+            other_rep.write_text(json.dumps({"refresh_token": "ref_other_session"}), encoding="utf-8")
+
+        assert json.loads(auth_file.read_text(encoding="utf-8")) == {"refresh_token": "ref_other_session"}
+
+        # 4. Resuming the pooled session for Turn 2 must re-borrow the latest auth.json, then write back & clean up again!
+        messages.append(res1["message"])
+        messages.append({"role": "user", "content": "turn two"})
+        res2 = adapter.chat(
+            {"messages": list(messages), "tools": tools_spec, "max_tokens": 64},
+            task_id="pool_t2",
+            timeout_s=5.0,
+            conversation_scope=scope,
+        )
+        assert res2["message"]["content"] == "done-2"
+        assert pool.stats["resumed"] == 1
+        assert seen_turn_tokens == ["ref_init", "ref_other_session"]
+        assert not idle_replica.exists()
+        assert json.loads(auth_file.read_text(encoding="utf-8")) == {"refresh_token": "ref_turn_2"}
+    finally:
+        adapter.close_sessions()
+

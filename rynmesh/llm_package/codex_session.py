@@ -395,21 +395,25 @@ class CodexRPC:
                  *, image_generation=False, cancelled=None):
         _check_protocol(executable, Path(executable).stat().st_mtime_ns)
         self._auth_diagnostics: dict = {}
+        self._auth_lease = None
         self.workspace = private_workspace(
+            copy_auth=False,
             image_generation=bool(image_generation),
-            auth_timeout=timeout,
-            diagnostics_out=self._auth_diagnostics,
         )
         self.output_limit = 40 * 1024 * 1024 if image_generation else MAX_OUTPUT
         self.cancelled = cancelled
         self.root, env = self.workspace.__enter__()
+        self._auth_source = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "auth.json"
+        self._auth_replica = self.root / "codex" / "auth.json"
         self.proxy_configured = _proxy_configured(env)
         self.omitted_attachments = 0
         self._storage_error = None
         try:
+            self.acquire_auth_lease(timeout)
             self.process = spawn([executable, "app-server", "--stdio", "--strict-config"],
                                  cwd=str(self.root), env=env, timeout=cpu_seconds or timeout)
         except BaseException:
+            self.release_auth_lease()
             self.workspace.__exit__(None, None, None)
             raise
         self.deadline = time.monotonic() + timeout
@@ -644,6 +648,24 @@ class CodexRPC:
                     pass
         return clean
 
+    def acquire_auth_lease(self, timeout: float | None = 30.0) -> None:
+        if self._auth_lease is not None:
+            return
+        self._auth_diagnostics.pop("auth_writeback", None)
+        ctx = borrowed_cli_auth_file(
+            self._auth_source,
+            self._auth_replica,
+            timeout=timeout,
+            diagnostics_out=self._auth_diagnostics,
+        )
+        ctx.__enter__()
+        self._auth_lease = ctx
+
+    def release_auth_lease(self) -> None:
+        ctx, self._auth_lease = self._auth_lease, None
+        if ctx is not None:
+            ctx.__exit__(None, None, None)
+
     def close(self):
         self.closed.set()
         terminate(self.process)
@@ -658,7 +680,10 @@ class CodexRPC:
         self.pending.clear()
         while not self.queue.empty():
             self.queue.get_nowait()
-        self.workspace.__exit__(None, None, None)
+        try:
+            self.release_auth_lease()
+        finally:
+            self.workspace.__exit__(None, None, None)
 
 
 def list_models(executable: str):
@@ -978,9 +1003,13 @@ def _stateless_chat(adapter, body, *, task_id, timeout_s, model="", output_schem
         rpc.omitted_attachments = omitted
         answer, usage, calls = _turn(rpc, thread_id, body, prompt, deadline=started + timeout_s,
                                      output_schema=output_schema, names=names, schemas=schemas, on_text=on_text)
+        if hasattr(rpc, "release_auth_lease"):
+            rpc.release_auth_lease()
         result = _result(answer, usage, calls, choice, prompt, started)
         if omitted > 0:
             result["diagnostics"] = {**(result.get("diagnostics") or {}), "omitted_attachments": omitted}
+        if getattr(rpc, "_auth_diagnostics", None) and "auth_writeback" in rpc._auth_diagnostics:
+            result["diagnostics"] = {**(result.get("diagnostics") or {}), "auth_writeback": rpc._auth_diagnostics["auth_writeback"]}
         return result
     except AdapterError as exc:
         if not getattr(exc, "diagnostics", None) and hasattr(rpc, "diagnostics"):
@@ -1021,6 +1050,8 @@ def _pooled_chat(adapter, body, conversation, *, task_id, timeout_s, model, outp
     try:
         if cancelled:
             raise AdapterError("task_cancelled")
+        if resumed and hasattr(rpc, "acquire_auth_lease"):
+            rpc.acquire_auth_lease(max(0.01, deadline - time.monotonic()))
         turn_body = body
         omitted = 0
         if resumed:
@@ -1039,14 +1070,20 @@ def _pooled_chat(adapter, body, conversation, *, task_id, timeout_s, model, outp
                                          output_schema=output_schema, on_text=on_text, resumed=resumed)
         finally:
             session.busy_seconds += time.monotonic() - turn_started
+        if hasattr(rpc, "release_auth_lease"):
+            rpc.release_auth_lease()
         session.turns += 1
         result = _result(answer, usage, calls, "auto", prompt, started)
         if omitted > 0:
             result["diagnostics"] = {**(result.get("diagnostics") or {}), "omitted_attachments": omitted}
+        if getattr(rpc, "_auth_diagnostics", None) and "auth_writeback" in rpc._auth_diagnostics:
+            result["diagnostics"] = {**(result.get("diagnostics") or {}), "auth_writeback": rpc._auth_diagnostics["auth_writeback"]}
         conversation.session = session
         pool.stats["resumed" if resumed else "started"] += 1
         return result
     except AdapterError as exc:
+        if hasattr(rpc, "release_auth_lease"):
+            rpc.release_auth_lease()
         if not getattr(exc, "diagnostics", None) and hasattr(rpc, "diagnostics"):
             exc.diagnostics = rpc.diagnostics()
         session.close()
@@ -1057,13 +1094,19 @@ def _pooled_chat(adapter, body, conversation, *, task_id, timeout_s, model, outp
         if not fallback:
             raise
     except BaseException:
+        if hasattr(rpc, "release_auth_lease"):
+            rpc.release_auth_lease()
         session.close()
         raise
     finally:
-        with adapter._lock:
-            adapter._running.pop(task_id, None)
-            if not fallback:
-                adapter._cancelled.discard(task_id)
+        try:
+            if hasattr(rpc, "release_auth_lease"):
+                rpc.release_auth_lease()
+        finally:
+            with adapter._lock:
+                adapter._running.pop(task_id, None)
+                if not fallback:
+                    adapter._cancelled.discard(task_id)
     pool.stats["fallback"] += 1
     return _stateless_chat(adapter, body, task_id=task_id, timeout_s=deadline - time.monotonic(),
                            model=model, output_schema=output_schema, on_text=on_text)
