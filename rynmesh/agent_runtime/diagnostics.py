@@ -47,6 +47,7 @@ _ERROR_GUIDANCE = {
     "agent_cancelled": ("review_receipts", "Review any dispatched operation receipts before deciding on a new task.", "/agent"),
     "agent_invalid_tool_call": ("review_tools", "Review model tool compatibility; no proposed operation should be assumed executed.", "/services/sources"),
     "agent_output_truncated": ("review_models", "The model response was repeatedly truncated without producing a usable answer. Narrow the request or select another model.", "/agent"),
+    "agent_model_output_limit_reached": ("review_models", "模型把输出额度都用在思考上了，请调高该模型的输出上限或降低推理强度", "/services/sources"),
     "resource_read_timeout": ("review_resource_connection", "The authorized resource read timed out. Check the named connection using the owner Drives interface; do not modify it or rerun the task automatically. This does not establish a credential or quota problem.", "/drives"),
 }
 

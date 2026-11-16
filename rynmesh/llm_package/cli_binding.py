@@ -119,7 +119,7 @@ class CLIModelDispatchAdapter:
     def context_metadata_for_model(self, model=""):
         from .cli_models import context_metadata, validate_model
         validate_model(model)
-        return context_metadata(self.current_models(), model)
+        return context_metadata(self.current_models(), model, kind=self.inner.kind)
 
     def binding_for_model(self, model=""):
         from .cli_models import validate_model
@@ -155,7 +155,7 @@ class CLIModelDispatchAdapter:
             if isinstance(item.get("id"), str) and item["id"]:
                 selected.setdefault(item["id"], item)
         observed = {model: {"model": item.get("id"), **{key: value for key, value in
-                    context_metadata([item], model).items() if key != "context_window_basis"}}
+                    context_metadata([item], model, kind=self.inner.kind).items() if key != "context_window_basis"}}
                     for model, item in selected.items()}
 
         def signatures(row):

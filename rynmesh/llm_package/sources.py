@@ -372,41 +372,123 @@ class SourceStore:
     def model_service_id(record, model):
         return record["id"] + "-" + hashlib.sha256(model.encode()).hexdigest()[:12]
 
+    @staticmethod
+    def _probe_llamacpp_n_ctx(adapter) -> int | None:
+        if not hasattr(adapter, "_json"):
+            return None
+        timeout_s = min(5.0, float(getattr(adapter, "timeout_s", 5.0) or 5.0))
+        props = None
+        try:
+            props = adapter._json("/props", None, timeout_s)
+        except Exception:
+            base = str(getattr(adapter, "base_url", "") or "").rstrip("/")
+            if base.endswith("/v1") and len(base) > 3:
+                try:
+                    root_adapter = SourceAdapter(
+                        base_url=base[:-3],
+                        api_prefix="",
+                        api_key=getattr(adapter, "api_key", ""),
+                        model=getattr(adapter, "model", ""),
+                        allow_non_loopback=True,
+                        timeout_s=timeout_s,
+                    )
+                    props = root_adapter._json("/props", None, timeout_s)
+                except Exception:
+                    props = None
+        if not isinstance(props, dict):
+            return None
+        gen_settings = props.get("default_generation_settings")
+        for val in (
+            gen_settings.get("n_ctx") if isinstance(gen_settings, dict) else None,
+            props.get("n_ctx"),
+        ):
+            if type(val) is int and 256 <= val <= 2000000:
+                return val
+        return None
+
+    def _collect_probed_metadata(self, record, adapter) -> tuple[list[dict], dict]:
+        listing = adapter.models()
+        metadata = copy.deepcopy(record.get("model_metadata", {}))
+        metadata.update(copy.deepcopy(self._model_metadata_cache.get(self._metadata_key(record), {})))
+        listed_ids: list[str] = []
+        any_listed_window = False
+        for item in listing:
+            identifier = item.get("id") or item.get("name")
+            if not isinstance(identifier, str) or not identifier or len(identifier) > 160:
+                continue
+            listed_ids.append(identifier)
+            values = [item.get(key) for key in ("context_window", "context_length", "max_model_len")]
+            window = next((value for value in values if type(value) is int and 256 <= value <= 2000000), None)
+            if window is not None:
+                metadata[identifier] = {"context_window": window}
+                any_listed_window = True
+            out_values = [item.get(key) for key in ("max_output_tokens", "max_completion_tokens")]
+            max_out = next((value for value in out_values if type(value) is int and 1 <= value <= 393216), None)
+            if max_out is not None:
+                metadata.setdefault(identifier, {})["max_output_tokens"] = max_out
+            modalities = item.get("input_modalities")
+            if isinstance(modalities, list) and 0 < len(modalities) <= 8 and all(isinstance(m, str) and m.strip() for m in modalities):
+                metadata.setdefault(identifier, {})["input_modalities"] = [m.strip().lower() for m in modalities]
+        if not any_listed_window:
+            n_ctx = self._probe_llamacpp_n_ctx(adapter)
+            if n_ctx is not None:
+                for identifier in dict.fromkeys([*listed_ids, *record.get("models", [])]):
+                    if identifier and "context_window" not in metadata.get(identifier, {}):
+                        metadata.setdefault(identifier, {})["context_window"] = n_ctx
+        with self.lock:
+            key = self._metadata_key(record)
+            if len(self._model_metadata_cache) >= 64 and key not in self._model_metadata_cache:
+                self._model_metadata_cache.pop(next(iter(self._model_metadata_cache)))
+            self._model_metadata_cache[key] = copy.deepcopy(metadata)
+        record["model_metadata"] = {model: metadata[model] for model in record["models"] if model in metadata}
+        return listing, metadata
+
+    @staticmethod
+    def _update_record_window_basis(record, *, candidate_ids: list[str] | None = None) -> None:
+        models = record.get("models") or []
+        if models:
+            metas = [model_settings.context_metadata(record, m) for m in models]
+            if any(m["context_window_basis"] == "unknown_fallback" for m in metas):
+                record["context_window_basis"] = "unknown_fallback"
+            else:
+                record["context_window_basis"] = metas[0]["context_window_basis"]
+        elif record.get("context_window_mode") == "auto":
+            cands = candidate_ids or []
+            if not cands or any(model_settings._known_vendor_context_window(m) is None for m in cands):
+                record["context_window_basis"] = "unknown_fallback"
+
     def probe(self, record, *, models_only=False):
         adapter = self.adapter(record)
         if models_only:
-            listing = adapter.models()
-            # Some listings expose only IDs. Omission is not a declaration that
-            # a previously authenticated capacity changed; retain that cache.
-            metadata = copy.deepcopy(record.get("model_metadata", {}))
-            metadata.update(copy.deepcopy(self._model_metadata_cache.get(self._metadata_key(record), {})))
-            for item in listing:
-                identifier = item.get("id") or item.get("name")
-                if not isinstance(identifier, str) or not identifier or len(identifier) > 160:
-                    continue
-                values = [item.get(key) for key in ("context_window", "context_length", "max_model_len")]
-                window = next((value for value in values if type(value) is int and 256 <= value <= 2000000), None)
-                if window is not None:
-                    metadata[identifier] = {"context_window": window}
-                out_values = [item.get(key) for key in ("max_output_tokens", "max_completion_tokens")]
-                max_out = next((value for value in out_values if type(value) is int and 1 <= value <= 393216), None)
-                if max_out is not None:
-                    metadata.setdefault(identifier, {})["max_output_tokens"] = max_out
-                modalities = item.get("input_modalities")
-                if isinstance(modalities, list) and 0 < len(modalities) <= 8 and all(isinstance(m, str) and m.strip() for m in modalities):
-                    metadata.setdefault(identifier, {})["input_modalities"] = [m.strip().lower() for m in modalities]
-            with self.lock:
-                key = self._metadata_key(record)
-                if len(self._model_metadata_cache) >= 64 and key not in self._model_metadata_cache:
-                    self._model_metadata_cache.pop(next(iter(self._model_metadata_cache)))
-                self._model_metadata_cache[key] = copy.deepcopy(metadata)
-            # Drafts may discover IDs before they are selected. Only server-read
-            # metadata is cached; a browser-supplied model_metadata is ignored.
-            record["model_metadata"] = {model: metadata[model] for model in record["models"] if model in metadata}
-            return {"models": [str(item.get("id") or item.get("name")) for item in listing if item.get("id") or item.get("name")],
-                    "model_metadata": metadata}
+            listing, metadata = self._collect_probed_metadata(record, adapter)
+            listed_models = [str(item.get("id") or item.get("name")) for item in listing if item.get("id") or item.get("name")]
+            unmatched = [m for m in listed_models if "context_window" not in metadata.get(m, {})]
+            if record.get("models"):
+                self._update_record_window_basis(record)
+            elif unmatched:
+                self._update_record_window_basis(record, candidate_ids=unmatched)
+            return {
+                "models": listed_models,
+                "model_metadata": metadata,
+                **({"context_window_basis": record["context_window_basis"]} if "context_window_basis" in record else {}),
+            }
         if not record["models"]:
             raise ValueError("请先添加至少一个模型 ID")
+        if record.get("context_window_mode") == "auto" and any(
+            "context_window" not in record.get("model_metadata", {}).get(m, {})
+            for m in record["models"]
+        ):
+            try:
+                self._collect_probed_metadata(record, adapter)
+            except Exception:
+                n_ctx = self._probe_llamacpp_n_ctx(adapter)
+                if n_ctx is not None:
+                    meta_map = copy.deepcopy(record.get("model_metadata", {}))
+                    for m in record["models"]:
+                        meta_map.setdefault(m, {})["context_window"] = n_ctx
+                    record["model_metadata"] = meta_map
+            model_settings.reconcile(record, copy.deepcopy(record))
+        self._update_record_window_basis(record)
         primary_model = record["models"][0]
         eff = model_settings.effective(record, primary_model)
         max_probe_tokens = min(4096, eff["max_output_tokens"])

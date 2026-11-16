@@ -217,12 +217,14 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
             if self.protocol == "anthropic_messages" and not self._allows_cache_control():
                 effective_prompt_cache = "off"
             path = "/v1/responses" if self.protocol == "openai_responses" else "/v1/messages"
+            req_merged = {**self.request_defaults, **validated}
+            req_max_tokens = req_merged.get("max_tokens", 512)
             for cache_attempt in range(2):
                 phase = "request"
                 request_diagnostics = {}
                 try:
                     payload = make_request(
-                        {**self.request_defaults, **validated},
+                        req_merged,
                         self.protocol,
                         self.model,
                         scope,
@@ -362,6 +364,8 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
             received_finish = result.get("finish_reason")
             message = result["message"]
             if received_finish != "content_filter" and not message.get("content") and not message.get("tool_calls"):
+                if received_finish == "length":
+                    raise NativeStreamError("upstream_output_limit_reached")
                 raise ValueError("empty completion")
             duration = int((time.monotonic() - started) * 1000)
             response_diagnostics = dict(request_diagnostics)
@@ -403,6 +407,8 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                 code, text = exc.code, str(exc)
             elif isinstance(exc, NativeStreamError):
                 code = text = exc.code
+                if code == "upstream_output_limit_reached" and type(req_max_tokens) is int and req_max_tokens > 0:
+                    diag = {**(diag or {}), "max_tokens": req_max_tokens}
             elif isinstance(exc, urllib.error.HTTPError):
                 diag = read_http_failure(exc, phase)
                 exc.close()

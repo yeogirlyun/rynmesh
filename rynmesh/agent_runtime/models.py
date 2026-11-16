@@ -115,6 +115,17 @@ class ModelCatalog:
                 and value.get("online")
                 and value.get("ready", True)
             )
+            is_cli = adapter in {"codex_cli", "antigravity_cli", "claude_cli"}
+            declared_claude_window = (
+                model_settings._known_vendor_context_window(manifest.get("model", ""))
+                if adapter == "claude_cli" and manifest.get("model")
+                else None
+            )
+            cli_basis = manifest.get("context_window_basis") if isinstance(manifest.get("context_window_basis"), str) else ""
+            window_known = (
+                (not is_cli and type(manifest.get("context_window")) is int)
+                or declared_claude_window is not None
+            )
             row = {"id": model_ref, "name": manifest.get("model_alias", service_id),
                    "source": "local_service" if own else "peer", "source_name": value.get("node_name", ""),
                    "service_id": service_id, "peer_id": peer_id, "adapter": adapter,
@@ -125,9 +136,15 @@ class ModelCatalog:
                    **({"catalog_state": value["catalog_state"]} if "catalog_state" in value else {}),
                    "tool_support": "unsupported" if adapter == "claude_cli" else value.get("tool_support", "unknown"),
                    "agent_support_basis": "adapter_contract" if own else "provider_protocol_contract",
-                   "context_window": manifest.get("context_window", 32768),
-                   "context_window_known": adapter not in {"codex_cli", "antigravity_cli"} and type(manifest.get("context_window")) is int,
-                   "context_window_basis": "provider_manifest" if adapter not in {"codex_cli", "antigravity_cli"} and type(manifest.get("context_window")) is int else "unknown_fallback",
+                   "context_window": declared_claude_window if declared_claude_window is not None else manifest.get("context_window", 32768),
+                   "context_window_known": window_known,
+                   "context_window_basis": (
+                       "vendor_family_default"
+                       if declared_claude_window is not None
+                       else "provider_manifest"
+                       if window_known
+                       else (cli_basis or "unknown_fallback")
+                   ),
                    "streaming": "streaming" in capabilities or "buffered-streaming" in capabilities,
                    "max_output_tokens": manifest.get("max_output_tokens", 4096),
                    "sharing": bool(value.get("accepting_orders", value.get("publication_enabled", False))) if own else True,
@@ -173,9 +190,10 @@ class ModelCatalog:
                 if adapter == "openai_compatible" and bound is not None and len(native_protocols) == 1:
                     row["adapter"] = native_protocols[0]
                 row.update(catalog_image_fields(row, service_record=value))
-                if adapter in {"codex_cli", "antigravity_cli"}:
+                if adapter in {"codex_cli", "antigravity_cli", "claude_cli"}:
                     from ..llm_package.cli_models import context_metadata
-                    row.update(context_metadata(value.get("cli_models", []), fallback=row["context_window"]))
+                    fallback_basis = row.get("context_window_basis", "unknown_fallback")
+                    row.update(context_metadata(value.get("cli_models", []), fallback=row["context_window"], fallback_basis=fallback_basis))
                     if row["context_window_known"]:
                         row["context_window_basis"] = "provider_cli_model_metadata"
                     for upstream in value.get("cli_models", []):
@@ -190,7 +208,7 @@ class ModelCatalog:
                             "tool_support": support, "agent_supported": row["agent_supported"],
                             "destination_revision": peer_binding.revision(specific, self.store.peer_id),
                             "destination_binding_supported": child_bound is not None, "expected_model_binding": child_bound}
-                        rows[identifier].update(context_metadata([upstream], upstream["id"], fallback=row["context_window"]))
+                        rows[identifier].update(context_metadata([upstream], upstream["id"], fallback=row["context_window"], fallback_basis=fallback_basis))
                         max_output = upstream.get("max_output_tokens")
                         if not isinstance(max_output, int) and rows[identifier].get("context_window_known"):
                             max_output = model_settings._known_vendor_max_output_tokens(upstream["id"])
@@ -269,7 +287,8 @@ class ModelCatalog:
                     "source_name": "Codex" if row["adapter"] == "codex_cli" else "Antigravity",
                     "tool_support": support, "agent_supported": row["agent_supported"]}
                 from ..llm_package.cli_models import context_metadata
-                rows[identifier].update(context_metadata([model], model["id"], fallback=row["context_window"]))
+                local_fallback_basis = row.get("context_window_basis", "unknown_fallback")
+                rows[identifier].update(context_metadata([model], model["id"], fallback=row["context_window"], fallback_basis=local_fallback_basis))
                 max_output = model.get("max_output_tokens")
                 if not isinstance(max_output, int) and rows[identifier].get("context_window_known"):
                     max_output = model_settings._known_vendor_max_output_tokens(model["id"])
@@ -285,7 +304,7 @@ class ModelCatalog:
                 row.update(reasoning_metadata(default.get("supported_reasoning_efforts"), default.get("default_reasoning_effort")))
             row.update(catalog_image_fields(row, cli_model_row=default))
             from ..llm_package.cli_models import context_metadata
-            row.update(context_metadata(upstream, fallback=row["context_window"]))
+            row.update(context_metadata(upstream, fallback=row["context_window"], fallback_basis=row.get("context_window_basis", "unknown_fallback")))
             default_output = default.get("max_output_tokens")
             if not isinstance(default_output, int) and row.get("context_window_known"):
                 default_output = model_settings._known_vendor_max_output_tokens(default.get("id", ""))

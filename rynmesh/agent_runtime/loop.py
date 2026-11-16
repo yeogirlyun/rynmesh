@@ -580,8 +580,16 @@ class AgentLoop:
             caller_selected["_request_started"] = request_started
             preparation_seconds = request_started - preparation_started
             overflowed = False
+            retry_cap = self._pending_output_limit_retry_cap(selected)
             try:
-                response = self._complete(selected, messages, specs, cancelled, on_event)
+                response = self._complete(
+                    selected,
+                    messages,
+                    specs,
+                    cancelled,
+                    on_event,
+                    **({"output_cap": retry_cap} if retry_cap is not None else {}),
+                )
             except _StreamOverflow:
                 overflowed = True
                 response = {"message": {"content": "".join(stream_chunks)}, "finish_reason": "length"}
@@ -770,6 +778,45 @@ class AgentLoop:
                             "context_epoch": selected.get("context_epoch", 0),
                         })
                 row["messages"].append({**message, "context_epoch": selected.get("context_epoch", 0)})
+                if finish_reason == "length" and pending and not wrap_up_reason:
+                    resp_policy = response.get("output_policy") if isinstance(response.get("output_policy"), dict) else {}
+                    cap_n = resp_policy.get("effective_cap")
+                    if not isinstance(cap_n, int) or cap_n < 1:
+                        budget_recs = (row.get("budget") or {}).get("records") or []
+                        last_op = budget_recs[-1].get("output_policy") if budget_recs and isinstance(budget_recs[-1], dict) else {}
+                        cap_n = last_op.get("effective_cap") if isinstance(last_op, dict) else None
+                    if not isinstance(cap_n, int) or cap_n < 1:
+                        cap_n = output_policy.configured_output(self._model_metadata(row.get("model_id", "")))
+                    prior_streak = row.get("length_tool_streak")
+                    prior_tool = prior_streak.get("tool") if isinstance(prior_streak, dict) else None
+                    prior_count = int(prior_streak.get("count", 0)) if isinstance(prior_streak, dict) else 0
+                    notified = bool(prior_streak.get("notified")) if isinstance(prior_streak, dict) else False
+                    first_tool = pending[0]["name"]
+                    streak_count = prior_count + 1 if prior_tool == first_tool else 1
+                    if prior_tool != first_tool:
+                        notified = False
+                    if streak_count >= 2:
+                        half_n = max(1, cap_n // 2)
+                        chunk_msg = (
+                            f"输出上限约 {cap_n} token。请把内容分成多次较小的写入（先建文件再追加或用补丁），"
+                            f"每次不超过约 {half_n} token"
+                        )
+                        for item_call in pending:
+                            if item_call["name"] == first_tool and isinstance(item_call.get("error_result"), dict):
+                                item_call["error_result"]["message"] = chunk_msg
+                    if streak_count >= 3 and not notified:
+                        notified = True
+                        event(
+                            row,
+                            "output_limit_hit",
+                            step=step,
+                            tool=first_tool,
+                            max_output_tokens=cap_n,
+                            model_id=row.get("model_id", ""),
+                        )
+                    row["length_tool_streak"] = {"tool": first_tool, "count": streak_count, "notified": notified}
+                else:
+                    row.pop("length_tool_streak", None)
                 if wrap_up_reason:
                     for call in pending:
                         skipped_res = {
@@ -980,6 +1027,32 @@ class AgentLoop:
         selected = [skill.get("id") for skill in row.get("skills") or [] if isinstance(skill, dict)]
         return extensions.plugin_context_note(self._execution_context(row), selected_skill_ids=selected)
 
+    def _pending_output_limit_retry_cap(self, row: dict) -> int | None:
+        if int(row.get("model_retry_count", 0) or 0) < 1:
+            return None
+        from .bridge import OUTPUT_LIMIT_REACHED_FEEDBACK, retry_output_limit_cap
+        latest = next(
+            (
+                ev
+                for ev in reversed(row.get("events") or [])
+                if isinstance(ev, dict) and ev.get("type") in {"model_response_rejected", "model_response_completed"}
+            ),
+            None,
+        )
+        if not latest or latest.get("type") != "model_response_rejected" or latest.get("detail") != OUTPUT_LIMIT_REACHED_FEEDBACK:
+            return None
+        model_meta = self._model_metadata(row.get("model_id", ""))
+        prev_cap = None
+        for rec in reversed((row.get("budget") or {}).get("records") or []):
+            if isinstance(rec, dict) and rec.get("kind") == "model" and isinstance(rec.get("output_policy"), dict):
+                cap = rec["output_policy"].get("effective_cap")
+                if type(cap) is int and cap >= 1:
+                    prev_cap = cap
+                    break
+        if prev_cap is None:
+            prev_cap = output_policy.configured_output(model_meta)
+        return retry_output_limit_cap(prev_cap, model_meta)
+
     def _context(self, row: dict) -> list[dict]:
         checkpoint = row.get("context_checkpoint")
         history = self._history(row)
@@ -1044,6 +1117,9 @@ class AgentLoop:
         # The retry after a structurally invalid response is told what was wrong, once, so that the
         # identical invalid call is not simply generated again (nothing in it was executed).
         rejection = row.get("rejected_response_note")
+        if not rejection and self._pending_output_limit_retry_cap(row) is not None:
+            from .bridge import OUTPUT_LIMIT_REACHED_FEEDBACK
+            rejection = OUTPUT_LIMIT_REACHED_FEEDBACK
         if row.get("_exclude_tail"):
             tail = []
             pending_subagent_messages = []

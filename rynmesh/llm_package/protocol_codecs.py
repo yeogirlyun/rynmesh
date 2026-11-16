@@ -655,6 +655,8 @@ def parse_response(raw: dict[str, Any], protocol: str, model: str, scope: str) -
     elif finish == "tool_calls":
         raise ValueError("native tool stop has no tool calls")
     if finish != "content_filter" and not message.get("content") and not calls:
+        if finish == "length":
+            raise NativeStreamError("upstream_output_limit_reached")
         raise ValueError("native response has no assistant output")
     message["provider_state"] = {"protocol": protocol, "scope": scope, "data": data}
     return {"message": message, "finish_reason": finish, "usage": _usage(raw.get("usage"), protocol)}

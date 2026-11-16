@@ -89,6 +89,7 @@ RUNTIME_ERROR_CODES = frozenset({
     "ai_permission_denied",
     "stream_delivery_failed", "upstream_http_failed", "upstream_response_invalid",
     "upstream_response_too_large",
+    "upstream_output_limit_reached",
     "upstream_stream_truncated",
     "source_protocol_parameters_unsupported",
     "source_protocol_response_invalid",
@@ -556,6 +557,16 @@ class OpenAICompatibleAdapter:
                 raise AdapterError("task_cancelled")
             if deadline is not None and time.monotonic() > deadline:
                 raise AdapterError("inference timed out", code="inference_timeout")
+            if finish == "length" and not message.get("content") and not message.get("tool_calls"):
+                req_max = body.get("max_tokens")
+                diag = {"max_tokens": req_max} if type(req_max) is int and req_max > 0 else {}
+                raise AdapterError(
+                    "upstream_output_limit_reached",
+                    code="upstream_output_limit_reached",
+                    reported_usage=observed_usage(usage),
+                    finish_reason="length",
+                    diagnostics=diag,
+                )
             if finish != "content_filter" and not message.get("content") and not message.get("tool_calls") and not message.get("reasoning_content"):
                 raise AdapterError("upstream_empty_completion")
             counts = observed_usage(usage)

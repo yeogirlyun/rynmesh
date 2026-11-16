@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import hashlib
 import hmac
 import json
@@ -79,7 +80,7 @@ from .lifecycle import (
 from .lifecycle import (
     update as update_runtime,
 )
-from .manifest import LLMPackageManifest, ManifestError, load_manifest
+from .manifest import LLMPackageManifest, ManifestError, load_manifest, save_manifest
 from .model_usage import ModelUsageStore, normalize_model_key, usage_caller_scope
 from .p2p import (
     SIGNAL_LONG_POLL_S,
@@ -467,7 +468,7 @@ class ProviderService:
             models = self.cli_models()
             if not models or (model and not any(item.get("id") == model for item in models)):
                 raise AdapterError("cli_model_unavailable", code="model_configuration_changed")
-            return context_metadata(models, model)["context_window"]
+            return context_metadata(models, model, kind=self.manifest.adapter)["context_window"]
         return self.manifest.context_window
 
     def public_status(self, *, benchmark: bool = False, cached_cli_models: bool = False) -> dict[str, Any]:
@@ -1785,11 +1786,26 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                         continue
                     if manifest.adapter != kind:
                         continue
+                    from .cli_models import CLI_FALLBACK_MAX_OUTPUT_TOKENS, CLI_FALLBACK_WINDOWS
+                    legacy_cli_windows = {"codex_cli": 872000, "antigravity_cli": 1048576, "claude_cli": 1000000}
+                    refreshed_manifest = False
+                    if kind in CLI_FALLBACK_WINDOWS:
+                        if manifest.context_window == legacy_cli_windows.get(kind):
+                            manifest.context_window = CLI_FALLBACK_WINDOWS[kind]
+                            refreshed_manifest = True
+                        if manifest.max_output_tokens == 128000:
+                            manifest.max_output_tokens = CLI_FALLBACK_MAX_OUTPUT_TOKENS
+                            refreshed_manifest = True
+                        if not manifest.context_window_basis:
+                            manifest.context_window_basis = "cli_default"
+                            refreshed_manifest = True
                     if kind == "codex_cli":
                         # Preserve the existing binding fingerprint across this
                         # admission change; publication adds the transport contract.
                         manifest.capabilities = [c for c in manifest.capabilities if c not in {"api-text-only", "client-tools"}]
                         manifest.capabilities += [c for c in ("buffered-streaming",) if c not in manifest.capabilities]
+                    if refreshed_manifest:
+                        save_manifest(manifest, path)
                     current = ProviderService(
                         manifest=manifest, adapter=adapter_from_manifest(manifest),
                         store=store, task_store=provider_orders, balance=balance,
@@ -2720,10 +2736,11 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         record = source_store.read().get(source_id)
         if not record:
             raise HTTPException(404, "来源不存在")
+        initial_record = copy.deepcopy(record)
         try:
             result = await asyncio.to_thread(source_store.probe, record)
             with source_store.lock:
-                if source_store.read().get(source_id) != record:
+                if source_store.read().get(source_id) != initial_record:
                     raise HTTPException(409, "配置已变更，请重新测试")
                 record["status"] = "ready"
                 checked = {"status": "passed", "checked_at": datetime.now(timezone.utc).isoformat(), "method": "fixed_chat"}
@@ -3558,10 +3575,15 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             and (effective_transport == "p2p" or callable(getattr(get_transport(), "iter_post_bytes", None)))
             and not own_request
         )
-        if public_manifest.get("adapter") in {"codex_cli", "antigravity_cli"}:
-            from .cli_models import context_metadata
-            public_manifest["context_window"] = context_metadata(selected.get("cli_models", []), cli_model,
-                fallback=public_manifest.get("context_window", 32768))["context_window"]
+        if public_manifest.get("adapter") in {"codex_cli", "antigravity_cli", "claude_cli"}:
+            from .cli_models import context_metadata, fallback_window
+            adapter_kind = str(public_manifest.get("adapter") or "")
+            public_manifest["context_window"] = context_metadata(
+                selected.get("cli_models", []),
+                cli_model,
+                fallback=public_manifest.get("context_window", fallback_window(adapter_kind)),
+                kind=adapter_kind,
+            )["context_window"]
         try:
             # Only package_id/model_alias/context_window/max_output_tokens/
             # timeout_seconds/pricing are load-bearing here; the rest are

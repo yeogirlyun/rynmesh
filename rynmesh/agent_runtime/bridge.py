@@ -48,6 +48,22 @@ BUSY_REASONS = frozenset({"node_slots", "service_slots", "memory_pressure", "gpu
 RESPONSE_TOO_LARGE_FEEDBACK = (
     "上一次回复超过大小上限，没有执行任何工具。请把大段写入拆成多次较小的 apply_patch/写文件调用"
 )
+OUTPUT_LIMIT_REACHED_FEEDBACK = (
+    "Server note: Your previous response used the entire output token budget on thinking/reasoning without "
+    "producing any visible text or tool call. Keep internal reasoning concise and output the reply or tool call directly."
+)
+OUTPUT_LIMIT_REACHED_MESSAGE = "模型把输出额度都用在思考上了，请调高该模型的输出上限或降低推理强度"
+
+
+def retry_output_limit_cap(prev_cap: int, target: dict) -> int:
+    return min(2 * prev_cap, output_policy.configured_output(target))
+
+
+def has_output_limit_feedback(messages) -> bool:
+    return any(
+        isinstance(m, dict) and OUTPUT_LIMIT_REACHED_FEEDBACK in str(m.get("content") or "")
+        for m in (messages or [])
+    )
 
 
 class AgentModelBridge:
@@ -521,11 +537,27 @@ class AgentModelBridge:
                         rejected.request_id = task_id
                         rejected.detail = RESPONSE_TOO_LARGE_FEEDBACK
                         raise rejected
+                    if peer_err == "upstream_output_limit_reached":
+                        usage, _ = self._response_metadata(result, target)
+                        if not has_output_limit_feedback(messages):
+                            rejected = AgentModelResponseError(usage, "length")
+                            rejected.request_id = task_id
+                            rejected.detail = OUTPUT_LIMIT_REACHED_FEEDBACK
+                            rejected.diagnostics = {"max_tokens": maximum}
+                            raise rejected
+                        err = (AgentModelResponseError(usage, "length", "agent_model_output_limit_reached")
+                               if isinstance(usage, dict) else AgentError("agent_model_output_limit_reached"))
+                        err.request_id = task_id
+                        err.detail = OUTPUT_LIMIT_REACHED_MESSAGE
+                        err.details = OUTPUT_LIMIT_REACHED_MESSAGE
+                        err.diagnostics = {"max_tokens": maximum}
+                        raise err
                     raise AgentError({"model_configuration_changed": "agent_model_destination_changed",
                                       "ai_permission_denied": "agent_model_destination_changed",
                                       "source_protocol_parameters_unsupported": "agent_model_protocol_unsupported",
                                       "source_protocol_response_invalid": "agent_model_protocol_invalid",
                                       "upstream_image_rejected": "agent_model_image_rejected",
+                                      "upstream_output_limit_reached": "agent_model_output_limit_reached",
                                       "model_daily_quota_exhausted": "agent_model_quota_exhausted",
                                       "peer_request_too_large": "agent_model_context_overflow",
                                       "estimated_context_window_exceeded": "agent_model_context_overflow"}.get(peer_err, "agent_inference_failed"))
@@ -588,6 +620,15 @@ class AgentModelBridge:
                 diag["reason"] = raw_diag["reason"]
             if type(raw_diag.get("limit_bytes")) is int and raw_diag["limit_bytes"] > 0:
                 diag["limit_bytes"] = raw_diag["limit_bytes"]
+            if type(raw_diag.get("max_tokens")) is int and raw_diag["max_tokens"] > 0:
+                diag["max_tokens"] = raw_diag["max_tokens"]
+            if exc.code == "upstream_output_limit_reached" and not cancelled() and not expired() and not has_output_limit_feedback(messages):
+                diag.setdefault("max_tokens", maximum)
+                rejected = AgentModelResponseError(exc.reported_usage, "length")
+                rejected.request_id = task_id
+                rejected.detail = OUTPUT_LIMIT_REACHED_FEEDBACK
+                rejected.diagnostics = diag
+                raise rejected from None
             if exc.code in {"upstream_response_invalid", "upstream_response_too_large"} and not cancelled() and not expired():
                 rej_finish = None if exc.code == "upstream_response_too_large" and exc.finish_reason == "length" else exc.finish_reason
                 rejected = AgentModelResponseError(exc.reported_usage, rej_finish)
@@ -612,6 +653,7 @@ class AgentModelBridge:
                     "upstream_stream_error": "agent_model_upstream_failed",
                     "upstream_stream_truncated": "agent_model_stream_interrupted",
                     "upstream_image_rejected": "agent_model_image_rejected",
+                    "upstream_output_limit_reached": "agent_model_output_limit_reached",
                     "upstream_request_rejected": "agent_model_request_rejected",
                     "source_protocol_parameters_unsupported": "agent_model_protocol_unsupported",
                     "source_protocol_response_invalid": "agent_model_protocol_invalid",
@@ -631,6 +673,10 @@ class AgentModelBridge:
             else:
                 err = AgentError(code)
             err.request_id = task_id
+            if code == "agent_model_output_limit_reached":
+                err.detail = OUTPUT_LIMIT_REACHED_MESSAGE
+                err.details = OUTPUT_LIMIT_REACHED_MESSAGE
+                diag.setdefault("max_tokens", maximum)
             if diag:
                 err.diagnostics = diag
             raise err from None
