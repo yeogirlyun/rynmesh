@@ -14,6 +14,7 @@ from rynmesh.crypto import sha256_file
 PROTOCOL_VERSION = "rynmesh.llm.task.v1"
 PACKAGE_VERSION = "0.1.0"
 MODES = {"managed", "import_gguf", "openai_compatible", "ollama", "codex_cli", "claude_cli", "antigravity_cli"}
+_DEFAULT_LIMIT_UNSET: Any = object()
 
 
 class ManifestError(ValueError):
@@ -48,8 +49,8 @@ class LLMPackageManifest:
     version: str = PACKAGE_VERSION
     protocol_version: str = PROTOCOL_VERSION
     capabilities: list[str] = field(default_factory=lambda: ["text-generation"])
-    context_window: int = 8192
-    max_output_tokens: int = 2048
+    context_window: int = _DEFAULT_LIMIT_UNSET
+    max_output_tokens: int = _DEFAULT_LIMIT_UNSET
     max_concurrent: int = 1
     queue_limit: int = 0
     timeout_seconds: float = 120.0
@@ -78,6 +79,13 @@ class LLMPackageManifest:
     model_owned: bool = False
     allow_non_loopback: bool = False
     debug_log_bodies: bool = False
+
+    def __post_init__(self) -> None:
+        external_api = self.mode in {"openai_compatible", "ollama"}
+        if self.context_window is _DEFAULT_LIMIT_UNSET or self.context_window is None:
+            self.context_window = 4096 if external_api else 8192
+        if self.max_output_tokens is _DEFAULT_LIMIT_UNSET or self.max_output_tokens is None:
+            self.max_output_tokens = 512 if external_api else 2048
 
     def validate(self) -> None:
         if not self.package_id or any(ch not in "abcdefghijklmnopqrstuvwxyz0123456789-_." for ch in self.package_id):
