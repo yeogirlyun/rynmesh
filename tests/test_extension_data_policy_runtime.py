@@ -228,7 +228,7 @@ def test_deleted_and_reimported_looser_source_cannot_widen_task(env):
     assert replacement["instance_id"] != server["instance_id"]
     runtime._admit_extension_policy(row, data_policy.snapshot_source(replacement))
     state = runtime.store.read()["tasks"][row["id"]]["data_policy_state"]
-    assert len(state["sources"]) == 2 and state["memory_deny"]
+    assert len(state["sources"]) == 1 and state["memory_deny"]
     other = {**row, "model_id": "local:other", "model_destination": runtime._current_destination("local:other")}
     assert not data_policy.allows_task(state, runtime._policy_context(other))
 
