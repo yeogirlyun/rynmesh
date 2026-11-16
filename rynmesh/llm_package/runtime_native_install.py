@@ -15,6 +15,7 @@ import hashlib
 import http.client
 import os
 import platform
+import shutil
 import tarfile
 import time
 import urllib.error
@@ -280,7 +281,10 @@ def _extract_tar(archive: Path, target: Path) -> None:
             if not (member.isfile() or member.isdir()):
                 raise LifecycleError("runtime archive contains an unsafe member type")
             total = _check_total(total + max(0, int(member.size)))
-        bundle.extractall(target, members=members, filter="data")
+        if hasattr(tarfile, "data_filter"):
+            bundle.extractall(target, members=members, filter="data")
+        else:
+            bundle.extractall(target, members=members)
 
 
 def _extract_zip(archive: Path, target: Path) -> None:
@@ -327,7 +331,7 @@ def _extract(archive: Path, target: Path) -> None:
             _extract_tar(archive, target)
     except LifecycleError:
         raise
-    except (OSError, tarfile.TarError, zipfile.BadZipFile, EOFError) as exc:
+    except (OSError, tarfile.TarError, zipfile.BadZipFile, EOFError, TypeError) as exc:
         raise LifecycleError(UNREADABLE_ARCHIVE) from exc
 
 
@@ -365,25 +369,48 @@ def download(base: Path, *, progress: Any = None, cancel_check: Any = None) -> P
         _fetch(runtime_base_url(base) + name, archive, expected_sha256, size_bytes,
                progress=progress, cancel_check=cancel_check)
     target = managed_root(base)
+    staging = target.with_name(target.name + ".new")
+    backup = target.with_name(target.name + ".old")
+    shutil.rmtree(staging, ignore_errors=True)
+    shutil.rmtree(backup, ignore_errors=True)
     try:
         # A repair must not leave an older completion marker authorizing a
-        # partly overwritten extraction if the process exits or I/O fails.
+        # previous installation if the repair itself fails before replacement.
         try:
-            (target / MARKER_NAME).unlink(missing_ok=True)
+            if target.exists():
+                (target / MARKER_NAME).unlink(missing_ok=True)
         except OSError as exc:
             raise LifecycleError(UNWRITABLE_STATE) from exc
-        _extract(archive, target)
-    finally:
-        _discard(archive)
-    server = _extracted_server(target)
-    if server is None:
-        raise LifecycleError("the runtime archive did not contain an inference server")
-    try:
-        if os.name != "nt":
-            server.chmod(0o755)
-    except OSError as exc:
-        raise LifecycleError(UNWRITABLE_STATE) from exc
-    report(progress, cancel_check, 79, "Finishing local inference runtime installation")
-    _write_marker(target, server, expected_sha256)
+        try:
+            _extract(archive, staging)
+        finally:
+            _discard(archive)
+        server_in_staging = _extracted_server(staging)
+        if server_in_staging is None:
+            raise LifecycleError("the runtime archive did not contain an inference server")
+        rel_server = server_in_staging.relative_to(staging)
+        try:
+            if os.name != "nt":
+                server_in_staging.chmod(0o755)
+        except OSError as exc:
+            raise LifecycleError(UNWRITABLE_STATE) from exc
+        report(progress, cancel_check, 79, "Finishing local inference runtime installation")
+        _write_marker(staging, server_in_staging, expected_sha256)
+        had_old = target.exists()
+        try:
+            if had_old:
+                target.rename(backup)
+            staging.rename(target)
+        except OSError as exc:
+            if not target.exists() and backup.exists():
+                try:
+                    backup.rename(target)
+                except OSError:
+                    pass
+            raise LifecycleError(UNWRITABLE_STATE) from exc
+        shutil.rmtree(backup, ignore_errors=True)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
     report(progress, None, 80, "Local inference runtime installed")
-    return server
+    return target / rel_server
