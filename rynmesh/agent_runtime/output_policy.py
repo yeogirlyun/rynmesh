@@ -18,7 +18,7 @@ from ..llm_package.image_input_profile import (
 from .store import UNKNOWN_WINDOW_CONTEXT_CHARS, AgentError, encoded
 
 VERSION = "configured-output-v2"
-IMAGE_ANALYSIS_VERSION = "canonical-image-heuristic-v1"
+IMAGE_ANALYSIS_VERSION = "canonical-image-heuristic-v2"
 TRANSPORT_MAX_TOKENS = 393216
 MAX_RAW_RESPONSE_BYTES = 256 * 1024
 MAX_PROVIDER_STATE_BYTES = 2 * 1024 * 1024
@@ -30,11 +30,11 @@ UNKNOWN_CONTEXT_WINDOW_TOKENS = 32768
 FRAMING_RESERVE_TOKENS = 512
 ESTIMATE_BASIS = "serialized_utf8_bytes_div_3_ceil_plus_512_framing_heuristic"
 RYN_ADMISSION_ESTIMATE_BASIS = "serialized_utf8_bytes_as_tokens_ryn_provider_admission"
-IMAGE_ESTIMATE_BASIS = "text_utf8_div_3_ceil_plus_512_and_image_patch16_x3_plus_1024_heuristic"
-IMAGE_TOKEN_FORMULA_BASIS = "heuristic_3_times_ceil_w_16_times_ceil_h_16_plus_1024_not_provider_tokenizer"
-IMAGE_PATCH_SIZE = 16
-IMAGE_TOKENS_PER_PATCH = 3
-IMAGE_FIXED_OVERHEAD_TOKENS = 1024
+IMAGE_ESTIMATE_BASIS = "text_utf8_div_3_ceil_plus_512_and_image_area_div_750_capped_10000_plus_85_heuristic"
+IMAGE_TOKEN_FORMULA_BASIS = "heuristic_min_10000_ceil_w_times_h_div_750_plus_85_not_provider_tokenizer"
+IMAGE_AREA_DIVISOR = 750
+IMAGE_MAX_TOKENS = 10000
+IMAGE_FIXED_OVERHEAD_TOKENS = 85
 IMAGE_TEXT_PROJECTION_PLACEHOLDER = "ryn-verified-image://inline"
 
 MAX_RAW_REQUEST_UTF8_BYTES = MAX_INTERNAL_RAW_REQUEST_BYTES
@@ -82,9 +82,8 @@ def estimate_image_tokens(width: int, height: int) -> int:
     """Conservative model-independent full-image token heuristic; never claimed as provider tokenizer truth."""
     if type(width) is not int or type(height) is not int or width <= 0 or height <= 0:
         raise ValueError("invalid_image_dimensions")
-    patches_w = (width + IMAGE_PATCH_SIZE - 1) // IMAGE_PATCH_SIZE
-    patches_h = (height + IMAGE_PATCH_SIZE - 1) // IMAGE_PATCH_SIZE
-    return IMAGE_TOKENS_PER_PATCH * patches_w * patches_h + IMAGE_FIXED_OVERHEAD_TOKENS
+    area_tokens = (width * height + IMAGE_AREA_DIVISOR - 1) // IMAGE_AREA_DIVISOR
+    return min(IMAGE_MAX_TOKENS, area_tokens) + IMAGE_FIXED_OVERHEAD_TOKENS
 
 
 def _inspect_canonical_image_part(

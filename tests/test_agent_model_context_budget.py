@@ -2,15 +2,18 @@
 
 All model responses are authored fixtures; no provider or network is invoked.
 """
+import base64
 import copy
+import io
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 from test_agent_runtime import advance, assistant, make_runtime
 from test_agent_runtime_model_switch import body as switch_body
 from test_agent_runtime_model_switch import setup as switch_setup
 
-from rynmesh.agent_runtime import budget, output_policy, state, verification
+from rynmesh.agent_runtime import budget, context_compaction, output_policy, state, verification
 from rynmesh.agent_runtime.diagnostics import DiagnosticTools
 from rynmesh.agent_runtime.runtime import AgentRuntime
 from rynmesh.agent_runtime.store import AgentError, AgentStore, encoded
@@ -240,3 +243,99 @@ def test_zero_input_allowance_when_full_configured_output_consumes_window():
     policy = output_policy.context_budget(window_model(8000, output=8000))
     assert policy["effective_max_context_bytes"] == 0
     assert policy["reserved_output_tokens"] == 8000
+
+
+def _png_attachment(name: str, width: int = 1280, height: int = 1280, color: tuple[int, int, int] = (24, 60, 120)) -> dict:
+    buf = io.BytesIO()
+    Image.new("RGB", (width, height), color).save(buf, format="PNG")
+    return {
+        "name": name,
+        "media_type": "image/png",
+        "data_base64": base64.b64encode(buf.getvalue()).decode("ascii"),
+    }
+
+
+def test_s03_i10_t1_image_token_estimates_across_dimensions_and_formula_version():
+    assert output_policy.IMAGE_ANALYSIS_VERSION == "canonical-image-heuristic-v2"
+    assert output_policy.IMAGE_ESTIMATE_BASIS == (
+        "text_utf8_div_3_ceil_plus_512_and_image_area_div_750_capped_10000_plus_85_heuristic"
+    )
+    assert output_policy.IMAGE_TOKEN_FORMULA_BASIS == (
+        "heuristic_min_10000_ceil_w_times_h_div_750_plus_85_not_provider_tokenizer"
+    )
+
+    assert output_policy.estimate_image_tokens(1, 1) == 86
+    assert output_policy.estimate_image_tokens(64, 48) == 90
+    assert output_policy.estimate_image_tokens(512, 512) == 435
+    assert output_policy.estimate_image_tokens(1280, 900) == 1621
+    assert output_policy.estimate_image_tokens(1280, 1280) == 2270
+    assert output_policy.estimate_image_tokens(2738, 2738) == 10081
+    assert output_policy.estimate_image_tokens(4000, 4000) == 10085
+
+    for bad_w, bad_h in [(0, 100), (100, -1), (True, 128), (128, 128.0)]:
+        with pytest.raises(ValueError, match="invalid_image_dimensions"):
+            output_policy.estimate_image_tokens(bad_w, bad_h)
+
+    buf = io.BytesIO()
+    Image.new("RGB", (1280, 1280), (12, 34, 56)).save(buf, format="PNG")
+    url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+    analysis = output_policy.analyze_request(
+        [{"role": "user", "content": [{"type": "text", "text": "Inspect"}, {"type": "image_url", "image_url": {"url": url}}]}],
+        [],
+    )
+    assert analysis["formula_version"] == "canonical-image-heuristic-v2"
+    assert analysis["estimate_basis"] == output_policy.IMAGE_ESTIMATE_BASIS
+    assert analysis["image_estimate_basis"] == output_policy.IMAGE_TOKEN_FORMULA_BASIS
+    assert analysis["estimated_image_tokens"] == 2270
+
+    # Requests carrying image token estimates remain excluded from text bytes/token calibration.
+    settled_with_image = {
+        "model_id": "local:test",
+        "budget": {
+            "records": [
+                {
+                    "kind": "model",
+                    "stage": "model",
+                    "status": "settled",
+                    "input_tokens": 5000,
+                    "output_policy": {
+                        "model_id": "local:test",
+                        "projected_context_utf8_bytes": 24000,
+                        "estimated_image_tokens": analysis["estimated_image_tokens"],
+                    },
+                }
+            ]
+        },
+    }
+    assert context_compaction.observed_bytes_per_token(settled_with_image) is None
+
+
+def test_s03_i10_t2_128k_window_with_four_1280_images_does_not_trigger_compaction(tmp_path):
+    runtime, model, _, _ = make_runtime(tmp_path, assistant("Reviewed all four 1280x1280 images directly."))
+    model.supports_image_input = True
+    configure(runtime, window_model(128000, output=4096, adapter="openai_compatible", supports_image_input=True))
+    attachments = [
+        _png_attachment(f"screen-{idx}.png", 1280, 1280, (20 * idx, 50, 100))
+        for idx in range(1, 5)
+    ]
+    task = runtime.create({"message": "Inspect all four 1280x1280 screenshots.", "attachments": attachments})
+    prior_step = "RECORDED_OBSERVATION_STEP " * 400  # ~10.4 KB per exchange, 12 exchanges = ~125 KB (~41k tokens in 128k window)
+
+    def seed_prior_history(data):
+        msgs = data["tasks"][task["id"]]["messages"]
+        prior = []
+        for idx in range(12):
+            prior.append({"role": "user", "content": f"Prior turn {idx}", "owner": True})
+            prior.append({"role": "assistant", "content": f"[{idx}] {prior_step}"})
+        msgs[:0] = prior
+
+    runtime.store.transaction(seed_prior_history)
+    advance(runtime, 3)
+    row = stored(runtime, task["id"])
+    assert runtime.get(task["id"])["status"] == "completed"
+    assert len(model.calls) == 1
+    assert not any(ev["type"].startswith("context_compaction") for ev in row["events"])
+    record = row["budget"]["records"][0]
+    assert record["output_policy"]["image_count"] == 4
+    assert record["output_policy"]["estimated_image_tokens"] == 4 * 2270
+
