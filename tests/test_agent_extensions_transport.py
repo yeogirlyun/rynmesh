@@ -144,7 +144,7 @@ def test_http_open_sse_trickle_deadline_and_oversize_notification() -> None:
             method = request.get("method")
             if ident is None:
                 body = (
-                    b"x" * (4 * 1024 * 1024 + 4096)
+                    b"x" * (8 * 1024 * 1024 + 4096)
                     if self.path == "/oversize-notification"
                     else b""
                 )

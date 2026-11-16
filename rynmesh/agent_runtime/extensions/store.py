@@ -46,6 +46,9 @@ DEFAULT_STARTUP_TIMEOUT_MS = 30000
 MAX_STARTUP_TIMEOUT_MS = 300000
 DEFAULT_TOOL_TIMEOUT_MS = 300000
 MAX_TOOL_TIMEOUT_MS = 3600000
+DEFAULT_MAX_OUTPUT_CHARS = 32000
+MIN_MAX_OUTPUT_CHARS = 64
+MAX_MAX_OUTPUT_CHARS = 2_000_000
 
 
 def validate_peer_provider(value: Any) -> dict[str, Any]:
@@ -462,6 +465,7 @@ class ExtensionStore:
             "secret_headers": {},
             "startup_timeout_ms": DEFAULT_STARTUP_TIMEOUT_MS,
             "tool_timeout_ms": DEFAULT_TOOL_TIMEOUT_MS,
+            "max_output_chars": DEFAULT_MAX_OUTPUT_CHARS,
             "enabled_tools": None,
             "disabled_tools": [],
             "read_only_tools": ["computer_observe_windows", "computer_read_window"],
@@ -1018,6 +1022,7 @@ class ExtensionStore:
                 server.get("startup_timeout_ms", DEFAULT_STARTUP_TIMEOUT_MS)
             ),
             "tool_timeout_ms": int(server.get("tool_timeout_ms", DEFAULT_TOOL_TIMEOUT_MS)),
+            "max_output_chars": int(server.get("max_output_chars", DEFAULT_MAX_OUTPUT_CHARS)),
             "enabled_tools": list(enabled_tools) if isinstance(enabled_tools, list) else None,
             "disabled_tools": sorted(disabled_tools),
             "read_only_tools": sorted(read_only_tools),
@@ -2366,6 +2371,11 @@ class ExtensionStore:
                     if existing
                     else DEFAULT_TOOL_TIMEOUT_MS
                 ),
+                "max_output_chars": int(
+                    existing.get("max_output_chars", DEFAULT_MAX_OUTPUT_CHARS)
+                    if existing
+                    else DEFAULT_MAX_OUTPUT_CHARS
+                ),
                 "enabled_tools": existing.get("enabled_tools") if existing else None,
                 "disabled_tools": list(existing.get("disabled_tools") or []) if existing else [],
                 "read_only_tools": list(existing.get("read_only_tools") or []) if existing else [],
@@ -2417,6 +2427,9 @@ class ExtensionStore:
         if "tool_timeout_ms" in payload and payload["tool_timeout_ms"] is not None:
             val = int(payload["tool_timeout_ms"])
             record["tool_timeout_ms"] = max(1000, min(MAX_TOOL_TIMEOUT_MS, val))
+        if "max_output_chars" in payload and payload["max_output_chars"] is not None:
+            val = int(payload["max_output_chars"])
+            record["max_output_chars"] = max(MIN_MAX_OUTPUT_CHARS, min(MAX_MAX_OUTPUT_CHARS, val))
         if "enabled_tools" in payload:
             et = payload["enabled_tools"]
             record["enabled_tools"] = [str(x) for x in et] if isinstance(et, list) else None
@@ -3053,6 +3066,13 @@ class ExtensionStore:
                         srv.get("startup_timeout_ms", DEFAULT_STARTUP_TIMEOUT_MS)
                     ),
                     "tool_timeout_ms": int(srv.get("tool_timeout_ms", DEFAULT_TOOL_TIMEOUT_MS)),
+                    "max_output_chars": max(
+                        MIN_MAX_OUTPUT_CHARS,
+                        min(
+                            MAX_MAX_OUTPUT_CHARS,
+                            int(srv.get("max_output_chars", DEFAULT_MAX_OUTPUT_CHARS)),
+                        ),
+                    ),
                     "enabled_tools": enabled_tools,
                     "disabled_tools": disabled_tools,
                     "read_only_tools": [],
