@@ -27,6 +27,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
@@ -40,6 +41,7 @@ from .runtime_native_install import (
     RUNTIME_RELEASE,
     UNAVAILABLE_REASON,
     UNWRITABLE_STATE,
+    UNWRITABLE_STATE_CODE,
     asset,
     download,
     find_server,
@@ -50,6 +52,72 @@ from .runtime_native_install import (
 )
 
 RUNTIME_ID = "native_llama_cpp"
+STDERR_TAIL_BYTES = 16 * 1024
+
+_LLAMA_OUTPUT_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("out_of_memory", ("out of memory", "failed to allocate", "cudamalloc")),
+    ("gpu_error", ("cuda error", "ggml_cuda", "vulkan")),
+    ("unsupported_model", ("unknown model architecture", "invalid magic", "failed to load model")),
+    ("template_error", ("chat template", "jinja")),
+    ("port_in_use", ("address already in use", "bind")),
+)
+
+_STARTUP_EXIT_MESSAGES: dict[str, str] = {
+    "out_of_memory": "本机推理服务启动失败（out_of_memory）：内存或显存不足，请换较小模型或调小上下文窗口",
+    "gpu_error": "本机推理服务启动失败（gpu_error）：GPU 驱动或加速后端报错，请检查显卡驱动或改用 CPU",
+    "unsupported_model": "本机推理服务启动失败（unsupported_model）：模型格式损坏或当前运行时不支持该模型架构",
+    "template_error": "本机推理服务启动失败（template_error）：模型聊天模板（Jinja）解析失败",
+    "port_in_use": "本机推理服务启动失败（port_in_use）：本地端口已被占用",
+    "unknown": "本机推理服务在启动阶段异常退出（unknown）",
+}
+
+
+def classify_llama_output(tail: bytes) -> str:
+    """Classify the trailing up-to-16 KiB stderr slice into a closed reason category."""
+    bounded = bytes(tail or b"")[-STDERR_TAIL_BYTES:]
+    text = bounded.decode("utf-8", errors="ignore").lower()
+    for category, keywords in _LLAMA_OUTPUT_RULES:
+        if any(kw in text for kw in keywords):
+            return category
+    return "unknown"
+
+
+def _start_stderr_reader(pipe: Any):
+    """Drain `pipe` into an in-memory 16 KiB ring buffer without writing raw bytes anywhere."""
+    if pipe is None or not hasattr(pipe, "read"):
+        return lambda *, wait_eof=False: b""
+    lock = threading.Lock()
+    buf = bytearray()
+
+    def _drain() -> None:
+        try:
+            while True:
+                chunk = pipe.read(4096)
+                if not chunk:
+                    break
+                data = chunk if isinstance(chunk, (bytes, bytearray)) else str(chunk).encode("utf-8", errors="ignore")
+                with lock:
+                    buf.extend(data)
+                    if len(buf) > STDERR_TAIL_BYTES:
+                        del buf[: len(buf) - STDERR_TAIL_BYTES]
+        except (OSError, ValueError):
+            pass
+        finally:
+            try:
+                pipe.close()
+            except OSError:
+                pass
+
+    reader = threading.Thread(target=_drain, name="ryn-llama-stderr", daemon=True)
+    reader.start()
+
+    def _snapshot(*, wait_eof: bool = False) -> bytes:
+        if wait_eof:
+            reader.join(timeout=0.5)
+        with lock:
+            return bytes(buf)
+
+    return _snapshot
 
 STARTUP_GRACE_SECONDS = 2.0
 STOP_GRACE_SECONDS = 10.0
@@ -168,7 +236,7 @@ def _runtime_dir(root: Path) -> Path:
         if os.name != "nt":
             os.chmod(directory, 0o700)
     except OSError as exc:
-        raise LifecycleError(UNWRITABLE_STATE) from exc
+        raise LifecycleError(UNWRITABLE_STATE, code=UNWRITABLE_STATE_CODE) from exc
     return directory
 
 
@@ -222,7 +290,7 @@ def _write_record(root: Path, package_id: str, pid: int, server_name: str,
         if os.name != "nt":
             os.chmod(path, 0o600)
     except OSError as exc:
-        raise LifecycleError(UNWRITABLE_STATE) from exc
+        raise LifecycleError(UNWRITABLE_STATE, code=UNWRITABLE_STATE_CODE) from exc
 
 
 def _command_matches(pid: int, server_name: str) -> bool:
@@ -311,6 +379,36 @@ def _windows_alive(pid: int, server_name: str = "", *, port: int | None = None) 
             pass
 
 
+def _record_child_exit(process: Any, log: Path | None = None) -> str:
+    tail_fn = getattr(process, "_ryn_stderr_tail", None)
+    raw_tail = tail_fn(wait_eof=True) if callable(tail_fn) else b""
+    category = classify_llama_output(raw_tail)
+    target_log = log or getattr(process, "_ryn_log_path", None)
+    if target_log is not None and not getattr(process, "_ryn_exit_logged", False):
+        process._ryn_exit_logged = True
+        try:
+            with Path(target_log).open("ab") as handle:
+                handle.write(f"runtime_process_exited code={process.returncode} category={category}\n".encode("ascii"))
+        except OSError:
+            pass
+    return category
+
+
+def last_exit_category(manifest: LLMPackageManifest) -> str:
+    root = _runtime_root(manifest)
+    log = root / "runtime" / f"{manifest.package_id}.log"
+    try:
+        lines = log.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return "unknown"
+    for line in reversed(lines):
+        if line.startswith("runtime_process_exited") and "category=" in line:
+            cat = line.rsplit("category=", 1)[1].strip()
+            if cat in _STARTUP_EXIT_MESSAGES:
+                return cat
+    return "unknown"
+
+
 def _alive(pid: int | None, server_name: str = "", port: int | None = None) -> bool:
     """True when `pid` is running and (given `server_name`) is still our server.
 
@@ -322,6 +420,7 @@ def _alive(pid: int | None, server_name: str = "", port: int | None = None) -> b
         return False
     child = _CHILDREN.get(pid)
     if child is not None and child.poll() is not None:
+        _record_child_exit(child)
         _forget_child(pid)
         return False
     if os.name == "nt":
@@ -386,22 +485,20 @@ def _spawn(server: Path, command: list[str], root: Path, package_id: str,
             handle.write(b"runtime_process_starting\n")
             handle.flush()
             process = subprocess.Popen(
-                command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                 cwd=str(server.parent), env=_child_env(), **detach,
             )
     except OSError as exc:
-        raise LifecycleError("unable to start llama-server (see the runtime log)") from exc
+        raise LifecycleError("无法启动本机推理服务（llama-server 启动失败）", code="runtime_spawn_failed") from exc
+    process._ryn_stderr_tail = _start_stderr_reader(getattr(process, "stderr", None))
+    process._ryn_log_path = log
     deadline = time.monotonic() + STARTUP_GRACE_SECONDS
     while time.monotonic() < deadline:
         if process.poll() is not None:
-            try:
-                with log.open("ab") as handle:
-                    handle.write(f"runtime_process_exited code={process.returncode}\n".encode("ascii"))
-            except OSError:
-                pass  # Reporting the original startup failure must not depend on logging.
+            category = _record_child_exit(process, log)
             if os.name == "nt" and process.returncode & 0xFFFFFFFF == 0xC0000135:
                 raise LifecycleError("local inference runtime dependency is missing; use Update runtime to repair it")
-            raise LifecycleError("llama-server exited during startup (see the runtime log)")
+            raise LifecycleError(_STARTUP_EXIT_MESSAGES[category], code=f"runtime_exited_{category}")
         if _port_open(port):
             break
         time.sleep(0.05)

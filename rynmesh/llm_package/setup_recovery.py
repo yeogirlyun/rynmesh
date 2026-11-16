@@ -41,7 +41,8 @@ def managed_resume_configuration(body: dict) -> dict | None:
 
 
 class SetupRecoveryError(LifecycleError):
-    pass
+    def __init__(self, message: str = RECOVERY_FAILED, code: str | None = "setup_recovery_failed") -> None:
+        super().__init__(message, code=code)
 
 
 class SetupRecovery:

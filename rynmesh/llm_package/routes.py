@@ -1833,10 +1833,12 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         package_id = str(body.get("package_id") or "local-small")
         alias = str(body.get("alias") or "rynmesh-local")
         root = home / "llm"
+        raw_port = body.get("port")
+        requested_port = int(raw_port) if raw_port is not None and not isinstance(raw_port, bool) else None
         if mode == "managed":
             return install_managed(
                 package_id=package_id, root=root,
-                port=int(body.get("port") or 18080),
+                port=requested_port,
                 accept_risk=bool(body.get("accept_risk", False)),
                 runtime=str(body.get("runtime") or "auto"),
                 profile=str(body.get("profile") or "auto"),
@@ -1845,7 +1847,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         if mode == "import-gguf":
             return import_gguf(
                 source=str(body.get("model_path") or ""), package_id=package_id,
-                alias=alias, root=root, port=int(body.get("port") or 18080),
+                alias=alias, root=root, port=requested_port,
                 accept_risk=bool(body.get("accept_risk", False)),
                 runtime=str(body.get("runtime") or "auto"),
                 progress=progress, cancel_check=cancel_check,
@@ -2942,6 +2944,12 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         except (AdapterError, OSError) as exc:
             raise HTTPException(503, str(exc)) from exc
 
+    def _route_error_detail(exc: Exception) -> str | dict[str, str]:
+        code = getattr(exc, "code", None)
+        if isinstance(code, str) and code:
+            return {"message": str(exc), "error_code": code}
+        return str(exc)
+
     @app.post("/api/local/llm/cli-services/{kind}/setup")
     async def local_cli_setup(kind: str) -> dict[str, Any]:
         if kind not in {"codex_cli", "claude_cli", "antigravity_cli"}:
@@ -2949,7 +2957,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         try:
             result = await asyncio.to_thread(connect_cli, kind=kind, root=home / "llm")
         except (LifecycleError, AdapterError, ManifestError, OSError, ValueError) as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise HTTPException(status_code=409, detail=_route_error_detail(exc)) from exc
         settings = read_cli_settings()
         sharing = bool(settings.get(kind, {}).get("publication_enabled"))
         settings[kind] = {"manifest": result["manifest"], "publication_enabled": sharing}
@@ -3031,12 +3039,12 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         if not setup_operation_lock.acquire(blocking=False):
             raise HTTPException(status_code=409, detail="another local model setup is already running")
         try:
-            if setup_recovery.pending:
+            if setup_recovery.pending or setup_recovery.path.exists():
                 setup_recovery.restore()
             result = await asyncio.to_thread(configure_llm, dict(await request.json()))
             return activate_configuration(result)
         except (LifecycleError, AdapterError, ManifestError, OSError, ValueError) as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise HTTPException(status_code=409, detail=_route_error_detail(exc)) from exc
         finally:
             setup_operation_lock.release()
 
@@ -3151,7 +3159,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                         "stage": "recovery" if recovery_error else "cancelled" if cancelled else "failed",
                         "progress": 0,
                         "error_code": "setup_recovery_failed" if recovery_state == "failed" else
-                            "setup_previous_unavailable" if recovery_error else "setup_cancelled" if cancelled else "setup_failed",
+                            "setup_previous_unavailable" if recovery_error else "setup_cancelled" if cancelled else (getattr(exc, "code", None) or "setup_failed"),
                         "message": message,
                         "recovery_state": recovery_state,
                         "resume_configuration": resume_configuration,
@@ -3235,7 +3243,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             return {"ok": True, "action": action, "result": public_result,
                     "publication_enabled": False}
         except (LifecycleError, AdapterError, ManifestError, OSError, ValueError) as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise HTTPException(status_code=409, detail=_route_error_detail(exc)) from exc
 
     @app.get("/api/local/llm/service/status")
     def local_llm_service_status(request: Request) -> dict[str, Any]:

@@ -5,10 +5,12 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import socket
 import stat
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from . import catalog, runtime_docker, runtime_native
 from .adapters import AdapterError, adapter_from_manifest
@@ -67,12 +69,19 @@ def select_runtime(preference: str = "auto", *, root: str | Path | None = None):
     if choice in {"native", RUNTIME_NATIVE}:
         ok, reason = runtime_native.available(root)
         if not ok:
-            raise LifecycleError(reason)
+            raise LifecycleError(reason, code="runtime_unavailable_for_platform")
         return runtime_native
     if choice in {"docker", RUNTIME_DOCKER}:
         ok, reason = runtime_docker.available()
         if not ok:
-            raise LifecycleError(reason)
+            docker_code = (
+                "docker_not_installed"
+                if reason == runtime_docker.DOCKER_NOT_INSTALLED_REASON
+                else "docker_engine_not_running"
+                if reason == runtime_docker.DOCKER_ENGINE_NOT_RUNNING_REASON
+                else None
+            )
+            raise LifecycleError(reason, code=docker_code)
         return runtime_docker
     if choice != "auto":
         raise LifecycleError("runtime preference must be auto, native, or docker")
@@ -82,8 +91,16 @@ def select_runtime(preference: str = "auto", *, root: str | Path | None = None):
     docker_ok, docker_reason = runtime_docker.available()
     if docker_ok:
         return runtime_docker
+    auto_code = (
+        "docker_not_installed"
+        if docker_reason == runtime_docker.DOCKER_NOT_INSTALLED_REASON
+        else "docker_engine_not_running"
+        if docker_reason == runtime_docker.DOCKER_ENGINE_NOT_RUNNING_REASON
+        else "runtime_unavailable_for_platform"
+    )
     raise LifecycleError(
-        f"no local inference runtime is available: {native_reason}; {docker_reason}"
+        f"no local inference runtime is available: {native_reason}; {docker_reason}",
+        code=auto_code,
     )
 
 
@@ -170,16 +187,76 @@ def validate_gguf(path: str | Path, *, report: HardwareReport | None = None,
             "fingerprint": fingerprint_file(source)}
 
 
-def wait_healthy(manifest: LLMPackageManifest, *, timeout_s: float = 120) -> dict[str, Any]:
+def _port_in_use(port: int) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+            return True
+    except OSError:
+        pass
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            probe.bind(("127.0.0.1", port))
+        return False
+    except OSError:
+        return True
+
+
+def _select_managed_port(port: int | None, *, root: Path, package_id: str) -> int:
+    if port is not None:
+        return int(port)
+    existing = runtime_native._read_record(runtime_native._pid_path(root, package_id))
+    if existing and existing.get("port", 0) > 0 and runtime_native._alive(existing["pid"], existing["server"], existing["port"]):
+        return int(existing["port"])
+    if not _port_in_use(18080):
+        return 18080
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+def _default_health_timeout(manifest: LLMPackageManifest) -> float:
+    size_bytes = 0
+    if manifest.model_path:
+        try:
+            size_bytes = int(Path(manifest.model_path).expanduser().stat().st_size)
+        except OSError:
+            size_bytes = 0
+    return min(600.0, 120.0 + (max(0, size_bytes) / (1024**3)) * 30.0)
+
+
+def wait_healthy(manifest: LLMPackageManifest, *, timeout_s: float | None = None) -> dict[str, Any]:
+    effective_timeout = _default_health_timeout(manifest) if timeout_s is None else float(timeout_s)
     adapter = adapter_from_manifest(manifest)
-    deadline = time.monotonic() + timeout_s
+    port = int(urlparse(manifest.base_url).port or 8080) if manifest.base_url else 8080
+    deadline = time.monotonic() + effective_timeout
     latest: dict[str, Any] = {"ok": False, "error": "not started"}
-    while time.monotonic() < deadline:
+    while True:
         latest = adapter.health()
         if latest.get("ok"):
             return latest
-        time.sleep(1)
-    raise LifecycleError(f"runtime did not become healthy: {latest.get('error', 'unknown error')}")
+        if manifest.runtime == RUNTIME_NATIVE:
+            st = runtime_native.state(manifest)
+            if not st.get("running") and st.get("status") != "adopted":
+                category = runtime_native.last_exit_category(manifest)
+                if category == "port_in_use" or (_port_in_use(port) and category == "unknown"):
+                    raise LifecycleError("端口被其他程序占用", code="runtime_port_in_use")
+                raise LifecycleError(f"运行时进程已退出（{category}）", code=f"runtime_exited_{category}")
+        elif manifest.runtime == RUNTIME_DOCKER:
+            st = runtime_docker.state(manifest)
+            if st.get("installed") and not st.get("running"):
+                raise LifecycleError("运行时进程已退出（unknown）", code="runtime_exited_unknown")
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(min(1.0, max(0.01, deadline - time.monotonic())))
+    if manifest.runtime in {RUNTIME_NATIVE, RUNTIME_DOCKER}:
+        if latest.get("error") == "model_not_found":
+            raise LifecycleError("端口被其他程序占用", code="runtime_port_in_use")
+        raise LifecycleError("模型仍在加载，健康等待超时", code="runtime_startup_timeout")
+    if _port_in_use(port) and latest.get("error") == "model_not_found":
+        raise LifecycleError("端口被其他程序占用", code="runtime_port_in_use")
+    raise LifecycleError(f"runtime did not become healthy: {latest.get('error', 'unknown error')}", code="runtime_startup_timeout")
 
 
 def self_test(manifest: LLMPackageManifest) -> dict[str, Any]:
@@ -273,13 +350,14 @@ def _resolve_install_profile(
 
 
 def install_managed(*, package_id: str = "local-small", root: str | Path | None = None,
-                    port: int = 18080, model_url: str = "", expected_sha256: str = "",
+                    port: int | None = None, model_url: str = "", expected_sha256: str = "",
                     expected_size_bytes: int | None = None,
                     accept_risk: bool = False, runtime: str = "auto", profile: str = "auto",
                     progress: ProgressCallback | None = None,
                     cancel_check: CancelCheck | None = None) -> dict[str, Any]:
     package_id = _validate_package_id(package_id)
     base = Path(root or default_root()).expanduser()
+    chosen_port = _select_managed_port(port, root=base, package_id=package_id)
     _progress(progress, cancel_check, "hardware", 5, "Checking available hardware")
     report = detect_hardware(base)
     choices = recommend(report)
@@ -320,7 +398,7 @@ def install_managed(*, package_id: str = "local-small", root: str | Path | None 
         package_id=package_id, mode="managed", public_model_alias=selected["alias"],
         adapter="openai_compatible", runtime=backend.RUNTIME_ID, model=selected["alias"],
         capabilities=["text-generation", CONTEXT_ESTIMATE_CAPABILITY],
-        model_path=str(model_path), model_owned=True, base_url=f"http://127.0.0.1:{port}",
+        model_path=str(model_path), model_owned=True, base_url=f"http://127.0.0.1:{chosen_port}",
         runtime_dir=str(base) if backend.RUNTIME_ID == RUNTIME_NATIVE else "",
         checksum=checksum, model_fingerprint=checksum,
         context_window=runtime_window, max_output_tokens=runtime_output,
@@ -351,12 +429,13 @@ def install_managed(*, package_id: str = "local-small", root: str | Path | None 
 
 
 def import_gguf(*, source: str | Path, package_id: str, alias: str,
-                root: str | Path | None = None, port: int = 18080,
+                root: str | Path | None = None, port: int | None = None,
                 accept_risk: bool = False, runtime: str = "auto",
                 progress: ProgressCallback | None = None,
                 cancel_check: CancelCheck | None = None) -> dict[str, Any]:
     package_id = _validate_package_id(package_id)
     base = Path(root or default_root()).expanduser()
+    chosen_port = _select_managed_port(port, root=base, package_id=package_id)
     _progress(progress, cancel_check, "validate_model", 10, "Validating the GGUF file in place")
     details = validate_gguf(source, allow_risk=accept_risk)
     _progress(progress, cancel_check, "runtime_check", 25, "Checking the local inference runtime")
@@ -369,7 +448,7 @@ def import_gguf(*, source: str | Path, package_id: str, alias: str,
         package_id=package_id, mode="import_gguf", public_model_alias=alias,
         adapter="openai_compatible", runtime=backend.RUNTIME_ID, model=alias,
         capabilities=["text-generation", CONTEXT_ESTIMATE_CAPABILITY],
-        model_path=details["path"], model_owned=False, base_url=f"http://127.0.0.1:{port}",
+        model_path=details["path"], model_owned=False, base_url=f"http://127.0.0.1:{chosen_port}",
         runtime_dir=str(base) if backend.RUNTIME_ID == RUNTIME_NATIVE else "",
         checksum=details["fingerprint"], model_fingerprint=details["fingerprint"],
         context_window=imported_window, max_output_tokens=imported_output,

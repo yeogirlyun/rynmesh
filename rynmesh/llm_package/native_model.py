@@ -1,6 +1,7 @@
 """User-selected local GGUF, verified native runtime and application-start policy."""
 from __future__ import annotations
 
+import errno
 import hashlib
 import http.client
 import json
@@ -31,6 +32,7 @@ from .hardware import _memory, _nvidia, cap_local_context_window, default_local_
 from .manifest import LLMPackageManifest
 from .model_usage import ModelUsageStore, current_usage_caller
 from .native_policy import NativeModelPolicy
+from .runtime_native import _start_stderr_reader, classify_llama_output
 from .transport_failure import download_retry_delay, format_download_failure
 
 MODEL_ID = "ryn-local-model"
@@ -371,6 +373,24 @@ class ManagedAdapter:
             self.owner.upstream.shutdown()
 
 
+def _classify_native_exception(exc: Exception) -> str:
+    if isinstance(exc, NativeModelError):
+        return str(exc)
+    if isinstance(exc, MemoryError):
+        return "insufficient_memory"
+    if isinstance(exc, (urllib.error.HTTPError, urllib.error.URLError)):
+        return "download_failed"
+    if isinstance(exc, OSError) and exc.errno == errno.ENOSPC:
+        return "disk_full"
+    return "operation_failed"
+
+
+def _error_category(error: str) -> str:
+    if not error:
+        return ""
+    return error.split(":", 1)[1] if ":" in error else error
+
+
 class NativeModel:
     def __init__(self, home: Path):
         self.home = home.resolve()
@@ -469,7 +489,9 @@ class NativeModel:
     def status(self):
         with self.lock:
             if self.state == "running" and self.process and self.process.poll() is not None:
-                self.state, self.error = "error", "runtime_exited"
+                tail_fn = getattr(self.process, "_ryn_stderr_tail", None)
+                cat = classify_llama_output(tail_fn(wait_eof=True)) if callable(tail_fn) else "unknown"
+                self.state, self.error = "error", f"runtime_exited:{cat}"
             package_id = self.manifest.package_id
             context_window = self.manifest.context_window
             name = self.metadata.get("name", "")
@@ -500,6 +522,7 @@ class NativeModel:
             "stage": stage,
             "progress": progress,
             "error": error,
+            "error_category": _error_category(error),
             "backend": backend,
             "supported": supported,
             "active_requests": active,
@@ -644,7 +667,7 @@ class NativeModel:
             with self.lock:
                 cancelled = self.cancel_event.is_set() or self.closed
                 self.state = ("stopped" if self.config["installed"] else "not_installed") if cancelled else "error"
-                self.error = "" if cancelled else (str(exc) if isinstance(exc, NativeModelError) else "operation_failed")
+                self.error = "" if cancelled else _classify_native_exception(exc)
                 self.stage, self.progress = "", None
         finally:
             if uploaded:
@@ -749,7 +772,7 @@ class NativeModel:
             if self.metadata.get("architecture", "").startswith("qwen"):
                 command += ["--chat-template-kwargs", '{"enable_thinking":false}']
             options = {"cwd": str(executable.parent), "stdin": subprocess.DEVNULL,
-                       "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+                       "stdout": subprocess.DEVNULL, "stderr": subprocess.PIPE}
             if os.name == "nt":
                 from .process_guard import _windows_job
                 process = subprocess.Popen(command, creationflags=0x4 | 0x08000000, **options)
@@ -762,6 +785,8 @@ class NativeModel:
             else:
                 entry = [sys.executable, "--ryn-native-worker"] if getattr(sys, "frozen", False) else [sys.executable, str(Path(__file__).with_name("native_worker.py"))]
                 process = subprocess.Popen([*entry, str(os.getpid()), *command], start_new_session=True, **options)
+            tail_fn = _start_stderr_reader(getattr(process, "stderr", None))
+            process._ryn_stderr_tail = tail_fn
             with self.lock:
                 self.process = process
                 cancelled = self.closed or self.cancel_event.is_set()
@@ -775,20 +800,26 @@ class NativeModel:
             while not upstream.health().get("ok"):
                 self._report("starting")
                 if process.poll() is not None:
+                    cat = classify_llama_output(tail_fn(wait_eof=True))
                     self._kill()
-                    if attempt == 0 and _port_occupied_by_other(port):
+                    if attempt == 0 and (_port_occupied_by_other(port) or cat == "port_in_use"):
                         retry_port = True
                         break
-                    raise NativeModelError("runtime_exited")
+                    raise NativeModelError(f"runtime_exited:{cat}")
                 if time.monotonic() > deadline:
                     raise NativeModelError("startup_timeout")
                 self.cancel_event.wait(0.5)
             if retry_port:
                 continue
             self._report("testing")
-            result = upstream.infer(prompt="Reply with exactly: OK", max_tokens=32, task_id="native-self-test", timeout_s=90)
+            try:
+                result = upstream.infer(prompt="Reply with exactly: OK", max_tokens=32, task_id="native-self-test", timeout_s=90)
+            except AdapterError as exc:
+                cat = classify_llama_output(tail_fn(wait_eof=process.poll() is not None))
+                raise NativeModelError(f"self_test_failed:{cat}") from exc
             if not result.get("text", "").strip():
-                raise NativeModelError("self_test_failed")
+                cat = classify_llama_output(tail_fn(wait_eof=process.poll() is not None))
+                raise NativeModelError(f"self_test_failed:{cat}")
             self._report("ready")
             with self.lock:
                 self.upstream = upstream
