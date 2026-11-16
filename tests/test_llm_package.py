@@ -366,6 +366,7 @@ def test_download_size_guard_rejects_a_body_larger_than_pinned(tmp_path, monkeyp
 def test_download_keeps_the_part_on_a_network_error(tmp_path, monkeypatch):
     destination = tmp_path / "model.gguf"
     part = destination.with_suffix(destination.suffix + ".part")
+    monkeypatch.setattr(llm_model_download.time, "sleep", lambda _s: None)
 
     class _FlakyResponse(_ChunkedResponse):
         def read(self, _size: int = -1) -> bytes:
@@ -375,7 +376,7 @@ def test_download_keeps_the_part_on_a_network_error(tmp_path, monkeypatch):
 
     monkeypatch.setattr(llm_model_download, "_urlopen",
                         lambda request, timeout=0: _FlakyResponse(DOWNLOAD_BODY, status=200))
-    with pytest.raises(LifecycleError, match="download failed"):
+    with pytest.raises(LifecycleError, match="下载失败："):
         llm_lifecycle._download(DOWNLOAD_URL, destination, DOWNLOAD_SHA256)
     assert part.exists()
     assert 0 < part.stat().st_size < len(DOWNLOAD_BODY)
@@ -385,6 +386,7 @@ def test_download_network_error_message_never_includes_a_path(tmp_path, monkeypa
     destination = tmp_path / "model.gguf"
     part = destination.with_suffix(destination.suffix + ".part")
     secret_path = str(tmp_path / "secret-owner-file.gguf")
+    monkeypatch.setattr(llm_model_download.time, "sleep", lambda _s: None)
 
     class _PathLeakingResponse(_ChunkedResponse):
         def read(self, _size: int = -1) -> bytes:
@@ -395,12 +397,14 @@ def test_download_network_error_message_never_includes_a_path(tmp_path, monkeypa
     with pytest.raises(LifecycleError) as failure:
         llm_lifecycle._download(DOWNLOAD_URL, destination, DOWNLOAD_SHA256)
     message = str(failure.value)
-    # `OSError(2, ...)` is auto-mapped to `FileNotFoundError` by Python, so the
-    # exact type name varies — what matters is that only the type name (never
-    # `str(exc)`, which would include the filename) reaches the message.
-    assert message.startswith("download failed: ")
-    assert "/" not in message and "\\" not in message
+    # S01-I30 replaces exception type names with closed Chinese transport reasons
+    # plus manual placement target (filename, sha256, destination directory),
+    # while never exposing `str(exc)` (such as `secret_path`) or the source URL.
+    assert message.startswith("下载失败：")
     assert secret_path not in message
+    assert "example.invalid" not in message
+    assert destination.name in message
+    assert str(destination.parent) in message
     assert not destination.exists()
     assert part.exists()  # a network error must never discard the resumable part
 

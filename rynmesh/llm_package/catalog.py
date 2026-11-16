@@ -22,7 +22,10 @@ _HOST_PORT_RE = re.compile(
     r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*"
     r"|\[[0-9A-Fa-f:]+\])(?::([0-9]{1,5}))?"
 )
+_PATH_SEGMENT_RE = re.compile(r"[A-Za-z0-9._~-]+")
+_SETTINGS_MIRROR_RE = re.compile(r'"llm_download_mirror"\s*:\s*"((?:\\.|[^"\\])*)"')
 _CONFIGURED_HF_MIRROR: str | None = None
+_CONFIGURED_DOWNLOAD_MIRROR: str | None = None
 
 
 def set_hf_mirror(mirror: str | None) -> None:
@@ -33,17 +36,104 @@ def set_hf_mirror(mirror: str | None) -> None:
     _CONFIGURED_HF_MIRROR = mirror.strip() if isinstance(mirror, str) and mirror.strip() else None
 
 
+def set_download_mirror(mirror: str | None) -> None:
+    """Configure an in-process download mirror prefix (`https://host[/prefix]`)."""
+    global _CONFIGURED_DOWNLOAD_MIRROR
+    normalized = normalize_download_mirror(mirror or "")
+    _CONFIGURED_DOWNLOAD_MIRROR = normalized or None
+
+
+def normalize_download_mirror(mirror: str | None) -> str:
+    """Validate an HTTPS mirror host with optional path prefix (`https://host[:port][/prefix]`)."""
+    raw = (mirror or "").strip()
+    if not raw:
+        return ""
+    if not raw.startswith("https://"):
+        raise ValueError(f"download mirror must start with https://: {raw!r}")
+    rest = raw[len("https://"):]
+    if any(ch in rest for ch in ("?", "#", "@", "\\", " ", "\t", "\r", "\n")):
+        raise ValueError(f"download mirror must not contain query, fragment, or credentials: {raw!r}")
+    authority, _, path_part = rest.partition("/")
+    if not authority:
+        raise ValueError(f"download mirror is missing hostname: {raw!r}")
+    match = _HOST_PORT_RE.fullmatch(authority)
+    if not match:
+        raise ValueError(f"invalid download mirror host: {raw!r}")
+    port_text = match.group(1)
+    if port_text is not None and not (1 <= int(port_text) <= 65535):
+        raise ValueError(f"invalid download mirror port: {raw!r}")
+    trimmed_path = path_part.rstrip("/")
+    if not trimmed_path:
+        return f"https://{authority}"
+    segments = trimmed_path.split("/")
+    for seg in segments:
+        if not seg or seg in {".", ".."} or not _PATH_SEGMENT_RE.fullmatch(seg):
+            raise ValueError(f"invalid download mirror path prefix: {raw!r}")
+    return f"https://{authority}/{'/'.join(segments)}"
+
+
+def _read_owner_download_mirror(home_dir: str | None = None) -> str:
+    candidates: list[str] = []
+    if home_dir:
+        candidates.append(os.path.join(os.path.expanduser(home_dir), "settings.json"))
+    env_home = os.environ.get("RYNMESH_HOME", "").strip()
+    if env_home:
+        candidates.append(os.path.join(os.path.expanduser(env_home), "settings.json"))
+    else:
+        env_llm_home = os.environ.get("RYNMESH_LLM_HOME", "").strip()
+        if env_llm_home:
+            candidates.append(os.path.join(os.path.dirname(os.path.expanduser(env_llm_home)), "settings.json"))
+        elif not home_dir:
+            candidates.append(os.path.join(os.path.expanduser("~"), ".rynmesh", "settings.json"))
+    for settings_file in candidates:
+        try:
+            with open(settings_file, encoding="utf-8") as handle:
+                text = handle.read(65536)
+        except OSError:
+            continue
+        found = _SETTINGS_MIRROR_RE.search(text)
+        if found:
+            value = found.group(1).replace(r"\/", "/").strip()
+            if value:
+                return value
+        return ""
+    return ""
+
+
+def resolve_download_mirror(*, mirror: str | None = None, home_dir: str | None = None) -> str:
+    if mirror is not None:
+        return normalize_download_mirror(mirror)
+    env_dl = os.environ.get("RYNMESH_DOWNLOAD_MIRROR")
+    if env_dl is not None and env_dl.strip():
+        return normalize_download_mirror(env_dl)
+    if _CONFIGURED_DOWNLOAD_MIRROR:
+        return normalize_download_mirror(_CONFIGURED_DOWNLOAD_MIRROR)
+    stored = _read_owner_download_mirror(home_dir)
+    return normalize_download_mirror(stored) if stored else ""
+
+
+def apply_download_mirror(url: str, *, mirror: str | None = None, home_dir: str | None = None) -> str:
+    prefix = resolve_download_mirror(mirror=mirror, home_dir=home_dir)
+    if not prefix:
+        return url
+    for origin in ("https://github.com", _DEFAULT_HF_ORIGIN):
+        if url.startswith(origin + "/"):
+            return prefix + url[len(origin):]
+    return url
+
+
 def _normalize_hf_mirror(mirror: str | None = None) -> str:
     if mirror is not None:
         raw = mirror.strip()
     else:
         env_hf = os.environ.get("RYNMESH_HF_MIRROR")
-        env_dl = os.environ.get("RYNMESH_DOWNLOAD_MIRROR")
-        raw = (
-            env_hf
-            if env_hf is not None and env_hf.strip() != ""
-            else (env_dl if env_dl is not None and env_dl.strip() != "" else (_CONFIGURED_HF_MIRROR or ""))
-        ).strip()
+        if env_hf is not None and env_hf.strip() != "":
+            raw = env_hf.strip()
+        elif _CONFIGURED_HF_MIRROR:
+            raw = _CONFIGURED_HF_MIRROR.strip()
+        else:
+            dl_prefix = resolve_download_mirror()
+            return dl_prefix or _DEFAULT_HF_ORIGIN
     if not raw:
         return _DEFAULT_HF_ORIGIN
     if not raw.startswith("https://"):
@@ -63,7 +153,7 @@ def _normalize_hf_mirror(mirror: str | None = None) -> str:
 
 
 def _apply_hf_mirror(url: str, *, mirror: str | None = None) -> str:
-    origin = _normalize_hf_mirror(mirror)
+    origin = normalize_download_mirror(mirror) or _DEFAULT_HF_ORIGIN if mirror is not None else _normalize_hf_mirror()
     if url.startswith(_DEFAULT_HF_ORIGIN + "/"):
         return origin + url[len(_DEFAULT_HF_ORIGIN):]
     return url
@@ -98,7 +188,7 @@ class ModelProfile:
 
 
 def _pinned_url(repo: str, revision: str, filename: str, *, mirror: str | None = None) -> str:
-    origin = _normalize_hf_mirror(mirror)
+    origin = (normalize_download_mirror(mirror) or _DEFAULT_HF_ORIGIN) if mirror is not None else _normalize_hf_mirror()
     return f"{origin}/{repo}/resolve/{revision}/{filename}"
 
 

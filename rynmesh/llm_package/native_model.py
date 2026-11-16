@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 import platform
@@ -13,18 +14,22 @@ import sys
 import tarfile
 import threading
 import time
+import urllib.error
 import urllib.request
 import zipfile
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from pathlib import Path, PurePosixPath
 
+from .. import __version__
 from .adapters import AdapterError, OpenAICompatibleAdapter, deadline_options
+from .catalog import apply_download_mirror
 from .gguf_import import NativeModelError, inspect_model
 from .hardware import _memory, _nvidia, cap_local_context_window, default_local_output_tokens
 from .manifest import LLMPackageManifest
 from .model_usage import ModelUsageStore, current_usage_caller
 from .native_policy import NativeModelPolicy
+from .transport_failure import download_retry_delay, format_download_failure
 
 MODEL_ID = "ryn-local-model"
 ENGINE_VERSION = "b11153"
@@ -68,19 +73,63 @@ def validate_model(path: Path, cancel=lambda: False) -> dict:
     return metadata
 
 
+DOWNLOAD_BACKOFFS = (2.0, 4.0, 8.0)
+
+
+class _IncompleteEngineDownload(OSError):
+    pass
+
+
+def _engine_base_url(home: Path | None = None) -> str:
+    if not ENGINE_BASE.startswith("https://github.com/"):
+        return ENGINE_BASE
+    try:
+        return apply_download_mirror(
+            ENGINE_BASE,
+            home_dir=str(home) if home is not None else None,
+        )
+    except ValueError as exc:
+        raise NativeModelError("invalid_download_mirror") from exc
+
+
 def download(url: str, target: Path, size: int, sha: str, report, cancel) -> None:
-    for attempt in range(3):
+    for attempt in range(len(DOWNLOAD_BACKOFFS) + 1):
         if cancel():
             raise NativeModelError("cancelled")
         try:
             return _download_once(url, target, size, sha, report, cancel)
-        except OSError as exc:
-            if attempt == 2:
-                raise NativeModelError("download_incomplete") from exc
-            for _ in range(10 * (attempt + 1)):
+        except urllib.error.HTTPError as exc:
+            retryable, wait_s = download_retry_delay(
+                exc, DOWNLOAD_BACKOFFS[attempt] if attempt < len(DOWNLOAD_BACKOFFS) else 0.0
+            )
+            exc.close()
+            if retryable and attempt < len(DOWNLOAD_BACKOFFS):
+                time.sleep(wait_s)
                 if cancel():
                     raise NativeModelError("cancelled") from exc
-                time.sleep(0.1)
+                continue
+            raise NativeModelError(
+                format_download_failure(
+                    exc,
+                    filename=target.name,
+                    sha256=sha,
+                    directory=target.parent,
+                )
+            ) from exc
+        except (OSError, http.client.HTTPException) as exc:
+            if attempt < len(DOWNLOAD_BACKOFFS):
+                time.sleep(DOWNLOAD_BACKOFFS[attempt])
+                if cancel():
+                    raise NativeModelError("cancelled") from exc
+                continue
+            raise NativeModelError(
+                format_download_failure(
+                    exc,
+                    filename=target.name,
+                    sha256=sha,
+                    directory=target.parent,
+                )
+            ) from exc
 
 
 def _download_once(url: str, target: Path, size: int, sha: str, report, cancel) -> None:
@@ -94,7 +143,7 @@ def _download_once(url: str, target: Path, size: int, sha: str, report, cancel) 
         part.unlink()
         offset = 0
     if offset < size:
-        headers = {"User-Agent": "Rynmesh/0.6", "Accept-Encoding": "identity"}
+        headers = {"User-Agent": f"Rynmesh/{__version__}", "Accept-Encoding": "identity"}
         if offset:
             headers["Range"] = f"bytes={offset}-"
         request = urllib.request.Request(url, headers=headers)
@@ -113,7 +162,7 @@ def _download_once(url: str, target: Path, size: int, sha: str, report, cancel) 
                     output.write(chunk)
                     report(offset, size)
     if part.stat().st_size != size:
-        raise NativeModelError("download_incomplete")
+        raise _IncompleteEngineDownload("download_incomplete")
     if digest_file(part, cancel) != sha:
         part.unlink()
         raise NativeModelError("download_checksum_invalid")
@@ -300,7 +349,8 @@ class ManagedAdapter:
 
 class NativeModel:
     def __init__(self, home: Path):
-        self.root = home.resolve() / "llm" / "native"
+        self.home = home.resolve()
+        self.root = self.home / "llm" / "native"
         self.usage_store = ModelUsageStore(home.resolve() / "llm" / "model-usage.json")
         self.config_path = self.root / "settings.json"
         self.policies = NativeModelPolicy(self.root)
@@ -551,9 +601,10 @@ class NativeModel:
                     return self._executable(directory)
             except (OSError, ValueError, AttributeError):
                 pass
+        base_url = _engine_base_url(self.home)
         for filename, size, sha in ENGINES[backend]:
             archive = self.root / "downloads" / filename
-            download(ENGINE_BASE + filename, archive, size, sha,
+            download(base_url + filename, archive, size, sha,
                      lambda n, total: self._report("runtime", int(n / total * 100)), self.cancel_event.is_set)
             extract_runtime(archive, directory)
         executable = self._executable(directory)
