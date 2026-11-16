@@ -613,6 +613,9 @@ pub struct WindowEntry {
     pub bounds: RectPx,
     pub client_bounds: RectPx,
     pub dpi: u32,
+    pub z_order: u32,
+    pub monitor: String,
+    pub is_elevated: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -766,6 +769,18 @@ pub struct StateGetParams {
     pub accessibility: Option<AccessibilityOptions>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScreenshotUnavailableReason {
+    TooLarge,
+    PngTooLarge,
+    Blank,
+    PrintFailed,
+    NotVisible,
+    Cloaked,
+    Disabled,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ScreenshotArtifact {
@@ -786,6 +801,16 @@ pub struct ScreenshotArtifact {
     pub minimized: bool,
     pub occluded: bool,
     pub capture_protected: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<ScreenshotUnavailableReason>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UiaObservationReason {
+    ComInitFailed,
+    RootFailed,
+    WalkerFailed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -824,6 +849,10 @@ pub struct AccessibilityObservation {
     pub selected_element_indices: Vec<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<UiaObservationReason>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hresult_hex: Option<String>,
     pub elements: Vec<UiaElement>,
 }
 
@@ -1102,6 +1131,8 @@ pub struct ActionCommitResult {
     pub focus_recovery: FocusRecoverySummary,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub observation: Option<Observation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_observation_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

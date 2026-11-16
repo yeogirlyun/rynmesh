@@ -122,6 +122,9 @@ VALID_ERROR_CODES = frozenset({
     "window_minimized",
     "window_occluded",
     "window_capture_protected",
+    "desktop_locked",
+    "element_disabled",
+    "element_offscreen",
     "observation_unavailable",
     "uia_unavailable",
     "uia_element_stale",
@@ -179,7 +182,6 @@ VALID_DIAGNOSTIC_REASONS = frozenset({
     "missing_request_id",
     "missing_method",
     "already_initialized",
-    "safety_constraint_disabled",
     "worker_instance_mismatch",
     "hwnd_parse_failed",
     "is_window_false",
@@ -196,17 +198,38 @@ VALID_DIAGNOSTIC_REASONS = frozenset({
     "foreground_verification_failed",
     "minimized_restore_disallowed",
     "mutex_wait_timeout",
-    "mutex_abandoned",
     "mutex_release_failed",
     "desktop_identity_lookup_failed",
+    "desktop_locked",
+    "window_capture_protected",
     "send_input_short_count",
     "uia_pattern_missing",
+    "uia_element_not_found",
+    "uia_com_call_failed",
+    "uia_app_not_responding",
+    "element_disabled",
+    "element_offscreen",
     "password_redacted",
     "direct_launch_disallowed",
     "cancelled_before_lock",
     "cancelled_while_ready",
     "cancelled_during_execution",
-    "parent_stdin_closed",
+})
+
+VALID_SCREENSHOT_REASONS = frozenset({
+    "too_large",
+    "png_too_large",
+    "blank",
+    "print_failed",
+    "not_visible",
+    "cloaked",
+    "disabled",
+})
+
+VALID_UIA_OBSERVATION_REASONS = frozenset({
+    "com_init_failed",
+    "root_failed",
+    "walker_failed",
 })
 
 VALID_CLIENT_PHASES = frozenset({
@@ -226,6 +249,10 @@ VALID_CLIENT_PHASES = frozenset({
 
 ALLOWLISTED_BRIDGE_ERROR_CODES = frozenset({
     "agent_cancelled",
+    "agent_task_paused",
+    "agent_goal_changed",
+    "agent_scope_changed",
+    "agent_permission_revoked",
     "agent_time_limit",
     "agent_time_budget_exhausted",
     "agent_permission_denied",
@@ -277,6 +304,9 @@ ALLOWLISTED_BRIDGE_ERROR_CODES = frozenset({
     "agent_computer_window_minimized",
     "agent_computer_window_occluded",
     "agent_computer_window_capture_protected",
+    "agent_computer_desktop_locked",
+    "agent_computer_element_disabled",
+    "agent_computer_element_offscreen",
     "agent_computer_observation_unavailable",
     "agent_computer_uia_unavailable",
     "agent_computer_uia_element_stale",
@@ -308,6 +338,9 @@ NATIVE_CODE_TO_BRIDGE_CODE: dict[str, str] = {
     "window_minimized": "agent_computer_window_minimized",
     "window_occluded": "agent_computer_window_occluded",
     "window_capture_protected": "agent_computer_window_capture_protected",
+    "desktop_locked": "agent_computer_desktop_locked",
+    "element_disabled": "agent_computer_element_disabled",
+    "element_offscreen": "agent_computer_element_offscreen",
     "observation_unavailable": "agent_computer_observation_unavailable",
     "uia_unavailable": "agent_computer_uia_unavailable",
     "uia_element_stale": "agent_computer_uia_element_stale",
@@ -326,6 +359,121 @@ NATIVE_CODE_TO_BRIDGE_CODE: dict[str, str] = {
     "unsupported": "agent_computer_action_unsupported",
     "internal_error": "agent_computer_native_error",
 }
+
+DEFAULT_BRIDGE_CORRECTION = "请先读窗口再决定下一步操作。"
+
+BRIDGE_CORRECTIONS: dict[tuple[str, str | None], str] = {
+    ("agent_computer_window_occluded", "hit_test_unrelated_window"): (
+        "目标窗口或点击点被其他窗口遮挡（未发送输入），请先 focus 再试，或重读窗口刷新状态。"
+    ),
+    ("agent_computer_window_occluded", None): (
+        "目标窗口被其他窗口遮挡，请先 focus 再试。"
+    ),
+    ("agent_computer_window_minimized", "minimized_restore_disallowed"): (
+        "目标窗口已最小化，请用 focus 动作还原后再操作。"
+    ),
+    ("agent_computer_window_minimized", None): (
+        "目标窗口已最小化，请用 focus 动作还原后再操作。"
+    ),
+    ("agent_computer_input_blocked_by_uipi", "send_input_short_count"): (
+        "目标是管理员窗口，Ryn 无权操作，无法输入。"
+    ),
+    ("agent_computer_input_blocked_by_uipi", None): (
+        "目标是管理员窗口，Ryn 无权操作，无法输入。"
+    ),
+    ("agent_computer_input_lock_busy", "mutex_wait_timeout"): (
+        "桌面输入锁正忙，请稍后重试。"
+    ),
+    ("agent_computer_input_lock_busy", None): (
+        "桌面输入锁正忙，请稍后重试。"
+    ),
+    ("agent_computer_timeout", None): (
+        "操作已超时（已执行到当前阶段，结果未确认），请先读窗口确认状态，不要重放。"
+    ),
+    ("agent_computer_protocol_invalid", None): (
+        "电脑控制组件版本不一致或协议异常，请重装。"
+    ),
+    ("agent_computer_version_mismatch", None): (
+        "电脑控制组件版本不一致，请重装。"
+    ),
+    ("agent_computer_desktop_locked", "desktop_locked"): (
+        "屏幕已锁定或正在显示 UAC，暂时无法操作。"
+    ),
+    ("agent_computer_desktop_locked", None): (
+        "屏幕已锁定或正在显示 UAC，暂时无法操作。"
+    ),
+    ("agent_computer_element_disabled", "element_disabled"): (
+        "控件当前不可用（处于禁用状态），请不要重试点击。"
+    ),
+    ("agent_computer_element_disabled", None): (
+        "控件当前不可用（处于禁用状态），请不要重试点击。"
+    ),
+    ("agent_computer_element_offscreen", "element_offscreen"): (
+        "目标控件不在可视区域内，请先滚动到可见位置再操作。"
+    ),
+    ("agent_computer_element_offscreen", None): (
+        "目标控件不在可视区域内，请先滚动到可见位置再操作。"
+    ),
+    ("agent_computer_window_capture_protected", None): (
+        "目标窗口启用了防截屏保护，无法截图，请依赖控件树信息或先读窗口再决定。"
+    ),
+    ("agent_computer_focus_failed", "foreground_verification_failed"): (
+        "窗口未能切到前台（仅尝试了激活窗口，未发送输入）。"
+        "请先调用 computer_read_window(hwnd=..., include_screenshot=true) 重读窗口获取新 state_token 后再试。"
+    ),
+    ("agent_computer_focus_failed", None): (
+        "窗口未能切到前台，请先读窗口再决定。"
+    ),
+    ("agent_computer_uia_element_stale", "uia_element_not_found"): (
+        "未找到目标控件或控件已变化，请先读窗口刷新控件列表再决定。"
+    ),
+    ("agent_computer_uia_unavailable", "uia_app_not_responding"): (
+        "目标窗口无响应，UIA 调用超时，请稍后再试或先读窗口再决定。"
+    ),
+    ("agent_computer_uia_unavailable", "uia_com_call_failed"): (
+        "UIA COM 调用失败，请结合截图观察或先读窗口再决定。"
+    ),
+    ("agent_computer_state_token_stale", None): (
+        "The window state_token is stale because window or desktop state changed. "
+        "Call computer_read_window(hwnd=..., include_screenshot=true) on the target window "
+        "to obtain a fresh state_token and fresh screenshot before calling computer_act_window again. "
+        "Note that computer_observe_windows only lists windows and does not issue a state_token."
+    ),
+}
+
+
+def lookup_bridge_correction(
+    bridge_code: str,
+    reason: str | None = None,
+    *,
+    stage: str | None = None,
+) -> str:
+    """Look up a safe, non-interpolated human/model correction string by `(bridge_code, reason)`."""
+    if bridge_code == "agent_computer_timeout" and stage and stage in VALID_ERROR_STAGES:
+        return f"操作在阶段 {stage} 超时（已执行到 {stage} 阶段），结果未确认，请先读窗口确认实际状态，不要重放。"
+    exact = BRIDGE_CORRECTIONS.get((bridge_code, reason))
+    if exact is not None:
+        return exact
+    by_code = BRIDGE_CORRECTIONS.get((bridge_code, None))
+    if by_code is not None:
+        return by_code
+    return DEFAULT_BRIDGE_CORRECTION
+
+
+def _sanitize_window_summary_dict(raw: Any) -> dict[str, str] | None:
+    if not isinstance(raw, dict):
+        return None
+    raw_title = raw.get("title")
+    raw_exe = raw.get("exe")
+    if not isinstance(raw_title, str) or not isinstance(raw_exe, str):
+        return None
+    clean_title = "".join(" " if ord(c) < 32 or ord(c) == 127 else c for c in raw_title).strip()[:80]
+    exe_base = raw_exe.replace("/", "\\").rsplit("\\", 1)[-1]
+    clean_exe = "".join("_" if ord(c) < 32 or ord(c) == 127 else c for c in exe_base).strip()[:128]
+    return {
+        "title": clean_title,
+        "exe": clean_exe or "unknown",
+    }
 
 
 def sanitize_diagnostic(
@@ -352,6 +500,9 @@ def sanitize_diagnostic(
     hresult_hex: str | None = None,
     target_hwnd: str | None = None,
     foreground_hwnd: str | None = None,
+    retryable: bool | None = None,
+    foreground_window: dict[str, str] | None = None,
+    occluding_window: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Build a strictly sanitized diagnostic dictionary containing only allowlisted enums and IDs.
 
@@ -407,6 +558,14 @@ def sanitize_diagnostic(
         out["target_hwnd"] = target_hwnd
     if isinstance(foreground_hwnd, str) and _DECIMAL_U64_RE.match(foreground_hwnd):
         out["foreground_hwnd"] = foreground_hwnd
+    if isinstance(retryable, bool):
+        out["retryable"] = retryable
+    fg_win = _sanitize_window_summary_dict(foreground_window)
+    if fg_win is not None:
+        out["foreground_window"] = fg_win
+    occ_win = _sanitize_window_summary_dict(occluding_window)
+    if occ_win is not None:
+        out["occluding_window"] = occ_win
     return out
 
 
@@ -439,6 +598,9 @@ class NativeBridgeError(AgentError):
         hresult_hex: str | None = None,
         target_hwnd: str | None = None,
         foreground_hwnd: str | None = None,
+        retryable: bool | None = None,
+        foreground_window: dict[str, str] | None = None,
+        occluding_window: dict[str, str] | None = None,
     ) -> None:
         safe_code = (
             code
@@ -484,6 +646,9 @@ class NativeBridgeError(AgentError):
         self.worker_instance = worker_instance
         self.worker_generation = worker_generation
         self.worker_pid = worker_pid
+        self.retryable: bool | None = retryable if isinstance(retryable, bool) else None
+        self.foreground_window = _sanitize_window_summary_dict(foreground_window)
+        self.occluding_window = _sanitize_window_summary_dict(occluding_window)
         self.diagnostics = sanitize_diagnostic(
             error_code=safe_code,
             phase=self.phase,
@@ -507,6 +672,9 @@ class NativeBridgeError(AgentError):
             hresult_hex=hresult_hex,
             target_hwnd=target_hwnd,
             foreground_hwnd=foreground_hwnd,
+            retryable=self.retryable,
+            foreground_window=self.foreground_window,
+            occluding_window=self.occluding_window,
         )
 
 
@@ -1005,6 +1173,8 @@ def validate_protocol_error(err_obj: Any, *, phase: str = "read") -> dict[str, A
                 "hresultHex",
                 "targetHwnd",
                 "foregroundHwnd",
+                "foregroundWindow",
+                "occludingWindow",
                 "internalMutation",
                 "reason",
             },
@@ -1034,6 +1204,33 @@ def validate_protocol_error(err_obj: Any, *, phase: str = "read") -> dict[str, A
             clean_details["foregroundHwnd"] = _require_decimal_u64(
                 details_raw["foregroundHwnd"], allow_zero=True, phase=phase
             )
+        for win_key in ("foregroundWindow", "occludingWindow"):
+            if details_raw.get(win_key) is not None:
+                win_raw = _require_exact_keys(
+                    details_raw[win_key],
+                    required={"title", "exe"},
+                    phase=phase,
+                )
+                if not isinstance(win_raw["title"], str) or len(win_raw["title"]) > 512:
+                    raise NativeBridgeError(
+                        "agent_computer_protocol_invalid",
+                        phase=phase,
+                        reason="malformed_json",
+                    )
+                if not isinstance(win_raw["exe"], str) or not win_raw["exe"].strip() or len(win_raw["exe"]) > 512:
+                    raise NativeBridgeError(
+                        "agent_computer_protocol_invalid",
+                        phase=phase,
+                        reason="malformed_json",
+                    )
+                sanitized_win = _sanitize_window_summary_dict(win_raw)
+                if sanitized_win is None:
+                    raise NativeBridgeError(
+                        "agent_computer_protocol_invalid",
+                        phase=phase,
+                        reason="malformed_json",
+                    )
+                clean_details[win_key] = sanitized_win
         if details_raw.get("internalMutation") is not None:
             im = _require_non_empty_str(
                 details_raw["internalMutation"], max_len=64, phase=phase
@@ -1121,6 +1318,9 @@ def bridge_error_from_native(
         hresult_hex=details.get("hresultHex"),
         target_hwnd=details.get("targetHwnd"),
         foreground_hwnd=details.get("foregroundHwnd"),
+        retryable=validated["retryable"],
+        foreground_window=details.get("foregroundWindow"),
+        occluding_window=details.get("occludingWindow"),
     )
 
 
@@ -1490,7 +1690,7 @@ def validate_window_entry(
             "clientBounds",
             "dpi",
         },
-        optional={"executablePath"},
+        optional={"executablePath", "zOrder", "monitor", "isElevated"},
         phase=phase,
     )
     wref = validate_window_ref(
@@ -1543,6 +1743,20 @@ def validate_window_entry(
                 reason="malformed_json",
             )
         out["executablePath"] = entry["executablePath"]
+    if entry.get("zOrder") is not None:
+        out["zOrder"] = _require_int(
+            entry["zOrder"], min_val=0, max_val=0xFFFFFFFF, phase=phase
+        )
+    if entry.get("monitor") is not None:
+        if not isinstance(entry["monitor"], str) or len(entry["monitor"]) > 256:
+            raise NativeBridgeError(
+                "agent_computer_protocol_invalid",
+                phase=phase,
+                reason="malformed_json",
+            )
+        out["monitor"] = entry["monitor"]
+    if entry.get("isElevated") is not None:
+        out["isElevated"] = _require_bool(entry["isElevated"], phase=phase)
     return out
 
 
@@ -1703,7 +1917,7 @@ def validate_screenshot_artifact(shot: Any, *, phase: str = "read") -> dict[str,
             "occluded",
             "captureProtected",
         },
-        optional={"dataBase64"},
+        optional={"dataBase64", "reason"},
         phase=phase,
     )
     art_id = _require_non_empty_str(shot["id"], max_len=MAX_ID_CHARS, phase=phase)
@@ -1840,6 +2054,21 @@ def validate_screenshot_artifact(shot: Any, *, phase: str = "read") -> dict[str,
     }
     if cleaned_b64 is not None:
         out["dataBase64"] = cleaned_b64
+    if shot.get("reason") is not None:
+        if status == "ok":
+            raise NativeBridgeError(
+                "agent_computer_screenshot_invalid",
+                phase=phase,
+                reason="malformed_json",
+            )
+        shot_reason = _require_non_empty_str(shot["reason"], max_len=64, phase=phase)
+        if shot_reason not in VALID_SCREENSHOT_REASONS:
+            raise NativeBridgeError(
+                "agent_computer_screenshot_invalid",
+                phase=phase,
+                reason="malformed_json",
+            )
+        out["reason"] = shot_reason
     return out
 
 
@@ -2011,7 +2240,13 @@ def validate_observation(
     acc_raw = _require_exact_keys(
         obs["accessibility"],
         required={"status", "treeHash", "truncated", "selectedElementIndices", "elements"},
-        optional={"focusedElementIndex", "focusedRuntimeId", "selectedText"},
+        optional={
+            "focusedElementIndex",
+            "focusedRuntimeId",
+            "selectedText",
+            "reason",
+            "hresultHex",
+        },
         phase=phase,
     )
     acc_status = _require_non_empty_str(acc_raw["status"], max_len=64, phase=phase)
@@ -2071,6 +2306,24 @@ def validate_observation(
                 reason="malformed_json",
             )
         accessibility["selectedText"] = acc_raw["selectedText"]
+    if acc_raw.get("reason") is not None:
+        acc_reason = _require_non_empty_str(acc_raw["reason"], max_len=64, phase=phase)
+        if acc_reason not in VALID_UIA_OBSERVATION_REASONS:
+            raise NativeBridgeError(
+                "agent_computer_protocol_invalid",
+                phase=phase,
+                reason="malformed_json",
+            )
+        accessibility["reason"] = acc_reason
+    if acc_raw.get("hresultHex") is not None:
+        acc_hr = _require_non_empty_str(acc_raw["hresultHex"], max_len=16, phase=phase)
+        if not _HRESULT_HEX_RE.match(acc_hr):
+            raise NativeBridgeError(
+                "agent_computer_protocol_invalid",
+                phase=phase,
+                reason="malformed_json",
+            )
+        accessibility["hresultHex"] = acc_hr
 
     fg_raw = _require_exact_keys(
         obs["foreground"],
@@ -2889,7 +3142,7 @@ def validate_action_commit_result(
             "mutation",
             "focusRecovery",
         },
-        optional={"observation"},
+        optional={"observation", "postObservationError"},
         phase=phase,
     )
     status = _require_non_empty_str(result["status"], max_len=32, phase=phase)
@@ -2953,14 +3206,36 @@ def validate_action_commit_result(
         "mutation": mutation,
         "focusRecovery": focus_recovery,
     }
-    if result.get("observation") is not None:
-        out["observation"] = validate_observation(
-            result["observation"],
-            expected_worker_instance=expected_worker_instance,
-            expected_task_session_id=expected_task_session_id,
-            expected_window=expected_window,
-            phase=phase,
+    if result.get("postObservationError") is not None:
+        po_err = _require_non_empty_str(
+            result["postObservationError"], max_len=64, phase=phase
         )
+        if not _SAFE_TOKEN_RE.match(po_err):
+            raise NativeBridgeError(
+                "agent_computer_protocol_invalid",
+                phase=phase,
+                method="action.commit",
+                commit_attempted=True,
+                dispatched=True,
+                operation_id=expected_operation_id,
+                task_session_id=expected_task_session_id,
+                worker_instance=expected_worker_instance,
+            )
+        out["postObservationError"] = po_err
+    if result.get("observation") is not None:
+        try:
+            out["observation"] = validate_observation(
+                result["observation"],
+                expected_worker_instance=expected_worker_instance,
+                expected_task_session_id=expected_task_session_id,
+                expected_window=expected_window,
+                phase=phase,
+            )
+        except NativeBridgeError as obs_exc:
+            # Post-observation validation is decoupled from commit confirmation:
+            # discard the malformed post-observation, attach postObservationError,
+            # and preserve the committed receipt.
+            out.setdefault("postObservationError", obs_exc.code)
     return out
 
 

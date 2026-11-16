@@ -1,6 +1,10 @@
-use crate::errors::{DiagnosticReason, ErrorCode, InternalMutationDetail, ProtocolError};
+use crate::errors::{
+    DiagnosticReason, ErrorCode, ErrorWindowSummary, InternalMutationDetail, ProtocolError,
+};
 use crate::protocol::FocusRecoverySummary;
-use crate::windows::{get_window_pid_tid, hwnd_to_u64, is_hwnd_related_to_target};
+use crate::windows::{
+    get_window_pid_tid, hwnd_to_u64, is_hwnd_related_to_target, summarize_hwnd_for_error,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use windows::Win32::Foundation::HWND;
@@ -33,6 +37,9 @@ pub trait FocusExecutionBackend {
     fn set_focus(&mut self, root_hwnd: HWND) -> bool;
     fn switch_to_this_window(&mut self, root_hwnd: HWND);
     fn attach_thread_input(&mut self, from_tid: u32, to_tid: u32, attach: bool) -> bool;
+    fn describe_window(&mut self, _hwnd: HWND) -> Option<ErrorWindowSummary> {
+        None
+    }
 }
 
 /// Production Win32 backend for window focus recovery.
@@ -122,6 +129,10 @@ impl FocusExecutionBackend for OsWin32FocusBackend {
             return false;
         }
         unsafe { AttachThreadInput(from_tid, to_tid, attach).as_bool() }
+    }
+
+    fn describe_window(&mut self, hwnd: HWND) -> Option<ErrorWindowSummary> {
+        summarize_hwnd_for_error(hwnd)
     }
 }
 
@@ -482,12 +493,19 @@ pub fn ensure_window_focused_with_backend<B: FocusExecutionBackend + ?Sized>(
         Some(hwnd_to_u64(final_fg))
     };
 
+    let fg_summary = if final_fg.0.is_null() {
+        None
+    } else {
+        backend.describe_window(final_fg)
+    };
+
     Err(ProtocolError::focus(
         ErrorCode::FocusFailed,
         internal_mutation,
         DiagnosticReason::ForegroundVerificationFailed,
     )
-    .with_hwnds(Some(hwnd_to_u64(root_hwnd)), fg_u64))
+    .with_hwnds(Some(hwnd_to_u64(root_hwnd)), fg_u64)
+    .with_foreground_window(fg_summary))
 }
 
 fn wait_for_foreground_until<B: FocusExecutionBackend + ?Sized>(

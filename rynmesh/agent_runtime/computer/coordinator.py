@@ -1509,7 +1509,14 @@ class NativeBridge:
             cached_commit["observation"] = _strip_observation_screenshots_for_cache(
                 cached_commit["observation"]
             )
+        if validated_commit.get("postObservationError") is not None:
+            cached_commit["postObservationError"] = str(
+                validated_commit["postObservationError"]
+            )
 
+        # Even if post-observation failed or was discarded (`postObservationError`),
+        # the commit envelope itself is verified (`status == "committed"`), so record
+        # the operation as confirmed rather than unknown.
         self._record_operation(
             _OperationRecord(
                 task_session_id=task_session_id,
