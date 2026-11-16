@@ -10,7 +10,7 @@ import copy
 import hashlib
 import uuid
 from contextlib import nullcontext
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from ..ai_access.store import rule_key
 from ..llm_package import model_settings
@@ -126,7 +126,13 @@ class FriendSharingTool:
             if expected_preview is None or expected_preview != preview:
                 raise AgentToolRejected("agent_approval_preview_changed")
             record, model, sid = self.target(args, records)
-            if sum(len(row.get("_sharing_operations", {})) for row in records.values()) >= 2500:
+            active_ops = sum(
+                1
+                for row in records.values()
+                for op in row.get("_sharing_operations", {}).values()
+                if not op.get("retired")
+            )
+            if active_ops >= 2500:
                 raise AgentToolRejected("agent_operation_ledger_limit")
             old = copy.deepcopy(record)
             grants = {rule_key(sid, row["relationship_id"]): {key: row[key] for key in
@@ -242,12 +248,44 @@ class FriendSharingTool:
         with self.sources.lock:
             records = self.sources.read()
             changed = False
+            retired_now = datetime.now(timezone.utc).isoformat()
             for source in records.values():
                 for row in source.get("_sharing_operations", {}).values():
                     if row["binding"].get("task_id") == task_id and not row.get("retired"):
                         row.pop("result", None)
                         row.pop("observation_transition", None)
                         row["retired"] = True
+                        row["retired_at"] = retired_now
                         changed = True
             if changed:
                 self.sources._write(records)
+
+    def prune_retired(self, older_than_days: float = 30) -> int:
+        if self.services.get("source_store") is None:
+            return 0
+        cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+        with self.sources.lock:
+            records = self.sources.read()
+            removed = 0
+            for source in records.values():
+                ops = source.get("_sharing_operations")
+                if not isinstance(ops, dict):
+                    continue
+                for op_id, row in list(ops.items()):
+                    if not isinstance(row, dict) or not row.get("retired"):
+                        continue
+                    raw_at = row.get("retired_at")
+                    if not isinstance(raw_at, str) or not raw_at:
+                        continue
+                    try:
+                        parsed = datetime.fromisoformat(raw_at)
+                    except ValueError:
+                        continue
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=timezone.utc)
+                    if parsed <= cutoff:
+                        ops.pop(op_id, None)
+                        removed += 1
+            if removed:
+                self.sources._write(records)
+            return removed

@@ -1703,7 +1703,88 @@ class AgentRuntime(AgentLoop):
                 self._relieve_storage("idle")
             except Exception as exc:
                 diagnostic_log.failure("storage_relief", exc)
+            try:
+                self.prune_retired_operations()
+            except Exception as exc:
+                diagnostic_log.failure("prune_retired_operations", exc)
         threading.Thread(target=relieve, name="ryn-agent-storage-relief", daemon=True).start()
+
+    def _operation_ledger(self):
+        rw = getattr(self.tools, "resource_writes", None)
+        return getattr(rw, "ledger", None)
+
+    def prune_retired_operations(self, *, older_than_days: float = 30) -> dict:
+        ledger_pruned = 0
+        sharing_pruned = 0
+        ledger = self._operation_ledger()
+        if ledger is not None and hasattr(ledger, "prune_retired"):
+            ledger_pruned = int(ledger.prune_retired(older_than_days=older_than_days))
+        sharing = getattr(self.tools, "friend_sharing", None)
+        if sharing is not None and hasattr(sharing, "prune_retired"):
+            sharing_pruned = int(sharing.prune_retired(older_than_days=older_than_days))
+        return {"ledger_pruned": ledger_pruned, "sharing_pruned": sharing_pruned}
+
+    def operation_ledger_status(self) -> dict:
+        ledger = self._operation_ledger()
+        if ledger is None or not hasattr(ledger, "health"):
+            return {"state": "ok", "error": None, "reset_supported": False}
+        return ledger.health()
+
+    def reset_operation_ledger(self, value: dict | None = None) -> dict:
+        if not isinstance(value, dict) or value.get("confirm") is not True or set(value) - {"confirm"}:
+            raise AgentError("agent_invalid_request")
+        ledger = self._operation_ledger()
+        if ledger is None or not hasattr(ledger, "reset"):
+            raise AgentError("agent_operation_ledger_unavailable")
+        ledger_res = ledger.reset()
+
+        def mark_inflight_unknown(data):
+            affected: list[str] = []
+            timestamp = now()
+            for task_id, row in data.get("tasks", {}).items():
+                if row.get("status") in TERMINAL:
+                    continue
+                flight = row.get("in_flight")
+                if not isinstance(flight, dict) or flight.get("kind") != "tool":
+                    continue
+                if flight.get("effect") == "read" and not flight.get("dispatched"):
+                    continue
+                if flight.get("effect") == "read":
+                    continue
+                prior_rec = row.get("reconciliation") if isinstance(row.get("reconciliation"), dict) else {}
+                row.update(
+                    status="interrupted",
+                    approved=None,
+                    pending_approval=None,
+                    error="agent_write_outcome_unknown",
+                )
+                verification.record(row, flight, "unknown", timestamp, flight=flight)
+                row["reconciliation"] = {
+                    "state": "unknown",
+                    "attempts": prior_rec.get("attempts", 0),
+                    "operation_id": flight.get("operation_id"),
+                    "reason": "agent_operation_ledger_reset",
+                    "requires_owner_review": True,
+                    "at": timestamp,
+                }
+                event(
+                    row,
+                    "operation_ledger_reset",
+                    operation_id=flight.get("operation_id"),
+                    tool=flight.get("name"),
+                    outcome="unknown",
+                    requires_owner_review=True,
+                )
+                affected.append(task_id)
+            return affected
+
+        affected_tasks = self.store.transaction(mark_inflight_unknown)
+        return {
+            "ok": True,
+            "quarantine_id": ledger_res.get("quarantine_id"),
+            "affected_tasks": affected_tasks,
+            "operation_ledger": self.operation_ledger_status(),
+        }
 
     def _reserve_output(self, selected):
         # Free room before this step reserves its output, instead of failing
@@ -1796,7 +1877,11 @@ class AgentRuntime(AgentLoop):
 
     def settings(self) -> dict:
         snapshot = self.configuration_snapshot(display_only=True)
-        return {**snapshot["settings"], "context_budget_policy": snapshot["context_budget_policy"]}
+        return {
+            **snapshot["settings"],
+            "context_budget_policy": snapshot["context_budget_policy"],
+            "operation_ledger": self.operation_ledger_status(),
+        }
 
     def list_projects(self) -> list[dict]:
         return [copy.deepcopy(item) for item in self.store.read().get("projects", {}).values() if item.get("enabled")]
@@ -1907,6 +1992,11 @@ class AgentRuntime(AgentLoop):
                                      "context_budget_provenance": provenance})
 
     def update_settings(self, values: dict) -> dict:
+        if isinstance(values, dict) and set(values) == {"reset_operation_ledger"}:
+            if values["reset_operation_ledger"] is not True:
+                raise AgentError("agent_invalid_settings")
+            reset_res = self.reset_operation_ledger({"confirm": True})
+            return {**self.settings(), "operation_ledger_reset": reset_res}
         if not isinstance(values, dict) or set(values) - (set(DEFAULT_SETTINGS) | set(self._EXTRA_SETTINGS)):
             raise AgentError("agent_invalid_settings")
         if "compact_prompt" in values:
@@ -2009,7 +2099,11 @@ class AgentRuntime(AgentLoop):
         # providers. Task admission still resolves its current model separately.
         settings = {**DEFAULT_SETTINGS, **self._EXTRA_SETTINGS, **saved["settings"]}
         policy = self._settings_context_policy(settings, saved["provenance"], display_only=True)
-        return {**settings, "context_budget_policy": policy}
+        return {
+            **settings,
+            "context_budget_policy": policy,
+            "operation_ledger": self.operation_ledger_status(),
+        }
 
     def models(self) -> list[dict]:
         return sanitized(getattr(self.catalog, "display_models", self.catalog.list_models)())
