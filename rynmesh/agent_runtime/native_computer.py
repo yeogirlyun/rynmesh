@@ -16,7 +16,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, NoReturn
 
-from .computer.binary import platform_support, resolve_owner_id
+from .computer.binary import (
+    platform_support,
+    register_settings_source,
+    resolve_owner_id,
+    unregister_settings_source,
+)
 from .computer.coordinator import (
     NativeBridge,
     bind_node_native_bridge,
@@ -2907,6 +2912,7 @@ class NativeComputerFacade:
 
     def close(self) -> None:
         self.overlay.close()
+        unregister_settings_source(self._owner)
         with self._lock:
             self._escaped_tasks.clear()
             for tstate in self._tasks.values():
@@ -2938,6 +2944,7 @@ def bind_owner_native_computer(
     """
     if owner is None:
         raise ValueError("owner is required for NativeComputerFacade")
+    register_settings_source(owner)
     target_owner_id = resolve_owner_id(owner)
     with _FACADE_LOCK:
         if bridge is not None:

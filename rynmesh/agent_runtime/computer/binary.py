@@ -88,11 +88,90 @@ _OWNER_IDS_LOCK = threading.Lock()
 _OWNER_IDS: weakref.WeakKeyDictionary[Any, str] = weakref.WeakKeyDictionary()
 _OWNER_FALLBACK_IDS: dict[int, str] = {}
 
+_SETTINGS_SOURCES_LOCK = threading.Lock()
+_SETTINGS_SOURCES: list[weakref.ref[Any]] = []
+
+
+def register_settings_source(source: Any) -> None:
+    """Register an active settings owner (such as `AgentStore`) so host checks read live settings."""
+    if source is None or not (hasattr(source, "inspect") or hasattr(source, "read")):
+        return
+    try:
+        ref = weakref.ref(source)
+    except TypeError:
+        return
+    with _SETTINGS_SOURCES_LOCK:
+        alive = [r for r in _SETTINGS_SOURCES if (obj := r()) is not None and obj is not source]
+        alive.append(ref)
+        _SETTINGS_SOURCES[:] = alive[-16:]
+
+
+def unregister_settings_source(source: Any) -> None:
+    """Unregister a closed settings owner so stale test stores do not linger across sessions."""
+    if source is None:
+        return
+    with _SETTINGS_SOURCES_LOCK:
+        _SETTINGS_SOURCES[:] = [
+            r for r in _SETTINGS_SOURCES if (obj := r()) is not None and obj is not source
+        ]
+
+
+def _extract_settings_from_source(source: Any) -> Mapping[str, Any] | None:
+    root = getattr(source, "root", None)
+    if isinstance(root, Path):
+        try:
+            if not root.exists():
+                return None
+        except OSError:
+            return None
+    try:
+        if hasattr(source, "inspect"):
+            raw = source.inspect(
+                lambda d: dict(d.get("settings") or {}) if isinstance(d, Mapping) else {}
+            )
+        elif hasattr(source, "read"):
+            data = source.read()
+            raw = dict(data.get("settings") or {}) if isinstance(data, Mapping) else {}
+        else:
+            return None
+    except Exception:
+        return None
+    return raw if isinstance(raw, Mapping) else None
+
+
+def _read_registered_settings() -> Mapping[str, Any] | None:
+    with _SETTINGS_SOURCES_LOCK:
+        candidates = [obj for r in reversed(_SETTINGS_SOURCES) if (obj := r()) is not None]
+    for source in candidates:
+        cfg = _extract_settings_from_source(source)
+        if cfg is not None:
+            return cfg
+    return None
+
+
+def _resolve_arm64_emulation_allowed(
+    *,
+    allow_arm64_emulation: bool | None = None,
+    settings: Mapping[str, Any] | None = None,
+) -> bool:
+    if allow_arm64_emulation is not None:
+        return bool(allow_arm64_emulation)
+    cfg = settings if isinstance(settings, Mapping) else _read_registered_settings()
+    if isinstance(cfg, Mapping) and (
+        "allow_arm64_computer_use" in cfg or "computer_allow_arm64_emulation" in cfg
+    ):
+        return bool(
+            cfg.get("allow_arm64_computer_use")
+            or cfg.get("computer_allow_arm64_emulation")
+        )
+    return bool(DEFAULT_ALLOW_ARM64_EMULATION)
+
 
 def resolve_owner_id(owner: Any) -> str:
     """Return a stable, unique owner identifier without using mutable path strings or I/O."""
     if owner is None:
         return f"own_standalone_{uuid.uuid4().hex}"
+    register_settings_source(owner)
     existing_attr = getattr(owner, "_ryn_native_bridge_owner_id", None)
     if isinstance(existing_attr, str) and existing_attr.startswith("own_"):
         return existing_attr
@@ -1094,18 +1173,10 @@ def platform_support(
             "message_zh": NON_WINDOWS_X64_MESSAGE,
         }
 
-    if allow_arm64_emulation is None:
-        if isinstance(settings, Mapping) and (
-            "allow_arm64_computer_use" in settings or "computer_allow_arm64_emulation" in settings
-        ):
-            allow_arm64 = bool(
-                settings.get("allow_arm64_computer_use")
-                or settings.get("computer_allow_arm64_emulation")
-            )
-        else:
-            allow_arm64 = bool(DEFAULT_ALLOW_ARM64_EMULATION)
-    else:
-        allow_arm64 = bool(allow_arm64_emulation)
+    allow_arm64 = _resolve_arm64_emulation_allowed(
+        allow_arm64_emulation=allow_arm64_emulation,
+        settings=settings,
+    )
 
     try:
         native_mach = _query_native_machine(phase="pre_dispatch")
@@ -1192,6 +1263,7 @@ def verify_windows_x64_host(
     *,
     phase: str = "pre_dispatch",
     allow_arm64_emulation: bool | None = None,
+    settings: Mapping[str, Any] | None = None,
 ) -> int:
     """Verify the host OS is native Windows x86_64 (`0x8664`), or ARM64 (`0xAA64`) when emulation is enabled."""
     if os.name != "nt" or sys.platform != "win32":
@@ -1203,10 +1275,9 @@ def verify_windows_x64_host(
     native_mach = _query_native_machine(phase=phase)
     if native_mach == IMAGE_FILE_MACHINE_AMD64:
         return native_mach
-    effective_allow = (
-        bool(DEFAULT_ALLOW_ARM64_EMULATION)
-        if allow_arm64_emulation is None
-        else bool(allow_arm64_emulation)
+    effective_allow = _resolve_arm64_emulation_allowed(
+        allow_arm64_emulation=allow_arm64_emulation,
+        settings=settings,
     )
     if native_mach == IMAGE_FILE_MACHINE_ARM64:
         if effective_allow:
@@ -1630,7 +1701,11 @@ def _resolve_frozen_install_root(*, phase: str = "pre_dispatch") -> tuple[str, _
     return sys_parent_lex, dir_ident
 
 
-def _load_packaged_release_spec(*, phase: str = "pre_dispatch") -> ArtifactSpec:
+def _load_packaged_release_spec(
+    *,
+    phase: str = "pre_dispatch",
+    allow_arm64_emulation: bool | None = None,
+) -> ArtifactSpec:
     """Private packaged release loader.
 
     Accepts NO caller `manifest_path`, `bundle_root`, `bundled_executable`, or `mode` arguments.
@@ -1644,7 +1719,7 @@ def _load_packaged_release_spec(*, phase: str = "pre_dispatch") -> ArtifactSpec:
             phase=phase,
         )
 
-    verify_windows_x64_host(phase=phase)
+    verify_windows_x64_host(phase=phase, allow_arm64_emulation=allow_arm64_emulation)
     sys_parent_lex, root_ident = _resolve_frozen_install_root(phase=phase)
 
     manifest_lex = validate_lexical_windows_path(PACKAGE_MANIFEST_PATH, phase=phase)
@@ -2274,6 +2349,7 @@ def open_and_verify_artifact_lease(
     on_before_open_file: Callable[[], None] | None = None,
     on_after_hash_before_return: Callable[[], None] | None = None,
     phase: str = "pre_dispatch",
+    allow_arm64_emulation: bool | None = None,
 ) -> ArtifactLease:
     """Pin the bundle directory and target executable handles, verifying containment, PE64, size, and SHA-256."""
     if not isinstance(spec, ArtifactSpec):
@@ -2289,7 +2365,10 @@ def open_and_verify_artifact_lease(
                 phase=phase,
             )
 
-    native_mach = verify_windows_x64_host(phase=phase)
+    native_mach = verify_windows_x64_host(
+        phase=phase,
+        allow_arm64_emulation=allow_arm64_emulation,
+    )
     is_emulated_x64 = native_mach == IMAGE_FILE_MACHINE_ARM64
 
     root_lexical = validate_lexical_windows_path(bundle_root, phase=phase)
@@ -2606,6 +2685,7 @@ def open_dev_executable_lease(
     expected_worker_version: str | None = EXPECTED_WORKER_VERSION,
     expected_protocol_version: str = PROTOCOL_SEMVER,
     phase: str = "pre_dispatch",
+    allow_arm64_emulation: bool | None = None,
 ) -> ArtifactLease:
     """Resolve an explicit non-frozen development/test executable command (`development_worker=True`)."""
     if bool(getattr(sys, "frozen", False)):
@@ -2614,7 +2694,10 @@ def open_dev_executable_lease(
             phase=phase,
             reason="dev_worker_forbidden_when_frozen",
         )
-    native_mach = verify_windows_x64_host(phase=phase)
+    native_mach = verify_windows_x64_host(
+        phase=phase,
+        allow_arm64_emulation=allow_arm64_emulation,
+    )
     is_emulated_x64 = native_mach == IMAGE_FILE_MACHINE_ARM64
 
     if isinstance(dev_executable, (list, tuple)):
@@ -2745,8 +2828,16 @@ class ProductionBinaryResolver:
             f"frozen={self.require_frozen}"
         )
 
-    def acquire_lease(self, *, phase: str = "pre_dispatch") -> ArtifactLease:
-        verify_windows_x64_host(phase=phase)
+    def acquire_lease(
+        self,
+        *,
+        phase: str = "pre_dispatch",
+        allow_arm64_emulation: bool | None = None,
+    ) -> ArtifactLease:
+        verify_windows_x64_host(
+            phase=phase,
+            allow_arm64_emulation=allow_arm64_emulation,
+        )
 
         if bool(getattr(sys, "frozen", False)):
             if self._explicit_require_frozen is False:
@@ -2809,7 +2900,10 @@ class ProductionBinaryResolver:
                         reason="final_path_mismatch",
                     )
 
-            spec = _load_packaged_release_spec(phase=phase)
+            spec = _load_packaged_release_spec(
+                phase=phase,
+                allow_arm64_emulation=allow_arm64_emulation,
+            )
             commitment = spec._release_commitment
             assert commitment is not None
             return open_and_verify_artifact_lease(
@@ -2820,6 +2914,7 @@ class ProductionBinaryResolver:
                 on_before_open_file=self.on_before_open_file,
                 on_after_hash_before_return=self.on_after_hash_before_return,
                 phase=phase,
+                allow_arm64_emulation=allow_arm64_emulation,
             )
 
         if (
@@ -2836,6 +2931,7 @@ class ProductionBinaryResolver:
                     expected_worker_version=self.expected_worker_version,
                     expected_protocol_version=self.expected_protocol_version,
                     phase=phase,
+                    allow_arm64_emulation=allow_arm64_emulation,
                 )
 
         spec = load_manifest(
@@ -2874,6 +2970,7 @@ class ProductionBinaryResolver:
             on_before_open_file=self.on_before_open_file,
             on_after_hash_before_return=self.on_after_hash_before_return,
             phase=phase,
+            allow_arm64_emulation=allow_arm64_emulation,
         )
 
 
@@ -2908,8 +3005,16 @@ class DevelopmentBinaryResolver:
             f"{_lexical_norm_path(candidate_executable)}"
         )
 
-    def acquire_lease(self, *, phase: str = "pre_dispatch") -> ArtifactLease:
-        verify_windows_x64_host(phase=phase)
+    def acquire_lease(
+        self,
+        *,
+        phase: str = "pre_dispatch",
+        allow_arm64_emulation: bool | None = None,
+    ) -> ArtifactLease:
+        verify_windows_x64_host(
+            phase=phase,
+            allow_arm64_emulation=allow_arm64_emulation,
+        )
         spec = load_manifest(
             self.manifest_path,
             expected_worker_name=self.expected_worker_name,
@@ -2926,4 +3031,5 @@ class DevelopmentBinaryResolver:
             on_before_open_file=self.on_before_open_file,
             on_after_hash_before_return=self.on_after_hash_before_return,
             phase=phase,
+            allow_arm64_emulation=allow_arm64_emulation,
         )

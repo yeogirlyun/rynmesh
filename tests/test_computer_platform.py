@@ -248,14 +248,15 @@ def test_t4_arm64_windows_0xaa64_toggle_controls_emulated_x64_and_arm_message(
         assert dto_off["native"]["platform_supported"] is False
         assert "本机是 ARM 版 Windows，电脑控制暂不支持" in dto_off["native"]["message"]
 
-        # Enable switch in settings and via explicit argument -> allowed with emulated_x64=True
+        # Enable switch in AgentStore settings ONLY (no monkeypatch of DEFAULT_ALLOW_ARM64_EMULATION)
         def enable_arm64(data: dict[str, Any]) -> None:
             data["settings"]["allow_arm64_computer_use"] = True
             data["settings_revision"] = data.get("settings_revision", 0) + 1
 
         store.transaction(enable_arm64)
-        monkeypatch.setattr(binary_mod, "DEFAULT_ALLOW_ARM64_EMULATION", True)
 
+        assert computer.platform_support()["supported"] is True
+        assert computer.platform_support()["emulated_x64"] is True
         assert verify_windows_x64_host() == 0xAA64
 
         base_py = Path(getattr(sys, "_base_executable", sys.executable)).resolve()
@@ -279,6 +280,106 @@ def test_t4_arm64_windows_0xaa64_toggle_controls_emulated_x64_and_arm_message(
         assert dto_on["native"]["emulated_x64"] is True
         assert "ARM 版 Windows 上以仿真运行" in dto_on["native"]["message"]
     finally:
+        tools.close()
+
+
+def test_t4b_arm64_setting_wires_into_real_worker_startup_and_platform_support(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, store, tools = _make_agent_tools(tmp_path)
+    ext_store = tools.extensions.store
+    ext_store.set_plugin_enabled(COMPUTER_USE_PLUGIN_ID, True)
+
+    script_path = tmp_path / "fake_arm64_worker.py"
+    script_path.write_text(FAKE_WORKER_SCRIPT, encoding="utf-8")
+    base_py = Path(getattr(sys, "_base_executable", sys.executable)).resolve()
+    state_file = tmp_path / "arm64_worker_state.jsonl"
+
+    app_dir = tmp_path / "arm64_prod_app"
+    bin_dir = app_dir / "rynmesh" / "bin"
+    bin_dir.mkdir(parents=True)
+    shutil.copyfile(base_py, app_dir / "ryn_desktop.exe")
+    shutil.copyfile(base_py, app_dir / PACKAGED_EXECUTABLE_BASENAME)
+    raw = (app_dir / PACKAGED_EXECUTABLE_BASENAME).read_bytes()
+    manifest_bytes = json.dumps(
+        _valid_manifest_dict(size=len(raw), sha256_hex=hashlib.sha256(raw).hexdigest())
+    ).encode("utf-8")
+    (bin_dir / "computer-use-manifest.json").write_bytes(manifest_bytes)
+    spec = parse_and_validate_manifest_bytes(manifest_bytes)
+
+    client = NativeWorkerClient()
+    client.reconfigure(dev_executable=[str(base_py), str(script_path), "normal", str(state_file)])
+    try:
+        monkeypatch.setattr(binary_mod, "_query_native_machine", lambda *, phase="pre_dispatch": 0xAA64)
+
+        # 1. Switch initially OFF -> platform_support, ExtensionStore, and real startup all reject
+        assert computer.platform_support()["supported"] is False
+        cu_off = next(p for p in ext_store.overview(desktop_access=True)["plugins"] if p["id"] == COMPUTER_USE_PLUGIN_ID)
+        assert cu_off["status"] == "unavailable"
+
+        with pytest.raises(NativeBridgeRejected) as exc_start_off:
+            client.ensure_session()
+        assert exc_start_off.value.code == "agent_computer_arch_unsupported"
+
+        with pytest.raises(NativeBridgeRejected) as exc_lease_off:
+            open_and_verify_artifact_lease(spec=spec, bundle_root=app_dir)
+        assert exc_lease_off.value.code == "agent_computer_arch_unsupported"
+
+        # 2. Turn switch ON in settings -> platform_support(), ExtensionStore, dev startup, and packaged lease all succeed
+        def set_arm64_toggle(enabled: bool):
+            def _mut(data: dict[str, Any]) -> None:
+                data["settings"]["allow_arm64_computer_use"] = enabled
+                data["settings_revision"] = data.get("settings_revision", 0) + 1
+
+            return _mut
+
+        store.transaction(set_arm64_toggle(True))
+
+        plat_on = computer.platform_support()
+        assert plat_on["supported"] is True
+        assert plat_on["emulated_x64"] is True
+
+        overview_on = ext_store.overview(desktop_access=True)
+        cu_on = next(p for p in overview_on["plugins"] if p["id"] == COMPUTER_USE_PLUGIN_ID)
+        assert cu_on["status"] == "enabled"
+        cu_srv_on = next(s for s in overview_on["mcp_servers"] if s["plugin_id"] == COMPUTER_USE_PLUGIN_ID)
+        assert cu_srv_on["enabled"] is True
+
+        session = client.ensure_session()
+        assert session.is_usable()
+        snap = client.cache_status()
+        assert snap["status"] == "ready"
+        assert snap["binding"]["emulatedX64"] is True
+
+        with monkeypatch.context() as m:
+            m.setattr(sys, "frozen", True, raising=False)
+            m.setattr(sys, "executable", str(app_dir / "ryn_desktop.exe"))
+            m.setattr(binary_mod, "PACKAGE_MANIFEST_PATH", bin_dir / "computer-use-manifest.json")
+            prod_lease = ProductionBinaryResolver().acquire_lease()
+            try:
+                assert prod_lease.verified_artifact.release_verified is True
+                assert prod_lease.verified_artifact.emulated_x64 is True
+            finally:
+                prod_lease.close()
+
+        # 3. Turn switch OFF again -> platform_support(), ExtensionStore, and startup reject with arch_unsupported
+        store.transaction(set_arm64_toggle(False))
+
+        assert computer.platform_support()["supported"] is False
+        cu_off_again = next(
+            p for p in ext_store.overview(desktop_access=True)["plugins"] if p["id"] == COMPUTER_USE_PLUGIN_ID
+        )
+        assert cu_off_again["status"] == "unavailable"
+
+        with pytest.raises(NativeBridgeRejected) as exc_start_off_again:
+            client.ensure_session()
+        assert exc_start_off_again.value.code == "agent_computer_arch_unsupported"
+
+        with pytest.raises(NativeBridgeRejected) as exc_lease_off_again:
+            open_and_verify_artifact_lease(spec=spec, bundle_root=app_dir)
+        assert exc_lease_off_again.value.code == "agent_computer_arch_unsupported"
+    finally:
+        client.shutdown()
         tools.close()
 
 

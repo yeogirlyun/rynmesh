@@ -411,6 +411,7 @@ class ExtensionStore:
         self.pub = peer_box.public_key_b64(self.key)
         self._cached_stamp: tuple[int, int] | None = None
         self._cached_state: dict[str, Any] | None = None
+        self._agent_store: Any = None
         with file_transaction(self.lock):
             if not self.path.exists():
                 self._write(self._default_state())
@@ -662,13 +663,48 @@ class ExtensionStore:
             return False
         return self._is_parent_plugin_enabled(skill.get("plugin_id"), state)
 
+    def _agent_settings(self) -> dict[str, Any] | None:
+        bound = getattr(self, "_agent_store", None)
+        if bound is not None:
+            try:
+                if hasattr(bound, "inspect"):
+                    raw = bound.inspect(
+                        lambda d: dict(d.get("settings") or {}) if isinstance(d, dict) else {}
+                    )
+                    if isinstance(raw, dict):
+                        return raw
+                elif hasattr(bound, "read"):
+                    data = bound.read()
+                    if isinstance(data, dict) and isinstance(data.get("settings"), dict):
+                        return dict(data["settings"])
+            except Exception:
+                pass
+        sessions_path = self.root / "sessions.json"
+        if sessions_path.exists():
+            try:
+                env = read_json(sessions_path, max_bytes=MAX_BYTES)
+                if isinstance(env, dict) and env.get("version") in {"ryn.agent.v1", "ryn.agent.v2"}:
+                    plaintext = peer_box.open_sealed(
+                        self.key,
+                        self.pub,
+                        env["nonce"],
+                        env["ciphertext"],
+                        info=b"rynmesh-agent-state-v1",
+                    )
+                    parsed = json.loads(plaintext)
+                    if isinstance(parsed, dict) and isinstance(parsed.get("settings"), dict):
+                        return dict(parsed["settings"])
+            except Exception:
+                pass
+        return None
+
     def _is_server_effectively_enabled(self, server: dict[str, Any], state: dict[str, Any]) -> bool:
         if not server.get("enabled", False):
             return False
         if server.get("id") == COMPUTER_USE_SERVER_ID:
             from ..computer.binary import platform_support
 
-            if not platform_support()["supported"]:
+            if not platform_support(settings=self._agent_settings())["supported"]:
                 return False
         return self._is_parent_plugin_enabled(server.get("plugin_id"), state)
 
@@ -714,7 +750,7 @@ class ExtensionStore:
         if is_computer_use:
             from ..computer.binary import platform_support
 
-            cu_plat = platform_support()
+            cu_plat = platform_support(settings=self._agent_settings())
             win_supported = bool(cu_plat["supported"])
         else:
             cu_plat = None

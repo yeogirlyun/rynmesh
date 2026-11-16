@@ -29,6 +29,7 @@ from .binary import (
     resolve_owner_id,
     verify_lease_release_authority,
     verify_suspended_process_handle,
+    verify_windows_x64_host,
 )
 from .protocol import (
     EXPECTED_WORKER_NAME,
@@ -1658,6 +1659,26 @@ class NativeWorkerClient:
                     )
 
                 if self._session is not None:
+                    if self._transport_factory is None:
+                        try:
+                            verify_windows_x64_host(phase="pre_dispatch")
+                        except NativeBridgeError as exc:
+                            stale_sess = self._session
+                            self._session = None
+                            self._cached_live = False
+                            self._cached_checked_at = _utc_now_iso()
+                            self._last_error = {
+                                "code": exc.code,
+                                "reason": exc.reason,
+                                "win32_error": getattr(exc, "win32_error", None),
+                                "observedAt": _utc_now_iso(),
+                            }
+                            self._cond.release()
+                            try:
+                                stale_sess.close()
+                            finally:
+                                self._cond.acquire()
+                            raise
                     if self._session.is_usable():
                         return self._session
                     old_to_close = self._session
