@@ -1395,7 +1395,9 @@ def create_app(store: RynmeshStore | None = None):
     @app.get("/api/local/node/status")
     def local_node_status(request: FastAPIRequest) -> dict[str, Any]:
         local_control(request)
+        from . import native_transport
         from .private_permissions import key_protection_status
+        from .transport import transport_status
 
         network_id = control_network_id()
         local_items = active_store.list_local_content().get("content", [])
@@ -1403,6 +1405,10 @@ def create_app(store: RynmeshStore | None = None):
             "node_name": active_store.node_name,
             "peer_id": active_store.peer_id,
             "key_protection": key_protection_status(active_store.home),
+            "transport": {
+                **transport_status(),
+                "native_p2p": native_transport.status(),
+            },
             "daemon_running": True,
             "desktop_managed": os.environ.get("RYNMESH_DESKTOP_MODE", "").strip().lower()
             in {"1", "true", "yes"},
