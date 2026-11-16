@@ -13,7 +13,17 @@ import time
 import urllib.error
 import urllib.request
 
-from .adapters import AdapterError, OpenAICompatibleAdapter, _openai_usage, _set_response_timeout, cached_input_tokens
+from .adapters import (
+    MAX_JSON_RESPONSE_BYTES,
+    MAX_SSE_LINE_BYTES,
+    MAX_STREAM_BYTES,
+    AdapterError,
+    OpenAICompatibleAdapter,
+    _openai_usage,
+    _response_too_large,
+    _set_response_timeout,
+    cached_input_tokens,
+)
 from .data_release import DataReleaseError
 from .data_release import urlopen as model_urlopen
 from .transport_failure import (
@@ -256,9 +266,9 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                 check()
                 is_sse = "text/event-stream" in response.headers.get("content-type", "").lower()
                 if not is_sse:
-                    raw = response.read(4 * 1024 * 1024 + 1)
-                    if len(raw) > 4 * 1024 * 1024:
-                        raise ValueError("response limit")
+                    raw = response.read(MAX_JSON_RESPONSE_BYTES + 1)
+                    if len(raw) > MAX_JSON_RESPONSE_BYTES:
+                        raise _response_too_large(MAX_JSON_RESPONSE_BYTES)
                     decoded = json.loads(raw)
                     if isinstance(decoded, dict):
                         received_usage = _openai_usage(_usage(decoded.get("usage"), self.protocol))
@@ -302,7 +312,7 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                         check()
                         if deadline is not None:
                             _set_response_timeout(response, read_timeout())
-                        line = response.readline(1024 * 1024 + 1)
+                        line = response.readline(MAX_SSE_LINE_BYTES + 1)
                         check()
                         if not line:
                             if data:
@@ -311,8 +321,12 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                         last_byte = time.monotonic()
                         total += len(line)
                         frame_size += len(line)
-                        if len(line) > 1024 * 1024 or frame_size > 4 * 1024 * 1024 or total > 32 * 1024 * 1024:
-                            raise ValueError("stream limit")
+                        if len(line) > MAX_SSE_LINE_BYTES:
+                            raise _response_too_large(MAX_SSE_LINE_BYTES)
+                        if frame_size > MAX_JSON_RESPONSE_BYTES:
+                            raise _response_too_large(MAX_JSON_RESPONSE_BYTES)
+                        if total > MAX_STREAM_BYTES:
+                            raise _response_too_large(MAX_STREAM_BYTES)
                         line = line.decode("utf-8").rstrip("\r\n")
                         if not line:
                             if data:

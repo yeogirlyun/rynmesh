@@ -66,12 +66,29 @@ class AdapterError(RuntimeError):
                               finish_reason in {"stop", "length", "tool_calls", "content_filter", "cancelled"} else "unknown")
 
 
+MAX_JSON_RESPONSE_BYTES = 4 * 1024 * 1024
+MAX_SSE_LINE_BYTES = 1024 * 1024
+MAX_STREAM_BYTES = 32 * 1024 * 1024
+MAX_STREAM_TEXT_BYTES = 4 * 1024 * 1024
+
+
+def _response_too_large(limit_bytes: int) -> AdapterError:
+    mib = limit_bytes / (1024 * 1024)
+    label = str(int(mib)) if mib.is_integer() else f"{mib:g}"
+    return AdapterError(
+        f"模型回复超过 {label} MiB 上限，请让模型分多次输出",
+        code="upstream_response_too_large",
+        diagnostics={"limit_bytes": int(limit_bytes)},
+    )
+
+
 RUNTIME_ERROR_CODES = frozenset({
     "runtime_busy", "model_not_ready", "model_not_found", "runtime_unavailable",
     "runtime_connection_failed", "inference_timeout", "inference_failed",
     "model_configuration_changed", "model_daily_quota_exhausted",
     "ai_permission_denied",
     "stream_delivery_failed", "upstream_http_failed", "upstream_response_invalid",
+    "upstream_response_too_large",
     "upstream_stream_truncated",
     "source_protocol_parameters_unsupported",
     "source_protocol_response_invalid",
@@ -221,7 +238,7 @@ class OpenAICompatibleAdapter:
                     with self._lock:
                         self._active_responses[task_id] = response
                 try:
-                    raw = response.read(4 * 1024 * 1024 + 1)
+                    raw = response.read(MAX_JSON_RESPONSE_BYTES + 1)
                 finally:
                     if task_id:
                         with self._lock:
@@ -249,8 +266,8 @@ class OpenAICompatibleAdapter:
             timed_out = isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)
             code = "inference_timeout" if timed_out else "runtime_connection_failed"
             raise AdapterError(f"local API request failed: {code}", code=code, diagnostics=describe(exc, phase)) from None
-        if len(raw) > 4 * 1024 * 1024:
-            raise AdapterError("local API response exceeded 4 MiB")
+        if len(raw) > MAX_JSON_RESPONSE_BYTES:
+            raise _response_too_large(MAX_JSON_RESPONSE_BYTES)
         try:
             value = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -450,9 +467,9 @@ class OpenAICompatibleAdapter:
                         # Some compatible servers ignore stream=true and return
                         # one complete JSON response. Consume that same response;
                         # never retry inference or invent token delta events.
-                        raw = response.read(4 * 1024 * 1024 + 1)
-                        if len(raw) > 4 * 1024 * 1024:
-                            raise AdapterError("local API response exceeded 4 MiB")
+                        raw = response.read(MAX_JSON_RESPONSE_BYTES + 1)
+                        if len(raw) > MAX_JSON_RESPONSE_BYTES:
+                            raise _response_too_large(MAX_JSON_RESPONSE_BYTES)
                         payload = json.loads(raw)
                         choice = payload["choices"][0]
                         message = normalize_message_tool_calls(choice["message"], call_id_nonce)
@@ -474,7 +491,7 @@ class OpenAICompatibleAdapter:
                             )
                         if deadline is not None:
                             _set_response_timeout(response, read_timeout())
-                        line = response.readline(1024 * 1024 + 1)
+                        line = response.readline(MAX_SSE_LINE_BYTES + 1)
                         now = time.monotonic()
                         if task_id in self._cancelled:
                             raise AdapterError("task_cancelled")
@@ -489,11 +506,11 @@ class OpenAICompatibleAdapter:
                         if not line:
                             break
                         last_byte = now
-                        if len(line) > 1024 * 1024:
-                            raise AdapterError("stream line exceeds 1 MiB")
+                        if len(line) > MAX_SSE_LINE_BYTES:
+                            raise _response_too_large(MAX_SSE_LINE_BYTES)
                         total += len(line)
-                        if total > 32 * 1024 * 1024:
-                            raise AdapterError("stream exceeds 32 MiB")
+                        if total > MAX_STREAM_BYTES:
+                            raise _response_too_large(MAX_STREAM_BYTES)
                         if not line.startswith(b"data:"):
                             continue
                         data = line[5:].strip()
@@ -615,9 +632,9 @@ class OpenAICompatibleAdapter:
                 self._active_responses[task_id] = response
             content_type = str(response.headers.get("Content-Type", "")).lower()
             if "application/json" in content_type and "event-stream" not in content_type:
-                raw = response.read(4 * 1024 * 1024 + 1)
-                if len(raw) > 4 * 1024 * 1024:
-                    raise AdapterError("local API response exceeded 4 MiB")
+                raw = response.read(MAX_JSON_RESPONSE_BYTES + 1)
+                if len(raw) > MAX_JSON_RESPONSE_BYTES:
+                    raise _response_too_large(MAX_JSON_RESPONSE_BYTES)
                 try:
                     value = json.loads(raw.decode("utf-8"))
                 except (UnicodeDecodeError, json.JSONDecodeError):
@@ -634,22 +651,28 @@ class OpenAICompatibleAdapter:
                 )
                 if not delta:
                     raise AdapterError("local API returned no completion text")
+                if len(delta.encode("utf-8")) > MAX_STREAM_TEXT_BYTES:
+                    raise _response_too_large(MAX_STREAM_TEXT_BYTES)
                 on_delta(delta)
                 text_parts.append(delta)
                 usage = value.get("usage")
             else:
+                total_bytes = 0
                 while True:
                     if task_id in self._cancelled:
                         raise AdapterError("task_cancelled")
                     if time.monotonic() - started > timeout_s:
                         raise AdapterError("local API streaming timed out", code="inference_timeout")
-                    raw_line = response.readline(256 * 1024 + 1)
+                    raw_line = response.readline(MAX_SSE_LINE_BYTES + 1)
                     if not raw_line:
                         if not finished:
                             raise AdapterError("local API stream ended before completion")
                         break
-                    if len(raw_line) > 256 * 1024:
-                        raise AdapterError("local API stream event exceeded 256 KiB")
+                    if len(raw_line) > MAX_SSE_LINE_BYTES:
+                        raise _response_too_large(MAX_SSE_LINE_BYTES)
+                    total_bytes += len(raw_line)
+                    if total_bytes > MAX_STREAM_BYTES:
+                        raise _response_too_large(MAX_STREAM_BYTES)
                     try:
                         line = raw_line.decode("utf-8").strip()
                     except UnicodeDecodeError:
@@ -686,8 +709,8 @@ class OpenAICompatibleAdapter:
                     if not delta:
                         continue
                     output_bytes += len(delta.encode("utf-8"))
-                    if output_bytes > 4 * 1024 * 1024:
-                        raise AdapterError("local API stream output exceeded 4 MiB")
+                    if output_bytes > MAX_STREAM_TEXT_BYTES:
+                        raise _response_too_large(MAX_STREAM_TEXT_BYTES)
                     on_delta(delta)
                     text_parts.append(delta)
             if task_id in self._cancelled:

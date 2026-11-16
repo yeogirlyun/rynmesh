@@ -45,6 +45,10 @@ class P2PCapacityError(P2PError):
     """The configured fixed UDP port already belongs to an active session."""
 
 
+class P2PMessageTooLarge(P2PError):
+    """A native session frame or sealed peer request exceeded the byte limit."""
+
+
 _FIXED_PORTS: set[int] = set()
 _FIXED_PORTS_LOCK = threading.Lock()
 class P2PTimeoutError(asyncio.TimeoutError):

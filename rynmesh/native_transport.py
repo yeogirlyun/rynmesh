@@ -188,9 +188,11 @@ class StreamReader:
 
 
 def _frame(value: dict[str, Any]) -> bytes:
+    from .llm_package.p2p import P2PMessageTooLarge
+
     raw = json.dumps(value, separators=(",", ":")).encode("utf-8")
     if len(raw) > MAX_FRAME_BYTES:
-        raise ValueError("native session message too large")
+        raise P2PMessageTooLarge("native session message too large")
     return len(raw).to_bytes(4, "big") + raw
 
 

@@ -327,7 +327,8 @@ class HttpPeerClient:
         payload: dict[str, Any],
         *,
         max_event_bytes: int = 256 * 1024,
-        max_total_bytes: int = 8 * 1024 * 1024,
+        max_total_bytes: int | None = None,
+        max_output_tokens: int | None = None,
     ) -> Iterator[dict[str, Any]]:
         """POST JSON and validate a bounded UTF-8 NDJSON response incrementally.
 
@@ -339,7 +340,8 @@ class HttpPeerClient:
         stream = getattr(self.transport, "iter_post_bytes", None)
         if not callable(stream):
             raise PeerTransportError("peer_transport_stream_unsupported")
-        if max_event_bytes < 2 or max_total_bytes < max_event_bytes:
+        effective_total = peer_stream_total_limit(max_output_tokens) if max_total_bytes is None else max_total_bytes
+        if max_event_bytes < 2 or effective_total < max_event_bytes:
             raise PeerTransportError("peer_stream_limits_invalid")
         body = json.dumps(
             payload, separators=(",", ":"), sort_keys=True, ensure_ascii=False,
@@ -364,7 +366,7 @@ class HttpPeerClient:
                 body,
                 timeout_s=self.timeout_s,
                 max_chunk_bytes=min(64 * 1024, max_event_bytes),
-                max_total_bytes=max_total_bytes,
+                max_total_bytes=effective_total,
                 headers={"Content-Type": "application/json", "Accept": "application/x-ndjson"},
             )
             for chunk in chunks:
@@ -405,6 +407,15 @@ class HttpPeerClient:
             if exc.reason == "unsupported_encoding":
                 raise PeerTransportError("peer_unsupported_encoding") from exc
             raise PeerTransportError(f"peer_http_error: {exc}") from exc
+
+
+MAX_NDJSON_STREAM_TOTAL_BYTES = 32 * 1024 * 1024
+MIN_NDJSON_STREAM_TOTAL_BYTES = 8 * 1024 * 1024
+
+
+def peer_stream_total_limit(max_output_tokens: int | None = None) -> int:
+    scaled = max_output_tokens * 16 if type(max_output_tokens) is int and max_output_tokens > 0 else 0
+    return min(MAX_NDJSON_STREAM_TOTAL_BYTES, max(MIN_NDJSON_STREAM_TOTAL_BYTES, scaled))
 
 
 def create_app(store: RynmeshStore | None = None):
