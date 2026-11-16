@@ -43,7 +43,11 @@ def one_receipt(messages):
     notes = receipts(messages)
     assert len(notes) == 1, 'The current authentic host operation needs exactly one trusted result note'
     value, text = notes[0]
-    assert set(value) == {'intent', 'applied', 'saved_count', 'deleted_count', 'reason'}
+    expected_keys = {'intent', 'applied', 'saved_count', 'deleted_count', 'reason'}
+    if value.get('applied') is True and value.get('intent') in {'remember', 'update'}:
+        expected_keys = expected_keys | {'visible_to_model'}
+        assert type(value['visible_to_model']) is bool
+    assert set(value) == expected_keys
     assert type(value['applied']) is bool
     assert all(type(value[key]) is int and 0 <= value[key] <= 128
                for key in ('saved_count', 'deleted_count'))
@@ -103,7 +107,7 @@ def test_current_correction_reports_one_actual_update_without_replaying_old_fact
     finish(env, task_id)
     result, text = one_receipt(front_requests(env)[-1]['messages'])
     assert result == {'intent': 'update', 'applied': True, 'saved_count': 1,
-                      'deleted_count': 0, 'reason': None}
+                      'deleted_count': 0, 'reason': None, 'visible_to_model': True}
     values = [entry['text'] for entry in env.api.snapshot()['entries']]
     assert any('X-H2' in value for value in values) and all('X-T5' not in value for value in values)
     assert all(value not in text for value in ('X-T5', 'X-H2', 'XF16-55'))
