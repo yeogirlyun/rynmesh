@@ -183,7 +183,8 @@ pub fn watchdog(app: tauri::AppHandle, status_item: tauri::menu::MenuItem<tauri:
             // A slow metadata/CLI refresh is not proof that the live node died.
             // Give a running child time to answer before interrupting its tasks;
             // exited children retain the ordinary three-failure crash recovery.
-            let grace = if node::owned_child_running(node.inner()) { Duration::from_secs(90) } else { Duration::ZERO };
+            let owned_running = node::owned_child_running(node.inner());
+            let grace = if owned_running { Duration::from_secs(90) } else { Duration::ZERO };
             let should_restart = Instant::now() >= boot_deadline && recovery.check_with_grace(status.node_online,
                 prefs.auto_recover && !runtime.action_busy.load(Ordering::SeqCst), Instant::now(), grace);
             status.recovery_attempts = recovery.attempts;
@@ -195,6 +196,8 @@ pub fn watchdog(app: tauri::AppHandle, status_item: tauri::menu::MenuItem<tauri:
             if let Some(tray) = app.tray_by_id("main") { let _ = tray.set_tooltip(Some(&text)); }
             *runtime.status.lock().unwrap() = status;
             if should_restart && !runtime.action_busy.swap(true, Ordering::SeqCst) {
+                log::warn!("node watchdog restarting: owned_child_running={owned_running}, consecutive_failures={}, unhealthy_seconds={}, attempt={}",
+                    recovery.failures, recovery.failed_since.map(|since| since.elapsed().as_secs()).unwrap_or(0), recovery.attempts);
                 if let Err(error) = node::restart(node.inner()) {
                     log::error!("node recovery failed: {error}");
                 } else {
