@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import threading
 import time
+import uuid
 from contextlib import nullcontext
 from contextvars import ContextVar
 
@@ -14,6 +15,15 @@ from .peer_binding import model_binding
 DISPATCH_WAIT_MAX_SECONDS = 120.0
 _BOUND = ContextVar("ryn_source_model_dispatch_binding", default=None)
 _SYNC_INIT_LOCK = threading.Lock()
+
+
+def _should_refund_dispatch(exc: BaseException) -> bool:
+    if not isinstance(exc, AdapterError):
+        return False
+    if exc.code not in {"runtime_connection_failed", "runtime_busy"}:
+        return False
+    diag = exc.diagnostics if isinstance(exc.diagnostics, dict) else {}
+    return diag.get("network_phase") == "request"
 
 
 class ModelDispatchAdapter:
@@ -63,7 +73,7 @@ class ModelDispatchAdapter:
         inner_cancel = getattr(self.inner, "cancel", None)
         return bool(inner_cancel(task_id)) if callable(inner_cancel) else True
 
-    def _start(self, *, task_id=None, caller=None, deadline=None, timeout_s=None, cancelled=None):
+    def _start(self, *, task_id=None, caller=None, max_tokens=None, deadline=None, timeout_s=None, cancelled=None):
         bound = _BOUND.get()
         cond, cancelled_tasks = self._sync_primitives()
         started = time.monotonic()
@@ -97,18 +107,23 @@ class ModelDispatchAdapter:
                     except (ValueError, OSError):
                         raise AdapterError("ai_permission_denied", code="ai_permission_denied") from None
                 policy = model_settings.effective(record, self.model)
+                requested_max = (
+                    min(max_tokens, policy["max_output_tokens"])
+                    if type(max_tokens) is int and max_tokens >= 1
+                    else policy["max_output_tokens"]
+                )
                 active = self.sources._active_models.get(self.service_id, 0)
                 if active < policy["max_concurrent"]:
-                    # Attempts consume quota when dispatched. Unknown/failed/cancelled
-                    # outcomes never refund it; a restart cannot reset today's usage.
-                    self.usage_store.admit_and_record_dispatch(
+                    admitted = self.usage_store.admit_and_record_dispatch(
                         self.model_key,
                         policy=policy,
                         caller=caller or current_usage_caller(),
                         task_id=task_id,
+                        max_tokens=requested_max,
                     )
+                    granted_max = admitted.get("granted_max_tokens") or requested_max
                     self.sources._active_models[self.service_id] = active + 1
-                    return policy
+                    return policy, granted_max
             with cond:
                 while True:
                     if (task_id and task_id in cancelled_tasks) or (callable(cancelled) and cancelled()):
@@ -131,87 +146,107 @@ class ModelDispatchAdapter:
         finally:
             _BOUND.reset(token)
 
-    def _finish(self, task_id=None):
+    def _finish(self, task_id=None, *, refund: bool = False):
         cond, cancelled_tasks = self._sync_primitives()
         with self.sources.lock, cond:
             self.sources._active_models[self.service_id] -= 1
             if task_id:
                 cancelled_tasks.discard(task_id)
             cond.notify_all()
+        if refund and task_id:
+            self.usage_store.refund_dispatch(task_id)
 
     def chat(self, body, *, deadline=None, cancelled=None, **kwargs):
         kwargs = deadline_options(kwargs, deadline)
         caller = current_usage_caller()
         task_id = kwargs.get("task_id")
-        policy = self._start(
-            task_id=task_id,
+        dispatch_task_id = task_id if isinstance(task_id, str) and task_id else f"_dispatch_{uuid.uuid4().hex}"
+        _policy, granted_max = self._start(
+            task_id=dispatch_task_id,
             caller=caller,
+            max_tokens=body.get("max_tokens"),
             deadline=deadline,
             timeout_s=kwargs.get("timeout_s"),
             cancelled=cancelled,
         )
+        refund = False
         try:
-            body = {**body, "max_tokens": min(body.get("max_tokens", policy["max_output_tokens"]), policy["max_output_tokens"])}
+            body = {**body, "max_tokens": granted_max}
             inner_kwargs = deadline_options(kwargs, deadline)
             if deadline is not None and getattr(self.inner, "supports_request_deadline", False) is True:
                 inner_kwargs = {**inner_kwargs, "deadline": deadline}
             result = self.inner.chat(body, **inner_kwargs)
             self.usage_store.record_completion(
-                self.model_key, result=result, caller=caller, state="succeeded", task_id=task_id
+                self.model_key, result=result, caller=caller, state="succeeded", task_id=dispatch_task_id
             )
             return result
-        except Exception:
-            self.usage_store.record_completion(
-                self.model_key, result=None, caller=caller, state="failed", task_id=task_id
-            )
+        except Exception as exc:
+            if _should_refund_dispatch(exc):
+                refund = True
+            else:
+                self.usage_store.record_completion(
+                    self.model_key, result=None, caller=caller, state="failed", task_id=dispatch_task_id
+                )
             raise
         finally:
-            self._finish(task_id)
+            self._finish(dispatch_task_id, refund=refund)
 
     def infer(self, *, max_tokens, deadline=None, cancelled=None, **kwargs):
         caller = current_usage_caller()
         task_id = kwargs.get("task_id")
-        policy = self._start(
-            task_id=task_id,
+        dispatch_task_id = task_id if isinstance(task_id, str) and task_id else f"_dispatch_{uuid.uuid4().hex}"
+        _policy, granted_max = self._start(
+            task_id=dispatch_task_id,
             caller=caller,
+            max_tokens=max_tokens,
             deadline=deadline,
             timeout_s=kwargs.get("timeout_s"),
             cancelled=cancelled,
         )
+        refund = False
         try:
-            result = self.inner.infer(max_tokens=min(max_tokens, policy["max_output_tokens"]), **kwargs)
+            result = self.inner.infer(max_tokens=granted_max, **kwargs)
             self.usage_store.record_completion(
-                self.model_key, result=result, caller=caller, state="succeeded", task_id=task_id
+                self.model_key, result=result, caller=caller, state="succeeded", task_id=dispatch_task_id
             )
             return result
-        except Exception:
-            self.usage_store.record_completion(
-                self.model_key, result=None, caller=caller, state="failed", task_id=task_id
-            )
+        except Exception as exc:
+            if _should_refund_dispatch(exc):
+                refund = True
+            else:
+                self.usage_store.record_completion(
+                    self.model_key, result=None, caller=caller, state="failed", task_id=dispatch_task_id
+                )
             raise
         finally:
-            self._finish(task_id)
+            self._finish(dispatch_task_id, refund=refund)
 
     def infer_stream(self, *, max_tokens, deadline=None, cancelled=None, **kwargs):
         caller = current_usage_caller()
         task_id = kwargs.get("task_id")
-        policy = self._start(
-            task_id=task_id,
+        dispatch_task_id = task_id if isinstance(task_id, str) and task_id else f"_dispatch_{uuid.uuid4().hex}"
+        _policy, granted_max = self._start(
+            task_id=dispatch_task_id,
             caller=caller,
+            max_tokens=max_tokens,
             deadline=deadline,
             timeout_s=kwargs.get("timeout_s"),
             cancelled=cancelled,
         )
+        refund = False
         try:
-            result = self.inner.infer_stream(max_tokens=min(max_tokens, policy["max_output_tokens"]), **kwargs)
+            result = self.inner.infer_stream(max_tokens=granted_max, **kwargs)
             self.usage_store.record_completion(
-                self.model_key, result=result, caller=caller, state="succeeded", task_id=task_id
+                self.model_key, result=result, caller=caller, state="succeeded", task_id=dispatch_task_id
             )
             return result
-        except Exception:
-            self.usage_store.record_completion(
-                self.model_key, result=None, caller=caller, state="failed", task_id=task_id
-            )
+        except Exception as exc:
+            if _should_refund_dispatch(exc):
+                refund = True
+            else:
+                self.usage_store.record_completion(
+                    self.model_key, result=None, caller=caller, state="failed", task_id=dispatch_task_id
+                )
             raise
         finally:
-            self._finish(task_id)
+            self._finish(dispatch_task_id, refund=refund)
