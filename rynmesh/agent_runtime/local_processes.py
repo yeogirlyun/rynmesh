@@ -26,9 +26,11 @@ from .git_safety import (
     SAFE_GIT_CONFIG,
     strip_rynmesh_env,
 )
-from .local_pty import COMPLETED, ConPtyProcess, check_pty_support, validate_size
+from .local_pty import COMPLETED, ConPtyProcess, PosixPtyProcess, check_pty_support, validate_size
 from .local_pty import terminate_session as terminate
 from .store import AgentToolRejected
+
+_DEFAULT_CONPTY_CLS = ConPtyProcess
 
 try:
     import winreg
@@ -515,7 +517,12 @@ class Processes:
             cmd_args = list(args)
             flags = 0x4 | 0x08000000 if os.name == "nt" else 0
             try:
-                process = ConPtyProcess(cmd_args, cwd, proc_env, rows, cols) if tty else subprocess.Popen(
+                pty_cls = (
+                    ConPtyProcess
+                    if (os.name == "nt" or ConPtyProcess is not _DEFAULT_CONPTY_CLS)
+                    else PosixPtyProcess
+                )
+                process = pty_cls(cmd_args, cwd, proc_env, rows, cols) if tty else subprocess.Popen(
                     cmd_args,
                     cwd=str(cwd),
                     stdin=subprocess.PIPE,
@@ -850,9 +857,10 @@ class Processes:
                     raise AgentToolRejected("agent_terminal_resize_requires_empty_text")
                 process.resize(rows, cols)
             else:
-                # Windows console EOF is Ctrl+Z followed by Enter (application
-                # dependent). Ctrl+D may still be sent explicitly in text.
-                process.write_input({"interrupt": "\x03", "eof": "\x1a\r"}.get(control, text))
+                # Windows console EOF is Ctrl+Z followed by Enter; POSIX PTY EOF
+                # is Ctrl+D (\x04). Both are program-dependent and keep the PTY open.
+                eof_seq = "\x1a\r" if os.name == "nt" and getattr(process, "backend", None) != "posix_pty" else "\x04"
+                process.write_input({"interrupt": "\x03", "eof": eof_seq}.get(control, text))
             return {"process_id": ident, "input_delivered": True, "eof": False,
                     "control": control, "rows": process.rows, "cols": process.cols}
         if process.poll() is not None:
