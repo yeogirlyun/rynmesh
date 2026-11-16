@@ -9,17 +9,76 @@ from __future__ import annotations
 import multiprocessing
 import os
 import queue
+import re
 import subprocess
 import threading
 import time
 from types import SimpleNamespace
 
 from ..llm_package.process_guard import _windows_job, terminate
+from .diagnostic_log import failure
 from .store import AgentError, AgentToolRejected
 
 COMPLETED = threading.Event()
 COMPLETED.set()
 _RETIRED_LOCK = threading.RLock()
+
+TERMINAL_QUERY_REPLIES = (
+    ("\x1b[5n", "\x1b[0n"),
+    ("\x1b[6n", "\x1b[1;1R"),
+    ("\x1b[18t", "\x1b[8;24;80t"),
+)
+_QUERY_PREFIXES = frozenset({
+    "\x1b", "\x1b[", "\x1b[5", "\x1b[6", "\x1b[1", "\x1b[18",
+})
+
+
+def normalize_conpty_input(text: str, previous_was_cr: bool = False) -> tuple[str, bool]:
+    """Normalize terminal input for Windows ConPTY (0x08->0x7f, lone LF->CR, drop LF after CR)."""
+    if not text:
+        return "", previous_was_cr
+    out: list[str] = []
+    prev_cr = bool(previous_was_cr)
+    for ch in text:
+        if ch == "\x08":
+            out.append("\x7f")
+            prev_cr = False
+        elif ch == "\r":
+            out.append("\r")
+            prev_cr = True
+        elif ch == "\n":
+            if not prev_cr:
+                out.append("\r")
+            prev_cr = False
+        else:
+            out.append(ch)
+            prev_cr = False
+    return "".join(out), prev_cr
+
+
+def _extract_terminal_query_replies(output: str, tail: str = "") -> tuple[list[str], str]:
+    scan = tail + output
+    replies: list[str] = []
+    idx = 0
+    n = len(scan)
+    while idx < n:
+        pos = scan.find("\x1b", idx)
+        if pos < 0:
+            return replies, ""
+        matched = False
+        for query, reply in TERMINAL_QUERY_REPLIES:
+            if scan.startswith(query, pos):
+                replies.append(reply)
+                idx = pos + len(query)
+                matched = True
+                break
+        if matched:
+            continue
+        rem = scan[pos:]
+        if rem in _QUERY_PREFIXES:
+            return replies, rem
+        idx = pos + 1
+    return replies, ""
 
 
 def check_pty_support():
@@ -59,6 +118,7 @@ def _host(connection):
                        cwd=cwd, env=environment)
         connection.send(("started", terminal.pid))
         ended_at = None
+        query_tail = ""
         while True:
             # One host thread owns the native object, including resize/write.
             if connection.poll():
@@ -78,6 +138,12 @@ def _host(connection):
                     raise
                 output = ""
             if output:
+                replies, query_tail = _extract_terminal_query_replies(output, query_tail)
+                for reply in replies:
+                    try:
+                        terminal.write(reply)
+                    except Exception:
+                        break
                 connection.send(("output", output.encode("utf-8")))
                 ended_at = None
             if not terminal.isalive():
@@ -89,10 +155,10 @@ def _host(connection):
             time.sleep(0.005)
     except (EOFError, BrokenPipeError):
         pass
-    except Exception:
+    except Exception as exc:
         # Never forward OS error strings containing commands or environment.
         try:
-            connection.send(("error", "agent_conpty_failed"))
+            connection.send(("error", "agent_conpty_failed", type(exc).__name__))
         except (OSError, EOFError):
             pass
     finally:
@@ -112,7 +178,7 @@ class ConPtyProcess:
         validate_size(rows, cols)
         self._lock = threading.RLock()
         self._dispose_lock = threading.Lock()
-        self._send_lock = threading.Lock()
+        self._send_lock = threading.RLock()
         self._pending = {}
         self._sequence = 0
         self._output = queue.Queue(maxsize=64)
@@ -121,6 +187,8 @@ class ConPtyProcess:
         self._returncode = None
         self._command_handle = None
         self.error = None
+        self.error_detail = None
+        self._input_previous_was_cr = False
         self.rows, self.cols = rows, cols
         self._job = None
         ctx = multiprocessing.get_context("spawn")
@@ -135,16 +203,29 @@ class ConPtyProcess:
             self._job = _windows_job(owner, memory_limit=0, cpu_rate=0, process_limit=0)
             self._connection.send((args, str(cwd), env, rows, cols))
             if not self._connection.poll(15):
-                raise AgentError("agent_conpty_start_timeout")
+                timeout_err = AgentError("agent_conpty_start_timeout")
+                failure("conpty_start", timeout_err)
+                raise timeout_err
             event = self._connection.recv()
             if event[0] != "started":
-                raise AgentError("agent_conpty_start_failed")
+                raw_detail = event[2] if len(event) > 2 and isinstance(event[2], str) else ""
+                detail = re.sub(r"[^A-Za-z0-9_]", "", raw_detail)[:80] or None
+                self.error_detail = detail
+                start_err = AgentError("agent_conpty_start_failed")
+                if detail:
+                    start_err.error_detail = detail
+                    start_err.__cause__ = type(detail, (Exception,), {})()
+                failure("conpty_start", start_err)
+                raise start_err
             self.pid = event[1]
             import _winapi
             # Keep the OS exit status available even if the host/terminal is
             # forcibly killed. The handle also prevents PID-reuse ambiguity.
             self._command_handle = _winapi.OpenProcess(0x100000 | 0x1000, False, self.pid)
-        except BaseException:
+        except BaseException as exc:
+            if not isinstance(exc, (AgentError, KeyboardInterrupt, SystemExit)):
+                self.error_detail = type(exc).__name__
+                failure("conpty_start", exc)
             child.close()
             self.dispose()
             raise
@@ -173,6 +254,10 @@ class ConPtyProcess:
                     break
                 elif event[0] == "error":
                     self.error = event[1]
+                    if len(event) > 2 and isinstance(event[2], str):
+                        clean = re.sub(r"[^A-Za-z0-9_]", "", event[2])[:80]
+                        if clean:
+                            self.error_detail = clean
                     break
         except (OSError, EOFError, TypeError):
             pass
@@ -231,7 +316,15 @@ class ConPtyProcess:
                     self._pending.pop(ident, None)
 
     def write_input(self, text):
-        self._request("write", text)
+        with self._send_lock:
+            if self.poll() is not None or self._closed.is_set():
+                raise AgentToolRejected("agent_process_not_running")
+            normalized, self._input_previous_was_cr = normalize_conpty_input(
+                text, self._input_previous_was_cr
+            )
+            if not normalized:
+                return
+            self._request("write", normalized)
 
     def resize(self, rows, cols):
         validate_size(rows, cols)
@@ -293,6 +386,7 @@ class PosixPtyProcess:
         self._proc = None
         self.pid = None
         self.error = None
+        self.error_detail = None
         self.rows, self.cols = rows, cols
 
         master_fd, slave_fd = pty.openpty()
