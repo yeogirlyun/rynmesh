@@ -440,10 +440,13 @@ def test_s05_i15_t1_xlsx_first_and_named_sheet_match_csv_and_export(tmp_path):
     exported = tools.perform("ryn_table_export", export_args, ctx, lambda: False, operation_id="op_xlsx_export")
     assert exported["readback_verified"] and (ws / "out.csv").is_file()
 
-    # Legacy binary .xls remains unsupported with agent_table_csv_or_json_required.
+    # Corrupt .xls enters the .xls parser and raises agent_table_input_invalid; unsupported .ods raises agent_table_csv_or_json_required.
     with pytest.raises(AgentToolRejected) as xls_exc:
         calculate(b"\xd0\xcf\x11\xe0binary", ".xls", recipe)
-    assert xls_exc.value.args[0] == "agent_table_csv_or_json_required"
+    assert xls_exc.value.args[0] == "agent_table_input_invalid"
+    with pytest.raises(AgentToolRejected) as ods_exc:
+        calculate(b"PK\x03\x04ods", ".ods", recipe)
+    assert ods_exc.value.args[0] == "agent_table_csv_or_json_required"
 
 
 def test_s05_i15_t2_xlsx_date_cells_read_as_iso_dates():

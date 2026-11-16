@@ -134,7 +134,7 @@ def test_missing_legacy_converter_is_an_actionable_error(monkeypatch):
     monkeypatch.setattr("rynmesh.agent_runtime.file_preview.shutil.which", lambda _: None)
     monkeypatch.setattr("rynmesh.agent_runtime.file_preview.Path.is_file", lambda _: False)
     with pytest.raises(PreviewError, match="agent_preview_converter_missing"):
-        preview_file("old.xls", b"binary")
+        preview_file("old.doc", b"binary")
 
 
 def test_legacy_conversion_uses_an_isolated_profile_and_the_same_bounded_parser(monkeypatch):

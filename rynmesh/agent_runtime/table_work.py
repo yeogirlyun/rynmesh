@@ -48,7 +48,7 @@ DEFAULT_CORRECTION = (
     "Missing values are not zero."
 )
 CORRECTIONS = {
-    "agent_table_csv_or_json_required": "只支持 .csv/.json/.xlsx，其他格式请先转换",
+    "agent_table_csv_or_json_required": "只支持 .csv/.json/.xlsx/.xls，其他格式请先转换",
     "agent_table_duplicate_headers": "表头有重复列名：{names}",
     "agent_table_date_invalid": "第 {row} 行 {column} 列的日期需为 YYYY-MM-DD，或在列定义里声明 date_format",
     "agent_table_text_invalid": "第 {row} 行 {column} 列的文本值无效，需为字符串",
@@ -368,13 +368,14 @@ def _check_duplicate_headers(headers):
 
 
 def _open_source_rows(raw, ext, recipe, sources):
-    if ext not in {".csv", ".json", ".xlsx", ".xlsm"}:
+    if ext not in {".csv", ".json", ".xlsx", ".xlsm", ".xls"}:
         reject("agent_table_csv_or_json_required")
-    if ext in {".xlsx", ".xlsm"}:
+    if ext in {".xlsx", ".xlsm", ".xls"}:
         from . import file_preview
 
+        reader_fn = file_preview.xls_sheet_rows if ext == ".xls" else file_preview.sheet_rows
         try:
-            headers, raw_rows = file_preview.sheet_rows(
+            headers, raw_rows = reader_fn(
                 raw,
                 sheet=recipe.get("sheet"),
                 max_rows=MAX_TABLE_ROWS,

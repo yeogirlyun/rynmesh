@@ -209,7 +209,11 @@ def _flatten_preview(preview):
     return "\n".join(lines)
 
 
-def _excerpt(name, mime, raw):
+LEGACY_OFFICE_SUFFIXES = {".xls", ".doc", ".ppt", ".odt", ".ods", ".odp", ".rtf"}
+LEGACY_UNCACHED_NOTE = "旧格式文件，尚未转换；稍后可在文件预览中查看，或让主人另存为 .xlsx/.docx"
+
+
+def _excerpt(name, mime, raw, *, cache_dir=None):
     suffix = Path(name).suffix.lower()
     if suffix in TEXT_SUFFIXES or mime.startswith("text/"):
         # Decode only a bounded prefix. UTF-16 is tried only with a BOM, otherwise
@@ -228,6 +232,29 @@ def _excerpt(name, mime, raw):
             return _flatten_preview(preview_file(name, raw, include_images=False))[:MAX_EXCERPT]
         except PreviewError:
             return ""
+    if suffix == ".xls":
+        from .file_preview import PreviewError, _xls_spreadsheet, read_cached_preview
+        try:
+            return _flatten_preview(_xls_spreadsheet(raw))[:MAX_EXCERPT]
+        except Exception:
+            if cache_dir is not None:
+                try:
+                    cached = read_cached_preview(cache_dir, raw, suffix, include_images=False)
+                    if cached is not None:
+                        return _flatten_preview(cached)[:MAX_EXCERPT]
+                except PreviewError:
+                    return ""
+            return ""
+    if suffix in {".doc", ".ppt", ".odt", ".ods", ".odp", ".rtf"}:
+        if cache_dir is not None:
+            from .file_preview import PreviewError, read_cached_preview
+            try:
+                cached = read_cached_preview(cache_dir, raw, suffix, include_images=False)
+                if cached is not None:
+                    return _flatten_preview(cached)[:MAX_EXCERPT]
+            except PreviewError:
+                return ""
+        return ""
     if suffix == ".pdf":
         try:
             from pypdf import PdfReader
@@ -341,12 +368,20 @@ def attach_to_message(store, row, message, prepared):
                     raw = None
             except OSError:
                 raw = None
-        excerpt = _excerpt(file["name"], file["media_type"], raw)[:left] if raw is not None and not file.get("image_url") and left else ""
+        cache_dir = (Path(store.root) / "preview-cache") if getattr(store, "root", None) else None
+        excerpt = (
+            _excerpt(file["name"], file["media_type"], raw, cache_dir=cache_dir)[:left]
+            if raw is not None and not file.get("image_url") and left
+            else ""
+        )
         if excerpt:
             lines.extend(["Bounded content excerpt:", excerpt, "End of attachment excerpt."])
             left -= len(excerpt)
         elif not file.get("image_url"):
-            lines.append("Content was not extracted here; use the local file/command tools to inspect the original.")
+            if Path(file["name"]).suffix.lower() in LEGACY_OFFICE_SUFFIXES:
+                lines.append(LEGACY_UNCACHED_NOTE)
+            else:
+                lines.append("Content was not extracted here; use the local file/command tools to inspect the original.")
     message["content"] = content + "\n".join(lines)
     return message
 
