@@ -28,6 +28,7 @@ from .local_processes import (
     shell_command,
 )
 from .local_specs import NAMES, SPECS
+from .protocol import bound_preview
 from .store import AgentError, AgentToolRejected, encoded
 
 MAX_FILE = 1024 * 1024
@@ -1508,7 +1509,7 @@ class LocalTools:
                         unknown_err.diagnostics = copy.deepcopy(prior["error_result"])
                     raise unknown_err
                 preview = self.preview(name, args, context)
-                if preview != expected_preview:
+                if bound_preview(preview) != bound_preview(expected_preview):
                     raise AgentToolRejected("agent_approval_preview_changed")
                 prepared_shell = None
                 if name == "ryn_shell_execute":

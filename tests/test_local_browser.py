@@ -1004,3 +1004,111 @@ def test_t20_upload_inside_same_origin_iframe_succeeds(local):
         server.shutdown()
         server.server_close()
         browser.close()
+
+
+def test_s02_i41_t1_browser_preview_separates_stable_binding_and_volatile_display(local):
+    from rynmesh.agent_runtime import protocol
+
+    assert hasattr(protocol, "bound_preview"), "protocol.bound_preview must exist"
+    bound_preview = protocol.bound_preview
+    digest = protocol.digest
+
+    tools, context, root, state = local
+    browser = _enable_browser(tools, context, state, headless=True)
+
+    page_html = (
+        b"<!doctype html><html><head><title>Timer 10s</title></head><body>"
+        b"<button id='pay' type='submit' onclick=\"document.body.dataset.clicked='yes'\">Pay now (10s)</button>"
+        b"<button id='ephemeral' type='button'>Vanish</button>"
+        b"</body></html>"
+    )
+
+    class _CheckoutHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(page_html)))
+            self.end_headers()
+            self.wfile.write(page_html)
+
+        def log_message(self, format, *args):
+            return
+
+    class _TCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+        allow_reuse_address = True
+
+    server = _TCPServer(("127.0.0.1", 0), _CheckoutHandler)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        initial_url = f"http://127.0.0.1:{port}/checkout/step?token=abc&ts=10#summary"
+        page_id = execute(tools, context, "ryn_browser_open", {"url": initial_url}, "op_s02_i41_open")["page_id"]
+
+        click_args = {"page_id": page_id, "action": "click", "selector": "#pay"}
+        preview1 = tools.preview("ryn_browser_action", click_args, context)
+
+        assert preview1["page_url"] == f"http://127.0.0.1:{port}/checkout/step"
+        assert "page_title" not in preview1
+        assert preview1["element"] == {"tag": "BUTTON", "type": "submit"}
+        assert preview1["action"] == "click"
+        assert preview1["selector"] == "#pay"
+        assert preview1["display"] == {
+            "page_title": "Timer 10s",
+            "page_url": initial_url,
+            "element": {"name": "Pay now (10s)"},
+        }
+
+        browser.evaluate(
+            page_id,
+            context["task_id"],
+            "(() => {"
+            "document.title = 'Timer 01s';"
+            "document.getElementById('pay').innerText = 'Pay now (1s)';"
+            "history.replaceState(null, '', '/checkout/step?token=xyz&ts=1#done');"
+            "return true;"
+            "})()",
+        )
+
+        preview2 = tools.preview("ryn_browser_action", click_args, context)
+        assert preview2["page_url"] == f"http://127.0.0.1:{port}/checkout/step"
+        assert preview2["display"] == {
+            "page_title": "Timer 01s",
+            "page_url": f"http://127.0.0.1:{port}/checkout/step?token=xyz&ts=1#done",
+            "element": {"name": "Pay now (1s)"},
+        }
+        assert "display" not in bound_preview(preview1)
+        assert digest(bound_preview(preview1)) == digest(bound_preview(preview2))
+
+        tools.execute(
+            "ryn_browser_action",
+            click_args,
+            operation_id="op_s02_i41_click",
+            context=context,
+            expected_preview=preview1,
+            cancelled=lambda: False,
+        )
+        assert browser.evaluate(page_id, context["task_id"], "document.body.dataset.clicked") == "yes"
+
+        vanish_args = {"page_id": page_id, "action": "click", "selector": "#ephemeral"}
+        vanish_preview = tools.preview("ryn_browser_action", vanish_args, context)
+        browser.evaluate(
+            page_id,
+            context["task_id"],
+            "(() => { document.getElementById('ephemeral').remove(); return true; })()",
+        )
+        with pytest.raises(AgentToolRejected) as exc_info:
+            browser.execute(
+                "ryn_browser_action",
+                vanish_args,
+                context["task_id"],
+                lambda v: tools.path(v, context),
+                tools.allowed(context),
+                lambda: False,
+            )
+        assert str(exc_info.value) == "agent_browser_element_changed_or_script_failed"
+        assert vanish_preview["element"] == {"tag": "BUTTON", "type": "button"}
+    finally:
+        server.shutdown()
+        server.server_close()
+        browser.close()
+

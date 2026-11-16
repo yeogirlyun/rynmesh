@@ -55,7 +55,7 @@ from .prompt import (
     progress_message,
     provider_messages,
 )
-from .protocol import digest, event, event_result, model_retry_authority, now, sanitized, task
+from .protocol import bound_preview, digest, event, event_result, model_retry_authority, now, sanitized, task
 from .store import (
     READ_FAILED_THREE_TIMES_CORRECTION,
     READ_FAILED_TWICE_CORRECTION,
@@ -2169,7 +2169,7 @@ class AgentLoop:
                             )
                         approval = {"id": "approval_" + uuid.uuid4().hex, "tool": call["name"], "arguments": sanitized(call["arguments"]),
                                     "call_id": call["call_id"], "arguments_sha256": digest(call["arguments"]), "preview": preview,
-                                    "preview_sha256": digest(preview), "title": str(meta.get("title", call["name"]))}
+                                    "preview_sha256": digest(bound_preview(preview)), "title": str(meta.get("title", call["name"]))}
                         row.update(status="waiting_approval", pending_approval=approval, in_flight=None)
                         row["elapsed_seconds"] += time.monotonic() - started
                         event(row, "approval_requested", approval_id=approval["id"], tool=call["name"])
@@ -2177,7 +2177,7 @@ class AgentLoop:
                         return "waiting"
                     if approved and (approved["arguments_sha256"] != digest(call["arguments"]) or approved["call_id"] != call["call_id"] or approved["tool"] != call["name"]):
                         raise AgentError("agent_approval_mismatch")
-                    if approved and approved["preview_sha256"] != digest(preview):
+                    if approved and approved["preview_sha256"] != digest(bound_preview(preview)):
                         row["approved"] = None
                         raise AgentError("agent_approval_preview_changed")
                     if automatic and not approved:
@@ -2193,7 +2193,7 @@ class AgentLoop:
                                     "authority": model_retry_authority(data["settings"]), "preview": preview}
                 row["in_flight"]["permission_record"] = {
                     "basis": authorization, "operation_id": call["operation_id"], "arguments_sha256": digest(call["arguments"]),
-                    "preview_sha256": digest(preview), "goal_revision": row["goal"]["revision"],
+                    "preview_sha256": digest(bound_preview(preview)), "goal_revision": row["goal"]["revision"],
                     "scope_revision": row["scope_revision"], "context_epoch": row.get("context_epoch", 0),
                     "control_revision": row["control_revision"],
                     **({"approval_id": approved["id"]} if authorization == "approved" else {})}

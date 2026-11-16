@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 
+from .protocol import bound_preview
 from .store import encoded
 
 
@@ -29,7 +30,7 @@ def projection(row, limit: int | None = DEFAULT_LIMIT):
         decision = receipt.get("permission_record")
         if isinstance(decision, dict):
             expected = {"operation_id": receipt["operation_id"], "arguments_sha256": fingerprint(receipt["arguments"]),
-                        "preview_sha256": fingerprint(receipt.get("preview")), "goal_revision": receipt["goal_revision"],
+                        "preview_sha256": fingerprint(bound_preview(receipt.get("preview"))), "goal_revision": receipt["goal_revision"],
                         "scope_revision": receipt["scope_revision"], "context_epoch": receipt["context_epoch"]}
             matching = (all(decision.get(key) == value for key, value in expected.items())
                         and receipt.get("arguments_sha256") == expected["arguments_sha256"]

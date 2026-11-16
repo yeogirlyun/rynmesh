@@ -4,6 +4,7 @@ from __future__ import annotations
 import atexit
 import base64
 import collections
+import copy
 import ctypes
 import ipaddress
 import json
@@ -20,7 +21,7 @@ import uuid
 import weakref
 from collections.abc import Mapping
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urlparse, urlsplit, urlunsplit
 
 import httpx
 
@@ -792,6 +793,15 @@ PREPARE_POINTER_JS = """(async options => {
   }
   return { x: rx, y: ry, ryn_id: elemId };
 })"""
+
+
+def _stable_page_url(url: str | None) -> str | None:
+    if not isinstance(url, str) or not url:
+        return url
+    parts = urlsplit(url)
+    if parts.scheme in {"http", "https", "ws", "wss"} and parts.netloc:
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    return url.split("#", 1)[0].split("?", 1)[0]
 
 
 class Browser:
@@ -1872,11 +1882,19 @@ class Browser:
                     raise
 
     def preview(self, args, task_id):
-        target = self.page(args["page_id"], task_id)
-        result = {"page_url": target.get("url"), "page_title": target.get("title")}
         action = args["action"]
+        uses_element_eval = action in {"click", "hover", "fill", "clear", "select", "upload"} or (
+            action == "press" and bool(args.get("selector"))
+        )
+        with self.lock:
+            session = self.sessions.get(task_id)
+            refresh = (not uses_element_eval) and isinstance((session or {}).get("port"), int)
+        target = self.page(args["page_id"], task_id, refresh=refresh)
+        full_url = target.get("url")
+        page_title = target.get("title")
         if args.get("frame_selector") and action not in {"click", "hover", "fill", "clear", "select", "press", "wait", "upload"}:
             raise AgentToolRejected("agent_browser_frame_action_unsupported")
+        element = None
         if action in {"click", "hover", "fill", "clear", "select", "upload"}:
             selector = args.get("selector")
             if not selector:
@@ -1890,10 +1908,9 @@ class Browser:
                 + json.dumps(selector)
                 + ", "
                 + json.dumps(args.get("frame_selector"))
-                + "); return {tag: e.tagName, type: e.type || '', name: (e.getAttribute('aria-label') || e.innerText || e.placeholder || '').slice(0, 160)};})()",
+                + "); return {page_url: String(window.location.href || ''), page_title: String(document.title || ''), tag: e.tagName, type: e.type || '', name: (e.getAttribute('aria-label') || e.innerText || e.placeholder || '').slice(0, 160)};})()",
                 selector=selector,
             )
-            result["element"] = element
             if action in {"fill", "select"} and "text" not in args:
                 raise AgentToolRejected("agent_browser_text_required")
         elif action == "press":
@@ -1911,10 +1928,9 @@ class Browser:
                     + json.dumps(selector)
                     + ", "
                     + json.dumps(args.get("frame_selector"))
-                    + "); return {tag: e.tagName, type: e.type || '', name: (e.getAttribute('aria-label') || e.innerText || e.placeholder || '').slice(0, 160)};})()",
+                    + "); return {page_url: String(window.location.href || ''), page_title: String(document.title || ''), tag: e.tagName, type: e.type || '', name: (e.getAttribute('aria-label') || e.innerText || e.placeholder || '').slice(0, 160)};})()",
                     selector=selector,
                 )
-                result["element"] = element
         elif action == "wait":
             wait_seconds = args.get("wait_seconds", 3.0)
             if type(wait_seconds) not in (int, float) or not (0.1 <= float(wait_seconds) <= 10.0):
@@ -1926,10 +1942,48 @@ class Browser:
                     "agent_browser_resize_invalid",
                     correction="resize 动作需要整数 width (320-7680) 与 height (240-4320)。",
                 )
-            result.update(width=w, height=h)
-        elif action == "new_tab":
-            if args.get("url"):
-                result["new_tab_url"] = args["url"]
+
+        if isinstance(element, dict):
+            if element.get("page_url"):
+                full_url = element["page_url"]
+            if "page_title" in element and element["page_title"] is not None:
+                page_title = element["page_title"]
+
+        result = {
+            "page_url": _stable_page_url(full_url),
+            "action": action,
+        }
+        for param_key in (
+            "page_id",
+            "selector",
+            "frame_selector",
+            "text",
+            "key",
+            "wait_seconds",
+            "delta_y",
+            "files",
+            "width",
+            "height",
+            "device_scale_factor",
+        ):
+            if param_key in args:
+                result[param_key] = copy.deepcopy(args[param_key])
+        if action == "new_tab" and args.get("url"):
+            result["new_tab_url"] = args["url"]
+
+        display = {
+            "page_title": page_title,
+            "page_url": full_url,
+        }
+        if isinstance(element, dict):
+            result["element"] = {
+                "tag": element.get("tag", ""),
+                "type": element.get("type", ""),
+            }
+            display["element"] = {
+                "name": element.get("name", ""),
+            }
+        result["display"] = display
         return result
 
     def execute(self, name, args, task_id, resolve, allowed, cancelled):
