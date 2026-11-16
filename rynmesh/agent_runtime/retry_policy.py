@@ -2,7 +2,7 @@
 import random
 import time
 
-NETWORK_ERRORS = {"agent_inference_timeout", "agent_model_connection_failed", "agent_model_busy", "agent_model_upstream_failed", "agent_model_stream_interrupted"}
+NETWORK_ERRORS = {"agent_inference_timeout", "agent_model_connection_failed", "agent_model_busy", "agent_model_upstream_failed", "agent_model_stream_interrupted", "agent_model_discovery_failed"}
 CONNECTION_REASONS = frozenset({"reset", "refused", "connection", "dns_temporary", "timeout"})
 RETRYABLE_HTTP_STATUSES = frozenset({408, 429, 500, 502, 503, 504, 529})
 DEFAULT_STREAM_MAX_RETRIES = 5

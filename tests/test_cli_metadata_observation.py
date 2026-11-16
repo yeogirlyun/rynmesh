@@ -18,6 +18,7 @@ def test_metadata_only_capacity_observation_is_durable_across_restart_without_bi
     fixture = cli_metadata_catalog
     fixture.models.append({"id": "model-b", "name": "B", "context_window": 128000})
     adapter = fixture.manager.adapter
+    adapter.current_models()
     before = {model: adapter.binding_for_model(model) for model in ("", "model-a", "model-b")}
     fixture.models[0]["context_window"] = 16000
     fixture.expire()
@@ -37,6 +38,7 @@ def test_successful_listing_disappearance_persists_tombstone_before_reappearance
     fixture = cli_metadata_catalog
     fixture.models.append({"id": "model-b", "name": "B", "context_window": 128000})
     adapter = fixture.manager.adapter
+    adapter.current_models()
     before = {model: adapter.binding_for_model(model) for model in ("model-a", "model-b")}
     removed = fixture.models.pop(0)
     fixture.expire()
@@ -57,6 +59,7 @@ def test_default_selection_observation_aba_changes_only_default_generation(cli_m
     fixture = cli_metadata_catalog
     fixture.models.append({"id": "model-b", "name": "B", "context_window": 400000})
     adapter = fixture.manager.adapter
+    adapter.current_models()
     before = {model: adapter.binding_for_model(model) for model in ("", "model-a", "model-b")}
     for selected in (1, 0):
         for index, item in enumerate(fixture.models):
@@ -117,6 +120,7 @@ def test_configured_cli_models_http_listing_records_observed_capacity_aba(cli_pa
               {"id": "unverified", "name": "Sibling", "context_window": 128000}]
     monkeypatch.setattr(cli_models, "list_models", lambda *a, **kw: copy.deepcopy(models))
     adapter = fixture.provider.adapter
+    adapter.current_models()
     before = adapter.binding_for_model(selected)
     sibling = adapter.binding_for_model("unverified")
     with TestClient(fixture.apps[0]) as client:

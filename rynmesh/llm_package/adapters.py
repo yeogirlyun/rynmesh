@@ -169,7 +169,7 @@ def _response_too_large(limit_bytes: int) -> AdapterError:
 RUNTIME_ERROR_CODES = frozenset({
     "runtime_busy", "model_not_ready", "model_not_found", "runtime_unavailable",
     "runtime_connection_failed", "inference_timeout", "inference_failed",
-    "model_configuration_changed", "model_daily_quota_exhausted",
+    "model_configuration_changed", "model_daily_quota_exhausted", "cli_model_discovery_failed",
     "ai_permission_denied",
     "stream_delivery_failed", "upstream_http_failed", "upstream_response_invalid",
     "upstream_response_too_large",

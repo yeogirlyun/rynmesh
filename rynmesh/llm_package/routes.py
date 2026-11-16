@@ -453,8 +453,9 @@ class ProviderService:
             return []
         from .cli_models import cached_models, list_models
         try:
-            if not cached_only and callable(getattr(self.adapter, "current_models", None)):
-                return self.adapter.current_models()
+            inventory = getattr(self.adapter, "snapshot_models" if cached_only else "current_models", None)
+            if callable(inventory):
+                return inventory()
             return (cached_models if cached_only else list_models)(self.manifest.adapter, self.adapter._command_path())
         except (AdapterError, OSError, AttributeError):
             return []
@@ -462,12 +463,12 @@ class ProviderService:
     def context_window_for_model(self, model=""):
         if self.manifest.adapter in {"codex_cli", "antigravity_cli"}:
             from .cli_models import context_metadata
-            current = getattr(self.adapter, "context_metadata_for_model", None)
+            current = getattr(self.adapter, "snapshot_context_metadata_for_model", None) or getattr(self.adapter, "context_metadata_for_model", None)
             if callable(current):
                 return current(model)["context_window"]
             models = self.cli_models()
             if not models or (model and not any(item.get("id") == model for item in models)):
-                raise AdapterError("cli_model_unavailable", code="model_configuration_changed")
+                raise AdapterError("cli_model_unavailable", code="cli_model_discovery_failed")
             return context_metadata(models, model, kind=self.manifest.adapter)["context_window"]
         return self.manifest.context_window
 
@@ -577,7 +578,14 @@ class ProviderService:
                                     or "image-carrier:" + SHARED_V2_CARRIER not in self.manifest.capabilities):
             raise TaskProtocolError("unsupported image carrier")
         with shared_image_carrier_scope(carrier):
-            return self._handle_opened(signed_request, outer, body, on_event, on_delta=on_delta)
+            try:
+                return self._handle_opened(signed_request, outer, body, on_event, on_delta=on_delta)
+            except AdapterError as exc:
+                if exc.code != "cli_model_discovery_failed":
+                    raise
+                reply_pub = str(body.get("reply_messaging_pub") or "")
+                _validate_messaging_pub(reply_pub)
+                return self._sealed_failure(str(outer["task_id"]), reply_pub, outer["from_peer_id"], "rejected", exc.code)
 
     def _handle_opened(self, signed_request: dict[str, Any], outer: dict[str, Any], body: dict[str, Any],
                        on_event: Any = None, *, on_delta: Callable[[str], None] | None = None) -> dict[str, Any]:
@@ -638,7 +646,9 @@ class ProviderService:
         if cli_model:
             from .cli_models import validate_model
             validate_model(cli_model)
-            if not any(row["id"] == cli_model for row in self.cli_models()):
+            snapshot = getattr(self.adapter, "snapshot_models", None)
+            models = snapshot() if callable(snapshot) else self.cli_models(cached_only=True)
+            if not any(row["id"] == cli_model for row in models):
                 return self._sealed_failure(task_id, reply_pub, outer["from_peer_id"], "rejected", "cli_model_unavailable")
         actual_model_binding = (self.adapter.binding_for_model(cli_model)
             if callable(getattr(self.adapter, "binding_for_model", None)) else getattr(self.adapter, "model_binding", None))
@@ -3394,7 +3404,13 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         task_id = str(body.get("task_id") or ("task_" + uuid.uuid4().hex))
         service_id = current.manifest.package_id
         max_tokens = min(max_tokens, current.manifest.max_output_tokens)
-        if not context_request_fits(prompt, output_tokens=max_tokens, context_window=current.context_window_for_model(body.get("cli_model", ""))):
+        try:
+            context_window = current.context_window_for_model(body.get("cli_model", ""))
+        except AdapterError as exc:
+            if exc.code == "cli_model_discovery_failed":
+                raise HTTPException(409, exc.code) from None
+            raise
+        if not context_request_fits(prompt, output_tokens=max_tokens, context_window=context_window):
             raise HTTPException(400, context_overflow_detail())
         bindings = {"provider_peer_id": store.peer_id, "service_id": service_id,
                     "idempotency_key": str(body.get("idempotency_key") or task_id),

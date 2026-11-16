@@ -55,6 +55,7 @@ OUTPUT_LIMIT_REACHED_FEEDBACK = (
 OUTPUT_LIMIT_REACHED_MESSAGE = "模型把输出额度都用在思考上了，请调高该模型的输出上限或降低推理强度"
 
 _PEER_ERROR_MAP = {
+    "cli_model_discovery_failed": "agent_model_discovery_failed",
     "model_configuration_changed": "agent_model_destination_changed",
     "ai_permission_denied": "agent_model_destination_changed",
     "source_protocol_parameters_unsupported": "agent_model_protocol_unsupported",
@@ -67,6 +68,7 @@ _PEER_ERROR_MAP = {
     "task_cancelled": "agent_cancelled",
 }
 _ADAPTER_ERROR_MAP = {
+    "cli_model_discovery_failed": "agent_model_discovery_failed",
     "inference_timeout": "agent_inference_timeout",
     "runtime_connection_failed": "agent_model_connection_failed",
     "upstream_http_failed": "agent_model_upstream_failed",
@@ -97,6 +99,13 @@ MODEL_ERROR_CODES = frozenset({
 
 def retry_output_limit_cap(prev_cap: int, target: dict) -> int:
     return min(2 * prev_cap, output_policy.configured_output(target))
+
+
+def _cli_binding(adapter, model):
+    try:
+        return adapter.binding_for_model(model)
+    except AdapterError as exc:
+        raise AgentError(_ADAPTER_ERROR_MAP.get(exc.code, "agent_inference_failed")) from None
 
 
 def has_output_limit_feedback(messages) -> bool:
@@ -151,7 +160,7 @@ class AgentModelBridge:
             manifest = getattr(manager, "manifest", None)
             if manager is not None and target.get("adapter") in {"codex_cli", "antigravity_cli"}:
                 method = getattr(manager.adapter, "binding_for_model", None)
-                actual = method(target.get("cli_model", "")) if callable(method) else None
+                actual = _cli_binding(manager.adapter, target.get("cli_model", "")) if callable(method) else None
             else:
                 actual = getattr(manager.adapter, "model_binding", None) if manager else None
             if (target.get("peer_id") != consumer or manager is None or binding != actual
@@ -182,7 +191,9 @@ class AgentModelBridge:
             manager = self.services["provider_for"](target["service_id"]) if target["source"] != "peer" else None
             destination = self.catalog.destination(target) if expected_destination is None else expected_destination
             return self._data_policy_context(target, destination, manager)
-        except (ValueError, KeyError, TypeError, AttributeError):
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            if isinstance(exc, AgentError) and str(exc) == "agent_model_discovery_failed":
+                raise
             raise AgentError("agent_model_destination_changed") from None
 
     @staticmethod
@@ -385,7 +396,7 @@ class AgentModelBridge:
         elif expected_destination is not None and target["source"] == "local_service":
             native_binding = target.get("local_model_binding")
             if manager is not None and target.get("adapter") in {"codex_cli", "antigravity_cli"}:
-                actual_binding = manager.adapter.binding_for_model(target.get("cli_model", "")) if hasattr(manager.adapter, "binding_for_model") else None
+                actual_binding = _cli_binding(manager.adapter, target.get("cli_model", "")) if hasattr(manager.adapter, "binding_for_model") else None
             else:
                 actual_binding = getattr(manager.adapter, "model_binding", None) if manager else None
             if (manager is None or native_binding != actual_binding
@@ -400,7 +411,9 @@ class AgentModelBridge:
                 try:
                     current = self.catalog.resolve(model_id)
                     context = self._data_policy_context(current, expected_destination, manager)
-                except (ValueError, KeyError, TypeError, AttributeError):
+                except (ValueError, KeyError, TypeError, AttributeError) as exc:
+                    if isinstance(exc, AgentError) and str(exc) == "agent_model_discovery_failed":
+                        raise
                     raise AgentError("agent_model_destination_changed") from None
             if not data_policy.allows_task(data_policy_state, context):
                 raise AgentError("agent_extension_model_not_allowed")
@@ -634,7 +647,7 @@ class AgentModelBridge:
                 err = AgentError("agent_model_stream_interrupted")
                 err.request_id = task_id
                 raise err from None
-            raise AgentError("agent_model_destination_changed" if detail_code == "model_configuration_changed" else "agent_inference_failed") from None
+            raise AgentError(_PEER_ERROR_MAP.get(detail_code, "agent_inference_failed")) from None
         except AdapterError as exc:
             from .diagnostic_log import safe_diagnostics
             raw_diag = dict(getattr(exc, "diagnostics", None) or {})
