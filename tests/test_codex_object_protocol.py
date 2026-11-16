@@ -353,3 +353,29 @@ def test_real_binary_emits_strict_object_schema_and_continues_after_origin_execu
         server.shutdown()
         server.server_close()
     assert all(not root.exists() for root in roots)
+
+
+def test_codex_object_protocol_accepts_twelve_proposals():
+    tool = {"name": "probe", "parameters": {"type": "object", "properties": {"idx": {"type": "integer"}}, "required": ["idx"], "additionalProperties": False}}
+    proposals = [{"name": "probe", "arguments": {"idx": i}} for i in range(12)]
+    msg = _validated({"text": json.dumps({"content": "12 calls", "tool_calls": proposals})}, {"probe": tool}, required=True)
+    assert len(msg["tool_calls"]) == 12
+
+
+def test_codex_named_tool_choice_missing_from_tools_raises_source_protocol_parameters_unsupported():
+    from rynmesh.llm_package import codex_tools
+    from rynmesh.llm_package.adapters import AdapterError
+
+    tool = {"type": "function", "function": {"name": "probe", "parameters": {"type": "object"}}}
+    with pytest.raises(AdapterError) as info:
+        codex_tools.chat(
+            CLIAgentAdapter("codex_cli", executable="fixture-codex"),
+            {
+                "messages": [{"role": "user", "content": "check"}],
+                "tools": [tool],
+                "tool_choice": {"type": "function", "function": {"name": "missing_fn"}},
+            },
+            task_id="missing-choice",
+            timeout_s=5,
+        )
+    assert info.value.code == "source_protocol_parameters_unsupported"

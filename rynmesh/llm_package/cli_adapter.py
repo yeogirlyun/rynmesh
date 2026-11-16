@@ -320,7 +320,18 @@ class CLIAgentAdapter:
             normalized_messages, omitted_attachments = normalize_cli_messages(body["messages"])
             if omitted_attachments > 0:
                 body = {**body, "messages": normalized_messages}
-        body = validate_chat(body)
+        try:
+            body = validate_chat(
+                body,
+                default_max_tokens=None if self.kind in {"codex_cli", "antigravity_cli"} else 512,
+            )
+        except ValueError as exc:
+            if str(exc) == "unknown tool_choice function":
+                raise AdapterError(
+                    "named tool choice is not in tools",
+                    code="source_protocol_parameters_unsupported",
+                ) from None
+            raise
         for message in body["messages"]:
             # Native API continuation belongs only to its bound HTTP adapter.
             # CLI sessions must never stringify it into their prompt envelope.
@@ -340,6 +351,12 @@ class CLIAgentAdapter:
                     if key in body:
                         raise AdapterError(f"CLI API mode does not support {key}")
                 if self.kind == "codex_cli":
+                    if "max_tokens" not in body:
+                        from .cli_models import default_max_output_tokens
+                        body = {
+                            **body,
+                            "max_tokens": default_max_output_tokens("codex_cli", model, executable=self.executable),
+                        }
                     # Codex forwards assistant text as it streams; proposals stay
                     # buffered until validated, then end the stream.
                     result = chat(self, body, task_id=task_id, timeout_s=min(timeout_s, 300), model=model,

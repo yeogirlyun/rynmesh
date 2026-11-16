@@ -215,6 +215,8 @@ class AgentModelBridge:
         cache_created = data.get("cache_creation_input_tokens") if ("reported_usage" in data or target["source"] != "peer") else None
         if type(cache_created) is int and cache_created >= 0:
             flags["cache_creation_input_tokens"] = cache_created
+        if isinstance(data.get("diagnostics"), dict) and data["diagnostics"]:
+            flags["diagnostics"] = copy.deepcopy(data["diagnostics"])
         return {"message": message, "finish_reason": finish, "usage": usage, "output_policy": policy, **flags}
 
     def complete(self, model_id, messages, tool_specs, cancelled, on_event=None, *, expected_destination=None, max_output_tokens=None, deadline=None, on_request_policy=None, reasoning_effort=None, conversation=None, cache_key=None, request_id=None, data_policy_state=None):

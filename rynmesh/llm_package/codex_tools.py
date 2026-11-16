@@ -10,15 +10,22 @@ import copy
 import json
 import uuid
 
+from ..agent_runtime import tool_dispatch
 from .adapters import AdapterError
 from .chat import validate_tool_arguments
 from .cli_images import image_inputs, text_messages
+from .cli_models import default_max_output_tokens
 from .codex_threads import Conversation
+
+MAX_PROPOSALS = max(
+    16,
+    int(getattr(tool_dispatch, "MAX_TOOL_PROPOSALS", getattr(tool_dispatch, "MAX_PARALLEL_TOOLS", 16))),
+)
 
 FEEDBACK = {
     "response_json": "Return the protocol object as plain JSON, without Markdown fences or prose outside it.",
     "response_shape": "The protocol object must contain only string content and an array tool_calls.",
-    "tool_calls": "Return at most eight proposals; required tool_choice needs at least one proposal.",
+    "tool_calls": f"Return at most {MAX_PROPOSALS} proposals; required tool_choice needs at least one proposal.",
     "tool_name": "Use exact names from the supplied functions. Unloaded client tools need schema discovery first; provider tool names are unavailable.",
     "arguments_json": "Each proposal arguments must be a valid JSON object encoded as a string, with escaped newlines and quotes.",
     "arguments_object": "Decode arguments to an object, not an array or scalar.",
@@ -274,7 +281,10 @@ def chat(adapter, body, *, task_id, timeout_s, model="", on_event=None, scope=No
     if choice == "none":
         tools = {}
     elif isinstance(choice, dict):
-        name = choice["function"]["name"]
+        fn_spec = choice.get("function") if isinstance(choice.get("function"), dict) else {}
+        name = fn_spec.get("name")
+        if not isinstance(name, str) or name not in tools:
+            raise AdapterError("named tool choice is not in tools", code="source_protocol_parameters_unsupported")
         tools = {name: tools[name]}
     required = choice == "required" or isinstance(choice, dict)
     schema = _response_schema(tools)
@@ -282,7 +292,11 @@ def chat(adapter, body, *, task_id, timeout_s, model="", on_event=None, scope=No
         output_schema = _response_schema(tools, strict=True)
     except ValueError:
         output_schema = None
-    budget = body.get("max_tokens") or 2048
+    budget = body.get("max_tokens") or default_max_output_tokens(
+        "codex_cli",
+        model,
+        executable=getattr(adapter, "executable", ""),
+    )
     strict = output_schema is not None
     conversation = Conversation(body["messages"], tools,
                                 render=lambda update: _continuation(update, choice, budget, strict=strict), scope=scope)
@@ -331,7 +345,7 @@ def _validated(result, tools, required, *, restore_omitted=False):
             raise ValueError()
         proposals = value["tool_calls"]
         reason = "tool_calls"
-        if not isinstance(proposals, list) or len(proposals) > 8 or (required and not proposals):
+        if not isinstance(proposals, list) or len(proposals) > MAX_PROPOSALS or (required and not proposals):
             raise ValueError()
         calls = []
         for proposal in proposals:

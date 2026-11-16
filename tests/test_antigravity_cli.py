@@ -10,9 +10,9 @@ from rynmesh.llm_package.cli_adapter import CLIAgentAdapter
 def test_model_list_parses_progress_duplicates_and_preserves_cli_default():
     from rynmesh.llm_package.cli_models import parse_antigravity_models
     rows = parse_antigravity_models("Fetching available models...\nmodel-a\tModel A\nmodel-a\tDuplicate\nmodel-b\tModel B\n")
-    assert rows == [{"id": "", "name": "CLI default", "default": True},
-                    {"id": "model-a", "name": "Model A", "default": False},
-                    {"id": "model-b", "name": "Model B", "default": False}]
+    assert rows == [{"id": "", "name": "CLI default", "default": True, "agent_support": "experimental"},
+                    {"id": "model-a", "name": "Model A", "default": False, "agent_support": "experimental"},
+                    {"id": "model-b", "name": "Model B", "default": False, "agent_support": "experimental"}]
 
 
 @pytest.mark.parametrize("output", ["Fetching available models...", "--flag\tBad", "model\t"])
