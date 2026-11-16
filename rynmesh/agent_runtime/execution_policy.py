@@ -247,6 +247,15 @@ def verified_read_classification(record, *, row=None, task_id=None, workspace_ro
     return True
 
 
+def is_full_automatic(row: dict, settings: dict) -> bool:
+    return (
+        isinstance(row, dict)
+        and isinstance(settings, dict)
+        and row.get("permission_mode") == "automatic"
+        and settings.get("permission_mode") == "automatic"
+    )
+
+
 def decide(call, metadata, row, settings):
     modes = {row["permission_mode"], settings["permission_mode"]}
     if not modes <= MODES:
