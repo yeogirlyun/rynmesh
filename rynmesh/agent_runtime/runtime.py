@@ -114,7 +114,17 @@ UNKNOWN_OUTCOME_NOTE = (
     "Before doing it again, check the actual state with read-only tools. Do not assume it failed and do not "
     "repeat it blindly."
 )
+MCP_UNKNOWN_OUTCOME_HINT = "先用只读工具核对再决定是否重试"
 VISUAL_SUFFIXES = (".svg", ".html", ".htm", ".png", ".jpg", ".jpeg", ".gif", ".webp")
+
+
+def _flight_has_server_hint_read(flight: dict | None) -> bool:
+    if not isinstance(flight, dict):
+        return False
+    if flight.get("server_hint_read") is True:
+        return True
+    binding = flight.get("extension_binding")
+    return isinstance(binding, dict) and binding.get("server_hint_read") is True
 
 
 def public_task(row: dict, *, summary: bool = False, settings: dict | None = None,
@@ -363,6 +373,423 @@ class AgentRuntime(AgentLoop):
         self._boot_id = "boot_" + uuid.uuid4().hex
         # Display only. Never used by admission, cancellation or persistence.
         self._active_run = None
+
+    def _effective_task_permission_mode(self, selected: dict, settings: dict | None = None) -> str:
+        task_mode = selected.get("permission_mode", "workspace")
+        if settings is None:
+            settings_mode = self.store.inspect(
+                lambda data: (data.get("settings") or {}).get("permission_mode", "workspace")
+            )
+        else:
+            settings_mode = settings.get("permission_mode", "workspace")
+        order = ("read_only", "confirm_changes", "workspace", "automatic")
+        if task_mode not in order or settings_mode not in order:
+            return "read_only"
+        return order[min(order.index(task_mode), order.index(settings_mode))]
+
+    def _execute_business_tool(self, selected, name, arguments, **options):
+        if name == "ryn_code_exec":
+            return super()._execute_business_tool(selected, name, arguments, **options)
+        from .tool_dispatch import supports_parallel
+
+        meta = self.tools.metadata(name)
+        mode = self._effective_task_permission_mode(selected)
+        with self._tool_dispatch_gate.enter(
+            selected["id"],
+            parallel=supports_parallel(name, meta, arguments, permission_mode=mode),
+            cancelled=options["cancelled"],
+        ):
+            return self.tools.execute(name, arguments, **options)
+
+    def _tool(self, selected: dict, cancelled, started: float) -> None:
+        from .tool_dispatch import MAX_PARALLEL_TOOLS
+
+        queue = selected.get("queue") or []
+        if len(queue) >= 2 and self._effective_task_permission_mode(selected) == "automatic":
+            batch: list[dict] = []
+            for item in queue[:MAX_PARALLEL_TOOLS]:
+                if (
+                    item.get("error_result") is not None
+                    or item.get("internal")
+                    or item.get("name") in ALL_INTERNAL_NAMES
+                    or item.get("effect") != "write"
+                    or not _flight_has_server_hint_read(item)
+                ):
+                    break
+                batch.append(item)
+            if len(batch) >= 2 and self._mcp_hint_read_batch(selected, batch, cancelled, started):
+                return
+        super()._tool(selected, cancelled, started)
+
+    def _mcp_hint_read_batch(self, selected: dict, batch: list[dict], cancelled, started: float) -> bool:
+        from concurrent.futures import ThreadPoolExecutor
+
+        from ..llm_package.chat import validate_tool_arguments
+        from .execution_policy import classify_operation, decide
+        from .tool_dispatch import supports_parallel
+        from .tool_router import assert_schema_unchanged
+
+        preparation_started = time.monotonic()
+        claim_persistence_seconds = float(selected.get("_claim_persistence_seconds", 0.0))
+        prep_persistence_seconds = 0.0
+        specs = {item["function"]["name"]: item["function"] for item in self._business_specs(selected)}
+        metas: dict[str, dict] = {}
+        previews: dict[str, Any] = {}
+
+        for call in batch:
+            if "extension_binding" not in call or not _flight_has_server_hint_read(call):
+                return False
+            try:
+                if hasattr(self.tools, "verify_extension_binding"):
+                    self.tools.verify_extension_binding(call)
+                meta = self.tools.metadata(call["name"])
+            except AgentError:
+                return False
+            if (
+                meta.get("effect") != "write"
+                or call.get("effect") != "write"
+                or meta.get("extension_binding") != call["extension_binding"]
+                or not supports_parallel(call["name"], meta, call.get("arguments"), permission_mode="automatic")
+                or call["name"] not in specs
+            ):
+                return False
+            try:
+                if "schema_snapshot" in call:
+                    assert_schema_unchanged(call, specs[call["name"]])
+                validate_tool_arguments(specs[call["name"]]["parameters"], call["arguments"])
+                subagents.check_subagent_tool_policy(selected, call["name"], call["arguments"])
+            except (ValueError, AgentError):
+                return False
+            preview = None
+            if hasattr(self.tools, "preview"):
+                try:
+                    preview_ctx = (
+                        self._execution_context(selected, call["operation_id"])
+                        if meta.get("scope_context_supported")
+                        else None
+                    )
+                    if preview_ctx is not None:
+                        preview_ctx["extension_binding"] = copy.deepcopy(call["extension_binding"])
+                    preview_options = {"context": preview_ctx} if preview_ctx is not None else {}
+                    preview = sanitized(
+                        self.tools.preview(call["name"], copy.deepcopy(call["arguments"]), **preview_options)
+                    )
+                except AgentError:
+                    return False
+                if len(encoded(preview)) > max(
+                    selected["limits"]["max_output_chars"], output_policy.MAX_TOOL_CALL_ARGUMENT_BYTES
+                ):
+                    return False
+            metas[call["call_id"]] = meta
+            previews[call["call_id"]] = preview
+
+        t0 = time.monotonic()
+        self._reserve_output(selected)
+        prep_persistence_seconds += max(0.0, time.monotonic() - t0)
+        call_ids = [call["call_id"] for call in batch]
+        authorized_classifications: dict[str, dict] = {}
+
+        def authorize(data):
+            row = task(data, selected["id"])
+            if (
+                row["status"] != "running"
+                or not data["settings"]["enabled"]
+                or row["control_revision"] != selected["_run_control_revision"]
+                or self._effective_task_permission_mode(row, data["settings"]) != "automatic"
+                or row.get("approved")
+                or [item["call_id"] for item in row["queue"][: len(batch)]] != call_ids
+            ):
+                return None
+            last_owner_at = next(
+                (str(item.get("at") or "") for item in reversed(row["events"]) if item["type"] in OWNER_TURN_EVENTS),
+                "",
+            )
+            for call in batch:
+                if hasattr(self.tools, "verify_extension_binding"):
+                    try:
+                        self.tools.verify_extension_binding(call)
+                    except AgentError:
+                        return None
+                meta = metas[call["call_id"]]
+                decision = decide(call, meta, row, data["settings"])
+                if decision.action != "execute" or decision.basis != "automatic":
+                    return None
+                args_hash = digest(call["arguments"])
+                if row.get("model_history") and any(
+                    receipt["goal_revision"] == row["goal"]["revision"]
+                    and receipt["tool"] == call["name"]
+                    and receipt["arguments_sha256"] == args_hash
+                    and receipt["status"] == "confirmed"
+                    and receipt.get("context_epoch", 0) != row.get("context_epoch", 0)
+                    for receipt in row.get("receipts", [])
+                ):
+                    return None
+                if any(
+                    receipt["goal_revision"] == row["goal"]["revision"]
+                    and receipt["tool"] == call["name"]
+                    and receipt["arguments_sha256"] == args_hash
+                    and (
+                        receipt.get("result", {}).get("error") == "owner_denied_operation"
+                        or (
+                            str(receipt.get("started_at") or "") > last_owner_at
+                            and isinstance(receipt.get("result"), dict)
+                            and receipt["result"].get("side_effects") == "unknown"
+                        )
+                    )
+                    for receipt in row.get("receipts", [])
+                ):
+                    return None
+            records = budget.initialize(row)["records"]
+            reservation_start = len(records)
+            try:
+                reservations = [budget.reserve(row, "tool", call["name"]) for call in batch]
+            except AgentError:
+                del records[reservation_start:]
+                return None
+            flights: dict[str, dict] = {}
+            for call in batch:
+                meta = metas[call["call_id"]]
+                preview = previews[call["call_id"]]
+                classification = classify_operation(
+                    call["name"],
+                    call["arguments"],
+                    meta,
+                    operation_id=call["operation_id"],
+                    task_id=row["id"],
+                    workspace_root=(row.get("local_execution") or {}).get("workspace_root", ""),
+                    goal_revision=row["goal"]["revision"],
+                    scope_revision=row["scope_revision"],
+                    context_epoch=row.get("context_epoch", 0),
+                    control_revision=row["control_revision"],
+                )
+                authorized_classifications[call["call_id"]] = classification
+                event(
+                    row,
+                    "automatically_authorized",
+                    tool=call["name"],
+                    arguments_sha256=digest(call["arguments"]),
+                    preview=preview,
+                )
+                flight = flights[call["call_id"]] = {
+                    **call,
+                    "kind": "tool",
+                    "dispatched": True,
+                    "authorization": "automatic",
+                    "workstation_permission_tool": meta.get("workstation_permission_tool"),
+                    "operation_classification": classification,
+                    "goal_revision": row["goal"]["revision"],
+                    "control_revision": row["control_revision"],
+                    "scope_revision": row["scope_revision"],
+                    "context_epoch": row.get("context_epoch", 0),
+                    "authority": model_retry_authority(data["settings"]),
+                    "preview": preview,
+                    "permission_record": {
+                        "basis": "automatic",
+                        "operation_id": call["operation_id"],
+                        "arguments_sha256": digest(call["arguments"]),
+                        "preview_sha256": digest(preview),
+                        "goal_revision": row["goal"]["revision"],
+                        "scope_revision": row["scope_revision"],
+                        "context_epoch": row.get("context_epoch", 0),
+                        "control_revision": row["control_revision"],
+                    },
+                }
+                verification.record(row, call, "intent", now(), flight=flight)
+                event(
+                    row,
+                    "tool_started",
+                    tool=call["name"],
+                    call_id=call["call_id"],
+                    operation_id=call["operation_id"],
+                    effect="write",
+                    step=row["steps"],
+                )
+            row["in_flight"] = {**flights[batch[0]["call_id"]], "batch_call_ids": call_ids}
+            return reservations
+
+        t0 = time.monotonic()
+        reservations = self.store.transaction(authorize)
+        prep_persistence_seconds += max(0.0, time.monotonic() - t0)
+        if reservations is None:
+            return False
+        post_persistence_seconds = 0.0
+        reservation_ids = [r["id"] for r in reservations]
+        if cancelled():
+            t0 = time.monotonic()
+            self._settle_usage_batch(selected["id"], reservation_ids, elapsed=time.monotonic() - started)
+            post_persistence_seconds += max(0.0, time.monotonic() - t0)
+            raise AgentToolRejected(getattr(cancelled, "reason", None) or "agent_cancelled")
+
+        def run(call: dict):
+            with diagnostic_log.context_scope(
+                task_id=selected["id"],
+                step=int(selected.get("steps", 0)),
+                operation_id=call["operation_id"],
+            ):
+                call_started = time.monotonic()
+                meta = metas[call["call_id"]]
+                options: dict[str, Any] = {"operation_id": call["operation_id"], "cancelled": cancelled}
+                if meta.get("scope_context_supported"):
+                    ctx = self._tool_context(selected, call["operation_id"])
+                    ctx["context_epoch"] = selected.get("context_epoch", 0)
+                    ctx["extension_binding"] = copy.deepcopy(call["extension_binding"])
+                    if call["call_id"] in authorized_classifications:
+                        ctx["operation_classification"] = copy.deepcopy(authorized_classifications[call["call_id"]])
+                    options["context"] = ctx
+                if meta.get("preview_precondition"):
+                    options["expected_preview"] = copy.deepcopy(previews[call["call_id"]])
+                try:
+                    res = sanitized(
+                        self._execute_business_tool(
+                            selected, call["name"], copy.deepcopy(call["arguments"]), **options
+                        )
+                    )
+                    return res, "confirmed", False, max(0.0, time.monotonic() - call_started)
+                except AgentToolRejected as exc:
+                    code = str(exc) if str(exc).startswith("agent_") else "agent_operation_failed"
+                    extra: dict[str, Any] = {}
+                    if getattr(exc, "correction", None):
+                        extra["correction"] = sanitized(exc.correction[:1600])
+                    if isinstance(getattr(exc, "details", None), dict) and exc.details:
+                        extra["details"] = sanitized(copy.deepcopy(exc.details))
+                    return (
+                        {"error": code, "not_executed": True, "no_mutation": True, **extra},
+                        "not_executed",
+                        True,
+                        max(0.0, time.monotonic() - call_started),
+                    )
+                except AgentError as exc:
+                    code = str(exc) if str(exc).startswith("agent_") else "agent_operation_failed"
+                    if code == "agent_mcp_outcome_unknown_reported":
+                        return (
+                            {
+                                "error": code,
+                                "outcome": "unknown",
+                                "not_executed": False,
+                                "hint": MCP_UNKNOWN_OUTCOME_HINT,
+                                "note": UNKNOWN_OUTCOME_NOTE,
+                            },
+                            "unknown",
+                            True,
+                            max(0.0, time.monotonic() - call_started),
+                        )
+                    return (
+                        {"error": code, "outcome": "unknown", "not_executed": False, "note": UNKNOWN_OUTCOME_NOTE},
+                        "unknown",
+                        True,
+                        max(0.0, time.monotonic() - call_started),
+                    )
+                except Exception:
+                    return (
+                        {
+                            "error": "agent_mcp_outcome_unknown_reported",
+                            "outcome": "unknown",
+                            "not_executed": False,
+                            "hint": MCP_UNKNOWN_OUTCOME_HINT,
+                            "note": UNKNOWN_OUTCOME_NOTE,
+                        },
+                        "unknown",
+                        True,
+                        max(0.0, time.monotonic() - call_started),
+                    )
+
+        exec_started = time.monotonic()
+        preparation_seconds = max(0.0, (exec_started - preparation_started) - prep_persistence_seconds)
+        try:
+            with ThreadPoolExecutor(max_workers=len(batch), thread_name_prefix="ryn-agent-mcp-read") as pool:
+                outcomes = list(pool.map(run, batch))
+            tool_execution_seconds = max(0.0, time.monotonic() - exec_started)
+        finally:
+            t0 = time.monotonic()
+            self._settle_usage_batch(selected["id"], reservation_ids, elapsed=time.monotonic() - started)
+            post_persistence_seconds += max(0.0, time.monotonic() - t0)
+
+        store_persistence_seconds = claim_persistence_seconds + prep_persistence_seconds + post_persistence_seconds
+        lead_timing = {
+            "scheduler_wait_seconds": round(float(selected.get("_scheduler_wait_seconds", 0.0)), 4),
+            "preparation_seconds": round(preparation_seconds, 4),
+            "tool_execution_seconds": round(tool_execution_seconds, 4),
+            "store_persistence_seconds": round(store_persistence_seconds, 4),
+        }
+
+        def finish(data):
+            row = task(data, selected["id"])
+            row["in_flight"] = None
+            row["elapsed_seconds"] += time.monotonic() - started
+            notice = self._budget_notice(row)
+            for index, (call, (result, rec_status, is_err, call_exec_seconds)) in enumerate(
+                zip(batch, outcomes, strict=True)
+            ):
+                reference = None
+                meta = metas[call["call_id"]]
+                origin = (
+                    copy.deepcopy(result.get("origin"))
+                    if meta.get("scope_context_supported")
+                    and isinstance(result.get("origin"), dict)
+                    and "grant_id" in result["origin"]
+                    else None
+                )
+                size = len(encoded(result))
+                if size > selected["limits"]["max_output_chars"]:
+                    reference = results.save(self.store, row, call, result)
+                    if origin:
+                        reference["resource_origin"] = origin
+                    row.setdefault("result_refs", []).append(reference)
+                    result = results.format_reference_result(
+                        call["name"],
+                        result,
+                        reference,
+                        max_bytes=selected["limits"]["max_output_chars"],
+                    )
+                shown = (
+                    {**result, "server_note": notice}
+                    if notice and index == len(batch) - 1 and isinstance(result, dict)
+                    else result
+                )
+                message = {
+                    "role": "tool",
+                    "tool_call_id": call["call_id"],
+                    "content": encoded(shown).decode(),
+                    "context_epoch": selected.get("context_epoch", 0),
+                }
+                if is_err or (isinstance(result, dict) and result.get("error")):
+                    message["is_error"] = True
+                if origin:
+                    message["resource_origin"] = origin
+                row["messages"].append(message)
+                verification.record(row, call, rec_status, now(), result=result if rec_status != "unknown" else None)
+                if rec_status == "unknown":
+                    self._record_auto_acknowledged_operation(row, call["operation_id"])
+                row["queue"] = [item for item in row["queue"] if item["call_id"] != call["call_id"]]
+                item_timing = (
+                    {**lead_timing, "call_execution_seconds": round(call_exec_seconds, 4)}
+                    if index == 0
+                    else {
+                        "scheduler_wait_seconds": 0.0,
+                        "preparation_seconds": 0.0,
+                        "tool_execution_seconds": 0.0,
+                        "store_persistence_seconds": 0.0,
+                        "call_execution_seconds": round(call_exec_seconds, 4),
+                        "batch_shared": True,
+                    }
+                )
+                event(
+                    row,
+                    "tool_result",
+                    tool=call["name"],
+                    call_id=call["call_id"],
+                    operation_id=call["operation_id"],
+                    step=row["steps"],
+                    result=result,
+                    context_epoch=selected.get("context_epoch", 0),
+                    timing=item_timing,
+                )
+            if row["status"] == "running":
+                row["status"] = "queued"
+            memory_integration.settle_in_tx(data, row, event)
+
+        self.store.transaction(finish)
+        return True
 
     def _process_boot_id(self) -> str:
         proc_mgr = getattr(self.tools, "processes", None) or getattr(
@@ -2680,7 +3107,10 @@ class AgentRuntime(AgentLoop):
                 break
             prev_res = prev_event.get("result")
             prev_err = prev_res.get("error") if isinstance(prev_res, dict) else None
-            if prev_event.get("tool") == tool_name and prev_err == "agent_write_outcome_unknown":
+            if prev_event.get("tool") == tool_name and prev_err in {
+                "agent_write_outcome_unknown",
+                "agent_mcp_outcome_unknown_reported",
+            }:
                 consecutive += 1
             else:
                 break
@@ -2702,15 +3132,23 @@ class AgentRuntime(AgentLoop):
                     same_call += 1
         return max(consecutive, same_call)
 
-    def _auto_acknowledge_allowed(self, row: dict, data: dict, flight: dict | None) -> bool:
+    def _auto_acknowledge_allowed(
+        self, row: dict, data: dict, flight: dict | None, *, code: str | None = None
+    ) -> bool:
         if not isinstance(flight, dict) or not flight:
             return False
         settings = data.get("settings") or {}
-        if (
-            not settings.get("enabled")
-            or row.get("permission_mode") != "automatic"
+        is_hint_read_unknown = (
+            code == "agent_mcp_outcome_unknown_reported" and _flight_has_server_hint_read(flight)
+        )
+        if not is_hint_read_unknown and (
+            row.get("permission_mode") != "automatic"
             or settings.get("permission_mode") != "automatic"
             or flight.get("authorization") != "automatic"
+        ):
+            return False
+        if (
+            not settings.get("enabled")
             or row.get("pending_control")
             or row.get("pending_approval")
             or row.get("pending_input")
@@ -2746,6 +3184,9 @@ class AgentRuntime(AgentLoop):
         resume: bool = False,
         error_details: str | None = None,
         repeated_unknown: bool = False,
+        error_code: str = "agent_write_outcome_unknown",
+        hint: str | None = None,
+        keep_sibling_queue: bool = False,
     ) -> None:
         """The owner (or automatic mode) continues past an unconfirmed write.
 
@@ -2756,11 +3197,13 @@ class AgentRuntime(AgentLoop):
         call_id = flight.get("call_id")
         epoch = flight.get("context_epoch", row.get("context_epoch", 0))
         result: dict[str, Any] = {
-            "error": "agent_write_outcome_unknown",
+            "error": error_code,
             "outcome": "unknown",
             "not_executed": False,
             "note": UNKNOWN_OUTCOME_NOTE,
         }
+        if isinstance(hint, str) and hint:
+            result["hint"] = hint
         truncated_details = self._truncate_unknown_error_details(error_details)
         if truncated_details is not None:
             result["details"] = truncated_details
@@ -2777,7 +3220,8 @@ class AgentRuntime(AgentLoop):
             event(row, "tool_result", tool=flight.get("name"), call_id=call_id,
                   operation_id=flight.get("operation_id"), result=result, context_epoch=epoch)
         row["queue"] = [call for call in row.get("queue", []) if call.get("call_id") != call_id]
-        close_queue(row, event, "agent_reconciliation_requires_review", keep_flight=False)
+        if not keep_sibling_queue:
+            close_queue(row, event, "agent_reconciliation_requires_review", keep_flight=False)
         if (row.get("pending_control") or {}).get("kind") in {"pause", "stop", "permissions"}:
             row.pop("pending_control", None)
         row["acknowledged_unknown"] = {"operation_id": flight.get("operation_id"), "tool": flight.get("name"), "at": now()}
@@ -3167,7 +3611,10 @@ class AgentRuntime(AgentLoop):
                 and not is_verified_read
             )
             if ambiguous_write:
-                if code not in budget.LIMIT_CODES and self._auto_acknowledge_allowed(row, data, flight):
+                is_hint_read_unknown = (
+                    code == "agent_mcp_outcome_unknown_reported" and _flight_has_server_hint_read(flight)
+                )
+                if code not in budget.LIMIT_CODES and self._auto_acknowledge_allowed(row, data, flight, code=code):
                     repeated = self._prior_unknown_count(row, flight) >= 1
                     op_id = flight.get("operation_id")
                     verification.record(row, flight, "unknown", now(), flight=flight)
@@ -3176,10 +3623,13 @@ class AgentRuntime(AgentLoop):
                         resume=True,
                         error_details=error_details or code,
                         repeated_unknown=repeated,
+                        error_code=code if is_hint_read_unknown else "agent_write_outcome_unknown",
+                        hint=MCP_UNKNOWN_OUTCOME_HINT if is_hint_read_unknown else None,
+                        keep_sibling_queue=is_hint_read_unknown,
                     )
                     self._record_auto_acknowledged_operation(row, op_id)
                     row.update(status="queued", error=None)
-                    event(row, "interrupted", ambiguous_write=True, continued=True, auto_acknowledged=True)
+                    event(row, "interrupted", ambiguous_write=not is_hint_read_unknown, continued=True, auto_acknowledged=True)
                     return
                 if (row.get("pending_control") or {}).get("kind") == "permissions":
                     row.pop("pending_control", None)

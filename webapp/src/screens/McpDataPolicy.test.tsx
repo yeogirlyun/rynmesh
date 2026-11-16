@@ -18,12 +18,16 @@ function fixture(extra: Record<string, unknown> = {}) {
 
 describe("MCP data policy and read-only hints", () => {
   it("shows immutable default policy without assuming old fixtures contain new fields", () => {
-    render(<McpDataPolicy server={fixture({ data_policy: undefined, server_hint_candidates: undefined })} onRefresh={vi.fn()} />);
+    const view = render(<McpDataPolicy server={fixture({ data_policy: { models: { mode: "any" }, memory: "allow" }, server_hint_candidates: undefined })} onRefresh={vi.fn()} />);
     expect(screen.getByText("Models: unrestricted")).toBeInTheDocument();
     expect(screen.getByText(/Long-term memory: allowed, subject/)).toBeInTheDocument();
     expect(screen.getByText(/does not prevent the owner from editing local source or data files/)).toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    view.unmount();
+    render(<McpDataPolicy server={fixture({ data_policy: undefined, server_hint_candidates: undefined })} onRefresh={vi.fn()} />);
+    expect(screen.getByRole("status")).toHaveTextContent(/Data policy unknown/i);
+    expect(screen.queryByText("Models: unrestricted")).not.toBeInTheDocument();
   });
 
   it("shows all allowlist rule types and the conservative memory restriction", () => {

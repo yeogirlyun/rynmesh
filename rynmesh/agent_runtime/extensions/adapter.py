@@ -631,6 +631,7 @@ class ExtensionToolAdapter:
             enabled_tools = server.get("enabled_tools")
             disabled_tools = set(server.get("disabled_tools") or [])
             read_only_tools = set(server.get("read_only_tools") or [])
+            owner_write_tools = set(server.get("owner_write_tools") or [])
             for tool in server.get("discovered_tools") or []:
                 if not isinstance(tool, dict):
                     continue
@@ -647,6 +648,16 @@ class ExtensionToolAdapter:
                     continue
                 model_name = str(
                     tool.get("model_tool_name") or compute_model_tool_name(server["id"], t_name)
+                )
+                annotations = (
+                    tool.get("annotations")
+                    if isinstance(tool.get("annotations"), dict)
+                    else {}
+                )
+                server_hint_read = (
+                    annotations.get("readOnlyHint") is True
+                    and annotations.get("destructiveHint") is not True
+                    and t_name not in owner_write_tools
                 )
                 owner_read_only = t_name in read_only_tools
                 effective_effect = "read" if owner_read_only else "write"
@@ -668,6 +679,7 @@ class ExtensionToolAdapter:
                     "schema_sha256": schema_sha256,
                     "effective_effect": effective_effect,
                     "effective_risk": effective_risk,
+                    "server_hint_read": server_hint_read,
                     "plugin_id": server.get("plugin_id"),
                     "plugin_revision": server.get("plugin_revision"),
                     "computer_access": bool(server.get("computer_access", False)),
@@ -975,6 +987,7 @@ class ExtensionToolAdapter:
             "scope_context_supported": True,
             "supports_preview": eff == "write",
             "supports_parallel": eff == "read" and not binding["computer_access"],
+            "server_hint_read": bool(binding.get("server_hint_read", False)),
             "preview_precondition": eff == "write",
             "computer_access": bool(binding["computer_access"]),
             "extension_binding": copy.deepcopy(binding),
@@ -1052,6 +1065,11 @@ class ExtensionToolAdapter:
         ):
             if expected.get(key) != current_binding.get(key):
                 raise AgentToolRejected("agent_tool_definition_changed")
+        if (
+            "server_hint_read" in expected
+            and bool(expected.get("server_hint_read")) != bool(current_binding.get("server_hint_read"))
+        ):
+            raise AgentToolRejected("agent_tool_definition_changed")
         self.store.verify_builtin_computer_use_authority(current_binding)
         return copy.deepcopy(current_binding)
 
@@ -1715,6 +1733,19 @@ class ExtensionToolAdapter:
                 "goal_revision", "control_revision", "scope_revision", "settings_revision")},
         }
 
+        def _unknown_outcome_error(diag_obj: Any = None) -> AgentError:
+            if binding.get("server_hint_read") is True:
+                err = AgentError("agent_mcp_outcome_unknown_reported")
+                err.reported_result = {  # type: ignore[attr-defined]
+                    "outcome": "unknown",
+                    "hint": "先用只读工具核对再决定是否重试",
+                }
+            else:
+                err = AgentError("agent_write_outcome_unknown")
+            if isinstance(diag_obj, dict):
+                err.diagnostics = copy.deepcopy(diag_obj)  # type: ignore[attr-defined]
+            return err
+
         with self._operation_lock(operation_id):
             ledger = self.ledger_factory()
             prior = ledger.get(operation_id)
@@ -1730,10 +1761,7 @@ class ExtensionToolAdapter:
                     raise AgentToolRejected(
                         str(prior.get("error") or "agent_mcp_operation_not_executed")
                     )
-                unknown_err = AgentError("agent_write_outcome_unknown")
-                if isinstance(prior.get("error_result"), dict):
-                    unknown_err.diagnostics = copy.deepcopy(prior["error_result"])  # type: ignore[attr-defined]
-                raise unknown_err
+                raise _unknown_outcome_error(prior.get("error_result"))
 
             current_preview = self.preview(
                 name,
@@ -1756,10 +1784,7 @@ class ExtensionToolAdapter:
                     raise AgentToolRejected(
                         str(prior.get("error") or "agent_mcp_operation_not_executed")
                     )
-                unknown_err = AgentError("agent_write_outcome_unknown")
-                if isinstance(prior.get("error_result"), dict):
-                    unknown_err.diagnostics = copy.deepcopy(prior["error_result"])  # type: ignore[attr-defined]
-                raise unknown_err
+                raise _unknown_outcome_error(prior.get("error_result"))
 
             if route_to_native:
                 def _verify_native_binding(expected_binding: dict[str, Any]) -> None:
@@ -2017,9 +2042,7 @@ class ExtensionToolAdapter:
                 if recovered is not None:
                     ledger.update(operation_id, "confirmed", result=recovered)
                     return recovered
-                unknown_err = AgentError("agent_write_outcome_unknown")
-                unknown_err.diagnostics = copy.deepcopy(diagnostic)  # type: ignore[attr-defined]
-                raise unknown_err from None
+                raise _unknown_outcome_error(diagnostic) from None
 
             normalized = self._normalize_mcp_result(
                 raw_res,
