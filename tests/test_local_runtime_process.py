@@ -113,17 +113,21 @@ def test_quiet_creationflags_applied_to_every_windows_subprocess_call(tmp_path, 
     class DummyPopen:
         pid = 5555
 
+        def __init__(self):
+            self.terminated = False
+            self.killed = False
+
         def poll(self):
             return None
 
         def terminate(self):
-            pass
+            self.terminated = True
 
         def wait(self, timeout=None):
             return 0
 
         def kill(self):
-            pass
+            self.killed = True
 
     def fake_native_popen(cmd, **kwargs):
         native_popens.append((list(cmd), int(kwargs.get("creationflags", 0))))
@@ -154,11 +158,14 @@ def test_quiet_creationflags_applied_to_every_windows_subprocess_call(tmp_path, 
     class ImmediatePopen:
         returncode = 0
 
+        def __init__(self):
+            self.killed = False
+
         def poll(self):
             return 0
 
         def kill(self):
-            pass
+            self.killed = True
 
     def fake_docker_popen(cmd, **kwargs):
         docker_flags.append((list(cmd), int(kwargs.get("creationflags", 0))))
@@ -390,21 +397,27 @@ def test_native_model_start_retries_once_when_port_is_occupied_on_exit(tmp_path,
     spawned_ports: list[int] = []
 
     class ExitedProc:
+        def __init__(self):
+            self.killed = False
+
         def poll(self):
             return 1
 
         def kill(self):
-            pass
+            self.killed = True
 
         def wait(self, timeout=None):
             return 1
 
     class HealthyProc:
+        def __init__(self):
+            self.killed = False
+
         def poll(self):
             return None
 
         def kill(self):
-            pass
+            self.killed = True
 
         def wait(self, timeout=None):
             return 0
@@ -412,6 +425,7 @@ def test_native_model_start_retries_once_when_port_is_occupied_on_exit(tmp_path,
     class FakeUpstream:
         def __init__(self, base_url, **_kwargs):
             self.port = int(base_url.rsplit(":", 1)[1])
+            self.closed = False
 
         def health(self):
             return {"ok": self.port == second_port}
@@ -420,7 +434,7 @@ def test_native_model_start_retries_once_when_port_is_occupied_on_exit(tmp_path,
             return {"text": "OK"}
 
         def shutdown(self):
-            pass
+            self.closed = True
 
     monkeypatch.setattr(llm_native_model, "_pick_loopback_port", lambda: next(chosen_ports))
     if os.name == "nt":
