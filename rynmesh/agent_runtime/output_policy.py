@@ -20,6 +20,8 @@ VERSION = "configured-output-v2"
 IMAGE_ANALYSIS_VERSION = "canonical-image-heuristic-v1"
 TRANSPORT_MAX_TOKENS = 393216
 MAX_RAW_RESPONSE_BYTES = 256 * 1024
+ANSWER_TOTAL_LIMIT = 1024 * 1024
+ANSWER_PREVIEW_BYTES = 64 * 1024
 MAX_TOOL_CALL_ARGUMENT_BYTES = 96 * 1024
 UNKNOWN_CONTEXT_WINDOW_TOKENS = 32768
 FRAMING_RESERVE_TOKENS = 512
@@ -368,12 +370,24 @@ def budgeted(policy, allowed):
     return value
 
 
+def answer_limit(row):
+    """Per-response visible prose byte limit, separate from inline tool result limits."""
+    limits = (row or {}).get("limits") if isinstance(row, dict) else None
+    configured = limits.get("max_output_chars", 0) if isinstance(limits, dict) else 0
+    base = configured if type(configured) is int and configured > 0 else 0
+    return min(MAX_RAW_RESPONSE_BYTES, max(base, 256 * 1024))
+
+
 def visible_message(message):
     """Only the typed private continuation and structured tool calls are excluded from visible prose bounds, never unknown data."""
     return {key: value for key, value in message.items() if key not in {"reasoning_content", "provider_state", "tool_calls"}}
 
 
-def storage_growth(visible_limit):
+def storage_growth(visible_limit, *, row=None, kind="tool"):
     # Existing visible result/event reserves plus one raw bounded continuation
-    # in the encrypted message history. No provider reasoning enters events.
+    # in the encrypted message history. Model steps reserve for answer_limit(row).
+    if isinstance(visible_limit, dict):
+        visible_limit = answer_limit(visible_limit)
+    elif row is not None and kind == "model":
+        visible_limit = answer_limit(row)
     return 8 * visible_limit + 128 * 1024 + MAX_RAW_RESPONSE_BYTES

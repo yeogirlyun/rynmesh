@@ -339,13 +339,13 @@ def test_cancel_during_write_retains_late_evidence(tmp_path):
 @pytest.mark.parametrize("response,error", [
     (assistant(name="shell", args={}), "agent_unknown_tool"),
     (assistant(name="share_service", args={"service_id": "svc1", "shell": "bad"}), "agent_tool_arguments_invalid"),
-    (assistant("x" * 41000), "agent_output_limit"),
+    ({"message": {"role": "assistant", "content": "ok", "reasoning_content": "x" * (256 * 1024 + 1)}}, "agent_model_output_limit"),
 ])
 def test_untrusted_model_output_cannot_bypass_tool_boundary(tmp_path, response, error):
     runtime, _, tools, _ = make_runtime(tmp_path, response)
     row = runtime.create({"message": "hi"})
     advance(runtime)
-    if error == "agent_output_limit":
+    if error == "agent_model_output_limit":
         assert runtime.get(row["id"])["error"] == error
     else:
         advance(runtime)

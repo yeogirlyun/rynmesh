@@ -45,23 +45,34 @@ def test_global_permissions_do_not_wake_waiting_or_reorder_paused_tasks(tmp_path
 
 @pytest.mark.parametrize("chunks", [None, [500], [200, 300]])
 def test_output_limit_keeps_utf8_prefix_after_store_reload(tmp_path, chunks):
-    text = "汉" * 500
-    runtime, model, tools, key = make_runtime(tmp_path, assistant(text))
-    runtime.update_settings({"max_output_chars": 1000})
-    if chunks:
-        def complete(model_id, messages, tool_specs, cancelled, on_event):
-            for size in chunks:
-                on_event({"type": "text_delta", "text": "汉" * size})
-            raise AssertionError("overflow must stop generation")
-        model.complete = complete
-    created = runtime.create({"message": "Answer"})
-    advance(runtime)
-    row = AgentStore(tmp_path, key).read()["tasks"][created["id"]]
-    assert row["error"] == "agent_output_limit"
-    partial = "".join(e["text"] for e in row["events"] if e["type"] == "text_delta")
-    assert partial == "汉" * 333
-    assert len(partial.encode()) <= 1000
-    assert not tools.calls
+    from rynmesh.agent_runtime import output_policy
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(output_policy, "answer_limit", lambda _row: 1000)
+        text = "汉" * 500
+        runtime, model, tools, key = make_runtime(tmp_path, assistant(text), assistant("续"))
+        runtime.update_settings({"max_output_chars": 1000})
+        if chunks:
+            step = [0]
+            def complete(model_id, messages, tool_specs, cancelled, on_event):
+                step[0] += 1
+                if step[0] == 1:
+                    for size in chunks:
+                        on_event({"type": "text_delta", "text": "汉" * size})
+                    raise AssertionError("overflow must stop generation")
+                return assistant("续")
+            model.complete = complete
+        created = runtime.create({"message": "Answer"})
+        advance(runtime, 1)
+        row = AgentStore(tmp_path, key).read()["tasks"][created["id"]]
+        assert row["status"] == "queued"
+        assert row["answer_continuation"]["text"] == "汉" * 333
+        assert len(row["answer_continuation"]["text"].encode()) <= 1000
+        advance(runtime, 3)
+        done = AgentStore(tmp_path, key).read()["tasks"][created["id"]]
+        assert done["status"] == "completed"
+        assert done["result"] == ("汉" * 333) + "续"
+        assert not tools.calls
 
 
 def test_partial_usage_uses_actual_response_size_in_runtime(tmp_path):

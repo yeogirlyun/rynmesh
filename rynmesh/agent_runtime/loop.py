@@ -7,11 +7,13 @@ Durable claims, model transport and tool implementations are injected by the hos
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from jsonschema import ValidationError, validate
 
@@ -63,6 +65,10 @@ from .streamed_reads import NestedReadDispatch, StreamedReads
 from .tool_dispatch import MAX_PARALLEL_TOOLS, PARALLEL_READS, supports_parallel
 from .tool_router import assert_schema_unchanged, normalize_tool_calls, schema_rejection_error
 from .turn_state import decide_turn
+
+
+class _StreamOverflow(Exception):
+    """Internal signal stopping stream consumption once answer_limit bytes are retained."""
 
 ALL_INTERNAL_SPECS = (
     *INTERNAL_SPECS,
@@ -516,6 +522,8 @@ class AgentLoop:
             live_stream = self._start_stream(selected, step)
             reads = StreamedReads(self, selected, specs, cancelled, PARALLEL_READS, metadata=request_metadata)
             streams.append(reads)
+            answer_cap = output_policy.answer_limit(selected)
+            stream_chunks: list[str] = []
             stream = {"text": "", "at": time.monotonic(), "total": 0, "retained_bytes": 0,
                       "writes": 0, "write_seconds": 0.0, "first_text_seconds": None}
 
@@ -542,14 +550,16 @@ class AgentLoop:
                 stream["total"] += len(metadata["text"].encode())
                 if metadata["text"] and stream["first_text_seconds"] is None:
                     stream["first_text_seconds"] = time.monotonic() - request_started
-                remaining = max(0, selected["limits"]["max_output_chars"] - stream["retained_bytes"])
+                remaining = max(0, answer_cap - stream["retained_bytes"])
                 text = sanitized(metadata["text"]).encode()[:remaining].decode("utf-8", errors="ignore")
                 stream["retained_bytes"] += len(text.encode())
                 stream["text"] += text
+                if text:
+                    stream_chunks.append(text)
                 self._append_stream(selected["id"], live_stream, text)
-                if stream["total"] > selected["limits"]["max_output_chars"]:
+                if stream["total"] > answer_cap:
                     flush_stream()
-                    raise AgentError("agent_output_limit")
+                    raise _StreamOverflow()
                 since_write = time.monotonic() - stream["at"]
                 if (stream["writes"] == 0 or
                         (since_write >= STREAM_MIN_PERSIST_SECONDS and
@@ -561,7 +571,12 @@ class AgentLoop:
             request_started = time.monotonic()
             caller_selected["_request_started"] = request_started
             preparation_seconds = request_started - preparation_started
-            response = self._complete(selected, messages, specs, cancelled, on_event)
+            overflowed = False
+            try:
+                response = self._complete(selected, messages, specs, cancelled, on_event)
+            except _StreamOverflow:
+                overflowed = True
+                response = {"message": {"content": "".join(stream_chunks)}, "finish_reason": "length"}
             response_received = time.monotonic()
             if cancelled():
                 raise AgentError(cancelled.reason)
@@ -578,18 +593,28 @@ class AgentLoop:
             calls = raw.get("tool_calls") or []
             if not isinstance(content, str) or not isinstance(calls, list):
                 raise AgentError("agent_invalid_model_response")
-            if len(encoded(raw)) > output_policy.MAX_RAW_RESPONSE_BYTES:
-                raise AgentError("agent_model_output_limit")
-            if len(encoded(output_policy.visible_message(raw))) > selected["limits"]["max_output_chars"]:
-                # Non-streaming providers have no text_delta history to recover.
-                # Preserve only prose, never executable calls from a rejected turn.
-                if not stream["total"]:
-                    stream["text"] = sanitized(content).encode()[:selected["limits"]["max_output_chars"]].decode("utf-8", errors="ignore")
+            if len(encoded(output_policy.visible_message(raw))) > answer_cap:
+                overflowed = True
+                content = sanitized(content).encode()[:answer_cap].decode("utf-8", errors="ignore")
+                calls = []
+                finish_reason = "length"
+                if not stream["total"] and content:
+                    stream["text"] = content
                     flush_stream()
-                raise AgentError("agent_output_limit")
-            if not calls and not content.strip():
+            raw_for_size = {**raw, "content": content, **({"tool_calls": calls} if calls else {})}
+            if not calls:
+                raw_for_size.pop("tool_calls", None)
+            if len(encoded(raw_for_size)) > output_policy.MAX_RAW_RESPONSE_BYTES and not overflowed:
+                raise AgentError("agent_model_output_limit")
+            if len(encoded({k: v for k, v in raw.items() if k not in {"content", "tool_calls"}})) > output_policy.MAX_RAW_RESPONSE_BYTES:
+                raise AgentError("agent_model_output_limit")
+            if not calls and not content.strip() and finish_reason != "length":
                 raise AgentError("agent_invalid_model_response")
-            streamed_results = reads.drain(calls)
+            if overflowed:
+                reads.abort()
+                streamed_results = []
+            else:
+                streamed_results = reads.drain(calls)
             message = {"role": "assistant", "content": sanitized(content)}
             if "reasoning_content" in raw:
                 if not isinstance(raw["reasoning_content"], str):
@@ -626,10 +651,18 @@ class AgentLoop:
                 queued["operation_id"] = record["call"]["operation_id"]
             if calls:
                 message["tool_calls"] = [{"id": call["call_id"], "type": "function", "function": {"name": call["name"], "arguments": call["arguments_json"]}} for call in pending]
+            prior_cont = selected.get("answer_continuation") or {}
+            cont_count = (
+                int(prior_cont.get("count", 0) or 0)
+                if (prior_cont.get("goal_revision") == selected["goal"]["revision"]
+                    and prior_cont.get("context_epoch") == selected.get("context_epoch", 0))
+                else 0
+            )
             try:
                 decision = decide_turn(pending_tool_calls=len(pending), finish_reason=finish_reason,
                                        end_turn=response.get("end_turn"),
-                                       needs_follow_up=response.get("needs_follow_up", False))
+                                       needs_follow_up=response.get("needs_follow_up", False),
+                                       length_continuations=cont_count)
             except ValueError:
                 raise AgentError("agent_invalid_model_response") from None
 
@@ -716,8 +749,23 @@ class AgentLoop:
                 event(row, "assistant", content=message["content"], tool_count=len(pending),
                       step=step, request_id=request_id, attempt=attempt, timing=timing)
                 event_compaction.fold_stream_deltas(row)
+                if overflowed and row.get("stream_read_journal"):
+                    row["stream_read_journal"] = [
+                        entry for entry in row["stream_read_journal"] if entry.get("parent_operation_id")
+                    ]
                 effective_action = "complete" if wrap_up_reason else decision.action
                 effective_reason = f"budget_wrap_up:{wrap_up_reason}" if wrap_up_reason else decision.reason
+                if effective_action == "continue":
+                    probe_cont = row.get("answer_continuation") or {}
+                    probe_prefix = (
+                        probe_cont.get("text", "")
+                        if (probe_cont.get("goal_revision") == row["goal"]["revision"]
+                            and probe_cont.get("context_epoch") == row.get("context_epoch", 0))
+                        else ""
+                    )
+                    if len((probe_prefix + message["content"]).encode("utf-8")) > output_policy.ANSWER_TOTAL_LIMIT:
+                        effective_action = "complete"
+                        effective_reason = "answer_total_limit"
                 if effective_action == "complete" and not wrap_up_reason and (reminder := planning.completion_reminder(row)):
                     row["messages"].append({"role": "assistant", "content": reminder,
                                             "context_epoch": row.get("context_epoch", 0)})
@@ -743,17 +791,19 @@ class AgentLoop:
                     continuation = row.get("answer_continuation") or {}
                     if (continuation.get("goal_revision") != row["goal"]["revision"] or
                             continuation.get("context_epoch") != row.get("context_epoch", 0)):
-                        continuation = {"goal_revision": row["goal"]["revision"], "context_epoch": row.get("context_epoch", 0), "text": ""}
+                        continuation = {"goal_revision": row["goal"]["revision"], "context_epoch": row.get("context_epoch", 0), "text": "", "count": 0}
                     continuation["text"] += message["content"]
-                    if len(continuation["text"].encode()) > row["limits"]["max_output_chars"]:
-                        raise AgentError("agent_output_limit")
+                    if finish_reason == "length":
+                        continuation["count"] = int(continuation.get("count", 0) or 0) + 1
                     row["answer_continuation"] = continuation
                     row["status"] = "queued"
-                    event(row, "response_continuation_requested", reason=decision.reason)
+                    event(row, "response_continuation_requested", reason=decision.reason, count=continuation.get("count", 0))
                 else:
                     continuation = row.pop("answer_continuation", {})
-                    prefix = continuation.get("text", "") if (continuation.get("goal_revision") == row["goal"]["revision"] and
-                        continuation.get("context_epoch") == row.get("context_epoch", 0)) else ""
+                    valid_cont = (continuation.get("goal_revision") == row["goal"]["revision"] and
+                        continuation.get("context_epoch") == row.get("context_epoch", 0))
+                    prefix = continuation.get("text", "") if valid_cont else ""
+                    exhausted_count = int(continuation.get("count", 0) or 0) if valid_cont else cont_count
                     answer = (
                         sanitized(
                             memory_integration.strip_forged_receipt_and_guard_claims(
@@ -763,6 +813,10 @@ class AgentLoop:
                         if prefix
                         else message["content"]
                     )
+                    if decision.reason == "output_truncated_limit" and not wrap_up_reason:
+                        if not answer.strip():
+                            raise AgentError("agent_output_truncated")
+                        event(row, "response_continuation_exhausted", count=exhausted_count)
                     if wrap_up_reason and not answer.strip():
                         answer = (
                             "已达到任务预算上限，已保存当前进度并停止调用工具。"
@@ -774,8 +828,8 @@ class AgentLoop:
                             "content": answer,
                             "context_epoch": selected.get("context_epoch", 0),
                         })
-                    if len(answer.encode()) > row["limits"]["max_output_chars"]:
-                        raise AgentError("agent_output_limit")
+                    if len(answer.encode("utf-8")) > output_policy.ANSWER_TOTAL_LIMIT:
+                        answer = self._store_oversized_answer_artifact(row, answer)
                     if wrap_up_reason:
                         # A budget wrap-up is progress, not completion: stop resumably
                         # on the hard limit it spent instead of reporting "completed".
@@ -799,6 +853,39 @@ class AgentLoop:
                         automations.settle_automation_turn_in_tx(self.store, data, row)
                         subagents.on_subagent_settled_in_tx(data, row)
             self.store.transaction(finish)
+
+    def _store_oversized_answer_artifact(self, row: dict, full_answer: str) -> str:
+        raw_bytes = full_answer.encode("utf-8")
+        root_value = (row.get("local_execution") or {}).get("workspace_root") or ""
+        if not root_value:
+            root_value = self.store.default_workspace()
+            row.setdefault("local_execution", {})["workspace_root"] = root_value
+        root = Path(root_value)
+        out_dir = root / ".ryn" / "answers"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        goal_rev = (row.get("goal") or {}).get("revision", 1)
+        seq = int(row.get("event_cursor", 0)) + 1
+        filename = f"full-answer-r{goal_rev}-{seq}.md"
+        target_path = (out_dir / filename).resolve()
+        target_path.write_bytes(raw_bytes)
+        sha = hashlib.sha256(raw_bytes).hexdigest()
+        op_id = "op_answer_" + uuid.uuid4().hex
+        row.setdefault("workspace_file_receipts", {})[op_id] = {
+            "operation_id": op_id,
+            "tool": "ryn_file_write",
+            "status": "confirmed",
+            "goal_revision": goal_rev,
+            "confirmed_at": now(),
+            "preview": {"before_sha256": None},
+            "result": {
+                "written": True,
+                "path": str(target_path),
+                "sha256": sha,
+                "bytes": len(raw_bytes),
+            },
+        }
+        preview_prefix = raw_bytes[:output_policy.ANSWER_PREVIEW_BYTES].decode("utf-8", errors="ignore")
+        return f"{preview_prefix}\n\n完整内容见附件：{filename}"
 
     @staticmethod
     def _budget_notice(row: dict):

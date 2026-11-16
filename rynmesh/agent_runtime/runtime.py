@@ -1168,15 +1168,25 @@ class AgentRuntime(AgentLoop):
     def _reserve_output(self, selected):
         # Free room before this step reserves its output, instead of failing
         # the step's commit after the model has already answered.
+        is_model_step = not selected.get("queue") and not selected.get("verification")
+        step_limit = output_policy.answer_limit(selected) if is_model_step else selected["limits"]["max_output_chars"]
         self._relieve_storage("step", exclude={selected["id"]},
-                              reserve_bytes=output_policy.storage_growth(selected["limits"]["max_output_chars"])
+                              reserve_bytes=output_policy.storage_growth(
+                                  step_limit, row=selected, kind="model" if is_model_step else "tool"
+                              )
                               + results.MAX_RESULT_BYTES)
 
         def reserve(data):
             row = task(data, selected["id"])
             if row.get("in_flight"):
-                self.store.reserve(data, row["id"], output_policy.storage_growth(row["limits"]["max_output_chars"]),
-                                   extra_disk=results.MAX_RESULT_BYTES if row["queue"] else 0)
+                model_flight = (row["in_flight"].get("kind") == "model")
+                limit = output_policy.answer_limit(row) if model_flight else row["limits"]["max_output_chars"]
+                self.store.reserve(
+                    data,
+                    row["id"],
+                    output_policy.storage_growth(limit, row=row, kind="model" if model_flight else "tool"),
+                    extra_disk=results.MAX_RESULT_BYTES if row["queue"] else 0,
+                )
         self.store.transaction(reserve)
 
     def scope_catalog(self) -> dict:
@@ -3650,7 +3660,7 @@ class AgentRuntime(AgentLoop):
             # Arbitrary provider exceptions can contain URLs or credentials.
             safe = {"agent_context_limit", "agent_inference_failed", "agent_invalid_model_response",
                     "agent_model_busy", "agent_model_output_limit", "agent_model_unavailable",
-                    "agent_model_tools_unsupported", "agent_tool_call_limit", "agent_unknown_tool",
+                    "agent_model_tools_unsupported", "agent_output_truncated", "agent_tool_call_limit", "agent_unknown_tool",
                     "agent_approval_preview_changed", "agent_friend_inactive", "agent_friend_model_not_shareable",
                     "agent_model_not_shareable", "agent_model_uses_personal_space_access",
                     "agent_permission_revision_conflict", "agent_personal_space_required", "agent_tool_arguments_invalid"}

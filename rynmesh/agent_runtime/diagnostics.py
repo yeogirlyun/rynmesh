@@ -46,6 +46,7 @@ _ERROR_GUIDANCE = {
     "agent_model_destination_changed": ("review_destination", "Review the current model destination and explicitly renew data consent.", "/agent"),
     "agent_cancelled": ("review_receipts", "Review any dispatched operation receipts before deciding on a new task.", "/agent"),
     "agent_invalid_tool_call": ("review_tools", "Review model tool compatibility; no proposed operation should be assumed executed.", "/services/sources"),
+    "agent_output_truncated": ("review_models", "The model response was repeatedly truncated without producing a usable answer. Narrow the request or select another model.", "/agent"),
     "resource_read_timeout": ("review_resource_connection", "The authorized resource read timed out. Check the named connection using the owner Drives interface; do not modify it or rerun the task automatically. This does not establish a credential or quota problem.", "/drives"),
 }
 
