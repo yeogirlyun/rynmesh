@@ -2029,7 +2029,7 @@ class AgentRuntime(AgentLoop):
 
         def update(data):
             workspace_changed = "workspace_root" in values and values["workspace_root"] != data["settings"].get("workspace_root")
-            desktop_revoked = values.get("desktop_access") is False
+            desktop_revoked = bool(data["settings"].get("desktop_access")) and values.get("desktop_access") is False
             permission_changed = desktop_revoked or any(key in values and values[key] != data["settings"].get(key) for key in ("allowed_write_tools", "workspace_root"))
             changed = any(data["settings"].get(key) != value for key, value in values.items())
             for key in budget.SEGMENT_LIMITS:

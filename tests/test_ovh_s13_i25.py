@@ -116,6 +116,20 @@ def test_t4_global_automatic_default_preserves_task_confirmation_and_approval(tm
     assert tools.calls == []
 
 
+def test_unchanged_desktop_flag_in_settings_form_preserves_existing_approval(tmp_path):
+    runtime, _, _, _ = make_runtime(tmp_path, assistant(name="share_service", args={"service_id": "svc1"}))
+    runtime.update_settings({"permission_mode": "confirm_changes", "desktop_access": False})
+    task = runtime.create({"message": "Share service"})
+    advance(runtime, 2)
+    pending = runtime.get(task["id"])
+    # The settings dialog submits the stored desktop flag alongside the new default.
+    runtime.update_settings({"permission_mode": "automatic", "desktop_access": False})
+    current = runtime.get(task["id"])
+    assert current["pending_approval"] == pending["pending_approval"]
+    assert current["control_revision"] == pending["control_revision"]
+    assert current["status"] == "waiting_approval"
+
+
 def test_t5_explicit_read_only_sync_pauses_then_changes_each_live_task(tmp_path):
     runtime, _, _, _ = make_runtime(tmp_path)
     runtime.update_settings({"permission_mode": "automatic"})
