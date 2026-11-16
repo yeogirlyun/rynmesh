@@ -34,53 +34,5 @@
     "site_rate_limited": "请求太频繁，稍后再试。",
     "site_unavailable": "现在打不开，稍后再试。"
   },
-  "studio": {
-    "eyebrow": "开放的页面",
-    "title": "我的做图服务",
-    "openHelp": "打开后，同事在「开放的页面」里能看到并打开你的做图页面。关掉后同事那边打不开。",
-    "notPublisher": "公司没有把你设为发布人，同事现在打不开这台电脑上的页面。请让管理员把你加入发布人名单。",
-    "notConnected": "这台电脑还没连接公司，同事看不到这个页面。先在公司插件里登录。",
-    "modelLabel": "出图用的模型",
-    "modelReady": "已登录，可以出图",
-    "model": {
-      "codex_missing": "这台电脑没有安装 Codex，出不了图",
-      "codex_signed_out": "Codex 没有登录，出不了图"
-    },
-    "today": "今天做了",
-    "queueing": "正在排队",
-    "who": "谁能用",
-    "noMembers": "还没有同事名单，连接公司后再选。",
-    "images_other": "{{count}} 张",
-    "images": "{{count}} 张",
-    "jobs": "{{count}} 个",
-    "jobs_other": "{{count}} 个",
-    "queue": "队列",
-    "queueHelp": "一次做一张，按提交顺序",
-    "queueEmpty": "现在没有任务。",
-    "running": "生成中 {{time}}",
-    "queued": "排队",
-    "prioritize": "提前",
-    "cancel": "取消",
-    "stop": "停止",
-    "usage": "谁用了多少",
-    "usageEmpty": "还没有人用过。",
-    "usageNote": "图都用你的 GPT 额度生成，作品只存在你这台电脑上。你的电脑关机或退出 Ryn，同事那边就显示离线。",
-    "col": {
-      "order": "顺序",
-      "who": "同事",
-      "brief": "描述",
-      "size": "尺寸",
-      "state": "状态",
-      "actions": "操作",
-      "today": "今天",
-      "month": "近 30 天",
-      "failed": "失败"
-    },
-    "errors": {
-      "image_not_found": "这个任务已经不在了。",
-      "image_not_queued": "这个任务已经开始了，不能提前。"
-    },
-    "modelName": "Codex · GPT"
-  },
   "manage": "管理"
 }

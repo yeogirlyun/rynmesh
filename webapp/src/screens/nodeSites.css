@@ -33,20 +33,3 @@
 .ns-offline { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 40px 24px; text-align: center; }
 .ns-offline h2 { margin: 0; font-size: 1.25rem; }
 .ns-offline p { margin: 0; max-width: 440px; color: var(--text-secondary); }
-.ns-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
-.ns-stat { padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; margin: 0; }
-.ns-stat label { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; }
-.ns-page input[type="radio"], .ns-page input[type="checkbox"] { width: 16px; height: 16px; margin: 0; flex: none; }
-.ns-nowrap { white-space: nowrap; }
-.ns-big { font-size: 1.4rem; }
-.ns-ok { color: var(--accent-green); font-size: 0.8rem; margin: 0; }
-.ns-table-wrap { overflow-x: auto; }
-.ns-table { width: 100%; min-width: 600px; border-collapse: collapse; font-size: 0.85rem; }
-.ns-table th { text-align: left; font-weight: 500; color: var(--text-secondary); padding: 8px; border-bottom: 1px solid var(--border-color); }
-.ns-table td { padding: 10px 8px; border-bottom: 1px solid var(--border-color); vertical-align: middle; }
-.ns-table tr:last-child td { border-bottom: none; }
-.ns-brief { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ns-actions { white-space: nowrap; display: flex; gap: 12px; }
-.ns-link { border: none; background: none; padding: 4px 0; color: var(--accent-blue, #2e55d6); cursor: pointer; font: inherit; }
-.ns-link.is-danger { color: var(--accent-red, #b42318); }
-.ns-link:disabled { opacity: 0.5; cursor: default; }

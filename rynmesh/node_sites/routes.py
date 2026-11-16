@@ -20,6 +20,7 @@ from .store import SiteStore
 
 class NodeSites:
     def __init__(self, engine: DropEngine, home: Path, *, gateway_port: int | None = None) -> None:
+        self.owner_paths: dict[str, str] = {}
         self.store = SiteStore(home)
         self.host = SiteHost(engine, self.store)
         self.client = SiteClient(engine, self.store)
@@ -93,7 +94,10 @@ def install_node_sites(app: FastAPI, *, engine: DropEngine, home: Path,
     @app.get("/api/local/node-sites/mine")
     async def node_sites_mine(request: Request):
         local_control(request)
-        return {"sites": [SiteStore.public(sid, row) for sid, row in sorted(sites.store.sites().items())],
+        return {"sites": [{**SiteStore.public(sid, row), "owner_path": sites.owner_paths.get(sid),
+                            "available": not row.get("builtin") or sid in sites.host.builtins}
+                           for sid, row in sorted(sites.store.sites().items())],
+                "plugins": getattr(app.state, "site_plugins", {}),
                 "members": await asyncio.to_thread(sites.members)}
 
     @app.post("/api/local/node-sites/mine")

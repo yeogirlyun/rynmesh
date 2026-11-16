@@ -14,6 +14,8 @@ export interface RemoteSiteDevice {
 export interface Audience { mode: "all" | "members"; members: string[] }
 /** A page this device hosts. The backend token is never returned after registration. */
 export interface HostedSite {
+  owner_path?: string | null;
+  available?: boolean;
   site_id: string;
   title: string;
   port: number;

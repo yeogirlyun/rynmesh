@@ -2854,9 +2854,9 @@ def create_app(store: RynmeshStore | None = None):
 
     node_sites = install_node_sites(app, engine=drop_engine, home=active_store.home, local_control=local_control)
 
-    from .image_studio import install_image_studio
+    from .node_sites.plugins import install_site_plugins
 
-    install_image_studio(app, home=active_store.home, sites=node_sites, local_control=local_control)
+    install_site_plugins(app, home=active_store.home, sites=node_sites, local_control=local_control)
 
     from .exchange.routes import install_exchange
 
