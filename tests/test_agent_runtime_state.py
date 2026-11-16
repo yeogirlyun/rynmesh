@@ -64,7 +64,7 @@ def test_model_cannot_forge_authoritative_criterion_fields(tmp_path, forged):
     advance(runtime, 3)
     done = runtime.get(row["id"])
     assert done["criteria"] == initial and done["plan"]["steps"] == []
-    assert "agent_invalid_control_proposal" in model.calls[-1][1][-1]["content"]
+    assert "agent_invalid_control_proposal" in model.calls[-1][1][-2]["content"]
     assert done["outcome"]["status"] == "unverified"
 
 

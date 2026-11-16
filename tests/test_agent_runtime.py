@@ -122,8 +122,8 @@ def test_encrypted_loop_inspect_approve_change_verify(tmp_path):
     assert done["result"] == "Verified svc1 is shared."
     assert [call[0] for call in tools.calls] == ["inspect_service", "share_service", "inspect_service"]
     assert len({call[2] for call in tools.calls}) == 3
-    assert model.calls[-1][1][-1]["role"] == "tool"
-    assert json.loads(model.calls[-1][1][-1]["content"])["shared"] is True
+    assert model.calls[-1][1][-2]["role"] == "tool"
+    assert json.loads(model.calls[-1][1][-2]["content"])["shared"] is True
     assert "never-expose-test-secret" not in json.dumps(done)
     ciphertext = (tmp_path / "sessions.json").read_text()
     assert "Inspect and share" not in ciphertext and "Verified svc1" not in ciphertext
@@ -181,7 +181,7 @@ def test_denial_becomes_tool_result_then_model_continues(tmp_path):
     runtime.action(row["id"], {"action": "deny", "approval_id": waiting["pending_approval"]["id"], "expected_revision": waiting["revision"]})
     advance(runtime)
     assert runtime.get(row["id"])["status"] == "completed"
-    assert "owner_denied_operation" in model.calls[-1][1][-1]["content"]
+    assert "owner_denied_operation" in model.calls[-1][1][-2]["content"]
     assert tools.calls == []
 
 
@@ -630,7 +630,7 @@ def test_definitely_rejected_write_returns_to_model_without_ambiguous_marker(tmp
     advance(restarted)
     assert restarted.get(row["id"])["status"] == "completed"
     assert not tools.shared
-    assert "agent_approval_preview_changed" in model.calls[-1][1][-1]["content"]
+    assert "agent_approval_preview_changed" in model.calls[-1][1][-2]["content"]
 
 
 def test_read_failure_is_model_visible_and_can_be_corrected(tmp_path):
@@ -639,7 +639,7 @@ def test_read_failure_is_model_visible_and_can_be_corrected(tmp_path):
     row = runtime.create({"message": "inspect A"})
     advance(runtime, 3)
     assert runtime.get(row["id"])["status"] == "completed"
-    assert "agent_model_unavailable" in model.calls[-1][1][-1]["content"]
+    assert "agent_model_unavailable" in model.calls[-1][1][-2]["content"]
 
 
 @pytest.mark.parametrize("automatic,settings_change", [

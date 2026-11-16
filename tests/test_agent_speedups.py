@@ -203,6 +203,8 @@ def test_system_prompt_changes_only_in_state_lines_after_a_write(tmp_path):
     from rynmesh.llm_package.codex_threads import state_lines
     runtime, model, _ = workstation(tmp_path,
         assistant(name="ryn_file_write", args={"path": "a.txt", "content": "x\n"}), assistant("Wrote a.txt."))
+    runtime.catalog.list_models = lambda: [{"id": "local:test", "name": "Test", "source": "local_api",
+                                            "adapter": "codex_cli", "available": True, "agent_supported": True}]
     runtime.create({"message": "Write a.txt."})
     advance(runtime, 3)
     assert model.calls[0][1][0] == model.calls[1][1][0]  # Pinned base stays stable.

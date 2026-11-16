@@ -223,7 +223,7 @@ def test_invalid_tool_call_is_explained_on_the_retry_instead_of_repeated_blind(n
         for tc in (m.get("tool_calls") or []) if tc.get("id") == "bad"
     )
     assert assistant_bad["function"]["arguments"] == raw_args
-    paired = requests[2]["messages"][-1]
+    paired = requests[2]["messages"][-2]
     assert paired["role"] == "tool" and paired["tool_call_id"] == "bad"
     assert json.loads(paired["content"]) == actual_result
     good_tool = next(m for m in requests[3]["messages"] if m.get("role") == "tool" and m.get("tool_call_id") == "good")
@@ -773,7 +773,7 @@ def test_model_reviews_and_repairs_its_changes_in_the_same_conversation(node, mo
     seen = {}
 
     def restore(request):
-        observation = json.loads(request["messages"][-1]["content"])
+        observation = json.loads(request["messages"][-2]["content"])
         seen["observed"] = observation["text"]
         assert observation["text"] == weakened
         return call("ryn_file_edit", json.dumps({"path": "test_keep.py", "old_text": "    assert one\n", "new_text": "    assert one\n    assert two\n",

@@ -12,7 +12,7 @@ from test_agent_runtime import advance, assistant, make_runtime
 from test_codex_object_protocol import assert_strict_subset
 
 from rynmesh.agent_runtime import planning, verification
-from rynmesh.agent_runtime.prompt import PLAN, authority
+from rynmesh.agent_runtime.prompt import PLAN, authority, progress_state
 from rynmesh.agent_runtime.runtime import AgentRuntime
 from rynmesh.agent_runtime.store import AgentStore, AgentToolRejected
 from rynmesh.llm_package.codex_tools import _response_schema, _validated
@@ -216,9 +216,9 @@ def test_personal_work_plan_survives_restart_and_delivers_actual_file(tmp_path):
     advance(runtime, 4)
     raw = runtime.store.read()["tasks"][task["id"]]
     rid = raw["receipts"][-1]["id"]
-    header = next(m["content"] for m in runtime._context(raw) if m["role"] == "developer" and "Server control state:" in m["content"])
-    state_line = next(line for line in header.splitlines() if line.startswith("Server control state: "))
-    state = json.loads(state_line.removeprefix("Server control state: "))
+    progress_msg = next(m["content"] for m in runtime._context(raw) if "Server progress state: " in m["content"])
+    state_line = next(line for line in progress_msg.splitlines() if line.startswith("Server progress state: "))
+    state = json.loads(state_line.removeprefix("Server progress state: "))
     assert state["plan_revision"] == state["planning_state"]["plan_revision"] == 1
     assert state["planning_state"]["unfinished_step_ids"] == ["read", "deliver"]
     assert state["planning_state"]["recent_receipts"][0]["id"] == rid
@@ -240,7 +240,7 @@ def test_personal_work_plan_survives_restart_and_delivers_actual_file(tmp_path):
     assert done["outcome"]["status"] == "unverified"  # Readback is not independent goal assessment.
     assert (workspace / "summary.txt").read_text() == "Summary of personal project notes"
     assert restarted.artifacts(task["id"])["files"][0]["status"] == "current"
-    assert rid in authority(raw) and "recent_receipts" in authority(raw)
+    assert rid in progress_state(raw) and "recent_receipts" in progress_state(raw)
     runtime.tools.local.processes.close()
 
 

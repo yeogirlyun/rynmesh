@@ -17,6 +17,10 @@ def raw(runtime, task_id):
 
 
 def system_state(messages):
+    for message in messages:
+        content = message.get("content") or ""
+        if isinstance(content, str) and "Server progress state: " in content:
+            return json.loads(content.split("Server progress state: ", 1)[1].split("\n", 1)[0])
     system = instruction_text(messages)
     return json.loads(system.split("Server control state: ", 1)[1].split("\n", 1)[0])
 

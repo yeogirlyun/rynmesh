@@ -309,7 +309,7 @@ def test_observed_file_version_tracks_reads_detects_external_changes_and_survive
             (workspace / "notes.txt").write_text("alpha\nEXTERNAL\n", encoding="utf-8")
             return assistant(name="ryn_file_edit", args={"path": "notes.txt", "old_text": "GAMMA\n", "new_text": "DELTA\n"})
         if call_index == 3:
-            last_tool = json.loads(messages[-1]["content"])
+            last_tool = json.loads(messages[-2]["content"])
             assert last_tool["error"] == "agent_local_file_changed_read_again"
             assert "correction" in last_tool
             return assistant(name="ryn_file_read", args={"path": "notes.txt"})
@@ -490,7 +490,7 @@ def test_core_tools_remain_pinned_with_internal_specs_in_moderate_additive_windo
 
 
 def test_codex_thread_reuses_session_across_tool_execution_permission_updates_tool_loading_and_followup():
-    from rynmesh.agent_runtime.prompt import PROMPT_VERSION, SYSTEM, authority
+    from rynmesh.agent_runtime.prompt import PROMPT_VERSION, SYSTEM, authority, progress_state
     from rynmesh.llm_package import codex_threads
 
     class DummyRpc:
@@ -527,7 +527,7 @@ def test_codex_thread_reuses_session_across_tool_execution_permission_updates_to
     funcs_v1 = {spec["function"]["name"]: spec for spec in specs(tool_menu.CORE_TOOLS)}
 
     row1 = make_row(goal_rev=1)
-    sys1 = SYSTEM + authority(row1)
+    sys1 = SYSTEM + authority(row1) + "\n" + progress_state(row1)
     msgs1 = [{"role": "system", "content": sys1}, {"role": "user", "content": "Inspect app.py"}]
     conv1 = codex_threads.Conversation(msgs1, funcs_v1, scope={"requester": "local_owner", "window": key[-1]})
     session = pool.session(DummyRpc(), key)
@@ -537,13 +537,13 @@ def test_codex_thread_reuses_session_across_tool_execution_permission_updates_to
     ]}
     conv1.finish(assistant_call)
 
-    # Turn 2: Tool executed, operation_permissions updated in Server control state, plus dynamic tool loaded.
+    # Turn 2: Tool executed, operation_permissions updated in Server progress state, plus dynamic tool loaded.
     row2 = make_row(goal_rev=1, receipts=[{
         "tool": "ryn_shell_execute", "effect": "write", "status": "confirmed", "authorization": "read",
         "operation_id": "op1", "arguments": {"command": "rg foo app.py"}, "arguments_sha256": "abc",
         "goal_revision": 1, "scope_revision": 0, "context_epoch": 0,
     }])
-    sys2 = SYSTEM + authority(row2)
+    sys2 = SYSTEM + authority(row2) + "\n" + progress_state(row2)
     msgs2 = [
         {"role": "system", "content": sys2},
         {"role": "user", "content": "Inspect app.py"},
@@ -564,8 +564,8 @@ def test_codex_thread_reuses_session_across_tool_execution_permission_updates_to
 
     # Turn 3: Same-window owner follow-up message increments goal_revision and reuses the session.
     row3 = make_row(goal_rev=2, receipts=row2["receipts"])
-    _ = SYSTEM + authority(row3)
-    msgs3 = [*msgs2, final_msg, {"role": "user", "content": "Now change x to 2."}]
+    sys3 = SYSTEM + authority(row3) + "\n" + progress_state(row3)
+    msgs3 = [{"role": "system", "content": sys3}, *msgs2[1:], final_msg, {"role": "user", "content": "Now change x to 2."}]
     conv3 = codex_threads.Conversation(msgs3, funcs_v2, scope={"requester": "local_owner", "window": key[-1]})
     leased3 = pool.lease(key, conv3)
     assert leased3 is session
