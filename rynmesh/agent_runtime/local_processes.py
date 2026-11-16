@@ -440,10 +440,24 @@ class Processes:
         with self.lock:
             items = list(self.items.values())
         for item in items:
-            if item["process"].poll() is None or item.get("tty"):
-                terminate(item["process"])
-            if item.get("cleanup_done"):
-                item["cleanup_done"].wait(5)
+            if item.get("_closed"):
+                continue
+            proc = item["process"]
+            cleanup_done = item.get("cleanup_done")
+            try:
+                if (
+                    proc.poll() is None
+                    or item.get("tty")
+                    or (cleanup_done is not None and not cleanup_done.is_set())
+                ):
+                    terminate(proc)
+                if cleanup_done is not None:
+                    cleanup_done.wait(5)
+            except Exception:
+                pass
+            finally:
+                if proc.poll() is not None and (cleanup_done is None or cleanup_done.is_set()):
+                    item["_closed"] = True
 
     def _evict_completed_locked(self, task_id):
         now_mono = time.monotonic()
