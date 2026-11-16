@@ -525,6 +525,8 @@ class AgentRuntime(AgentLoop):
         return {"effect": "read", "title": name, "internal": True} if name in ALL_INTERNAL_NAMES else self.tools.metadata(name)
 
     def _history(self, row: dict) -> list[dict]:
+        if "_history_override" in row:
+            return copy.deepcopy(row["_history_override"])
         epoch = row.get("context_epoch", 0)
         return [message for message in row["messages"] if message["role"] == "user" or message.get("context_epoch", 0) == epoch]
 
@@ -704,7 +706,7 @@ class AgentRuntime(AgentLoop):
         digest = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()[:48]
         return f"{digest}:subagent" if is_subagent else digest
 
-    def _complete(self, row: dict, messages: list, specs: list, cancelled, on_event, *, nested=False, stage=None, output_cap=None, request_id=None, image_context=None):
+    def _complete(self, row: dict, messages: list, specs: list, cancelled, on_event, *, nested=False, stage=None, output_cap=None, request_id=None, image_context=None, reasoning_override=None):
         # Measure the final provider-visible projection, including JSON string
         # escaping and validated inline image bounds, before reserving or dispatching inference.
         model = self._model_metadata(row["model_id"]) or {}
@@ -756,13 +758,21 @@ class AgentRuntime(AgentLoop):
         if active_request_id and getattr(self.model, "supports_request_id", False) is True:
             options["request_id"] = active_request_id
 
-        if "reasoning_effort" in row:
+        override_effort = None
+        if reasoning_override is not None and getattr(self.model, "supports_reasoning_effort", False) is True:
+            try:
+                override_effort = reasoning.validate(model, reasoning_override)
+            except AgentError:
+                override_effort = None
+        if override_effort is not None:
+            options["reasoning_effort"] = override_effort
+        elif "reasoning_effort" in row:
             options["reasoning_effort"] = reasoning.validate(model, row["reasoning_effort"])
             if getattr(self.model, "supports_reasoning_effort", False) is not True:
                 raise AgentError("agent_reasoning_effort_unsupported")
         # The window's own conversation may continue a provider thread across
-        # turns. Summaries (no tools) and nested checks are separate requests.
-        if not nested and specs and getattr(self.model, "supports_conversation_key", False) is True:
+        # turns. Summaries (stage="compaction") and nested checks are separate requests.
+        if not nested and stage is None and specs and getattr(self.model, "supports_conversation_key", False) is True:
             conv_key = (row["id"] + ":edit:" + str(row["conversation_revision"])
                         if row.get("conversation_revision") else row["id"])
             if row.get("memory_conversation_epoch"):
@@ -1352,10 +1362,13 @@ class AgentRuntime(AgentLoop):
             return public_task(row, settings=data["settings"])
         return self.store.transaction(apply)
 
+    COMPACT_PROMPT_MAX_BYTES = 4000
+    _EXTRA_SETTINGS = {"compact_prompt": ""}
+
     def configuration_snapshot(self, *, display_only=False) -> dict:
         data = self.store.inspect(lambda state: {key: state[key] for key in
             ("settings", "settings_revision", "settings_context_budget_provenance") if key in state})
-        settings = {**DEFAULT_SETTINGS, **data["settings"]}
+        settings = {**DEFAULT_SETTINGS, **self._EXTRA_SETTINGS, **data["settings"]}
         policy = self._settings_context_policy(settings, data.get("settings_context_budget_provenance"),
                                                display_only=display_only)
         return {"settings": settings, "settings_revision": data.get("settings_revision", 0), "context_budget_policy": policy}
@@ -1369,8 +1382,12 @@ class AgentRuntime(AgentLoop):
                                      "context_budget_provenance": provenance})
 
     def update_settings(self, values: dict) -> dict:
-        if not isinstance(values, dict) or set(values) - set(DEFAULT_SETTINGS):
+        if not isinstance(values, dict) or set(values) - (set(DEFAULT_SETTINGS) | set(self._EXTRA_SETTINGS)):
             raise AgentError("agent_invalid_settings")
+        if "compact_prompt" in values:
+            cp = values["compact_prompt"]
+            if not isinstance(cp, str) or len(cp.encode("utf-8")) > self.COMPACT_PROMPT_MAX_BYTES or "\x00" in cp:
+                raise AgentError("agent_invalid_settings")
         from .local_tools import validate_configuration
         validate_configuration(values)
         if "enabled" in values and type(values["enabled"]) is not bool:
@@ -1465,8 +1482,8 @@ class AgentRuntime(AgentLoop):
         saved = self.store.transaction(update)
         # Display metadata must not hold the encrypted state lock or refresh
         # providers. Task admission still resolves its current model separately.
-        settings = saved["settings"]
-        policy = self._settings_context_policy({**DEFAULT_SETTINGS, **settings}, saved["provenance"], display_only=True)
+        settings = {**DEFAULT_SETTINGS, **self._EXTRA_SETTINGS, **saved["settings"]}
+        policy = self._settings_context_policy(settings, saved["provenance"], display_only=True)
         return {**settings, "context_budget_policy": policy}
 
     def models(self) -> list[dict]:

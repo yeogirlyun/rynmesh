@@ -22,6 +22,8 @@ def _stream_max_retries(diagnostics):
 
 def limit(code, diagnostics):
     diagnostics = diagnostics if isinstance(diagnostics, dict) else {}
+    if code == "agent_compaction_incomplete":
+        return 2
     if code not in NETWORK_ERRORS:
         return 1  # Existing malformed response / compaction recovery.
     reason = diagnostics.get("network_reason")
