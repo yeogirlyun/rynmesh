@@ -34,6 +34,32 @@ DEFAULT_IMAGE = (
     "ghcr.io/ggml-org/llama.cpp:server@"
     "sha256:db8e923e6edc9241ad788979af79543a1e1ba55dbb7d41e62490ef0d0ad3c8e7"
 )
+_HOST_PORT_RE = re.compile(
+    r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*"
+    r"|\[[0-9A-Fa-f:]+\])(?::([0-9]{1,5}))?"
+)
+
+
+def _normalize_docker_registry_mirror(mirror: str | None = None) -> str:
+    raw = (mirror if mirror is not None else os.environ.get("RYNMESH_DOCKER_REGISTRY_MIRROR", "")).strip()
+    if not raw:
+        return ""
+    if raw.lower().startswith("http://"):
+        raise LifecycleError("Docker registry mirror must not use plain HTTP")
+    if raw.lower().startswith("https://"):
+        raw = raw[len("https://"):]
+    if raw.endswith("/"):
+        raw = raw[:-1]
+    if not raw or any(ch in raw for ch in ("/", "?", "#", "@", "\\", " ", "\t", "\r", "\n")):
+        raise LifecycleError("Docker registry mirror must specify registry host only")
+    match = _HOST_PORT_RE.fullmatch(raw)
+    if not match:
+        raise LifecycleError("invalid Docker registry mirror host")
+    port_text = match.group(1)
+    if port_text is not None and not (1 <= int(port_text) <= 65535):
+        raise LifecycleError("invalid Docker registry mirror port")
+    return raw
 
 
 def _docker_pull(
@@ -44,6 +70,8 @@ def _docker_pull(
     timeout_s: float = 600,
 ) -> None:
     docker = _docker()
+    if progress:
+        progress("pull_runtime", 72, "Preparing the local inference runtime")
     process = subprocess.Popen(
         [docker, "pull", image],
         stdin=subprocess.DEVNULL,
@@ -89,14 +117,22 @@ def _container_name(package_id: str) -> str:
     return "rynmesh-llm-" + re.sub(r"[^a-z0-9_.-]", "-", package_id.lower())
 
 
-def _pinned_runtime_image(manifest: LLMPackageManifest | None = None) -> str:
+def _pinned_runtime_image(
+    manifest: LLMPackageManifest | None = None,
+    *,
+    apply_mirror: bool = True,
+) -> str:
     image = str((manifest.install_source if manifest else {}).get("runtime_image") or DEFAULT_IMAGE)
     if image == "ghcr.io/ggml-org/llama.cpp:server":
         # Migrate manifests created by the pre-pinning preview to the reviewed
         # digest without ever pulling or running the mutable legacy tag.
-        return DEFAULT_IMAGE
+        image = DEFAULT_IMAGE
     if not re.fullmatch(r"[^\s@]+@sha256:[a-f0-9]{64}", image):
         raise LifecycleError("managed runtime image must be pinned by SHA-256 digest")
+    if apply_mirror:
+        mirror_host = _normalize_docker_registry_mirror()
+        if mirror_host and image.startswith("ghcr.io/"):
+            image = f"{mirror_host}/{image[len('ghcr.io/'):]}"
     return image
 
 
@@ -118,17 +154,34 @@ def _docker_state(package_id: str) -> dict[str, Any]:
             "status": str(state.get("Status") or "unknown"), "exit_code": state.get("ExitCode")}
 
 
-def _run_container(manifest: LLMPackageManifest) -> None:
+def _image_present(docker: str, image: str) -> bool:
+    result = subprocess.run(
+        [docker, "image", "inspect", image],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    return result.returncode == 0
+
+
+def _run_container(
+    manifest: LLMPackageManifest,
+    *,
+    progress: Any = None,
+    cancel_check: Any = None,
+) -> None:
     docker = _docker()
     model = Path(manifest.model_path).resolve()
     if not model.is_file():
         raise LifecycleError("configured model file is missing")
     if manifest.checksum and fingerprint_file(model) != manifest.checksum:
         raise LifecycleError("configured model checksum no longer matches; refusing to start")
+    runtime_image = _pinned_runtime_image(manifest)
+    if not _image_present(docker, runtime_image):
+        _docker_pull(runtime_image, progress=progress, cancel_check=cancel_check, timeout_s=600)
     name = _container_name(manifest.package_id)
     subprocess.run([docker, "rm", "-f", name], capture_output=True, timeout=30)
     port = int(urlparse(manifest.base_url).port or 8080)
-    runtime_image = _pinned_runtime_image(manifest)
     if not manifest.runtime_api_key:
         manifest.runtime_api_key = secrets.token_urlsafe(API_KEY_BYTES)
     command = [
@@ -163,17 +216,28 @@ def available() -> tuple[bool, str]:
     return True, ""
 
 
-def prepare(*, progress: Any = None, cancel_check: Any = None, root: Any = None) -> None:
-    """Pull the pinned image (was `_docker_pull(DEFAULT_IMAGE, ...)`).
+def prepare(
+    manifest: LLMPackageManifest | None = None,
+    *,
+    progress: Any = None,
+    cancel_check: Any = None,
+    root: Any = None,
+) -> None:
+    """Pull the pinned image declared by `manifest` (or `DEFAULT_IMAGE`).
 
     `root` exists only so both backends share one `prepare` signature; the
     Docker image lives in the engine's own store, not under the Rynmesh root.
     """
-    _docker_pull(DEFAULT_IMAGE, progress=progress, cancel_check=cancel_check)
+    _docker_pull(_pinned_runtime_image(manifest), progress=progress, cancel_check=cancel_check)
 
 
-def start(manifest: LLMPackageManifest) -> None:
-    _run_container(manifest)
+def start(
+    manifest: LLMPackageManifest,
+    *,
+    progress: Any = None,
+    cancel_check: Any = None,
+) -> None:
+    _run_container(manifest, progress=progress, cancel_check=cancel_check)
 
 
 def stop(manifest: LLMPackageManifest) -> bool:
@@ -196,4 +260,4 @@ def state(manifest: LLMPackageManifest) -> dict[str, Any]:
 
 
 def install_source(manifest_or_none: LLMPackageManifest | None) -> dict[str, str]:
-    return {"runtime_image": _pinned_runtime_image(manifest_or_none)}
+    return {"runtime_image": _pinned_runtime_image(manifest_or_none, apply_mirror=False)}

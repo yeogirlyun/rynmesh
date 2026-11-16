@@ -25,6 +25,7 @@ _DEFAULTS: dict[str, Any] = {
     "notification_frequency": "immediate",
     "notification_quiet_start": 22,
     "notification_quiet_end": 8,
+    "llm_download_mirror": "",
 }
 _WHITELIST = set(_DEFAULTS)
 
@@ -88,6 +89,12 @@ class SettingsStore:
                     data[k] = number
             elif k in {"ai_model", "node_name"}:
                 data[k] = str(v or "").strip()[:256]
+            elif k == "llm_download_mirror":
+                if v is not None and not isinstance(v, str):
+                    raise ValueError("llm_download_mirror must be an HTTPS URL")
+                from .llm_package.catalog import normalize_download_mirror
+
+                data[k] = normalize_download_mirror("" if v is None else v)
             elif k == "recap":
                 # Nested config block. Merged, not replaced, so a partial patch
                 # can't silently wipe SMTP credentials the caller didn't send.

@@ -212,7 +212,8 @@ def describe(exc, phase="request", envelope=None):
                 elif exc.code == 422 and isinstance(envelope, dict) and any(k in envelope for k in ("detail", "error", "code", "type")):
                     result["network_reason"] = "request_rejected"
 
-        value = (exc.headers or {}).get("Retry-After")
+        headers = exc.headers or {}
+        value = headers.get("Retry-After") or headers.get("retry-after")
         if value:
             try:
                 seconds = float(value)
@@ -236,13 +237,48 @@ def describe(exc, phase="request", envelope=None):
         kind = "dns_temporary" if number == socket.EAI_AGAIN else "dns_not_found"
     elif isinstance(cause, TimeoutError):
         kind = "timeout"
-    elif number in {errno.ECONNRESET, errno.ECONNABORTED, 10054, 10053}:
+    elif isinstance(cause, ConnectionResetError) or number in {errno.ECONNRESET, errno.ECONNABORTED, 10054, 10053}:
         kind = "reset"
-    elif number in {errno.ECONNREFUSED, 10061}:
+    elif isinstance(cause, ConnectionRefusedError) or number in {errno.ECONNREFUSED, 10061}:
         kind = "refused"
     else:
         kind = "connection"
     return {"network_reason": kind, "network_phase": phase}
+
+
+DOWNLOAD_REASON_LABELS = {
+    "dns_not_found": "DNS 解析失败",
+    "dns_temporary": "DNS 解析失败",
+    "reset": "连接被重置",
+    "tls_certificate": "证书校验失败",
+    "tls": "TLS 连接失败",
+    "timeout": "超时",
+    "idle_timeout": "超时",
+    "total_timeout": "超时",
+    "refused": "连接被拒绝",
+    "connection": "网络连接失败",
+}
+
+
+def download_retry_delay(exc, default_backoff: float) -> tuple[bool, float]:
+    """Return `(should_retry, wait_seconds)` for a download transport failure."""
+    if isinstance(exc, HTTPError):
+        if exc.code == 429 or 500 <= exc.code < 600:
+            info = describe(exc, phase="download")
+            wait = min(float(info["retry_after_seconds"]), 60.0) if "retry_after_seconds" in info else default_backoff
+            return True, wait
+        return False, 0.0
+    return True, default_backoff
+
+
+def format_download_failure(exc, *, filename: str, sha256: str, directory) -> str:
+    """Closed Chinese failure reason plus manual placement instructions."""
+    info = describe(exc, phase="download")
+    if "http_status" in info:
+        reason_text = f"HTTP {int(info['http_status'])}"
+    else:
+        reason_text = DOWNLOAD_REASON_LABELS.get(info.get("network_reason", "connection"), "网络连接失败")
+    return f"下载失败：{reason_text}。可手动下载 {filename}（SHA-256: {sha256.lower()}）并放到目录 {directory}"
 
 
 def classify_stream_error(event, phase="read"):
