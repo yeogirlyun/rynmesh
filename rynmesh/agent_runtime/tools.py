@@ -349,10 +349,23 @@ class RynTools:
                     "arguments_sha256": operation["arguments_sha256"], "result": copy.deepcopy(prior[1])}}
 
     def specs(self, context=None):
-        return [{"type": "function", "function": {"name": name, "description": row[0], "parameters": copy.deepcopy(row[3])}}
-                for name, row in {**_SPECS, **LOCAL_SPECS}.items()] + [copy.deepcopy(CODE_MODE_SPEC)] + self.diagnostics.specs() + (copy.deepcopy(APP_SPECS) if getattr(self.app.state, "node_apps", None) else []) + self.craft_plugins.specs() + self.craft.specs() + self.extensions.specs(context)
+        from .native_computer import filter_computer_tool_specs
+        raw = (
+            [{"type": "function", "function": {"name": name, "description": row[0], "parameters": copy.deepcopy(row[3])}}
+             for name, row in {**_SPECS, **LOCAL_SPECS}.items()]
+            + [copy.deepcopy(CODE_MODE_SPEC)]
+            + self.diagnostics.specs()
+            + (copy.deepcopy(APP_SPECS) if getattr(self.app.state, "node_apps", None) else [])
+            + self.craft_plugins.specs()
+            + self.craft.specs()
+            + self.extensions.specs(context)
+        )
+        return filter_computer_tool_specs(raw, store=self.store)
 
     def spec(self, name, context=None):
+        from .native_computer import computer_platform_status, is_computer_control_tool_name
+        if is_computer_control_tool_name(name) and not computer_platform_status(self.store)["supported"]:
+            return None
         if name == CODE_MODE_NAME:
             return copy.deepcopy(CODE_MODE_SPEC["function"])
         if self.extensions.handles(name):

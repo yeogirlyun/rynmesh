@@ -31,9 +31,17 @@ MANIFEST_SCHEMA_VERSION = 1
 RECEIPT_SCHEMA_VERSION = 1
 
 SUPPORTED_TARGET_TRIPLE = "x86_64-pc-windows-msvc"
+# Multi-target triples (macOS AX/CGEvent, Windows ARM64 native) await owner decision (S11-I26);
+# keep supported target triples centralized in one tuple/helper for future expansion.
+SUPPORTED_TARGET_TRIPLES: tuple[str, ...] = (SUPPORTED_TARGET_TRIPLE,)
 INSTALLED_EXECUTABLE_FILENAME = "ryn_computer_use.exe"
 TAURI_STAGED_NATIVE_FILENAME = f"ryn_computer_use-{SUPPORTED_TARGET_TRIPLE}.exe"
 TAURI_STAGED_PEER_FILENAME = f"rynmesh-peer-{SUPPORTED_TARGET_TRIPLE}.exe"
+
+
+def supported_target_triples() -> tuple[str, ...]:
+    """Return the centralized tuple of supported native computer-use target triples."""
+    return SUPPORTED_TARGET_TRIPLES
 EXPECTED_TAURI_EXTERNAL_BINS = (
     "binaries/rynmesh-peer",
     "binaries/ryn_computer_use",

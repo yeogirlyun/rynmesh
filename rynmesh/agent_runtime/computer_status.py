@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 from ..atomic_io import read_json
 from ..services import peer_box
 from . import image_capabilities
+from .computer.binary import NON_WINDOWS_X64_MESSAGE, platform_support
 from .computer.coordinator import NativeBridge
 from .computer.protocol import EXPECTED_WORKER_NAME, PROTOCOL_SEMVER
 from .diagnostic_log import failure
@@ -516,17 +517,69 @@ def _project_plugin_section(ext_state: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
-def _project_native_section(runtime: Any) -> dict[str, Any]:
-    if sys.platform != "win32":
+NATIVE_REASON_MESSAGES_ZH: dict[str, str] = {
+    "unc_path": "不支持从网络共享路径（UNC）运行，请把 Ryn 装在本地非链接目录",
+    "device_path": "安装路径不能使用 Windows 设备命名空间路径，请把 Ryn 装在本地普通磁盘目录",
+    "ads": "安装路径包含 NTFS 备用数据流（ADS），请把 Ryn 装在标准本地目录",
+    "reserved_name": "安装路径包含 Windows 保留设备名，请更换本地安装目录",
+    "dot_segment": "安装路径包含相对路径段或尾随点号，请使用规范的本地绝对路径",
+    "reparse_below_root": "安装目录内部包含符号链接或目录联接（junction），请把 Ryn 装在本地非链接目录",
+    "final_path_mismatch": "组件最终解析路径与安装目录不一致，请把 Ryn 重新装在本地非链接目录",
+    "open_failed": "无法打开电脑控制组件文件，请检查文件权限或杀毒软件拦截",
+    "not_directory": "电脑控制组件所在安装根不是有效目录，请重新安装 Ryn",
+    "pid_mismatch": "电脑控制组件进程号核验不一致，已拦截启动",
+    "image_path_mismatch": "电脑控制组件进程镜像路径与已验证文件不一致，已拦截启动",
+    "arm64_emulation_disabled": "本机是 ARM 版 Windows，电脑控制暂不支持",
+    "dev_worker_forbidden_when_frozen": "正式打包环境不允许切换到开发模式组件",
+}
+
+
+def translate_native_reason_zh(
+    reason: str | None,
+    *,
+    win32_error: int | None = None,
+) -> str | None:
+    """Translate a subdivided native path/identity reason code into a safe Chinese user hint."""
+    if not isinstance(reason, str) or not reason:
+        return None
+    base_msg = NATIVE_REASON_MESSAGES_ZH.get(reason)
+    if base_msg is None:
+        return None
+    if reason == "open_failed" and type(win32_error) is int and 0 < win32_error <= 0xFFFFFFFF:
+        return f"无法打开电脑控制组件文件（系统错误码 {win32_error}），请检查权限或安全软件拦截"
+    return base_msg
+
+
+def _project_native_section(
+    runtime: Any,
+    settings: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    plat = platform_support(settings=settings)
+    if sys.platform != "win32" or not plat.get("supported"):
+        plat_name = (
+            str(plat.get("platform_name") or sys.platform)
+            if plat.get("sys_platform") == sys.platform
+            else str(sys.platform or "unknown")
+        )
+        msg_zh = str(plat.get("message_zh") or NON_WINDOWS_X64_MESSAGE)
         return {
             "platform": "unsupported",
+            "platform_supported": False,
+            "platform_name": plat_name,
+            "emulated_x64": False,
             "executable_presence": "unknown",
             "status": "error",
             "version": None,
             "protocol_version": None,
             "evidence": _make_evidence("none", None),
             "reason_code": "native_platform_unsupported",
+            "reason": plat.get("reason"),
+            "message": msg_zh,
         }
+
+    plat_name = str(plat.get("platform_name") or "Windows x64")
+    emulated_x64 = bool(plat.get("emulated_x64"))
+    base_msg = str(plat["message_zh"]) if isinstance(plat.get("message_zh"), str) and plat.get("message_zh") else None
 
     runtime_dict = getattr(runtime, "__dict__", {})
     store = runtime_dict.get("store")
@@ -536,12 +589,17 @@ def _project_native_section(runtime: Any) -> dict[str, Any]:
     if not isinstance(bridge, NativeBridge):
         return {
             "platform": "windows",
+            "platform_supported": True,
+            "platform_name": plat_name,
+            "emulated_x64": emulated_x64,
             "executable_presence": "unknown",
             "status": "unknown",
             "version": None,
             "protocol_version": None,
             "evidence": _make_evidence("none", None),
             "reason_code": "native_not_verified",
+            "reason": None,
+            "message": base_msg,
         }
 
     try:
@@ -550,14 +608,55 @@ def _project_native_section(runtime: Any) -> dict[str, Any]:
         raw = None
 
     if not isinstance(raw, dict) or raw.get("cached") is not True:
+        last_err = raw.get("lastError") if isinstance(raw, dict) and isinstance(raw.get("lastError"), dict) else None
+        if last_err is not None:
+            err_code = str(last_err.get("code") or "")
+            err_reason = last_err.get("reason") if isinstance(last_err.get("reason"), str) else None
+            err_w32 = last_err.get("win32_error") if type(last_err.get("win32_error")) is int else None
+            err_ts = _normalize_iso_timestamp(last_err.get("observedAt"))
+            zh_hint = translate_native_reason_zh(err_reason, win32_error=err_w32) or base_msg
+            if err_code == "agent_computer_executable_not_found":
+                return {
+                    "platform": "windows",
+                    "platform_supported": True,
+                    "platform_name": plat_name,
+                    "emulated_x64": emulated_x64,
+                    "executable_presence": "missing",
+                    "status": "missing",
+                    "version": None,
+                    "protocol_version": None,
+                    "evidence": _make_evidence("native_probe_cache", err_ts) if err_ts else _make_evidence("none", None),
+                    "reason_code": "native_missing",
+                    "reason": err_reason,
+                    "message": zh_hint,
+                }
+            return {
+                "platform": "windows",
+                "platform_supported": True,
+                "platform_name": plat_name,
+                "emulated_x64": emulated_x64,
+                "executable_presence": "unknown",
+                "status": "error",
+                "version": None,
+                "protocol_version": None,
+                "evidence": _make_evidence("native_probe_cache", err_ts) if err_ts else _make_evidence("none", None),
+                "reason_code": "native_failed",
+                "reason": err_reason,
+                "message": zh_hint,
+            }
         return {
             "platform": "windows",
+            "platform_supported": True,
+            "platform_name": plat_name,
+            "emulated_x64": emulated_x64,
             "executable_presence": "unknown",
             "status": "unknown",
             "version": None,
             "protocol_version": None,
             "evidence": _make_evidence("none", None),
             "reason_code": "native_not_verified",
+            "reason": None,
+            "message": base_msg,
         }
 
     worker_info = raw.get("worker") if isinstance(raw.get("worker"), dict) else {}
@@ -565,6 +664,7 @@ def _project_native_section(runtime: Any) -> dict[str, Any]:
     protocol_version = _normalize_safe_version(raw.get("protocolVersion"))
     worker_name = worker_info.get("name")
     live = raw.get("live") is True
+    emulated_live = bool(emulated_x64 or raw.get("emulatedX64"))
     handshake_ts = _normalize_iso_timestamp(raw.get("handshakeTimestamp"))
     evidence = _make_evidence("live_session" if live else "native_probe_cache", handshake_ts)
     presence = "present" if (live and evidence["observed_at"] is not None) else "unknown"
@@ -574,35 +674,50 @@ def _project_native_section(runtime: Any) -> dict[str, Any]:
     ):
         return {
             "platform": "windows",
+            "platform_supported": True,
+            "platform_name": plat_name,
+            "emulated_x64": emulated_live,
             "executable_presence": presence,
             "status": "incompatible",
             "version": version,
             "protocol_version": protocol_version,
             "evidence": evidence,
             "reason_code": "native_protocol_incompatible",
+            "reason": None,
+            "message": base_msg,
         }
 
     if not live or raw.get("status") == "stale" or evidence["observed_at"] is None:
         return {
             "platform": "windows",
+            "platform_supported": True,
+            "platform_name": plat_name,
+            "emulated_x64": emulated_live,
             "executable_presence": presence,
             "status": "unverified",
             "version": version,
             "protocol_version": protocol_version,
             "evidence": evidence,
             "reason_code": "native_evidence_stale",
+            "reason": None,
+            "message": base_msg,
         }
 
     # NativeBridge.cache_status() currently lacks authoritative current binary/config
     # verification binding, so it must not independently qualify native.status="ready".
     return {
         "platform": "windows",
+        "platform_supported": True,
+        "platform_name": plat_name,
+        "emulated_x64": emulated_live,
         "executable_presence": presence,
         "status": "unverified",
         "version": version,
         "protocol_version": protocol_version,
         "evidence": evidence,
         "reason_code": "native_not_verified",
+        "reason": None,
+        "message": base_msg,
     }
 
 
@@ -1788,7 +1903,7 @@ def build_computer_status_dto(app: Any, runtime: Any, requested_task_id: str | N
     ext_state = _read_extension_state_readonly(runtime)
 
     plugin_sec = _project_plugin_section(ext_state)
-    native_sec = _project_native_section(runtime)
+    native_sec = _project_native_section(runtime, settings=settings)
     permissions_sec = _project_permissions_section(settings, task_id, task_row)
     session_sec = _project_session_section(runtime, task_id, task_row)
     model_sec, current_route_dest = _project_model_section(runtime, settings, task_id, task_row)
