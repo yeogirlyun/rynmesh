@@ -54,6 +54,43 @@ OUTPUT_LIMIT_REACHED_FEEDBACK = (
 )
 OUTPUT_LIMIT_REACHED_MESSAGE = "模型把输出额度都用在思考上了，请调高该模型的输出上限或降低推理强度"
 
+_PEER_ERROR_MAP = {
+    "model_configuration_changed": "agent_model_destination_changed",
+    "ai_permission_denied": "agent_model_destination_changed",
+    "source_protocol_parameters_unsupported": "agent_model_protocol_unsupported",
+    "source_protocol_response_invalid": "agent_model_protocol_invalid",
+    "upstream_image_rejected": "agent_model_image_rejected",
+    "upstream_output_limit_reached": "agent_model_output_limit_reached",
+    "model_daily_quota_exhausted": "agent_model_quota_exhausted",
+    "peer_request_too_large": "agent_model_context_overflow",
+    "estimated_context_window_exceeded": "agent_model_context_overflow",
+}
+_ADAPTER_ERROR_MAP = {
+    "inference_timeout": "agent_inference_timeout",
+    "runtime_connection_failed": "agent_model_connection_failed",
+    "upstream_http_failed": "agent_model_upstream_failed",
+    "upstream_stream_error": "agent_model_upstream_failed",
+    "upstream_stream_truncated": "agent_model_stream_interrupted",
+    "upstream_image_rejected": "agent_model_image_rejected",
+    "upstream_output_limit_reached": "agent_model_output_limit_reached",
+    "upstream_request_rejected": "agent_model_request_rejected",
+    "source_protocol_parameters_unsupported": "agent_model_protocol_unsupported",
+    "source_protocol_response_invalid": "agent_model_protocol_invalid",
+    "runtime_busy": "agent_model_busy",
+    "ai_permission_denied": "agent_model_destination_changed",
+    "model_configuration_changed": "agent_model_destination_changed",
+    "model_daily_quota_exhausted": "agent_model_quota_exhausted",
+    "model_not_ready": "agent_model_unavailable",
+    "model_not_found": "agent_model_unavailable",
+    "runtime_unavailable": "agent_model_unavailable",
+}
+MODEL_ERROR_CODES = frozenset({
+    *_ADAPTER_ERROR_MAP.values(),
+    *_PEER_ERROR_MAP.values(),
+    "agent_inference_failed",
+    "agent_model_destination_unverifiable",
+})
+
 
 def retry_output_limit_cap(prev_cap: int, target: dict) -> int:
     return min(2 * prev_cap, output_policy.configured_output(target))
@@ -552,15 +589,7 @@ class AgentModelBridge:
                         err.details = OUTPUT_LIMIT_REACHED_MESSAGE
                         err.diagnostics = {"max_tokens": maximum}
                         raise err
-                    raise AgentError({"model_configuration_changed": "agent_model_destination_changed",
-                                      "ai_permission_denied": "agent_model_destination_changed",
-                                      "source_protocol_parameters_unsupported": "agent_model_protocol_unsupported",
-                                      "source_protocol_response_invalid": "agent_model_protocol_invalid",
-                                      "upstream_image_rejected": "agent_model_image_rejected",
-                                      "upstream_output_limit_reached": "agent_model_output_limit_reached",
-                                      "model_daily_quota_exhausted": "agent_model_quota_exhausted",
-                                      "peer_request_too_large": "agent_model_context_overflow",
-                                      "estimated_context_window_exceeded": "agent_model_context_overflow"}.get(peer_err, "agent_inference_failed"))
+                    raise AgentError(_PEER_ERROR_MAP.get(peer_err, "agent_inference_failed"))
             stopped = cancelled()
             if stopped or expired():
                 usage, finish = self._response_metadata(result, target)
@@ -647,23 +676,7 @@ class AgentModelBridge:
             # Adapters already reduce upstream errors to this closed code set.
             # Keep transport failures distinguishable without copying an HTTP
             # response, URL, credential, or exception message into task state.
-            code = {"inference_timeout": "agent_inference_timeout",
-                    "runtime_connection_failed": "agent_model_connection_failed",
-                    "upstream_http_failed": "agent_model_upstream_failed",
-                    "upstream_stream_error": "agent_model_upstream_failed",
-                    "upstream_stream_truncated": "agent_model_stream_interrupted",
-                    "upstream_image_rejected": "agent_model_image_rejected",
-                    "upstream_output_limit_reached": "agent_model_output_limit_reached",
-                    "upstream_request_rejected": "agent_model_request_rejected",
-                    "source_protocol_parameters_unsupported": "agent_model_protocol_unsupported",
-                    "source_protocol_response_invalid": "agent_model_protocol_invalid",
-                    "runtime_busy": "agent_model_busy",
-                    "ai_permission_denied": "agent_model_destination_changed",
-                    "model_configuration_changed": "agent_model_destination_changed",
-                    "model_daily_quota_exhausted": "agent_model_quota_exhausted",
-                    "model_not_ready": "agent_model_unavailable",
-                    "model_not_found": "agent_model_unavailable",
-                    "runtime_unavailable": "agent_model_unavailable"}.get(exc.code, "agent_inference_failed")
+            code = _ADAPTER_ERROR_MAP.get(exc.code, "agent_inference_failed")
             if cancelled():
                 code = cancellation_reason(cancelled)
             elif expired():

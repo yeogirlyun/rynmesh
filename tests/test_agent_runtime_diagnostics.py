@@ -263,3 +263,143 @@ def test_invalid_tool_catalog_name_is_rejected_before_dispatch(tmp_path):
     advance(runtime)
     assert runtime.get(row["id"])["error"] == "agent_tool_definition_changed"
     read.assert_not_called()
+
+
+def test_s02_i28_t1_all_bridge_model_error_codes_and_new_codes_have_guidance():
+    from rynmesh.agent_runtime import bridge, diagnostics
+
+    assert isinstance(bridge.MODEL_ERROR_CODES, frozenset)
+    for expected in (
+        "agent_inference_failed",
+        "agent_model_upstream_failed",
+        "agent_model_image_rejected",
+        "agent_model_quota_exhausted",
+        "agent_model_destination_unverifiable",
+    ):
+        assert expected in bridge.MODEL_ERROR_CODES
+
+    for code in sorted(bridge.MODEL_ERROR_CODES):
+        assert code in diagnostics._ERROR_GUIDANCE, code
+        action_id, instruction, owner_path = diagnostics._ERROR_GUIDANCE[code]
+        assert action_id and instruction and owner_path.startswith("/")
+
+    for extra_code in (
+        "agent_context_limit",
+        "agent_output_limit",
+        "agent_inference_failed",
+        "agent_compaction_failed",
+        "agent_compaction_incomplete",
+        "agent_model_response_stopped",
+        "agent_task_limit",
+        "agent_token_budget_exhausted",
+        "agent_model_call_budget_exhausted",
+        "agent_time_budget_exhausted",
+        "agent_fork_too_large",
+        "agent_permissions_changed",
+        "agent_output_truncated",
+    ):
+        assert extra_code in diagnostics._ERROR_GUIDANCE, extra_code
+
+
+def test_s02_i28_t2_operations_retain_recent_64_prioritizing_errors_and_report_omitted():
+    events = []
+    for idx in range(100):
+        op_id = f"op-{idx:03d}"
+        events.append({"type": "tool_started", "tool": "read_doc", "effect": "read", "operation_id": op_id})
+        err = None
+        if idx == 2:
+            err = "resource_read_timeout"
+        elif idx == 98:  # 99th operation (1-based)
+            err = "agent_inference_failed"
+        res_payload = {"connection_id": f"conn-{idx:03d}"}
+        if err:
+            res_payload["error"] = err
+        events.append({"type": "tool_result", "tool": "read_doc", "operation_id": op_id, "result": res_payload})
+
+    projected = DiagnosticTools._operations({"events": events})
+    assert len(projected["operations"]) == 64
+    assert projected["operations_truncated"] is True
+    assert projected["operations_omitted"] == 36
+    assert projected["read_dispatch_count"] == 100
+    assert projected["write_dispatch_count"] == 0
+
+    conn_ids = [op["connection_id"] for op in projected["operations"]]
+    assert "conn-000" not in conn_ids
+    assert "conn-002" in conn_ids
+    assert "conn-098" in conn_ids
+    assert conn_ids == sorted(conn_ids)
+    op_99 = next(op for op in projected["operations"] if op["connection_id"] == "conn-098")
+    assert op_99["error"] == "agent_inference_failed"
+
+
+def test_s02_i28_t3_100_models_with_90th_default_reports_in_catalog_and_models_truncated():
+    models = [
+        {"id": f"model-{idx:03d}", "name": f"Model {idx}", "available": True, "agent_supported": True, "tool_support": "supported"}
+        for idx in range(100)
+    ]
+    tools, runtime, _ = toolset(models=models)
+    runtime.settings.return_value["model_id"] = "model-089"  # 90th model in catalog
+
+    cfg = execute(tools, "ryn_get_agent_configuration")
+    assert cfg["default_model_id"] == "model-089"
+    assert cfg["default_model_in_catalog"] is True
+    assert cfg["default_model"] is not None and cfg["default_model"]["id"] == "model-089"
+    assert cfg["models_truncated"] is True
+
+    sys_diag = execute(tools, "ryn_get_system_diagnostics")
+    assert len(sys_diag["models"]) == 64
+    assert sys_diag["models_truncated"] is True
+
+
+def test_s02_i28_t4_workspace_permission_mode_reported_truthfully():
+    tools, runtime, _ = toolset()
+    runtime.settings.return_value["permission_mode"] = "workspace"
+    cfg = execute(tools, "ryn_get_agent_configuration")
+    assert cfg["permission_mode"] == "workspace"
+
+    runtime.settings.return_value["permission_mode"] = "bogus_mode"
+    assert execute(tools, "ryn_get_agent_configuration")["permission_mode"] == "unknown"
+
+
+def test_s02_i28_t5_agent_inference_failed_returned_verbatim_with_specific_guidance():
+    from rynmesh.agent_runtime import diagnostics
+
+    tools, runtime, _ = toolset()
+    runtime.get.return_value.update(error="agent_inference_failed")
+    res = execute(tools, "ryn_diagnose_current_task")
+    assert res["error"] == "agent_inference_failed"
+    expected_id, expected_text, expected_path = diagnostics._ERROR_GUIDANCE["agent_inference_failed"]
+    assert res["suggestions"] == [
+        {"id": expected_id, "instruction": expected_text, "owner_path": expected_path, "executed": False}
+    ]
+
+
+def test_s02_i28_t6_unlisted_valid_agent_code_returned_verbatim_with_generic_guidance():
+    from rynmesh.agent_runtime import diagnostics
+
+    unlisted = "agent_unlisted_future_diagnostic_code"
+    assert unlisted not in diagnostics._ERROR_GUIDANCE
+    tools, runtime, _ = toolset()
+    runtime.get.return_value.update(error=unlisted)
+    res = execute(tools, "ryn_diagnose_current_task")
+    assert res["error"] == unlisted
+    assert len(res["suggestions"]) == 1
+    assert res["suggestions"][0]["id"] == "review_task"
+    assert res["suggestions"][0]["executed"] is False
+
+
+@pytest.mark.parametrize("bad_error", [
+    "RuntimeError: Bearer secret-key",
+    "AGENT_UPPERCASE_CODE",
+    "custom_non_agent_error",
+    "agent_" + ("x" * 101),
+    12345,
+])
+def test_s02_i28_t7_malformed_error_values_report_agent_unknown_error(bad_error):
+    tools, runtime, _ = toolset()
+    runtime.get.return_value.update(error=bad_error)
+    res = execute(tools, "ryn_diagnose_current_task")
+    assert res["error"] == "agent_unknown_error"
+    assert "secret-key" not in json.dumps(res)
+    assert res["suggestions"][0]["id"] == "review_task"
+

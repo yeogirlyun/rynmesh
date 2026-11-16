@@ -10,7 +10,7 @@ import math
 import re
 from datetime import datetime
 
-from . import model_profiles
+from . import diagnostic_log, execution_policy, model_profiles
 from .store import AgentError, AgentToolRejected
 
 _TITLES = {
@@ -48,8 +48,42 @@ _ERROR_GUIDANCE = {
     "agent_invalid_tool_call": ("review_tools", "Review model tool compatibility; no proposed operation should be assumed executed.", "/services/sources"),
     "agent_output_truncated": ("review_models", "The model response was repeatedly truncated without producing a usable answer. Narrow the request or select another model.", "/agent"),
     "agent_model_output_limit_reached": ("review_models", "模型把输出额度都用在思考上了，请调高该模型的输出上限或降低推理强度", "/services/sources"),
+    "agent_context_limit": ("start_new_or_continue", "对话太长超出模型上下文窗口，请新开对话或从摘要续接。", "/agent"),
+    "agent_output_limit": ("narrow_request", "回复超过单次输出长度上限，请要求分段或精简输出。", "/agent"),
+    "agent_inference_failed": ("review_connection", "模型调用异常，请检查模型来源连接与服务状态。", "/services/sources"),
+    "agent_compaction_failed": ("retry_task", "上下文压缩未能生成有效摘要，可重试当前轮次。", "/agent"),
+    "agent_compaction_incomplete": ("retry_task", "上下文压缩摘要未完整结束，可重试当前轮次或调高模型输出上限。", "/agent"),
+    "agent_model_response_stopped": ("revise_prompt", "回复被服务商内容过滤或策略拦下，请换种说法或拆小请求。", "/agent"),
+    "agent_task_limit": ("archive_old_tasks", "任务数量或单任务体积达到上限，请归档旧任务后再试。", "/agent"),
+    "agent_token_budget_exhausted": ("increase_budget", "任务 token 预算已用完，请在任务预算设置中调高上限。", "/agent"),
+    "agent_model_call_budget_exhausted": ("increase_budget", "任务模型调用次数预算已用完，请在任务预算设置中调高上限。", "/agent"),
+    "agent_time_budget_exhausted": ("increase_budget", "任务运行时间预算已用完，请在任务预算设置中调高上限。", "/agent"),
+    "agent_model_upstream_failed": ("review_connection", "上游模型 HTTP 或流式请求失败，请查看模型来源状态。", "/services/sources"),
+    "agent_model_image_rejected": ("review_models", "上游模型拒收图片输入，请去掉图片或切换到支持图片的模型。", "/services/sources"),
+    "agent_model_quota_exhausted": ("review_quota", "该模型当日额度已用完，请切换其他模型或等待额度恢复。", "/services/sources"),
+    "agent_model_destination_unverifiable": ("review_destination", "无法核实模型去向绑定，请复查模型来源配置。", "/services/sources"),
+    "agent_model_stream_interrupted": ("review_connection", "上游模型流式传输中断，请检查连接稳定性后重试。", "/services/sources"),
+    "agent_model_request_rejected": ("review_models", "上游服务商拒绝了本次模型请求参数或载荷，请检查模型配置或精简输入。", "/services/sources"),
+    "agent_model_context_overflow": ("start_new_or_continue", "上游服务商提示请求超出模型上下文窗口，请压缩上下文、续接新任务或换更大窗口模型。", "/agent"),
+    "agent_fork_too_large": ("fork_later_turn", "这段对话太长，无法分叉；请从靠后的消息分叉。", "/agent"),
+    "agent_permissions_changed": ("review_permissions", "排队重试等待期间权限被收紧，请确认当前权限设置后继续。", "/agent"),
     "resource_read_timeout": ("review_resource_connection", "The authorized resource read timed out. Check the named connection using the owner Drives interface; do not modify it or rerun the task automatically. This does not establish a credential or quota problem.", "/drives"),
 }
+_GENERIC_ERROR_GUIDANCE = (
+    "review_task",
+    "Review the current task and safe local service logs; the original exception is not sent to the model.",
+    "/agent",
+)
+
+
+def _classify_error(raw_error):
+    if not raw_error:
+        return None, None
+    if isinstance(raw_error, str) and raw_error in _ERROR_GUIDANCE:
+        return raw_error, _ERROR_GUIDANCE[raw_error]
+    if isinstance(raw_error, str) and diagnostic_log._CODE.fullmatch(raw_error):
+        return raw_error, _GENERIC_ERROR_GUIDANCE
+    return "agent_unknown_error", _GENERIC_ERROR_GUIDANCE
 
 
 def safe_label(value, limit=256):
@@ -126,16 +160,24 @@ class DiagnosticTools:
         except Exception:
             return {}
 
-    def _models(self):
+    def _models_with_meta(self, model_id: str = ""):
         try:
             rows = self.catalog.list_models()
         except Exception:
             raise AgentToolRejected("agent_diagnostics_catalog_unavailable") from None
+        valid_rows = [row for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str)]
+        in_catalog = bool(model_id) and any(_text(row["id"]) == model_id for row in valid_rows)
+        if model_id:
+            ordered = [
+                *[row for row in valid_rows if _text(row["id"]) == model_id],
+                *[row for row in valid_rows if _text(row["id"]) != model_id],
+            ]
+        else:
+            ordered = valid_rows
+        truncated = len(ordered) > 64
         overrides = self._profile_overrides()
         output = []
-        for row in rows[:64]:
-            if not isinstance(row, dict) or not isinstance(row.get("id"), str):
-                continue
+        for row in ordered[:64]:
             profile = model_profiles.resolve(row, override=overrides.get(row["id"]))
             output.append({**{key: _text(row[key]) for key in _MODEL_FIELDS if key in row},
                 "available": _bool(row.get("available")), "agent_supported": _bool(row.get("agent_supported")),
@@ -144,7 +186,10 @@ class DiagnosticTools:
                 # Which Agent prompt adaptation this model gets and why; never the prompt text.
                 "model_profile": {key: profile[key] for key in ("catalog", "profile", "revision", "basis", "route",
                                                                 "fallback_reason", "override_status", "notes")}})
-        return output
+        return output, truncated, in_catalog
+
+    def _models(self, model_id: str = ""):
+        return self._models_with_meta(model_id=model_id)[0]
 
     def _configuration(self):
         runtime = self._runtime()
@@ -154,12 +199,13 @@ class DiagnosticTools:
         except Exception:
             raise AgentToolRejected("agent_diagnostics_settings_unavailable") from None
         model_id = _text(settings.get("model_id"))
-        models = self._models()
+        models, models_truncated, default_in_catalog = self._models_with_meta(model_id=model_id)
         return {"enabled": _bool(settings.get("enabled")), "default_model_id": model_id,
                 "settings_revision": snapshot["settings_revision"],
                 "default_model": next((row for row in models if row["id"] == model_id), None),
-                "default_model_in_catalog": any(row["id"] == model_id for row in models),
-                "permission_mode": settings.get("permission_mode") if settings.get("permission_mode") in {"read_only", "confirm_changes", "automatic"} else "unknown",
+                "default_model_in_catalog": default_in_catalog,
+                "models_truncated": models_truncated,
+                "permission_mode": settings.get("permission_mode") if settings.get("permission_mode") in execution_policy.MODES else "unknown",
                 "limits": {key: _number(settings.get(key)) for key in _LIMITS},
                 "context_budget_policy": snapshot.get("context_budget_policy"),
                 "evidence": {"kind": "persisted_agent_settings", "default_model_selected_from": "settings.model_id"},
@@ -176,11 +222,8 @@ class DiagnosticTools:
             row = runtime.get(task_id)
         except AgentError:
             raise AgentToolRejected("agent_diagnostics_task_unavailable") from None
-        raw_error = row.get("error")
-        error = raw_error if isinstance(raw_error, str) and raw_error in _ERROR_GUIDANCE else "agent_unknown_error" if raw_error else None
-        guidance = [_ERROR_GUIDANCE[error]] if error in _ERROR_GUIDANCE else []
-        if error == "agent_unknown_error":
-            guidance.append(("review_task", "Review the current task and safe local service logs; the original exception is not sent to the model.", "/agent"))
+        error, err_guidance = _classify_error(row.get("error"))
+        guidance = [err_guidance] if err_guidance is not None else []
         state = row.get("status") if row.get("status") in _STATES else "unknown"
         if not error and state == "waiting_approval":
             guidance.append(("review_approval", "Review the exact pending change in the owner interface; diagnostics cannot approve it.", "/agent"))
@@ -211,7 +254,11 @@ class DiagnosticTools:
                 continue
             if entry.get("internal") is True:
                 receipt = entry.get("result") if isinstance(entry.get("result"), dict) else {}
-                if entry["type"] != "tool_result" or receipt.get("error") not in _ERROR_GUIDANCE:
+                raw_internal_err = receipt.get("error")
+                if entry["type"] != "tool_result" or not (
+                    isinstance(raw_internal_err, str)
+                    and (raw_internal_err in _ERROR_GUIDANCE or bool(diagnostic_log._CODE.fullmatch(raw_internal_err)))
+                ):
                     continue
             operation_id = entry.get("operation_id") or entry.get("call_id")
             if not isinstance(operation_id, str):
@@ -226,17 +273,32 @@ class DiagnosticTools:
                     write_count += first_dispatch and effect == "write"
             else:
                 receipt = entry.get("result") if isinstance(entry.get("result"), dict) else {}
-                error = receipt.get("error")
-                operation.update(not_executed=_bool(receipt.get("not_executed")), error=error if isinstance(error, str) and error in _ERROR_GUIDANCE else "agent_unknown_error" if error else None)
-                if operation["error"] in _ERROR_GUIDANCE:
-                    key, instruction, path = _ERROR_GUIDANCE[operation["error"]]
+                op_error, op_guidance = _classify_error(receipt.get("error"))
+                operation.update(not_executed=_bool(receipt.get("not_executed")), error=op_error)
+                if op_guidance is not None and op_error in _ERROR_GUIDANCE:
+                    key, instruction, path = op_guidance
+                    operation["suggestion"] = {"id": key, "instruction": instruction, "owner_path": path, "executed": False}
+                elif op_guidance is not None and op_error is not None and op_error != "agent_unknown_error":
+                    key, instruction, path = op_guidance
                     operation["suggestion"] = {"id": key, "instruction": instruction, "owner_path": path, "executed": False}
                 # Connection metadata is safe operational evidence. Never forward
                 # arbitrary argument/result content or an underlying file path.
                 for key in ("connection_id", "connection_name"):
                     if isinstance(receipt.get(key), str):
                         operation[key] = _text(receipt[key])
-        return {"operations": list(operations.values())[:64], "operations_truncated": len(operations) > 64,
+        all_ops = list(operations.values())
+        if len(all_ops) <= 64:
+            selected_ops = all_ops
+        else:
+            err_indices = [idx for idx, op in enumerate(all_ops) if op.get("error")]
+            ok_indices = [idx for idx, op in enumerate(all_ops) if not op.get("error")]
+            chosen = set(err_indices[-64:])
+            rem = 64 - len(chosen)
+            if rem > 0 and ok_indices:
+                chosen.update(ok_indices[-rem:])
+            selected_ops = [all_ops[idx] for idx in sorted(chosen)]
+        return {"operations": selected_ops, "operations_truncated": len(all_ops) > 64,
+                "operations_omitted": len(all_ops) - len(selected_ops),
                 "read_dispatched": read_count > 0, "write_dispatched": write_count > 0,
                 "read_dispatch_count": read_count, "write_dispatch_count": write_count,
                 "operation_evidence_note": "Dispatch describes runtime invocation attempts, not proof that a business mutation occurred. Only stored event metadata is projected; no task data permissions are granted."}
@@ -273,7 +335,8 @@ class DiagnosticTools:
         elif name == "ryn_get_agent_configuration":
             result = self._configuration()
         else:
-            result = {"models": self._models(), "devices": self._devices(cancelled),
+            models, models_truncated, _ = self._models_with_meta()
+            result = {"models": models, "models_truncated": models_truncated, "devices": self._devices(cancelled),
                       "note": "Model records do not measure current connection, inference, quotas, or throughput. Diagnostics is read only and grants no permissions."}
         if cancelled():
             raise AgentToolRejected("agent_cancelled")
