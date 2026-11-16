@@ -658,7 +658,12 @@ class AgentLoop:
                     budget.stop_for_limit(row, "agent_time_limit", step=step, request_id=request_id, attempt=attempt)
                     subagents.on_subagent_settled_in_tx(data, row)
                     return
-                message["content"] = sanitized(memory_integration.strip_forged_receipt_and_guard_claims(row, message["content"]))
+                is_final_reply = (not pending or bool(wrap_up_reason)) and decision.action != "continue"
+                message["content"] = sanitized(
+                    memory_integration.strip_forged_receipt_and_guard_claims(
+                        row, message["content"], guard_claims=is_final_reply
+                    )
+                )
                 if memory_integration.messages_disclose_memory(messages, data, row=selected):
                     row["memory_disclosed_in_epoch"] = True
                     row["memory_projection_watermark"] = memory_runtime.memory_projection_watermark(data, row).get("watermark", "")
@@ -749,7 +754,15 @@ class AgentLoop:
                     continuation = row.pop("answer_continuation", {})
                     prefix = continuation.get("text", "") if (continuation.get("goal_revision") == row["goal"]["revision"] and
                         continuation.get("context_epoch") == row.get("context_epoch", 0)) else ""
-                    answer = prefix + message["content"]
+                    answer = (
+                        sanitized(
+                            memory_integration.strip_forged_receipt_and_guard_claims(
+                                row, prefix + message["content"], guard_claims=True
+                            )
+                        )
+                        if prefix
+                        else message["content"]
+                    )
                     if wrap_up_reason and not answer.strip():
                         answer = (
                             "已达到任务预算上限，已保存当前进度并停止调用工具。"

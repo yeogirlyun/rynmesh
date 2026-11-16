@@ -1448,20 +1448,108 @@ def memory_projection_watermark(data: dict[str, Any], row: dict[str, Any]) -> di
 
 
 _MEMORY_SAVE_CLAIM_RE = re.compile(
-    r"(?:已(?:经)?(?:为您|帮你|替你)?(?:记住|记下|记入)|记住了|(?:已(?:经)?|成功)?(?:保存|存入|写入|更新|记录)(?:到|至|入|进)?(?:长期)?记忆|记忆(?:已(?:经)?|成功)(?:保存|更新|记住|记录)|\bsaved\s+to\s+memory\b|\bi\s+have\s+remembered\b|\bnoted\s+in\s+memory\b)",
+    r"(?<![未没不否])(?:"
+    r"(?:我)?已(?:经)?(?:为你|为您|帮你|替你)?(?:记住|记下)(?:了)?(?!\s*[吗呢？?])"
+    r"|(?:我)?已(?:经)?(?:为你|为您|帮你|替你)?保存到(?:长期)?记忆"
+    r"|\bi(?:'ve|\s+have)\s+(?:remembered|saved(?!\s+(?:the\s+|a\s+)?file\b))\b"
+    r")",
     re.IGNORECASE,
 )
 
+_EXPLICIT_TURN_EXTRA_CLAIM_RE = re.compile(
+    r"(?<![未没不否])(?:"
+    r"记忆(?:已(?:经)?|成功)(?:保存|记住|记下)"
+    r"|\bsaved\s+to\s+(?:long[- ]term\s+)?memory\b"
+    r")",
+    re.IGNORECASE,
+)
+
+_SENTENCE_BOUNDARY_RE = re.compile(r"(\n+|[。！？!?]+|(?<!\d)\.(?=\s|$))")
+
+
+def _turn_called_memory_propose(row: dict[str, Any], latest: dict[str, Any] | None) -> bool:
+    if not isinstance(row, dict):
+        return False
+    messages = row.get("messages")
+    if not isinstance(messages, list):
+        return False
+    seen_latest = latest is None
+    latest_id = latest.get("message_id") if isinstance(latest, dict) else None
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        if not seen_latest:
+            if msg.get("role") == "user" and msg.get("message_id") == latest_id:
+                seen_latest = True
+            continue
+        if msg.get("role") != "assistant":
+            continue
+        for call in msg.get("tool_calls") or []:
+            if not isinstance(call, dict):
+                continue
+            fn = call.get("function")
+            name = fn.get("name") if isinstance(fn, dict) else call.get("name")
+            if name == MEMORY_PROPOSE_TOOL:
+                return True
+    return False
+
+
+def _replace_matching_claim_sentences(
+    text: str,
+    claim_matcher: Any,
+    host_note: str,
+    *,
+    skip_substring: str | None = None,
+) -> str:
+    parts = _SENTENCE_BOUNDARY_RE.split(text)
+    out: list[str] = []
+    for idx in range(0, len(parts), 2):
+        seg = parts[idx]
+        delim = parts[idx + 1] if idx + 1 < len(parts) else ""
+        if (
+            seg
+            and "（主机注：" not in seg
+            and (skip_substring is None or skip_substring not in seg)
+            and claim_matcher(seg)
+        ):
+            leading_ws_len = len(seg) - len(seg.lstrip(" \t"))
+            leading_ws = seg[:leading_ws_len]
+            trailing_delim = delim if delim.startswith("\n") else ""
+            out.append(f"{leading_ws}{host_note}{trailing_delim}")
+        else:
+            out.append(seg + delim)
+    return "".join(out)
+
 
 def guard_false_memory_save_claim(row: dict[str, Any], content: str) -> str:
-    """Prevent assistant replies from falsely claiming a memory was saved unless backed by a current-turn receipt."""
+    """Prevent assistant final replies from falsely claiming a memory was saved unless backed by a current-turn receipt."""
     text = str(content or "")
-    if not _MEMORY_SAVE_CLAIM_RE.search(text):
+    if not text:
         return text
 
     latest = latest_authentic_owner_message(row) if isinstance(row, dict) else None
+    is_explicit_turn = bool(
+        latest is not None
+        and analyze_owner_memory_intent(str(latest.get("content") or ""), row).get("is_explicit")
+    )
+    called_propose = _turn_called_memory_propose(row, latest) if isinstance(row, dict) else False
+    has_narrow_claim = bool(_MEMORY_SAVE_CLAIM_RE.search(text))
+
+    if not (is_explicit_turn or called_propose or has_narrow_claim):
+        return text
+
+    def matches_claim(segment: str) -> bool:
+        if _MEMORY_SAVE_CLAIM_RE.search(segment):
+            return True
+        if (is_explicit_turn or called_propose) and _EXPLICIT_TURN_EXTRA_CLAIM_RE.search(segment):
+            return True
+        return False
+
+    if not matches_claim(text):
+        return text
+
     current_receipt: dict[str, Any] | None = None
-    if latest is not None:
+    if latest is not None and isinstance(row, dict):
         msg_id = latest["message_id"]
         conv_rev = int(latest["conversation_revision"])
         last_r = row.get("memory_last_receipt")
@@ -1481,15 +1569,35 @@ def guard_false_memory_save_claim(row: dict[str, Any], content: str) -> str:
     if isinstance(current_receipt, dict) and (
         current_receipt.get("applied") is True or current_receipt.get("saved") is True
     ):
+        if current_receipt.get("visible_to_model") is False:
+            return _replace_matching_claim_sentences(
+                text,
+                matches_claim,
+                "（主机注：已存本机，当前模型不可见）",
+                skip_substring="当前模型不可见",
+            )
         return text
 
     if isinstance(current_receipt, dict) and (
         current_receipt.get("applied") is False or current_receipt.get("saved") is False
     ):
-        reason = current_receipt.get("reason") or (current_receipt.get("errors") or ["save_failed"])[0]
-        return f"记忆未保存（保存失败，原因：{reason}）。"
+        reason = str(current_receipt.get("reason") or (current_receipt.get("errors") or ["save_failed"])[0])
+        is_failed_memory_op = bool(
+            current_receipt.get("errors")
+            or current_receipt.get("operation")
+            or current_receipt.get("intent") not in (None, "", "none")
+        )
+        if is_failed_memory_op:
+            host_note = f"（主机注：本轮没有成功保存记忆，原因：{reason}（保存失败））"
+        else:
+            host_note = f"（主机注：本轮没有成功保存记忆，原因：{reason}）"
+        return _replace_matching_claim_sentences(text, matches_claim, host_note)
 
-    return "尚未确认保存记忆（当前回合没有有效写入回执，请核对记忆状态）。"
+    return _replace_matching_claim_sentences(
+        text,
+        matches_claim,
+        "（主机注：本轮没有成功保存记忆，原因：尚未确认写入回执）",
+    )
 
 
 def _extract_job_owner_sources(job: dict[str, Any]) -> list[dict[str, Any]]:
