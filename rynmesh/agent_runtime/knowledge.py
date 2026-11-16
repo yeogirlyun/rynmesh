@@ -15,14 +15,18 @@ SKILLS = {
                    "Make the smallest coherent change without narrowing the requested outcome, retain existing checks, then run focused tests. Distinguish test failures from "
                    "missing dependencies. Batch independent final checks in one response; repeat only after changes, failure or unresolved uncertainty. "
                    "Review the final diff and report actual results, changed files and remaining limits."},
-    "spreadsheet-work": {"id": "spreadsheet-work", "version": "1", "title": "Spreadsheet processing",
+    "spreadsheet-work": {"id": "spreadsheet-work", "version": "2", "title": "Spreadsheet processing",
         "description": "Inspect, process and verify spreadsheet files using installed libraries.",
         "content": "Inspect sheets, headers, types and formulas before transforming data. For workspace CSV/JSON tables prefer "
                    "ryn_table_calculate and ryn_table_export: declare column types, derived expressions and checks; use explicit rounding. "
                    "Missing fields require clarification, not guessed zeros or defaults. A passed arithmetic check does not verify source truth or business rules. "
-                   "Discover installed spreadsheet libraries "
-                   "through the shell; do not invent availability. Preserve formulas, formatting and source files unless changes were requested. "
-                   "Write the requested output, reopen it and check row counts, totals and representative cells. Report assumptions and link the file."},
+                   "Use supplied table tools directly; inspect installed libraries only when custom processing is needed. "
+                   "Preserve formulas, formatting and source files unless changes were requested. "
+                   "For a passed ryn_table_calculate, export with calculation_receipt_id and path; do not repeat the recipe. "
+                   "ryn_table_export validates serialized data and reads back written bytes. When readback_verified is true and its calculation fingerprint matches, "
+                   "reuse that receipt for output verification; do not routinely reopen or recalculate the unchanged export. "
+                   "For other writers, reopen and check row counts, totals and representative cells. Repeat checks after changes, failures, unresolved uncertainty, "
+                   "or an explicit request for additional verification. Report source/business-rule limits and link the completed file promptly."},
     "document-work": {"id": "document-work", "version": "1", "title": "Document production",
         "description": "Produce and inspect documents using the available local runtime.",
         "content": "Inspect the source and requested format. Check installed document/rendering libraries before using them. "
@@ -126,6 +130,7 @@ def messages(row, current_preferences, memory_selection=None):
         notes: list[str] = []
         if is_truncated:
             notes.append(str(skill.get("continuation_note") or SKILL_CONTINUATION_NOTE))
+        notes.append("Reuse the supplied skill body. Read only missing/truncated sections or required reference files; do not reread unchanged instructions.")
         ref_files = [
             str(f) for f in (skill.get("files") or [])
             if isinstance(f, str) and f
