@@ -59,6 +59,25 @@ def test_existing_version_is_preserved(tmp_path):
     assert not list(tmp_path.glob('.full-install-*'))
 
 
+@pytest.mark.parametrize('existing', [b'other-python-build', None])
+def test_company_same_revision_different_or_incomplete_build_is_preserved(tmp_path, existing):
+    source, target = tmp_path / 'payload', tmp_path / 'company-revision'
+    source.mkdir()
+    target.mkdir()
+    (source / 'runtime.dll').write_bytes(b'expected-build')
+    (source / 'runtime-manifest.json').write_text(json.dumps({
+        'files': {'runtime.dll': installer.sha(source / 'runtime.dll')}}))
+    if existing is not None:
+        (target / 'runtime.dll').write_bytes(existing)
+    (target / 'keep').write_text('rollback')
+    installed = installer.company_install_target(source, target)
+    assert installed != target
+    assert (installed / 'runtime.dll').read_bytes() == b'expected-build'
+    assert (target / 'keep').read_text() == 'rollback'
+    assert ((target / 'runtime.dll').read_bytes() if existing is not None else None) == existing
+    assert installer.company_install_target(source, installed) == installed
+
+
 def test_upgrade_verifies_package_before_stopping_or_uninstalling(tmp_path, monkeypatch):
     destination = tmp_path / 'Ryn'
     destination.mkdir()
