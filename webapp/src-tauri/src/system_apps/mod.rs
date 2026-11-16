@@ -399,15 +399,20 @@ fn quit_if_idle(app: &tauri::AppHandle, closing: Option<&str>) {
     let editors_open = app.webview_windows().keys()
         .any(|label| label.starts_with("craft-") && Some(label.as_str()) != closing);
     let background = app.state::<DesktopState>().prefs.lock().unwrap().background;
-    if should_quit(APP_REQUESTED.load(Ordering::SeqCst), main_visible, editors_open, background, LAUNCHES.pending()) {
+    let agent_active_runs = app.state::<crate::desktop::RuntimeState>().status.lock().unwrap().agent_active_runs;
+    if should_quit(APP_REQUESTED.load(Ordering::SeqCst), main_visible, editors_open, background, LAUNCHES.pending(), agent_active_runs) {
         app.exit(0);
+    } else if agent_active_runs > 0 && !main_visible && !editors_open {
+        if let Some(main) = app.get_webview_window("main") {
+            let _ = main.hide();
+        }
     }
 }
 
 /// Started for an app alone, Ryn ends with that app's last window unless it runs in the
-/// background, or another app is still starting.
-fn should_quit(app_requested: bool, main_visible: bool, editors_open: bool, background: bool, launching: usize) -> bool {
-    app_requested && !main_visible && !editors_open && !background && launching == 0
+/// background, another app is still starting, or an Agent task is running.
+fn should_quit(app_requested: bool, main_visible: bool, editors_open: bool, background: bool, launching: usize, agent_active_runs: u64) -> bool {
+    app_requested && !main_visible && !editors_open && !background && launching == 0 && agent_active_runs == 0
 }
 
 /// Brings the system's app entries in line with the installed, enabled editors. Fails when any
@@ -729,14 +734,16 @@ mod tests {
 
     #[test]
     fn closing_the_last_editor_quits_only_when_nothing_else_is_coming() {
-        // app requested, main visible, editors open, background, launches in flight
-        assert!(should_quit(true, false, false, false, 0));
-        assert!(!should_quit(true, false, false, false, 1), "a launch still on its way keeps Ryn running");
-        assert!(!should_quit(true, false, false, false, 3));
-        assert!(!should_quit(false, false, false, false, 0), "a normal start keeps its own close behaviour");
-        assert!(!should_quit(true, true, false, false, 0));
-        assert!(!should_quit(true, false, true, false, 0));
-        assert!(!should_quit(true, false, false, true, 0));
+        // app requested, main visible, editors open, background, launches in flight, agent active runs
+        assert!(should_quit(true, false, false, false, 0, 0));
+        assert!(!should_quit(true, false, false, false, 1, 0), "a launch still on its way keeps Ryn running");
+        assert!(!should_quit(true, false, false, false, 3, 0));
+        assert!(!should_quit(true, false, false, false, 0, 1), "an active Agent task keeps Ryn in the tray");
+        assert!(!should_quit(true, false, false, false, 0, 4));
+        assert!(!should_quit(false, false, false, false, 0, 0), "a normal start keeps its own close behaviour");
+        assert!(!should_quit(true, true, false, false, 0, 0));
+        assert!(!should_quit(true, false, true, false, 0, 0));
+        assert!(!should_quit(true, false, false, true, 0, 0));
     }
 
     #[test]
@@ -747,10 +754,10 @@ mod tests {
         assert_eq!(TRACKER.pending(), 2);
         drop(first); // opened its window
         assert_eq!(TRACKER.pending(), 1);
-        assert!(!should_quit(true, false, false, false, TRACKER.pending()));
+        assert!(!should_quit(true, false, false, false, TRACKER.pending(), 0));
         drop(second); // failed, its error page shown
         assert_eq!(TRACKER.pending(), 0);
-        assert!(should_quit(true, false, false, false, TRACKER.pending()));
+        assert!(should_quit(true, false, false, false, TRACKER.pending(), 0));
         let launches: Vec<_> = (0..8).map(|_| std::thread::spawn(|| {
             let launching = TRACKER.start();
             std::thread::sleep(Duration::from_millis(5));

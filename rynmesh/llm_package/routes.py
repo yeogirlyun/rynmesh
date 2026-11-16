@@ -2365,11 +2365,30 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                             if order.get("state") in {"queued", "accepted", "running"})
         running = current._running if current else 0
         setup = read_setup_job().get("state") in {"queued", "running", "cancelling"}
+        agent_active_runs = 0
+        agent_waiting = 0
+        agent_task_titles: list[str] = []
+        agent_rt = getattr(app.state, "agent_runtime", None)
+        if agent_rt is not None and hasattr(agent_rt, "activity_counts"):
+            try:
+                counts = agent_rt.activity_counts()
+                agent_active_runs = int(counts.get("agent_active_runs", 0))
+                agent_waiting = int(counts.get("agent_waiting", 0))
+                raw_titles = counts.get("agent_task_titles")
+                if isinstance(raw_titles, list):
+                    agent_task_titles = [str(t)[:40] for t in raw_titles[:3] if isinstance(t, str) and t]
+            except Exception:
+                agent_active_runs = 0
+                agent_waiting = 0
+                agent_task_titles = []
         return {
             "desktop_managed": os.environ.get("RYNMESH_DESKTOP_MODE") == "1",
             "configured": current is not None,
             "sharing": bool(current and current.accepting_orders),
             "active_tasks": running + consuming,
+            "agent_active_runs": agent_active_runs,
+            "agent_waiting": agent_waiting,
+            "agent_task_titles": agent_task_titles,
             "setup_active": setup,
         }
 

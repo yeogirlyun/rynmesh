@@ -290,6 +290,82 @@ class AgentRuntime(AgentLoop):
         with self._active_lock:
             return next((run.copy() for run in self._active_runs.values() if run["task_id"] == task_id), None)
 
+    def activity_counts(self) -> dict[str, Any]:
+        """Lightweight task activity summary for the desktop watchdog without copying histories."""
+        with self._active_lock:
+            running = len(self._active_runs)
+            active_task_ids = [
+                run["task_id"]
+                for run in self._active_runs.values()
+                if isinstance(run, dict) and isinstance(run.get("task_id"), str)
+            ]
+        active_id_set = set(active_task_ids)
+
+        def _view(data: dict) -> dict[str, Any]:
+            tasks = data.get("tasks") or {}
+            queued = 0
+            retrying = 0
+            waiting_approval = 0
+            waiting_input = 0
+            titles: list[str] = []
+            seen_title_ids: set[str] = set()
+
+            for tid in active_task_ids:
+                if tid in seen_title_ids or len(titles) >= 3:
+                    continue
+                row = tasks.get(tid)
+                if isinstance(row, dict):
+                    seen_title_ids.add(tid)
+                    raw_title = " ".join(str(row.get("title") or "").split())[:40]
+                    titles.append(raw_title or tid[:40])
+
+            queued_rows: list[tuple[str, str, dict]] = []
+            for tid, row in tasks.items():
+                if not isinstance(row, dict):
+                    continue
+                status = row.get("status")
+                if status == "waiting_approval":
+                    waiting_approval += 1
+                    continue
+                if status == "waiting_input":
+                    waiting_input += 1
+                    continue
+                if tid in active_id_set:
+                    continue
+                if (row.get("fork") or {}).get("awaiting_instruction"):
+                    continue
+                recovery_state = (row.get("connection_recovery") or {}).get("state")
+                is_retrying = recovery_state == "retrying" or (status == "queued" and not retry_policy.ready(row))
+                if status == "queued" or is_retrying:
+                    queued += 1
+                    if is_retrying:
+                        retrying += 1
+                    queued_rows.append((str(row.get("updated_at") or ""), str(tid), row))
+
+            if len(titles) < 3 and queued_rows:
+                queued_rows.sort(key=lambda item: item[0])
+                for _updated, tid, row in queued_rows:
+                    if tid in seen_title_ids:
+                        continue
+                    seen_title_ids.add(tid)
+                    raw_title = " ".join(str(row.get("title") or "").split())[:40]
+                    titles.append(raw_title or tid[:40])
+                    if len(titles) >= 3:
+                        break
+
+            return {
+                "running": running,
+                "queued": queued,
+                "retrying": retrying,
+                "waiting_approval": waiting_approval,
+                "waiting_input": waiting_input,
+                "agent_active_runs": running + queued,
+                "agent_waiting": waiting_approval + waiting_input,
+                "agent_task_titles": titles,
+            }
+
+        return self.store.inspect(_view)
+
     def _start_stream(self, selected, step):
         # Live text is a display projection, separate from encrypted recovery
         # checkpoints. The provider callback must not wait on a disk commit for

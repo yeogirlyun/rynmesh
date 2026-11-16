@@ -28,7 +28,9 @@ it("translates desktop controls and keeps preview actions working in Chinese", a
   expect(screen.getByRole("heading", { name: "快捷操作" })).toBeInTheDocument();
   expect(screen.queryByText("Startup & background")).not.toBeInTheDocument();
   expect(screen.queryByText("At your fingertips")).not.toBeInTheDocument();
-  expect(screen.getByText("0 个进行中的 AI 任务")).toBeInTheDocument();
+  expect(screen.getByText("0 个 Agent 任务")).toBeInTheDocument();
+  expect(screen.getByText("0 个模型请求")).toBeInTheDocument();
+  expect(screen.getByRole("switch", { name: "有任务运行或共享时保持唤醒" })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "暂停 AI 共享" }));
   expect(await screen.findByRole("heading", { name: "AI 共享已暂停" })).toBeInTheDocument();
   expect(screen.getByRole("status")).toHaveTextContent("预览：AI 共享已暂停");

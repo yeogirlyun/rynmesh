@@ -12,6 +12,9 @@ pub struct RuntimeStatus {
     pub configured: bool,
     pub sharing: bool,
     pub active_tasks: u64,
+    pub agent_active_runs: u64,
+    pub agent_waiting: u64,
+    pub agent_task_titles: Vec<String>,
     pub setup_active: bool,
     pub recovery_attempts: u8,
     pub recovery: String,
@@ -77,17 +80,104 @@ pub fn desktop_status(state: tauri::State<RuntimeState>) -> RuntimeStatus { stat
 
 // Native confirmations also work when the webview or local node is unavailable.
 // Buttons default to Cancel for potentially interrupted work.
+#[cfg_attr(windows, allow(dead_code))]
+fn non_windows_dialog_decision(
+    text: &str,
+    confirm: bool,
+    invoke_dialog: impl FnOnce(
+        &str,
+        tauri_plugin_dialog::MessageDialogKind,
+        tauri_plugin_dialog::MessageDialogButtons,
+    ) -> bool,
+) -> bool {
+    use tauri_plugin_dialog::{MessageDialogButtons, MessageDialogKind};
+    if confirm {
+        invoke_dialog(text, MessageDialogKind::Warning, MessageDialogButtons::OkCancel)
+    } else {
+        invoke_dialog(text, MessageDialogKind::Info, MessageDialogButtons::Ok)
+    }
+}
+
 #[cfg(windows)]
-pub fn message(text: &str, confirm: bool) -> bool {
+fn windows_message_box(text: &str, confirm: bool) -> bool {
     #[link(name = "user32")]
     extern "system" { fn MessageBoxW(window: isize, text: *const u16, caption: *const u16, flags: u32) -> i32; }
     let text: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
     let title: Vec<u16> = "Ryn".encode_utf16().chain(Some(0)).collect();
     unsafe { MessageBoxW(0, text.as_ptr(), title.as_ptr(), if confirm { 0x10131 } else { 0x10040 }) == 1 }
 }
+
+pub fn startup_alert(text: &str) {
+    #[cfg(windows)]
+    { let _ = windows_message_box(text, false); }
+    #[cfg(not(windows))]
+    {
+        let _ = rfd::MessageDialog::new()
+            .set_title("Ryn")
+            .set_description(text)
+            .set_level(rfd::MessageLevel::Error)
+            .set_buttons(rfd::MessageButtons::Ok)
+            .show();
+    }
+}
+
+#[cfg(windows)]
+pub fn message(_app: &tauri::AppHandle, text: &str, confirm: bool) -> bool {
+    windows_message_box(text, confirm)
+}
+
 #[cfg(not(windows))]
-// Preserve the existing non-Windows lifecycle; native confirmation is Windows-only.
-pub fn message(_text: &str, _confirm: bool) -> bool { true }
+pub fn message(app: &tauri::AppHandle, text: &str, confirm: bool) -> bool {
+    use tauri_plugin_dialog::DialogExt;
+    non_windows_dialog_decision(text, confirm, |body, kind, buttons| {
+        app.dialog().message(body).title("Ryn").kind(kind).buttons(buttons).blocking_show()
+    })
+}
+
+pub fn should_keep_awake(keep_awake_pref: bool, status: &RuntimeStatus) -> bool {
+    keep_awake_pref
+        && status.node_online
+        && (status.sharing || status.active_tasks > 0 || status.agent_active_runs > 0 || status.setup_active)
+}
+
+pub fn confirm_warning(current: Result<&RuntimeStatus, &str>) -> String {
+    match current {
+        Ok(s) if s.agent_active_runs > 0 => {
+            let shown: Vec<String> = s
+                .agent_task_titles
+                .iter()
+                .map(|t| t.trim().chars().take(40).collect::<String>())
+                .filter(|t| !t.is_empty())
+                .take(3)
+                .collect();
+            let mut head = tr("{{count}} Agent tasks are running")
+                .replace("{{count}}", &s.agent_active_runs.to_string());
+            if !shown.is_empty() {
+                let joined = shown.join(&tr(", "));
+                if (s.agent_active_runs as usize) > shown.len() {
+                    head.push_str(
+                        &tr(" ({{titles}}, etc. {{count}} total)")
+                            .replace("{{titles}}", &joined)
+                            .replace("{{count}}", &s.agent_active_runs.to_string()),
+                    );
+                } else {
+                    head.push_str(&tr(" ({{titles}})").replace("{{titles}}", &joined));
+                }
+            }
+            if s.setup_active {
+                let setup_line = tr("Model setup: {{state}}.").replace("{{state}}", &tr("in progress"));
+                format!("{head}\n{setup_line}\n\n{}", tr("This will interrupt work on this node."))
+            } else {
+                format!("{head}\n\n{}", tr("This will interrupt work on this node."))
+            }
+        }
+        Ok(s) if s.active_tasks > 0 || s.setup_active => tr("{{count}} active AI tasks. Model setup: {{state}}.\n\nThis will interrupt work on this node.")
+            .replace("{{count}}", &s.active_tasks.to_string())
+            .replace("{{state}}", &tr(if s.setup_active { "in progress" } else { "idle" })),
+        Ok(_) => tr("This will disconnect services on this computer. Other service requests may also be interrupted."),
+        Err(_) => tr("Task status is unavailable. Running work may be interrupted."),
+    }
+}
 
 fn awake(enabled: bool) -> bool {
     #[cfg(windows)] {
@@ -135,17 +225,12 @@ fn action_inner(app: &tauri::AppHandle, action: &str) -> Result<String, String> 
         }
         "restart" | "quit" => {
             let current = read_status(state.port);
-            let warning = match &current {
-                Ok(s) if s.active_tasks > 0 || s.setup_active => tr("{{count}} active AI tasks. Model setup: {{state}}.\n\nThis will interrupt work on this node.")
-                    .replace("{{count}}", &s.active_tasks.to_string()).replace("{{state}}", &tr(if s.setup_active { "in progress" } else { "idle" })),
-                Ok(_) => tr("This will disconnect services on this computer. Other service requests may also be interrupted."),
-                Err(_) => tr("Task status is unavailable. Running work may be interrupted."),
-            };
+            let warning = confirm_warning(current.as_ref().map_err(String::as_str));
             let update_notice = match (action, crate::updates::version_on_quit(app)) {
                 ("quit", Some(version)) => format!("\n\n{}", tr("Ryn {{version}} will be installed as Ryn quits.").replace("{{version}}", &version)),
                 _ => String::new(),
             };
-            if !message(&format!("{}\n\n{warning}{update_notice}", tr(if action == "quit" { "Quit Ryn?" } else { "Restart the node in Ryn?" })), true) {
+            if !message(app, &format!("{}\n\n{warning}{update_notice}", tr(if action == "quit" { "Quit Ryn?" } else { "Restart the node in Ryn?" })), true) {
                 return Ok("Cancelled.".into());
             }
             if action == "quit" { crate::updates::note_quit(app); app.exit(0); return Ok("Quitting Ryn.".into()); }
@@ -162,7 +247,17 @@ pub async fn desktop_action(app: tauri::AppHandle, action: String) -> Result<Str
     tauri::async_runtime::spawn_blocking(move || run_action(&app, &action)).await.map_err(|_| tr("Desktop action failed."))?
 }
 pub fn tray_status_key(status: &RuntimeStatus) -> &'static str {
-    if !status.node_online { "Ryn - Node unavailable" } else if !status.configured { "Ryn - Node running" } else if status.sharing { "Ryn - AI sharing enabled" } else { "Ryn - AI sharing paused" }
+    if !status.node_online {
+        "Ryn - Node unavailable"
+    } else if status.agent_active_runs > 0 {
+        "Ryn - Agent running"
+    } else if !status.configured {
+        "Ryn - Node running"
+    } else if status.sharing {
+        "Ryn - AI sharing enabled"
+    } else {
+        "Ryn - AI sharing paused"
+    }
 }
 const STARTUP_GRACE: Duration = Duration::from_secs(120);
 
@@ -179,7 +274,7 @@ pub fn watchdog(app: tauri::AppHandle, status_item: tauri::menu::MenuItem<tauri:
             if runtime.reset_recovery.swap(false, Ordering::SeqCst) { recovery = Recovery::default(); }
             let previous = runtime.status.lock().unwrap().clone();
             let mut status = watchdog_status(previous, read_status(node.port), || node::health_ok(node.port));
-            status.awake_active = awake(prefs.keep_awake && status.node_online && (status.sharing || status.active_tasks > 0 || status.setup_active));
+            status.awake_active = awake(should_keep_awake(prefs.keep_awake, &status));
             // A slow metadata/CLI refresh is not proof that the live node died.
             // Give a running child time to answer before interrupting its tasks;
             // exited children retain the ordinary three-failure crash recovery.
@@ -279,5 +374,70 @@ mod tests {
     fn disabled_recovery_never_restarts() {
         let mut r = Recovery::default();
         for _ in 0..100 { assert!(!r.check(false, false, Instant::now())); }
+    }
+
+    #[test]
+    fn old_node_status_defaults_agent_counts_and_keep_awake_includes_agent_runs() {
+        let legacy_json = serde_json::json!({
+            "desktop_managed": true,
+            "configured": false,
+            "sharing": false,
+            "active_tasks": 0,
+            "setup_active": false
+        });
+        let legacy: RuntimeStatus = serde_json::from_value(legacy_json).unwrap();
+        assert_eq!(legacy.agent_active_runs, 0);
+        assert_eq!(legacy.agent_waiting, 0);
+        assert!(legacy.agent_task_titles.is_empty());
+        assert!(!should_keep_awake(true, &legacy));
+
+        let mut active_agent = RuntimeStatus {
+            node_online: true,
+            configured: false,
+            sharing: false,
+            active_tasks: 0,
+            agent_active_runs: 2,
+            agent_waiting: 1,
+            agent_task_titles: vec!["Task Alpha".into(), "Task Beta".into()],
+            setup_active: false,
+            ..Default::default()
+        };
+        assert!(should_keep_awake(true, &active_agent));
+        assert!(!should_keep_awake(false, &active_agent));
+        assert_eq!(tray_status_key(&active_agent), "Ryn - Agent running");
+
+        let warn_two = confirm_warning(Ok(&active_agent));
+        assert!(warn_two.contains("2"));
+        assert!(warn_two.contains("Task Alpha"));
+        assert!(warn_two.contains("Task Beta"));
+
+        active_agent.agent_active_runs = 5;
+        active_agent.agent_task_titles = vec!["T1".into(), "T2".into(), "T3".into()];
+        let warn_five = confirm_warning(Ok(&active_agent));
+        assert!(warn_five.contains("5"));
+        assert!(warn_five.contains("T1") && warn_five.contains("T2") && warn_five.contains("T3"));
+    }
+
+    #[test]
+    fn non_windows_confirmation_dialog_returns_false_when_cancelled() {
+        use tauri_plugin_dialog::{MessageDialogButtons, MessageDialogKind};
+        let mut seen_body = None;
+        let mut seen_warning_ok_cancel = false;
+        let cancelled = non_windows_dialog_decision("Quit Ryn?", true, |body, kind, buttons| {
+            seen_body = Some(body.to_owned());
+            seen_warning_ok_cancel = matches!(kind, MessageDialogKind::Warning)
+                && matches!(buttons, MessageDialogButtons::OkCancel);
+            false
+        });
+        assert!(!cancelled);
+        assert_eq!(seen_body.as_deref(), Some("Quit Ryn?"));
+        assert!(seen_warning_ok_cancel);
+
+        let accepted = non_windows_dialog_decision("Quit Ryn?", true, |_body, kind, buttons| {
+            assert!(matches!(kind, MessageDialogKind::Warning));
+            assert!(matches!(buttons, MessageDialogButtons::OkCancel));
+            true
+        });
+        assert!(accepted);
     }
 }
