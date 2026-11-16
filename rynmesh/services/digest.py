@@ -29,7 +29,11 @@ from xml.etree import ElementTree
 
 from ..atomic_io import atomic_write_json
 from ..recommendation_evidence import build_evidence_packet
-from ..recommendation_profile import RecommendationProfileStore
+from ..recommendation_profile import (
+    RecommendationProfileStore,
+    extract_cjk_terms,
+    iter_direction_terms,
+)
 from ..recommender import (
     BaselineRanker,
     Candidate,
@@ -239,10 +243,20 @@ def _terms_of(item: Mapping[str, Any]) -> list[str]:
     """Subject terms for an item, most distinctive first (title before body)."""
     seen: dict[str, None] = {}
     for field, limit in (("title", 40), ("summary", 60)):
-        for word in _TERM_RE.findall(str(item.get(field, "")).lower())[:limit]:
+        field_text = str(item.get(field, "")).lower()
+        count = 0
+        for word in _TERM_RE.findall(field_text):
             if word in _STOPWORDS or word.isdigit():
                 continue
             seen.setdefault(f"term:{word}", None)
+            count += 1
+            if count >= limit:
+                break
+        for cjk_word in extract_cjk_terms(field_text):
+            if count >= limit:
+                break
+            seen.setdefault(f"term:{cjk_word}", None)
+            count += 1
     return list(seen)
 
 
@@ -256,30 +270,16 @@ def _candidate_tags(source: Mapping[str, Any], item: Mapping[str, Any]) -> tuple
 def parse_steering(text: str) -> dict[str, list[str]]:
     """Turn 'more math explainers, less politics' into interests / avoids.
 
-    Split on separators first so each clause carries its own polarity; a clause
-    without a cue word inherits the previous one, which is how people actually
-    write these ("more rust, less js, no crypto").
+    Split on sentence separators first so polarity resets across sentences, while
+    comma/conjunction list items within a sentence inherit active polarity.
     """
     interests: list[str] = []
     avoids: list[str] = []
-    polarity = "+"
-    for clause in re.split(r"[,;/\n]|\band\b|\bbut\b", str(text or "").lower()):
-        clause = clause.strip()
-        if not clause:
+    for word, polarity in iter_direction_terms(str(text or "")):
+        if word.isascii() and (len(word) < 3 or word in _STOPWORDS or word.isdigit()):
             continue
-        if _NEGATIVE_LEAD.search(clause):
-            polarity = "-"
-        elif _POSITIVE_LEAD.search(clause):
-            polarity = "+"
-        words = [
-            word
-            for word in _TERM_RE.findall(clause)
-            if word not in _STOPWORDS
-            and not _NEGATIVE_LEAD.fullmatch(word)
-            and not _POSITIVE_LEAD.fullmatch(word)
-        ]
-        target = interests if polarity == "+" else avoids
-        target.extend(f"term:{word}" for word in words)
+        target = interests if polarity > 0 else avoids
+        target.append(f"term:{word}")
     return {
         "interests": list(dict.fromkeys(interests)),
         "avoids": list(dict.fromkeys(avoids)),
