@@ -24,6 +24,7 @@ MAX_JOBS = 64
 MAX_TOMBSTONES = 256
 MAX_SUPPRESSED_SLOTS = 4096
 MAX_FENCED_SOURCES = 512
+MAX_TASK_FENCES = 2048
 MAX_CONTROL_REQUESTS = 128
 MAX_FACT_TEXT_CHARS = 1000
 MAX_FACT_KEY_CHARS = 160
@@ -680,6 +681,190 @@ def _compact_tombstones(mem: dict[str, Any], *, fold_all: bool = False, force_ha
     return folded_total
 
 
+_COMPACT_MANIFEST_KEYS = ("message_id", "conversation_revision", "content_sha256", "source_seq")
+_SHRINK_IDEMPOTENCY_OPS = frozenset(
+    {"delete_entry", "reset_memory", "forget_query", "owner_delete_entry", "owner_reset_memory"}
+)
+
+
+def _is_terminal_job(job: dict[str, Any]) -> bool:
+    state = job.get("state")
+    if state in {"committed", "no_op", "stale"}:
+        return True
+    if state == "failed":
+        if job.get("error_code") == "daily_extraction_budget_exhausted":
+            return False
+        return job.get("retry_at") is None
+    return False
+
+
+def _compact_terminal_job(job: dict[str, Any]) -> bool:
+    """Strip source_manifest text and settled dispatch_usage once a job reaches terminal state."""
+    if not isinstance(job, dict) or not _is_terminal_job(job):
+        return False
+    changed = False
+    manifest = job.get("source_manifest")
+    if isinstance(manifest, list):
+        compacted_manifest: list[dict[str, Any]] = []
+        for item in manifest:
+            if isinstance(item, dict):
+                slim = {k: item[k] for k in _COMPACT_MANIFEST_KEYS if k in item}
+                if slim != item:
+                    changed = True
+                compacted_manifest.append(slim)
+        job["source_manifest"] = compacted_manifest
+    usage_map = job.get("dispatch_usage")
+    if isinstance(usage_map, dict):
+        for ltok in list(usage_map.keys()):
+            stages = usage_map.get(ltok)
+            if not isinstance(stages, dict) or all(
+                isinstance(st, dict) and st.get("settled") for st in stages.values()
+            ):
+                usage_map.pop(ltok, None)
+                changed = True
+        if not usage_map:
+            job.pop("dispatch_usage", None)
+            changed = True
+    return changed
+
+
+def _compact_task_fences_and_boundaries(
+    mem: dict[str, Any],
+    *,
+    max_task_fences: int = MAX_TASK_FENCES,
+    fold_all_boundaries: bool = False,
+) -> None:
+    fences = mem.get("source_fences")
+    if not isinstance(fences, dict):
+        return
+    watermarks = fences.setdefault("fenced_task_watermarks", {})
+    for map_key in ("deleted_tasks", "archived_tasks"):
+        tmap = fences.get(map_key)
+        if isinstance(tmap, dict) and len(tmap) > max_task_fences:
+            ordered_tasks = sorted(
+                tmap.items(),
+                key=lambda item: (
+                    float(item[1].get("at") or 0.0) if isinstance(item[1], dict) else 0.0,
+                    str(item[0]),
+                ),
+            )
+            while len(tmap) > max_task_fences and ordered_tasks:
+                tid, meta = ordered_tasks.pop(0)
+                tmap.pop(tid, None)
+                default_rev = 10**9 if map_key == "deleted_tasks" else 0
+                rev_val = (
+                    int(meta.get("conversation_revision", default_rev))
+                    if isinstance(meta, dict)
+                    else default_rev
+                )
+                if map_key == "deleted_tasks":
+                    rev_val = max(rev_val, 10**9)
+                watermarks[tid] = max(int(watermarks.get(tid, 0)), rev_val)
+
+    boundaries = fences.get("reset_task_boundaries")
+    if not isinstance(boundaries, dict) or not boundaries:
+        return
+    if fold_all_boundaries:
+        for tid, binfo in list(boundaries.items()):
+            if isinstance(binfo, dict):
+                boundaries[tid] = {
+                    "reset_epoch": int(binfo.get("reset_epoch", 0)),
+                    "conversation_revision": int(binfo.get("conversation_revision", 0)),
+                    "message_count": int(binfo.get("message_count", 0)),
+                }
+        return
+    if len(boundaries) > max_task_fences:
+        ordered_bounds = sorted(
+            boundaries.items(),
+            key=lambda item: (
+                float(item[1].get("at") or 0.0) if isinstance(item[1], dict) else 0.0,
+                str(item[0]),
+            ),
+        )
+        fold_count = len(boundaries) - max_task_fences
+        for tid, binfo in ordered_bounds[:fold_count]:
+            if isinstance(binfo, dict):
+                boundaries[tid] = {
+                    "reset_epoch": int(binfo.get("reset_epoch", 0)),
+                    "conversation_revision": int(binfo.get("conversation_revision", 0)),
+                    "message_count": int(binfo.get("message_count", 0)),
+                }
+        for _tid, binfo in list(boundaries.items()):
+            if isinstance(binfo, dict) and "fenced_message_ids" in binfo:
+                binfo.pop("fenced_message_ids", None)
+
+
+def _shrink_to_fit(mem: dict[str, Any]) -> None:
+    """Aggressively reclaim compactable ledger state before enforcing max_memory_bytes."""
+    if not isinstance(mem, dict):
+        return
+    max_bytes = int(mem.get("settings", {}).get("budgets", {}).get("max_memory_bytes", MAX_MEMORY_BYTES))
+    max_fenced = int(mem.get("settings", {}).get("budgets", {}).get("max_fenced_sources", MAX_FENCED_SOURCES))
+
+    jobs = mem.get("jobs")
+    if isinstance(jobs, dict):
+        for job in jobs.values():
+            if isinstance(job, dict):
+                _compact_terminal_job(job)
+
+    if isinstance(mem.get("tombstones"), dict) and mem["tombstones"]:
+        _compact_tombstones(mem, fold_all=True)
+
+    fences = mem.get("source_fences")
+    if isinstance(fences, dict):
+        _compact_source_fences_into_watermarks(mem, max(1, max_fenced // 2))
+        _compact_task_fences_and_boundaries(mem, max_task_fences=MAX_TASK_FENCES, fold_all_boundaries=True)
+
+    candidates = mem.get("candidates")
+    if isinstance(candidates, dict):
+        for cid in [k for k, v in candidates.items() if isinstance(v, dict) and v.get("status") != "pending"]:
+            candidates.pop(cid, None)
+
+    entries = mem.get("entries")
+    if isinstance(entries, dict):
+        for eid in [k for k, v in entries.items() if isinstance(v, dict) and v.get("status") == "deleted"]:
+            entries.pop(eid, None)
+        if len(encoded(mem)) > max_bytes:
+            superseded = sorted(
+                (
+                    (eid, float(e.get("updated_at") or 0.0))
+                    for eid, e in entries.items()
+                    if isinstance(e, dict) and e.get("status") == "superseded"
+                ),
+                key=lambda pair: pair[1],
+            )
+            for eid, _ in superseded:
+                entries.pop(eid, None)
+                if len(encoded(mem)) <= max_bytes:
+                    break
+
+    if len(encoded(mem)) > max_bytes:
+        if isinstance(mem.get("control_requests"), dict):
+            mem["control_requests"].clear()
+        if isinstance(mem.get("idempotency"), dict):
+            mem["idempotency"].clear()
+        _prune_processed_sources(mem, MAX_FENCED_SOURCES // 2)
+
+    if len(encoded(mem)) > max_bytes and isinstance(jobs, dict):
+        terminal_ids = sorted(
+            (
+                (jid, float(job.get("updated_at") or 0.0))
+                for jid, job in jobs.items()
+                if isinstance(job, dict) and _is_terminal_job(job)
+            ),
+            key=lambda pair: pair[1],
+        )
+        for jid, _ in terminal_ids:
+            jobs.pop(jid, None)
+            if len(encoded(mem)) <= max_bytes:
+                break
+
+    if len(encoded(mem)) > max_bytes and isinstance(fences, dict):
+        _compact_source_fences_into_watermarks(mem, 0)
+        _compact_task_fences_and_boundaries(mem, max_task_fences=0, fold_all_boundaries=True)
+        _prune_processed_sources(mem, 0)
+
+
 def compact_for_lifecycle(mem: dict[str, Any]) -> None:
     """Reclaim compactable ledger overhead (tombstones, terminal job texts, fences, resolved records) before lifecycle retry."""
     if not isinstance(mem, dict):
@@ -693,13 +878,8 @@ def compact_for_lifecycle(mem: dict[str, Any]) -> None:
         for jid, job in jobs.items():
             if not isinstance(job, dict):
                 continue
-            if job.get("state") in {"committed", "no_op", "stale", "failed"}:
-                manifest = job.get("source_manifest")
-                if isinstance(manifest, list):
-                    for item in manifest:
-                        if isinstance(item, dict):
-                            item.pop("text", None)
-                job.pop("dispatch_usage", None)
+            if _is_terminal_job(job):
+                _compact_terminal_job(job)
                 terminal_ids.append((jid, float(job.get("updated_at") or 0.0)))
         terminal_ids.sort(key=lambda pair: pair[1])
         keep_jobs = MAX_JOBS // 2
@@ -711,23 +891,7 @@ def compact_for_lifecycle(mem: dict[str, Any]) -> None:
     if isinstance(fences, dict):
         max_fenced = int(mem.get("settings", {}).get("budgets", {}).get("max_fenced_sources", MAX_FENCED_SOURCES))
         _compact_source_fences_into_watermarks(mem, max(1, max_fenced // 2))
-        watermarks = fences.setdefault("fenced_task_watermarks", {})
-        for map_key in ("deleted_tasks", "archived_tasks"):
-            tmap = fences.get(map_key)
-            if isinstance(tmap, dict) and len(tmap) > 2048:
-                ordered_tasks = sorted(
-                    tmap.items(),
-                    key=lambda item: float(item[1].get("at") or 0.0) if isinstance(item[1], dict) else 0.0,
-                )
-                while len(tmap) > 2048 and ordered_tasks:
-                    tid, _ = ordered_tasks.pop(0)
-                    tmap.pop(tid, None)
-                    watermarks[tid] = max(int(watermarks.get(tid, 0)), 0)
-        boundaries = fences.get("reset_task_boundaries")
-        if isinstance(boundaries, dict):
-            for binfo in boundaries.values():
-                if isinstance(binfo, dict):
-                    binfo.pop("fenced_message_ids", None)
+        _compact_task_fences_and_boundaries(mem, max_task_fences=MAX_TASK_FENCES, fold_all_boundaries=True)
 
     reqs = mem.get("control_requests")
     if isinstance(reqs, dict) and len(reqs) > MAX_CONTROL_REQUESTS // 2:
@@ -818,20 +982,31 @@ def _task_processed_through_seq(
     return same_rev, max(0, int(wm.get("through_seq") or 0))
 
 
-def _enforce_memory_bounds(mem: dict[str, Any]) -> None:
-    # Prune oldest terminal jobs and control requests first to keep state compact.
+def _enforce_memory_bounds(
+    mem: dict[str, Any],
+    *,
+    strict_bytes: bool = True,
+    degraded_context: dict[str, Any] | None = None,
+    root_data: dict[str, Any] | None = None,
+) -> None:
+    mem.pop("_pending_idempotency_shrink", None)
+    # Compact all terminal jobs upfront (compatible with pre-existing DB records).
     jobs = mem.get("jobs", {})
+    if isinstance(jobs, dict):
+        for job in jobs.values():
+            if isinstance(job, dict):
+                _compact_terminal_job(job)
     if len(jobs) > MAX_JOBS:
         terminal = [
             (jid, j.get("updated_at", 0.0))
             for jid, j in jobs.items()
-            if j.get("state") in {"committed", "no_op", "stale", "failed"}
+            if isinstance(j, dict) and _is_terminal_job(j)
         ]
         terminal.sort(key=lambda item: item[1])
         while len(jobs) > MAX_JOBS and terminal:
             jid, _ = terminal.pop(0)
             jobs.pop(jid, None)
-    if len(jobs) > MAX_JOBS:
+    if strict_bytes and len(jobs) > MAX_JOBS:
         raise AgentError("agent_memory_job_limit")
 
     requests = mem.get("control_requests", {})
@@ -846,16 +1021,18 @@ def _enforce_memory_bounds(mem: dict[str, Any]) -> None:
     max_tombstones = int(mem["settings"]["budgets"].get("max_tombstones", MAX_TOMBSTONES))
     if len(tombstones) > max_tombstones:
         _compact_tombstones(mem)
-    if len(mem.get("tombstones", {})) > max_tombstones:
+    if strict_bytes and len(mem.get("tombstones", {})) > max_tombstones:
         raise AgentError("agent_memory_tombstone_limit")
 
     # Security invariant: NEVER silently drop source fences without folding into monotonic task revision watermarks.
     max_fenced = int(mem["settings"]["budgets"].get("max_fenced_sources", MAX_FENCED_SOURCES))
     _compact_source_fences_into_watermarks(mem, max_fenced)
+    _compact_task_fences_and_boundaries(mem, max_task_fences=MAX_TASK_FENCES)
+    watermark_cap = max_fenced * 2 if max_fenced < MAX_FENCED_SOURCES else max(max_fenced * 2, 10000 + MAX_TASK_FENCES)
     if (
         len(mem["source_fences"].get("fenced_messages", {})) > max_fenced
         or len(mem["source_fences"].get("retired_branches", [])) > max_fenced
-        or len(mem["source_fences"].get("fenced_task_watermarks", {})) > max_fenced * 2
+        or len(mem["source_fences"].get("fenced_task_watermarks", {})) > watermark_cap
     ):
         raise AgentError("agent_memory_fence_limit")
 
@@ -865,7 +1042,7 @@ def _enforce_memory_bounds(mem: dict[str, Any]) -> None:
         entries.pop(eid, None)
     active_count = sum(1 for v in entries.values() if v.get("status") == "active")
     max_entries = int(mem["settings"]["budgets"].get("max_entries", MAX_ENTRIES))
-    if active_count > max_entries:
+    if strict_bytes and active_count > max_entries:
         raise AgentError("agent_memory_entry_limit")
     if len(entries) > max_entries * 2:
         superseded = [
@@ -880,7 +1057,7 @@ def _enforce_memory_bounds(mem: dict[str, Any]) -> None:
     candidates = mem.get("candidates", {})
     pending_count = sum(1 for c in candidates.values() if c.get("status") == "pending")
     max_candidates = int(mem["settings"]["budgets"].get("max_candidates", MAX_CANDIDATES))
-    if pending_count > max_candidates:
+    if strict_bytes and pending_count > max_candidates:
         raise AgentError("agent_memory_candidate_limit")
     if len(candidates) > max_candidates * 2:
         resolved = [
@@ -893,12 +1070,24 @@ def _enforce_memory_bounds(mem: dict[str, Any]) -> None:
             cid, _ = resolved.pop(0)
             candidates.pop(cid, None)
     max_bytes = int(mem["settings"]["budgets"].get("max_memory_bytes", MAX_MEMORY_BYTES))
-    if len(encoded(mem)) > max_bytes and mem.get("tombstones"):
-        _compact_tombstones(mem, force_half=True)
-    if len(encoded(mem)) > max_bytes and mem.get("tombstones"):
-        _compact_tombstones(mem, fold_all=True)
     if len(encoded(mem)) > max_bytes:
-        raise AgentError("agent_memory_byte_limit")
+        _shrink_to_fit(mem)
+    if len(encoded(mem)) > max_bytes:
+        if strict_bytes:
+            raise AgentError("agent_memory_byte_limit")
+        ctx = degraded_context or {}
+        degraded_info = {
+            "at": _now(),
+            "code": "agent_memory_byte_limit",
+            "task_id": str(ctx.get("task_id") or ""),
+            "operation": str(ctx.get("operation") or "shrink"),
+        }
+        mem["ledger_degraded"] = degraded_info
+        if isinstance(root_data, dict):
+            root_data["memory_ledger_degraded"] = copy.deepcopy(degraded_info)
+    else:
+        if isinstance(mem.get("ledger_degraded"), dict) and mem["ledger_degraded"].get("code") == "agent_memory_byte_limit":
+            mem.pop("ledger_degraded", None)
 
 
 def _record_idempotency(
@@ -907,7 +1096,13 @@ def _record_idempotency(
     operation: str,
     payload: dict[str, Any],
 ) -> tuple[bool, Any]:
+    is_shrink = operation in _SHRINK_IDEMPOTENCY_OPS or (
+        operation in {"decide_candidate", "owner_decide_candidate"}
+        and isinstance(payload, dict)
+        and payload.get("decision") == "reject"
+    )
     if not client_request_id:
+        mem["_pending_idempotency_shrink"] = is_shrink
         return False, None
     if not isinstance(client_request_id, str) or len(client_request_id) > 128:
         raise AgentError("agent_memory_invalid_request_id")
@@ -922,17 +1117,34 @@ def _record_idempotency(
         if prior.get("fingerprint") != fp:
             raise AgentError("agent_request_conflict")
         return True, copy.deepcopy(prior.get("result"))
+    mem["_pending_idempotency_shrink"] = is_shrink
     return False, fp
 
 
-def _save_idempotency(mem: dict[str, Any], client_request_id: str | None, fp: str | None, result: Any) -> Any:
+def _save_idempotency(
+    mem: dict[str, Any],
+    client_request_id: str | None,
+    fp: str | None,
+    result: Any,
+    *,
+    strict_bytes: bool | None = None,
+    degraded_context: dict[str, Any] | None = None,
+    root_data: dict[str, Any] | None = None,
+) -> Any:
+    pending_shrink = bool(mem.pop("_pending_idempotency_shrink", False))
+    effective_strict = (not pending_shrink) if strict_bytes is None else strict_bytes
     if client_request_id and fp:
         mem["control_requests"][client_request_id] = {
             "fingerprint": fp,
             "result": copy.deepcopy(result),
             "at": _now(),
         }
-    _enforce_memory_bounds(mem)
+    _enforce_memory_bounds(
+        mem,
+        strict_bytes=effective_strict,
+        degraded_context=degraded_context,
+        root_data=root_data,
+    )
     return result
 
 
@@ -1404,12 +1616,20 @@ def _build_capture_status(mem: dict[str, Any]) -> dict[str, Any]:
 
 def get_memory_settings_snapshot(data: dict[str, Any]) -> dict[str, Any]:
     mem = read_memory_state(data)
-    degraded = data.get("memory_ledger_degraded") if isinstance(data, dict) else None
+    raw_mem = data.get("memory") if isinstance(data, dict) and isinstance(data.get("memory"), dict) else mem
+    memory_bytes = len(encoded(raw_mem))
+    memory_bytes_limit = int(mem["settings"]["budgets"].get("max_memory_bytes", MAX_MEMORY_BYTES))
+    degraded = (
+        (data.get("memory_ledger_degraded") if isinstance(data, dict) else None)
+        or mem.get("ledger_degraded")
+    )
     return {
         "schema_version": mem["schema_version"],
         "generation": mem["generation"],
         "reset_epoch": mem["reset_epoch"],
         "policy_revision": mem["policy_revision"],
+        "memory_bytes": memory_bytes,
+        "memory_bytes_limit": memory_bytes_limit,
         "settings": copy.deepcopy(mem["settings"]),
         "daily_usage": copy.deepcopy(mem["daily_usage"]),
         "capture_status": _build_capture_status(mem),
@@ -1742,7 +1962,12 @@ def delete_memory_entry(
                 cand["revision"] += 1
                 cand["updated_at"] = now
 
-        _enforce_memory_bounds(mem)
+        _enforce_memory_bounds(
+            mem,
+            strict_bytes=False,
+            degraded_context={"operation": "delete_entry"},
+            root_data=data,
+        )
         result = {
             "deleted": True,
             "id": entry_id,
@@ -1751,7 +1976,15 @@ def delete_memory_entry(
             "generation": mem["generation"],
             "policy_revision": mem["policy_revision"],
         }
-        return _save_idempotency(mem, client_request_id, cached, result)
+        return _save_idempotency(
+            mem,
+            client_request_id,
+            cached,
+            result,
+            strict_bytes=False,
+            degraded_context={"operation": "delete_entry"},
+            root_data=data,
+        )
 
 
 def _scope_filter_matches(item_scope: dict[str, Any] | None, filter_scope: dict[str, Any] | None) -> bool:
@@ -1857,49 +2090,36 @@ def forget_by_slot_or_query(
                 cand["revision"] += 1
                 cand["updated_at"] = now
 
-        _enforce_memory_bounds(mem)
+        _enforce_memory_bounds(
+            mem,
+            strict_bytes=False,
+            degraded_context={"operation": "forget"},
+            root_data=data,
+        )
         result = {
             "deleted_ids": deleted_ids,
             "deleted_count": len(deleted_ids),
             "generation": mem["generation"],
             "policy_revision": mem["policy_revision"],
         }
-        return _save_idempotency(mem, client_request_id, cached, result)
+        return _save_idempotency(
+            mem,
+            client_request_id,
+            cached,
+            result,
+            strict_bytes=False,
+            degraded_context={"operation": "forget"},
+            root_data=data,
+        )
 
 
 def _record_task_reset_boundary(mem: dict[str, Any], tid: str, row: dict[str, Any]) -> None:
     crev = int(row.get("conversation_revision", 0))
     msgs = row.get("messages") or []
-    mids: list[str] = []
-    sources_to_fence: list[dict[str, Any]] = []
-    for msg in msgs:
-        if not isinstance(msg, dict):
-            continue
-        mid = msg.get("message_id")
-        if isinstance(mid, str) and mid:
-            mids.append(mid)
-            if msg.get("role") == "user":
-                text = (
-                    msg.get("ui", {}).get("text")
-                    if isinstance(msg.get("ui"), dict) and "text" in msg["ui"]
-                    else msg.get("content", "")
-                )
-                if isinstance(text, str):
-                    sources_to_fence.append(
-                        {
-                            "source_type": "task_message",
-                            "task_id": tid,
-                            "message_id": mid,
-                            "conversation_revision": crev,
-                            "content_sha256": message_content_sha256(text),
-                        }
-                    )
-    _fence_sources_in_state(mem, sources_to_fence, reason="memory_reset")
     mem["source_fences"].setdefault("reset_task_boundaries", {})[tid] = {
         "reset_epoch": mem["reset_epoch"],
         "conversation_revision": crev,
         "message_count": len(msgs),
-        "fenced_message_ids": mids,
         "at": _now(),
     }
 
@@ -1966,6 +2186,7 @@ def reset_memory(
                     job["state"] = "stale"
                     job["error_code"] = "reset_epoch_mismatch"
                     job["updated_at"] = now
+                    _compact_terminal_job(job)
         elif norm_scope and norm_scope["kind"] == "personal":
             for eid in [k for k, v in mem["entries"].items() if (v.get("scope") or {}).get("kind") == "personal"]:
                 entry = mem["entries"].pop(eid)
@@ -2001,6 +2222,7 @@ def reset_memory(
                     job["state"] = "stale"
                     job["error_code"] = "reset_epoch_mismatch"
                     job["updated_at"] = now
+                    _compact_terminal_job(job)
         else:
             cleared_entries = len(mem["entries"])
             cleared_candidates = len(mem["candidates"])
@@ -2022,12 +2244,14 @@ def reset_memory(
             mem["suppressed_slots"] = []
             mem["processed_sources"] = {}
             mem["hmac_salt"] = uuid.uuid4().hex + uuid.uuid4().hex
+            mem.pop("ledger_degraded", None)
             data.pop("memory_ledger_degraded", None)
             for job in mem["jobs"].values():
                 if job.get("state") in {"queued", "leased", "extracted"}:
                     job["state"] = "stale"
                     job["error_code"] = "reset_epoch_mismatch"
                     job["updated_at"] = now
+                    _compact_terminal_job(job)
             mem["source_fences"]["reset_watermark"] = {
                 "reset_epoch": mem["reset_epoch"],
                 "at": now,
@@ -2035,7 +2259,12 @@ def reset_memory(
             }
             mem["source_fences"]["relearn_tasks"] = {}
 
-        _enforce_memory_bounds(mem)
+        _enforce_memory_bounds(
+            mem,
+            strict_bytes=False,
+            degraded_context={"operation": "reset_memory"},
+            root_data=data,
+        )
         result = {
             "reset": True,
             "scope": norm_scope or {"kind": "all"},
@@ -2045,7 +2274,15 @@ def reset_memory(
             "generation": mem["generation"],
             "policy_revision": mem["policy_revision"],
         }
-        return _save_idempotency(mem, client_request_id, cached, result)
+        return _save_idempotency(
+            mem,
+            client_request_id,
+            cached,
+            result,
+            strict_bytes=False,
+            degraded_context={"operation": "reset_memory"},
+            root_data=data,
+        )
 
 
 def invalidate_task_policy_in_tx(data: dict[str, Any], row: dict[str, Any]) -> bool:
@@ -2060,6 +2297,7 @@ def invalidate_task_policy_in_tx(data: dict[str, Any], row: dict[str, Any]) -> b
     for job in (mem.get("jobs") or {}).values():
         if isinstance(job, dict) and job.get("task_id") == row["id"] and job.get("state") in {"queued", "leased", "extracted"}:
             job.update(state="stale", error_code="source_data_policy_denied", updated_at=now, lease_until=0)
+            _compact_terminal_job(job)
             changed = True
     for candidate in (mem.get("candidates") or {}).values():
         if isinstance(candidate, dict) and candidate.get("status") == "pending" and any(
@@ -2193,6 +2431,7 @@ def enqueue_extraction_job(
                     existing["error_code"] = "superseded_by_relearn"
                     existing["retry_at"] = None
                     existing["updated_at"] = now
+                    _compact_terminal_job(existing)
 
         job_id = "mjob_" + uuid.uuid4().hex[:16]
         job = {
@@ -2264,6 +2503,7 @@ def claim_extraction_job(
                 cand["lease_token"] = None
                 cand["lease_until"] = 0.0
                 cand["updated_at"] = now
+                _compact_terminal_job(cand)
                 mem["generation"] += 1
                 continue
             selected = cand
@@ -2275,6 +2515,7 @@ def claim_extraction_job(
             selected["state"] = "stale"
             selected["error_code"] = "reset_epoch_mismatch"
             selected["updated_at"] = now
+            _compact_terminal_job(selected)
             return None
 
         for src in selected.get("source_manifest") or []:
@@ -2283,6 +2524,7 @@ def claim_extraction_job(
                 selected["state"] = "stale"
                 selected["error_code"] = reason or "source_fenced"
                 selected["updated_at"] = now
+                _compact_terminal_job(selected)
                 return None
 
         selected["state"] = "leased"
@@ -2322,6 +2564,7 @@ def commit_extraction_job(
             job["state"] = "stale"
             job["error_code"] = "lease_expired"
             job["updated_at"] = now
+            _compact_terminal_job(job)
             return {"state": "stale", "job": copy.deepcopy(job), "committed_candidates": []}
 
         # 1. Re-verify reset_epoch at commit time
@@ -2329,12 +2572,14 @@ def commit_extraction_job(
             job["state"] = "stale"
             job["error_code"] = "reset_epoch_mismatch"
             job["updated_at"] = now
+            _compact_terminal_job(job)
             return {"state": "stale", "job": copy.deepcopy(job), "committed_candidates": []}
 
         # 2. Re-verify task project generation & every source in the job's manifest against live task/branch/fence state
         live_row = (data.get("tasks") or {}).get(job.get("task_id"))
         if memory_blocked(live_row):
             job.update(state="stale", error_code="source_data_policy_denied", updated_at=now)
+            _compact_terminal_job(job)
             return {"state": "stale", "job": copy.deepcopy(job), "committed_candidates": []}
         if isinstance(live_row, dict) and job.get("project_id"):
             live_proj = live_row.get("project") if isinstance(live_row.get("project"), dict) else {}
@@ -2342,6 +2587,7 @@ def commit_extraction_job(
                 job["state"] = "stale"
                 job["error_code"] = "project_generation_changed"
                 job["updated_at"] = now
+                _compact_terminal_job(job)
                 return {"state": "stale", "job": copy.deepcopy(job), "committed_candidates": []}
 
         manifest = job.get("source_manifest") or []
@@ -2352,6 +2598,7 @@ def commit_extraction_job(
                 job["state"] = "stale"
                 job["error_code"] = reason or "source_invalidated"
                 job["updated_at"] = now
+                _compact_terminal_job(job)
                 return {"state": "stale", "job": copy.deepcopy(job), "committed_candidates": []}
 
         day = local_day_string(now)
@@ -2374,6 +2621,7 @@ def commit_extraction_job(
             job["lease_until"] = 0.0
             job["updated_at"] = now
             _record_processed_watermark(mem, job, live_row)
+            _compact_terminal_job(job)
             mem["generation"] += 1
             _enforce_memory_bounds(mem)
             return {"state": "no_op", "job": copy.deepcopy(job), "committed_candidates": []}
@@ -2545,6 +2793,7 @@ def commit_extraction_job(
                 job["error_code"] = skipped_reasons[0]
             _record_processed_watermark(mem, job, live_row)
 
+        _compact_terminal_job(job)
         mem["generation"] += 1
         _enforce_memory_bounds(mem)
         return {
@@ -2629,9 +2878,22 @@ def decide_candidate(
             cand["revision"] += 1
             cand["updated_at"] = now
             mem["generation"] += 1
-            _enforce_memory_bounds(mem)
+            _enforce_memory_bounds(
+                mem,
+                strict_bytes=False,
+                degraded_context={"operation": "reject_candidate"},
+                root_data=data,
+            )
             result = {"candidate": copy.deepcopy(cand), "entry": None, "generation": mem["generation"]}
-            return _save_idempotency(mem, client_request_id, cached, result)
+            return _save_idempotency(
+                mem,
+                client_request_id,
+                cached,
+                result,
+                strict_bytes=False,
+                degraded_context={"operation": "reject_candidate"},
+                root_data=data,
+            )
 
         if cand.get("target_entry_id"):
             target = mem["entries"].get(cand["target_entry_id"])
@@ -2753,11 +3015,17 @@ def record_branch_rewrite_fence(
                     job["state"] = "stale"
                     job["error_code"] = "source_branch_retired"
                     job["updated_at"] = now
+                    _compact_terminal_job(job)
 
         mem["generation"] += 1
         if invalidated_entries:
             mem["policy_revision"] += 1
-        _enforce_memory_bounds(mem)
+        _enforce_memory_bounds(
+            mem,
+            strict_bytes=False,
+            degraded_context={"task_id": task_id, "operation": "branch_rewrite"},
+            root_data=data,
+        )
         return {
             "fenced_message_ids": retired_ids,
             "invalidated_candidates": invalidated_candidates,
@@ -2836,6 +3104,7 @@ def record_branch_rewrite_fence_minimal(
                     job["state"] = "stale"
                     job["error_code"] = "source_branch_retired"
                     job["updated_at"] = now
+                    _compact_terminal_job(job)
 
     raw_mem["generation"] = int(raw_mem.get("generation") or 0) + 1
     if invalidated_entries:
@@ -2859,19 +3128,29 @@ def record_task_lifecycle_fence(
         fences = mem["source_fences"]
         invalidated_candidates = 0
         invalidated_entries = 0
+        t_row = (data.get("tasks") or {}).get(task_id) or (data.get("archives") or {}).get(task_id)
+        t_crev = int(t_row.get("conversation_revision", 0)) if isinstance(t_row, dict) else 0
 
         if operation == "archive":
-            fences.setdefault("archived_tasks", {})[task_id] = {"at": now}
+            fences.setdefault("archived_tasks", {})[task_id] = {
+                "at": now,
+                "conversation_revision": t_crev,
+            }
             fences.get("relearn_tasks", {}).pop(task_id, None)
             for job in mem["jobs"].values():
                 if job.get("task_id") == task_id and job.get("state") in {"queued", "leased", "extracted"}:
                     job["state"] = "stale"
                     job["error_code"] = "source_task_archived"
                     job["updated_at"] = now
+                    _compact_terminal_job(job)
         elif operation == "restore":
             fences.get("archived_tasks", {}).pop(task_id, None)
         elif operation == "delete":
-            fences.setdefault("deleted_tasks", {})[task_id] = {"at": now, "reset_epoch": mem["reset_epoch"]}
+            fences.setdefault("deleted_tasks", {})[task_id] = {
+                "at": now,
+                "reset_epoch": mem["reset_epoch"],
+                "conversation_revision": t_crev,
+            }
             fences.get("archived_tasks", {}).pop(task_id, None)
             fences.get("relearn_tasks", {}).pop(task_id, None)
             for job in mem["jobs"].values():
@@ -2879,6 +3158,7 @@ def record_task_lifecycle_fence(
                     job["state"] = "stale"
                     job["error_code"] = "source_task_deleted"
                     job["updated_at"] = now
+                    _compact_terminal_job(job)
             for cand in mem["candidates"].values():
                 if cand.get("status") == "pending" and any(s.get("task_id") == task_id for s in (cand.get("sources") or [])):
                     cand["status"] = "stale"
@@ -2899,7 +3179,12 @@ def record_task_lifecycle_fence(
         mem["generation"] += 1
         if invalidated_entries:
             mem["policy_revision"] += 1
-        _enforce_memory_bounds(mem)
+        _enforce_memory_bounds(
+            mem,
+            strict_bytes=False,
+            degraded_context={"task_id": task_id, "operation": operation},
+            root_data=data,
+        )
         return {
             "task_id": task_id,
             "operation": operation,
@@ -3465,12 +3750,20 @@ def list_memories_snapshot(
         candidates.append(copy.deepcopy(cand))
     candidates.sort(key=lambda c: (-float(c.get("updated_at") or 0.0), c["id"]))
 
-    degraded = data.get("memory_ledger_degraded") if isinstance(data, dict) else None
+    raw_mem = data.get("memory") if isinstance(data, dict) and isinstance(data.get("memory"), dict) else mem
+    memory_bytes = len(encoded(raw_mem))
+    memory_bytes_limit = int(mem["settings"]["budgets"].get("max_memory_bytes", MAX_MEMORY_BYTES))
+    degraded = (
+        (data.get("memory_ledger_degraded") if isinstance(data, dict) else None)
+        or mem.get("ledger_degraded")
+    )
     return {
         "schema_version": mem["schema_version"],
         "generation": mem["generation"],
         "reset_epoch": mem["reset_epoch"],
         "policy_revision": mem["policy_revision"],
+        "memory_bytes": memory_bytes,
+        "memory_bytes_limit": memory_bytes_limit,
         "settings": copy.deepcopy(mem["settings"]),
         "capture_status": _build_capture_status(mem),
         "entries": entries,

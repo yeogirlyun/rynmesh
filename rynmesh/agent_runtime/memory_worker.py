@@ -202,6 +202,7 @@ class MemoryExtractionWorker:
                     job["state"] = "stale"
                     job["error_code"] = error_code
                     job["updated_at"] = now_ts
+                    memory._compact_terminal_job(job)
                     changed = True
             if changed:
                 mem["generation"] = int(mem.get("generation", 0)) + 1
@@ -478,12 +479,14 @@ class MemoryExtractionWorker:
             job_dest = memory.normalize_destination(claimed.get("destination_binding"))
             if job_dest != verified_dest:
                 live_job.update(state="stale", error_code="extraction_destination_drifted", updated_at=now_ts)
+                memory._compact_terminal_job(live_job)
                 mem["generation"] += 1
                 return ("stale", copy.deepcopy(live_job))
 
             task_row = (data.get("tasks") or {}).get(claimed.get("task_id"))
             if not isinstance(task_row, dict) or task_row.get("archived"):
                 live_job.update(state="stale", error_code="source_task_unavailable", updated_at=now_ts)
+                memory._compact_terminal_job(live_job)
                 mem["generation"] += 1
                 return ("stale", copy.deepcopy(live_job))
 
@@ -503,6 +506,7 @@ class MemoryExtractionWorker:
                     projects.validate_binding(data, live_proj)
                 except AgentError:
                     live_job.update(state="stale", error_code="project_binding_invalid", updated_at=now_ts)
+                    memory._compact_terminal_job(live_job)
                     mem["generation"] += 1
                     return ("stale", copy.deepcopy(live_job))
                 if (
@@ -510,6 +514,7 @@ class MemoryExtractionWorker:
                     or live_proj.get("generation") != claimed.get("project_generation")
                 ):
                     live_job.update(state="stale", error_code="project_generation_changed", updated_at=now_ts)
+                    memory._compact_terminal_job(live_job)
                     mem["generation"] += 1
                     return ("stale", copy.deepcopy(live_job))
 
@@ -535,6 +540,7 @@ class MemoryExtractionWorker:
                     updated_at=now_ts,
                 )
                 memory._record_processed_watermark(mem, live_job, task_row)
+                memory._compact_terminal_job(live_job)
                 mem["generation"] += 1
                 return ("no_op", copy.deepcopy(live_job))
 
@@ -576,6 +582,7 @@ class MemoryExtractionWorker:
                 self._reserve_stage(live_job, 1, day, reserved_tokens)
             except AgentError as exc:
                 live_job.update(state="failed", error_code=str(exc), last_error=str(exc), updated_at=now_ts)
+                memory._compact_terminal_job(live_job)
                 mem["generation"] += 1
                 return ("stale", copy.deepcopy(live_job))
             usage["extraction_calls"] = int(usage.get("extraction_calls", 0)) + 1
@@ -670,6 +677,7 @@ class MemoryExtractionWorker:
                     lease_until=0.0,
                     updated_at=now_ts,
                 )
+            memory._compact_terminal_job(live_job)
             mem["generation"] += 1
 
         self.runtime.store.transaction(mutate)
@@ -708,6 +716,7 @@ class MemoryExtractionWorker:
                     live_job["state"] = "stale"
                     live_job["error_code"] = reason
                     live_job["updated_at"] = now_ts
+                    memory._compact_terminal_job(live_job)
                     mem["generation"] += 1
                 return ("stale", None)
 
@@ -722,6 +731,7 @@ class MemoryExtractionWorker:
                 live_job["state"] = "stale"
                 live_job["error_code"] = "capture_disabled_or_destination_drifted"
                 live_job["updated_at"] = now_ts
+                memory._compact_terminal_job(live_job)
                 mem["generation"] += 1
                 return ("stale", None)
 
@@ -730,6 +740,7 @@ class MemoryExtractionWorker:
                 live_job["state"] = "stale"
                 live_job["error_code"] = "source_task_not_completed"
                 live_job["updated_at"] = now_ts
+                memory._compact_terminal_job(live_job)
                 mem["generation"] += 1
                 return ("stale", None)
 
@@ -737,6 +748,7 @@ class MemoryExtractionWorker:
                 live_job["state"] = "stale"
                 live_job["error_code"] = "reset_epoch_mismatch"
                 live_job["updated_at"] = now_ts
+                memory._compact_terminal_job(live_job)
                 mem["generation"] += 1
                 return ("stale", None)
 
@@ -746,6 +758,7 @@ class MemoryExtractionWorker:
                     live_job["state"] = "stale"
                     live_job["error_code"] = reason or "source_invalidated"
                     live_job["updated_at"] = now_ts
+                    memory._compact_terminal_job(live_job)
                     mem["generation"] += 1
                     return ("stale", None)
 
@@ -795,6 +808,7 @@ class MemoryExtractionWorker:
                 self._reserve_stage(live_job, 2, day, reserved_tokens2)
             except AgentError as exc:
                 live_job.update(state="failed", error_code=str(exc), last_error=str(exc), updated_at=now_ts)
+                memory._compact_terminal_job(live_job)
                 mem["generation"] += 1
                 return ("stale", None)
             usage["extraction_calls"] = int(usage.get("extraction_calls", 0)) + 1
@@ -861,6 +875,7 @@ class MemoryExtractionWorker:
                     live_job["state"] = "stale"
                     live_job["error_code"] = attempt_reason or "capture_disabled_or_destination_drifted"
                     live_job["updated_at"] = time.time()
+                    memory._compact_terminal_job(live_job)
                     mem["generation"] += 1
                 return
 
@@ -877,6 +892,7 @@ class MemoryExtractionWorker:
                     live_job["state"] = "stale"
                     live_job["error_code"] = "source_task_not_completed"
                     live_job["updated_at"] = time.time()
+                    memory._compact_terminal_job(live_job)
                     mem["generation"] += 1
                 return
 
@@ -908,7 +924,8 @@ class MemoryExtractionWorker:
                     usage["extraction_tokens"] = int(usage.get("extraction_tokens", 0)) + max(0, actual_tokens)
                 live_job = (mem.get("jobs") or {}).get(job["id"])
                 if isinstance(live_job, dict) and live_job.get("lease_token") == job.get("lease_token") and live_job.get("state") in {"leased", "extracted"}:
-                    live_job.update(state="failed", error_code=str(exc), updated_at=time.time())
+                    live_job.update(state="failed", error_code=str(exc), retry_at=None, updated_at=time.time())
+                    memory._compact_terminal_job(live_job)
                 return
             finally:
                 current = memory.ensure_memory_state(data)
@@ -916,6 +933,8 @@ class MemoryExtractionWorker:
                 stages = ((current_job.get("dispatch_usage") or {}).get(job.get("lease_token")) or {}) if isinstance(current_job, dict) else {}
                 if isinstance(stages.get("1"), dict):
                     stages["1"].update(settled=True, actual_tokens=max(0, actual_tokens))
+                if isinstance(current_job, dict):
+                    memory._compact_terminal_job(current_job)
 
             if res.get("state") in {"stale", "failed"}:
                 if usage.get("day") == reserved_day:
@@ -959,6 +978,7 @@ class MemoryExtractionWorker:
             if reason:
                 if isinstance(live_job, dict) and live_job.get("lease_owner") == self.worker_id and live_job.get("lease_token") == job.get("lease_token") and live_job.get("state") in {"leased", "extracted"}:
                     live_job.update(state="stale", error_code=reason, updated_at=time.time())
+                    memory._compact_terminal_job(live_job)
                     mem["generation"] += 1
                 return
             if isinstance(live_job, dict) and job.get("rejected_observations"):
@@ -983,7 +1003,8 @@ class MemoryExtractionWorker:
                 mem = memory.ensure_memory_state(data)
                 live_job = (mem.get("jobs") or {}).get(job["id"])
                 if isinstance(live_job, dict) and live_job.get("lease_owner") == self.worker_id and live_job.get("lease_token") == job.get("lease_token") and live_job.get("state") in {"leased", "extracted"}:
-                    live_job.update(state="failed", error_code=str(exc), updated_at=time.time())
+                    live_job.update(state="failed", error_code=str(exc), retry_at=None, updated_at=time.time())
+                    memory._compact_terminal_job(live_job)
                     mem["generation"] += 1
                 return
             if res.get("state") == "no_op":
