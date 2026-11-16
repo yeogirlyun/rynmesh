@@ -990,6 +990,7 @@ export default function RynAgent() {
   const runErrorAction = (kind: AgentErrorAction) => {
     if (kind === "new_task") { newTask(); return; }
     if (kind === "open_sources") { routerNavigate("/services/sources"); return; }
+    if (kind === "open_extensions") { routerNavigate("/agent/extensions"); return; }
     if (kind === "switch_model" && task && canUseAgentAction(task, "model")) { setTaskModelTarget(""); setTaskModelOpen(true); return; }
     if (kind === "retry" && task && canUseAgentAction(task, "resume")) { void action("resume"); return; }
     if (kind === "retry" && !draft.trim()) changeDraft(i18n.language.startsWith("zh") ? "请继续。" : "Please continue.");

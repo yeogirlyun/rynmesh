@@ -58,6 +58,7 @@ import {
   type SecretEntryDraft,
 } from "../domain/agentExtensions";
 import { rynAgent } from "../domain/rynAgent";
+import { agentErrorHelp } from "./rynAgentErrors";
 import { AgentComputerStatusPanel } from "./AgentComputerStatusPanel";
 import { PeerProviderSettings } from "./PeerProviderSettings";
 import { McpAuthSettings } from "./McpAuthSettings";
@@ -128,6 +129,8 @@ function describeError(
 ): string {
   if (error instanceof AgentExtensionError) {
     switch (error.code) {
+      case "agent_extension_state_limit":
+        return tx(agentErrorHelp(error.code, true).text, agentErrorHelp(error.code, false).text);
       case "agent_extensions_revision_conflict":
         return tx(
           "配置已在其他视图中更新，已为你同步最新版本。你的草稿与密钥输入已保留，请核对后再次保存。",
@@ -1515,6 +1518,17 @@ export default function AgentExtensions() {
           <span className="ae-tab-count">{overview?.mcp_servers.length ?? 0}</span>
         </NavLink>
       </nav>
+
+      {overview?.recovery ? (
+        <div className="ae-banner ae-banner-warning" role="status">
+          {overview.recovery.status === "recovered_from_prev"
+            ? tx("已恢复到上一次的配置", "Restored the previous extension configuration.")
+            : tx(
+                `扩展配置已损坏，已备份到 ${overview.recovery.quarantine_path}，请重新添加`,
+                `Extension configuration was damaged and backed up to ${overview.recovery.quarantine_path}. Please add your extensions again.`,
+              )}
+        </div>
+      ) : null}
 
       {pageError ? (
         <div className="ae-banner ae-banner-error" role="alert">
