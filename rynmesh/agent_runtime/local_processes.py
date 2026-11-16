@@ -93,6 +93,14 @@ class OutputDecoder:
             return self._decoder.decode(data, final=final)
         except UnicodeDecodeError:
             raw = pending + data
+            if final:
+                try:
+                    prefix, consumed = codecs.utf_8_decode(raw, "strict", False)
+                except UnicodeDecodeError:
+                    pass
+                else:
+                    self._decoder.reset()
+                    return prefix + ("\ufffd" if consumed < len(raw) else "")
             try:
                 raw.decode("utf-8", errors="strict")
                 split_at = len(raw)

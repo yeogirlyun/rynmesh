@@ -143,3 +143,19 @@ def test_t4_python_utf8_variables_injected_into_child_environment(tmp_path, monk
     parsed = json.loads(result["output"].strip())
     assert parsed == {"utf8": "1", "io": "utf-8", "msg": "子进程UTF8中文"}
     assert result["output_encoding"] == "utf-8"
+
+
+def test_trailing_incomplete_utf8_at_eof_emits_replacement_without_switching(monkeypatch):
+    monkeypatch.setattr(local_processes.os, "name", "nt")
+    monkeypatch.setattr(local_processes.locale, "getpreferredencoding", lambda *_: "cp1252")
+
+    decoder = local_processes.OutputDecoder()
+    part1 = decoder.decode("🚀世界".encode("utf-8") + b"\xe4\xbd", final=False)
+    part2 = decoder.decode(b"", final=True)
+    assert part1 + part2 == "🚀世界\ufffd"
+    assert decoder.encoding == "utf-8"
+
+    single = local_processes.OutputDecoder()
+    assert single.decode("🚀世界".encode("utf-8") + b"\xe4\xbd", final=True) == "🚀世界\ufffd"
+    assert single.encoding == "utf-8"
+
