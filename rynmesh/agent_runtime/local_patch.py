@@ -350,16 +350,50 @@ def _narrow_by_anchor(matches: list[int], anchor_matches: list[int], total_lines
     return matches
 
 
+def _split_keep_endings(text: str) -> tuple[list[str], list[str], str]:
+    if not text:
+        return [], [], "\n"
+    lines: list[str] = []
+    endings: list[str] = []
+    preferred: str | None = None
+    n = len(text)
+    i = 0
+    line_start = 0
+    while i < n:
+        ch = text[i]
+        if ch == "\r":
+            if i + 1 < n and text[i + 1] == "\n":
+                ending = "\r\n"
+                next_i = i + 2
+            else:
+                ending = "\r"
+                next_i = i + 1
+            lines.append(text[line_start:i])
+            endings.append(ending)
+            if preferred is None:
+                preferred = ending
+            i = line_start = next_i
+        elif ch == "\n":
+            lines.append(text[line_start:i])
+            endings.append("\n")
+            if preferred is None:
+                preferred = "\n"
+            i = line_start = i + 1
+        else:
+            i += 1
+    if line_start < n:
+        lines.append(text[line_start:n])
+        endings.append("")
+    return lines, endings, (preferred if preferred is not None else "\n")
+
+
 def apply_hunks(text: str, hunks: list[dict], *, path: str | None = None) -> str:
     """Locate all hunks on the immutable original snapshot using a sequential cursor, verify non-overlap, then apply in reverse order."""
-    eol = "\r\n" if "\r\n" in text and text.count("\r\n") * 2 >= text.count("\n") else "\n"
-    trailing = text.endswith("\n") or not text
-    lines = text.replace("\r\n", "\n").split("\n") if text else []
-    if text.endswith("\n"):
-        lines.pop()
+    lines, endings, preferred = _split_keep_endings(text)
+    trailing = (not text) or bool(endings[-1])
 
     cursor = 0
-    located: list[tuple[int, int, int, list[str]]] = []
+    located: list[tuple[int, int, int, list[tuple[str, str]]]] = []
     for hunk_index, hunk in enumerate(hunks):
         anchor = hunk["anchor"]
         eof = hunk["eof"]
@@ -488,15 +522,16 @@ def apply_hunks(text: str, hunks: list[dict], *, path: str | None = None) -> str
         cursor = position + len(old)
         start_pos = position
         end_pos = position + len(old)
-        # Matched context keeps the file's own text, while '+' lines keep their exact supplied indentation.
-        original, replacement = iter(lines[start_pos:end_pos]), []
+        # Matched context keeps the file's own text and line ending, while '+' lines keep their exact indentation and use preferred ending.
+        original = iter(zip(lines[start_pos:end_pos], endings[start_pos:end_pos]))
+        replacement: list[tuple[str, str]] = []
         for marker, value in ops:
             if marker == " ":
                 replacement.append(next(original))
             elif marker == "-":
                 next(original)
             else:
-                replacement.append(value)
+                replacement.append((value, preferred))
         located.append((hunk_index, start_pos, end_pos, replacement))
 
     for i in range(len(located)):
@@ -521,11 +556,19 @@ def apply_hunks(text: str, hunks: list[dict], *, path: str | None = None) -> str
                     extra_details={"conflicting_hunk_index": idx_a},
                 )
 
-    result_lines = list(lines)
+    result_pairs: list[tuple[str, str]] = list(zip(lines, endings))
     for _hunk_index, start_pos, end_pos, replacement in sorted(
         located, key=lambda item: (item[1], item[2], item[0]), reverse=True
     ):
-        result_lines[start_pos:end_pos] = replacement
+        result_pairs[start_pos:end_pos] = replacement
 
-    result = eol.join(result_lines)
-    return result + eol if trailing and result_lines else result
+    if not result_pairs:
+        return ""
+    last_idx = len(result_pairs) - 1
+    out: list[str] = []
+    for idx, (line_text, line_ending) in enumerate(result_pairs):
+        if idx < last_idx:
+            out.append(line_text + (line_ending or preferred))
+        else:
+            out.append(line_text + ((line_ending or preferred) if trailing else ""))
+    return "".join(out)

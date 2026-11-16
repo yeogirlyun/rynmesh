@@ -195,3 +195,111 @@ def test_s05_i1_ambiguous_context_still_rejected_when_unresolved():
         local_patch.apply_hunks(dup_blocks_with_tail, fallback_ambiguous_ops[0]["hunks"], path="tail.py")
     assert exc_fb.value.details["reason"] == "ambiguous_context"
     assert exc_fb.value.details["match_count"] == 2
+
+
+def test_s05_i2_t1_preserves_per_line_lf_crlf_cr_and_missing_final_eol():
+    """T1 (Changes 1, 2, 3): pure CRLF, pure LF, mixed LF+CRLF, and isolated CR files keep every other line's exact bytes and final-EOL absence."""
+    lines, endings, preferred = local_patch._split_keep_endings("a\r\nb\nc\rd")
+    assert lines == ["a", "b", "c", "d"]
+    assert endings == ["\r\n", "\n", "\r", ""]
+    assert preferred == "\r\n"
+    assert local_patch._split_keep_endings("") == ([], [], "\n")
+    assert local_patch._split_keep_endings("no_eol") == (["no_eol"], [""], "\n")
+
+    single_edit_hunks = local_patch.parse(
+        _patch(
+            "*** Update File: sample.txt",
+            "@@",
+            " line2",
+            "-line3",
+            "+LINE3",
+            " line4",
+        )
+    )[0]["hunks"]
+
+    cases = [
+        # 1. Pure CRLF
+        (
+            b"line1\r\nline2\r\nline3\r\nline4\r\n",
+            b"line1\r\nline2\r\nLINE3\r\nline4\r\n",
+        ),
+        # 2. Pure LF
+        (
+            b"line1\nline2\nline3\nline4\n",
+            b"line1\nline2\nLINE3\nline4\n",
+        ),
+        # 3. Mixed LF + CRLF (first ending LF, majority CRLF, context has CRLF, untouched line has CRLF)
+        (
+            b"line1\nline2\r\nline3\r\nline4\r\nline5\n",
+            b"line1\nline2\r\nLINE3\nline4\r\nline5\n",
+        ),
+        # 4. Isolated CR (pure CR and mixed CR + CRLF + LF without trailing newline)
+        (
+            b"line1\rline2\rline3\rline4\r",
+            b"line1\rline2\rLINE3\rline4\r",
+        ),
+        (
+            b"line1\r\nline2\rline3\nline4\rline5",
+            b"line1\r\nline2\rLINE3\r\nline4\rline5",
+        ),
+    ]
+    for before_bytes, expected_bytes in cases:
+        after_text = local_patch.apply_hunks(before_bytes.decode("utf-8"), single_edit_hunks, path="sample.txt")
+        assert after_text.encode("utf-8") == expected_bytes
+
+    # Replacing the final line of a file that had no trailing newline keeps no trailing newline.
+    tail_hunks = local_patch.parse(
+        _patch(
+            "*** Update File: tail_no_eol.txt",
+            "@@",
+            " keep_crlf",
+            "-last_no_eol",
+            "+LAST_NO_EOL",
+        )
+    )[0]["hunks"]
+    res_no_eol = local_patch.apply_hunks("head_lf\nkeep_crlf\r\nlast_no_eol", tail_hunks, path="tail_no_eol.txt")
+    assert res_no_eol.encode("utf-8") == b"head_lf\nkeep_crlf\r\nLAST_NO_EOL"
+
+
+def test_s05_i2_t2_added_lines_use_first_line_ending_preferred():
+    """T2 (Changes 1, 2, 3): newly added '+' lines use the file's first line ending (preferred), defaulting to '\\n' when none exists."""
+    add_hunks = local_patch.parse(
+        _patch(
+            "*** Update File: mixed.txt",
+            "@@",
+            " second",
+            "+inserted_a",
+            "+inserted_b",
+            " third",
+        )
+    )[0]["hunks"]
+
+    # First ending is CRLF even though remaining lines are LF -> '+' lines get CRLF, existing LF lines stay LF.
+    crlf_first = "first\r\nsecond\nthird\nfourth\n"
+    assert local_patch.apply_hunks(crlf_first, add_hunks).encode("utf-8") == (
+        b"first\r\nsecond\ninserted_a\r\ninserted_b\r\nthird\nfourth\n"
+    )
+
+    # First ending is LF even though remaining lines are CRLF -> '+' lines get LF, existing CRLF lines stay CRLF.
+    lf_first = "first\nsecond\r\nthird\r\nfourth\r\n"
+    assert local_patch.apply_hunks(lf_first, add_hunks).encode("utf-8") == (
+        b"first\nsecond\r\ninserted_a\ninserted_b\nthird\r\nfourth\r\n"
+    )
+
+    # First ending is isolated CR -> '+' lines get CR.
+    cr_first = "first\rsecond\nthird\r\n"
+    assert local_patch.apply_hunks(cr_first, add_hunks).encode("utf-8") == (
+        b"first\rsecond\ninserted_a\rinserted_b\rthird\r\n"
+    )
+
+    # Single-line file without any line ending defaults preferred to '\n' for interior separation and keeps no final EOL.
+    append_hunks = local_patch.parse(
+        _patch(
+            "*** Update File: single.txt",
+            "@@",
+            " only_line",
+            "+added_line",
+        )
+    )[0]["hunks"]
+    assert local_patch.apply_hunks("only_line", append_hunks).encode("utf-8") == b"only_line\nadded_line"
+
