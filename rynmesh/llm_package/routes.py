@@ -3433,8 +3433,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         except Exception as exc:
             error_code = (
                 exc.code
-                if isinstance(exc, AdapterError)
-                and exc.code in {"model_daily_quota_exhausted", "model_configuration_changed", "runtime_busy"}
+                if isinstance(exc, AdapterError) and exc.code in RUNTIME_ERROR_CODES
                 else "local_cli_failed"
             )
             with terminal_commit_lock:

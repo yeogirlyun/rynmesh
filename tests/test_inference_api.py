@@ -216,6 +216,10 @@ def test_alias_validation_and_persistence(api, tmp_path):
 
 
 def test_alias_pins_remote_provider_when_discovery_changes(tmp_path):
+    import time as std_time
+    from unittest.mock import patch
+    import rynmesh.llm_package.api as api_mod
+
     providers = [{"peer_id": name, "online": True, "chat_protocol": "rynmesh.chat.v1",
                   "service": {"package_id": "qwen", "model_alias": "Qwen", "max_output_tokens": 64, "context_window": 4096}}
                  for name in ["provider-a", "provider-b"]]
@@ -223,6 +227,8 @@ def test_alias_pins_remote_provider_when_discovery_changes(tmp_path):
 
     async def execute(order, emit):
         calls.append(order)
+        if not any(item["peer_id"] == order["provider_peer_id"] for item in providers):
+            return {"state": "failed", "error_code": "runtime_unavailable"}
         return {"state": "succeeded", **ChatAdapter().chat(order["chat"], task_id=order["task_id"], timeout_s=10)}
 
     def client_for_node():
@@ -244,14 +250,21 @@ def test_alias_pins_remote_provider_when_discovery_changes(tmp_path):
     assert calls[0]["provider_peer_id"] == "provider-a"
     assert calls[0]["transport"] == "p2p"
     providers.pop()
-    assert client.post("/v1/chat/completions", json=payload).status_code == 503
-    assert len(calls) == 1
-    assert "qwen" not in [m["id"] for m in client.get("/v1/models").json()["data"]]
-    # Switching a provider is an explicit local configuration change.
-    target = client.get("/api/local/llm/api-access").json()["targets"][0]["id"]
-    assert client.put("/api/local/llm/model-aliases/qwen", json={"target": target}).status_code == 200
-    assert client.post("/v1/chat/completions", json=payload).status_code == 200
-    assert calls[-1]["provider_peer_id"] == "provider-b"
+    # Within the 5s model_catalog cache window, inference stays pinned to provider-a and fails via execute_order.
+    cached_err = client.post("/v1/chat/completions", json=payload)
+    assert cached_err.status_code == 502 and cached_err.json()["error"]["code"] == "runtime_unavailable"
+    assert len(calls) == 2 and calls[1]["provider_peer_id"] == "provider-a"
+    # Once the 5s catalog cache expires, discovery hides provider-a and rejects before execute_order.
+    real_monotonic = std_time.monotonic
+    with patch.object(api_mod.time, "monotonic", side_effect=lambda: real_monotonic() + 6.0):
+        assert client.post("/v1/chat/completions", json=payload).status_code == 503
+        assert len(calls) == 2
+        assert "qwen" not in [m["id"] for m in client.get("/v1/models").json()["data"]]
+        # Switching a provider is an explicit local configuration change.
+        target = client.get("/api/local/llm/api-access").json()["targets"][0]["id"]
+        assert client.put("/api/local/llm/model-aliases/qwen", json={"target": target}).status_code == 200
+        assert client.post("/v1/chat/completions", json=payload).status_code == 200
+        assert calls[-1]["provider_peer_id"] == "provider-b"
 
 
 def test_provider_keeps_full_messages_and_seals_each_delta(tmp_path):
