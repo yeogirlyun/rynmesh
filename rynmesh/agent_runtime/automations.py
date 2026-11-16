@@ -203,6 +203,19 @@ ATTENTION_TIMEOUT_MS = 30 * 60 * 1000
 LOST_TASK_TIMEOUT_MS = 10 * 60 * 1000
 TERMINAL_TASK_STATUSES = frozenset({"completed", "failed", "cancelled"})
 ATTENTION_TASK_STATUSES = frozenset({"waiting_input", "waiting_approval", "interrupted", "paused"})
+AUTOMATION_RUN_STATUSES = frozenset(
+    {
+        "IN_PROGRESS",
+        "ACCEPTED",
+        "ARCHIVED",
+        "FAILED",
+        "CANCELLED",
+        "NEEDS_ATTENTION",
+        "SKIPPED_OVERLAP",
+        "SKIPPED",
+        "LOST",
+    }
+)
 
 
 def now_ms() -> int:
@@ -1334,6 +1347,8 @@ def execute_automation_tool_call_in_tx(
 def automation_developer_instructions(store: Any, row: dict[str, Any]) -> str:
     if str(row.get("source") or "") != "automation":
         return ""
+    if not str(row.get("automation_run_id") or "").strip():
+        return ""
     auto_id = str(row.get("automation_id") or "").strip()
     if not auto_id:
         return ""
@@ -1491,7 +1506,7 @@ def settle_lost_automation_run_in_tx(
 def settle_automation_turn_in_tx(store: Any, data: dict[str, Any], row: dict[str, Any]) -> None:
     auto_id = str(row.get("automation_id") or "").strip()
     run_id = str(row.get("automation_run_id") or "").strip()
-    if not auto_id and not run_id:
+    if not run_id:
         return
 
     ensure_automation_state(data)
@@ -1499,6 +1514,15 @@ def settle_automation_turn_in_tx(store: Any, data: dict[str, Any], row: dict[str
     status = str(row.get("status") or "").strip()
     if status not in (TERMINAL_TASK_STATUSES | ATTENTION_TASK_STATUSES):
         return
+
+    existing_run = data["automation_runs"].get(run_id)
+    if isinstance(existing_run, dict):
+        r_status = str(existing_run.get("status") or "").strip()
+        if status in ATTENTION_TASK_STATUSES:
+            if r_status != "IN_PROGRESS":
+                return
+        elif r_status not in {"IN_PROGRESS", "NEEDS_ATTENTION"}:
+            return
 
     now_str = now_iso()
     auto_item = data["automations"].get(auto_id) if auto_id else None
@@ -1581,17 +1605,22 @@ def settle_automation_turn_in_tx(store: Any, data: dict[str, Any], row: dict[str
         )
     row["latest_turn_is_silent_heartbeat"] = bool(is_silent)
 
-    if is_silent and str(row.get("automation_kind") or "") == "heartbeat":
+    if run_id and is_silent and str(row.get("automation_kind") or "") == "heartbeat":
         # Mark the latest heartbeat user & assistant messages as silent so UI hides them like Codex
         if assistant_msg is not None:
             ui_meta = dict(assistant_msg.get("ui") or {}) if isinstance(assistant_msg.get("ui"), dict) else {}
             ui_meta["kind"] = "silent_heartbeat"
             ui_meta["hidden"] = True
             assistant_msg["ui"] = ui_meta
+        hb_msg_id = f"msg-hb-{run_id}"
         for msg in reversed(row.get("messages") or []):
             if isinstance(msg, dict) and msg.get("role") == "user":
                 ui_meta = dict(msg.get("ui") or {}) if isinstance(msg.get("ui"), dict) else {}
-                if ui_meta.get("kind") == "heartbeat" or "<heartbeat>" in str(msg.get("content") or ""):
+                if (
+                    msg.get("message_id") == hb_msg_id
+                    or ui_meta.get("kind") == "heartbeat"
+                    or "<heartbeat>" in str(msg.get("content") or "")
+                ):
                     ui_meta["kind"] = "silent_heartbeat"
                     ui_meta["hidden"] = True
                     msg["ui"] = ui_meta
