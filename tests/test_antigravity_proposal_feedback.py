@@ -10,6 +10,7 @@ import pytest
 from test_agent_runtime import make_runtime
 
 from rynmesh.agent_runtime.bridge import AgentModelBridge
+from rynmesh.agent_runtime.prompt import PROGRESS_TAIL_PREFIX
 from rynmesh.agent_runtime.store import AgentModelResponseError
 from rynmesh.llm_package import antigravity_session as session
 from rynmesh.llm_package.adapters import AdapterError
@@ -181,7 +182,8 @@ def test_runtime_safe_feedback_then_corrected_proposal_continues_without_replayi
             assert "No proposed tool was executed" in wire and PRIVATE not in wire
             return infer_result(json.dumps({"content": "", "tool_calls": [
                 {"name": "inspect_service", "arguments": {"service_id": "svc1"}}]}), input_tokens=13, output_tokens=4)
-        assert payload["messages"][-1]["role"] == "tool"
+        sent = [m for m in payload["messages"] if not str(m.get("content") or "").startswith(PROGRESS_TAIL_PREFIX)]
+        assert sent[-1]["role"] == "tool"
         return infer_result(json.dumps({"content": "Inspection completed.", "tool_calls": []}), input_tokens=17, output_tokens=5)
     monkeypatch.setattr(session, "infer", fake_infer)
     row = runtime.create({"message": "Inspect svc1; do not change it."})
