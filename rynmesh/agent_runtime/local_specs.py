@@ -13,11 +13,36 @@ TEXT = {"type": "string", "maxLength": 16000}
 OFFSET = {"type": "integer", "minimum": 0}
 HASH = {"type": "string", "pattern": "^[a-f0-9]{64}$"}
 SPECS = {}
+FREEFORM_GRAMMARS: dict[str, str] = {}
 SHELLS = ["powershell", "cmd"] if os.name == "nt" else ["sh"]
 
+APPLY_PATCH_LARK_GRAMMAR = """\
+start: begin_patch hunk+ end_patch
+begin_patch: "*** Begin Patch" LF
+end_patch: "*** End Patch" LF?
 
-def add(name, description, effect, properties=None, required=None):
+hunk: add_hunk | delete_hunk | update_hunk
+add_hunk: "*** Add File: " filename LF add_line+
+delete_hunk: "*** Delete File: " filename LF
+update_hunk: "*** Update File: " filename LF change_move? change?
+
+filename: /(.+)/
+add_line: "+" /(.*)/ LF -> line
+
+change_move: "*** Move to: " filename LF
+change: (change_context | change_line)+ eof_line?
+change_context: ("@@" | "@@ " /(.+)/) LF
+change_line: ("+" | "-" | " ") /(.*)/ LF
+eof_line: "*** End of File" LF
+
+%import common.LF
+"""
+
+
+def add(name, description, effect, properties=None, required=None, *, freeform_grammar: str | None = None):
     SPECS[name] = (description, effect, "high" if effect == "write" else "low", schema(properties, required))
+    if freeform_grammar is not None:
+        FREEFORM_GRAMMARS[name] = freeform_grammar
 
 
 add("ryn_local_environment", "Inspect this consumer computer: OS, authorized workspace, desktop/browser availability and installed command interpreters. Use only when the request needs computer context; unavailable capabilities require owner settings, not invented success.", "read")
@@ -31,7 +56,7 @@ add("ryn_file_search", "Search text or regex across local workspace files. Bound
 add("ryn_render_inspect", "Observe how a workspace SVG, HTML page or PNG/JPEG/GIF/WebP image actually renders. It is drawn in an isolated headless browser (page scripts and every external request blocked; writes no files) and returned as text: a coarse color map per sampled animation time, element boxes, rotations and path endpoints in the file's own coordinates, how moving endpoints stay in contact with small parts across frames, per-frame motion, the loop-seam difference and findings such as parts outside the view, missing targets or missing motion. Animations are paused at `times` seconds (default: six evenly spaced times over the loop). `track` adds CSS selectors to measure. Use it after creating or changing a visual deliverable and before describing how it looks; fix what it reveals and inspect again.", "read", {"path": PATH, "times": {"type": "array", "maxItems": 8, "items": {"type": "number", "minimum": 0, "maximum": 3600}}, "track": {"type": "array", "maxItems": 12, "items": {"type": "string", "minLength": 1, "maxLength": 200}}, "width": {"type": "integer", "minimum": 160, "maximum": 1600}}, ["path"])
 add("ryn_file_write","Create or replace a 文本文件（UTF-8/UTF-16/GB18030）（工作区内；自动处理档可用绝对路径访问工作区外）. Existing files require expected_sha256 or a prior read in this task. Parent directory must exist. Approval previews exact content.", "write", {"path": PATH, "content": TEXT, "expected_sha256": HASH}, ["path", "content"])
 add("ryn_file_edit", "Replace an exact string in an existing 文本文件（UTF-8/UTF-16/GB18030）（工作区内；自动处理档可用绝对路径访问工作区外）. Verifies expected_sha256 or the version last read in this task. By default exactly one match is required; replace_all explicitly replaces all matches. Read back after edits.", "write", {"path": PATH, "old_text": {"type": "string", "minLength": 1, "maxLength": 16000}, "new_text": TEXT, "expected_sha256": HASH, "replace_all": {"type": "boolean"}}, ["path", "old_text", "new_text"])
-add("ryn_apply_patch", "Preferred way to create, edit, move or delete workspace text files: one patch can change several files. Format: '*** Begin Patch' then per file '*** Add File: path' (+ lines), '*** Delete File: path', or '*** Update File: path' (optional '*** Move to: path') with hunks: '@@ optional line to locate', then ' ' context, '-' removed and '+' added lines, ending with '*** End Patch'. Give about 3 unchanged context lines around each change; no line numbers or sha256 needed. Paths are relative or absolute（工作区内；自动处理档可用绝对路径访问工作区外）; missing parent directories are created. Every hunk must match or nothing is written. Returns each file's new sha256.", "write", {"patch": {"type": "string", "minLength": 1, "maxLength": 90000}}, ["patch"])
+add("ryn_apply_patch", "Preferred way to create, edit, move or delete workspace text files: one patch can change several files. Format: '*** Begin Patch' then per file '*** Add File: path' (+ lines), '*** Delete File: path', or '*** Update File: path' (optional '*** Move to: path') with hunks: '@@ optional line to locate', then ' ' context, '-' removed and '+' added lines, ending with '*** End Patch'. Give about 3 unchanged context lines around each change; no line numbers or sha256 needed. Paths are relative or absolute（工作区内；自动处理档可用绝对路径访问工作区外）; missing parent directories are created. Every hunk must match or nothing is written. Returns each file's new sha256.", "write", {"patch": {"type": "string", "minLength": 1, "maxLength": 90000}}, ["patch"], freeform_grammar=APPLY_PATCH_LARK_GRAMMAR)
 add("ryn_file_manage", "Create a directory, copy or move one file, or delete one file/empty directory（工作区内；自动处理档可用绝对路径访问工作区外）. Never overwrite destinations; no recursive deletion. Existing source files require fresh expected_sha256.", "write", {"action": {"enum": ["mkdir", "copy", "move", "delete"]}, "path": PATH, "destination": PATH, "expected_sha256": HASH}, ["action", "path"])
 SHELL_SAFETY_GUIDANCE = (
     " Before deleting or overwriting files, verify the exact target paths with a read-only check; "

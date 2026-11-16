@@ -220,6 +220,8 @@ def normalize_tool_calls(calls, specs, *, existing_call_ids=(), metadata=None,
                 "schema_snapshot": copy.deepcopy(snapshot),
                 "schema_sha256": _schema_digest(snapshot) if snapshot is not None else None,
                 "effect": None, "error_result": None}
+        if raw.get("wire_kind") == "custom":
+            call["wire_kind"] = "custom"
         if bad_type:
             normalized.append(_reject(call, "agent_unknown_tool", "This tool payload is not in the request's function catalog."))
             continue

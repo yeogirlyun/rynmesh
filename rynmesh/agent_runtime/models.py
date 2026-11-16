@@ -226,13 +226,26 @@ class ModelCatalog:
             support = record.get("tool_support", {}).get(model, "unknown")
             prior = rows.get(model_ref, {})
             policy = model_settings.public(record, model)
+            from . import model_profiles
+            source_adapter = (record.get("protocol") if record.get("protocol") in {"openai_responses", "anthropic_messages"}
+                              else "openai_compatible")
+            verified_custom_tools = model_profiles.supports_custom_tools({
+                "source": "local_api",
+                "adapter": source_adapter,
+                "provider": record.get("provider", ""),
+                "base_url": record.get("base_url", ""),
+                "model_id": model,
+                "tool_support": support,
+                "evidence": policy["evidence"],
+            })
             rows[model_ref] = {**prior, "id": model_ref, "name": record["name"] + " · " + model,
                 "source": "local_api", "source_name": record["name"], "source_id": record["id"],
+                "provider": str(record.get("provider") or ""),
                 "model_id": model, "service_id": service_id, "peer_id": self.store.peer_id,
                 "destination_revision": self.source_destination_revision(record, model),
                 "model_settings": policy, "rule_revision": policy.get("rule_revision", ""), "evidence": policy["evidence"],
-                "adapter": (record.get("protocol") if record.get("protocol") in {"openai_responses", "anthropic_messages"}
-                            else "openai_compatible"),
+                "adapter": source_adapter,
+                **({"custom_tools": True} if verified_custom_tools else {}),
                 "available": bool(prior.get("available") and record.get("enabled") and record.get("status") == "ready"),
                 "availability_basis": "configured_source_readiness_not_live_probe",
                 # A source's two-turn tool probe proves tools, not streaming.

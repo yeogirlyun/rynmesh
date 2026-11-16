@@ -316,6 +316,8 @@ class SourceStore:
         prompt_cache_key_supported = True if pck_status == "supported" else False if pck_status == "unsupported" else None
         cc_status = (evidence.get("cache_control") or {}).get("status")
         cache_control_supported = False if cc_status == "unsupported" else True if cc_status == "supported" else None
+        ct_status = (evidence.get("custom_tools") or {}).get("status")
+        custom_tools_supported = False if ct_status == "unsupported" else True if ct_status == "supported" else None
         source_id = record.get("id", "")
         on_cap = (
             (lambda k, st, _sid=source_id, _m=selected_model: store_self._record_model_capability(_sid, _m, k, st))
@@ -328,6 +330,8 @@ class SourceStore:
             adapter_cls, protocol_kwargs = NativeProtocolAdapter, {
                 "protocol": protocol,
                 "cache_control_supported": cache_control_supported,
+                "custom_tools": custom_tools_supported,
+                "tool_support": record.get("tool_support", {}).get(selected_model, "unknown"),
             }
         return adapter_cls(
             base_url=record["base_url"],

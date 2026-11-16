@@ -75,12 +75,30 @@ def _envelope_mentions_cache_control(envelope) -> bool:
 class NativeProtocolAdapter(OpenAICompatibleAdapter):
     supports_developer_role = True
 
-    def __init__(self, *, protocol, cache_control_supported: bool | None = None, **options):
+    def __init__(self, *, protocol, cache_control_supported: bool | None = None,
+                 custom_tools: bool | None = None, tool_support: str = "unknown", **options):
         if protocol not in {"openai_responses", "anthropic_messages"}:
             raise ValueError("unsupported source protocol")
         super().__init__(**options)
         self.protocol = protocol
         self._cache_control_supported = cache_control_supported
+        self._custom_tools = custom_tools
+        self._tool_support = tool_support
+
+    def _allows_custom_tools(self) -> bool:
+        if self.protocol != "openai_responses":
+            return False
+        if self._custom_tools is not None:
+            return bool(self._custom_tools)
+        from ..agent_runtime import model_profiles
+        return bool(model_profiles.resolve({
+            "source": "local_api",
+            "adapter": self.protocol,
+            "provider": self.provider,
+            "base_url": self.base_url,
+            "model_id": self.model,
+            "tool_support": self._tool_support,
+        }).get("custom_tools"))
 
     def _cache_control_key(self) -> tuple[str, str, str]:
         return (self.base_url, self.api_prefix, self.model)
@@ -226,12 +244,18 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                 phase = "request"
                 request_diagnostics = {}
                 try:
+                    effective_custom_tools = (
+                        req_merged["custom_tools"]
+                        if "custom_tools" in req_merged
+                        else self._allows_custom_tools()
+                    )
                     payload = make_request(
                         req_merged,
                         self.protocol,
                         self.model,
                         scope,
                         prompt_cache=effective_prompt_cache,
+                        custom_tools=effective_custom_tools,
                         diagnostics=request_diagnostics,
                     )
                 except (ValueError, TypeError, KeyError):
