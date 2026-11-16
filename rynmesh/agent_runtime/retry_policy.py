@@ -2,7 +2,7 @@
 import random
 import time
 
-NETWORK_ERRORS = {"agent_inference_timeout", "agent_model_connection_failed", "agent_model_busy", "agent_model_upstream_failed"}
+NETWORK_ERRORS = {"agent_inference_timeout", "agent_model_connection_failed", "agent_model_busy", "agent_model_upstream_failed", "agent_model_stream_interrupted"}
 
 
 def now():

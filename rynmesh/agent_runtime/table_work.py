@@ -237,12 +237,15 @@ def calculate(raw, suffix, recipe, cancelled=lambda: False):
             "rounding": recipe.get("rounding", "not_requested")}
 
 
+TOTALS_SEMANTICS = ("Unweighted arithmetic sums of every decimal column, for declared checks only. "
+                    "Percentages, rates and repeated source summaries are not necessarily additive business metrics.")
+
+
 def summary(report):
     # Keep the durable operation result below its reserved receipt capacity.
     # Full values/rules remain in the export; previews must not flood context.
     result = {k: v for k, v in report.items() if k not in {"rows", "recipe", "decimal_columns", "checks"}}
-    result["totals_semantics"] = ("Unweighted arithmetic sums of every decimal column, for declared checks only. "
-                                  "Percentages, rates and repeated source summaries are not necessarily additive business metrics.")
+    result["totals_semantics"] = TOTALS_SEMANTICS
     result["export_layout"] = ("XLSX Data and CSV contain headers plus data rows only: no automatic totals row. "
                                "The totals metadata is not rendered as company metrics. JSON retains arithmetic metadata.")
     result["checks"] = [{k: v for k, v in check.items() if k != "expression"} for check in report["checks"]]
@@ -259,6 +262,16 @@ def summary(report):
     if len(encoded(result)) > 24000:
         reject("agent_table_summary_limit")
     return result
+
+
+
+def export_summary(report):
+    """A receipt-based export confirms an existing calculation, without echoing its rows/checks."""
+    if report["status"] != "passed":
+        reject("agent_table_checks_not_passed")
+    return {**{key: report[key] for key in (
+        "engine", "status", "calculation_sha256", "input_sha256", "recipe_sha256", "coverage", "totals",
+        "row_count", "declared_check_count", "failed_check_count", "rounding")}, "totals_semantics": TOTALS_SEMANTICS}
 
 
 def _cell_name(col, row):

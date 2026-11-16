@@ -185,3 +185,17 @@ def test_subagent_context_and_report_guidance_reach_only_their_agent():
         assert SUBAGENT_REPORT_GUIDANCE in child[1]["content"]
         assert MULTI_AGENT_COORDINATOR_GUIDANCE not in child[1]["content"]
         assert child[0] == root[0]
+
+
+def test_workspace_file_guidance_uses_supplied_writer_without_changing_authority():
+    state = row()
+    original = copy.deepcopy(state)
+    messages = instruction_layers(state, session_base="Owner-pinned base")
+    assert messages[0]["content"] == "Owner-pinned base"
+    control = json.loads(messages[1]["content"].split("Server control state: ")[1].split("\nOwner corrections")[0])
+    policy = control["file_output_policy"]
+    assert "ryn_file_write when supplied" in policy and "current tool menu" in policy
+    assert "read existing files" in policy and "readback" in policy
+    assert control["local_execution"] == original["local_execution"]
+    assert "read-only" in messages[1]["content"]
+    assert state == original

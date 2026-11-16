@@ -476,6 +476,7 @@ class AgentModelBridge:
             code = {"inference_timeout": "agent_inference_timeout",
                     "runtime_connection_failed": "agent_model_connection_failed",
                     "upstream_http_failed": "agent_model_upstream_failed",
+                    "upstream_stream_truncated": "agent_model_stream_interrupted",
                     "upstream_image_rejected": "agent_model_image_rejected",
                     "source_protocol_parameters_unsupported": "agent_model_protocol_unsupported",
                     "source_protocol_response_invalid": "agent_model_protocol_invalid",

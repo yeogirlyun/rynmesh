@@ -89,7 +89,7 @@ CONTINUE_SECONDS = 20.0
 # Completed streaming reads retain their receipts before inference retry. Writes
 # remain behind accepted responses. Retries are bounded by task and lifetime budgets.
 RETRYABLE_MODEL_ERRORS = {"agent_inference_timeout", "agent_model_connection_failed", "agent_model_busy",
-                          "agent_model_upstream_failed",
+                          "agent_model_upstream_failed", "agent_model_stream_interrupted",
                           "agent_invalid_model_response", "agent_compaction_size_limit", "agent_compaction_incomplete"}
 PUBLIC_FIELDS = ("fork", "id", "client_request_id", "title", "model_id", "reasoning_effort", "status", "revision", "created_at", "updated_at",
                  "messages", "pending_user_messages", "events", "pending_approval", "steps", "result", "error", "connection_recovery", "limits", "permission_mode", "allowed_write_tools",
