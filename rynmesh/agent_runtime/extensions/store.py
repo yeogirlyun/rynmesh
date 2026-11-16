@@ -405,6 +405,21 @@ def _alloc_generation(state: dict[str, Any]) -> int:
     return nxt
 
 
+def _norm_skill_path(value: str | Path) -> Path:
+    expanded = Path(value).expanduser()
+    try:
+        resolved = expanded.resolve()
+    except OSError:
+        resolved = expanded
+    return Path(os.path.normcase(str(resolved)))
+
+
+def _path_is_within(child: str | Path, parent: str | Path) -> bool:
+    c = _norm_skill_path(child)
+    p = _norm_skill_path(parent)
+    return c == p or c.is_relative_to(p)
+
+
 class ExtensionStore:
     """Thread-safe, sealed local configuration store for Ryn Agent extensions."""
 
@@ -425,6 +440,7 @@ class ExtensionStore:
         self._cached_stamp: tuple[int, int] | None = None
         self._cached_state: dict[str, Any] | None = None
         self._agent_store: Any = None
+        self._skill_roots_fingerprint_cache: dict[tuple[Any, ...], tuple[Any, list[str], list[dict[str, Any]]]] = {}
         with file_transaction(self.lock):
             if not self.path.exists():
                 self._write(self._default_state())
@@ -676,6 +692,24 @@ class ExtensionStore:
             return False
         return self._is_parent_plugin_enabled(skill.get("plugin_id"), state)
 
+    @staticmethod
+    def _is_skill_visible_in_workspace(
+        skill: dict[str, Any],
+        workspace_root: str | Path | None,
+    ) -> bool:
+        if bool(skill.get("source_missing", False)):
+            return False
+        scope = str(skill.get("scope") or ("plugin" if skill.get("plugin_id") else "user"))
+        if scope != "repo":
+            return True
+        ws_roots = [str(w) for w in (skill.get("workspace_roots") or []) if w]
+        if not ws_roots:
+            # Legacy repo skills without workspace_roots remain visible across all workspaces.
+            return True
+        if not workspace_root:
+            return False
+        return any(_path_is_within(workspace_root, allowed_ws) for allowed_ws in ws_roots)
+
     def _agent_settings(self) -> dict[str, Any] | None:
         bound = getattr(self, "_agent_store", None)
         if bound is not None:
@@ -872,6 +906,7 @@ class ExtensionStore:
             "parent_enabled": True,
             "source_format": "builtin",
             "scope": "system",
+            "source_missing": False,
             "path": f"builtin://{skill['id']}/SKILL.md",
             "interface": {
                 "display_name": skill["title"],
@@ -890,7 +925,8 @@ class ExtensionStore:
 
     def _public_imported_skill(self, skill: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
         parent_enabled = self._is_parent_plugin_enabled(skill.get("plugin_id"), state)
-        effective_enabled = self._is_skill_effectively_enabled(skill, state)
+        source_missing = bool(skill.get("source_missing", False))
+        effective_enabled = self._is_skill_effectively_enabled(skill, state) and not source_missing
         description = str(skill.get("description") or skill.get("summary") or "")
         raw_iface = skill.get("interface") if isinstance(skill.get("interface"), dict) else {}
         short_description = str(
@@ -907,6 +943,7 @@ class ExtensionStore:
             or (str(Path(pkg_dir) / "SKILL.md") if pkg_dir else "")
         )
         raw_policy = skill.get("policy") if isinstance(skill.get("policy"), dict) else {}
+        ws_roots = [str(w) for w in (skill.get("workspace_roots") or []) if w]
         return {
             "id": skill["id"],
             "instance_id": skill.get("instance_id", ""),
@@ -926,6 +963,8 @@ class ExtensionStore:
             "parent_enabled": parent_enabled,
             "source_format": skill.get("source_format", "skill_md"),
             "scope": scope,
+            "source_missing": source_missing,
+            **({"workspace_roots": ws_roots} if ws_roots else {}),
             "path": skill_path,
             "package_dir": str(pkg_dir or ""),
             "interface": {
@@ -1110,7 +1149,31 @@ class ExtensionStore:
             "updated_at": server.get("updated_at"),
         }
 
-    def overview(self, *, desktop_access: bool = False) -> dict[str, Any]:
+    def overview(
+        self,
+        *,
+        desktop_access: bool = False,
+        workspace_roots: list[Path] | None = None,
+    ) -> dict[str, Any]:
+        from . import codex_skills
+
+        effective_ws_roots = workspace_roots
+        if effective_ws_roots is None:
+            agent_cfg = self._agent_settings()
+            ws_cfg = (agent_cfg or {}).get("workspace_root") if isinstance(agent_cfg, dict) else None
+            if isinstance(ws_cfg, str) and ws_cfg.strip():
+                effective_ws_roots = [Path(ws_cfg.strip())]
+        raw_skill_roots = codex_skills.default_local_skill_roots(effective_ws_roots)
+        skill_roots = [
+            {
+                "priority": idx + 1,
+                "path": str(entry[0]),
+                "scope": str(entry[1]),
+                "workspace_root": getattr(entry, "workspace_root", None),
+            }
+            for idx, entry in enumerate(raw_skill_roots)
+        ]
+
         with file_transaction(self.lock):
             state = self._read()
             plugins = [
@@ -1145,11 +1208,14 @@ class ExtensionStore:
             ]
             servers.sort(key=lambda item: (not item["builtin"], item["name"].lower(), item["id"]))
 
+            rev = int(state.get("revision", 1))
             return {
-                "revision": int(state.get("revision", 1)),
+                "revision": rev,
+                "generation": rev,
                 "updated_at": state.get("updated_at"),
                 "desktop_access": bool(desktop_access),
                 "windows_supported": os.name == "nt",
+                "skill_roots": skill_roots,
                 "plugins": plugins,
                 "skills": skills,
                 "mcp_servers": servers,
@@ -1172,8 +1238,12 @@ class ExtensionStore:
                      "peer_provider": validate_peer_provider(plugin["peer_provider"])}
                     for plugin in state["plugins"].values() if plugin.get("peer_provider") is not None]
 
-    def enabled_skills_catalog(self) -> list[dict[str, Any]]:
-        """Return enabled built-in and imported skills matching knowledge.catalog() shape."""
+    def enabled_skills_catalog(
+        self,
+        *,
+        workspace_root: str | Path | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return enabled built-in and workspace-visible imported skills matching knowledge.catalog() shape."""
         with file_transaction(self.lock):
             state = self._read()
             builtin_enabled = state.get("builtin_skills_enabled", {})
@@ -1182,10 +1252,13 @@ class ExtensionStore:
                 if builtin_enabled.get(skill_id, True):
                     out.append({key: value for key, value in skill.items() if key != "content"})
             for skill in state["skills"].values():
-                if self._is_skill_effectively_enabled(skill, state):
+                if self._is_skill_effectively_enabled(skill, state) and self._is_skill_visible_in_workspace(
+                    skill, workspace_root
+                ):
                     out.append(
                         {
                             "id": skill["id"],
+                            "name": str(skill.get("name") or skill["id"]),
                             "version": str(skill.get("version", "1")),
                             "title": skill.get("title") or skill.get("name") or skill["id"],
                             "description": str(skill.get("description") or skill.get("summary") or ""),
@@ -1193,13 +1266,25 @@ class ExtensionStore:
                     )
             return out
 
+    def missing_skill_ids(self) -> set[str]:
+        """Names that must be rejected even when explicitly mentioned with $id."""
+        with file_transaction(self.lock):
+            return {
+                str(value).lower()
+                for skill in self._read(borrow=True)["skills"].values()
+                if skill.get("source_missing")
+                for value in (skill["id"], skill.get("raw_skill_id") or skill.get("name"))
+                if value
+            }
+
     def select_skills(
         self,
         skill_ids: list[str] | None,
         *,
+        workspace_root: str | Path | None = None,
         warnings: list[dict[str, Any]] | None = None,
     ) -> SelectedSkillsResult:
-        """Select and snapshot enabled built-in or imported skills for a task."""
+        """Select and snapshot enabled built-in or workspace-visible imported skills for a task."""
         if skill_ids is None:
             return SelectedSkillsResult()
         if (
@@ -1231,7 +1316,22 @@ class ExtensionStore:
                     selected.append(b_snap)
                     continue
                 skill = state["skills"].get(item)
-                if not skill or not self._is_skill_effectively_enabled(skill, state):
+                if (
+                    not skill
+                    or not self._is_skill_effectively_enabled(skill, state)
+                    or not self._is_skill_visible_in_workspace(skill, workspace_root)
+                ):
+                    skill = None
+                    for candidate in state["skills"].values():
+                        if (
+                            str(candidate.get("scope") or "") == "repo"
+                            and self._is_skill_effectively_enabled(candidate, state)
+                            and self._is_skill_visible_in_workspace(candidate, workspace_root)
+                            and str(candidate.get("raw_skill_id") or _slugify(str(candidate.get("name") or ""))) == item
+                        ):
+                            skill = candidate
+                            break
+                if not skill:
                     raise AgentError("agent_invalid_skills")
                 pkg_dir_str = skill.get("package_dir")
                 if pkg_dir_str:
@@ -1283,7 +1383,7 @@ class ExtensionStore:
                     return None
                 return copy.deepcopy(BUILTIN_SKILLS[skill_id])
             imported = state["skills"].get(skill_id)
-            if not imported or not self._is_skill_effectively_enabled(imported, state):
+            if not imported or not self._is_skill_effectively_enabled(imported, state) or bool(imported.get("source_missing", False)):
                 return None
             return copy.deepcopy(imported)
 
@@ -1337,7 +1437,10 @@ class ExtensionStore:
             skill = state["skills"].get(skill_id)
             if not skill:
                 raise AgentError("agent_skill_not_found")
-            if not allow_disabled and not self._is_skill_effectively_enabled(skill, state):
+            if not allow_disabled and (
+                not self._is_skill_effectively_enabled(skill, state)
+                or bool(skill.get("source_missing", False))
+            ):
                 raise AgentError("agent_skill_disabled")
             if expected_version is not None and str(expected_version) != str(skill.get("version", "1")):
                 raise AgentError("agent_skill_version_mismatch")
@@ -1914,9 +2017,103 @@ class ExtensionStore:
             _alloc_generation(state)
             state["updated_at"] = _now()
             self._write(state)
+            self._skill_roots_fingerprint_cache.clear()
             if pkg_dir and not plugin_id:
                 self._safe_rmtree(Path(pkg_dir))
             return {"deleted": True, "id": skill_id, "revision": state["revision"]}
+
+    def _compute_skill_roots_fingerprint(
+        self,
+        search_roots: list[Any],
+        state: dict[str, Any],
+    ) -> tuple[tuple[Any, ...], tuple[Any, ...]]:
+        from . import codex_skills
+
+        key_items: list[tuple[str, str, tuple[str, ...]]] = []
+        fp_roots: list[Any] = []
+
+        def _stat_pkg_files(pkg_dir: Path, depth: int, acc: list[tuple[str, int, int]]) -> None:
+            if depth > MAX_SKILL_PACKAGE_DEPTH or len(acc) >= MAX_SKILL_PACKAGE_FILES:
+                return
+            try:
+                entries = sorted(os.scandir(pkg_dir), key=lambda e: e.name)
+            except OSError:
+                return
+            for entry in entries:
+                if len(acc) >= MAX_SKILL_PACKAGE_FILES:
+                    break
+                try:
+                    st = entry.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                if stat.S_ISLNK(st.st_mode):
+                    continue
+                if stat.S_ISDIR(st.st_mode):
+                    if entry.name.lower() in codex_skills.SKIP_DISCOVERY_DIRS or entry.name.startswith("."):
+                        continue
+                    acc.append((f"d:{entry.name}", st.st_mtime_ns, 0))
+                    _stat_pkg_files(Path(entry.path), depth + 1, acc)
+                elif stat.S_ISREG(st.st_mode):
+                    acc.append((entry.name, st.st_mtime_ns, st.st_size))
+
+        for raw_root in search_roots:
+            root_dir, scope, ws_list = codex_skills._normalize_root_item(raw_root)
+            norm_root = str(_norm_skill_path(root_dir))
+            norm_ws = tuple(sorted(str(_norm_skill_path(w)) for w in ws_list if w))
+            key_items.append((norm_root, scope, norm_ws))
+            try:
+                root_st = os.lstat(root_dir)
+            except OSError:
+                fp_roots.append((norm_root, None))
+                continue
+            if stat.S_ISLNK(root_st.st_mode) or not stat.S_ISDIR(root_st.st_mode):
+                fp_roots.append((norm_root, None))
+                continue
+            children_fp: list[Any] = []
+            try:
+                sub_entries = sorted(os.scandir(root_dir), key=lambda e: e.name.lower())
+            except OSError:
+                sub_entries = []
+            for child in sub_entries:
+                if child.name.startswith("."):
+                    continue
+                try:
+                    c_st = child.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                if stat.S_ISLNK(c_st.st_mode) or not stat.S_ISDIR(c_st.st_mode):
+                    continue
+                pkg_files: list[tuple[str, int, int]] = []
+                _stat_pkg_files(Path(child.path), 0, pkg_files)
+                children_fp.append((child.name, c_st.st_mtime_ns, tuple(pkg_files)))
+            fp_roots.append((norm_root, root_st.st_mtime_ns, tuple(children_fp)))
+
+        stored_ext_status = tuple(
+            sorted(
+                (
+                    sid,
+                    bool(s_rec.get("source_missing", False)),
+                    bool(s_rec.get("external_source_dir") and Path(str(s_rec["external_source_dir"])).is_dir()),
+                )
+                for sid, s_rec in state.get("skills", {}).items()
+                if isinstance(s_rec, dict) and s_rec.get("source_format") == "codex_local"
+            )
+        )
+        return tuple(key_items), (int(state.get("revision", 1)), tuple(fp_roots), stored_ext_status)
+
+    @staticmethod
+    def _merge_workspace_roots(existing_roots: list[Any] | None, incoming_roots: list[str]) -> list[str]:
+        merged: list[str] = []
+        seen_norm: set[str] = set()
+        for raw_item in [*(existing_roots or []), *incoming_roots]:
+            if not raw_item:
+                continue
+            s_val = str(raw_item)
+            norm_val = str(_norm_skill_path(s_val))
+            if norm_val not in seen_norm:
+                seen_norm.add(norm_val)
+                merged.append(s_val)
+        return merged
 
     def sync_discovered_skills(
         self,
@@ -1926,10 +2123,30 @@ class ExtensionStore:
         desktop_access: bool = False,
         reset_uninstalled: bool = False,
     ) -> dict[str, Any]:
-        """Discover local Codex/Agent skills (.codex/skills, .agents/skills) and sync into store."""
-        from .codex_skills import copy_codex_skill_bounded, discover_local_skills
+        """Discover local Ryn/Codex/Agent skills and sync into store with root-set fingerprint caching."""
+        from . import codex_skills
 
-        discovered = discover_local_skills(roots=roots, workspace_roots=workspace_roots)
+        search_roots = roots if roots is not None else codex_skills.default_local_skill_roots(workspace_roots)
+        with file_transaction(self.lock):
+            pre_state = self._read(borrow=True)
+            root_set_key, pre_fp = self._compute_skill_roots_fingerprint(search_roots, pre_state)
+        if not reset_uninstalled:
+            cached_entry = self._skill_roots_fingerprint_cache.get(root_set_key)
+            if cached_entry is not None and cached_entry[0] == pre_fp:
+                return {
+                    "synced_skill_ids": list(cached_entry[1]),
+                    "warnings": copy.deepcopy(cached_entry[2]),
+                    "overview": self.overview(desktop_access=desktop_access, workspace_roots=workspace_roots),
+                }
+
+        disc_warnings: list[dict[str, Any]] = []
+        discovered = codex_skills.discover_local_skills(
+            roots=roots,
+            workspace_roots=workspace_roots,
+            warnings=disc_warnings,
+        )
+        bounded_warnings = disc_warnings[:20]
+
         with file_transaction(self.lock):
             state = self._read()
             if reset_uninstalled:
@@ -1939,10 +2156,44 @@ class ExtensionStore:
             mutated = False
             synced_ids: list[str] = []
 
+            by_ext_dir: dict[str, str] = {}
+            for k_sid, k_skill in state["skills"].items():
+                ext_d = k_skill.get("external_source_dir")
+                if k_skill.get("source_format") == "codex_local" and ext_d:
+                    by_ext_dir[str(_norm_skill_path(ext_d))] = k_sid
+
             for disc in discovered:
-                sid = disc["id"]
-                if sid in BUILTIN_SKILLS or sid in uninstalled:
+                raw_sid = disc["id"]
+                scope = str(disc.get("scope") or "user")
+                src_dir_str = str(disc["package_dir"])
+                norm_src = str(_norm_skill_path(src_dir_str))
+                incoming_ws_roots = [str(w) for w in (disc.get("workspace_roots") or []) if w]
+                if scope == "repo" and disc.get("workspace_root") and str(disc["workspace_root"]) not in incoming_ws_roots:
+                    incoming_ws_roots.append(str(disc["workspace_root"]))
+
+                if norm_src in by_ext_dir:
+                    sid = by_ext_dir[norm_src]
+                elif scope == "repo":
+                    existing_raw = state["skills"].get(raw_sid)
+                    raw_collides = raw_sid in BUILTIN_SKILLS or (
+                        existing_raw is not None
+                        and str(_norm_skill_path(existing_raw.get("external_source_dir") or "")) != norm_src
+                    )
+                    if raw_collides:
+                        src_hash6 = hashlib.sha256(norm_src.encode("utf-8")).hexdigest()[:6]
+                        sid = f"{raw_sid[:57]}.{src_hash6}"
+                    else:
+                        sid = raw_sid
+                    if sid in uninstalled or (sid == raw_sid and raw_sid in uninstalled):
+                        continue
+                else:
+                    if raw_sid in BUILTIN_SKILLS or raw_sid in uninstalled:
+                        continue
+                    sid = raw_sid
+
+                if sid in uninstalled:
                     continue
+
                 existing = state["skills"].get(sid)
                 if existing and existing.get("source_format") not in ("codex_local", None):
                     if not existing.get("interface") and disc.get("interface"):
@@ -1960,27 +2211,49 @@ class ExtensionStore:
                     and existing_pkg
                     and Path(existing_pkg).is_dir()
                 ):
+                    record_changed = False
+                    if bool(existing.get("source_missing", False)):
+                        existing["source_missing"] = False
+                        record_changed = True
+                    if scope == "repo" and incoming_ws_roots:
+                        merged_ws = self._merge_workspace_roots(existing.get("workspace_roots"), incoming_ws_roots)
+                        if merged_ws != list(existing.get("workspace_roots") or []):
+                            existing["workspace_roots"] = merged_ws
+                            record_changed = True
                     if existing.get("interface") != disc.get("interface"):
-                        existing["interface"] = disc.get("interface")
+                        existing["interface"] = disc["interface"]
                         existing["short_description"] = disc.get("short_description")
                         existing["title"] = disc.get("title") or existing.get("title")
+                        record_changed = True
+                    if record_changed:
+                        existing["revision"] = _alloc_generation(state)
+                        existing["updated_at"] = now
                         mutated = True
                     synced_ids.append(sid)
                     continue
 
                 dest_pkg = self.allocate_package_dir("skill", sid)
-                copy_codex_skill_bounded(Path(disc["package_dir"]), dest_pkg)
+                codex_skills.copy_codex_skill_bounded(Path(disc["package_dir"]), dest_pkg)
                 pkg_manifest = compute_directory_manifest(dest_pkg)
                 gen = _alloc_generation(state)
                 install_gen = (int(existing.get("install_generation", 1)) + 1) if existing else 1
                 is_enabled = bool(existing.get("enabled", True)) if existing else True
                 explicitly_disabled = bool(existing.get("explicitly_disabled", False)) if existing else False
+                merged_ws_roots = (
+                    self._merge_workspace_roots(
+                        existing.get("workspace_roots") if existing else None,
+                        incoming_ws_roots,
+                    )
+                    if scope == "repo"
+                    else []
+                )
 
                 state["skills"][sid] = {
                     "id": sid,
+                    "raw_skill_id": raw_sid,
                     "instance_id": existing.get("instance_id") if existing else uuid.uuid4().hex,
-                    "name": disc.get("name") or sid,
-                    "title": disc.get("title") or disc.get("name") or sid,
+                    "name": disc.get("name") or raw_sid,
+                    "title": disc.get("title") or disc.get("name") or raw_sid,
                     "description": disc.get("description") or "",
                     "short_description": disc.get("short_description") or disc.get("summary") or "",
                     "summary": disc.get("summary") or disc.get("description") or "",
@@ -1989,14 +2262,16 @@ class ExtensionStore:
                     "content": str(disc.get("content") or ""),
                     "package_dir": str(dest_pkg),
                     "skill_md_path": disc.get("skill_md_path") or str(dest_pkg / "SKILL.md"),
-                    "external_source_dir": disc.get("package_dir"),
+                    "external_source_dir": src_dir_str,
                     "external_manifest_sha256": ext_sha,
                     "manifest_sha256": pkg_manifest["manifest_sha256"],
                     "files": pkg_manifest["files"],
                     "plugin_id": None,
-                    "scope": disc.get("scope") or "user",
-                    "deletable": (disc.get("scope") or "user") != "system",
+                    "scope": scope,
+                    "deletable": scope != "system",
                     "source_format": "codex_local",
+                    "source_missing": False,
+                    **({"workspace_roots": merged_ws_roots} if scope == "repo" and merged_ws_roots else {}),
                     "interface": disc.get("interface") or {},
                     "policy": disc.get("policy") or {"allow_implicit_invocation": True},
                     "warnings": [],
@@ -2005,19 +2280,41 @@ class ExtensionStore:
                     "revision": gen,
                     "updated_at": now,
                 }
+                by_ext_dir[norm_src] = sid
                 if existing_pkg and existing_pkg != str(dest_pkg):
                     self._safe_rmtree(Path(existing_pkg))
                 mutated = True
                 synced_ids.append(sid)
+
+            # Sweep all codex_local skills by external_source_dir existence (independent of current scan roots)
+            for s_rec in state["skills"].values():
+                if s_rec.get("source_format") != "codex_local":
+                    continue
+                ext_dir_str = s_rec.get("external_source_dir")
+                if not ext_dir_str:
+                    continue
+                if not Path(str(ext_dir_str)).is_dir() and not bool(s_rec.get("source_missing", False)):
+                    s_rec["source_missing"] = True
+                    s_rec["revision"] = _alloc_generation(state)
+                    s_rec["updated_at"] = now
+                    mutated = True
 
             if mutated:
                 _alloc_generation(state)
                 state["updated_at"] = now
                 self._write(state)
 
+            post_key, post_fp = self._compute_skill_roots_fingerprint(search_roots, state)
+            self._skill_roots_fingerprint_cache[post_key] = (
+                post_fp,
+                list(synced_ids),
+                copy.deepcopy(bounded_warnings),
+            )
+
         return {
             "synced_skill_ids": synced_ids,
-            "overview": self.overview(desktop_access=desktop_access),
+            "warnings": bounded_warnings,
+            "overview": self.overview(desktop_access=desktop_access, workspace_roots=workspace_roots),
         }
 
     def list_recommended_skills(

@@ -457,9 +457,14 @@ class ExtensionToolAdapter:
             except Exception:
                 pass
 
-    def overview(self, *, desktop_access: bool = False) -> dict[str, Any]:
+    def overview(
+        self,
+        *,
+        desktop_access: bool = False,
+        workspace_roots: list[Path] | None = None,
+    ) -> dict[str, Any]:
         self.refresh_catalogs_soon()
-        value = self.store.overview(desktop_access=desktop_access)
+        value = self.store.overview(desktop_access=desktop_access, workspace_roots=workspace_roots)
         oauth = getattr(self.manager, "oauth", None)
         if oauth is None:
             return value

@@ -274,6 +274,10 @@ export function CodexSkillsView({
 
   const overview = controlledOverview !== undefined ? controlledOverview : localOverview;
   const busyIds = controlledBusyIds ?? localBusyIds;
+  const lastGenerationRef = useRef<number | null>(null);
+  if (overview) {
+    lastGenerationRef.current = overview.generation ?? overview.revision;
+  }
 
   const updateOverview = useCallback(
     (next: ExtensionOverview) => {
@@ -310,6 +314,47 @@ export function CodexSkillsView({
       controller.abort();
     };
   }, [controlledOverview]);
+
+  // Reload skill list on window focus or tab visibility when backend overview generation changed
+  useEffect(() => {
+    let cancelled = false;
+    async function checkGenerationAndReload() {
+      try {
+        const latest = await agentExtensions.overview();
+        if (cancelled) return;
+        const nextGen = latest.generation ?? latest.revision;
+        if (lastGenerationRef.current !== null && nextGen === lastGenerationRef.current) {
+          return;
+        }
+        lastGenerationRef.current = nextGen;
+        updateOverview(latest);
+        const nextRec = await agentExtensions.recommendedSkills(false).catch(() => null);
+        if (!cancelled && nextRec) {
+          setRecommended(nextRec);
+        }
+      } catch {
+        // Ignore transient focus fetch errors
+      }
+    }
+    function handleFocus() {
+      void checkGenerationAndReload();
+    }
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        void checkGenerationAndReload();
+      }
+    }
+    if (controlledOverview !== undefined) {
+      void checkGenerationAndReload();
+    }
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [updateOverview, controlledOverview]);
 
   // Ctrl+F / Cmd+F keyboard shortcut to focus search input (matching Codex skills-page-cc58e762964c.js)
   useEffect(() => {
@@ -681,6 +726,40 @@ export function CodexSkillsView({
         </div>
       </div>
 
+      {overview?.skill_roots && overview.skill_roots.length > 0 ? (
+        <div
+          className="codex-skills-roots-bar"
+          aria-label={tx("技能发现目录与优先级", "Skill discovery roots and priority")}
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: 8,
+            padding: "8px 12px",
+            marginBottom: 12,
+            borderRadius: 8,
+            border: "1px solid var(--pf-border, rgba(128,128,128,0.2))",
+            fontSize: 12,
+          }}
+        >
+          <span style={{ fontWeight: 600, color: "var(--pf-muted)" }}>
+            {tx("技能发现根路径（按优先级）：", "Discovery roots (by priority):")}
+          </span>
+          {overview.skill_roots.map(root => (
+            <span
+              key={`${root.priority}:${root.path}`}
+              className="codex-skill-pill"
+              style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+              title={`${formatScopeLabel(root.scope, false, tx)} · #${root.priority}`}
+            >
+              <strong>#{root.priority}</strong>
+              <span>{formatScopeLabel(root.scope, false, tx)}</span>
+              <code>{root.path}</code>
+            </span>
+          ))}
+        </div>
+      ) : null}
+
       {notice ? (
         <div
           className={`ae-banner ${notice.tone === "error" ? "ae-banner-error" : ""}`}
@@ -816,7 +895,12 @@ export function CodexSkillsView({
                             {tx(`插件：${parentPlugin.title}`, `Plugin: ${parentPlugin.title}`)}
                           </span>
                         ) : null}
-                        {parentBlocked ? (
+                        {skill.source_missing ? (
+                          <span className="codex-skill-pill codex-skill-pill-warning">
+                            <AlertTriangle size={11} />
+                            <span>{tx("源目录已删除", "Source directory deleted")}</span>
+                          </span>
+                        ) : parentBlocked ? (
                           <span className="codex-skill-pill codex-skill-pill-warning">
                             {tx(
                               "父插件已停用",
@@ -848,6 +932,23 @@ export function CodexSkillsView({
                     className="codex-skill-card-actions"
                     onClick={event => event.stopPropagation()}
                   >
+                    {skill.source_missing && skill.deletable && !skill.builtin && skill.scope !== "system" ? (
+                      <button
+                        type="button"
+                        className="codex-skill-icon-action"
+                        aria-label={tx(`卸载已缺失技能 ${skill.title}`, `Uninstall missing skill ${skill.title}`)}
+                        title={tx("手动卸载", "Uninstall")}
+                        onClick={() => {
+                          if (controlledRequestRemoveSkill) {
+                            controlledRequestRemoveSkill(skill);
+                          } else {
+                            setConfirmRemoveSkill(skill);
+                          }
+                        }}
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="codex-skill-icon-action"
@@ -1279,6 +1380,17 @@ function CodexSkillContentsModal({
         {/* Codex Modal Body */}
         <div className="codex-skill-modal-body">
           <p className="codex-skill-modal-desc">{skill.description}</p>
+
+          {skill.source_missing ? (
+            <div className="ae-banner ae-banner-warning" role="status">
+              <span>
+                {tx(
+                  "源目录已删除：该技能在新任务中已隐藏，恢复外部源目录后可重新启用，或点击下方「移除技能」手动卸载。",
+                  "Source directory deleted: this skill is hidden from new tasks until its external source directory is restored, or you can manually remove it below.",
+                )}
+              </span>
+            </div>
+          ) : null}
 
           {!skill.parent_enabled && skill.component_enabled ? (
             <div className="ae-banner ae-banner-warning" role="status">
