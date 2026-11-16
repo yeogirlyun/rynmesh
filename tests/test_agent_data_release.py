@@ -3,6 +3,7 @@ import copy
 import json
 import threading
 import urllib.error
+import urllib.request
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
@@ -183,9 +184,69 @@ def test_scope_refuses_redirect_statuses_and_resets(status):
                 urlopen(origin + "/initial", timeout=2)
             error.value.close()
         assert received == [] and len(sent) == 1
-        with urlopen(origin + "/ordinary", timeout=2) as response:
-            assert response.status == 200
-        assert len(received) == 1 and len(sent) == 2
+        with pytest.raises(urllib.error.HTTPError) as ordinary_error:
+            urlopen(origin + "/ordinary", timeout=2)
+        assert ordinary_error.value.code == status
+        ordinary_error.value.close()
+        assert received == [] and len(sent) == 2
+
+
+def test_unrestricted_urlopen_refuses_302_redirect_and_raises_http_error():
+    """T1: Outside restricted scope (and with restricted=False), 302 to another host sends no second request and raises HTTPError."""
+    with endpoint() as (sink, received, _), endpoint(redirect=sink + "/redirected", status=302) as (origin, sent, _):
+        req1 = urllib.request.Request(origin + "/v1/chat/completions", headers={"Authorization": "Bearer test-secret-token"})
+        with pytest.raises(urllib.error.HTTPError) as exc1:
+            urlopen(req1, timeout=2)
+        assert exc1.value.code == 302
+        exc1.value.close()
+
+        req2 = urllib.request.Request(origin + "/v1/models", headers={"Authorization": "Bearer test-secret-token"})
+        with model_request_scope(restricted=False):
+            with pytest.raises(urllib.error.HTTPError) as exc2:
+                urlopen(req2, timeout=2)
+            assert exc2.value.code == 302
+            exc2.value.close()
+
+        assert len(sent) == 2
+        assert received == []
+
+
+@pytest.mark.parametrize("protocol", ["openai_chat", "openai_responses", "anthropic_messages", "models"])
+def test_unrestricted_adapter_and_models_never_leak_authorization_on_redirect(protocol):
+    """T2: Local fake second server receives zero requests and zero Authorization/x-api-key headers on unrestricted 302 redirect."""
+    api_secret = "test-only-api-credential"
+    with endpoint() as (sink, received, _), endpoint(redirect=sink + "/steal-auth", status=302) as (origin, sent, _):
+        options = {"base_url": origin, "model": "fixture", "api_key": api_secret}
+        if protocol in {"openai_responses", "anthropic_messages"}:
+            adapter = NativeProtocolAdapter(protocol=protocol, **options)
+        else:
+            adapter = OpenAICompatibleAdapter(**options)
+
+        with pytest.raises(AdapterError) as err:
+            if protocol == "models":
+                adapter.models()
+            else:
+                adapter.chat(
+                    {"messages": [{"role": "user", "content": "hello"}]},
+                    task_id="task_redirect_check",
+                    timeout_s=2,
+                )
+
+        if protocol != "models":
+            assert err.value.code == "upstream_http_failed"
+        assert err.value.diagnostics["http_status"] == 302
+        for forbidden in (api_secret, origin, sink, "steal-auth"):
+            assert forbidden not in str(err.value)
+            assert forbidden not in json.dumps(err.value.diagnostics)
+
+        # First host received the credential header; second host received nothing at all.
+        assert len(sent) == 1
+        sent_headers_lower = {k.lower(): v for k, v in sent[0]["headers"].items()}
+        if protocol == "anthropic_messages":
+            assert sent_headers_lower.get("x-api-key") == api_secret
+        else:
+            assert sent_headers_lower.get("authorization") == f"Bearer {api_secret}"
+        assert received == []
 
 
 @pytest.mark.parametrize("method", ["infer", "chat", "stream_chat", "infer_stream", "capabilities",
