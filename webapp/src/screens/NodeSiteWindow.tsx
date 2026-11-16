@@ -4,7 +4,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { NodeSiteError, nodeSites, type OpenedSiteStatus } from "../domain/nodeSites";
 import "./nodeSites.css";
 
-const POLL_MS = 15_000;
+const POLL_MS = 10_000;
 const ORIGIN = /^http:\/\/[0-9a-f]{32}\.site\.localhost:\d{4,5}$/;
 
 /** The site's origin-relative entry path; anything else falls back to "/". */
@@ -30,7 +30,10 @@ export default function NodeSiteWindow() {
   useEffect(() => {
     let alive = true;
     let wasOnline: boolean | null = null;
+    let inFlight = false;
     const check = async (fresh: boolean) => {
+      if (inFlight) return;
+      inFlight = true;
       try {
         const value = await nodeSites.status(key, fresh);
         if (!alive) return;
@@ -42,6 +45,8 @@ export default function NodeSiteWindow() {
       } catch (err) {
         if (!alive) return;
         setError(err instanceof NodeSiteError ? err.code : "site_unavailable");
+      } finally {
+        inFlight = false;
       }
     };
     void check(true);
