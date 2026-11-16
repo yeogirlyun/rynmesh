@@ -17,7 +17,8 @@ from .store import AgentError
 SAFE_STATES = {"paused", "completed", "failed", "waiting_input", "waiting_approval", "interrupted", "cancelled"}
 DATA_POLICY = {
     "sent_after_resume": ["owner_messages", "current_goal", "selected_skills", "current_saved_preferences"],
-    "excluded": ["previous_model_messages", "previous_tool_results", "previous_summaries", "previous_resource_grants"],
+    "excluded": ["previous_model_messages", "previous_tool_results", "previous_summaries", "previous_resource_grants", "previous_model_notes"],
+    "model_notes": "sent_if_carry_progress_summary_confirmed",
     "resources_require_explicit_transfer_or_new_authorization": True,
     "automatic_resume": False,
 }
@@ -92,7 +93,8 @@ def change(runtime, task_id, value):
     from .runtime import event, public_task, task
     fields = {"model_id", "expected_control_revision", "expected_scope_revision", "expected_destination",
               "confirm_data_destination", "transfer_resource_scope", "client_request_id"}
-    if (not isinstance(value, dict) or set(value) != fields or value["confirm_data_destination"] is not True
+    if (not isinstance(value, dict) or set(value) - {"carry_progress_summary"} != fields
+            or type(value.get("carry_progress_summary", False)) is not bool or value["confirm_data_destination"] is not True
             or type(value["transfer_resource_scope"]) is not bool or not value["client_request_id"]):
         raise AgentError("agent_invalid_request")
     request = {**value, "operation": "switch_task_model"}
@@ -158,6 +160,8 @@ def change(runtime, task_id, value):
         row["context_epoch"] = row.get("context_epoch", 0) + 1
         for key in ("context_checkpoint", "verification", "verification_cycle", "model_retry_authority"):
             row.pop(key, None)
+        if not value.get("carry_progress_summary", False):
+            row.pop("notes", None)
         row["model_retry_count"] = 0
         row["plan"] = {"revision": row["plan"]["revision"] + 1, "goal_revision": row["goal"]["revision"], "steps": []}
         row["criteria_proposals"] = []
