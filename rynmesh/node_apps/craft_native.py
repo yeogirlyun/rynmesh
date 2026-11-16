@@ -36,6 +36,8 @@ MAX_FILES = 8192
 MAX_RECEIPT = 2 * 1024 * 1024
 MAX_REQUEST = 1024 * 1024
 MAX_OUTPUT = 8 * 1024 * 1024
+MAX_LIFETIME = 4 * 3600.0
+MAX_CANCELLED_IDS = 256
 PROTOCOL_VERSION = "2025-06-18"
 _VERSIONS = {PROTOCOL_VERSION, "2025-03-26", "2024-11-05"}
 _WINDOWS_RESERVED = re.compile(r"^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)", re.I)
@@ -396,19 +398,20 @@ class McpProcess:
     """One serial MCP session, with finite bytes, time and process-tree lifetime."""
 
     def __init__(self, executable, workspace, app, *, cancelled=lambda: False,
-                 timeout=30.0, max_output=MAX_OUTPUT, lifetime=300.0):
+                 timeout=30.0, max_output=MAX_OUTPUT, lifetime=MAX_LIFETIME):
         _specification(app)
         self.executable, self.workspace = Path(executable).resolve(), Path(workspace).resolve()
         if (self.executable.name != f"{app}-cli.exe" or not self.executable.is_file()
                 or not self.workspace.is_dir()):
             raise CraftError("craft_mcp_path_invalid")
-        if (not isinstance(timeout, (int, float)) or not 0 < timeout <= 300
-                or not isinstance(lifetime, (int, float)) or not 0 < lifetime <= 600
+        if (not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or not 0 < timeout <= MAX_LIFETIME
+                or not isinstance(lifetime, (int, float)) or isinstance(lifetime, bool) or not 0 < lifetime <= MAX_LIFETIME
                 or type(max_output) is not int or not 1024 <= max_output <= 32 * 1024 * 1024):
             raise CraftError("craft_mcp_limits_invalid")
         self.timeout, self.max_output, self.cancelled = float(timeout), max_output, cancelled
         self.deadline = time.monotonic() + lifetime
         self.sequence, self.output_bytes, self.notifications = 0, 0, 0
+        self._cancelled_ids = OrderedDict()
         self.initialized, self.initialization = False, None
         self._request_cancelled = None
         self.failure = None
@@ -427,7 +430,7 @@ class McpProcess:
             args += ["--root", str(self.workspace)]
         try:
             self.process = process_guard.spawn(args, cwd=str(self.workspace),
-                                               env=_environment(self.private.name), timeout=lifetime)
+                                               env=_environment(self.private.name), timeout=MAX_LIFETIME)
         except (OSError, ValueError):
             self.private.cleanup()
             raise CraftError("craft_mcp_start_failed") from None
@@ -524,14 +527,16 @@ class McpProcess:
 
     def _exchange(self, method, params, timeout=None):
         duration = self.timeout if timeout is None else timeout
-        if not isinstance(duration, (int, float)) or not 0 < duration <= 300:
+        if not isinstance(duration, (int, float)) or isinstance(duration, bool) or not 0 < duration <= MAX_LIFETIME:
             raise CraftError("craft_mcp_limits_invalid")
         deadline = time.monotonic() + duration
         self._check(deadline)
         self.sequence += 1
         ident = self.sequence
+        sent = False
         try:
             self._send({"jsonrpc": "2.0", "id": ident, "method": method, "params": params}, deadline)
+            sent = True
             while True:
                 self._check(deadline)
                 try:
@@ -545,6 +550,9 @@ class McpProcess:
                     if self.notifications > 64:
                         raise CraftError("craft_mcp_notification_limit")
                     continue
+                if type(message.get("id")) is int and "method" not in message and message["id"] in self._cancelled_ids:
+                    self._cancelled_ids.pop(message["id"], None)
+                    continue
                 if type(message.get("id")) is not int or message["id"] != ident:
                     raise CraftError("craft_mcp_response_id_mismatch")
                 if "error" in message:
@@ -552,7 +560,35 @@ class McpProcess:
                 if "result" not in message or not isinstance(message["result"], dict):
                     raise CraftError("craft_mcp_protocol_invalid")
                 return message["result"]
-        except BaseException:
+        except BaseException as exc:
+            if (
+                isinstance(exc, CraftError)
+                and str(exc) == "craft_mcp_timeout"
+                and self.initialized
+                and sent
+                and not self.failure
+                and not self.closed.is_set()
+                and time.monotonic() < self.deadline
+                and self.process.poll() is None
+            ):
+                self._cancelled_ids[ident] = True
+                while len(self._cancelled_ids) > MAX_CANCELLED_IDS:
+                    self._cancelled_ids.popitem(last=False)
+                try:
+                    self._send(
+                        {
+                            "jsonrpc": "2.0",
+                            "method": "notifications/cancelled",
+                            "params": {"requestId": ident, "reason": "timeout"},
+                        },
+                        min(time.monotonic() + 2.0, self.deadline),
+                    )
+                except BaseException:
+                    self.close()
+                else:
+                    if self.failure or self.process.poll() is not None:
+                        self.close()
+                raise
             self.close()
             raise
 

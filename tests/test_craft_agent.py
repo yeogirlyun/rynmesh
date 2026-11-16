@@ -40,7 +40,7 @@ SCHEMAS = {
 class Backend:
     def __init__(self):
         self.ready = True
-        self.instances, self.calls, self.installations = [], [], []
+        self.instances, self.calls, self.timeouts, self.installations = [], [], [], []
         self.fail_next = None
 
     def process(self, executable, workspace, app, *, cancelled, **_):
@@ -70,9 +70,10 @@ class Backend:
                                                     "required": required[:]}}
                                    for name, (properties, required) in SCHEMAS.items()]}
 
-            def tools_call(self, name, args, *, cancelled=None):
+            def tools_call(self, name, args, *, timeout=None, cancelled=None):
                 self.check(cancelled)
                 backend.calls.append((self, name, copy.deepcopy(args)))
+                backend.timeouts.append((name, timeout))
                 if name == "new_document":
                     self.text = ""
                     value = {"created": True}
@@ -409,7 +410,7 @@ def test_large_chinese_readbacks_page_by_bytes_without_dropping_text(craft):
 
 def test_post_save_validation_failure_keeps_the_write_unknown_and_cannot_replay(craft, monkeypatch):
     runtime, _ = craft.runtime()
-    context = _context(runtime.create({"message": "保存后验证失败也不能重放"}))
+    context = _context(runtime.create({"message": "保存后重开验证失败返回 failed，哈希损坏仍报 unknown 且不能重放"}))
     _act(craft, context, "new_document")
     args = _args("save_document", {"path": "saved-before-check-failed.docx"})
     preview = craft.tools.preview(ACTION, args, context=context)
@@ -418,12 +419,28 @@ def test_post_save_validation_failure_keeps_the_write_unknown_and_cannot_replay(
         raise OSError("fixture readback failure after the export exists")
 
     monkeypatch.setattr(craft.tools.craft, "_reopen", failed)
-    for _ in range(2):
-        with pytest.raises(AgentError, match="write_outcome_unknown"):
-            _act(craft, context, "save_document", args["arguments"], operation="post-save-failed", preview=preview)
+    saved = _act(craft, context, "save_document", args["arguments"], operation="post-save-failed", preview=preview)
+    assert saved["ok"] is True
+    assert saved["files"][0]["validation"]["status"] == "failed"
+    assert _act(craft, context, "save_document", args["arguments"], operation="post-save-failed", preview=preview) == saved
     assert (craft.workspace / args["arguments"]["path"]).is_file()
     assert sum(name == "save_document" for _, name, _ in craft.backend.calls) == 1
-    assert craft.tools.resource_writes.ledger.get("post-save-failed")["status"] == "dispatched"
+    assert craft.tools.resource_writes.ledger.get("post-save-failed")["status"] == "confirmed"
+
+    corrupt_args = _args("save_document", {"path": "saved-hash-corrupted.docx"})
+    corrupt_preview = craft.tools.preview(ACTION, corrupt_args, context=context)
+    real_publish = craft.tools.craft._publish
+
+    def corrupt_after_publish(source, destination):
+        real_publish(source, destination)
+        destination.write_bytes(b"corrupted post-publish bytes")
+
+    monkeypatch.setattr(craft.tools.craft, "_publish", corrupt_after_publish)
+    for _ in range(2):
+        with pytest.raises(AgentError, match="write_outcome_unknown"):
+            _act(craft, context, "save_document", corrupt_args["arguments"], operation="post-save-corrupted", preview=corrupt_preview)
+    assert sum(name == "save_document" for _, name, _ in craft.backend.calls) == 2
+    assert craft.tools.resource_writes.ledger.get("post-save-corrupted")["status"] == "published"
 
 
 def test_craft_tools_discovery_includes_compact_schema_and_normalizes_alias_keys(craft):
