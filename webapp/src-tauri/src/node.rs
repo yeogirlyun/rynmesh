@@ -348,9 +348,11 @@ fn start_inner(state: &NodeState) -> std::io::Result<()> {
 fn stop_child(state: &NodeState) {
     let mut guard = state.child.lock().unwrap();
     if let Some(mut child) = guard.take() {
-        if matches!(child.try_wait(), Ok(Some(_))) {
+        if let Ok(Some(status)) = child.try_wait() {
+            log::warn!("managed node already exited before stop: pid={}, status={status}", child.id());
             return;
         }
+        log::info!("stopping live managed node: pid={}", child.id());
         #[cfg(windows)]
         {
             // PyInstaller onefile owns a worker process: stop the owned tree.
