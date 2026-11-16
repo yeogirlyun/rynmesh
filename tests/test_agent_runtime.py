@@ -351,7 +351,10 @@ def test_untrusted_model_output_cannot_bypass_tool_boundary(tmp_path, response, 
         advance(runtime)
         saved = runtime.store.read()["tasks"][row["id"]]
         paired = json.loads(saved["messages"][-1]["content"])
-        assert paired == {"error": error, "message": paired["message"], "not_executed": True, "no_mutation": True}
+        expected = {"error": error, "message": paired["message"], "not_executed": True, "no_mutation": True}
+        if error == "agent_tool_arguments_invalid":
+            expected["details"] = {"field_path": "<root>", "validator": "additionalProperties"}
+        assert paired == expected
         assert saved["messages"][-1]["tool_call_id"] == response["message"]["tool_calls"][0]["id"]
         assert saved.get("receipts", []) == []
         assert saved["status"] == "queued"  # The model can correct it in the same conversation.

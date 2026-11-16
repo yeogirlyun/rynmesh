@@ -484,7 +484,7 @@ def test_t7_remote_large_request_precheck_and_compaction_flow(
                     {
                         "role": "tool",
                         "tool_call_id": f"c_{idx}",
-                        "content": json.dumps({"note": f"entry-{idx}-" + ("w" * 3500)}),
+                        "content": json.dumps({"note": f"entry-{idx}-" + ("w" * 14000)}),
                         "context_epoch": 0,
                     }
                 )
@@ -492,6 +492,8 @@ def test_t7_remote_large_request_precheck_and_compaction_flow(
             msgs.append({"role": "user", "content": "Now provide the final answer.", "context_epoch": 0})
 
         runtime.store.transaction(seed_large_history)
+        seeded = runtime.store.read()["tasks"][tid]
+        assert runtime._request_context_bytes(seeded, specs=runtime._specs(seeded)) > runtime._context_limit(seeded)
         for _ in range(4):
             runtime.run_once()
             if runtime.get(tid)["status"] == "completed":
