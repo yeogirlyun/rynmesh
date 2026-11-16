@@ -148,7 +148,13 @@ def test_edit_replaces_suffix_preserves_prefix_audit_and_rotates_provider_conver
     assert edited["conversation_event_cursor"] == edited["events"][-1]["seq"]
     assert "conversation_branches" not in edited
     saved = runtime.store.read()["tasks"][row["id"]]
-    assert "DISCARDED_FUTURE_QUESTION" in json.dumps(saved["conversation_branches"])
+    assert "DISCARDED_FUTURE_QUESTION" not in json.dumps(saved["conversation_branches"])
+    from rynmesh.agent_runtime import lifecycle
+    archived_branch = lifecycle.read_archived_conversation_branch(
+        runtime.store, row["id"], saved["conversation_branches"][-1]["archive_ref"]
+    )
+    assert archived_branch is not None
+    assert "DISCARDED_FUTURE_QUESTION" in json.dumps(archived_branch["messages"])
     assert "DISCARDED_FUTURE_QUESTION" not in json.dumps(runtime._context(saved))
     advance(runtime)
     assert requests[-1][0] != requests[-2][0]

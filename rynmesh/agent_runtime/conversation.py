@@ -2,19 +2,85 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import sys
+from typing import Any
 
-from . import budget
+from . import budget, diagnostic_log, lifecycle
 from .state import record_goal_history
-from .store import AgentError
+from .store import AgentError, AgentStore, encoded
+
+BRANCH_METADATA_LIMIT = 20
+_BRANCH_META_KEYS = (
+    "revision",
+    "message_index",
+    "event_cursor",
+    "retired_count",
+    "retired_sha256",
+    "archive_ref",
+)
 
 
-def rewrite(row: dict, control: dict, emit, *, data: dict | None = None) -> None:
+def _enclosing_store() -> AgentStore | None:
+    frame = sys._getframe(1)
+    depth = 0
+    while frame is not None and depth < 24:
+        if frame.f_code.co_name == "transaction":
+            candidate = frame.f_locals.get("self")
+            if isinstance(candidate, AgentStore):
+                return candidate
+        frame = frame.f_back
+        depth += 1
+    return None
+
+
+def _branch_archive_ref(revision: Any, retired_sha256: str) -> str:
+    return f"branch:{revision}:{retired_sha256[:16]}"
+
+
+def _build_branch_entry(
+    *,
+    revision: Any,
+    message_index: Any,
+    event_cursor: Any,
+    retired_messages: list[dict],
+    retired_goal: dict | None,
+    can_archive: bool,
+) -> tuple[dict[str, Any], tuple[str, dict[str, Any]] | None]:
+    raw_messages = copy.deepcopy(retired_messages)
+    retired_sha256 = hashlib.sha256(encoded(raw_messages)).hexdigest()
+    archive_ref = _branch_archive_ref(revision, retired_sha256) if can_archive else None
+    meta: dict[str, Any] = {
+        "revision": revision,
+        "message_index": message_index,
+        "event_cursor": event_cursor,
+        "retired_count": len(raw_messages),
+        "retired_sha256": retired_sha256,
+        "archive_ref": archive_ref,
+    }
+    if not can_archive or archive_ref is None:
+        return meta, None
+    payload: dict[str, Any] = {
+        "revision": revision,
+        "message_index": message_index,
+        "event_cursor": event_cursor,
+        "retired_count": len(raw_messages),
+        "retired_sha256": retired_sha256,
+        "messages": raw_messages,
+    }
+    if retired_goal is not None:
+        payload["goal"] = copy.deepcopy(retired_goal)
+    return meta, (archive_ref, payload)
+
+
+def rewrite(row: dict, control: dict, emit, *, data: dict | None = None, store: Any = None) -> None:
     """Apply an edit only after the old operation has a known outcome.
 
     Receipts and events remain the durable audit trail. The previous suffix is
-    encrypted with the task, but never becomes input to the replacement turn.
-    The valid retained prefix keeps native signatures required by some providers;
-    the runtime uses a fresh conversation key for the replacement branch.
+    archived in the task's encrypted archive store, and never becomes input to
+    the replacement turn. The valid retained prefix keeps native signatures
+    required by some providers; the runtime uses a fresh conversation key for
+    the replacement branch.
     """
     from . import memory, memory_integration
 
@@ -22,13 +88,55 @@ def rewrite(row: dict, control: dict, emit, *, data: dict | None = None) -> None
     messages = row["messages"]
     previous_revision = row.get("conversation_revision", 0)
     retired_messages = copy.deepcopy(messages[index:])
-    row.setdefault("conversation_branches", []).append({
-        "revision": previous_revision,
-        "message_index": index,
-        "event_cursor": row["event_cursor"],
-        "messages": retired_messages,
-        "goal": copy.deepcopy(row["goal"]),
-    })
+    active_store = store if isinstance(store, AgentStore) else _enclosing_store()
+    can_archive = active_store is not None and isinstance(row.get("id"), str) and bool(row["id"])
+
+    normalized_branches: list[dict[str, Any]] = []
+    to_archive: dict[str, dict[str, Any]] = {}
+    newly_archived_metas: list[dict[str, Any]] = []
+    for existing in row.get("conversation_branches") or []:
+        if not isinstance(existing, dict):
+            continue
+        if "messages" in existing or "goal" in existing:
+            legacy_messages = existing.get("messages") if isinstance(existing.get("messages"), list) else []
+            legacy_goal = existing.get("goal") if isinstance(existing.get("goal"), dict) else None
+            meta, pair = _build_branch_entry(
+                revision=existing.get("revision", 0),
+                message_index=existing.get("message_index", 0),
+                event_cursor=existing.get("event_cursor", 0),
+                retired_messages=legacy_messages,
+                retired_goal=legacy_goal,
+                can_archive=can_archive,
+            )
+            if pair is not None:
+                to_archive[pair[0]] = pair[1]
+                newly_archived_metas.append(meta)
+            normalized_branches.append(meta)
+        else:
+            normalized_branches.append({key: existing.get(key) for key in _BRANCH_META_KEYS})
+
+    new_meta, new_pair = _build_branch_entry(
+        revision=previous_revision,
+        message_index=index,
+        event_cursor=row["event_cursor"],
+        retired_messages=retired_messages,
+        retired_goal=row.get("goal") if isinstance(row.get("goal"), dict) else None,
+        can_archive=can_archive,
+    )
+    if new_pair is not None:
+        to_archive[new_pair[0]] = new_pair[1]
+        newly_archived_metas.append(new_meta)
+    normalized_branches.append(new_meta)
+
+    if can_archive and to_archive:
+        try:
+            lifecycle.archive_conversation_branches(active_store, row["id"], to_archive)
+        except (AgentError, OSError, ValueError) as exc:
+            for meta in newly_archived_metas:
+                meta["archive_ref"] = None
+            diagnostic_log.failure("conversation_branch_archive", exc, task_id=row.get("id"))
+
+    row["conversation_branches"] = normalized_branches[-BRANCH_METADATA_LIMIT:]
     previous_epoch = row.get("context_epoch", 0)
     epoch = previous_epoch + 1
     row["context_epoch"] = epoch

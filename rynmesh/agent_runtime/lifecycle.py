@@ -19,6 +19,32 @@ def archive_store(store, task_id):
     return AgentStore(store.root / "archives" / directory, store.key)
 
 
+def archive_conversation_branches(store, task_id: str, branches_by_ref: dict[str, dict]) -> None:
+    if not branches_by_ref:
+        return
+
+    def mutate(archived: dict) -> None:
+        archived.update(version=VERSION, schema_version=archived.get("schema_version", 2))
+        archived.setdefault("settings", {})
+        archived.setdefault("tasks", {})
+        bucket = archived.setdefault("conversation_branches", {})
+        for ref, payload in branches_by_ref.items():
+            bucket[ref] = copy.deepcopy(payload)
+
+    archive_store(store, task_id).transaction(mutate)
+
+
+def read_archived_conversation_branch(store, task_id: str, archive_ref: str | None) -> dict | None:
+    if not isinstance(archive_ref, str) or not archive_ref:
+        return None
+    archived = archive_store(store, task_id).read()
+    branches = archived.get("conversation_branches")
+    if not isinstance(branches, dict):
+        return None
+    entry = branches.get(archive_ref)
+    return copy.deepcopy(entry) if isinstance(entry, dict) else None
+
+
 def purge_archive(store, task_id):
     archive = archive_store(store, task_id)
     if archive.root.exists():
