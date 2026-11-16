@@ -74,16 +74,46 @@ def bounded_snippet(
     return text, start_idx + 1, max(start_idx + 1, actual_end)
 
 
+_HEREDOC_OPENERS = frozenset({"<<EOF", "<<'EOF'", '<<"EOF"'})
+
+
+def _trim_blank_edges(lines: list[str]) -> list[str]:
+    trimmed = list(lines)
+    while trimmed and not trimmed[-1].strip():
+        trimmed.pop()
+    while trimmed and not trimmed[0].strip():
+        trimmed.pop(0)
+    return trimmed
+
+
+def _is_patch_envelope(lines: list[str]) -> bool:
+    return len(lines) >= 2 and lines[0].strip() == BEGIN and lines[-1].strip() == END
+
+
+def _unwrap_lenient_envelope(lines: list[str]) -> list[str]:
+    if len(lines) < 4:
+        return lines
+    first = lines[0].strip()
+    last = lines[-1].strip()
+    heredoc_head = first[len("apply_patch "):].lstrip() if first.startswith("apply_patch ") else first
+    if heredoc_head in _HEREDOC_OPENERS and last.endswith("EOF"):
+        return _trim_blank_edges(lines[1:-1])
+    if first.startswith("```") and last == "```":
+        return _trim_blank_edges(lines[1:-1])
+    return lines
+
+
 def parse(text: str) -> list[dict]:
-    lines = text.replace("\r\n", "\n").split("\n")
-    while lines and not lines[-1].strip():
-        lines.pop()
-    while lines and not lines[0].strip():
-        lines.pop(0)
-    if len(lines) < 2 or lines[0].strip() != BEGIN or lines[-1].strip() != END:
+    lines = _trim_blank_edges(text.replace("\r\n", "\n").split("\n"))
+    if not _is_patch_envelope(lines):
+        lines = _unwrap_lenient_envelope(lines)
+    if not _is_patch_envelope(lines):
         reject(
             "invalid_envelope",
-            correction="Wrap the patch in '*** Begin Patch' and '*** End Patch' lines.",
+            correction=(
+                "Wrap the patch in '*** Begin Patch' and '*** End Patch' lines "
+                "(already tried stripping heredoc <<EOF...EOF and ```...``` fences)."
+            ),
             details={"field_path": "patch", "reason": "invalid_envelope"},
         )
     operations, body, index = [], lines[1:-1], 0
