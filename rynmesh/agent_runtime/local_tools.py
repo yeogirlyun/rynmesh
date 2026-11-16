@@ -2424,6 +2424,13 @@ class LocalTools:
                 if args.get("timeout_seconds") is not None
                 else (local_processes.DEFAULT_READ_SHELL_TIMEOUT if is_read else None)
             )
+            explicit_stdin = args.get("stdin")
+            if explicit_stdin is not None:
+                stdin_mode = explicit_stdin
+            elif args.get("background") or args.get("yield_seconds") is not None:
+                stdin_mode = "pipe"
+            else:
+                stdin_mode = "closed"
             prior_running = self.processes.running_for_operation(task_id)
             ident = self.processes.start(
                 command,
@@ -2434,6 +2441,7 @@ class LocalTools:
                 cancelled,
                 operation_id=operation_id or context.get("operation_id"),
                 tty=args.get("tty", False), rows=args.get("rows", 24), cols=args.get("cols", 80),
+                stdin_mode=stdin_mode,
             )
             item = self.processes.get(ident, task_id)
             if before is not None:

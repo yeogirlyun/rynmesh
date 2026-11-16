@@ -472,11 +472,13 @@ class Processes:
             victim_id, _ = min(completed_all, key=_evict_key)
             self.items.pop(victim_id, None)
 
-    def start(self, args, cwd, task_id, timeout=None, allowed=lambda: True, cancelled=lambda: False, *, operation_id=None, tty=False, rows=24, cols=80, env_overrides=None):
+    def start(self, args, cwd, task_id, timeout=None, allowed=lambda: True, cancelled=lambda: False, *, operation_id=None, tty=False, rows=24, cols=80, env_overrides=None, stdin_mode="pipe"):
         # Task-state callbacks can acquire the Agent store lock; never call one
         # while holding the process-table lock (preview takes them in reverse).
         if type(tty) is not bool:
             raise AgentProcessStartRejected("agent_invalid_terminal_mode")
+        if stdin_mode not in {"closed", "pipe"}:
+            raise AgentProcessStartRejected("agent_invalid_stdin_mode")
         if tty:
             validate_size(rows, cols)
             check_pty_support()
@@ -522,10 +524,11 @@ class Processes:
                     if (os.name == "nt" or ConPtyProcess is not _DEFAULT_CONPTY_CLS)
                     else PosixPtyProcess
                 )
+                stdin_target = subprocess.DEVNULL if stdin_mode == "closed" else subprocess.PIPE
                 process = pty_cls(cmd_args, cwd, proc_env, rows, cols) if tty else subprocess.Popen(
                     cmd_args,
                     cwd=str(cwd),
-                    stdin=subprocess.PIPE,
+                    stdin=stdin_target,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     env=proc_env,
@@ -559,7 +562,7 @@ class Processes:
                     "reason": None, "reader_done": threading.Event(),
                     "last_empty_offset": None, "empty_poll_count": 0, "tty": tty,
                     "powershell_login_profile": bool(getattr(args, "powershell_login_profile", False)),
-                    "input_lock": None if tty else threading.Lock(), "stdin_closed": False, "cleanup_done": threading.Event()}
+                    "input_lock": None if tty else threading.Lock(), "stdin_closed": (not tty and stdin_mode == "closed"), "cleanup_done": threading.Event()}
             self.items[ident] = item
 
         def read():
@@ -614,7 +617,7 @@ class Processes:
             finally:
                 # Closing a Windows job also cleans descendants after the shell exits.
                 terminate(process)
-                if not tty:
+                if not tty and process.stdin is not None:
                     process.stdin.close()
                 if item.get("ended_at") is None:
                     item["ended_at"] = time.monotonic()
@@ -865,8 +868,11 @@ class Processes:
                     "control": control, "rows": process.rows, "cols": process.cols}
         if process.poll() is not None:
             raise AgentToolRejected("agent_process_not_running")
-        if item.get("stdin_closed"):
-            raise AgentToolRejected("agent_process_stdin_closed")
+        if item.get("stdin_closed") or process.stdin is None:
+            raise AgentToolRejected(
+                "agent_process_stdin_closed",
+                correction='Start the command with stdin="pipe" to write to it.',
+            )
         errors = []
 
         def send():
@@ -1027,6 +1033,9 @@ def prepare_shell_command(arguments):
     login = arguments.get("login", True)
     if type(login) is not bool:
         raise AgentToolRejected("agent_invalid_login_mode")
+    stdin = arguments.get("stdin")
+    if stdin is not None and stdin not in {"closed", "pipe"}:
+        raise AgentToolRejected("agent_invalid_stdin_mode")
     if arguments.get("tty"):
         check_pty_support()
         validate_size(arguments.get("rows", 24), arguments.get("cols", 80))
