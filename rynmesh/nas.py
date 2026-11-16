@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import socket
+import ssl
 import threading
 import time
 import uuid
@@ -182,6 +183,35 @@ class SMBConnector:
         self.api.reset_connection_cache(connection_cache=self.cache)
 
 
+_SSL_CONTEXT_LOCK = threading.Lock()
+_HTTP_ONLY_SSL_CONTEXT: ssl.SSLContext | None = None
+_HTTPS_DEFAULT_SSL_CONTEXT: ssl.SSLContext | None = None
+
+
+def _webdav_ssl_context(url: str) -> ssl.SSLContext:
+    """Reuse thread-safe SSLContexts so one-shot WebDAV reads do not reload CA bundles per request."""
+    global _HTTP_ONLY_SSL_CONTEXT, _HTTPS_DEFAULT_SSL_CONTEXT
+    if url.startswith("http://"):
+        if _HTTP_ONLY_SSL_CONTEXT is None:
+            with _SSL_CONTEXT_LOCK:
+                if _HTTP_ONLY_SSL_CONTEXT is None:
+                    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                    ctx.check_hostname = True
+                    ctx.verify_mode = ssl.CERT_REQUIRED
+                    _HTTP_ONLY_SSL_CONTEXT = ctx
+        return _HTTP_ONLY_SSL_CONTEXT
+    if _HTTPS_DEFAULT_SSL_CONTEXT is None:
+        with _SSL_CONTEXT_LOCK:
+            if _HTTPS_DEFAULT_SSL_CONTEXT is None:
+                try:
+                    import certifi
+
+                    _HTTPS_DEFAULT_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+                except ImportError:
+                    _HTTPS_DEFAULT_SSL_CONTEXT = ssl.create_default_context()
+    return _HTTPS_DEFAULT_SSL_CONTEXT
+
+
 class WebDAVConnector:
     def __init__(self, config):
         import httpx
@@ -193,6 +223,7 @@ class WebDAVConnector:
         self.client = httpx.Client(
             auth=(config["username"], config["password"]),
             timeout=config.get("timeout", 20),
+            verify=_webdav_ssl_context(self.root),
             follow_redirects=False,
             trust_env=False,
         )
@@ -206,11 +237,11 @@ class WebDAVConnector:
         stripped = path.rstrip("/")
         if not stripped:
             raise NasError("invalid_path")
-        relative_path(stripped)
+        clean = relative_path(stripped)
         # relative_path already rejects ".."; quote(..., safe="/") encodes any
         # literal "%" into "%25", so one server decode restores the filename
         # without turning encoded sequences into path traversal.
-        return self.root + quote(stripped, safe="/") + ("/" if trailing_slash else "")
+        return self.root + quote(clean, safe="/") + ("/" if trailing_slash else "")
 
     def request(self, method, path, *, limit=MAX_FILE, **kwargs):
         with self.client.stream(method, self.url(path), **kwargs) as response:

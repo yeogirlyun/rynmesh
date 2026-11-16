@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import ssl
 import threading
 import time
 
-from rynmesh.nas import NasPlugin
+import rynmesh.nas as nas_mod
+from rynmesh.nas import NasPlugin, WebDAVConnector
 
 
 def _make_plugin(tmp_path) -> tuple[NasPlugin, str]:
@@ -153,3 +155,45 @@ def test_t8_two_concurrent_writes_still_serialize_under_gate(tmp_path) -> None:
     assert len(spans) == 2
     assert spans[1][1] >= spans[0][2]
     assert source_id in plugin.sessions
+
+
+def test_t10_one_shot_webdav_connectors_do_not_reload_ssl_ca_bundle_per_read(monkeypatch) -> None:
+    """Rework #2: One-shot WebDAVConnector instances must skip CA bundle loading for http:// and cache SSLContext for https:// so inflight reads do not stall before sending GET."""
+    monkeypatch.setattr(nas_mod, "_HTTP_ONLY_SSL_CONTEXT", None, raising=False)
+    monkeypatch.setattr(nas_mod, "_HTTPS_DEFAULT_SSL_CONTEXT", None, raising=False)
+
+    real_create_default_context = ssl.create_default_context
+    ca_load_calls = 0
+
+    def counting_create_default_context(*args, **kwargs):
+        nonlocal ca_load_calls
+        ca_load_calls += 1
+        return real_create_default_context(*args, **kwargs)
+
+    monkeypatch.setattr(ssl, "create_default_context", counting_create_default_context)
+
+    for _ in range(4):
+        http_conn = WebDAVConnector(
+            {
+                "url": "http://127.0.0.1:18080/dav",
+                "root": "",
+                "username": "fixture",
+                "password": "fixture",
+            }
+        )
+        http_conn.close()
+    assert ca_load_calls == 0
+
+    for _ in range(5):
+        https_conn = WebDAVConnector(
+            {
+                "url": "https://dav.example.test/dav",
+                "root": "shared",
+                "username": "fixture",
+                "password": "fixture",
+            }
+        )
+        assert https_conn.url("allowed/source.md") == "https://dav.example.test/dav/shared/allowed/source.md"
+        https_conn.close()
+    assert ca_load_calls == 1
+
