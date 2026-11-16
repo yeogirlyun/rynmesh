@@ -59,7 +59,7 @@ def test_t3_schema_projection_consistency_and_automatic_mode_never_asks(tmp_path
     description, effect, risk, params = SPECS["ryn_shell_execute"]
     assert set(params["properties"]) == {
         "command", "shell", "cwd", "timeout_seconds", "background",
-        "yield_seconds", "tty", "rows", "cols", "login",
+        "yield_seconds", "tty", "rows", "cols", "login", "stdin",
     }
     assert params["required"] == ["command"]
     assert params["additionalProperties"] is False
