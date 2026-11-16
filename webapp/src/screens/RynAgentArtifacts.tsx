@@ -6,7 +6,7 @@ import { Check, ChevronDown, Copy, Download, ExternalLink, FileText, FolderOpen,
 import { AgentAPIError, agentReadBackoff, isTransientAgentReadError, agentFileUrl, agentTaskState, isAgentActive, rynAgent, type AgentArtifact, type AgentArtifactListing, type AgentFileArtifact, type AgentTask } from "../domain/rynAgent";
 import { isTauriDesktop } from "../domain/nodeUrl";
 import { NasPreview } from "../personal/NasPreview";
-import { decodeAgentFileText, isOfficePreview, readAgentFilePreview } from "../domain/agentFilePreview";
+import { decodeAgentFileText, isOfficePreview, type OfficePreviewLoader, readAgentFilePreview } from "../domain/agentFilePreview";
 import { AgentFileContext, fileAvailable } from "./RynAgentFileContext";
 import RynAgentPreviewSurface, { AgentPreviewHostContext } from "./RynAgentPreviewSurface";
 import "../personal/nas.css";
@@ -253,14 +253,14 @@ export function TaskArtifacts({ task, maxTurnIndex = 0, children }: { task: Agen
   // The version, not the listing object's identity, decides when bytes are fetched again.
   }, [task.id, file?.id, file?.sha256, file?.media_type, file?.name, t]);
   const readFileText = useCallback(async (signal: AbortSignal) => decodeAgentFileText(await loadFile(signal)), [loadFile]);
-  const readDocument = useCallback(async (signal: AbortSignal) => {
+  const readDocument = useCallback<OfficePreviewLoader>(async (signal, options) => {
     if (!file) throw new Error(t("artifactReadError"));
-    try { return await readAgentFilePreview(task.id, file, signal); }
+    try { return await readAgentFilePreview(task.id, file, signal, options); }
     catch (reason) {
       if (reason instanceof AgentAPIError && reason.code === "agent_artifact_content_changed" && !signal.aborted) setReload(n => n + 1);
       throw reason;
     }
-  }, [task.id, file?.id, file?.sha256, t]);
+  }, [task.id, file?.id, file?.sha256, file?.bytes, t]);
   const items = listing?.artifacts || [];
   const resultFiles = files.filter(item => {
     const normalized = item.path.replaceAll("\\", "/");

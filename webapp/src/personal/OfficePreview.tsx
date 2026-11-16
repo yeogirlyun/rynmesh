@@ -5,7 +5,7 @@ import { type FilePreview, type OfficePreviewLoader, type PreviewBlock } from ".
 import "./officePreview.css";
 
 const labels = {
-  en: { loading: "Loading document…", retry: "Retry preview", failed: "The document could not be previewed. Try again or download the original.",
+  en: { loading: "Loading document…", converting: "Converting…", retry: "Retry preview", failed: "The document could not be previewed. Try again or download the original.",
     invalid: "This file is damaged, encrypted, or uses an unsupported document structure. Download it to open in its original app.",
     large: "This document exceeds the preview size limit. Download the original to view it.",
     converter: "This older document format needs LibreOffice installed on the node. Download it to open in its original app.",
@@ -13,7 +13,7 @@ const labels = {
     limited: "Showing a limited content preview. Download the original for all content and formatting.",
     formulas: "Some formulas have no saved result. The formula is shown instead; open in Excel to calculate it.",
     empty: "This document has no visible text content.", sheets: "Worksheets", previous: "Previous slide", next: "Next slide", slide: "Slide", content: "Content preview", layout: "Preview shows document content; original layout and embedded objects may differ.", rows: "rows", columns: "columns" },
-  zh: { loading: "正在加载文档…", retry: "重新预览", failed: "文档预览失败，请重试或下载原文件查看。",
+  zh: { loading: "正在加载文档…", converting: "正在转换…", retry: "重新预览", failed: "文档预览失败，请重试或下载原文件查看。",
     invalid: "文件可能已损坏、已加密或使用了暂不支持的文档结构，请下载后用原应用打开。",
     large: "文件超出预览大小限制，请下载原文件查看。",
     converter: "此旧版文档格式需要节点安装 LibreOffice 才能预览，可下载后用原应用打开。",
@@ -42,13 +42,16 @@ export function OfficePreview({ load }: { load: OfficePreviewLoader }) {
   const { i18n } = useTranslation();
   const text = labels[i18n.language.startsWith("zh") ? "zh" : "en"];
   const [preview, setPreview] = useState<FilePreview | null>(null);
+  const [converting, setConverting] = useState(false);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
   const [selected, setSelected] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
-    setPreview(null); setError(""); setSelected(0);
-    void load(controller.signal).then(value => {
+    setPreview(null); setConverting(false); setError(""); setSelected(0);
+    void load(controller.signal, {
+      onStatus: status => { if (!controller.signal.aborted && status === "converting") setConverting(true); },
+    }).then(value => {
       if (!controller.signal.aborted) {
         setPreview(value);
         if (value.kind === "spreadsheet") setSelected(Math.max(0, value.sheets.findIndex(sheet => !sheet.hidden)));
@@ -61,7 +64,7 @@ export function OfficePreview({ load }: { load: OfficePreviewLoader }) {
       : error === "agent_preview_invalid" ? text.invalid : error === "agent_artifact_content_changed" ? text.changed : text.failed;
     return <div className="office-preview-error"><p role="alert">{message}</p><button onClick={() => setReload(value => value + 1)}><RefreshCw size={14} />{text.retry}</button></div>;
   }
-  if (!preview) return <p className="nas-preview-message" role="status">{text.loading}</p>;
+  if (!preview) return <p className="nas-preview-message" role="status">{converting ? text.converting : text.loading}</p>;
   const sheet = preview.kind === "spreadsheet" ? preview.sheets[selected] : undefined;
   const slide = preview.kind === "presentation" ? preview.slides[selected] : undefined;
   const limited = preview.truncated || sheet?.truncated;
