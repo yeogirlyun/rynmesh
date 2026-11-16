@@ -35,5 +35,55 @@
     "site_rate_limited": "Too many requests. Try again in a moment.",
     "site_unavailable": "This page can't be opened right now. Try again later."
   },
+  "studio": {
+    "eyebrow": "Shared pages",
+    "title": "Your image studio",
+    "openHelp": "When open, colleagues see your image studio under Shared pages. When closed, they can't open it.",
+    "notPublisher": "Your company hasn't made you a publisher, so colleagues can't open pages on this computer. Ask an admin to add you.",
+    "notConnected": "This computer isn't connected to a company, so colleagues can't see this page. Sign in to the company plugin first.",
+    "modelLabel": "Image model",
+    "modelReady": "Signed in, ready",
+    "model": {
+      "codex_missing": "Codex isn't installed here",
+      "codex_signed_out": "Codex isn't signed in"
+    },
+    "today": "Made today",
+    "queueing": "In queue",
+    "who": "Who can use it",
+    "noMembers": "No colleague list yet. Connect to your company first.",
+    "images_one": "{{count}} image",
+    "images_other": "{{count}} images",
+    "images": "{{count}} images",
+    "jobs_one": "{{count}} job",
+    "jobs_other": "{{count}} jobs",
+    "jobs": "{{count}} jobs",
+    "queue": "Queue",
+    "queueHelp": "One image at a time, in order",
+    "queueEmpty": "Nothing in the queue.",
+    "running": "Generating {{time}}",
+    "queued": "Queued",
+    "prioritize": "Move up",
+    "cancel": "Cancel",
+    "stop": "Stop",
+    "usage": "Usage by person",
+    "usageEmpty": "Nobody has used it yet.",
+    "usageNote": "Images use your GPT quota and are stored only on this computer. When it's off or Ryn is closed, colleagues see it as offline.",
+    "col": {
+      "order": "#",
+      "who": "Colleague",
+      "brief": "Brief",
+      "size": "Size",
+      "state": "State",
+      "actions": "Actions",
+      "today": "Today",
+      "month": "Last 30 days",
+      "failed": "Failed"
+    },
+    "errors": {
+      "image_not_found": "That job no longer exists.",
+      "image_not_queued": "That job already started."
+    },
+    "modelName": "Codex · GPT"
+  },
   "manage": "Manage"
 }

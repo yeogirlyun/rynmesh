@@ -16,9 +16,8 @@ POST /api/local/node-sites/mine   {"site_id": "image-studio", "title": "Image st
 PATCH /api/local/node-sites/mine/image-studio   {"enabled": true, "audience": {"mode": "all", "members": []}}
 ```
 
-Ryn can also host separately installed trusted Python site plugins in-process
-(no port, the same checks and exposure switch). [Image studio](IMAGE_STUDIO.md)
-is maintained and installed independently of Ryn.
+Ryn can also host built-in sites in-process (no port or token, same checks
+and exposure switch); the first is the [image studio](IMAGE_STUDIO.md).
 
 `audience.mode` is `all` (every member of the provider directory) or
 `members` (listed member ids). Re-registering a site rotates its token and
@@ -84,33 +83,5 @@ WebSockets or streaming; long work should be submitted and then polled.
 
 The provider service on the company center must accept `site.open`; until
 it does, every open is denied. There is no plugin manifest declaration yet:
-loopback sites are registered through the owner API. Python site plugins use the entry-point contract below. No friend or public audience.
+sites are registered through the owner API. No friend or public audience.
 macOS WKWebView resolution of `*.localhost` subdomains is unverified.
-
-## Independently installed Python site plugins
-
-`<node home>/site-plugins/enabled.json` explicitly maps site IDs to package
-subdirectories inside `site-plugins`. Only those directories are loaded; nothing
-is discovered from global Python installations or downloaded automatically.
-These are trusted native extensions with full node-process privileges, not
-sandboxed MCP tools. Only the local owner should install or activate them.
-
-A wheel declares an entry point in `rynmesh.node_sites`, named after its site ID.
-Its callable receives `(app, *, home, sites, local_control)` and returns the
-plugin instance. Register the site's handler through `sites.host.builtins`,
-persist its exposure through `sites.store.register`, and register a shutdown
-callback to stop workers. Keep durable data outside the package directory.
-
-An optional `owner_path` on the returned instance must begin with
-`/api/local/site-plugins/<site-id>/`. Owner assets and all owner APIs must enforce
-`local_control(request)`; never expose them through the peer handler. The owner
-list supplies this path and the frontend uses `/apps/sites/:siteId` to embed it.
-The core has no application-specific routes or management components.
-
-The owner list also reports plugin readiness/version and per-site availability.
-Missing or failed in-process handlers are omitted from peer discovery while
-persisted settings remain intact. Failed plugins do not block node startup;
-partial routes/handlers are removed and registered shutdown hooks are run.
-
-Upgrade while Ryn is stopped. Preserve the previous package directory and
-activation manifest for rollback. Restart after changing the activation manifest.
