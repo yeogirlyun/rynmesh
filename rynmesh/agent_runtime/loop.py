@@ -875,6 +875,35 @@ class AgentLoop:
                     row.update(status="queued")
                     event(row, "turn_decision", action="continue", reason="subagent_notification", step=step)
                     return
+                goal_revision = (row.get("goal") or {}).get("revision")
+                if effective_action == "complete" and not wrap_up_reason and row.get("running_work_reminder_goal") != goal_revision:
+                    proc_reader = getattr(self.tools, "running_processes", None) or getattr(
+                        getattr(self.tools, "local", None), "running_processes", None
+                    )
+                    running_procs = list(proc_reader(row["id"]) or []) if callable(proc_reader) else []
+                    tasks_map = data.get("tasks") or {}
+                    running_subs = [
+                        cid
+                        for cid in (row.get("subagent_ids") or [])
+                        if isinstance(cid, str)
+                        and isinstance(tasks_map.get(cid), dict)
+                        and not tasks_map[cid].get("deleted")
+                        and tasks_map[cid].get("status") in {"queued", "running"}
+                    ]
+                    running_ids = [*running_procs, *running_subs]
+                    if running_ids:
+                        row["running_work_reminder_goal"] = goal_revision
+                        row["messages"].append({
+                            "role": "assistant",
+                            "content": (
+                                f"Runtime note: processes or subagents this task started are still running ({', '.join(running_ids)}). "
+                                "Wait for the result you need, or stop them, before the final reply."
+                            ),
+                            "context_epoch": row.get("context_epoch", 0),
+                        })
+                        row.update(status="queued")
+                        event(row, "turn_decision", action="continue", reason="running_work", step=step)
+                        return
                 event(row, "turn_decision", action=effective_action, reason=effective_reason, step=step)
                 if wrap_up_reason:
                     event(row, "budget_wrap_up", reason=wrap_up_reason, step=step, skipped_tool_calls=len(pending))
