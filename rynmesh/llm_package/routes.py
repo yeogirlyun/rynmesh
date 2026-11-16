@@ -335,7 +335,9 @@ class ProviderService:
         self._provider_records_by_peer: Counter[str] = Counter()
         self.accepting_orders = True
         self._refresh_provider_record_counts(prune=True)
-        self.task_store.use_memory_responses()
+        self.task_store.use_memory_responses(
+            ttl_seconds=max(60.0, float(self.manifest.timeout_seconds) + 60.0),
+        )
 
     def _refresh_provider_record_counts(self, *, prune: bool = False) -> None:
         if prune:
@@ -673,21 +675,18 @@ class ProviderService:
                 return self._sealed_failure(
                     task_id, reply_pub, str(outer["from_peer_id"]), "failed", _missing_provider_response_code(existing),
                 )
-            deadline = time.monotonic() + self.manifest.timeout_seconds + 30
-            while time.monotonic() < deadline:
-                # 0.25s keeps duplicate waits from monopolizing the threadpool
-                # with 20Hz disk reads while staying responsive.
-                time.sleep(0.25)
-                existing = self.task_store.get(task_id) or {}
+            existing = self.task_store.wait_terminal(
+                task_id, self.manifest.timeout_seconds + 30,
+            )
+            if existing is not None and existing.get("state") in TERMINAL_STATES:
                 encrypted = existing.get("encrypted_response")
-                if existing.get("state") in TERMINAL_STATES:
-                    if isinstance(encrypted, dict):
-                        if external_request:
-                            bound_authorize()
-                        return dict(encrypted)
-                    return self._sealed_failure(
-                        task_id, reply_pub, str(outer["from_peer_id"]), "failed", _missing_provider_response_code(existing),
-                    )
+                if isinstance(encrypted, dict):
+                    if external_request:
+                        bound_authorize()
+                    return dict(encrypted)
+                return self._sealed_failure(
+                    task_id, reply_pub, str(outer["from_peer_id"]), "failed", _missing_provider_response_code(existing),
+                )
             raise TaskProtocolError("duplicate task is still in progress")
         with self._lock:
             pending_cancel = self._pending_cancellations.pop(task_id, None)
@@ -1320,6 +1319,10 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         private_key_bytes=store.private_key_bytes,
     )
     _recover_consumer_orders(consumer_orders, balance, store)
+    consumer_orders.prune_terminal(
+        older_than=datetime.now(timezone.utc) - timedelta(days=7),
+        skip_awaiting_archive=True,
+    )
     manager: ProviderService | None = None
     manager_lock = threading.Lock()
     p2p_sessions: set[str] = set()
@@ -3205,6 +3208,11 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     "idempotency_key": str(body.get("idempotency_key") or task_id),
                     "request_fingerprint": _request_fingerprint(body, store.private_key_bytes)}
         try:
+            if consumer_orders._count >= 9000:
+                consumer_orders.prune_terminal(
+                    older_than=datetime.now(timezone.utc) - timedelta(days=7),
+                    skip_awaiting_archive=True,
+                )
             _, claimed = consumer_orders.claim(task_id=task_id, bindings=bindings)
         except TaskProtocolError as exc:
             raise HTTPException(409, str(exc)) from exc
@@ -3489,6 +3497,11 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             **({"provider_resource": external_resource} if external_resource else {}),
         }
         try:
+            if consumer_orders._count >= 9000:
+                consumer_orders.prune_terminal(
+                    older_than=datetime.now(timezone.utc) - timedelta(days=7),
+                    skip_awaiting_archive=True,
+                )
             existing, claimed = consumer_orders.claim(task_id=task_id, bindings=bindings)
         except TaskProtocolError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
