@@ -540,7 +540,7 @@ def test_retryable_transport_failure_does_not_burn_393k_output_reservation_and_h
     assert healed["lifetime"]["charged_tokens"] == 64
 
 
-def test_reaching_2m_token_threshold_auto_compacts_and_continues(tmp_path):
+def test_reaching_2m_token_threshold_auto_extends_without_compaction(tmp_path):
     step1_resp = assistant(name="inspect_service", args={"service_id": "svc-1"}, call_id="c1")
     step1_resp.update(
         usage={"input_tokens": 900000, "output_tokens": 50000},
@@ -551,27 +551,24 @@ def test_reaching_2m_token_threshold_auto_compacts_and_continues(tmp_path):
         usage={"input_tokens": 980000, "output_tokens": 50000},
         reported_usage={"input_tokens": 980000, "output_tokens": 50000},
     )
-    summary_resp = assistant("Compacted svc-1 and svc-2 inspection findings.")
-    summary_resp.update(
-        usage={"input_tokens": 2000, "output_tokens": 200},
-        reported_usage={"input_tokens": 2000, "output_tokens": 200},
-    )
-    final_resp = assistant("All services inspected after automatic compaction at 2M threshold.")
+    final_resp = assistant("All services inspected without budget-triggered compaction.")
     final_resp.update(
         usage={"input_tokens": 1500, "output_tokens": 100},
         reported_usage={"input_tokens": 1500, "output_tokens": 100},
     )
 
-    runtime, model, tools, _ = make_runtime(tmp_path, step1_resp, step2_resp, summary_resp, final_resp)
+    runtime, model, tools, _ = make_runtime(tmp_path, step1_resp, step2_resp, final_resp)
     row = runtime.create({"message": "Inspect svc-1 and svc-2 across 2M threshold"})
     advance(runtime, 6)
     done = runtime.get(row["id"])
     assert done["status"] == "completed", done
     assert done["outcome"]["status"] != "budget_limited"
-    assert done["result"] == "All services inspected after automatic compaction at 2M threshold."
+    assert done["result"] == "All services inspected without budget-triggered compaction."
     assert done["budget"]["limits"]["max_total_tokens"] == 4000000
-    assert any(ev.get("type") == "budget_compaction_continued" for ev in done["events"])
-    assert any(ev.get("type") == "context_compacted" for ev in done["events"])
+    assert any(ev.get("type") == "budget_auto_extended" for ev in done["events"])
+    assert not any(ev.get("type") == "context_compacted" for ev in done["events"])
+    assert len(model.calls) == 3 and len(tools.calls) == 2
+    assert all(service in json.dumps(model.calls[-1][1]) for service in ("svc-1", "svc-2"))
 
 
 def test_codex_compaction_retention_and_receipt_slimming(tmp_path):

@@ -353,23 +353,14 @@ class AgentLoop:
                 if rem_tokens < two_turns_needed:
                     cur_max_tokens = int(b_limits["max_total_tokens"])
                     max_token_cap = budget.RANGES["max_total_tokens"][1]
-                    has_compactable = self._has_compactable_history(selected, min_non_user=2)
-                    can_compact_and_continue = (
+                    can_extend_and_continue = (
                         not budget.is_hard(selected, "max_total_tokens")
                         and cur_max_tokens < max_token_cap
-                        and (
-                            self._has_compactable_history(selected, min_non_user=4)
-                            or (
-                                cur_max_tokens >= budget.DEFAULT_LIMITS["max_total_tokens"]
-                                and (has_compactable or bool(selected.get("context_checkpoint")))
-                            )
-                        )
                     )
-                    if can_compact_and_continue:
+                    if can_extend_and_continue:
                         self._auto_extend_budget_for_compaction(
                             selected,
                             needed_tokens=two_turns_needed,
-                            will_compact=has_compactable,
                         )
                         selected = {
                             **task(self.store.read(), selected["id"]),
@@ -388,46 +379,9 @@ class AgentLoop:
                                 if key in selected
                             },
                         }
-                        if has_compactable:
-                            try:
-                                if not self._compact(selected, cancelled, started):
-                                    return
-                            except AgentError as exc:
-                                if str(exc) not in {
-                                    "agent_context_limit",
-                                    "agent_compaction_incomplete",
-                                    "agent_compaction_failed",
-                                    "agent_compaction_size_limit",
-                                }:
-                                    raise
-                                self.store.transaction(lambda data: task(data, selected["id"]).update(
-                                    in_flight=self._main_flight(selected.get("in_flight"))))
-                            selected = {
-                                **task(self.store.read(), selected["id"]),
-                                **{
-                                    key: selected[key]
-                                    for key in (
-                                        "_model_retry_authority",
-                                        "_run_control_revision",
-                                        "_run_started",
-                                        "_run_lifetime_remaining",
-                                        "_scheduler_wait_seconds",
-                                        "_claim_persistence_seconds",
-                                        "_request_id",
-                                        "_attempt",
-                                    )
-                                    if key in selected
-                                },
-                            }
-                            messages = self._context(selected)
                         b_state = budget.public(selected)
                         b_limits = b_state["limits"]
                         b_life = b_state["lifetime"]
-                        est_policy = output_policy.select(model_meta, messages, specs)
-                        est_input = int(est_policy["estimated_input_tokens"])
-                        est_output = int(est_policy["effective_cap"])
-                        min_turn_needed = est_input + (min(est_output, 1024) if can_reduce_out else est_output)
-                        two_turns_needed = (2 * est_input) + (min(est_output, 4096) if can_reduce_out else (2 * est_output))
                         rem_tokens = int(b_limits["max_total_tokens"]) - int(b_life["charged_tokens"])
                 # A final no-tool wrap-up fits inside a hard limit. Default limits
                 # extend (cumulative) or continue in a new segment (per run) instead.
@@ -1548,7 +1502,7 @@ class AgentLoop:
                 "suffix_budget_bytes": budget, "retained_suffix_bytes": retained,
                 "projected_after_bytes": fixed + reserve + retained}
 
-    def _auto_extend_budget_for_compaction(self, selected: dict, *, needed_tokens: int, will_compact: bool = True) -> None:
+    def _auto_extend_budget_for_compaction(self, selected: dict, *, needed_tokens: int) -> None:
         def extend(data):
             row = task(data, selected["id"])
             if row["status"] != "running" or row["control_revision"] != selected["_run_control_revision"]:
@@ -1580,7 +1534,7 @@ class AgentLoop:
                 )
             event(
                 row,
-                "budget_compaction_continued",
+                "budget_auto_extended",
                 previous_max_total_tokens=cur_max_tokens,
                 new_max_total_tokens=new_max_tokens,
                 charged_tokens=int(totals["charged_tokens"]),
