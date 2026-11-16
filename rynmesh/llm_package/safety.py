@@ -20,6 +20,14 @@ MAX_REQUEST = 16 * 1024 * 1024
 MAX_OUTPUT = 8 * 1024 * 1024
 MAX_TEMP = 64 * 1024 * 1024
 MIN_FREE_DISK = 512 * 1024 * 1024
+BODY_IDLE_TIMEOUT_S = 15
+BODY_RATE_FLOOR_BYTES_PER_S = 256 * 1024
+
+
+class RequestTooLargeError(HTTPException):
+    def __init__(self, limit_bytes: int):
+        self.limit_bytes = int(limit_bytes)
+        super().__init__(413, {"detail": "request_too_large", "limit_bytes": self.limit_bytes})
 
 
 def private_storage_bytes(root: Path) -> int:
@@ -66,6 +74,16 @@ _gpu_sampler_thread: threading.Thread | None = None
 
 def install_body_limit(app):
     if not getattr(app.state, "inference_body_limit", False):
+        from fastapi.responses import JSONResponse
+
+        @app.exception_handler(RequestTooLargeError)
+        async def _handle_request_too_large(_request, exc: RequestTooLargeError):
+            return JSONResponse(
+                {"detail": "request_too_large", "limit_bytes": exc.limit_bytes},
+                status_code=413,
+                headers={"Cache-Control": "no-store"},
+            )
+
         app.add_middleware(InferenceBodyLimit)
         app.state.inference_body_limit = True
 
@@ -208,7 +226,7 @@ async def read_json(request, limit=MAX_REQUEST):
     data = bytearray()
     async for part in request.stream():
         if len(data) + len(part) > limit:
-            raise HTTPException(413, "request_too_large")
+            raise RequestTooLargeError(limit)
         data.extend(part)
     try:
         value = json.loads(data)
@@ -222,14 +240,18 @@ async def read_json(request, limit=MAX_REQUEST):
 class InferenceBodyLimit:
     """Bound unauthenticated/chunked bodies before FastAPI parses them."""
 
-    def __init__(self, app):
+    def __init__(self, app, *, idle_timeout: float | None = None, total_timeout: float | None = None):
         self.app = app
+        self._idle_timeout = idle_timeout
+        self._total_timeout = total_timeout
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http" or not scope.get("path", "").startswith(
             ("/api/local/llm/", "/api/peer/llm/", "/v1/")
         ):
             return await self.app(scope, receive, send)
+        if scope.get("method") == "GET":
+            return await self.bounded(scope, receive, send)
         if not HTTP_SLOTS.acquire(blocking=False):
             await self.reject(send, 429, b"inference_connection_limit")
             return
@@ -249,27 +271,53 @@ class InferenceBodyLimit:
             return await self.app(scope, receive, upload_send)
         # Signed ciphertext envelopes include base64 overhead.
         limit = 4 * MAX_REQUEST if scope["path"].startswith("/api/peer/") else MAX_REQUEST
+        idle_timeout = float(self._idle_timeout if self._idle_timeout is not None else BODY_IDLE_TIMEOUT_S)
+        total_timeout = float(
+            self._total_timeout
+            if self._total_timeout is not None
+            else max(60, limit / BODY_RATE_FLOOR_BYTES_PER_S)
+        )
+        deadline = time.monotonic() + total_timeout
         packets, total = [], 0
-        async def collect():
-            nonlocal total
-            while True:
-                event = await receive()
-                if event["type"] == "http.disconnect":
-                    return False
-                total += len(event.get("body", b""))
-                if total > limit:
-                    await self.reject(send, 413, b"request_too_large")
-                    return False
-                packets.append(event)
-                if not event.get("more_body"):
-                    return True
-
-        try:
-            if not await asyncio.wait_for(collect(), timeout=15):
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                await self.reject(send, 408, b"request_body_total_timeout")
                 return
-        except asyncio.TimeoutError:
-            await self.reject(send, 408, b"request_body_timeout")
-            return
+            wait_s = min(idle_timeout, remaining)
+            hit_total = remaining <= idle_timeout
+            try:
+                event = await asyncio.wait_for(receive(), timeout=wait_s)
+            except asyncio.TimeoutError:
+                reason = (
+                    b"request_body_total_timeout"
+                    if hit_total or time.monotonic() >= deadline
+                    else b"request_body_idle_timeout"
+                )
+                await self.reject(send, 408, reason)
+                return
+            if event["type"] == "http.disconnect":
+                return
+            total += len(event.get("body", b""))
+            if total > limit:
+                payload: dict[str, object] = {"detail": "request_too_large", "limit_bytes": limit}
+                if scope["path"].startswith("/v1/"):
+                    msg = f"request exceeds byte limit ({limit} bytes)；多张图片时请先压缩或减少张数"
+                    if scope["path"] == "/v1/messages":
+                        payload["type"] = "error"
+                        payload["error"] = {"type": "invalid_request_error", "message": msg}
+                    else:
+                        payload["error"] = {
+                            "type": "invalid_request_error",
+                            "message": msg,
+                            "code": "request_too_large",
+                            "param": None,
+                        }
+                await self.reject_json(send, 413, payload)
+                return
+            packets.append(event)
+            if not event.get("more_body"):
+                break
         iterator = iter(packets)
 
         async def replay():
@@ -288,3 +336,16 @@ class InferenceBodyLimit:
         await send({"type": "http.response.start", "status": status,
                     "headers": [(b"cache-control", b"no-store")]})
         await send({"type": "http.response.body", "body": reason})
+
+    @staticmethod
+    async def reject_json(send, status, payload):
+        raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        await send({
+            "type": "http.response.start",
+            "status": status,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"cache-control", b"no-store"),
+            ],
+        })
+        await send({"type": "http.response.body", "body": raw})

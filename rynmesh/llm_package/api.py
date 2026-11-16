@@ -233,11 +233,14 @@ def install_inference_api(app: Any, *, home: Path, store: Any, active_manager: A
         else:
             status, message = 502, "model_inference_failed"
         kind = "authentication_error" if status == 401 else "permission_error" if status == 403 else "rate_limit_error" if status == 429 else "invalid_request_error" if status < 500 else "api_error"
-        body = {"error": {"type": kind, "message": message}}
+        body: dict[str, Any] = {"error": {"type": kind, "message": message}}
+        if status == 413:
+            body["detail"] = "request_too_large"
+            body["limit_bytes"] = getattr(exc, "limit_bytes", MAX_REQUEST)
         if protocol == "messages":
             body["type"] = "error"
         else:
-            body["error"].update(code=message, param=None)
+            body["error"].update(code="request_too_large" if status == 413 else message, param=None)
         return JSONResponse(body, status_code=status)
 
     @app.get("/v1/models")
@@ -255,7 +258,10 @@ def install_inference_api(app: Any, *, home: Path, store: Any, active_manager: A
             async for part in request.stream():
                 raw.extend(part)
                 if len(raw) > MAX_REQUEST:
-                    raise HTTPException(413, "request exceeds byte limit")
+                    raise HTTPException(
+                        413,
+                        f"request exceeds byte limit ({MAX_REQUEST} bytes)；多张图片时请先压缩或减少张数",
+                    )
             body = json.loads(raw)
             if not isinstance(body, dict):
                 raise ValueError("request must be a JSON object")
