@@ -22,6 +22,7 @@ from .safety import check_disk
 _logger = logging.getLogger(__name__)
 
 TASK_ENVELOPE_VERSION = "rynmesh.llm.e2ee.v1"
+CLOCK_SKEW_SECONDS = 300
 TERMINAL_STATES = {"succeeded", "failed", "timed_out", "cancelled", "rejected"}
 ALL_STATES = {"created", "accepted", "running", *TERMINAL_STATES}
 ALLOWED_TRANSITIONS = {
@@ -127,8 +128,8 @@ def open_task(signed: SignedPayload | dict[str, Any], *, recipient_peer_id: str,
     if expected_kind and outer.get("kind") != expected_kind:
         raise TaskProtocolError("task envelope kind mismatch")
     try:
-        if _parse_time(str(outer["expires_at"])) < datetime.now(timezone.utc):
-            raise TaskProtocolError("task envelope expired")
+        if _parse_time(str(outer["expires_at"])) + timedelta(seconds=CLOCK_SKEW_SECONDS) < datetime.now(timezone.utc):
+            raise TaskProtocolError("task envelope expired; check device clock")
         plaintext = peer_box.open_sealed(
             recipient_messaging_key, str(outer["ephemeral_pub"]),
             str(outer["nonce"]), str(outer["ciphertext"]),
