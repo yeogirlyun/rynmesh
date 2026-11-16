@@ -438,7 +438,7 @@ class ChatAccumulator:
                 if norm_id:
                     call["id"] = norm_id
                     self._id_to_slot[norm_id] = slot
-                for extra_field in ("type", "namespace"):
+                for extra_field in ("type", "namespace", "wire_kind"):
                     if extra_field in item and item[extra_field] is not None:
                         call[extra_field] = item[extra_field]
                 function = item.get("function")

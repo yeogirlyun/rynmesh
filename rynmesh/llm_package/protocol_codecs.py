@@ -40,7 +40,7 @@ _ID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 _SCOPE = re.compile(r"[a-f0-9]{64}\Z")
 _CACHE_KEY = re.compile(r"[A-Za-z0-9:_-]{1,64}\Z")
 _IMAGE = re.compile(r"data:(image/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+={0,2})\Z")
-_KNOWN_RESPONSE_ITEMS = frozenset({"message", "function_call", "reasoning"})
+_KNOWN_RESPONSE_ITEMS = frozenset({"message", "function_call", "custom_tool_call", "reasoning"})
 _KNOWN_RESPONSE_PARTS = frozenset({"output_text", "refusal"})
 _KNOWN_MESSAGE_BLOCKS = frozenset({"text", "tool_use", "thinking", "redacted_thinking"})
 _KNOWN_MESSAGE_DELTAS = frozenset({"text_delta", "input_json_delta", "thinking_delta", "signature_delta", "citations_delta"})
@@ -134,6 +134,9 @@ def _text(content):
 def _call(call, index=0, nonce="", *, canonical=False):
     if not isinstance(call, dict) or call.get("type", "function") != "function" or "namespace" in call:
         raise ValueError("unsupported native tool call")
+    wire_kind = call.get("wire_kind")
+    if wire_kind is not None and wire_kind != "custom":
+        raise ValueError("unsupported native tool wire_kind")
     function = call.get("function")
     if not isinstance(function, dict) or not isinstance(function.get("name"), str) or not _NAME.fullmatch(function["name"]):
         raise ValueError("invalid native tool name")
@@ -148,7 +151,10 @@ def _call(call, index=0, nonce="", *, canonical=False):
         call_id = normalize_call_id(raw_id, index, nonce or new_call_id_nonce())
     if not isinstance(function.get("arguments"), str):
         raise ValueError("invalid native tool arguments")
-    return {"id": call_id, "type": "function", "function": {"name": function["name"], "arguments": function["arguments"]}}
+    out = {"id": call_id, "type": "function", "function": {"name": function["name"], "arguments": function["arguments"]}}
+    if wire_kind == "custom":
+        out["wire_kind"] = "custom"
+    return out
 
 
 def _calls(message, *, canonical=False):
@@ -229,6 +235,16 @@ def _from_responses(output, *, nonce="", allow_incomplete=False):
             if item.get("status") not in {None, "completed"}:
                 raise ValueError("unfinished native tool call")
             calls.append(_call({"id": item.get("call_id"), "function": {"name": item.get("name"), "arguments": item.get("arguments")}}, index=len(calls), nonce=active_nonce))
+        elif kind == "custom_tool_call":
+            if allow_incomplete:
+                continue
+            if item.get("status") not in {None, "completed"}:
+                raise ValueError("unfinished native tool call")
+            raw_input = item.get("input")
+            if not isinstance(raw_input, str):
+                raise ValueError("invalid native custom tool input")
+            arguments = json.dumps({"patch": raw_input}, ensure_ascii=False, allow_nan=False)
+            calls.append(_call({"id": item.get("call_id"), "wire_kind": "custom", "function": {"name": item.get("name"), "arguments": arguments}}, index=len(calls), nonce=active_nonce))
         elif kind == "reasoning":
             # This opaque native item, including encrypted_content, is private.
             if "encrypted_content" in item and item["encrypted_content"] is not None and not isinstance(item["encrypted_content"], str):
@@ -313,13 +329,27 @@ def _continuation(message, protocol, scope, diagnostics=None):
     return _filter_continuation_items(native, protocol)
 
 
-def _tool_definitions(tools, protocol):
+def _custom_call_input(arguments_json: str) -> str:
+    parsed = _object_arguments(arguments_json)
+    if set(parsed) != {"patch"} or not isinstance(parsed.get("patch"), str):
+        raise ValueError("custom tool call arguments require a string patch field")
+    return parsed["patch"]
+
+
+def _tool_definitions(tools, protocol, *, custom_tools: bool = False):
+    from ..agent_runtime.local_specs import FREEFORM_GRAMMARS
+
     if not isinstance(tools, list) or len(tools) > 128:
         raise ValueError("invalid native tool definitions")
-    result, names = [], set()
+    result, names, custom_names = [], set(), set()
     for tool in tools:
         function = tool.get("function") if isinstance(tool, dict) else None
-        if not isinstance(function, dict) or tool.get("type") != "function" or set(function) - {"name", "description", "parameters", "strict"}:
+        if (
+            not isinstance(function, dict)
+            or tool.get("type") != "function"
+            or set(tool) - {"type", "function", "freeform_grammar"}
+            or set(function) - {"name", "description", "parameters", "strict", "freeform_grammar"}
+        ):
             raise ValueError("unsupported native tool definition")
         name = function.get("name")
         if not isinstance(name, str) or not _NAME.fullmatch(name) or name in names:
@@ -328,20 +358,41 @@ def _tool_definitions(tools, protocol):
         parameters = function.get("parameters", {})
         if not isinstance(parameters, dict) or ("strict" in function and type(function["strict"]) is not bool):
             raise ValueError("invalid native tool definition schema")
+        if "description" in function and not isinstance(function["description"], str):
+            raise ValueError("invalid native tool description")
+        has_explicit_grammar = "freeform_grammar" in function or "freeform_grammar" in tool
+        grammar = (
+            function.get("freeform_grammar")
+            if "freeform_grammar" in function
+            else tool.get("freeform_grammar")
+            if "freeform_grammar" in tool
+            else FREEFORM_GRAMMARS.get(name)
+        )
+        if has_explicit_grammar and grammar is not None and (not isinstance(grammar, str) or not grammar):
+            raise ValueError("invalid native tool freeform grammar")
+        if protocol == RESPONSES and custom_tools and isinstance(grammar, str) and grammar:
+            entry: dict[str, Any] = {
+                "type": "custom",
+                "name": name,
+                "format": {"type": "grammar", "syntax": "lark", "definition": grammar},
+            }
+            if "description" in function:
+                entry["description"] = function["description"]
+            custom_names.add(name)
+            result.append(entry)
+            continue
         entry = {"name": name, "parameters" if protocol == RESPONSES else "input_schema": _copy(parameters)}
         if "description" in function:
-            if not isinstance(function["description"], str):
-                raise ValueError("invalid native tool description")
             entry["description"] = function["description"]
         if protocol == RESPONSES:
             entry.update(type="function", strict=function.get("strict", False))
         elif function.get("strict"):
             raise ValueError("strict native Messages tools are not supported")
         result.append(entry)
-    return result, names
+    return result, names, custom_names
 
 
-def _tool_choice(choice, protocol, names):
+def _tool_choice(choice, protocol, names, custom_names=()):
     if isinstance(choice, str):
         if choice not in {"auto", "none", "required"} or (choice == "required" and not names):
             raise ValueError("invalid native tool choice")
@@ -351,7 +402,9 @@ def _tool_choice(choice, protocol, names):
     name = choice["function"].get("name")
     if name not in names:
         raise ValueError("unknown native named tool choice")
-    return {"type": "function", "name": name} if protocol == RESPONSES else {"type": "tool", "name": name}
+    if protocol == RESPONSES:
+        return {"type": "custom" if name in custom_names else "function", "name": name}
+    return {"type": "tool", "name": name}
 
 
 def _messages(body, protocol, scope, diagnostics=None):
@@ -359,7 +412,7 @@ def _messages(body, protocol, scope, diagnostics=None):
     if not isinstance(history, list) or not history:
         raise ValueError("native messages must be a nonempty array")
     output, system = [], []
-    pending: dict[str, str] = {}
+    pending: dict[str, tuple[str, str]] = {}
     seen_conversation = False
     for message in history:
         if not isinstance(message, dict):
@@ -371,10 +424,11 @@ def _messages(body, protocol, scope, diagnostics=None):
             call_id = message.get("tool_call_id")
             if call_id not in pending:
                 raise ValueError("native tool result must match a pending call")
-            wire_call_id = pending.pop(call_id)
+            wire_call_id, wire_kind = pending.pop(call_id)
             text = _text(message.get("content"))
             if protocol == RESPONSES:
-                output.append({"type": "function_call_output", "call_id": wire_call_id, "output": text})
+                out_type = "custom_tool_call_output" if wire_kind == "custom" else "function_call_output"
+                output.append({"type": out_type, "call_id": wire_call_id, "output": text})
             else:
                 block = {"type": "tool_result", "tool_use_id": wire_call_id, "content": text}
                 if "is_error" in message:
@@ -400,11 +454,22 @@ def _messages(body, protocol, scope, diagnostics=None):
         native = _continuation(message, protocol, scope, diagnostics=diagnostics) if role == "assistant" else None
         if native is not None:
             if protocol == RESPONSES:
-                raw_ids = [item.get("call_id") for item in native if isinstance(item, dict) and item.get("type") == "function_call"]
+                raw_items = [
+                    (item.get("call_id"), "custom" if item.get("type") == "custom_tool_call" else "function")
+                    for item in native
+                    if isinstance(item, dict) and item.get("type") in {"function_call", "custom_tool_call"}
+                ]
             else:
-                raw_ids = [block.get("id") for block in native if isinstance(block, dict) and block.get("type") == "tool_use"]
-            for call, raw_id in zip(calls, raw_ids):
-                pending[call["id"]] = raw_id if isinstance(raw_id, str) and raw_id else call["id"]
+                raw_items = [
+                    (block.get("id"), "function")
+                    for block in native
+                    if isinstance(block, dict) and block.get("type") == "tool_use"
+                ]
+            for call, (raw_id, raw_kind) in zip(calls, raw_items, strict=False):
+                pending[call["id"]] = (
+                    raw_id if isinstance(raw_id, str) and raw_id else call["id"],
+                    raw_kind,
+                )
             if protocol == RESPONSES:
                 output.extend(native)
             elif output and output[-1]["role"] == "assistant":
@@ -415,14 +480,31 @@ def _messages(body, protocol, scope, diagnostics=None):
                 output.append({"role": "assistant", "content": native})
             continue
         for call in calls:
-            pending[call["id"]] = call["id"]
+            pending[call["id"]] = (
+                call["id"],
+                "custom" if protocol == RESPONSES and call.get("wire_kind") == "custom" else "function",
+            )
         content = _parts(message.get("content"), images=role == "user")
         if protocol == RESPONSES:
             parts = [{"type": "input_image", "image_url": part["url"], "detail": part["detail"]} if part["type"] == "image" else
                      {"type": "output_text" if role == "assistant" else "input_text", "text": part["text"]} for part in content]
             if parts:
                 output.append({"role": role, "content": parts})
-            output.extend({"type": "function_call", "call_id": call["id"], "name": call["function"]["name"], "arguments": call["function"]["arguments"]} for call in calls)
+            for call in calls:
+                if call.get("wire_kind") == "custom":
+                    output.append({
+                        "type": "custom_tool_call",
+                        "call_id": call["id"],
+                        "name": call["function"]["name"],
+                        "input": _custom_call_input(call["function"]["arguments"]),
+                    })
+                else:
+                    output.append({
+                        "type": "function_call",
+                        "call_id": call["id"],
+                        "name": call["function"]["name"],
+                        "arguments": call["function"]["arguments"],
+                    })
         else:
             blocks = [{"type": "image", "source": {"type": "base64", "media_type": part["media_type"], "data": part["data"]}} if part["type"] == "image" else part for part in content]
             blocks.extend({"type": "tool_use", "id": call["id"], "name": call["function"]["name"], "input": _object_arguments(call["function"]["arguments"])} for call in calls)
@@ -470,11 +552,13 @@ def make_request(
     scope: str,
     *,
     prompt_cache: str | None = None,
+    custom_tools: bool | None = None,
+    profile: dict[str, Any] | None = None,
     diagnostics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Convert canonical history/tools; this function never performs inference."""
     _check(protocol, model, scope)
-    if not isinstance(body, dict) or set(body) - {"messages", "max_tokens", "temperature", "top_p", "stop", "tools", "tool_choice", "stream", "reasoning_effort", "thinking", "enable_thinking", "chat_template_kwargs", "prompt_cache_key", "prompt_cache"}:
+    if not isinstance(body, dict) or set(body) - {"messages", "max_tokens", "temperature", "top_p", "stop", "tools", "tool_choice", "stream", "reasoning_effort", "thinking", "enable_thinking", "chat_template_kwargs", "prompt_cache_key", "prompt_cache", "custom_tools"}:
         raise ValueError("unsupported native request parameter")
     if "prompt_cache_key" in body:
         cache_key = body["prompt_cache_key"]
@@ -483,6 +567,17 @@ def make_request(
     eff_prompt_cache = prompt_cache if prompt_cache is not None else body.get("prompt_cache", "auto")
     if eff_prompt_cache not in {"auto", "off"}:
         raise ValueError("invalid native prompt_cache")
+    if profile is not None and not isinstance(profile, dict):
+        raise ValueError("invalid native route profile")
+    eff_custom_tools = (
+        custom_tools
+        if custom_tools is not None
+        else profile.get("custom_tools", False)
+        if profile is not None
+        else body.get("custom_tools", False)
+    )
+    if type(eff_custom_tools) is not bool:
+        raise ValueError("invalid native custom_tools")
     maximum = body.get("max_tokens", 512)
     if type(maximum) is not int or maximum < 1 or type(body.get("stream", False)) is not bool:
         raise ValueError("invalid native request limits")
@@ -516,11 +611,11 @@ def make_request(
                     raise ValueError("unsupported native temperature")
             result[key] = body[key]
     if "tools" in body:
-        result["tools"], names = _tool_definitions(body["tools"], protocol)
+        result["tools"], names, custom_names = _tool_definitions(body["tools"], protocol, custom_tools=eff_custom_tools)
     else:
-        names = set()
+        names, custom_names = set(), set()
     if "tool_choice" in body:
-        result["tool_choice"] = _tool_choice(body["tool_choice"], protocol, names)
+        result["tool_choice"] = _tool_choice(body["tool_choice"], protocol, names, custom_names)
     if protocol == RESPONSES:
         if body.get("stop") not in (None, "", []):
             raise ValueError("native Responses stop sequences are not supported")
@@ -621,14 +716,14 @@ def parse_response(raw: dict[str, Any], protocol: str, model: str, scope: str) -
         if is_length:
             kept_output = []
             for item in raw["output"]:
-                if not isinstance(item, dict) or item.get("type") == "function_call":
+                if not isinstance(item, dict) or item.get("type") in {"function_call", "custom_tool_call"}:
                     continue
                 if item.get("type") == "message" and item.get("status") not in {None, "completed"}:
                     item = {**item, "status": "completed"}
                 kept_output.append(item)
             data = {"output": kept_output}
         else:
-            fn_items = [item for item in raw["output"] if isinstance(item, dict) and item.get("type") == "function_call"]
+            fn_items = [item for item in raw["output"] if isinstance(item, dict) and item.get("type") in {"function_call", "custom_tool_call"}]
             for item, norm_call in zip(fn_items, message.get("tool_calls", []), strict=False):
                 if not item.get("call_id"):
                     item["call_id"] = norm_call["id"]
@@ -781,20 +876,21 @@ class StreamDecoder:
             if not isinstance(final_items, list):
                 raise ValueError("invalid native final output")
             for index, item in self._items.items():
-                if self.finish_reason == "length" and item.get("type") == "function_call" and index >= len(final_items):
+                if self.finish_reason == "length" and item.get("type") in {"function_call", "custom_tool_call"} and index >= len(final_items):
                     continue
                 if index >= len(final_items):
                     raise ValueError("native output item missing from final response")
                 final_item = final_items[index]
                 if not isinstance(final_item, dict) or item.get("type") != final_item.get("type") or item.get("id") != final_item.get("id"):
                     raise ValueError("native output identity changed")
-                if item.get("type") == "function_call":
+                if item.get("type") in {"function_call", "custom_tool_call"}:
+                    field_key = "input" if item["type"] == "custom_tool_call" else "arguments"
                     for key in ("call_id", "name"):
                         if item.get(key) != final_item.get(key):
                             raise ValueError("native tool identity changed")
                     if self.finish_reason != "length":
                         observed = self._arguments.get(index, "")
-                        if observed and observed != final_item.get("arguments"):
+                        if observed and observed != final_item.get(field_key):
                             raise ValueError("native tool arguments changed after streaming")
             return self._complete(response)
         if kind in {"response.output_text.delta", "response.refusal.delta"}:
@@ -823,10 +919,11 @@ class StreamDecoder:
             if previous is not None and (previous.get("id") != item.get("id") or previous.get("type") != item.get("type")):
                 raise ValueError("native output item identity changed")
             self._items[index] = _copy(item)
-            if item["type"] == "function_call":
+            if item["type"] in {"function_call", "custom_tool_call"}:
                 if previous is not None and any(previous.get(key) != item.get(key) for key in ("call_id", "name")):
                     raise ValueError("native tool identity changed")
-                arguments = item.get("arguments", "")
+                field_key = "input" if item["type"] == "custom_tool_call" else "arguments"
+                arguments = item.get(field_key, "")
                 if not isinstance(arguments, str):
                     raise ValueError("invalid native tool argument event")
                 if kind.endswith(".done"):
@@ -845,6 +942,24 @@ class StreamDecoder:
             if not isinstance(item, dict) or item.get("type") != "function_call" or index in self._item_done or event.get("item_id") != item.get("id"):
                 raise ValueError("native tool delta has no matching item")
             value = event.get("delta" if kind.endswith(".delta") else "arguments")
+            if not isinstance(value, str):
+                raise ValueError("invalid native tool argument delta")
+            observed = self._arguments.get(index, "")
+            if kind.endswith(".done"):
+                if observed and observed != value:
+                    raise ValueError("native tool argument completion changed")
+                self._arguments[index] = value
+            else:
+                self._arguments[index] = observed + value
+            if len(self._arguments[index].encode()) > _LIMIT:
+                raise ValueError("native tool argument limit exceeded")
+            return []
+        if kind in {"response.custom_tool_call_input.delta", "response.custom_tool_call_input.done"}:
+            index = event.get("output_index")
+            item = self._items.get(index)
+            if not isinstance(item, dict) or item.get("type") != "custom_tool_call" or index in self._item_done or (event.get("item_id") is not None and event.get("item_id") != item.get("id")):
+                raise ValueError("native tool delta has no matching item")
+            value = event.get("delta" if kind.endswith(".delta") else "input")
             if not isinstance(value, str):
                 raise ValueError("invalid native tool argument delta")
             observed = self._arguments.get(index, "")
