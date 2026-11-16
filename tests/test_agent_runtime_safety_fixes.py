@@ -377,6 +377,8 @@ def test_s04_i8_t8_posix_program_unsafe_flags_and_arguments_rejected():
         "sort --output=f f",
         "sort -ro f f",
         "uniq a b",
+        "tree -o out.txt src",
+        "file -C -m magic",
     ):
         assert shell_read({"command": bad_cmd, "shell": "sh"}) is False, bad_cmd
 

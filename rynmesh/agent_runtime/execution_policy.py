@@ -362,6 +362,11 @@ def _uniq_read_ok(words: list[str]) -> bool:
 def _posix_read_ok(words: list[str]) -> bool:
     prog = executable_key(words[0])
     if prog in POSIX_ANY_ARG_READ_PROGRAMS:
+        # `tree -o FILE` and `file -C` write files.
+        if prog == "tree":
+            return not any(arg.startswith("-o") for arg in words[1:])
+        if prog == "file":
+            return not any(arg in {"-C", "--compile"} for arg in words[1:])
         return True
     if prog == "find":
         return not any(arg in FIND_UNSAFE_FLAGS for arg in words[1:])
