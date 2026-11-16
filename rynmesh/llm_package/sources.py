@@ -5,6 +5,7 @@ import base64
 import copy
 import hashlib
 import json
+import re
 import time
 import uuid
 from pathlib import Path
@@ -194,10 +195,12 @@ class SourceStore:
         if not isinstance(shared, list) or any(not isinstance(m, str) or m not in models for m in shared):
             raise ValueError("shared_models must contain configured model IDs")
         shared = list(dict.fromkeys(shared))
+        max_output_explicit = True if "max_output_tokens" in body else bool(old["max_output_tokens_explicit"]) if "max_output_tokens_explicit" in old else False
         record = {"id": source_id or "src-" + uuid.uuid4().hex[:16], "kind": kind, "protocol": protocol,
                 "name": name, "provider": str(body.get("provider", old.get("provider", "custom")))[:80],
                 "base_url": base, "api_key": key.strip(), "models": models,
-                "context_window": context, "context_window_mode": mode, "max_output_tokens": output, "request_defaults": defaults,
+                "context_window": context, "context_window_mode": mode, "max_output_tokens": output,
+                "max_output_tokens_explicit": max_output_explicit, "request_defaults": defaults,
                 "sharing": bool(shared), "shared_models": shared,
                 "enabled": bool(body.get("enabled", old.get("enabled", True))),
                 "status": "needs_key" if kind == "api" and not key else "untested"}
@@ -223,12 +226,8 @@ class SourceStore:
         metadata.update(self._model_metadata_cache.get(self._metadata_key(record), {}))
         record["model_metadata"] = {model: metadata[model] for model in models if model in metadata}
         # A text test or a user-supplied flag cannot assert client-tool support.
-        fields = ("kind", "provider", "base_url", "api_key", "protocol", "models", "context_window", "max_output_tokens", "request_defaults")
         record["tool_support"] = {m: v for m, v in old.get("tool_support", {}).items() if m in models}
         record["model_settings"] = copy.deepcopy(old.get("model_settings", {}))
-        # Preserve unaffected sibling evidence when merely adding/removing a model.
-        if _same_configuration(record, old, (k for k in fields if k != "models")):
-            record["tool_support"] = {m: v for m, v in old.get("tool_support", {}).items() if m in models}
         model_settings.reconcile(record, old)
         if not models and output > (context if mode == "manual" else default_context):
             raise ValueError("model_output_exceeds_context")
@@ -557,7 +556,7 @@ class SourceStore:
     @staticmethod
     def probe_adapter_image(adapter, max_output_tokens):
         messages = [{"role": "user", "content": [
-            {"type": "text", "text": "What colour is this square? Answer with one colour word."},
+            {"type": "text", "text": "Reply with the code RYN-RED if the square is red, otherwise RYN-OTHER"},
             {"type": "image_url", "image_url": {"url": IMAGE_PROBE_DATA_URL, "detail": "low"}}]}]
         try:
             result = adapter.chat({"messages": messages, "max_tokens": min(1024, max_output_tokens)},
@@ -567,11 +566,17 @@ class SourceStore:
                 return {"image_support": "unsupported"}
             raise
         text = str(result.get("text") or (result.get("message") or {}).get("content") or "").lower()
-        return {"image_support": "supported" if ("red" in text or "红" in text) else "unknown"}
+        if "ryn-other" in text and "ryn-red" not in text:
+            supported = False
+        elif "ryn-red" in text:
+            supported = True
+        else:
+            supported = bool(re.search(r"\b(?:red|crimson|scarlet|rojo|rouge|rot)\b", text) or "红" in text)
+        return {"image_support": "supported" if supported else "unknown"}
 
     @staticmethod
     def probe_adapter_tools(adapter, max_output_tokens):
-        from .chat import validate_tool_arguments
+        from .chat import new_call_id_nonce, normalize_call_id, validate_tool_arguments
 
         schema = {"type": "object", "properties": {"value": {"const": "ryn-tool-test"}},
                   "required": ["value"], "additionalProperties": False}
@@ -580,12 +585,25 @@ class SourceStore:
         first = adapter.chat({"messages": messages, "tools": [spec], "tool_choice": "required",
                               "max_tokens": min(4096, max_output_tokens)},
                              task_id="source-tools-" + uuid.uuid4().hex, timeout_s=60)
-        message = first.get("message") or {}
-        calls = message.get("tool_calls") or []
-        if len(calls) != 1 or calls[0].get("function", {}).get("name") != "ryn_capability_probe":
-            raise ValueError("model did not return a structured client tool call")
-        validate_tool_arguments(schema, json.loads(calls[0]["function"]["arguments"]))
-        messages += [message, {"role": "tool", "tool_call_id": calls[0]["id"], "content": "ryn-tool-test-ok"},
+        try:
+            message = copy.deepcopy(first.get("message") or {})
+            calls = message.get("tool_calls") or []
+            if len(calls) != 1 or not isinstance(calls[0], dict):
+                raise ValueError("model did not return a structured client tool call")
+            call = dict(calls[0])
+            fn = call.get("function")
+            if not isinstance(fn, dict) or fn.get("name") != "ryn_capability_probe":
+                raise ValueError("model did not return a structured client tool call")
+            raw_id = call.get("id")
+            if raw_id is not None and not isinstance(raw_id, str):
+                raise ValueError("model did not return a structured client tool call")
+            call_id = normalize_call_id(raw_id, 0, new_call_id_nonce())
+            call["id"] = call_id
+            message["tool_calls"] = [call]
+            validate_tool_arguments(schema, json.loads(fn["arguments"]))
+        except Exception:
+            raise ValueError("model did not return a structured client tool call") from None
+        messages += [message, {"role": "tool", "tool_call_id": call_id, "content": "ryn-tool-test-ok"},
                      {"role": "user", "content": "Return the tool result as text; do not call another tool."}]
         final = adapter.chat({"messages": messages, "tools": [spec], "tool_choice": "none",
                               "max_tokens": min(4096, max_output_tokens)},

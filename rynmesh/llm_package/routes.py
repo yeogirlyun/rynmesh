@@ -23,7 +23,7 @@ from typing import Any, Callable
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 from fastapi import HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from rynmesh.ai_access.store import AIAccessError, AIAccessStore
 from rynmesh.atomic_io import atomic_write_json
@@ -2733,6 +2733,41 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         active_source_managers()
         return {"ok": True, "publication": refresh_publication() if was_shared else "not_needed"}
 
+    def _source_probe_error_response(exc: Exception, message: str) -> JSONResponse:
+        from .transport_failure import REASONS as _TRANSPORT_REASONS
+
+        http_status: int | None = None
+        network_reason: str | None = None
+        if isinstance(exc, AdapterError):
+            diag = exc.diagnostics if isinstance(exc.diagnostics, dict) else {}
+            raw_status = diag.get("http_status")
+            if type(raw_status) is int:
+                http_status = raw_status
+            raw_reason = diag.get("network_reason")
+            if isinstance(raw_reason, str) and raw_reason in _TRANSPORT_REASONS:
+                network_reason = raw_reason
+            error_code = exc.code if exc.code in RUNTIME_ERROR_CODES else "inference_failed"
+            if network_reason == "quota" or http_status == 429:
+                error_code = "model_daily_quota_exhausted"
+        else:
+            error_code = "source_request_invalid"
+        # Keep `detail` as the original Chinese string + `X-Ryn-Error-Code` header for
+        # legacy frontend (`aiSources.ts` does `new Error(result.detail)`), while also
+        # returning closed top-level fields (`message`, `error_code`, `network_reason`, `http_status`).
+        payload = {
+            "detail": message,
+            "message": message,
+            "error_code": error_code,
+            "network_reason": network_reason,
+            "http_status": http_status,
+        }
+        headers = {"X-Ryn-Error-Code": error_code}
+        if network_reason is not None:
+            headers["X-Ryn-Network-Reason"] = network_reason
+        if http_status is not None:
+            headers["X-Ryn-Http-Status"] = str(http_status)
+        return JSONResponse(status_code=400, content=payload, headers=headers)
+
     @app.post("/api/local/llm/sources/{source_id}/test")
     async def test_source(source_id: str):
         record = source_store.read().get(source_id)
@@ -2752,7 +2787,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 source_store.save(record)
             return {**result, "source": source_store.public(record)}
         except (ValueError, AdapterError, OSError) as exc:
-            raise HTTPException(400, "连接测试失败：请检查地址、密钥、模型权限及请求参数") from exc
+            return _source_probe_error_response(exc, "连接测试失败：请检查地址、密钥、模型权限及请求参数")
 
     @app.post("/api/local/llm/sources/models")
     async def read_source_models(request: Request):
@@ -2761,7 +2796,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             record = source_store.prepare(body, str(body.get("id") or ""))
             return await asyncio.to_thread(source_store.probe, record, models_only=True)
         except (ValueError, TypeError, AdapterError, OSError) as exc:
-            raise HTTPException(400, "无法读取模型列表，可手动填写模型 ID；请检查地址和密钥") from exc
+            return _source_probe_error_response(exc, "无法读取模型列表，可手动填写模型 ID；请检查地址和密钥")
 
     @app.post("/api/local/llm/sources/{source_id}/models/test")
     async def test_source_model_tools(source_id: str, request: Request):

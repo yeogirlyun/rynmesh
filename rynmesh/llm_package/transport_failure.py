@@ -155,6 +155,24 @@ def context_overflow(envelope, status=None) -> bool:
     return any(marker in combined for marker in _CONTEXT_OVERFLOW_MARKERS)
 
 
+_TOOLS_UNSUPPORTED_MARKERS = (
+    "does not support tools",
+    "tools is not supported",
+    "tool use is not supported",
+    "function calling is not supported",
+    "does not support function",
+)
+
+
+def tools_rejection(envelope, status=None) -> bool:
+    """True when a 4xx error body says the model does not support client tools. Keeps no text."""
+    if status in {401, 403, 404} or not isinstance(envelope, dict):
+        return False
+    code, err_type, param, msg = _extract_envelope_fields(envelope)
+    combined = f"{code} {err_type} {param} {msg}".lower()
+    return any(marker in combined for marker in _TOOLS_UNSUPPORTED_MARKERS)
+
+
 def image_rejection(envelope, status=None):
     """True when a 4xx error body says the model refused image input. Keeps no text."""
     if status == 404 or not isinstance(envelope, dict):
@@ -196,6 +214,8 @@ def describe(exc, phase="request", envelope=None):
         if 400 <= exc.code < 500 and image_rejection(envelope, status=exc.code):
             # A closed flag only; the response body itself is never retained.
             result["image_rejected"] = True
+        if 400 <= exc.code < 500 and tools_rejection(envelope, status=exc.code):
+            result["tools_unsupported"] = True
 
         if any(t in _QUOTA_CODES for t in tokens):
             result["network_reason"] = "quota"

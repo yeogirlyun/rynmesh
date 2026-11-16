@@ -132,14 +132,25 @@ def defaults(record, model=None):
     meta_output = metadata.get("max_output_tokens") if isinstance(metadata, dict) else None
     vendor_output = _known_vendor_max_output_tokens(model)
     source_output = record.get("max_output_tokens")
-    if type(source_output) is int and source_output != 4096:
+    explicit_output = record.get("max_output_tokens_explicit")
+    if explicit_output is True and type(source_output) is int:
         max_output = source_output
-    elif type(meta_output) is int and 1 <= meta_output <= min(393216, window):
-        max_output = meta_output
-    elif vendor_output is not None and vendor_output <= window:
-        max_output = vendor_output
+    elif explicit_output is False:
+        if type(meta_output) is int and 1 <= meta_output <= min(393216, window):
+            max_output = meta_output
+        elif vendor_output is not None and vendor_output <= window:
+            max_output = vendor_output
+        else:
+            max_output = source_output if type(source_output) is int else 4096
     else:
-        max_output = source_output if type(source_output) is int else 4096
+        if type(source_output) is int and source_output != 4096:
+            max_output = source_output
+        elif type(meta_output) is int and 1 <= meta_output <= min(393216, window):
+            max_output = meta_output
+        elif vendor_output is not None and vendor_output <= window:
+            max_output = vendor_output
+        else:
+            max_output = source_output if type(source_output) is int else 4096
     source_idle = record.get("stream_idle_seconds")
     source_max_request = record.get("max_request_seconds")
     source_stream_retries = record.get("stream_max_retries")

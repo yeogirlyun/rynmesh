@@ -323,7 +323,9 @@ class SourceDrafts:
                 if test_tools:
                     item["tool_support"] = "unsupported"
             evidence.append(item)
-        return {"chat_passed": all(e["chat"] == "passed" for e in evidence), "models": evidence,
+        failed_models = [e["model_id"] for e in evidence if e["chat"] != "passed"]
+        return {"chat_passed": any(e["chat"] == "passed" for e in evidence), "failed_models": failed_models,
+                "models": evidence,
                 "checked_at": time.time(), "probe_performed": progress["requests"] > 0, "probe_requests": progress["requests"],
                 "usage": "unknown", "cost": "unknown"}
 
@@ -394,7 +396,27 @@ class SourceDrafts:
                             test.get("credential_version") != row["credential_version"] or time.time() - test.get("checked_at", 0) > 900):
                         reject("agent_source_test_required")
                     record = self._record(row, credential)
-                    record.update(status="ready", tool_support={e["model_id"]: e["tool_support"] for e in test["models"]})
+                    passed_models = [
+                        e["model_id"]
+                        for e in test.get("models", [])
+                        if e.get("chat") == "passed" and e.get("model_id") in record["models"]
+                    ]
+                    failed_models = [
+                        e["model_id"]
+                        for e in test.get("models", [])
+                        if e.get("chat") != "passed"
+                    ]
+                    if not passed_models:
+                        reject("agent_source_test_required")
+                    record["models"] = passed_models
+                    record["shared_models"] = [m for m in record.get("shared_models", []) if m in passed_models]
+                    record["sharing"] = bool(record["shared_models"])
+                    record["model_metadata"] = {m: v for m, v in record.get("model_metadata", {}).items() if m in passed_models}
+                    record["model_settings"] = {m: v for m, v in record.get("model_settings", {}).items() if m in passed_models}
+                    record.update(
+                        status="ready",
+                        tool_support={e["model_id"]: e["tool_support"] for e in test["models"] if e["model_id"] in passed_models},
+                    )
                     ledger.update(operation_id, "dispatched")
                     dispatched = True
                     saved = self.sources.save(record)
@@ -406,7 +428,9 @@ class SourceDrafts:
                         credential["reused_source_revision"] = saved["source_revision"]
                     self._write(state)
                     result = {"ok": True, "source_id": saved["id"], "source_revision": saved["source_revision"],
-                              "models": saved["models"], "shared_models": saved["shared_models"], "status": saved["status"],
+                              "models": saved["models"], "failed_models": failed_models,
+                              **({"warning": "以下模型未通过测试，未保存：" + "、".join(failed_models)} if failed_models else {}),
+                              "shared_models": saved["shared_models"], "status": saved["status"],
                               "post_save_retest": "pending", "draft_id": row["draft_id"], "version": row["version"]}
             ledger.update(operation_id, "confirmed", result=result, confirmed_at=time.time())
         except AgentError as exc:

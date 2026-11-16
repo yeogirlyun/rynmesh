@@ -116,6 +116,18 @@ class ModelCatalog:
                 and value.get("ready", True)
             )
             is_cli = adapter in {"codex_cli", "antigravity_cli", "claude_cli"}
+            local_tool_support = "unsupported" if adapter == "claude_cli" else value.get("tool_support", "unknown")
+            if own and not is_cli and service_id not in source_index:
+                caps = getattr(self.store, "llm_tool_capabilities", None)
+                provider_for = self.services.get("provider_for") if isinstance(self.services, dict) else None
+                if caps is not None and callable(provider_for):
+                    mgr = provider_for(service_id)
+                    if mgr is not None and getattr(mgr, "manifest", None) is not None:
+                        stored_sup = caps.support(mgr.manifest)
+                        if stored_sup != "unknown":
+                            local_tool_support = stored_sup
+                if local_tool_support == "unsupported":
+                    supported = False
             declared_claude_window = (
                 model_settings._known_vendor_context_window(manifest.get("model", ""))
                 if adapter == "claude_cli" and manifest.get("model")
@@ -134,7 +146,7 @@ class ModelCatalog:
                    "destination_revision": "",
                    "available": available, "agent_supported": supported,
                    **({"catalog_state": value["catalog_state"]} if "catalog_state" in value else {}),
-                   "tool_support": "unsupported" if adapter == "claude_cli" else value.get("tool_support", "unknown"),
+                   "tool_support": local_tool_support,
                    "agent_support_basis": "adapter_contract" if own else "provider_protocol_contract",
                    **({"agent_support": "experimental"} if adapter == "antigravity_cli" else {}),
                    "context_window": declared_claude_window if declared_claude_window is not None else manifest.get("context_window", 32768),

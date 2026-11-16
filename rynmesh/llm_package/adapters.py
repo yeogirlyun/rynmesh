@@ -378,7 +378,7 @@ class OpenAICompatibleAdapter:
         return value
 
     def models(self) -> list[dict[str, Any]]:
-        result = self._json("/v1/models", None, min(8.0, self.timeout_s))
+        result = self._json("/v1/models", None, min(8.0, self.timeout_s), classify_errors=True)
         entries = result.get("data", result.get("models", []))
         return [dict(item) for item in entries if isinstance(item, dict)]
 
