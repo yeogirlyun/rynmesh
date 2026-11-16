@@ -300,7 +300,7 @@ def test_t8_distinct_corrections_include_row_column_header_and_reason():
 
     # 6c. agent_table_input_invalid: row limit exceeded
     with pytest.raises(AgentToolRejected) as e_rows:
-        calculate(b"a\n" + b"1\n" * 5001, ".csv", {"columns": [{"name": "a", "type": "decimal"}]})
+        calculate(b"a\n" + b"1\n" * 100001, ".csv", {"columns": [{"name": "a", "type": "decimal"}]})
     assert e_rows.value.args[0] == "agent_table_input_invalid"
     assert "行数超限" in e_rows.value.correction
     seen_corrections["in_rows"] = e_rows.value.correction
@@ -322,3 +322,293 @@ def test_t9_unknown_error_code_and_missing_detail_keys_fall_back_to_generic_corr
         table_work.reject("agent_table_date_invalid")
     assert e_missing_key.value.args[0] == "agent_table_date_invalid"
     assert e_missing_key.value.correction == generic
+
+
+def _build_ooxml_xlsx(sheets: list[tuple[str, str]], *, shared_strings: list[str] | None = None, styles_xml: str | None = None) -> bytes:
+    import io
+    import zipfile
+
+    ns_s = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    ns_r = 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
+    sheet_tags = "".join(
+        f'<sheet name="{name}" sheetId="{idx}" r:id="rId{idx}"/>'
+        for idx, (name, _) in enumerate(sheets, 1)
+    )
+    rel_tags = "".join(
+        f'<Relationship Id="rId{idx}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet{idx}.xml"/>'
+        for idx in range(1, len(sheets) + 1)
+    )
+    files = {
+        "xl/workbook.xml": f'<workbook {ns_s} {ns_r}><sheets>{sheet_tags}</sheets></workbook>',
+        "xl/_rels/workbook.xml.rels": f'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{rel_tags}</Relationships>',
+    }
+    for idx, (_, body_xml) in enumerate(sheets, 1):
+        files[f"xl/worksheets/sheet{idx}.xml"] = f'<worksheet {ns_s}><sheetData>{body_xml}</sheetData></worksheet>'
+    if shared_strings is not None:
+        si_xml = "".join(f"<si><t>{s}</t></si>" for s in shared_strings)
+        files["xl/sharedStrings.xml"] = f"<sst {ns_s}>{si_xml}</sst>"
+    if styles_xml is not None:
+        files["xl/styles.xml"] = styles_xml
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path, content in files.items():
+            zf.writestr(path, content)
+    return buf.getvalue()
+
+
+def _make_local_tools(tmp_path):
+    from types import SimpleNamespace
+    from rynmesh.agent_runtime.local_tools import LocalTools
+    from rynmesh.agent_runtime.operation_ledger import OperationLedger
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    state = {"settings": {"enabled": True, "workspace_root": str(ws), "desktop_access": False, "permission_mode": "workspace"}, "tasks": {}}
+    tools = LocalTools(SimpleNamespace(home=home), lambda: OperationLedger(home))
+    tools.store = SimpleNamespace(inspect=lambda fn: fn(state), read=lambda: state, default_workspace=lambda: str(ws))
+    ctx = {"task_id": "t_local", "local_execution": {"workspace_root": str(ws), "desktop_access": False}}
+    return tools, ctx, ws
+
+
+def test_s05_i15_t1_xlsx_first_and_named_sheet_match_csv_and_export(tmp_path):
+    from rynmesh.agent_runtime import file_preview
+    from rynmesh.agent_runtime.local_specs import SPECS
+
+    assert hasattr(file_preview, "sheet_rows")
+    spec_desc = SPECS["ryn_table_calculate"][0].lower()
+    assert "xlsx" in spec_desc and ("cached" in spec_desc or "缓存" in SPECS["ryn_table_calculate"][0])
+
+    sheet1_xml = (
+        '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="inlineStr"><is><t>amount</t></is></c><c r="C1" t="inlineStr"><is><t>fee</t></is></c></row>'
+        '<row r="2"><c r="A2" t="s"><v>1</v></c><c r="B2"><v>100.50</v></c><c r="C2"><f>B2*0.1</f><v>10.05</v></c></row>'
+        '<row r="3"><c r="A3" t="s"><v>2</v></c><c r="B3"><v>200.00</v></c><c r="C3"><v>20.00</v></c></row>'
+    )
+    sheet2_xml = (
+        '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="inlineStr"><is><t>amount</t></is></c><c r="C1" t="inlineStr"><is><t>fee</t></is></c></row>'
+        '<row r="2"><c r="A2" t="inlineStr"><is><t>Q2-Item</t></is></c><c r="B2"><v>500.25</v></c><c r="C2"><v>12.75</v></c></row>'
+    )
+    xlsx_raw = _build_ooxml_xlsx(
+        [("一季度", sheet1_xml), ("二季度", sheet2_xml)],
+        shared_strings=["item", "Alpha", "Beta"],
+    )
+    csv_q1 = b"item,amount,fee\nAlpha,100.50,10.05\nBeta,200.00,20.00\n"
+    csv_q2 = b"item,amount,fee\nQ2-Item,500.25,12.75\n"
+
+    recipe = {
+        "columns": [
+            {"name": "item", "type": "text"},
+            {"name": "amount", "type": "decimal"},
+            {"name": "fee", "type": "decimal"},
+        ],
+        "derived": [{"column": "total", "expression": "amount + fee"}],
+    }
+    rep_xlsx_1 = calculate(xlsx_raw, ".xlsx", recipe)
+    rep_csv_1 = calculate(csv_q1, ".csv", recipe)
+    assert rep_xlsx_1["status"] == rep_csv_1["status"] == "passed"
+    assert rep_xlsx_1["rows"] == rep_csv_1["rows"]
+    assert rep_xlsx_1["totals"] == rep_csv_1["totals"]
+
+    rep_xlsx_2 = calculate(xlsx_raw, ".xlsm", {**recipe, "sheet": "二季度"})
+    rep_csv_2 = calculate(csv_q2, ".csv", recipe)
+    assert rep_xlsx_2["rows"] == rep_csv_2["rows"]
+    assert rep_xlsx_2["totals"] == rep_csv_2["totals"]
+
+    # Duplicate headers in .xlsx raise agent_table_duplicate_headers.
+    dup_sheet_xml = (
+        '<row r="1"><c r="A1" t="inlineStr"><is><t>amount</t></is></c><c r="B1" t="inlineStr"><is><t>amount</t></is></c></row>'
+        '<row r="2"><c r="A2"><v>1</v></c><c r="B2"><v>2</v></c></row>'
+    )
+    with pytest.raises(AgentToolRejected) as dup_exc:
+        calculate(_build_ooxml_xlsx([("Dup", dup_sheet_xml)]), ".xlsx", {"columns": [{"name": "amount", "type": "decimal"}]})
+    assert dup_exc.value.args[0] == "agent_table_duplicate_headers"
+
+    # ryn_table_export preview and perform support .xlsx source directly via LocalTools.
+    tools, ctx, ws = _make_local_tools(tmp_path)
+    (ws / "source.xlsx").write_bytes(xlsx_raw)
+    named_recipe = {**recipe, "sheet": "二季度"}
+    calc_summary = tools.perform("ryn_table_calculate", {"source_path": "source.xlsx", "recipe": named_recipe}, ctx, lambda: False)
+    export_args = {
+        "source_path": "source.xlsx",
+        "recipe": named_recipe,
+        "expected_calculation_sha256": calc_summary["calculation_sha256"],
+        "path": "out.csv",
+    }
+    prev = tools.preview("ryn_table_export", export_args, ctx)
+    assert prev["calculation"]["calculation_sha256"] == calc_summary["calculation_sha256"]
+    exported = tools.perform("ryn_table_export", export_args, ctx, lambda: False, operation_id="op_xlsx_export")
+    assert exported["readback_verified"] and (ws / "out.csv").is_file()
+
+    # Legacy binary .xls remains unsupported with agent_table_csv_or_json_required.
+    with pytest.raises(AgentToolRejected) as xls_exc:
+        calculate(b"\xd0\xcf\x11\xe0binary", ".xls", recipe)
+    assert xls_exc.value.args[0] == "agent_table_csv_or_json_required"
+
+
+def test_s05_i15_t2_xlsx_date_cells_read_as_iso_dates():
+    ns_s = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    styles = (
+        f'<styleSheet {ns_s}>'
+        '<numFmts count="1"><numFmt numFmtId="164" formatCode="yyyy&quot;年&quot;m&quot;月&quot;d&quot;日&quot;"/></numFmts>'
+        '<cellXfs><xf numFmtId="0"/><xf numFmtId="14"/><xf numFmtId="164"/></cellXfs>'
+        '</styleSheet>'
+    )
+    sheet_xml = (
+        '<row r="1"><c r="A1" t="inlineStr"><is><t>start_on</t></is></c><c r="B1" t="inlineStr"><is><t>end_on</t></is></c></row>'
+        '<row r="2"><c r="A2" s="1"><v>45292</v></c><c r="B2" s="2"><v>45322</v></c></row>'
+    )
+    xlsx_raw = _build_ooxml_xlsx([("Dates", sheet_xml)], styles_xml=styles)
+    recipe = {
+        "columns": [
+            {"name": "start_on", "type": "date"},
+            {"name": "end_on", "type": "date"},
+        ],
+        "derived": [{"column": "days", "expression": "days_between(start_on, end_on)"}],
+    }
+    report = calculate(xlsx_raw, ".xlsx", recipe)
+    assert report["status"] == "passed"
+    assert report["rows"][0] == {"start_on": "2024-01-01", "end_on": "2024-01-31", "days": "30"}
+
+
+def test_s05_i15_t3_uncalculated_formula_raises_missing_value_with_row_and_column():
+    sheet_xml = (
+        '<row r="1"><c r="A1" t="inlineStr"><is><t>price</t></is></c><c r="B1" t="inlineStr"><is><t>subtotal</t></is></c></row>'
+        '<row r="2"><c r="A2"><v>10</v></c><c r="B2"><f>A2*2</f><v>20</v></c></row>'
+        '<row r="3"><c r="A3"><v>15</v></c><c r="B3"><f>A3*2</f></c></row>'
+    )
+    xlsx_raw = _build_ooxml_xlsx([("Sheet1", sheet_xml)])
+    recipe = {
+        "columns": [
+            {"name": "price", "type": "decimal"},
+            {"name": "subtotal", "type": "decimal"},
+        ]
+    }
+    with pytest.raises(AgentToolRejected) as exc_info:
+        calculate(xlsx_raw, ".xlsx", recipe)
+    assert exc_info.value.args[0] == "agent_table_formula_value_missing"
+    assert exc_info.value.details["row"] == 2
+    assert exc_info.value.details["column"] == "subtotal"
+
+
+def test_s05_i15_t4_gbk_csv_matches_utf8_and_sets_input_encoding_gb18030():
+    csv_text = "门店,销售额,费用\n上海静安,1200.50,200.25\n北京朝阳,800.00,100.75\n"
+    gbk_bytes = csv_text.encode("gbk")
+    utf8_bytes = csv_text.encode("utf-8")
+    utf16_bytes = csv_text.encode("utf-16")
+    recipe = {
+        "columns": [
+            {"name": "shop", "type": "text", "source": "门店"},
+            {"name": "sales", "type": "decimal", "source": "销售额"},
+            {"name": "cost", "type": "decimal", "source": "费用"},
+        ],
+        "derived": [{"column": "profit", "expression": "sales - cost"}],
+    }
+    rep_gbk = calculate(gbk_bytes, ".csv", recipe)
+    rep_utf8 = calculate(utf8_bytes, ".csv", recipe)
+    rep_utf16 = calculate(utf16_bytes, ".csv", recipe)
+
+    assert rep_gbk["input_encoding"] == "gb18030"
+    assert rep_utf8["input_encoding"] == "utf-8"
+    assert rep_utf16["input_encoding"] in {"utf-16-le", "utf-16-be"}
+    assert rep_gbk["rows"] == rep_utf8["rows"] == rep_utf16["rows"]
+    assert rep_gbk["totals"] == rep_utf8["totals"] == rep_utf16["totals"]
+
+
+def test_s05_i15_t5_60000_row_csv_passes_with_200_preview_rows_and_streams_export(tmp_path):
+    lines = ["id,amount,fee\n"] + [f"row_{i},10.25,1.75\n" for i in range(1, 60001)]
+    big_csv = "".join(lines).encode("utf-8")
+    assert len(big_csv) > 1024 * 1024  # > 1 MiB, verifying 64 MiB source read too
+
+    recipe = {
+        "columns": [
+            {"name": "id", "type": "text"},
+            {"name": "amount", "type": "decimal"},
+            {"name": "fee", "type": "decimal"},
+        ],
+        "derived": [{"column": "total", "expression": "amount + fee"}],
+    }
+    report = calculate(big_csv, ".csv", recipe)
+    assert report["status"] == "passed"
+    assert report["row_count"] == 60000
+    assert len(report["rows"]) == 200
+    assert report["rows"][0]["id"] == "row_1"
+    assert report["rows"][199]["id"] == "row_200"
+    assert report["totals"]["total"] == "720000.00"
+
+    # Full 60,000 rows remain exportable via export_bytes AND LocalTools (>1 MiB source via 64 MiB read_window).
+    exported_csv = export_bytes(report, ".csv")
+    exported_lines = exported_csv.decode("utf-8-sig").splitlines()
+    assert len(exported_lines) == 60001
+    assert exported_lines[1].startswith("row_1,")
+    assert exported_lines[-1].startswith("row_60000,")
+
+    tools, ctx, ws = _make_local_tools(tmp_path)
+    (ws / "big.csv").write_bytes(big_csv)
+    calc_res = tools.perform("ryn_table_calculate", {"source_path": "big.csv", "recipe": recipe}, ctx, lambda: False)
+    assert calc_res["row_count"] == 60000 and calc_res["rows_truncated"] is True
+    exp_res = tools.perform(
+        "ryn_table_export",
+        {"source_path": "big.csv", "recipe": recipe, "expected_calculation_sha256": calc_res["calculation_sha256"], "path": "big_out.csv"},
+        ctx,
+        lambda: False,
+        operation_id="op_big_csv",
+    )
+    assert exp_res["readback_verified"] and (ws / "big_out.csv").read_bytes() == exported_csv
+
+    # Oversized .xlsx (>8 MiB) continues to raise agent_table_output_limit.
+    import base64
+    import os
+
+    incompressible_rows = [base64.a85encode(os.urandom(18000)).decode("ascii").replace(",", "_").replace('"', "_") for _ in range(480)]
+    huge_xlsx_src = ("payload\n" + "\n".join(incompressible_rows) + "\n").encode("utf-8")
+    (ws / "huge.csv").write_bytes(huge_xlsx_src)
+    huge_recipe = {"columns": [{"name": "payload", "type": "text"}]}
+    huge_calc = tools.perform("ryn_table_calculate", {"source_path": "huge.csv", "recipe": huge_recipe}, ctx, lambda: False)
+    with pytest.raises(AgentToolRejected, match="agent_table_output_limit"):
+        tools.preview(
+            "ryn_table_export",
+            {"source_path": "huge.csv", "recipe": huge_recipe, "expected_calculation_sha256": huge_calc["calculation_sha256"], "path": "huge.xlsx"},
+            ctx,
+        )
+
+
+def test_s05_i15_t6_100001_rows_and_wide_recipe_limits_report_cap_and_guidance():
+    over_csv = b"amount\n" + b"1\n" * 100001
+    with pytest.raises(AgentToolRejected) as row_exc:
+        calculate(over_csv, ".csv", {"columns": [{"name": "amount", "type": "decimal"}]})
+    assert row_exc.value.args[0] == "agent_table_input_invalid"
+    assert "100000" in row_exc.value.correction
+    assert "先筛选或分表" in row_exc.value.correction
+
+    # 128 columns + 64 derived columns succeed; 129 columns and 65 derived columns reject with cap & guidance.
+    wide_headers = ",".join(f"c{i}" for i in range(128))
+    wide_row = ",".join("1" for _ in range(128))
+    wide_csv = f"{wide_headers}\n{wide_row}\n".encode("utf-8")
+    wide_recipe = {
+        "columns": [{"name": f"c{i}", "type": "decimal"} for i in range(128)],
+        "derived": [{"column": f"d{j}", "expression": f"c{j} + 1"} for j in range(64)],
+    }
+    wide_report = calculate(wide_csv, ".csv", wide_recipe)
+    assert wide_report["status"] == "passed"
+    assert wide_report["totals"]["d0"] == "2"
+
+    with pytest.raises(AgentToolRejected) as col_exc:
+        calculate(
+            b"c0\n1\n",
+            ".csv",
+            {"columns": [{"name": f"c{i}", "type": "decimal"} for i in range(129)]},
+        )
+    assert "128" in col_exc.value.correction and "先筛选或分表" in col_exc.value.correction
+
+    with pytest.raises(AgentToolRejected) as der_exc:
+        calculate(
+            b"c0\n1\n",
+            ".csv",
+            {
+                "columns": [{"name": "c0", "type": "decimal"}],
+                "derived": [{"column": f"d{j}", "expression": "c0 + 1"} for j in range(65)],
+            },
+        )
+    assert "64" in der_exc.value.correction and "先筛选或分表" in der_exc.value.correction
+
