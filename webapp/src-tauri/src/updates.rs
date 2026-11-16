@@ -11,6 +11,8 @@ use tauri::{Manager, Url};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 pub const ENDPOINT: &str = "https://github.com/yeogirlyun/rynmesh/releases/latest/download/desktop-latest.json";
+const OFFICIAL_PACKAGE_PREFIX: &str = "/yeogirlyun/rynmesh/releases/download/";
+const MIRRORS: Option<&str> = option_env!("RYN_DESKTOP_UPDATE_MIRRORS");
 const PUBLIC_KEY: &str = match option_env!("RYN_DESKTOP_UPDATE_PUBLIC_KEY") { Some(key) => key, None => "" };
 /// End-to-end test builds only; the release workflow never sets it. The manifest URL of a
 /// local test server: packages must come from its origin and still carry a signature for
@@ -109,17 +111,123 @@ fn record_failure(app: &tauri::AppHandle, error: String, visible: bool) -> Strin
 fn failed(app: &tauri::AppHandle, error: String) -> String { record_failure(app, error, false) }
 fn install_failed(app: &tauri::AppHandle, error: String) -> String { record_failure(app, error, true) }
 
-fn endpoint() -> Url {
-    TEST_ENDPOINT.and_then(|value| value.parse().ok()).unwrap_or_else(|| ENDPOINT.parse().unwrap())
+fn valid_mirror_endpoint(url: &Url) -> bool {
+    url.scheme() == "https"
+        && url.port_or_known_default() == Some(443)
+        && url.host_str().is_some_and(|h| !h.is_empty() && h != "github.com")
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.query().is_none()
+        && url.fragment().is_none()
+        && !url.path().split('/').any(|seg| seg == "..")
 }
-fn allowed_package(url: &Url, endpoint: &Url) -> bool {
-    if !url.username().is_empty() || url.password().is_some() { return false; }
-    if endpoint.as_str() == ENDPOINT {
-        return url.scheme() == "https" && url.host_str() == Some("github.com") && url.port_or_known_default() == Some(443)
-            && url.path().starts_with("/yeogirlyun/rynmesh/releases/download/");
+
+fn mirror_package_prefix(mirror_endpoint: &Url) -> String {
+    let path = mirror_endpoint.path();
+    if let Some(stem) = path.strip_suffix("/releases/latest/download/desktop-latest.json") {
+        return format!("{stem}/releases/download/");
     }
-    // A test build's local server serves packages from the origin of its manifest.
-    url.origin() == endpoint.origin()
+    match path.rfind('/') {
+        Some(0) | None => "/releases/download/".to_string(),
+        Some(idx) => {
+            let dir = &path[..=idx];
+            if dir == "/" { "/releases/download/".to_string() } else { dir.to_string() }
+        }
+    }
+}
+
+fn parse_mirrors(raw: Option<&str>) -> Vec<Url> {
+    let mut out = Vec::new();
+    let Some(raw) = raw else { return out; };
+    for part in raw.split(',') {
+        let trimmed = part.trim();
+        if trimmed.is_empty() { continue; }
+        let candidate = if trimmed.ends_with(".json") {
+            trimmed.to_string()
+        } else {
+            format!("{}/desktop-latest.json", trimmed.trim_end_matches('/'))
+        };
+        let Ok(url) = candidate.parse::<Url>() else { continue; };
+        if valid_mirror_endpoint(&url) && !out.iter().any(|existing: &Url| existing == &url) {
+            out.push(url);
+        }
+    }
+    out
+}
+
+fn resolve_endpoints(test_endpoint: Option<&str>, mirrors_raw: Option<&str>) -> Vec<Url> {
+    if let Some(test_url) = test_endpoint.and_then(|value| value.parse::<Url>().ok()) {
+        return vec![test_url];
+    }
+    let mut list = vec![ENDPOINT.parse::<Url>().unwrap()];
+    list.extend(parse_mirrors(mirrors_raw));
+    list
+}
+
+fn endpoint() -> Vec<Url> {
+    resolve_endpoints(TEST_ENDPOINT, MIRRORS)
+}
+
+fn allowed_package(url: &Url, configured_endpoints: &[Url]) -> bool {
+    if !url.username().is_empty() || url.password().is_some() || url.path().split('/').any(|seg| seg == "..") {
+        return false;
+    }
+    if configured_endpoints.len() == 1 && configured_endpoints[0].as_str() != ENDPOINT {
+        // A test build's local server serves packages from the origin of its manifest.
+        return url.origin() == configured_endpoints[0].origin();
+    }
+    if url.scheme() != "https" || url.port_or_known_default() != Some(443) {
+        return false;
+    }
+    if url.host_str() == Some("github.com") && url.path().starts_with(OFFICIAL_PACKAGE_PREFIX) {
+        return true;
+    }
+    for mirror in configured_endpoints.iter().skip(1) {
+        let prefix = mirror_package_prefix(mirror);
+        if url.host_str() == mirror.host_str()
+            && url.port_or_known_default() == mirror.port_or_known_default()
+            && url.path().starts_with(&prefix)
+            && url.path().len() > prefix.len()
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn package_relative_path<'a>(package_url: &'a Url, configured_endpoints: &[Url]) -> Option<&'a str> {
+    if package_url.host_str() == Some("github.com") {
+        return package_url.path().strip_prefix(OFFICIAL_PACKAGE_PREFIX).filter(|s| !s.is_empty());
+    }
+    for mirror in configured_endpoints.iter().skip(1) {
+        if package_url.host_str() == mirror.host_str() {
+            let prefix = mirror_package_prefix(mirror);
+            if let Some(rest) = package_url.path().strip_prefix(&prefix) {
+                if !rest.is_empty() {
+                    return Some(rest);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn candidate_download_urls(primary_url: &Url, configured_endpoints: &[Url]) -> Vec<Url> {
+    let mut urls = vec![primary_url.clone()];
+    let Some(rel_path) = package_relative_path(primary_url, configured_endpoints) else {
+        return urls;
+    };
+    for mirror in configured_endpoints.iter().skip(1) {
+        let prefix = mirror_package_prefix(mirror);
+        let mut candidate = mirror.clone();
+        candidate.set_path(&format!("{prefix}{rel_path}"));
+        candidate.set_query(None);
+        candidate.set_fragment(None);
+        if allowed_package(&candidate, configured_endpoints) && !urls.iter().any(|u| u == &candidate) {
+            urls.push(candidate);
+        }
+    }
+    urls
 }
 
 #[tauri::command]
@@ -164,9 +272,9 @@ async fn bounded_check<T>(
 async fn check(app: &tauri::AppHandle) -> Result<(), String> {
     if PUBLIC_KEY.trim().is_empty() { return Err("update_signing_key_not_configured".into()); }
     let state = app.state::<UpdateState>();
-    let endpoint = endpoint();
+    let endpoint_list = endpoint();
     let updater = app.updater_builder().pubkey(PUBLIC_KEY)
-        .endpoints(vec![endpoint.clone()]).map_err(|e| e.to_string())?
+        .endpoints(endpoint_list.clone()).map_err(|e| e.to_string())?
         .timeout(CHECK_TIMEOUT).build().map_err(|e| e.to_string())?;
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
     *state.cancel_check.lock().unwrap() = Some(cancel_tx);
@@ -194,7 +302,7 @@ async fn check(app: &tauri::AppHandle) -> Result<(), String> {
     let mut update = result?;
     if let Some(ref mut update) = update { update.timeout = Some(DOWNLOAD_TIMEOUT); }
     if let Some(ref update) = update {
-        if !allowed_package(&update.download_url, &endpoint) { return Err("update_download_origin_rejected".into()); }
+        if !allowed_package(&update.download_url, &endpoint_list) { return Err("update_download_origin_rejected".into()); }
     }
     let cached = update.as_ref().is_some_and(|u| {
         let Ok(path) = cache_path(app, u) else { return false; };
@@ -216,12 +324,51 @@ async fn download(app: &tauri::AppHandle) -> Result<(), String> {
     let state = app.state::<UpdateState>();
     let update = state.pending.lock().unwrap().clone().ok_or("update_not_available")?;
     let path = cache_path(app, &update)?;
+    let endpoint_list = endpoint();
+    let candidates = candidate_download_urls(&update.download_url, &endpoint_list);
+    let mut last_error = String::from("update_download_failed");
+    let mut downloaded_bytes: Option<Vec<u8>> = None;
     // Always download/verify before declaring ready; cached files are reverified by install().
-    { let mut status = state.status.lock().unwrap(); status.state = "downloading".into(); status.downloaded = 0; }
-    let bytes = update.download(|length, total| {
-        let mut status = state.status.lock().unwrap();
-        status.downloaded += length as u64; status.total = total;
-    }, || {}).await.map_err(|e| e.to_string())?;
+    for (index, candidate_url) in candidates.iter().enumerate() {
+        {
+            let mut status = state.status.lock().unwrap();
+            status.state = "downloading".into();
+            status.downloaded = 0;
+            status.total = None;
+        }
+        let mut attempt = update.clone();
+        attempt.download_url = candidate_url.clone();
+        let source_label = format!(
+            "{}{}",
+            candidate_url.host_str().unwrap_or("unknown"),
+            candidate_url.path()
+        );
+        match attempt.download(|length, total| {
+            let mut status = state.status.lock().unwrap();
+            status.downloaded += length as u64;
+            status.total = total;
+        }, || {}).await {
+            Ok(bytes) => {
+                log::info!(
+                    "desktop_update_download succeeded attempt={} source={}",
+                    index + 1,
+                    source_label
+                );
+                downloaded_bytes = Some(bytes);
+                break;
+            }
+            Err(error) => {
+                last_error = error.to_string();
+                log::warn!(
+                    "desktop_update_download failed attempt={} source={} error={}",
+                    index + 1,
+                    source_label,
+                    last_error
+                );
+            }
+        }
+    }
+    let bytes = downloaded_bytes.ok_or(last_error)?;
     let stage = path.with_extension("part");
     std::fs::write(&stage, bytes).map_err(|e| e.to_string())?;
     std::fs::rename(stage, path).map_err(|e| e.to_string())?;
@@ -379,7 +526,8 @@ pub fn initialize(app: &tauri::AppHandle) {
     }
     *app.state::<UpdateState>().status.lock().unwrap() = Status {
         current_version: current, auto_download: preferences.auto_download, install_on_quit: preferences.install_on_quit,
-        configured: !PUBLIC_KEY.trim().is_empty(), state: "idle".into(), endpoint: endpoint().to_string(),
+        configured: !PUBLIC_KEY.trim().is_empty(), state: "idle".into(),
+        endpoint: endpoint().first().map(Url::to_string).unwrap_or_else(|| ENDPOINT.to_string()),
         updated_from: from, ..Default::default()
     };
     let handle = app.clone();
@@ -458,12 +606,79 @@ mod tests {
         }
     }
     #[test]
+    fn whitelisted_mirrors_allow_matching_https_packages_and_reject_others_or_credentials() {
+        let configured = resolve_endpoints(
+            None,
+            Some("https://mirror-cn.example.test/ryn-updates/desktop-latest.json, https://mirror-hk.example.test/yeogirlyun/rynmesh/releases/latest/download/desktop-latest.json"),
+        );
+        // Official GitHub and whitelisted mirror prefixes on https:443 are accepted.
+        assert!(allowed_package(&url("https://github.com/yeogirlyun/rynmesh/releases/download/v0.9.1/Ryn.exe"), &configured));
+        assert!(allowed_package(&url("https://mirror-cn.example.test/ryn-updates/v0.9.1/Ryn.exe"), &configured));
+        assert!(allowed_package(&url("https://mirror-hk.example.test/yeogirlyun/rynmesh/releases/download/v0.9.1/Ryn.exe"), &configured));
+
+        // Unlisted hosts, non-HTTPS, custom ports, outside-prefix paths, traversal, and credentials are rejected.
+        for bad in [
+            "https://unlisted.example.test/ryn-updates/v0.9.1/Ryn.exe",
+            "http://mirror-cn.example.test/ryn-updates/v0.9.1/Ryn.exe",
+            "https://mirror-cn.example.test:8443/ryn-updates/v0.9.1/Ryn.exe",
+            "https://mirror-cn.example.test/other/v0.9.1/Ryn.exe",
+            "https://mirror-cn.example.test/ryn-updates/",
+            "https://user@mirror-cn.example.test/ryn-updates/v0.9.1/Ryn.exe",
+            "https://user:secret@mirror-cn.example.test/ryn-updates/v0.9.1/Ryn.exe",
+            "https://:secret@github.com/yeogirlyun/rynmesh/releases/download/v0.9.1/Ryn.exe",
+        ] {
+            assert!(!allowed_package(&url(bad), &configured), "{bad}");
+        }
+    }
+    #[test]
+    fn endpoint_list_preserves_primary_then_mirror_order_and_derives_fallback_urls() {
+        // Without mirrors, behavior matches the single official endpoint.
+        let default_list = resolve_endpoints(None, None);
+        assert_eq!(default_list, vec![url(ENDPOINT)]);
+        assert_eq!(resolve_endpoints(None, Some(" , ")), vec![url(ENDPOINT)]);
+
+        // Configured mirrors preserve order after ENDPOINT, deduplicate, and drop invalid entries.
+        let ordered = resolve_endpoints(
+            None,
+            Some(" https://m1.example.test/ryn/desktop-latest.json , http://insecure.example.test/desktop-latest.json, https://m2.example.test/releases , https://m1.example.test/ryn/desktop-latest.json "),
+        );
+        let ordered_strs: Vec<&str> = ordered.iter().map(Url::as_str).collect();
+        assert_eq!(
+            ordered_strs,
+            vec![
+                ENDPOINT,
+                "https://m1.example.test/ryn/desktop-latest.json",
+                "https://m2.example.test/releases/desktop-latest.json",
+            ]
+        );
+
+        // Test builds isolate to the test endpoint only.
+        let test_only = resolve_endpoints(
+            Some("http://127.0.0.1:47811/desktop-latest.json"),
+            Some("https://m1.example.test/ryn/desktop-latest.json"),
+        );
+        assert_eq!(test_only, vec![url("http://127.0.0.1:47811/desktop-latest.json")]);
+
+        // Fallback download URLs try primary first, then each mirror's same-version package URL in order.
+        let primary_pkg = url("https://github.com/yeogirlyun/rynmesh/releases/download/v0.9.1/Ryn-0.9.1-windows-x86_64.exe");
+        let candidates = candidate_download_urls(&primary_pkg, &ordered);
+        let candidate_strs: Vec<&str> = candidates.iter().map(Url::as_str).collect();
+        assert_eq!(
+            candidate_strs,
+            vec![
+                "https://github.com/yeogirlyun/rynmesh/releases/download/v0.9.1/Ryn-0.9.1-windows-x86_64.exe",
+                "https://m1.example.test/ryn/v0.9.1/Ryn-0.9.1-windows-x86_64.exe",
+                "https://m2.example.test/releases/v0.9.1/Ryn-0.9.1-windows-x86_64.exe",
+            ]
+        );
+    }
+    #[test]
     fn release_builds_use_the_official_release() {
-        if TEST_ENDPOINT.is_none() { assert_eq!(endpoint().as_str(), ENDPOINT); }
+        if TEST_ENDPOINT.is_none() { assert_eq!(endpoint()[0].as_str(), ENDPOINT); }
     }
     #[test]
     fn only_official_https_release_assets() {
-        let official = url(ENDPOINT);
+        let official = [url(ENDPOINT)];
         assert!(allowed_package(&url("https://github.com/yeogirlyun/rynmesh/releases/download/v1/Ryn.exe"), &official));
         for package in ["http://github.com/yeogirlyun/rynmesh/releases/download/v1/Ryn.exe",
             "https://github.com/attacker/rynmesh/releases/download/v1/Ryn.exe",
@@ -475,7 +690,7 @@ mod tests {
     }
     #[test]
     fn a_test_server_serves_packages_from_its_own_origin() {
-        let local = url("http://127.0.0.1:47811/desktop-latest.json");
+        let local = [url("http://127.0.0.1:47811/desktop-latest.json")];
         assert!(allowed_package(&url("http://127.0.0.1:47811/Ryn_0.8.91_x64-setup.exe"), &local));
         for package in ["http://127.0.0.1:47812/Ryn.exe", "http://localhost:47811/Ryn.exe",
             "https://github.com/yeogirlyun/rynmesh/releases/download/v1/Ryn.exe"] {
