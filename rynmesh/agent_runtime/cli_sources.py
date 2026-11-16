@@ -5,6 +5,7 @@ import copy
 import hashlib
 import json
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -50,7 +51,11 @@ class CLISources:
             raise AgentToolRejected("agent_cli_configuration_unavailable")
         if not self.path.exists():
             return {}
-        value = json.loads(self.path.read_text(encoding="utf-8"))
+        try:
+            value = json.loads(self.path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self.path.replace(self.path.with_name(f"cli-services.json.corrupt-{int(time.time())}"))
+            raise AgentToolRejected("agent_cli_configuration_invalid") from None
         if not isinstance(value, dict):
             raise AgentToolRejected("agent_cli_configuration_invalid")
         return value

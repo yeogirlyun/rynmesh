@@ -2566,6 +2566,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     @app.get("/api/local/llm/sources")
     def list_sources():
         return {"sources": [source_store.public(r) for r in source_store.read().values()],
+                "storage_warning": source_store.recovered,
                 "peer_id": store.peer_id, "node_name": store.node_name, "source_revision_cas_supported": True}
 
     from .sources import SOURCE_HTTP_SCHEMA

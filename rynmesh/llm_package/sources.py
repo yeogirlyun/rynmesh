@@ -11,7 +11,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 
 from ..atomic_io import atomic_write_bytes
 from ..file_transactions import file_transaction
@@ -75,6 +75,14 @@ class SourceAdapter(OpenAICompatibleAdapter):
         return result
 
 
+class SourceStoreDamaged(ValueError):
+    """The saved source bytes cannot be decrypted or decoded as JSON."""
+
+    def __init__(self, reason):
+        self.reason = reason
+        super().__init__(reason)
+
+
 class SourceStore:
     def __init__(self, home: Path, private_key: bytes, *, migrate: bool = True):
         self.path = home / "llm" / "sources.enc"
@@ -83,8 +91,18 @@ class SourceStore:
         self.lock_path = home / "llm" / ".sharing.lock"
         self._active_models = {}
         self._model_metadata_cache = {}
+        self.recovered = None
         with self.lock:
-            records = self.read()
+            try:
+                records = self.read()
+            except SourceStoreDamaged as exc:
+                at = int(time.time())
+                backup = self.path.with_name(f"sources.enc.corrupt-{at}")
+                self.path.replace(backup)
+                for old in sorted(self.path.parent.glob("sources.enc.corrupt-*"), reverse=True)[3:]:
+                    old.unlink()
+                self.recovered = {"at": at, "reason": exc.reason, "backup": str(backup)}
+                records = {}
             changed = False
             for record in records.values() if migrate else ():
                 if set(record.get("model_settings", {})) != set(record["models"]):
@@ -103,7 +121,12 @@ class SourceStore:
         with self.lock:
             if not self.path.exists():
                 return {}
-            return json.loads(self.cipher.decrypt(self.path.read_bytes()))
+            try:
+                return json.loads(self.cipher.decrypt(self.path.read_bytes()))
+            except InvalidToken as exc:
+                raise SourceStoreDamaged("invalid_token") from exc
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                raise SourceStoreDamaged("invalid_json") from exc
 
     def _write(self, records):
         atomic_write_bytes(self.path, self.cipher.encrypt(json.dumps(records).encode()))

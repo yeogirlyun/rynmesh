@@ -7,8 +7,11 @@ import json
 import re
 import uuid
 
+from cryptography.exceptions import InvalidTag
+
 from ..atomic_io import atomic_write_json, read_json
 from ..services import peer_box
+from . import diagnostic_log
 from .store import AgentError, encoded
 
 MAX_RESULT_BYTES = 2 * 1024 * 1024
@@ -324,8 +327,16 @@ def read(store, row, result_id, *, provider=False):
         if len(raw) > MAX_RESULT_BYTES or hashlib.sha256(raw).hexdigest() != reference["sha256"]:
             raise ValueError
         return json.loads(raw), reference
-    except Exception:
-        raise AgentError("agent_result_unreadable") from None
+    except (OSError, InvalidTag, ValueError, KeyError, TypeError) as exc:
+        cause = exc.__cause__ or exc  # read_json wraps filesystem and JSON errors.
+        if isinstance(cause, FileNotFoundError):
+            code = "agent_result_missing"
+        elif isinstance(cause, OSError):
+            code = "agent_result_unreadable"
+        else:
+            code = "agent_result_corrupt"
+        diagnostic_log.failure("result_read", exc, task_id=row["id"])
+        raise AgentError(code) from None
 
 
 def page(store, row, result_id, offset=0, limit=8192, *, provider=False):
