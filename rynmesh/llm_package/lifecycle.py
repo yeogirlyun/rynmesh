@@ -453,6 +453,7 @@ def connect_local_api(*, base_url: str, package_id: str, alias: str, model: str 
         package_id=package_id, mode="ollama" if adapter == "ollama" else "openai_compatible",
         public_model_alias=alias, adapter=adapter, runtime=RUNTIME_EXTERNAL, base_url=base_url,
         api_key_env=api_key_env, model=model, allow_non_loopback=allow_non_loopback,
+        context_window=8192, max_output_tokens=2048,
         install_source={"kind": "existing_local_service"},
     )
     active = adapter_from_manifest(manifest)
