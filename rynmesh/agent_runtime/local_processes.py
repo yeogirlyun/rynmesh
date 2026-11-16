@@ -49,6 +49,15 @@ PAGE_CHARS = 6000
 HEAD_CHARS = 2000
 DEFAULT_READ_WAIT = 10
 MAX_READ_WAIT = 20
+DEFAULT_YIELD_SECONDS = 10
+DEFAULT_READ_SHELL_TIMEOUT = 120
+MAX_TASK_PROCESSES = 16
+MAX_GLOBAL_PROCESSES = 64
+_PROCESS_ID_RE = re.compile(r"^process_[A-Za-z0-9_-]{4,56}$")
+LOST_PROCESS_CORRECTION = (
+    "Ryn may have restarted since this process was started; background processes do not survive a restart. "
+    "Re-run the command if it is still needed, and do not read this process_id again."
+)
 
 
 def _append_output(item: dict, text: str) -> None:
@@ -330,6 +339,7 @@ class Processes:
         self.lock = threading.RLock()
         self.changed = threading.Condition(self.lock)
         self.items = {}
+        self.boot_id = "boot_" + uuid.uuid4().hex
         atexit.register(self.close)
         _start_environment_warmup()
 
@@ -342,7 +352,43 @@ class Processes:
             if item.get("cleanup_done"):
                 item["cleanup_done"].wait(5)
 
-    def start(self, args, cwd, task_id, timeout, allowed, cancelled, *, operation_id=None, tty=False, rows=24, cols=80, env_overrides=None):
+    def _evict_completed_locked(self, task_id):
+        now_mono = time.monotonic()
+        for val in self.items.values():
+            if val["process"].poll() is not None and val.get("ended_at") is None:
+                val["ended_at"] = now_mono
+
+        def _evict_key(pair):
+            _k, val = pair
+            return (
+                val.get("ended_at") if val.get("ended_at") is not None else now_mono,
+                val.get("last_read_at") if val.get("last_read_at") is not None else 0.0,
+                val.get("started_at") if val.get("started_at") is not None else 0.0,
+            )
+
+        while sum(v.get("task_id") == task_id for v in self.items.values()) >= MAX_TASK_PROCESSES:
+            completed_task = [
+                (k, v)
+                for k, v in self.items.items()
+                if v.get("task_id") == task_id and v["process"].poll() is not None
+            ]
+            if not completed_task:
+                break
+            victim_id, _ = min(completed_task, key=_evict_key)
+            self.items.pop(victim_id, None)
+
+        while len(self.items) >= MAX_GLOBAL_PROCESSES:
+            completed_all = [
+                (k, v)
+                for k, v in self.items.items()
+                if v["process"].poll() is not None
+            ]
+            if not completed_all:
+                break
+            victim_id, _ = min(completed_all, key=_evict_key)
+            self.items.pop(victim_id, None)
+
+    def start(self, args, cwd, task_id, timeout=None, allowed=lambda: True, cancelled=lambda: False, *, operation_id=None, tty=False, rows=24, cols=80, env_overrides=None):
         # Task-state callbacks can acquire the Agent store lock; never call one
         # while holding the process-table lock (preview takes them in reverse).
         if type(tty) is not bool:
@@ -358,14 +404,26 @@ class Processes:
                 for v in self.items.values()
             ):
                 raise AgentProcessStartRejected("agent_process_already_running")
-            if sum(v["process"].poll() is None for v in self.items.values()) >= 8:
-                raise AgentProcessStartRejected("agent_process_capacity")
-            # Evict only completed processes, never running ones.
-            for key in list(self.items):
-                if len(self.items) < 128:
-                    break
-                if self.items[key]["process"].poll() is not None:
-                    self.items.pop(key)
+            # Evict earliest-finished, least-recently-read completed entries before checking capacity.
+            self._evict_completed_locked(task_id)
+            task_running_ids = [
+                k for k, v in self.items.items()
+                if v.get("task_id") == task_id and v["process"].poll() is None
+            ]
+            global_running_count = sum(v["process"].poll() is None for v in self.items.values())
+            if len(task_running_ids) >= MAX_TASK_PROCESSES or global_running_count >= MAX_GLOBAL_PROCESSES:
+                raise AgentProcessStartRejected(
+                    "agent_process_capacity",
+                    correction=(
+                        "Too many background processes are running. Stop unused processes with "
+                        "ryn_process_stop before starting another command."
+                    ),
+                    details={
+                        "running_process_ids": task_running_ids,
+                        "task_limit": MAX_TASK_PROCESSES,
+                        "global_limit": MAX_GLOBAL_PROCESSES,
+                    },
+                )
             proc_env = child_environment()
             for extra_env in (getattr(args, "env_overrides", None), env_overrides):
                 if isinstance(extra_env, Mapping):
@@ -404,7 +462,9 @@ class Processes:
                     raise
             ident = "process_" + uuid.uuid4().hex
             decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+            started_mono = time.monotonic()
             item = {"process": process, "task_id": task_id, "operation_id": operation_id,
+                    "timeout": timeout, "started_at": started_mono, "last_read_at": started_mono, "ended_at": None,
                     "head": "", "tail": collections.deque(), "tail_chars": 0,
                     "total_chars": 0, "dropped_chars": 0, "decoder": decoder,
                     "reason": None, "reader_done": threading.Event(),
@@ -447,24 +507,28 @@ class Processes:
                     self.changed.notify_all()
 
         def watch():
-            deadline = time.monotonic() + timeout
+            deadline = (time.monotonic() + float(timeout)) if timeout is not None else None
             try:
                 while process.poll() is None:
                     now_mono = time.monotonic()
+                    timed_out = deadline is not None and now_mono >= deadline
                     # cancelled() belongs to the launch dispatch and becomes
                     # true at an ordinary running -> queued scheduler handoff.
                     # Session lifetime follows durable task permissions instead;
                     # allowed() also observes owner cancellation and revocation.
-                    if now_mono >= deadline or not allowed():
-                        item["reason"] = "timeout" if now_mono >= deadline else "permission_or_task_stopped"
+                    if timed_out or not allowed():
+                        item["reason"] = "timeout" if timed_out else "permission_or_task_stopped"
                         terminate(process)
                         break
-                    time.sleep(min(0.05, max(0.005, deadline - now_mono)))
+                    sleep_for = 0.05 if deadline is None else min(0.05, max(0.005, deadline - now_mono))
+                    time.sleep(sleep_for)
             finally:
                 # Closing a Windows job also cleans descendants after the shell exits.
                 terminate(process)
                 if not tty:
                     process.stdin.close()
+                if item.get("ended_at") is None:
+                    item["ended_at"] = time.monotonic()
                 item["cleanup_done"].set()
                 item["cleanup_done"] = COMPLETED
                 with self.changed:
@@ -538,7 +602,19 @@ class Processes:
     def get(self, ident, task_id):
         with self.lock:
             item = self.items.get(ident)
-            if item is None or item["task_id"] != task_id:
+            if item is None:
+                if isinstance(ident, str) and _PROCESS_ID_RE.match(ident):
+                    raise AgentToolRejected(
+                        "agent_process_not_found",
+                        correction=LOST_PROCESS_CORRECTION,
+                        details={
+                            "reason": "process_table_is_in_memory",
+                            "may_have_been_lost_on_restart": True,
+                            "restart_note_in_history": True,
+                        },
+                    )
+                raise AgentToolRejected("agent_process_not_found")
+            if item["task_id"] != task_id:
                 raise AgentToolRejected("agent_process_not_found")
             return item
 
@@ -645,6 +721,10 @@ class Processes:
                                 item["profile_fallback_triggered"] = True
                         if item.get("profile_fallback_triggered"):
                             payload["profile_notice"] = POWERSHELL_PROFILE_FALLBACK_NOTICE
+                    now_read = time.monotonic()
+                    item["last_read_at"] = now_read
+                    if not running and item.get("ended_at") is None:
+                        item["ended_at"] = now_read
                     return payload
                 self.changed.wait(min(0.1, remaining))
 
