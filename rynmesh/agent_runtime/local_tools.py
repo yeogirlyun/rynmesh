@@ -18,6 +18,7 @@ from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import local_processes
 from .diagnostic_log import failure
 from .local_processes import (
     AgentProcessStartRejected,
@@ -916,7 +917,17 @@ class LocalTools:
                 self._desktop = Desktop(native_computer=self.native_computer)
             return self._desktop
 
-    def allowed(self, context):
+    def _build_authority_checker(self, context, *, stop_on_paused: bool, cache_ttl: float):
+        stopped_statuses = (
+            {"paused", "cancelled", "failed", "interrupted"}
+            if stop_on_paused
+            else {"cancelled", "failed", "interrupted"}
+        )
+        max_consecutive_errors = 20
+        last_result = True
+        last_checked_at: float | None = None
+        consecutive_errors = 0
+
         def projection(data):
             row = data.get("tasks", {}).get(context["task_id"])
             if row is None:
@@ -936,35 +947,67 @@ class LocalTools:
                     "tasks": {context["task_id"]: control}}
 
         def check():
+            nonlocal last_result, last_checked_at, consecutive_errors
+            now_mono = time.monotonic()
+            if cache_ttl > 0.0 and last_checked_at is not None and (now_mono - last_checked_at) < cache_ttl:
+                return last_result
             try:
                 from .execution_policy import decide, shell_read, verified_read_classification
-                # Watchers run five times a second. Project only authority rather
-                # than cloning every task transcript twice on each check.
+                # Process watchers poll exit every 50 ms, while authority checks run
+                # once per second (cached); browser checks run on demand. Project only
+                # authority rather than cloning every task transcript on each check.
                 state = self.store.inspect(projection)
-                row = state.get("tasks", {}).get(context["task_id"])
-                current = state["settings"]
-                operation = (row or {}).get("in_flight") or {}
-                authorized_read = verified_read_classification(
-                    operation,
-                    task_id=context["task_id"],
-                    workspace_root=context["local_execution"].get("workspace_root", ""),
-                ) or (
-                    operation.get("operation_classification") is None
-                    and operation.get("authorization") == "read"
-                    and shell_read(operation.get("arguments") or {})
-                )
-                if operation.get("authorization") == "automatic":
-                    if decide(operation, {"effect": operation.get("effect"),
-                        "computer_access": operation.get("computer_access"),
-                        "workstation_permission_tool": operation.get("workstation_permission_tool")}, row, current).action != "execute":
-                        return False
-                return bool(row and current.get("enabled") and
-                            row["status"] not in {"paused", "cancelled", "failed", "interrupted"} and
-                            (current.get("permission_mode") != "read_only" or authorized_read) and
-                            self.policy(context, state)["workspace_root"] == context["local_execution"].get("workspace_root", ""))
             except Exception:
-                return False
+                last_checked_at = now_mono
+                consecutive_errors += 1
+                if consecutive_errors >= max_consecutive_errors:
+                    last_result = False
+                    return False
+                return last_result
+
+            row = state.get("tasks", {}).get(context["task_id"])
+            current = state["settings"]
+            operation = (row or {}).get("in_flight") or {}
+            authorized_read = verified_read_classification(
+                operation,
+                task_id=context["task_id"],
+                workspace_root=context["local_execution"].get("workspace_root", ""),
+            ) or (
+                operation.get("operation_classification") is None
+                and operation.get("authorization") == "read"
+                and shell_read(operation.get("arguments") or {})
+            )
+            if operation.get("authorization") == "automatic":
+                if decide(operation, {"effect": operation.get("effect"),
+                    "computer_access": operation.get("computer_access"),
+                    "workstation_permission_tool": operation.get("workstation_permission_tool")}, row, current).action != "execute":
+                    consecutive_errors = 0
+                    last_checked_at = now_mono
+                    last_result = False
+                    return False
+            try:
+                workspace_ok = self.policy(context, state)["workspace_root"] == context["local_execution"].get("workspace_root", "")
+            except AgentToolRejected:
+                workspace_ok = False
+            ok = bool(
+                row
+                and current.get("enabled")
+                and row["status"] not in stopped_statuses
+                and (current.get("permission_mode") != "read_only" or authorized_read)
+                and workspace_ok
+            )
+            consecutive_errors = 0
+            last_checked_at = now_mono
+            last_result = ok
+            return ok
+
         return check
+
+    def allowed(self, context):
+        return self._build_authority_checker(context, stop_on_paused=True, cache_ttl=0.0)
+
+    def process_allowed(self, context):
+        return self._build_authority_checker(context, stop_on_paused=False, cache_ttl=1.0)
 
     @staticmethod
     def _observed_key(path: Path | str) -> str:
@@ -2283,22 +2326,28 @@ class LocalTools:
                 return {"path": str(path), "destination": str(destination), "sha256": dest_sha, "action": action}
         if name == "ryn_shell_execute":
             from . import workspace_artifacts
+            from .execution_policy import shell_read
+            is_read = bool(shell_read(args))
             if prepared_shell is None:
-                from .execution_policy import shell_read
                 command = prepare_shell_command(args)
                 policy = self.policy(context)
                 cwd = self.path(args.get("cwd", "."), context, policy)
                 root = self.path(".", context, policy)
-                before = None if shell_read(args) else workspace_artifacts.snapshot(root)
+                before = None if is_read else workspace_artifacts.snapshot(root)
             else:
                 command, cwd, root, before = prepared_shell
+            timeout = (
+                args["timeout_seconds"]
+                if args.get("timeout_seconds") is not None
+                else (local_processes.DEFAULT_READ_SHELL_TIMEOUT if is_read else None)
+            )
             prior_running = self.processes.running_for_operation(task_id)
             ident = self.processes.start(
                 command,
                 cwd,
                 task_id,
-                args.get("timeout_seconds", 120),
-                self.allowed(context),
+                timeout,
+                self.process_allowed(context),
                 cancelled,
                 operation_id=operation_id or context.get("operation_id"),
                 tty=args.get("tty", False), rows=args.get("rows", 24), cols=args.get("cols", 80),
@@ -2310,6 +2359,13 @@ class LocalTools:
                 result = self.processes.read(ident, task_id, wait_seconds=0)
             elif args.get("yield_seconds") is not None:
                 result = self.processes.wait(ident, task_id, cancelled, yield_seconds=args["yield_seconds"])
+            elif not is_read:
+                result = self.processes.wait(
+                    ident,
+                    task_id,
+                    cancelled,
+                    yield_seconds=local_processes.DEFAULT_YIELD_SECONDS,
+                )
             else:
                 result = self.processes.wait(ident, task_id, cancelled)
             still_running_now = set(self.processes.running_for_operation(task_id))

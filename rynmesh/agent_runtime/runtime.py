@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import hashlib
+import json
 import math
 import re
 import threading
@@ -213,6 +214,95 @@ def message_text(value: Any) -> str:
     return value.strip()
 
 
+def _summarize_shell_command(raw_cmd: object) -> str:
+    if not isinstance(raw_cmd, str):
+        return ""
+    collapsed = " ".join(raw_cmd.strip().split())
+    if len(collapsed) > 80:
+        return collapsed[:77] + "..."
+    return collapsed
+
+
+def _note_lost_background_processes(row: dict, boot_id: str) -> None:
+    if boot_id and row.get("process_note_boot") == boot_id:
+        return
+    messages = row.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return
+    start_idx = 0
+    for idx, msg in enumerate(messages):
+        if isinstance(msg, dict) and (msg.get("ui") or {}).get("kind") == "lost_background_processes":
+            start_idx = idx + 1
+    call_commands: dict[str, str] = {}
+    for msg in messages:
+        if msg.get("role") != "assistant":
+            continue
+        for call in msg.get("tool_calls") or []:
+            cid = call.get("id")
+            fn = call.get("function") or {}
+            if (fn.get("name") or call.get("name")) != "ryn_shell_execute" or not cid:
+                continue
+            raw_args = fn.get("arguments") if "arguments" in fn else call.get("arguments")
+            if isinstance(raw_args, str):
+                try:
+                    raw_args = json.loads(raw_args)
+                except (ValueError, TypeError):
+                    raw_args = None
+            if isinstance(raw_args, dict):
+                call_commands[cid] = _summarize_shell_command(raw_args.get("command"))
+    active_cmds: dict[str, str] = {}
+    for msg in messages[start_idx:]:
+        if msg.get("role") != "tool":
+            continue
+        raw_content = msg.get("content")
+        if not isinstance(raw_content, str) or "process_" not in raw_content:
+            continue
+        try:
+            parsed = json.loads(raw_content)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        pid = parsed.get("process_id")
+        if not isinstance(pid, str) or not pid.startswith("process_"):
+            continue
+        if parsed.get("running") is True:
+            active_cmds[pid] = active_cmds.get(pid) or call_commands.get(msg.get("tool_call_id") or "") or ""
+        elif "running" in parsed and not parsed.get("running"):
+            active_cmds.pop(pid, None)
+    if not active_cmds:
+        return
+    entries = "、".join(
+        f"{pid}（{summary or '未知命令'}）" for pid, summary in active_cmds.items()
+    )
+    note_text = f"Ryn 节点已重启，以下后台进程已结束：{entries}。需要时重新启动命令，不要再读这些 id。"
+    note_msg = {
+        "role": "assistant",
+        "content": note_text,
+        "context_epoch": row.get("context_epoch", 0),
+        "ui": {"kind": "lost_background_processes", "hidden": True},
+    }
+    insert_at = len(messages)
+    if row.get("queue"):
+        tail_tool_start = len(messages)
+        while (
+            tail_tool_start > 0
+            and isinstance(messages[tail_tool_start - 1], dict)
+            and messages[tail_tool_start - 1].get("role") == "tool"
+        ):
+            tail_tool_start -= 1
+        if tail_tool_start > 0:
+            prev = messages[tail_tool_start - 1]
+            if isinstance(prev, dict) and prev.get("role") == "assistant" and prev.get("tool_calls"):
+                expected_ids = {c.get("id") for c in prev["tool_calls"] if isinstance(c, dict) and c.get("id")}
+                present_ids = {messages[i].get("tool_call_id") for i in range(tail_tool_start, len(messages))}
+                if expected_ids - present_ids:
+                    insert_at = tail_tool_start - 1
+    messages.insert(insert_at, note_msg)
+    if boot_id:
+        row["process_note_boot"] = boot_id
+
+
 class _ExtensionPolicyAdmitter:
     def __init__(self, runtime: AgentRuntime, row: dict) -> None:
         self.runtime = runtime
@@ -270,8 +360,16 @@ class AgentRuntime(AgentLoop):
         self._step = threading.local()  # Whether this thread's last step ended normally.
         self._stream_lock = threading.Lock()
         self._streams = {}
+        self._boot_id = "boot_" + uuid.uuid4().hex
         # Display only. Never used by admission, cancellation or persistence.
         self._active_run = None
+
+    def _process_boot_id(self) -> str:
+        proc_mgr = getattr(self.tools, "processes", None) or getattr(
+            getattr(self.tools, "local", None), "processes", None
+        )
+        boot_id = getattr(proc_mgr, "boot_id", None)
+        return boot_id if isinstance(boot_id, str) and boot_id else self._boot_id
 
     @property
     def _active_run(self):
@@ -2813,10 +2911,13 @@ class AgentRuntime(AgentLoop):
             return False
         return self.store.transaction(adopt)
 
+    _note_lost_background_processes = staticmethod(_note_lost_background_processes)
+
     def reconcile(self) -> None:
         """Called once at node construction, before worker startup."""
         if not self.store.path.exists():
             return
+        boot_id = self._process_boot_id()
 
         def reconcile(data):
             from .execution_policy import verified_read_classification
@@ -2861,39 +2962,38 @@ class AgentRuntime(AgentLoop):
                                 continued=False,
                                 cleanup_confirmed=False,
                             )
-                            continue
-                        may_continue = (
-                            not was_cancelled
-                            and not was_paused
-                            and self._read_may_continue_after_restart(row, flight, data)
-                        )
-                        settled_outcome = self._settle_interrupted_read(row, flight, "agent_node_restarted", recovery=recovery)
-                        row["in_flight"] = None
-                        row["approved"] = None
-                        settle(row, event, data=data)
-                        if was_editing:
-                            # The owner already committed the replacement turn.
-                            # Its old flight settled above; do not overwrite the
-                            # edited branch's queued/paused state with recovery.
-                            may_continue = row["status"] == "queued"
-                        elif was_cancelled:
-                            row.update(status="cancelled", error="agent_node_restarted")
-                        elif was_paused:
-                            row.update(status="paused", error="agent_node_restarted")
-                        elif may_continue:
-                            row.update(status="queued", error=None)
                         else:
-                            row.update(status="interrupted", error="agent_node_restarted")
-                        event(
-                            row,
-                            "interrupted",
-                            ambiguous_write=False,
-                            continued=may_continue,
-                            cleanup_confirmed=True,
-                            ledger_outcome=settled_outcome,
-                        )
-                        continue
-                    if (
+                            may_continue = (
+                                not was_cancelled
+                                and not was_paused
+                                and self._read_may_continue_after_restart(row, flight, data)
+                            )
+                            settled_outcome = self._settle_interrupted_read(row, flight, "agent_node_restarted", recovery=recovery)
+                            row["in_flight"] = None
+                            row["approved"] = None
+                            settle(row, event, data=data)
+                            if was_editing:
+                                # The owner already committed the replacement turn.
+                                # Its old flight settled above; do not overwrite the
+                                # edited branch's queued/paused state with recovery.
+                                may_continue = row["status"] == "queued"
+                            elif was_cancelled:
+                                row.update(status="cancelled", error="agent_node_restarted")
+                            elif was_paused:
+                                row.update(status="paused", error="agent_node_restarted")
+                            elif may_continue:
+                                row.update(status="queued", error=None)
+                            else:
+                                row.update(status="interrupted", error="agent_node_restarted")
+                            event(
+                                row,
+                                "interrupted",
+                                ambiguous_write=False,
+                                continued=may_continue,
+                                cleanup_confirmed=True,
+                                ledger_outcome=settled_outcome,
+                            )
+                    elif (
                         ambiguous_write
                         and not was_cancelled
                         and not was_paused
@@ -2914,18 +3014,20 @@ class AgentRuntime(AgentLoop):
                             reason="node_restarted",
                             auto_acknowledged=True,
                         )
-                        continue
-                    row.update(status="interrupted", approved=None, error="agent_write_outcome_unknown" if ambiguous_write else "agent_node_restarted")
-                    if ambiguous_write:
-                        verification.record(row, flight, "unknown", now(), flight=flight)
-                        self._schedule_reconciliation(row)
-                    if not ambiguous_write:
-                        if cleanup_ok:
-                            row["in_flight"] = None
-                            settle(row, event, data=data)
-                        if not (was_editing and cleanup_ok):
-                            row["status"] = "cancelled" if was_cancelled else "interrupted"
-                    event(row, "interrupted", ambiguous_write=ambiguous_write)
+                    else:
+                        row.update(status="interrupted", approved=None, error="agent_write_outcome_unknown" if ambiguous_write else "agent_node_restarted")
+                        if ambiguous_write:
+                            verification.record(row, flight, "unknown", now(), flight=flight)
+                            self._schedule_reconciliation(row)
+                        if not ambiguous_write:
+                            if cleanup_ok:
+                                row["in_flight"] = None
+                                settle(row, event, data=data)
+                            if not (was_editing and cleanup_ok):
+                                row["status"] = "cancelled" if was_cancelled else "interrupted"
+                        event(row, "interrupted", ambiguous_write=ambiguous_write)
+                if row.get("status") not in {"completed", "cancelled", "failed"}:
+                    _note_lost_background_processes(row, boot_id)
         self.store.transaction(reconcile)
 
     def _schedule_reconciliation(self, row):
