@@ -1300,9 +1300,9 @@ def test_text_only_and_canonical_image_token_accounting_and_policy_sha256_preser
     assert text_policy["estimate_basis"] == output_policy.ESTIMATE_BASIS
     assert isinstance(text_policy["policy_sha256"], str) and len(text_policy["policy_sha256"]) == 64
 
-    # 1280x900 canonical PNG: 3 * ceil(1280/16) * ceil(900/16) + 1024 = 3 * 80 * 57 + 1024 = 14704
+    # 1280x900 canonical PNG: min(10000, ceil(1280 * 900 / 750)) + 85 = 1536 + 85 = 1621
     expected_img_tokens = output_policy.estimate_image_tokens(1280, 900)
-    assert expected_img_tokens == 3 * 80 * 57 + 1024 == 14_704
+    assert expected_img_tokens == 1536 + 85 == 1621
 
     img_msgs = _user_image_messages(PNG_3_46MIB, text="Plain text request for accounting verification.")
     img_policy = output_policy.select(row, img_msgs, [])
