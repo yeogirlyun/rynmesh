@@ -6,21 +6,26 @@ tool loops may continue an in-memory thread (see codex_threads).
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import os
 import queue
 import shutil
+import stat
 import subprocess
 import tempfile
 import threading
 import time
 import uuid
 from collections import deque
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager, nullcontext, suppress
 from functools import lru_cache
 from pathlib import Path
 
 import rynmesh
+from rynmesh.atomic_io import AtomicIOError, atomic_write_bytes
+from rynmesh.private_permissions import restrict_windows_acl
 
 from . import codex_threads, process_guard
 from .adapters import AdapterError
@@ -62,8 +67,199 @@ def cleanup_stale_workspaces(base: Path):
             continue
 
 
+_logger = logging.getLogger(__name__)
+_AUTH_GUARD = threading.Lock()
+_AUTH_SEMAPHORES: dict[str, threading.BoundedSemaphore] = {}
+
+
+def _auth_semaphore(source: Path) -> threading.BoundedSemaphore:
+    key = os.path.normcase(os.path.abspath(os.fspath(source)))
+    with _AUTH_GUARD:
+        sem = _AUTH_SEMAPHORES.get(key)
+        if sem is None:
+            sem = threading.BoundedSemaphore(1)
+            _AUTH_SEMAPHORES[key] = sem
+        return sem
+
+
 @contextmanager
-def private_workspace(*, copy_auth=True, image_generation=False):
+def _hold_cli_auth_lock(source: Path, *, timeout: float | None = 30.0):
+    budget = 300.0 if timeout is None else max(0.01, float(timeout))
+    deadline = time.monotonic() + budget
+    sem = _auth_semaphore(source)
+    if not sem.acquire(timeout=budget):
+        raise AdapterError("cli_auth_busy", code="runtime_busy", diagnostics={"reason": "cli_auth_busy"})
+    lock_path = source.with_name(source.name + ".ryn.lock")
+    handle = None
+    locked = False
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = lock_path.open("a+b")
+        handle.seek(0, os.SEEK_END)
+        if not handle.tell():
+            handle.write(b"0")
+            handle.flush()
+        while True:
+            handle.seek(0)
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locked = True
+                break
+            except OSError:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise AdapterError(
+                        "cli_auth_busy",
+                        code="runtime_busy",
+                        diagnostics={"reason": "cli_auth_busy"},
+                    ) from None
+                time.sleep(min(0.02, max(0.005, remaining)))
+        yield lock_path
+    finally:
+        if handle is not None:
+            if locked:
+                with suppress(OSError):
+                    handle.seek(0)
+                    if os.name == "nt":
+                        import msvcrt
+
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        import fcntl
+
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            with suppress(OSError):
+                handle.close()
+        sem.release()
+
+
+def _remove_replica_with_retries(replica: Path, *, attempts: int = 8) -> None:
+    for attempt in range(attempts):
+        try:
+            if not replica.exists() and not replica.is_symlink():
+                return
+            with suppress(OSError):
+                os.chmod(replica, 0o600)
+            replica.unlink(missing_ok=True)
+            if not replica.exists() and not replica.is_symlink():
+                return
+        except OSError:
+            if attempt + 1 < attempts:
+                time.sleep(min(0.01 * (2 ** attempt), 0.1))
+                continue
+            with suppress(OSError):
+                with replica.open("r+b") as wipe_fh:
+                    wipe_fh.truncate(0)
+                    wipe_fh.flush()
+
+
+@contextmanager
+def borrowed_cli_auth_file(
+    source: Path,
+    replica: Path,
+    *,
+    timeout: float | None = 30.0,
+    diagnostics_out: dict | None = None,
+):
+    """Hold an exclusive lease on ``source``, stage ``replica``, write back valid refreshes, and delete ``replica``."""
+    if not source.is_file():
+        yield
+        return
+    with _hold_cli_auth_lock(source, timeout=timeout):
+        orig_sha256: str | None = None
+        orig_mtime_ns: int | None = None
+        orig_mode = 0o600
+        if source.is_file():
+            st = source.stat()
+            if st.st_size > 1024 * 1024:
+                raise AdapterError("CLI authentication file exceeds limit")
+            orig_bytes = source.read_bytes()
+            orig_sha256 = hashlib.sha256(orig_bytes).hexdigest()
+            orig_mtime_ns = st.st_mtime_ns
+            if os.name != "nt":
+                orig_mode = stat.S_IMODE(st.st_mode) or 0o600
+            with replica.open("xb") as output:
+                with suppress(OSError):
+                    os.chmod(replica, 0o600)
+                if os.name == "nt":
+                    with suppress(OSError):
+                        restrict_windows_acl(replica)
+                output.write(orig_bytes)
+        try:
+            yield
+        finally:
+            try:
+                if orig_sha256 is not None and replica.is_file():
+                    rep_stat = replica.stat()
+                    if rep_stat.st_size <= 1024 * 1024:
+                        new_bytes = replica.read_bytes()
+                        new_sha256 = hashlib.sha256(new_bytes).hexdigest()
+                        if new_sha256 != orig_sha256:
+                            valid_json = False
+                            try:
+                                parsed = json.loads(new_bytes.decode("utf-8"))
+                                valid_json = isinstance(parsed, dict)
+                            except (UnicodeDecodeError, ValueError):
+                                valid_json = False
+                            if not valid_json:
+                                _logger.warning("Borrowed CLI auth replica is invalid JSON; discarding without writeback")
+                                if diagnostics_out is not None:
+                                    diagnostics_out["auth_writeback"] = "invalid_replica_json"
+                            else:
+                                cur_sha256 = (
+                                    hashlib.sha256(source.read_bytes()).hexdigest()
+                                    if source.is_file()
+                                    else None
+                                )
+                                if cur_sha256 != orig_sha256:
+                                    _logger.warning(
+                                        "Borrowed CLI auth file was modified externally during session (orig_mtime_ns=%s); keeping external file",
+                                        orig_mtime_ns,
+                                    )
+                                    if diagnostics_out is not None:
+                                        diagnostics_out["auth_writeback"] = "skipped_external_change"
+                                else:
+                                    try:
+                                        atomic_write_bytes(source, new_bytes, mode=orig_mode)
+                                        if diagnostics_out is not None:
+                                            diagnostics_out["auth_writeback"] = "updated"
+                                    except AtomicIOError as exc:
+                                        if os.name == "nt" and isinstance(exc.__cause__, OSError):
+                                            atomic_write_bytes(source, new_bytes, mode=0o644)
+                                            if diagnostics_out is not None:
+                                                diagnostics_out["auth_writeback"] = "updated_weak_acl"
+                                            _logger.warning(
+                                                "Wrote back refreshed CLI auth without Windows ACL (%s)",
+                                                type(exc.__cause__).__name__,
+                                            )
+                                        else:
+                                            _logger.warning(
+                                                "Failed to write back refreshed CLI auth (%s)",
+                                                type(exc).__name__,
+                                            )
+                                            if diagnostics_out is not None:
+                                                diagnostics_out["auth_writeback"] = "writeback_failed"
+            except OSError as exc:
+                _logger.warning("Failed inspecting borrowed CLI auth replica (%s)", type(exc).__name__)
+            finally:
+                _remove_replica_with_retries(replica)
+
+
+@contextmanager
+def private_workspace(
+    *,
+    copy_auth=True,
+    image_generation=False,
+    auth_timeout: float | None = 30.0,
+    diagnostics_out: dict | None = None,
+):
     check_disk(tempfile.gettempdir())
     base = Path(tempfile.gettempdir()) / "rynmesh-private-cli"
     base.mkdir(mode=0o700, exist_ok=True)
@@ -80,15 +276,19 @@ def private_workspace(*, copy_auth=True, image_generation=False):
         home = root / "codex"
         home.mkdir(mode=0o700)
         auth = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "auth.json"
-        if copy_auth and auth.is_file():
-            if auth.stat().st_size > 1024 * 1024:
-                raise AdapterError("CLI authentication file exceeds limit")
-            target = home / "auth.json"
-            with target.open("xb") as output:
-                os.chmod(target, 0o600)
-                output.write(auth.read_bytes())
-        # Do not load the owner's config, plugins, hooks, skills or MCP servers.
-        config = '''approval_policy = "never"
+        auth_ctx = (
+            borrowed_cli_auth_file(
+                auth,
+                home / "auth.json",
+                timeout=auth_timeout,
+                diagnostics_out=diagnostics_out,
+            )
+            if copy_auth
+            else nullcontext()
+        )
+        with auth_ctx:
+            # Do not load the owner's config, plugins, hooks, skills or MCP servers.
+            config = '''approval_policy = "never"
 sandbox_mode = "read-only"
 web_search = "disabled"
 project_doc_max_bytes = 0
@@ -128,29 +328,29 @@ default_mode_request_user_input = false
 skill_search = false
 skip_host_skill_discovery = true
 '''
-        if image_generation:
-            # Only the dedicated origin-side image tool opts in. Normal model
-            # sessions remain inference-only. Native imagegen requires its host.
-            config = config.replace("image_generation = false", "image_generation = true")
-            config = config.replace("code_mode_host = false", "code_mode_host = true")
-        (home / "config.toml").write_text(config, encoding="utf-8")
-        keep = {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "LANG", "LC_ALL",
-                "OPENAI_API_KEY", "SSL_CERT_FILE", "SSL_CERT_DIR",
-                "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
-                "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE"}
-        env = {k: v for k, v in os.environ.items() if k.upper() in keep}
-        env.update(CODEX_HOME=str(home), HOME=directory, USERPROFILE=directory,
-                   TMP=directory, TEMP=directory, TMPDIR=directory,
-                   XDG_CONFIG_HOME=directory, XDG_CACHE_HOME=directory,
-                   APPDATA=directory, LOCALAPPDATA=directory,
-                   RUST_LOG="off", OTEL_SDK_DISABLED="true")
-        yield root, env
+            if image_generation:
+                # Only the dedicated origin-side image tool opts in. Normal model
+                # sessions remain inference-only. Native imagegen requires its host.
+                config = config.replace("image_generation = false", "image_generation = true")
+                config = config.replace("code_mode_host = false", "code_mode_host = true")
+            (home / "config.toml").write_text(config, encoding="utf-8")
+            keep = {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "LANG", "LC_ALL",
+                    "OPENAI_API_KEY", "SSL_CERT_FILE", "SSL_CERT_DIR",
+                    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+                    "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE"}
+            env = {k: v for k, v in os.environ.items() if k.upper() in keep}
+            env.update(CODEX_HOME=str(home), HOME=directory, USERPROFILE=directory,
+                       TMP=directory, TEMP=directory, TMPDIR=directory,
+                       XDG_CONFIG_HOME=directory, XDG_CACHE_HOME=directory,
+                       APPDATA=directory, LOCALAPPDATA=directory,
+                       RUST_LOG="off", OTEL_SDK_DISABLED="true")
+            yield root, env
 
 
 @lru_cache(maxsize=8)
 def _check_protocol(executable: str, mtime: int):
     """Old binaries can silently ignore JSON fields: refuse unsafe versions."""
-    with private_workspace() as (root, env):
+    with private_workspace(copy_auth=False) as (root, env):
         out = root / "schema"
         process = spawn([executable, "app-server", "generate-json-schema", "--experimental",
                          "--out", str(out)], cwd=str(root), env=env, timeout=20)
@@ -194,17 +394,26 @@ class CodexRPC:
     def __init__(self, executable: str, timeout: float = 30, cpu_seconds: float | None = None,
                  *, image_generation=False, cancelled=None):
         _check_protocol(executable, Path(executable).stat().st_mtime_ns)
-        self.workspace = private_workspace(image_generation=True) if image_generation else private_workspace()
+        self._auth_diagnostics: dict = {}
+        self._auth_lease = None
+        self.workspace = private_workspace(
+            copy_auth=False,
+            image_generation=bool(image_generation),
+        )
         self.output_limit = 40 * 1024 * 1024 if image_generation else MAX_OUTPUT
         self.cancelled = cancelled
         self.root, env = self.workspace.__enter__()
+        self._auth_source = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "auth.json"
+        self._auth_replica = self.root / "codex" / "auth.json"
         self.proxy_configured = _proxy_configured(env)
         self.omitted_attachments = 0
         self._storage_error = None
         try:
+            self.acquire_auth_lease(timeout)
             self.process = spawn([executable, "app-server", "--stdio", "--strict-config"],
                                  cwd=str(self.root), env=env, timeout=cpu_seconds or timeout)
         except BaseException:
+            self.release_auth_lease()
             self.workspace.__exit__(None, None, None)
             raise
         self.deadline = time.monotonic() + timeout
@@ -239,6 +448,8 @@ class CodexRPC:
         }
         if self.omitted_attachments > 0:
             diag["omitted_attachments"] = int(self.omitted_attachments)
+        if getattr(self, "_auth_diagnostics", None) and "auth_writeback" in self._auth_diagnostics:
+            diag["auth_writeback"] = self._auth_diagnostics["auth_writeback"]
         return diag
 
     def _raise_with_diagnostics(self, message: str, *, code: str | None = None):
@@ -437,6 +648,24 @@ class CodexRPC:
                     pass
         return clean
 
+    def acquire_auth_lease(self, timeout: float | None = 30.0) -> None:
+        if self._auth_lease is not None:
+            return
+        self._auth_diagnostics.pop("auth_writeback", None)
+        ctx = borrowed_cli_auth_file(
+            self._auth_source,
+            self._auth_replica,
+            timeout=timeout,
+            diagnostics_out=self._auth_diagnostics,
+        )
+        ctx.__enter__()
+        self._auth_lease = ctx
+
+    def release_auth_lease(self) -> None:
+        ctx, self._auth_lease = self._auth_lease, None
+        if ctx is not None:
+            ctx.__exit__(None, None, None)
+
     def close(self):
         self.closed.set()
         terminate(self.process)
@@ -451,7 +680,10 @@ class CodexRPC:
         self.pending.clear()
         while not self.queue.empty():
             self.queue.get_nowait()
-        self.workspace.__exit__(None, None, None)
+        try:
+            self.release_auth_lease()
+        finally:
+            self.workspace.__exit__(None, None, None)
 
 
 def list_models(executable: str):
@@ -771,9 +1003,13 @@ def _stateless_chat(adapter, body, *, task_id, timeout_s, model="", output_schem
         rpc.omitted_attachments = omitted
         answer, usage, calls = _turn(rpc, thread_id, body, prompt, deadline=started + timeout_s,
                                      output_schema=output_schema, names=names, schemas=schemas, on_text=on_text)
+        if hasattr(rpc, "release_auth_lease"):
+            rpc.release_auth_lease()
         result = _result(answer, usage, calls, choice, prompt, started)
         if omitted > 0:
             result["diagnostics"] = {**(result.get("diagnostics") or {}), "omitted_attachments": omitted}
+        if getattr(rpc, "_auth_diagnostics", None) and "auth_writeback" in rpc._auth_diagnostics:
+            result["diagnostics"] = {**(result.get("diagnostics") or {}), "auth_writeback": rpc._auth_diagnostics["auth_writeback"]}
         return result
     except AdapterError as exc:
         if not getattr(exc, "diagnostics", None) and hasattr(rpc, "diagnostics"):
@@ -814,6 +1050,8 @@ def _pooled_chat(adapter, body, conversation, *, task_id, timeout_s, model, outp
     try:
         if cancelled:
             raise AdapterError("task_cancelled")
+        if resumed and hasattr(rpc, "acquire_auth_lease"):
+            rpc.acquire_auth_lease(max(0.01, deadline - time.monotonic()))
         turn_body = body
         omitted = 0
         if resumed:
@@ -832,14 +1070,20 @@ def _pooled_chat(adapter, body, conversation, *, task_id, timeout_s, model, outp
                                          output_schema=output_schema, on_text=on_text, resumed=resumed)
         finally:
             session.busy_seconds += time.monotonic() - turn_started
+        if hasattr(rpc, "release_auth_lease"):
+            rpc.release_auth_lease()
         session.turns += 1
         result = _result(answer, usage, calls, "auto", prompt, started)
         if omitted > 0:
             result["diagnostics"] = {**(result.get("diagnostics") or {}), "omitted_attachments": omitted}
+        if getattr(rpc, "_auth_diagnostics", None) and "auth_writeback" in rpc._auth_diagnostics:
+            result["diagnostics"] = {**(result.get("diagnostics") or {}), "auth_writeback": rpc._auth_diagnostics["auth_writeback"]}
         conversation.session = session
         pool.stats["resumed" if resumed else "started"] += 1
         return result
     except AdapterError as exc:
+        if hasattr(rpc, "release_auth_lease"):
+            rpc.release_auth_lease()
         if not getattr(exc, "diagnostics", None) and hasattr(rpc, "diagnostics"):
             exc.diagnostics = rpc.diagnostics()
         session.close()
@@ -850,13 +1094,19 @@ def _pooled_chat(adapter, body, conversation, *, task_id, timeout_s, model, outp
         if not fallback:
             raise
     except BaseException:
+        if hasattr(rpc, "release_auth_lease"):
+            rpc.release_auth_lease()
         session.close()
         raise
     finally:
-        with adapter._lock:
-            adapter._running.pop(task_id, None)
-            if not fallback:
-                adapter._cancelled.discard(task_id)
+        try:
+            if hasattr(rpc, "release_auth_lease"):
+                rpc.release_auth_lease()
+        finally:
+            with adapter._lock:
+                adapter._running.pop(task_id, None)
+                if not fallback:
+                    adapter._cancelled.discard(task_id)
     pool.stats["fallback"] += 1
     return _stateless_chat(adapter, body, task_id=task_id, timeout_s=deadline - time.monotonic(),
                            model=model, output_schema=output_schema, on_text=on_text)
