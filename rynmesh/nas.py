@@ -12,6 +12,8 @@ import json
 import logging
 import os
 import re
+import socket
+import ssl
 import threading
 import time
 import uuid
@@ -33,6 +35,7 @@ MAX_PREVIEW = 256 * 1024
 MAX_IMAGE = 20 * 1024 * 1024
 MAX_IMAGE_PIXELS = 40_000_000
 MAX_ENTRIES = 5000
+PAGE_ENTRIES = 500
 SYSTEMS = [
     {
         "id": key,
@@ -77,6 +80,7 @@ class SMBConnector:
         self.api = smbclient
         self.cache = {}  # Never share authenticated SMB sessions between NAS instances.
         self.config = config
+        self.last_skipped = 0
         self.root = "\\\\" + config["host"] + "\\" + config["share"]
         if config["root"]:
             self.root += "\\" + config["root"].replace("/", "\\")
@@ -111,17 +115,22 @@ class SMBConnector:
     def kw(self):
         return {"connection_cache": self.cache, "port": self.config["port"]}
 
-    def list(self, path):
+    def _collect_entries(self, path, *, max_entries=None):
         result = []
+        skipped = 0
         for entry in self.api.scandir(self.path(path), **self.kw):
             # SMBDirEntry.stat() loses a non-default port in smbprotocol 1.17.
             st = self.api.stat(entry.path, follow_symlinks=False, **self.kw)
             if st.st_file_attributes & 0x400:
                 continue
-            if len(result) >= MAX_ENTRIES:
-                raise NasError("directory_too_large", 413)
             name = entry.name
-            child = relative_path((path + "/" if path else "") + name)
+            try:
+                child = relative_path((path + "/" if path else "") + name)
+            except (NasError, ValueError):
+                skipped += 1
+                continue
+            if max_entries is not None and len(result) >= max_entries:
+                raise NasError("directory_too_large", 413)
             result.append(
                 {
                     "name": name,
@@ -131,7 +140,19 @@ class SMBConnector:
                     "modified": st.st_mtime,
                 }
             )
+        self.last_skipped = skipped
         return result
+
+    def list(self, path):
+        return self._collect_entries(path, max_entries=MAX_ENTRIES)
+
+    def list_page(self, path, cursor=""):
+        cursor_text = cursor.decode("utf-8") if isinstance(cursor, bytes) else str(cursor or "")
+        entries = sorted(self._collect_entries(path, max_entries=None), key=lambda e: e["name"])
+        remaining = [e for e in entries if e["name"] > cursor_text] if cursor_text else entries
+        page = remaining[:PAGE_ENTRIES]
+        next_cursor = page[-1]["name"] if len(remaining) > PAGE_ENTRIES else ""
+        return {"entries": page, "next_cursor": next_cursor, "skipped": self.last_skipped}
 
     def read(self, path, limit):
         with self.api.open_file(self.path(path), mode="rb", **self.kw) as f:
@@ -162,30 +183,71 @@ class SMBConnector:
         self.api.reset_connection_cache(connection_cache=self.cache)
 
 
+_SSL_CONTEXT_LOCK = threading.Lock()
+_HTTP_ONLY_SSL_CONTEXT: ssl.SSLContext | None = None
+_HTTPS_DEFAULT_SSL_CONTEXT: ssl.SSLContext | None = None
+
+
+def _webdav_ssl_context(url: str) -> ssl.SSLContext:
+    """Reuse thread-safe SSLContexts so one-shot WebDAV reads do not reload CA bundles per request."""
+    global _HTTP_ONLY_SSL_CONTEXT, _HTTPS_DEFAULT_SSL_CONTEXT
+    if url.startswith("http://"):
+        if _HTTP_ONLY_SSL_CONTEXT is None:
+            with _SSL_CONTEXT_LOCK:
+                if _HTTP_ONLY_SSL_CONTEXT is None:
+                    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                    ctx.check_hostname = True
+                    ctx.verify_mode = ssl.CERT_REQUIRED
+                    _HTTP_ONLY_SSL_CONTEXT = ctx
+        return _HTTP_ONLY_SSL_CONTEXT
+    if _HTTPS_DEFAULT_SSL_CONTEXT is None:
+        with _SSL_CONTEXT_LOCK:
+            if _HTTPS_DEFAULT_SSL_CONTEXT is None:
+                try:
+                    import certifi
+
+                    _HTTPS_DEFAULT_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+                except ImportError:
+                    _HTTPS_DEFAULT_SSL_CONTEXT = ssl.create_default_context()
+    return _HTTPS_DEFAULT_SSL_CONTEXT
+
+
 class WebDAVConnector:
     def __init__(self, config):
         import httpx
 
+        self.last_skipped = 0
         self.root = config["url"].rstrip("/") + "/"
         if config["root"]:
             self.root += quote(config["root"], safe="/") + "/"
         self.client = httpx.Client(
             auth=(config["username"], config["password"]),
-            timeout=20,
+            timeout=config.get("timeout", 20),
+            verify=_webdav_ssl_context(self.root),
             follow_redirects=False,
             trust_env=False,
         )
 
     def url(self, path):
-        # A second decode by a server must not turn user input into traversal.
-        if "%" in path:
-            raise NasError("encoded_path_not_supported")
-        return self.root + quote(path, safe="/")
+        if not isinstance(path, str):
+            raise NasError("invalid_path")
+        if path in ("", "/"):
+            return self.root
+        trailing_slash = path.endswith("/")
+        stripped = path.rstrip("/")
+        if not stripped:
+            raise NasError("invalid_path")
+        clean = relative_path(stripped)
+        # relative_path already rejects ".."; quote(..., safe="/") encodes any
+        # literal "%" into "%25", so one server decode restores the filename
+        # without turning encoded sequences into path traversal.
+        return self.root + quote(clean, safe="/") + ("/" if trailing_slash else "")
 
     def request(self, method, path, *, limit=MAX_FILE, **kwargs):
         with self.client.stream(method, self.url(path), **kwargs) as response:
             if response.status_code in (401, 403):
-                raise NasError("nas_access_denied", 403)
+                logging.getLogger("rynmesh.nas").warning("nas operation failed: HTTPStatusError")
+                raise NasError("nas_auth_failed", response.status_code)
             if response.status_code == 404:
                 raise NasError("file_not_found", 404)
             if response.status_code in (409, 412):
@@ -199,40 +261,66 @@ class WebDAVConnector:
                     raise NasError("file_too_large", 413)
             return bytes(data)
 
-    def list(self, path):
+    def _collect_entries(self, path, *, max_entries=None, limit=4 * 1024 * 1024):
+        clean_path = "" if path in ("", "/") else relative_path(path.rstrip("/") if isinstance(path, str) else path)
         body = self.request(
-            "PROPFIND", path + ("/" if path else ""), headers={"Depth": "1"}, limit=4 * 1024 * 1024
+            "PROPFIND", "/" if not clean_path else (clean_path + "/"), headers={"Depth": "1"}, limit=limit
         )
         if b"<!DOCTYPE" in body.upper() or b"<!ENTITY" in body.upper():
             raise NasError("invalid_directory_response", 502)
         tree = ElementTree.fromstring(body)
         root_path = unquote(urlsplit(self.root).path).rstrip("/") + "/"
         result = []
+        skipped = 0
         for item in tree.findall("{DAV:}response"):
             href = item.findtext("{DAV:}href", "")
+            # Decode once only: an href containing "%2520" decodes to literal "%20".
             decoded = unquote(urlsplit(href).path).rstrip("/")
             if decoded == root_path.rstrip("/"):
                 continue
             if not decoded.startswith(root_path):
                 continue
-            child = relative_path(decoded[len(root_path) :])
-            if child == path or child.rpartition("/")[0] != path:
+            try:
+                child = relative_path(decoded[len(root_path) :])
+            except (NasError, ValueError):
+                skipped += 1
+                continue
+            if child == clean_path or child.rpartition("/")[0] != clean_path:
                 continue
             prop = item.find("{DAV:}propstat/{DAV:}prop")
             if prop is None:
                 continue
-            if len(result) >= MAX_ENTRIES:
+            if max_entries is not None and len(result) >= max_entries:
                 raise NasError("directory_too_large", 413)
+            try:
+                size = int(prop.findtext("{DAV:}getcontentlength", "0"))
+            except (TypeError, ValueError):
+                size = 0
             result.append(
                 {
                     "name": child.rsplit("/", 1)[-1],
                     "path": child,
                     "directory": prop.find("{DAV:}resourcetype/{DAV:}collection") is not None,
-                    "size": int(prop.findtext("{DAV:}getcontentlength", "0")),
+                    "size": size,
                     "modified": prop.findtext("{DAV:}getlastmodified", ""),
                 }
             )
+        self.last_skipped = skipped
         return result
+
+    def list(self, path):
+        return self._collect_entries(path, max_entries=MAX_ENTRIES, limit=4 * 1024 * 1024)
+
+    def list_page(self, path, cursor=""):
+        cursor_text = cursor.decode("utf-8") if isinstance(cursor, bytes) else str(cursor or "")
+        entries = sorted(
+            self._collect_entries(path, max_entries=None, limit=16 * 1024 * 1024),
+            key=lambda e: e["name"],
+        )
+        remaining = [e for e in entries if e["name"] > cursor_text] if cursor_text else entries
+        page = remaining[:PAGE_ENTRIES]
+        next_cursor = page[-1]["name"] if len(remaining) > PAGE_ENTRIES else ""
+        return {"entries": page, "next_cursor": next_cursor, "skipped": self.last_skipped}
 
     def read(self, path, limit):
         return self.request("GET", path, limit=limit)
@@ -247,11 +335,70 @@ class WebDAVConnector:
         self.client.close()
 
 
+_SMB_AUTH_NTSTATUS = {
+    0xC000006D,  # STATUS_LOGON_FAILURE
+    0xC000006A,  # STATUS_WRONG_PASSWORD
+    0xC0000072,  # STATUS_ACCOUNT_DISABLED
+    0xC0000234,  # STATUS_ACCOUNT_LOCKED_OUT
+    0xC0000071,  # STATUS_PASSWORD_EXPIRED
+    0xC0000193,  # STATUS_ACCOUNT_EXPIRED
+    0xC000006E,  # STATUS_ACCOUNT_RESTRICTION
+}
+
+
+def _classify_nas_exception(exc: BaseException) -> tuple[str, int, bool]:
+    """Map connector exceptions to closed NAS error codes without exposing URLs or credentials."""
+    if type(exc).__name__ in {"SMBAuthenticationError", "LogonFailure"}:
+        return "nas_auth_failed", 401, True
+    if getattr(exc, "ntstatus", None) in _SMB_AUTH_NTSTATUS:
+        return "nas_auth_failed", 401, True
+    resp = getattr(exc, "response", None)
+    status_code = getattr(resp, "status_code", None)
+    if status_code in (401, 403):
+        return "nas_auth_failed", int(status_code), True
+
+    if isinstance(exc, FileNotFoundError):
+        return "file_not_found", 404, False
+    if isinstance(exc, FileExistsError):
+        return "file_exists", 409, False
+    if isinstance(exc, PermissionError):
+        return "nas_access_denied", 403, False
+    if isinstance(exc, ImportError):
+        return "connector_dependency_missing", 503, False
+
+    cur: BaseException | None = exc
+    for _ in range(4):
+        if cur is None:
+            break
+        if isinstance(cur, socket.gaierror):
+            return "nas_dns_failed", 502, True
+        if isinstance(cur, ConnectionRefusedError) or (
+            isinstance(cur, OSError) and cur.errno == errno.ECONNREFUSED
+        ):
+            return "nas_unreachable", 502, True
+        if isinstance(cur, (TimeoutError, socket.timeout)) or "Timeout" in type(cur).__name__:
+            return "nas_timeout", 504, True
+        cur = cur.__cause__ or cur.__context__
+
+    if isinstance(exc, OSError):
+        mapped = {
+            errno.ENOENT: ("file_not_found", 404, False),
+            errno.EEXIST: ("file_exists", 409, False),
+            errno.EACCES: ("nas_access_denied", 403, False),
+            errno.EPERM: ("nas_access_denied", 403, False),
+        }.get(exc.errno)
+        if mapped is not None:
+            return mapped
+
+    return "nas_connection_failed", 502, True
+
+
 class NasPlugin:
     def __init__(self, home):
         self.directory = Path(home) / "plugins" / "nas"
         self.lock = threading.RLock()
         self.source_locks = {}
+        self.listing_locks = {}
         self.sessions = {}
         self.state = {"enabled": False, "sources": []}
         self.connectors = {"smb": SMBConnector, "webdav": WebDAVConnector}
@@ -532,47 +679,40 @@ class NasPlugin:
         connector = None
         failed = True
         try:
-            session = self.sessions.get(config["id"]) if reuse else None
-            if session and (session[0] is not config or time.monotonic() - session[2] > 60):
-                self._close_session(config["id"])
-                session = None
+            session = None
+            if reuse:
+                with self.lock:
+                    session = self.sessions.get(config["id"])
+                if session and (session[0] is not config or time.monotonic() - session[2] > 60):
+                    self._close_session(config["id"])
+                    session = None
             connector = session[1] if session else self.connectors[config["protocol"]](config)
             if reuse:
-                self.sessions[config["id"]] = (config, connector, time.monotonic())
+                with self.lock:
+                    self.sessions[config["id"]] = (config, connector, time.monotonic())
             yield connector
             failed = False
         except NasError:
             raise
-        except FileNotFoundError as exc:
-            raise NasError("file_not_found", 404) from exc
-        except FileExistsError as exc:
-            raise NasError("file_exists", 409) from exc
-        except PermissionError as exc:
-            raise NasError("nas_access_denied", 403) from exc
-        except OSError as exc:
-            code, status = {
-                errno.ENOENT: ("file_not_found", 404),
-                errno.EEXIST: ("file_exists", 409),
-                errno.EACCES: ("nas_access_denied", 403),
-                errno.EPERM: ("nas_access_denied", 403),
-            }.get(exc.errno, ("nas_connection_failed", 502))
-            raise NasError(code, status) from exc
-        except ImportError as exc:
-            raise NasError("connector_dependency_missing", 503) from exc
         except Exception as exc:
             # Do not expose library exceptions: they may contain URLs or credentials.
-            raise NasError("nas_connection_failed", 502) from exc
+            code, status, log_warning = _classify_nas_exception(exc)
+            if log_warning:
+                logging.getLogger("rynmesh.nas").warning("nas operation failed: %s", type(exc).__name__)
+            raise NasError(code, status) from exc
         finally:
             if connector and (not reuse or failed):
                 if reuse:
-                    self.sessions.pop(config["id"], None)
+                    with self.lock:
+                        self.sessions.pop(config["id"], None)
                 try:
                     connector.close()
                 except Exception:
                     pass  # Cleanup must not expose credential-bearing transport errors.
 
     def _close_session(self, source_id):
-        session = self.sessions.pop(source_id, None)
+        with self.lock:
+            session = self.sessions.pop(source_id, None)
         if session:
             try:
                 session[1].close()
@@ -592,6 +732,7 @@ class NasPlugin:
             self.state["sources"] = [s for s in self.state["sources"] if s["id"] != source_id]
             self.directory_cache.invalidate(source_id)
             self.save()
+            self.listing_locks.pop(source_id, None)
             gate = self.source_locks.pop(source_id, None)
         if gate is None or gate.acquire(blocking=False):
             try:
@@ -621,8 +762,8 @@ class NasPlugin:
             self.source(source_id)
             if cached:
                 return self.directory_cache.get(source_id, path) or {"entries": None, "updated_at": 0}
-            gate = self.source_locks.setdefault(source_id, threading.RLock())
-        with gate:
+            list_lock = self.listing_locks.setdefault(source_id, threading.RLock())
+        with list_lock:
             with self.lock:
                 self.source(source_id)
                 item = self.directory_cache.get(source_id, path)
@@ -642,9 +783,16 @@ class NasPlugin:
                 entries = list({entry["path"]: entry for entry in entries}.values())
                 if len(entries) > MAX_ENTRIES or page.get("next_cursor") == cursor and cursor:
                     raise NasError("directory_too_large", 413)
-                return self.directory_cache.put(source_id, path, entries,
-                    next_cursor=page.get("next_cursor", ""), previous_cursor=cursor,
-                    scan=scan if cursor else uuid.uuid4().hex)
+                skipped = (item.get("skipped", 0) if cursor and item else 0) + int(page.get("skipped", 0) or 0)
+                return self.directory_cache.put(
+                    source_id,
+                    path,
+                    entries,
+                    next_cursor=page.get("next_cursor", ""),
+                    previous_cursor=cursor,
+                    scan=scan if cursor else uuid.uuid4().hex,
+                    skipped=skipped,
+                )
 
     def update_source(self, source_id, body):
         with self.lock:
@@ -670,13 +818,14 @@ class NasPlugin:
 
     def _operate(self, source_id, action, path="", data=b""):
         path = relative_path(path)
+        write_action = action in {"write", "mkdir"}
         with self.lock:
             self.source(source_id)
-            gate = self.source_locks.setdefault(source_id, threading.RLock())
-        with gate:
+            gate = self.source_locks.setdefault(source_id, threading.RLock()) if write_action else None
+        with gate if gate is not None else nullcontext():
             with self.lock:
                 source = self.source(source_id)
-                if action in {"write", "mkdir"}:
+                if write_action:
                     if not source["writable"]:
                         raise NasError("nas_read_only", 403)
                     if not path:
@@ -686,14 +835,14 @@ class NasPlugin:
                 if action == "ai" and not source["allow_ai"]:
                     raise NasError("nas_ai_not_allowed", 403)
             try:
-                with self.connection(source, reuse=True) as connector:
+                with self.connection(source, reuse=write_action) as connector:
                     result = self._perform(connector, action, path, data)
                 with self.lock:
                     if self.source(source_id) is not source:
                         raise NasError("nas_not_found", 404)
                     if action == "list":
-                        self.directory_cache.put(source_id, path, result)
-                    elif action in {"write", "mkdir"}:
+                        self.directory_cache.put(source_id, path, result, skipped=getattr(connector, "last_skipped", 0))
+                    elif write_action:
                         self.directory_cache.invalidate(source_id, path.rpartition("/")[0])
                 return result
             except NasError as exc:
@@ -710,9 +859,13 @@ class NasPlugin:
     @staticmethod
     def _perform(connector, action, path, data):
         if action == "list_page":
+            cursor_arg = data.decode("utf-8") if isinstance(data, bytes) else data
             if hasattr(connector, "list_page"):
-                return connector.list_page(path, data)
-            return {"entries": connector.list(path), "next_cursor": ""}
+                page = connector.list_page(path, cursor_arg)
+            else:
+                page = {"entries": connector.list(path), "next_cursor": ""}
+            page.setdefault("skipped", getattr(connector, "last_skipped", 0))
+            return page
         if action == "list":
             return sorted(
                 connector.list(path),
