@@ -119,15 +119,34 @@ def _docker_pull(
         raise LifecycleError("unable to download the llama.cpp runtime image")
 
 
+DOCKER_NOT_INSTALLED_REASON = "Docker is not installed; connect an existing local API or install Docker first"
+DOCKER_ENGINE_NOT_RUNNING_REASON = "Docker is installed but its engine is not running"
+
+
+def classify_docker_error(stderr: str) -> tuple[str, str, str]:
+    lower = (stderr or "").lower()
+    if "port is already allocated" in lower or "address already in use" in lower:
+        return ("port_in_use", "Docker 容器启动失败（port_in_use）：本地端口已被占用", "docker_port_in_use")
+    if "no space left" in lower:
+        return ("disk_full", "Docker 容器启动失败（disk_full）：磁盘空间不足", "docker_disk_full")
+    if "pull access denied" in lower or "manifest unknown" in lower:
+        return ("image_unavailable", "Docker 容器启动失败（image_unavailable）：无法拉取或找到指定的运行时镜像", "docker_image_unavailable")
+    if "cannot connect to the docker daemon" in lower:
+        return ("daemon_unreachable", "Docker 容器启动失败（daemon_unreachable）：无法连接到 Docker 守护进程，请确认 Docker 已启动", "docker_engine_not_running")
+    if "oci runtime" in lower:
+        return ("oci_runtime_error", "Docker 容器启动失败（oci_runtime_error）：OCI 容器运行时启动报错", "docker_oci_runtime_error")
+    return ("unknown", "Docker 容器启动失败（unknown）：容器退出或未能启动", "docker_container_start_failed")
+
+
 def _docker() -> str:
     executable = shutil.which("docker")
     if not executable:
-        raise LifecycleError("Docker is not installed; connect an existing local API or install Docker first")
+        raise LifecycleError(DOCKER_NOT_INSTALLED_REASON, code="docker_not_installed")
     try:
         subprocess.run([executable, "info", "--format", "{{.ServerVersion}}"], check=True,
                        capture_output=True, text=True, timeout=15, **_quiet())
     except (OSError, subprocess.SubprocessError) as exc:
-        raise LifecycleError("Docker is installed but its engine is not running") from exc
+        raise LifecycleError(DOCKER_ENGINE_NOT_RUNNING_REASON, code="docker_engine_not_running") from exc
     return executable
 
 
@@ -158,10 +177,15 @@ def _docker_state(package_id: str) -> dict[str, Any]:
     docker = shutil.which("docker")
     if not docker:
         return {"installed": False, "running": False, "status": "docker unavailable"}
-    result = subprocess.run(
-        [docker, "inspect", "--format", "{{json .State}}", _container_name(package_id)],
-        capture_output=True, text=True, timeout=15, **_quiet(),
-    )
+    try:
+        result = subprocess.run(
+            [docker, "inspect", "--format", "{{json .State}}", _container_name(package_id)],
+            capture_output=True, text=True, timeout=15, **_quiet(),
+        )
+    except subprocess.TimeoutExpired:
+        return {"installed": False, "running": False, "status": "docker_unresponsive"}
+    except OSError:
+        return {"installed": False, "running": False, "status": "docker unavailable"}
     if result.returncode:
         return {"installed": False, "running": False, "status": "not created"}
     try:
@@ -173,13 +197,16 @@ def _docker_state(package_id: str) -> dict[str, Any]:
 
 
 def _image_present(docker: str, image: str) -> bool:
-    result = subprocess.run(
-        [docker, "image", "inspect", image],
-        capture_output=True,
-        text=True,
-        timeout=15,
-        **_quiet(),
-    )
+    try:
+        result = subprocess.run(
+            [docker, "image", "inspect", image],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            **_quiet(),
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise LifecycleError("Docker 守护进程未响应（docker_unresponsive）", code="docker_unresponsive") from exc
     return result.returncode == 0
 
 
@@ -199,7 +226,10 @@ def _run_container(
     if not _image_present(docker, runtime_image):
         _docker_pull(runtime_image, progress=progress, cancel_check=cancel_check, timeout_s=600)
     name = _container_name(manifest.package_id)
-    subprocess.run([docker, "rm", "-f", name], capture_output=True, timeout=30, **_quiet())
+    try:
+        subprocess.run([docker, "rm", "-f", name], capture_output=True, timeout=30, **_quiet())
+    except subprocess.TimeoutExpired as exc:
+        raise LifecycleError("Docker 守护进程未响应（docker_unresponsive）", code="docker_unresponsive") from exc
     port = int(urlparse(manifest.base_url).port or 8080)
     if not manifest.runtime_api_key:
         manifest.runtime_api_key = secrets.token_urlsafe(API_KEY_BYTES)
@@ -221,9 +251,13 @@ def _run_container(
         "--api-key", manifest.runtime_api_key, "--cors-origins", CORS_ORIGINS,
         "-lv", LOG_VERBOSITY,
     ]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=60, **_quiet())
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=60, **_quiet())
+    except subprocess.TimeoutExpired as exc:
+        raise LifecycleError("Docker 容器启动超时（docker_unresponsive）", code="docker_unresponsive") from exc
     if result.returncode:
-        raise LifecycleError("llama.cpp container failed to start (inspect Docker logs for details)")
+        _, message, code = classify_docker_error(result.stderr or "")
+        raise LifecycleError(message, code=code)
 
 
 def available() -> tuple[bool, str]:
@@ -260,18 +294,31 @@ def start(
 
 
 def stop(manifest: LLMPackageManifest) -> bool:
-    result = subprocess.run([_docker(), "stop", _container_name(manifest.package_id)],
-                            capture_output=True, text=True, timeout=60, **_quiet())
+    try:
+        result = subprocess.run([_docker(), "stop", _container_name(manifest.package_id)],
+                                capture_output=True, text=True, timeout=60, **_quiet())
+    except subprocess.TimeoutExpired as exc:
+        raise LifecycleError("Docker 守护进程未响应（docker_unresponsive）", code="docker_unresponsive") from exc
     return result.returncode == 0
 
 
 def remove(manifest: LLMPackageManifest) -> None:
-    subprocess.run([_docker(), "rm", "-f", _container_name(manifest.package_id)],
-                   capture_output=True, timeout=60, **_quiet())
+    try:
+        subprocess.run([_docker(), "rm", "-f", _container_name(manifest.package_id)],
+                       capture_output=True, timeout=60, **_quiet())
+    except subprocess.TimeoutExpired as exc:
+        raise LifecycleError("Docker 守护进程未响应（docker_unresponsive）", code="docker_unresponsive") from exc
 
 
 def update(manifest: LLMPackageManifest) -> None:
-    subprocess.run([_docker(), "pull", _pinned_runtime_image(manifest)], check=True, timeout=600, **_quiet())
+    try:
+        subprocess.run([_docker(), "pull", _pinned_runtime_image(manifest)],
+                       check=True, capture_output=True, text=True, timeout=600, **_quiet())
+    except subprocess.TimeoutExpired as exc:
+        raise LifecycleError("更新 Docker 运行时镜像超时（docker_unresponsive）", code="docker_unresponsive") from exc
+    except subprocess.CalledProcessError as exc:
+        _, message, code = classify_docker_error(exc.stderr or "")
+        raise LifecycleError(message, code=code) from exc
 
 
 def state(manifest: LLMPackageManifest) -> dict[str, Any]:

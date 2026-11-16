@@ -57,8 +57,11 @@ UNAVAILABLE_REASON = (
     "no bundled inference runtime is available for this platform; "
     "connect an existing local API or install Docker instead"
 )
+UNAVAILABLE_CODE = "runtime_unavailable_for_platform"
 UNREADABLE_ARCHIVE = "runtime archive is unreadable or corrupt"
+UNREADABLE_ARCHIVE_CODE = "runtime_archive_corrupt"
 UNWRITABLE_STATE = "unable to write runtime state"
+UNWRITABLE_STATE_CODE = "runtime_state_unwritable"
 
 
 def normalize_machine(value: str) -> str:
@@ -244,12 +247,12 @@ def _fetch(url: str, destination: Path, expected_sha256: str, size_bytes: int, *
             ) from exc
     if _file_sha256(temporary, cancel_check) != expected_sha256.lower():
         _discard(temporary)
-        raise LifecycleError("runtime archive checksum mismatch")
+        raise LifecycleError("runtime archive checksum mismatch", code=UNREADABLE_ARCHIVE_CODE)
     try:
         temporary.replace(destination)
     except OSError as exc:
         _discard(temporary)
-        raise LifecycleError(UNWRITABLE_STATE) from exc
+        raise LifecycleError(UNWRITABLE_STATE, code=UNWRITABLE_STATE_CODE) from exc
 
 
 def _discard(path: Path) -> None:
@@ -323,7 +326,7 @@ def _extract(archive: Path, target: Path) -> None:
         if os.name != "nt":
             os.chmod(target, 0o700)
     except OSError as exc:
-        raise LifecycleError(UNWRITABLE_STATE) from exc
+        raise LifecycleError(UNWRITABLE_STATE, code=UNWRITABLE_STATE_CODE) from exc
     try:
         if archive.name.endswith(".zip"):
             _extract_zip(archive, target)
@@ -332,7 +335,7 @@ def _extract(archive: Path, target: Path) -> None:
     except LifecycleError:
         raise
     except (OSError, tarfile.TarError, zipfile.BadZipFile, EOFError, TypeError) as exc:
-        raise LifecycleError(UNREADABLE_ARCHIVE) from exc
+        raise LifecycleError(UNREADABLE_ARCHIVE, code=UNREADABLE_ARCHIVE_CODE) from exc
 
 
 def _extracted_server(target: Path) -> Path | None:
@@ -350,14 +353,14 @@ def _write_marker(target: Path, server: Path, expected_sha256: str) -> None:
     try:
         atomic_write_json(target / MARKER_NAME, payload, indent=2, sort_keys=True)
     except AtomicIOError as exc:
-        raise LifecycleError(UNWRITABLE_STATE) from exc
+        raise LifecycleError(UNWRITABLE_STATE, code=UNWRITABLE_STATE_CODE) from exc
 
 
 def download(base: Path, *, progress: Any = None, cancel_check: Any = None) -> Path:
     """Fetch, verify, and unpack the pinned release under `base`; return the server."""
     pinned = asset()
     if pinned is None:
-        raise LifecycleError(UNAVAILABLE_REASON)
+        raise LifecycleError(UNAVAILABLE_REASON, code=UNAVAILABLE_CODE)
     name, expected_sha256, size_bytes = pinned
     report(progress, cancel_check, 65, "Downloading the local inference runtime")
     archive = base / "runtime" / name
@@ -380,20 +383,20 @@ def download(base: Path, *, progress: Any = None, cancel_check: Any = None) -> P
             if target.exists():
                 (target / MARKER_NAME).unlink(missing_ok=True)
         except OSError as exc:
-            raise LifecycleError(UNWRITABLE_STATE) from exc
+            raise LifecycleError(UNWRITABLE_STATE, code=UNWRITABLE_STATE_CODE) from exc
         try:
             _extract(archive, staging)
         finally:
             _discard(archive)
         server_in_staging = _extracted_server(staging)
         if server_in_staging is None:
-            raise LifecycleError("the runtime archive did not contain an inference server")
+            raise LifecycleError("the runtime archive did not contain an inference server", code=UNREADABLE_ARCHIVE_CODE)
         rel_server = server_in_staging.relative_to(staging)
         try:
             if os.name != "nt":
                 server_in_staging.chmod(0o755)
         except OSError as exc:
-            raise LifecycleError(UNWRITABLE_STATE) from exc
+            raise LifecycleError(UNWRITABLE_STATE, code=UNWRITABLE_STATE_CODE) from exc
         report(progress, cancel_check, 79, "Finishing local inference runtime installation")
         _write_marker(staging, server_in_staging, expected_sha256)
         had_old = target.exists()
@@ -407,7 +410,7 @@ def download(base: Path, *, progress: Any = None, cancel_check: Any = None) -> P
                     backup.rename(target)
                 except OSError:
                     pass
-            raise LifecycleError(UNWRITABLE_STATE) from exc
+            raise LifecycleError(UNWRITABLE_STATE, code=UNWRITABLE_STATE_CODE) from exc
         shutil.rmtree(backup, ignore_errors=True)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)

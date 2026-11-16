@@ -733,7 +733,8 @@ def test_start_fails_fast_when_the_server_exits_without_leaking_a_path(tmp_path,
     with pytest.raises(LifecycleError) as failure:
         llm_runtime_native.start(manifest)
     message = str(failure.value)
-    assert "exited during startup" in message
+    assert "启动阶段异常退出" in message or "exited during startup" in message
+    assert "see the runtime log" not in message.lower()
     assert "/" not in message and "\\" not in message
     assert not (root / "runtime" / "native-dead.pid").exists()
 

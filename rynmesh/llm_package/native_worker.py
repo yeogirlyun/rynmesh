@@ -8,7 +8,7 @@ import time
 def main(args):
     parent = int(args[0])
     process = subprocess.Popen(args[1:], stdin=subprocess.DEVNULL,
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                               stdout=subprocess.DEVNULL)
     try:
         while process.poll() is None:
             if os.getppid() != parent:
@@ -22,6 +22,8 @@ def main(args):
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=3)
+    rc = process.returncode
+    sys.exit(0 if rc is None else (rc if rc >= 0 else 128 + (-rc)))
 
 
 if __name__ == "__main__":
