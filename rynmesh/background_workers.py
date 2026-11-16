@@ -23,7 +23,8 @@ from datetime import datetime, timezone
 _MAX_ERROR_CHARS = 512
 
 _log = logging.getLogger(__name__)
-_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="ryn-bg")
+# Six Agent workers can sit in long model calls; keep room for friends, Ask and discovery.
+_executor = ThreadPoolExecutor(max_workers=32, thread_name_prefix="ryn-bg")
 
 
 @dataclass(frozen=True)
