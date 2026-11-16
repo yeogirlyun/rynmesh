@@ -666,6 +666,22 @@ export function MemoryEditor({ projects = [], currentProject, initialOpen = fals
                 </p>
               )}
               {(() => {
+                const memBytes = typeof snapshot.memory_bytes === "number" ? snapshot.memory_bytes : 0;
+                const memLimit = typeof snapshot.memory_bytes_limit === "number" && snapshot.memory_bytes_limit > 0
+                  ? snapshot.memory_bytes_limit
+                  : (typeof snapshot.settings.budgets?.max_memory_bytes === "number" && snapshot.settings.budgets.max_memory_bytes > 0
+                    ? snapshot.settings.budgets.max_memory_bytes
+                    : 262144);
+                return memLimit > 0 && memBytes >= memLimit * 0.8 ? (
+                  <p role="status">
+                    {text(
+                      `记忆账本接近上限，可重置（当前 ${Math.round((memBytes / memLimit) * 100)}%，${memBytes}/${memLimit} 字节）`,
+                      `Memory ledger is approaching capacity (${Math.round((memBytes / memLimit) * 100)}%, ${memBytes}/${memLimit} bytes); you can reset memory to reclaim space.`,
+                    )}
+                  </p>
+                ) : null;
+              })()}
+              {(() => {
                 const maxTombstones = typeof snapshot.settings.budgets?.max_tombstones === "number"
                   ? snapshot.settings.budgets.max_tombstones
                   : 256;

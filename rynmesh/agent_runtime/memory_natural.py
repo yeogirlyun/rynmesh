@@ -1170,6 +1170,7 @@ def commit_natural_consolidation_job(
             job["state"] = "stale"
             job["error_code"] = "lease_expired"
             job["updated_at"] = now
+            memory._compact_terminal_job(job)
             return {
                 "state": "stale",
                 "job": copy.deepcopy(job),
@@ -1185,6 +1186,7 @@ def commit_natural_consolidation_job(
             job["state"] = "stale"
             job["error_code"] = "reset_epoch_mismatch"
             job["updated_at"] = now
+            memory._compact_terminal_job(job)
             return {
                 "state": "stale",
                 "job": copy.deepcopy(job),
@@ -1202,6 +1204,7 @@ def commit_natural_consolidation_job(
                 job["state"] = "stale"
                 job["error_code"] = "project_generation_changed"
                 job["updated_at"] = now
+                memory._compact_terminal_job(job)
                 return {
                     "state": "stale",
                     "job": copy.deepcopy(job),
@@ -1219,6 +1222,7 @@ def commit_natural_consolidation_job(
                 job["state"] = "stale"
                 job["error_code"] = reason or "source_invalidated"
                 job["updated_at"] = now
+                memory._compact_terminal_job(job)
                 return {
                     "state": "stale",
                     "job": copy.deepcopy(job),
@@ -1475,6 +1479,7 @@ def commit_natural_consolidation_job(
                 job["error_code"] = skipped_reasons[0]
             memory._record_processed_watermark(mem, job, live_row)
 
+        memory._compact_terminal_job(job)
         mem["generation"] += 1
         memory._enforce_memory_bounds(mem)
 
