@@ -416,6 +416,11 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
 
         drop_engine = getattr(app.state, "drop_engine", None)
         drop_dir = drop_engine.receive_dir() if drop_engine is not None else default_receive_dir()
+        inbound_save_dirs = (
+            [row["save_dir"] for row in drop_engine.db.transfers_in(("completed",), direction="in") if row.get("save_dir")]
+            if drop_engine is not None
+            else []
+        )
         workspace_root = ""
         project_roots: list[str] = []
         if startup_error is None:
@@ -434,7 +439,7 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
 
         roots: list[str] = []
         seen: set[str] = set()
-        for candidate in [drop_dir, workspace_root, *project_roots, output_dir]:
+        for candidate in [drop_dir, *inbound_save_dirs, workspace_root, *project_roots, output_dir]:
             if not candidate:
                 continue
             p = Path(candidate)

@@ -101,3 +101,99 @@ def test_s13_i47_open_roots_endpoint_enforces_local_control_and_refreshes_on_set
             assert ws_first.resolve() not in roots_3
     finally:
         drop_engine.stop()
+
+
+def test_s13_i47_inbound_custom_save_dir_included_in_open_roots(tmp_path: Path):
+    """Rework: completed inbound transfers saved to a user-chosen save_dir are deduplicated into /api/local/desktop/open-roots."""
+    from test_agent_runtime import Catalog, Model, Tools
+
+    home = tmp_path / "home"
+    default_recv = tmp_path / "default_recv"
+    default_recv.mkdir()
+    custom_save = tmp_path / "custom_save_dir"
+    custom_save.mkdir()
+    outbound_only = tmp_path / "outbound_dir"
+    outbound_only.mkdir()
+
+    app = FastAPI()
+    node_store = RynmeshStore(home=home, network_dir=home / "network", node_name="test-node")
+    msg_key = X25519PrivateKey.generate()
+    drop_engine = DropEngine(
+        node=node_store,
+        home=home,
+        messaging_key=msg_key,
+        network_id=lambda: "local",
+        own_peers=dict,
+        friend_peers=dict,
+        peer_endpoints=lambda _pid: [],
+    )
+    drop_engine.db.set_setting("receive_dir", str(default_recv))
+    drop_engine.db.insert_transfer(
+        {
+            "transfer_id": "tr_in_1",
+            "offer_id": "off_1",
+            "peer_id": "peer_a",
+            "direction": "in",
+            "kind": "file",
+            "name": "report.pdf",
+            "file_count": 1,
+            "total_bytes": 128,
+            "status": "completed",
+            "save_dir": str(custom_save),
+            "final_path": str(custom_save / "report.pdf"),
+        },
+        [{"file_id": "f1", "idx": 0, "rel_path": "report.pdf", "size": 128, "committed": 128, "status": "completed"}],
+    )
+    drop_engine.db.insert_transfer(
+        {
+            "transfer_id": "tr_in_2_dup",
+            "offer_id": "off_2",
+            "peer_id": "peer_a",
+            "direction": "in",
+            "kind": "file",
+            "name": "notes.txt",
+            "file_count": 1,
+            "total_bytes": 64,
+            "status": "completed",
+            "save_dir": str(custom_save),
+            "final_path": str(custom_save / "notes.txt"),
+        },
+        [{"file_id": "f2", "idx": 0, "rel_path": "notes.txt", "size": 64, "committed": 64, "status": "completed"}],
+    )
+    drop_engine.db.insert_transfer(
+        {
+            "transfer_id": "tr_out_1",
+            "offer_id": "off_3",
+            "peer_id": "peer_a",
+            "direction": "out",
+            "kind": "file",
+            "name": "sent.pdf",
+            "file_count": 1,
+            "total_bytes": 64,
+            "status": "completed",
+            "save_dir": str(outbound_only),
+        },
+        [],
+    )
+    install_drop(app, engine=drop_engine, local_control=lambda _req: None)
+    install_agent(
+        app,
+        store=node_store,
+        home=home,
+        workers=BackgroundWorkerRegistry(),
+        local_control=lambda _req: None,
+        messaging_key=msg_key,
+        integrations=(Model(), Tools(), Catalog()),
+    )
+
+    try:
+        with TestClient(app) as client:
+            resp = client.get("/api/local/desktop/open-roots")
+            assert resp.status_code == 200
+            raw_roots = resp.json()["roots"]
+            resolved = [Path(p).resolve() for p in raw_roots]
+            assert custom_save.resolve() in resolved
+            assert resolved.count(custom_save.resolve()) == 1
+            assert outbound_only.resolve() not in resolved
+    finally:
+        drop_engine.stop()
