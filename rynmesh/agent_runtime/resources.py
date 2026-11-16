@@ -24,6 +24,13 @@ from .store import AgentReadFailure, AgentToolRejected
 PROTOCOLS = {"smb", "webdav", "baidu", "google", "onedrive"}
 CREATE_PROTOCOLS = {"smb", "webdav", "baidu"}
 FORMATS = {".txt", ".md", ".markdown", ".json", ".csv", ".tsv", ".log", ".yaml", ".yml", ".pdf"}
+NAS_ERROR_CODES = {
+    "nas_auth_failed",
+    "nas_timeout",
+    "nas_dns_failed",
+    "nas_unreachable",
+    "nas_connection_failed",
+}
 
 
 def reject(code="agent_resource_scope_denied"):
@@ -414,7 +421,9 @@ class ResourceTools:
         try:
             with plugin.access() if plugin and isinstance(context, dict) and context.get("resource_grants") else nullcontext():
                 return self._execute(name, args, context=context, cancelled=cancelled)
-        except NasError:
+        except NasError as exc:
+            if str(exc) in NAS_ERROR_CODES:
+                reject(str(exc))
             reject("agent_resource_permission_changed")
 
     def _execute(self, name, args, *, context, cancelled):
@@ -477,7 +486,8 @@ class ResourceTools:
                         reject("agent_resource_cursor_limit")
                     next_cursor = self._next_cursor(binding, provider_cursor=page["next_cursor"], offset=0)
                 result = {"entries": entries, "truncated": bool(next_cursor), "next_cursor": next_cursor,
-                          "coverage": "Live directory page; continue next_cursor until empty. Not a recursive search or an atomic directory snapshot."}
+                          "coverage": "Live directory page; continue next_cursor until empty. Not a recursive search or an atomic directory snapshot.",
+                          **({"skipped": page["skipped"]} if page.get("skipped") else {})}
             else:
                 with self.nas.lock:
                     cloud_format = self._source(grant["connection_id"])["protocol"] in {"google", "onedrive"}
@@ -518,7 +528,7 @@ class ResourceTools:
 
             cause = exc
             for _ in range(4):
-                if isinstance(cause, (TimeoutError, httpx.TimeoutException)):
+                if action != "list" and isinstance(cause, httpx.TimeoutException):
                     if cancelled():
                         reject("agent_cancelled")
                     self.validate_context(context)
@@ -530,6 +540,8 @@ class ResourceTools:
                 cause = cause.__cause__
                 if cause is None:
                     break
+            if str(exc) in NAS_ERROR_CODES:
+                reject(str(exc))
             reject({"file_too_large": "agent_resource_size_limit",
                     "preview_requires_utf8_text": "agent_resource_requires_utf8_text"}.get(str(exc), "agent_resource_read_failed"))
         if cancelled():
