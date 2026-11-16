@@ -242,6 +242,7 @@ def test_shell_execute_surfaces_active_background_process_hint_to_prevent_overla
             pass
 
 
+
 def test_compound_shell_command_with_unavailable_rg_is_rejected_before_spawn(tmp_path, monkeypatch):
     from test_agent_local_tools import local as local_fixture
 
@@ -274,3 +275,179 @@ def test_compound_shell_command_with_unavailable_rg_is_rejected_before_spawn(tmp
             next(gen)
         except StopIteration:
             pass
+
+
+def _pid_alive(pid: int) -> bool:
+    if os.name == "nt":
+        import ctypes
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            if not ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return False
+            return code.value == STILL_ACTIVE
+        finally:
+            ctypes.windll.kernel32.CloseHandle(handle)
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def test_s04_i23_t1_lifespan_shutdown_hook_kills_all_running_process_groups_first(
+    tmp_path, monkeypatch
+):
+    """T1 (covers Step 2): Node lifespan shutdown invokes Processes.close() first (without relying on atexit) and kills all running agent process groups including spawned child sleepers; POSIX path kills each group via os.killpg."""
+    import signal
+    from pathlib import Path
+    from fastapi.testclient import TestClient
+    from rynmesh.llm_package import process_guard
+    from rynmesh.peer_http import create_app
+    from rynmesh.store import RynmeshStore
+
+    monkeypatch.setenv("RYNMESH_LOCAL_TOKEN", "s04-i23-secret")
+    monkeypatch.delenv("RYNMESH_LLM_SERVICE_MANIFEST", raising=False)
+
+    app = create_app(RynmeshStore(home=tmp_path / "node", network_dir=tmp_path / "net"))
+    processes: Processes = app.state.agent_runtime.tools.local.processes
+    shutdown_order: list[str] = []
+
+    orig_close = processes.close
+    orig_llm_shutdown = app.state.llm_shutdown
+
+    def tracked_processes_close():
+        shutdown_order.append("processes.close")
+        return orig_close()
+
+    def tracked_llm_shutdown():
+        shutdown_order.append("llm_shutdown")
+        return orig_llm_shutdown()
+
+    monkeypatch.setattr(processes, "close", tracked_processes_close)
+    app.state.llm_shutdown = tracked_llm_shutdown
+
+    child_pid_file = tmp_path / "grandchild.pid"
+    parent_with_child_script = (
+        "import subprocess, sys, time; "
+        f"p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(600)']); "
+        f"open({str(child_pid_file)!r}, 'w', encoding='utf-8').write(str(p.pid)); "
+        "print('spawned', flush=True); "
+        "time.sleep(600)"
+    )
+    second_sleeper_script = "import time; print('sleeping', flush=True); time.sleep(600)"
+
+    try:
+        with TestClient(app) as _client:
+            id1 = processes.start(
+                [sys.executable, "-u", "-c", parent_with_child_script],
+                tmp_path,
+                "task_shutdown",
+                600,
+                lambda: True,
+                lambda: False,
+            )
+            id2 = processes.start(
+                [sys.executable, "-u", "-c", second_sleeper_script],
+                tmp_path,
+                "task_shutdown",
+                600,
+                lambda: True,
+                lambda: False,
+            )
+            r1 = processes.read(id1, "task_shutdown", wait_seconds=5)
+            r2 = processes.read(id2, "task_shutdown", wait_seconds=5)
+            assert "spawned" in r1["output"] and r1["running"] is True
+            assert "sleeping" in r2["output"] and r2["running"] is True
+
+            deadline = time.monotonic() + 5.0
+            while not child_pid_file.exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            grandchild_pid = int(child_pid_file.read_text(encoding="utf-8").strip())
+            parent1_pid = processes.items[id1]["process"].pid
+            parent2_pid = processes.items[id2]["process"].pid
+            assert _pid_alive(grandchild_pid)
+
+        # Exiting TestClient runs FastAPI lifespan shutdown (NOT atexit):
+        # Processes.close() must have run FIRST before llm_shutdown, and all processes must be dead.
+        assert shutdown_order and shutdown_order[0] == "processes.close"
+        assert "llm_shutdown" in shutdown_order
+        assert processes.items[id1]["process"].poll() is not None
+        assert processes.items[id2]["process"].poll() is not None
+
+        deadline = time.monotonic() + 3.0
+        while (
+            _pid_alive(parent1_pid) or _pid_alive(parent2_pid) or _pid_alive(grandchild_pid)
+        ) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not _pid_alive(parent1_pid)
+        assert not _pid_alive(parent2_pid)
+        assert not _pid_alive(grandchild_pid)
+    finally:
+        orig_close()
+
+    # Cross-platform verification of POSIX process-group killpg behavior in Processes.close()
+    posix_procs = Processes()
+    killed_pgids: list[tuple[int, int]] = []
+    fake_sigkill = getattr(signal, "SIGKILL", 9)
+    monkeypatch.setattr(process_guard.os, "name", "posix")
+    monkeypatch.setattr(process_guard.signal, "SIGKILL", fake_sigkill, raising=False)
+    monkeypatch.setattr(
+        process_guard.os,
+        "killpg",
+        lambda pgid, sig: killed_pgids.append((pgid, sig)),
+        raising=False,
+    )
+
+    def _make_fake_posix_group(pid: int):
+        state = {"rc": None}
+
+        def _wait(**_kw):
+            state["rc"] = -9
+            return -9
+
+        done_ev = threading.Event()
+        done_ev.set()
+        return {
+            "process": SimpleNamespace(
+                pid=pid,
+                poll=lambda: state["rc"],
+                wait=_wait,
+                kill=lambda: state.update(rc=-9),
+            ),
+            "task_id": "posix_task",
+            "tty": False,
+            "cleanup_done": done_ev,
+            "reader_done": done_ev,
+        }
+
+    posix_procs.items["process_pg1"] = _make_fake_posix_group(41001)
+    posix_procs.items["process_pg2"] = _make_fake_posix_group(41002)
+    posix_procs.close()
+    assert killed_pgids == [(41001, fake_sigkill), (41002, fake_sigkill)]
+
+    # Calling close() a second time (e.g. atexit after lifespan) is idempotent and does not re-signal exited groups
+    posix_procs.close()
+    assert killed_pgids == [(41001, fake_sigkill), (41002, fake_sigkill)]
+
+
+def test_s04_i23_t2_tauri_node_rs_unix_process_group_and_8s_grace_contract():
+    """T2 (covers Step 3): Verify webapp/src-tauri/src/node.rs configures unix process_group(0), sends SIGTERM to -pid, waits 8 seconds (80 * 100ms), then sends SIGKILL to -pid matching plugin_services.rs."""
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[1]
+    node_rs = (repo_root / "webapp" / "src-tauri" / "src" / "node.rs").read_text(encoding="utf-8")
+    plugin_rs = (repo_root / "webapp" / "src-tauri" / "src" / "plugin_services.rs").read_text(encoding="utf-8")
+
+    assert "process_group(0)" in plugin_rs
+    assert "cmd.process_group(0)" in node_rs
+    assert "libc::kill(-pid, libc::SIGTERM)" in node_rs
+    assert "for _ in 0..80" in node_rs
+    assert "libc::kill(-pid, libc::SIGKILL)" in node_rs

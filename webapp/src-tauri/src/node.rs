@@ -340,6 +340,11 @@ fn start_inner(state: &NodeState) -> std::io::Result<()> {
     cmd.stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(log_err));
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
     let child = cmd.spawn()?;
     *guard = Some(child);
     Ok(())
@@ -360,17 +365,20 @@ fn stop_child(state: &NodeState) {
         }
         #[cfg(unix)]
         {
-        let pid = child.id() as i32;
-        unsafe {
-            libc::kill(pid, libc::SIGTERM);
-        }
-        for _ in 0..30 {
-            match child.try_wait() {
-                Ok(Some(_)) => return,
-                Ok(None) => std::thread::sleep(Duration::from_millis(100)),
-                Err(_) => break,
+            let pid = child.id() as i32;
+            unsafe {
+                libc::kill(-pid, libc::SIGTERM);
             }
-        }
+            for _ in 0..80 {
+                match child.try_wait() {
+                    Ok(Some(_)) => return,
+                    Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+                    Err(_) => break,
+                }
+            }
+            unsafe {
+                libc::kill(-pid, libc::SIGKILL);
+            }
         }
         let _ = child.kill();
         let _ = child.wait();

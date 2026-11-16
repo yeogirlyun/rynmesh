@@ -703,6 +703,13 @@ def create_app(store: RynmeshStore | None = None):
         try:
             yield
         finally:
+            agent_runtime = getattr(lifespan_app.state, "agent_runtime", None)
+            agent_local = getattr(getattr(agent_runtime, "tools", None), "local", None)
+            agent_processes = getattr(agent_local, "processes", None)
+            if agent_processes is not None:
+                await _asyncio.to_thread(agent_processes.close)
+            if agent_local is not None:
+                await _asyncio.to_thread(agent_local.close)
             if drop_engine is not None:
                 await _asyncio.to_thread(drop_engine.stop)
             await registry.stop()
