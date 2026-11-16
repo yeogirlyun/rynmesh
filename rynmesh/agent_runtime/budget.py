@@ -5,19 +5,20 @@ import copy
 import math
 import uuid
 
-from .store import AgentError
+from .store import DEFAULT_SETTINGS, AgentError
 
 DEFAULT_LIMITS = {"max_total_model_calls": 128, "max_total_tool_calls": 256,
                   "max_total_tokens": 2000000, "max_total_seconds": 3600}
-RANGES = {"max_total_model_calls": (1, 1024), "max_total_tool_calls": (1, 4096),
-          "max_total_tokens": (1000, 20000000), "max_total_seconds": (10, 86400)}
+RANGES = {"max_total_model_calls": (1, 100000), "max_total_tool_calls": (1, 400000),
+          "max_total_tokens": (1000, 2000000000), "max_total_seconds": (10, 2592000)}
 DEFAULT_CACHED_INPUT_WEIGHT = 0.1
 PEER_CACHED_INPUT_WEIGHT = 1.0
 
 # Where a limit came from. Only "default" limits are host policy that may be
-# extended or continued automatically. "owner" limits were set explicitly and
-# are hard. Rows saved before sources were recorded are "legacy_unknown" and
-# stay hard: a value that happens to equal a default does not prove intent.
+# extended or continued automatically without a hard ceiling. "owner" limits were
+# set explicitly and are hard. Pre-upgrade "legacy_unknown" limits migrate to
+# "default" only when their value equals the shipped default and no owner
+# budget_changed event exists; otherwise they stay hard until released.
 LIMIT_SOURCES = frozenset({"default", "owner", "legacy_unknown"})
 # Per-run limits in row["limits"]. With a "default" source they only size an
 # execution segment: reaching them checkpoints and schedules the next segment.
@@ -121,7 +122,7 @@ def record_request_policy(row, policy):
     safe = {"enforcement": policy["enforcement"], "measurement": "pre_admission_upper_bound"}
     for key in ("provider_timeout_seconds", "effective_timeout_seconds"):
         value = policy.get(key)
-        if value is not None and (type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= 86400):
+        if value is not None and (type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= RANGES["max_total_seconds"][1]):
             raise AgentError("agent_invalid_request_policy")
         safe[key] = value
     for record in reversed(initialize(row)["records"]):
@@ -141,6 +142,50 @@ def validate_limits(value):
     return {**DEFAULT_LIMITS, **value}
 
 
+def _migrate_legacy_default_sources(row, state):
+    sources = state.get("limit_sources")
+    if not isinstance(sources, dict):
+        sources = dict.fromkeys(DEFAULT_LIMITS, "legacy_unknown")
+        state["limit_sources"] = sources
+    else:
+        for key in DEFAULT_LIMITS:
+            if sources.get(key) not in LIMIT_SOURCES:
+                sources[key] = "legacy_unknown"
+    events = row.get("events")
+    if isinstance(events, list) and any(isinstance(ev, dict) and ev.get("type") == "budget_changed" for ev in events):
+        return
+    migrated_limits = []
+    for key, default_val in DEFAULT_LIMITS.items():
+        if sources.get(key) == "legacy_unknown" and state["limits"].get(key) == default_val:
+            sources[key] = "default"
+            migrated_limits.append(key)
+    migrated_segments = []
+    row_limits = row.get("limits") if isinstance(row.get("limits"), dict) else {}
+    for seg_key in SEGMENT_LIMITS:
+        if segment_source(row, seg_key) == "legacy_unknown" and row_limits.get(seg_key) == DEFAULT_SETTINGS[seg_key]:
+            row.setdefault("limits_source", {})[seg_key] = "default"
+            migrated_segments.append(seg_key)
+    if (migrated_limits or migrated_segments) and "event_cursor" in row and "revision" in row:
+        from .protocol import event
+        event(row, "budget_source_migrated", migrated_limits=migrated_limits, migrated_segment_limits=migrated_segments)
+
+
+def release_legacy_limits(row):
+    """Mark every legacy_unknown cumulative or segment limit as default without changing its value."""
+    state = initialize(row)
+    sources = state.setdefault("limit_sources", dict.fromkeys(DEFAULT_LIMITS, "legacy_unknown"))
+    released = []
+    for key in DEFAULT_LIMITS:
+        if limit_source(row, key) == "legacy_unknown":
+            sources[key] = "default"
+            released.append(key)
+    for seg_key in SEGMENT_LIMITS:
+        if segment_source(row, seg_key) == "legacy_unknown":
+            row.setdefault("limits_source", {})[seg_key] = "default"
+            released.append(seg_key)
+    return released
+
+
 def initialize(row):
     if "budget" not in row:
         # Old histories do not reveal complete prior usage. Count known model
@@ -154,9 +199,10 @@ def initialize(row):
                          "round": 1, "records": [], "legacy_usage_unknown": legacy,
                          "legacy_model_calls": legacy_models if legacy else 0, "legacy_tool_calls": legacy_tools,
                          "legacy_seconds": row.get("elapsed_seconds", 0.0) if legacy else 0.0,
-                         # A row with history, or limits stored in the old place, cannot prove default intent.
                          "limit_sources": {key: "legacy_unknown" if legacy or key in explicit else "default"
                                            for key in DEFAULT_LIMITS}}
+        if legacy or explicit:
+            _migrate_legacy_default_sources(row, row["budget"])
     else:
         for rec in row["budget"].get("records", []):
             if (
@@ -170,6 +216,7 @@ def initialize(row):
             ):
                 rec["charged_tokens"] = max(1, min(int(rec.get("input_reservation") or 64), 64))
                 rec["charge_basis"] = "retryable_transport_failure"
+        _migrate_legacy_default_sources(row, row["budget"])
     return row["budget"]
 
 
@@ -208,24 +255,39 @@ def _totals(state, records, *, lifetime):
 
 def public(row):
     state = initialize(row)
+    lifetime = _totals(state, state["records"], lifetime=True)
+    used_by_key = {
+        "max_total_model_calls": lifetime["charged_model_calls"],
+        "max_total_tool_calls": lifetime["charged_tool_calls"],
+        "max_total_tokens": lifetime["charged_tokens"],
+        "max_total_seconds": lifetime["charged_seconds"],
+    }
+    near_limit = [
+        key
+        for key in DEFAULT_LIMITS
+        if limit_source(row, key) == "owner"
+        and state["limits"][key] > 0
+        and used_by_key[key] * 100 >= state["limits"][key] * 85
+    ]
     return {"limits": copy.deepcopy(state["limits"]), "round": state["round"],
             "limit_sources": {key: limit_source(row, key) for key in DEFAULT_LIMITS},
-            "default_ceilings": {key: RANGES[key][1] for key in DEFAULT_LIMITS},
-            "lifetime": _totals(state, state["records"], lifetime=True),
+            "default_ceilings": {key: None for key in DEFAULT_LIMITS},
+            "ranges": {key: list(RANGES[key]) for key in DEFAULT_LIMITS},
+            "near_limit": near_limit,
+            "lifetime": lifetime,
             "current_round": _totals(state, [record for record in state["records"] if record["round"] == state["round"]], lifetime=False),
             "reservation_policy": "Unknown model usage retains the conservative dispatch reservation; cost is unknown without trusted pricing."}
 
 
 def _room(row, state, key, used, need):
-    """Admit `need` more units; only a default limit grows, never past its ceiling."""
+    """Admit `need` more units; only a default limit grows, with no hard ceiling."""
     limits = state["limits"]
     if used + need <= limits[key]:
         return True
-    ceiling = RANGES[key][1]
-    if is_hard(row, key) or used + need > ceiling:
+    if is_hard(row, key):
         return False
     previous = limits[key]
-    limits[key] = min(ceiling, max(previous + DEFAULT_LIMITS[key], int(math.ceil(used + need))))
+    limits[key] = max(previous + DEFAULT_LIMITS[key], int(math.ceil(used + need)))
     if "event_cursor" in row:
         from .protocol import event
         event(row, "budget_auto_extended", limits=copy.deepcopy(limits), extended={key: limits[key]},
@@ -241,7 +303,57 @@ def ensure_default_room(row, key, need):
     totals = _totals(state, state["records"], lifetime=True)
     used = {"max_total_model_calls": totals["charged_model_calls"], "max_total_tool_calls": totals["charged_tool_calls"],
             "max_total_tokens": totals["charged_tokens"], "max_total_seconds": totals["charged_seconds"]}[key]
-    _room(row, state, key, used, min(need, max(0, RANGES[key][1] - used)))
+    _room(row, state, key, used, max(0, need))
+
+
+def extend_defaults_for_owner_turn(row, wrap_reason=None):
+    """Extend default allowances before an owner follow-up on an ended task, with no ceiling."""
+    state = initialize(row)
+    b_limits = state["limits"]
+    b_life = _totals(state, state["records"], lifetime=True)
+    if wrap_reason is None:
+        wrap_reason = (row.get("outcome") or {}).get("budget_wrap_up_reason")
+    auto_extended = {}
+    tok_threshold = min(500000, max(1000, b_limits["max_total_tokens"] // 4))
+    if not is_hard(row, "max_total_tokens") and (
+        b_limits["max_total_tokens"] - b_life["charged_tokens"] <= tok_threshold
+        or wrap_reason == "token_budget_low"
+        or row.get("error") == "agent_token_budget_exhausted"
+    ):
+        new_tok = max(b_limits["max_total_tokens"], b_life["charged_tokens"]) + DEFAULT_LIMITS["max_total_tokens"]
+        if new_tok > b_limits["max_total_tokens"]:
+            b_limits["max_total_tokens"] = new_tok
+            auto_extended["max_total_tokens"] = new_tok
+    if not is_hard(row, "max_total_model_calls") and (
+        b_limits["max_total_model_calls"] - b_life["charged_model_calls"] <= 0
+        or wrap_reason == "model_call_budget_low"
+    ):
+        new_mc = max(b_limits["max_total_model_calls"], b_life["charged_model_calls"]) + DEFAULT_LIMITS["max_total_model_calls"]
+        if new_mc > b_limits["max_total_model_calls"]:
+            b_limits["max_total_model_calls"] = new_mc
+            auto_extended["max_total_model_calls"] = new_mc
+    if isinstance(row.get("outcome"), dict):
+        row["outcome"].pop("budget_wrap_up_reason", None)
+        row["outcome"].pop("budget_limited", None)
+    if not is_hard(row, "max_total_tool_calls") and b_limits["max_total_tool_calls"] - b_life["charged_tool_calls"] <= 0:
+        new_tc = max(b_limits["max_total_tool_calls"], b_life["charged_tool_calls"]) + DEFAULT_LIMITS["max_total_tool_calls"]
+        if new_tc > b_limits["max_total_tool_calls"]:
+            b_limits["max_total_tool_calls"] = new_tc
+            auto_extended["max_total_tool_calls"] = new_tc
+    sec_threshold = min(60.0, max(5.0, b_limits["max_total_seconds"] * 0.1))
+    if not is_hard(row, "max_total_seconds") and min(
+        b_limits["max_total_seconds"] - b_life["charged_seconds"],
+        time_remaining(row),
+    ) <= sec_threshold:
+        new_sec = int(math.ceil(max(b_limits["max_total_seconds"], b_life["charged_seconds"]))) + DEFAULT_LIMITS["max_total_seconds"]
+        if new_sec > b_limits["max_total_seconds"]:
+            b_limits["max_total_seconds"] = new_sec
+            auto_extended["max_total_seconds"] = new_sec
+    if auto_extended and "event_cursor" in row and "revision" in row:
+        from .protocol import event
+        event(row, "budget_auto_extended", limits=copy.deepcopy(b_limits), extended=auto_extended,
+              round=state["round"], reason="default_policy")
+    return auto_extended
 
 
 def reserve(row, kind, stage, *, input_bound=0, output_bound=0, seconds_bound=None):
@@ -329,12 +441,11 @@ def abandon(row):
 
 def time_remaining(row):
     state = initialize(row)
+    if not is_hard(row, "max_total_seconds"):
+        return float("inf")
     # The current flight's time is checked by its own monotonic callback.
     used = sum(record["charged_seconds"] for record in state["records"] if record["status"] != "reserved") + state["legacy_seconds"]
     limit = state["limits"]["max_total_seconds"]
-    if not is_hard(row, "max_total_seconds"):
-        # A default allowance grows at admission; in-flight work is bounded by its ceiling.
-        limit = max(limit, RANGES["max_total_seconds"][1])
     return max(0.0, limit - used - row.get("retry_wait_seconds", 0))
 
 

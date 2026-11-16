@@ -131,7 +131,16 @@ export interface AgentBudgetLimits { max_total_model_calls: number; max_total_to
 export interface AgentBudgetUsage { model_calls: number | null; tool_calls: number | null; charged_model_calls?: number; charged_tool_calls?: number; legacy_usage_unknown?: boolean; input_tokens?: number | null; output_tokens?: number | null; cached_input_tokens?: number | null; known_input_tokens?: number; known_output_tokens?: number; known_cached_input_tokens?: number; total_tokens: number | null; charged_tokens: number; charged_seconds: number; active_seconds: number | null; cost: number | null; usage_complete: boolean; unsettled_operations: number; }
 /** "default" limits are host policy that may grow automatically; "owner" and "legacy_unknown" limits are hard. */
 export type AgentLimitSource = "default" | "owner" | "legacy_unknown";
-export interface AgentBudget { limits: AgentBudgetLimits; round: number; limit_sources?: Partial<Record<keyof AgentBudgetLimits, AgentLimitSource>>; default_ceilings?: Partial<AgentBudgetLimits>; lifetime: AgentBudgetUsage; current_round: AgentBudgetUsage; }
+export interface AgentBudget {
+  limits: AgentBudgetLimits;
+  round: number;
+  limit_sources?: Partial<Record<keyof AgentBudgetLimits, AgentLimitSource>>;
+  default_ceilings?: Partial<Record<keyof AgentBudgetLimits, number | null>>;
+  ranges?: Partial<Record<keyof AgentBudgetLimits, [number, number]>>;
+  near_limit?: Array<keyof AgentBudgetLimits>;
+  lifetime: AgentBudgetUsage;
+  current_round: AgentBudgetUsage;
+}
 export interface AgentRunTiming {
   recorded_seconds: number | null;
   elapsed_seconds: number | null;
@@ -518,7 +527,7 @@ export const rynAgent = {
   skills: () => request<{ skills: AgentSkill[] }>("/skills"),
   preferences: () => request<AgentPreferences>("/preferences"),
   savePreferences: (body: { expected_revision: number; items: AgentPreferences["items"] }) => request<AgentPreferences>("/preferences", "PUT", body),
-  updateBudget: (id: string, body: { limits: Partial<AgentBudgetLimits>; run_max_seconds?: number; expected_control_revision: number; client_request_id: string }) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}/budget`, "PUT", body),
+  updateBudget: (id: string, body: { limits: Partial<AgentBudgetLimits>; run_max_seconds?: number; release_legacy?: boolean; expected_control_revision: number; client_request_id: string }) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}/budget`, "PUT", body),
   previewModel: (id: string, modelID: string, signal?: AbortSignal) => request<AgentModelSwitchPreview>(`/tasks/${encodeURIComponent(id)}/model?model_id=${encodeURIComponent(modelID)}`, "GET", undefined, signal),
   switchModel: (id: string, body: AgentModelSwitchRequest) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}/model`, "PUT", body),
   automations: (signal?: AbortSignal) => request<AgentAutomationsSnapshot>("/automations", "GET", undefined, signal),
