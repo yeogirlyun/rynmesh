@@ -49,6 +49,21 @@ def sha(raw):
     return hashlib.sha256(raw).hexdigest()
 
 
+_PERMISSION_ORDER = ("read_only", "confirm_changes", "workspace", "automatic")
+_WIN_RESERVED_NAMES = frozenset({"CON", "PRN", "AUX", "NUL", *[f"COM{i}" for i in range(1, 10)], *[f"LPT{i}" for i in range(1, 10)]})
+_OUTSIDE_WORKSPACE_CORRECTION = "文件工具只能访问 workspace_root；需要时请主人切到自动处理或改工作区，不要用 shell 绕过"
+
+
+def _has_invalid_windows_parts(path_obj: Path) -> bool:
+    return any(
+        ":" in part
+        or part.endswith((".", " "))
+        or part.split(".")[0].upper() in _WIN_RESERVED_NAMES
+        for part in path_obj.parts
+        if part not in {path_obj.anchor, ".", ".."}
+    )
+
+
 def _control_char_ratio(text: str, *, include_pua: bool = False) -> float:
     if not text:
         return 0.0
@@ -688,8 +703,18 @@ class LocalTools:
 
     def policy(self, context, state=None):
         bound = context.get("local_execution") or {}
-        data = state if state is not None else self.store.inspect(lambda data: {
-            "settings": data["settings"], "projects": data.get("projects", {})})
+        task_id = context.get("task_id")
+
+        def _project(raw_data):
+            tasks_map = raw_data.get("tasks") or {}
+            row = tasks_map.get(task_id) if task_id else None
+            return {
+                "settings": raw_data["settings"],
+                "projects": raw_data.get("projects", {}),
+                "tasks": {task_id: {"permission_mode": row.get("permission_mode")}} if isinstance(row, dict) else {},
+            }
+
+        data = state if state is not None else self.store.inspect(_project)
         current = data["settings"]
         if not current.get("enabled"):
             raise AgentToolRejected("agent_disabled")
@@ -706,8 +731,20 @@ class LocalTools:
             current_root = current.get("workspace_root") or self.store.default_workspace()
         if bound.get("workspace_root", "") != current_root:
             raise AgentToolRejected("agent_workspace_changed_new_task_required")
-        return {"workspace_root": bound.get("workspace_root", ""),
-                "desktop_access": bool(bound.get("desktop_access") and current.get("desktop_access"))}
+        modes = set()
+        if current.get("permission_mode") in _PERMISSION_ORDER:
+            modes.add(current["permission_mode"])
+        row_info = (data.get("tasks") or {}).get(task_id) if task_id else None
+        if isinstance(row_info, dict) and row_info.get("permission_mode") in _PERMISSION_ORDER:
+            modes.add(row_info["permission_mode"])
+        if context.get("permission_mode") in _PERMISSION_ORDER:
+            modes.add(context["permission_mode"])
+        effective_mode = next((m for m in _PERMISSION_ORDER if m in modes), "workspace")
+        return {
+            "workspace_root": bound.get("workspace_root", ""),
+            "desktop_access": bool(bound.get("desktop_access") and current.get("desktop_access")),
+            "permission_mode": effective_mode,
+        }
 
     def path(self, value, context, policy=None):
         policy = policy or self.policy(context)
@@ -716,15 +753,22 @@ class LocalTools:
         root = Path(policy["workspace_root"]).resolve(strict=True)
         if not isinstance(value, str) or not value or "\x00" in value:
             raise AgentToolRejected("agent_local_path_invalid")
-        requested = Path(value)
-        path = (requested if requested.is_absolute() else root / requested).resolve()
-        if not path.is_relative_to(root):
-            raise AgentToolRejected("agent_local_path_outside_workspace")
-        # Windows ADS/device names bypass ordinary file semantics.
-        if os.name == "nt" and any(":" in part or part.endswith((".", " ")) or
-                part.split(".")[0].upper() in {"CON", "PRN", "AUX", "NUL", *[f"COM{i}" for i in range(1, 10)], *[f"LPT{i}" for i in range(1, 10)]}
-                for part in requested.parts if part not in {requested.anchor, ".", ".."}):
+        expanded = os.path.expanduser(value) if (value == "~" or value.startswith(("~/", "~\\"))) else value
+        requested = Path(expanded)
+        is_abs = requested.is_absolute()
+        outside_ok = policy.get("permission_mode") == "automatic" and is_abs
+        # Windows ADS/device names bypass ordinary file semantics; check all segments before & after resolve.
+        if os.name == "nt" and _has_invalid_windows_parts(requested):
             raise AgentToolRejected("agent_local_path_invalid")
+        path = (requested if is_abs else root / requested).resolve()
+        if os.name == "nt" and _has_invalid_windows_parts(path):
+            raise AgentToolRejected("agent_local_path_invalid")
+        if not path.is_relative_to(root):
+            if not outside_ok:
+                raise AgentToolRejected(
+                    "agent_local_path_outside_workspace",
+                    correction=_OUTSIDE_WORKSPACE_CORRECTION,
+                )
         return path
 
     def raw(self, path):
@@ -1117,12 +1161,13 @@ class LocalTools:
     def _patch_plan(self, args, context, policy):
         """Resolve and apply every hunk in memory; raises before any file is written."""
         from . import local_patch
+        outside_ok = policy.get("permission_mode") == "automatic"
         plan, seen = [], set()
         for operation in local_patch.parse(args["patch"]):
             from .file_review import safe_path
-            safe_path(policy["workspace_root"], operation["path"])
+            safe_path(policy["workspace_root"], operation["path"], outside_ok=outside_ok)
             if operation.get("move_to"):
-                safe_path(policy["workspace_root"], operation["move_to"])
+                safe_path(policy["workspace_root"], operation["move_to"], outside_ok=outside_ok)
             path = self.path(operation["path"], context, policy)
             destination = self.path(operation["move_to"], context, policy) if operation.get("move_to") else None
             for target in (path, destination):
@@ -1730,7 +1775,11 @@ class LocalTools:
                 raw = export_bytes(report, path.suffix.lower())
                 if len(raw) > 8 * 1024 * 1024 or cancelled():
                     raise AgentToolRejected("agent_cancelled" if cancelled() else "agent_table_output_limit")
-                self.file_review(task_id, self.path(".", context)).apply([(path, None, raw, None)], operation_id=operation_id)
+                policy = self.policy(context)
+                outside_ok = policy.get("permission_mode") == "automatic"
+                self.file_review(task_id, self.path(".", context, policy)).apply(
+                    [(path, None, raw, None)], operation_id=operation_id, outside_ok=outside_ok
+                )
                 with path.open("rb") as output:
                     written = output.read(8 * 1024 * 1024 + 1)
             if written != raw:
@@ -2164,13 +2213,14 @@ class LocalTools:
             from . import local_patch
             from .file_review import safe_path
             policy = self.policy(context)
+            outside_ok = policy.get("permission_mode") == "automatic"
             parsed_ops = local_patch.parse(args["patch"])
             lock_targets = []
             for op in parsed_ops:
-                safe_path(policy["workspace_root"], op["path"])
+                safe_path(policy["workspace_root"], op["path"], outside_ok=outside_ok)
                 lock_targets.append(self.path(op["path"], context, policy))
                 if op.get("move_to"):
-                    safe_path(policy["workspace_root"], op["move_to"])
+                    safe_path(policy["workspace_root"], op["move_to"], outside_ok=outside_ok)
                     lock_targets.append(self.path(op["move_to"], context, policy))
             with self._path_lock(*lock_targets):
                 if isinstance(approved_preview, dict) and isinstance(approved_preview.get("files"), list):
@@ -2200,7 +2250,9 @@ class LocalTools:
                         changes.extend([(destination, None, item["after"], group), (path, item["before"], None, group)])
                     else:
                         changes.append((path, item["before"], item["after"], None))
-                self.file_review(task_id, policy["workspace_root"]).apply(changes, operation_id=operation_id)
+                self.file_review(task_id, policy["workspace_root"]).apply(
+                    changes, operation_id=operation_id, outside_ok=outside_ok
+                )
                 files = []
                 observed_updates = {path: sha(after) if after is not None else None for path, _, after, _ in changes}
                 for item in plan:
@@ -2214,12 +2266,14 @@ class LocalTools:
                 return {"applied": True, "files": files}
         if name in {"ryn_file_write", "ryn_file_edit", "ryn_file_manage"}:
             from .file_review import safe_path
-            root = self.policy(context)["workspace_root"]
-            safe_path(root, args["path"], allow_directory=name == "ryn_file_manage")
+            policy = self.policy(context)
+            root = policy["workspace_root"]
+            outside_ok = policy.get("permission_mode") == "automatic"
+            safe_path(root, args["path"], allow_directory=name == "ryn_file_manage", outside_ok=outside_ok)
             if args.get("destination"):
-                safe_path(root, args["destination"])
-            path = self.path(args["path"], context)
-            dest_lock = self.path(args["destination"], context) if args.get("destination") else None
+                safe_path(root, args["destination"], outside_ok=outside_ok)
+            path = self.path(args["path"], context, policy)
+            dest_lock = self.path(args["destination"], context, policy) if args.get("destination") else None
             with self._path_lock(path, dest_lock):
                 has_preview_before = isinstance(approved_preview, dict) and "before_sha256" in approved_preview
                 preview_before_sha = approved_preview.get("before_sha256") if has_preview_before else None
@@ -2293,7 +2347,9 @@ class LocalTools:
                     raw = encode_text(content, target_encoding, original_raw=before_bytes, path=args["path"])
                     if len(raw) > MAX_FILE:
                         raise AgentToolRejected("agent_local_file_too_large")
-                    self.file_review(task_id, root).apply([(path, before_bytes, raw, None)], operation_id=operation_id)
+                    self.file_review(task_id, root).apply(
+                        [(path, before_bytes, raw, None)], operation_id=operation_id, outside_ok=outside_ok
+                    )
                     new_sha = sha(raw)
                     self._record_observed_files(context, {path: new_sha})
                     return {"path": str(path), "sha256": new_sha, "bytes": len(raw), "encoding": target_encoding, "written": True,
@@ -2307,7 +2363,9 @@ class LocalTools:
                 if action == "delete":
                     was_file = path.is_file()
                     if was_file:
-                        self.file_review(task_id, root).apply([(path, before_bytes, None, None)], operation_id=operation_id)
+                        self.file_review(task_id, root).apply(
+                            [(path, before_bytes, None, None)], operation_id=operation_id, outside_ok=outside_ok
+                        )
                     else:
                         path.rmdir()
                     if was_file:
@@ -2320,7 +2378,7 @@ class LocalTools:
                 changes = [(destination, None, before_bytes, group)]
                 if action == "move":
                     changes.append((path, before_bytes, None, group))
-                self.file_review(task_id, root).apply(changes, operation_id=operation_id)
+                self.file_review(task_id, root).apply(changes, operation_id=operation_id, outside_ok=outside_ok)
                 dest_sha = sha(self.raw(destination))
                 self._record_observed_files(context, {destination: dest_sha, **({path: None} if action == "move" else {})})
                 return {"path": str(path), "destination": str(destination), "sha256": dest_sha, "action": action}

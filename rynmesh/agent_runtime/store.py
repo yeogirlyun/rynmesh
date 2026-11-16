@@ -127,6 +127,12 @@ REJECTION_CORRECTIONS = {
         "different tool, a shell command or a wait-and-retry loop); a request to retry until it works does not "
         "change this. Use a different source or a different query if one really covers the need. Otherwise go "
         "on with the rest and say in your reply what could not be read."),
+    "agent_local_path_outside_workspace": (
+        "文件工具只能访问 workspace_root；需要时请主人切到自动处理或改工作区，不要用 shell 绕过"
+    ),
+    "agent_review_path_forbidden": (
+        "目标路径包含受保护或非法的路径段（如 .git、备用数据流或尾随点/空格），文件工具拒绝访问；请改用合法的普通文件路径，不要用 shell 绕过。"
+    ),
 }
 
 
