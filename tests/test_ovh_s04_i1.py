@@ -268,25 +268,17 @@ def test_t5_multibyte_utf8_split_across_chunks_decodes_cleanly(tmp_path, monkeyp
 
 def test_t6_long_wait_does_not_repeatedly_decode_full_buffer(tmp_path, monkeypatch):
     """T6: Waiting in Processes.read does not repeatedly decode the buffered output on each poll wakeup (Steps 2, 3, 4)."""
-    assert hasattr(local_processes, "codecs"), "local_processes must use codecs incremental decoder"
-    real_factory = codecs.getincrementaldecoder("utf-8")
+    assert hasattr(local_processes, "OutputDecoder"), "local_processes must use incremental OutputDecoder"
+    real_decoder_cls = local_processes.OutputDecoder
     stats = {"calls": 0, "bytes": 0}
 
-    class CountingDecoder:
-        def __init__(self, errors="strict"):
-            self._inner = real_factory(errors=errors)
-            self.errors = errors
-
-        def decode(self, input_bytes, final=False):
+    class CountingOutputDecoder(real_decoder_cls):
+        def decode(self, input_bytes: bytes, final: bool = False) -> str:
             stats["calls"] += 1
             stats["bytes"] += len(input_bytes)
-            return self._inner.decode(input_bytes, final=final)
+            return super().decode(input_bytes, final=final)
 
-    monkeypatch.setattr(
-        local_processes.codecs,
-        "getincrementaldecoder",
-        lambda name: CountingDecoder if name.lower().replace("-", "") == "utf8" else codecs.getincrementaldecoder(name),
-    )
+    monkeypatch.setattr(local_processes, "OutputDecoder", CountingOutputDecoder)
 
     processes = Processes()
     script = (
