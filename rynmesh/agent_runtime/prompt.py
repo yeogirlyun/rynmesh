@@ -207,9 +207,9 @@ def authority(row: dict) -> str:
     if 0 < len(port) <= 5 and port.isascii() and port.isdigit() and 0 < int(port) <= 65535:
         context["local_control_api"] = {"origin": f"http://127.0.0.1:{int(port)}", "schema_path": "/openapi.json"}
     context["file_output_policy"] = (
-        "Edit workspace_root text files via ryn_apply_patch (multi-file); generate images via ryn_image_generate; download URLs/fileRef via ryn_download_file; use shell for other binaries. Confirm outputs via readback or workspace_files. "
-        "Link files as [name](absolute-path) with forward slashes (<paths with spaces>); embed images as ![desc](absolute-path). "
-        "Use workspace_root without asking for a folder."
+        "Create and edit text files in workspace_root with ryn_apply_patch (several files per patch); generate images with ryn_image_generate; download URLs or plugin fileRef values with ryn_download_file; other binary files may use shell. Confirm outputs via readback or workspace_files. "
+        "Link final files as [name](absolute-path) with forward slashes, <paths with spaces>; embed images as ![description](absolute-path). "
+        "Use the supplied workspace without asking for a folder."
         + (" For connected cloud drives (e.g. Baidu Netdisk / 百度网盘, Google Drive, OneDrive) and NAS resources, use ryn_list_resource_roots, ryn_list_resources, ryn_create_directory, ryn_upload_resource_file, and ryn_create_text_file directly instead of searching the local OS desktop or filesystem."
            if (row.get("scope") or {}).get("resource_grants") else "")
     )
