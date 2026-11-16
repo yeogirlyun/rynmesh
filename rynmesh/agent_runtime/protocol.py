@@ -22,6 +22,14 @@ def digest(value: Any) -> str:
     return hashlib.sha256(encoded(value)).hexdigest()
 
 
+def bound_preview(preview: Any) -> Any:
+    """Return a deep copy of preview without top-level volatile display fields."""
+    copied = copy.deepcopy(preview)
+    if isinstance(copied, dict):
+        copied.pop("display", None)
+    return copied
+
+
 def sanitized(value: Any, depth: int = 0) -> Any:
     """Defense in depth; integrations must also expose only explicit safe fields."""
     if depth > 20:
