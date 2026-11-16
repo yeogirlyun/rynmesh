@@ -659,6 +659,9 @@ class LocalTools:
             return True
         return self.store.transaction(save)
 
+    def running_processes(self, task_id):
+        return list(self.processes.running_for_operation(task_id))
+
     def collect_command_artifacts(self, task_id):
         with self.processes.lock:
             items = [(ident, item) for ident, item in self.processes.items.items()
