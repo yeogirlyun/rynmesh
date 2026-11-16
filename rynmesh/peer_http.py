@@ -2047,6 +2047,7 @@ def create_app(store: RynmeshStore | None = None):
     def local_recap_settings(request: FastAPIRequest) -> dict[str, Any]:
         local_control(request)
         config = _recap_config()
+        has_pw = bool(config.smtp_password)
         return {
             "to_address": config.to_address,
             "from_address": config.from_address,
@@ -2057,7 +2058,8 @@ def create_app(store: RynmeshStore | None = None):
             "base_url": config.base_url,
             "per_source": config.per_source,
             # never echo the password back
-            "password_set": bool(config.smtp_password),
+            "has_smtp_password": has_pw,
+            "password_set": has_pw,
             "pdf_available": recap_service.pdf_available(),
             "send_hour_utc": int(_settings.get().get("recap", {}).get("send_hour_utc", 13)),
             "enabled": bool(_settings.get().get("recap", {}).get("enabled", False)),
@@ -2066,6 +2068,10 @@ def create_app(store: RynmeshStore | None = None):
 
     @app.patch("/api/local/recap/settings")
     async def local_recap_settings_update(request: FastAPIRequest) -> dict[str, Any]:
+        import base64
+
+        from . import os_secret
+
         local_control(request)
         body = await request.json()
         current = dict(_settings.get().get("recap", {}) or {})
@@ -2075,10 +2081,17 @@ def create_app(store: RynmeshStore | None = None):
             "smtp_host",
             "smtp_user",
             "base_url",
-            "smtp_password",
         ):
             if key in body:
                 current[key] = str(body[key])
+        if "smtp_password" in body:
+            raw_pw = str(body["smtp_password"] or "").strip()[:512]
+            current["smtp_password"] = None
+            current["smtp_password_protected"] = (
+                base64.b64encode(os_secret.protect(raw_pw.encode("utf-8"))).decode("ascii")
+                if raw_pw
+                else ""
+            )
         for key in ("smtp_port", "per_source", "send_hour_utc"):
             if key in body:
                 current[key] = int(body[key])

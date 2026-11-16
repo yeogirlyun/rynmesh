@@ -81,7 +81,7 @@ def test_t1_new_keys_and_nas_files_have_expected_dacl(tmp_path: Path):
 
     nas = NasPlugin(nas_home)
     nas.save()
-    _assert_restricted_file_acl(nas_home / "plugins" / "nas" / "key")
+    _assert_restricted_file_acl(nas_home / "plugins" / "nas" / "key.protected")
     _assert_restricted_file_acl(nas_home / "plugins" / "nas" / "state.enc")
 
 

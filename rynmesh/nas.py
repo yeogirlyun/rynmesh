@@ -22,6 +22,7 @@ from xml.etree import ElementTree
 
 from cryptography.fernet import Fernet, InvalidToken
 
+from . import os_secret
 from .atomic_io import AtomicIOError, atomic_write_bytes
 from .private_permissions import ensure_private_file_acl, mark_key_protection
 
@@ -275,6 +276,7 @@ class NasPlugin:
                 ts = int(time.time())
                 self._quarantine_file(state_path, ts)
                 if not key_loaded:
+                    self._quarantine_file(self.directory / "key.protected", ts)
                     self._quarantine_file(self.directory / "key", ts)
                 self.state = {"enabled": False, "sources": []}
                 self.cipher = None
@@ -293,11 +295,36 @@ class NasPlugin:
         self.directory_cache = DirectoryCache(self)
 
     def _load_cipher(self):
-        key_path = self.directory / "key"
-        raw = key_path.read_bytes()
-        cipher = Fernet(raw)
-        ensure_private_file_acl(key_path, track_key_status=True, logger=logger)
-        return cipher
+        protected_path = self.directory / "key.protected"
+        legacy_path = self.directory / "key"
+        if protected_path.exists() or protected_path.is_symlink():
+            raw = os_secret.unprotect(protected_path.read_bytes())
+            cipher = Fernet(raw)
+            ensure_private_file_acl(protected_path, track_key_status=True, logger=logger)
+            if legacy_path.exists() or legacy_path.is_symlink():
+                self._backup_legacy_key(legacy_path, int(time.time()))
+            return cipher
+        if legacy_path.exists() or legacy_path.is_symlink():
+            raw = legacy_path.read_bytes()
+            cipher = Fernet(raw)
+            self._write_private(protected_path, os_secret.protect(raw))
+            self._backup_legacy_key(legacy_path, int(time.time()))
+            return cipher
+        raise FileNotFoundError("nas_key_missing")
+
+    @staticmethod
+    def _backup_legacy_key(path: Path, ts: int) -> None:
+        if not path.exists() and not path.is_symlink():
+            return
+        target = path.with_name(f"{path.name}.bak-{ts}")
+        counter = 1
+        while target.exists() or target.is_symlink():
+            target = path.with_name(f"{path.name}.bak-{ts}-{counter}")
+            counter += 1
+        try:
+            path.rename(target)
+        except OSError as exc:
+            logger.warning("Failed to rename migrated NAS legacy key (%s)", type(exc).__name__)
 
     @staticmethod
     def _quarantine_file(path: Path, ts: int) -> None:
@@ -340,20 +367,27 @@ class NasPlugin:
     def _save(self):
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         if self.cipher is None:
-            key_path = self.directory / "key"
-            if key_path.exists() or key_path.is_symlink():
+            protected_path = self.directory / "key.protected"
+            legacy_path = self.directory / "key"
+            if (
+                protected_path.exists()
+                or protected_path.is_symlink()
+                or legacy_path.exists()
+                or legacy_path.is_symlink()
+            ):
                 try:
                     self.cipher = self._load_cipher()
                 except (OSError, ValueError) as exc:
                     ts = int(time.time())
-                    self._quarantine_file(key_path, ts)
+                    self._quarantine_file(protected_path, ts)
+                    self._quarantine_file(legacy_path, ts)
                     logger.warning(
                         "NAS key corrupted (%s); isolated corrupt key and creating a new key",
                         type(exc).__name__,
                     )
             if self.cipher is None:
                 key = Fernet.generate_key()
-                self._write_private(key_path, key)
+                self._write_private(protected_path, os_secret.protect(key))
                 self.cipher = Fernet(key)
         data = self.cipher.encrypt(json.dumps(self.state).encode("utf-8"))
         self._write_private(self.directory / "state.enc", data)
