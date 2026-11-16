@@ -125,10 +125,10 @@ export default function NodeSites() {
               {t("sites.openToColleagues")}
             </label>
             <span className={`ns-pill${site.enabled ? " is-online" : ""}`}>
-              {site.enabled ? t("sites.openState") : t("sites.closedState")}
+              {site.available === false ? t("sites.errors.site_unavailable") : site.enabled ? t("sites.openState") : t("sites.closedState")}
             </span>
-            {site.site_id === "image-studio" && <button className="ns-button"
-              onClick={() => navigate("/apps/sites/image-studio")}>{t("sites.manage")}</button>}
+            {site.owner_path && <button className="ns-button"
+              onClick={() => navigate(`/apps/sites/${encodeURIComponent(site.site_id)}`)}>{t("sites.manage")}</button>}
           </div>
           <div className="ns-mine-row">
             <label>

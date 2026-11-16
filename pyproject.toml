@@ -124,7 +124,6 @@ include = ["rynmesh*"]
 "rynmesh" = ["webui/**/*", "locales/*.json", "bin/*"]
 "rynmesh.friends" = ["invitation.html", "invitation.js"]
 # The image studio page, served to colleagues through node sites.
-"rynmesh.image_studio" = ["web/*"]
 
 [tool.ruff]
 line-length = 100
