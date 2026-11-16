@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeout
 from typing import Any, Callable
 
 from ..drop import codec
@@ -35,6 +35,8 @@ from .store import SiteStore
 
 AUTH_TTL_S = 60.0
 LIST_TTL_S = 60.0
+STATUS_TIMEOUT_S = 4.0
+MAX_STATUS_PROBES = 8
 
 
 class SiteClient:
@@ -45,6 +47,39 @@ class SiteClient:
         self._lock = threading.Lock()
         self._auth: dict[tuple[str, str, str], float] = {}
         self._lists: dict[tuple[str, str], tuple[float, list[dict[str, Any]]]] = {}
+        self._status_probes: dict[tuple[str, str], Future] = {}
+
+    def _status_probe(self, resource: str, peer_id: str, *, fresh: bool):
+        # NAT discovery may take a minute. Keep it running for eventual recovery,
+        # but never hold the trusted frame's offline indicator behind that work.
+        # One worker per peer also prevents overlapping polls queuing fresh probes.
+        key = (resource, peer_id)
+        with self._lock:
+            future = self._status_probes.get(key)
+            if future is None:
+                if len(self._status_probes) >= MAX_STATUS_PROBES:
+                    self._status_probes = {k: f for k, f in self._status_probes.items() if not f.done()}
+                if len(self._status_probes) >= MAX_STATUS_PROBES:
+                    raise SiteError("site_offline", 502)
+                future = Future()
+                self._status_probes[key] = future
+
+                def run():
+                    try:
+                        future.set_result(self._probe(resource, peer_id, fresh=fresh))
+                    except Exception as exc:
+                        future.set_exception(exc)
+
+                threading.Thread(target=run, name="site-status-probe", daemon=True).start()
+        try:
+            return future.result(timeout=STATUS_TIMEOUT_S)
+        except FutureTimeout:
+            raise SiteError("site_offline", 502) from None
+        finally:
+            if future.done():
+                with self._lock:
+                    if self._status_probes.get(key) is future:
+                        self._status_probes.pop(key, None)
 
     # ---- helpers ---------------------------------------------------------------
     def _member(self, resource: str, peer_id: str) -> dict[str, Any]:
@@ -167,7 +202,7 @@ class SiteClient:
         member = self._member(row["resource"], row["peer_id"])
         online, route = False, None
         try:
-            probe = self._probe(row["resource"], row["peer_id"], fresh=fresh)
+            probe = self._status_probe(row["resource"], row["peer_id"], fresh=fresh)
             online, route = True, probe.route
         except SiteError as exc:
             if exc.code != "site_offline":

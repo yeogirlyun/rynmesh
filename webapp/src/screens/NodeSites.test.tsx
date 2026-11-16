@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, expect, it, vi } from "vitest";
@@ -31,6 +31,25 @@ function renderWindow(path: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   api.mine.mockResolvedValue({ sites: [], members: [] });
+});
+
+it("polls without overlapping a slow check and reloads after recovery", async () => {
+  vi.useFakeTimers();
+  let resolve!: (value: OpenedSiteStatus) => void;
+  api.status.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+  const view = renderWindow(`/apps/sites/open/${KEY}`);
+  try {
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(api.status).toHaveBeenCalledTimes(1);
+    await act(async () => { resolve(status({ online: false })); });
+    expect(view.container.querySelector("iframe")).toBeNull();
+    api.status.mockResolvedValue(status());
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(view.container.querySelector("iframe")).not.toBeNull();
+  } finally {
+    view.unmount();
+    vi.useRealTimers();
+  }
 });
 
 it("shows the page in an isolated frame under a bar Ryn draws", async () => {
