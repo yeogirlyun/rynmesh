@@ -19,6 +19,24 @@ class FriendCryptoError(ValueError):
     pass
 
 
+class FriendClockSkewError(FriendCryptoError):
+    def __init__(self, server_time: int) -> None:
+        super().__init__("friend_clock_skew")
+        self.server_time = int(server_time)
+
+
+def check_permissions(raw_permissions: object) -> tuple[list[str], list[str]]:
+    if (
+        not isinstance(raw_permissions, (list, tuple))
+        or any(not isinstance(p, str) or not 0 < len(p) <= 128 for p in raw_permissions)
+        or len(set(raw_permissions)) != len(raw_permissions)
+        or not set(PERMISSIONS).issubset(raw_permissions)
+    ):
+        raise FriendCryptoError("invalid_invite")
+    ignored = [p for p in raw_permissions if p not in PERMISSIONS]
+    return list(PERMISSIONS), ignored
+
+
 def b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
 
@@ -59,8 +77,8 @@ def parse_invite(
     payload = signed.payload
     if payload.get("kind") != INVITE_KIND or payload.get("peer_id") != signed.public_key:
         raise FriendCryptoError("invalid_invite")
-    if tuple(payload.get("permissions") or ()) != PERMISSIONS:
-        raise FriendCryptoError("invalid_invite")
+    _, ignored_permissions = check_permissions(payload.get("permissions"))
+    object.__setattr__(signed, "ignored_permissions", ignored_permissions)
     if payload.get('purpose') not in {None, 'friend', 'ai'}:
         raise FriendCryptoError('invalid_invite')
     if payload.get('purpose') == 'ai':
@@ -177,7 +195,7 @@ def verify_auth(
     now: int,
 ) -> None:
     if abs(now - timestamp) > AUTH_WINDOW_SECONDS:
-        raise FriendCryptoError("friend_auth_failed")
+        raise FriendClockSkewError(now)
     expected = auth_headers(
         secret,
         method=method,

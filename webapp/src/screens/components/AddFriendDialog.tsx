@@ -101,6 +101,7 @@ export default function AddFriendDialog(props: AddFriendProps) {
             <div><dt>{tr("Allows")}</dt><dd>{tr("Messages, attachments up to 5 MiB, content cards")}</dd></div>
             <div><dt>{tr("Stays off")}</dt><dd>{review.preview.purpose === "ai" ? "Other AI services, VPN, access to your files and credits" : tr("AI, VPN, access to your files and credits")}</dd></div>
           </dl>
+          {review.preview.ignored_permissions && review.preview.ignored_permissions.length > 0 ? <p className="rq-warn-note" role="status">{tr("对方版本更新，有 {{count}} 项新权限本机不支持", { count: review.preview.ignored_permissions.length })}</p> : null}
           {review.preview.ai && <section aria-label={tr("AI invitation details")}>
             <p>{tr("Model:")} {review.preview.ai.service.model_alias} · {review.preview.ai.ready ? "Model ready" : "Model not ready"} · {review.preview.ai.sharing ? "Sharing enabled" : "Sharing paused"}</p>
             <p>{tr("Your questions go to")} {review.preview.node_name}{tr("'s device. No model download or API key is needed here.")}</p>
