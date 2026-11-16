@@ -190,6 +190,7 @@ class RynTools:
 
     def forget_task(self, task_id, *, operation_ids):
         try:
+            ArtifactTransfers(self.local.store).forget_task(task_id)
             self.resource_writes.forget_task(task_id)
             self.source_drafts.forget_task(task_id)
             self.friend_sharing.forget_task(task_id)
