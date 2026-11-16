@@ -10,6 +10,7 @@ from test_agent_runtime import advance, approve, assistant, fit_window, make_run
 from test_agent_tool_menu import ManyTools
 
 from rynmesh.agent_runtime import tool_menu
+from rynmesh.agent_runtime.prompt import PROGRESS_TAIL_PREFIX
 from rynmesh.agent_runtime.runtime import AgentRuntime
 from rynmesh.agent_runtime.store import AgentStore, encoded
 from rynmesh.agent_runtime.tools import RynTools
@@ -47,7 +48,8 @@ def test_fitting_raw_discovery_evidence_does_not_spend_a_summary(tmp_path):
     assert cap * 0.8 < request_size(runtime._context(before), runtime._specs(before)) < cap
     advance(runtime)
     assert len(model.calls) == 1 and model.calls[0][2]
-    assert model.calls[0][1][-2:] == [{k: v for k, v in m.items() if k != "context_epoch"}
+    sent = [m for m in model.calls[0][1] if not str(m.get("content") or "").startswith(PROGRESS_TAIL_PREFIX)]
+    assert sent[-2:] == [{k: v for k, v in m.items() if k != "context_epoch"}
                                    for m in evidence["messages"][1:3]]
     after = runtime.store.read()["tasks"][task["id"]]
     assert not after.get("context_checkpoint")
@@ -103,7 +105,8 @@ def test_real_resource_tools_reach_body_and_approved_artifact_under_pressure(wri
                     return assistant(json.dumps(observed_state(payload["history"], previous)))
                 return assistant(json.dumps({"status": "passed", "summary": "Created content was mechanically read back.",
                     "uncovered_requirements": [], "evidence_refs": [e["id"] for e in payload["evidence"]]}))
-            assert [m["content"] for m in messages if m["role"] == "user"] == owners
+            assert [m["content"] for m in messages if m["role"] == "user"
+                    and not str(m.get("content") or "").startswith(PROGRESS_TAIL_PREFIX)] == owners
             state, references = {}, {}
             for m in messages:
                 if m.get("content", "").startswith("Historical checkpoint"):
