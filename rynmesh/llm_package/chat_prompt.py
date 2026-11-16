@@ -9,8 +9,10 @@ CHAT_FORMAT = "chat_messages_v1"
 def decode_chat_prompt(prompt: str, prompt_format: str) -> list[dict[str, str]] | None:
     if prompt_format == "text":
         return None
-    if prompt_format != CHAT_FORMAT or len(prompt.encode()) > 64 * 1024:
-        raise ValueError("unsupported or oversized prompt format")
+    if prompt_format != CHAT_FORMAT:
+        raise ValueError("prompt format is not supported")
+    if len(prompt.encode()) > 64 * 1024:
+        raise ValueError("chat prompt exceeds 64 KiB; send messages in the chat field instead")
     try:
         messages = json.loads(prompt)
     except (ValueError, RecursionError):

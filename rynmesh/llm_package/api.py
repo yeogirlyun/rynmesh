@@ -26,7 +26,7 @@ from rynmesh.private_permissions import ensure_private_file_acl, restrict_window
 
 from . import codex_threads
 from .adapters import actual_usage
-from .api_formats import StreamFormat, convert_response, normalize, sse
+from .api_formats import StreamFormat, convert_response, normalize_with_ignored, sse
 from .chat import completion
 from .safety import MAX_OUTPUT, MAX_REQUEST, install_body_limit
 from .service_view import is_usable
@@ -197,21 +197,25 @@ def install_inference_api(app: Any, *, home: Path, store: Any, active_manager: A
     async def set_model_alias(name: str, request: Request):
         try:
             value = await request.json()
+            if not isinstance(value, dict):
+                raise ValueError("request must be a JSON object")
             target = value.get("target")
             catalog = await asyncio.to_thread(model_catalog)
             if not isinstance(target, str) or not any(item["id"] == target for item in catalog):
                 raise HTTPException(400, "choose an available model target")
             keys.set_alias(name, target)
             return {"name": name, "target": target}
-        except (ValueError, TypeError, AttributeError) as exc:
+        except (ValueError, TypeError) as exc:
             raise HTTPException(400, str(exc)) from exc
 
     @app.post("/api/local/llm/api-keys")
     async def create_key(request: Request):
         try:
             value = await request.json()
+            if not isinstance(value, dict):
+                raise ValueError("request must be a JSON object")
             return keys.create(value.get("name", ""), value.get("output_token_limit", 100000))
-        except (ValueError, TypeError, AttributeError) as exc:
+        except (ValueError, TypeError) as exc:
             raise HTTPException(400, str(exc)) from exc
 
     @app.delete("/api/local/llm/api-keys/{key_id}")
@@ -220,8 +224,14 @@ def install_inference_api(app: Any, *, home: Path, store: Any, active_manager: A
         return {"revoked": True}
 
     def error(exc: Exception, protocol: str) -> JSONResponse:
-        status = exc.status_code if isinstance(exc, HTTPException) else 400 if isinstance(exc, (ValueError, TypeError, KeyError, AttributeError, IndexError)) else 502
-        message = str(exc.detail) if isinstance(exc, HTTPException) else str(exc) if status == 400 else "model_inference_failed"
+        if isinstance(exc, HTTPException):
+            status, message = exc.status_code, str(exc.detail)
+        elif isinstance(exc, (ValueError, TypeError)):
+            status, message = 400, str(exc)
+        elif isinstance(exc, (KeyError, AttributeError, IndexError)):
+            status, message = 500, "internal_error"
+        else:
+            status, message = 502, "model_inference_failed"
         kind = "authentication_error" if status == 401 else "permission_error" if status == 403 else "rate_limit_error" if status == 429 else "invalid_request_error" if status < 500 else "api_error"
         body = {"error": {"type": kind, "message": message}}
         if protocol == "messages":
@@ -249,7 +259,8 @@ def install_inference_api(app: Any, *, home: Path, store: Any, active_manager: A
             body = json.loads(raw)
             if not isinstance(body, dict):
                 raise ValueError("request must be a JSON object")
-            chat = normalize(body, protocol)
+            chat, ignored_list = normalize_with_ignored(body, protocol)
+            ignored_params = set(ignored_list)
             catalog = await asyncio.to_thread(model_catalog)
             requested = body.get("model")
             if not isinstance(requested, str):
@@ -268,7 +279,11 @@ def install_inference_api(app: Any, *, home: Path, store: Any, active_manager: A
                     raise HTTPException(400, "CLI API mode does not support streaming yet")
                 if target["adapter"] == "claude_cli" and (chat.get("tools") or chat.get("tool_choice", "auto") not in ("auto", "none")):
                     raise HTTPException(400, "CLI API mode does not support client tool calls")
-                unsupported = set(chat) & {"temperature", "top_p", "stop", "enable_thinking"}
+                for cli_ignored in ("temperature", "top_p"):
+                    if cli_ignored in chat:
+                        chat.pop(cli_ignored, None)
+                        ignored_params.add(cli_ignored)
+                unsupported = set(chat) & {"stop", "enable_thinking"}
                 if unsupported:
                     raise HTTPException(400, "CLI API mode does not support " + ", ".join(sorted(unsupported)))
             # Client defaults often describe a larger model (e.g. 128k output).
@@ -278,7 +293,12 @@ def install_inference_api(app: Any, *, home: Path, store: Any, active_manager: A
             available = target["context_window"] - estimated_input
             if available < 1:
                 raise HTTPException(400, "estimated context window exceeded")
-            chat["max_tokens"] = min(chat["max_tokens"], target["max_output_tokens"], available)
+            requested_max = chat.get("max_tokens")
+            chat["max_tokens"] = min(
+                requested_max if requested_max is not None else target["max_output_tokens"],
+                target["max_output_tokens"],
+                available,
+            )
             task_id = "api_" + uuid.uuid4().hex
             manager = (local_manager_for(target["service_id"]) if local_manager_for
                        else active_manager()) if target["source"] == "local" else None
@@ -353,6 +373,12 @@ def install_inference_api(app: Any, *, home: Path, store: Any, active_manager: A
                 except HTTPException:
                     pass
 
+        ignored_headers = (
+            {"X-Ryn-Ignored-Parameters": ", ".join(sorted(ignored_params))}
+            if ignored_params
+            else {}
+        )
+
         if not chat.get("stream"):
             # Watch a disconnected client while keeping the worker alive for cleanup.
             task = asyncio.create_task(run(None))
@@ -362,7 +388,8 @@ def install_inference_api(app: Any, *, home: Path, store: Any, active_manager: A
                     if await request.is_disconnected():
                         await asyncio.to_thread(cancel)
                         break
-                return convert_response(await asyncio.shield(task), protocol)
+                payload = convert_response(await asyncio.shield(task), protocol, request_body=body)
+                return JSONResponse(payload, headers=ignored_headers)
             except asyncio.CancelledError:
                 cleanup = asyncio.create_task(asyncio.to_thread(cancel))
                 cleanup.add_done_callback(lambda future: future.exception() if not future.cancelled() else None)
@@ -371,7 +398,7 @@ def install_inference_api(app: Any, *, home: Path, store: Any, active_manager: A
                 return error(exc, protocol)
 
         async def generate():
-            formatter = StreamFormat(protocol, model["id"], task_id)
+            formatter = StreamFormat(protocol, model["id"], task_id, request_body=body)
             try:
                 for value in formatter.start():
                     yield value
@@ -401,7 +428,7 @@ def install_inference_api(app: Any, *, home: Path, store: Any, active_manager: A
 
         from starlette.background import BackgroundTask
 
-        return StreamingResponse(generate(), media_type="text/event-stream", headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"}, background=BackgroundTask(release_unused))
+        return StreamingResponse(generate(), media_type="text/event-stream", headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no", **ignored_headers}, background=BackgroundTask(release_unused))
 
     @app.post("/v1/chat/completions")
     async def chat_completions(request: Request):
