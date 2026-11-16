@@ -51,7 +51,7 @@ def upstream(protocol, mode, failure):
         def do_POST(self):
             requests.append({"path": self.path, "body": json.loads(self.rfile.read(int(self.headers["Content-Length"])))})
             if failure.startswith("http_"):
-                payload = json.dumps({"error": {"message": "PRIVATE_PROVIDER_ERROR"}}).encode()
+                payload = json.dumps({"error": {"type": "invalid_request_error", "message": "PRIVATE_PROVIDER_ERROR"}}).encode()
                 self.send_response(int(failure.removeprefix("http_")))
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(payload)))
@@ -105,7 +105,7 @@ def test_native_protocol_failure_is_terminal_without_second_model_request(node, 
         assert row["status"] == "failed", row
         assert len(requests) == 1
         assert requests[0]["path"] == ("/v1/responses" if protocol == "openai_responses" else "/v1/messages")
-        assert row["error"] == ("agent_model_protocol_unsupported" if failure.startswith("http_") else "agent_model_protocol_invalid")
+        assert row["error"] == ("agent_model_request_rejected" if failure.startswith("http_") else "agent_model_protocol_invalid")
         assert not any(event["type"] == "model_retry_scheduled" for event in row["events"])
         assert not any(event["type"] == "tool_call" for event in row["events"])
         assert not stored.get("operation_receipts") and not stored["queue"]

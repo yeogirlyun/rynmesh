@@ -105,7 +105,9 @@ def test_transport_failure_retains_only_unexpired_authorized_snapshot(space_pair
     assert p.consumer.records() == rows
     assert p.consumer.cache[p.locator["peer_id"]]["checked_at"] == checked
     p.consumer.clock = lambda: checked + 121
-    assert not p.consumer.records()
+    stale = p.consumer.records()
+    assert len(stale) == 1 and stale[0]["catalog_state"] == "stale" and stale[0]["available"] is False
+    assert expected(stale[0], p.child.store.peer_id) is None
     p.consumer.clock = lambda: checked + 1
     p.child.set_policy("local")
     assert not p.consumer.records()
@@ -197,7 +199,7 @@ def test_space_catalog_rejects_replay_tampering_and_mixed_permission(space_pair)
     p.consumer.exchange = capture
     row = p.consumer.refresh(p.locator)[0]
     p.consumer.exchange = lambda *_: captured[0]
-    with pytest.raises(TaskProtocolError, match="space_catalog_refresh_failed"):
+    with pytest.raises(TaskProtocolError, match="space_catalog_response_invalid"):
         p.consumer.refresh(p.locator)
     assert not p.consumer.records()
     row["ai_permission"] = {"relationship_id": "a" * 32, "revision": 1}
@@ -250,8 +252,9 @@ def test_space_catalog_limits_and_stranger_cannot_read_metadata(space_pair):
         assert client.post("/api/peer/llm/space-catalog", json=wire).status_code == 403
     p.publisher.last_requests.clear()
     p.publisher.providers = lambda: [p.provider] * 101
-    with pytest.raises(TaskProtocolError, match="capacity_exhausted"):
-        p.publisher.respond(captured[0])
+    truncated = open_task(p.publisher.respond(captured[0]), recipient_peer_id=p.child.store.peer_id,
+                          recipient_messaging_key=p.keys[1], expected_kind="space_model_catalog_response")[1]
+    assert 0 < len(truncated["services"]) <= 100
     assert not p.traces
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import hashlib
 
+from ..llm_package.context_safety import ESTIMATED_BYTES_PER_TOKEN
 from ..llm_package.image_input_profile import (
     MAX_INTERNAL_RAW_REQUEST_BYTES,
     MAX_INTERNAL_REQUEST_IMAGES,
@@ -17,20 +18,23 @@ from ..llm_package.image_input_profile import (
 from .store import UNKNOWN_WINDOW_CONTEXT_CHARS, AgentError, encoded
 
 VERSION = "configured-output-v2"
-IMAGE_ANALYSIS_VERSION = "canonical-image-heuristic-v1"
+IMAGE_ANALYSIS_VERSION = "canonical-image-heuristic-v2"
 TRANSPORT_MAX_TOKENS = 393216
 MAX_RAW_RESPONSE_BYTES = 256 * 1024
+MAX_PROVIDER_STATE_BYTES = 2 * 1024 * 1024
+MAX_REASONING_CONTENT_BYTES = 256 * 1024
+ANSWER_TOTAL_LIMIT = 1024 * 1024
+ANSWER_PREVIEW_BYTES = 64 * 1024
 MAX_TOOL_CALL_ARGUMENT_BYTES = 96 * 1024
 UNKNOWN_CONTEXT_WINDOW_TOKENS = 32768
 FRAMING_RESERVE_TOKENS = 512
-ESTIMATED_BYTES_PER_TOKEN = 3
 ESTIMATE_BASIS = "serialized_utf8_bytes_div_3_ceil_plus_512_framing_heuristic"
 RYN_ADMISSION_ESTIMATE_BASIS = "serialized_utf8_bytes_as_tokens_ryn_provider_admission"
-IMAGE_ESTIMATE_BASIS = "text_utf8_div_3_ceil_plus_512_and_image_patch16_x3_plus_1024_heuristic"
-IMAGE_TOKEN_FORMULA_BASIS = "heuristic_3_times_ceil_w_16_times_ceil_h_16_plus_1024_not_provider_tokenizer"
-IMAGE_PATCH_SIZE = 16
-IMAGE_TOKENS_PER_PATCH = 3
-IMAGE_FIXED_OVERHEAD_TOKENS = 1024
+IMAGE_ESTIMATE_BASIS = "text_utf8_div_3_ceil_plus_512_and_image_area_div_750_capped_10000_plus_85_heuristic"
+IMAGE_TOKEN_FORMULA_BASIS = "heuristic_min_10000_ceil_w_times_h_div_750_plus_85_not_provider_tokenizer"
+IMAGE_AREA_DIVISOR = 750
+IMAGE_MAX_TOKENS = 10000
+IMAGE_FIXED_OVERHEAD_TOKENS = 85
 IMAGE_TEXT_PROJECTION_PLACEHOLDER = "ryn-verified-image://inline"
 
 MAX_RAW_REQUEST_UTF8_BYTES = MAX_INTERNAL_RAW_REQUEST_BYTES
@@ -78,9 +82,8 @@ def estimate_image_tokens(width: int, height: int) -> int:
     """Conservative model-independent full-image token heuristic; never claimed as provider tokenizer truth."""
     if type(width) is not int or type(height) is not int or width <= 0 or height <= 0:
         raise ValueError("invalid_image_dimensions")
-    patches_w = (width + IMAGE_PATCH_SIZE - 1) // IMAGE_PATCH_SIZE
-    patches_h = (height + IMAGE_PATCH_SIZE - 1) // IMAGE_PATCH_SIZE
-    return IMAGE_TOKENS_PER_PATCH * patches_w * patches_h + IMAGE_FIXED_OVERHEAD_TOKENS
+    area_tokens = (width * height + IMAGE_AREA_DIVISOR - 1) // IMAGE_AREA_DIVISOR
+    return min(IMAGE_MAX_TOKENS, area_tokens) + IMAGE_FIXED_OVERHEAD_TOKENS
 
 
 def _inspect_canonical_image_part(
@@ -368,12 +371,24 @@ def budgeted(policy, allowed):
     return value
 
 
+def answer_limit(row):
+    """Per-response visible prose byte limit, separate from inline tool result limits."""
+    limits = (row or {}).get("limits") if isinstance(row, dict) else None
+    configured = limits.get("max_output_chars", 0) if isinstance(limits, dict) else 0
+    base = configured if type(configured) is int and configured > 0 else 0
+    return min(MAX_RAW_RESPONSE_BYTES, max(base, 256 * 1024))
+
+
 def visible_message(message):
     """Only the typed private continuation and structured tool calls are excluded from visible prose bounds, never unknown data."""
     return {key: value for key, value in message.items() if key not in {"reasoning_content", "provider_state", "tool_calls"}}
 
 
-def storage_growth(visible_limit):
+def storage_growth(visible_limit, *, row=None, kind="tool"):
     # Existing visible result/event reserves plus one raw bounded continuation
-    # in the encrypted message history. No provider reasoning enters events.
+    # in the encrypted message history. Model steps reserve for answer_limit(row).
+    if isinstance(visible_limit, dict):
+        visible_limit = answer_limit(visible_limit)
+    elif row is not None and kind == "model":
+        visible_limit = answer_limit(row)
     return 8 * visible_limit + 128 * 1024 + MAX_RAW_RESPONSE_BYTES

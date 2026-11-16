@@ -21,20 +21,21 @@ def test_peer_msg_delivery_and_history(tmp_path, monkeypatch):
     # Node B receives a sealed envelope and exposes it via local history.
     cb, sb = _node(tmp_path, "B", "2", monkeypatch)
     b_pub = cb.get("/api/peer/pubkey").json()["x25519_pub"]
-    # craft a sealed message from a synthetic sender A using peer_box directly
+    # craft a sealed message from a registered sender A using peer_box directly
     import json
 
     from rynmesh.services import peer_box
+    sa = RynmeshStore(home=tmp_path / "A", network_dir=sb.network_dir)
     a_priv = peer_box.load_or_create_messaging_key(tmp_path / "A" / "messaging.x25519")
     a_pub = peer_box.public_key_b64(a_priv)
+    sa.register_node(endpoints=())
     inner = {"msg_id": "m1", "ts": "2026-06-06T00:00:00+00:00", "kind": "text", "text": "hi B"}
     nonce, ct = peer_box.seal(a_priv, b_pub, json.dumps(inner).encode())
-    # B must be able to resolve A's pubkey — inject it via the test header field
-    header = {"v": 1, "from": "peerA", "to": sb.peer_id, "nonce": nonce, "ciphertext": ct,
-              "from_pub": a_pub}  # v1: sender includes its messaging pubkey (TOFU)
+    header = {"v": 1, "from": sa.peer_id, "to": sb.peer_id, "nonce": nonce, "ciphertext": ct,
+              "from_pub": a_pub}
     r = cb.post("/api/peer/msg", json=header)
     assert r.status_code == 200
-    rh = cb.get("/api/local/messages", params={"peer_id": "peerA"})
+    rh = cb.get("/api/local/messages", params={"peer_id": sa.peer_id})
     assert rh.status_code == 200
     hist = rh.json()
     assert hist[-1]["text"] == "hi B" and hist[-1]["dir"] == "in"
@@ -50,6 +51,7 @@ def test_history_peer_id_with_slash(tmp_path, monkeypatch):
     a_priv = peer_box.load_or_create_messaging_key(tmp_path / "A2" / "messaging.x25519")
     a_pub = peer_box.public_key_b64(a_priv)
     sender = "peer/A+x="
+    cb.app.state.pubkey_cache[sender] = a_pub
     inner = {"msg_id": "m2", "ts": "2026-06-06T00:00:00+00:00", "kind": "text", "text": "slash hi"}
     nonce, ct = peer_box.seal(a_priv, b_pub, json.dumps(inner).encode())
     header = {"v": 1, "from": sender, "to": sb.peer_id, "nonce": nonce, "ciphertext": ct,

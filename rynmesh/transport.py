@@ -25,10 +25,11 @@ Profiles are selected with `RYNMESH_TRANSPORT` (default: `camouflage`).
 
 from __future__ import annotations
 
-import http.client
 import hashlib
+import http.client
 import os
 import ssl
+import tempfile
 import urllib.request
 from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
@@ -49,10 +50,19 @@ _BROWSER_HEADERS = {
     "User-Agent": _BROWSER_UA,
     "Accept": "application/json,text/plain,*/*",
     "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate",
+    "Accept-Encoding": "identity",
 }
 
 NETWORK_KEY_HEADER = "X-Ryn-Auth"
+SERVER_TIME_HEADER = "X-Ryn-Server-Time"
+
+
+def _parse_server_time(raw: Any) -> int | None:
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
 
 
 class TransportError(RuntimeError):
@@ -64,10 +74,11 @@ class TransportError(RuntimeError):
     """
 
     def __init__(self, message: str, *, reason: str = "http_error",
-                 status: int | None = None) -> None:
+                 status: int | None = None, server_time: int | None = None) -> None:
         super().__init__(message)
         self.reason = reason
         self.status = status
+        self.server_time = server_time
 
 
 
@@ -85,6 +96,7 @@ class TransportProfile:
     # The stdlib transport documents these as a plugin-only capability.
     sni: str = ""
     connect_host: str = ""
+    requested_unknown: bool = False
 
 
 def network_key() -> str:
@@ -92,20 +104,20 @@ def network_key() -> str:
     return os.environ.get("RYNMESH_NETWORK_KEY", "").strip()
 
 
-def network_key_header() -> dict[str, str]:
+def network_key_header(key: str | None = None) -> dict[str, str]:
     """Outbound auth header for peers running probe resistance.
 
     Returns ``{X-Ryn-Auth: <salted hash>}`` when a network key is configured,
     else ``{}``. Single source of truth for the header name + value derivation
     so every peer→peer caller authenticates identically.
     """
-    key = network_key()
-    if not key:
+    resolved = network_key() if key is None else key.strip()
+    if not resolved:
         return {}
     # Sent as a salted hash so the raw key is not echoed into peer logs.
     return {
         NETWORK_KEY_HEADER: hashlib.sha256(
-            ("rynmesh-net-key:" + key).encode("utf-8")
+            ("rynmesh-net-key:" + resolved).encode("utf-8")
         ).hexdigest()
     }
 
@@ -183,6 +195,7 @@ def resolve_profile() -> TransportProfile:
     # Default: camouflage — browser-like, broad TLS compatibility. A name that
     # matches a registered plugin transport is preserved so get_transport can
     # dispatch to it (with camouflage defaults as its base profile).
+    known = name == "camouflage" or name in _REGISTRY
     return TransportProfile(
         name=name if name in _REGISTRY else "camouflage",
         headers=dict(_BROWSER_HEADERS),
@@ -191,6 +204,7 @@ def resolve_profile() -> TransportProfile:
         proxies=proxies,
         sni=os.environ.get("RYNMESH_TLS_SNI", "").strip(),
         connect_host=os.environ.get("RYNMESH_CONNECT_HOST", "").strip(),
+        requested_unknown=not known,
     )
 
 
@@ -279,11 +293,19 @@ class StdlibHttpsTransport:
         req = urllib.request.Request(url, data=body, method=method, headers=self._headers(headers))
         try:
             with self._opener.open(req, timeout=timeout_s) as resp:
+                _check_content_encoding(resp)
                 return read_bounded(resp, max_bytes)
+        except TransportError:
+            raise
         except HTTPError as exc:
+            st = (
+                _parse_server_time(exc.headers.get(SERVER_TIME_HEADER))
+                if exc.code == 409 and exc.headers is not None
+                else None
+            )
             raise TransportError(f"http status {exc.code}", reason="http_error",
-                                 status=exc.code) from exc
-        except (URLError, TimeoutError, ssl.SSLError, OSError) as exc:
+                                 status=exc.code, server_time=st) from exc
+        except (URLError, TimeoutError, ssl.SSLError, OSError):
             raise TransportError("http request failed", reason="http_error") from None
 
     def get_bytes(
@@ -308,6 +330,7 @@ class StdlibHttpsTransport:
         req = urllib.request.Request(url, method="GET", headers=self._headers(headers))
         try:
             with self._opener.open(req, timeout=timeout_s) as resp, dest.open("wb") as handle:
+                _check_content_encoding(resp)
                 total = 0
                 while True:
                     chunk = resp.read(1024 * 1024)
@@ -320,7 +343,7 @@ class StdlibHttpsTransport:
         except TransportError:
             dest.unlink(missing_ok=True)
             raise
-        except (HTTPError, URLError, TimeoutError, ssl.SSLError, OSError) as exc:
+        except (HTTPError, URLError, TimeoutError, ssl.SSLError, OSError):
             dest.unlink(missing_ok=True)
             raise TransportError("http request failed", reason="http_error") from None
         return dest
@@ -343,6 +366,7 @@ class StdlibHttpsTransport:
         )
         try:
             with self._opener.open(req, timeout=timeout_s) as resp:
+                _check_content_encoding(resp)
                 total = 0
                 read_chunk = getattr(resp, "read1", resp.read)
                 while True:
@@ -440,8 +464,14 @@ class FrontedHttpsTransport:
                 pass
             raise TransportError("http request failed", reason="http_error") from None
         if (method == "POST" and not 200 <= resp.status < 300) or resp.status >= 400:
+            st = _parse_server_time(resp.getheader(SERVER_TIME_HEADER)) if resp.status == 409 else None
             conn.close()
-            raise TransportError(f"http status {resp.status}", reason="http_error", status=resp.status)
+            raise TransportError(f"http status {resp.status}", reason="http_error", status=resp.status, server_time=st)
+        try:
+            _check_content_encoding(resp)
+        except TransportError:
+            conn.close()
+            raise
         return conn, resp
 
     def _request(self, method: str, url: str, *, body: bytes | None, timeout_s: float,
@@ -555,6 +585,39 @@ def get_pinned_transport(url: str, connect_ip: str) -> FrontedHttpsTransport:
     return FrontedHttpsTransport(replace(profile, connect_host=connect_ip, sni=host))
 
 
+class _BufferedSocket:
+    """Socket wrapper preserving any frame bytes read past ``\\r\\n\\r\\n`` during handshake."""
+
+    def __init__(self, sock: Any, initial: bytes = b"") -> None:
+        self._sock = sock
+        self._buf = bytearray(initial)
+
+    def recv(self, n: int) -> bytes:
+        if self._buf:
+            out = bytes(self._buf[:n])
+            del self._buf[:n]
+            return out
+        return self._sock.recv(n)
+
+    def sendall(self, data: bytes) -> None:
+        self._sock.sendall(data)
+
+    def close(self) -> None:
+        self._sock.close()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._sock, name)
+
+
+def _parse_ws_handshake_status(header_bytes: bytes | bytearray) -> str:
+    first_line = bytes(header_bytes).split(b"\r\n", 1)[0]
+    if first_line.startswith(b"HTTP/"):
+        parts = first_line.split()
+        if len(parts) >= 2 and len(parts[1]) == 3 and all(48 <= b <= 57 for b in parts[1]):
+            return parts[1].decode("ascii")
+    return "unknown"
+
+
 class CdnWebSocketTransport:
     """Tunnel peer traffic over WebSocket to a CDN/relay endpoint.
 
@@ -643,38 +706,80 @@ class CdnWebSocketTransport:
         req_lines += ["", ""]
         raw.sendall("\r\n".join(req_lines).encode("utf-8"))
 
-        # Read the 101 Switching Protocols response.
+        # Read the 101 Switching Protocols response (bounded header block).
         buf = bytearray()
+        max_handshake_bytes = 64 * 1024
         while b"\r\n\r\n" not in buf:
+            if len(buf) >= max_handshake_bytes:
+                raw.close()
+                raise TransportError(
+                    f"ws handshake failed: status {_parse_ws_handshake_status(buf)}",
+                    reason="http_error",
+                )
             chunk = raw.recv(4096)
             if not chunk:
                 raw.close()
-                raise TransportError("ws handshake: connection closed", reason="http_error")
+                if not buf:
+                    raise TransportError("ws handshake: connection closed", reason="http_error")
+                raise TransportError(
+                    f"ws handshake failed: status {_parse_ws_handshake_status(buf)}",
+                    reason="http_error",
+                )
             buf.extend(chunk)
-        if b"101" not in buf[:20]:
+        sep = buf.index(b"\r\n\r\n")
+        header_block = bytes(buf[:sep])
+        leftover = bytes(buf[sep + 4 :])
+        lines = header_block.split(b"\r\n")
+        status_line = lines[0] if lines else b""
+        if not (status_line == b"HTTP/1.1 101" or status_line.startswith(b"HTTP/1.1 101 ")):
             raw.close()
-            raise TransportError(f"ws handshake failed: {buf[:80]!r}", reason="http_error")
-        return raw
+            raise TransportError(
+                f"ws handshake failed: status {_parse_ws_handshake_status(header_block)}",
+                reason="http_error",
+            )
+        expected_accept = _b64.b64encode(
+            hashlib.sha1(nonce.encode("ascii") + self._WS_MAGIC).digest()
+        ).decode("ascii")
+        accept_values: list[str] = []
+        for line in lines[1:]:
+            name, colon, value = line.partition(b":")
+            if colon and name.strip().lower() == b"sec-websocket-accept":
+                accept_values.append(value.strip().decode("latin-1"))
+        if accept_values != [expected_accept]:
+            raw.close()
+            raise TransportError(
+                "ws handshake failed: invalid Sec-WebSocket-Accept",
+                reason="http_error",
+            )
+        return _BufferedSocket(raw, leftover) if leftover else raw
 
     @staticmethod
-    def _ws_send_frame(sock: Any, payload: bytes) -> None:
-        """Send a masked binary WebSocket frame (client→server MUST be masked)."""
+    def _ws_send_frame(sock: Any, payload: bytes, *, opcode: int = 0x02) -> None:
+        """Send a masked WebSocket frame (client→server MUST be masked)."""
         import os as _os
 
         mask = _os.urandom(4)
-        masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
-        length = len(payload)
-        if length < 126:
-            header = bytes([0x82, 0x80 | length]) + mask
-        elif length < 65536:
-            header = bytes([0x82, 0xFE]) + length.to_bytes(2, "big") + mask
+        n = len(payload)
+        masked = (
+            b""
+            if n == 0
+            else (
+                int.from_bytes(payload, "big")
+                ^ int.from_bytes((mask * (n // 4 + 1))[:n], "big")
+            ).to_bytes(n, "big")
+        )
+        first_byte = 0x80 | (opcode & 0x0F)
+        if n < 126:
+            header = bytes([first_byte, 0x80 | n]) + mask
+        elif n < 65536:
+            header = bytes([first_byte, 0xFE]) + n.to_bytes(2, "big") + mask
         else:
-            header = bytes([0x82, 0xFF]) + length.to_bytes(8, "big") + mask
+            header = bytes([first_byte, 0xFF]) + n.to_bytes(8, "big") + mask
         sock.sendall(header + masked)
 
     @staticmethod
-    def _ws_recv_frame(sock: Any, max_bytes: int) -> bytes:
-        """Receive one WebSocket frame (server→client frames are never masked)."""
+    def _ws_iter_message(sock: Any, max_bytes: int) -> Iterator[bytes]:
+        """Yield payload chunks of one complete WebSocket data message."""
 
         def recv_exact(n: int) -> bytes:
             buf = bytearray()
@@ -685,26 +790,81 @@ class CdnWebSocketTransport:
                 buf.extend(chunk)
             return bytes(buf)
 
-        header = recv_exact(2)
-        # opcode: text=0x81, binary=0x82, close=0x88, ping=0x89
-        opcode = header[0] & 0x0F
-        if opcode == 0x08:
-            raise TransportError("ws: server sent close frame", reason="http_error")
-        length = header[1] & 0x7F
-        if length == 126:
-            length = int.from_bytes(recv_exact(2), "big")
-        elif length == 127:
-            length = int.from_bytes(recv_exact(8), "big")
-        if length > max_bytes:
-            raise TransportError("ws: frame too large", reason="too_large")
-        return recv_exact(length)
+        started = False
+        total_bytes = 0
+        while True:
+            header = recv_exact(2)
+            fin = bool(header[0] & 0x80)
+            opcode = header[0] & 0x0F
+            masked = bool(header[1] & 0x80)
+            length = header[1] & 0x7F
+            if length == 126:
+                length = int.from_bytes(recv_exact(2), "big")
+            elif length == 127:
+                length = int.from_bytes(recv_exact(8), "big")
+            mask_key = recv_exact(4) if masked else b""
 
-    def _do_request(
-        self, url: str, timeout_s: float, max_bytes: int,
-        extra_headers: dict[str, str] | None, *, method: str = "GET",
+            if opcode >= 0x08:
+                if opcode == 0x08:
+                    raise TransportError("ws: server sent close frame", reason="http_error")
+                if not fin or length > 125:
+                    raise TransportError("ws: invalid control frame", reason="http_error")
+                ctrl_payload = recv_exact(length)
+                if mask_key and ctrl_payload:
+                    cn = len(ctrl_payload)
+                    ctrl_payload = (
+                        int.from_bytes(ctrl_payload, "big")
+                        ^ int.from_bytes((mask_key * (cn // 4 + 1))[:cn], "big")
+                    ).to_bytes(cn, "big")
+                if opcode == 0x09:
+                    CdnWebSocketTransport._ws_send_frame(sock, ctrl_payload, opcode=0x0A)
+                    continue
+                if opcode == 0x0A:
+                    continue
+                raise TransportError("ws: unsupported opcode", reason="http_error")
+
+            if not started:
+                if opcode not in (0x01, 0x02):
+                    raise TransportError("ws: unexpected continuation frame", reason="http_error")
+                started = True
+            elif opcode != 0x00:
+                raise TransportError("ws: interleaved data frame", reason="http_error")
+
+            if total_bytes + length > max_bytes:
+                raise TransportError("ws: frame too large", reason="too_large")
+            total_bytes += length
+
+            remaining = length
+            offset = 0
+            while remaining > 0:
+                step = min(64 * 1024, remaining)
+                chunk = recv_exact(step)
+                if mask_key:
+                    cn = len(chunk)
+                    rotated = bytes(mask_key[(offset + i) % 4] for i in range(4))
+                    chunk = (
+                        int.from_bytes(chunk, "big")
+                        ^ int.from_bytes((rotated * (cn // 4 + 1))[:cn], "big")
+                    ).to_bytes(cn, "big")
+                remaining -= len(chunk)
+                offset += len(chunk)
+                yield chunk
+            if fin:
+                return
+
+    @staticmethod
+    def _ws_recv_frame(sock: Any, max_bytes: int) -> bytes:
+        """Receive one WebSocket message (reassembling fragments and answering pings)."""
+        return b"".join(CdnWebSocketTransport._ws_iter_message(sock, max_bytes))
+
+    def _build_tunneled_request(
+        self,
+        url: str,
+        extra_headers: dict[str, str] | None,
+        *,
+        method: str = "GET",
         body: bytes | None = None,
     ) -> bytes:
-        """Tunnel one bounded HTTP request through a WebSocket connection."""
         parts = urlparse(url)
         path = (parts.path or "/") + (("?" + parts.query) if parts.query else "")
         host = parts.hostname or ""
@@ -715,14 +875,48 @@ class CdnWebSocketTransport:
         req_headers = dict(_profile_headers(self.profile))
         if extra_headers:
             req_headers.update(extra_headers)
-        req_headers.update(network_key_header())
+        req_headers = stamp_network_key(req_headers)
         req_headers["Host"] = host_header
         if body is not None:
             req_headers["Content-Length"] = str(len(body))
         req_lines = [f"{method} {path} HTTP/1.1"]
         req_lines.extend(f"{k}: {v}" for k, v in req_headers.items())
         req_lines += ["", ""]
-        raw_request = "\r\n".join(req_lines).encode("utf-8") + (body or b"")
+        return "\r\n".join(req_lines).encode("utf-8") + (body or b"")
+
+    @staticmethod
+    def _validate_tunneled_response_headers(header_block: bytes) -> None:
+        lines = header_block.split(b"\r\n")
+        status_parts = lines[0].split() if lines else []
+        try:
+            status = int(status_parts[1])
+        except (IndexError, ValueError) as exc:
+            raise TransportError("ws: malformed HTTP status", reason="http_error") from exc
+        if not 200 <= status < 300:
+            st = None
+            if status == 409:
+                for line in lines[1:]:
+                    name, colon, value = line.partition(b":")
+                    if colon and name.strip().lower() == b"x-ryn-server-time":
+                        st = _parse_server_time(value.decode("latin-1"))
+                        break
+            raise TransportError(f"http status {status}", reason="http_error", status=status, server_time=st)
+        encodings: list[str] = []
+        for line in lines[1:]:
+            name, colon, value = line.partition(b":")
+            if colon and name.strip().lower() == b"content-encoding":
+                encodings.append(value.decode("latin-1"))
+        _check_encoding_values(encodings)
+
+    def _do_request(
+        self, url: str, timeout_s: float, max_bytes: int,
+        extra_headers: dict[str, str] | None, *, method: str = "GET",
+        body: bytes | None = None,
+    ) -> bytes:
+        """Tunnel one bounded HTTP request through a WebSocket connection."""
+        raw_request = self._build_tunneled_request(
+            url, extra_headers, method=method, body=body,
+        )
 
         sock = self._ws_connect(timeout_s)
         try:
@@ -739,13 +933,7 @@ class CdnWebSocketTransport:
         sep = raw_response.find(b"\r\n\r\n")
         if sep == -1:
             raise TransportError("ws: malformed HTTP response frame", reason="http_error")
-        status_line = raw_response[:sep].split(b"\r\n", 1)[0].split()
-        try:
-            status = int(status_line[1])
-        except (IndexError, ValueError) as exc:
-            raise TransportError("ws: malformed HTTP status", reason="http_error") from exc
-        if not 200 <= status < 300:
-            raise TransportError(f"http status {status}", reason="http_error")
+        self._validate_tunneled_response_headers(raw_response[:sep])
         response_body = raw_response[sep + 4:]
         if len(response_body) > max_bytes:
             raise TransportError("response too large", reason="too_large")
@@ -778,11 +966,71 @@ class CdnWebSocketTransport:
         self, url: str, dest: Path, *, timeout_s: float, max_bytes: int,
         headers: dict[str, str] | None = None,
     ) -> Path:
-        data = self.get_bytes(url, timeout_s=timeout_s, max_bytes=max_bytes, headers=headers)
         dest = Path(dest).expanduser()
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(data)
-        return dest
+        raw_request = self._build_tunneled_request(url, headers, method="GET", body=None)
+        tmp_path: Path | None = None
+        handle: Any | None = None
+        sock: Any | None = None
+        try:
+            sock = self._ws_connect(timeout_s)
+            self._ws_send_frame(sock, raw_request)
+            tmp_fd, tmp_name = tempfile.mkstemp(
+                dir=str(dest.parent),
+                prefix=f".{dest.name}.",
+                suffix=".part",
+            )
+            tmp_path = Path(tmp_name)
+            handle = os.fdopen(tmp_fd, "wb")
+            header_buf = bytearray()
+            headers_parsed = False
+            written = 0
+            for chunk in self._ws_iter_message(sock, max_bytes + 64 * 1024):
+                if not headers_parsed:
+                    header_buf.extend(chunk)
+                    sep = header_buf.find(b"\r\n\r\n")
+                    if sep == -1:
+                        if len(header_buf) > 64 * 1024:
+                            raise TransportError(
+                                "ws: malformed HTTP response frame", reason="http_error"
+                            )
+                        continue
+                    self._validate_tunneled_response_headers(bytes(header_buf[:sep]))
+                    headers_parsed = True
+                    body_chunk = bytes(header_buf[sep + 4 :])
+                    header_buf.clear()
+                else:
+                    body_chunk = chunk
+                if body_chunk:
+                    written += len(body_chunk)
+                    if written > max_bytes:
+                        raise TransportError("media too large", reason="too_large")
+                    handle.write(body_chunk)
+            if not headers_parsed:
+                raise TransportError("ws: malformed HTTP response frame", reason="http_error")
+            handle.flush()
+            handle.close()
+            handle = None
+            os.replace(tmp_path, dest)
+            tmp_path = None
+            return dest
+        except TransportError:
+            raise
+        except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
+            raise TransportError(f"cdn-ws error: {exc}", reason="http_error") from exc
+        finally:
+            if handle is not None:
+                try:
+                    handle.close()
+                except OSError:
+                    pass
+            if tmp_path is not None:
+                tmp_path.unlink(missing_ok=True)
+            if sock is not None:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
 
 
 # --- transport registry (plugin point) -----------------------------------
@@ -790,6 +1038,8 @@ class CdnWebSocketTransport:
 TransportFactory = Callable[[TransportProfile], Transport]
 _REGISTRY: dict[str, TransportFactory] = {}
 _CACHE: dict[str, Transport] = {}
+_LAST_EFFECTIVE: dict[str, Any] | None = None
+_LAST_PROFILE: TransportProfile | None = None
 
 
 def register_transport(name: str, factory: TransportFactory) -> None:
@@ -799,6 +1049,68 @@ def register_transport(name: str, factory: TransportFactory) -> None:
 
 # Built-in plugin registrations -------------------------------------------
 register_transport("cdn-ws", lambda profile: CdnWebSocketTransport(profile))
+
+
+def _record_effective(
+    profile: TransportProfile,
+    *,
+    effective: str | None,
+    degraded_reason: str | None,
+) -> None:
+    global _LAST_EFFECTIVE, _LAST_PROFILE
+    _LAST_PROFILE = profile
+    _LAST_EFFECTIVE = {
+        "requested": profile.name,
+        "effective": effective,
+        "requested_unknown": profile.requested_unknown,
+        "degraded_reason": degraded_reason,
+    }
+
+
+def _inspect_effective(profile: TransportProfile, transport: Transport) -> None:
+    if getattr(transport, "_ech_active", None) is False:
+        if not hasattr(ssl.SSLContext, "set_ech_config_list"):
+            reason = "ech_unavailable"
+        elif not os.environ.get("RYNMESH_ECH_CONFIGS", "").strip():
+            reason = "ech_configs_missing"
+        else:
+            reason = "ech_config_invalid"
+        _record_effective(profile, effective="sni_fronting", degraded_reason=reason)
+        return
+    if profile.name in _REGISTRY:
+        eff = profile.name
+    elif isinstance(transport, FrontedHttpsTransport):
+        eff = "fronted_https"
+    else:
+        eff = "stdlib_https"
+    _record_effective(
+        profile,
+        effective=eff,
+        degraded_reason="unknown_transport" if profile.requested_unknown else None,
+    )
+
+
+def last_effective() -> dict[str, Any] | None:
+    """Return a copy of the last effective transport record, if any."""
+    return dict(_LAST_EFFECTIVE) if _LAST_EFFECTIVE is not None else None
+
+
+def transport_status() -> dict[str, Any]:
+    """Resolve and return the effective transport status for node status reporting."""
+    current = resolve_profile()
+    if _LAST_EFFECTIVE is None or _LAST_PROFILE != current:
+        try:
+            get_transport(current)
+        except TransportError:
+            pass
+    if _LAST_EFFECTIVE is not None:
+        return dict(_LAST_EFFECTIVE)
+    return {
+        "requested": current.name,
+        "effective": None,
+        "requested_unknown": current.requested_unknown,
+        "degraded_reason": "unknown_transport" if current.requested_unknown else None,
+    }
 
 
 def get_transport(profile: TransportProfile | None = None) -> Transport:
@@ -813,26 +1125,40 @@ def get_transport(profile: TransportProfile | None = None) -> Transport:
             ";".join(f"{k}={v}" for k, v in sorted(active.proxies.items())),
             active.sni,
             active.connect_host,
+            str(active.requested_unknown),
         ]
     )
     cached = _CACHE.get(cache_key)
     if cached is not None:
+        _inspect_effective(active, cached)
         return cached
     factory = _REGISTRY.get(active.name)
     if factory:
-        transport: Transport = factory(active)
+        try:
+            transport: Transport = factory(active)
+        except TransportError as exc:
+            _record_effective(
+                active,
+                effective=None,
+                degraded_reason=exc.reason or "config_error",
+            )
+            raise
     elif active.sni or active.connect_host:
         # Real SNI/connect/Host split (defeats SNI filtering, substitutes for ECH).
         transport = FrontedHttpsTransport(active)
     else:
         transport = StdlibHttpsTransport(active)
     _CACHE[cache_key] = transport
+    _inspect_effective(active, transport)
     return transport
 
 
 def reset_transport_cache() -> None:
     """Drop cached transports (tests after env changes)."""
+    global _LAST_EFFECTIVE, _LAST_PROFILE
     _CACHE.clear()
+    _LAST_EFFECTIVE = None
+    _LAST_PROFILE = None
 
 def stamp_network_key(headers: dict[str, str]) -> dict[str, str]:
     """Return ``headers`` with the mesh credential enforced, case-insensitively.
@@ -845,6 +1171,32 @@ def stamp_network_key(headers: dict[str, str]) -> dict[str, str]:
     cleaned = {k: v for k, v in headers.items() if k.lower() != NETWORK_KEY_HEADER.lower()}
     cleaned.update(network_key_header())
     return cleaned
+
+
+def _check_encoding_values(values: list[str]) -> None:
+    tokens = [
+        tok.strip().lower()
+        for raw in values
+        for tok in str(raw).split(",")
+        if tok.strip()
+    ]
+    if any(tok != "identity" for tok in tokens):
+        raise TransportError("unsupported content encoding", reason="unsupported_encoding")
+
+
+def _check_content_encoding(resp: Any) -> None:
+    headers = getattr(resp, "headers", None)
+    if headers is not None and hasattr(headers, "get_all"):
+        values = [str(v) for v in (headers.get_all("Content-Encoding") or [])]
+    elif headers is not None and hasattr(headers, "get"):
+        val = headers.get("Content-Encoding") or headers.get("content-encoding")
+        values = [str(val)] if val else []
+    elif hasattr(resp, "getheader"):
+        val = resp.getheader("Content-Encoding")
+        values = [str(val)] if val else []
+    else:
+        values = []
+    _check_encoding_values(values)
 
 
 def read_bounded(resp, max_bytes: int) -> bytes:
@@ -864,4 +1216,3 @@ def check_status(status: int, *, strict: bool) -> None:
     """
     if (strict and not 200 <= status < 300) or (not strict and status >= 400):
         raise TransportError(f"http status {status}", reason="http_error", status=status)
-

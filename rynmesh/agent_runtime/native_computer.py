@@ -16,7 +16,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, NoReturn
 
-from .computer.binary import resolve_owner_id
+from .computer.binary import (
+    platform_support,
+    register_settings_source,
+    resolve_owner_id,
+    unregister_settings_source,
+)
 from .computer.coordinator import (
     NativeBridge,
     bind_node_native_bridge,
@@ -25,6 +30,7 @@ from .computer.protocol import (
     NativeBridgeError,
     NativeBridgeRejected,
     compute_action_fingerprint,
+    lookup_bridge_correction,
     normalize_action_spec,
     validate_window_ref,
     window_refs_equal,
@@ -182,6 +188,8 @@ class TrustedWriteAuthorityStamp:
     frozen_state_token: str
     frozen_action_fingerprint: str
     frozen_hwnd: int
+    permission_mode: str | None = None
+    allowed_write_tools: tuple[str, ...] | None = None
 
 
 @dataclass
@@ -210,6 +218,7 @@ class WindowObservationRecord:
     context_epoch: int = 0
     scope_revision: int = 0
     artifact_ids: list[str] = field(default_factory=list)
+    screenshot_statuses: list[dict[str, Any]] = field(default_factory=list)
 
 
 class _TaskComputerState:
@@ -517,6 +526,7 @@ class NativeComputerFacade:
     def _find_store_object(self) -> Any:
         for cand in (
             self._owner,
+            getattr(self._owner, "store", None) if self._owner is not None else None,
             getattr(self._local_tools, "store", None) if self._local_tools is not None else None,
         ):
             if cand is not None and (
@@ -719,6 +729,22 @@ class NativeComputerFacade:
                 pass
         return None, None
 
+    @staticmethod
+    def _classify_pending_control_code(pending_control: Any) -> str:
+        if pending_control == "pause":
+            return "agent_task_paused"
+        if isinstance(pending_control, Mapping):
+            kind = str(pending_control.get("kind") or "").strip().lower()
+            if kind == "pause":
+                return "agent_task_paused"
+            if kind == "scope":
+                return "agent_scope_changed"
+            if kind in {"goal", "edit_message"}:
+                return "agent_goal_changed"
+            if kind in {"permissions", "permission"}:
+                return "agent_permission_revoked"
+        return "agent_cancelled"
+
     def capture_trusted_write_authority(
         self,
         *,
@@ -757,12 +783,14 @@ class NativeComputerFacade:
         if row is not None:
             status = row.get("status")
             if status is not None and status != "running":
-                if status in {"paused", "cancelled", "interrupted"}:
+                if status == "paused":
+                    raise AgentToolRejected("agent_task_paused")
+                if status in {"cancelled", "interrupted"}:
                     raise AgentToolRejected("agent_cancelled")
                 # Same code as before; the text must not claim the setting is off.
                 raise AgentToolRejected("agent_desktop_access_required", correction=TASK_NOT_RUNNING_CORRECTION)
             if row.get("pending_control"):
-                raise AgentToolRejected("agent_cancelled")
+                raise AgentToolRejected(self._classify_pending_control_code(row["pending_control"]))
             row_exec = row.get("local_execution") or {}
             if "desktop_access" in row_exec and not row_exec.get("desktop_access"):
                 raise AgentToolRejected("agent_desktop_access_required")
@@ -776,21 +804,43 @@ class NativeComputerFacade:
             or ""
         )
 
-        def _pick_rev(ctx_key: str, row_val: Any) -> int | None:
+        def _pick_rev(ctx_key: str, row_val: Any, *, mismatch_code: str) -> int | None:
             ctx_val = ctx.get(ctx_key)
             if type(row_val) is int and type(ctx_val) is int and row_val != ctx_val:
-                raise AgentToolRejected("agent_cancelled")
+                raise AgentToolRejected(mismatch_code)
             if type(row_val) is int:
                 return int(row_val)
             if type(ctx_val) is int:
                 return int(ctx_val)
             return None
 
-        ctrl_rev = _pick_rev("control_revision", (row or {}).get("control_revision"))
-        ctx_epoch = _pick_rev("context_epoch", (row or {}).get("context_epoch"))
-        scope_rev = _pick_rev("scope_revision", (row or {}).get("scope_revision"))
         row_goal_rev = ((row or {}).get("goal") or {}).get("revision") if isinstance((row or {}).get("goal"), Mapping) else None
-        goal_rev = _pick_rev("goal_revision", row_goal_rev)
+        goal_rev = _pick_rev("goal_revision", row_goal_rev, mismatch_code="agent_goal_changed")
+        scope_rev = _pick_rev("scope_revision", (row or {}).get("scope_revision"), mismatch_code="agent_scope_changed")
+
+        eff_perm_mode: str | None = None
+        if isinstance((row or {}).get("permission_mode"), str):
+            eff_perm_mode = str((row or {})["permission_mode"])
+        elif isinstance((settings or {}).get("permission_mode"), str):
+            eff_perm_mode = str((settings or {})["permission_mode"])
+        if isinstance(ctx.get("permission_mode"), str) and eff_perm_mode is not None and ctx.get("permission_mode") != eff_perm_mode:
+            raise AgentToolRejected("agent_permission_revoked")
+
+        raw_allowed_tools = (
+            (row or {}).get("allowed_write_tools")
+            if isinstance((row or {}).get("allowed_write_tools"), list)
+            else (settings or {}).get("allowed_write_tools")
+            if isinstance((settings or {}).get("allowed_write_tools"), list)
+            else None
+        )
+        allowed_tools_tuple = (
+            tuple(str(t) for t in raw_allowed_tools if isinstance(t, str))
+            if raw_allowed_tools is not None
+            else None
+        )
+
+        ctx_epoch = _pick_rev("context_epoch", (row or {}).get("context_epoch"), mismatch_code="agent_goal_changed")
+        ctrl_rev = _pick_rev("control_revision", (row or {}).get("control_revision"), mismatch_code="agent_cancelled")
 
         in_flight = (row or {}).get("in_flight") if isinstance((row or {}).get("in_flight"), Mapping) else None
         has_in_flight = bool(in_flight and in_flight.get("operation_id"))
@@ -827,6 +877,8 @@ class NativeComputerFacade:
             frozen_state_token=frozen_token,
             frozen_action_fingerprint=frozen_fp,
             frozen_hwnd=hwnd,
+            permission_mode=eff_perm_mode,
+            allowed_write_tools=allowed_tools_tuple,
         )
 
     def verify_ready_write_authority(
@@ -871,6 +923,8 @@ class NativeComputerFacade:
             if not settings.get("desktop_access"):
                 raise AgentToolRejected("agent_desktop_access_required")
             if settings.get("permission_mode") == "read_only":
+                if stamp.permission_mode is not None and stamp.permission_mode != "read_only":
+                    raise AgentToolRejected("agent_permission_revoked")
                 raise AgentToolRejected("agent_permission_denied")
 
         if stamp.has_store_row and row is None:
@@ -879,41 +933,69 @@ class NativeComputerFacade:
         if row is not None:
             status = row.get("status")
             if status is not None and status != "running":
-                if status in {"paused", "cancelled", "interrupted"}:
+                if status == "paused":
+                    raise AgentToolRejected("agent_task_paused")
+                if status in {"cancelled", "interrupted"}:
                     raise AgentToolRejected("agent_cancelled")
                 # Same code as before; the text must not claim the setting is off.
                 raise AgentToolRejected("agent_desktop_access_required", correction=TASK_NOT_RUNNING_CORRECTION)
             if row.get("pending_control"):
-                raise AgentToolRejected("agent_cancelled")
+                raise AgentToolRejected(self._classify_pending_control_code(row["pending_control"]))
             row_exec = row.get("local_execution") or {}
             if "desktop_access" in row_exec and not row_exec.get("desktop_access"):
                 raise AgentToolRejected("agent_desktop_access_required")
             if stamp.workspace_root and str(row_exec.get("workspace_root") or "") != stamp.workspace_root:
                 raise AgentToolRejected("agent_workspace_changed_new_task_required")
 
-            if (
-                stamp.control_revision is not None
-                and type(row.get("control_revision")) is int
-                and int(row["control_revision"]) != stamp.control_revision
-            ):
-                raise AgentToolRejected("agent_cancelled")
-            if (
-                stamp.context_epoch is not None
-                and type(row.get("context_epoch")) is int
-                and int(row["context_epoch"]) != stamp.context_epoch
-            ):
-                raise AgentToolRejected("agent_cancelled")
-            if (
-                stamp.scope_revision is not None
-                and type(row.get("scope_revision")) is int
-                and int(row["scope_revision"]) != stamp.scope_revision
-            ):
-                raise AgentToolRejected("agent_cancelled")
             row_goal_rev = (row.get("goal") or {}).get("revision") if isinstance(row.get("goal"), Mapping) else None
             if (
                 stamp.goal_revision is not None
                 and type(row_goal_rev) is int
                 and int(row_goal_rev) != stamp.goal_revision
+            ):
+                raise AgentToolRejected("agent_goal_changed")
+            if (
+                stamp.scope_revision is not None
+                and type(row.get("scope_revision")) is int
+                and int(row["scope_revision"]) != stamp.scope_revision
+            ):
+                raise AgentToolRejected("agent_scope_changed")
+
+            cur_perm_mode = (
+                str(row["permission_mode"])
+                if isinstance(row.get("permission_mode"), str)
+                else str(settings["permission_mode"])
+                if isinstance((settings or {}).get("permission_mode"), str)
+                else None
+            )
+            if stamp.permission_mode is not None and cur_perm_mode is not None and cur_perm_mode != stamp.permission_mode:
+                if stamp.permission_mode == "auto" and cur_perm_mode in {"manual", "selected_writes", "read_only"}:
+                    raise AgentToolRejected("agent_permission_revoked")
+            cur_allowed_list = (
+                row.get("allowed_write_tools")
+                if isinstance(row.get("allowed_write_tools"), list)
+                else (settings or {}).get("allowed_write_tools")
+                if isinstance((settings or {}).get("allowed_write_tools"), list)
+                else None
+            )
+            if (
+                stamp.allowed_write_tools is not None
+                and cur_allowed_list is not None
+                and stamp.tool_name in stamp.allowed_write_tools
+                and stamp.tool_name not in cur_allowed_list
+            ):
+                raise AgentToolRejected("agent_permission_revoked")
+
+            if (
+                stamp.context_epoch is not None
+                and type(row.get("context_epoch")) is int
+                and int(row["context_epoch"]) != stamp.context_epoch
+            ):
+                raise AgentToolRejected("agent_goal_changed")
+            if (
+                stamp.control_revision is not None
+                and type(row.get("control_revision")) is int
+                and int(row["control_revision"]) != stamp.control_revision
             ):
                 raise AgentToolRejected("agent_cancelled")
 
@@ -935,7 +1017,7 @@ class NativeComputerFacade:
             and hasattr(getattr(self._local_tools, "store", None), "inspect")
         ):
             if not self._local_tools.allowed(dict(context))():
-                raise AgentToolRejected("agent_cancelled")
+                raise AgentToolRejected("agent_permission_revoked")
 
         latest_obs = self._require_observed_window_state(
             stamp.task_id, stamp.frozen_hwnd, context=context
@@ -947,31 +1029,79 @@ class NativeComputerFacade:
             raise AgentToolRejected("agent_approval_preview_changed")
 
     def _translate_bridge_exception(self, exc: NativeBridgeError, *, is_write: bool) -> NoReturn:
-        # The bundled worker distinguishes activation from delivery of the
-        # requested input. A validated hit-test failure occurs before SendInput;
-        # it must not strand a task as an ambiguous send merely because focus
-        # changed. Never infer this from an arbitrary MCP error or timeout.
+        # The bundled worker distinguishes activation/pre-input validation from physical
+        # input delivery. Validated hit-test, focus-only, UIPI (SendInput sent==0),
+        # disabled/offscreen element checks, and ready-stage post-focus cancellation all
+        # occur before any business input is accepted by the target window.
         no_input_failure = (
-            (exc.native_code == "window_occluded" and exc.native_stage == "validating"
-             and exc.reason == "hit_test_unrelated_window")
-            or (exc.native_code == "focus_failed" and exc.native_stage == "activating"
-                and exc.reason == "foreground_verification_failed")
-        )
-        if (is_write and exc.method == "action.commit" and no_input_failure
+            (
+                exc.native_code == "window_occluded"
+                and exc.native_stage == "validating"
+                and exc.reason == "hit_test_unrelated_window"
                 and exc.internal_mutation == "focus_only"
-                and not exc.callback_uncertain):
-            rej = AgentToolRejected(exc.code, details=copy.deepcopy(exc.diagnostics),
-                correction="Window activation or target hit testing failed. Only window activation was attempted; "
-                           "no click or text input was delivered. Because activation mutated window state, your "
-                           "previous state_token is now stale. Call computer_read_window(hwnd=..., include_screenshot=true) "
-                           "first to read a fresh screenshot and fresh state_token before calling computer_act_window "
-                           "(including action='focus'). Then choose the correct current target and do not reuse stale coordinates.")
+            )
+            or (
+                exc.native_code == "focus_failed"
+                and exc.native_stage in {"activating", "validating"}
+                and exc.reason == "foreground_verification_failed"
+                and exc.internal_mutation in {"none", "focus_only"}
+            )
+            or (
+                exc.native_code == "input_blocked_by_uipi"
+                and exc.internal_mutation in {"none", "focus_only", "unknown_or_partial"}
+            )
+            or (
+                exc.native_code in {"element_disabled", "element_offscreen"}
+                and exc.native_stage == "validating"
+                and exc.internal_mutation == "focus_only"
+            )
+            or (
+                exc.native_code == "cancelled"
+                and exc.native_stage == "validating"
+                and exc.internal_mutation == "focus_only"
+                and exc.reason == "cancelled_while_ready"
+            )
+        )
+        if (
+            is_write
+            and exc.method == "action.commit"
+            and no_input_failure
+            and not exc.callback_uncertain
+        ):
+            if exc.code == "agent_cancelled":
+                correction = (
+                    ESCAPE_STOP_MESSAGE
+                    if bool(self._escaped_tasks)
+                    else "操作在输入发送前已取消（仅聚焦了窗口，未发送点击或键盘输入）。请先调用 computer_read_window 重读窗口获取新 state_token。"
+                )
+            elif exc.native_code in {"window_occluded", "focus_failed"}:
+                base_hint = lookup_bridge_correction(
+                    exc.code, exc.reason, stage=exc.native_stage or exc.stage
+                )
+                correction = (
+                    f"{base_hint} "
+                    "Only window activation was attempted; no click or text input was delivered. "
+                    "Because activation mutated window state, your previous state_token is now stale. "
+                    "Call computer_read_window(hwnd=..., include_screenshot=true) first to read a fresh screenshot "
+                    "and fresh state_token before calling computer_act_window (including action='focus')."
+                )
+            else:
+                correction = lookup_bridge_correction(
+                    exc.code, exc.reason, stage=exc.native_stage or exc.stage
+                )
+            rej = AgentToolRejected(
+                exc.code,
+                details=copy.deepcopy(exc.diagnostics),
+                correction=correction,
+            )
             rej.diagnostics = copy.deepcopy(exc.diagnostics)
+            rej.retryable = exc.retryable
             rej.input_not_delivered = True
             rej.pre_dispatch = False
             rej.dispatched = True
             rej.commit_attempted = True
             raise rej from None
+
         if isinstance(exc, NativeBridgeRejected) or (
             exc.pre_dispatch
             and not exc.commit_attempted
@@ -984,18 +1114,30 @@ class NativeComputerFacade:
                 if isinstance(cause, AgentToolRejected) and str(cause).strip()
                 else exc.code
             )
-            rej_correction = None
-            if rej_code == "agent_computer_state_token_stale":
-                rej_correction = (
-                    "The window state_token is stale because window or desktop state changed. "
-                    "Call computer_read_window(hwnd=..., include_screenshot=true) on the target window "
-                    "to obtain a fresh state_token and fresh screenshot before calling computer_act_window again. "
-                    "Note that computer_observe_windows only lists windows and does not issue a state_token."
-                )
-            elif rej_code == "agent_cancelled" and bool(self._escaped_tasks):
+            rej_correction: str | None = None
+            if rej_code == "agent_cancelled" and bool(self._escaped_tasks):
                 rej_correction = ESCAPE_STOP_MESSAGE
-            rej = AgentToolRejected(rej_code, details=copy.deepcopy(exc.diagnostics), correction=rej_correction)
+            elif isinstance(cause, AgentToolRejected) and getattr(cause, "correction", None):
+                rej_correction = cause.correction
+            elif rej_code in {
+                "agent_cancelled",
+                "agent_task_paused",
+                "agent_goal_changed",
+                "agent_scope_changed",
+                "agent_permission_revoked",
+            }:
+                rej_correction = None
+            else:
+                rej_correction = lookup_bridge_correction(
+                    rej_code, exc.reason, stage=exc.native_stage or exc.stage
+                )
+            rej = AgentToolRejected(
+                rej_code,
+                details=copy.deepcopy(exc.diagnostics),
+                correction=rej_correction,
+            )
             rej.diagnostics = copy.deepcopy(exc.diagnostics)
+            rej.retryable = exc.retryable
             rej.pre_dispatch = True
             rej.dispatched = False
             rej.commit_attempted = False
@@ -1005,6 +1147,10 @@ class NativeComputerFacade:
             err = AgentError("agent_write_outcome_unknown")
             err.diagnostics = copy.deepcopy(exc.diagnostics)
             err.cause_code = exc.code
+            err.correction = lookup_bridge_correction(
+                exc.code, exc.reason, stage=exc.native_stage or exc.stage
+            )
+            err.retryable = exc.retryable
             err.dispatched = True
             err.commit_attempted = exc.commit_attempted
             err.callback_uncertain = exc.callback_uncertain
@@ -1012,6 +1158,10 @@ class NativeComputerFacade:
 
         read_err = AgentError(exc.code)
         read_err.diagnostics = copy.deepcopy(exc.diagnostics)
+        read_err.correction = lookup_bridge_correction(
+            exc.code, exc.reason, stage=exc.native_stage or exc.stage
+        )
+        read_err.retryable = exc.retryable
         raise read_err from None
 
     def _produce_observation_screenshots(
@@ -1391,6 +1541,20 @@ class NativeComputerFacade:
             tstate.windows_by_key[wref["windowKey"]] = win_entry
             tstate.windows_by_key.move_to_end(wref["windowKey"])
 
+            shot_statuses: list[dict[str, Any]] = []
+            for raw_shot in obs.get("screenshots") or []:
+                if isinstance(raw_shot, Mapping):
+                    st_item: dict[str, Any] = {
+                        "id": str(raw_shot.get("id") or ""),
+                        "status": str(raw_shot.get("status") or "unavailable"),
+                        "minimized": bool(raw_shot.get("minimized", False)),
+                        "occluded": bool(raw_shot.get("occluded", False)),
+                        "capture_protected": bool(raw_shot.get("captureProtected", False)),
+                    }
+                    if raw_shot.get("reason") is not None:
+                        st_item["reason"] = str(raw_shot["reason"])
+                    shot_statuses.append(st_item)
+
             obs_record = WindowObservationRecord(
                 task_id=task_id,
                 hwnd=hwnd_int,
@@ -1424,6 +1588,16 @@ class NativeComputerFacade:
                         if obs["accessibility"].get("selectedText") is not None
                         else {}
                     ),
+                    **(
+                        {"reason": str(obs["accessibility"]["reason"])}
+                        if obs["accessibility"].get("reason") is not None
+                        else {}
+                    ),
+                    **(
+                        {"hresultHex": str(obs["accessibility"]["hresultHex"])}
+                        if obs["accessibility"].get("hresultHex") is not None
+                        else {}
+                    ),
                 },
                 elements=elements_out,
                 elements_by_index=by_index,
@@ -1434,6 +1608,7 @@ class NativeComputerFacade:
                 context_epoch=ctx_epoch,
                 scope_revision=scope_rev,
                 artifact_ids=[a.artifact_id for a in artifact_entries],
+                screenshot_statuses=shot_statuses,
             )
             evicted_files = tstate.record_observation(obs_record, artifact_entries)
 
@@ -2031,7 +2206,7 @@ class NativeComputerFacade:
                     worker_generation=gen,
                     context=context,
                 )
-                for entry in raw_list["windows"]:
+                for enum_idx, entry in enumerate(raw_list["windows"]):
                     sky_id, stored = tstate.record_window_entry(entry)
                     if q_lower:
                         haystack = f"{stored['title']} {stored['processName']} {stored['className']}".lower()
@@ -2041,27 +2216,29 @@ class NativeComputerFacade:
                         continue
                     wref = stored["window"]
                     b = stored["bounds"]
-                    windows_out.append(
-                        {
-                            "hwnd": int(wref["hwnd"], 10),
-                            "window_id": int(wref["hwnd"], 10),
-                            "sky_window_id": sky_id,
-                            "window_ref": copy.deepcopy(wref),
-                            "title": stored["title"],
-                            "class_name": stored["className"],
-                            "process_name": stored["processName"],
-                            "pid": int(wref["pid"]),
-                            "visible": bool(stored["visible"]),
-                            "enabled": bool(stored["enabled"]),
-                            "minimized": bool(stored["minimized"]),
-                            "maximized": bool(stored["maximized"]),
-                            "foreground": bool(stored["foreground"]),
-                            "rect": [int(b["left"]), int(b["top"]), int(b["right"]), int(b["bottom"])],
-                            "bounds": copy.deepcopy(b),
-                            "client_bounds": copy.deepcopy(stored["clientBounds"]),
-                            "dpi": int(stored["dpi"]),
-                        }
-                    )
+                    win_item: dict[str, Any] = {
+                        "hwnd": int(wref["hwnd"], 10),
+                        "window_id": int(wref["hwnd"], 10),
+                        "sky_window_id": sky_id,
+                        "window_ref": copy.deepcopy(wref),
+                        "title": stored["title"],
+                        "class_name": stored["className"],
+                        "process_name": stored["processName"],
+                        "pid": int(wref["pid"]),
+                        "visible": bool(stored["visible"]),
+                        "enabled": bool(stored["enabled"]),
+                        "minimized": bool(stored["minimized"]),
+                        "maximized": bool(stored["maximized"]),
+                        "foreground": bool(stored["foreground"]),
+                        "rect": [int(b["left"]), int(b["top"]), int(b["right"]), int(b["bottom"])],
+                        "bounds": copy.deepcopy(b),
+                        "client_bounds": copy.deepcopy(stored["clientBounds"]),
+                        "dpi": int(stored["dpi"]),
+                        "z_order": int(stored["zOrder"]) if stored.get("zOrder") is not None else enum_idx,
+                        "monitor": str(stored.get("monitor") or ""),
+                        "is_elevated": bool(stored.get("isElevated", False)),
+                    }
+                    windows_out.append(win_item)
 
             windows_out.sort(
                 key=lambda w: (
@@ -2081,6 +2258,7 @@ class NativeComputerFacade:
                 f"- hwnd={w['hwnd']} title={w['title']!r} proc={w['process_name']} rect={w['rect']}"
                 + (" [foreground]" if w.get("foreground") else "")
                 + (" [minimized]" if w.get("minimized") else "")
+                + (" [elevated/admin]" if w.get("is_elevated") else "")
                 for w in windows_out[:25]
             ]
             summary_block = ("\n".join(summary_lines) + "\n") if summary_lines else ""
@@ -2197,6 +2375,8 @@ class NativeComputerFacade:
                     {k: v for k, v in item.items() if k != "native_descriptor"}
                     for item in public_artifacts
                 ]
+            elif obs_record.screenshot_statuses:
+                structured["screenshot_status"] = copy.deepcopy(obs_record.screenshot_statuses)
 
             txt = f"Read window {obs_record.hwnd}: {obs_record.window_title[:48]}. Controls are in structuredContent."
             content_blocks: list[dict[str, Any]] = [{"type": "text", "text": txt}]
@@ -2397,6 +2577,11 @@ class NativeComputerFacade:
 
         post_artifacts: list[dict[str, Any]] = []
         post_record: WindowObservationRecord | None = None
+        post_obs_error: str | None = (
+            str(commit_res["postObservationError"])
+            if commit_res.get("postObservationError")
+            else None
+        )
         if isinstance(commit_res.get("observation"), Mapping):
             try:
                 post_record, post_artifacts = self._ingest_observation(
@@ -2406,10 +2591,14 @@ class NativeComputerFacade:
                     window_meta={"title": approved_preview.get("window_title", "")},
                     context=context,
                 )
-            except (NativeBridgeError, OSError):
+            except NativeBridgeError as obs_exc:
                 # The native receipt already proves input delivery. A failed
                 # follow-up capture/file write must not turn it into a retry.
                 post_artifacts = []
+                post_obs_error = post_obs_error or obs_exc.code
+            except OSError:
+                post_artifacts = []
+                post_obs_error = post_obs_error or "artifact_write_failed"
 
         structured = {
             "status": str(commit_res["status"]),
@@ -2430,6 +2619,8 @@ class NativeComputerFacade:
             ) if post_record else
             "The action committed but its new observation is unavailable. Read the window to verify; do not replay the action.",
         }
+        if post_obs_error is not None:
+            structured["post_observation_error"] = post_obs_error
         if post_record:
             bounds = post_record.geometry["windowRect"]
             structured["observation"] = {
@@ -2721,6 +2912,7 @@ class NativeComputerFacade:
 
     def close(self) -> None:
         self.overlay.close()
+        unregister_settings_source(self._owner)
         with self._lock:
             self._escaped_tasks.clear()
             for tstate in self._tasks.values():
@@ -2752,6 +2944,7 @@ def bind_owner_native_computer(
     """
     if owner is None:
         raise ValueError("owner is required for NativeComputerFacade")
+    register_settings_source(owner)
     target_owner_id = resolve_owner_id(owner)
     with _FACADE_LOCK:
         if bridge is not None:
@@ -2788,12 +2981,83 @@ def bind_owner_native_computer(
         return facade
 
 
+_COMPUTER_CONTROL_PREFIXES = (
+    "ryn_computer_",
+    "mcp__computer_use__",
+    "mcp__plugin_computer_use_",
+    "mcp.computer_use.",
+    "computer_use.",
+)
+
+
+def is_computer_control_tool_name(name: str) -> bool:
+    """Return True if `name` is a legacy or builtin MCP desktop computer-control tool."""
+    if not isinstance(name, str):
+        return False
+    return name.startswith(_COMPUTER_CONTROL_PREFIXES)
+
+
+def computer_platform_status(store: Any = None) -> dict[str, Any]:
+    """Read current agent settings (read-only) and return `computer.platform_support(...)`."""
+    settings: dict[str, Any] | None = None
+    if store is not None:
+        try:
+            if hasattr(store, "inspect"):
+                raw_settings = store.inspect(lambda d: dict(d.get("settings") or {}) if isinstance(d, dict) else {})
+            elif hasattr(store, "read"):
+                raw_data = store.read()
+                raw_settings = dict(raw_data.get("settings") or {}) if isinstance(raw_data, dict) else {}
+            else:
+                raw_settings = None
+            if isinstance(raw_settings, dict):
+                settings = raw_settings
+        except Exception:
+            settings = None
+    return platform_support(settings=settings)
+
+
+def filter_computer_tool_specs(
+    specs: list[dict[str, Any]],
+    *,
+    store: Any = None,
+) -> list[dict[str, Any]]:
+    """Omit computer-control tools from the model tool menu on unsupported platforms."""
+    support = computer_platform_status(store)
+    if support.get("supported") is True:
+        return specs
+    return [
+        item
+        for item in specs
+        if not is_computer_control_tool_name(str((item.get("function") or {}).get("name") or ""))
+    ]
+
+
+def environment_computer_fields(store: Any = None) -> dict[str, Any]:
+    """Build `ryn_local_environment` fields explaining computer-control platform support."""
+    support = computer_platform_status(store)
+    supported = bool(support.get("supported"))
+    out: dict[str, Any] = {
+        "computer_control_supported": supported,
+        "computer_control_platform": str(support.get("platform_name") or ""),
+    }
+    if support.get("emulated_x64"):
+        out["computer_control_emulated_x64"] = True
+    msg = support.get("message_zh")
+    if isinstance(msg, str) and msg:
+        out["computer_control_reason"] = msg
+    return out
+
+
 __all__ = [
     "HostObservationArtifactEntry",
     "NativeComputerFacade",
     "TrustedWriteAuthorityStamp",
     "WindowObservationRecord",
     "bind_owner_native_computer",
+    "computer_platform_status",
+    "environment_computer_fields",
+    "filter_computer_tool_specs",
+    "is_computer_control_tool_name",
     "normalize_key_token",
     "validate_native_observation_descriptor",
 ]

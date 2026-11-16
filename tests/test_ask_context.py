@@ -115,7 +115,7 @@ def test_structured_prompt_rejects_invalid_roles_and_payloads(messages):
 
     with pytest.raises(ValueError):
         decode_chat_prompt(json.dumps(messages), CHAT_FORMAT)
-    with pytest.raises(ValueError, match="unsupported"):
+    with pytest.raises(ValueError, match="prompt format is not supported"):
         decode_chat_prompt("question", "future-chat-format")
 
 

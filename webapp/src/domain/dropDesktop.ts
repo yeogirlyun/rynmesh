@@ -41,4 +41,17 @@ export async function listenNativeFileDrop(handler: (event: NativeDropEvent) => 
   });
 }
 
+export interface DropPathInfo {
+  path: string;
+  size: number;
+  kind: "file" | "dir" | "missing";
+}
+
+export async function inspectDropPaths(paths: string[]): Promise<DropPathInfo[]> {
+  if (!isTauriDesktop() || !paths.length) {
+    return paths.map(path => ({ path, size: 0, kind: "file" }));
+  }
+  return (await invoke<DropPathInfo[]>("inspect_drop_paths", { paths })) || [];
+}
+
 export const baseName = (path: string) => path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || path;

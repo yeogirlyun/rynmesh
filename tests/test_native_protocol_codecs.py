@@ -157,16 +157,20 @@ def test_native_output_private_continuation_is_scoped_and_checked(protocol):
         assert wire["input"][1:-1] == native["output"]
     else:
         assert wire["messages"][1]["content"] == native["content"]
-    # Whitespace/member-order normalization is harmless; changed values are not.
+    # Whitespace/member-order normalization is harmless; changed values discard private continuation and fall back to public projection.
     assistant["tool_calls"][0]["function"]["arguments"] = '{ "city" : "北京" }'
     make_request(body(history), protocol, MODEL, SCOPE)
     assistant["tool_calls"][0]["function"]["arguments"] = '{"city":"上海"}'
-    with pytest.raises(ValueError, match="no longer matches"):
-        make_request(body(history), protocol, MODEL, SCOPE)
+    diag_args = {}
+    fallback_args = make_request(body(history), protocol, MODEL, SCOPE, diagnostics=diag_args)
+    assert "PRIVATE_" not in json.dumps(fallback_args)
+    assert diag_args == {"provider_state_discarded": 1}
     assistant["tool_calls"][0]["function"]["arguments"] = call()["function"]["arguments"]
     assistant["content"] += " changed"
-    with pytest.raises(ValueError, match="no longer matches"):
-        make_request(body(history), protocol, MODEL, SCOPE)
+    diag_text = {}
+    fallback_text = make_request(body(history), protocol, MODEL, SCOPE, diagnostics=diag_text)
+    assert "PRIVATE_" not in json.dumps(fallback_text)
+    assert diag_text == {"provider_state_discarded": 1}
     # Switching destination reuses only public canonical history.
     other = make_request(body(history), protocol, MODEL, OTHER_SCOPE)
     assert "PRIVATE_" not in json.dumps(other)
@@ -224,8 +228,10 @@ def test_messages_unknown_or_paused_stop_is_not_success(stop):
 @pytest.mark.parametrize("protocol", [RESPONSES, MESSAGES])
 def test_truncated_response_cannot_propose_executable_tools(protocol):
     native = response(status="incomplete") if protocol == RESPONSES else message(stop="max_tokens")
-    with pytest.raises(ValueError, match="safe tool completion"):
-        parse_response(native, protocol, MODEL, SCOPE)
+    parsed = parse_response(native, protocol, MODEL, SCOPE)
+    assert parsed["finish_reason"] == "length"
+    assert parsed["message"]["content"] == "Checking"
+    assert "tool_calls" not in parsed["message"]
 
 
 def response_stream(native=None):
@@ -322,11 +328,11 @@ def test_stream_truncated_tool_never_reaches_model_executor(protocol, events):
         stream[-1] = {"type": "response.incomplete", "response": terminal}
     else:
         stream[-2]["delta"]["stop_reason"] = "max_tokens"
-    for event in stream[:-1]:
+    for event in stream:
         chunks += decoder.feed(event)
-    with pytest.raises(ValueError):
-        decoder.feed(stream[-1])
     assert not any(choice.get("delta", {}).get("tool_calls") for chunk in chunks for choice in chunk.get("choices", []))
+    assert "tool_calls" not in decoder.result()["message"]
+    assert decoder.result()["message"]["content"] == "Checking"
     assert decoder.finish_reason == "length"
     assert decoder.usage["completion_tokens"] == 5
 
@@ -358,9 +364,13 @@ def test_responses_final_cannot_change_streamed_public_projection(change):
 @pytest.mark.parametrize("protocol,native", [(RESPONSES, response), (MESSAGES, message)])
 def test_server_tools_are_rejected_instead_of_dropped(protocol, native):
     raw = native(tools=False)
-    raw["output" if protocol == RESPONSES else "content"].append({"type": "web_search_call" if protocol == RESPONSES else "server_tool_use", "id": "server_1"})
-    with pytest.raises(ValueError, match="unsupported"):
-        parse_response(raw, protocol, MODEL, SCOPE)
+    server_type = "web_search_call" if protocol == RESPONSES else "server_tool_use"
+    raw["output" if protocol == RESPONSES else "content"].append({"type": server_type, "id": "server_1"})
+    parsed = parse_response(raw, protocol, MODEL, SCOPE)
+    assert parsed["message"]["content"] == "Checking"
+    assert "tool_calls" not in parsed["message"]
+    wire = make_request(body([{"role": "user", "content": "q"}, parsed["message"], {"role": "user", "content": "next"}]), protocol, MODEL, SCOPE)
+    assert server_type not in json.dumps(wire)
 
 
 def test_messages_merges_synthetic_assistant_checkpoint_with_native_thinking_continuation():

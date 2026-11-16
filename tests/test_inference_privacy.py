@@ -200,7 +200,7 @@ def test_zcode_api_a_encrypted_b_codex_tool_response(fake_rpc, tmp_path, protoco
     discovered = [{"peer_id": b.peer_id, "online": True, "chat_protocol": "rynmesh.chat.v1", "service": manifest.public_dict()}]
     install_inference_api(app, home=tmp_path / "a", store=a, active_manager=lambda: None,
         discover=lambda _: discovered, execute_order=execute, cancel_order=lambda _: None)
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         key = client.post("/api/local/llm/api-keys", json={"name": "zcode"}).json()["key"]
         model = client.get("/api/local/llm/api-access").json()["targets"][0]["id"]
         body = {"model": model, "stream": stream}

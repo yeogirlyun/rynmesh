@@ -8,6 +8,7 @@ announcement bus remains as a local development compatibility layer.
 from __future__ import annotations
 
 import json
+import logging
 import mimetypes
 import os
 import re
@@ -21,6 +22,13 @@ from typing import Any
 
 from .credits import GENERAL_CATEGORY, GLOBAL_CATEGORY, FileCreditLedger
 from .crypto import SignedPayload, b64, public_key_from_private, sha256_bytes, unb64
+from .private_permissions import (
+    ensure_private_file_acl,
+    key_protection_status,
+    read_windows_dacl,
+    restrict_windows_acl,
+    write_private_bytes_exclusive,
+)
 from .identity import (
     IdentityPolicy,
     IdentityTier,
@@ -223,16 +231,44 @@ def _generate_private_key() -> bytes:
     return Ed25519PrivateKey.generate().private_bytes_raw()
 
 
+_logger = logging.getLogger(__name__)
+
+
+def _read_and_validate_private_key(path: Path) -> bytes:
+    try:
+        encoded_text = path.read_text(encoding="utf-8").strip()
+        raw = unb64(encoded_text) if encoded_text else b""
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise ValueError("identity_key_invalid") from exc
+    if len(raw) != 32:
+        raise ValueError("identity_key_invalid")
+    ensure_private_file_acl(
+        path,
+        track_key_status=True,
+        acl_fn=restrict_windows_acl,
+        dacl_fn=read_windows_dacl,
+        logger=_logger,
+    )
+    return raw
+
+
 def load_or_create_private_key(path: Path) -> bytes:
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
-        return unb64(path.read_text(encoding="utf-8").strip())
+        return _read_and_validate_private_key(path)
     private_key = _generate_private_key()
-    path.write_text(b64(private_key) + "\n", encoding="utf-8")
+    payload = (b64(private_key) + "\n").encode("utf-8")
     try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+        write_private_bytes_exclusive(
+            path,
+            payload,
+            acl_fn=restrict_windows_acl,
+            dacl_fn=read_windows_dacl,
+            logger=_logger,
+        )
+    except FileExistsError:
+        return _read_and_validate_private_key(path)
     return private_key
 
 

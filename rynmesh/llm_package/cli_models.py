@@ -23,15 +23,50 @@ def _discovery_lock(kind, executable):
         return _discovery_locks.setdefault((kind, executable), threading.Lock())
 
 
-def context_metadata(models, model="", *, fallback=32768):
+CLI_FALLBACK_WINDOWS = {
+    "codex_cli": 128000,
+    "claude_cli": 200000,
+    "antigravity_cli": 65536,
+}
+CLI_FALLBACK_MAX_OUTPUT_TOKENS = 32000
+
+
+def fallback_window(kind: str, default: int = 32768) -> int:
+    return CLI_FALLBACK_WINDOWS.get(kind, default)
+
+
+def default_max_output_tokens(kind: str, model: str = "", *, executable: str = "") -> int:
+    """Resolve the model's max_output_tokens for CLI sessions when max_tokens is omitted."""
+    from .model_settings import _known_vendor_max_output_tokens
+
+    if executable:
+        rows = cached_models(kind, executable)
+        if rows:
+            selected = (
+                next((r for r in rows if r.get("id") == model), {})
+                if model
+                else next((r for r in rows if r.get("default")), {})
+            )
+            declared = selected.get("max_output_tokens")
+            if type(declared) is int and declared > 0:
+                return declared
+    if model:
+        vendor_max = _known_vendor_max_output_tokens(model)
+        if type(vendor_max) is int and vendor_max > 0:
+            return vendor_max
+    return CLI_FALLBACK_MAX_OUTPUT_TOKENS
+
+
+def context_metadata(models, model="", *, fallback=None, kind="", fallback_basis="unknown_fallback"):
     """Read only the selected/default model's declared window, never a caller hint."""
+    effective_fallback = fallback if fallback is not None else fallback_window(kind, 32768)
     selected = next((row for row in models if row.get("id") == model), {}) if model else next(
         (row for row in models if row.get("default")), {})
     window = selected.get("context_window")
     known = type(window) is int and 256 <= window <= 2000000
-    return {"context_window": window if known else fallback,
+    return {"context_window": window if known else effective_fallback,
             "context_window_known": known,
-            "context_window_basis": "installed_cli_model_cache" if known else "unknown_fallback"}
+            "context_window_basis": "installed_cli_model_cache" if known else fallback_basis}
 
 
 def cached_models(kind, executable):
@@ -69,7 +104,7 @@ def parse_antigravity_models(output):
         if not identifier or not name:
             raise AdapterError("Antigravity returned an invalid model list")
         if identifier not in seen:
-            row = {"id": identifier, "name": name, "default": False}
+            row = {"id": identifier, "name": name, "default": False, "agent_support": "experimental"}
             window = _known_vendor_context_window(identifier)
             if window is not None:
                 row["context_window"] = window
@@ -81,13 +116,13 @@ def parse_antigravity_models(output):
     if not models:
         raise AdapterError("Antigravity returned no models; run agy locally to check login and model access")
     # No default model is advertised by `agy models`; preserve the CLI's choice.
-    default_row = {"id": "", "name": "CLI default", "default": True}
+    default_row = {"id": "", "name": "CLI default", "default": True, "agent_support": "experimental"}
     default_windows = [row["context_window"] for row in models if "context_window" in row]
     if default_windows:
-        default_row["context_window"] = max(default_windows)
+        default_row["context_window"] = min(default_windows)
     default_outputs = [row["max_output_tokens"] for row in models if "max_output_tokens" in row]
     if default_outputs:
-        default_row["max_output_tokens"] = max(default_outputs)
+        default_row["max_output_tokens"] = min(default_outputs)
     return [default_row, *models]
 
 

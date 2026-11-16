@@ -7,6 +7,7 @@ relays/operators see only ciphertext. Uses only `cryptography` (no new deps).
 from __future__ import annotations
 
 import base64
+import logging
 import os
 from pathlib import Path
 
@@ -15,18 +16,47 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
+from ..private_permissions import (
+    ensure_private_file_acl,
+    read_windows_dacl,
+    restrict_windows_acl,
+    write_private_bytes_exclusive,
+)
+
+_logger = logging.getLogger(__name__)
 _INFO = b"rynmesh-peer-msg-v1"
+
+
+def _read_and_validate_messaging_key(path: Path) -> X25519PrivateKey:
+    raw = path.read_bytes()
+    if len(raw) != 32:
+        raise ValueError("messaging_key_invalid")
+    ensure_private_file_acl(
+        path,
+        track_key_status=True,
+        acl_fn=restrict_windows_acl,
+        dacl_fn=read_windows_dacl,
+        logger=_logger,
+    )
+    return X25519PrivateKey.from_private_bytes(raw)
 
 
 def load_or_create_messaging_key(path: str | Path) -> X25519PrivateKey:
     path = Path(path)
     if path.exists():
-        return X25519PrivateKey.from_private_bytes(path.read_bytes())
+        return _read_and_validate_messaging_key(path)
     key = X25519PrivateKey.generate()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "wb") as handle:
-        handle.write(key.private_bytes_raw())
+    raw = key.private_bytes_raw()
+    try:
+        write_private_bytes_exclusive(
+            path,
+            raw,
+            acl_fn=restrict_windows_acl,
+            dacl_fn=read_windows_dacl,
+            logger=_logger,
+        )
+    except FileExistsError:
+        return _read_and_validate_messaging_key(path)
     return key
 
 

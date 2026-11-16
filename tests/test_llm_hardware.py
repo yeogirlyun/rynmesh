@@ -37,8 +37,8 @@ Swapouts:                                    0.
 
 
 def test_parse_vm_stat_uses_reported_page_size():
-    # (10000 + 5000 + 500) pages * 16384 bytes / 2**20 MiB-per-byte-divisor
-    expected_mb = (10000 + 5000 + 500) * 16384 // 2**20
+    # (10000 + 5000 + 500 + 100) pages * 16384 bytes / 2**20 MiB-per-byte-divisor
+    expected_mb = (10000 + 5000 + 500 + 100) * 16384 // 2**20
     assert llm_hardware._parse_vm_stat(VM_STAT_SAMPLE_16K_PAGES) == expected_mb
 
 
@@ -60,7 +60,7 @@ def test_darwin_memory_branch_reads_sysctl_and_vm_stat(monkeypatch):
     monkeypatch.setattr(llm_hardware.subprocess, "run", fake_run)
     total_mb, available_mb = llm_hardware._memory()
     assert total_mb == 16 * 1024
-    assert available_mb == (10000 + 5000 + 500) * 16384 // 2**20
+    assert available_mb == (10000 + 5000 + 500 + 100) * 16384 // 2**20
 
 
 def test_darwin_memory_branch_falls_back_to_zero_on_failure(monkeypatch):

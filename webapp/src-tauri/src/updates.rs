@@ -5,12 +5,21 @@
 //! running the click is remembered and the update installs once Ryn is idle (the owner
 //! may also choose to update right away; open documents are never closed for them).
 //! A ready update is also installed when the owner quits Ryn, unless they turned that off.
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
-use std::{sync::{Mutex, atomic::{AtomicBool, Ordering}}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
+use sha2::{Digest, Sha256};
+use std::{
+    io::{Read, Write},
+    path::{Path, PathBuf},
+    sync::{Mutex, atomic::{AtomicBool, Ordering}},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
 use tauri::{Manager, Url};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 pub const ENDPOINT: &str = "https://github.com/yeogirlyun/rynmesh/releases/latest/download/desktop-latest.json";
+const OFFICIAL_PACKAGE_PREFIX: &str = "/yeogirlyun/rynmesh/releases/download/";
+const MIRRORS: Option<&str> = option_env!("RYN_DESKTOP_UPDATE_MIRRORS");
 const PUBLIC_KEY: &str = match option_env!("RYN_DESKTOP_UPDATE_PUBLIC_KEY") { Some(key) => key, None => "" };
 /// End-to-end test builds only; the release workflow never sets it. The manifest URL of a
 /// local test server: packages must come from its origin and still carry a signature for
@@ -20,7 +29,8 @@ const CHECK_INTERVAL: Duration = Duration::from_secs(3600);
 const RETRY_INTERVAL: Duration = Duration::from_secs(15 * 60);
 const TICK: Duration = Duration::from_secs(15);
 const CHECK_TIMEOUT: Duration = Duration::from_secs(20);
-const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(600);
+const CHUNK_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+const STREAM_BUF_BYTES: usize = 64 * 1024;
 /// Background failures reach the app shell only once they keep happening; a failure of
 /// an update the owner asked to install is shown at once.
 pub const VISIBLE_FAILURES: u32 = 3;
@@ -93,9 +103,137 @@ fn write_preferences(app: &tauri::AppHandle, preferences: &Preferences) -> Resul
     std::fs::write(&stage, serde_json::to_vec(preferences).unwrap()).map_err(|e| e.to_string())?;
     std::fs::rename(stage, path).map_err(|e| e.to_string())
 }
-fn cache_path(app: &tauri::AppHandle, update: &Update) -> Result<std::path::PathBuf, String> {
+fn cache_path(app: &tauri::AppHandle, update: &Update) -> Result<PathBuf, String> {
     // version originates from the updater's parsed SemVer, never a caller path.
     Ok(directory(app)?.join(format!("{}.update", update.version)))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VerifiedMarker {
+    size: u64,
+    modified_secs: u64,
+    modified_nanos: u32,
+    version: String,
+    sha256: String,
+}
+
+fn part_path(cache_file: &Path) -> PathBuf {
+    cache_file.with_extension("part")
+}
+
+fn verified_path(cache_file: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.verified", cache_file.display()))
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(&mut out, "{b:02x}");
+    }
+    out
+}
+
+fn file_stamp(path: &Path) -> Option<(u64, u64, u32)> {
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() {
+        return None;
+    }
+    let dur = meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
+    Some((meta.len(), dur.as_secs(), dur.subsec_nanos()))
+}
+
+fn write_verified_marker(cache_file: &Path, version: &str, sha256: &str) -> Result<(), String> {
+    let (size, modified_secs, modified_nanos) =
+        file_stamp(cache_file).ok_or_else(|| "update_cache_missing".to_string())?;
+    let marker = VerifiedMarker {
+        size,
+        modified_secs,
+        modified_nanos,
+        version: version.to_string(),
+        sha256: sha256.to_string(),
+    };
+    let target = verified_path(cache_file);
+    let tmp = PathBuf::from(format!("{}.tmp", target.display()));
+    let payload = serde_json::to_vec(&marker).map_err(|e| e.to_string())?;
+    std::fs::write(&tmp, payload).map_err(|e| e.to_string())?;
+    std::fs::rename(tmp, target).map_err(|e| e.to_string())
+}
+
+fn read_verified_marker(cache_file: &Path) -> Option<VerifiedMarker> {
+    let bytes = std::fs::read(verified_path(cache_file)).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn clear_cached_package(cache_file: &Path) {
+    let _ = std::fs::remove_file(cache_file);
+    let _ = std::fs::remove_file(verified_path(cache_file));
+}
+
+fn check_cached_package(cache_file: &Path, expected_version: &str) -> bool {
+    let marker_file = verified_path(cache_file);
+    if !cache_file.exists() {
+        if marker_file.exists() {
+            let _ = std::fs::remove_file(&marker_file);
+        }
+        return false;
+    }
+    let Some((size, secs, nanos)) = file_stamp(cache_file) else {
+        clear_cached_package(cache_file);
+        return false;
+    };
+    let Some(marker) = read_verified_marker(cache_file) else {
+        clear_cached_package(cache_file);
+        return false;
+    };
+    let matches = marker.size == size
+        && marker.modified_secs == secs
+        && marker.modified_nanos == nanos
+        && marker.version == expected_version
+        && marker.sha256.len() == 64;
+    if !matches {
+        clear_cached_package(cache_file);
+    }
+    matches
+}
+
+fn sha256_hex_streaming(path: &Path) -> Result<String, String> {
+    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0_u8; STREAM_BUF_BYTES];
+    loop {
+        let read_len = file.read(&mut buf).map_err(|e| e.to_string())?;
+        if read_len == 0 {
+            break;
+        }
+        hasher.update(&buf[..read_len]);
+    }
+    Ok(hex_lower(&hasher.finalize()[..]))
+}
+
+fn load_verified_package_bytes(
+    cache_file: &Path,
+    expected_version: &str,
+    read_all: impl FnOnce(&Path) -> std::io::Result<Vec<u8>>,
+) -> Result<Vec<u8>, String> {
+    let Some(marker) = read_verified_marker(cache_file) else {
+        clear_cached_package(cache_file);
+        return Err("update_cache_corrupt".into());
+    };
+    if marker.version != expected_version || marker.sha256.len() != 64 {
+        clear_cached_package(cache_file);
+        return Err("update_cache_corrupt".into());
+    }
+    let Ok(actual_sha256) = sha256_hex_streaming(cache_file) else {
+        clear_cached_package(cache_file);
+        return Err("update_cache_corrupt".into());
+    };
+    if actual_sha256 != marker.sha256 {
+        clear_cached_package(cache_file);
+        return Err("update_cache_corrupt".into());
+    }
+    read_all(cache_file).map_err(|e| e.to_string())
 }
 fn snapshot(app: &tauri::AppHandle) -> Status { app.state::<UpdateState>().status.lock().unwrap().clone() }
 fn record_failure(app: &tauri::AppHandle, error: String, visible: bool) -> String {
@@ -109,17 +247,123 @@ fn record_failure(app: &tauri::AppHandle, error: String, visible: bool) -> Strin
 fn failed(app: &tauri::AppHandle, error: String) -> String { record_failure(app, error, false) }
 fn install_failed(app: &tauri::AppHandle, error: String) -> String { record_failure(app, error, true) }
 
-fn endpoint() -> Url {
-    TEST_ENDPOINT.and_then(|value| value.parse().ok()).unwrap_or_else(|| ENDPOINT.parse().unwrap())
+fn valid_mirror_endpoint(url: &Url) -> bool {
+    url.scheme() == "https"
+        && url.port_or_known_default() == Some(443)
+        && url.host_str().is_some_and(|h| !h.is_empty() && h != "github.com")
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.query().is_none()
+        && url.fragment().is_none()
+        && !url.path().split('/').any(|seg| seg == "..")
 }
-fn allowed_package(url: &Url, endpoint: &Url) -> bool {
-    if !url.username().is_empty() || url.password().is_some() { return false; }
-    if endpoint.as_str() == ENDPOINT {
-        return url.scheme() == "https" && url.host_str() == Some("github.com") && url.port_or_known_default() == Some(443)
-            && url.path().starts_with("/yeogirlyun/rynmesh/releases/download/");
+
+fn mirror_package_prefix(mirror_endpoint: &Url) -> String {
+    let path = mirror_endpoint.path();
+    if let Some(stem) = path.strip_suffix("/releases/latest/download/desktop-latest.json") {
+        return format!("{stem}/releases/download/");
     }
-    // A test build's local server serves packages from the origin of its manifest.
-    url.origin() == endpoint.origin()
+    match path.rfind('/') {
+        Some(0) | None => "/releases/download/".to_string(),
+        Some(idx) => {
+            let dir = &path[..=idx];
+            if dir == "/" { "/releases/download/".to_string() } else { dir.to_string() }
+        }
+    }
+}
+
+fn parse_mirrors(raw: Option<&str>) -> Vec<Url> {
+    let mut out = Vec::new();
+    let Some(raw) = raw else { return out; };
+    for part in raw.split(',') {
+        let trimmed = part.trim();
+        if trimmed.is_empty() { continue; }
+        let candidate = if trimmed.ends_with(".json") {
+            trimmed.to_string()
+        } else {
+            format!("{}/desktop-latest.json", trimmed.trim_end_matches('/'))
+        };
+        let Ok(url) = candidate.parse::<Url>() else { continue; };
+        if valid_mirror_endpoint(&url) && !out.iter().any(|existing: &Url| existing == &url) {
+            out.push(url);
+        }
+    }
+    out
+}
+
+fn resolve_endpoints(test_endpoint: Option<&str>, mirrors_raw: Option<&str>) -> Vec<Url> {
+    if let Some(test_url) = test_endpoint.and_then(|value| value.parse::<Url>().ok()) {
+        return vec![test_url];
+    }
+    let mut list = vec![ENDPOINT.parse::<Url>().unwrap()];
+    list.extend(parse_mirrors(mirrors_raw));
+    list
+}
+
+fn endpoint() -> Vec<Url> {
+    resolve_endpoints(TEST_ENDPOINT, MIRRORS)
+}
+
+fn allowed_package(url: &Url, configured_endpoints: &[Url]) -> bool {
+    if !url.username().is_empty() || url.password().is_some() || url.path().split('/').any(|seg| seg == "..") {
+        return false;
+    }
+    if configured_endpoints.len() == 1 && configured_endpoints[0].as_str() != ENDPOINT {
+        // A test build's local server serves packages from the origin of its manifest.
+        return url.origin() == configured_endpoints[0].origin();
+    }
+    if url.scheme() != "https" || url.port_or_known_default() != Some(443) {
+        return false;
+    }
+    if url.host_str() == Some("github.com") && url.path().starts_with(OFFICIAL_PACKAGE_PREFIX) {
+        return true;
+    }
+    for mirror in configured_endpoints.iter().skip(1) {
+        let prefix = mirror_package_prefix(mirror);
+        if url.host_str() == mirror.host_str()
+            && url.port_or_known_default() == mirror.port_or_known_default()
+            && url.path().starts_with(&prefix)
+            && url.path().len() > prefix.len()
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn package_relative_path<'a>(package_url: &'a Url, configured_endpoints: &[Url]) -> Option<&'a str> {
+    if package_url.host_str() == Some("github.com") {
+        return package_url.path().strip_prefix(OFFICIAL_PACKAGE_PREFIX).filter(|s| !s.is_empty());
+    }
+    for mirror in configured_endpoints.iter().skip(1) {
+        if package_url.host_str() == mirror.host_str() {
+            let prefix = mirror_package_prefix(mirror);
+            if let Some(rest) = package_url.path().strip_prefix(&prefix) {
+                if !rest.is_empty() {
+                    return Some(rest);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn candidate_download_urls(primary_url: &Url, configured_endpoints: &[Url]) -> Vec<Url> {
+    let mut urls = vec![primary_url.clone()];
+    let Some(rel_path) = package_relative_path(primary_url, configured_endpoints) else {
+        return urls;
+    };
+    for mirror in configured_endpoints.iter().skip(1) {
+        let prefix = mirror_package_prefix(mirror);
+        let mut candidate = mirror.clone();
+        candidate.set_path(&format!("{prefix}{rel_path}"));
+        candidate.set_query(None);
+        candidate.set_fragment(None);
+        if allowed_package(&candidate, configured_endpoints) && !urls.iter().any(|u| u == &candidate) {
+            urls.push(candidate);
+        }
+    }
+    urls
 }
 
 #[tauri::command]
@@ -164,9 +408,9 @@ async fn bounded_check<T>(
 async fn check(app: &tauri::AppHandle) -> Result<(), String> {
     if PUBLIC_KEY.trim().is_empty() { return Err("update_signing_key_not_configured".into()); }
     let state = app.state::<UpdateState>();
-    let endpoint = endpoint();
+    let endpoint_list = endpoint();
     let updater = app.updater_builder().pubkey(PUBLIC_KEY)
-        .endpoints(vec![endpoint.clone()]).map_err(|e| e.to_string())?
+        .endpoints(endpoint_list.clone()).map_err(|e| e.to_string())?
         .timeout(CHECK_TIMEOUT).build().map_err(|e| e.to_string())?;
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
     *state.cancel_check.lock().unwrap() = Some(cancel_tx);
@@ -191,15 +435,13 @@ async fn check(app: &tauri::AppHandle) -> Result<(), String> {
         state.status.lock().unwrap().state = "cancelled".into();
         return Ok(());
     }
-    let mut update = result?;
-    if let Some(ref mut update) = update { update.timeout = Some(DOWNLOAD_TIMEOUT); }
+    let update = result?;
     if let Some(ref update) = update {
-        if !allowed_package(&update.download_url, &endpoint) { return Err("update_download_origin_rejected".into()); }
+        if !allowed_package(&update.download_url, &endpoint_list) { return Err("update_download_origin_rejected".into()); }
     }
     let cached = update.as_ref().is_some_and(|u| {
         let Ok(path) = cache_path(app, u) else { return false; };
-        let Ok(bytes) = std::fs::read(&path) else { return false; };
-        if u.verify(&bytes).is_ok() { true } else { let _ = std::fs::remove_file(path); false }
+        check_cached_package(&path, &u.version)
     });
     let mut status = state.status.lock().unwrap();
     status.available_version = update.as_ref().map(|u| u.version.clone());
@@ -212,19 +454,189 @@ async fn check(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+async fn stream_url_to_part(
+    client: &reqwest::Client,
+    url: &Url,
+    stage_path: &Path,
+    idle_timeout: Duration,
+    mut on_progress: impl FnMut(u64, Option<u64>),
+) -> Result<String, String> {
+    let existing_len = std::fs::metadata(stage_path)
+        .ok()
+        .filter(|m| m.is_file())
+        .map(|m| m.len())
+        .unwrap_or(0);
+
+    let mut req = client.get(url.as_str());
+    if existing_len > 0 {
+        req = req.header(reqwest::header::RANGE, format!("bytes={existing_len}-"));
+    }
+
+    let mut response = tokio::time::timeout(idle_timeout, req.send())
+        .await
+        .map_err(|_| "update_download_idle_timeout".to_string())?
+        .map_err(|e| e.to_string())?;
+
+    let status = response.status();
+    let mut hasher = Sha256::new();
+    let (mut file, mut downloaded, total) = if existing_len > 0 && status == StatusCode::PARTIAL_CONTENT {
+        {
+            let mut prev = std::fs::File::open(stage_path).map_err(|e| e.to_string())?;
+            let mut buf = vec![0_u8; STREAM_BUF_BYTES];
+            loop {
+                let n = prev.read(&mut buf).map_err(|e| e.to_string())?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(&buf[..n]);
+            }
+        }
+        let total = response.content_length().map(|rem| existing_len + rem);
+        let f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(stage_path)
+            .map_err(|e| e.to_string())?;
+        (f, existing_len, total)
+    } else if status == StatusCode::OK {
+        let total = response.content_length();
+        let f = std::fs::File::create(stage_path).map_err(|e| e.to_string())?;
+        (f, 0_u64, total)
+    } else {
+        return Err(format!("update_download_http_{}", status.as_u16()));
+    };
+
+    on_progress(downloaded, total);
+
+    loop {
+        let next = tokio::time::timeout(idle_timeout, response.chunk())
+            .await
+            .map_err(|_| "update_download_idle_timeout".to_string())?
+            .map_err(|e| e.to_string())?;
+        let Some(chunk) = next else {
+            break;
+        };
+        for piece in chunk.chunks(STREAM_BUF_BYTES) {
+            file.write_all(piece).map_err(|e| e.to_string())?;
+            hasher.update(piece);
+            downloaded += piece.len() as u64;
+            on_progress(downloaded, total);
+        }
+    }
+    file.sync_all().map_err(|e| e.to_string())?;
+    Ok(hex_lower(&hasher.finalize()[..]))
+}
+
+fn ensure_rustls_crypto_provider() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
+
+async fn download_candidates_to_cache(
+    candidates: &[Url],
+    cache_file: &Path,
+    version: &str,
+    idle_timeout: Duration,
+    mut on_progress: impl FnMut(u64, Option<u64>),
+    mut verify_signature: impl FnMut(&[u8]) -> Result<(), String>,
+) -> Result<(), String> {
+    ensure_rustls_crypto_provider();
+    let mut builder = reqwest::Client::builder();
+    if candidates
+        .iter()
+        .all(|u| matches!(u.host_str(), Some("127.0.0.1" | "localhost")))
+    {
+        builder = builder.no_proxy();
+    }
+    let client = builder.build().map_err(|e| e.to_string())?;
+    let stage = part_path(cache_file);
+    let mut last_error = String::from("update_download_failed");
+
+    for (index, candidate_url) in candidates.iter().enumerate() {
+        let source_label = format!(
+            "{}{}",
+            candidate_url.host_str().unwrap_or("unknown"),
+            candidate_url.path()
+        );
+        let sha256 = match stream_url_to_part(
+            &client,
+            candidate_url,
+            &stage,
+            idle_timeout,
+            &mut on_progress,
+        )
+        .await
+        {
+            Ok(digest) => digest,
+            Err(error) => {
+                last_error = error;
+                log::warn!(
+                    "desktop_update_download failed attempt={} source={} error={}",
+                    index + 1,
+                    source_label,
+                    last_error
+                );
+                continue;
+            }
+        };
+
+        // Single whole-package read for signature verification; bytes dropped immediately.
+        let verify_result = {
+            let bytes = std::fs::read(&stage).map_err(|e| e.to_string())?;
+            verify_signature(&bytes)
+        };
+        if let Err(error) = verify_result {
+            let _ = std::fs::remove_file(&stage);
+            last_error = error;
+            log::warn!(
+                "desktop_update_download verify_failed attempt={} source={} error={}",
+                index + 1,
+                source_label,
+                last_error
+            );
+            continue;
+        }
+
+        std::fs::rename(&stage, cache_file).map_err(|e| e.to_string())?;
+        write_verified_marker(cache_file, version, &sha256)?;
+        log::info!(
+            "desktop_update_download succeeded attempt={} source={}",
+            index + 1,
+            source_label
+        );
+        return Ok(());
+    }
+    Err(last_error)
+}
+
 async fn download(app: &tauri::AppHandle) -> Result<(), String> {
     let state = app.state::<UpdateState>();
     let update = state.pending.lock().unwrap().clone().ok_or("update_not_available")?;
     let path = cache_path(app, &update)?;
-    // Always download/verify before declaring ready; cached files are reverified by install().
-    { let mut status = state.status.lock().unwrap(); status.state = "downloading".into(); status.downloaded = 0; }
-    let bytes = update.download(|length, total| {
+    let endpoint_list = endpoint();
+    let candidates = candidate_download_urls(&update.download_url, &endpoint_list);
+    {
         let mut status = state.status.lock().unwrap();
-        status.downloaded += length as u64; status.total = total;
-    }, || {}).await.map_err(|e| e.to_string())?;
-    let stage = path.with_extension("part");
-    std::fs::write(&stage, bytes).map_err(|e| e.to_string())?;
-    std::fs::rename(stage, path).map_err(|e| e.to_string())?;
+        status.state = "downloading".into();
+        status.downloaded = 0;
+        status.total = None;
+    }
+    download_candidates_to_cache(
+        &candidates,
+        &path,
+        &update.version,
+        CHUNK_IDLE_TIMEOUT,
+        |downloaded, total| {
+            let mut status = state.status.lock().unwrap();
+            status.state = "downloading".into();
+            status.downloaded = downloaded;
+            status.total = total;
+        },
+        |bytes| update.verify(bytes).map_err(|e| e.to_string()),
+    )
+    .await?;
     let mut status = state.status.lock().unwrap();
     status.state = "ready".into(); status.failures = 0;
     Ok(())
@@ -304,8 +716,26 @@ fn install(app: &tauri::AppHandle, reopen: bool) -> Result<(), String> {
     if runtime.action_busy.swap(true, Ordering::SeqCst) { return Err("update_busy".into()); }
     let _action = Busy(&runtime.action_busy);
     let update = state.pending.lock().unwrap().clone().ok_or("update_not_available")?.restart_after_install(reopen);
-    let bytes = std::fs::read(cache_path(app, &update)?).map_err(|e| install_failed(app, e.to_string()))?;
-    update.verify(&bytes).map_err(|e| install_failed(app, e.to_string()))?;
+    let cpath = cache_path(app, &update)?;
+    let bytes = match load_verified_package_bytes(&cpath, &update.version, |p| std::fs::read(p)) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            let recorded = install_failed(app, error.clone());
+            drop(_action);
+            drop(_busy);
+            if error == "update_cache_corrupt" {
+                let retry_app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = desktop_update_download(retry_app).await;
+                });
+            }
+            return Err(recorded);
+        }
+    };
+    update.verify(&bytes).map_err(|e| {
+        clear_cached_package(&cpath);
+        install_failed(app, e.to_string())
+    })?;
     state.status.lock().unwrap().state = "installing".into();
     // Let the shell show "Updating Ryn…" before the window goes away.
     std::thread::sleep(Duration::from_millis(1500));
@@ -316,7 +746,7 @@ fn install(app: &tauri::AppHandle, reopen: bool) -> Result<(), String> {
     // On Windows a successful install starts the silent installer and exits Ryn; the
     // installer reopens Ryn when `reopen` is set.
     if let Err(error) = update.install(bytes) {
-        if let Ok(path) = cache_path(app, &update) { let _ = std::fs::remove_file(path); }
+        clear_cached_package(&cpath);
         services.resume();
         let _ = crate::node::start(node.inner());
         runtime.reset_recovery.store(true, Ordering::SeqCst);
@@ -340,8 +770,15 @@ pub fn install_on_quit(app: &tauri::AppHandle) {
     let state = app.state::<UpdateState>();
     if !state.quitting.load(Ordering::SeqCst) || version_on_quit(app).is_none() { return; }
     let Some(update) = state.pending.lock().unwrap().clone() else { return; };
-    let Ok(bytes) = cache_path(app, &update).and_then(|path| std::fs::read(path).map_err(|e| e.to_string())) else { return; };
-    if update.verify(&bytes).is_err() { return; }
+    let Ok(cpath) = cache_path(app, &update) else { return; };
+    let Ok(bytes) = load_verified_package_bytes(&cpath, &update.version, |p| std::fs::read(p)) else {
+        log::warn!("update on quit skipped: cached package failed SHA-256 marker check");
+        return;
+    };
+    if update.verify(&bytes).is_err() {
+        clear_cached_package(&cpath);
+        return;
+    }
     if let Err(error) = update.restart_after_install(false).install(bytes) {
         log::warn!("update on quit failed: {error}");
     }
@@ -353,7 +790,14 @@ fn numeric_version(value: &str) -> Option<(u64, u64, u64)> {
 }
 /// Downloaded packages for this version or older are no longer needed once it runs.
 fn obsolete_package(name: &str, current: &str) -> bool {
-    let Some(stem) = name.strip_suffix(".update").or_else(|| name.strip_suffix(".part")) else { return false; };
+    let Some(stem) = name
+        .strip_suffix(".update.verified")
+        .or_else(|| name.strip_suffix(".verified"))
+        .or_else(|| name.strip_suffix(".update"))
+        .or_else(|| name.strip_suffix(".part"))
+    else {
+        return false;
+    };
     match (numeric_version(stem), numeric_version(current)) { (Some(package), Some(running)) => package <= running, _ => false }
 }
 fn remove_obsolete_packages(app: &tauri::AppHandle, current: &str) {
@@ -369,6 +813,7 @@ fn updated_from(previous: Option<&str>, current: &str) -> Option<String> {
 }
 
 pub fn initialize(app: &tauri::AppHandle) {
+    ensure_rustls_crypto_provider();
     let mut preferences = read_preferences(app);
     let current = app.package_info().version.to_string();
     let from = updated_from(preferences.last_version.as_deref(), &current);
@@ -379,7 +824,8 @@ pub fn initialize(app: &tauri::AppHandle) {
     }
     *app.state::<UpdateState>().status.lock().unwrap() = Status {
         current_version: current, auto_download: preferences.auto_download, install_on_quit: preferences.install_on_quit,
-        configured: !PUBLIC_KEY.trim().is_empty(), state: "idle".into(), endpoint: endpoint().to_string(),
+        configured: !PUBLIC_KEY.trim().is_empty(), state: "idle".into(),
+        endpoint: endpoint().first().map(Url::to_string).unwrap_or_else(|| ENDPOINT.to_string()),
         updated_from: from, ..Default::default()
     };
     let handle = app.clone();
@@ -458,12 +904,79 @@ mod tests {
         }
     }
     #[test]
+    fn whitelisted_mirrors_allow_matching_https_packages_and_reject_others_or_credentials() {
+        let configured = resolve_endpoints(
+            None,
+            Some("https://mirror-cn.example.test/ryn-updates/desktop-latest.json, https://mirror-hk.example.test/yeogirlyun/rynmesh/releases/latest/download/desktop-latest.json"),
+        );
+        // Official GitHub and whitelisted mirror prefixes on https:443 are accepted.
+        assert!(allowed_package(&url("https://github.com/yeogirlyun/rynmesh/releases/download/v0.9.1/Ryn.exe"), &configured));
+        assert!(allowed_package(&url("https://mirror-cn.example.test/ryn-updates/v0.9.1/Ryn.exe"), &configured));
+        assert!(allowed_package(&url("https://mirror-hk.example.test/yeogirlyun/rynmesh/releases/download/v0.9.1/Ryn.exe"), &configured));
+
+        // Unlisted hosts, non-HTTPS, custom ports, outside-prefix paths, traversal, and credentials are rejected.
+        for bad in [
+            "https://unlisted.example.test/ryn-updates/v0.9.1/Ryn.exe",
+            "http://mirror-cn.example.test/ryn-updates/v0.9.1/Ryn.exe",
+            "https://mirror-cn.example.test:8443/ryn-updates/v0.9.1/Ryn.exe",
+            "https://mirror-cn.example.test/other/v0.9.1/Ryn.exe",
+            "https://mirror-cn.example.test/ryn-updates/",
+            "https://user@mirror-cn.example.test/ryn-updates/v0.9.1/Ryn.exe",
+            "https://user:secret@mirror-cn.example.test/ryn-updates/v0.9.1/Ryn.exe",
+            "https://:secret@github.com/yeogirlyun/rynmesh/releases/download/v0.9.1/Ryn.exe",
+        ] {
+            assert!(!allowed_package(&url(bad), &configured), "{bad}");
+        }
+    }
+    #[test]
+    fn endpoint_list_preserves_primary_then_mirror_order_and_derives_fallback_urls() {
+        // Without mirrors, behavior matches the single official endpoint.
+        let default_list = resolve_endpoints(None, None);
+        assert_eq!(default_list, vec![url(ENDPOINT)]);
+        assert_eq!(resolve_endpoints(None, Some(" , ")), vec![url(ENDPOINT)]);
+
+        // Configured mirrors preserve order after ENDPOINT, deduplicate, and drop invalid entries.
+        let ordered = resolve_endpoints(
+            None,
+            Some(" https://m1.example.test/ryn/desktop-latest.json , http://insecure.example.test/desktop-latest.json, https://m2.example.test/releases , https://m1.example.test/ryn/desktop-latest.json "),
+        );
+        let ordered_strs: Vec<&str> = ordered.iter().map(Url::as_str).collect();
+        assert_eq!(
+            ordered_strs,
+            vec![
+                ENDPOINT,
+                "https://m1.example.test/ryn/desktop-latest.json",
+                "https://m2.example.test/releases/desktop-latest.json",
+            ]
+        );
+
+        // Test builds isolate to the test endpoint only.
+        let test_only = resolve_endpoints(
+            Some("http://127.0.0.1:47811/desktop-latest.json"),
+            Some("https://m1.example.test/ryn/desktop-latest.json"),
+        );
+        assert_eq!(test_only, vec![url("http://127.0.0.1:47811/desktop-latest.json")]);
+
+        // Fallback download URLs try primary first, then each mirror's same-version package URL in order.
+        let primary_pkg = url("https://github.com/yeogirlyun/rynmesh/releases/download/v0.9.1/Ryn-0.9.1-windows-x86_64.exe");
+        let candidates = candidate_download_urls(&primary_pkg, &ordered);
+        let candidate_strs: Vec<&str> = candidates.iter().map(Url::as_str).collect();
+        assert_eq!(
+            candidate_strs,
+            vec![
+                "https://github.com/yeogirlyun/rynmesh/releases/download/v0.9.1/Ryn-0.9.1-windows-x86_64.exe",
+                "https://m1.example.test/ryn/v0.9.1/Ryn-0.9.1-windows-x86_64.exe",
+                "https://m2.example.test/releases/v0.9.1/Ryn-0.9.1-windows-x86_64.exe",
+            ]
+        );
+    }
+    #[test]
     fn release_builds_use_the_official_release() {
-        if TEST_ENDPOINT.is_none() { assert_eq!(endpoint().as_str(), ENDPOINT); }
+        if TEST_ENDPOINT.is_none() { assert_eq!(endpoint()[0].as_str(), ENDPOINT); }
     }
     #[test]
     fn only_official_https_release_assets() {
-        let official = url(ENDPOINT);
+        let official = [url(ENDPOINT)];
         assert!(allowed_package(&url("https://github.com/yeogirlyun/rynmesh/releases/download/v1/Ryn.exe"), &official));
         for package in ["http://github.com/yeogirlyun/rynmesh/releases/download/v1/Ryn.exe",
             "https://github.com/attacker/rynmesh/releases/download/v1/Ryn.exe",
@@ -475,7 +988,7 @@ mod tests {
     }
     #[test]
     fn a_test_server_serves_packages_from_its_own_origin() {
-        let local = url("http://127.0.0.1:47811/desktop-latest.json");
+        let local = [url("http://127.0.0.1:47811/desktop-latest.json")];
         assert!(allowed_package(&url("http://127.0.0.1:47811/Ryn_0.8.91_x64-setup.exe"), &local));
         for package in ["http://127.0.0.1:47812/Ryn.exe", "http://localhost:47811/Ryn.exe",
             "https://github.com/yeogirlyun/rynmesh/releases/download/v1/Ryn.exe"] {
@@ -500,9 +1013,12 @@ mod tests {
     #[test]
     fn removes_only_packages_this_version_has_reached() {
         assert!(obsolete_package("0.8.91.update", "0.8.91"));
+        assert!(obsolete_package("0.8.91.update.verified", "0.8.91"));
         assert!(obsolete_package("0.8.90.update", "0.8.91"));
+        assert!(obsolete_package("0.8.90.update.verified", "0.8.91"));
         assert!(obsolete_package("0.8.9.part", "0.8.91"));
         assert!(!obsolete_package("0.9.0.update", "0.8.91"));
+        assert!(!obsolete_package("0.9.0.update.verified", "0.8.91"));
         assert!(!obsolete_package("0.8.100.update", "0.8.91"));
         assert!(!obsolete_package("preferences.json", "0.8.91"));
         assert!(!obsolete_package("notes.update", "0.8.91"));
@@ -512,5 +1028,340 @@ mod tests {
         assert_eq!(updated_from(Some("0.8.0"), "0.9.0").as_deref(), Some("0.8.0"));
         assert_eq!(updated_from(Some("0.9.0"), "0.9.0"), None);
         assert_eq!(updated_from(None, "0.9.0"), None);
+    }
+
+    struct TestDir(PathBuf);
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn temp_test_dir(tag: &str) -> TestDir {
+        static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "ryn-updates-{tag}-{}-{seq}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        TestDir(dir)
+    }
+
+    fn read_http_headers(stream: &mut std::net::TcpStream) -> String {
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+        let mut raw = Vec::new();
+        let mut byte = [0_u8; 1];
+        while raw.len() < 16 * 1024 {
+            match stream.read(&mut byte) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    raw.push(byte[0]);
+                    if raw.ends_with(b"\r\n\r\n") {
+                        break;
+                    }
+                }
+            }
+        }
+        String::from_utf8_lossy(&raw).into_owned()
+    }
+
+    #[test]
+    fn verified_marker_skips_package_read_when_matching_and_discards_on_mismatch_or_part_only() {
+        let tmp = temp_test_dir("t1");
+        let cache_file = tmp.0.join("0.9.2.update");
+        let part_file = part_path(&cache_file);
+
+        // .part alone is ignored and never treated as a cached package.
+        std::fs::write(&part_file, b"partial-download").unwrap();
+        assert!(!check_cached_package(&cache_file, "0.9.2"));
+        assert!(part_file.exists());
+        std::fs::remove_file(&part_file).unwrap();
+
+        // Matching .verified marker allows check_cached_package without reading cache_file bytes.
+        std::fs::write(&cache_file, b"signed-bundle-v0.9.2").unwrap();
+        let digest = sha256_hex_streaming(&cache_file).unwrap();
+        write_verified_marker(&cache_file, "0.9.2", &digest).unwrap();
+        {
+            #[cfg(windows)]
+            let _no_read_guard = {
+                use std::os::windows::fs::OpenOptionsExt;
+                let guard = std::fs::OpenOptions::new()
+                    .read(true)
+                    .share_mode(0)
+                    .open(&cache_file)
+                    .unwrap();
+                assert!(std::fs::read(&cache_file).is_err());
+                guard
+            };
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&cache_file, std::fs::Permissions::from_mode(0o000)).unwrap();
+            }
+            assert!(check_cached_package(&cache_file, "0.9.2"));
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&cache_file, std::fs::Permissions::from_mode(0o644)).unwrap();
+            }
+        }
+
+        // Version mismatch discards both cached package and .verified marker.
+        assert!(!check_cached_package(&cache_file, "0.9.3"));
+        assert!(!cache_file.exists());
+        assert!(!verified_path(&cache_file).exists());
+
+        // Size / mtime mismatch discards both cached package and .verified marker.
+        std::fs::write(&cache_file, b"signed-bundle-v0.9.2").unwrap();
+        let digest = sha256_hex_streaming(&cache_file).unwrap();
+        write_verified_marker(&cache_file, "0.9.2", &digest).unwrap();
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&cache_file)
+            .unwrap()
+            .write_all(b"x")
+            .unwrap();
+        assert!(!check_cached_package(&cache_file, "0.9.2"));
+        assert!(!cache_file.exists());
+        assert!(!verified_path(&cache_file).exists());
+
+        // Legacy cache without .verified marker is discarded.
+        std::fs::write(&cache_file, b"legacy-unmarked-bundle").unwrap();
+        assert!(!check_cached_package(&cache_file, "0.9.2"));
+        assert!(!cache_file.exists());
+    }
+
+    #[test]
+    fn install_precheck_rejects_sha256_mismatch_without_loading_package_into_memory() {
+        let tmp = temp_test_dir("t2");
+        let cache_file = tmp.0.join("0.9.2.update");
+
+        std::fs::write(&cache_file, b"original-valid-bundle").unwrap();
+        let digest = sha256_hex_streaming(&cache_file).unwrap();
+        write_verified_marker(&cache_file, "0.9.2", &digest).unwrap();
+
+        // Corrupt the cached bytes in place; read_all must never be invoked.
+        std::fs::write(&cache_file, b"tampered-corrupt-data").unwrap();
+        let read_called = AtomicBool::new(false);
+        let err = load_verified_package_bytes(&cache_file, "0.9.2", |_| {
+            read_called.store(true, Ordering::SeqCst);
+            Ok(Vec::new())
+        })
+        .unwrap_err();
+        assert_eq!(err, "update_cache_corrupt");
+        assert!(!read_called.load(Ordering::SeqCst));
+        assert!(!cache_file.exists());
+        assert!(!verified_path(&cache_file).exists());
+
+        // Intact package passes streaming SHA-256 precheck and loads once.
+        std::fs::write(&cache_file, b"original-valid-bundle").unwrap();
+        let digest = sha256_hex_streaming(&cache_file).unwrap();
+        write_verified_marker(&cache_file, "0.9.2", &digest).unwrap();
+        let loaded = load_verified_package_bytes(&cache_file, "0.9.2", |p| {
+            read_called.store(true, Ordering::SeqCst);
+            std::fs::read(p)
+        })
+        .unwrap();
+        assert!(read_called.load(Ordering::SeqCst));
+        assert_eq!(loaded, b"original-valid-bundle");
+    }
+
+    #[tokio::test]
+    async fn interrupted_download_resumes_with_range_header_for_remaining_bytes_only() {
+        let tmp = temp_test_dir("t3");
+        let cache_file = tmp.0.join("0.9.2.update");
+        let payload: Vec<u8> = (0..150_000_usize).map(|i| (i % 251) as u8).collect();
+        let cut = 70_000_usize;
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server_payload = payload.clone();
+        let server = std::thread::spawn(move || {
+            let (mut s1, _) = listener.accept().unwrap();
+            let req1 = read_http_headers(&mut s1);
+            let head1 = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                server_payload.len()
+            );
+            let _ = s1.write_all(head1.as_bytes());
+            let _ = s1.write_all(&server_payload[..cut]);
+            let _ = s1.flush();
+            let _ = s1.shutdown(std::net::Shutdown::Write);
+            drop(s1);
+
+            let (mut s2, _) = listener.accept().unwrap();
+            let req2 = read_http_headers(&mut s2);
+            let rem = server_payload.len() - cut;
+            let head2 = format!(
+                "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {cut}-{}/{}\r\nContent-Length: {rem}\r\nConnection: close\r\n\r\n",
+                server_payload.len() - 1,
+                server_payload.len()
+            );
+            let _ = s2.write_all(head2.as_bytes());
+            let _ = s2.write_all(&server_payload[cut..]);
+            let _ = s2.flush();
+            (req1, req2)
+        });
+
+        let pkg_url = url(&format!("http://{addr}/Ryn-0.9.2.exe"));
+        let first = download_candidates_to_cache(
+            std::slice::from_ref(&pkg_url),
+            &cache_file,
+            "0.9.2",
+            Duration::from_secs(5),
+            |_, _| {},
+            |_| Ok(()),
+        )
+        .await;
+        assert!(first.is_err());
+        assert_eq!(std::fs::metadata(part_path(&cache_file)).unwrap().len(), cut as u64);
+        assert!(!cache_file.exists());
+
+        let mut last_progress = (0_u64, None);
+        let mut verify_calls = 0_usize;
+        download_candidates_to_cache(
+            std::slice::from_ref(&pkg_url),
+            &cache_file,
+            "0.9.2",
+            Duration::from_secs(5),
+            |downloaded, total| last_progress = (downloaded, total),
+            |bytes| {
+                verify_calls += 1;
+                assert_eq!(bytes.len(), payload.len());
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+
+        let (req1, req2) = server.join().unwrap();
+        assert!(!req1.to_ascii_lowercase().contains("\nrange:"));
+        assert!(req2.to_ascii_lowercase().contains(&format!("range: bytes={cut}-")));
+        assert_eq!(verify_calls, 1);
+        assert_eq!(last_progress, (payload.len() as u64, Some(payload.len() as u64)));
+        assert!(!part_path(&cache_file).exists());
+        assert_eq!(std::fs::read(&cache_file).unwrap(), payload);
+        assert!(check_cached_package(&cache_file, "0.9.2"));
+    }
+
+    #[tokio::test]
+    async fn server_ignoring_range_returns_200_and_truncates_part_from_scratch() {
+        let tmp = temp_test_dir("t4");
+        let cache_file = tmp.0.join("0.9.2.update");
+        let stale = b"stale-partial-prefix-longer-than-fresh-payload-must-truncate";
+        std::fs::write(part_path(&cache_file), stale).unwrap();
+
+        let fresh = b"fresh-full-package-from-200".to_vec();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server_fresh = fresh.clone();
+        let server = std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let req = read_http_headers(&mut s);
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                server_fresh.len()
+            );
+            let _ = s.write_all(head.as_bytes());
+            let _ = s.write_all(&server_fresh);
+            let _ = s.flush();
+            req
+        });
+
+        let pkg_url = url(&format!("http://{addr}/Ryn-0.9.2.exe"));
+        download_candidates_to_cache(
+            std::slice::from_ref(&pkg_url),
+            &cache_file,
+            "0.9.2",
+            Duration::from_secs(5),
+            |_, _| {},
+            |_| Ok(()),
+        )
+        .await
+        .unwrap();
+
+        let req = server.join().unwrap();
+        assert!(req.to_ascii_lowercase().contains(&format!("range: bytes={}-", stale.len())));
+        assert!(!part_path(&cache_file).exists());
+        assert_eq!(std::fs::read(&cache_file).unwrap(), fresh);
+        assert!(check_cached_package(&cache_file, "0.9.2"));
+    }
+
+    #[tokio::test]
+    async fn download_aborts_when_no_bytes_arrive_within_idle_timeout() {
+        assert_eq!(CHUNK_IDLE_TIMEOUT, Duration::from_secs(60));
+        let tmp = temp_test_dir("t5");
+        let cache_file = tmp.0.join("0.9.2.update");
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+        let server = std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let _ = read_http_headers(&mut s);
+            let _ = s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1024\r\n\r\n0123456789abcdef");
+            let _ = s.flush();
+            let _ = done_rx.recv_timeout(Duration::from_secs(2));
+        });
+
+        let pkg_url = url(&format!("http://{addr}/Ryn-0.9.2.exe"));
+        let err = download_candidates_to_cache(
+            std::slice::from_ref(&pkg_url),
+            &cache_file,
+            "0.9.2",
+            Duration::from_millis(150),
+            |_, _| {},
+            |_| Ok(()),
+        )
+        .await
+        .unwrap_err();
+
+        let _ = done_tx.send(());
+        let _ = server.join();
+        assert_eq!(err, "update_download_idle_timeout");
+        assert!(!cache_file.exists());
+        assert!(!verified_path(&cache_file).exists());
+        assert_eq!(std::fs::metadata(part_path(&cache_file)).unwrap().len(), 16);
+    }
+
+    #[tokio::test]
+    async fn invalid_signature_removes_part_file_and_does_not_create_cache_or_marker() {
+        let tmp = temp_test_dir("t6");
+        let cache_file = tmp.0.join("0.9.2.update");
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let _ = read_http_headers(&mut s);
+            let body = b"unsigned-or-corrupted-installer";
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = s.write_all(head.as_bytes());
+            let _ = s.write_all(body);
+            let _ = s.flush();
+        });
+
+        let pkg_url = url(&format!("http://{addr}/Ryn-0.9.2.exe"));
+        let err = download_candidates_to_cache(
+            std::slice::from_ref(&pkg_url),
+            &cache_file,
+            "0.9.2",
+            Duration::from_secs(5),
+            |_, _| {},
+            |_| Err("bad_signature".into()),
+        )
+        .await
+        .unwrap_err();
+
+        server.join().unwrap();
+        assert_eq!(err, "bad_signature");
+        assert!(!part_path(&cache_file).exists());
+        assert!(!cache_file.exists());
+        assert!(!verified_path(&cache_file).exists());
     }
 }

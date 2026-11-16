@@ -122,15 +122,15 @@ def test_encrypted_loop_inspect_approve_change_verify(tmp_path):
     assert done["result"] == "Verified svc1 is shared."
     assert [call[0] for call in tools.calls] == ["inspect_service", "share_service", "inspect_service"]
     assert len({call[2] for call in tools.calls}) == 3
-    assert model.calls[-1][1][-1]["role"] == "tool"
-    assert json.loads(model.calls[-1][1][-1]["content"])["shared"] is True
+    assert model.calls[-1][1][-2]["role"] == "tool"
+    assert json.loads(model.calls[-1][1][-2]["content"])["shared"] is True
     assert "never-expose-test-secret" not in json.dumps(done)
     ciphertext = (tmp_path / "sessions.json").read_text()
     assert "Inspect and share" not in ciphertext and "Verified svc1" not in ciphertext
     restored = AgentRuntime(AgentStore(tmp_path, key), model, tools, Catalog())
     restored.reconcile()
     assert restored.get(row["id"]) == done
-    with pytest.raises(AgentError, match="agent_state_unreadable"):
+    with pytest.raises(AgentError, match="agent_state_corrupt"):
         AgentStore(tmp_path, X25519PrivateKey.generate()).read()
 
 
@@ -181,7 +181,7 @@ def test_denial_becomes_tool_result_then_model_continues(tmp_path):
     runtime.action(row["id"], {"action": "deny", "approval_id": waiting["pending_approval"]["id"], "expected_revision": waiting["revision"]})
     advance(runtime)
     assert runtime.get(row["id"])["status"] == "completed"
-    assert "owner_denied_operation" in model.calls[-1][1][-1]["content"]
+    assert "owner_denied_operation" in model.calls[-1][1][-2]["content"]
     assert tools.calls == []
 
 
@@ -339,13 +339,13 @@ def test_cancel_during_write_retains_late_evidence(tmp_path):
 @pytest.mark.parametrize("response,error", [
     (assistant(name="shell", args={}), "agent_unknown_tool"),
     (assistant(name="share_service", args={"service_id": "svc1", "shell": "bad"}), "agent_tool_arguments_invalid"),
-    (assistant("x" * 41000), "agent_output_limit"),
+    ({"message": {"role": "assistant", "content": "ok", "reasoning_content": "x" * (256 * 1024 + 1)}}, "agent_model_output_limit"),
 ])
 def test_untrusted_model_output_cannot_bypass_tool_boundary(tmp_path, response, error):
     runtime, _, tools, _ = make_runtime(tmp_path, response)
     row = runtime.create({"message": "hi"})
     advance(runtime)
-    if error == "agent_output_limit":
+    if error == "agent_model_output_limit":
         assert runtime.get(row["id"])["error"] == error
     else:
         advance(runtime)
@@ -476,7 +476,7 @@ def test_compaction_preserves_owner_constraints_closed_tool_groups_and_original_
     done = runtime.get(row["id"])
     assert done["status"] == "completed"
     assert done["messages"][:-1] == original
-    assert model.calls[0][2] == []  # Summary model has no executable tools.
+    assert model.calls[0][2] != [] and "Do not call tools" in model.calls[0][1][-1]["content"]
     projected = model.calls[1][1]
     owner_messages = [item["content"] for item in projected if item["role"] == "user"]
     assert "Inspect A. Never change B." in owner_messages
@@ -609,7 +609,7 @@ def test_corrupt_optional_agent_state_does_not_stop_node_routes(tmp_path):
     assert app.state.agent_startup_error == "agent_state_unreadable"
     with TestClient(app) as client:
         assert client.get("/api/local/agent/models").status_code == 200
-        assert client.get("/api/local/agent/tasks").json()["detail"] == "agent_state_unreadable"
+        assert client.get("/api/local/agent/tasks").json()["detail"] == "agent_state_corrupt"
 
 
 def test_definitely_rejected_write_returns_to_model_without_ambiguous_marker(tmp_path):
@@ -630,7 +630,7 @@ def test_definitely_rejected_write_returns_to_model_without_ambiguous_marker(tmp
     advance(restarted)
     assert restarted.get(row["id"])["status"] == "completed"
     assert not tools.shared
-    assert "agent_approval_preview_changed" in model.calls[-1][1][-1]["content"]
+    assert "agent_approval_preview_changed" in model.calls[-1][1][-2]["content"]
 
 
 def test_read_failure_is_model_visible_and_can_be_corrected(tmp_path):
@@ -639,7 +639,7 @@ def test_read_failure_is_model_visible_and_can_be_corrected(tmp_path):
     row = runtime.create({"message": "inspect A"})
     advance(runtime, 3)
     assert runtime.get(row["id"])["status"] == "completed"
-    assert "agent_model_unavailable" in model.calls[-1][1][-1]["content"]
+    assert "agent_model_unavailable" in model.calls[-1][1][-2]["content"]
 
 
 @pytest.mark.parametrize("automatic,settings_change", [

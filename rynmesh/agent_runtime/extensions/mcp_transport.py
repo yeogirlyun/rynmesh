@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
+import math
 import os
 import queue
 import re
@@ -11,10 +13,12 @@ import sys
 import tempfile
 import threading
 import time
-from datetime import datetime, timezone
 from contextlib import contextmanager
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -27,7 +31,18 @@ from .mcp_oauth import (
     has_static_authorization,
     parse_auth_challenge,
 )
-from .store import COMPUTER_USE_SERVER_ID, ExtensionStore, _canon_sha256
+from .store import (
+    COMPUTER_USE_PLUGIN_ID,
+    COMPUTER_USE_SERVER_ID,
+    DEFAULT_STARTUP_TIMEOUT_MS,
+    DEFAULT_TOOL_TIMEOUT_MS,
+    EXTENSION_ID_RE,
+    MAX_STARTUP_TIMEOUT_MS,
+    MAX_TOOL_TIMEOUT_MS,
+    ExtensionStore,
+    _canon_sha256,
+    _slugify,
+)
 
 # A remote plugin can add tools at any time (for example a new company data
 # query). Re-read its catalog in the background so the Agent never believes a
@@ -59,10 +74,20 @@ SUPPORTED_PROTOCOL_VERSIONS = {
     "2024-11-05",
 }
 MAX_REQUEST_BYTES = 512 * 1024
-MAX_OUTPUT_BYTES = 4 * 1024 * 1024
+MAX_OUTPUT_BYTES = 8 * 1024 * 1024
+MAX_TOOL_CALL_OUTPUT_BYTES = 40 * 1024 * 1024
+MAX_LINE_BYTES = 8 * 1024 * 1024
+MAX_TOOL_CALL_LINE_BYTES = 40 * 1024 * 1024
+
+
+def _max_response_bytes(method: str | None = None) -> int:
+    if method in {"tools/call", "tools/prepare"}:
+        return int(MAX_TOOL_CALL_OUTPUT_BYTES)
+    return int(MAX_OUTPUT_BYTES)
 MAX_TOOL_PAGES = 16
 MAX_DISCOVERED_TOOLS = 256
-SESSION_LIFETIME_SECONDS = 300.0
+SESSION_IDLE_SECONDS = 1800.0
+SESSION_MAX_SECONDS = 86400.0
 
 _SSE_EVENT_SEP_RE = re.compile(rb"\r?\n\r?\n")
 
@@ -91,6 +116,101 @@ ALLOWLISTED_MCP_RPC_ERROR_CODES = frozenset({
 })
 
 
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]+")
+_AUTH_SCHEME_RE = re.compile(r"(?i)\b(Bearer|Basic)\s+[^\s,;\"'<>]+")
+_AUTH_KV_RE = re.compile(r"(?i)(authorization\s*[:=]\s*)[^\s,;\"'<>]+")
+_LONG_TOKEN_RE = re.compile(r"[A-Za-z0-9+/=_-]{40,}(?:\.[A-Za-z0-9+/=_-]+)*")
+_NON_SECRET_REQUEST_HEADERS = frozenset({"accept", "content-type", "user-agent"})
+
+
+def _http_timeout(seconds: float) -> httpx.Timeout:
+    bounded = max(0.05, float(seconds))
+    return httpx.Timeout(bounded, connect=bounded, read=bounded, write=bounded, pool=bounded)
+
+
+def _extract_request_redact_values(
+    headers: dict[str, str] | None,
+    extra_values: list[str] | None = None,
+) -> list[str]:
+    vals: list[str] = []
+    if isinstance(headers, dict):
+        for key, val in headers.items():
+            if isinstance(key, str) and key.strip().lower() in _NON_SECRET_REQUEST_HEADERS:
+                continue
+            if isinstance(val, str) and len(val.strip()) >= 4:
+                vals.append(val)
+    for item in extra_values or []:
+        if isinstance(item, str) and len(item.strip()) >= 4:
+            vals.append(item)
+    return vals
+
+
+def _redact_secret_values(text: str, redact_values: list[str] | None) -> str:
+    if not redact_values:
+        return text
+    cleaned = text
+    candidates: list[str] = []
+    for secret in redact_values:
+        if isinstance(secret, str) and len(secret.strip()) >= 4:
+            s_trim = secret.strip()
+            candidates.append(s_trim)
+            parts = s_trim.split(None, 1)
+            if len(parts) == 2 and len(parts[1].strip()) >= 4:
+                candidates.append(parts[1].strip())
+    for tok in sorted(set(candidates), key=len, reverse=True):
+        cleaned = cleaned.replace(tok, "[REDACTED]")
+    return cleaned
+
+
+def _redact_long_tokens(text: str) -> str:
+    def _sub(match: re.Match[str]) -> str:
+        tok = match.group(0)
+        if len(set(tok)) >= 6 and (
+            any(ch.isdigit() for ch in tok) or any(ch in "+/=." for ch in tok)
+        ):
+            return "[REDACTED]"
+        return tok
+
+    return _LONG_TOKEN_RE.sub(_sub, text)
+
+
+def _clean_mcp_error_message(
+    raw: Any,
+    *,
+    redact_values: list[str] | None = None,
+    limit: int = 500,
+) -> str:
+    if not isinstance(raw, str):
+        return ""
+    cleaned = _CONTROL_CHARS_RE.sub(" ", raw).strip()
+    if not cleaned:
+        return ""
+    cleaned = _redact_secret_values(cleaned, redact_values)
+    cleaned = _AUTH_SCHEME_RE.sub(r"\1 [REDACTED]", cleaned)
+    cleaned = _AUTH_KV_RE.sub(r"\1[REDACTED]", cleaned)
+    cleaned = _redact_long_tokens(cleaned)
+    return cleaned[:limit]
+
+
+def _sanitize_http_error_body(
+    raw_bytes: bytes,
+    *,
+    redact_values: list[str] | None = None,
+    limit: int = 1000,
+) -> str:
+    if not raw_bytes:
+        return ""
+    text = raw_bytes[:2048].decode("utf-8", errors="replace")
+    cleaned = _CONTROL_CHARS_RE.sub(" ", text).strip()
+    if not cleaned:
+        return ""
+    cleaned = _redact_secret_values(cleaned, redact_values)
+    cleaned = _AUTH_SCHEME_RE.sub(r"\1 [REDACTED]", cleaned)
+    cleaned = _AUTH_KV_RE.sub(r"\1[REDACTED]", cleaned)
+    cleaned = _redact_long_tokens(cleaned)
+    return cleaned[:limit]
+
+
 class McpTransportError(AgentError):
     """MCP transport or protocol failure with explicit dispatch tracking."""
 
@@ -103,10 +223,12 @@ class McpTransportError(AgentError):
         request_id: int | None = None,
         rpc_code: int | None = None,
         http_status: int | None = None,
+        retry_after: float | None = None,
         transport: str | None = None,
         server_id: str | None = None,
         session_scope: str | None = None,
         session_pid: int | None = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(code)
         self.dispatched = bool(dispatched)
@@ -114,16 +236,73 @@ class McpTransportError(AgentError):
         self.request_id = request_id
         self.rpc_code = rpc_code
         self.http_status = http_status
+        self.retry_after = retry_after
         self.transport = transport
         self.server_id = server_id
         self.session_scope = session_scope
         self.session_pid = session_pid
+        self.details: dict[str, Any] | None = (
+            dict(details) if isinstance(details, dict) and details else None
+        )
+
+
+_RETRYABLE_HTTP_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
+_HTTP_RETRY_DELAYS = (0.25, 1.0)
+
+
+def _parse_retry_after(value: str | None) -> float | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw = value.strip()
+    try:
+        seconds = float(raw)
+    except (ValueError, TypeError):
+        try:
+            seconds = parsedate_to_datetime(raw).timestamp() - time.time()
+        except (ValueError, TypeError, OverflowError):
+            return None
+    if math.isfinite(seconds) and seconds >= 0:
+        return min(seconds, 86400.0)
+    return None
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    if isinstance(exc, McpTransportError):
+        if str(exc) == "agent_mcp_auth_required":
+            return False
+        if exc.http_status in _RETRYABLE_HTTP_STATUSES:
+            return True
+        if str(exc) == "agent_mcp_process_disconnected" and exc.dispatched is False:
+            return True
+        return False
+    if isinstance(exc, (httpx.ConnectError, OSError)) and getattr(exc, "dispatched", False) is False:
+        return True
+    return False
+
+
+_STDIO_CA_FILE_VARS = frozenset(
+    {"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"}
+)
+
+
+def _host_env_case_insensitive(name: str) -> str | None:
+    target = name.upper()
+    for key, val in os.environ.items():
+        if key.upper() == target and val:
+            return val
+    return None
 
 
 def _stdio_environment(
     private_dir: str,
     secret_env: dict[str, str] | None,
     env_vars: list[str] | None = None,
+    *,
+    home_dir: str | None = None,
+    cache_dir: str | None = None,
+    inherit_user_home: bool = False,
+    plugin_root: str | None = None,
+    plugin_data: str | None = None,
 ) -> dict[str, str]:
     keep = {
         "PATH",
@@ -136,19 +315,76 @@ def _stdio_environment(
         "PYTHONPATH",
         "VIRTUAL_ENV",
         "SYSTEMDRIVE",
+        "USERNAME",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "TERM",
+        "TZ",
+        "PROGRAMFILES",
+        "PROGRAMFILES(X86)",
+        "PROGRAMDATA",
+        "ALLUSERSPROFILE",
+        "NUMBER_OF_PROCESSORS",
+        "PROCESSOR_ARCHITECTURE",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "ALL_PROXY",
+        "NODE_PATH",
     }
-    env = {key: value for key, value in os.environ.items() if key.upper() in keep}
+    env: dict[str, str] = {}
+    for key, value in os.environ.items():
+        upper = key.upper()
+        if upper in keep:
+            env[key] = value
+        elif upper in _STDIO_CA_FILE_VARS and value.strip():
+            env[key] = os.path.abspath(os.path.expanduser(value.strip()))
+        elif upper == "SSL_CERT_DIR" and value.strip():
+            parts = [
+                os.path.abspath(os.path.expanduser(p.strip()))
+                for p in value.split(os.pathsep)
+                if p.strip()
+            ]
+            if parts:
+                env[key] = os.pathsep.join(parts)
+
+    if inherit_user_home:
+        real_home = (
+            _host_env_case_insensitive("HOME")
+            or _host_env_case_insensitive("USERPROFILE")
+            or str(Path.home())
+        )
+        real_profile = _host_env_case_insensitive("USERPROFILE") or real_home
+        real_appdata = _host_env_case_insensitive("APPDATA") or real_home
+        real_localappdata = _host_env_case_insensitive("LOCALAPPDATA") or real_home
+        env.update(
+            HOME=real_home,
+            USERPROFILE=real_profile,
+            APPDATA=real_appdata,
+            LOCALAPPDATA=real_localappdata,
+        )
+    else:
+        effective_home = home_dir or private_dir
+        env.update(
+            HOME=effective_home,
+            USERPROFILE=effective_home,
+            APPDATA=effective_home,
+            LOCALAPPDATA=effective_home,
+        )
+
     env.update(
-        HOME=private_dir,
-        USERPROFILE=private_dir,
-        APPDATA=private_dir,
-        LOCALAPPDATA=private_dir,
         TMP=private_dir,
         TEMP=private_dir,
         TMPDIR=private_dir,
         PYTHONIOENCODING="utf-8",
         PYTHONUTF8="1",
     )
+    if cache_dir:
+        env["npm_config_cache"] = cache_dir
+        env["UV_CACHE_DIR"] = cache_dir
+        env["PIP_CACHE_DIR"] = cache_dir
+
     if isinstance(env_vars, list):
         for var_name in env_vars:
             if isinstance(var_name, str) and var_name in os.environ:
@@ -157,6 +393,18 @@ def _stdio_environment(
         for k, v in secret_env.items():
             if isinstance(k, str) and k and v is not None:
                 env[k] = str(v)
+
+    if plugin_root is not None or plugin_data is not None:
+        protected = {
+            *(["PLUGIN_ROOT"] if plugin_root is not None else []),
+            *(["PLUGIN_DATA"] if plugin_data is not None else []),
+        }
+        for existing_key in [ek for ek in env if ek.upper() in protected]:
+            env.pop(existing_key, None)
+        if plugin_root is not None:
+            env["PLUGIN_ROOT"] = plugin_root
+        if plugin_data is not None:
+            env["PLUGIN_DATA"] = plugin_data
     return env
 
 
@@ -214,19 +462,37 @@ class StdioMcpSession:
         server: dict[str, Any],
         *,
         fallback_cwd: str | Path,
+        store_root: str | Path | None = None,
         cancelled: Callable[[], bool] = lambda: False,
     ) -> None:
         self.server_id = str(server["id"])
         self.instance_id = str(server.get("instance_id", ""))
         self.revision = int(server.get("revision", 1))
         self.config_generation = int(server.get("config_generation", 1))
-        self.startup_timeout = max(1.0, min(60.0, int(server.get("startup_timeout_ms", 10000)) / 1000.0))
-        self.tool_timeout = max(1.0, min(120.0, int(server.get("tool_timeout_ms", 30000)) / 1000.0))
+        self.startup_timeout = max(
+            1.0,
+            min(
+                MAX_STARTUP_TIMEOUT_MS / 1000.0,
+                int(server.get("startup_timeout_ms", DEFAULT_STARTUP_TIMEOUT_MS)) / 1000.0,
+            ),
+        )
+        self.tool_timeout = max(
+            1.0,
+            min(
+                MAX_TOOL_TIMEOUT_MS / 1000.0,
+                int(server.get("tool_timeout_ms", DEFAULT_TOOL_TIMEOUT_MS)) / 1000.0,
+            ),
+        )
         self.cancelled = cancelled
         self._request_cancelled: Callable[[], bool] | None = None
-        self.deadline = time.monotonic() + SESSION_LIFETIME_SECONDS
+        now = time.monotonic()
+        self.max_deadline = now + float(SESSION_MAX_SECONDS)
+        self.deadline = min(self.max_deadline, now + max(0.01, float(SESSION_IDLE_SECONDS)))
+        self._in_flight = 0
+        self._active_method: str | None = None
+        self._active_request_id: int | None = None
+        self._eof = False
         self.sequence = 0
-        self.output_bytes = 0
         self.notifications = 0
         self.initialized = False
         self.server_info: dict[str, Any] = {}
@@ -239,20 +505,91 @@ class StdioMcpSession:
         if self._is_cancelled():
             raise McpTransportError("agent_cancelled", dispatched=False)
 
+        fallback_path = Path(fallback_cwd).resolve()
+        if store_root is not None:
+            root_path = Path(store_root).resolve()
+        elif fallback_path.name == "mcp_runtime":
+            root_path = fallback_path.parent
+        else:
+            root_path = fallback_path
+
+        runtime_dir = (root_path / "mcp_runtime").resolve()
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+
+        safe_sid = (
+            self.server_id
+            if EXTENSION_ID_RE.match(self.server_id)
+            else _slugify(self.server_id, "mcp-server")
+        )
+        cache_dir = (root_path / "mcp_cache" / safe_sid).resolve()
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        inherit_user_home = bool(server.get("inherit_user_home", False))
+        home_dir: Path | None = None
+        if not inherit_user_home:
+            home_dir = (root_path / "mcp_home" / safe_sid).resolve()
+            home_dir.mkdir(parents=True, exist_ok=True)
+
+        plugin_id = str(server.get("plugin_id") or "").strip()
+        is_builtin_plugin = bool(server.get("builtin", False)) or plugin_id == COMPUTER_USE_PLUGIN_ID
+        raw_pkg_dir = server.get("plugin_package_dir") or server.get("package_dir")
+        plugin_root_path = Path(str(raw_pkg_dir)).resolve() if raw_pkg_dir else None
+        plugin_data_path: Path | None = None
+        if plugin_id and not is_builtin_plugin:
+            raw_data_dir = server.get("plugin_data_dir")
+            safe_pid = (
+                plugin_id
+                if EXTENSION_ID_RE.match(plugin_id)
+                else _slugify(plugin_id, "plugin")
+            )
+            plugin_data_path = (
+                Path(str(raw_data_dir)).resolve()
+                if raw_data_dir
+                else (root_path / "plugin_data" / safe_pid).resolve()
+            )
+            plugin_data_path.mkdir(parents=True, exist_ok=True)
+            if plugin_root_path is None and server.get("cwd"):
+                plugin_root_path = Path(str(server["cwd"])).resolve()
+
         cwd_raw = server.get("cwd")
-        cwd_path = Path(cwd_raw).resolve() if cwd_raw else Path(fallback_cwd).resolve()
+        if cwd_raw and str(cwd_raw).strip():
+            cwd_path = Path(str(cwd_raw)).resolve()
+        elif plugin_root_path is not None:
+            cwd_path = plugin_root_path
+        else:
+            cwd_path = fallback_path
         cwd_path.mkdir(parents=True, exist_ok=True)
         exe = _resolve_executable(str(server.get("command") or ""), str(cwd_path))
         args = [exe, *[str(a) for a in (server.get("args") or [])]]
 
         self.private_dir = tempfile.TemporaryDirectory(
-            prefix=".ryn-mcp-", dir=str(cwd_path), ignore_cleanup_errors=True
+            prefix=".ryn-mcp-", dir=str(runtime_dir), ignore_cleanup_errors=True
         )
         env = _stdio_environment(
             self.private_dir.name,
             server.get("secret_env"),
             server.get("env_vars"),
+            home_dir=str(home_dir) if home_dir is not None else None,
+            cache_dir=str(cache_dir),
+            inherit_user_home=inherit_user_home,
+            plugin_root=str(plugin_root_path) if plugin_root_path is not None else None,
+            plugin_data=str(plugin_data_path) if plugin_data_path is not None else None,
         )
+        stdio_secrets: list[str] = []
+        for s_key, s_val in (server.get("secret_env") or {}).items():
+            if (
+                plugin_id
+                and not is_builtin_plugin
+                and str(s_key).upper() in {"PLUGIN_ROOT", "PLUGIN_DATA"}
+            ):
+                continue
+            if isinstance(s_val, str) and len(s_val.strip()) >= 4:
+                stdio_secrets.append(s_val)
+        for env_k in server.get("env_vars") or []:
+            env_v = env.get(str(env_k))
+            if isinstance(env_v, str) and len(env_v.strip()) >= 4:
+                stdio_secrets.append(env_v)
+        self._redact_env_values = stdio_secrets
         if (
             getattr(sys, "frozen", False)
             and self.server_id == COMPUTER_USE_SERVER_ID
@@ -265,7 +602,7 @@ class StdioMcpSession:
                 args,
                 cwd=str(cwd_path),
                 env=env,
-                timeout=SESSION_LIFETIME_SECONDS,
+                timeout=SESSION_MAX_SECONDS,
             )
         except (OSError, ValueError) as exc:
             self.private_dir.cleanup()
@@ -297,15 +634,83 @@ class StdioMcpSession:
         finally:
             self._request_cancelled = None
 
+    def _renew_idle_deadline(self) -> None:
+        self.deadline = min(
+            self.max_deadline,
+            time.monotonic() + max(0.01, float(SESSION_IDLE_SECONDS)),
+        )
+
+    @contextmanager
+    def _in_flight_scope(self, method: str | None = None, request_id: int | None = None):
+        self._in_flight += 1
+        if method is not None:
+            self._active_method = method
+        if request_id is not None:
+            self._active_request_id = request_id
+        try:
+            yield
+        finally:
+            if request_id is not None and self._active_request_id == request_id:
+                self._active_request_id = None
+            if method is not None and self._active_method == method:
+                self._active_method = None
+            self._in_flight = max(0, self._in_flight - 1)
+
+    def _current_line_limit(self) -> int:
+        if self._active_method in {"tools/call", "tools/prepare"}:
+            return int(MAX_TOOL_CALL_LINE_BYTES)
+        return int(MAX_LINE_BYTES)
+
+    def _read_bounded_line(self) -> tuple[bytes | None, bool, int | None]:
+        first = self.process.stdout.readline(65536)
+        if not first:
+            return None, False, None
+        limit = self._current_line_limit()
+        if first.endswith(b"\n"):
+            if len(first) > limit:
+                return None, True, self._active_request_id
+            return first, False, None
+
+        parts: list[bytes] = []
+        total = len(first)
+        overflow = total > limit
+        overflow_req_id = self._active_request_id if overflow else None
+        if not overflow:
+            parts.append(first)
+
+        while not self.closed.is_set():
+            chunk = self.process.stdout.readline(65536)
+            if not chunk:
+                if overflow:
+                    return None, True, overflow_req_id or self._active_request_id
+                return b"".join(parts), False, None
+            total += len(chunk)
+            if not overflow:
+                limit = self._current_line_limit()
+                if total > limit:
+                    overflow = True
+                    overflow_req_id = self._active_request_id
+                    parts.clear()
+                else:
+                    parts.append(chunk)
+            if chunk.endswith(b"\n"):
+                if overflow:
+                    return None, True, overflow_req_id or self._active_request_id
+                return b"".join(parts), False, None
+        return None, False, None
+
     def _read_loop(self) -> None:
         try:
             while not self.closed.is_set():
-                line = self.process.stdout.readline(MAX_OUTPUT_BYTES + 1)
-                if not line:
+                line, overflowed, overflow_req_id = self._read_bounded_line()
+                if overflowed:
+                    if overflow_req_id is not None:
+                        self.messages.put({"_ryn_line_overflow": overflow_req_id}, timeout=0.2)
+                    continue
+                if line is None:
                     break
-                self.output_bytes += len(line)
-                if self.output_bytes > MAX_OUTPUT_BYTES or not line.endswith(b"\n"):
-                    self.failure = "agent_mcp_output_limit"
+                if not line.endswith(b"\n"):
+                    self.failure = "agent_mcp_protocol_invalid"
                     break
                 stripped = line.strip()
                 if not stripped:
@@ -318,6 +723,7 @@ class StdioMcpSession:
         except (ValueError, UnicodeError, OSError, queue.Full):
             self.failure = self.failure or "agent_mcp_protocol_invalid"
         finally:
+            self._eof = True
             try:
                 self.messages.put_nowait(None)
             except queue.Full:
@@ -326,7 +732,10 @@ class StdioMcpSession:
     def _watch_loop(self) -> None:
         while not self.closed.wait(0.05):
             cancelled = self._is_cancelled()
-            if cancelled or time.monotonic() >= self.deadline or self.failure:
+            now = time.monotonic()
+            idle_expired = self._in_flight == 0 and now >= self.deadline
+            max_expired = now >= self.max_deadline
+            if cancelled or idle_expired or max_expired or self.failure:
                 self.failure = self.failure or (
                     "agent_cancelled" if cancelled else "agent_mcp_timeout"
                 )
@@ -341,32 +750,86 @@ class StdioMcpSession:
                 pass
 
     def is_usable(self) -> bool:
+        now = time.monotonic()
+        idle_ok = self._in_flight > 0 or now < self.deadline
         return (
             not self.closed.is_set()
+            and not self._eof
             and self.failure is None
-            and time.monotonic() < self.deadline
+            and idle_ok
+            and now < self.max_deadline
             and self.process.poll() is None
         )
 
-    def _check(self, deadline: float, *, dispatched: bool) -> None:
+    def _check(
+        self,
+        deadline: float,
+        *,
+        dispatched: bool,
+        phase: str | None = None,
+        timeout_seconds: float | None = None,
+        method: str | None = None,
+    ) -> None:
         if self._is_cancelled():
             self.failure = self.failure or "agent_cancelled"
         elif not dispatched and self.process.poll() is not None:
             self.failure = self.failure or "agent_mcp_process_disconnected"
         if self.failure:
+            if self.failure == "agent_mcp_timeout":
+                eff_phase = phase or ("await_response" if dispatched else "pre_dispatch")
+                t_details: dict[str, Any] = {"phase": eff_phase}
+                if timeout_seconds is not None:
+                    t_details["timeout_seconds"] = round(float(timeout_seconds), 3)
+                if method:
+                    t_details["method"] = str(method)
+                raise McpTransportError(
+                    "agent_mcp_timeout",
+                    dispatched=dispatched,
+                    phase=eff_phase,
+                    details=t_details,
+                )
             raise McpTransportError(self.failure, dispatched=dispatched)
         if self.closed.is_set():
             raise McpTransportError("agent_mcp_closed", dispatched=dispatched)
-        if time.monotonic() >= min(deadline, self.deadline):
-            raise McpTransportError("agent_mcp_timeout", dispatched=dispatched)
+        session_cap = (
+            self.max_deadline
+            if self._in_flight > 0
+            else min(self.deadline, self.max_deadline)
+        )
+        if time.monotonic() >= min(deadline, session_cap):
+            eff_phase = phase or ("await_response" if dispatched else "pre_dispatch")
+            t_details = {"phase": eff_phase}
+            if timeout_seconds is not None:
+                t_details["timeout_seconds"] = round(float(timeout_seconds), 3)
+            if method:
+                t_details["method"] = str(method)
+            raise McpTransportError(
+                "agent_mcp_timeout",
+                dispatched=dispatched,
+                phase=eff_phase,
+                details=t_details,
+            )
 
-    def _send(self, payload: dict[str, Any], deadline: float) -> None:
+    def _send(
+        self,
+        payload: dict[str, Any],
+        deadline: float,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> None:
+        method = str(payload.get("method") or "") or None
         raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
         if len(raw) > MAX_REQUEST_BYTES:
             raise McpTransportError(
                 "agent_mcp_request_too_large", dispatched=False, phase="pre_dispatch"
             )
-        self._check(deadline, dispatched=False)
+        self._check(
+            deadline,
+            dispatched=False,
+            phase="pre_dispatch",
+            timeout_seconds=timeout_seconds,
+            method=method,
+        )
         errors: list[bool] = []
         done = threading.Event()
 
@@ -381,7 +844,13 @@ class StdioMcpSession:
 
         threading.Thread(target=_write, daemon=True, name="ryn-mcp-stdin").start()
         while not done.wait(0.02):
-            self._check(deadline, dispatched=True)
+            self._check(
+                deadline,
+                dispatched=True,
+                phase="send",
+                timeout_seconds=timeout_seconds,
+                method=method,
+            )
         if errors:
             raise McpTransportError("agent_mcp_write_failed", dispatched=True, phase="send")
 
@@ -394,113 +863,182 @@ class StdioMcpSession:
         before_dispatch: Callable[[], None] | None = None,
     ) -> dict[str, Any]:
         deadline = time.monotonic() + timeout
-        self._check(deadline, dispatched=False)
-        if before_dispatch is not None:
-            try:
-                before_dispatch()
-            except BaseException as exc:
-                if not hasattr(exc, "dispatched"):
-                    exc.dispatched = False  # type: ignore[attr-defined]
-                if getattr(exc, "phase", None) is None:
-                    exc.phase = "pre_dispatch"  # type: ignore[attr-defined]
-                self.close()
-                raise
-        self._check(deadline, dispatched=False)
+        self._check(
+            deadline,
+            dispatched=False,
+            phase="pre_dispatch",
+            timeout_seconds=timeout,
+            method=method,
+        )
         self.sequence += 1
         ident = self.sequence
-        try:
-            self._send(
-                {"jsonrpc": "2.0", "id": ident, "method": method, "params": params},
-                deadline,
-            )
-            while True:
-                self._check(deadline, dispatched=True)
+        with self._in_flight_scope(method, ident):
+            if before_dispatch is not None:
                 try:
-                    message = self.messages.get(timeout=0.05)
-                except queue.Empty:
-                    continue
-                if message is None:
-                    raise McpTransportError(
-                        self.failure or "agent_mcp_process_disconnected",
+                    before_dispatch()
+                except BaseException as exc:
+                    if not hasattr(exc, "dispatched"):
+                        exc.dispatched = False  # type: ignore[attr-defined]
+                    if getattr(exc, "phase", None) is None:
+                        exc.phase = "pre_dispatch"  # type: ignore[attr-defined]
+                    self.close()
+                    raise
+            self._check(
+                deadline,
+                dispatched=False,
+                phase="pre_dispatch",
+                timeout_seconds=timeout,
+                method=method,
+            )
+            try:
+                self._send(
+                    {"jsonrpc": "2.0", "id": ident, "method": method, "params": params},
+                    deadline,
+                    timeout_seconds=timeout,
+                )
+                while True:
+                    self._check(
+                        deadline,
                         dispatched=True,
                         phase="await_response",
-                        request_id=ident,
+                        timeout_seconds=timeout,
+                        method=method,
                     )
-                if "id" not in message and str(message.get("method", "")).startswith("notifications/"):
-                    if message.get("method") == TOOLS_LIST_CHANGED:
-                        _announce_tools_changed(self)
+                    try:
+                        message = self.messages.get(timeout=0.05)
+                    except queue.Empty:
                         continue
-                    self.notifications += 1
-                    if self.notifications > 64:
+                    if message is None:
                         raise McpTransportError(
-                            "agent_mcp_notification_limit",
+                            self.failure or "agent_mcp_process_disconnected",
                             dispatched=True,
                             phase="await_response",
                             request_id=ident,
                         )
-                    continue
-                if message.get("id") != ident:
-                    raise McpTransportError(
-                        "agent_mcp_protocol_invalid",
-                        dispatched=True,
-                        phase="response_parse",
-                        request_id=ident,
-                    )
-                if "error" in message:
-                    err_obj = message.get("error")
-                    code = err_obj.get("code") if isinstance(err_obj, dict) else None
-                    rpc_code = code if type(code) is int else None
-                    if code in (-32602, -32601):
-                        msg = err_obj.get("message") if isinstance(err_obj, dict) else None
-                        err_code = (
-                            msg
-                            if isinstance(msg, str) and msg in ALLOWLISTED_MCP_RPC_ERROR_CODES
-                            else "agent_mcp_rpc_rejected"
-                        )
+                    if "_ryn_line_overflow" in message:
+                        if message.get("_ryn_line_overflow") == ident:
+                            raise McpTransportError(
+                                "agent_mcp_output_limit",
+                                dispatched=True,
+                                phase="await_response",
+                                request_id=ident,
+                            )
+                        continue
+                    if "id" not in message and str(message.get("method", "")).startswith("notifications/"):
+                        if message.get("method") == TOOLS_LIST_CHANGED:
+                            _announce_tools_changed(self)
+                            continue
+                        self.notifications += 1
+                        if self.notifications > 64:
+                            raise McpTransportError(
+                                "agent_mcp_notification_limit",
+                                dispatched=True,
+                                phase="await_response",
+                                request_id=ident,
+                            )
+                        continue
+                    if message.get("id") != ident:
                         raise McpTransportError(
-                            err_code,
+                            "agent_mcp_protocol_invalid",
+                            dispatched=True,
+                            phase="response_parse",
+                            request_id=ident,
+                        )
+                    if "error" in message:
+                        err_obj = message.get("error")
+                        code = err_obj.get("code") if isinstance(err_obj, dict) else None
+                        rpc_code = code if type(code) is int else None
+                        raw_msg = err_obj.get("message") if isinstance(err_obj, dict) else None
+                        cleaned_msg = _clean_mcp_error_message(
+                            raw_msg,
+                            redact_values=self._redact_env_values,
+                            limit=500,
+                        )
+                        rpc_details: dict[str, Any] = {}
+                        if cleaned_msg:
+                            rpc_details["message"] = cleaned_msg
+                        if rpc_code is not None:
+                            rpc_details["rpc_code"] = rpc_code
+                        if code in (-32602, -32601):
+                            err_code = (
+                                raw_msg
+                                if isinstance(raw_msg, str) and raw_msg in ALLOWLISTED_MCP_RPC_ERROR_CODES
+                                else "agent_mcp_rpc_rejected"
+                            )
+                            raise McpTransportError(
+                                err_code,
+                                dispatched=True,
+                                phase="rpc_error",
+                                request_id=ident,
+                                rpc_code=rpc_code,
+                                details=rpc_details or None,
+                            )
+                        raise McpTransportError(
+                            "agent_mcp_rpc_error",
                             dispatched=True,
                             phase="rpc_error",
                             request_id=ident,
                             rpc_code=rpc_code,
+                            details=rpc_details or None,
                         )
-                    raise McpTransportError(
-                        "agent_mcp_rpc_error",
-                        dispatched=True,
-                        phase="rpc_error",
-                        request_id=ident,
-                        rpc_code=rpc_code,
+                    result = message.get("result")
+                    if not isinstance(result, dict):
+                        raise McpTransportError(
+                            "agent_mcp_protocol_invalid",
+                            dispatched=True,
+                            phase="response_parse",
+                            request_id=ident,
+                        )
+                    self._renew_idle_deadline()
+                    return result
+            except AgentToolRejected:
+                raise
+            except BaseException as exc:
+                if getattr(exc, "request_id", None) is None:
+                    exc.request_id = ident  # type: ignore[attr-defined]
+                if getattr(exc, "phase", None) is None:
+                    exc.phase = "await_response" if getattr(exc, "dispatched", False) else "pre_dispatch"  # type: ignore[attr-defined]
+                if getattr(exc, "transport", None) is None:
+                    exc.transport = "stdio"  # type: ignore[attr-defined]
+                if getattr(exc, "server_id", None) is None:
+                    exc.server_id = self.server_id  # type: ignore[attr-defined]
+                pid = getattr(self.process, "pid", None)
+                if getattr(exc, "session_pid", None) is None and type(pid) is int:
+                    exc.session_pid = pid  # type: ignore[attr-defined]
+                if isinstance(exc, McpTransportError) and str(exc) == "agent_mcp_timeout":
+                    d = dict(exc.details or {})
+                    d.setdefault("phase", exc.phase or "await_response")
+                    d.setdefault("timeout_seconds", round(float(timeout), 3))
+                    d.setdefault("method", method)
+                    exc.details = d
+                keep_open_after_recoverable_error = (
+                    isinstance(exc, McpTransportError)
+                    and (
+                        exc.phase == "rpc_error"
+                        or str(exc) == "agent_mcp_output_limit"
                     )
-                result = message.get("result")
-                if not isinstance(result, dict):
-                    raise McpTransportError(
-                        "agent_mcp_protocol_invalid",
-                        dispatched=True,
-                        phase="response_parse",
-                        request_id=ident,
-                    )
-                return result
-        except AgentToolRejected:
-            raise
-        except BaseException as exc:
-            if getattr(exc, "request_id", None) is None:
-                exc.request_id = ident  # type: ignore[attr-defined]
-            if getattr(exc, "phase", None) is None:
-                exc.phase = "await_response" if getattr(exc, "dispatched", False) else "pre_dispatch"  # type: ignore[attr-defined]
-            if getattr(exc, "transport", None) is None:
-                exc.transport = "stdio"  # type: ignore[attr-defined]
-            if getattr(exc, "server_id", None) is None:
-                exc.server_id = self.server_id  # type: ignore[attr-defined]
-            pid = getattr(self.process, "pid", None)
-            if getattr(exc, "session_pid", None) is None and type(pid) is int:
-                exc.session_pid = pid  # type: ignore[attr-defined]
-            self.close()
-            raise
+                    and self.initialized
+                    and not self.closed.is_set()
+                    and not self._eof
+                    and self.failure is None
+                    and self.process.poll() is None
+                )
+                if keep_open_after_recoverable_error:
+                    self._renew_idle_deadline()
+                else:
+                    self.close()
+                raise
 
     def initialize(self, *, cancelled: Callable[[], bool] | None = None) -> dict[str, Any]:
         with self.lock:
             if self.initialized:
-                self._check(self.deadline, dispatched=False)
+                self._check(
+                    self.deadline,
+                    dispatched=False,
+                    phase="initialize",
+                    timeout_seconds=self.startup_timeout,
+                    method="initialize",
+                )
                 if cancelled is not None and cancelled():
                     raise McpTransportError(
                         "agent_cancelled",
@@ -530,10 +1068,13 @@ class StdioMcpSession:
                         dispatched=False,
                         phase="initialize",
                     )
-                self._send(
-                    {"jsonrpc": "2.0", "method": "notifications/initialized"},
-                    time.monotonic() + self.startup_timeout,
-                )
+                with self._in_flight_scope("notifications/initialized"):
+                    self._send(
+                        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+                        time.monotonic() + self.startup_timeout,
+                        timeout_seconds=self.startup_timeout,
+                    )
+                    self._renew_idle_deadline()
                 self.initialized = True
                 self.server_info = result
                 return result
@@ -542,7 +1083,13 @@ class StdioMcpSession:
         if not self.initialized:
             self.initialize(cancelled=cancelled)
         with self.lock:
-            self._check(self.deadline, dispatched=False)
+            self._check(
+                self.deadline,
+                dispatched=False,
+                phase="pre_dispatch",
+                timeout_seconds=self.startup_timeout,
+                method="tools/list",
+            )
             if cancelled is not None and cancelled():
                 raise McpTransportError(
                     "agent_cancelled",
@@ -555,9 +1102,24 @@ class StdioMcpSession:
                 tools: list[dict[str, Any]] = []
                 cursor: str | None = None
                 seen_cursors: set[str] = set()
+                total_budget = 10.0 * self.startup_timeout
+                total_deadline = time.monotonic() + total_budget
                 for _ in range(MAX_TOOL_PAGES):
+                    remaining_total = total_deadline - time.monotonic()
+                    if remaining_total <= 0:
+                        raise McpTransportError(
+                            "agent_mcp_timeout",
+                            dispatched=False,
+                            phase="await_response",
+                            details={
+                                "phase": "await_response",
+                                "timeout_seconds": round(total_budget, 3),
+                                "method": "tools/list",
+                            },
+                        )
+                    page_timeout = min(self.startup_timeout, remaining_total)
                     params = {"cursor": cursor} if cursor else {}
-                    res = self._exchange("tools/list", params, self.startup_timeout)
+                    res = self._exchange("tools/list", params, page_timeout)
                     page_tools = res.get("tools")
                     if not isinstance(page_tools, list):
                         raise McpTransportError("agent_mcp_protocol_invalid", dispatched=False)
@@ -580,6 +1142,7 @@ class StdioMcpSession:
         name: str,
         arguments: dict[str, Any],
         *,
+        timeout: float | None = None,
         before_dispatch: Callable[[], None] | None = None,
         cancelled: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
@@ -589,8 +1152,19 @@ class StdioMcpSession:
             except BaseException as exc:
                 exc.dispatched = False  # type: ignore[attr-defined]
                 raise
+        eff_timeout = (
+            min(self.tool_timeout, max(0.05, float(timeout)))
+            if timeout is not None
+            else self.tool_timeout
+        )
         with self.lock:
-            self._check(self.deadline, dispatched=False)
+            self._check(
+                self.deadline,
+                dispatched=False,
+                phase="pre_dispatch",
+                timeout_seconds=eff_timeout,
+                method="tools/call",
+            )
             if cancelled is not None and cancelled():
                 raise McpTransportError(
                     "agent_cancelled",
@@ -603,7 +1177,7 @@ class StdioMcpSession:
                 return self._exchange(
                     "tools/call",
                     {"name": name, "arguments": arguments},
-                    self.tool_timeout,
+                    eff_timeout,
                     before_dispatch=before_dispatch,
                 )
 
@@ -664,8 +1238,20 @@ class StreamableHttpMcpSession:
         self.url = str(server.get("url") or "").strip()
         if not self.url.startswith(("http://", "https://")):
             raise McpTransportError("agent_mcp_url_required", dispatched=False)
-        self.startup_timeout = max(1.0, min(60.0, int(server.get("startup_timeout_ms", 10000)) / 1000.0))
-        self.tool_timeout = max(1.0, min(120.0, int(server.get("tool_timeout_ms", 30000)) / 1000.0))
+        self.startup_timeout = max(
+            1.0,
+            min(
+                MAX_STARTUP_TIMEOUT_MS / 1000.0,
+                int(server.get("startup_timeout_ms", DEFAULT_STARTUP_TIMEOUT_MS)) / 1000.0,
+            ),
+        )
+        self.tool_timeout = max(
+            1.0,
+            min(
+                MAX_TOOL_TIMEOUT_MS / 1000.0,
+                int(server.get("tool_timeout_ms", DEFAULT_TOOL_TIMEOUT_MS)) / 1000.0,
+            ),
+        )
         self.cancelled = cancelled
         self.sequence = 0
         self.notifications = 0
@@ -686,10 +1272,30 @@ class StreamableHttpMcpSession:
         }
         headers.update(connector_headers(server))
         self._base_headers = headers
-        self._client = httpx.Client(follow_redirects=False, timeout=self.tool_timeout)
+        parsed_url = urlsplit(self.url)
+        host = (parsed_url.hostname or "").strip().lower()
+        is_loopback = host == "localhost"
+        if not is_loopback and host:
+            try:
+                is_loopback = ipaddress.ip_address(host).is_loopback
+            except ValueError:
+                pass
+        trust_env = not is_loopback
+        mounts = (
+            {"all://127.0.0.1": None, "all://[::1]": None, "all://localhost": None}
+            if trust_env
+            else None
+        )
+        self._client = httpx.Client(
+            follow_redirects=False,
+            timeout=_http_timeout(self.tool_timeout),
+            trust_env=trust_env,
+            verify=(parsed_url.scheme == "https"),
+            mounts=mounts,
+        )
 
     def is_usable(self) -> bool:
-        return not self.closed.is_set()
+        return not self.closed.is_set() and not self._client.is_closed
 
     def _is_cancelled(self, cancelled: Callable[[], bool] | None) -> bool:
         try:
@@ -703,13 +1309,27 @@ class StreamableHttpMcpSession:
         cancelled: Callable[[], bool] | None,
         *,
         dispatched: bool,
+        phase: str | None = None,
+        timeout_seconds: float | None = None,
+        method: str | None = None,
     ) -> None:
         if self.closed.is_set():
             raise McpTransportError("agent_mcp_closed", dispatched=dispatched)
         if self._is_cancelled(cancelled):
             raise McpTransportError("agent_cancelled", dispatched=dispatched)
         if time.monotonic() >= deadline:
-            raise McpTransportError("agent_mcp_timeout", dispatched=dispatched)
+            eff_phase = phase or ("await_response" if dispatched else "pre_dispatch")
+            t_details: dict[str, Any] = {"phase": eff_phase}
+            if timeout_seconds is not None:
+                t_details["timeout_seconds"] = round(float(timeout_seconds), 3)
+            if method:
+                t_details["method"] = str(method)
+            raise McpTransportError(
+                "agent_mcp_timeout",
+                dispatched=dispatched,
+                phase=eff_phase,
+                details=t_details,
+            )
 
     def _remaining_timeout(
         self,
@@ -717,8 +1337,18 @@ class StreamableHttpMcpSession:
         cancelled: Callable[[], bool] | None,
         *,
         dispatched: bool,
+        phase: str | None = None,
+        timeout_seconds: float | None = None,
+        method: str | None = None,
     ) -> float:
-        self._check_deadline(deadline, cancelled, dispatched=dispatched)
+        self._check_deadline(
+            deadline,
+            cancelled,
+            dispatched=dispatched,
+            phase=phase,
+            timeout_seconds=timeout_seconds,
+            method=method,
+        )
         return max(0.05, deadline - time.monotonic())
 
     @contextmanager
@@ -732,11 +1362,45 @@ class StreamableHttpMcpSession:
 
         def _watchdog() -> None:
             while not done.wait(0.05):
-                if self.closed.is_set() or self._is_cancelled(cancelled) or time.monotonic() >= deadline:
+                if self.closed.is_set() or time.monotonic() >= deadline or self._is_cancelled(cancelled):
                     try:
                         response.close()
                     except Exception:
                         pass
+                    return
+
+        watcher = threading.Thread(
+            target=_watchdog, daemon=True, name=f"ryn-mcp-http-watch-{self.server_id}"
+        )
+        watcher.start()
+        try:
+            yield
+        finally:
+            done.set()
+
+    @contextmanager
+    def _watch_request(
+        self,
+        deadline: float,
+        cancelled: Callable[[], bool] | None,
+        response_box: list[httpx.Response | None],
+    ):
+        done = threading.Event()
+
+        def _watchdog() -> None:
+            while not done.wait(0.05):
+                if self.closed.is_set() or time.monotonic() >= deadline or self._is_cancelled(cancelled):
+                    resp = response_box[0]
+                    if resp is not None:
+                        try:
+                            resp.close()
+                        except Exception:
+                            pass
+                    else:
+                        try:
+                            self._client.close()
+                        except Exception:
+                            pass
                     return
 
         watcher = threading.Thread(
@@ -783,11 +1447,17 @@ class StreamableHttpMcpSession:
         return error
 
     @staticmethod
-    def _check_content_length(response: httpx.Response, *, dispatched: bool) -> None:
+    def _check_content_length(
+        response: httpx.Response,
+        *,
+        dispatched: bool,
+        max_bytes: int | None = None,
+    ) -> None:
+        limit = int(MAX_OUTPUT_BYTES) if max_bytes is None else int(max_bytes)
         cl_header = response.headers.get("Content-Length") or response.headers.get("content-length")
         if cl_header:
             try:
-                if int(cl_header) > MAX_OUTPUT_BYTES:
+                if int(cl_header) > limit:
                     raise McpTransportError("agent_mcp_output_limit", dispatched=dispatched)
             except ValueError:
                 pass
@@ -852,7 +1522,14 @@ class StreamableHttpMcpSession:
         _auth_retry: bool = False,
     ) -> dict[str, Any]:
         deadline = _deadline if _deadline is not None else (time.monotonic() + timeout)
-        self._check_deadline(deadline, cancelled, dispatched=False)
+        self._check_deadline(
+            deadline,
+            cancelled,
+            dispatched=False,
+            phase="pre_dispatch",
+            timeout_seconds=timeout,
+            method=method,
+        )
 
         self.sequence += 1
         ident = self.sequence
@@ -866,11 +1543,24 @@ class StreamableHttpMcpSession:
                 "agent_mcp_request_too_large", dispatched=False, phase="pre_dispatch"
             )
 
+        auth_refresh_eligible = method in {
+            "initialize",
+            "tools/list",
+            "tools/call",
+            "tools/prepare",
+        }
         refresh_state = [_auth_retry]
-        headers = self._headers(refresh_on_error=method in {"initialize", "tools/list"}, refresh_state=refresh_state)
+        headers = self._headers(refresh_on_error=auth_refresh_eligible, refresh_state=refresh_state)
         # Refresh can block. Authenticate before marking a tool dispatched,
         # then recheck cancellation/configuration immediately before sending.
-        self._check_deadline(deadline, cancelled, dispatched=False)
+        self._check_deadline(
+            deadline,
+            cancelled,
+            dispatched=False,
+            phase="pre_dispatch",
+            timeout_seconds=timeout,
+            method=method,
+        )
         if before_dispatch is not None:
             try:
                 before_dispatch()
@@ -881,90 +1571,203 @@ class StreamableHttpMcpSession:
                     exc.phase = "pre_dispatch"  # type: ignore[attr-defined]
                 self.close()
                 raise
-        req_timeout = self._remaining_timeout(deadline, cancelled, dispatched=False)
+        req_timeout = self._remaining_timeout(
+            deadline,
+            cancelled,
+            dispatched=False,
+            phase="pre_dispatch",
+            timeout_seconds=timeout,
+            method=method,
+        )
+        redact_vals = _extract_request_redact_values(
+            headers,
+            [
+                v
+                for v in (self._server.get("secret_headers") or {}).values()
+                if isinstance(v, str)
+            ],
+        )
         dispatched = False
         message: dict[str, Any] | None = None
+        resp_box: list[httpx.Response | None] = [None]
         try:
             dispatched = True
-            with self._client.stream(
-                "POST",
-                self.url,
-                content=body,
-                headers=headers,
-                timeout=req_timeout,
-            ) as response, self._watch_response(response, deadline, cancelled):
-                self._check_deadline(deadline, cancelled, dispatched=True)
-                if response.status_code in (401, 403):
-                    raise self._auth_error(response, dispatched=True, request_id=ident)
-                if response.status_code >= 300:
-                    raise McpTransportError(
-                        "agent_mcp_http_error",
+            with self._watch_request(deadline, cancelled, resp_box):
+                with self._client.stream(
+                    "POST",
+                    self.url,
+                    content=body,
+                    headers=headers,
+                    timeout=_http_timeout(req_timeout),
+                ) as response:
+                    resp_box[0] = response
+                    self._check_deadline(
+                        deadline,
+                        cancelled,
                         dispatched=True,
-                        phase="http_status",
-                        request_id=ident,
-                        http_status=int(response.status_code),
+                        phase="await_response",
+                        timeout_seconds=timeout,
+                        method=method,
                     )
-                self._check_content_length(response, dispatched=True)
-                sess_hdr = response.headers.get("Mcp-Session-Id") or response.headers.get("mcp-session-id")
-                if sess_hdr:
-                    self.session_id = sess_hdr.strip()
-
-                ctype = (response.headers.get("Content-Type") or "").lower()
-                is_sse = "text/event-stream" in ctype
-                sse_buffer = bytearray()
-                chunks: list[bytes] = []
-                total = 0
-
-                for chunk in response.iter_bytes():
-                    self._check_deadline(deadline, cancelled, dispatched=True)
-                    total += len(chunk)
-                    if total > MAX_OUTPUT_BYTES:
+                    if response.status_code == 401:
+                        raise self._auth_error(response, dispatched=False, request_id=ident)
+                    if response.status_code == 403:
+                        challenge = parse_auth_challenge(
+                            response.headers.get("WWW-Authenticate", "")
+                        )
+                        if challenge.get("error") == "insufficient_scope":
+                            raise self._auth_error(response, dispatched=False, request_id=ident)
                         raise McpTransportError(
-                            "agent_mcp_output_limit",
+                            "agent_mcp_http_forbidden",
+                            dispatched=False,
+                            phase="http_status",
+                            request_id=ident,
+                            http_status=403,
+                            details={"http_status": 403},
+                        )
+                    if response.status_code >= 300:
+                        status_code = int(response.status_code)
+                        status_dispatched = not (
+                            400 <= status_code < 500 and status_code not in (408, 429)
+                        )
+                        retry_after_sec = _parse_retry_after(
+                            response.headers.get("Retry-After")
+                        )
+                        err_buf = bytearray()
+                        try:
+                            for err_chunk in response.iter_bytes():
+                                if self._is_cancelled(cancelled):
+                                    raise McpTransportError(
+                                        "agent_cancelled", dispatched=status_dispatched
+                                    )
+                                err_buf.extend(err_chunk[: max(0, 2048 - len(err_buf))])
+                                if len(err_buf) >= 2048 or time.monotonic() >= deadline:
+                                    break
+                        except McpTransportError:
+                            raise
+                        except (httpx.HTTPError, OSError):
+                            pass
+                        http_body = _sanitize_http_error_body(
+                            bytes(err_buf),
+                            redact_values=redact_vals,
+                            limit=1000,
+                        )
+                        http_details: dict[str, Any] = {"http_status": status_code}
+                        if http_body:
+                            http_details["http_body"] = http_body
+                        err_code = (
+                            "agent_mcp_session_expired"
+                            if (
+                                status_code == 404
+                                and bool(self.session_id)
+                                and method != "initialize"
+                            )
+                            else "agent_mcp_http_error"
+                        )
+                        raise McpTransportError(
+                            err_code,
+                            dispatched=status_dispatched,
+                            phase="http_status",
+                            request_id=ident,
+                            http_status=status_code,
+                            retry_after=retry_after_sec,
+                            details=http_details,
+                        )
+                    resp_limit = _max_response_bytes(method)
+                    self._check_content_length(response, dispatched=True, max_bytes=resp_limit)
+                    sess_hdr = response.headers.get("Mcp-Session-Id") or response.headers.get("mcp-session-id")
+                    if sess_hdr:
+                        self.session_id = sess_hdr.strip()
+
+                    ctype = (response.headers.get("Content-Type") or "").lower()
+                    is_sse = "text/event-stream" in ctype
+                    sse_buffer = bytearray()
+                    chunks: list[bytes] = []
+                    total = 0
+
+                    for chunk in response.iter_bytes():
+                        self._check_deadline(
+                            deadline,
+                            cancelled,
                             dispatched=True,
                             phase="await_response",
-                            request_id=ident,
+                            timeout_seconds=timeout,
+                            method=method,
                         )
-                    if is_sse:
-                        sse_buffer.extend(chunk)
-                        message = self._extract_sse_message(sse_buffer, ident, flush_final=False)
-                        if message is not None:
-                            break
-                    else:
-                        chunks.append(chunk)
+                        total += len(chunk)
+                        if total > resp_limit:
+                            raise McpTransportError(
+                                "agent_mcp_output_limit",
+                                dispatched=True,
+                                phase="await_response",
+                                request_id=ident,
+                            )
+                        if is_sse:
+                            sse_buffer.extend(chunk)
+                            message = self._extract_sse_message(sse_buffer, ident, flush_final=False)
+                            if message is not None:
+                                break
+                        else:
+                            chunks.append(chunk)
 
-                self._check_deadline(deadline, cancelled, dispatched=True)
-                if is_sse:
-                    if message is None:
-                        message = self._extract_sse_message(sse_buffer, ident, flush_final=True)
-                    if message is None:
-                        raise McpTransportError(
-                            "agent_mcp_protocol_invalid",
-                            dispatched=True,
-                            phase="response_parse",
-                            request_id=ident,
-                        )
-                else:
-                    raw = b"".join(chunks)
-                    try:
-                        message = json.loads(raw.decode("utf-8"))
-                    except Exception as exc:
-                        raise McpTransportError(
-                            "agent_mcp_protocol_invalid",
-                            dispatched=True,
-                            phase="response_parse",
-                            request_id=ident,
-                        ) from exc
+                    self._check_deadline(
+                        deadline,
+                        cancelled,
+                        dispatched=True,
+                        phase="await_response",
+                        timeout_seconds=timeout,
+                        method=method,
+                    )
+                    if is_sse:
+                        if message is None:
+                            message = self._extract_sse_message(sse_buffer, ident, flush_final=True)
+                        if message is None:
+                            raise McpTransportError(
+                                "agent_mcp_protocol_invalid",
+                                dispatched=True,
+                                phase="response_parse",
+                                request_id=ident,
+                            )
+                    else:
+                        raw = b"".join(chunks)
+                        try:
+                            message = json.loads(raw.decode("utf-8"))
+                        except Exception as exc:
+                            raise McpTransportError(
+                                "agent_mcp_protocol_invalid",
+                                dispatched=True,
+                                phase="response_parse",
+                                request_id=ident,
+                            ) from exc
         except McpTransportError as exc:
-            if (exc.http_status == 401 and self.oauth and headers.get("Authorization")
-                    and method in {"initialize", "tools/list"} and not refresh_state[0]):
+            if (
+                exc.http_status == 401
+                and self.oauth
+                and headers.get("Authorization")
+                and auth_refresh_eligible
+                and not refresh_state[0]
+            ):
                 try:
                     self.oauth.access_token(self._server, force_refresh=True, refresh_state=refresh_state)
                 except McpOAuthError as auth_exc:
-                    raise McpTransportError(str(auth_exc), dispatched=True, phase="http_status",
-                        request_id=ident, http_status=401, transport="streamable_http", server_id=self.server_id) from None
-                return self._exchange(method, params, timeout, before_dispatch=before_dispatch,
-                    cancelled=cancelled, _deadline=deadline, _auth_retry=True)
+                    raise McpTransportError(
+                        str(auth_exc),
+                        dispatched=False,
+                        phase="http_status",
+                        request_id=ident,
+                        http_status=401,
+                        transport="streamable_http",
+                        server_id=self.server_id,
+                    ) from None
+                return self._exchange(
+                    method,
+                    params,
+                    timeout,
+                    before_dispatch=before_dispatch,
+                    cancelled=cancelled,
+                    _deadline=deadline,
+                    _auth_retry=True,
+                )
             if exc.request_id is None:
                 exc.request_id = ident
             if exc.phase is None:
@@ -973,22 +1776,47 @@ class StreamableHttpMcpSession:
                 exc.transport = "streamable_http"
             if exc.server_id is None:
                 exc.server_id = self.server_id
+            if str(exc) == "agent_mcp_timeout":
+                d = dict(exc.details or {})
+                d.setdefault("phase", exc.phase)
+                d.setdefault("timeout_seconds", round(float(timeout), 3))
+                d.setdefault("method", method)
+                exc.details = d
             raise
         except httpx.TimeoutException as exc:
+            timeout_dispatched = (
+                False
+                if isinstance(exc, (httpx.ConnectTimeout, httpx.PoolTimeout))
+                else dispatched
+            )
+            eff_phase = "await_response" if timeout_dispatched else "pre_dispatch"
             raise McpTransportError(
                 "agent_mcp_timeout",
-                dispatched=dispatched,
-                phase="await_response" if dispatched else "pre_dispatch",
+                dispatched=timeout_dispatched,
+                phase=eff_phase,
                 request_id=ident,
                 transport="streamable_http",
                 server_id=self.server_id,
+                details={
+                    "phase": eff_phase,
+                    "timeout_seconds": round(float(timeout), 3),
+                    "method": method,
+                },
             ) from exc
         except (httpx.HTTPError, OSError) as exc:
-            self._check_deadline(deadline, cancelled, dispatched=dispatched)
+            conn_dispatched = False if isinstance(exc, httpx.ConnectError) else dispatched
+            self._check_deadline(
+                deadline,
+                cancelled,
+                dispatched=conn_dispatched,
+                phase="await_response" if conn_dispatched else "pre_dispatch",
+                timeout_seconds=timeout,
+                method=method,
+            )
             raise McpTransportError(
                 "agent_mcp_process_disconnected",
-                dispatched=dispatched,
-                phase="await_response" if dispatched else "pre_dispatch",
+                dispatched=conn_dispatched,
+                phase="await_response" if conn_dispatched else "pre_dispatch",
                 request_id=ident,
                 transport="streamable_http",
                 server_id=self.server_id,
@@ -1007,11 +1835,21 @@ class StreamableHttpMcpSession:
             err_obj = message.get("error")
             code = err_obj.get("code") if isinstance(err_obj, dict) else None
             rpc_code = code if type(code) is int else None
+            raw_msg = err_obj.get("message") if isinstance(err_obj, dict) else None
+            cleaned_msg = _clean_mcp_error_message(
+                raw_msg,
+                redact_values=redact_vals,
+                limit=500,
+            )
+            rpc_details: dict[str, Any] = {}
+            if cleaned_msg:
+                rpc_details["message"] = cleaned_msg
+            if rpc_code is not None:
+                rpc_details["rpc_code"] = rpc_code
             if code in (-32602, -32601):
-                msg = err_obj.get("message") if isinstance(err_obj, dict) else None
                 err_code = (
-                    msg
-                    if isinstance(msg, str) and msg in ALLOWLISTED_MCP_RPC_ERROR_CODES
+                    raw_msg
+                    if isinstance(raw_msg, str) and raw_msg in ALLOWLISTED_MCP_RPC_ERROR_CODES
                     else "agent_mcp_rpc_rejected"
                 )
                 raise McpTransportError(
@@ -1022,6 +1860,7 @@ class StreamableHttpMcpSession:
                     rpc_code=rpc_code,
                     transport="streamable_http",
                     server_id=self.server_id,
+                    details=rpc_details or None,
                 )
             raise McpTransportError(
                 "agent_mcp_rpc_error",
@@ -1031,6 +1870,7 @@ class StreamableHttpMcpSession:
                 rpc_code=rpc_code,
                 transport="streamable_http",
                 server_id=self.server_id,
+                details=rpc_details or None,
             )
         result = message.get("result")
         if not isinstance(result, dict):
@@ -1044,13 +1884,86 @@ class StreamableHttpMcpSession:
             )
         return result
 
+    def _sleep_before_retry(
+        self,
+        delay_seconds: float,
+        *,
+        deadline: float,
+        cancelled: Callable[[], bool] | None,
+        timeout_seconds: float,
+        method: str,
+    ) -> bool:
+        now_mono = time.monotonic()
+        if now_mono + delay_seconds >= deadline:
+            return False
+        target = now_mono + delay_seconds
+        while True:
+            self._check_deadline(
+                deadline,
+                cancelled,
+                dispatched=False,
+                phase="pre_dispatch",
+                timeout_seconds=timeout_seconds,
+                method=method,
+            )
+            rem = target - time.monotonic()
+            if rem <= 0:
+                return True
+            time.sleep(min(0.05, rem))
+
+    def _exchange_with_retry(
+        self,
+        method: str,
+        params: dict[str, Any],
+        timeout: float,
+        *,
+        deadline: float,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> dict[str, Any]:
+        max_attempts = 1 + len(_HTTP_RETRY_DELAYS)
+        for attempt in range(max_attempts):
+            try:
+                return self._exchange(
+                    method,
+                    params,
+                    timeout,
+                    cancelled=cancelled,
+                    _deadline=deadline,
+                )
+            except BaseException as exc:
+                if attempt >= len(_HTTP_RETRY_DELAYS) or not _is_retryable(exc):
+                    raise
+                base_delay = _HTTP_RETRY_DELAYS[attempt]
+                retry_after = getattr(exc, "retry_after", None)
+                wait_sec = (
+                    max(base_delay, float(retry_after))
+                    if type(retry_after) in (int, float)
+                    else base_delay
+                )
+                if not self._sleep_before_retry(
+                    wait_sec,
+                    deadline=deadline,
+                    cancelled=cancelled,
+                    timeout_seconds=timeout,
+                    method=method,
+                ):
+                    raise
+        raise AssertionError("unreachable")
+
     def initialize(self, *, cancelled: Callable[[], bool] | None = None) -> dict[str, Any]:
         with self.lock:
             deadline = time.monotonic() + self.startup_timeout
             if self.initialized:
-                self._check_deadline(deadline, cancelled, dispatched=False)
+                self._check_deadline(
+                    deadline,
+                    cancelled,
+                    dispatched=False,
+                    phase="initialize",
+                    timeout_seconds=self.startup_timeout,
+                    method="initialize",
+                )
                 return self.server_info
-            result = self._exchange(
+            result = self._exchange_with_retry(
                 "initialize",
                 {
                     "protocolVersion": STREAMABLE_HTTP_PROTOCOL_VERSION,
@@ -1058,8 +1971,8 @@ class StreamableHttpMcpSession:
                     "clientInfo": {"name": "Ryn", "version": "1.0"},
                 },
                 self.startup_timeout,
+                deadline=deadline,
                 cancelled=cancelled,
-                _deadline=deadline,
             )
             if (
                 result.get("protocolVersion") not in SUPPORTED_PROTOCOL_VERSIONS
@@ -1076,40 +1989,102 @@ class StreamableHttpMcpSession:
                 refresh_state = [False]
                 for attempt in range(2):
                     headers = self._headers(refresh_on_error=True, refresh_state=refresh_state)
-                    req_timeout = self._remaining_timeout(deadline, cancelled, dispatched=False)
+                    req_timeout = self._remaining_timeout(
+                        deadline,
+                        cancelled,
+                        dispatched=False,
+                        phase="initialize",
+                        timeout_seconds=self.startup_timeout,
+                        method="notifications/initialized",
+                    )
                     retry = False
-                    with self._client.stream("POST", self.url, content=notif, headers=headers, timeout=req_timeout) as resp, self._watch_response(resp, deadline, cancelled):
-                        self._check_deadline(deadline, cancelled, dispatched=False)
-                        if resp.status_code in (401, 403):
-                            auth_error = self._auth_error(resp, dispatched=True)
-                            retry = bool(resp.status_code == 401 and self.oauth and headers.get("Authorization") and attempt == 0 and not refresh_state[0])
+                    notif_box: list[httpx.Response | None] = [None]
+                    with self._watch_request(deadline, cancelled, notif_box):
+                        with self._client.stream(
+                            "POST",
+                            self.url,
+                            content=notif,
+                            headers=headers,
+                            timeout=_http_timeout(req_timeout),
+                        ) as resp:
+                            notif_box[0] = resp
+                            self._check_deadline(
+                                deadline,
+                                cancelled,
+                                dispatched=False,
+                                phase="initialize",
+                                timeout_seconds=self.startup_timeout,
+                                method="notifications/initialized",
+                            )
+                            if resp.status_code == 401:
+                                auth_error = self._auth_error(resp, dispatched=False)
+                                retry = bool(self.oauth and headers.get("Authorization") and attempt == 0 and not refresh_state[0])
+                                if not retry:
+                                    raise auth_error
+                            elif resp.status_code == 403:
+                                if parse_auth_challenge(resp.headers.get("WWW-Authenticate", "")).get("error") == "insufficient_scope":
+                                    raise self._auth_error(resp, dispatched=False)
+                                raise McpTransportError(
+                                    "agent_mcp_http_forbidden",
+                                    dispatched=False,
+                                    phase="http_status",
+                                    http_status=403,
+                                    details={"http_status": 403},
+                                )
+                            elif resp.status_code >= 300:
+                                raise McpTransportError(
+                                    "agent_mcp_http_error",
+                                    dispatched=False,
+                                    phase="http_status",
+                                    http_status=int(resp.status_code),
+                                )
                             if not retry:
-                                raise auth_error
-                        elif resp.status_code >= 300:
-                            raise McpTransportError("agent_mcp_http_error", dispatched=False)
-                        if not retry:
-                            self._check_content_length(resp, dispatched=False)
-                            notif_total = 0
-                            for chunk in resp.iter_bytes():
-                                self._check_deadline(deadline, cancelled, dispatched=False)
-                                notif_total += len(chunk)
-                                if notif_total > MAX_OUTPUT_BYTES:
-                                    raise McpTransportError("agent_mcp_output_limit", dispatched=False)
+                                notif_limit = _max_response_bytes("notifications/initialized")
+                                self._check_content_length(resp, dispatched=False, max_bytes=notif_limit)
+                                notif_total = 0
+                                for chunk in resp.iter_bytes():
+                                    self._check_deadline(
+                                        deadline,
+                                        cancelled,
+                                        dispatched=False,
+                                        phase="initialize",
+                                        timeout_seconds=self.startup_timeout,
+                                        method="notifications/initialized",
+                                    )
+                                    notif_total += len(chunk)
+                                    if notif_total > notif_limit:
+                                        raise McpTransportError("agent_mcp_output_limit", dispatched=False)
                     if not retry:
                         break
                     try:
                         self.oauth.access_token(self._server, force_refresh=True, refresh_state=refresh_state)
                     except McpOAuthError as exc:
-                        raise McpTransportError(str(exc), dispatched=True, phase="http_status", http_status=401) from None
+                        raise McpTransportError(str(exc), dispatched=False, phase="http_status", http_status=401) from None
             except McpTransportError:
                 self.close()
                 raise
             except httpx.TimeoutException as exc:
                 self.close()
-                raise McpTransportError("agent_mcp_timeout", dispatched=False) from exc
+                raise McpTransportError(
+                    "agent_mcp_timeout",
+                    dispatched=False,
+                    phase="initialize",
+                    details={
+                        "phase": "initialize",
+                        "timeout_seconds": round(float(self.startup_timeout), 3),
+                        "method": "notifications/initialized",
+                    },
+                ) from exc
             except (httpx.HTTPError, OSError) as exc:
                 self.close()
-                self._check_deadline(deadline, cancelled, dispatched=False)
+                self._check_deadline(
+                    deadline,
+                    cancelled,
+                    dispatched=False,
+                    phase="initialize",
+                    timeout_seconds=self.startup_timeout,
+                    method="notifications/initialized",
+                )
                 raise McpTransportError("agent_mcp_process_disconnected", dispatched=False) from exc
             self.initialized = True
             self.server_info = result
@@ -1122,10 +2097,30 @@ class StreamableHttpMcpSession:
             tools: list[dict[str, Any]] = []
             cursor: str | None = None
             seen_cursors: set[str] = set()
+            total_budget = 10.0 * self.startup_timeout
+            total_deadline = time.monotonic() + total_budget
             for _ in range(MAX_TOOL_PAGES):
+                remaining_total = total_deadline - time.monotonic()
+                if remaining_total <= 0:
+                    raise McpTransportError(
+                        "agent_mcp_timeout",
+                        dispatched=False,
+                        phase="await_response",
+                        details={
+                            "phase": "await_response",
+                            "timeout_seconds": round(total_budget, 3),
+                            "method": "tools/list",
+                        },
+                    )
+                page_timeout = min(self.startup_timeout, remaining_total)
+                page_deadline = time.monotonic() + page_timeout
                 params = {"cursor": cursor} if cursor else {}
-                res = self._exchange(
-                    "tools/list", params, self.startup_timeout, cancelled=cancelled
+                res = self._exchange_with_retry(
+                    "tools/list",
+                    params,
+                    page_timeout,
+                    deadline=page_deadline,
+                    cancelled=cancelled,
                 )
                 page_tools = res.get("tools")
                 if not isinstance(page_tools, list):
@@ -1149,6 +2144,7 @@ class StreamableHttpMcpSession:
         name: str,
         arguments: dict[str, Any],
         *,
+        timeout: float | None = None,
         before_dispatch: Callable[[], None] | None = None,
         cancelled: Callable[[], bool] | None = None,
         trusted_operation: dict[str, Any] | None = None,
@@ -1160,12 +2156,17 @@ class StreamableHttpMcpSession:
             except BaseException as exc:
                 exc.dispatched = False  # type: ignore[attr-defined]
                 raise
+        eff_timeout = (
+            min(self.tool_timeout, max(0.05, float(timeout)))
+            if timeout is not None
+            else self.tool_timeout
+        )
         with self.lock:
             return self._exchange(
                 "tools/prepare" if prepare else "tools/call",
                 {"name": name, "arguments": arguments,
                  **({"_meta": {"ryn_operation": trusted_operation}} if trusted_operation is not None else {})},
-                self.tool_timeout,
+                eff_timeout,
                 before_dispatch=before_dispatch,
                 cancelled=cancelled,
             )
@@ -1368,7 +2369,12 @@ class McpSessionManager:
         if transport == "streamable_http":
             session = StreamableHttpMcpSession(server, cancelled=cancelled, oauth=self.oauth)
         else:
-            session = StdioMcpSession(server, fallback_cwd=self._fallback_cwd, cancelled=cancelled)
+            session = StdioMcpSession(
+                server,
+                fallback_cwd=self._fallback_cwd,
+                store_root=self.store.root,
+                cancelled=cancelled,
+            )
         session.on_tools_changed = lambda sid=str(server["id"]): self.catalog_changed(sid)  # type: ignore[attr-defined]
         return session
 
@@ -1472,6 +2478,7 @@ class McpSessionManager:
         if restart:
             self.invalidate_server(server_id)
 
+        had_tools = bool(initial.get("discovered_tools"))
         session: StdioMcpSession | StreamableHttpMcpSession | None = None
         try:
             session = self._create_session(initial)
@@ -1480,7 +2487,12 @@ class McpSessionManager:
             if session is not None:
                 session.close()
             err_code = str(exc)
-            status = "NeedsAuth" if err_code == "agent_mcp_auth_required" else "Error"
+            if err_code == "agent_mcp_auth_required":
+                status = "NeedsAuth"
+            elif had_tools:
+                status = "Degraded"
+            else:
+                status = "Error"
             updated_view = self.store.record_mcp_discovery(
                 server_id,
                 expected_revision=initial["revision"],
@@ -1512,7 +2524,7 @@ class McpSessionManager:
                 expected_enabled=initial["effective_enabled"],
                 allow_disabled=True,
                 discovered_tools=None,
-                status="Error",
+                status="Degraded" if had_tools else "Error",
                 status_message="agent_mcp_transport_error",
                 desktop_access=desktop_access,
             )
@@ -1819,6 +2831,7 @@ class McpSessionManager:
         expected_instance_id: str,
         expected_schema_hash: str | None = None,
         session_scope: str | None = None,
+        timeout_ms: int | None = None,
         before_dispatch: Callable[[], None] | None = None,
         cancelled: Callable[[], bool] = lambda: False,
         trusted_operation: dict[str, Any] | None = None,
@@ -1841,96 +2854,148 @@ class McpSessionManager:
             self.invalidate_server(server_id)
             raise
 
-        session = self._get_or_connect_enabled_session(
-            server, session_scope=session_scope, cancelled=cancelled
-        )
-
         scope = key[1]
-        with self._lock:
-            call_mgr_gen = self._manager_generation
-            call_srv_gen = self._server_generations.get(server_id, 0)
-            call_scope_gen = self._scope_generations.get(scope, 0) if scope is not None else 0
-
-        def _locked_pre_dispatch() -> None:
-            self._revalidate_tool_call(
-                server_id,
-                tool_name,
-                expected_revision=expected_revision,
-                expected_config_generation=expected_config_generation,
-                expected_instance_id=expected_instance_id,
-                expected_schema_hash=expected_schema_hash,
-                session=session,
+        for attempt in range(2):
+            session = self._get_or_connect_enabled_session(
+                server, session_scope=session_scope, cancelled=cancelled
             )
-            if before_dispatch is not None:
-                before_dispatch()
 
-        def _call_cancelled() -> bool:
-            if cancelled():
-                return True
-            if self._is_generation_stale(
-                server_id, scope, call_mgr_gen, call_srv_gen, call_scope_gen
-            ):
-                return True
-            try:
-                srv = self._revalidate_tool_call(
+            with self._lock:
+                call_mgr_gen = self._manager_generation
+                call_srv_gen = self._server_generations.get(server_id, 0)
+                call_scope_gen = self._scope_generations.get(scope, 0) if scope is not None else 0
+
+            def _locked_pre_dispatch(
+                _sess: StdioMcpSession | StreamableHttpMcpSession = session,
+            ) -> None:
+                self._revalidate_tool_call(
                     server_id,
                     tool_name,
                     expected_revision=expected_revision,
                     expected_config_generation=expected_config_generation,
                     expected_instance_id=expected_instance_id,
                     expected_schema_hash=expected_schema_hash,
-                    session=None,
+                    session=_sess,
                 )
-                return bool(
-                    session.instance_id != srv["instance_id"]
-                    or session.config_generation != int(srv["config_generation"])
-                    or session.revision != int(srv["revision"])
-                )
-            except BaseException:
-                return True
+                if before_dispatch is not None:
+                    before_dispatch()
 
-        try:
-            extra = {}
-            if trusted_operation is not None or prepare:
-                from urllib.parse import urlsplit
-                url = urlsplit(server.get("url") or "")
-                local = url.scheme == "http" and url.hostname == "127.0.0.1" and (server.get("secret_headers") or {}).get("X-Ryn-Service-Token")
-                remote = (url.scheme == "https" and (server.get("auth") or {}).get("mode") == "oauth"
-                          and any(tool.get("name") == tool_name and (tool.get("input_schema") or {}).get("x-ryn-operation") == "1"
-                                  for tool in server.get("discovered_tools") or []))
-                if not isinstance(session, StreamableHttpMcpSession) or not (local or remote):
-                    raise AgentError("agent_local_service_binding_invalid")
-                extra["trusted_operation"] = trusted_operation
-                extra["prepare"] = prepare
-            return session.call_tool(
-                tool_name,
-                arguments,
-                before_dispatch=_locked_pre_dispatch,
-                cancelled=_call_cancelled,
-                **extra,
-            )
-        except BaseException as exc:
-            if getattr(exc, "server_id", None) is None:
-                exc.server_id = server_id  # type: ignore[attr-defined]
-            if getattr(exc, "session_scope", None) is None and session_scope:
-                exc.session_scope = session_scope  # type: ignore[attr-defined]
-            if getattr(exc, "transport", None) is None:
-                exc.transport = (  # type: ignore[attr-defined]
-                    "streamable_http"
-                    if isinstance(session, StreamableHttpMcpSession)
-                    else "stdio"
+            def _call_cancelled(
+                _sess: StdioMcpSession | StreamableHttpMcpSession = session,
+                _mgr_g: int = call_mgr_gen,
+                _srv_g: int = call_srv_gen,
+                _scp_g: int = call_scope_gen,
+            ) -> bool:
+                if cancelled():
+                    return True
+                if self._is_generation_stale(
+                    server_id, scope, _mgr_g, _srv_g, _scp_g
+                ):
+                    return True
+                try:
+                    srv = self._revalidate_tool_call(
+                        server_id,
+                        tool_name,
+                        expected_revision=expected_revision,
+                        expected_config_generation=expected_config_generation,
+                        expected_instance_id=expected_instance_id,
+                        expected_schema_hash=expected_schema_hash,
+                        session=None,
+                    )
+                    return bool(
+                        _sess.instance_id != srv["instance_id"]
+                        or _sess.config_generation != int(srv["config_generation"])
+                        or _sess.revision != int(srv["revision"])
+                    )
+                except BaseException:
+                    return True
+
+            try:
+                extra: dict[str, Any] = {}
+                if timeout_ms is not None:
+                    extra["timeout"] = min(
+                        session.tool_timeout,
+                        max(0.05, float(timeout_ms) / 1000.0),
+                    )
+                if trusted_operation is not None or prepare:
+                    from urllib.parse import urlsplit
+                    url = urlsplit(server.get("url") or "")
+                    local = url.scheme == "http" and url.hostname == "127.0.0.1" and (server.get("secret_headers") or {}).get("X-Ryn-Service-Token")
+                    remote = (url.scheme == "https" and (server.get("auth") or {}).get("mode") == "oauth"
+                              and any(tool.get("name") == tool_name and (tool.get("input_schema") or {}).get("x-ryn-operation") == "1"
+                                      for tool in server.get("discovered_tools") or []))
+                    if not isinstance(session, StreamableHttpMcpSession) or not (local or remote):
+                        raise AgentError("agent_local_service_binding_invalid")
+                    extra["trusted_operation"] = trusted_operation
+                    extra["prepare"] = prepare
+                return session.call_tool(
+                    tool_name,
+                    arguments,
+                    before_dispatch=_locked_pre_dispatch,
+                    cancelled=_call_cancelled,
+                    **extra,
                 )
-            proc = getattr(session, "process", None)
-            pid = getattr(proc, "pid", None)
-            if getattr(exc, "session_pid", None) is None and type(pid) is int:
-                exc.session_pid = pid  # type: ignore[attr-defined]
-            if (
-                session.closed.is_set()
-                or not session.is_usable()
-                or getattr(exc, "dispatched", False)
-            ):
-                with self._lock:
-                    if self._sessions.get(key) is session:
-                        self._sessions.pop(key, None)
-                session.close()
-            raise
+            except BaseException as exc:
+                if getattr(exc, "server_id", None) is None:
+                    exc.server_id = server_id  # type: ignore[attr-defined]
+                if getattr(exc, "session_scope", None) is None and session_scope:
+                    exc.session_scope = session_scope  # type: ignore[attr-defined]
+                if getattr(exc, "transport", None) is None:
+                    exc.transport = (  # type: ignore[attr-defined]
+                        "streamable_http"
+                        if isinstance(session, StreamableHttpMcpSession)
+                        else "stdio"
+                    )
+                proc = getattr(session, "process", None)
+                pid = getattr(proc, "pid", None)
+                if getattr(exc, "session_pid", None) is None and type(pid) is int:
+                    exc.session_pid = pid  # type: ignore[attr-defined]
+
+                session_expired = (
+                    isinstance(exc, McpTransportError)
+                    and str(exc) == "agent_mcp_session_expired"
+                )
+                if session_expired and getattr(exc, "dispatched", True) is False and attempt == 0:
+                    with self._lock:
+                        if self._sessions.get(key) is session:
+                            self._sessions.pop(key, None)
+                    session.close()
+                    try:
+                        server = self._revalidate_tool_call(
+                            server_id,
+                            tool_name,
+                            expected_revision=expected_revision,
+                            expected_config_generation=expected_config_generation,
+                            expected_instance_id=expected_instance_id,
+                            expected_schema_hash=expected_schema_hash,
+                        )
+                    except BaseException as reval_exc:
+                        if not hasattr(reval_exc, "dispatched"):
+                            reval_exc.dispatched = False  # type: ignore[attr-defined]
+                        self.invalidate_server(server_id)
+                        raise
+                    continue
+
+                recoverable_phase = getattr(exc, "phase", None) in {"rpc_error", "http_status"}
+                keep_stdio_after_line_overflow = (
+                    isinstance(session, StdioMcpSession)
+                    and isinstance(exc, McpTransportError)
+                    and str(exc) == "agent_mcp_output_limit"
+                    and session.is_usable()
+                )
+                if (
+                    session.closed.is_set()
+                    or not session.is_usable()
+                    or session_expired
+                    or (
+                        bool(getattr(exc, "dispatched", False))
+                        and not recoverable_phase
+                        and not keep_stdio_after_line_overflow
+                    )
+                ):
+                    with self._lock:
+                        if self._sessions.get(key) is session:
+                            self._sessions.pop(key, None)
+                    session.close()
+                raise
+        raise AssertionError("unreachable")

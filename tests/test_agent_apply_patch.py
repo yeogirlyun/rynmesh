@@ -177,19 +177,24 @@ def test_duplicate_anchor_with_unique_context_succeeds_and_duplicate_full_contex
         "        return 1\n\n"
         "class Beta:\n"
         "    def run(self):\n"
-        "        return 1\n"
+        "        return 1\n\n"
+        "class Tail:\n"
+        "    done = False\n"
     )
     ambiguous_target = workspace / "service_ambiguous.py"
     ambiguous_target.write_text(ambiguous_content, encoding="utf-8")
     with pytest.raises(AgentToolRejected, match="agent_patch_context_not_found") as exc_info:
         tools.preview("ryn_apply_patch", {"patch": patch(
             "*** Update File: service_ambiguous.py",
+            "@@ class Tail:",
+            "-    done = False",
+            "+    done = True",
             "@@ def run(self):",
             "-        return 1",
             "+        return 10",
         )}, context)
     assert exc_info.value.details["match_count"] == 2
-    assert exc_info.value.details["hunk_index"] == 0
+    assert exc_info.value.details["hunk_index"] == 1
     assert ambiguous_target.read_text(encoding="utf-8") == ambiguous_content
 
 
@@ -250,7 +255,7 @@ def test_patch_preserves_added_indentation_verbatim_and_reports_bounded_diagnost
         tools.preview("ryn_apply_patch", {"patch": patch(
             "*** Update File: indent.py",
             "@@ def calc():",
-            "-  x = 1",
+            "-  x = 999",
             "+  x = 2",
         )}, context)
     assert exc_info.value.correction
@@ -304,7 +309,7 @@ def test_observed_file_version_tracks_reads_detects_external_changes_and_survive
             (workspace / "notes.txt").write_text("alpha\nEXTERNAL\n", encoding="utf-8")
             return assistant(name="ryn_file_edit", args={"path": "notes.txt", "old_text": "GAMMA\n", "new_text": "DELTA\n"})
         if call_index == 3:
-            last_tool = json.loads(messages[-1]["content"])
+            last_tool = json.loads(messages[-2]["content"])
             assert last_tool["error"] == "agent_local_file_changed_read_again"
             assert "correction" in last_tool
             return assistant(name="ryn_file_read", args={"path": "notes.txt"})
@@ -461,7 +466,7 @@ def test_resolve_rg_executable_prefers_bundled_binary_and_falls_back_to_path(tmp
 
     # Fallback to shutil.which when no bundled binary exists
     monkeypatch.setattr(local_processes, "_rg_candidate_dirs", lambda: [tmp_path / "empty_bin"])
-    monkeypatch.setattr(local_processes.shutil, "which", lambda name: "/usr/bin/rg" if name in {"rg", "rg.exe"} else None)
+    monkeypatch.setattr(local_processes.shutil, "which", lambda name, path=None: "/usr/bin/rg" if name in {"rg", "rg.exe"} else None)
     assert local_processes.resolve_rg_executable() == "/usr/bin/rg"
 
 
@@ -485,7 +490,7 @@ def test_core_tools_remain_pinned_with_internal_specs_in_moderate_additive_windo
 
 
 def test_codex_thread_reuses_session_across_tool_execution_permission_updates_tool_loading_and_followup():
-    from rynmesh.agent_runtime.prompt import PROMPT_VERSION, SYSTEM, authority
+    from rynmesh.agent_runtime.prompt import PROMPT_VERSION, SYSTEM, authority, progress_state
     from rynmesh.llm_package import codex_threads
 
     class DummyRpc:
@@ -522,7 +527,7 @@ def test_codex_thread_reuses_session_across_tool_execution_permission_updates_to
     funcs_v1 = {spec["function"]["name"]: spec for spec in specs(tool_menu.CORE_TOOLS)}
 
     row1 = make_row(goal_rev=1)
-    sys1 = SYSTEM + authority(row1)
+    sys1 = SYSTEM + authority(row1) + "\n" + progress_state(row1)
     msgs1 = [{"role": "system", "content": sys1}, {"role": "user", "content": "Inspect app.py"}]
     conv1 = codex_threads.Conversation(msgs1, funcs_v1, scope={"requester": "local_owner", "window": key[-1]})
     session = pool.session(DummyRpc(), key)
@@ -532,13 +537,13 @@ def test_codex_thread_reuses_session_across_tool_execution_permission_updates_to
     ]}
     conv1.finish(assistant_call)
 
-    # Turn 2: Tool executed, operation_permissions updated in Server control state, plus dynamic tool loaded.
+    # Turn 2: Tool executed, operation_permissions updated in Server progress state, plus dynamic tool loaded.
     row2 = make_row(goal_rev=1, receipts=[{
         "tool": "ryn_shell_execute", "effect": "write", "status": "confirmed", "authorization": "read",
         "operation_id": "op1", "arguments": {"command": "rg foo app.py"}, "arguments_sha256": "abc",
         "goal_revision": 1, "scope_revision": 0, "context_epoch": 0,
     }])
-    sys2 = SYSTEM + authority(row2)
+    sys2 = SYSTEM + authority(row2) + "\n" + progress_state(row2)
     msgs2 = [
         {"role": "system", "content": sys2},
         {"role": "user", "content": "Inspect app.py"},
@@ -559,8 +564,8 @@ def test_codex_thread_reuses_session_across_tool_execution_permission_updates_to
 
     # Turn 3: Same-window owner follow-up message increments goal_revision and reuses the session.
     row3 = make_row(goal_rev=2, receipts=row2["receipts"])
-    _ = SYSTEM + authority(row3)
-    msgs3 = [*msgs2, final_msg, {"role": "user", "content": "Now change x to 2."}]
+    sys3 = SYSTEM + authority(row3) + "\n" + progress_state(row3)
+    msgs3 = [{"role": "system", "content": sys3}, *msgs2[1:], final_msg, {"role": "user", "content": "Now change x to 2."}]
     conv3 = codex_threads.Conversation(msgs3, funcs_v2, scope={"requester": "local_owner", "window": key[-1]})
     leased3 = pool.lease(key, conv3)
     assert leased3 is session

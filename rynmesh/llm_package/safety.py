@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import platform
 import shutil
 import stat
 import subprocess
@@ -19,6 +20,14 @@ MAX_REQUEST = 16 * 1024 * 1024
 MAX_OUTPUT = 8 * 1024 * 1024
 MAX_TEMP = 64 * 1024 * 1024
 MIN_FREE_DISK = 512 * 1024 * 1024
+BODY_IDLE_TIMEOUT_S = 15
+BODY_RATE_FLOOR_BYTES_PER_S = 256 * 1024
+
+
+class RequestTooLargeError(HTTPException):
+    def __init__(self, limit_bytes: int):
+        self.limit_bytes = int(limit_bytes)
+        super().__init__(413, {"detail": "request_too_large", "limit_bytes": self.limit_bytes})
 
 
 def private_storage_bytes(root: Path) -> int:
@@ -53,18 +62,40 @@ def private_storage_bytes(root: Path) -> int:
 
 NODE_SLOTS = threading.BoundedSemaphore(4)
 HTTP_SLOTS = threading.BoundedSemaphore(32)
+_GPU_SAMPLE_INTERVAL_SECONDS = 5.0
 _pressure_lock = threading.Lock()
 _pressure_checked = 0.0
 _pressure_ok = True
+_pressure_reason_cached: str | None = None
+_gpu_temperature: int | None = None
+_gpu_sampler_lock = threading.Lock()
+_gpu_sampler_thread: threading.Thread | None = None
 
 
 def install_body_limit(app):
     if not getattr(app.state, "inference_body_limit", False):
+        from fastapi.responses import JSONResponse
+
+        @app.exception_handler(RequestTooLargeError)
+        async def _handle_request_too_large(_request, exc: RequestTooLargeError):
+            return JSONResponse(
+                {"detail": "request_too_large", "limit_bytes": exc.limit_bytes},
+                status_code=413,
+                headers={"Cache-Control": "no-store"},
+            )
+
         app.add_middleware(InferenceBodyLimit)
         app.state.inference_body_limit = True
 
 
 def _available_memory():
+    if platform.system() == "Darwin":
+        from . import hardware
+        try:
+            _, available_mb = hardware._darwin_memory()
+            return available_mb * 1024**2
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return None
     if os.name == "nt":
         import ctypes
         class Memory(ctypes.Structure):
@@ -82,50 +113,103 @@ def _available_memory():
     return None
 
 
+def _read_gpu_temperature() -> int | None:
+    nvidia = shutil.which("nvidia-smi")
+    if not nvidia:
+        return None
+    try:
+        result = subprocess.run(
+            [nvidia, "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            timeout=2,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        temperatures = [int(line) for line in result.stdout.splitlines() if line.strip().isdigit()]
+        return max(temperatures) if temperatures else None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _gpu_sampler_loop() -> None:
+    global _gpu_temperature
+    while True:
+        _gpu_temperature = _read_gpu_temperature()
+        time.sleep(_GPU_SAMPLE_INTERVAL_SECONDS)
+
+
+def _ensure_gpu_sampler() -> None:
+    global _gpu_sampler_thread
+    if _gpu_sampler_thread is not None and _gpu_sampler_thread.is_alive():
+        return
+    with _gpu_sampler_lock:
+        if _gpu_sampler_thread is None or not _gpu_sampler_thread.is_alive():
+            _gpu_sampler_thread = threading.Thread(
+                target=_gpu_sampler_loop,
+                name="ryn-llm-gpu-temp",
+                daemon=True,
+            )
+            _gpu_sampler_thread.start()
+
+
+def _pressure_reason() -> str | None:
+    global _pressure_checked, _pressure_ok, _pressure_reason_cached
+    with _pressure_lock:
+        _ensure_gpu_sampler()
+        now = time.monotonic()
+        if now - _pressure_checked >= 5:
+            available = _available_memory()
+            mem_ok = available is None or available >= 256 * 1024**2
+            temp = _gpu_temperature
+            gpu_ok = temp is None or temp < 85
+            if not mem_ok:
+                _pressure_reason_cached = "memory_pressure"
+            elif not gpu_ok:
+                _pressure_reason_cached = "gpu_temperature"
+            else:
+                _pressure_reason_cached = None
+            _pressure_ok = _pressure_reason_cached is None
+            _pressure_checked = now
+        if not _pressure_ok:
+            return _pressure_reason_cached or "memory_pressure"
+        if _gpu_temperature is not None and _gpu_temperature >= 85:
+            _pressure_ok = False
+            _pressure_reason_cached = "gpu_temperature"
+            return "gpu_temperature"
+        return None
+
+
 def pressure_ok():
     """Admission circuit breaker, not a hardware damage guarantee."""
-    global _pressure_checked, _pressure_ok
-    with _pressure_lock:
-        if time.monotonic() - _pressure_checked < 5:
-            return _pressure_ok
-        available = _available_memory()
-        safe = available is None or available >= 256 * 1024**2
-        nvidia = shutil.which("nvidia-smi")
-        if nvidia:
-            try:
-                result = subprocess.run([nvidia, "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"],
-                    capture_output=True, timeout=2, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-                temperatures = [int(line) for line in result.stdout.splitlines() if line.strip().isdigit()]
-                if temperatures:
-                    safe = safe and max(temperatures) < 85
-            except (OSError, subprocess.TimeoutExpired):
-                pass  # GPU metrics unavailable; do not claim thermal enforcement.
-        _pressure_ok, _pressure_checked = safe, time.monotonic()
-        return safe
+    return _pressure_reason() is None
 
 
 class SharedSlots:
-    """Per-service and process-wide admission; callers cannot enlarge either."""
+    """本机算力来源共享进程级 4 槽，远端来源只受自身并发限制。"""
 
-    def __init__(self, capacity, path):
-        self._global_bounded = capacity <= 4
-        self.local = threading.BoundedSemaphore(capacity if capacity > 4 else min(capacity, 4))
+    def __init__(self, capacity, path, local_compute: bool = True):
+        self.local_compute = bool(local_compute)
+        self._global_bounded = self.local_compute
+        self.local = threading.BoundedSemaphore(capacity)
         self.path = path
 
-    def acquire(self, blocking=False):
+    def acquire_reason(self, blocking=False) -> str | None:
         try:
             check_disk(self.path)
         except RuntimeError:
-            return False
-        if not pressure_ok():
-            return False
-        if self._global_bounded and not NODE_SLOTS.acquire(blocking=False):
-            return False
+            return "disk"
+        if self.local_compute:
+            reason = _pressure_reason()
+            if reason is not None:
+                return reason
         if not self.local.acquire(blocking=False):
-            if self._global_bounded:
-                NODE_SLOTS.release()
-            return False
-        return True
+            return "service_slots"
+        if self._global_bounded and not NODE_SLOTS.acquire(blocking=False):
+            self.local.release()
+            return "node_slots"
+        return None
+
+    def acquire(self, blocking=False):
+        return self.acquire_reason(blocking=blocking) is None
 
     def release(self):
         self.local.release()
@@ -142,7 +226,7 @@ async def read_json(request, limit=MAX_REQUEST):
     data = bytearray()
     async for part in request.stream():
         if len(data) + len(part) > limit:
-            raise HTTPException(413, "request_too_large")
+            raise RequestTooLargeError(limit)
         data.extend(part)
     try:
         value = json.loads(data)
@@ -156,14 +240,18 @@ async def read_json(request, limit=MAX_REQUEST):
 class InferenceBodyLimit:
     """Bound unauthenticated/chunked bodies before FastAPI parses them."""
 
-    def __init__(self, app):
+    def __init__(self, app, *, idle_timeout: float | None = None, total_timeout: float | None = None):
         self.app = app
+        self._idle_timeout = idle_timeout
+        self._total_timeout = total_timeout
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http" or not scope.get("path", "").startswith(
             ("/api/local/llm/", "/api/peer/llm/", "/v1/")
         ):
             return await self.app(scope, receive, send)
+        if scope.get("method") == "GET":
+            return await self.bounded(scope, receive, send)
         if not HTTP_SLOTS.acquire(blocking=False):
             await self.reject(send, 429, b"inference_connection_limit")
             return
@@ -183,27 +271,53 @@ class InferenceBodyLimit:
             return await self.app(scope, receive, upload_send)
         # Signed ciphertext envelopes include base64 overhead.
         limit = 4 * MAX_REQUEST if scope["path"].startswith("/api/peer/") else MAX_REQUEST
+        idle_timeout = float(self._idle_timeout if self._idle_timeout is not None else BODY_IDLE_TIMEOUT_S)
+        total_timeout = float(
+            self._total_timeout
+            if self._total_timeout is not None
+            else max(60, limit / BODY_RATE_FLOOR_BYTES_PER_S)
+        )
+        deadline = time.monotonic() + total_timeout
         packets, total = [], 0
-        async def collect():
-            nonlocal total
-            while True:
-                event = await receive()
-                if event["type"] == "http.disconnect":
-                    return False
-                total += len(event.get("body", b""))
-                if total > limit:
-                    await self.reject(send, 413, b"request_too_large")
-                    return False
-                packets.append(event)
-                if not event.get("more_body"):
-                    return True
-
-        try:
-            if not await asyncio.wait_for(collect(), timeout=15):
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                await self.reject(send, 408, b"request_body_total_timeout")
                 return
-        except asyncio.TimeoutError:
-            await self.reject(send, 408, b"request_body_timeout")
-            return
+            wait_s = min(idle_timeout, remaining)
+            hit_total = remaining <= idle_timeout
+            try:
+                event = await asyncio.wait_for(receive(), timeout=wait_s)
+            except asyncio.TimeoutError:
+                reason = (
+                    b"request_body_total_timeout"
+                    if hit_total or time.monotonic() >= deadline
+                    else b"request_body_idle_timeout"
+                )
+                await self.reject(send, 408, reason)
+                return
+            if event["type"] == "http.disconnect":
+                return
+            total += len(event.get("body", b""))
+            if total > limit:
+                payload: dict[str, object] = {"detail": "request_too_large", "limit_bytes": limit}
+                if scope["path"].startswith("/v1/"):
+                    msg = f"request exceeds byte limit ({limit} bytes)；多张图片时请先压缩或减少张数"
+                    if scope["path"] == "/v1/messages":
+                        payload["type"] = "error"
+                        payload["error"] = {"type": "invalid_request_error", "message": msg}
+                    else:
+                        payload["error"] = {
+                            "type": "invalid_request_error",
+                            "message": msg,
+                            "code": "request_too_large",
+                            "param": None,
+                        }
+                await self.reject_json(send, 413, payload)
+                return
+            packets.append(event)
+            if not event.get("more_body"):
+                break
         iterator = iter(packets)
 
         async def replay():
@@ -222,3 +336,16 @@ class InferenceBodyLimit:
         await send({"type": "http.response.start", "status": status,
                     "headers": [(b"cache-control", b"no-store")]})
         await send({"type": "http.response.body", "body": reason})
+
+    @staticmethod
+    async def reject_json(send, status, payload):
+        raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        await send({
+            "type": "http.response.start",
+            "status": status,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"cache-control", b"no-store"),
+            ],
+        })
+        await send({"type": "http.response.body", "body": raw})

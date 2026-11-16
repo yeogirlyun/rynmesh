@@ -12,18 +12,25 @@ owner through setup progress and node logs.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import os
 import platform
+import shutil
 import tarfile
+import time
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlparse
 
+from .. import __version__
 from ..atomic_io import AtomicIOError, atomic_write_json
+from .catalog import apply_download_mirror
 from .errors import LifecycleError
 from .https_only import build_https_only_opener
+from .transport_failure import download_retry_delay, format_download_failure
 
 RUNTIME_RELEASE = "b10774"  # ggml-org/llama.cpp, 2026-09-03
 RUNTIME_BASE_URL = f"https://github.com/ggml-org/llama.cpp/releases/download/{RUNTIME_RELEASE}/"
@@ -50,8 +57,11 @@ UNAVAILABLE_REASON = (
     "no bundled inference runtime is available for this platform; "
     "connect an existing local API or install Docker instead"
 )
+UNAVAILABLE_CODE = "runtime_unavailable_for_platform"
 UNREADABLE_ARCHIVE = "runtime archive is unreadable or corrupt"
+UNREADABLE_ARCHIVE_CODE = "runtime_archive_corrupt"
 UNWRITABLE_STATE = "unable to write runtime state"
+UNWRITABLE_STATE_CODE = "runtime_state_unwritable"
 
 
 def normalize_machine(value: str) -> str:
@@ -113,43 +123,136 @@ def report(progress: Any, cancel_check: Any, percent: int, message: str) -> None
         progress("pull_runtime", percent, message)
 
 
+DOWNLOAD_BACKOFFS = (2.0, 4.0, 8.0)
+
+
+class _IncompleteRuntimeDownload(OSError):
+    pass
+
+
+def _file_sha256(path: Path, cancel_check: Any = None) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(CHUNK_BYTES):
+            if cancel_check and cancel_check():
+                raise LifecycleError("setup cancelled")
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _header(headers: Any, name: str) -> str | None:
+    getter = getattr(headers, "get", None)
+    if getter is None:
+        return None
+    return getter(name) or getter(name.lower()) or getter(name.title())
+
+
+def runtime_base_url(base: Path | None = None) -> str:
+    if not RUNTIME_BASE_URL.startswith("https://github.com/"):
+        return RUNTIME_BASE_URL
+    try:
+        return apply_download_mirror(
+            RUNTIME_BASE_URL,
+            home_dir=str(base.parent) if base is not None else None,
+        )
+    except ValueError as exc:
+        raise LifecycleError("runtime downloads require an HTTPS mirror") from exc
+
+
 def _fetch(url: str, destination: Path, expected_sha256: str, size_bytes: int, *,
            progress: Any = None, cancel_check: Any = None) -> None:
     parsed = urlparse(url)
     if parsed.scheme != "https" or not parsed.hostname:
         raise LifecycleError("runtime downloads require an HTTPS URL")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if (
+        destination.is_file()
+        and destination.stat().st_size == size_bytes
+        and _file_sha256(destination, cancel_check) == expected_sha256.lower()
+    ):
+        return
     temporary = destination.with_suffix(destination.suffix + ".part")
-    digest = hashlib.sha256()
-    downloaded = 0
-    try:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        request = urllib.request.Request(url, headers={"User-Agent": "Rynmesh/0.6"})
-        opener = build_https_only_opener()
-        with opener.open(request, timeout=300) as response, temporary.open("wb") as handle:
-            while chunk := response.read(CHUNK_BYTES):
-                if cancel_check and cancel_check():
-                    raise LifecycleError("setup cancelled")
-                downloaded += len(chunk)
-                if downloaded > size_bytes:
+    for attempt in range(len(DOWNLOAD_BACKOFFS) + 1):
+        if cancel_check and cancel_check():
+            raise LifecycleError("setup cancelled")
+        offset = temporary.stat().st_size if temporary.exists() else 0
+        if offset > size_bytes:
+            _discard(temporary)
+            offset = 0
+        try:
+            if offset < size_bytes:
+                headers = {
+                    "User-Agent": f"Rynmesh/{__version__}",
+                    "Accept-Encoding": "identity",
+                }
+                if offset:
+                    headers["Range"] = f"bytes={offset}-"
+                request = urllib.request.Request(url, headers=headers)
+                opener = build_https_only_opener()
+                overflow = False
+                with opener.open(request, timeout=60) as response:
+                    status = int(getattr(response, "status", 200) or 200)
+                    if offset and status != 206:
+                        offset = 0
+                    if status == 206 and _header(response.headers, "Content-Range") != f"bytes {offset}-{size_bytes - 1}/{size_bytes}":
+                        raise LifecycleError("runtime download returned an invalid byte range")
+                    with temporary.open("ab" if offset else "wb") as handle:
+                        while chunk := response.read(CHUNK_BYTES):
+                            if cancel_check and cancel_check():
+                                raise LifecycleError("setup cancelled")
+                            offset += len(chunk)
+                            if offset > size_bytes:
+                                overflow = True
+                                break
+                            handle.write(chunk)
+                            percent = min(80, 65 + int(offset / size_bytes * 15))
+                            report(progress, None, percent, "Downloading the local inference runtime")
+                if overflow:
+                    _discard(temporary)
                     raise LifecycleError("runtime archive is larger than its pinned size")
-                digest.update(chunk)
-                handle.write(chunk)
-                percent = min(80, 65 + int(downloaded / size_bytes * 15))
-                report(progress, None, percent, "Downloading the local inference runtime")
-    except LifecycleError:
+                if offset < size_bytes:
+                    raise _IncompleteRuntimeDownload("incomplete runtime download")
+            break
+        except urllib.error.HTTPError as exc:
+            if offset and exc.code == 416:
+                exc.close()
+                if offset == size_bytes:
+                    break
+            retryable, wait_s = download_retry_delay(
+                exc, DOWNLOAD_BACKOFFS[attempt] if attempt < len(DOWNLOAD_BACKOFFS) else 0.0
+            )
+            exc.close()
+            if retryable and attempt < len(DOWNLOAD_BACKOFFS):
+                time.sleep(wait_s)
+                continue
+            raise LifecycleError(
+                format_download_failure(
+                    exc,
+                    filename=destination.name,
+                    sha256=expected_sha256,
+                    directory=destination.parent,
+                )
+            ) from exc
+        except (OSError, http.client.HTTPException) as exc:
+            if attempt < len(DOWNLOAD_BACKOFFS):
+                time.sleep(DOWNLOAD_BACKOFFS[attempt])
+                continue
+            raise LifecycleError(
+                format_download_failure(
+                    exc,
+                    filename=destination.name,
+                    sha256=expected_sha256,
+                    directory=destination.parent,
+                )
+            ) from exc
+    if _file_sha256(temporary, cancel_check) != expected_sha256.lower():
         _discard(temporary)
-        raise
-    except OSError as exc:
-        _discard(temporary)
-        raise LifecycleError("downloading the local inference runtime failed") from exc
-    if digest.hexdigest() != expected_sha256.lower():
-        _discard(temporary)
-        raise LifecycleError("runtime archive checksum mismatch")
+        raise LifecycleError("runtime archive checksum mismatch", code=UNREADABLE_ARCHIVE_CODE)
     try:
         temporary.replace(destination)
     except OSError as exc:
         _discard(temporary)
-        raise LifecycleError(UNWRITABLE_STATE) from exc
+        raise LifecycleError(UNWRITABLE_STATE, code=UNWRITABLE_STATE_CODE) from exc
 
 
 def _discard(path: Path) -> None:
@@ -181,7 +284,10 @@ def _extract_tar(archive: Path, target: Path) -> None:
             if not (member.isfile() or member.isdir()):
                 raise LifecycleError("runtime archive contains an unsafe member type")
             total = _check_total(total + max(0, int(member.size)))
-        bundle.extractall(target, members=members, filter="data")
+        if hasattr(tarfile, "data_filter"):
+            bundle.extractall(target, members=members, filter="data")
+        else:
+            bundle.extractall(target, members=members)
 
 
 def _extract_zip(archive: Path, target: Path) -> None:
@@ -220,7 +326,7 @@ def _extract(archive: Path, target: Path) -> None:
         if os.name != "nt":
             os.chmod(target, 0o700)
     except OSError as exc:
-        raise LifecycleError(UNWRITABLE_STATE) from exc
+        raise LifecycleError(UNWRITABLE_STATE, code=UNWRITABLE_STATE_CODE) from exc
     try:
         if archive.name.endswith(".zip"):
             _extract_zip(archive, target)
@@ -228,8 +334,8 @@ def _extract(archive: Path, target: Path) -> None:
             _extract_tar(archive, target)
     except LifecycleError:
         raise
-    except (OSError, tarfile.TarError, zipfile.BadZipFile, EOFError) as exc:
-        raise LifecycleError(UNREADABLE_ARCHIVE) from exc
+    except (OSError, tarfile.TarError, zipfile.BadZipFile, EOFError, TypeError) as exc:
+        raise LifecycleError(UNREADABLE_ARCHIVE, code=UNREADABLE_ARCHIVE_CODE) from exc
 
 
 def _extracted_server(target: Path) -> Path | None:
@@ -247,39 +353,67 @@ def _write_marker(target: Path, server: Path, expected_sha256: str) -> None:
     try:
         atomic_write_json(target / MARKER_NAME, payload, indent=2, sort_keys=True)
     except AtomicIOError as exc:
-        raise LifecycleError(UNWRITABLE_STATE) from exc
+        raise LifecycleError(UNWRITABLE_STATE, code=UNWRITABLE_STATE_CODE) from exc
 
 
 def download(base: Path, *, progress: Any = None, cancel_check: Any = None) -> Path:
     """Fetch, verify, and unpack the pinned release under `base`; return the server."""
     pinned = asset()
     if pinned is None:
-        raise LifecycleError(UNAVAILABLE_REASON)
+        raise LifecycleError(UNAVAILABLE_REASON, code=UNAVAILABLE_CODE)
     name, expected_sha256, size_bytes = pinned
     report(progress, cancel_check, 65, "Downloading the local inference runtime")
     archive = base / "runtime" / name
-    _fetch(RUNTIME_BASE_URL + name, archive, expected_sha256, size_bytes,
-           progress=progress, cancel_check=cancel_check)
+    if not (
+        archive.is_file()
+        and archive.stat().st_size == size_bytes
+        and _file_sha256(archive, cancel_check) == expected_sha256.lower()
+    ):
+        _fetch(runtime_base_url(base) + name, archive, expected_sha256, size_bytes,
+               progress=progress, cancel_check=cancel_check)
     target = managed_root(base)
+    staging = target.with_name(target.name + ".new")
+    backup = target.with_name(target.name + ".old")
+    shutil.rmtree(staging, ignore_errors=True)
+    shutil.rmtree(backup, ignore_errors=True)
     try:
         # A repair must not leave an older completion marker authorizing a
-        # partly overwritten extraction if the process exits or I/O fails.
+        # previous installation if the repair itself fails before replacement.
         try:
-            (target / MARKER_NAME).unlink(missing_ok=True)
+            if target.exists():
+                (target / MARKER_NAME).unlink(missing_ok=True)
         except OSError as exc:
-            raise LifecycleError(UNWRITABLE_STATE) from exc
-        _extract(archive, target)
-    finally:
-        _discard(archive)
-    server = _extracted_server(target)
-    if server is None:
-        raise LifecycleError("the runtime archive did not contain an inference server")
-    try:
-        if os.name != "nt":
-            server.chmod(0o755)
-    except OSError as exc:
-        raise LifecycleError(UNWRITABLE_STATE) from exc
-    report(progress, cancel_check, 79, "Finishing local inference runtime installation")
-    _write_marker(target, server, expected_sha256)
+            raise LifecycleError(UNWRITABLE_STATE, code=UNWRITABLE_STATE_CODE) from exc
+        try:
+            _extract(archive, staging)
+        finally:
+            _discard(archive)
+        server_in_staging = _extracted_server(staging)
+        if server_in_staging is None:
+            raise LifecycleError("the runtime archive did not contain an inference server", code=UNREADABLE_ARCHIVE_CODE)
+        rel_server = server_in_staging.relative_to(staging)
+        try:
+            if os.name != "nt":
+                server_in_staging.chmod(0o755)
+        except OSError as exc:
+            raise LifecycleError(UNWRITABLE_STATE, code=UNWRITABLE_STATE_CODE) from exc
+        report(progress, cancel_check, 79, "Finishing local inference runtime installation")
+        _write_marker(staging, server_in_staging, expected_sha256)
+        had_old = target.exists()
+        try:
+            if had_old:
+                target.rename(backup)
+            staging.rename(target)
+        except OSError as exc:
+            if not target.exists() and backup.exists():
+                try:
+                    backup.rename(target)
+                except OSError:
+                    pass
+            raise LifecycleError(UNWRITABLE_STATE, code=UNWRITABLE_STATE_CODE) from exc
+        shutil.rmtree(backup, ignore_errors=True)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
     report(progress, None, 80, "Local inference runtime installed")
-    return server
+    return target / rel_server

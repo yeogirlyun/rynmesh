@@ -702,56 +702,83 @@ def verify_proposal_grounding_in_owner_message(proposal_text: str, owner_content
     return True
 
 
-def _derive_new_explicit_entry_exposure_policy(data: dict[str, Any]) -> dict[str, Any]:
-    """Derive initial entry exposure policy for a new explicit-owner fact from settings.default_exposure (fail-closed to local_only)."""
-    mem = data.get("memory") if isinstance(data, dict) else None
+def _verified_task_destination(row: dict[str, Any] | None) -> dict[str, str] | None:
+    if not isinstance(row, dict):
+        return None
+    raw_dest = row.get("model_destination")
+    if not isinstance(raw_dest, dict):
+        return None
+    norm = memory.normalize_destination(raw_dest)
+    if (
+        norm
+        and norm.get("catalog_model_id")
+        and norm.get("provider_peer_id")
+        and norm.get("destination_revision")
+    ):
+        return norm
+    return None
+
+
+def _derive_new_explicit_entry_exposure_policy(
+    data: dict[str, Any],
+    row: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Derive initial entry exposure policy for a new explicit-owner fact from settings.default_exposure or verified task destination."""
+    mem = memory.read_memory_state(data) if isinstance(data, dict) else None
     settings = mem.get("settings") if isinstance(mem, dict) else None
     default_exp = settings.get("default_exposure") if isinstance(settings, dict) else None
     if not isinstance(default_exp, dict):
+        task_dest = _verified_task_destination(row)
+        if task_dest is not None:
+            return {"mode": "destinations", "allowed_destinations": [task_dest]}
         return {"mode": "local_only", "allowed_destinations": []}
     mode = default_exp.get("mode")
     if not isinstance(mode, str) or mode.strip() not in {"destination", "selected_models"}:
         return {"mode": "local_only", "allowed_destinations": []}
     raw_dests = default_exp.get("allowed_destinations")
-    if not isinstance(raw_dests, list) or not raw_dests:
-        return {"mode": "local_only", "allowed_destinations": []}
     valid_dests: list[dict[str, str]] = []
-    for item in raw_dests:
-        if not isinstance(item, dict):
-            continue
-        cat_id = item.get("catalog_model_id")
-        peer_id = item.get("provider_peer_id")
-        src_id = item.get("source_id", "")
-        rev = item.get("destination_revision")
-        if (
-            not isinstance(cat_id, str)
-            or not cat_id.strip()
-            or not isinstance(peer_id, str)
-            or not peer_id.strip()
-            or not isinstance(src_id, str)
-            or not isinstance(rev, str)
-            or not rev.strip()
-        ):
-            continue
-        norm = memory.normalize_destination(
-            {
-                "catalog_model_id": cat_id.strip(),
-                "provider_peer_id": peer_id.strip(),
-                "source_id": src_id.strip(),
-                "destination_revision": rev.strip(),
-            }
-        )
-        if (
-            norm
-            and norm.get("catalog_model_id")
-            and norm.get("provider_peer_id")
-            and norm.get("destination_revision")
-            and norm not in valid_dests
-        ):
-            valid_dests.append(norm)
-    if not valid_dests:
+    if isinstance(raw_dests, list) and raw_dests:
+        for item in raw_dests:
+            if not isinstance(item, dict):
+                continue
+            cat_id = item.get("catalog_model_id")
+            peer_id = item.get("provider_peer_id")
+            src_id = item.get("source_id", "")
+            rev = item.get("destination_revision")
+            if (
+                not isinstance(cat_id, str)
+                or not cat_id.strip()
+                or not isinstance(peer_id, str)
+                or not peer_id.strip()
+                or not isinstance(src_id, str)
+                or not isinstance(rev, str)
+                or not rev.strip()
+            ):
+                continue
+            norm = memory.normalize_destination(
+                {
+                    "catalog_model_id": cat_id.strip(),
+                    "provider_peer_id": peer_id.strip(),
+                    "source_id": src_id.strip(),
+                    "destination_revision": rev.strip(),
+                }
+            )
+            if (
+                norm
+                and norm.get("catalog_model_id")
+                and norm.get("provider_peer_id")
+                and norm.get("destination_revision")
+                and norm not in valid_dests
+            ):
+                valid_dests.append(norm)
+    if valid_dests:
+        return {"mode": "destinations", "allowed_destinations": valid_dests}
+    if isinstance(mem, dict) and mem.get("default_exposure_configured") is True:
         return {"mode": "local_only", "allowed_destinations": []}
-    return {"mode": "destinations", "allowed_destinations": valid_dests}
+    task_dest = _verified_task_destination(row)
+    if task_dest is not None:
+        return {"mode": "destinations", "allowed_destinations": [task_dest]}
+    return {"mode": "local_only", "allowed_destinations": []}
 
 
 def _build_explicit_owner_upsert_payload(
@@ -763,6 +790,7 @@ def _build_explicit_owner_upsert_payload(
     text: str,
     sources: list[dict[str, Any]],
     keywords: list[str] | None = None,
+    row: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble explicit-owner upsert payload, deriving exposure_policy only when no active matching slot exists."""
     norm_scope = memory.normalize_scope(scope or {"kind": "personal"})
@@ -787,7 +815,7 @@ def _build_explicit_owner_upsert_payload(
     if keywords is not None:
         payload["keywords"] = list(keywords)
     if not has_existing_active:
-        payload["exposure_policy"] = _derive_new_explicit_entry_exposure_policy(data)
+        payload["exposure_policy"] = _derive_new_explicit_entry_exposure_policy(data, row=row)
     return payload
 
 
@@ -835,6 +863,7 @@ def execute_explicit_owner_intent_in_tx(
                             text=op["text"],
                             keywords=op.get("keywords", []),
                             sources=[src_ref],
+                            row=row,
                         ),
                         origin="explicit_owner_chat",
                     )
@@ -847,9 +876,21 @@ def execute_explicit_owner_intent_in_tx(
         errors.append(str(exc))
 
     applied_ok = bool(committed_entries or deleted_ids) and not errors
+    task_dest = _verified_task_destination(row)
+    if not applied_ok:
+        visible_to_model = False
+    elif committed_entries:
+        visible_to_model = any(
+            memory.exposure_allows_destination(entry.get("exposure_policy"), task_dest)
+            for entry in committed_entries
+            if isinstance(entry, dict)
+        )
+    else:
+        visible_to_model = True
     receipt = {
         "applied": applied_ok,
         "saved": applied_ok,
+        "visible_to_model": visible_to_model,
         "intent": analysis["intent"],
         "message_id": target_msg["message_id"],
         "conversation_revision": target_msg["conversation_revision"],
@@ -1225,12 +1266,17 @@ def execute_memory_tool_call_in_tx(
                         text=proposed_text,
                         keywords=final_keywords,
                         sources=[src_ref],
+                        row=row,
                     ),
                     origin="explicit_owner_chat",
                 )
+            task_dest = _verified_task_destination(row)
             receipt = {
                 "saved": True,
                 "applied": True,
+                "visible_to_model": memory.exposure_allows_destination(
+                    res["entry"].get("exposure_policy"), task_dest
+                ),
                 "status": "committed",
                 "operation": operation,
                 "message_id": msg_id,
@@ -1404,20 +1450,141 @@ def memory_projection_watermark(data: dict[str, Any], row: dict[str, Any]) -> di
 
 
 _MEMORY_SAVE_CLAIM_RE = re.compile(
-    r"(?:已(?:经)?(?:为您|帮你|替你)?(?:记住|记下|记入)|记住了|(?:已(?:经)?|成功)?(?:保存|存入|写入|更新|记录)(?:到|至|入|进)?(?:长期)?记忆|记忆(?:已(?:经)?|成功)(?:保存|更新|记住|记录)|\bsaved\s+to\s+memory\b|\bi\s+have\s+remembered\b|\bnoted\s+in\s+memory\b)",
+    r"(?<![未没不否])(?:"
+    r"(?:我)?已(?:经)?(?:为你|为您|帮你|替你)?(?:记住|记下)(?:了)?(?!\s*[吗呢？?])"
+    r"|(?:我)?已(?:经)?(?:为你|为您|帮你|替你)?保存到(?:长期)?记忆"
+    r"|\bi(?:'ve|\s+have)\s+(?:remembered|saved(?!\s+(?:the\s+|a\s+)?file\b))\b"
+    r")",
     re.IGNORECASE,
 )
 
+_EXPLICIT_TURN_EXTRA_CLAIM_RE = re.compile(
+    r"(?<![未没不否])(?:"
+    r"记忆(?:已(?:经)?|成功)(?:保存|记住|记下)"
+    r"|\bsaved\s+to\s+(?:long[- ]term\s+)?memory\b"
+    r")",
+    re.IGNORECASE,
+)
+
+_SENTENCE_BOUNDARY_RE = re.compile(r"(\n+|[。！？!?]+|(?<!\d)\.(?=\s|$))")
+
+
+def _turn_called_memory_propose(row: dict[str, Any], latest: dict[str, Any] | None) -> bool:
+    if not isinstance(row, dict):
+        return False
+    messages = row.get("messages")
+    if not isinstance(messages, list):
+        return False
+    seen_latest = latest is None
+    latest_id = latest.get("message_id") if isinstance(latest, dict) else None
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        if not seen_latest:
+            if msg.get("role") == "user" and msg.get("message_id") == latest_id:
+                seen_latest = True
+            continue
+        if msg.get("role") != "assistant":
+            continue
+        for call in msg.get("tool_calls") or []:
+            if not isinstance(call, dict):
+                continue
+            fn = call.get("function")
+            name = fn.get("name") if isinstance(fn, dict) else call.get("name")
+            if name == MEMORY_PROPOSE_TOOL:
+                return True
+    return False
+
+
+def _replace_matching_claim_sentences(
+    text: str,
+    claim_matcher: Any,
+    host_note: str,
+) -> str:
+    parts = _SENTENCE_BOUNDARY_RE.split(text)
+    out: list[str] = []
+    for idx in range(0, len(parts), 2):
+        seg = parts[idx]
+        delim = parts[idx + 1] if idx + 1 < len(parts) else ""
+        if seg and "（主机注：" not in seg and claim_matcher(seg):
+            leading_ws_len = len(seg) - len(seg.lstrip(" \t"))
+            leading_ws = seg[:leading_ws_len]
+            trailing_delim = delim if delim.startswith("\n") else ""
+            out.append(f"{leading_ws}{host_note}{trailing_delim}")
+        else:
+            out.append(seg + delim)
+    return "".join(out)
+
+
+def _append_note_to_matching_claim_sentences(
+    text: str,
+    claim_matcher: Any,
+    host_note: str,
+    *,
+    skip_substring: str | None = None,
+) -> str:
+    parts = _SENTENCE_BOUNDARY_RE.split(text)
+    out: list[str] = []
+    for idx in range(0, len(parts), 2):
+        seg = parts[idx]
+        delim = parts[idx + 1] if idx + 1 < len(parts) else ""
+        next_seg = parts[idx + 2] if idx + 2 < len(parts) else ""
+        already_noted = (
+            "（主机注：" in seg
+            or (skip_substring is not None and skip_substring in seg)
+            or next_seg.lstrip(" \t").startswith(host_note)
+        )
+        if seg and not already_noted and claim_matcher(seg):
+            if delim.startswith("\n"):
+                out.append(f"{seg}{host_note}{delim}")
+            else:
+                out.append(f"{seg}{delim}{host_note}")
+        else:
+            out.append(seg + delim)
+    return "".join(out)
+
+
+def _has_identifiable_task_model_destination(row: dict[str, Any] | None) -> bool:
+    """Return False only for synthetic stub destination dicts that lack provider_peer_id."""
+    if not isinstance(row, dict):
+        return False
+    raw_dest = row.get("model_destination")
+    if raw_dest is None:
+        return True
+    if not isinstance(raw_dest, dict):
+        return False
+    return bool(str(raw_dest.get("provider_peer_id") or raw_dest.get("peer_id") or "").strip())
+
 
 def guard_false_memory_save_claim(row: dict[str, Any], content: str) -> str:
-    """Prevent assistant replies from falsely claiming a memory was saved unless backed by a current-turn receipt."""
+    """Prevent assistant final replies from falsely claiming a memory was saved unless backed by a current-turn receipt."""
     text = str(content or "")
-    if not _MEMORY_SAVE_CLAIM_RE.search(text):
+    if not text:
         return text
 
     latest = latest_authentic_owner_message(row) if isinstance(row, dict) else None
+    is_explicit_turn = bool(
+        latest is not None
+        and analyze_owner_memory_intent(str(latest.get("content") or ""), row).get("is_explicit")
+    )
+    called_propose = _turn_called_memory_propose(row, latest) if isinstance(row, dict) else False
+    has_narrow_claim = bool(_MEMORY_SAVE_CLAIM_RE.search(text))
+
+    if not (is_explicit_turn or called_propose or has_narrow_claim):
+        return text
+
+    def matches_claim(segment: str) -> bool:
+        if _MEMORY_SAVE_CLAIM_RE.search(segment):
+            return True
+        if (is_explicit_turn or called_propose) and _EXPLICIT_TURN_EXTRA_CLAIM_RE.search(segment):
+            return True
+        return False
+
+    if not matches_claim(text):
+        return text
+
     current_receipt: dict[str, Any] | None = None
-    if latest is not None:
+    if latest is not None and isinstance(row, dict):
         msg_id = latest["message_id"]
         conv_rev = int(latest["conversation_revision"])
         last_r = row.get("memory_last_receipt")
@@ -1437,15 +1604,35 @@ def guard_false_memory_save_claim(row: dict[str, Any], content: str) -> str:
     if isinstance(current_receipt, dict) and (
         current_receipt.get("applied") is True or current_receipt.get("saved") is True
     ):
+        if current_receipt.get("visible_to_model") is False and _has_identifiable_task_model_destination(row):
+            return _append_note_to_matching_claim_sentences(
+                text,
+                matches_claim,
+                "（主机注：已存本机，当前模型不可见）",
+                skip_substring="当前模型不可见",
+            )
         return text
 
     if isinstance(current_receipt, dict) and (
         current_receipt.get("applied") is False or current_receipt.get("saved") is False
     ):
-        reason = current_receipt.get("reason") or (current_receipt.get("errors") or ["save_failed"])[0]
-        return f"记忆未保存（保存失败，原因：{reason}）。"
+        reason = str(current_receipt.get("reason") or (current_receipt.get("errors") or ["save_failed"])[0])
+        is_failed_memory_op = bool(
+            current_receipt.get("errors")
+            or current_receipt.get("operation")
+            or current_receipt.get("intent") not in (None, "", "none")
+        )
+        if is_failed_memory_op:
+            host_note = f"（主机注：本轮没有成功保存记忆，原因：{reason}（保存失败））"
+        else:
+            host_note = f"（主机注：本轮没有成功保存记忆，原因：{reason}）"
+        return _replace_matching_claim_sentences(text, matches_claim, host_note)
 
-    return "尚未确认保存记忆（当前回合没有有效写入回执，请核对记忆状态）。"
+    return _replace_matching_claim_sentences(
+        text,
+        matches_claim,
+        "（主机注：本轮没有成功保存记忆，原因：尚未确认写入回执）",
+    )
 
 
 def _extract_job_owner_sources(job: dict[str, Any]) -> list[dict[str, Any]]:

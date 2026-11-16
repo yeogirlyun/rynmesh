@@ -10,6 +10,7 @@ pub struct Preferences {
     pub background: bool,
     pub startup: bool,
     pub startup_supported: bool,
+    pub awake_supported: bool,
     pub silent_start: bool,
     pub auto_recover: bool,
     pub keep_awake: bool,
@@ -18,6 +19,7 @@ pub struct Preferences {
 impl Default for Preferences {
     fn default() -> Self {
         Self { background: true, startup: false, startup_supported: cfg!(windows),
+            awake_supported: crate::desktop::awake_supported(),
             silent_start: true, auto_recover: true, keep_awake: false, close_notice_seen: false }
     }
 }
@@ -30,6 +32,7 @@ pub fn load(app: &tauri::AppHandle) -> Preferences {
         .and_then(|bytes| serde_json::from_slice::<Preferences>(&bytes).ok()).unwrap_or_default();
     prefs.startup = startup_enabled();
     prefs.startup_supported = cfg!(windows);
+    prefs.awake_supported = crate::desktop::awake_supported();
     prefs
 }
 #[cfg(windows)]
@@ -72,6 +75,8 @@ fn update_startup(prefs: &Preferences) -> Result<(), String> {
 pub fn get_desktop_preferences(state: tauri::State<DesktopState>) -> Preferences {
     let mut prefs = state.prefs.lock().unwrap().clone();
     prefs.startup = startup_enabled();
+    prefs.startup_supported = cfg!(windows);
+    prefs.awake_supported = crate::desktop::awake_supported();
     prefs
 }
 #[tauri::command]
@@ -79,6 +84,7 @@ pub fn set_desktop_preferences(app: tauri::AppHandle, state: tauri::State<Deskto
     let mut old = state.prefs.lock().unwrap();
     let mut prefs = preferences;
     prefs.startup_supported = cfg!(windows);
+    prefs.awake_supported = crate::desktop::awake_supported();
     prefs.close_notice_seen = old.close_notice_seen;
     let path = settings_path(&app)?;
     if let Some(parent) = path.parent() { std::fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
@@ -113,6 +119,7 @@ mod tests {
     fn old_preferences_gain_safe_defaults_without_losing_choices() {
         let p: Preferences = serde_json::from_str(r#"{"background":false,"startup":true,"startup_supported":true}"#).unwrap();
         assert!(!p.background); assert!(p.startup); assert!(p.auto_recover);
+        assert_eq!(p.awake_supported, crate::desktop::awake_supported());
         assert!(p.silent_start); assert!(!p.keep_awake); assert!(!p.close_notice_seen);
     }
 }

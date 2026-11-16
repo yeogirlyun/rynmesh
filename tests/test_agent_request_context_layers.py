@@ -199,3 +199,32 @@ def test_workspace_file_guidance_uses_supplied_writer_without_changing_authority
     assert control["local_execution"] == original["local_execution"]
     assert "read-only" in messages[1]["content"]
     assert state == original
+
+
+def test_s03_i4_project_guidance_rules_live_in_user_instruction_layer(tmp_path):
+    from rynmesh.agent_runtime import projects
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    (repo / "AGENTS.md").write_text("Follow local test helper.", encoding="utf-8")
+
+    data = {}
+    registered = projects.register(data, {"path": str(repo)})
+    selected_proj = projects.selected(data, registered["id"], refresh=True)
+    task_row = {**row(), "project": selected_proj}
+
+    rendered = projects.guidance(task_row)
+    layers = instruction_layers(task_row, project_guidance=rendered)
+    assert layers[-1]["role"] == "user"
+    assert "Git repository: do not commit, amend, create or switch branches" in layers[-1]["content"]
+    assert "Fix the cause, not the symptom;" in layers[-1]["content"]
+    assert "AGENTS.md rules apply to their directory tree;" in layers[-1]["content"]
+    for msg in layers[:-1]:
+        assert msg["role"] == "developer"
+        assert "Git repository: do not commit" not in msg["content"]
+        assert "Fix the cause, not the symptom;" not in msg["content"]
+        assert "AGENTS.md rules apply to their directory tree;" not in msg["content"]
+
+    plain_layers = instruction_layers(row(), project_guidance=projects.guidance(row()))
+    assert all(msg["role"] == "developer" for msg in plain_layers)

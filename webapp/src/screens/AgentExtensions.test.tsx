@@ -1843,6 +1843,144 @@ describe("AgentExtensions UI", () => {
     expect(await screen.findByRole("heading", { name: "Codex Custom" })).toBeInTheDocument();
   });
 
+  it("defaults MCP form timeouts to 30000/300000 ms and allows caps up to 300000/3600000 ms", async () => {
+    const user = userEvent.setup();
+    const currentOverview = makeOverviewFixture();
+    let submittedPayload: Record<string, unknown> | null = null;
+
+    server.use(
+      http.get("*/api/local/agent/extensions", () => HttpResponse.json(currentOverview)),
+      http.post("*/api/local/agent/extensions/mcp/servers", async ({ request }) => {
+        submittedPayload = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({
+          id: "slow-mcp",
+          revision: 12,
+          name: "Slow MCP",
+          transport: "stdio",
+          builtin: false,
+          deletable: true,
+          plugin_id: null,
+          computer_access: false,
+          enabled: true,
+          component_enabled: true,
+          parent_enabled: true,
+          command: "slow-mcp-bin",
+          args: [],
+          cwd: "",
+          env_keys: [],
+          masked_env: {},
+          url: "",
+          bearer_token_env: "",
+          header_keys: [],
+          masked_headers: {},
+          enabled_tools: null,
+          disabled_tools: [],
+          read_only_tools: [],
+          tools: [],
+          tools_count: 0,
+          enabled_tools_count: 0,
+          has_secrets: false,
+          status: "NeedsTest",
+          status_message: "",
+          last_tested_at: null,
+        });
+      }),
+    );
+
+    renderExtensions("/settings/extensions/mcp");
+    await screen.findByRole("heading", { name: "Servers" });
+    await user.click(screen.getByRole("button", { name: "Connect to a custom MCP" }));
+    const addDialog = await screen.findByRole("dialog", { name: "Add MCP server" });
+
+    const startupInput = within(addDialog).getByLabelText("Startup timeout (ms)") as HTMLInputElement;
+    const toolInput = within(addDialog).getByLabelText("Tool call timeout (ms)") as HTMLInputElement;
+    expect(startupInput.value).toBe("30000");
+    expect(toolInput.value).toBe("300000");
+    expect(startupInput.max).toBe("300000");
+    expect(toolInput.max).toBe("3600000");
+
+    await user.type(within(addDialog).getByLabelText("Server name"), "Slow MCP");
+    await user.type(within(addDialog).getByLabelText("Command"), "slow-mcp-bin");
+    await user.clear(toolInput);
+    await user.type(toolInput, "900000");
+    await user.click(within(addDialog).getByRole("button", { name: "Save server" }));
+
+    await waitFor(() => expect(submittedPayload).not.toBeNull());
+    expect(submittedPayload).toMatchObject({
+      startup_timeout_ms: 30000,
+      tool_timeout_ms: 900000,
+    });
+  });
+
+  it("renders Degraded status badge for MCP servers with cached tools", async () => {
+    const baseOverview = makeOverviewFixture();
+    const degradedOverview = {
+      ...baseOverview,
+      mcp_servers: [
+        ...baseOverview.mcp_servers,
+        {
+          id: "degraded-analytics",
+          instance_id: "mcp-degraded-analytics",
+          name: "Degraded Analytics",
+          title: "Degraded Analytics",
+          description: "Remote analytics server keeping cached tools.",
+          transport: "streamable_http",
+          builtin: false,
+          deletable: true,
+          plugin_id: null,
+          computer_access: false,
+          enabled: true,
+          component_enabled: true,
+          parent_enabled: true,
+          command: "",
+          args: [],
+          cwd: "",
+          env_keys: [],
+          masked_env: {},
+          url: "http://127.0.0.1:8777/mcp",
+          bearer_token_env: "",
+          header_keys: [],
+          masked_headers: {},
+          has_secrets: false,
+          startup_timeout_ms: 30000,
+          tool_timeout_ms: 300000,
+          enabled_tools: null,
+          disabled_tools: [],
+          read_only_tools: ["query_metrics"],
+          tools: [
+            {
+              name: "query_metrics",
+              model_tool_name: "mcp__degraded_analytics__query_metrics",
+              title: "Query Metrics",
+              description: "Run metrics query.",
+              enabled: true,
+              component_enabled: true,
+              owner_read_only: true,
+              effective_effect: "read",
+              effective_risk: "low",
+              annotations: { readOnlyHint: true },
+            },
+          ],
+          tools_count: 3,
+          enabled_tools_count: 3,
+          status: "Degraded",
+          status_message: "agent_mcp_timeout",
+          last_tested_at: "2026-11-15T10:00:00Z",
+          revision: 7,
+        },
+      ],
+    };
+
+    server.use(
+      http.get("*/api/local/agent/extensions", () => HttpResponse.json(degradedOverview)),
+    );
+
+    renderExtensions("/settings/extensions/mcp");
+    await screen.findByRole("heading", { name: "Servers" });
+    expect(await screen.findByText("Degraded Analytics")).toBeInTheDocument();
+    expect(await screen.findByText("Degraded · 3 cached tools")).toBeInTheDocument();
+  });
+
   it("renders Codex Skills page with Scope filter tabs, Recommended skills one-click install, Refresh discovery, and reference file preview", async () => {
     const user = userEvent.setup();
     let currentOverview = makeOverviewFixture();

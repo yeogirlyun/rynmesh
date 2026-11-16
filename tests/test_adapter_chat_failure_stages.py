@@ -160,6 +160,6 @@ def test_upstream_failures_have_safe_distinct_codes(upstream, mode, streaming, c
     if mode == "http_error":
         assert caught.value.diagnostics == {"network_reason": "http", "network_phase": "request", "http_status": 503, "retry_after_seconds": 5}
     if mode == "timeout":
-        assert caught.value.diagnostics == {"network_reason": "timeout", "network_phase": "read"}
+        assert caught.value.diagnostics == {"network_reason": "idle_timeout" if streaming else "timeout", "network_phase": "read"}
     assert PRIVATE not in str(caught.value) + json.dumps(vars(caught.value))
     assert state["calls"] == 1

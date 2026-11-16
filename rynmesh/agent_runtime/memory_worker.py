@@ -4,17 +4,23 @@ from __future__ import annotations
 import copy
 import threading
 import time
+from datetime import datetime
 from typing import Any
 
 from ..background_workers import WorkerRunResult
 from . import memory, memory_integration, memory_natural, memory_runtime, projects
+from .control import ambiguous
 from .data_policy import memory_blocked
+from .retry_policy import NETWORK_ERRORS
 from .store import AgentError, encoded
 
 MEMORY_WORKER_NAME = "ryn-agent-memory"
 DEFAULT_WORKER_LEASE_SECONDS = 240.0
-DEFAULT_EXTRACTION_MAX_OUTPUT_TOKENS = 512
+MIN_EXTRACTION_MAX_OUTPUT_TOKENS = 1024
+MAX_EXTRACTION_MAX_OUTPUT_TOKENS = 4096
+DEFAULT_EXTRACTION_MAX_OUTPUT_TOKENS = MIN_EXTRACTION_MAX_OUTPUT_TOKENS
 DEFAULT_EXTRACTION_TIMEOUT_SECONDS = 180.0
+NON_COMPLETED_CAPTURE_IDLE_SECONDS = 600.0
 
 
 class MemoryExtractionWorker:
@@ -26,24 +32,118 @@ class MemoryExtractionWorker:
         *,
         worker_id: str = MEMORY_WORKER_NAME,
         lease_seconds: float = DEFAULT_WORKER_LEASE_SECONDS,
-        max_output_tokens: int = DEFAULT_EXTRACTION_MAX_OUTPUT_TOKENS,
+        max_output_tokens: int | None = None,
         request_timeout_seconds: float = DEFAULT_EXTRACTION_TIMEOUT_SECONDS,
     ) -> None:
         self.runtime = runtime
         self.worker_id = worker_id
         self.lease_seconds = lease_seconds
-        self.max_output_tokens = max_output_tokens
+        self._custom_max_output_tokens = int(max_output_tokens) if max_output_tokens is not None else None
+        self.max_output_tokens = (
+            self._custom_max_output_tokens
+            if self._custom_max_output_tokens is not None
+            else DEFAULT_EXTRACTION_MAX_OUTPUT_TOKENS
+        )
         self.request_timeout_seconds = request_timeout_seconds
         self._lock = threading.Lock()
+
+    def _compute_max_output_tokens(self, est_input_tokens: int, job: dict[str, Any]) -> int:
+        if self._custom_max_output_tokens is not None:
+            base = max(1, int(self._custom_max_output_tokens))
+        else:
+            base = min(
+                MAX_EXTRACTION_MAX_OUTPUT_TOKENS,
+                max(MIN_EXTRACTION_MAX_OUTPUT_TOKENS, max(1, int(est_input_tokens)) // 2),
+            )
+        if bool(job.get("output_tokens_doubled")):
+            return min(MAX_EXTRACTION_MAX_OUTPUT_TOKENS * 2, base * 2)
+        return base
+
+    @staticmethod
+    def _parse_task_timestamp(row: dict[str, Any]) -> float | None:
+        candidates: list[Any] = [row.get("updated_at")]
+        events = row.get("events")
+        if isinstance(events, list) and events:
+            last_ev = events[-1]
+            if isinstance(last_ev, dict):
+                candidates.append(last_ev.get("at"))
+        candidates.append(row.get("created_at"))
+        for raw_ts in candidates:
+            if isinstance(raw_ts, (int, float)) and not isinstance(raw_ts, bool):
+                return float(raw_ts)
+            if isinstance(raw_ts, str) and raw_ts.strip():
+                text_ts = raw_ts.strip()
+                if text_ts.endswith("Z"):
+                    text_ts = text_ts[:-1] + "+00:00"
+                try:
+                    dt = datetime.fromisoformat(text_ts)
+                    return dt.timestamp()
+                except ValueError:
+                    try:
+                        return float(text_ts)
+                    except ValueError:
+                        continue
+        return None
+
+    @staticmethod
+    def _is_retryable_error(error_code: str) -> bool:
+        code = str(error_code or "").strip()
+        if not code:
+            return False
+        non_retryable_exact = {
+            "capture_disabled",
+            "capture_disabled_or_destination_drifted",
+            "extraction_destination_drifted",
+            "project_binding_invalid",
+            "project_generation_changed",
+            "reset_epoch_mismatch",
+            "agent_model_invalid_request",
+            "agent_memory_secret_prohibited",
+            "agent_memory_dispatch_accounting_limit",
+            "agent_memory_dispatch_stage_exists",
+            "extraction_dispatch_already_finalized",
+        }
+        if code in non_retryable_exact or code.startswith("source_"):
+            return False
+        if code in NETWORK_ERRORS:
+            return True
+        if code in {
+            "extraction_timeout",
+            "extraction_lease_expired",
+            "extraction_cancelled",
+            "extraction_model_failed",
+            "consolidation_model_failed",
+            "extraction_destination_unavailable",
+            "invalid_extraction_response",
+            "invalid_extraction_json",
+            "invalid_consolidation_response",
+            "invalid_consolidation_json",
+        }:
+            return True
+        if code.startswith("invalid_observation:"):
+            return True
+        lowered = code.lower()
+        return any(
+            token in lowered
+            for token in ("timeout", "rate_limit", "unavailable", "upstream_failed", "502", "503", "504", "429")
+        )
 
     @staticmethod
     def _is_task_eligible_for_capture(data: dict[str, Any], tid: str | None, row: Any) -> bool:
         if not isinstance(tid, str) or not tid or not isinstance(row, dict):
             return False
-        if memory_blocked(row):
+        if memory_blocked(row) or row.get("archived"):
             return False
-        if row.get("status") != "completed" or row.get("archived"):
-            return False
+        status = str(row.get("status") or "")
+        if status != "completed":
+            if status in {"failed", "cancelled", "paused", "interrupted"}:
+                if ambiguous(row):
+                    return False
+                last_ts = MemoryExtractionWorker._parse_task_timestamp(row)
+                if last_ts is None or (time.time() - last_ts) < NON_COMPLETED_CAPTURE_IDLE_SECONDS:
+                    return False
+            else:
+                return False
         if (
             row.get("in_flight")
             or row.get("pending_control")
@@ -102,6 +202,7 @@ class MemoryExtractionWorker:
                     job["state"] = "stale"
                     job["error_code"] = error_code
                     job["updated_at"] = now_ts
+                    memory._compact_terminal_job(job)
                     changed = True
             if changed:
                 mem["generation"] = int(mem.get("generation", 0)) + 1
@@ -265,7 +366,19 @@ class MemoryExtractionWorker:
                     except AgentError:
                         continue
                 memory_natural.stamp_task_owner_messages_in_tx(data, row)
-                force_relearn_task = tid in relearn_tasks
+                conv_rev = int(row.get("conversation_revision") or 0)
+                same_rev_processed, through_seq = memory._task_processed_through_seq(mem, tid, conv_rev)
+                relearn_epoch_match = int(relearn_tasks.get(tid, -1)) == int(mem["reset_epoch"])
+                has_epoch_job = any(
+                    isinstance(j, dict)
+                    and j.get("task_id") == tid
+                    and j.get("reset_epoch") == mem["reset_epoch"]
+                    and j.get("state") in {"queued", "leased", "extracted", "committed", "no_op", "failed"}
+                    for j in (mem.get("jobs") or {}).values()
+                )
+                force_relearn_task = bool(
+                    relearn_epoch_match and not has_epoch_job and through_seq == 0 and not same_rev_processed
+                )
                 eligible_ids: list[str] = []
                 for msg in row.get("messages") or []:
                     if not isinstance(msg, dict) or msg.get("role") != "user":
@@ -273,6 +386,12 @@ class MemoryExtractionWorker:
                     mid = msg.get("message_id")
                     if not isinstance(mid, str) or not mid.strip():
                         continue
+                    msg_seq = int(msg.get("owner_source_seq") or 0)
+                    if not force_relearn_task:
+                        if through_seq > 0 and 0 < msg_seq <= through_seq:
+                            continue
+                        if same_rev_processed and through_seq == 0 and msg_seq == 0:
+                            continue
                     ui_kind = (msg.get("ui") or {}).get("kind") if isinstance(msg.get("ui"), dict) else None
                     if ui_kind == "source_credential":
                         continue
@@ -283,8 +402,7 @@ class MemoryExtractionWorker:
                     )
                     if not isinstance(text, str) or not text.strip():
                         continue
-                    if is_auto_policy and not force_relearn_task:
-                        msg_seq = int(msg.get("owner_source_seq") or 0)
+                    if is_auto_policy and not force_relearn_task and not relearn_epoch_match:
                         if 0 < msg_seq <= auto_frontier_seq:
                             continue
                     intent_info = memory_runtime.analyze_owner_memory_intent(text, row)
@@ -302,7 +420,7 @@ class MemoryExtractionWorker:
                     except AgentError:
                         continue
 
-            # 2. Claim next queued or expired-lease job whose source task is completed or permanently unavailable
+            # 2. Claim next queued or expired-lease job whose source task is eligible or permanently unavailable
             now_ts = time.time()
             candidate_job_ids: list[str] = []
             for jid, job in sorted(
@@ -312,37 +430,46 @@ class MemoryExtractionWorker:
                 if not isinstance(job, dict):
                     continue
                 state = job.get("state")
-                if state == "queued" or (state == "leased" and float(job.get("lease_until") or 0.0) <= now_ts):
-                    t_id = job.get("task_id")
-                    t_row = (data.get("tasks") or {}).get(t_id)
-                    if (
-                        not isinstance(t_row, dict)
-                        or t_row.get("archived")
-                        or t_id in deleted_tasks
-                        or t_id in archived_tasks
-                    ):
-                        candidate_job_ids.append(jid)
+                if state == "queued":
+                    retry_at = job.get("retry_at")
+                    if isinstance(retry_at, (int, float)) and float(retry_at) > now_ts:
                         continue
-                    if not self._is_task_eligible_for_capture(data, t_id, t_row):
-                        continue
+                elif not (state == "leased" and float(job.get("lease_until") or 0.0) <= now_ts):
+                    continue
+                t_id = job.get("task_id")
+                t_row = (data.get("tasks") or {}).get(t_id)
+                if (
+                    not isinstance(t_row, dict)
+                    or t_row.get("archived")
+                    or t_id in deleted_tasks
+                    or t_id in archived_tasks
+                ):
                     candidate_job_ids.append(jid)
+                    continue
+                if not self._is_task_eligible_for_capture(data, t_id, t_row):
+                    continue
+                candidate_job_ids.append(jid)
 
             if not candidate_job_ids:
                 return None
 
-            target_jid = candidate_job_ids[0]
-            claimed = memory.claim_extraction_job(
-                data,
-                worker_id=self.worker_id,
-                job_id=target_jid,
-                lease_seconds=self.lease_seconds,
-            )
-            if claimed is None:
-                live_job = (mem.get("jobs") or {}).get(target_jid)
-                if isinstance(live_job, dict) and live_job.get("state") == "stale":
+            claimed = None
+            mutated_non_dispatch: tuple[str, Any] | None = None
+            for target_jid in candidate_job_ids:
+                claimed = memory.claim_extraction_job(
+                    data,
+                    worker_id=self.worker_id,
+                    job_id=target_jid,
+                    lease_seconds=self.lease_seconds,
+                )
+                if claimed is not None:
+                    break
+                live_cand = (mem.get("jobs") or {}).get(target_jid)
+                if isinstance(live_cand, dict) and live_cand.get("state") in {"stale", "failed"}:
                     mem["generation"] += 1
-                    return ("stale", copy.deepcopy(live_job))
-                return None
+                    mutated_non_dispatch = (str(live_cand["state"]), copy.deepcopy(live_cand))
+            if claimed is None:
+                return mutated_non_dispatch
 
             jid = claimed["id"]
             live_job = mem["jobs"][jid]
@@ -352,12 +479,14 @@ class MemoryExtractionWorker:
             job_dest = memory.normalize_destination(claimed.get("destination_binding"))
             if job_dest != verified_dest:
                 live_job.update(state="stale", error_code="extraction_destination_drifted", updated_at=now_ts)
+                memory._compact_terminal_job(live_job)
                 mem["generation"] += 1
                 return ("stale", copy.deepcopy(live_job))
 
             task_row = (data.get("tasks") or {}).get(claimed.get("task_id"))
             if not isinstance(task_row, dict) or task_row.get("archived"):
                 live_job.update(state="stale", error_code="source_task_unavailable", updated_at=now_ts)
+                memory._compact_terminal_job(live_job)
                 mem["generation"] += 1
                 return ("stale", copy.deepcopy(live_job))
 
@@ -377,6 +506,7 @@ class MemoryExtractionWorker:
                     projects.validate_binding(data, live_proj)
                 except AgentError:
                     live_job.update(state="stale", error_code="project_binding_invalid", updated_at=now_ts)
+                    memory._compact_terminal_job(live_job)
                     mem["generation"] += 1
                     return ("stale", copy.deepcopy(live_job))
                 if (
@@ -384,6 +514,7 @@ class MemoryExtractionWorker:
                     or live_proj.get("generation") != claimed.get("project_generation")
                 ):
                     live_job.update(state="stale", error_code="project_generation_changed", updated_at=now_ts)
+                    memory._compact_terminal_job(live_job)
                     mem["generation"] += 1
                     return ("stale", copy.deepcopy(live_job))
 
@@ -399,22 +530,31 @@ class MemoryExtractionWorker:
             else:
                 prompt_messages = memory_runtime.build_extraction_messages(claimed)
             if not prompt_messages:
-                live_job.update(state="no_op", error_code="empty_manifest", updated_at=now_ts)
+                live_job.update(
+                    state="no_op",
+                    error_code="empty_manifest",
+                    retry_at=None,
+                    lease_owner=None,
+                    lease_token=None,
+                    lease_until=0.0,
+                    updated_at=now_ts,
+                )
+                memory._record_processed_watermark(mem, live_job, task_row)
+                memory._compact_terminal_job(live_job)
                 mem["generation"] += 1
                 return ("no_op", copy.deepcopy(live_job))
 
             # 4. Atomic daily budget reservation before model dispatch
             est_input_tokens = max(1, len(encoded(prompt_messages)) // 4)
-            reserved_tokens = est_input_tokens + self.max_output_tokens
-            budgets = settings.get("budgets") or {}
-            max_calls = int(budgets.get("max_daily_extraction_calls", 32))
-            max_tokens = int(budgets.get("max_daily_extraction_tokens", 24000))
-            day = time.strftime("%Y-%m-%d", time.gmtime(now_ts))
+            stage1_max_output_tokens = self._compute_max_output_tokens(est_input_tokens, live_job)
+            reserved_tokens = est_input_tokens + stage1_max_output_tokens
+            budgets = settings.get("budgets") if isinstance(settings.get("budgets"), dict) else {}
+            raw_max_calls = budgets.get("max_daily_extraction_calls")
+            raw_max_tokens = budgets.get("max_daily_extraction_tokens")
+            max_calls = int(raw_max_calls if raw_max_calls is not None else memory.DEFAULT_DAILY_EXTRACTION_CALLS)
+            max_tokens = int(raw_max_tokens if raw_max_tokens is not None else memory.DEFAULT_DAILY_EXTRACTION_TOKENS)
+            day = memory.local_day_string(now_ts)
             usage = mem["daily_usage"]
-            if str(usage.get("day") or "") > day:
-                live_job.update(state="failed", error_code="extraction_clock_regressed", updated_at=now_ts)
-                mem["generation"] += 1
-                return ("stale", copy.deepcopy(live_job))
             if usage.get("day") != day:
                 usage["day"] = day
                 usage["extraction_calls"] = 0
@@ -424,14 +564,25 @@ class MemoryExtractionWorker:
                 int(usage.get("extraction_calls", 0)) + 1 > max_calls
                 or int(usage.get("extraction_tokens", 0)) + reserved_tokens > max_tokens
             ):
-                live_job.update(state="failed", error_code="daily_extraction_budget_exhausted", updated_at=now_ts)
+                live_job.update(
+                    state="queued",
+                    retry_at=memory.next_local_midnight(now_ts),
+                    last_error="daily_extraction_budget_exhausted",
+                    error_code="daily_extraction_budget_exhausted",
+                    attempts=max(0, int(live_job.get("attempts") or 0) - 1),
+                    lease_owner=None,
+                    lease_token=None,
+                    lease_until=0.0,
+                    updated_at=now_ts,
+                )
                 mem["generation"] += 1
                 return ("budget_exhausted", copy.deepcopy(live_job))
 
             try:
                 self._reserve_stage(live_job, 1, day, reserved_tokens)
             except AgentError as exc:
-                live_job.update(state="failed", error_code=str(exc), updated_at=now_ts)
+                live_job.update(state="failed", error_code=str(exc), last_error=str(exc), updated_at=now_ts)
+                memory._compact_terminal_job(live_job)
                 mem["generation"] += 1
                 return ("stale", copy.deepcopy(live_job))
             usage["extraction_calls"] = int(usage.get("extraction_calls", 0)) + 1
@@ -446,6 +597,7 @@ class MemoryExtractionWorker:
                     "task_row": copy.deepcopy(task_row),
                     "reserved_tokens": reserved_tokens,
                     "reserved_day": day,
+                    "max_output_tokens": stage1_max_output_tokens,
                 },
             )
 
@@ -472,9 +624,60 @@ class MemoryExtractionWorker:
                 return
             if live_job.get("state") in {"committed", "no_op", "stale", "failed"}:
                 return
-            live_job["state"] = state
-            live_job["error_code"] = error_code
-            live_job["updated_at"] = time.time()
+            if job.get("rejected_observations"):
+                live_job["rejected_observations"] = copy.deepcopy(job["rejected_observations"])
+            now_ts = time.time()
+            if state == "stale":
+                live_job.update(
+                    state="stale",
+                    error_code=error_code,
+                    retry_at=None,
+                    lease_owner=None,
+                    lease_token=None,
+                    lease_until=0.0,
+                    updated_at=now_ts,
+                )
+            elif self._is_retryable_error(error_code):
+                if error_code in {"invalid_extraction_json", "invalid_consolidation_json"} and not live_job.get(
+                    "output_tokens_doubled"
+                ):
+                    live_job["output_tokens_doubled"] = True
+                attempts = int(live_job.get("attempts") or 1)
+                if attempts >= memory.MAX_EXTRACTION_ATTEMPTS:
+                    live_job.update(
+                        state="failed",
+                        last_error=error_code,
+                        error_code="retry_exhausted",
+                        retry_at=None,
+                        lease_owner=None,
+                        lease_token=None,
+                        lease_until=0.0,
+                        updated_at=now_ts,
+                    )
+                else:
+                    backoff_seconds = 60.0 * (2 ** max(1, attempts))
+                    live_job.update(
+                        state="queued",
+                        last_error=error_code,
+                        error_code=error_code,
+                        retry_at=round(now_ts + backoff_seconds, 6),
+                        lease_owner=None,
+                        lease_token=None,
+                        lease_until=0.0,
+                        updated_at=now_ts,
+                    )
+            else:
+                live_job.update(
+                    state="failed",
+                    last_error=error_code,
+                    error_code=error_code,
+                    retry_at=None,
+                    lease_owner=None,
+                    lease_token=None,
+                    lease_until=0.0,
+                    updated_at=now_ts,
+                )
+            memory._compact_terminal_job(live_job)
             mem["generation"] += 1
 
         self.runtime.store.transaction(mutate)
@@ -513,6 +716,7 @@ class MemoryExtractionWorker:
                     live_job["state"] = "stale"
                     live_job["error_code"] = reason
                     live_job["updated_at"] = now_ts
+                    memory._compact_terminal_job(live_job)
                     mem["generation"] += 1
                 return ("stale", None)
 
@@ -527,6 +731,7 @@ class MemoryExtractionWorker:
                 live_job["state"] = "stale"
                 live_job["error_code"] = "capture_disabled_or_destination_drifted"
                 live_job["updated_at"] = now_ts
+                memory._compact_terminal_job(live_job)
                 mem["generation"] += 1
                 return ("stale", None)
 
@@ -535,6 +740,7 @@ class MemoryExtractionWorker:
                 live_job["state"] = "stale"
                 live_job["error_code"] = "source_task_not_completed"
                 live_job["updated_at"] = now_ts
+                memory._compact_terminal_job(live_job)
                 mem["generation"] += 1
                 return ("stale", None)
 
@@ -542,6 +748,7 @@ class MemoryExtractionWorker:
                 live_job["state"] = "stale"
                 live_job["error_code"] = "reset_epoch_mismatch"
                 live_job["updated_at"] = now_ts
+                memory._compact_terminal_job(live_job)
                 mem["generation"] += 1
                 return ("stale", None)
 
@@ -551,9 +758,12 @@ class MemoryExtractionWorker:
                     live_job["state"] = "stale"
                     live_job["error_code"] = reason or "source_invalidated"
                     live_job["updated_at"] = now_ts
+                    memory._compact_terminal_job(live_job)
                     mem["generation"] += 1
                     return ("stale", None)
 
+            if job.get("rejected_observations"):
+                live_job["rejected_observations"] = copy.deepcopy(job["rejected_observations"])
             permitted_snapshot = memory_natural.select_existing_memories_for_consolidation(
                 data,
                 live_job,
@@ -565,29 +775,40 @@ class MemoryExtractionWorker:
                 permitted_snapshot,
             )
             est_input2 = max(1, len(encoded(stage2_messages)) // 4)
-            reserved_tokens2 = est_input2 + self.max_output_tokens
+            stage2_max_output_tokens = self._compute_max_output_tokens(est_input2, live_job)
+            reserved_tokens2 = est_input2 + stage2_max_output_tokens
 
-            budgets = settings.get("budgets") or {}
-            max_calls = int(budgets.get("max_daily_extraction_calls", 32))
-            max_tokens = int(budgets.get("max_daily_extraction_tokens", 24000))
-            day = time.strftime("%Y-%m-%d", time.gmtime(now_ts))
-            if str(usage.get("day") or "") > day:
-                live_job.update(state="failed", error_code="extraction_clock_regressed", updated_at=now_ts)
-                return ("stale", None)
+            budgets = settings.get("budgets") if isinstance(settings.get("budgets"), dict) else {}
+            raw_max_calls = budgets.get("max_daily_extraction_calls")
+            raw_max_tokens = budgets.get("max_daily_extraction_tokens")
+            max_calls = int(raw_max_calls if raw_max_calls is not None else memory.DEFAULT_DAILY_EXTRACTION_CALLS)
+            max_tokens = int(raw_max_tokens if raw_max_tokens is not None else memory.DEFAULT_DAILY_EXTRACTION_TOKENS)
+            day = memory.local_day_string(now_ts)
             if usage.get("day") != day:
                 usage.update(day=day, extraction_calls=0, extraction_tokens=0)
             if (
                 int(usage.get("extraction_calls", 0)) + 1 > max_calls
                 or int(usage.get("extraction_tokens", 0)) + reserved_tokens2 > max_tokens
             ):
-                live_job.update(state="failed", error_code="daily_extraction_budget_exhausted", updated_at=now_ts)
+                live_job.update(
+                    state="queued",
+                    retry_at=memory.next_local_midnight(now_ts),
+                    last_error="daily_extraction_budget_exhausted",
+                    error_code="daily_extraction_budget_exhausted",
+                    attempts=max(0, int(live_job.get("attempts") or 0) - 1),
+                    lease_owner=None,
+                    lease_token=None,
+                    lease_until=0.0,
+                    updated_at=now_ts,
+                )
                 mem["generation"] += 1
                 return ("budget_exhausted", None)
 
             try:
                 self._reserve_stage(live_job, 2, day, reserved_tokens2)
             except AgentError as exc:
-                live_job.update(state="failed", error_code=str(exc), updated_at=now_ts)
+                live_job.update(state="failed", error_code=str(exc), last_error=str(exc), updated_at=now_ts)
+                memory._compact_terminal_job(live_job)
                 mem["generation"] += 1
                 return ("stale", None)
             usage["extraction_calls"] = int(usage.get("extraction_calls", 0)) + 1
@@ -601,6 +822,7 @@ class MemoryExtractionWorker:
                     "permitted_snapshot": permitted_snapshot,
                     "stage2_reserved_tokens": reserved_tokens2,
                     "stage2_reserved_day": day,
+                    "stage2_max_output_tokens": stage2_max_output_tokens,
                 },
             )
 
@@ -653,6 +875,7 @@ class MemoryExtractionWorker:
                     live_job["state"] = "stale"
                     live_job["error_code"] = attempt_reason or "capture_disabled_or_destination_drifted"
                     live_job["updated_at"] = time.time()
+                    memory._compact_terminal_job(live_job)
                     mem["generation"] += 1
                 return
 
@@ -669,6 +892,7 @@ class MemoryExtractionWorker:
                     live_job["state"] = "stale"
                     live_job["error_code"] = "source_task_not_completed"
                     live_job["updated_at"] = time.time()
+                    memory._compact_terminal_job(live_job)
                     mem["generation"] += 1
                 return
 
@@ -677,6 +901,10 @@ class MemoryExtractionWorker:
                 usage["extraction_calls"] = max(0, int(usage.get("extraction_calls", 0)) - 1)
                 usage["extraction_tokens"] = max(0, int(usage.get("extraction_tokens", 0)) - reserved_tokens)
 
+            if job.get("rejected_observations"):
+                pre_live_job = (mem.get("jobs") or {}).get(job["id"])
+                if isinstance(pre_live_job, dict):
+                    pre_live_job["rejected_observations"] = copy.deepcopy(job["rejected_observations"])
             try:
                 res = memory.commit_extraction_job(
                     data,
@@ -696,7 +924,8 @@ class MemoryExtractionWorker:
                     usage["extraction_tokens"] = int(usage.get("extraction_tokens", 0)) + max(0, actual_tokens)
                 live_job = (mem.get("jobs") or {}).get(job["id"])
                 if isinstance(live_job, dict) and live_job.get("lease_token") == job.get("lease_token") and live_job.get("state") in {"leased", "extracted"}:
-                    live_job.update(state="failed", error_code=str(exc), updated_at=time.time())
+                    live_job.update(state="failed", error_code=str(exc), retry_at=None, updated_at=time.time())
+                    memory._compact_terminal_job(live_job)
                 return
             finally:
                 current = memory.ensure_memory_state(data)
@@ -704,6 +933,8 @@ class MemoryExtractionWorker:
                 stages = ((current_job.get("dispatch_usage") or {}).get(job.get("lease_token")) or {}) if isinstance(current_job, dict) else {}
                 if isinstance(stages.get("1"), dict):
                     stages["1"].update(settled=True, actual_tokens=max(0, actual_tokens))
+                if isinstance(current_job, dict):
+                    memory._compact_terminal_job(current_job)
 
             if res.get("state") in {"stale", "failed"}:
                 if usage.get("day") == reserved_day:
@@ -747,8 +978,11 @@ class MemoryExtractionWorker:
             if reason:
                 if isinstance(live_job, dict) and live_job.get("lease_owner") == self.worker_id and live_job.get("lease_token") == job.get("lease_token") and live_job.get("state") in {"leased", "extracted"}:
                     live_job.update(state="stale", error_code=reason, updated_at=time.time())
+                    memory._compact_terminal_job(live_job)
                     mem["generation"] += 1
                 return
+            if isinstance(live_job, dict) and job.get("rejected_observations"):
+                live_job["rejected_observations"] = copy.deepcopy(job["rejected_observations"])
             try:
                 res = memory_natural.commit_natural_consolidation_job(
                     data,
@@ -769,7 +1003,8 @@ class MemoryExtractionWorker:
                 mem = memory.ensure_memory_state(data)
                 live_job = (mem.get("jobs") or {}).get(job["id"])
                 if isinstance(live_job, dict) and live_job.get("lease_owner") == self.worker_id and live_job.get("lease_token") == job.get("lease_token") and live_job.get("state") in {"leased", "extracted"}:
-                    live_job.update(state="failed", error_code=str(exc), updated_at=time.time())
+                    live_job.update(state="failed", error_code=str(exc), retry_at=None, updated_at=time.time())
+                    memory._compact_terminal_job(live_job)
                     mem["generation"] += 1
                 return
             if res.get("state") == "no_op":
@@ -840,9 +1075,10 @@ class MemoryExtractionWorker:
                     return True
                 return False
 
+            stage1_max_output_tokens = int(payload.get("max_output_tokens") or self.max_output_tokens)
             options: dict[str, Any] = {"expected_destination": copy.deepcopy(verified_dest)}
             if getattr(self.runtime.model, "supports_output_token_limit", False) is True:
-                options["max_output_tokens"] = self.max_output_tokens
+                options["max_output_tokens"] = stage1_max_output_tokens
             if getattr(self.runtime.model, "supports_request_deadline", False) is True:
                 options["deadline"] = deadline
 
@@ -861,9 +1097,14 @@ class MemoryExtractionWorker:
                     **options,
                 )
             except Exception as exc:
-                err_code = getattr(cancelled, "reason", None) or str(exc) or "extraction_model_failed"
-                if not getattr(cancelled, "reason", None) and not err_code.startswith(("agent_", "extraction_", "capture_")):
-                    err_code = "extraction_model_failed"
+                if getattr(cancelled, "reason", None):
+                    err_code = str(cancelled.reason)
+                elif isinstance(exc, TimeoutError):
+                    err_code = "extraction_timeout"
+                else:
+                    err_code = str(exc) or "extraction_model_failed"
+                    if not err_code.startswith(("agent_", "extraction_", "capture_")):
+                        err_code = "extraction_model_failed"
                 self._record_dispatch_failure(
                     job,
                     error_code=err_code,
@@ -930,6 +1171,8 @@ class MemoryExtractionWorker:
                     task_row,
                 )
             except (ValueError, AgentError) as exc:
+                if job_with_scope.get("rejected_observations"):
+                    job["rejected_observations"] = copy.deepcopy(job_with_scope["rejected_observations"])
                 self._record_dispatch_failure(
                     job,
                     error_code=str(exc) or "invalid_extraction_json",
@@ -938,6 +1181,8 @@ class MemoryExtractionWorker:
                     reserved_day=reserved_day,
                 )
                 return WorkerRunResult(activity=True)
+            if job_with_scope.get("rejected_observations"):
+                job["rejected_observations"] = copy.deepcopy(job_with_scope["rejected_observations"])
 
             activation_policy = str(job.get("activation_policy") or "owner_review")
             if activation_policy != "automatic" or phase1_mode == "legacy_candidates":
@@ -1006,10 +1251,13 @@ class MemoryExtractionWorker:
             permitted_snapshot = stage2_payload["permitted_snapshot"]
             stage2_reserved_tokens = int(stage2_payload["stage2_reserved_tokens"])
             stage2_reserved_day = str(stage2_payload["stage2_reserved_day"])
+            stage2_max_output_tokens = int(stage2_payload.get("stage2_max_output_tokens") or self.max_output_tokens)
             stage = 2
             total_reserved_tokens = actual_tokens + stage2_reserved_tokens
             est_input2 = max(1, len(encoded(stage2_messages)) // 4)
 
+            if getattr(self.runtime.model, "supports_output_token_limit", False) is True:
+                options["max_output_tokens"] = stage2_max_output_tokens
             if getattr(self.runtime.model, "supports_request_deadline", False) is True:
                 options["deadline"] = deadline
 
@@ -1027,9 +1275,14 @@ class MemoryExtractionWorker:
                     **options,
                 )
             except Exception as exc:
-                err_code = getattr(cancelled, "reason", None) or str(exc) or "consolidation_model_failed"
-                if not getattr(cancelled, "reason", None) and not err_code.startswith(("agent_", "extraction_", "consolidation_", "capture_")):
-                    err_code = "consolidation_model_failed"
+                if getattr(cancelled, "reason", None):
+                    err_code = str(cancelled.reason)
+                elif isinstance(exc, TimeoutError):
+                    err_code = "extraction_timeout"
+                else:
+                    err_code = str(exc) or "consolidation_model_failed"
+                    if not err_code.startswith(("agent_", "extraction_", "consolidation_", "capture_")):
+                        err_code = "consolidation_model_failed"
                 self._record_dispatch_failure(
                     job,
                     error_code=err_code,

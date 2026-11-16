@@ -71,7 +71,7 @@ def test_literal_document_search_never_opens_approval(tmp_path, mode):
     assert "123.45" in done["result"]
     assert len(model.calls) == 2
     assert not any(e["type"] == "approval_requested" for e in done["events"])
-    assert "123.45" in model.calls[-1][1][-1]["content"]
+    assert "123.45" in model.calls[-1][1][-2]["content"]
     receipt = runtime.store.read()["tasks"][task["id"]]["receipts"][0]
     assert receipt["authorization"] == "read"
     assert projection(runtime.store.read()["tasks"][task["id"]])[0]["permission_basis"] == "read_policy"
@@ -110,7 +110,7 @@ def test_balance_query_uses_real_http_and_shell_without_confirmation(tmp_path):
         assert requests == ["/balance"]
         assert done["status"] == "completed", done.get("error")
         assert len(model.calls) == 2
-        assert "123.45" in model.calls[-1][1][-1]["content"]
+        assert "123.45" in model.calls[-1][1][-2]["content"]
         assert not any(e["type"] in {"approval_requested", "verification_started", "change_review_requested"} for e in done["events"])
     finally:
         server.shutdown()
@@ -222,7 +222,7 @@ def test_actual_ripgrep_search_is_automatic_in_legacy_strict_mode(tmp_path):
     task = runtime.create({"message": "查一下米宝余额"})
     advance(runtime, 3)
     assert runtime.get(task["id"])["status"] == "completed"
-    assert '1:balance: /balance' in model.calls[-1][1][-1]["content"]
+    assert '1:balance: /balance' in model.calls[-1][1][-2]["content"]
 
 
 @pytest.mark.skipif(not shutil.which("rg"), reason="ripgrep is not installed")
@@ -237,7 +237,7 @@ def test_automatic_read_ignores_ripgrep_preprocessor_config(tmp_path, monkeypatc
     task = runtime.create({"message": "查余额"})
     advance(runtime, 3)
     assert runtime.get(task["id"])["status"] == "completed"
-    assert '1:balance: /balance' in model.calls[-1][1][-1]["content"]
+    assert '1:balance: /balance' in model.calls[-1][1][-2]["content"]
 
 
 def test_tool_failure_returns_to_the_same_model_for_correction(tmp_path):
@@ -249,5 +249,5 @@ def test_tool_failure_returns_to_the_same_model_for_correction(tmp_path):
     task = runtime.create({"message": "查一下米宝余额"})
     advance(runtime, 5)
     assert runtime.get(task["id"])["status"] == "completed"
-    assert json.loads(model.calls[1][1][-1]["content"])["no_mutation"] is True
-    assert "123.45" in model.calls[2][1][-1]["content"]
+    assert json.loads(model.calls[1][1][-2]["content"])["no_mutation"] is True
+    assert "123.45" in model.calls[2][1][-2]["content"]

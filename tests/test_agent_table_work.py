@@ -124,7 +124,7 @@ def test_cancellation_and_row_limit():
     with pytest.raises(AgentToolRejected, match="agent_cancelled"):
         calculate(CSV, ".csv", RECIPE, lambda: True)
     with pytest.raises(AgentToolRejected, match="agent_table_input_invalid"):
-        calculate(b'amount\n' + b'1\n' * 5001, ".csv", {"columns": columns(amount="decimal")})
+        calculate(b'amount\n' + b'1\n' * 100001, ".csv", {"columns": columns(amount="decimal")})
 
 
 def test_actual_tool_exports_then_verifies_and_never_overwrites(local):
@@ -220,7 +220,7 @@ def test_table_recipe_uses_strict_object_protocol_and_restores_nested_omissions(
 
     tools = {"ryn_table_calculate": {"name": "ryn_table_calculate", "parameters": SPECS["ryn_table_calculate"][3]}}
     wire = {"content": "", "tool_calls": [{"name": "ryn_table_calculate", "arguments": {
-        "source_path": "source.csv", "recipe": {"columns": [{"name": "amount", "type": "decimal", "source": None}],
+        "source_path": "source.csv", "recipe": {"sheet": None, "columns": [{"name": "amount", "type": "decimal", "source": None}],
         "derived": None, "checks": None, "rounding": None, "column_order": None}}}]}
     Draft202012Validator(_response_schema(tools, strict=True)).validate(wire)
     message = _validated({"text": json.dumps(wire)}, tools, False, restore_omitted=True)

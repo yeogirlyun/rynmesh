@@ -272,6 +272,13 @@ def test_http_model_switch_owner_guard_confirmation_and_exact_retry(tmp_path):
 
 def test_new_model_cannot_repeat_confirmed_old_write_in_same_goal(tmp_path):
     runtime, model, tools, _, task_id, _ = setup(tmp_path, assistant(name="share_service", args={"service_id": "A"}), assistant("Done"))
+    base_metadata = tools.metadata
+    tools.metadata = lambda name: (
+        {**base_metadata(name), "extension_binding": {"kind": "mcp", "server_id": "svc", "tool_name": "share_service"}}
+        if name == "share_service"
+        else base_metadata(name)
+    )
+    tools.verify_extension_binding = lambda _call: None
     runtime.action(task_id, {"action": "resume", "expected_control_revision": runtime.get(task_id)["control_revision"]})
     advance(runtime, 2)
     approve(runtime, task_id)
@@ -287,4 +294,4 @@ def test_new_model_cannot_repeat_confirmed_old_write_in_same_goal(tmp_path):
     assert len(tools.calls) == 1 and row["pending_approval"] is None
     refused = json.loads(row["messages"][-1]["content"])
     assert refused["error"] == "agent_operation_already_confirmed"
-    assert "was not run again" in refused["correction"] and "Treat it as done" not in refused["correction"]
+    assert "这个调用在更早的上下文里已确认执行过" in refused["correction"]

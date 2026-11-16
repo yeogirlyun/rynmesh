@@ -18,23 +18,27 @@ from __future__ import annotations
 import hashlib
 import http.client
 import re
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 
+from .. import __version__
 from .errors import LifecycleError
 from .https_only import build_https_only_opener
+from .transport_failure import download_retry_delay, format_download_failure
 
 ProgressCallback = Callable[[str, int, str], None]
 CancelCheck = Callable[[], bool]
 
 CHUNK_BYTES = 1024 * 1024
+DOWNLOAD_BACKOFFS = (2.0, 4.0, 8.0)
 _CONTENT_RANGE = re.compile(r"bytes (\d+)-(\d+)/(\d+|\*)", re.I)
 
 
-def _urlopen(request: urllib.request.Request, timeout: float = 300) -> Any:
+def _urlopen(request: urllib.request.Request, timeout: float = 60) -> Any:
     """Open `request` with the HTTPS-only opener (the whole redirect chain).
 
     The single seam tests replace to serve a model body without a network.
@@ -130,69 +134,111 @@ def download(
     if parsed.scheme != "https" or not parsed.hostname:
         raise LifecycleError("install downloads require an HTTPS URL")
     destination.parent.mkdir(parents=True, exist_ok=True)
+    if (
+        destination.is_file()
+        and (size_bytes is None or destination.stat().st_size == size_bytes)
+        and file_sha256(destination) == expected_sha256.lower()
+    ):
+        return expected_sha256.lower()
     temporary = destination.with_suffix(destination.suffix + ".part")
-    resume_from = temporary.stat().st_size if temporary.exists() else 0
-    _report(progress, cancel_check, "download_model", 15, "Preparing model download; verification pending")
-    if size_bytes is not None and resume_from > size_bytes:
-        temporary.unlink(missing_ok=True)
-        raise LifecycleError("download exceeded the pinned size")
-    headers = {"User-Agent": "Rynmesh/0.6", "Accept-Encoding": "identity"}
-    if resume_from:
-        headers["Range"] = f"bytes={resume_from}-"
-        _report(progress, cancel_check, "download_model", 15, "Resuming model download; verification pending")
-
-    request = urllib.request.Request(url, headers=headers)
-    already_complete = False
-    try:
-        connection = _urlopen(request, timeout=300)
-    except urllib.error.HTTPError as exc:
-        if resume_from and exc.code == 416:
-            exc.close()
-            if size_bytes is not None and resume_from < size_bytes:
-                raise LifecycleError("download incomplete; retry to resume") from exc
-            # A range refusal is not proof of integrity. Only the complete
-            # checksum below can authorize publishing the existing part.
-            already_complete = True
-            connection = None
-        else:
-            raise LifecycleError("download failed: " + type(exc).__name__) from exc
-    except (OSError, http.client.HTTPException) as exc:
-        raise LifecycleError("download failed: " + type(exc).__name__) from exc
-
-    if not already_complete:
-        overflow = False
-        try:
-            with connection as response:
-                offset, response_size, full_size = _response_plan(response, resume_from, size_bytes)
-                downloaded = offset
-                mode = "ab" if offset else "wb"
-                with temporary.open(mode) as handle:
-                    while chunk := response.read(CHUNK_BYTES):
-                        if cancel_check and cancel_check():
-                            raise LifecycleError("setup cancelled")
-                        downloaded += len(chunk)
-                        if size_bytes is not None and downloaded > size_bytes:
-                            # Not trustworthy: stop writing and discard below,
-                            # once the handle is closed (Windows cannot unlink
-                            # an open file).
-                            overflow = True
-                            break
-                        handle.write(chunk)
-                        percent = 15 + int(downloaded / full_size * 45) if full_size else 35
-                        if progress:
-                            progress("download_model", min(60, percent), "Downloading model data; verification pending")
-                if not overflow:
-                    if response_size is not None and downloaded - offset != response_size:
-                        raise LifecycleError("download incomplete; retry to resume")
-                    if full_size is not None and downloaded < full_size:
-                        raise LifecycleError("download incomplete; retry to resume")
-        except LifecycleError:
-            raise
-        except (OSError, http.client.HTTPException) as exc:
-            raise LifecycleError("download failed: " + type(exc).__name__) from exc
-        if overflow:
+    for attempt in range(len(DOWNLOAD_BACKOFFS) + 1):
+        resume_from = temporary.stat().st_size if temporary.exists() else 0
+        _report(progress, cancel_check, "download_model", 15, "Preparing model download; verification pending")
+        if size_bytes is not None and resume_from > size_bytes:
             temporary.unlink(missing_ok=True)
             raise LifecycleError("download exceeded the pinned size")
+        headers = {"User-Agent": f"Rynmesh/{__version__}", "Accept-Encoding": "identity"}
+        if resume_from:
+            headers["Range"] = f"bytes={resume_from}-"
+            _report(progress, cancel_check, "download_model", 15, "Resuming model download; verification pending")
+
+        request = urllib.request.Request(url, headers=headers)
+        already_complete = False
+        try:
+            connection = _urlopen(request, timeout=60)
+        except urllib.error.HTTPError as exc:
+            if resume_from and exc.code == 416:
+                exc.close()
+                if size_bytes is not None and resume_from < size_bytes:
+                    raise LifecycleError("download incomplete; retry to resume") from exc
+                # A range refusal is not proof of integrity. Only the complete
+                # checksum below can authorize publishing the existing part.
+                already_complete = True
+                connection = None
+            else:
+                retryable, wait_s = download_retry_delay(
+                    exc, DOWNLOAD_BACKOFFS[attempt] if attempt < len(DOWNLOAD_BACKOFFS) else 0.0
+                )
+                exc.close()
+                if retryable and attempt < len(DOWNLOAD_BACKOFFS):
+                    time.sleep(wait_s)
+                    continue
+                raise LifecycleError(
+                    format_download_failure(
+                        exc,
+                        filename=destination.name,
+                        sha256=expected_sha256,
+                        directory=destination.parent,
+                    )
+                ) from exc
+        except (OSError, http.client.HTTPException) as exc:
+            if attempt < len(DOWNLOAD_BACKOFFS):
+                time.sleep(DOWNLOAD_BACKOFFS[attempt])
+                continue
+            raise LifecycleError(
+                format_download_failure(
+                    exc,
+                    filename=destination.name,
+                    sha256=expected_sha256,
+                    directory=destination.parent,
+                )
+            ) from exc
+
+        if not already_complete:
+            overflow = False
+            try:
+                with connection as response:
+                    offset, response_size, full_size = _response_plan(response, resume_from, size_bytes)
+                    downloaded = offset
+                    mode = "ab" if offset else "wb"
+                    with temporary.open(mode) as handle:
+                        while chunk := response.read(CHUNK_BYTES):
+                            if cancel_check and cancel_check():
+                                raise LifecycleError("setup cancelled")
+                            downloaded += len(chunk)
+                            if size_bytes is not None and downloaded > size_bytes:
+                                # Not trustworthy: stop writing and discard below,
+                                # once the handle is closed (Windows cannot unlink
+                                # an open file).
+                                overflow = True
+                                break
+                            handle.write(chunk)
+                            percent = 15 + int(downloaded / full_size * 45) if full_size else 35
+                            if progress:
+                                progress("download_model", min(60, percent), "Downloading model data; verification pending")
+                    if not overflow:
+                        if response_size is not None and downloaded - offset != response_size:
+                            raise LifecycleError("download incomplete; retry to resume")
+                        if full_size is not None and downloaded < full_size:
+                            raise LifecycleError("download incomplete; retry to resume")
+            except LifecycleError:
+                raise
+            except (OSError, http.client.HTTPException) as exc:
+                if attempt < len(DOWNLOAD_BACKOFFS):
+                    time.sleep(DOWNLOAD_BACKOFFS[attempt])
+                    continue
+                raise LifecycleError(
+                    format_download_failure(
+                        exc,
+                        filename=destination.name,
+                        sha256=expected_sha256,
+                        directory=destination.parent,
+                    )
+                ) from exc
+            if overflow:
+                temporary.unlink(missing_ok=True)
+                raise LifecycleError("download exceeded the pinned size")
+        break
 
     # Hash the complete file fresh (not a running digest), so a resumed part
     # verifies against the bytes actually on disk rather than just this session.

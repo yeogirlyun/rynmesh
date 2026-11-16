@@ -1,4 +1,4 @@
-use crate::errors::{DiagnosticReason, ErrorCode, ErrorStage, ProtocolError};
+use crate::errors::{DiagnosticReason, ErrorCode, ErrorStage, ErrorWindowSummary, ProtocolError};
 use crate::lifecycle::{
     map_lifecycle_error_to_protocol, parse_window_ref_os_tuple, LifecycleService,
 };
@@ -15,12 +15,19 @@ use std::ffi::c_void;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 use windows::core::{BOOL, PWSTR};
-use windows::Win32::Foundation::{CloseHandle, FILETIME, HWND, LPARAM, POINT, RECT};
+use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE, HWND, LPARAM, POINT, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
-use windows::Win32::Graphics::Gdi::ClientToScreen;
+use windows::Win32::Graphics::Gdi::{
+    ClientToScreen, GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITORINFOEXW,
+    MONITOR_DEFAULTTONEAREST,
+};
+use windows::Win32::Security::{
+    GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, TokenIntegrityLevel,
+    TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
+};
 use windows::Win32::System::Threading::{
-    GetCurrentProcessId, GetProcessTimes, OpenProcess, QueryFullProcessImageNameW,
-    PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    GetCurrentProcess, GetCurrentProcessId, GetProcessTimes, OpenProcess, OpenProcessToken,
+    QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::HiDpi::{
     GetDpiForWindow, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE,
@@ -53,13 +60,39 @@ pub fn init_process_dpi_awareness() -> String {
     }
 }
 
+pub fn format_unix_millis_rfc3339(epoch_ms: u128) -> String {
+    let total_secs = (epoch_ms / 1000) as i64;
+    let millis = (epoch_ms % 1000) as u32;
+
+    let days = total_secs.div_euclid(86_400);
+    let secs_of_day = total_secs.rem_euclid(86_400) as u32;
+    let hour = secs_of_day / 3600;
+    let minute = (secs_of_day % 3600) / 60;
+    let second = secs_of_day % 60;
+
+    // Howard Hinnant civil-from-days algorithm (UTC Gregorian calendar).
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u32; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let y = (yoe as i64) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let day = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let month = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let year = if month <= 2 { y + 1 } else { y };
+
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        year, month, day, hour, minute, second, millis
+    )
+}
+
 pub fn now_iso8601_utc() -> String {
     let dur = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
-    let secs = dur.as_secs();
-    let millis = dur.subsec_millis();
-    format!("{}.{:03}Z", secs, millis)
+    format_unix_millis_rfc3339(dur.as_millis())
 }
 
 /// Service-backed window identity tracker that assigns monotonic checked `issue_generation`
@@ -374,6 +407,157 @@ pub fn query_process_executable_path(pid: u32) -> Option<String> {
             None
         }
     }
+}
+
+unsafe fn query_token_integrity_rid(token: HANDLE) -> Option<u32> {
+    let mut needed = 0u32;
+    let _ = GetTokenInformation(token, TokenIntegrityLevel, None, 0, &mut needed);
+    if needed == 0 {
+        return None;
+    }
+    let mut buf = vec![0u8; needed as usize];
+    GetTokenInformation(
+        token,
+        TokenIntegrityLevel,
+        Some(buf.as_mut_ptr() as *mut c_void),
+        needed,
+        &mut needed,
+    )
+    .ok()?;
+    let tml = &*(buf.as_ptr() as *const TOKEN_MANDATORY_LABEL);
+    let sid = tml.Label.Sid;
+    if sid.is_invalid() {
+        return None;
+    }
+    let count_ptr = GetSidSubAuthorityCount(sid);
+    if count_ptr.is_null() {
+        return None;
+    }
+    let count = *count_ptr;
+    if count == 0 {
+        return None;
+    }
+    let rid_ptr = GetSidSubAuthority(sid, (count - 1) as u32);
+    if rid_ptr.is_null() {
+        return None;
+    }
+    Some(*rid_ptr)
+}
+
+pub fn query_current_process_integrity_rid() -> Option<u32> {
+    unsafe {
+        let mut token = HANDLE::default();
+        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).ok()?;
+        let rid = query_token_integrity_rid(token);
+        let _ = CloseHandle(token);
+        rid
+    }
+}
+
+pub fn query_process_integrity_rid(pid: u32) -> Option<u32> {
+    if pid == 0 {
+        return None;
+    }
+    unsafe {
+        let proc_handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let mut token = HANDLE::default();
+        let tok_res = OpenProcessToken(proc_handle, TOKEN_QUERY, &mut token);
+        let _ = CloseHandle(proc_handle);
+        tok_res.ok()?;
+        let rid = query_token_integrity_rid(token);
+        let _ = CloseHandle(token);
+        rid
+    }
+}
+
+pub const fn compare_integrity_rids_is_elevated(
+    target_rid: Option<u32>,
+    self_rid: Option<u32>,
+) -> bool {
+    match (target_rid, self_rid) {
+        (Some(t), Some(s)) => t > s,
+        _ => false,
+    }
+}
+
+pub fn is_process_elevated_above_self(pid: u32) -> bool {
+    if pid == 0 || pid == current_worker_pid() {
+        return false;
+    }
+    let self_rid = query_current_process_integrity_rid();
+    match query_process_integrity_rid(pid) {
+        Some(target_rid) => compare_integrity_rids_is_elevated(Some(target_rid), self_rid),
+        None => {
+            // If the process exists (or we cannot even open its limited token because of higher protection)
+            // and self is <= Medium (0x2000), check whether OpenProcess itself failed with ACCESS_DENIED.
+            unsafe {
+                if OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).is_err()
+                    && windows::Win32::Foundation::GetLastError()
+                        == windows::Win32::Foundation::ERROR_ACCESS_DENIED
+                {
+                    return self_rid.unwrap_or(0x2000) < 0x3000;
+                }
+            }
+            false
+        }
+    }
+}
+
+pub fn is_hwnd_elevated_above_self(hwnd: HWND) -> bool {
+    if hwnd.0.is_null() {
+        return false;
+    }
+    let (pid, _) = get_window_pid_tid(hwnd);
+    is_process_elevated_above_self(pid)
+}
+
+pub fn query_window_monitor_name(hwnd: HWND) -> String {
+    if hwnd.0.is_null() {
+        return "unknown".to_string();
+    }
+    unsafe {
+        let hmon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        if hmon.0.is_null() {
+            return "unknown".to_string();
+        }
+        let mut info = MONITORINFOEXW::default();
+        info.monitorInfo = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFOEXW>() as u32,
+            ..Default::default()
+        };
+        if GetMonitorInfoW(hmon, &mut info.monitorInfo as *mut MONITORINFO).as_bool() {
+            let end = info
+                .szDevice
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(info.szDevice.len());
+            let dev = String::from_utf16_lossy(&info.szDevice[..end])
+                .trim()
+                .to_string();
+            if !dev.is_empty() {
+                return dev;
+            }
+        }
+        "unknown".to_string()
+    }
+}
+
+pub fn summarize_hwnd_for_error(hwnd: HWND) -> Option<ErrorWindowSummary> {
+    if hwnd.0.is_null() || !unsafe { IsWindow(Some(hwnd)).as_bool() } {
+        return None;
+    }
+    let root = unsafe {
+        let r = GetAncestor(hwnd, GA_ROOT);
+        if r.0.is_null() {
+            hwnd
+        } else {
+            r
+        }
+    };
+    let (pid, _) = get_window_pid_tid(root);
+    let title = get_window_title(root);
+    let exe_raw = query_process_executable_path(pid).unwrap_or_else(|| "unknown".to_string());
+    Some(ErrorWindowSummary::sanitized(&title, &exe_raw))
 }
 
 pub fn get_window_title(hwnd: HWND) -> String {
@@ -713,6 +897,19 @@ pub fn inspect_window_entry(
     hwnd: HWND,
     fg_hwnd: HWND,
 ) -> Result<WindowEntry, ProtocolError> {
+    let z_order = enumerate_top_level_hwnds()
+        .into_iter()
+        .position(|h| h == hwnd)
+        .unwrap_or(0) as u32;
+    inspect_window_entry_with_z_order(tracker, hwnd, fg_hwnd, z_order)
+}
+
+pub fn inspect_window_entry_with_z_order(
+    tracker: &WindowIdentityTracker,
+    hwnd: HWND,
+    fg_hwnd: HWND,
+    z_order: u32,
+) -> Result<WindowEntry, ProtocolError> {
     if hwnd.0.is_null() || !unsafe { IsWindow(Some(hwnd)).as_bool() } {
         return Err(
             ProtocolError::observe(ErrorCode::WindowNotFound, DiagnosticReason::IsWindowFalse)
@@ -747,6 +944,8 @@ pub fn inspect_window_entry(
     let cloaked = is_window_cloaked(hwnd);
     let capture_protected = is_window_capture_protected(hwnd);
     let foreground = !fg_hwnd.0.is_null() && is_hwnd_related_to_target(fg_hwnd, hwnd);
+    let monitor = query_window_monitor_name(hwnd);
+    let is_elevated = is_process_elevated_above_self(pid);
 
     Ok(WindowEntry {
         window: wref,
@@ -764,6 +963,9 @@ pub fn inspect_window_entry(
         bounds: geometry.window_rect,
         client_bounds: geometry.client_rect,
         dpi: geometry.dpi,
+        z_order,
+        monitor,
+        is_elevated,
     })
 }
 
@@ -815,7 +1017,7 @@ pub fn handle_windows_list(
     let hwnds = enumerate_top_level_hwnds();
     let mut entries = Vec::new();
 
-    for hwnd in hwnds {
+    for (z_idx, hwnd) in hwnds.into_iter().enumerate() {
         if entries.len() >= max_windows {
             break;
         }
@@ -839,7 +1041,7 @@ pub fn handle_windows_list(
             }
         }
 
-        let entry = match inspect_window_entry(tracker, hwnd, fg_hwnd) {
+        let entry = match inspect_window_entry_with_z_order(tracker, hwnd, fg_hwnd, z_idx as u32) {
             Ok(e) => e,
             Err(_) => continue,
         };

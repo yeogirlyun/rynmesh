@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 import pytest
-from test_agent_runtime import Tools, advance, assistant, make_runtime
+from test_agent_runtime import Tools, advance, assistant, fit_window, make_runtime
 
 from rynmesh.agent_runtime import tool_menu
 from rynmesh.agent_runtime.runtime import AgentRuntime
@@ -168,6 +168,7 @@ def test_small_window_can_load_structured_input_without_loading_unused_control_s
     runtime.tools = ManyTools()
     runtime.update_settings({"max_context_chars": 12000})
     task = runtime.create({"message": "Prepare a report; ask for its missing language."})
+    fit_window(runtime, task["id"], 12000, small_window=True)
     advance(runtime, 4)
     row = runtime.get(task["id"])
     assert row["status"] == "waiting_input" and row["pending_input"]["kind"] == "information"
@@ -193,7 +194,11 @@ def test_loading_write_tool_still_requires_exact_approval(tmp_path):
 
 @pytest.mark.parametrize("oversized", [False, True])
 def test_closed_latest_exchange_can_be_compacted_when_no_shorter_prefix_fits(tmp_path, oversized):
-    responses = ([assistant("x" * 4000)] if oversized else []) + [assistant("Observed fixture evidence; no writes performed."), assistant("Read complete.")]
+    responses = (
+        [assistant("x" * 4000), assistant("Read complete.")]
+        if oversized
+        else [assistant("Observed fixture evidence; no writes performed."), assistant("Read complete.")]
+    )
     runtime, model, _, key = make_runtime(tmp_path, *responses)
     runtime.tools = ManyTools()
     runtime.update_settings({"max_context_chars": 12000})
@@ -206,19 +211,19 @@ def test_closed_latest_exchange_can_be_compacted_when_no_shorter_prefix_fits(tmp
     runtime.store.transaction(seed)
     original = runtime.store.read()["tasks"][task["id"]]["messages"]
     advance(runtime)
+    current = runtime.store.read()["tasks"][task["id"]]
     if oversized:
-        rejected = runtime.store.read()["tasks"][task["id"]]
-        assert rejected["status"] == "queued" and rejected["model_retry_count"] == 1
-        assert not rejected.get("context_checkpoint")
+        # S03-I5: oversized summaries with maximum > 256 are UTF-8 truncated to maximum across all window sizes.
+        assert current["status"] == "completed"
+        assert 256 < len(current["context_checkpoint"]["content"].encode("utf-8")) < 4000
         assert not runtime.tools.calls
         runtime = AgentRuntime(AgentStore(tmp_path, key), model, runtime.tools, runtime.catalog)
-        advance(runtime)
-    current = runtime.store.read()["tasks"][task["id"]]
+        current = runtime.store.read()["tasks"][task["id"]]
     assert current["context_checkpoint"]["through"] == len(original)
     assert current["messages"][:len(original)] == original
     assert "PRIVATE_PROVIDER_CONTINUATION" in original[1]["reasoning_content"]
     assert all("PRIVATE_PROVIDER_CONTINUATION" not in json.dumps(call[1]) for call in model.calls)
-    assert len(model.calls) == (3 if oversized else 2) and not model.calls[0][2]
+    assert len(model.calls) == 2 and not model.calls[0][2]
     assert any(message["content"] == original[0]["content"] for message in model.calls[-1][1])
     assert all(len(encoded(call[1])) + len(encoded(call[2])) <= 12000 for call in model.calls)
 

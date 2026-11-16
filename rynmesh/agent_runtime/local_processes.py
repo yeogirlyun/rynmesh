@@ -2,26 +2,213 @@
 from __future__ import annotations
 
 import atexit
+import codecs
+import collections
+import locale
 import math
 import os
+import re
+import shlex
 import shutil
 import subprocess
 import sys
 import threading
 import time
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
 
+from .. import __version__
 from ..llm_package.process_guard import _windows_job
-from .local_pty import COMPLETED, ConPtyProcess, check_pty_support, validate_size
+from . import login_environment
+from .git_safety import (
+    GIT_READONLY_DIFF_FLAGS,
+    GIT_READONLY_DIFF_SUBCOMMANDS,
+    SAFE_GIT_CONFIG,
+    strip_rynmesh_env,
+)
+from .local_pty import COMPLETED, ConPtyProcess, PosixPtyProcess, check_pty_support, validate_size
 from .local_pty import terminate_session as terminate
 from .store import AgentToolRejected
 
-MAX_OUTPUT = 512 * 1024
+_DEFAULT_CONPTY_CLS = ConPtyProcess
+
+try:
+    import winreg
+except ImportError:
+    winreg = None
+
+_WINDOWS_SYSTEM_ENV_KEY = r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+_WINDOWS_WARMUP_LOCK = threading.Lock()
+_WINDOWS_WARMUP_STARTED = False
+_POWERSHELL_PROFILE_LOCK = threading.Lock()
+_POWERSHELL_PROFILE_DISABLED = False
+POWERSHELL_PROFILE_FALLBACK_NOTICE = (
+    "PowerShell profile failed to load (PSSecurityException); "
+    "switched to -NoProfile for subsequent commands in this process."
+)
+
+HEAD_KEEP_CHARS = 512 * 1024
+TAIL_KEEP_CHARS = 512 * 1024
 PAGE_CHARS = 6000
 HEAD_CHARS = 2000
 DEFAULT_READ_WAIT = 10
 MAX_READ_WAIT = 20
+DEFAULT_YIELD_SECONDS = 10
+DEFAULT_READ_SHELL_TIMEOUT = 120
+MAX_TASK_PROCESSES = 16
+MAX_GLOBAL_PROCESSES = 64
+_PROCESS_ID_RE = re.compile(r"^process_[A-Za-z0-9_-]{4,56}$")
+LOST_PROCESS_CORRECTION = (
+    "Ryn may have restarted since this process was started; background processes do not survive a restart. "
+    "Re-run the command if it is still needed, and do not read this process_id again."
+)
+
+
+def _windows_fallback_encoding() -> str:
+    preferred = (locale.getpreferredencoding(False) or "").strip().lower()
+    if preferred in {"", "utf-8", "utf8", "cp65001"} and hasattr(locale, "getencoding"):
+        preferred = (locale.getencoding() or "").strip().lower()
+    if preferred in {"", "utf-8", "utf8", "cp65001"}:
+        return "utf-8"
+    try:
+        codecs.lookup(preferred)
+        return preferred
+    except LookupError:
+        return "utf-8"
+
+
+class OutputDecoder:
+    """Incremental strict UTF-8 decoder with sticky Windows code-page fallback."""
+
+    def __init__(self) -> None:
+        self.encoding = "utf-8"
+        self._switched = False
+        self._decoder = codecs.getincrementaldecoder("utf-8")(errors="strict")
+
+    def decode(self, data: bytes, final: bool = False) -> str:
+        if self._switched:
+            return self._decoder.decode(data, final=final)
+        pending = self._decoder.getstate()[0]
+        try:
+            return self._decoder.decode(data, final=final)
+        except UnicodeDecodeError:
+            raw = pending + data
+            if final:
+                try:
+                    prefix, consumed = codecs.utf_8_decode(raw, "strict", False)
+                except UnicodeDecodeError:
+                    pass
+                else:
+                    self._decoder.reset()
+                    return prefix + ("\ufffd" if consumed < len(raw) else "")
+            try:
+                raw.decode("utf-8", errors="strict")
+                split_at = len(raw)
+            except UnicodeDecodeError as raw_exc:
+                split_at = raw_exc.start
+            prefix = raw[:split_at].decode("utf-8")
+            remainder = raw[split_at:]
+            target = _windows_fallback_encoding() if os.name == "nt" else "utf-8"
+            self.encoding = target
+            self._switched = True
+            self._decoder = codecs.getincrementaldecoder(target)(errors="replace")
+            return prefix + self._decoder.decode(remainder, final=final)
+
+
+def _append_output(item: dict, text: str) -> None:
+    if not text:
+        return
+    item["total_chars"] += len(text)
+    head_keep = HEAD_KEEP_CHARS
+    tail_keep = TAIL_KEEP_CHARS
+    head_room = max(0, head_keep - len(item["head"]))
+    if head_room > 0:
+        take = min(head_room, len(text))
+        item["head"] += text[:take]
+        text = text[take:]
+    if not text:
+        return
+    tail = item["tail"]
+    tail_chars = item.get("tail_chars", 0)
+    if tail_keep <= 0:
+        if tail_chars:
+            tail.clear()
+            item["tail_chars"] = 0
+            item["dropped_chars"] += tail_chars
+        item["dropped_chars"] += len(text)
+        return
+    if len(text) >= tail_keep:
+        item["dropped_chars"] += tail_chars + (len(text) - tail_keep)
+        tail.clear()
+        tail.append(text[-tail_keep:])
+        item["tail_chars"] = tail_keep
+        return
+    tail.append(text)
+    tail_chars += len(text)
+    while tail_chars > tail_keep:
+        excess = tail_chars - tail_keep
+        oldest = tail[0]
+        if len(oldest) <= excess:
+            tail.popleft()
+            tail_chars -= len(oldest)
+            item["dropped_chars"] += len(oldest)
+        else:
+            tail[0] = oldest[excess:]
+            tail_chars -= excess
+            item["dropped_chars"] += excess
+    item["tail_chars"] = tail_chars
+
+
+def _slice_tail(item: dict, rel_start: int, rel_end: int) -> str:
+    if rel_start >= rel_end:
+        return ""
+    tail = item["tail"]
+    tail_chars = item.get("tail_chars", 0)
+    rel_start = max(0, rel_start)
+    rel_end = min(tail_chars, rel_end)
+    if rel_start >= rel_end:
+        return ""
+    if rel_start > tail_chars // 2:
+        pos = tail_chars
+        parts = []
+        for chunk in reversed(tail):
+            chunk_start = pos - len(chunk)
+            if chunk_start < rel_end:
+                s = max(0, rel_start - chunk_start)
+                e = min(len(chunk), rel_end - chunk_start)
+                parts.append(chunk[s:e])
+                if chunk_start <= rel_start:
+                    break
+            pos = chunk_start
+        parts.reverse()
+        return "".join(parts)
+    pos = 0
+    parts = []
+    for chunk in tail:
+        chunk_end = pos + len(chunk)
+        if chunk_end > rel_start:
+            s = max(0, rel_start - pos)
+            e = min(len(chunk), rel_end - pos)
+            parts.append(chunk[s:e])
+            if chunk_end >= rel_end:
+                break
+        pos = chunk_end
+    return "".join(parts)
+
+
+def _read_contiguous(item: dict, start: int, end: int) -> str:
+    if start >= end:
+        return ""
+    head = item["head"]
+    head_end = len(head)
+    tail_start = head_end + item["dropped_chars"]
+    parts = []
+    if start < head_end:
+        parts.append(head[start:min(head_end, end)])
+    if end > tail_start:
+        parts.append(_slice_tail(item, max(0, start - tail_start), end - tail_start))
+    return "".join(parts)
 
 
 class AgentProcessStartRejected(AgentToolRejected):
@@ -53,29 +240,190 @@ def _bundled_rg_executable() -> str | None:
     return None
 
 
-def resolve_rg_executable() -> str | None:
-    """Resolve bundled ripgrep binary first, falling back to system PATH."""
+def _which(name: str, path: str | None = None) -> str | None:
+    return shutil.which(name, path=path) if path is not None else shutil.which(name)
+
+
+_PS_PROFILE_PATH_RE = re.compile(r"(?:^|[\\/ _])profile\.ps1\b", re.IGNORECASE)
+
+
+def _is_powershell_profile_security_error(head_text: str) -> bool:
+    """Detect startup $PROFILE execution-policy failures without matching user script errors."""
+    if not head_text or "PSSecurityException" not in head_text:
+        return False
+    leading = "\n".join(head_text[:4096].splitlines()[:20])
+    exc_idx = leading.find("PSSecurityException")
+    if exc_idx < 0:
+        return False
+    before_exc = re.sub(r"\r?\n\s*", "", leading[:exc_idx])
+    return bool(_PS_PROFILE_PATH_RE.search(before_exc))
+
+
+def resolve_rg_executable(path: str | None = None) -> str | None:
+    """Resolve bundled ripgrep binary first, falling back to merged system PATH."""
     bundled = _bundled_rg_executable()
     if bundled:
         return bundled
-    return shutil.which("rg") or (shutil.which("rg.exe") if os.name == "nt" else None)
+    search_path = path if path is not None else child_environment().get("PATH")
+    return _which("rg", path=search_path) or (_which("rg.exe", path=search_path) if os.name == "nt" else None)
 
 
-def child_environment():
+class PreparedCommand(list):
+    """Argv list carrying optional per-invocation environment overrides and launch flags."""
+
+    def __init__(
+        self,
+        iterable=(),
+        *,
+        env_overrides: Mapping[str, str] | None = None,
+        powershell_login_profile: bool = False,
+    ):
+        super().__init__(iterable)
+        self.env_overrides = (
+            {str(k): str(v) for k, v in env_overrides.items() if not str(k).upper().startswith("RYNMESH_")}
+            if env_overrides
+            else None
+        )
+        self.powershell_login_profile = bool(powershell_login_profile)
+
+
+def _expand_windows_vars(raw: str, env: Mapping[str, str]) -> str:
+    env_upper = {k.upper(): v for k, v in env.items()}
+    expanded = re.sub(
+        r"%([^%]+)%",
+        lambda m: env_upper.get(m.group(1).upper(), m.group(0)),
+        raw,
+    )
+    return os.path.expandvars(expanded)
+
+
+def _read_windows_registry_paths() -> list[str]:
+    reg = winreg
+    if reg is None:
+        return []
+    values: list[str] = []
+    for hive, subkey in (
+        (reg.HKEY_CURRENT_USER, "Environment"),
+        (reg.HKEY_LOCAL_MACHINE, _WINDOWS_SYSTEM_ENV_KEY),
+    ):
+        try:
+            with reg.OpenKey(hive, subkey) as key_handle:
+                raw_val, _ = reg.QueryValueEx(key_handle, "Path")
+                if isinstance(raw_val, str) and raw_val.strip():
+                    values.append(raw_val)
+        except OSError:
+            continue
+    return values
+
+
+def _merge_windows_registry_path(env: dict[str, str]) -> None:
+    path_keys = [k for k in env if k.upper() == "PATH"]
+    current_path = env.get("PATH")
+    if current_path is None and path_keys:
+        current_path = env[path_keys[0]]
+    for key in path_keys:
+        if key != "PATH":
+            env.pop(key, None)
+    sources = [current_path or ""]
+    for raw_reg_path in _read_windows_registry_paths():
+        sources.append(_expand_windows_vars(raw_reg_path, env))
+    seen: set[str] = set()
+    merged: list[str] = []
+    for source in sources:
+        for segment in source.split(";"):
+            cleaned = segment.strip().strip('"')
+            if not cleaned:
+                continue
+            norm = cleaned.rstrip("\\/").lower()
+            if norm not in seen:
+                seen.add(norm)
+                merged.append(cleaned)
+    if merged or current_path is not None:
+        env["PATH"] = ";".join(merged)
+
+
+def _start_environment_warmup() -> None:
+    global _WINDOWS_WARMUP_STARTED
+    if os.name != "nt":
+        login_environment.start_warmup()
+        return
+    with _WINDOWS_WARMUP_LOCK:
+        if _WINDOWS_WARMUP_STARTED:
+            return
+        _WINDOWS_WARMUP_STARTED = True
+    threading.Thread(
+        target=_read_windows_registry_paths,
+        daemon=True,
+        name="ryn-win-env-warmup",
+    ).start()
+
+
+def _pop_env_case_aware(env: dict[str, str], key: str) -> None:
+    if os.name == "nt":
+        target = key.upper()
+        for existing in [k for k in env if k.upper() == target]:
+            env.pop(existing, None)
+    else:
+        env.pop(key, None)
+
+
+def _set_env_case_aware(env: dict[str, str], key: str, value: str) -> None:
+    _pop_env_case_aware(env, key)
+    env[key] = value
+
+
+def child_environment(*, task_id: str | None = None, tty: bool = False) -> dict[str, str]:
     """The node's own configuration and secrets must not reach model-driven commands.
 
     RYNMESH_LOCAL_TOKEN/RYNMESH_NETWORK_KEY would hand node control to any command the model
     runs, and RYNMESH_HOME & co. change how a project's own tests behave (a run reported five
     false "pre-existing" failures because of them).
     """
-    env = {key: value for key, value in os.environ.items() if not key.upper().startswith("RYNMESH_")}
+    env = strip_rynmesh_env(os.environ)
+    if os.name != "nt":
+        for volatile_key in login_environment.IGNORED_KEYS:
+            env.pop(volatile_key, None)
+        captured = login_environment.captured_for_child()
+        for key, value in captured.items():
+            if key not in login_environment.IGNORED_KEYS and not key.upper().startswith("RYNMESH_"):
+                env[key] = value
+    else:
+        _merge_windows_registry_path(env)
+
+    # Fixed child overrides (applied after login/registry merge, before bundled rg PATH prepend).
+    for fixed_key, fixed_val in (
+        ("PAGER", "cat"),
+        ("GIT_PAGER", "cat"),
+        ("GH_PAGER", "cat"),
+        ("NO_COLOR", "1"),
+        ("PYTHONUTF8", "1"),
+        ("PYTHONIOENCODING", "utf-8"),
+        ("RYN_VERSION", __version__),
+    ):
+        _set_env_case_aware(env, fixed_key, fixed_val)
+    if not tty:
+        _set_env_case_aware(env, "TERM", "dumb")
+    else:
+        existing_term = next((env[k] for k in env if (k.upper() == "TERM" if os.name == "nt" else k == "TERM")), None)
+        if existing_term == "dumb":
+            _pop_env_case_aware(env, "TERM")
+    if task_id is not None:
+        _set_env_case_aware(env, "RYN_TASK_ID", str(task_id))
+    else:
+        _pop_env_case_aware(env, "RYN_TASK_ID")
+
     bundled = _bundled_rg_executable()
     if bundled:
-        bundled_dir = str(Path(bundled).parent)
+        sep = ";" if os.name == "nt" else ":"
+        bundled_dir = os.path.dirname(bundled)
+        norm_bundled = bundled_dir.rstrip("\\/").lower() if os.name == "nt" else bundled_dir.rstrip("/")
         current_path = env.get("PATH", "")
-        parts = current_path.split(os.pathsep) if current_path else []
-        if bundled_dir not in parts:
-            env["PATH"] = bundled_dir + (os.pathsep + current_path if current_path else "")
+        parts = [
+            p
+            for p in (current_path.split(sep) if current_path else [])
+            if p and ((p.rstrip("\\/").lower() if os.name == "nt" else p.rstrip("/")) != norm_bundled)
+        ]
+        env["PATH"] = sep.join([bundled_dir, *parts]) if parts else bundled_dir
     return env
 
 
@@ -84,22 +432,76 @@ class Processes:
         self.lock = threading.RLock()
         self.changed = threading.Condition(self.lock)
         self.items = {}
+        self.boot_id = "boot_" + uuid.uuid4().hex
         atexit.register(self.close)
+        _start_environment_warmup()
 
     def close(self):
         with self.lock:
             items = list(self.items.values())
         for item in items:
-            if item["process"].poll() is None or item.get("tty"):
-                terminate(item["process"])
-            if item.get("cleanup_done"):
-                item["cleanup_done"].wait(5)
+            if item.get("_closed"):
+                continue
+            proc = item["process"]
+            cleanup_done = item.get("cleanup_done")
+            try:
+                if (
+                    proc.poll() is None
+                    or item.get("tty")
+                    or (cleanup_done is not None and not cleanup_done.is_set())
+                ):
+                    terminate(proc)
+                if cleanup_done is not None:
+                    cleanup_done.wait(5)
+            except Exception:
+                pass
+            finally:
+                if proc.poll() is not None and (cleanup_done is None or cleanup_done.is_set()):
+                    item["_closed"] = True
 
-    def start(self, args, cwd, task_id, timeout, allowed, cancelled, *, operation_id=None, tty=False, rows=24, cols=80):
+    def _evict_completed_locked(self, task_id):
+        now_mono = time.monotonic()
+        for val in self.items.values():
+            if val["process"].poll() is not None and val.get("ended_at") is None:
+                val["ended_at"] = now_mono
+
+        def _evict_key(pair):
+            _k, val = pair
+            return (
+                val.get("ended_at") if val.get("ended_at") is not None else now_mono,
+                val.get("last_read_at") if val.get("last_read_at") is not None else 0.0,
+                val.get("started_at") if val.get("started_at") is not None else 0.0,
+            )
+
+        while sum(v.get("task_id") == task_id for v in self.items.values()) >= MAX_TASK_PROCESSES:
+            completed_task = [
+                (k, v)
+                for k, v in self.items.items()
+                if v.get("task_id") == task_id and v["process"].poll() is not None
+            ]
+            if not completed_task:
+                break
+            victim_id, _ = min(completed_task, key=_evict_key)
+            self.items.pop(victim_id, None)
+
+        while len(self.items) >= MAX_GLOBAL_PROCESSES:
+            completed_all = [
+                (k, v)
+                for k, v in self.items.items()
+                if v["process"].poll() is not None
+            ]
+            if not completed_all:
+                break
+            victim_id, _ = min(completed_all, key=_evict_key)
+            self.items.pop(victim_id, None)
+
+    def start(self, args, cwd, task_id, timeout=None, allowed=lambda: True, cancelled=lambda: False, *, operation_id=None, tty=False, rows=24, cols=80, env_overrides=None, stdin_mode="pipe"):
         # Task-state callbacks can acquire the Agent store lock; never call one
         # while holding the process-table lock (preview takes them in reverse).
         if type(tty) is not bool:
             raise AgentProcessStartRejected("agent_invalid_terminal_mode")
+        if stdin_mode not in {"closed", "pipe"}:
+            raise AgentProcessStartRejected("agent_invalid_stdin_mode")
         if tty:
             validate_size(rows, cols)
             check_pty_support()
@@ -111,19 +513,51 @@ class Processes:
                 for v in self.items.values()
             ):
                 raise AgentProcessStartRejected("agent_process_already_running")
-            if sum(v["process"].poll() is None for v in self.items.values()) >= 8:
-                raise AgentProcessStartRejected("agent_process_capacity")
-            # Evict only completed processes, never running ones.
-            for key in list(self.items):
-                if len(self.items) < 128:
-                    break
-                if self.items[key]["process"].poll() is not None:
-                    self.items.pop(key)
+            # Evict earliest-finished, least-recently-read completed entries before checking capacity.
+            self._evict_completed_locked(task_id)
+            task_running_ids = [
+                k for k, v in self.items.items()
+                if v.get("task_id") == task_id and v["process"].poll() is None
+            ]
+            global_running_count = sum(v["process"].poll() is None for v in self.items.values())
+            if len(task_running_ids) >= MAX_TASK_PROCESSES or global_running_count >= MAX_GLOBAL_PROCESSES:
+                raise AgentProcessStartRejected(
+                    "agent_process_capacity",
+                    correction=(
+                        "Too many background processes are running. Stop unused processes with "
+                        "ryn_process_stop before starting another command."
+                    ),
+                    details={
+                        "running_process_ids": task_running_ids,
+                        "task_limit": MAX_TASK_PROCESSES,
+                        "global_limit": MAX_GLOBAL_PROCESSES,
+                    },
+                )
+            proc_env = child_environment(task_id=task_id, tty=tty)
+            for extra_env in (getattr(args, "env_overrides", None), env_overrides):
+                if isinstance(extra_env, Mapping):
+                    for key, value in extra_env.items():
+                        if not str(key).upper().startswith("RYNMESH_"):
+                            proc_env[str(key)] = str(value)
+            cmd_args = list(args)
             flags = 0x4 | 0x08000000 if os.name == "nt" else 0
             try:
-                process = ConPtyProcess(args, cwd, child_environment(), rows, cols) if tty else subprocess.Popen(args, cwd=str(cwd), stdin=subprocess.PIPE,
-                                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=child_environment(),
-                                           creationflags=flags, start_new_session=os.name != "nt")
+                pty_cls = (
+                    ConPtyProcess
+                    if (os.name == "nt" or ConPtyProcess is not _DEFAULT_CONPTY_CLS)
+                    else PosixPtyProcess
+                )
+                stdin_target = subprocess.DEVNULL if stdin_mode == "closed" else subprocess.PIPE
+                process = pty_cls(cmd_args, cwd, proc_env, rows, cols) if tty else subprocess.Popen(
+                    cmd_args,
+                    cwd=str(cwd),
+                    stdin=stdin_target,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    env=proc_env,
+                    creationflags=flags,
+                    start_new_session=os.name != "nt",
+                )
             except OSError:
                 if tty:
                     # The host may have started the command before IPC failed.
@@ -142,21 +576,42 @@ class Processes:
                     process.wait(timeout=5)
                     raise
             ident = "process_" + uuid.uuid4().hex
-            item = {"process": process, "task_id": task_id, "operation_id": operation_id, "output": bytearray(),
-                    "truncated": False, "reason": None, "reader_done": threading.Event(),
+            decoder = OutputDecoder()
+            started_mono = time.monotonic()
+            item = {"process": process, "task_id": task_id, "operation_id": operation_id,
+                    "timeout": timeout, "started_at": started_mono, "last_read_at": started_mono, "ended_at": None,
+                    "head": "", "tail": collections.deque(), "tail_chars": 0,
+                    "total_chars": 0, "dropped_chars": 0, "decoder": decoder,
+                    "reason": None, "reader_done": threading.Event(),
                     "last_empty_offset": None, "empty_poll_count": 0, "tty": tty,
-                    "input_lock": None if tty else threading.Lock(), "stdin_closed": False, "cleanup_done": threading.Event()}
+                    "powershell_login_profile": bool(getattr(args, "powershell_login_profile", False)),
+                    "input_lock": None if tty else threading.Lock(), "stdin_closed": (not tty and stdin_mode == "closed"), "cleanup_done": threading.Event()}
             self.items[ident] = item
 
         def read():
+            flushed_done = False
             try:
                 while chunk := (process.read_output() if tty else os.read(process.stdout.fileno(), 8192)):
+                    text = item["decoder"].decode(chunk, final=False)
+                    if text:
+                        with self.changed:
+                            _append_output(item, text)
+                            self.changed.notify_all()
+                flushed = item["decoder"].decode(b"", final=True)
+                flushed_done = True
+                if flushed:
                     with self.changed:
-                        room = max(0, MAX_OUTPUT - len(item["output"]))
-                        item["output"].extend(chunk[:room])
-                        item["truncated"] |= len(chunk) > room
+                        _append_output(item, flushed)
                         self.changed.notify_all()
             finally:
+                if not flushed_done:
+                    try:
+                        flushed = item["decoder"].decode(b"", final=True)
+                    except Exception:
+                        flushed = ""
+                    if flushed:
+                        with self.changed:
+                            _append_output(item, flushed)
                 if not tty:
                     process.stdout.close()
                 elif item["cleanup_done"].wait(5):
@@ -167,24 +622,28 @@ class Processes:
                     self.changed.notify_all()
 
         def watch():
-            deadline = time.monotonic() + timeout
+            deadline = (time.monotonic() + float(timeout)) if timeout is not None else None
             try:
                 while process.poll() is None:
                     now_mono = time.monotonic()
+                    timed_out = deadline is not None and now_mono >= deadline
                     # cancelled() belongs to the launch dispatch and becomes
                     # true at an ordinary running -> queued scheduler handoff.
                     # Session lifetime follows durable task permissions instead;
                     # allowed() also observes owner cancellation and revocation.
-                    if now_mono >= deadline or not allowed():
-                        item["reason"] = "timeout" if now_mono >= deadline else "permission_or_task_stopped"
+                    if timed_out or not allowed():
+                        item["reason"] = "timeout" if timed_out else "permission_or_task_stopped"
                         terminate(process)
                         break
-                    time.sleep(min(0.05, max(0.005, deadline - now_mono)))
+                    sleep_for = 0.05 if deadline is None else min(0.05, max(0.005, deadline - now_mono))
+                    time.sleep(sleep_for)
             finally:
                 # Closing a Windows job also cleans descendants after the shell exits.
                 terminate(process)
-                if not tty:
+                if not tty and process.stdin is not None:
                     process.stdin.close()
+                if item.get("ended_at") is None:
+                    item["ended_at"] = time.monotonic()
                 item["cleanup_done"].set()
                 item["cleanup_done"] = COMPLETED
                 with self.changed:
@@ -258,15 +717,33 @@ class Processes:
     def get(self, ident, task_id):
         with self.lock:
             item = self.items.get(ident)
-            if item is None or item["task_id"] != task_id:
+            if item is None:
+                if isinstance(ident, str) and _PROCESS_ID_RE.match(ident):
+                    raise AgentToolRejected(
+                        "agent_process_not_found",
+                        correction=LOST_PROCESS_CORRECTION,
+                        details={
+                            "reason": "process_table_is_in_memory",
+                            "may_have_been_lost_on_restart": True,
+                            "restart_note_in_history": True,
+                        },
+                    )
+                raise AgentToolRejected("agent_process_not_found")
+            if item["task_id"] != task_id:
                 raise AgentToolRejected("agent_process_not_found")
             return item
 
     def read(self, ident, task_id, offset=0, *, wait_seconds=DEFAULT_READ_WAIT, cancelled=None,
-             coalesce_empty_poll=False):
+             coalesce_empty_poll=False, tail=False):
         if (type(wait_seconds) not in {int, float} or not math.isfinite(wait_seconds)
                 or not 0 <= wait_seconds <= MAX_READ_WAIT):
             raise AgentToolRejected("agent_invalid_process_wait")
+        if type(tail) is not bool or type(offset) is not int:
+            raise AgentToolRejected("agent_invalid_process_offset")
+        if tail:
+            if offset not in (0, -1):
+                raise AgentToolRejected("agent_invalid_process_offset")
+            offset = -1
         item = self.get(ident, task_id)
         effective_wait = float(wait_seconds)
         if coalesce_empty_poll and item.get("last_empty_offset") == offset and effective_wait < 1.0:
@@ -278,20 +755,46 @@ class Processes:
             if cancelled is not None and cancelled():
                 raise AgentToolRejected("agent_cancelled")
             with self.changed:
-                output = bytes(item["output"]).decode("utf-8", errors="replace")
-                if type(offset) is not int or not 0 <= offset <= len(output):
+                total_chars = item["total_chars"]
+                if offset < -1 or offset > total_chars:
                     raise AgentToolRejected("agent_invalid_process_offset")
                 running = item["process"].poll() is None
                 remaining = deadline - time.monotonic()
-                if (offset < len(output) and running) or (not running and item["reader_done"].is_set()) or remaining <= 0:
-                    end = min(len(output), offset + PAGE_CHARS)
-                    text = output[offset:end]
-                    if offset == 0 and not running and len(output) > PAGE_CHARS:
+                has_unread = (total_chars > 0) if offset == -1 else (offset < total_chars)
+                if (has_unread and running) or (not running and item["reader_done"].is_set()) or remaining <= 0:
+                    head = item["head"]
+                    head_end = len(head)
+                    dropped = item["dropped_chars"]
+                    tail_start = head_end + dropped
+                    if offset == -1:
+                        min_start = tail_start if dropped > 0 else 0
+                        start = max(min_start, total_chars - PAGE_CHARS)
+                        end = total_chars
+                        text = _read_contiguous(item, start, end)
+                    elif offset == 0 and not running and total_chars > PAGE_CHARS and (dropped == 0 or head_end > 0):
                         # Failures and summaries are usually at the end of a finished
                         # command: show its head and tail; the middle stays pageable.
-                        end, tail = HEAD_CHARS, len(output) - (PAGE_CHARS - HEAD_CHARS)
-                        text = (output[:end] + f"\n... [{tail - end} characters omitted; ryn_process_read offset={end} reads them] ...\n"
-                                + output[tail:])
+                        if dropped == 0:
+                            end = min(HEAD_CHARS, total_chars)
+                            head_part = _read_contiguous(item, 0, end)
+                            tail_pos = max(end, total_chars - (PAGE_CHARS - len(head_part)))
+                        else:
+                            end = min(HEAD_CHARS, head_end)
+                            head_part = head[:end]
+                            tail_pos = max(tail_start, total_chars - (PAGE_CHARS - len(head_part)))
+                        tail_part = _read_contiguous(item, tail_pos, total_chars)
+                        text = (head_part
+                                + f"\n... [{tail_pos - end} characters omitted; ryn_process_read offset={end} reads them] ...\n"
+                                + tail_part)
+                    elif dropped > 0 and offset < head_end:
+                        end = min(head_end, offset + PAGE_CHARS)
+                        text = head[offset:end]
+                    elif dropped > 0 and offset < tail_start:
+                        end = tail_start
+                        text = f"[{tail_start - offset} characters dropped]\n"
+                    else:
+                        end = min(total_chars, offset + PAGE_CHARS)
+                        text = _read_contiguous(item, offset, end)
                     exit_code = item["process"].poll()
                     stop_reason = item["reason"] or (
                         None if running else ("exited" if exit_code == 0 else "exited_nonzero" if exit_code is not None else "terminated")
@@ -306,10 +809,12 @@ class Processes:
                         else:
                             item["last_empty_offset"] = None
                             item["empty_poll_count"] = 0
+                    output_encoding = getattr(item.get("decoder"), "encoding", None) or "utf-8"
                     payload = {"process_id": ident, "running": running,
                                "exit_code": exit_code, "output": text,
-                               "next_offset": end if end < len(output) else None, "output_length": len(output),
-                               "truncated": item["truncated"], "stop_reason": stop_reason,
+                               "output_encoding": output_encoding,
+                               "next_offset": end if end < total_chars else None, "output_length": total_chars,
+                               "dropped_chars": dropped, "truncated": dropped > 0, "stop_reason": stop_reason,
                                "empty_poll_count": int(item.get("empty_poll_count", 0))}
                     if item.get("tty"):
                         payload.update(tty=True, terminal_backend=item["process"].backend,
@@ -319,12 +824,26 @@ class Processes:
                                        output_complete=item["reader_done"].is_set())
                         if item["process"].error:
                             payload["terminal_error"] = item["process"].error
+                            if getattr(item["process"], "error_detail", None):
+                                payload["terminal_error_detail"] = item["process"].error_detail
                             payload["stop_reason"] = item["reason"] or "terminal_transport_error"
                     if payload["empty_poll_count"] >= 2 and running:
                         payload["poll_notice"] = (
                             "No new output at this offset yet; pass a larger wait_seconds (e.g. 10-20) "
                             "or stop the process instead of rapid polling at the same offset."
                         )
+                    if item.get("powershell_login_profile") and _is_powershell_profile_security_error(head):
+                        global _POWERSHELL_PROFILE_DISABLED
+                        with _POWERSHELL_PROFILE_LOCK:
+                            if not _POWERSHELL_PROFILE_DISABLED:
+                                _POWERSHELL_PROFILE_DISABLED = True
+                                item["profile_fallback_triggered"] = True
+                        if item.get("profile_fallback_triggered"):
+                            payload["profile_notice"] = POWERSHELL_PROFILE_FALLBACK_NOTICE
+                    now_read = time.monotonic()
+                    item["last_read_at"] = now_read
+                    if not running and item.get("ended_at") is None:
+                        item["ended_at"] = now_read
                     return payload
                 self.changed.wait(min(0.1, remaining))
 
@@ -366,15 +885,19 @@ class Processes:
                     raise AgentToolRejected("agent_terminal_resize_requires_empty_text")
                 process.resize(rows, cols)
             else:
-                # Windows console EOF is Ctrl+Z followed by Enter (application
-                # dependent). Ctrl+D may still be sent explicitly in text.
-                process.write_input({"interrupt": "\x03", "eof": "\x1a\r"}.get(control, text))
+                # Windows console EOF is Ctrl+Z followed by Enter; POSIX PTY EOF
+                # is Ctrl+D (\x04). Both are program-dependent and keep the PTY open.
+                eof_seq = "\x1a\r" if os.name == "nt" and getattr(process, "backend", None) != "posix_pty" else "\x04"
+                process.write_input({"interrupt": "\x03", "eof": eof_seq}.get(control, text))
             return {"process_id": ident, "input_delivered": True, "eof": False,
                     "control": control, "rows": process.rows, "cols": process.cols}
         if process.poll() is not None:
             raise AgentToolRejected("agent_process_not_running")
-        if item.get("stdin_closed"):
-            raise AgentToolRejected("agent_process_stdin_closed")
+        if item.get("stdin_closed") or process.stdin is None:
+            raise AgentToolRejected(
+                "agent_process_stdin_closed",
+                correction='Start the command with stdin="pipe" to write to it.',
+            )
         errors = []
 
         def send():
@@ -412,13 +935,23 @@ class Processes:
         return self.read(ident, task_id, wait_seconds=0)
 
 
-def shell_command(shell, command, *, tty=False):
+def shell_command(shell, command, *, tty=False, login=True, env: Mapping[str, str] | None = None):
     if os.name == "nt":
         if shell == "powershell":
-            executable = shutil.which("pwsh") or shutil.which("powershell")
+            search_path = (env if env is not None else child_environment()).get("PATH")
+            executable = _which("pwsh", path=search_path) or _which("powershell", path=search_path)
             if executable:
+                use_profile = bool(login) and not _POWERSHELL_PROFILE_DISABLED
                 prefix = "[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new(); $OutputEncoding=[Console]::OutputEncoding; "
-                return [executable, "-NoLogo", "-NoProfile", *([] if tty else ["-NonInteractive"]), "-Command", prefix + command]
+                argv = [
+                    executable,
+                    "-NoLogo",
+                    *([] if use_profile else ["-NoProfile"]),
+                    *([] if tty else ["-NonInteractive"]),
+                    "-Command",
+                    prefix + command,
+                ]
+                return PreparedCommand(argv, powershell_login_profile=True) if use_profile else argv
         elif shell == "cmd":
             return [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/s", "/c", "chcp 65001 >nul & " + command]
     elif shell == "sh":
@@ -426,34 +959,152 @@ def shell_command(shell, command, *, tty=False):
     raise AgentToolRejected("agent_shell_unavailable")
 
 
-def literal_read_command(arguments):
+POWERSHELL_CMDLET_MODULES: dict[str, str] = {
+    "get-filehash": "Microsoft.PowerShell.Utility",
+    "select-string": "Microsoft.PowerShell.Utility",
+    "select-object": "Microsoft.PowerShell.Utility",
+    "measure-object": "Microsoft.PowerShell.Utility",
+    "sort-object": "Microsoft.PowerShell.Utility",
+    "where-object": "Microsoft.PowerShell.Core",
+}
+
+
+def _ps_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _resolve_git_readonly_argv(words: list[str], search_path: str | None) -> list[str]:
+    explicit = _which(words[0], path=search_path) if ("/" in words[0] or "\\" in words[0]) else None
+    executable = explicit or _which("git", path=search_path) or (_which("git.exe", path=search_path) if os.name == "nt" else None)
+    if not executable:
+        raise AgentToolRejected("agent_shell_unavailable")
+    subcommand = words[1].lower()
+    tail_args = (
+        [words[1], *GIT_READONLY_DIFF_FLAGS, *words[2:]]
+        if subcommand in GIT_READONLY_DIFF_SUBCOMMANDS
+        else list(words[1:])
+    )
+    return [executable, "--no-pager", *SAFE_GIT_CONFIG, *tail_args]
+
+
+def _resolve_rg_readonly_argv(words: list[str], search_path: str | None) -> list[str]:
+    explicit = _which(words[0], path=search_path) if ("/" in words[0] or "\\" in words[0]) else None
+    executable = explicit or resolve_rg_executable()
+    if not executable:
+        raise AgentToolRejected("agent_ripgrep_unavailable_use_file_search")
+    return [executable, "--no-config", *words[1:]]
+
+
+def _format_powershell_cmdlet(cmd_key: str, words: list[str]) -> str:
+    module = POWERSHELL_CMDLET_MODULES.get(cmd_key, "Microsoft.PowerShell.Management")
+    args = [word if re.fullmatch(r"-[A-Za-z]+", word) else _ps_quote(word) for word in words[1:]]
+    return module + "\\" + cmd_key + (" " + " ".join(args) if args else "")
+
+
+def literal_read_command(arguments, *, env: Mapping[str, str] | None = None):
     """Execute recognized reads without shell expansion or ripgrep preprocessors."""
-    from .execution_policy import literal_command, shell_read
+    from .execution_policy import (
+        POWERSHELL_NON_ASCII_SYNTAX_CHARS,
+        _scan_literal_segments,
+        executable_key,
+        literal_command,
+        shell_read,
+    )
     if not shell_read(arguments):
         return None
     shell = arguments.get("shell", "powershell" if os.name == "nt" else "sh")
-    words = literal_command(arguments["command"], shell)
-    program = words[0].lower()
-    if program in {"git", "git.exe"}:
-        executable = shutil.which("git") or (shutil.which("git.exe") if os.name == "nt" else None)
-        if not executable:
-            raise AgentToolRejected("agent_shell_unavailable")
-        return [executable, "--no-pager", *words[1:]]
-    if program in {"rg", "rg.exe"} or shell == "sh":
-        executable = resolve_rg_executable() if program in {"rg", "rg.exe"} else shutil.which(program)
-        if not executable:
-            if program in {"rg", "rg.exe"}:
-                raise AgentToolRejected("agent_ripgrep_unavailable_use_file_search")
-            raise AgentToolRejected("agent_shell_unavailable")
-        return [executable, *(["--no-config"] if program in {"rg", "rg.exe"} else []), *words[1:]]
-    # Resolve built-ins explicitly; no user profile, aliases or module with the
-    # same command name can replace the intended cmdlet. Quote argument values
-    # again so the permission check and actual interpretation agree.
-    import re
-    module = "Microsoft.PowerShell.Utility" if program == "select-string" else "Microsoft.PowerShell.Management"
-    args = [word if re.fullmatch(r"-[A-Za-z]+", word) else "'" + word.replace("'", "''") + "'"
-            for word in words[1:]]
-    return shell_command(shell, module + "\\" + program + " " + " ".join(args))
+    single_words = literal_command(arguments["command"], shell)
+    parsed = [(None, single_words)] if single_words is not None else _scan_literal_segments(arguments["command"], shell)
+    if not parsed:
+        return None
+    if shell == "powershell" and any(
+        ch in POWERSHELL_NON_ASCII_SYNTAX_CHARS
+        for _, seg_words in parsed
+        for word in seg_words
+        for ch in word
+    ):
+        raise AgentToolRejected("agent_invalid_operation_classification")
+    resolved_env = env if env is not None else child_environment()
+    search_path = resolved_env.get("PATH")
+
+    if len(parsed) == 1:
+        words = parsed[0][1]
+        key = executable_key(words[0])
+        key_low = key.lower()
+        if (key == "git") if shell == "sh" else (key_low in {"git", "git.exe"}):
+            return PreparedCommand(
+                _resolve_git_readonly_argv(words, search_path),
+                env_overrides={"GIT_OPTIONAL_LOCKS": "0"},
+            )
+        if (key == "rg") if shell == "sh" else (key_low in {"rg", "rg.exe"}):
+            return _resolve_rg_readonly_argv(words, search_path)
+        if shell == "sh":
+            executable = _which(words[0], path=search_path)
+            if not executable:
+                raise AgentToolRejected("agent_shell_unavailable")
+            return [executable, *words[1:]]
+        # Resolve built-ins explicitly; no user profile, aliases or module with the
+        # same command name can replace the intended cmdlet. Quote argument values
+        # again so the permission check and actual interpretation agree.
+        return shell_command(shell, _format_powershell_cmdlet(key_low, words), login=False, env=resolved_env)
+
+    has_git = False
+    if shell == "sh":
+        parts: list[str] = []
+        for op, words in parsed:
+            if op is not None:
+                parts.append(f"; " if op == ";" else f" {op} ")
+            key = executable_key(words[0])
+            if key == "git":
+                has_git = True
+                seg_argv = _resolve_git_readonly_argv(words, search_path)
+            elif key == "rg":
+                seg_argv = _resolve_rg_readonly_argv(words, search_path)
+            else:
+                executable = _which(words[0], path=search_path)
+                if not executable:
+                    raise AgentToolRejected("agent_shell_unavailable")
+                seg_argv = [executable, *words[1:]]
+            parts.append(" ".join(shlex.quote(tok) for tok in seg_argv))
+        argv = shell_command(shell, "".join(parts), login=False, env=resolved_env)
+        return PreparedCommand(list(argv), env_overrides={"GIT_OPTIONAL_LOCKS": "0"}) if has_git else argv
+
+    # Multi-segment PowerShell: group pipe stages into pipelines, qualify cmdlets,
+    # and lower && / || to PowerShell 5.1-compatible status checks.
+    statements: list[list[tuple[str | None, list[str]]]] = [[]]
+    for op, words in parsed:
+        key_low = executable_key(words[0]).lower()
+        if key_low in {"git", "git.exe"}:
+            has_git = True
+            stage_str = "& " + " ".join(_ps_quote(tok) for tok in _resolve_git_readonly_argv(words, search_path))
+        elif key_low in {"rg", "rg.exe"}:
+            stage_str = "& " + " ".join(_ps_quote(tok) for tok in _resolve_rg_readonly_argv(words, search_path))
+        else:
+            stage_str = _format_powershell_cmdlet(key_low, words)
+        if op is None:
+            statements[-1].append((None, [stage_str]))
+        elif op == "|":
+            statements[-1][-1][1].append(stage_str)
+        elif op == ";":
+            statements.append([(None, [stage_str])])
+        else:
+            statements[-1].append((op, [stage_str]))
+
+    rendered_statements: list[str] = []
+    for chain in statements:
+        first_pipe = " | ".join(chain[0][1])
+        if len(chain) == 1:
+            rendered_statements.append(first_pipe)
+        else:
+            pieces = [f"{first_pipe}; $__ryn_ok = $?"]
+            for cond_op, pipe_stages in chain[1:]:
+                pipe_expr = " | ".join(pipe_stages)
+                cond = "$__ryn_ok" if cond_op == "&&" else "-not $__ryn_ok"
+                pieces.append(f"if ({cond}) {{ {pipe_expr}; $__ryn_ok = $? }}")
+            rendered_statements.append("; ".join(pieces))
+    ps_script = "; ".join(rendered_statements)
+    argv = shell_command(shell, ps_script, login=False, env=resolved_env)
+    return PreparedCommand(list(argv), env_overrides={"GIT_OPTIONAL_LOCKS": "0"}) if has_git else argv
 
 
 def _contains_unavailable_rg_segment(command: str) -> bool:
@@ -510,16 +1161,28 @@ def _contains_unavailable_rg_segment(command: str) -> bool:
 
 def prepare_shell_command(arguments):
     """Resolve the actual executable before recording a durable dispatch intent."""
+    login = arguments.get("login", True)
+    if type(login) is not bool:
+        raise AgentToolRejected("agent_invalid_login_mode")
+    stdin = arguments.get("stdin")
+    if stdin is not None and stdin not in {"closed", "pipe"}:
+        raise AgentToolRejected("agent_invalid_stdin_mode")
     if arguments.get("tty"):
         check_pty_support()
         validate_size(arguments.get("rows", 24), arguments.get("cols", 80))
     elif "rows" in arguments or "cols" in arguments:
         raise AgentToolRejected("agent_terminal_size_requires_tty")
-    literal = literal_read_command(arguments)
+    env = child_environment()
+    literal = literal_read_command(arguments, env=env)
     if literal is not None:
         return literal
     command = arguments["command"]
     if not resolve_rg_executable() and _contains_unavailable_rg_segment(command):
         raise AgentToolRejected("agent_ripgrep_unavailable_use_file_search")
     return shell_command(
-        arguments.get("shell", "powershell" if os.name == "nt" else "sh"), command, tty=arguments.get("tty", False))
+        arguments.get("shell", "powershell" if os.name == "nt" else "sh"),
+        command,
+        tty=arguments.get("tty", False),
+        login=login,
+        env=env,
+    )

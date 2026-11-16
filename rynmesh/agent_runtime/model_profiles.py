@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 CATALOG = "ryn-model-profiles-1"
 SETTING = "model_profile_overrides"
@@ -84,13 +85,47 @@ class Profile:
     revision: int
     routes: frozenset | None  # None fits every route
     notes: tuple  # ((note_id, text), ...)
+    progress_placement: str = "tail"
+    custom_tools: bool = False
 
 
 PROFILES = {
-    "generic": Profile("generic", 1, None, ()),
+    "generic": Profile("generic", 1, None, (), progress_placement="tail", custom_tools=False),
     "codex-cli": Profile("codex-cli", 1, frozenset({"codex_cli"}),
-                         (("codex_backend_tools", CODEX_BACKEND_TOOLS),)),
+                         (("codex_backend_tools", CODEX_BACKEND_TOOLS),),
+                         progress_placement="header", custom_tools=False),
 }
+
+OPENAI_RESPONSES_HOSTS = frozenset({"api.openai.com"})
+
+
+def supports_custom_tools(model: dict | None) -> bool:
+    """Custom freeform tools are default-off and enabled only on verified OpenAI Responses sources."""
+    if not isinstance(model, dict) or route_of(model) != "openai_responses":
+        return False
+    if model.get("source", "local_api") != "local_api":
+        return False
+    if model.get("custom_tools") is False:
+        return False
+    evidence = model.get("evidence")
+    if not isinstance(evidence, dict):
+        settings = model.get("model_settings")
+        evidence = settings.get("evidence") if isinstance(settings, dict) else None
+    ct_ev = evidence.get("custom_tools") if isinstance(evidence, dict) else None
+    if isinstance(ct_ev, dict) and ct_ev.get("status") == "unsupported":
+        return False
+    if model.get("custom_tools") is True or (isinstance(ct_ev, dict) and ct_ev.get("status") == "supported"):
+        return True
+    provider = str(model.get("provider") or "").strip().lower()
+    base_url = str(model.get("base_url") or "").strip()
+    host = (urlparse(base_url).hostname or "").lower() if base_url else ""
+    if provider != "openai" and host not in OPENAI_RESPONSES_HOSTS:
+        return False
+    tools_ev = evidence.get("tools") if isinstance(evidence, dict) else None
+    return (
+        model.get("tool_support") == "supported"
+        or (isinstance(tools_ev, dict) and tools_ev.get("status") == "supported")
+    )
 
 
 def route_of(model: dict | None) -> str:
@@ -144,9 +179,15 @@ def resolve(model: dict | None, *, override=None) -> dict:
                            "unknown_route" if route == "unknown" else "no_route_profile")
     notes = (*profile.notes, *capability_notes(model))
     text = HEADER + "".join("\n- " + body for _, body in notes) if notes else ""
+    custom_tools = (
+        profile.custom_tools
+        if basis == "override"
+        else (profile.custom_tools or supports_custom_tools(model))
+    )
     return {"catalog": CATALOG, "profile": profile.id, "revision": profile.revision, "basis": basis,
             "route": route, "fallback_reason": fallback_reason, "override_status": override_status,
-            "notes": [note_id for note_id, _ in notes], "instructions": text}
+            "notes": [note_id for note_id, _ in notes], "instructions": text,
+            "progress_placement": profile.progress_placement, "custom_tools": custom_tools}
 
 
 def overrides_from(settings) -> dict:

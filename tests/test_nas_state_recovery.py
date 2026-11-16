@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from cryptography.fernet import Fernet
 
+from rynmesh import os_secret
 from rynmesh.nas import NasPlugin
 
 
@@ -48,7 +49,7 @@ def test_missing_key_with_existing_state_isolates_corrupt_state_and_recovers(tmp
     nas_dir = tmp_path / "plugins" / "nas"
     original_ciphertext = (nas_dir / "state.enc").read_bytes()
     assert b"secret-password-t1" not in original_ciphertext
-    (nas_dir / "key").unlink()
+    (nas_dir / "key.protected").unlink()
 
     with caplog.at_level(logging.WARNING, logger="rynmesh.nas"):
         recovered = NasPlugin(tmp_path)
@@ -80,7 +81,7 @@ def test_missing_key_with_existing_state_isolates_corrupt_state_and_recovers(tmp
 
     recovered.enable(True)
     assert (nas_dir / "state.enc").exists()
-    assert (nas_dir / "key").exists()
+    assert (nas_dir / "key.protected").exists()
     assert corrupt_files[0].exists()
 
     reloaded = NasPlugin(tmp_path)
@@ -94,7 +95,7 @@ def test_garbage_or_corrupt_state_enc_isolates_corrupt_file_and_recovers(tmp_pat
     home_garbage = tmp_path / "garbage_state"
     _make_configured_plugin(home_garbage, password="secret-password-t2")
     nas_dir = home_garbage / "plugins" / "nas"
-    existing_key = (nas_dir / "key").read_bytes()
+    existing_key = os_secret.unprotect((nas_dir / "key.protected").read_bytes())
     (nas_dir / "state.enc").write_bytes(b"garbage-not-fernet-token")
 
     with caplog.at_level(logging.WARNING, logger="rynmesh.nas"):
@@ -114,7 +115,7 @@ def test_garbage_or_corrupt_state_enc_isolates_corrupt_file_and_recovers(tmp_pat
     assert "corrupt-" not in json.dumps(status)
 
     recovered.save()
-    assert (nas_dir / "key").read_bytes() == existing_key
+    assert os_secret.unprotect((nas_dir / "key.protected").read_bytes()) == existing_key
     assert (nas_dir / "state.enc").exists()
     assert "recovered_from_corruption" not in NasPlugin(home_garbage).status()
 
@@ -132,13 +133,13 @@ def test_garbage_or_corrupt_state_enc_isolates_corrupt_file_and_recovers(tmp_pat
     home_bad_key = tmp_path / "bad_key_with_state"
     _make_configured_plugin(home_bad_key, password="secret-password-t2b")
     bad_key_dir = home_bad_key / "plugins" / "nas"
-    (bad_key_dir / "key").write_bytes(b"broken-key-bytes")
+    (bad_key_dir / "key.protected").write_bytes(b"broken-key-bytes")
     recovered_both = NasPlugin(home_bad_key)
-    assert recovered_both.status()["recovered_from_corruption"]["reason"] == "ValueError"
+    assert recovered_both.status()["recovered_from_corruption"]["reason"] in {"ValueError", "OSSecretError"}
     assert len(list(bad_key_dir.glob("state.enc.corrupt-*"))) == 1
-    assert len(list(bad_key_dir.glob("key.corrupt-*"))) == 1
+    assert len(list(bad_key_dir.glob("key.protected.corrupt-*"))) == 1
     recovered_both.save()
-    assert (bad_key_dir / "key").exists()
+    assert (bad_key_dir / "key.protected").exists()
     assert (bad_key_dir / "state.enc").exists()
 
 
@@ -155,7 +156,7 @@ def test_existing_valid_key_without_state_reuses_key_on_first_save(tmp_path):
     plugin.enable(True)
     plugin.configure(_sample_smb_body(password="reused-key-secret"))
 
-    assert (nas_dir / "key").read_bytes() == original_key
+    assert os_secret.unprotect((nas_dir / "key.protected").read_bytes()) == original_key
     assert list(nas_dir.glob("key.corrupt-*")) == []
     assert (nas_dir / "state.enc").exists()
 
@@ -180,7 +181,7 @@ def test_corrupt_key_without_state_isolates_corrupt_key_and_creates_new_key(tmp_
     corrupt_keys = list(nas_dir.glob("key.corrupt-*"))
     assert len(corrupt_keys) == 1
     assert corrupt_keys[0].read_bytes() == b"corrupt-key-not-base64-fernet"
-    new_key = (nas_dir / "key").read_bytes()
+    new_key = os_secret.unprotect((nas_dir / "key.protected").read_bytes())
     Fernet(new_key)
 
     restarted = NasPlugin(tmp_path)
@@ -213,7 +214,7 @@ def test_normal_state_roundtrip_unchanged(tmp_path):
 
 def test_transient_key_or_state_lock_retries_without_reset(tmp_path, monkeypatch):
     original = _make_configured_plugin(tmp_path)
-    for name in ('key', 'state.enc'):
+    for name in ('key.protected', 'state.enc'):
         target = original.directory / name
         before = {p.name: p.read_bytes() for p in original.directory.iterdir() if p.is_file()}
         real = Path.read_bytes
@@ -236,7 +237,7 @@ def test_persistent_read_errors_never_quarantine_valid_state_or_key(tmp_path, mo
     original = _make_configured_plugin(tmp_path)
     before = {p.name: p.read_bytes() for p in original.directory.iterdir() if p.is_file()}
     real = Path.read_bytes
-    for name in ('key', 'state.enc'):
+    for name in ('key.protected', 'state.enc'):
         target = original.directory / name
         calls = []
         def locked(path, *, target=target, calls=calls):
@@ -259,7 +260,7 @@ def test_save_key_access_error_preserves_key_and_existing_state(tmp_path, monkey
     original.cipher = None
     real = Path.read_bytes
     def locked(path):
-        if path == original.directory / 'key':
+        if path == original.directory / 'key.protected':
             raise PermissionError('key temporarily inaccessible')
         return real(path)
     with monkeypatch.context() as patch:
@@ -273,7 +274,7 @@ def test_failed_quarantine_cannot_enable_replacing_the_original(tmp_path, monkey
     original = _make_configured_plugin(tmp_path)
     target = original.directory / 'state.enc'
     target.write_bytes(b'damaged envelope to preserve')
-    key = (original.directory / 'key').read_bytes()
+    key = (original.directory / 'key.protected').read_bytes()
     real = Path.rename
     def blocked(path, destination):
         if path == target:
@@ -283,5 +284,5 @@ def test_failed_quarantine_cannot_enable_replacing_the_original(tmp_path, monkey
     with pytest.raises(PermissionError):
         NasPlugin(tmp_path)
     assert target.read_bytes() == b'damaged envelope to preserve'
-    assert (original.directory / 'key').read_bytes() == key
+    assert (original.directory / 'key.protected').read_bytes() == key
     assert not list(original.directory.glob('*.corrupt-*'))

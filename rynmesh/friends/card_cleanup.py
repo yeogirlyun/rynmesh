@@ -19,7 +19,8 @@ def controls(data):
             or not isinstance(value.get('deleted'), list) or len(value['deleted']) > LIMIT
             or any(not isinstance(key, str) or not 0 < len(key) <= 256 for key in value['deleted'])
             or not isinstance(value.get('receipts'), list) or len(value['receipts']) > 32
-            or value.get('pending') is not None and not isinstance(value['pending'], dict)):
+            or value.get('pending') is not None and not isinstance(value['pending'], dict)
+            or 'auto_cleaned_count' in value and (type(value['auto_cleaned_count']) is not int or value['auto_cleaned_count'] < 0)):
         raise ValueError('friend_card_cleanup_version_unsupported')
     pending = value['pending']
     if pending is not None:
@@ -42,6 +43,27 @@ def controls(data):
 
 def erased(data, identifier):
     return identifier in controls(data)['deleted']
+
+
+def mark_auto_erased(data, identifiers: list[str]) -> list[str]:
+    control = controls(data)
+    deleted_set = set(control['deleted'])
+    evicted: list[str] = []
+    for cid in identifiers:
+        if not isinstance(cid, str) or not 0 < len(cid) <= 256:
+            continue
+        if cid not in deleted_set and len(deleted_set) >= LIMIT:
+            break
+        deleted_set.add(cid)
+        evicted.append(cid)
+    if evicted:
+        control['deleted'] = sorted(deleted_set)
+        control['auto_cleaned_count'] = int(control.get('auto_cleaned_count', 0)) + len(evicted)
+    return evicted
+
+
+def auto_cleaned_count(data) -> int:
+    return int(controls(data).get('auto_cleaned_count', 0))
 
 
 def digest(raw):

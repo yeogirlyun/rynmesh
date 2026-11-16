@@ -6,26 +6,45 @@ tool loops may continue an in-memory thread (see codex_threads).
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import os
 import queue
 import shutil
+import stat
 import subprocess
 import tempfile
 import threading
 import time
 import uuid
 from collections import deque
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext, suppress
 from functools import lru_cache
 from pathlib import Path
 
-from . import codex_threads
+import rynmesh
+from rynmesh.atomic_io import AtomicIOError, atomic_write_bytes
+from rynmesh.private_permissions import restrict_windows_acl
+
+from . import codex_threads, process_guard
 from .adapters import AdapterError
 from .chat import reported_token_count, validate_tool_arguments
 from .process_guard import spawn, terminate
 from .reasoning import metadata as reasoning_metadata
 from .safety import MAX_OUTPUT, MAX_TEMP, check_disk, private_storage_bytes
+
+STORAGE_CHECK_INTERVAL = getattr(process_guard, "STORAGE_CHECK_INTERVAL", 1.0)
+_PROXY_ENV_KEYS = frozenset({"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"})
+
+
+def _proxy_configured(environ=None) -> bool:
+    source = os.environ if environ is None else environ
+    return any(
+        isinstance(key, str) and key.upper() in _PROXY_ENV_KEYS
+        and isinstance(value, str) and bool(value.strip())
+        for key, value in source.items()
+    )
 
 
 def cleanup_stale_workspaces(base: Path):
@@ -48,8 +67,199 @@ def cleanup_stale_workspaces(base: Path):
             continue
 
 
+_logger = logging.getLogger(__name__)
+_AUTH_GUARD = threading.Lock()
+_AUTH_SEMAPHORES: dict[str, threading.BoundedSemaphore] = {}
+
+
+def _auth_semaphore(source: Path) -> threading.BoundedSemaphore:
+    key = os.path.normcase(os.path.abspath(os.fspath(source)))
+    with _AUTH_GUARD:
+        sem = _AUTH_SEMAPHORES.get(key)
+        if sem is None:
+            sem = threading.BoundedSemaphore(1)
+            _AUTH_SEMAPHORES[key] = sem
+        return sem
+
+
 @contextmanager
-def private_workspace(*, copy_auth=True, image_generation=False):
+def _hold_cli_auth_lock(source: Path, *, timeout: float | None = 30.0):
+    budget = 300.0 if timeout is None else max(0.01, float(timeout))
+    deadline = time.monotonic() + budget
+    sem = _auth_semaphore(source)
+    if not sem.acquire(timeout=budget):
+        raise AdapterError("cli_auth_busy", code="runtime_busy", diagnostics={"reason": "cli_auth_busy"})
+    lock_path = source.with_name(source.name + ".ryn.lock")
+    handle = None
+    locked = False
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = lock_path.open("a+b")
+        handle.seek(0, os.SEEK_END)
+        if not handle.tell():
+            handle.write(b"0")
+            handle.flush()
+        while True:
+            handle.seek(0)
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locked = True
+                break
+            except OSError:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise AdapterError(
+                        "cli_auth_busy",
+                        code="runtime_busy",
+                        diagnostics={"reason": "cli_auth_busy"},
+                    ) from None
+                time.sleep(min(0.02, max(0.005, remaining)))
+        yield lock_path
+    finally:
+        if handle is not None:
+            if locked:
+                with suppress(OSError):
+                    handle.seek(0)
+                    if os.name == "nt":
+                        import msvcrt
+
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        import fcntl
+
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            with suppress(OSError):
+                handle.close()
+        sem.release()
+
+
+def _remove_replica_with_retries(replica: Path, *, attempts: int = 8) -> None:
+    for attempt in range(attempts):
+        try:
+            if not replica.exists() and not replica.is_symlink():
+                return
+            with suppress(OSError):
+                os.chmod(replica, 0o600)
+            replica.unlink(missing_ok=True)
+            if not replica.exists() and not replica.is_symlink():
+                return
+        except OSError:
+            if attempt + 1 < attempts:
+                time.sleep(min(0.01 * (2 ** attempt), 0.1))
+                continue
+            with suppress(OSError):
+                with replica.open("r+b") as wipe_fh:
+                    wipe_fh.truncate(0)
+                    wipe_fh.flush()
+
+
+@contextmanager
+def borrowed_cli_auth_file(
+    source: Path,
+    replica: Path,
+    *,
+    timeout: float | None = 30.0,
+    diagnostics_out: dict | None = None,
+):
+    """Hold an exclusive lease on ``source``, stage ``replica``, write back valid refreshes, and delete ``replica``."""
+    if not source.is_file():
+        yield
+        return
+    with _hold_cli_auth_lock(source, timeout=timeout):
+        orig_sha256: str | None = None
+        orig_mtime_ns: int | None = None
+        orig_mode = 0o600
+        if source.is_file():
+            st = source.stat()
+            if st.st_size > 1024 * 1024:
+                raise AdapterError("CLI authentication file exceeds limit")
+            orig_bytes = source.read_bytes()
+            orig_sha256 = hashlib.sha256(orig_bytes).hexdigest()
+            orig_mtime_ns = st.st_mtime_ns
+            if os.name != "nt":
+                orig_mode = stat.S_IMODE(st.st_mode) or 0o600
+            with replica.open("xb") as output:
+                with suppress(OSError):
+                    os.chmod(replica, 0o600)
+                if os.name == "nt":
+                    with suppress(OSError):
+                        restrict_windows_acl(replica)
+                output.write(orig_bytes)
+        try:
+            yield
+        finally:
+            try:
+                if orig_sha256 is not None and replica.is_file():
+                    rep_stat = replica.stat()
+                    if rep_stat.st_size <= 1024 * 1024:
+                        new_bytes = replica.read_bytes()
+                        new_sha256 = hashlib.sha256(new_bytes).hexdigest()
+                        if new_sha256 != orig_sha256:
+                            valid_json = False
+                            try:
+                                parsed = json.loads(new_bytes.decode("utf-8"))
+                                valid_json = isinstance(parsed, dict)
+                            except (UnicodeDecodeError, ValueError):
+                                valid_json = False
+                            if not valid_json:
+                                _logger.warning("Borrowed CLI auth replica is invalid JSON; discarding without writeback")
+                                if diagnostics_out is not None:
+                                    diagnostics_out["auth_writeback"] = "invalid_replica_json"
+                            else:
+                                cur_sha256 = (
+                                    hashlib.sha256(source.read_bytes()).hexdigest()
+                                    if source.is_file()
+                                    else None
+                                )
+                                if cur_sha256 != orig_sha256:
+                                    _logger.warning(
+                                        "Borrowed CLI auth file was modified externally during session (orig_mtime_ns=%s); keeping external file",
+                                        orig_mtime_ns,
+                                    )
+                                    if diagnostics_out is not None:
+                                        diagnostics_out["auth_writeback"] = "skipped_external_change"
+                                else:
+                                    try:
+                                        atomic_write_bytes(source, new_bytes, mode=orig_mode)
+                                        if diagnostics_out is not None:
+                                            diagnostics_out["auth_writeback"] = "updated"
+                                    except AtomicIOError as exc:
+                                        if os.name == "nt" and isinstance(exc.__cause__, OSError):
+                                            atomic_write_bytes(source, new_bytes, mode=0o644)
+                                            if diagnostics_out is not None:
+                                                diagnostics_out["auth_writeback"] = "updated_weak_acl"
+                                            _logger.warning(
+                                                "Wrote back refreshed CLI auth without Windows ACL (%s)",
+                                                type(exc.__cause__).__name__,
+                                            )
+                                        else:
+                                            _logger.warning(
+                                                "Failed to write back refreshed CLI auth (%s)",
+                                                type(exc).__name__,
+                                            )
+                                            if diagnostics_out is not None:
+                                                diagnostics_out["auth_writeback"] = "writeback_failed"
+            except OSError as exc:
+                _logger.warning("Failed inspecting borrowed CLI auth replica (%s)", type(exc).__name__)
+            finally:
+                _remove_replica_with_retries(replica)
+
+
+@contextmanager
+def private_workspace(
+    *,
+    copy_auth=True,
+    image_generation=False,
+    auth_timeout: float | None = 30.0,
+    diagnostics_out: dict | None = None,
+):
     check_disk(tempfile.gettempdir())
     base = Path(tempfile.gettempdir()) / "rynmesh-private-cli"
     base.mkdir(mode=0o700, exist_ok=True)
@@ -66,15 +276,19 @@ def private_workspace(*, copy_auth=True, image_generation=False):
         home = root / "codex"
         home.mkdir(mode=0o700)
         auth = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "auth.json"
-        if copy_auth and auth.is_file():
-            if auth.stat().st_size > 1024 * 1024:
-                raise AdapterError("CLI authentication file exceeds limit")
-            target = home / "auth.json"
-            with target.open("xb") as output:
-                os.chmod(target, 0o600)
-                output.write(auth.read_bytes())
-        # Do not load the owner's config, plugins, hooks, skills or MCP servers.
-        config = '''approval_policy = "never"
+        auth_ctx = (
+            borrowed_cli_auth_file(
+                auth,
+                home / "auth.json",
+                timeout=auth_timeout,
+                diagnostics_out=diagnostics_out,
+            )
+            if copy_auth
+            else nullcontext()
+        )
+        with auth_ctx:
+            # Do not load the owner's config, plugins, hooks, skills or MCP servers.
+            config = '''approval_policy = "never"
 sandbox_mode = "read-only"
 web_search = "disabled"
 project_doc_max_bytes = 0
@@ -114,27 +328,29 @@ default_mode_request_user_input = false
 skill_search = false
 skip_host_skill_discovery = true
 '''
-        if image_generation:
-            # Only the dedicated origin-side image tool opts in. Normal model
-            # sessions remain inference-only. Native imagegen requires its host.
-            config = config.replace("image_generation = false", "image_generation = true")
-            config = config.replace("code_mode_host = false", "code_mode_host = true")
-        (home / "config.toml").write_text(config, encoding="utf-8")
-        keep = {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "LANG", "LC_ALL",
-                "OPENAI_API_KEY", "SSL_CERT_FILE", "SSL_CERT_DIR"}
-        env = {k: v for k, v in os.environ.items() if k.upper() in keep}
-        env.update(CODEX_HOME=str(home), HOME=directory, USERPROFILE=directory,
-                   TMP=directory, TEMP=directory, TMPDIR=directory,
-                   XDG_CONFIG_HOME=directory, XDG_CACHE_HOME=directory,
-                   APPDATA=directory, LOCALAPPDATA=directory,
-                   RUST_LOG="off", OTEL_SDK_DISABLED="true")
-        yield root, env
+            if image_generation:
+                # Only the dedicated origin-side image tool opts in. Normal model
+                # sessions remain inference-only. Native imagegen requires its host.
+                config = config.replace("image_generation = false", "image_generation = true")
+                config = config.replace("code_mode_host = false", "code_mode_host = true")
+            (home / "config.toml").write_text(config, encoding="utf-8")
+            keep = {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "LANG", "LC_ALL",
+                    "OPENAI_API_KEY", "SSL_CERT_FILE", "SSL_CERT_DIR",
+                    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+                    "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE"}
+            env = {k: v for k, v in os.environ.items() if k.upper() in keep}
+            env.update(CODEX_HOME=str(home), HOME=directory, USERPROFILE=directory,
+                       TMP=directory, TEMP=directory, TMPDIR=directory,
+                       XDG_CONFIG_HOME=directory, XDG_CACHE_HOME=directory,
+                       APPDATA=directory, LOCALAPPDATA=directory,
+                       RUST_LOG="off", OTEL_SDK_DISABLED="true")
+            yield root, env
 
 
 @lru_cache(maxsize=8)
 def _check_protocol(executable: str, mtime: int):
     """Old binaries can silently ignore JSON fields: refuse unsafe versions."""
-    with private_workspace() as (root, env):
+    with private_workspace(copy_auth=False) as (root, env):
         out = root / "schema"
         process = spawn([executable, "app-server", "generate-json-schema", "--experimental",
                          "--out", str(out)], cwd=str(root), env=env, timeout=20)
@@ -165,7 +381,10 @@ class CodexRPC:
     cancelled = None
     output_bytes = 0
     _delta_signalled = False
-    _checked_at = 0.0
+    deadline: float | None = None
+    _storage_error: BaseException | None = None
+    proxy_configured = False
+    omitted_attachments = 0
     stage = "init"
     session_mode = "stateless"
     events_received = 0
@@ -175,19 +394,31 @@ class CodexRPC:
     def __init__(self, executable: str, timeout: float = 30, cpu_seconds: float | None = None,
                  *, image_generation=False, cancelled=None):
         _check_protocol(executable, Path(executable).stat().st_mtime_ns)
-        self.workspace = private_workspace(image_generation=True) if image_generation else private_workspace()
+        self._auth_diagnostics: dict = {}
+        self._auth_lease = None
+        self.workspace = private_workspace(
+            copy_auth=False,
+            image_generation=bool(image_generation),
+        )
         self.output_limit = 40 * 1024 * 1024 if image_generation else MAX_OUTPUT
         self.cancelled = cancelled
         self.root, env = self.workspace.__enter__()
+        self._auth_source = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "auth.json"
+        self._auth_replica = self.root / "codex" / "auth.json"
+        self.proxy_configured = _proxy_configured(env)
+        self.omitted_attachments = 0
+        self._storage_error = None
         try:
+            self.acquire_auth_lease(timeout)
             self.process = spawn([executable, "app-server", "--stdio", "--strict-config"],
                                  cwd=str(self.root), env=env, timeout=cpu_seconds or timeout)
         except BaseException:
+            self.release_auth_lease()
             self.workspace.__exit__(None, None, None)
             raise
         self.deadline = time.monotonic() + timeout
-        self.queue = queue.Queue(maxsize=256)
-        self.pending = deque(maxlen=256)
+        self.queue = queue.Queue(maxsize=4096)
+        self.pending = deque(maxlen=4096)
         self.deltas = []
         self.delta_lock = threading.Lock()
         self.sequence = 0
@@ -198,25 +429,77 @@ class CodexRPC:
         self.events_received = 0
         self.deltas_received = 0
         self.last_event_at = None
+        self.storage_watcher = threading.Thread(target=self._watch_storage, daemon=True)
+        self.storage_watcher.start()
         self.reader = threading.Thread(target=self._read, daemon=True)
         self.reader.start()
 
     def diagnostics(self) -> dict:
         now_mono = time.monotonic()
         last_at = self.last_event_at
-        return {
+        diag = {
             "rpc_stage": self.stage,
             "session_mode": self.session_mode,
             "events_received": self.events_received,
             "deltas_received": self.deltas_received,
             "last_event_age_seconds": round(max(0.0, now_mono - last_at), 3) if last_at is not None else None,
             "process_alive": self.process.poll() is None,
+            "proxy_configured": bool(self.proxy_configured),
         }
+        if self.omitted_attachments > 0:
+            diag["omitted_attachments"] = int(self.omitted_attachments)
+        if getattr(self, "_auth_diagnostics", None) and "auth_writeback" in self._auth_diagnostics:
+            diag["auth_writeback"] = self._auth_diagnostics["auth_writeback"]
+        return diag
 
     def _raise_with_diagnostics(self, message: str, *, code: str | None = None):
         err = AdapterError(message, code=code) if code is not None else AdapterError(message)
         err.diagnostics = self.diagnostics()
         raise err
+
+    def _enqueue(self, item) -> bool:
+        fallback_deadline: float | None = None
+        while not self.closed.is_set():
+            try:
+                self.queue.put_nowait(item)
+                return True
+            except queue.Full:
+                deadline = self.deadline
+                if deadline is None:
+                    if fallback_deadline is None:
+                        fallback_deadline = time.monotonic() + 1.0
+                    deadline = fallback_deadline
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise
+                try:
+                    self.queue.put(item, timeout=min(0.1, remaining))
+                    return True
+                except queue.Full:
+                    if time.monotonic() >= deadline:
+                        raise
+        return False
+
+    def _watch_storage(self):
+        while not self.closed.wait(max(0.01, float(STORAGE_CHECK_INTERVAL))):
+            try:
+                check_disk(self.root)
+                if private_storage_bytes(self.root) > MAX_TEMP:
+                    self.failure = "CLI temporary storage limit exceeded"
+                else:
+                    continue
+            except BaseException as exc:
+                self._storage_error = exc
+            terminate(self.process)
+            with suppress(queue.Full):
+                self.queue.put_nowait(None)
+            break
+
+    def _check_storage_failure(self):
+        if self._storage_error is not None:
+            raise self._storage_error
+        if self.failure:
+            self._raise_with_diagnostics(self.failure)
 
     def _read(self):
         try:
@@ -232,10 +515,8 @@ class CodexRPC:
                 self.last_event_at = time.monotonic()
                 self.events_received += 1
                 # Queuing every token delta can overwhelm the bounded queue while
-                # receive() checks disk and private storage, notably in the
-                # installed Windows build during large tool proposals. A streaming
-                # turn buffers assistant text beside the queue and queues at most
-                # one wake-up signal; the caller thread forwards it.
+                # a streaming turn buffers assistant text beside the queue and
+                # queues at most one wake-up signal; the caller thread forwards it.
                 # Preserve ALL requests/responses and execution-boundary events;
                 # provider tool requests must still be rejected by the caller.
                 if isinstance(value, dict) and "id" not in value:
@@ -245,13 +526,14 @@ class CodexRPC:
                         with self.delta_lock:
                             self.deltas.append(value["params"])
                             signal, self._delta_signalled = not self._delta_signalled, True
-                        if signal:
-                            self.queue.put(DELTA_SIGNAL, timeout=1)
+                        if signal and not self._enqueue(DELTA_SIGNAL):
+                            break
                         continue
                     if method not in {"item/started", "item/completed",
                                       "thread/tokenUsage/updated", "turn/completed", "error"}:
                         continue
-                self.queue.put(value, timeout=1)
+                if not self._enqueue(value):
+                    break
         except (ValueError, OSError, queue.Full):
             self.failure = "CLI protocol output invalid or excessive"
         finally:
@@ -284,21 +566,14 @@ class CodexRPC:
         while True:
             if self.cancelled and self.cancelled():
                 self._raise_with_diagnostics("Image generation cancelled", code="cancelled")
-            if self.failure:
-                self._raise_with_diagnostics(self.failure)
+            self._check_storage_failure()
             if time.monotonic() >= self.deadline:
                 self._raise_with_diagnostics("Codex app-server timed out", code="inference_timeout")
-            # Walking private storage per streamed event would dominate a turn.
-            if time.monotonic() - self._checked_at >= 0.25:
-                check_disk(self.root)
-                size = private_storage_bytes(self.root)
-                if size > MAX_TEMP:
-                    self._raise_with_diagnostics("CLI temporary storage limit exceeded")
-                self._checked_at = time.monotonic()
             try:
                 value = self.queue.get(timeout=min(0.25, max(0.01, self.deadline - time.monotonic())))
             except queue.Empty:
                 continue
+            self._check_storage_failure()
             if value is None:
                 self._raise_with_diagnostics("Codex app-server disconnected", code="runtime_connection_failed")
             if not isinstance(value, dict):
@@ -329,7 +604,7 @@ class CodexRPC:
 
     def initialize(self):
         self.stage = "initialize"
-        self.call("initialize", {"clientInfo": {"name": "rynmesh", "version": "0.6.2"},
+        self.call("initialize", {"clientInfo": {"name": "rynmesh", "version": rynmesh.__version__},
                                  "capabilities": {"experimentalApi": True}})
         self.send({"method": "initialized"})
 
@@ -347,8 +622,8 @@ class CodexRPC:
         return measured if measured is not None else estimate
 
     def alive(self) -> bool:
-        return (not self.closed.is_set() and not self.failure and self.reader.is_alive()
-                and self.process.poll() is None)
+        return (not self.closed.is_set() and not self.failure and self._storage_error is None
+                and self.reader.is_alive() and self.process.poll() is None)
 
     def settle(self) -> bool:
         """Drop an idle thread's stale notifications; any server request voids it."""
@@ -373,9 +648,29 @@ class CodexRPC:
                     pass
         return clean
 
+    def acquire_auth_lease(self, timeout: float | None = 30.0) -> None:
+        if self._auth_lease is not None:
+            return
+        self._auth_diagnostics.pop("auth_writeback", None)
+        ctx = borrowed_cli_auth_file(
+            self._auth_source,
+            self._auth_replica,
+            timeout=timeout,
+            diagnostics_out=self._auth_diagnostics,
+        )
+        ctx.__enter__()
+        self._auth_lease = ctx
+
+    def release_auth_lease(self) -> None:
+        ctx, self._auth_lease = self._auth_lease, None
+        if ctx is not None:
+            ctx.__exit__(None, None, None)
+
     def close(self):
         self.closed.set()
         terminate(self.process)
+        if hasattr(self, "storage_watcher"):
+            self.storage_watcher.join(timeout=2)
         self.reader.join(timeout=2)
         for pipe in (self.process.stdin, self.process.stdout):
             try:
@@ -385,7 +680,10 @@ class CodexRPC:
         self.pending.clear()
         while not self.queue.empty():
             self.queue.get_nowait()
-        self.workspace.__exit__(None, None, None)
+        try:
+            self.release_auth_lease()
+        finally:
+            self.workspace.__exit__(None, None, None)
 
 
 def list_models(executable: str):
@@ -547,7 +845,7 @@ def _start_thread(rpc, *, model, dynamic, instructions):
     return session["thread"]["id"]
 
 
-def _prompt(body, output_schema, choice):
+def _prompt_with_omitted(body, output_schema, choice) -> tuple[str, int]:
     # Structured client-tool proposals already contain the complete role
     # transcript, schemas and tool_choice in their trusted framing. Wrapping
     # that single user string in another JSON envelope double-escapes every
@@ -555,9 +853,15 @@ def _prompt(body, output_schema, choice):
     messages = body["messages"]
     if ((output_schema is not None or body.get("_client_proposals")) and len(messages) == 1
             and messages[0].get("role") == "user" and isinstance(messages[0].get("content"), str)):
-        return messages[0]["content"]
+        return messages[0]["content"], 0
     from .cli_images import text_messages
-    return json.dumps({"messages": text_messages(messages), "tool_choice": choice}, ensure_ascii=False)
+    projected = text_messages(messages)
+    return json.dumps({"messages": projected, "tool_choice": choice}, ensure_ascii=False), projected.omitted_count
+
+
+def _prompt(body, output_schema, choice):
+    prompt, _ = _prompt_with_omitted(body, output_schema, choice)
+    return prompt
 
 
 def _raise_rpc_error(rpc, message: str, *, code: str | None = None):
@@ -686,6 +990,7 @@ def _stateless_chat(adapter, body, *, task_id, timeout_s, model="", output_schem
     choice, names, schemas, dynamic = _client_tools(body)
     rpc = CodexRPC(adapter._command_path(), timeout_s)
     rpc.session_mode = "stateless"
+    rpc.omitted_attachments = 0
     with adapter._lock:
         adapter._running[task_id] = rpc.process
         cancelled = task_id in adapter._cancelled
@@ -694,12 +999,20 @@ def _stateless_chat(adapter, body, *, task_id, timeout_s, model="", output_schem
             raise AdapterError("task_cancelled")
         rpc.initialize()
         thread_id = _start_thread(rpc, model=model, dynamic=dynamic, instructions=_instructions(body, output_schema))
-        prompt = _prompt(body, output_schema, choice)
+        prompt, omitted = _prompt_with_omitted(body, output_schema, choice)
+        rpc.omitted_attachments = omitted
         answer, usage, calls = _turn(rpc, thread_id, body, prompt, deadline=started + timeout_s,
                                      output_schema=output_schema, names=names, schemas=schemas, on_text=on_text)
-        return _result(answer, usage, calls, choice, prompt, started)
+        if hasattr(rpc, "release_auth_lease"):
+            rpc.release_auth_lease()
+        result = _result(answer, usage, calls, choice, prompt, started)
+        if omitted > 0:
+            result["diagnostics"] = {**(result.get("diagnostics") or {}), "omitted_attachments": omitted}
+        if getattr(rpc, "_auth_diagnostics", None) and "auth_writeback" in rpc._auth_diagnostics:
+            result["diagnostics"] = {**(result.get("diagnostics") or {}), "auth_writeback": rpc._auth_diagnostics["auth_writeback"]}
+        return result
     except AdapterError as exc:
-        if not getattr(exc, "diagnostics", None):
+        if not getattr(exc, "diagnostics", None) and hasattr(rpc, "diagnostics"):
             exc.diagnostics = rpc.diagnostics()
         raise
     finally:
@@ -729,6 +1042,7 @@ def _pooled_chat(adapter, body, conversation, *, task_id, timeout_s, model, outp
         session = pool.session(CodexRPC(command, timeout_s, codex_threads.SESSION_CPU_SECONDS), key)
     rpc = session.rpc
     rpc.session_mode = "resumed" if resumed else "started"
+    rpc.omitted_attachments = 0
     with adapter._lock:
         adapter._running[task_id] = rpc.process
         cancelled = task_id in adapter._cancelled
@@ -736,7 +1050,10 @@ def _pooled_chat(adapter, body, conversation, *, task_id, timeout_s, model, outp
     try:
         if cancelled:
             raise AdapterError("task_cancelled")
+        if resumed and hasattr(rpc, "acquire_auth_lease"):
+            rpc.acquire_auth_lease(max(0.01, deadline - time.monotonic()))
         turn_body = body
+        omitted = 0
         if resumed:
             prompt = conversation.render(conversation.update)
             from .cli_images import image_inputs
@@ -745,20 +1062,29 @@ def _pooled_chat(adapter, body, conversation, *, task_id, timeout_s, model, outp
             rpc.initialize()
             session.thread_id = _start_thread(rpc, model=model, dynamic=[],
                                               instructions=_instructions(body, output_schema, persistent=True))
-            prompt = _prompt(body, output_schema, "auto")
+            prompt, omitted = _prompt_with_omitted(body, output_schema, "auto")
+            rpc.omitted_attachments = omitted
         turn_started = time.monotonic()
         try:
             answer, usage, calls = _turn(rpc, session.thread_id, turn_body, prompt, deadline=deadline,
                                          output_schema=output_schema, on_text=on_text, resumed=resumed)
         finally:
             session.busy_seconds += time.monotonic() - turn_started
+        if hasattr(rpc, "release_auth_lease"):
+            rpc.release_auth_lease()
         session.turns += 1
         result = _result(answer, usage, calls, "auto", prompt, started)
+        if omitted > 0:
+            result["diagnostics"] = {**(result.get("diagnostics") or {}), "omitted_attachments": omitted}
+        if getattr(rpc, "_auth_diagnostics", None) and "auth_writeback" in rpc._auth_diagnostics:
+            result["diagnostics"] = {**(result.get("diagnostics") or {}), "auth_writeback": rpc._auth_diagnostics["auth_writeback"]}
         conversation.session = session
         pool.stats["resumed" if resumed else "started"] += 1
         return result
     except AdapterError as exc:
-        if not getattr(exc, "diagnostics", None):
+        if hasattr(rpc, "release_auth_lease"):
+            rpc.release_auth_lease()
+        if not getattr(exc, "diagnostics", None) and hasattr(rpc, "diagnostics"):
             exc.diagnostics = rpc.diagnostics()
         session.close()
         with adapter._lock:
@@ -768,13 +1094,19 @@ def _pooled_chat(adapter, body, conversation, *, task_id, timeout_s, model, outp
         if not fallback:
             raise
     except BaseException:
+        if hasattr(rpc, "release_auth_lease"):
+            rpc.release_auth_lease()
         session.close()
         raise
     finally:
-        with adapter._lock:
-            adapter._running.pop(task_id, None)
-            if not fallback:
-                adapter._cancelled.discard(task_id)
+        try:
+            if hasattr(rpc, "release_auth_lease"):
+                rpc.release_auth_lease()
+        finally:
+            with adapter._lock:
+                adapter._running.pop(task_id, None)
+                if not fallback:
+                    adapter._cancelled.discard(task_id)
     pool.stats["fallback"] += 1
     return _stateless_chat(adapter, body, task_id=task_id, timeout_s=deadline - time.monotonic(),
                            model=model, output_schema=output_schema, on_text=on_text)

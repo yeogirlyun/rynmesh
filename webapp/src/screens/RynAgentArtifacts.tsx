@@ -6,19 +6,21 @@ import { Check, ChevronDown, Copy, Download, ExternalLink, FileText, FolderOpen,
 import { AgentAPIError, agentReadBackoff, isTransientAgentReadError, agentFileUrl, agentTaskState, isAgentActive, rynAgent, type AgentArtifact, type AgentArtifactListing, type AgentFileArtifact, type AgentTask } from "../domain/rynAgent";
 import { isTauriDesktop } from "../domain/nodeUrl";
 import { NasPreview } from "../personal/NasPreview";
-import { decodeAgentFileText, isOfficePreview, readAgentFilePreview } from "../domain/agentFilePreview";
+import { decodeAgentFileText, isOfficePreview, type OfficePreviewLoader, readAgentFilePreview } from "../domain/agentFilePreview";
 import { AgentFileContext, fileAvailable } from "./RynAgentFileContext";
 import RynAgentPreviewSurface, { AgentPreviewHostContext } from "./RynAgentPreviewSurface";
 import "../personal/nas.css";
 
 // Tool results that can add, change or remove a task's workspace files or their render evidence.
-const FILE_TOOLS = new Set(["ryn_file_write", "ryn_file_edit", "ryn_file_manage", "ryn_apply_patch", "ryn_file_read", "ryn_render_inspect", "ryn_image_generate", "ryn_shell_execute", "ryn_process_read", "ryn_process_stop"]);
+export const FILE_TOOLS = new Set(["ryn_file_write", "ryn_file_edit", "ryn_file_manage", "ryn_apply_patch", "ryn_file_read", "ryn_render_inspect", "ryn_image_generate", "ryn_table_export", "ryn_download_file", "ryn_shell_execute", "ryn_process_read", "ryn_process_stop"]);
+
+export function latestFileToolResultSeq(task: Pick<AgentTask, "events">): number | undefined {
+  return task.events.filter(e => e.type === "tool_result" && e.tool && FILE_TOOLS.has(e.tool)).at(-1)?.seq;
+}
 const EMPTY_FILES: AgentFileArtifact[] = [];
 // A listing error that is not a connection or server failure is retried this often, then left to Refresh.
 const ARTIFACT_PERSISTENT_RETRY_MS = 15000;
 const ARTIFACT_PERSISTENT_RETRIES = 4;
-const HELPER_SCRIPT_RE = /\.(?:py|pyc|pyo|json|jsonl|sh|bash|zsh|ps1|bat|cmd|js|mjs|cjs|ts|tsx|yaml|yml|toml|ini|cfg|log|tmp|bak)$/i;
-const INTERMEDIATE_RENDER_RE = /(?:^|[/_-])(?:page|slide|render|preview|crop|tmp|temp|check)[-_]?\d*\.(?:png|jpe?g|webp|ppm|pgm|pbm)$/i;
 
 function deduplicateByName(items: AgentFileArtifact[]): AgentFileArtifact[] {
   const byName = new Map<string, AgentFileArtifact>();
@@ -168,7 +170,8 @@ export function TurnDeliverables({ turnIndex }: { turnIndex: number }) {
 }
 
 export function TaskArtifacts({ task, maxTurnIndex = 0, children }: { task: AgentTask; maxTurnIndex?: number; children?: ReactNode }) {
-  const { t } = useTranslation("rynAgent");
+  const { t, i18n } = useTranslation("rynAgent");
+  const zh = i18n.language.startsWith("zh");
   const [listing, setListing] = useState<AgentArtifactListing | null>(null);
   const [chosen, setChosen] = useState<AgentArtifact | null>(null);
   const [chosenFile, setChosenFile] = useState("");
@@ -177,7 +180,7 @@ export function TaskArtifacts({ task, maxTurnIndex = 0, children }: { task: Agen
   const [error, setError] = useState(false);
   const [reload, setReload] = useState(0);
   const writes = task.events.filter(e => e.type === "tool_result" && e.tool === "ryn_create_text_file").length;
-  const fileResults = task.events.filter(e => e.type === "tool_result" && e.tool && FILE_TOOLS.has(e.tool)).at(-1)?.seq;
+  const fileResults = latestFileToolResultSeq(task);
   const finished = !isAgentActive(agentTaskState(task));
   useEffect(() => { setListing(null); setChosenFile(""); }, [task.id]);
   useEffect(() => {
@@ -250,16 +253,19 @@ export function TaskArtifacts({ task, maxTurnIndex = 0, children }: { task: Agen
   // The version, not the listing object's identity, decides when bytes are fetched again.
   }, [task.id, file?.id, file?.sha256, file?.media_type, file?.name, t]);
   const readFileText = useCallback(async (signal: AbortSignal) => decodeAgentFileText(await loadFile(signal)), [loadFile]);
-  const readDocument = useCallback(async (signal: AbortSignal) => {
+  const readDocument = useCallback<OfficePreviewLoader>(async (signal, options) => {
     if (!file) throw new Error(t("artifactReadError"));
-    try { return await readAgentFilePreview(task.id, file, signal); }
+    try { return await readAgentFilePreview(task.id, file, signal, options); }
     catch (reason) {
       if (reason instanceof AgentAPIError && reason.code === "agent_artifact_content_changed" && !signal.aborted) setReload(n => n + 1);
       throw reason;
     }
-  }, [task.id, file?.id, file?.sha256, t]);
+  }, [task.id, file?.id, file?.sha256, file?.bytes, t]);
   const items = listing?.artifacts || [];
-  const resultFiles = files.filter(item => item.source !== "computer_observation" && !item.path.replaceAll("\\", "/").startsWith(".ryn/computer/") && !item.path.replaceAll("\\", "/").startsWith(".ryn/attachments/"));
+  const resultFiles = files.filter(item => {
+    const normalized = item.path.replaceAll("\\", "/");
+    return item.source !== "computer_observation" && !normalized.startsWith(".ryn/") && !normalized.includes("/.ryn/");
+  });
   const deliverablesByTurn = useMemo(() => {
     const map = new Map<number, AgentFileArtifact[]>();
     for (const item of resultFiles) {
@@ -279,19 +285,23 @@ export function TaskArtifacts({ task, maxTurnIndex = 0, children }: { task: Agen
   const deliverables = useMemo(() => deduplicateByName(currentTurnFiles.filter(item => item.role === "deliverable")), [currentTurnFiles]);
   const deliverableNames = useMemo(() => new Set(deliverables.map(item => item.name.trim().toLowerCase())), [deliverables]);
   const supporting = useMemo(() => deduplicateByName(
-    currentTurnFiles.filter(item =>
-      item.role !== "deliverable" &&
-      item.source !== "command" &&
-      !HELPER_SCRIPT_RE.test(item.name) &&
-      !INTERMEDIATE_RENDER_RE.test(item.path.replaceAll("\\", "/")) &&
-      !deliverableNames.has(item.name.trim().toLowerCase()),
-    ),
+    currentTurnFiles.filter(item => {
+      const normalized = item.path.replaceAll("\\", "/");
+      return (
+        item.role !== "deliverable" &&
+        item.role !== "helper" &&
+        !normalized.startsWith(".ryn/") &&
+        !normalized.includes("/.ryn/") &&
+        !deliverableNames.has(item.name.trim().toLowerCase())
+      );
+    }),
   ), [currentTurnFiles, deliverableNames]);
-  // A file on disk is still work in progress until the turn and its background
-  // file producers have settled. Keep the listing available for process previews.
-  const showCurrentFiles = finished && !listing?.pending_files;
-  const showLegacyArtifacts = !listing?.pending_files && (finished || !listing?.files?.length);
-  const showResultFiles = showCurrentFiles && (deliverables.length > 0 || supporting.length > 0);
+  const pendingFiles = Boolean(listing?.pending_files);
+  const showCurrentFiles = Boolean(listing);
+  const showLegacyArtifacts = !pendingFiles && (finished || !listing?.files?.length);
+  const hasCurrentFiles = deliverables.length > 0 || supporting.length > 0;
+  const showResultFiles = showCurrentFiles && (hasCurrentFiles || pendingFiles);
+  const unbackedMentions = listing?.unbacked_mentions || [];
   const partial = ["failed", "cancelled", "interrupted", "paused"].includes(agentTaskState(task));
   const availableCount = deliverables.filter(file => file.status !== "missing").length || supporting.filter(file => file.status !== "missing").length;
   useEffect(() => {
@@ -304,12 +314,17 @@ export function TaskArtifacts({ task, maxTurnIndex = 0, children }: { task: Agen
     {children}
     {showResultFiles && <section className="ra-files" aria-label={t(finished ? "resultFiles" : "filesSoFar")}>
       {error && items.length === 0 && <p role="alert">{t("artifactListError")} <button onClick={() => setReload(n => n + 1)}>{t("retry")}</button></p>}
-      {(!availableCount || partial) && <div className="ra-files-head"><span role="status" aria-live="polite">{availableCount ? <Check size={15} /> : <TriangleAlert size={15} />}{t(!availableCount ? "filesUnavailable" : "filesSavedPartial", { count: availableCount })}</span>
-        <button className="ra-icon" aria-label={t("refreshFiles")} title={t("refreshFiles")} onClick={() => setReload(n => n + 1)}><RefreshCw size={13} /></button></div>}
+      {(!finished || pendingFiles || (hasCurrentFiles && (!availableCount || partial))) && <div className="ra-files-head">
+        {!finished && <span className="ra-files-progress" role="status" aria-live="polite">{zh ? "进行中" : "In progress"}</span>}
+        {pendingFiles && <span className="ra-files-pending" role="status" aria-live="polite">{zh ? "还在写入" : "Still writing"}</span>}
+        {hasCurrentFiles && (!availableCount || partial) && <span role="status" aria-live="polite">{availableCount ? <Check size={15} /> : <TriangleAlert size={15} />}{t(!availableCount ? "filesUnavailable" : "filesSavedPartial", { count: availableCount })}</span>}
+        {hasCurrentFiles && (!availableCount || partial) && <button className="ra-icon" aria-label={t("refreshFiles")} title={t("refreshFiles")} onClick={() => setReload(n => n + 1)}><RefreshCw size={13} /></button>}
+      </div>}
       {deliverables.map(item => <FileCard key={item.id} task={task} file={item} onOpen={openFile} />)}
-      {supporting.length > 0 && <details className={`ra-files-supporting${deliverables.length > 0 ? " ra-sr-only" : ""}`}><summary>{t("supportingFiles", { count: supporting.length })}</summary>
+      {supporting.length > 0 && <details className="ra-files-supporting"><summary>{t("supportingFiles", { count: supporting.length })}</summary>
         {supporting.map(item => <FileCard key={item.id} task={task} file={item} onOpen={openFile} />)}</details>}
     </section>}
+    {unbackedMentions.length > 0 && <p className="ra-unbacked-mentions" data-testid="unbacked-mentions">{zh ? `回答提到但本任务没有产生的文件：${unbackedMentions.join("、")}` : `Mentioned in the answer, but not produced by this task: ${unbackedMentions.join(", ")}`}</p>}
       {file && <RynAgentPreviewSurface label={file.name} onClose={() => setChosenFile("")}><NasPreview key={`${task.id}/${file.id}/${file.sha256}`} source={{ id: task.id, name: t("taskFilesSource"), allow_ai: false }}
         entry={{ name: file.name, path: file.path, directory: false, size: file.bytes || 0, modified: file.updated_at || "" }}
         onClose={() => setChosenFile("")} download={() => { void saveCopy(task, file).catch(() => setError(true)); }} askAi={() => {}} busy={false}

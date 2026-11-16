@@ -25,8 +25,14 @@ from ...atomic_io import atomic_write_json, read_json
 from ...file_transactions import file_transaction
 from ...services import peer_box
 from ..data_policy import normalize_policy
-from ..knowledge import SKILLS as BUILTIN_SKILLS
+from ..knowledge import (
+    SKILL_CONTENT_MAX_BYTES,
+    SKILL_CONTINUATION_NOTE,
+    SKILLS as BUILTIN_SKILLS,
+    truncate_skill_content,
+)
 from ..store import AgentError, AgentToolRejected, encoded
+from .schema_normalize import normalize_mcp_input_schema
 from .views import normalize_views
 from .web_app import validate_web_app
 
@@ -40,6 +46,22 @@ MAX_SKILL_FILE_BYTES = 512 * 1024
 MAX_SKILL_TOTAL_BYTES = 4 * 1024 * 1024
 MAX_SKILL_PACKAGE_DEPTH = 8
 STREAM_CHUNK_BYTES = 64 * 1024
+
+DEFAULT_STARTUP_TIMEOUT_MS = 30000
+MAX_STARTUP_TIMEOUT_MS = 300000
+DEFAULT_TOOL_TIMEOUT_MS = 300000
+MAX_TOOL_TIMEOUT_MS = 3600000
+DEFAULT_MAX_OUTPUT_CHARS = 32000
+MIN_MAX_OUTPUT_CHARS = 64
+MAX_MAX_OUTPUT_CHARS = 2_000_000
+
+
+class SelectedSkillsResult(list):
+    """List of selected skill snapshots carrying non-fatal integrity warnings."""
+
+    def __init__(self, items: list[dict[str, Any]] | None = None, *, warnings: list[dict[str, Any]] | None = None) -> None:
+        super().__init__(items or [])
+        self.warnings: list[dict[str, Any]] = list(warnings or [])
 
 
 def validate_peer_provider(value: Any) -> dict[str, Any]:
@@ -370,6 +392,8 @@ def _mcp_config_fingerprint(server: dict[str, Any]) -> str:
         "data_policy": normalize_policy(server.get("data_policy")),
         "computer_access": bool(server.get("computer_access", False)),
     }
+    if bool(server.get("inherit_user_home", False)):
+        relevant["inherit_user_home"] = True
     return _canon_sha256(relevant)
 
 
@@ -400,6 +424,7 @@ class ExtensionStore:
         self.pub = peer_box.public_key_b64(self.key)
         self._cached_stamp: tuple[int, int] | None = None
         self._cached_state: dict[str, Any] | None = None
+        self._agent_store: Any = None
         with file_transaction(self.lock):
             if not self.path.exists():
                 self._write(self._default_state())
@@ -452,8 +477,9 @@ class ExtensionStore:
             "url": None,
             "bearer_token_env": None,
             "secret_headers": {},
-            "startup_timeout_ms": 10000,
-            "tool_timeout_ms": 30000,
+            "startup_timeout_ms": DEFAULT_STARTUP_TIMEOUT_MS,
+            "tool_timeout_ms": DEFAULT_TOOL_TIMEOUT_MS,
+            "max_output_chars": DEFAULT_MAX_OUTPUT_CHARS,
             "enabled_tools": None,
             "disabled_tools": [],
             "read_only_tools": ["computer_observe_windows", "computer_read_window"],
@@ -650,9 +676,49 @@ class ExtensionStore:
             return False
         return self._is_parent_plugin_enabled(skill.get("plugin_id"), state)
 
+    def _agent_settings(self) -> dict[str, Any] | None:
+        bound = getattr(self, "_agent_store", None)
+        if bound is not None:
+            try:
+                if hasattr(bound, "inspect"):
+                    raw = bound.inspect(
+                        lambda d: dict(d.get("settings") or {}) if isinstance(d, dict) else {}
+                    )
+                    if isinstance(raw, dict):
+                        return raw
+                elif hasattr(bound, "read"):
+                    data = bound.read()
+                    if isinstance(data, dict) and isinstance(data.get("settings"), dict):
+                        return dict(data["settings"])
+            except Exception:
+                pass
+        sessions_path = self.root / "sessions.json"
+        if sessions_path.exists():
+            try:
+                env = read_json(sessions_path, max_bytes=MAX_BYTES)
+                if isinstance(env, dict) and env.get("version") in {"ryn.agent.v1", "ryn.agent.v2"}:
+                    plaintext = peer_box.open_sealed(
+                        self.key,
+                        self.pub,
+                        env["nonce"],
+                        env["ciphertext"],
+                        info=b"rynmesh-agent-state-v1",
+                    )
+                    parsed = json.loads(plaintext)
+                    if isinstance(parsed, dict) and isinstance(parsed.get("settings"), dict):
+                        return dict(parsed["settings"])
+            except Exception:
+                pass
+        return None
+
     def _is_server_effectively_enabled(self, server: dict[str, Any], state: dict[str, Any]) -> bool:
         if not server.get("enabled", False):
             return False
+        if server.get("id") == COMPUTER_USE_SERVER_ID:
+            from ..computer.binary import platform_support
+
+            if not platform_support(settings=self._agent_settings())["supported"]:
+                return False
         return self._is_parent_plugin_enabled(server.get("plugin_id"), state)
 
     def _check_expected_revision(
@@ -694,7 +760,14 @@ class ExtensionStore:
         desktop_access: bool = False,
     ) -> dict[str, Any]:
         is_computer_use = plugin["id"] == COMPUTER_USE_PLUGIN_ID
-        win_supported = os.name == "nt"
+        if is_computer_use:
+            from ..computer.binary import platform_support
+
+            cu_plat = platform_support(settings=self._agent_settings())
+            win_supported = bool(cu_plat["supported"])
+        else:
+            cu_plat = None
+            win_supported = os.name == "nt"
         bundled_skills = [
             self._public_imported_skill(state["skills"][sid], state)
             for sid in plugin.get("skill_ids", [])
@@ -707,10 +780,12 @@ class ExtensionStore:
         ]
         status = "enabled" if plugin.get("enabled") else "disabled"
         status_reason = ""
+        status_message = ""
         if is_computer_use:
             if not win_supported:
                 status = "unavailable"
                 status_reason = "windows_only"
+                status_message = str((cu_plat or {}).get("message_zh") or "本机电脑控制仅支持 Windows x64")
             elif plugin.get("enabled") and not desktop_access:
                 status = "needs_permission"
                 status_reason = "desktop_access_disabled"
@@ -730,6 +805,7 @@ class ExtensionStore:
             "parent_enabled": True,
             "status": status,
             "status_reason": status_reason,
+            **({"status_message": status_message} if status_message else {}),
             "computer_access": bool(plugin.get("computer_access", False)),
             "skill_ids": list(plugin.get("skill_ids", [])),
             "mcp_server_ids": list(plugin.get("mcp_server_ids", [])),
@@ -913,32 +989,35 @@ class ExtensionStore:
                 (enabled_tools is None or t_name in enabled_tools)
                 and t_name not in disabled_tools
             )
-            t_enabled = effective_enabled and comp_enabled
+            schema_invalid = bool(tool.get("schema_invalid", False))
+            t_enabled = effective_enabled and comp_enabled and not schema_invalid
             annotations = tool.get("annotations") if isinstance(tool.get("annotations"), dict) else {}
             owner_read_only = t_name in read_only_tools
             model_name = compute_model_tool_name(server["id"], t_name)
-            tools_view.append(
-                {
-                    "name": t_name,
-                    "model_tool_name": model_name,
-                    "title": tool.get("title") or t_name,
-                    "description": tool.get("description") or "",
-                    "enabled": bool(t_enabled),
-                    "component_enabled": bool(comp_enabled),
-                    "owner_read_only": bool(owner_read_only),
-                    "effective_effect": "read" if owner_read_only else "write",
-                    "effective_risk": "low" if owner_read_only else "high",
-                    "annotations": {
-                        "readOnlyHint": annotations.get("readOnlyHint") is True,
-                        "destructiveHint": bool(annotations.get("destructiveHint", False)),
-                        "idempotentHint": bool(annotations.get("idempotentHint", False)),
-                        "openWorldHint": bool(annotations.get("openWorldHint", False)),
-                    },
-                    "schema_sha256": tool.get("schema_sha256")
-                    or _canon_sha256(tool.get("input_schema") or {}),
-                    "input_schema": tool.get("input_schema") or {"type": "object"},
-                }
-            )
+            tool_entry: dict[str, Any] = {
+                "name": t_name,
+                "model_tool_name": model_name,
+                "title": tool.get("title") or t_name,
+                "description": tool.get("description") or "",
+                "enabled": bool(t_enabled),
+                "component_enabled": bool(comp_enabled),
+                "schema_invalid": schema_invalid,
+                "owner_read_only": bool(owner_read_only),
+                "effective_effect": "read" if owner_read_only else "write",
+                "effective_risk": "low" if owner_read_only else "high",
+                "annotations": {
+                    "readOnlyHint": annotations.get("readOnlyHint") is True,
+                    "destructiveHint": bool(annotations.get("destructiveHint", False)),
+                    "idempotentHint": bool(annotations.get("idempotentHint", False)),
+                    "openWorldHint": bool(annotations.get("openWorldHint", False)),
+                },
+                "schema_sha256": tool.get("schema_sha256")
+                or _canon_sha256(tool.get("input_schema") or {}),
+                "input_schema": tool.get("input_schema") if isinstance(tool.get("input_schema"), dict) else {"type": "object"},
+            }
+            if isinstance(tool.get("output_schema"), dict):
+                tool_entry["output_schema"] = copy.deepcopy(tool["output_schema"])
+            tools_view.append(tool_entry)
         tool_name_counts = Counter(tool["name"] for tool in tools_view)
         bearer_env = server.get("bearer_token_env")
         bearer_env_present = bool(bearer_env and os.environ.get(bearer_env))
@@ -983,6 +1062,7 @@ class ExtensionStore:
             "deletable": bool(server.get("deletable", not server.get("builtin", False))),
             "plugin_id": server.get("plugin_id"),
             "computer_access": bool(server.get("computer_access", False)),
+            "inherit_user_home": bool(server.get("inherit_user_home", False)),
             "enabled": effective_enabled,
             "component_enabled": bool(server.get("enabled", False)),
             "parent_enabled": parent_enabled,
@@ -1002,8 +1082,11 @@ class ExtensionStore:
             "auth": normalize_mcp_auth(server.get("auth")),
             "data_policy": normalize_policy(server.get("data_policy")),
             "has_secrets": bool(masked_env or masked_headers),
-            "startup_timeout_ms": int(server.get("startup_timeout_ms", 10000)),
-            "tool_timeout_ms": int(server.get("tool_timeout_ms", 30000)),
+            "startup_timeout_ms": int(
+                server.get("startup_timeout_ms", DEFAULT_STARTUP_TIMEOUT_MS)
+            ),
+            "tool_timeout_ms": int(server.get("tool_timeout_ms", DEFAULT_TOOL_TIMEOUT_MS)),
+            "max_output_chars": int(server.get("max_output_chars", DEFAULT_MAX_OUTPUT_CHARS)),
             "enabled_tools": list(enabled_tools) if isinstance(enabled_tools, list) else None,
             "disabled_tools": sorted(disabled_tools),
             "read_only_tools": sorted(read_only_tools),
@@ -1110,10 +1193,15 @@ class ExtensionStore:
                     )
             return out
 
-    def select_skills(self, skill_ids: list[str] | None) -> list[dict[str, Any]]:
-        """Select and snapshot enabled built-in or imported skills for a new task."""
+    def select_skills(
+        self,
+        skill_ids: list[str] | None,
+        *,
+        warnings: list[dict[str, Any]] | None = None,
+    ) -> SelectedSkillsResult:
+        """Select and snapshot enabled built-in or imported skills for a task."""
         if skill_ids is None:
-            return []
+            return SelectedSkillsResult()
         if (
             not isinstance(skill_ids, list)
             or any(not isinstance(item, str) or not item for item in skill_ids)
@@ -1127,11 +1215,20 @@ class ExtensionStore:
             if len(skill_ids) > max(max_allowed, 1):
                 raise AgentError("agent_invalid_skills")
             selected: list[dict[str, Any]] = []
+            collected_warnings: list[dict[str, Any]] = []
             for item in skill_ids:
                 if item in BUILTIN_SKILLS:
                     if not builtin_enabled.get(item, True):
                         raise AgentError("agent_invalid_skills")
-                    selected.append(copy.deepcopy(BUILTIN_SKILLS[item]))
+                    b_snap = copy.deepcopy(BUILTIN_SKILLS[item])
+                    trunc_text, was_trunc = truncate_skill_content(
+                        str(b_snap.get("content", "")), SKILL_CONTENT_MAX_BYTES
+                    )
+                    b_snap["content"] = trunc_text
+                    if was_trunc:
+                        b_snap["truncated"] = True
+                        b_snap["continuation_note"] = SKILL_CONTINUATION_NOTE
+                    selected.append(b_snap)
                     continue
                 skill = state["skills"].get(item)
                 if not skill or not self._is_skill_effectively_enabled(skill, state):
@@ -1139,17 +1236,32 @@ class ExtensionStore:
                 pkg_dir_str = skill.get("package_dir")
                 if pkg_dir_str:
                     pkg_dir = Path(pkg_dir_str).resolve()
-                    manifest = compute_directory_manifest(pkg_dir)
-                    if skill.get("manifest_sha256") and manifest["manifest_sha256"] != skill["manifest_sha256"]:
-                        raise AgentError("agent_skill_integrity_failed")
+                    integrity_error: str | None = None
+                    try:
+                        manifest = compute_directory_manifest(pkg_dir)
+                        if skill.get("manifest_sha256") and manifest["manifest_sha256"] != skill["manifest_sha256"]:
+                            integrity_error = "agent_skill_integrity_failed"
+                    except AgentError:
+                        integrity_error = "agent_skill_integrity_failed"
+                    if integrity_error is not None:
+                        collected_warnings.append(
+                            {"skill_id": str(skill["id"]), "reason": integrity_error}
+                        )
+                        continue
+                trunc_content, was_truncated = truncate_skill_content(
+                    str(skill.get("content", "")), SKILL_CONTENT_MAX_BYTES
+                )
                 snapshot: dict[str, Any] = {
                     "id": skill["id"],
                     "version": str(skill.get("version", "1")),
                     "install_generation": int(skill.get("install_generation", 1)),
                     "title": skill.get("title") or skill.get("name") or skill["id"],
                     "description": str(skill.get("description") or skill.get("summary") or ""),
-                    "content": str(skill.get("content", "")),
+                    "content": trunc_content,
                 }
+                if was_truncated:
+                    snapshot["truncated"] = True
+                    snapshot["continuation_note"] = SKILL_CONTINUATION_NOTE
                 if skill.get("manifest_sha256"):
                     snapshot["manifest_sha256"] = skill["manifest_sha256"]
                 if skill.get("files"):
@@ -1157,7 +1269,9 @@ class ExtensionStore:
                         f["path"] for f in skill["files"] if isinstance(f, dict) and "path" in f
                     ]
                 selected.append(snapshot)
-            return selected
+            if warnings is not None:
+                warnings.extend(collected_warnings)
+            return SelectedSkillsResult(selected, warnings=collected_warnings)
 
     def get_skill_for_runtime(self, skill_id: str) -> dict[str, Any] | None:
         """Return an effectively enabled skill for runtime discovery/invocation, or None."""
@@ -1409,6 +1523,14 @@ class ExtensionStore:
             )
             out["identity_group_id"] = comp["id"] if comp else None
             out["identity_group_origin"] = comp.get("origin") if comp else None
+            plugin_rec = state["plugins"].get(pid) if pid else None
+            pkg_dir = plugin_rec.get("package_dir") if isinstance(plugin_rec, dict) else None
+            out["plugin_package_dir"] = str(pkg_dir) if pkg_dir else None
+            out["plugin_data_dir"] = (
+                str(self.plugin_data_dir(str(pid)))
+                if pid and isinstance(plugin_rec, dict) and not plugin_rec.get("builtin")
+                else None
+            )
             return out
 
     def list_mcp_servers_internal(self, *, include_tools: bool = True) -> list[dict[str, Any]]:
@@ -1432,6 +1554,14 @@ class ExtensionStore:
                 )
                 item["identity_group_id"] = comp["id"] if comp else None
                 item["identity_group_origin"] = comp.get("origin") if comp else None
+                plugin_rec = state["plugins"].get(pid) if pid else None
+                pkg_dir = plugin_rec.get("package_dir") if isinstance(plugin_rec, dict) else None
+                item["plugin_package_dir"] = str(pkg_dir) if pkg_dir else None
+                item["plugin_data_dir"] = (
+                    str(self.plugin_data_dir(str(pid)))
+                    if pid and isinstance(plugin_rec, dict) and not plugin_rec.get("builtin")
+                    else None
+                )
                 result.append(item)
             return result
 
@@ -1458,6 +1588,14 @@ class ExtensionStore:
                     )
                     item["identity_group_id"] = comp["id"] if comp else None
                     item["identity_group_origin"] = comp.get("origin") if comp else None
+                    plugin_rec = state["plugins"].get(pid) if pid else None
+                    pkg_dir = plugin_rec.get("package_dir") if isinstance(plugin_rec, dict) else None
+                    item["plugin_package_dir"] = str(pkg_dir) if pkg_dir else None
+                    item["plugin_data_dir"] = (
+                        str(self.plugin_data_dir(str(pid)))
+                        if pid and isinstance(plugin_rec, dict) and not plugin_rec.get("builtin")
+                        else None
+                    )
                     result.append(item)
             return result
 
@@ -2284,6 +2422,11 @@ class ExtensionStore:
                 if "computer_access" in payload
                 else (existing.get("computer_access", False) if existing else False)
             )
+            inherit_user_home = bool(
+                payload["inherit_user_home"]
+                if "inherit_user_home" in payload
+                else (existing.get("inherit_user_home", False) if existing else False)
+            ) if transport == "stdio" else False
 
             gen = _alloc_generation(state)
             record: dict[str, Any] = {
@@ -2296,6 +2439,7 @@ class ExtensionStore:
                 "deletable": True,
                 "plugin_id": existing.get("plugin_id") if existing else payload.get("plugin_id"),
                 "computer_access": computer_access,
+                "inherit_user_home": inherit_user_home,
                 "enabled": enabled,
                 "explicitly_disabled": not enabled if "enabled" in payload else (
                     existing.get("explicitly_disabled", False) if existing else False
@@ -2312,8 +2456,21 @@ class ExtensionStore:
                 "oauth_client_registration": oauth_client_registration,
                 "auth": normalize_mcp_auth(payload.get("auth") if "auth" in payload else (existing or {}).get("auth")),
                 "data_policy": normalize_policy((existing or {}).get("data_policy")),
-                "startup_timeout_ms": int(existing.get("startup_timeout_ms", 10000) if existing else 10000),
-                "tool_timeout_ms": int(existing.get("tool_timeout_ms", 30000) if existing else 30000),
+                "startup_timeout_ms": int(
+                    existing.get("startup_timeout_ms", DEFAULT_STARTUP_TIMEOUT_MS)
+                    if existing
+                    else DEFAULT_STARTUP_TIMEOUT_MS
+                ),
+                "tool_timeout_ms": int(
+                    existing.get("tool_timeout_ms", DEFAULT_TOOL_TIMEOUT_MS)
+                    if existing
+                    else DEFAULT_TOOL_TIMEOUT_MS
+                ),
+                "max_output_chars": int(
+                    existing.get("max_output_chars", DEFAULT_MAX_OUTPUT_CHARS)
+                    if existing
+                    else DEFAULT_MAX_OUTPUT_CHARS
+                ),
                 "enabled_tools": existing.get("enabled_tools") if existing else None,
                 "disabled_tools": list(existing.get("disabled_tools") or []) if existing else [],
                 "read_only_tools": list(existing.get("read_only_tools") or []) if existing else [],
@@ -2361,10 +2518,13 @@ class ExtensionStore:
     def _apply_mcp_policy_fields(self, record: dict[str, Any], payload: dict[str, Any]) -> None:
         if "startup_timeout_ms" in payload and payload["startup_timeout_ms"] is not None:
             val = int(payload["startup_timeout_ms"])
-            record["startup_timeout_ms"] = max(1000, min(60000, val))
+            record["startup_timeout_ms"] = max(1000, min(MAX_STARTUP_TIMEOUT_MS, val))
         if "tool_timeout_ms" in payload and payload["tool_timeout_ms"] is not None:
             val = int(payload["tool_timeout_ms"])
-            record["tool_timeout_ms"] = max(1000, min(120000, val))
+            record["tool_timeout_ms"] = max(1000, min(MAX_TOOL_TIMEOUT_MS, val))
+        if "max_output_chars" in payload and payload["max_output_chars"] is not None:
+            val = int(payload["max_output_chars"])
+            record["max_output_chars"] = max(MIN_MAX_OUTPUT_CHARS, min(MAX_MAX_OUTPUT_CHARS, val))
         if "enabled_tools" in payload:
             et = payload["enabled_tools"]
             record["enabled_tools"] = [str(x) for x in et] if isinstance(et, list) else None
@@ -2388,6 +2548,12 @@ class ExtensionStore:
             record["owner_write_tools"] = sorted(declined - current)
         if "computer_access" in payload and not record.get("builtin"):
             record["computer_access"] = bool(payload["computer_access"])
+        if "inherit_user_home" in payload and not record.get("builtin"):
+            record["inherit_user_home"] = (
+                bool(payload["inherit_user_home"])
+                if record.get("transport", "stdio") == "stdio"
+                else False
+            )
 
     def record_mcp_discovery(
         self,
@@ -2440,9 +2606,34 @@ class ExtensionStore:
                     name = str(item.get("name") or "").strip()
                     if not name:
                         continue
-                    schema = item.get("inputSchema") or item.get("input_schema") or {"type": "object"}
-                    if not isinstance(schema, dict):
-                        schema = {"type": "object"}
+                    if "inputSchema" in item and item["inputSchema"] is not None:
+                        provided_schema = item["inputSchema"]
+                    elif "input_schema" in item and item["input_schema"] is not None:
+                        provided_schema = item["input_schema"]
+                    else:
+                        provided_schema = {"type": "object"}
+                    schema = (
+                        copy.deepcopy(provided_schema)
+                        if isinstance(provided_schema, dict)
+                        else {"type": "object"}
+                    )
+                    candidate_for_model = copy.deepcopy(provided_schema)
+                    if isinstance(candidate_for_model, dict):
+                        candidate_for_model.pop("x-ryn-artifact", None)
+                        candidate_for_model.pop("x-ryn-operation", None)
+                        candidate_for_model.pop("x-ryn-result", None)
+                    model_schema = normalize_mcp_input_schema(candidate_for_model)
+                    schema_invalid = model_schema is None
+                    raw_output_schema = (
+                        item.get("outputSchema")
+                        if "outputSchema" in item
+                        else item.get("output_schema")
+                    )
+                    output_schema = (
+                        copy.deepcopy(raw_output_schema)
+                        if isinstance(raw_output_schema, dict)
+                        else None
+                    )
                     annotations = item.get("annotations") if isinstance(item.get("annotations"), dict) else {}
                     normalized.append(
                         {
@@ -2450,6 +2641,9 @@ class ExtensionStore:
                             "title": str(item.get("title") or name),
                             "description": str(item.get("description") or "")[:1000],
                             "input_schema": schema,
+                            "model_schema": model_schema,
+                            "schema_invalid": schema_invalid,
+                            "output_schema": output_schema,
                             "schema_sha256": _canon_sha256(schema),
                             "annotations": {
                                 "readOnlyHint": annotations.get("readOnlyHint") is True,
@@ -2946,6 +3140,7 @@ class ExtensionStore:
                     "deletable": True,
                     "plugin_id": srv.get("plugin_id"),
                     "computer_access": bool(srv.get("computer_access", False)),
+                    "inherit_user_home": False,
                     "enabled": False,
                     "explicitly_disabled": False,
                     "command": srv.get("command"),
@@ -2962,8 +3157,17 @@ class ExtensionStore:
                     "oauth_client_registration": str(srv.get("oauth_client_registration") or "auto"),
                     "auth": normalize_mcp_auth(srv.get("auth")),
                     "data_policy": normalize_policy(srv.get("data_policy", plugin_policies.get(srv.get("plugin_id")))),
-                    "startup_timeout_ms": int(srv.get("startup_timeout_ms", 10000)),
-                    "tool_timeout_ms": int(srv.get("tool_timeout_ms", 30000)),
+                    "startup_timeout_ms": int(
+                        srv.get("startup_timeout_ms", DEFAULT_STARTUP_TIMEOUT_MS)
+                    ),
+                    "tool_timeout_ms": int(srv.get("tool_timeout_ms", DEFAULT_TOOL_TIMEOUT_MS)),
+                    "max_output_chars": max(
+                        MIN_MAX_OUTPUT_CHARS,
+                        min(
+                            MAX_MAX_OUTPUT_CHARS,
+                            int(srv.get("max_output_chars", DEFAULT_MAX_OUTPUT_CHARS)),
+                        ),
+                    ),
                     "enabled_tools": enabled_tools,
                     "disabled_tools": disabled_tools,
                     "read_only_tools": [],
@@ -3079,6 +3283,17 @@ class ExtensionStore:
                 "overview": view,
             }
 
+
+    def plugin_data_dir(self, plugin_id: str, *, create: bool = False) -> Path:
+        raw_id = str(plugin_id or "").strip()
+        safe_id = raw_id if EXTENSION_ID_RE.match(raw_id) else _slugify(raw_id, "plugin")
+        base_dir = (self.root / "plugin_data").resolve()
+        dest = (base_dir / safe_id).resolve()
+        if base_dir not in dest.parents:
+            raise AgentError("agent_extension_invalid_package_path")
+        if create:
+            dest.mkdir(parents=True, exist_ok=True)
+        return dest
 
     def allocate_package_dir(self, category: str, item_id: str) -> Path:
         safe_cat = _slugify(category, "pkg")

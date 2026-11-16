@@ -24,6 +24,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from .credits import CreditPolicy
 from .recommendation_evidence import build_evidence_packet
+from .recommendation_profile import extract_cjk_terms
 from .recommender import (
     BaselineRanker,
     Candidate,
@@ -62,6 +63,7 @@ def _candidate_tags(item: Mapping[str, Any]) -> tuple[str, ...]:
     tags = list(_interest_tags(item.get("tags", ())))
     text = f"{item.get('title', '')} {item.get('description', '')}".lower()
     tags.extend(f"term:{word}" for word in _TERM.findall(text))
+    tags.extend(f"term:{word}" for word in extract_cjk_terms(text))
     platform = str(item.get("source_platform", "") or "").strip().lower()
     if platform:
         tags.append(f"platform:{platform}")

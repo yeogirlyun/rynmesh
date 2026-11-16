@@ -1,6 +1,7 @@
 import RynAgentFork, { RynAgentForkSource } from "./RynAgentFork";
 import RynAgentFileChanges from "./RynAgentFileChanges";
 import RynAgentConnection, { hasConnectionRecovery } from "./RynAgentConnection";
+import RynAgentNodeRecoveryBanner from "./RynAgentNodeRecoveryBanner";
 import { AGENT_TASKS_IN_MEMORY, agentTaskCache, agentTaskListCache, forgetAgentTask, hydrateAgentRecords, readAgentWorkspace, rememberAgentTask, rememberAgentTaskList, writeAgentWorkspace } from "../domain/agentWorkspaceCache";
 import RynAgentProgress, { groupAgentMessages, RynAgentTurnDuration } from "./RynAgentProgress";
 import RynAgentReadOnlyHints from "./RynAgentReadOnlyHints";
@@ -21,16 +22,16 @@ import { ExtensionModelAvailability } from "./ExtensionModelAvailability";
 import RynAgentComposer from "./RynAgentComposer";
 import RynAgentMessageEditor from "./RynAgentMessageEditor";
 import AgentMessageAttachments from "./AgentMessageAttachments";
-import { agentAttachmentInputs, type AgentAttachmentInput, type AgentDraftAttachment } from "../domain/agentAttachments";
+import { agentAttachmentInputs, applyAgentAttachmentLimits, attachmentLimitTranslation, type AgentAttachmentInput, type AgentDraftAttachment, type AgentAttachmentLimitDetails } from "../domain/agentAttachments";
 import RynAgentProject from "./RynAgentProject";
 import { useAgentTaskMenu } from "./RynAgentTaskMenu";
 import { useAgentTaskAttention } from "./useAgentTaskAttention";
 import RynAgentInputCard from "./RynAgentInputCard";
 import RynAgentVerification from "./RynAgentVerification";
 import { MemoryEditor, PreferencesEditor, SkillSelection, TaskSkills } from "./RynAgentGuidance";
-import RynAgentBudget, { budgetStopMessage } from "./RynAgentBudget";
+import RynAgentBudget, { RynAgentNearLimitBanner, RynAgentOwnerStopExtendButton, budgetStopMessage } from "./RynAgentBudget";
 import { ArchivedTasks, TaskRecords, TaskResultFiles } from "./RynAgentRecords";
-import { TaskArtifacts, TurnDeliverables } from "./RynAgentArtifacts";
+import { latestFileToolResultSeq, TaskArtifacts, TurnDeliverables } from "./RynAgentArtifacts";
 import RynAgentTurnRail, { type TurnRailItem as AgentTurnRailItem } from "./RynAgentTurnRail";
 import AgentTaskComputerStatus from "./AgentTaskComputerStatus";
 import { AutomationChatCard, AutomationDialog, AutomationsPanel, extractTurnAutomations, HeartbeatWakeupDivider } from "./RynAgentAutomations";
@@ -77,7 +78,13 @@ function mutationErrorKey(reason: unknown): string {
   if (reason.code === "agent_model_destination_unverifiable") return "modelDestinationUnavailable";
   if (reason.code === "agent_model_destination_changed") return "modelDestinationChanged";
   if (reason.code === "agent_model_unavailable") return "selectedModelUnavailable";
-  if (["agent_attachment_limit", "agent_attachment_image_limit"].includes(reason.code)) return "attachmentLimit";
+  if (reason.code === "agent_attachment_directory") return "attachmentDirectoryError";
+  if (["agent_attachment_limit", "agent_attachment_image_limit"].includes(reason.code)) {
+    if (reason.code === "agent_attachment_limit" && reason.details && typeof reason.details.limit === "string") {
+      return "attachmentLimitDetail:" + JSON.stringify(reason.details);
+    }
+    return "attachmentLimit";
+  }
   if (reason.code.startsWith("agent_attachment_") || reason.code === "agent_invalid_attachment") return "attachmentReadError";
   if (reason.status < 500 && SEND_ERROR_CODES.has(reason.code)) return "agentError:" + reason.code;
   if (reason.status === 409 && /(?:revision_conflict|invalid_transition)$/.test(reason.code)) return "conflict";
@@ -215,7 +222,11 @@ export default function RynAgent() {
   const nav = useContext(AgentNavigationContext);
   const taskCache = useRef(agentTaskCache());
   const taskListLoaded = useRef(false);
-  const [cachedWorkspace] = useState(readAgentWorkspace);
+  const [cachedWorkspace] = useState(() => {
+    const ws = readAgentWorkspace();
+    applyAgentAttachmentLimits(ws.settings?.attachment_limits);
+    return ws;
+  });
   const [settings, setSettings] = useState<AgentSettings | null>(cachedWorkspace.settings);
   const [models, setModels] = useState<AgentModel[]>(cachedWorkspace.models);
   const [tasks, setTasks] = useState<AgentTaskSummary[]>(() => cachedAgentTaskList(taskCache.current));
@@ -456,7 +467,10 @@ export default function RynAgent() {
         setResourceErrors(current => ({ ...current, settings: "" }));
       }).catch(reason => {
         if (refreshID !== refreshRevision.current) return;
-        if (!cachedSettingsRef.current) setResourceErrors(current => ({ ...current, settings: reason instanceof AgentAPIError && [404, 501].includes(reason.status) ? "unavailable" : "settingsLoadError" }));
+        if (!cachedSettingsRef.current) {
+          applyAgentAttachmentLimits(null);
+          setResourceErrors(current => ({ ...current, settings: reason instanceof AgentAPIError && [404, 501].includes(reason.status) ? "unavailable" : "settingsLoadError" }));
+        }
       }).finally(() => { if (refreshID === refreshRevision.current) setLoading(false); }),
       rynAgent.models(controller.signal).then(nextModels => {
         if (refreshID !== refreshRevision.current) return;
@@ -1136,7 +1150,24 @@ export default function RynAgent() {
     </header>
     {taskMenu.dialogs}
     {pendingMessage?.phase === "rejected" && <div className="ra-banner ra-unsent-message" role="alert"><CircleAlert size={17} /><details><summary>{t("unsentMessage")}</summary><p>{pendingMessage.message}</p></details><button className="ra-icon" aria-label={t("close")} onClick={() => setPendingMessage(null)}><X size={16} /></button></div>}
-    {error && <div role="alert" className="ra-banner"><CircleAlert size={17} /><span>{error.startsWith("agentError:") ? agentErrorHelp(error.slice("agentError:".length), i18n.language.startsWith("zh")).text : t(error)}</span><button onClick={() => void reload()} disabled={busy}>{t("retry")}</button></div>}
+    {error && <div role="alert" className="ra-banner"><CircleAlert size={17} /><span>{(() => {
+      if (error.startsWith("agentError:")) return agentErrorHelp(error.slice("agentError:".length), i18n.language.startsWith("zh")).text;
+      if (error.startsWith("attachmentLimitDetail:")) {
+        try {
+          const parsed = JSON.parse(error.slice("attachmentLimitDetail:".length)) as Partial<AgentAttachmentLimitDetails>;
+          const msg = attachmentLimitTranslation(parsed);
+          return t(msg.key, msg.values);
+        } catch {
+          const fallback = attachmentLimitTranslation(null);
+          return t(fallback.key, fallback.values);
+        }
+      }
+      if (error === "attachmentLimit") {
+        const msg = attachmentLimitTranslation(null);
+        return t(msg.key, msg.values);
+      }
+      return t(error);
+    })()}</span><button onClick={() => void reload()} disabled={busy}>{t("retry")}</button></div>}
     {Object.values(resourceErrors).filter(Boolean).map(key => <div key={key} role="alert" className="ra-banner"><CircleAlert size={17} /><span>{t(key)}</span><button onClick={() => void reload()} disabled={busy}>{t("retry")}</button></div>)}
     {enabled && <RynAgentReadOnlyHints />}
     {uncertain && <div role="alert" className="ra-banner">{t("uncertain")}{autoRecoveryExhausted && <> {t("autoRecoveryStopped")}</>}<button disabled={busy} onClick={() => void recoverRequest()}>{t("recoverRequest")}</button></div>}
@@ -1175,11 +1206,13 @@ export default function RynAgent() {
         <small className="ra-local"><Monitor size={14} />{t("localHistory")}</small>
       </aside>
       <div className="ra-chat">
+        <RynAgentNodeRecoveryBanner />
         {showSkillsView ? <CodexSkillsView embeddedInAgent onTrySkillPrompt={(prefillPrompt, skillId) => { setShowSkillsView(false); setShowAutomationsView(false); selectedRef.current = ""; setSelected(""); setTask(null); const targetKey = pluginDraftKey || newDraftKey(projectID); setDrafts(current => ({ ...current, [targetKey]: prefillPrompt })); if (skillId) { setSkillIDs(current => (current.includes(skillId) ? current : [...current, skillId])); } setTimeout(() => input.current?.focus(), 0); }} /> : showAutomationsView ? <AutomationsPanel automations={automationsList} runs={automationRuns} tasks={tasks} activeTaskId={selected} zh={i18n.language.startsWith("zh")} onRefresh={refreshAutomations} onCreateNew={() => { setEditingAutomation({ kind: selected ? "heartbeat" : "cron", target_task_id: selected || "", repeat: "daily", time: "09:00", status: "ACTIVE" }); setAutomationDialogOpen(true); }} onEdit={item => { setEditingAutomation(item); setAutomationDialogOpen(true); }} onSelectTask={id => { setShowAutomationsView(false); chooseTask(id); }} /> : <>
 
         {settingsReady && !enabled && task && <div className="ra-disabled-banner"><span>{t("historyDisabled")}</span><button disabled={busy} onClick={() => void updateSettings({ enabled: true, ...(model ? { model_id: model } : {}) })}>{t("enable")}</button></div>}
         {!detailLoading && task && <RynAgentTurnRail turns={turnRailItems} scrollRef={scroll} />}
         {!detailLoading && task && <RynAgentOverview key={task.id} task={task} />}
+        {!detailLoading && task && <RynAgentNearLimitBanner task={task} busy={busy || controlUncertain} onChange={acceptTask} />}
         <div ref={scroll} className="ra-scroll" aria-busy={detailLoading}>
 
           {detailLoading ? <div className="ra-empty" role="status">{t("loading")}</div> : task ? <div key={`thread/${task.id}`} className="ra-thread"><RynAgentForkSource task={task} onChoose={chooseTask} /><TaskArtifacts key={`artifacts/${task.id}`} task={task} maxTurnIndex={maxTurnIndex}>
@@ -1198,7 +1231,7 @@ export default function RynAgent() {
             {task.continued_to && <div className="ra-banner" role="note"><span>{t("continuedToHelp")}</span><button type="button" onClick={() => chooseTask(task.continued_to!)}>{t("openContinuedConversation")}</button></div>}
             {imageNotice && <p className="ra-turn-evidence" role="note">{t(imageNotice)}</p>}
             {task.result && <section className="ra-result"><strong>{t("result")}</strong><ChatMarkdown fileLinks>{task.result}</ChatMarkdown></section>}
-            <RynAgentFileChanges key={`changes/${task.id}`} taskId={task.id} revision={task.revision} />
+            <RynAgentFileChanges key={`changes/${task.id}`} taskId={task.id} changeKey={latestFileToolResultSeq(task)} />
             <TaskResultFiles key={`results/${task.id}`} task={task} />
             </TaskArtifacts>
               <RynAgentConnection task={task} modelName={selectedModel?.source_name || selectedModel?.name || task.model_id} busy={busy || controlUncertain || !settingsReady} enabled={Boolean(enabled)} onAction={kind => void action(kind)} />
@@ -1207,6 +1240,7 @@ export default function RynAgent() {
                 const help = agentErrorHelp(task.error!, zh);
                 const actions = help.actions.filter(kind => kind !== "switch_model" || canUseAgentAction(task, "model"));
                 return <section className="ra-task-error" role="alert"><strong>{t("error")}</strong><p>{budgetStopMessage(task, zh) ?? help.text}</p>
+                  <RynAgentOwnerStopExtendButton task={task} busy={busy || controlUncertain} onChange={acceptTask} />
                   {actions.length > 0 && <div className="ra-error-actions">{actions.map(kind => <button key={kind} type="button" disabled={busy} onClick={() => runErrorAction(kind)}>{agentErrorActionLabel(kind, zh)}</button>)}</div>}
                   <code>{task.error}</code></section>;
               })()}

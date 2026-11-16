@@ -1,5 +1,5 @@
 import { nodeControlUrl } from "./nodeUrl";
-import type { AgentAttachmentInput, AgentMessageAttachment } from "./agentAttachments";
+import { applyAgentAttachmentLimits, type AgentAttachmentInput, type AgentMessageAttachment, type ServerAttachmentLimits } from "./agentAttachments";
 import type { ModelTokenUsage } from "./aiSources";
 
 export type AgentStatus = "queued" | "running" | "waiting_approval" | "waiting_input" | "pausing" | "reconciling" | "paused" | "completed" | "cancelled" | "failed" | "interrupted";
@@ -90,6 +90,7 @@ export interface AgentSettings {
   max_context_chars: number | null;
   context_budget_policy?: AgentContextBudgetPolicy;
   max_output_chars: number;
+  attachment_limits?: ServerAttachmentLimits;
 }
 export interface AgentModel {
   context_window?: number;
@@ -131,7 +132,16 @@ export interface AgentBudgetLimits { max_total_model_calls: number; max_total_to
 export interface AgentBudgetUsage { model_calls: number | null; tool_calls: number | null; charged_model_calls?: number; charged_tool_calls?: number; legacy_usage_unknown?: boolean; input_tokens?: number | null; output_tokens?: number | null; cached_input_tokens?: number | null; known_input_tokens?: number; known_output_tokens?: number; known_cached_input_tokens?: number; total_tokens: number | null; charged_tokens: number; charged_seconds: number; active_seconds: number | null; cost: number | null; usage_complete: boolean; unsettled_operations: number; }
 /** "default" limits are host policy that may grow automatically; "owner" and "legacy_unknown" limits are hard. */
 export type AgentLimitSource = "default" | "owner" | "legacy_unknown";
-export interface AgentBudget { limits: AgentBudgetLimits; round: number; limit_sources?: Partial<Record<keyof AgentBudgetLimits, AgentLimitSource>>; default_ceilings?: Partial<AgentBudgetLimits>; lifetime: AgentBudgetUsage; current_round: AgentBudgetUsage; }
+export interface AgentBudget {
+  limits: AgentBudgetLimits;
+  round: number;
+  limit_sources?: Partial<Record<keyof AgentBudgetLimits, AgentLimitSource>>;
+  default_ceilings?: Partial<Record<keyof AgentBudgetLimits, number | null>>;
+  ranges?: Partial<Record<keyof AgentBudgetLimits, [number, number]>>;
+  near_limit?: Array<keyof AgentBudgetLimits>;
+  lifetime: AgentBudgetUsage;
+  current_round: AgentBudgetUsage;
+}
 export interface AgentRunTiming {
   recorded_seconds: number | null;
   elapsed_seconds: number | null;
@@ -169,11 +179,12 @@ export interface AgentEvent {
 export interface AgentConnectionRecovery {
   state: "retrying" | "disconnected" | "stopped" | "recovered";
   retry_count: number;
-  max_retries: number;
+  max_retries: number | null;
+  waiting_for_network?: boolean;
   next_retry_at?: number;
   recovered_at?: number;
   error_code?: string;
-  diagnostics?: { network_reason?: string; network_phase?: string; http_status?: number; retry_after_seconds?: number };
+  diagnostics?: { network_reason?: string; network_phase?: string; http_status?: number; retry_after_seconds?: number; stream_max_retries?: number; overloaded?: boolean };
 }
 export interface AgentTaskSummary {
   fork?: { source_task_id: string; source_title: string; message_count: number; shared_workspace: boolean; awaiting_instruction: boolean };
@@ -316,7 +327,7 @@ export interface AgentArtifact { id: string; name: string; bytes: number; sha256
 /** A workspace file proven by this task's own confirmed file operations, re-checked against the disk. */
 export interface AgentFileArtifact {
   id: string; name: string; path: string; absolute_path?: string; operation_id?: string; source?: "write" | "command" | "read" | "computer_observation"; media_type: string; preview: "image" | "text" | "download";
-  role: "deliverable" | "supporting"; status: "current" | "changed_outside_task" | "missing" | "too_large" | "unavailable" | "unverified";
+  role: "deliverable" | "supporting" | "helper"; status: "current" | "changed_outside_task" | "missing" | "too_large" | "unavailable" | "unverified";
   bytes?: number; sha256?: string | null; receipt_sha256?: string | null; created_by_task: boolean; revisions: number;
   attribution?: "observed_during_command"; turn_index?: number;
   goal_revisions: number[]; created_at?: string; updated_at?: string; mentioned_in_answer: boolean;
@@ -336,7 +347,13 @@ export interface AgentTask extends AgentTaskSummary {
 export type AgentAction = "pause" | "resume" | "stop" | "cancel" | "approve" | "deny";
 
 export class AgentAPIError extends Error {
-  constructor(public code: string, public status: number) { super(code); }
+  constructor(
+    public code: string,
+    public status: number,
+    public details?: Record<string, unknown>,
+  ) {
+    super(code);
+  }
 }
 
 const READ_TIMEOUT_MS = 10000;
@@ -451,7 +468,8 @@ async function request<T>(path: string, method = "GET", body?: unknown, signal?:
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
       const code = typeof data.detail === "string" ? data.detail : typeof data.error === "string" ? data.error : "agent_request_failed";
-      throw new AgentAPIError(code, response.status);
+      const details = data.details && typeof data.details === "object" ? (data.details as Record<string, unknown>) : undefined;
+      throw new AgentAPIError(code, response.status, details);
     }
     return response.json() as Promise<T>;
   };
@@ -480,8 +498,8 @@ export const rynAgent = {
   loadProject: (path: string) => request<AgentProject>("/projects", "POST", { path }),
   renameProject: (id: string, name: string) => request<AgentProject>(`/projects/${encodeURIComponent(id)}`, "PATCH", { name }),
   removeProject: (id: string) => request<{ removed: boolean }>(`/projects/${encodeURIComponent(id)}`, "DELETE"),
-  settings: (signal?: AbortSignal) => request<AgentSettings>("/settings", "GET", undefined, signal),
-  updateSettings: (settings: Partial<AgentSettings>) => request<AgentSettings>("/settings", "PUT", settings),
+  settings: (signal?: AbortSignal) => request<AgentSettings>("/settings", "GET", undefined, signal).then(s => { applyAgentAttachmentLimits(s.attachment_limits); return s; }),
+  updateSettings: (settings: Partial<AgentSettings>) => request<AgentSettings>("/settings", "PUT", settings).then(s => { applyAgentAttachmentLimits(s.attachment_limits); return s; }),
   models: (signal?: AbortSignal) => request<{ models: AgentModel[] }>("/models", "GET", undefined, signal),
   tools: (signal?: AbortSignal) => request<{ tools: AgentTool[] }>("/tools", "GET", undefined, signal),
   tasks: (signal?: AbortSignal) => request<{ tasks: AgentTaskSummary[] }>("/tasks", "GET", undefined, signal),
@@ -517,7 +535,7 @@ export const rynAgent = {
   skills: () => request<{ skills: AgentSkill[] }>("/skills"),
   preferences: () => request<AgentPreferences>("/preferences"),
   savePreferences: (body: { expected_revision: number; items: AgentPreferences["items"] }) => request<AgentPreferences>("/preferences", "PUT", body),
-  updateBudget: (id: string, body: { limits: Partial<AgentBudgetLimits>; run_max_seconds?: number; expected_control_revision: number; client_request_id: string }) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}/budget`, "PUT", body),
+  updateBudget: (id: string, body: { limits: Partial<AgentBudgetLimits>; run_max_seconds?: number; release_legacy?: boolean; expected_control_revision: number; client_request_id: string }) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}/budget`, "PUT", body),
   previewModel: (id: string, modelID: string, signal?: AbortSignal) => request<AgentModelSwitchPreview>(`/tasks/${encodeURIComponent(id)}/model?model_id=${encodeURIComponent(modelID)}`, "GET", undefined, signal),
   switchModel: (id: string, body: AgentModelSwitchRequest) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}/model`, "PUT", body),
   automations: (signal?: AbortSignal) => request<AgentAutomationsSnapshot>("/automations", "GET", undefined, signal),

@@ -75,7 +75,7 @@ def test_actual_http_timeout_retains_safe_connection_evidence(http_resources):
     ref = reference(tools, context)
     # Bound an actual network read; the server withholds its response rather than
     # substituting a synthetic exception in the connector or resource tool.
-    nas.sessions[source["id"]][1].client.timeout = httpx.Timeout(0.1)
+    nas.source(source["id"])["timeout"] = httpx.Timeout(0.1)
     entered, release = server.arm("GET", "allowed/source.md", "barrier_before_io")
     try:
         with pytest.raises(AgentReadFailure, match="^resource_read_timeout$") as failure:

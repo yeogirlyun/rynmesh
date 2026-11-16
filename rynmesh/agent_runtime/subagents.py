@@ -86,6 +86,7 @@ NICKNAMES: tuple[str, ...] = (
 
 MAX_OPEN_SUBAGENTS: int = 6
 MAX_SUBAGENT_DEPTH: int = 2
+MAX_SUBAGENT_PROMPT_CHARS: int = 32000
 
 FORK_ISOLATION_PROMPT: str = (
     "You are now a newly spawned child agent. The preceding conversation is inherited parent context. "
@@ -94,14 +95,20 @@ FORK_ISOLATION_PROMPT: str = (
     "Report your result to your parent."
 )
 
-MULTI_AGENT_COORDINATOR_GUIDANCE: str = (
-    "<multi_agent_mode>"
-    "Delegate sidecar exploration (role=explorer, read-only), parallel scoped implementation (role=worker with disjoint write_scope), "
-    "or long test/process waits (role=awaiter) via ryn_spawn_agent; keep work blocking your immediate next step local. "
-    "Give each worker explicit write_scope ownership. Call ryn_wait_agent sparingly after finishing non-overlapping local steps. "
-    "Completed subagents emit <subagent_notification> and remain open against the concurrency limit until closed with ryn_close_agent."
-    "</multi_agent_mode>"
-)
+
+def build_coordinator_guidance() -> str:
+    return (
+        "<multi_agent_mode>"
+        f"Up to {MAX_OPEN_SUBAGENTS} subagents may remain open concurrently (settled subagents still count until closed with "
+        f"ryn_close_agent; when full, the earliest settled open subagent is closed automatically), with a maximum nesting depth of {MAX_SUBAGENT_DEPTH}. "
+        "All subagents share the same workspace with you, so file edits are immediately visible across agents. "
+        "Trust explorer findings without re-reading the same files, and reuse an existing explorer for related follow-up questions. "
+        "Completed subagents emit <subagent_notification>."
+        "</multi_agent_mode>"
+    )
+
+
+MULTI_AGENT_COORDINATOR_GUIDANCE: str = build_coordinator_guidance()
 
 # Every role's final answer goes straight to the parent, which should not have
 # to redo the work to learn what happened.
@@ -131,12 +138,20 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
         "function": {
             "name": "ryn_spawn_agent",
             "description": (
-                "Spawn a background subagent (Turing, Curie, Feynman, etc.) to explore code, implement scoped file "
-                "changes, or run checks in parallel. Returns immediately with agent_id, nickname, and agent_path. "
+                "Spawn a background subagent (returns agent_id, nickname, and agent_path immediately). "
+                "Keep critical-path work and anything blocking your immediate next step local. "
                 # The parent decides how much context a child gets, as in openai/codex
                 # rust-v0.167.0 multi-agent roles (Apache-2.0); wording is Ryn's.
-                "With fork_turns=none (default) the child sees only this prompt: include the goal, "
-                "relevant paths, constraints and what to report."
+                "With fork_turns=none (default) the child sees only this prompt: state the concrete goal, "
+                "relevant paths, constraints, and what to report. "
+                "Assign disjoint write_scope sets across workers. "
+                "Do not redo work you already delegated; call ryn_wait_agent sparingly after completing non-overlapping local steps. "
+                "Only set model_id or reasoning_effort when the owner or active skill explicitly requests it.\n"
+                "Available roles:\n"
+                "- explorer: read-only fast codebase search and inspection that runs safely in parallel; trust its findings and reuse it.\n"
+                "- worker: scoped file implementation and verification; requires an explicit write_scope.\n"
+                "- awaiter: dedicated solely to monitoring long-running tests, builds, or background processes.\n"
+                "- default: general-purpose subtask execution when specialized constraints are unneeded."
             ),
             "parameters": {
                 "type": "object",
@@ -144,9 +159,17 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
                 "required": ["task_name", "prompt"],
                 "properties": {
                     "task_name": {"type": "string", "minLength": 1, "maxLength": 64},
-                    "prompt": {"type": "string", "minLength": 1, "maxLength": 8000},
-                    "role": {"type": "string", "enum": ["default", "explorer", "worker", "awaiter"]},
-                    "fork_turns": {"type": "string", "enum": ["none", "all"]},
+                    "prompt": {"type": "string", "minLength": 1, "maxLength": MAX_SUBAGENT_PROMPT_CHARS},
+                    "role": {
+                        "type": "string",
+                        "enum": ["default", "explorer", "worker", "awaiter"],
+                        "description": "Subagent role preset; omit when no specialized role is needed (defaults to 'default').",
+                    },
+                    "fork_turns": {
+                        "type": "string",
+                        "enum": ["none", "all"],
+                        "description": "Context mode: 'none' (default) shows only prompt; 'all' inherits parent conversation text.",
+                    },
                     "write_scope": {
                         "type": "array",
                         "maxItems": 32,
@@ -162,14 +185,17 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
         "type": "function",
         "function": {
             "name": "ryn_send_message",
-            "description": "Send supplemental context or a message to an existing subagent by nickname, task_name, agent_path, or agent_id.",
+            "description": (
+                "Send supplemental context or a message to an existing subagent by nickname, task_name, agent_path, or agent_id. "
+                "Reuse an existing subagent instead of spawning a new one when follow-up work heavily depends on context it already holds."
+            ),
             "parameters": {
                 "type": "object",
                 "additionalProperties": False,
                 "required": ["target", "message"],
                 "properties": {
                     "target": {"type": "string", "minLength": 1, "maxLength": 128},
-                    "message": {"type": "string", "minLength": 1, "maxLength": 8000},
+                    "message": {"type": "string", "minLength": 1, "maxLength": MAX_SUBAGENT_PROMPT_CHARS},
                 },
             },
         },
@@ -178,14 +204,17 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
         "type": "function",
         "function": {
             "name": "ryn_followup_task",
-            "description": "Assign a new follow-up task prompt to an existing non-closed subagent and trigger its execution.",
+            "description": (
+                "Assign a new follow-up task prompt to an existing non-closed subagent and trigger its execution. "
+                "Reuse an existing subagent instead of spawning a new one when follow-up work heavily depends on context it already holds."
+            ),
             "parameters": {
                 "type": "object",
                 "additionalProperties": False,
                 "required": ["target", "prompt"],
                 "properties": {
                     "target": {"type": "string", "minLength": 1, "maxLength": 128},
-                    "prompt": {"type": "string", "minLength": 1, "maxLength": 8000},
+                    "prompt": {"type": "string", "minLength": 1, "maxLength": MAX_SUBAGENT_PROMPT_CHARS},
                 },
             },
         },
@@ -268,7 +297,7 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
                 "required": ["target"],
                 "properties": {
                     "target": {"type": "string", "minLength": 1, "maxLength": 128},
-                    "prompt": {"type": "string", "minLength": 1, "maxLength": 8000},
+                    "prompt": {"type": "string", "minLength": 1, "maxLength": MAX_SUBAGENT_PROMPT_CHARS},
                 },
             },
         },
@@ -335,7 +364,10 @@ def role_guidance(meta: dict) -> str:
     elif role == "awaiter":
         parts.append(
             "Role=awaiter: Monitor the requested command, process, or test suite until completion or failure. "
-            "Do not modify source files unless explicitly instructed. Report the final exit status and concise root-cause findings."
+            "Do not modify source files unless explicitly instructed. Report the final exit status and concise root-cause findings. "
+            "Do not change, reinterpret or optimize the task; keep waiting until a terminal state or an explicit stop. "
+            "Keep calling ryn_process_read; never report completion without an exit status. "
+            "If asked for status, report it and keep waiting."
         )
     else:
         parts.append(
@@ -352,11 +384,17 @@ def validate_subagent_tool(name: str, arguments: dict) -> dict:
         raise AgentToolRejected("agent_invalid_tool_arguments", correction="Tool arguments must be a JSON object.")
     if name == "ryn_spawn_agent":
         task_name = str(arguments.get("task_name") or "").strip()
-        prompt = str(arguments.get("prompt") or "").strip()
+        raw_prompt = str(arguments.get("prompt") or "")
+        prompt = raw_prompt.strip()
         if not task_name:
             raise AgentToolRejected("agent_invalid_tool_arguments", correction="task_name is required for ryn_spawn_agent.")
         if not prompt:
             raise AgentToolRejected("agent_invalid_tool_arguments", correction="prompt is required for ryn_spawn_agent.")
+        if len(raw_prompt) > MAX_SUBAGENT_PROMPT_CHARS:
+            raise AgentToolRejected(
+                "agent_invalid_tool_arguments",
+                correction=f"prompt must be at most {MAX_SUBAGENT_PROMPT_CHARS} characters.",
+            )
         role = str(arguments.get("role") or "default").strip().lower()
         if role not in ROLES:
             raise AgentToolRejected(
@@ -393,15 +431,27 @@ def validate_subagent_tool(name: str, arguments: dict) -> dict:
         }
     if name == "ryn_send_message":
         target = str(arguments.get("target") or "").strip()
-        message = str(arguments.get("message") or "").strip()
+        raw_message = str(arguments.get("message") or "")
+        message = raw_message.strip()
         if not target or not message:
             raise AgentToolRejected("agent_invalid_tool_arguments", correction="target and message are required.")
+        if len(raw_message) > MAX_SUBAGENT_PROMPT_CHARS:
+            raise AgentToolRejected(
+                "agent_invalid_tool_arguments",
+                correction=f"message must be at most {MAX_SUBAGENT_PROMPT_CHARS} characters.",
+            )
         return {"target": target, "message": message}
     if name == "ryn_followup_task":
         target = str(arguments.get("target") or "").strip()
-        prompt = str(arguments.get("prompt") or "").strip()
+        raw_prompt = str(arguments.get("prompt") or "")
+        prompt = raw_prompt.strip()
         if not target or not prompt:
             raise AgentToolRejected("agent_invalid_tool_arguments", correction="target and prompt are required.")
+        if len(raw_prompt) > MAX_SUBAGENT_PROMPT_CHARS:
+            raise AgentToolRejected(
+                "agent_invalid_tool_arguments",
+                correction=f"prompt must be at most {MAX_SUBAGENT_PROMPT_CHARS} characters.",
+            )
         return {"target": target, "prompt": prompt}
     if name == "ryn_wait_agent":
         raw_targets = arguments.get("targets")
@@ -430,7 +480,13 @@ def validate_subagent_tool(name: str, arguments: dict) -> dict:
         target = str(arguments.get("target") or "").strip()
         if not target:
             raise AgentToolRejected("agent_invalid_tool_arguments", correction="target is required for ryn_resume_agent.")
-        prompt = str(arguments.get("prompt") or "").strip() or None
+        raw_prompt = str(arguments.get("prompt") or "")
+        if raw_prompt and len(raw_prompt) > MAX_SUBAGENT_PROMPT_CHARS:
+            raise AgentToolRejected(
+                "agent_invalid_tool_arguments",
+                correction=f"prompt must be at most {MAX_SUBAGENT_PROMPT_CHARS} characters.",
+            )
+        prompt = raw_prompt.strip() or None
         return {"target": target, "prompt": prompt}
     raise AgentToolRejected("agent_unknown_internal_tool")
 
@@ -1036,18 +1092,64 @@ def resume_agent_in_tx(data: dict, parent_row: dict, args: dict) -> dict:
     }
 
 
+def _notification_id(notif: dict, index: int) -> str:
+    raw_id = notif.get("id")
+    if isinstance(raw_id, str) and raw_id:
+        return raw_id
+    return f"legacy_{index}:{notif.get('agent_id') or ''}:{notif.get('created_at') or ''}"
+
+
 def drain_subagent_notifications_in_tx(data: dict, parent_row: dict, target_ids: set[str] | None = None) -> list[dict]:
     """Mark matching unread notifications on parent_row as delivered and return them."""
     queue = parent_row.get("subagent_notifications") or []
     delivered: list[dict] = []
-    for item in queue:
+    tasks = (data.get("tasks") or {}) if isinstance(data, dict) else {}
+    for index, item in enumerate(queue):
         if not isinstance(item, dict) or item.get("delivered"):
             continue
-        if target_ids and item.get("agent_id") not in target_ids:
+        notif_id = _notification_id(item, index)
+        if target_ids is not None and notif_id not in target_ids and item.get("agent_id") not in target_ids:
             continue
         item["delivered"] = True
+        child_row = tasks.get(item.get("agent_id"))
+        if isinstance(child_row, dict):
+            last_notif = (child_row.get("subagent_meta") or {}).get("last_notification")
+            if isinstance(last_notif, dict) and last_notif.get("id") == item.get("id"):
+                last_notif["delivered"] = True
         delivered.append(copy.deepcopy(item))
     return delivered
+
+
+def pending_for_request(row: dict) -> list[dict]:
+    """Build pending tail message(s) for unread subagent notifications on row."""
+    queue = row.get("subagent_notifications") or []
+    unread: list[tuple[str, dict]] = []
+    for index, item in enumerate(queue):
+        if isinstance(item, dict) and not item.get("delivered"):
+            unread.append((_notification_id(item, index), item))
+    if not unread:
+        return []
+    shown_ids = [nid for nid, _ in unread]
+    sections: list[str] = ["Runtime subagent notifications:"]
+    if len(unread) > 8:
+        earlier = unread[:-8]
+        recent = unread[-8:]
+        sections.append(f"Earlier subagent notifications ({len(earlier)} summarized):")
+        for _, notif in earlier:
+            nickname = str(notif.get("nickname") or "")
+            agent_path = str(notif.get("agent_path") or "")
+            status = str(notif.get("status") or "")
+            sections.append(f"- {nickname} | {agent_path} | {status}")
+    else:
+        recent = unread
+    sections.extend(format_notification_tag(notif) for _, notif in recent)
+    return [
+        {
+            "role": "user",
+            "content": "\n".join(sections),
+            "subagent_notification_ids": shown_ids,
+        }
+    ]
 
 
 def format_notification_tag(notif: dict) -> str:

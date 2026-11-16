@@ -115,3 +115,57 @@ pub async fn drag_local_file(window: tauri::WebviewWindow, path: String) -> Resu
     tauri::async_runtime::spawn_blocking(move || receiver.recv().map_err(|error| error.to_string())?)
         .await.map_err(|error| error.to_string())?
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct DropPathInfo {
+    pub path: String,
+    pub size: u64,
+    pub kind: &'static str,
+}
+
+pub(crate) fn inspect_path(path: String) -> DropPathInfo {
+    let target = std::path::PathBuf::from(&path);
+    if !target.is_absolute() {
+        return DropPathInfo { path, size: 0, kind: "missing" };
+    }
+    match std::fs::metadata(&target) {
+        Ok(meta) if meta.is_dir() => DropPathInfo { path, size: 0, kind: "dir" },
+        Ok(meta) if meta.is_file() => DropPathInfo { path, size: meta.len(), kind: "file" },
+        _ => DropPathInfo { path, size: 0, kind: "missing" },
+    }
+}
+
+/// Read-only stat for dropped or picked local paths before staging composer attachments.
+#[tauri::command]
+pub async fn inspect_drop_paths(paths: Vec<String>) -> Result<Vec<DropPathInfo>, String> {
+    tauri::async_runtime::spawn_blocking(move || paths.into_iter().map(inspect_path).collect())
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inspects_file_size_directory_and_missing_path() {
+        let dir = std::env::temp_dir().join(format!("ryn-drop-inspect-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("sample.txt");
+        std::fs::write(&file, b"hello world").unwrap();
+
+        let file_info = inspect_path(file.to_string_lossy().into_owned());
+        assert_eq!(file_info.kind, "file");
+        assert_eq!(file_info.size, 11);
+
+        let dir_info = inspect_path(dir.to_string_lossy().into_owned());
+        assert_eq!(dir_info.kind, "dir");
+        assert_eq!(dir_info.size, 0);
+
+        let missing_info = inspect_path(dir.join("absent.bin").to_string_lossy().into_owned());
+        assert_eq!(missing_info.kind, "missing");
+        assert_eq!(missing_info.size, 0);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}

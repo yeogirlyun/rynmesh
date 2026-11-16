@@ -331,8 +331,10 @@ def test_attachment_boundary_cancel_nonce_bound_and_torn_history(tmp_path) -> No
     relationship = bob.store.relationship_for_peer(alice.peer_id)
     assert relationship
     for index in range(520):
-        accepted = bob.store.remember_nonce(relationship["relationship_id"], f"nonce-{index}", now=100, timestamp=100)
-        assert accepted is (index < 512)
+        accepted = bob.store.remember_nonce(
+            relationship["relationship_id"], f"nonce-{index}", now=100, timestamp=100, limit=512
+        )
+        assert bool(accepted) is (index < 512)
     assert len(bob.store.state()["nonces"][relationship["relationship_id"]]) == 512
 
     path = bob.messages._conv_path(alice.peer_id)

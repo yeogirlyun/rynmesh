@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ from rynmesh.crypto import sha256_file
 PROTOCOL_VERSION = "rynmesh.llm.task.v1"
 PACKAGE_VERSION = "0.1.0"
 MODES = {"managed", "import_gguf", "openai_compatible", "ollama", "codex_cli", "claude_cli", "antigravity_cli"}
+_DEFAULT_LIMIT_UNSET: Any = object()
 
 
 class ManifestError(ValueError):
@@ -48,8 +50,9 @@ class LLMPackageManifest:
     version: str = PACKAGE_VERSION
     protocol_version: str = PROTOCOL_VERSION
     capabilities: list[str] = field(default_factory=lambda: ["text-generation"])
-    context_window: int = 4096
-    max_output_tokens: int = 512
+    context_window: int = _DEFAULT_LIMIT_UNSET
+    max_output_tokens: int = _DEFAULT_LIMIT_UNSET
+    context_window_basis: str = ""
     max_concurrent: int = 1
     queue_limit: int = 0
     timeout_seconds: float = 120.0
@@ -78,6 +81,13 @@ class LLMPackageManifest:
     model_owned: bool = False
     allow_non_loopback: bool = False
     debug_log_bodies: bool = False
+
+    def __post_init__(self) -> None:
+        external_api = self.mode in {"openai_compatible", "ollama"}
+        if self.context_window is _DEFAULT_LIMIT_UNSET or self.context_window is None:
+            self.context_window = 4096 if external_api else 8192
+        if self.max_output_tokens is _DEFAULT_LIMIT_UNSET or self.max_output_tokens is None:
+            self.max_output_tokens = 512 if external_api else 2048
 
     def validate(self) -> None:
         if not self.package_id or any(ch not in "abcdefghijklmnopqrstuvwxyz0123456789-_." for ch in self.package_id):
@@ -133,6 +143,7 @@ class LLMPackageManifest:
             "capabilities": list(self.capabilities),
             "context_window": self.context_window,
             "max_output_tokens": self.max_output_tokens,
+            **({"context_window_basis": self.context_window_basis} if self.context_window_basis else {}),
             "max_concurrent": self.max_concurrent,
             "queue_limit": self.queue_limit,
             "timeout_seconds": self.timeout_seconds,
@@ -184,3 +195,33 @@ def save_manifest(manifest: LLMPackageManifest, path: str | Path) -> Path:
 
 def fingerprint_file(path: str | Path, *, chunk_size: int = 1024 * 1024) -> str:
     return sha256_file(path, chunk_size=chunk_size)
+
+
+def cached_fingerprint(path: str | Path, *, chunk_size: int = 1024 * 1024) -> str:
+    target = Path(path).expanduser()
+    stat_info = target.stat()
+    size = stat_info.st_size
+    mtime_ns = stat_info.st_mtime_ns
+    cache_path = target.with_name(target.name + ".ryn-sha256.json")
+    try:
+        cached = json.loads(cache_path.read_text(encoding="utf-8"))
+        if (
+            isinstance(cached, dict)
+            and cached.get("size") == size
+            and cached.get("mtime_ns") == mtime_ns
+            and isinstance(cached.get("sha256"), str)
+            and re.fullmatch(r"sha256:[0-9a-f]{64}", cached["sha256"])
+        ):
+            return cached["sha256"]
+    except (OSError, ValueError):
+        pass
+    digest = fingerprint_file(target, chunk_size=chunk_size)
+    try:
+        atomic_write_json(
+            cache_path,
+            {"size": size, "mtime_ns": mtime_ns, "sha256": digest},
+            sort_keys=True,
+        )
+    except OSError:
+        pass
+    return digest

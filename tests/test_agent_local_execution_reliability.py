@@ -62,7 +62,7 @@ def test_missing_rg_is_recoverable_before_dispatch_and_does_not_snapshot(local, 
     from rynmesh.agent_runtime import local_processes, workspace_artifacts
     tools, context, _, _ = local
     real_which = local_processes.shutil.which
-    monkeypatch.setattr(local_processes.shutil, "which", lambda name: None if name.lower() in {"rg", "rg.exe"} else real_which(name))
+    monkeypatch.setattr(local_processes.shutil, "which", lambda name, path=None: None if name.lower() in {"rg", "rg.exe"} else real_which(name, path=path))
     monkeypatch.setattr(workspace_artifacts, "snapshot", lambda *_: pytest.fail("read-only rg must not inventory workspace"))
     with pytest.raises(AgentToolRejected, match="agent_ripgrep_unavailable_use_file_search"):
         execute(tools, context, "ryn_shell_execute", {"command": "rg -n 'balance_query' ."}, "missing-rg")
@@ -80,7 +80,7 @@ def test_agent_continues_with_native_search_after_rg_is_missing(node, monkeypatc
     runtime.update_settings({"enabled": True, "model_id": model_id, "workspace_root": str(tmp_path)})
     (tmp_path / "balance.py").write_text("balance_query = 1\n", encoding="utf-8")
     real_which = local_processes.shutil.which
-    monkeypatch.setattr(local_processes.shutil, "which", lambda name: None if name.lower() in {"rg", "rg.exe"} else real_which(name))
+    monkeypatch.setattr(local_processes.shutil, "which", lambda name, path=None: None if name.lower() in {"rg", "rg.exe"} else real_which(name, path=path))
     requests = fake_upstream(monkeypatch, [
         call("ryn_shell_execute", json.dumps({"command": "rg -n balance_query ."}), "rg"),
         call("ryn_file_search", json.dumps({"path": ".", "query": "balance_query"}), "native"),
@@ -486,7 +486,7 @@ def test_recovery_checks_old_process_and_prevents_duplicate_running_operation(lo
 
 def test_genuine_write_shell_unknown_outcome_still_enters_reconciliation(node, monkeypatch, tmp_path):
     runtime, store, bridge, tools, catalog, _ = _make_node_runtime(node, tmp_path, "write-shell-unknown")
-    runtime.update_settings({"permission_mode": "automatic", "allowed_write_tools": ["ryn_shell_execute"]})
+    runtime.update_settings({"permission_mode": "workspace", "allowed_write_tools": ["ryn_shell_execute"]})
     write_cmd = "Add-Content out.txt hi" if os.name == "nt" else "echo hi >> out.txt"
 
     def fail_wait(*_args, **_kwargs):
@@ -1500,3 +1500,277 @@ os._exit(9)
         assert "receipt_reserve" not in settled
     finally:
         new_local_tools.processes.close()
+
+
+def test_s02_i9_automatic_mode_reconcile_acknowledges_unknown_write_once_without_replay(node, monkeypatch, tmp_path):
+    from rynmesh.agent_runtime import verification
+    from rynmesh.agent_runtime.execution_policy import classify_operation
+    from rynmesh.agent_runtime.protocol import model_retry_authority, now
+    from rynmesh.agent_runtime.runtime import UNKNOWN_OUTCOME_NOTE
+
+    runtime, store, bridge, tools, catalog, _ = _make_node_runtime(node, tmp_path, "s02-i9-reconcile")
+    runtime.update_settings({"permission_mode": "automatic"})
+    write_cmd = ("Set-Content -Path marker.txt -Value ok" if os.name == "nt" else "printf ok > marker.txt")
+    dispatched_runs = []
+    real_start = tools.local.processes.start
+
+    def spy_start(*args, **kwargs):
+        dispatched_runs.append(1)
+        return real_start(*args, **kwargs)
+
+    monkeypatch.setattr(tools.local.processes, "start", spy_start)
+
+    created = runtime.create({"message": "Write marker.txt safely."})
+    task_id = created["id"]
+    op_id = "op_auto_restart_once"
+
+    def stage_dispatched_write(data):
+        row = data["tasks"][task_id]
+        args = {"command": write_cmd}
+        classification = classify_operation(
+            "ryn_shell_execute",
+            args,
+            {"effect": "write"},
+            operation_id=op_id,
+            task_id=task_id,
+            workspace_root=row["local_execution"]["workspace_root"],
+            goal_revision=row["goal"]["revision"],
+            scope_revision=row["scope_revision"],
+            context_epoch=row.get("context_epoch", 0),
+            control_revision=row["control_revision"],
+        )
+        call_item = {
+            "call_id": "call_auto_restart",
+            "operation_id": op_id,
+            "name": "ryn_shell_execute",
+            "arguments": args,
+            "effect": "write",
+            "context_epoch": row.get("context_epoch", 0),
+        }
+        row["messages"].append({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "call_auto_restart",
+                "type": "function",
+                "function": {"name": "ryn_shell_execute", "arguments": json.dumps(args)},
+            }],
+        })
+        row["status"] = "running"
+        row["queue"] = [call_item]
+        row["in_flight"] = {
+            **call_item,
+            "kind": "tool",
+            "dispatched": True,
+            "authorization": "automatic",
+            "operation_classification": classification,
+            "goal_revision": row["goal"]["revision"],
+            "control_revision": row["control_revision"],
+            "scope_revision": row["scope_revision"],
+            "context_epoch": row.get("context_epoch", 0),
+            "authority": model_retry_authority(data["settings"]),
+            "preview": {"command": write_cmd},
+        }
+        verification.record(row, call_item, "intent", now(), flight=row["in_flight"])
+
+    store.transaction(stage_dispatched_write)
+
+    restarted = AgentRuntime(store, bridge, tools, catalog)
+    restarted.reconcile()
+    after = restarted.get(task_id)
+    assert after["status"] == "queued"
+    assert after["error"] is None
+    assert after.get("reconciliation") is None
+    raw_after = store.read()["tasks"][task_id]
+    assert op_id in raw_after.get("auto_acknowledged_operations", [])
+    interrupted_ev = next(e for e in reversed(after["events"]) if e["type"] == "interrupted")
+    assert interrupted_ev.get("continued") is True
+    assert interrupted_ev.get("reason") == "node_restarted"
+    assert interrupted_ev.get("auto_acknowledged") is True
+
+    requests = fake_upstream(
+        monkeypatch,
+        [
+            call("ryn_file_list", json.dumps({"path": "."}), "check_dir"),
+            {"role": "assistant", "content": "Checked state first without repeating the unconfirmed command."},
+            passed_checker,
+        ],
+    )
+    for _ in range(8):
+        restarted.run_once()
+        cur = restarted.get(task_id)
+        if cur["status"] in {"completed", "failed", "interrupted"}:
+            break
+    assert cur["status"] == "completed", cur.get("error")
+    assert dispatched_runs == []
+    tool_msgs = [m for m in requests[0]["messages"] if m.get("role") == "tool"]
+    assert any("agent_write_outcome_unknown" in m["content"] and UNKNOWN_OUTCOME_NOTE in m["content"] for m in tool_msgs)
+
+    # Same operation_id appearing in flight on a second restart must NOT auto-acknowledge again.
+    def restage_same_op(data):
+        row = data["tasks"][task_id]
+        args = {"command": write_cmd}
+        call_item = {
+            "call_id": "call_auto_restart_again",
+            "operation_id": op_id,
+            "name": "ryn_shell_execute",
+            "arguments": args,
+            "effect": "write",
+            "context_epoch": row.get("context_epoch", 0),
+        }
+        row["status"] = "running"
+        row["queue"] = [call_item]
+        row["in_flight"] = {
+            **call_item,
+            "kind": "tool",
+            "dispatched": True,
+            "authorization": "automatic",
+            "goal_revision": row["goal"]["revision"],
+            "control_revision": row["control_revision"],
+            "scope_revision": row["scope_revision"],
+            "context_epoch": row.get("context_epoch", 0),
+            "authority": model_retry_authority(data["settings"]),
+            "preview": {"command": write_cmd},
+        }
+
+    store.transaction(restage_same_op)
+    restarted_again = AgentRuntime(store, bridge, tools, catalog)
+    restarted_again.reconcile()
+    second = restarted_again.get(task_id)
+    assert second["status"] == "interrupted"
+    assert second["error"] == "agent_write_outcome_unknown"
+    assert second.get("reconciliation", {}).get("state") == "pending"
+
+
+def test_s02_i9_automatic_shell_exception_continues_and_confirm_changes_stops(node, monkeypatch, tmp_path):
+    from rynmesh.agent_runtime.runtime import UNKNOWN_OUTCOME_NOTE
+
+    runtime, store, _, tools, _, _ = _make_node_runtime(node, tmp_path, "s02-i9-shell-exc")
+    runtime.update_settings({"permission_mode": "automatic"})
+    write_cmd = ("Set-Content -Path note.txt -Value done" if os.name == "nt" else "printf done > note.txt")
+    real_wait = tools.local.processes.wait
+    spawn_count = {"n": 0}
+    real_start = tools.local.processes.start
+
+    def count_start(*args, **kwargs):
+        spawn_count["n"] += 1
+        return real_start(*args, **kwargs)
+
+    def fail_wait_once(ident, task_id, cancelled):
+        tools.local.processes.stop(ident, task_id)
+        real_wait(ident, task_id, cancelled)
+        raise OSError(errno.EIO, "pipe lost: " + ("x" * 1200))
+
+    monkeypatch.setattr(tools.local.processes, "start", count_start)
+    monkeypatch.setattr(tools.local.processes, "wait", fail_wait_once)
+
+    requests = fake_upstream(
+        monkeypatch,
+        [
+            call("ryn_shell_execute", json.dumps({"command": write_cmd}), "call_write_1"),
+            call("ryn_file_list", json.dumps({"path": "."}), "call_check_1"),
+            {"role": "assistant", "content": "Checked workspace after unconfirmed shell command."},
+            passed_checker,
+        ],
+    )
+    created = runtime.create({"message": "Create note.txt."})
+    for _ in range(10):
+        runtime.run_once()
+        cur = runtime.get(created["id"])
+        if cur["status"] in {"completed", "failed", "interrupted", "waiting_approval"}:
+            break
+    assert cur["status"] == "completed", cur.get("error")
+    assert spawn_count["n"] == 1
+    interrupted_ev = next(e for e in cur["events"] if e["type"] == "interrupted")
+    assert interrupted_ev.get("continued") is True
+    assert interrupted_ev.get("auto_acknowledged") is True
+
+    unknown_msg = next(
+        json.loads(m["content"])
+        for m in requests[1]["messages"]
+        if m.get("role") == "tool" and "agent_write_outcome_unknown" in m.get("content", "")
+    )
+    assert unknown_msg["outcome"] == "unknown"
+    assert UNKNOWN_OUTCOME_NOTE in unknown_msg["note"]
+    assert isinstance(unknown_msg.get("details"), str) and unknown_msg["details"]
+    assert len(unknown_msg["details"].encode("utf-8")) <= 900
+
+    # confirm_changes mode must stay interrupted waiting for owner confirmation.
+    runtime.update_settings({"permission_mode": "confirm_changes"})
+    fake_upstream(
+        monkeypatch,
+        [
+            call("ryn_shell_execute", json.dumps({"command": write_cmd}), "call_write_confirm"),
+        ],
+    )
+    confirm_task = runtime.create({"message": "Create note.txt with confirmation."})
+    runtime.run_once()
+    runtime.run_once()
+    waiting = runtime.get(confirm_task["id"])
+    assert waiting["status"] == "waiting_approval"
+    runtime.action(
+        confirm_task["id"],
+        {
+            "action": "approve",
+            "expected_revision": waiting["revision"],
+            "approval_id": waiting["pending_approval"]["id"],
+        },
+    )
+    runtime.run_once()
+    stopped = runtime.get(confirm_task["id"])
+    assert stopped["status"] == "interrupted"
+    assert stopped["error"] == "agent_write_outcome_unknown"
+
+    # workspace mode must also stay interrupted and schedule reconciliation.
+    runtime.update_settings({"permission_mode": "workspace"})
+    fake_upstream(
+        monkeypatch,
+        [
+            call("ryn_shell_execute", json.dumps({"command": write_cmd}), "call_write_workspace"),
+        ],
+    )
+    ws_task = runtime.create({"message": "Create note.txt in workspace mode."})
+    for _ in range(5):
+        runtime.run_once()
+        ws_stopped = runtime.get(ws_task["id"])
+        if ws_stopped["status"] in {"interrupted", "completed", "failed"}:
+            break
+    assert ws_stopped["status"] == "interrupted"
+    assert ws_stopped["error"] == "agent_write_outcome_unknown"
+    assert ws_stopped["reconciliation"]["state"] == "pending"
+
+
+def test_s02_i9_repeated_unknown_outcomes_stop_on_third_occurrence(node, monkeypatch, tmp_path):
+    runtime, _, _, tools, _, _ = _make_node_runtime(node, tmp_path, "s02-i9-loop-guard")
+    runtime.update_settings({"permission_mode": "automatic"})
+    write_cmd = ("Set-Content -Path loop.txt -Value v" if os.name == "nt" else "printf v > loop.txt")
+    real_wait = tools.local.processes.wait
+    attempts = {"n": 0}
+
+    def always_fail_wait(ident, task_id, cancelled):
+        attempts["n"] += 1
+        tools.local.processes.stop(ident, task_id)
+        real_wait(ident, task_id, cancelled)
+        raise OSError(errno.EIO, "persistent pipe break")
+
+    monkeypatch.setattr(tools.local.processes, "wait", always_fail_wait)
+    fake_upstream(
+        monkeypatch,
+        [
+            call("ryn_shell_execute", json.dumps({"command": write_cmd}), "u1"),
+            call("ryn_shell_execute", json.dumps({"command": write_cmd}), "u2"),
+            call("ryn_shell_execute", json.dumps({"command": write_cmd}), "u3"),
+            {"role": "assistant", "content": "Should never reach fourth model call."},
+        ],
+    )
+    created = runtime.create({"message": "Run flaky command."})
+    for _ in range(12):
+        runtime.run_once()
+        cur = runtime.get(created["id"])
+        if cur["status"] in {"completed", "failed", "interrupted"}:
+            break
+    assert attempts["n"] == 3
+    assert cur["status"] == "interrupted"
+    assert cur["error"] == "agent_write_outcome_unknown"
+    ack_events = [e for e in cur["events"] if e["type"] == "unknown_outcome_acknowledged"]
+    assert len(ack_events) == 2

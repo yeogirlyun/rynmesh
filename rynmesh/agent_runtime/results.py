@@ -51,6 +51,8 @@ def format_reference_result(
         "bytes": reference["bytes"],
         "note": note,
     }
+    if reference.get("truncated") is True:
+        base["truncated"] = True
     field = WORKSTATION_INLINE_PREVIEW_FIELDS.get(tool_name)
     if field and isinstance(result, dict) and isinstance(result.get(field), str):
         preview = {
@@ -84,11 +86,14 @@ def format_reference_result(
             if key not in {"structuredContent", "content", "native_observation_artifacts"}
             and isinstance(value, (str, int, float, bool, type(None)))
         }
-        for art_key in ("images", "native_observation_artifacts", "image_artifacts", "mcp_artifacts"):
+        for art_key in ("images", "native_observation_artifacts", "image_artifacts", "mcp_artifacts", "files"):
             if isinstance(result.get(art_key), list):
                 art_bytes = len(encoded(result[art_key]))
                 if art_bytes <= max(2048, max_bytes // 3):
                     preview[art_key] = result[art_key]
+        for meta_key in ("truncated", "structured_truncated"):
+            if isinstance(result.get(meta_key), dict):
+                preview[meta_key] = result[meta_key]
         sc = result.get("structuredContent")
         if isinstance(sc, dict):
             scalar_sc = {}
@@ -107,10 +112,12 @@ def format_reference_result(
                 preview["structuredContent"] = scalar_sc
         preview.update(base)
         preview["truncated_inline"] = True
-        if isinstance( preview.get("text"), str) and len(preview["text"]) > max(512, max_bytes // 3):
+        if isinstance(preview.get("text"), str) and len(preview["text"]) > max(512, max_bytes // 3):
             preview["text"] = truncate_head_tail(
                 preview["text"], max(256, max_bytes // 4), reference_id=reference["id"]
             )
+        if isinstance(result.get("truncated"), dict):
+            preview["truncated"] = result["truncated"]
         structured_obj = (
             result.get("structuredContent")
             if "structuredContent" in result
@@ -140,14 +147,70 @@ def path(store, task_id, result_id):
     return store.root / "results" / hashlib.sha256(task_id.encode()).hexdigest() / (result_id + ".json")
 
 
+def _fit_json_string_field(shell: dict, field: str, text: str, max_bytes: int) -> bytes:
+    empty_raw = encoded({**shell, field: ""})
+    if len(empty_raw) >= max_bytes:
+        minimal = {"truncated": True, field: ""}
+        min_overhead = len(encoded(minimal))
+        cap = max(0, max_bytes - min_overhead - 8)
+        prefix = text.encode("utf-8")[:cap].decode("utf-8", errors="ignore")
+        while True:
+            cand = encoded({"truncated": True, field: prefix})
+            if len(cand) <= max_bytes or not prefix:
+                return cand
+            prefix = prefix[: max(0, len(prefix) - max(1, (len(cand) - max_bytes) // 2 + 1))]
+    avail = max(0, max_bytes - len(empty_raw))
+    prefix = text.encode("utf-8")[:avail].decode("utf-8", errors="ignore")
+    while True:
+        cand = encoded({**shell, field: prefix})
+        if len(cand) <= max_bytes or not prefix:
+            return cand
+        excess = len(cand) - max_bytes
+        step = max(1, excess // 2 + 16)
+        prefix = prefix[: max(0, len(prefix) - step)]
+
+
+def _truncate_encoded_result(value: object, raw: bytes, max_bytes: int) -> bytes:
+    original_bytes = len(raw)
+    if isinstance(value, dict):
+        kept: dict = {}
+        for k, v in value.items():
+            if k in {"text", "output", "content", "structuredContent"}:
+                continue
+            if isinstance(v, (str, int, float, bool, type(None))) and (not isinstance(v, str) or len(v) <= 4096):
+                kept[k] = v
+            elif k in {"mcp_artifacts", "files", "images", "structured_truncated"} and len(encoded(v)) <= max_bytes // 8:
+                kept[k] = v
+        kept["truncated"] = value["truncated"] if isinstance(value.get("truncated"), dict) else True
+        kept["original_bytes"] = original_bytes
+        for str_field in ("text", "output"):
+            if isinstance(value.get(str_field), str) and value[str_field]:
+                return _fit_json_string_field(kept, str_field, value[str_field], max_bytes)
+        raw_prefix = raw[:max_bytes].decode("utf-8", errors="ignore")
+        return _fit_json_string_field(kept, "content", raw_prefix, max_bytes)
+    raw_prefix = raw[:max_bytes].decode("utf-8", errors="ignore")
+    return _fit_json_string_field(
+        {"truncated": True, "original_bytes": original_bytes},
+        "content",
+        raw_prefix,
+        max_bytes,
+    )
+
+
 def save(store, row, call, value):
     raw = encoded(value)
-    if len(raw) > MAX_RESULT_BYTES:
-        raise AgentError("agent_result_storage_limit")
+    was_truncated = False
+    original_bytes = len(raw)
+    if original_bytes > MAX_RESULT_BYTES:
+        raw = _truncate_encoded_result(value, raw, MAX_RESULT_BYTES)
+        was_truncated = True
     result_id = "result_" + uuid.uuid4().hex
     reference = {"id": result_id, "task_id": row["id"], "tool": call["name"], "operation_id": call["operation_id"],
                  "goal_revision": row["goal"]["revision"], "scope_revision": row["scope_revision"], "context_epoch": row.get("context_epoch", 0),
                  "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
+    if was_truncated:
+        reference["truncated"] = True
+        reference["original_bytes"] = original_bytes
     state = store.inspect(lambda data: copy.deepcopy((data.get("tasks", {}).get(row["id"]) or row).get("data_policy_state")))
     if state:
         reference["data_policy_state"] = state
@@ -273,8 +336,11 @@ def page(store, row, result_id, offset=0, limit=8192, *, provider=False):
     if offset > len(text):
         raise AgentError("agent_invalid_cursor")
     end = min(len(text), offset + limit)
-    return {"id": result_id, "sha256": reference["sha256"], "bytes": reference["bytes"], "characters": len(text),
-            "offset": offset, "next_offset": end if end < len(text) else None, "content": text[offset:end]}
+    out = {"id": result_id, "sha256": reference["sha256"], "bytes": reference["bytes"], "characters": len(text),
+           "offset": offset, "next_offset": end if end < len(text) else None, "content": text[offset:end]}
+    if reference.get("truncated") is True:
+        out["truncated"] = True
+    return out
 
 
 def purge(store, task_id):

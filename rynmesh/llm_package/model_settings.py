@@ -16,8 +16,13 @@ FIELDS = {
     "shared_tokens_per_day",
     "share_scope",
     "image_input",
+    "prompt_cache",
+    "stream_idle_seconds",
+    "max_request_seconds",
+    "stream_max_retries",
 }
 IMAGE_INPUT_VALUES = ("auto", "supported", "unsupported")
+PROMPT_CACHE_VALUES = ("auto", "off")
 # Model-name prefixes whose image input was confirmed with the owner's image test.
 # Add an entry only after that test passed on a real account; never from memory.
 KNOWN_VENDOR_IMAGE_INPUT: tuple[str, ...] = ()
@@ -127,29 +132,61 @@ def defaults(record, model=None):
     meta_output = metadata.get("max_output_tokens") if isinstance(metadata, dict) else None
     vendor_output = _known_vendor_max_output_tokens(model)
     source_output = record.get("max_output_tokens")
-    if type(source_output) is int and source_output != 4096:
+    explicit_output = record.get("max_output_tokens_explicit")
+    if explicit_output is True and type(source_output) is int:
         max_output = source_output
-    elif type(meta_output) is int and 1 <= meta_output <= min(393216, window):
-        max_output = meta_output
-    elif vendor_output is not None and vendor_output <= window:
-        max_output = vendor_output
+    elif explicit_output is False:
+        if type(meta_output) is int and 1 <= meta_output <= min(393216, window):
+            max_output = meta_output
+        elif vendor_output is not None and vendor_output <= window:
+            max_output = vendor_output
+        else:
+            max_output = source_output if type(source_output) is int else 4096
     else:
-        max_output = source_output if type(source_output) is int else 4096
+        if type(source_output) is int and source_output != 4096:
+            max_output = source_output
+        elif type(meta_output) is int and 1 <= meta_output <= min(393216, window):
+            max_output = meta_output
+        elif vendor_output is not None and vendor_output <= window:
+            max_output = vendor_output
+        else:
+            max_output = source_output if type(source_output) is int else 4096
+    source_idle = record.get("stream_idle_seconds")
+    source_max_request = record.get("max_request_seconds")
+    source_stream_retries = record.get("stream_max_retries")
+    stream_idle = source_idle if type(source_idle) is int and 1 <= source_idle <= 86400 else 120
+    max_request = source_max_request if type(source_max_request) is int and 1 <= source_max_request <= 86400 else 1800
+    stream_max_retries = source_stream_retries if type(source_stream_retries) is int and 0 <= source_stream_retries <= 20 else 5
+    protocol = record.get("protocol", "openai_chat")
+    default_prompt_cache = "auto" if protocol in {"openai_responses", "anthropic_messages"} else "off"
+    source_prompt_cache = record.get("prompt_cache")
+    prompt_cache = source_prompt_cache if source_prompt_cache in PROMPT_CACHE_VALUES else default_prompt_cache
     return {"context_window": window,
             "max_output_tokens": max_output,
             "request_defaults": copy.deepcopy(record.get("request_defaults", {})),
-            "max_concurrent": _known_vendor_max_concurrent(model) or 1,
+            "max_concurrent": _known_vendor_max_concurrent(model) or (4 if record.get("kind") == "api" else 1),
             "requests_per_day": None,
             "tokens_per_day": None,
             "shared_tokens_per_day": None,
             "share_scope": "personal_space",
-            "image_input": "auto"}
+            "image_input": "auto",
+            "prompt_cache": prompt_cache,
+            "stream_idle_seconds": stream_idle,
+            "max_request_seconds": max_request,
+            "stream_max_retries": stream_max_retries}
 
 
 def validate(values):
     if not isinstance(values, dict) or set(values) - FIELDS:
         raise ValueError("model_configuration_invalid")
-    for key, low, high in (("context_window", 256, 2000000), ("max_output_tokens", 1, 393216), ("max_concurrent", 1, 2500)):
+    for key, low, high in (
+        ("context_window", 256, 2000000),
+        ("max_output_tokens", 1, 393216),
+        ("max_concurrent", 1, 2500),
+        ("stream_idle_seconds", 1, 86400),
+        ("max_request_seconds", 1, 86400),
+        ("stream_max_retries", 0, 20),
+    ):
         if key in values and (type(values[key]) is not int or not low <= values[key] <= high):
             raise ValueError("model_" + key + "_invalid")
     quota = values.get("requests_per_day")
@@ -157,6 +194,8 @@ def validate(values):
         raise ValueError("model_share_scope_invalid")
     if "image_input" in values and values["image_input"] not in IMAGE_INPUT_VALUES:
         raise ValueError("model_image_input_invalid")
+    if "prompt_cache" in values and values["prompt_cache"] not in PROMPT_CACHE_VALUES:
+        raise ValueError("model_prompt_cache_invalid")
     if quota is not None and (type(quota) is not int or not 1 <= quota <= 1000000):
         raise ValueError("model_requests_per_day_invalid")
     for tok_key in ("tokens_per_day", "shared_tokens_per_day"):
@@ -240,10 +279,15 @@ def image_input_state(record, model):
 
 def public(record, model):
     row = record.get("model_settings", {}).get(model, {})
+    raw_evidence = row.get("evidence", {})
+    evidence = {key: copy.deepcopy(raw_evidence.get(key, {"status": "unknown", "checked_at": None}))
+                for key in ("connection", "model_exists", "tools", "image")}
+    for extra_key in ("prompt_cache_key", "cache_control"):
+        if extra_key in raw_evidence:
+            evidence[extra_key] = copy.deepcopy(raw_evidence[extra_key])
     return {**copy.deepcopy(row), "effective": effective(record, model), **context_metadata(record, model),
             "inherited_fields": sorted(FIELDS - set(row.get("overrides", {}))),
-            "evidence": {key: copy.deepcopy(row.get("evidence", {}).get(key, {"status": "unknown", "checked_at": None}))
-                         for key in ("connection", "model_exists", "tools", "image")}}
+            "evidence": evidence}
 
 
 def fingerprint(record, model):

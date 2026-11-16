@@ -535,3 +535,355 @@ def test_updating_time_or_name_preserves_multiday_weekly_schedule(tmp_path: Path
     assert after_name["name"] == "Updated standup"
     assert after_name["weekdays"] == ["MO", "WE"]
     assert "BYDAY=MO,WE" in after_name["rrule"]
+
+
+@pytest.mark.parametrize(
+    ("hour", "minute", "second", "microsecond"),
+    [
+        (19, 0, 10, 0),
+        (19, 20, 0, 0),
+        (19, 53, 36, 271_000),
+        (19, 59, 50, 0),
+    ],
+    ids=["top_of_hour_plus_10s", "mid_hour_20m", "late_hour_53m36s", "ten_sec_before_hour"],
+)
+def test_heartbeat_skips_paused_task_with_owner_paused_reason_and_advances_schedule(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    hour: int,
+    minute: int,
+    second: int,
+    microsecond: int,
+):
+    app, runtime, model, client = _build_test_env(tmp_path)
+    model.responses = [
+        {
+            "message": {"role": "assistant", "content": "准备就绪。"},
+            "finish_reason": "stop",
+            "usage": {"input_tokens": 10, "output_tokens": 10},
+        }
+    ]
+    base_task = runtime.create({"message": "主会话"})
+    runtime.run_once()
+    tid = base_task["id"]
+
+    local_tz = automations._local_tz()
+    fixed_dt = dt.datetime(2026, 11, 16, hour, minute, second, microsecond, tzinfo=local_tz)
+    fixed_now_ms = int(fixed_dt.timestamp() * 1000)
+    monkeypatch.setattr(automations, "now_ms", lambda: fixed_now_ms)
+
+    hb = client.post(
+        "/api/local/agent/automations",
+        json={
+            "name": "暂停保护心跳",
+            "prompt": "检查状态",
+            "repeat": "hourly",
+            "interval_hours": 1,
+            "time": "00:00",
+            "kind": "heartbeat",
+            "target_task_id": tid,
+        },
+    ).json()["automation"]
+    auto_id = hb["id"]
+
+    due_ms = fixed_now_ms - 5_000
+    runtime.store.transaction(
+        lambda d: (
+            d["tasks"][tid].update(status="paused"),
+            d["automations"][auto_id].update(next_run_at=due_ms),
+        )
+    )
+    worker: automation_worker.AutomationSchedulerWorker = app.state.agent_automation_worker
+    assert worker.run_once().activity is True
+
+    assert runtime.get(tid)["status"] == "paused"
+    listed = runtime.list_automations()
+    auto_item = next(i for i in listed["items"] if i["id"] == auto_id)
+    expected_next = automations.compute_next_run_at(
+        auto_item["rrule"],
+        after_ms=fixed_now_ms,
+        salt=automations.ensure_jitter_salt(runtime.store),
+        automation_id=auto_id,
+        run_count=0,
+    )
+    assert auto_item["next_run_at"] == expected_next
+    assert auto_item["next_run_at"] > fixed_now_ms
+    assert auto_item["next_run_at"] != fixed_now_ms + 60_000
+    if minute == 0 and second == 10:
+        assert auto_item["next_run_at"] >= fixed_now_ms + 59 * 60 * 1000
+    assert worker.run_once().activity is False
+
+    runs = [r for r in listed["runs"] if r["automation_id"] == auto_id]
+    assert len(runs) == 1
+    assert runs[0]["status"] == "SKIPPED"
+    assert runs[0]["skip_reason"] == "owner_paused"
+
+
+def _heartbeat_ok_reply(auto_id: str, note: str) -> dict[str, Any]:
+    return {
+        "message": {
+            "role": "assistant",
+            "content": (
+                f"{note}\n"
+                "<heartbeat>\n"
+                f"<automation_id>{auto_id}</automation_id>\n"
+                "<decision>NOTIFY</decision>\n"
+                f"<message>{note}</message>\n"
+                "</heartbeat>"
+            ),
+        },
+        "finish_reason": "stop",
+        "usage": {"input_tokens": 20, "output_tokens": 15},
+    }
+
+
+def test_s14_i56_t1_heartbeat_without_target_creates_single_dedicated_chat_for_three_runs(tmp_path: Path):
+    """T1 (covers Steps 1, 2, 4): Heartbeat with empty target_task_id ('此任务的新聊天') run 3 times creates only 1 chat, puts all 3 wakeups in that chat, and records kind='heartbeat' on all 3 runs."""
+    app, runtime, model, client = _build_test_env(tmp_path)
+    worker: automation_worker.AutomationSchedulerWorker = app.state.agent_automation_worker
+
+    # Legacy record without dedicated_chat defaults to False
+    norm_legacy = automations.normalize_automation_record(
+        runtime.store,
+        {"id": "legacy-hb", "name": "Legacy", "prompt": "check", "kind": "heartbeat"},
+    )
+    assert norm_legacy["dedicated_chat"] is False
+
+    tasks_before = set(runtime.store.read().get("tasks", {}).keys())
+    created = client.post(
+        "/api/local/agent/automations",
+        json={
+            "name": "每半小时巡检",
+            "prompt": "检查服务健康状态",
+            "repeat": "minutely",
+            "interval_minutes": 30,
+            "kind": "heartbeat",
+            "target_task_id": "",
+        },
+    )
+    assert created.status_code == 200
+    auto = created.json()["automation"]
+    auto_id = auto["id"]
+    assert auto["kind"] == "heartbeat"
+    assert auto["target_task_id"] == ""
+    assert auto.get("dedicated_chat") is False
+
+    for idx in range(1, 4):
+        model.responses.append(_heartbeat_ok_reply(auto_id, f"第 {idx} 次巡检正常"))
+        runtime.store.transaction(
+            lambda d: d["automations"][auto_id].update(next_run_at=automations.now_ms() - 1000)
+        )
+        assert worker.run_once().activity is True
+        runtime.run_once()
+
+    state = runtime.store.read()
+    new_task_ids = set(state.get("tasks", {}).keys()) - tasks_before
+    assert len(new_task_ids) == 1
+    dedicated_tid = next(iter(new_task_ids))
+
+    dedicated_row = state["tasks"][dedicated_tid]
+    assert dedicated_row["automation_kind"] == "heartbeat"
+    assert dedicated_row["automation_id"] == auto_id
+    user_wakeups = [
+        m
+        for m in dedicated_row["messages"]
+        if isinstance(m, dict)
+        and m.get("role") == "user"
+        and "<heartbeat>" in str(m.get("content") or "")
+    ]
+    assert len(user_wakeups) == 3
+
+    listed = runtime.list_automations()
+    saved_auto = next(i for i in listed["items"] if i["id"] == auto_id)
+    assert saved_auto["target_task_id"] == dedicated_tid
+    assert saved_auto["dedicated_chat"] is True
+
+    toml_text = Path(saved_auto["memory_path"]).with_name("automation.toml").read_text(encoding="utf-8")
+    parsed_toml = automations.parse_automation_toml(toml_text)
+    assert parsed_toml["dedicated_chat"] is True
+    assert parsed_toml["target_task_id"] == dedicated_tid
+
+    runs = [r for r in listed["runs"] if r["automation_id"] == auto_id]
+    assert len(runs) == 3
+    assert all(r["kind"] == "heartbeat" for r in runs)
+    assert all(r["task_id"] == dedicated_tid for r in runs)
+
+
+def test_s14_i56_t2_deleting_dedicated_chat_spawns_new_target_without_pausing(tmp_path: Path):
+    """T2 (covers Steps 1, 2, 3, 4): Deleting (or archiving) a dedicated_chat target clears target_task_id and spawns a replacement dedicated chat on the next run instead of pausing."""
+    app, runtime, model, client = _build_test_env(tmp_path)
+    worker: automation_worker.AutomationSchedulerWorker = app.state.agent_automation_worker
+
+    auto = client.post(
+        "/api/local/agent/automations",
+        json={
+            "name": "专用对话重建测试",
+            "prompt": "汇报进度",
+            "repeat": "hourly",
+            "interval_hours": 1,
+            "kind": "heartbeat",
+            "target_task_id": "",
+        },
+    ).json()["automation"]
+    auto_id = auto["id"]
+
+    # Run 1 creates first dedicated chat
+    model.responses.append(_heartbeat_ok_reply(auto_id, "首次运行"))
+    runtime.store.transaction(
+        lambda d: d["automations"][auto_id].update(next_run_at=automations.now_ms() - 1000)
+    )
+    assert worker.run_once().activity is True
+    runtime.run_once()
+    first_tid = next(i for i in runtime.list_automations()["items"] if i["id"] == auto_id)["target_task_id"]
+    assert first_tid
+
+    # Delete first dedicated chat via API, then run again -> spawns replacement chat, stays ACTIVE
+    del_res = client.request(
+        "DELETE",
+        f"/api/local/agent/tasks/{first_tid}",
+        json={"expected_control_revision": runtime.get(first_tid)["control_revision"]},
+    )
+    assert del_res.status_code == 200
+
+    model.responses.append(_heartbeat_ok_reply(auto_id, "删除后自动重建"))
+    runtime.store.transaction(
+        lambda d: d["automations"][auto_id].update(next_run_at=automations.now_ms() - 1000)
+    )
+    assert worker.run_once().activity is True
+    runtime.run_once()
+
+    after_del = next(i for i in runtime.list_automations()["items"] if i["id"] == auto_id)
+    assert after_del["status"] == "ACTIVE"
+    assert after_del["dedicated_chat"] is True
+    second_tid = after_del["target_task_id"]
+    assert second_tid and second_tid != first_tid
+    assert second_tid in runtime.store.read()["tasks"]
+
+    # Archive second dedicated chat, then run again -> also spawns replacement chat without pausing
+    def _archive_second(d):
+        d.setdefault("archives", {})[second_tid] = d["tasks"].pop(second_tid)
+        d["automations"][auto_id]["next_run_at"] = automations.now_ms() - 1000
+
+    model.responses.append(_heartbeat_ok_reply(auto_id, "归档后自动重建"))
+    runtime.store.transaction(_archive_second)
+    assert worker.run_once().activity is True
+    runtime.run_once()
+
+    after_arch = next(i for i in runtime.list_automations()["items"] if i["id"] == auto_id)
+    assert after_arch["status"] == "ACTIVE"
+    assert after_arch["dedicated_chat"] is True
+    assert after_arch["target_task_id"] not in {"", first_tid, second_tid}
+
+
+def test_s14_i56_t3_hand_picked_target_deleted_still_pauses_automation(tmp_path: Path):
+    """T3 (covers Steps 3, 4): When a user-selected existing chat target (dedicated_chat=False) is deleted, the heartbeat automation still transitions to PAUSED."""
+    app, runtime, model, client = _build_test_env(tmp_path)
+    worker: automation_worker.AutomationSchedulerWorker = app.state.agent_automation_worker
+
+    model.responses.append(
+        {
+            "message": {"role": "assistant", "content": "已有对话就绪"},
+            "finish_reason": "stop",
+            "usage": {"input_tokens": 10, "output_tokens": 8},
+        }
+    )
+    existing_chat = runtime.create({"message": "用户手选的现有聊天"})
+    runtime.run_once()
+    picked_tid = existing_chat["id"]
+
+    auto = client.post(
+        "/api/local/agent/automations",
+        json={
+            "name": "绑定现有聊天心跳",
+            "prompt": "继续跟进",
+            "repeat": "hourly",
+            "interval_hours": 1,
+            "kind": "heartbeat",
+            "target_task_id": picked_tid,
+        },
+    ).json()["automation"]
+    auto_id = auto["id"]
+    assert auto.get("dedicated_chat") is False
+
+    # Delete the hand-picked chat
+    assert (
+        client.request(
+            "DELETE",
+            f"/api/local/agent/tasks/{picked_tid}",
+            json={"expected_control_revision": runtime.get(picked_tid)["control_revision"]},
+        ).status_code
+        == 200
+    )
+    tasks_after_delete = set(runtime.store.read().get("tasks", {}).keys())
+
+    runtime.store.transaction(
+        lambda d: d["automations"][auto_id].update(next_run_at=automations.now_ms() - 1000)
+    )
+    assert worker.run_once().activity is True
+
+    paused = next(i for i in runtime.list_automations()["items"] if i["id"] == auto_id)
+    assert paused["status"] == "PAUSED"
+    assert paused["next_run_at"] is None
+    assert set(runtime.store.read().get("tasks", {}).keys()) == tasks_after_delete
+
+
+def test_s14_i56_t4_pre_upgrade_last_task_id_is_adopted_without_spawning_new(tmp_path: Path):
+    """T4 (covers Steps 1, 2, 4): A pre-upgrade heartbeat record with empty target_task_id and an active last_task_id in tasks adopts last_task_id instead of spawning a new chat."""
+    app, runtime, model, client = _build_test_env(tmp_path)
+    worker: automation_worker.AutomationSchedulerWorker = app.state.agent_automation_worker
+
+    model.responses.append(
+        {
+            "message": {"role": "assistant", "content": "升级前已创建的对话"},
+            "finish_reason": "stop",
+            "usage": {"input_tokens": 10, "output_tokens": 8},
+        }
+    )
+    pre_existing = runtime.create({"message": "旧版第一轮创建的对话"})
+    runtime.run_once()
+    legacy_tid = pre_existing["id"]
+
+    auto = client.post(
+        "/api/local/agent/automations",
+        json={
+            "name": "升级前此任务新聊天",
+            "prompt": "定时汇总",
+            "repeat": "hourly",
+            "interval_hours": 1,
+            "kind": "heartbeat",
+            "target_task_id": "",
+        },
+    ).json()["automation"]
+    auto_id = auto["id"]
+
+    def _seed_pre_upgrade_state(d):
+        rec = d["automations"][auto_id]
+        rec["target_task_id"] = ""
+        rec["last_task_id"] = legacy_tid
+        rec.pop("dedicated_chat", None)
+        rec["next_run_at"] = automations.now_ms() - 1000
+        automations.write_automation_files(runtime.store, rec)
+
+    runtime.store.transaction(_seed_pre_upgrade_state)
+    tasks_before = set(runtime.store.read().get("tasks", {}).keys())
+
+    model.responses.append(_heartbeat_ok_reply(auto_id, "升级后复用原对话"))
+    assert worker.run_once().activity is True
+    runtime.run_once()
+
+    state = runtime.store.read()
+    assert set(state.get("tasks", {}).keys()) == tasks_before
+    adopted = next(i for i in runtime.list_automations()["items"] if i["id"] == auto_id)
+    assert adopted["target_task_id"] == legacy_tid
+    runs = [r for r in runtime.list_automations()["runs"] if r["automation_id"] == auto_id]
+    assert len(runs) == 1
+    assert runs[0]["kind"] == "heartbeat"
+    assert runs[0]["task_id"] == legacy_tid
+    hb_msgs = [
+        m
+        for m in state["tasks"][legacy_tid]["messages"]
+        if isinstance(m, dict)
+        and m.get("role") == "user"
+        and "<heartbeat>" in str(m.get("content") or "")
+    ]
+    assert len(hb_msgs) == 1

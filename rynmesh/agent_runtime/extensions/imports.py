@@ -23,6 +23,8 @@ from ..store import AgentError
 from .store import (
     COMPUTER_USE_PLUGIN_ID,
     COMPUTER_USE_SERVER_ID,
+    DEFAULT_STARTUP_TIMEOUT_MS,
+    DEFAULT_TOOL_TIMEOUT_MS,
     ENV_KEY_RE,
     EXTENSION_ID_RE,
     HEADER_KEY_RE,
@@ -30,6 +32,8 @@ from .store import (
     MAX_SKILL_PACKAGE_DEPTH,
     MAX_SKILL_PACKAGE_FILES,
     MAX_SKILL_TOTAL_BYTES,
+    MAX_STARTUP_TIMEOUT_MS,
+    MAX_TOOL_TIMEOUT_MS,
     ExtensionStore,
     _slugify,
     compute_directory_manifest,
@@ -49,6 +53,7 @@ MAX_ARCHIVE_BYTES = 6 * 1024 * 1024
 MAX_STAGED_PREVIEWS = 32
 PREVIEW_TTL_SECONDS = 1800
 PLUGIN_ROOT_TOKEN = "__RYN_PLUGIN_ROOT__"
+PLUGIN_DATA_TOKEN = "__RYN_PLUGIN_DATA__"
 
 _FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n?(.*)\Z", re.DOTALL)
 _MD_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
@@ -267,23 +272,60 @@ def copy_directory_safely(src_dir: Path, dest_dir: Path) -> Path:
     return dest_dir
 
 
-def _substitute_plugin_root_token(value: str, package_root: Path | None) -> str:
-    """Replace ${CLAUDE_PLUGIN_ROOT} and ${CODEX_PLUGIN_ROOT} safely within package root."""
-    out = value.replace("${CLAUDE_PLUGIN_ROOT}", PLUGIN_ROOT_TOKEN).replace(
-        "${CODEX_PLUGIN_ROOT}", PLUGIN_ROOT_TOKEN
+def _infer_plugin_data_dir_from_pkg(package_root: Path | None) -> Path | None:
+    if package_root is None:
+        return None
+    pkg_res = package_root.resolve()
+    if (
+        len(pkg_res.parents) >= 4
+        and pkg_res.parent.parent.name == "plugin"
+        and pkg_res.parent.parent.parent.name == "extensions_pkgs"
+    ):
+        store_root = pkg_res.parent.parent.parent.parent
+        return (store_root / "plugin_data" / pkg_res.parent.name).resolve()
+    return None
+
+
+def _substitute_plugin_root_token(
+    value: str,
+    package_root: Path | None,
+    plugin_data_dir: Path | None = None,
+) -> str:
+    """Replace plugin root and plugin data tokens safely within their roots."""
+    out = (
+        value.replace("${CLAUDE_PLUGIN_ROOT}", PLUGIN_ROOT_TOKEN)
+        .replace("${CODEX_PLUGIN_ROOT}", PLUGIN_ROOT_TOKEN)
+        .replace("${PLUGIN_ROOT}", PLUGIN_ROOT_TOKEN)
+        .replace("${PLUGIN_DATA}", PLUGIN_DATA_TOKEN)
     )
     if PLUGIN_ROOT_TOKEN in out:
         norm = out.replace("\\", "/")
         if f"{PLUGIN_ROOT_TOKEN}/.." in norm or "/../" in norm or norm.endswith("/.."):
             raise AgentError("agent_extension_archive_traversal")
         if package_root is not None:
-            root_str = str(package_root.resolve())
-            resolved_str = out.replace(PLUGIN_ROOT_TOKEN, root_str)
-            candidate = Path(resolved_str).resolve()
             pkg_res = package_root.resolve()
-            if candidate != pkg_res and pkg_res not in candidate.parents:
-                raise AgentError("agent_extension_archive_traversal")
-            return str(candidate)
+            resolved_str = out.replace(PLUGIN_ROOT_TOKEN, str(pkg_res))
+            if PLUGIN_DATA_TOKEN not in resolved_str:
+                candidate = Path(resolved_str).resolve()
+                if candidate != pkg_res and pkg_res not in candidate.parents:
+                    raise AgentError("agent_extension_archive_traversal")
+                return str(candidate)
+            out = resolved_str
+
+    if PLUGIN_DATA_TOKEN in out:
+        norm = out.replace("\\", "/")
+        if f"{PLUGIN_DATA_TOKEN}/.." in norm or "/../" in norm or norm.endswith("/.."):
+            raise AgentError("agent_extension_archive_traversal")
+        effective_data_dir = plugin_data_dir or _infer_plugin_data_dir_from_pkg(package_root)
+        if effective_data_dir is not None:
+            data_res = effective_data_dir.resolve()
+            resolved_str = out.replace(PLUGIN_DATA_TOKEN, str(data_res))
+            if PLUGIN_ROOT_TOKEN not in resolved_str:
+                candidate = Path(resolved_str).resolve()
+                if candidate != data_res and data_res not in candidate.parents:
+                    raise AgentError("agent_extension_archive_traversal")
+                return str(candidate)
+            out = resolved_str
     return out
 
 
@@ -760,17 +802,27 @@ class ExtensionImportManager:
                 for srv in servers:
                     p_id = srv.get("plugin_id")
                     pkg_root = plugin_pkg_map.get(p_id) if p_id else None
+                    data_root = (
+                        self.store.plugin_data_dir(str(p_id), create=True) if p_id else None
+                    )
                     if srv.get("command"):
-                        srv["command"] = _substitute_plugin_root_token(srv["command"], pkg_root)
+                        srv["command"] = _substitute_plugin_root_token(
+                            srv["command"], pkg_root, data_root
+                        )
                     if srv.get("args"):
                         srv["args"] = [
-                            _substitute_plugin_root_token(str(a), pkg_root) for a in srv["args"]
+                            _substitute_plugin_root_token(str(a), pkg_root, data_root)
+                            for a in srv["args"]
                         ]
                     if srv.get("cwd"):
-                        srv["cwd"] = _substitute_plugin_root_token(srv["cwd"], pkg_root)
+                        srv["cwd"] = _substitute_plugin_root_token(
+                            srv["cwd"], pkg_root, data_root
+                        )
+                    elif pkg_root and srv.get("transport", "stdio") == "stdio":
+                        srv["cwd"] = str(pkg_root.resolve())
                     if srv.get("secret_env"):
                         srv["secret_env"] = {
-                            k: _substitute_plugin_root_token(str(v), pkg_root)
+                            k: _substitute_plugin_root_token(str(v), pkg_root, data_root)
                             for k, v in srv["secret_env"].items()
                         }
 
@@ -956,20 +1008,33 @@ class ExtensionImportManager:
             else:
                 raise AgentError("agent_mcp_invalid_transport")
 
+            plugin_data_dir = (
+                self.store.plugin_data_dir(plugin_id, create=False) if plugin_id else None
+            )
             if transport == "stdio":
                 if not command:
                     raise AgentError("agent_mcp_command_required")
-                command = _substitute_plugin_root_token(command, package_root)
+                command = _substitute_plugin_root_token(
+                    command, package_root, plugin_data_dir
+                )
                 raw_args = cfg.get("args") or []
                 if not isinstance(raw_args, list) or any(not isinstance(a, str) for a in raw_args):
                     raise AgentError("agent_mcp_invalid_args")
-                args = [_substitute_plugin_root_token(str(a), package_root) for a in raw_args[:64]]
+                args = [
+                    _substitute_plugin_root_token(str(a), package_root, plugin_data_dir)
+                    for a in raw_args[:64]
+                ]
                 cwd_raw = cfg.get("cwd")
-                cwd = (
-                    _substitute_plugin_root_token(str(cwd_raw).strip(), package_root)
-                    if cwd_raw
-                    else None
-                )
+                if cwd_raw and str(cwd_raw).strip():
+                    cwd = _substitute_plugin_root_token(
+                        str(cwd_raw).strip(), package_root, plugin_data_dir
+                    )
+                elif plugin_id:
+                    cwd = _substitute_plugin_root_token(
+                        "${PLUGIN_ROOT}", package_root, plugin_data_dir
+                    )
+                else:
+                    cwd = None
             else:
                 if not url or not (url.startswith("http://") or url.startswith("https://")):
                     raise AgentError("agent_mcp_url_required")
@@ -984,7 +1049,9 @@ class ExtensionImportManager:
                     if not ENV_KEY_RE.match(k_str):
                         raise AgentError("agent_mcp_invalid_env_key")
                     if v is not None:
-                        secret_env[k_str] = _substitute_plugin_root_token(str(v), package_root)
+                        secret_env[k_str] = _substitute_plugin_root_token(
+                            str(v), package_root, plugin_data_dir
+                        )
 
             raw_env_vars = cfg.get("env_vars") if "env_vars" in cfg else cfg.get("envVars")
             env_vars: list[str] = []
@@ -1037,11 +1104,19 @@ class ExtensionImportManager:
 
             startup_timeout_ms = int(
                 cfg.get("startup_timeout_ms")
-                or (int(cfg["startup_timeout_sec"]) * 1000 if "startup_timeout_sec" in cfg else 10000)
+                or (
+                    int(cfg["startup_timeout_sec"]) * 1000
+                    if "startup_timeout_sec" in cfg
+                    else DEFAULT_STARTUP_TIMEOUT_MS
+                )
             )
             tool_timeout_ms = int(
                 cfg.get("tool_timeout_ms")
-                or (int(cfg["tool_timeout_sec"]) * 1000 if "tool_timeout_sec" in cfg else 30000)
+                or (
+                    int(cfg["tool_timeout_sec"]) * 1000
+                    if "tool_timeout_sec" in cfg
+                    else DEFAULT_TOOL_TIMEOUT_MS
+                )
             )
 
             raw_enabled_tools = cfg.get("enabled_tools")
@@ -1086,8 +1161,8 @@ class ExtensionImportManager:
                     "oauth_client_registration": str(cfg.get("oauth_client_registration") or cfg.get("oauthClientRegistration") or "auto"),
                     "secret_headers": secret_headers,
                     "env_http_headers": env_http_headers if transport == "streamable_http" else {},
-                    "startup_timeout_ms": max(1000, min(60000, startup_timeout_ms)),
-                    "tool_timeout_ms": max(1000, min(120000, tool_timeout_ms)),
+                    "startup_timeout_ms": max(1000, min(MAX_STARTUP_TIMEOUT_MS, startup_timeout_ms)),
+                    "tool_timeout_ms": max(1000, min(MAX_TOOL_TIMEOUT_MS, tool_timeout_ms)),
                     "enabled_tools": enabled_tools,
                     "disabled_tools": disabled_tools,
                     "read_only_tools": [],

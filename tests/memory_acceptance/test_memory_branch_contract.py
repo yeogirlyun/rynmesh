@@ -31,7 +31,8 @@ host = importlib.import_module("rynmesh.agent_runtime.memory_runtime")
 runtime_module = importlib.import_module("rynmesh.agent_runtime.runtime")
 store_module = importlib.import_module("rynmesh.agent_runtime.store")
 models_module = importlib.import_module("rynmesh.agent_runtime.models")
-for module in (memory, host, runtime_module, store_module, models_module):
+lifecycle_module = importlib.import_module("rynmesh.agent_runtime.lifecycle")
+for module in (memory, host, runtime_module, store_module, models_module, lifecycle_module):
     assert Path(module.__file__).resolve().is_relative_to(REPO), "Mixed checkout imports"
 
 
@@ -168,10 +169,16 @@ def edited_branch(tmp_path):
     assert hashlib.sha256(rewritten["messages"][0]["content"].encode("utf-8")).hexdigest() == expected_prefix_hash
     branch = rewritten["conversation_branches"][-1]
     assert branch["revision"] == 0
-    assert any(message.get("message_id") == suffix_owner["message_id"] for message in branch["messages"])
+    assert "messages" not in branch
+    archived_branch = lifecycle_module.read_archived_conversation_branch(
+        runtime.store, task_id, branch["archive_ref"]
+    )
+    assert archived_branch is not None
+    assert any(message.get("message_id") == suffix_owner["message_id"] for message in archived_branch["messages"])
     return SimpleNamespace(runtime=runtime, task_id=task_id, key=key, prefix_owner=prefix_owner,
         prefix_ids={entry["id"] for entry in prefix_entries}, prefix_source_pairs=original_prefix_proofs,
-        suffix_entry_id=suffix_entries[0]["id"], suffix_source=suffix_source, branch=branch, leased=leased)
+        suffix_entry_id=suffix_entries[0]["id"], suffix_source=suffix_source, branch=branch,
+        archived_branch=archived_branch, leased=leased)
 
 
 def has_actual_pipeline_fence(env):
@@ -231,7 +238,7 @@ def test_real_store_branch_data_fence_keeps_untouched_prefix_and_retires_suffix(
         # discarded suffix. No fabricated owner/source or pretend integration.
         env.runtime.store.transaction(lambda data: memory.record_branch_rewrite_fence(data,
             task_id=env.task_id, previous_conversation_revision=0, new_conversation_revision=1,
-            retired_messages=copy.deepcopy(env.branch["messages"])))
+            retired_messages=copy.deepcopy(env.archived_branch["messages"])))
     assert_branch_boundary(env)
 
 

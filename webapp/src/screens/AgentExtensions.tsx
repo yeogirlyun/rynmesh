@@ -28,9 +28,13 @@ import {
 } from "lucide-react";
 import {
   AgentExtensionError,
+  DEFAULT_MCP_STARTUP_TIMEOUT_MS,
+  DEFAULT_MCP_TOOL_TIMEOUT_MS,
   ENV_KEY_RE,
   HEADER_KEY_RE,
   MASKED_SECRET_PLACEHOLDER,
+  MAX_MCP_STARTUP_TIMEOUT_MS,
+  MAX_MCP_TOOL_TIMEOUT_MS,
   agentExtensions,
   buildNewSecretMap,
   buildSecretPatch,
@@ -371,6 +375,12 @@ function getServerObservedBadge(
   if (st === "Error" || st === "error") {
     return { label: tx("连接错误", "Connection error"), tone: "danger" };
   }
+  if (st === "Degraded") {
+    return {
+      label: tx(`已降级 · ${server.tools_count} 个缓存工具`, `Degraded · ${server.tools_count} cached tools`),
+      tone: "warning",
+    };
+  }
   if (st === "NeedsTest") {
     return { label: tx("未测试", "Not tested"), tone: "neutral" };
   }
@@ -409,6 +419,21 @@ function getServerStatusNotice(
         "Parent plugin is disabled.",
       ),
       tone: "neutral",
+      showRetry: false,
+    };
+  }
+
+  if (
+    server.oauth?.state !== "logged_in" &&
+    (server.oauth?.error === "agent_mcp_oauth_credentials_reset" ||
+      rawMessage === "agent_mcp_oauth_credentials_reset")
+  ) {
+    return {
+      text: tx(
+        "登录信息已损坏并重置，请重新登录",
+        "Sign-in credentials were corrupted and reset. Please sign in again.",
+      ),
+      tone: "warning",
       showRetry: false,
     };
   }
@@ -3109,6 +3134,11 @@ function McpServerDetailsModal({
                           {tx("服务端提示：readOnlyHint", "Hint: readOnlyHint")}
                         </span>
                       ) : null}
+                      {tool.schema_invalid ? (
+                        <span className="ae-badge ae-badge-danger">
+                          {tx("schema 不合规，未提供给模型", "Schema invalid, not provided to model")}
+                        </span>
+                      ) : null}
                     </div>
                     {tool.description ? <small>{tool.description}</small> : null}
                   </div>
@@ -3193,13 +3223,16 @@ function McpServerFormModal({
   const [url, setUrl] = useState(initialServer?.url ?? "");
   const [bearerTokenEnv, setBearerTokenEnv] = useState(initialServer?.bearer_token_env ?? "");
   const [startupTimeout, setStartupTimeout] = useState(
-    String(initialServer?.startup_timeout_ms ?? 10000),
+    String(initialServer?.startup_timeout_ms ?? DEFAULT_MCP_STARTUP_TIMEOUT_MS),
   );
   const [toolTimeout, setToolTimeout] = useState(
-    String(initialServer?.tool_timeout_ms ?? 30000),
+    String(initialServer?.tool_timeout_ms ?? DEFAULT_MCP_TOOL_TIMEOUT_MS),
   );
   const [computerAccess, setComputerAccess] = useState(
     Boolean(initialServer?.computer_access ?? false),
+  );
+  const [inheritUserHome, setInheritUserHome] = useState(
+    Boolean(initialServer?.inherit_user_home ?? false),
   );
 
   const [envEntries, setEnvEntries] = useState<SecretEntryDraft[]>(() =>
@@ -3265,6 +3298,7 @@ function McpServerFormModal({
     setStartupTimeout(String(srv.startup_timeout_ms));
     setToolTimeout(String(srv.tool_timeout_ms));
     setComputerAccess(Boolean(srv.computer_access));
+    setInheritUserHome(Boolean(srv.inherit_user_home));
   };
 
   const addSecretRow = (kind: "env" | "header") => {
@@ -3351,8 +3385,14 @@ function McpServerFormModal({
       return;
     }
 
-    const startupMs = Math.max(1000, Math.min(60000, Number(startupTimeout) || 10000));
-    const toolMs = Math.max(1000, Math.min(120000, Number(toolTimeout) || 30000));
+    const startupMs = Math.max(
+      1000,
+      Math.min(MAX_MCP_STARTUP_TIMEOUT_MS, Number(startupTimeout) || DEFAULT_MCP_STARTUP_TIMEOUT_MS),
+    );
+    const toolMs = Math.max(
+      1000,
+      Math.min(MAX_MCP_TOOL_TIMEOUT_MS, Number(toolTimeout) || DEFAULT_MCP_TOOL_TIMEOUT_MS),
+    );
     const currentBase = baselineServer ?? initialServer ?? null;
     const resolvedCommand =
       mode === "edit" && currentBase && command === currentBase.command
@@ -3440,6 +3480,7 @@ function McpServerFormModal({
           startup_timeout_ms: startupMs,
           tool_timeout_ms: toolMs,
           computer_access: computerAccess,
+          ...(transport === "stdio" ? { inherit_user_home: inheritUserHome } : {}),
           expected_revision: expectedRevision,
         });
       } else {
@@ -3481,6 +3522,7 @@ function McpServerFormModal({
           startup_timeout_ms: startupMs,
           tool_timeout_ms: toolMs,
           computer_access: computerAccess,
+          ...(transport === "stdio" ? { inherit_user_home: inheritUserHome } : {}),
           expected_revision: expectedRevision,
         });
       }
@@ -3605,6 +3647,13 @@ function McpServerFormModal({
           Boolean(base.computer_access),
           Boolean(latest.computer_access),
           setComputerAccess,
+        );
+        rebaseField(
+          "inherit_user_home",
+          inheritUserHome,
+          Boolean(base.inherit_user_home),
+          Boolean(latest.inherit_user_home),
+          setInheritUserHome,
         );
 
         const baseEnvKeys =
@@ -4333,7 +4382,7 @@ function McpServerFormModal({
               id="ae-mcp-startup-timeout"
               type="number"
               min={1000}
-              max={60000}
+              max={MAX_MCP_STARTUP_TIMEOUT_MS}
               value={startupTimeout}
               disabled={submitting || replacedOrDeleted}
               onChange={event => setStartupTimeout(event.target.value)}
@@ -4347,7 +4396,7 @@ function McpServerFormModal({
               id="ae-mcp-tool-timeout"
               type="number"
               min={1000}
-              max={120000}
+              max={MAX_MCP_TOOL_TIMEOUT_MS}
               value={toolTimeout}
               disabled={submitting || replacedOrDeleted}
               onChange={event => setToolTimeout(event.target.value)}
@@ -4377,6 +4426,38 @@ function McpServerFormModal({
             )}
           </span>
         </label>
+        {transport === "stdio" ? (
+          <div style={{ marginTop: 8 }}>
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={inheritUserHome}
+                disabled={submitting || replacedOrDeleted}
+                onChange={event => setInheritUserHome(event.target.checked)}
+              />
+              <span>
+                {tx(
+                  "使用本机真实用户主目录 (inherit_user_home)",
+                  "Use real host user home directory (inherit_user_home)",
+                )}
+              </span>
+            </label>
+            <small style={{ display: "block", marginTop: 4, marginLeft: 24, color: "var(--pf-muted)" }}>
+              {tx(
+                "风险提示：默认使用每服务器独立的私有主目录与真实 HOME 隔离；开启后该子进程可直接读写您真实 HOME / APPDATA 下的个人配置与登录凭据。",
+                "Risk: By default each server gets an isolated private home directory; enabling this allows the subprocess to read and write personal configs and credentials under your real HOME / APPDATA.",
+              )}
+            </small>
+          </div>
+        ) : null}
       </details>
     </AccessibleModal>
   );

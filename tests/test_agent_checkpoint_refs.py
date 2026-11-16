@@ -63,9 +63,12 @@ def test_runtime_keeps_exact_refs_outside_summary_and_across_encrypted_restart(t
 
 def test_reference_map_cannot_grow_without_limit_or_silently_lose_values():
     references = {checkpoint_refs.label("gAAAA" + str(i).zfill(80)): "gAAAA" + str(i).zfill(80) for i in range(128)}
-    with pytest.raises(AgentError, match="agent_context_limit"):
-        checkpoint_refs.project(exchange("gAAAA" + "N" * 80), references)
-    assert len(references) == 128
+    newest = "gAAAA" + "N" * 80
+    _, updated = checkpoint_refs.project(exchange(newest), references)
+    assert len(references) == 128 and len(updated) == 128
+    assert checkpoint_refs.label("gAAAA" + str(0).zfill(80)) not in updated
+    assert updated[checkpoint_refs.label(newest)] == newest
+    assert "1 older ref_ labels were dropped; list the directory again to get fresh references" in checkpoint_refs.note(updated)
     for malformed in ([], {"wrong-label": "gAAAA" + "R" * 80}):
         with pytest.raises(AgentError, match="agent_checkpoint_references_invalid"):
             checkpoint_refs.project([], malformed)

@@ -91,13 +91,13 @@ fn open_requested_page(app: &tauri::AppHandle, args: &[String]) {
 fn dispatch(app: &tauri::AppHandle, action: &str) {
     let app = app.clone(); let action = action.to_string();
     std::thread::spawn(move || {
-        if let Err(error) = desktop::run_action(&app, &action) { desktop::message(&error, false); }
+        if let Err(error) = desktop::run_action(&app, &action) { desktop::message(&app, &error, false); }
     });
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     if let Err(error) = deployment::initialize() {
-        desktop::message(&format!("Ryn deployment configuration error\n\n{error}"), false);
+        desktop::startup_alert(&format!("Ryn deployment configuration error\n\n{error}"));
         return;
     }
     let port = std::env::var("RYNMESH_PEER_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(8791);
@@ -108,6 +108,7 @@ pub fn run() {
             open_requested_page(app, &argv);
             if !argv.iter().any(|arg| arg == "--background") { focus_main(app); }
         }))
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -129,7 +130,7 @@ pub fn run() {
             mcp_auth_browser::open_mcp_auth_browser,
             craft_browser::open_craft_browser, system_apps::sync_system_apps, system_apps::system_app_info,
             system_apps::choose_default_system_app,
-            drop::choose_drop_paths, drop::choose_drop_dir, drop::drop_open_path, drop::drag_local_file];
+            drop::choose_drop_paths, drop::choose_drop_dir, drop::drop_open_path, drop::drag_local_file, drop::inspect_drop_paths];
             handler(invoke)
         })
         .manage(preferences::DesktopState::default())
@@ -248,7 +249,8 @@ pub fn run() {
                     let _ = window.hide();
                     if !prefs.close_notice_seen {
                         preferences::acknowledge_close(window.app_handle());
-                        std::thread::spawn(|| { desktop::message(&tr("Ryn is still running in the system tray.\n\nYour shared services remain available while this computer is awake. Use the tray to reopen Ryn, pause AI sharing, or quit.\n\nChange this in Settings > Desktop."), false); });
+                        let handle = window.app_handle().clone();
+                        std::thread::spawn(move || { desktop::message(&handle, &tr("Ryn is still running in the system tray.\n\nYour shared services remain available while this computer is awake. Use the tray to reopen Ryn, pause AI sharing, or quit.\n\nChange this in Settings > Desktop."), false); });
                     }
                 } else { dispatch(window.app_handle(), "quit"); }
             }

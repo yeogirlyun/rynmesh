@@ -119,6 +119,8 @@ it("presents receipt-backed result files and opens an SVG only as an inert image
   expect(await screen.findByText("Ryn checked how this version renders")).toBeInTheDocument();
   expect(section).toHaveTextContent("Other files from this task (1)");
   expect(section).not.toHaveTextContent("ghost.svg");
+  expect(screen.queryByRole("button", { name: "Open ghost.svg" })).not.toBeInTheDocument();
+  expect(screen.getByTestId("unbacked-mentions")).toHaveTextContent("ghost.svg");
   const tab = screen.getByRole("link", { name: "Open pelican.svg in a new tab" });
   expect(tab.getAttribute("href")).toMatch(/\/agent\/tasks\/file-task\/files\/file_pelican\?v=v1$/);
   expect(tab).toHaveAttribute("target", "_blank"); expect(tab.getAttribute("rel")).toContain("noopener");
@@ -343,8 +345,10 @@ it("does not render a ready-files card for unmentioned shell command scratch fil
   } as AgentFileArtifact;
   server.use(http.get("*/api/local/agent/tasks/file-task/artifacts", () => HttpResponse.json({ artifacts: [], files: [scratch1, scratch2] })));
   const view = render(<TaskArtifacts task={{ ...done, status: "running", result: "" }} />);
-  await waitFor(() => expect(screen.queryByText(/files? ready/i)).not.toBeInTheDocument());
-  expect(view.container.querySelector("section.ra-files")).toBeNull();
+  expect(await screen.findByText("In progress")).toBeVisible();
+  expect(screen.queryByText(/files? ready/i)).not.toBeInTheDocument();
+  expect(view.container.querySelectorAll("section.ra-files > .ra-file-card")).toHaveLength(0);
+  expect(screen.getByText("Other files from this task (2)")).toBeVisible();
 
   // When a real deliverable exists and a subsequent refresh fails, only one section is rendered.
   let fail = false;
@@ -403,17 +407,23 @@ it("waits for both turn completion and background file production before present
   }));
   const view = render(<TaskArtifacts task={{ ...done, status: "running", result: "" }} />);
   await waitFor(() => expect(loaded).toHaveBeenCalled());
-  expect(screen.queryByRole("button", { name: "Open pelican.svg" })).not.toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Open pelican.svg" })).toBeVisible();
+  expect(screen.getByText("In progress")).toBeVisible();
+  expect(screen.getByText("Still writing")).toBeVisible();
   expect(screen.queryByRole("button", { name: "Open report.md" })).not.toBeInTheDocument();
   view.rerender(<TaskArtifacts task={done} />);
   await waitFor(() => expect(loaded).toHaveBeenCalledTimes(2));
-  expect(screen.queryByRole("button", { name: "Open pelican.svg" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Open pelican.svg" })).toBeVisible();
+  expect(screen.queryByText("In progress")).not.toBeInTheDocument();
+  expect(screen.getByText("Still writing")).toBeVisible();
   pending = false;
   view.rerender(<TaskArtifacts task={{ ...done, file_artifact_revision: 1 }} />);
+  await waitFor(() => expect(screen.queryByText("Still writing")).not.toBeInTheDocument());
   expect(await screen.findByRole("button", { name: "Open pelican.svg" })).toBeVisible();
   expect(await screen.findByRole("button", { name: "Open report.md" })).toBeVisible();
   view.rerender(<TaskArtifacts task={{ ...done, run_state: "running", file_artifact_revision: 1 }} />);
-  expect(screen.queryByRole("button", { name: "Open pelican.svg" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Open pelican.svg" })).toBeVisible();
+  expect(screen.getByText("In progress")).toBeVisible();
 });
 
 it("keeps script implementation in collapsed activity without claiming a tool request succeeded", async () => {

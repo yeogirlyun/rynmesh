@@ -17,6 +17,9 @@ __all__ = [
     "PLATFORM_CHOICES",
     "TOPIC_CHOICES",
     "RecommendationProfileStore",
+    "extract_cjk_terms",
+    "extract_terms",
+    "iter_direction_terms",
     "starter_items",
 ]
 
@@ -44,7 +47,9 @@ PLATFORM_CHOICES: tuple[dict[str, str], ...] = (
 _TOPICS = {item["id"]: item for item in TOPIC_CHOICES}
 _PLATFORMS = {item["id"]: item for item in PLATFORM_CHOICES}
 _ACTIONS = {"more", "less", "hide", "neutral"}
-_WORD = re.compile(r"[a-z0-9][a-z0-9+.-]{1,31}")
+_ASCII_WORD = re.compile(r"[a-z0-9][a-z0-9+.-]{1,31}")
+_CJK_RUN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]+")
+_WORD = re.compile(r"[a-z0-9][a-z0-9+.-]{1,31}|[\u3400-\u4dbf\u4e00-\u9fff]{2,}")
 _STOP_WORDS = {
     "about",
     "and",
@@ -58,14 +63,102 @@ _STOP_WORDS = {
     "this",
     "with",
     "would",
+    "的",
+    "了",
+    "一些",
+    "内容",
+    "相关",
 }
 _NEGATIVE_DIRECTION = re.compile(
-    r"\b(?:less|no|not|fewer|avoid|without|stop|hide|skip|don'?t want|dont want)\b",
+    r"(?:\b(?:less|no|not|fewer|avoid|without|stop|hide|skip|don'?t want|dont want)\b"
+    r"|不要看|不想看|少看|别看|不要|避免|不看|不想|屏蔽|减少"
+    r"|(?:^\s*(?:请|尽量|希望)?(?:少(?!年|女)|别)))",
     re.IGNORECASE,
 )
 _POSITIVE_DIRECTION = re.compile(
-    r"\b(?:more|want|prefer|show|interested in|focus on|like)\b", re.IGNORECASE
+    r"(?:\b(?:more|want|prefer|show|interested in|focus on|like)\b"
+    r"|多看|想看|喜欢看|喜欢|关注|增加"
+    r"|(?:^\s*(?:请|希望)?多(?!媒体|模态|线程|租户)))",
+    re.IGNORECASE,
 )
+_SENTENCE_SPLIT = re.compile(r"[;；。\r\n]+|\bbut\b|但是|不过|而是", re.IGNORECASE)
+_CLAUSE_ITEM_SPLIT = re.compile(r"[,，、/]+|\band\b|以及|[和与及]", re.IGNORECASE)
+_CJK_SEGMENT_SPLIT = re.compile(r"[、，；。！？：/\\\s]+|以及|[和与及的了]|一些|内容|相关")
+_CJK_DIRECTION_PREFIX = re.compile(
+    r"^(?:多看一些|少看一些|想看一些|不要看|不想看|喜欢看|"
+    r"多看|少看|想看|不看|别看|不要|不想|避免|屏蔽|减少|喜欢|关注|增加|"
+    r"多(?!媒体|模态|线程|租户)|少(?!年|女)|别)+"
+)
+
+
+def extract_cjk_terms(text: str, *, strip_direction_prefix: bool = False) -> list[str]:
+    """Slice CJK runs into 2-4 character terms after splitting conjunctions/particles."""
+    out: list[str] = []
+    seen: set[str] = set()
+    cleaned = str(text or "").strip()
+    if strip_direction_prefix:
+        cleaned = _CJK_DIRECTION_PREFIX.sub("", cleaned)
+    for piece in _CJK_SEGMENT_SPLIT.split(cleaned):
+        for run in _CJK_RUN.findall(piece):
+            seg = _CJK_DIRECTION_PREFIX.sub("", run) if strip_direction_prefix else run
+            if len(seg) < 2:
+                continue
+            max_w = min(4, len(seg))
+            for width in range(2, max_w + 1):
+                for idx in range(len(seg) - width + 1):
+                    gram = seg[idx : idx + width]
+                    if (
+                        gram in _STOP_WORDS
+                        or _NEGATIVE_DIRECTION.fullmatch(gram)
+                        or _POSITIVE_DIRECTION.fullmatch(gram)
+                    ):
+                        continue
+                    if gram not in seen:
+                        seen.add(gram)
+                        out.append(gram)
+    return out
+
+
+def extract_terms(text: str, *, strip_direction_prefix: bool = False) -> list[str]:
+    """Extract lowercase ASCII and 2-4 char CJK terms without invoking any model."""
+    lowered = str(text or "").lower()
+    out: list[str] = []
+    seen: set[str] = set()
+    for word in _ASCII_WORD.findall(lowered):
+        if (
+            word not in _STOP_WORDS
+            and not _NEGATIVE_DIRECTION.fullmatch(word)
+            and not _POSITIVE_DIRECTION.fullmatch(word)
+            and word not in seen
+        ):
+            seen.add(word)
+            out.append(word)
+    for cjk_word in extract_cjk_terms(lowered, strip_direction_prefix=strip_direction_prefix):
+        if cjk_word not in seen:
+            seen.add(cjk_word)
+            out.append(cjk_word)
+    return out
+
+
+def iter_direction_terms(direction: str) -> list[tuple[str, float]]:
+    """Two-level direction parser: sentence splits reset polarity to +1.0; list items inherit."""
+    pairs: list[tuple[str, float]] = []
+    raw = str(direction or "").lower()
+    for sentence in _SENTENCE_SPLIT.split(raw):
+        if not sentence.strip():
+            continue
+        direction_polarity = 1.0
+        for clause in _CLAUSE_ITEM_SPLIT.split(sentence):
+            clause_stripped = clause.strip()
+            if not clause_stripped:
+                continue
+            if _NEGATIVE_DIRECTION.search(clause_stripped):
+                direction_polarity = -1.5
+            elif _POSITIVE_DIRECTION.search(clause_stripped):
+                direction_polarity = 1.0
+            for word in extract_terms(clause_stripped, strip_direction_prefix=True):
+                pairs.append((word, direction_polarity))
+    return pairs
 
 
 def _now() -> str:
@@ -281,21 +374,8 @@ class RecommendationProfileStore:
                 add_tag(str(tag), 1.5)
         for platform_id in profile.get("platforms", []):
             add_tag(f"platform:{platform_id}", 1.25)
-        direction_polarity = 1.0
-        for clause in re.split(
-            r"[,;/\n]|\band\b|\bbut\b", str(profile.get("direction", "")).lower()
-        ):
-            if _NEGATIVE_DIRECTION.search(clause):
-                direction_polarity = -1.5
-            elif _POSITIVE_DIRECTION.search(clause):
-                direction_polarity = 1.0
-            for word in _WORD.findall(clause):
-                if (
-                    word not in _STOP_WORDS
-                    and not _NEGATIVE_DIRECTION.fullmatch(word)
-                    and not _POSITIVE_DIRECTION.fullmatch(word)
-                ):
-                    add_tag(f"term:{word}", direction_polarity)
+        for word, direction_polarity in iter_direction_terms(str(profile.get("direction", ""))):
+            add_tag(f"term:{word}", direction_polarity)
 
         feedback = profile.get("feedback", {})
         if isinstance(feedback, dict):

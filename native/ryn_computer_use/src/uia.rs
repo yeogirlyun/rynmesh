@@ -2,9 +2,9 @@ use crate::errors::{
     DiagnosticReason, ErrorCode, ErrorStage, InternalMutationDetail, ProtocolError,
 };
 use crate::protocol::{
-    AccessibilityObservation, AccessibilityOptions, RectPx, UiaElement, MAX_TEXT_CHARS_CAP,
-    MAX_TEXT_CHARS_DEFAULT, MAX_UIA_DEPTH_CAP, MAX_UIA_DEPTH_DEFAULT, MAX_UIA_ELEMENTS_CAP,
-    MAX_UIA_ELEMENTS_DEFAULT,
+    AccessibilityObservation, AccessibilityOptions, RectPx, UiaElement, UiaObservationReason,
+    MAX_TEXT_CHARS_CAP, MAX_TEXT_CHARS_DEFAULT, MAX_UIA_DEPTH_CAP, MAX_UIA_DEPTH_DEFAULT,
+    MAX_UIA_ELEMENTS_CAP, MAX_UIA_ELEMENTS_DEFAULT,
 };
 use sha2::{Digest, Sha256};
 use std::ffi::c_void;
@@ -19,18 +19,60 @@ use windows::Win32::System::Ole::{
 };
 use windows::Win32::UI::Accessibility::*;
 
-/// Ensures COM is initialized on the calling thread and creates a native `IUIAutomation` instance.
-pub fn create_uia_instance() -> Result<IUIAutomation, ProtocolError> {
+/// Classifies a COM UIA `HRESULT` into a structured `DiagnosticReason`.
+pub const fn classify_uia_com_hresult(hr: i32) -> DiagnosticReason {
+    match hr as u32 {
+        // UIA_E_ELEMENTNOTAVAILABLE (0x80040200)
+        0x8004_0200 => DiagnosticReason::UiaElementNotFound,
+        // UIA_E_TIMEOUT (0x80040201), HRESULT_FROM_WIN32(ERROR_TIMEOUT) (0x800705B4),
+        // RPC_E_SERVERFAULT (0x80010105), RPC_E_CALL_CANCELED (0x80010002),
+        // HRESULT_FROM_WIN32(RPC_S_SERVER_UNAVAILABLE) (0x800706BA),
+        // HRESULT_FROM_WIN32(RPC_S_CALL_FAILED) (0x800706BE)
+        0x8004_0201 | 0x8007_05B4 | 0x8001_0105 | 0x8001_0002 | 0x8007_06BA | 0x8007_06BE => {
+            DiagnosticReason::UiaAppNotResponding
+        }
+        _ => DiagnosticReason::UiaComCallFailed,
+    }
+}
+
+pub fn observe_window_accessibility_from_stage_error(
+    reason: UiaObservationReason,
+    hr: i32,
+) -> AccessibilityObservation {
+    AccessibilityObservation {
+        status: "unavailable".to_string(),
+        tree_hash: empty_tree_hash(),
+        truncated: false,
+        focused_element_index: None,
+        focused_runtime_id: None,
+        selected_element_indices: Vec::new(),
+        selected_text: None,
+        reason: Some(reason),
+        hresult_hex: Some(format!("0x{:08X}", hr as u32)),
+        elements: Vec::new(),
+    }
+}
+
+fn create_uia_instance_raw() -> Result<IUIAutomation, i32> {
     unsafe {
         let hr = CoInitializeEx(None, COINIT_MULTITHREADED);
         if hr.is_err() {
-            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+            let hr_sta = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+            // RPC_E_CHANGED_MODE (0x80010106) means COM is already initialized on another apartment model, which is usable.
+            if hr_sta.is_err() && (hr_sta.0 as u32) != 0x8001_0106 {
+                return Err(hr_sta.0);
+            }
         }
-        CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).map_err(|e| {
-            ProtocolError::observe(ErrorCode::UiaUnavailable, DiagnosticReason::UiaPatternMissing)
-                .with_hresult(e.code().0)
-        })
+        CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).map_err(|e| e.code().0)
     }
+}
+
+/// Ensures COM is initialized on the calling thread and creates a native `IUIAutomation` instance.
+pub fn create_uia_instance() -> Result<IUIAutomation, ProtocolError> {
+    create_uia_instance_raw().map_err(|hr| {
+        ProtocolError::observe(ErrorCode::UiaUnavailable, classify_uia_com_hresult(hr))
+            .with_hresult(hr)
+    })
 }
 
 /// Observes the accessibility tree of `hwnd` using native COM UIA (`IUIAutomation`).
@@ -49,6 +91,8 @@ pub fn observe_window_accessibility(
             focused_runtime_id: None,
             selected_element_indices: Vec::new(),
             selected_text: None,
+            reason: None,
+            hresult_hex: None,
             elements: Vec::new(),
         };
     }
@@ -67,51 +111,33 @@ pub fn observe_window_accessibility(
         .unwrap_or(MAX_TEXT_CHARS_DEFAULT)
         .clamp(16, MAX_TEXT_CHARS_CAP);
 
-    let uia = match create_uia_instance() {
+    let uia = match create_uia_instance_raw() {
         Ok(u) => u,
-        Err(_) => {
-            return AccessibilityObservation {
-                status: "unavailable".to_string(),
-                tree_hash: empty_tree_hash(),
-                truncated: false,
-                focused_element_index: None,
-                focused_runtime_id: None,
-                selected_element_indices: Vec::new(),
-                selected_text: None,
-                elements: Vec::new(),
-            }
+        Err(hr) => {
+            return observe_window_accessibility_from_stage_error(
+                UiaObservationReason::ComInitFailed,
+                hr,
+            );
         }
     };
 
     let root = match unsafe { uia.ElementFromHandle(hwnd) } {
         Ok(r) => r,
-        Err(_) => {
-            return AccessibilityObservation {
-                status: "unavailable".to_string(),
-                tree_hash: empty_tree_hash(),
-                truncated: false,
-                focused_element_index: None,
-                focused_runtime_id: None,
-                selected_element_indices: Vec::new(),
-                selected_text: None,
-                elements: Vec::new(),
-            }
+        Err(e) => {
+            return observe_window_accessibility_from_stage_error(
+                UiaObservationReason::RootFailed,
+                e.code().0,
+            );
         }
     };
 
     let walker = match unsafe { uia.ControlViewWalker() } {
         Ok(w) => w,
-        Err(_) => {
-            return AccessibilityObservation {
-                status: "unavailable".to_string(),
-                tree_hash: empty_tree_hash(),
-                truncated: false,
-                focused_element_index: None,
-                focused_runtime_id: None,
-                selected_element_indices: Vec::new(),
-                selected_text: None,
-                elements: Vec::new(),
-            }
+        Err(e) => {
+            return observe_window_accessibility_from_stage_error(
+                UiaObservationReason::WalkerFailed,
+                e.code().0,
+            );
         }
     };
 
@@ -153,6 +179,8 @@ pub fn observe_window_accessibility(
         focused_runtime_id: global_focused_runtime_id,
         selected_element_indices,
         selected_text,
+        reason: None,
+        hresult_hex: None,
         elements,
     }
 }
@@ -463,7 +491,7 @@ pub fn verify_live_element_state_matches_snapshot(
             ErrorCode::UiaElementStale,
             ErrorStage::Validating,
             InternalMutationDetail::FocusOnly,
-            DiagnosticReason::UiaPatternMissing,
+            DiagnosticReason::UiaElementNotFound,
         ));
     }
 
@@ -487,12 +515,22 @@ pub fn verify_live_element_state_matches_snapshot(
         _ => {}
     }
 
-    if live_enabled != Some(true) || live_offscreen != Some(false) {
+    if live_enabled != Some(true) {
         return Err(ProtocolError::commit(
-            ErrorCode::StateTokenStale,
+            ErrorCode::ElementDisabled,
             ErrorStage::Validating,
             InternalMutationDetail::FocusOnly,
-            DiagnosticReason::UiaPatternMissing,
+            DiagnosticReason::ElementDisabled,
+        )
+        .with_retryable(false));
+    }
+
+    if live_offscreen != Some(false) {
+        return Err(ProtocolError::commit(
+            ErrorCode::ElementOffscreen,
+            ErrorStage::Validating,
+            InternalMutationDetail::FocusOnly,
+            DiagnosticReason::ElementOffscreen,
         ));
     }
 
@@ -560,31 +598,33 @@ pub fn find_live_element_by_runtime_id(
             ErrorCode::Cancelled,
             ErrorStage::Validating,
             InternalMutationDetail::FocusOnly,
-            DiagnosticReason::CancelledDuringExecution,
+            DiagnosticReason::CancelledWhileReady,
         ));
     }
 
     let uia = create_uia_instance()?;
     let root = unsafe {
         uia.ElementFromHandle(hwnd).map_err(|e| {
+            let hr = e.code().0;
             ProtocolError::commit(
                 ErrorCode::UiaUnavailable,
                 ErrorStage::Validating,
                 InternalMutationDetail::FocusOnly,
-                DiagnosticReason::UiaPatternMissing,
+                classify_uia_com_hresult(hr),
             )
-            .with_hresult(e.code().0)
+            .with_hresult(hr)
         })?
     };
     let walker = unsafe {
         uia.ControlViewWalker().map_err(|e| {
+            let hr = e.code().0;
             ProtocolError::commit(
                 ErrorCode::UiaUnavailable,
                 ErrorStage::Validating,
                 InternalMutationDetail::FocusOnly,
-                DiagnosticReason::UiaPatternMissing,
+                classify_uia_com_hresult(hr),
             )
-            .with_hresult(e.code().0)
+            .with_hresult(hr)
         })?
     };
 
@@ -605,7 +645,7 @@ pub fn find_live_element_by_runtime_id(
                 ErrorCode::Cancelled,
                 ErrorStage::Validating,
                 InternalMutationDetail::FocusOnly,
-                DiagnosticReason::CancelledDuringExecution,
+                DiagnosticReason::CancelledWhileReady,
             ));
         }
         Ok(found)
@@ -614,14 +654,14 @@ pub fn find_live_element_by_runtime_id(
             ErrorCode::Cancelled,
             ErrorStage::Validating,
             InternalMutationDetail::FocusOnly,
-            DiagnosticReason::CancelledDuringExecution,
+            DiagnosticReason::CancelledWhileReady,
         ))
     } else {
         Err(ProtocolError::commit(
             ErrorCode::UiaElementStale,
             ErrorStage::Validating,
             InternalMutationDetail::FocusOnly,
-            DiagnosticReason::UiaPatternMissing,
+            DiagnosticReason::UiaElementNotFound,
         ))
     }
 }
@@ -695,7 +735,7 @@ fn verify_live_uia_element_before_write(
             ErrorCode::Cancelled,
             ErrorStage::Validating,
             InternalMutationDetail::FocusOnly,
-            DiagnosticReason::CancelledDuringExecution,
+            DiagnosticReason::CancelledWhileReady,
         ));
     }
 
@@ -714,7 +754,12 @@ fn verify_live_uia_element_before_write(
             } else {
                 Some(crate::windows::hwnd_to_u64(fg_hwnd))
             },
-        ));
+        )
+        .with_foreground_window(if fg_hwnd.0.is_null() {
+            None
+        } else {
+            crate::windows::summarize_hwnd_for_error(fg_hwnd)
+        }));
     }
 
     unsafe {
@@ -766,7 +811,7 @@ fn verify_live_uia_element_before_write(
                 ErrorCode::Cancelled,
                 ErrorStage::Validating,
                 InternalMutationDetail::FocusOnly,
-                DiagnosticReason::CancelledDuringExecution,
+                DiagnosticReason::CancelledWhileReady,
             ));
         }
 
@@ -817,17 +862,18 @@ pub fn execute_uia_invoke(
                         ErrorCode::Cancelled,
                         ErrorStage::Validating,
                         InternalMutationDetail::FocusOnly,
-                        DiagnosticReason::CancelledDuringExecution,
+                        DiagnosticReason::CancelledWhileReady,
                     ));
                 }
                 inv.Invoke().map_err(|e| {
+                    let hr = e.code().0;
                     ProtocolError::commit(
                         ErrorCode::InputFailed,
                         ErrorStage::InputStarted,
                         InternalMutationDetail::UnknownOrPartial,
-                        DiagnosticReason::UiaPatternMissing,
+                        classify_uia_com_hresult(hr),
                     )
-                    .with_hresult(e.code().0)
+                    .with_hresult(hr)
                 })?;
                 return Ok(());
             }
@@ -839,17 +885,18 @@ pub fn execute_uia_invoke(
                         ErrorCode::Cancelled,
                         ErrorStage::Validating,
                         InternalMutationDetail::FocusOnly,
-                        DiagnosticReason::CancelledDuringExecution,
+                        DiagnosticReason::CancelledWhileReady,
                     ));
                 }
                 tog.Toggle().map_err(|e| {
+                    let hr = e.code().0;
                     ProtocolError::commit(
                         ErrorCode::InputFailed,
                         ErrorStage::InputStarted,
                         InternalMutationDetail::UnknownOrPartial,
-                        DiagnosticReason::UiaPatternMissing,
+                        classify_uia_com_hresult(hr),
                     )
-                    .with_hresult(e.code().0)
+                    .with_hresult(hr)
                 })?;
                 return Ok(());
             }
@@ -887,18 +934,19 @@ pub fn execute_uia_set_value(
                         ErrorCode::Cancelled,
                         ErrorStage::Validating,
                         InternalMutationDetail::FocusOnly,
-                        DiagnosticReason::CancelledDuringExecution,
+                        DiagnosticReason::CancelledWhileReady,
                     ));
                 }
                 let bstr = BSTR::from(value);
                 val_pat.SetValue(&bstr).map_err(|e| {
+                    let hr = e.code().0;
                     ProtocolError::commit(
                         ErrorCode::InputFailed,
                         ErrorStage::InputStarted,
                         InternalMutationDetail::UnknownOrPartial,
-                        DiagnosticReason::UiaPatternMissing,
+                        classify_uia_com_hresult(hr),
                     )
-                    .with_hresult(e.code().0)
+                    .with_hresult(hr)
                 })?;
                 return Ok(());
             }
@@ -935,17 +983,18 @@ pub fn execute_uia_select(
                         ErrorCode::Cancelled,
                         ErrorStage::Validating,
                         InternalMutationDetail::FocusOnly,
-                        DiagnosticReason::CancelledDuringExecution,
+                        DiagnosticReason::CancelledWhileReady,
                     ));
                 }
                 sel_pat.Select().map_err(|e| {
+                    let hr = e.code().0;
                     ProtocolError::commit(
                         ErrorCode::InputFailed,
                         ErrorStage::InputStarted,
                         InternalMutationDetail::UnknownOrPartial,
-                        DiagnosticReason::UiaPatternMissing,
+                        classify_uia_com_hresult(hr),
                     )
-                    .with_hresult(e.code().0)
+                    .with_hresult(hr)
                 })?;
                 return Ok(());
             }
@@ -981,7 +1030,7 @@ pub fn execute_uia_focus(
                 ErrorCode::Cancelled,
                 ErrorStage::Validating,
                 InternalMutationDetail::FocusOnly,
-                DiagnosticReason::CancelledDuringExecution,
+                DiagnosticReason::CancelledWhileReady,
             ));
         }
         elem.SetFocus().map_err(|e| {

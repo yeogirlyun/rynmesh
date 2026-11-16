@@ -9,6 +9,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from .git_safety import SAFE_GIT_CONFIG, safe_git_env
 from .store import AgentError, AgentToolRejected, encoded
 
 ENTRY_FILES = ("AGENTS.md", "README.md", "AI_HANDOFF.md", "PROJECT_MAP.md")
@@ -125,11 +126,28 @@ def selected(data, ident, *, refresh=False):
     if str(root) != value["path"]:
         raise AgentError("agent_project_path_changed")
     result = {**value, **overview(root), "name": value["name"]} if refresh else dict(value)
+    result["is_git"] = (root / ".git").exists()
     if refresh and inside_file(root, "AGENTS.md"):
+        hasher = hashlib.sha256()
+        head = bytearray()
+        total_bytes = 0
         with (root / "AGENTS.md").open("rb") as stream:
-            raw = stream.read(64 * 1024 + 1)
-        result["instructions"] = {"path": "AGENTS.md", "text": raw[:64 * 1024].decode("utf-8-sig", errors="replace"),
-                                  "incomplete": len(raw) > 64 * 1024}
+            while True:
+                chunk = stream.read(64 * 1024)
+                if not chunk:
+                    break
+                total_bytes += len(chunk)
+                hasher.update(chunk)
+                if len(head) < 64 * 1024 + 1:
+                    head.extend(chunk[:64 * 1024 + 1 - len(head)])
+        raw = bytes(head)
+        result["instructions"] = {
+            "path": "AGENTS.md",
+            "text": raw[:64 * 1024].decode("utf-8-sig", errors="replace"),
+            "incomplete": len(raw) > 64 * 1024,
+            "bytes": total_bytes,
+            "sha256": hasher.hexdigest(),
+        }
     return result
 
 
@@ -286,9 +304,15 @@ def inspect(root, *, read_file=None, cancelled=lambda: False, validate=None):
                                  ("changes", ["status", "--porcelain", "--untracked-files=no"])):
             check()
             try:
-                run = subprocess.run(["git", "-C", str(root), *arguments], capture_output=True,
-                                     timeout=3, encoding="utf-8", errors="replace",
-                                     creationflags=0x08000000 if os.name == "nt" else 0)
+                run = subprocess.run(
+                    ["git", *SAFE_GIT_CONFIG, "-C", str(root), *arguments],
+                    capture_output=True,
+                    timeout=5,
+                    encoding="utf-8",
+                    errors="replace",
+                    env=safe_git_env(os.environ),
+                    creationflags=0x08000000 if os.name == "nt" else 0,
+                )
                 if run.returncode == 0:
                     lines = run.stdout.splitlines()
                     if field == "changes":
@@ -386,6 +410,86 @@ def inspect(root, *, read_file=None, cancelled=lambda: False, validate=None):
     return result
 
 
+INSTRUCTIONS_MAX_BYTES = 32768
+
+
+def _instructions_slice(row):
+    project = row.get("project")
+    if not project:
+        return None
+    instructions = project.get("instructions") or {}
+    if not instructions.get("text"):
+        return None
+    limit = row.get("limits", {}).get("max_context_chars")
+    maximum = min(INSTRUCTIONS_MAX_BYTES, limit // 4) if type(limit) is int else INSTRUCTIONS_MAX_BYTES
+    raw = instructions["text"].encode()
+    incomplete = bool(instructions.get("incomplete"))
+    truncated = len(raw) > maximum or incomplete
+    prefix = raw[:maximum]
+    if len(raw) > maximum and b"\n" in prefix:
+        prefix = prefix[:prefix.rfind(b"\n") + 1]
+    text = prefix.decode("utf-8", errors="ignore").rstrip("\n")
+    shown_bytes = len(text.encode("utf-8"))
+    start_line = len(text.splitlines()) + 1
+    total_bytes = instructions["bytes"] if type(instructions.get("bytes")) is int else len(raw)
+    return {
+        "text": text,
+        "raw_bytes": len(raw),
+        "shown_bytes": shown_bytes,
+        "total_bytes": total_bytes,
+        "maximum": maximum,
+        "incomplete": incomplete,
+        "truncated": truncated,
+        "start_line": start_line,
+    }
+
+
+def instructions_truncation(row):
+    info = _instructions_slice(row)
+    if not info or not info["truncated"]:
+        return None
+    return {
+        "injected_bytes": info["shown_bytes"],
+        "total_bytes": info["total_bytes"],
+        "max_bytes": info["maximum"],
+        "incomplete": info["incomplete"],
+    }
+
+
+GIT_SAFETY_RULE = (
+    "Git repository: do not commit, amend, create or switch branches, or discard changes "
+    "(reset --hard, checkout --, clean) unless the owner asks. Changes you did not make "
+    "belong to the owner; keep them."
+)
+ENGINEERING_RULE = (
+    "Fix the cause, not the symptom; follow the repository's existing patterns; keep the change "
+    "to what was asked; mention unrelated problems instead of fixing them."
+)
+TEST_HYGIENE_RULE = (
+    "Batch independent final checks in one response; repeat only after changes, failure or unresolved uncertainty."
+)
+AGENTS_MD_SCOPE_RULE = (
+    "AGENTS.md rules apply to their directory tree; a deeper file wins over a higher one, "
+    "and the owner's direct instructions win over both."
+)
+AGENTS_MD_STOP_RULE = (
+    "If you stop because of a rule in AGENTS.md, name the file and quote the rule."
+)
+
+
+def _project_is_git(project: dict) -> bool:
+    if "is_git" in project:
+        return bool(project["is_git"])
+    path = project.get("path")
+    if not isinstance(path, str) or not path:
+        return False
+    try:
+        candidate = Path(path)
+        return candidate.is_absolute() and (candidate / ".git").exists()
+    except OSError:
+        return False
+
+
 def guidance(row):
     project = row.get("project")
     if not project:
@@ -398,22 +502,40 @@ def guidance(row):
         f"  <project>{json.dumps(info, ensure_ascii=False, separators=(',', ':'))}</project>\n"
         "</environment_context>"
     )
-    instructions = project.get("instructions") or {}
-    limit = row.get("limits", {}).get("max_context_chars")
-    maximum = min(4000, limit // 4) if type(limit) is int else 4000
-    if not instructions.get("text"):
-        return env_block
-    raw = instructions["text"].encode()
-    prefix = raw[:maximum]
-    if len(raw) > maximum and b"\n" in prefix:
-        prefix = prefix[:prefix.rfind(b"\n") + 1]
-    text = prefix.decode("utf-8", errors="ignore").rstrip("\n")
+    rules = (
+        [GIT_SAFETY_RULE, ENGINEERING_RULE, TEST_HYGIENE_RULE]
+        if _project_is_git(project)
+        else [ENGINEERING_RULE, TEST_HYGIENE_RULE]
+    )
+    prefix = f"{env_block}\n\n" + "\n".join(rules)
+    sliced = _instructions_slice(row)
+    if sliced is None:
+        return prefix
+    text = sliced["text"]
+    if not sliced["truncated"]:
+        return (
+            f"{prefix}\n\n"
+            f"# AGENTS.md instructions for {path}\n\n"
+            f"{AGENTS_MD_SCOPE_RULE}\n\n"
+            "<INSTRUCTIONS>\n"
+            f"{text}\n"
+            "</INSTRUCTIONS>\n"
+            f"{AGENTS_MD_STOP_RULE}"
+        )
+    total_display = ">64 KiB" if sliced["incomplete"] else f"{sliced['raw_bytes']} bytes"
+    marker = (
+        f"[AGENTS.md truncated: showing {sliced['shown_bytes']} of {total_display}; "
+        f"read the rest with ryn_file_read path=AGENTS.md start_line={sliced['start_line']}]"
+    )
+    body = f"{text}\n{marker}" if text else marker
     return (
-        f"{env_block}\n\n"
+        f"{prefix}\n\n"
         f"# AGENTS.md instructions for {path}\n\n"
+        f"{AGENTS_MD_SCOPE_RULE}\n\n"
         "<INSTRUCTIONS>\n"
-        f"{text}\n"
-        "</INSTRUCTIONS>"
+        f"{body}\n"
+        "</INSTRUCTIONS>\n"
+        f"{AGENTS_MD_STOP_RULE}"
     )
 
 

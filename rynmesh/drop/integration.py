@@ -42,8 +42,14 @@ def install_device_drop(app: FastAPI, *, store: Any, messaging_key: Any, persona
     def peer_endpoints(peer_id: str) -> list[str]:
         return [str(row.get("endpoint") or "") for row in friend_rows() if row.get("peer_id") == peer_id]
 
+    def record_presence(row: dict[str, Any]) -> None:
+        cache = getattr(app.state, "peer_presence", None)
+        if cache is not None:
+            cache.update([row])
+
     engine = DropEngine(node=store, home=store.home, messaging_key=messaging_key, network_id=network_id,
                         own_peers=own_peers, friend_peers=friend_peers, peer_endpoints=peer_endpoints,
                         provider_peers=peer_providers.cached_peers if peer_providers is not None else None,
-                        provider_authorize=peer_providers.sync_authorize if peer_providers is not None else None)
+                        provider_authorize=peer_providers.sync_authorize if peer_providers is not None else None,
+                        presence=record_presence)
     return install_drop(app, engine=engine, local_control=local_control)

@@ -42,6 +42,8 @@ const explanations: Record<string, string> = {
   library_import_cancelled_by_cleanup: "Local copies were cleared while this download was running. Nothing was restored. Start a new download if you want this copy back.",
   library_import_version_unsupported: "This saved data needs a newer version of Ryn. It has been kept unchanged.",
   library_cleanup_pending: "Document cleanup is unfinished. Continue it in Settings → Privacy & data before downloading this copy again.",
+  friend_clock_skew: "本机或对方电脑时间不准",
+  friend_rate_limited: "请求过于频繁，请稍后重试。",
 };
 
 export function aiJoinExplanation(code: string): string {
@@ -63,7 +65,7 @@ async function request<T>(path: string, method = "GET", body?: unknown): Promise
 export const friendsApi = {
   diagnostics: () => request<FriendDiagnostics>("/diagnostics"),
   diagnose: (relationship_ids: string[]) => request<FriendDiagnostics>("/diagnostics", "POST", { relationship_ids }),
-  list: () => request<{ friends: FriendRecord[] }>(""),
+  list: () => request<{ friends: FriendRecord[]; secret_protection?: "dpapi" | "keychain" | "file" }>(""),
   invites: () => request<{ invites: (FriendInvitePreview & { status: string })[] }>("/invites"),
   createInvite: (reviewed_endpoint?: string) => request<FriendInviteResult>("/invites", "POST", { ttl_minutes: 15, reviewed_endpoint }),
   inspect: (invite_uri: string) => request<FriendInvitePreview>("/invites/inspect", "POST", { invite_uri }),
@@ -86,7 +88,7 @@ export const friendsApi = {
   send: (peer: string, body: { message_id: string; text: string; attachment?: { filename: string; mime: string; data_base64: string } }) =>
     request<FriendMessage>(`/${encodeURIComponent(peer)}/messages`, "POST", body),
   retry: (peer: string) => request(`/${encodeURIComponent(peer)}/retry-messages`, "POST"),
-  cards: () => request<{ cards: FriendContentCard[] }>("/cards"),
+  cards: () => request<{ cards: FriendContentCard[]; auto_cleaned_cards?: number }>("/cards"),
   reviewCardCleanup: () => request<{ review_token: string; cards: number; legacy_files: number; resuming: boolean }>("/card-cleanup"),
   clearCards: (review_token: string) => request<{ cards: number; complete: boolean; remote_confirmed: boolean }>("/card-cleanup", "POST", { review_token }),
   share: (body: { peer_id: string; item_id: string; card_id: string; offline_job_id?: string }) => request<FriendContentCard>("/share", "POST", { ...body, prefer_source: !body.offline_job_id }),
@@ -128,6 +130,7 @@ export function friendDeliveryExplanation(message: Pick<FriendMessage, "delivery
     recipient_full: "Your friend's mailbox is full. Wait for space or a direct connection, then retry the same message or card.",
     sender_quota: "Your pending mail to this friend has reached its limit. Wait for them to receive it, then retry the same message or card.",
     rate_limited: "The mailbox is limiting send requests. Wait a little, then retry the same message or card.",
+    friend_clock_skew: "本机或对方电脑时间不准",
     waiting_for_direct_connection: "This item is waiting for a direct connection. It has not been confirmed as delivered.",
     mailbox_unavailable: "The mailbox could not be reached. Delivery is unconfirmed; check the connection and retry.",
   };

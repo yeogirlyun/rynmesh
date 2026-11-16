@@ -18,6 +18,7 @@ from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import local_processes
 from .diagnostic_log import failure
 from .local_processes import (
     AgentProcessStartRejected,
@@ -27,9 +28,11 @@ from .local_processes import (
     shell_command,
 )
 from .local_specs import NAMES, SPECS
+from .protocol import bound_preview
 from .store import AgentError, AgentToolRejected, encoded
 
 MAX_FILE = 1024 * 1024
+READ_MAX_FILE = 64 * 1024 * 1024
 # Characters per ryn_file_read page. 6000 meant an 18 KB source file needed four model round trips.
 MAX_READ_CHARS = 12000
 MAX_SEARCH_FILES = 1000
@@ -46,6 +49,150 @@ SEARCH_BINARY_SUFFIXES = frozenset({
 
 def sha(raw):
     return hashlib.sha256(raw).hexdigest()
+
+
+_PERMISSION_ORDER = ("read_only", "confirm_changes", "workspace", "automatic")
+_WIN_RESERVED_NAMES = frozenset({"CON", "PRN", "AUX", "NUL", *[f"COM{i}" for i in range(1, 10)], *[f"LPT{i}" for i in range(1, 10)]})
+_OUTSIDE_WORKSPACE_CORRECTION = "文件工具只能访问 workspace_root；需要时请主人切到自动处理或改工作区，不要用 shell 绕过"
+
+
+def _has_invalid_windows_parts(path_obj: Path) -> bool:
+    return any(
+        ":" in part
+        or part.endswith((".", " "))
+        or part.split(".")[0].upper() in _WIN_RESERVED_NAMES
+        for part in path_obj.parts
+        if part not in {path_obj.anchor, ".", ".."}
+    )
+
+
+def _control_char_ratio(text: str, *, include_pua: bool = False) -> float:
+    if not text:
+        return 0.0
+    suspicious = 0
+    for ch in text:
+        cp = ord(ch)
+        if (cp < 32 and ch not in ("\t", "\n", "\r", "\f", "\b", "\x1b")) or cp == 0x7F or (0x80 <= cp <= 0x9F):
+            suspicious += 1
+        elif include_pua and ((0xE000 <= cp <= 0xF8FF) or cp >= 0xF0000):
+            suspicious += 1
+    return suspicious / len(text)
+
+
+def decode_text(raw: bytes) -> tuple[str, str]:
+    """Decode text bytes: UTF-8 BOM -> UTF-16 BOM -> strict UTF-8 -> gb18030 -> UnicodeDecodeError."""
+    if not isinstance(raw, (bytes, bytearray, memoryview)):
+        raise TypeError("decode_text requires a bytes-like object")
+    data = bytes(raw)
+    if not data:
+        return "", "utf-8"
+    if data.startswith(b"\xef\xbb\xbf"):
+        text = data[3:].decode("utf-8", errors="strict")
+        if "\x00" in text or "\ufffd" in text or _control_char_ratio(text) > 0.05:
+            raise UnicodeDecodeError("utf-8-sig", data, 0, len(data), "binary control bytes")
+        return text, "utf-8-sig"
+    if data.startswith(b"\xff\xfe") and not data.startswith(b"\xff\xfe\x00\x00"):
+        text = data[2:].decode("utf-16-le", errors="strict")
+        if "\x00" in text or "\ufffd" in text or _control_char_ratio(text) > 0.02:
+            raise UnicodeDecodeError("utf-16-le", data, 0, len(data), "binary control bytes")
+        return text, "utf-16-le"
+    if data.startswith(b"\xfe\xff"):
+        text = data[2:].decode("utf-16-be", errors="strict")
+        if "\x00" in text or "\ufffd" in text or _control_char_ratio(text) > 0.02:
+            raise UnicodeDecodeError("utf-16-be", data, 0, len(data), "binary control bytes")
+        return text, "utf-16-be"
+    try:
+        text = data.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        pass
+    else:
+        if "\x00" in text or "\ufffd" in text or _control_char_ratio(text) > 0.05:
+            raise UnicodeDecodeError("utf-8", data, 0, len(data), "binary control bytes")
+        return text, "utf-8"
+    text = data.decode("gb18030", errors="strict")
+    if "\x00" in text or "\ufffd" in text or _control_char_ratio(text, include_pua=True) > 0.02:
+        raise UnicodeDecodeError("gb18030", data, 0, len(data), "binary or excessive control/PUA characters")
+    return text, "gb18030"
+
+
+def encode_text(
+    text: str,
+    encoding: str,
+    *,
+    original_raw: bytes | None = None,
+    path: str | Path | None = None,
+) -> bytes:
+    """Encode text back to its original encoding (preserving BOM); reject unrepresentable characters."""
+    enc = (encoding or "utf-8").lower()
+    prefix = b""
+    if enc == "utf-8":
+        codec = "utf-8"
+    elif enc == "utf-8-sig":
+        codec, prefix = "utf-8", b"\xef\xbb\xbf"
+    elif enc == "utf-16-le":
+        codec, prefix = "utf-16-le", b"\xff\xfe"
+    elif enc == "utf-16-be":
+        codec, prefix = "utf-16-be", b"\xfe\xff"
+    elif enc == "utf-16":
+        codec = "utf-16"
+    elif enc in {"gb18030", "gbk", "gb2312"}:
+        uses_gb18030_ext = False
+        if enc == "gb18030" and original_raw is not None:
+            try:
+                original_raw.decode("gbk", errors="strict")
+            except UnicodeDecodeError:
+                uses_gb18030_ext = True
+        codec = "gb18030" if uses_gb18030_ext else "gbk"
+        if uses_gb18030_ext:
+            orig_chars = set(original_raw.decode("gb18030", errors="ignore")) if original_raw else set()
+            for idx, ch in enumerate(text):
+                if 0x1F000 <= ord(ch) <= 0x1FAFF and ch not in orig_chars:
+                    raise _unrepresentable_rejection(text, idx, encoding, path)
+    else:
+        codec = enc
+    try:
+        return prefix + text.encode(codec, errors="strict")
+    except UnicodeEncodeError as exc:
+        pos = max(0, min(exc.start, len(text) - 1)) if text else 0
+        raise _unrepresentable_rejection(text, pos, encoding, path) from None
+
+
+def _unrepresentable_rejection(
+    text: str,
+    pos: int,
+    encoding: str,
+    path: str | Path | None,
+) -> AgentToolRejected:
+    bad_char = text[pos] if text and 0 <= pos < len(text) else ""
+    codepoint = f"U+{ord(bad_char):04X}" if bad_char else "unknown"
+    line_no = text.count("\n", 0, pos) + 1
+    col_no = pos - text.rfind("\n", 0, pos)
+    target = str(path) if path is not None else "file"
+    return AgentToolRejected(
+        "agent_local_encoding_unrepresentable",
+        correction=(
+            f"Character {bad_char!r} ({codepoint}) on line {line_no} (column {col_no}) "
+            f"cannot be represented in file encoding '{encoding}' for '{target}'. "
+            f"Replace or remove that character instead of silently converting the file to UTF-8."
+        ),
+        details={
+            "path": str(path) if path is not None else None,
+            "encoding": encoding,
+            "character": bad_char,
+            "codepoint": codepoint,
+            "line": line_no,
+            "column": col_no,
+        },
+    )
+
+
+def _decode_for_diff(raw: bytes | None) -> str:
+    if not raw:
+        return ""
+    try:
+        return decode_text(raw)[0]
+    except UnicodeError:
+        return raw.decode("utf-8-sig", errors="replace")
 
 
 def apply_edit(text, args, *, path: str | None = None):
@@ -401,12 +548,20 @@ class LocalTools:
         self.lock = threading.RLock()
         self._operation_guard = threading.Lock()
         self._operation_locks = {}
+        self._path_guard = threading.Lock()
+        self._path_locks = {}
         self.processes = Processes()
         self._browser = None
         self._desktop = None
         self._renderer = None
         self._web_search = None
         self._reads = {}
+        if self.home is not None:
+            try:
+                from .local_browser import sweep_orphan_profiles
+                sweep_orphan_profiles(self.home)
+            except Exception:
+                pass
         self.native_computer = bind_owner_native_computer(
             store if store is not None else self, local_tools=self
         )
@@ -415,17 +570,61 @@ class LocalTools:
     def _operation_lock(self, operation_id):
         # Independent shell commands may wait concurrently, but the same durable
         # operation must never pass the dispatch boundary twice.
+        ident = threading.get_ident()
         with self._operation_guard:
-            entry = self._operation_locks.setdefault(operation_id, [threading.Lock(), 0])
+            entry = self._operation_locks.get(operation_id)
+            if entry is not None and entry[2] == ident:
+                raise AgentToolRejected("agent_operation_id_conflict")
+            if entry is None:
+                entry = [threading.Lock(), 0, None]
+                self._operation_locks[operation_id] = entry
             entry[1] += 1
         try:
             with entry[0]:
-                yield
+                with self._operation_guard:
+                    entry[2] = ident
+                try:
+                    yield
+                finally:
+                    with self._operation_guard:
+                        entry[2] = None
         finally:
             with self._operation_guard:
                 entry[1] -= 1
                 if not entry[1]:
                     self._operation_locks.pop(operation_id, None)
+
+    @staticmethod
+    def _norm_lock_path(path: Path | str) -> str:
+        resolved = path.resolve() if isinstance(path, Path) else Path(path).resolve()
+        return os.path.normcase(os.path.abspath(str(resolved)))
+
+    @contextmanager
+    def _path_lock(self, *paths):
+        keys = sorted({self._norm_lock_path(p) for p in paths if p is not None})
+        if not keys:
+            yield
+            return
+        entries = []
+        with self._path_guard:
+            for key in keys:
+                entry = self._path_locks.setdefault(key, [threading.Lock(), 0])
+                entry[1] += 1
+                entries.append((key, entry))
+        acquired = []
+        try:
+            for _, entry in entries:
+                entry[0].acquire()
+                acquired.append(entry[0])
+            yield
+        finally:
+            for lock_obj in reversed(acquired):
+                lock_obj.release()
+            with self._path_guard:
+                for key, entry in entries:
+                    entry[1] -= 1
+                    if not entry[1]:
+                        self._path_locks.pop(key, None)
 
     def _command_artifacts(self, result, task_id):
         from . import workspace_artifacts
@@ -460,6 +659,9 @@ class LocalTools:
             row["revision"] += 1
             return True
         return self.store.transaction(save)
+
+    def running_processes(self, task_id):
+        return list(self.processes.running_for_operation(task_id))
 
     def collect_command_artifacts(self, task_id):
         with self.processes.lock:
@@ -506,8 +708,18 @@ class LocalTools:
 
     def policy(self, context, state=None):
         bound = context.get("local_execution") or {}
-        data = state if state is not None else self.store.inspect(lambda data: {
-            "settings": data["settings"], "projects": data.get("projects", {})})
+        task_id = context.get("task_id")
+
+        def _project(raw_data):
+            tasks_map = raw_data.get("tasks") or {}
+            row = tasks_map.get(task_id) if task_id else None
+            return {
+                "settings": raw_data["settings"],
+                "projects": raw_data.get("projects", {}),
+                "tasks": {task_id: {"permission_mode": row.get("permission_mode")}} if isinstance(row, dict) else {},
+            }
+
+        data = state if state is not None else self.store.inspect(_project)
         current = data["settings"]
         if not current.get("enabled"):
             raise AgentToolRejected("agent_disabled")
@@ -524,8 +736,47 @@ class LocalTools:
             current_root = current.get("workspace_root") or self.store.default_workspace()
         if bound.get("workspace_root", "") != current_root:
             raise AgentToolRejected("agent_workspace_changed_new_task_required")
-        return {"workspace_root": bound.get("workspace_root", ""),
-                "desktop_access": bool(bound.get("desktop_access") and current.get("desktop_access"))}
+        settings_mode = current["permission_mode"] if current.get("permission_mode") in _PERMISSION_ORDER else "workspace"
+        row_info = (data.get("tasks") or {}).get(task_id) if task_id else None
+        if isinstance(row_info, dict):
+            row_mode = row_info["permission_mode"] if row_info.get("permission_mode") in _PERMISSION_ORDER else "workspace"
+        elif context.get("permission_mode") in _PERMISSION_ORDER:
+            row_mode = context["permission_mode"]
+        else:
+            row_mode = "workspace"
+        modes = {settings_mode, row_mode}
+        if context.get("permission_mode") in _PERMISSION_ORDER:
+            modes.add(context["permission_mode"])
+        effective_mode = next((m for m in _PERMISSION_ORDER if m in modes), "workspace")
+        return {
+            "workspace_root": bound.get("workspace_root", ""),
+            "desktop_access": bool(bound.get("desktop_access") and current.get("desktop_access")),
+            "permission_mode": effective_mode,
+        }
+
+    def _shell_cwd(self, value, context, policy=None):
+        policy = policy or self.policy(context)
+        if not policy["workspace_root"]:
+            raise AgentToolRejected("agent_workspace_required")
+        if value is None:
+            value = "."
+        if not isinstance(value, str) or not value or "\x00" in value:
+            raise AgentToolRejected("agent_local_path_invalid")
+        expanded = os.path.expanduser(value) if (value == "~" or value.startswith(("~/", "~\\"))) else value
+        requested = Path(expanded)
+        if policy.get("permission_mode") == "automatic" and requested.is_absolute():
+            if os.name == "nt" and _has_invalid_windows_parts(requested):
+                raise AgentToolRejected("agent_local_path_invalid")
+            cwd = requested.resolve()
+            if os.name == "nt" and _has_invalid_windows_parts(cwd):
+                raise AgentToolRejected("agent_local_path_invalid")
+            if not cwd.is_dir():
+                raise AgentToolRejected("agent_local_cwd_not_directory")
+            return cwd
+        cwd = self.path(value, context, policy)
+        if not cwd.is_dir():
+            raise AgentToolRejected("agent_local_cwd_not_directory")
+        return cwd
 
     def path(self, value, context, policy=None):
         policy = policy or self.policy(context)
@@ -534,32 +785,47 @@ class LocalTools:
         root = Path(policy["workspace_root"]).resolve(strict=True)
         if not isinstance(value, str) or not value or "\x00" in value:
             raise AgentToolRejected("agent_local_path_invalid")
-        requested = Path(value)
-        path = (requested if requested.is_absolute() else root / requested).resolve()
-        if not path.is_relative_to(root):
-            raise AgentToolRejected("agent_local_path_outside_workspace")
-        # Windows ADS/device names bypass ordinary file semantics.
-        if os.name == "nt" and any(":" in part or part.endswith((".", " ")) or
-                part.split(".")[0].upper() in {"CON", "PRN", "AUX", "NUL", *[f"COM{i}" for i in range(1, 10)], *[f"LPT{i}" for i in range(1, 10)]}
-                for part in requested.parts if part not in {requested.anchor, ".", ".."}):
+        expanded = os.path.expanduser(value) if (value == "~" or value.startswith(("~/", "~\\"))) else value
+        requested = Path(expanded)
+        is_abs = requested.is_absolute()
+        outside_ok = policy.get("permission_mode") == "automatic" and is_abs
+        # Windows ADS/device names bypass ordinary file semantics; check all segments before & after resolve.
+        if os.name == "nt" and _has_invalid_windows_parts(requested):
             raise AgentToolRejected("agent_local_path_invalid")
+        path = (requested if is_abs else root / requested).resolve()
+        if os.name == "nt" and _has_invalid_windows_parts(path):
+            raise AgentToolRejected("agent_local_path_invalid")
+        if not path.is_relative_to(root):
+            if not outside_ok:
+                raise AgentToolRejected(
+                    "agent_local_path_outside_workspace",
+                    correction=_OUTSIDE_WORKSPACE_CORRECTION,
+                )
         return path
 
-    def raw(self, path):
-        if not path.is_file() or path.stat().st_size > MAX_FILE:
+    def raw(self, path, *, max_bytes: int = MAX_FILE):
+        if not path.is_file() or path.stat().st_size > max_bytes:
             raise AgentToolRejected("agent_local_file_missing_or_too_large")
         with path.open("rb") as stream:
-            raw = stream.read(MAX_FILE + 1)
-        if len(raw) > MAX_FILE:
+            raw = stream.read(max_bytes + 1)
+        if len(raw) > max_bytes:
             raise AgentToolRejected("agent_local_file_too_large")
         return raw
 
-    def text(self, path):
+    def read_window(self, path, *, max_bytes: int = READ_MAX_FILE):
+        return self.raw(path, max_bytes=max_bytes)
+
+    def text(self, path, *, with_encoding: bool = True):
         raw = self.raw(path)
         try:
-            return raw, raw.decode("utf-8-sig")
+            decoded, encoding = decode_text(raw)
         except UnicodeError:
             raise AgentToolRejected("agent_local_file_not_utf8") from None
+        return (raw, decoded, encoding) if with_encoding else (raw, decoded)
+
+    def text_pair(self, path):
+        raw, decoded, _ = self.text(path)
+        return raw, decoded
 
     def _baseline_dir(self, task_id):
         if self.home is None:
@@ -607,10 +873,17 @@ class LocalTools:
                         directory.rmdir()
                     except OSError:
                         pass
+        if getattr(self, "_browser", None) is not None:
+            self._browser.close_task(task_id)
         if getattr(self, "native_computer", None) is not None:
             self.native_computer.forget_task(task_id)
         if getattr(self, "_web_search", None) is not None:
             self._web_search.forget_task(task_id)
+
+    def close(self):
+        if getattr(self, "_browser", None) is not None:
+            self._browser.close()
+        self.processes.close()
 
     def file_review(self, task_id, workspace_root):
         from .file_review import FileReview
@@ -667,8 +940,8 @@ class LocalTools:
                 status = "modified"
             if status is None:
                 continue
-            before_text = (original or b"").decode("utf-8-sig", errors="replace")
-            after_text = (current or b"").decode("utf-8-sig", errors="replace")
+            before_text = _decode_for_diff(original)
+            after_text = _decode_for_diff(current)
             relative = str(path)
             if root is not None and path.is_relative_to(root):
                 relative = os.path.relpath(path, root)
@@ -696,31 +969,44 @@ class LocalTools:
     def browser(self, context):
         if not self.policy(context)["desktop_access"]:
             raise AgentToolRejected("agent_desktop_access_required")
-        if self._browser is None:
-            from .local_browser import Browser
-            self._browser = Browser(self.home, self.processes)
-        return self._browser
+        with self.lock:
+            if self._browser is None:
+                from .local_browser import Browser
+                self._browser = Browser(self.home, self.processes)
+            return self._browser
 
     def web_search(self, context=None):
-        if self._web_search is None:
-            from .web_search import WebSearchEngine
-            base = Path(self.home) if self.home else (Path.cwd() / ".ryn_agent")
-            self._web_search = WebSearchEngine(base / "web_search_cache")
-        return self._web_search
+        with self.lock:
+            if self._web_search is None:
+                from .web_search import WebSearchEngine
+                base = Path(self.home) if self.home else (Path.cwd() / ".ryn_agent")
+                self._web_search = WebSearchEngine(base / "web_search_cache")
+            return self._web_search
 
     def desktop(self, context):
         if not self.policy(context)["desktop_access"]:
             raise AgentToolRejected("agent_desktop_access_required")
         owner = self.store if self.store is not None else self
-        if self.native_computer is None or self.native_computer._owner is not owner:
-            from .native_computer import bind_owner_native_computer
-            self.native_computer = bind_owner_native_computer(owner, local_tools=self)
-        if self._desktop is None or getattr(self._desktop, "native_computer", None) is not self.native_computer:
-            from .local_desktop import Desktop
-            self._desktop = Desktop(native_computer=self.native_computer)
-        return self._desktop
+        with self.lock:
+            if self.native_computer is None or self.native_computer._owner is not owner:
+                from .native_computer import bind_owner_native_computer
+                self.native_computer = bind_owner_native_computer(owner, local_tools=self)
+            if self._desktop is None or getattr(self._desktop, "native_computer", None) is not self.native_computer:
+                from .local_desktop import Desktop
+                self._desktop = Desktop(native_computer=self.native_computer)
+            return self._desktop
 
-    def allowed(self, context):
+    def _build_authority_checker(self, context, *, stop_on_paused: bool, cache_ttl: float):
+        stopped_statuses = (
+            {"paused", "cancelled", "failed", "interrupted"}
+            if stop_on_paused
+            else {"cancelled", "failed", "interrupted"}
+        )
+        max_consecutive_errors = 20
+        last_result = True
+        last_checked_at: float | None = None
+        consecutive_errors = 0
+
         def projection(data):
             row = data.get("tasks", {}).get(context["task_id"])
             if row is None:
@@ -740,35 +1026,67 @@ class LocalTools:
                     "tasks": {context["task_id"]: control}}
 
         def check():
+            nonlocal last_result, last_checked_at, consecutive_errors
+            now_mono = time.monotonic()
+            if cache_ttl > 0.0 and last_checked_at is not None and (now_mono - last_checked_at) < cache_ttl:
+                return last_result
             try:
                 from .execution_policy import decide, shell_read, verified_read_classification
-                # Watchers run five times a second. Project only authority rather
-                # than cloning every task transcript twice on each check.
+                # Process watchers poll exit every 50 ms, while authority checks run
+                # once per second (cached); browser checks run on demand. Project only
+                # authority rather than cloning every task transcript on each check.
                 state = self.store.inspect(projection)
-                row = state.get("tasks", {}).get(context["task_id"])
-                current = state["settings"]
-                operation = (row or {}).get("in_flight") or {}
-                authorized_read = verified_read_classification(
-                    operation,
-                    task_id=context["task_id"],
-                    workspace_root=context["local_execution"].get("workspace_root", ""),
-                ) or (
-                    operation.get("operation_classification") is None
-                    and operation.get("authorization") == "read"
-                    and shell_read(operation.get("arguments") or {})
-                )
-                if operation.get("authorization") == "automatic":
-                    if decide(operation, {"effect": operation.get("effect"),
-                        "computer_access": operation.get("computer_access"),
-                        "workstation_permission_tool": operation.get("workstation_permission_tool")}, row, current).action != "execute":
-                        return False
-                return bool(row and current.get("enabled") and
-                            row["status"] not in {"paused", "cancelled", "failed", "interrupted"} and
-                            (current.get("permission_mode") != "read_only" or authorized_read) and
-                            self.policy(context, state)["workspace_root"] == context["local_execution"].get("workspace_root", ""))
             except Exception:
-                return False
+                last_checked_at = now_mono
+                consecutive_errors += 1
+                if consecutive_errors >= max_consecutive_errors:
+                    last_result = False
+                    return False
+                return last_result
+
+            row = state.get("tasks", {}).get(context["task_id"])
+            current = state["settings"]
+            operation = (row or {}).get("in_flight") or {}
+            authorized_read = verified_read_classification(
+                operation,
+                task_id=context["task_id"],
+                workspace_root=context["local_execution"].get("workspace_root", ""),
+            ) or (
+                operation.get("operation_classification") is None
+                and operation.get("authorization") == "read"
+                and shell_read(operation.get("arguments") or {})
+            )
+            if operation.get("authorization") == "automatic":
+                if decide(operation, {"effect": operation.get("effect"),
+                    "computer_access": operation.get("computer_access"),
+                    "workstation_permission_tool": operation.get("workstation_permission_tool")}, row, current).action != "execute":
+                    consecutive_errors = 0
+                    last_checked_at = now_mono
+                    last_result = False
+                    return False
+            try:
+                workspace_ok = self.policy(context, state)["workspace_root"] == context["local_execution"].get("workspace_root", "")
+            except AgentToolRejected:
+                workspace_ok = False
+            ok = bool(
+                row
+                and current.get("enabled")
+                and row["status"] not in stopped_statuses
+                and (current.get("permission_mode") != "read_only" or authorized_read)
+                and workspace_ok
+            )
+            consecutive_errors = 0
+            last_checked_at = now_mono
+            last_result = ok
+            return ok
+
         return check
+
+    def allowed(self, context):
+        return self._build_authority_checker(context, stop_on_paused=True, cache_ttl=0.0)
+
+    def process_allowed(self, context):
+        return self._build_authority_checker(context, stop_on_paused=False, cache_ttl=1.0)
 
     @staticmethod
     def _observed_key(path: Path | str) -> str:
@@ -878,12 +1196,13 @@ class LocalTools:
     def _patch_plan(self, args, context, policy):
         """Resolve and apply every hunk in memory; raises before any file is written."""
         from . import local_patch
+        outside_ok = policy.get("permission_mode") == "automatic"
         plan, seen = [], set()
         for operation in local_patch.parse(args["patch"]):
             from .file_review import safe_path
-            safe_path(policy["workspace_root"], operation["path"])
+            safe_path(policy["workspace_root"], operation["path"], outside_ok=outside_ok)
             if operation.get("move_to"):
-                safe_path(policy["workspace_root"], operation["move_to"])
+                safe_path(policy["workspace_root"], operation["move_to"], outside_ok=outside_ok)
             path = self.path(operation["path"], context, policy)
             destination = self.path(operation["move_to"], context, policy) if operation.get("move_to") else None
             for target in (path, destination):
@@ -912,9 +1231,9 @@ class LocalTools:
                         details={"path": str(path), "field_path": "patch"},
                     )
                 after_text = "".join(line + "\n" for line in operation["lines"])
-                after = after_text.encode()
+                after = encode_text(after_text, "utf-8", path=operation["path"])
             elif operation["kind"] == "delete":
-                before, before_text = self.text(path)
+                before, before_text, _ = self.text(path)
                 observed_sha = self._get_observed_sha256(context, path)
                 if observed_sha is not None and observed_sha != sha(before):
                     raise AgentToolRejected(
@@ -923,7 +1242,7 @@ class LocalTools:
                         details={"path": str(path), "expected_sha256": observed_sha, "actual_sha256": sha(before), "field_path": "patch"},
                     )
             else:
-                before, before_text = self.text(path)
+                before, before_text, before_encoding = self.text(path)
                 observed_sha = self._get_observed_sha256(context, path)
                 if observed_sha is not None and observed_sha != sha(before):
                     raise AgentToolRejected(
@@ -933,7 +1252,7 @@ class LocalTools:
                     )
                 if operation["hunks"]:
                     after_text = local_patch.apply_hunks(before_text, operation["hunks"], path=operation["path"])
-                    after = (b"\xef\xbb\xbf" if before.startswith(b"\xef\xbb\xbf") else b"") + after_text.encode()
+                    after = encode_text(after_text, before_encoding, original_raw=before, path=operation["path"])
                 else:  # A pure move keeps the exact bytes.
                     after, after_text = before, before_text
                 if destination is not None and destination.exists():
@@ -980,13 +1299,14 @@ class LocalTools:
             from .table_work import calculate, export_bytes, summary
             args = self._table_export_arguments(args, context)
             source = self.path(args["source_path"], context)
-            report = calculate(self.raw(source), source.suffix, args["recipe"])
+            source_raw = self.read_window(source)
+            report = calculate(source_raw, source.suffix, args["recipe"])
             if report["calculation_sha256"] != args["expected_calculation_sha256"]:
                 raise AgentToolRejected("agent_table_input_changed", correction="Recalculate the changed source/rules and review the new checks before exporting.")
             path = self.path(args["path"], context)
             if path.exists() or not path.parent.is_dir():
                 raise AgentToolRejected("agent_table_new_output_required")
-            raw = export_bytes(report, path.suffix.lower())
+            raw = export_bytes(report, path.suffix.lower(), source_raw=source_raw, source_suffix=source.suffix)
             if len(raw) > 8 * 1024 * 1024:
                 raise AgentToolRejected("agent_table_output_limit")
             return {**preview, "path": str(path), "sha256": sha(raw), "bytes": len(raw), "calculation": summary(report)}
@@ -1044,15 +1364,23 @@ class LocalTools:
                             correction=f"File '{args['path']}' does not exist. Use ryn_file_write or ryn_apply_patch to create new files.",
                             details={"path": str(path), "field_path": "path"},
                         )
-                    _, text = self.text(path)
-                    content = apply_edit(text, args, path=args["path"])
+                    _, before_text, target_encoding = self.text(path)
+                    content = apply_edit(before_text, args, path=args["path"])
                 else:
+                    if before is not None:
+                        try:
+                            before_text, target_encoding = decode_text(before)
+                        except UnicodeError:
+                            before_text, target_encoding = before.decode("utf-8-sig", errors="replace"), "utf-8"
+                    else:
+                        before_text, target_encoding = "", "utf-8"
                     content = args["content"]
-                if len(content.encode()) > MAX_FILE:
+                after_raw = encode_text(content, target_encoding, original_raw=before, path=args["path"])
+                if len(after_raw) > MAX_FILE:
                     raise AgentToolRejected("agent_local_file_too_large")
                 preview.update(before_sha256=sha(before) if before is not None else None,
-                               after_sha256=sha(content.encode()), bytes=len(content.encode()),
-                               **change_summary(before.decode("utf-8-sig", errors="replace") if before is not None else "", content))
+                               after_sha256=sha(after_raw), bytes=len(after_raw), encoding=target_encoding,
+                               **change_summary(before_text, content))
             elif name == "ryn_file_manage":
                 action = args["action"]
                 if action == "mkdir":
@@ -1081,9 +1409,7 @@ class LocalTools:
                             raise AgentToolRejected("agent_local_destination_exists_or_parent_missing")
                         preview["destination"] = str(destination)
         elif name == "ryn_shell_execute":
-            cwd = self.path(args.get("cwd", "."), context)
-            if not cwd.is_dir():
-                raise AgentToolRejected("agent_local_cwd_not_directory")
+            cwd = self._shell_cwd(args.get("cwd", "."), context)
             shell = args.get("shell", "powershell" if os.name == "nt" else "sh")
             shell_command(shell, args["command"], tty=args.get("tty", False))
             preview.update(cwd=str(cwd), shell=shell, execution_scope="user_account_not_sandboxed")
@@ -1094,6 +1420,8 @@ class LocalTools:
             if name == "ryn_browser_open":
                 preview["url"] = browser.validate_url(args["url"], lambda v: self.path(v, context))
             else:
+                if args.get("action") == "new_tab" and args.get("url"):
+                    preview["url"] = browser.validate_url(args["url"], lambda v: self.path(v, context))
                 preview.update(browser.preview(args, context["task_id"]))
                 if args.get("action") == "upload":
                     if not args.get("files") or any(not self.path(p, context).is_file() for p in args["files"]):
@@ -1147,111 +1475,114 @@ class LocalTools:
         # Durable intent prevents a repeated shell command or input event after restart.
         binding = {"operation_id": operation_id, "tool": name, "task_id": context["task_id"],
                    "arguments_sha256": sha(encoded(args)), "local_execution": context["local_execution"]}
-        with self._operation_lock(operation_id), (nullcontext() if name == "ryn_shell_execute" else self.lock):
-            if self.processes.running_for_operation(context["task_id"], operation_id):
-                raise AgentToolRejected("agent_process_already_running")
-            ledger = self.ledger_factory()
-            prior = ledger.get(operation_id)
-            if prior:
-                if prior["binding"] != binding:
-                    raise AgentToolRejected("agent_operation_id_conflict")
-                if prior["status"] == "confirmed":
-                    return prior["result"]
-                if prior["status"] == "not_executed":
-                    raise AgentToolRejected(prior.get("error", "agent_local_operation_not_executed"))
-                if (
-                    prior["status"] == "failed"
-                    and prior.get("no_mutation") is True
-                    and prior.get("cleanup_confirmed") is True
-                    and is_read_shell
-                    and verified_read_classification(
-                        prior,
-                        task_id=context["task_id"],
-                        workspace_root=policy["workspace_root"],
-                        operation_id=operation_id,
-                        tool=name,
-                        arguments=args,
-                    )
-                ):
-                    raise AgentError(prior.get("error", "agent_read_interrupted"))
-                unknown_err = AgentError("agent_write_outcome_unknown")
-                if isinstance(prior.get("error_result"), dict):
-                    unknown_err.diagnostics = copy.deepcopy(prior["error_result"])
-                raise unknown_err
-            preview = self.preview(name, args, context)
-            if preview != expected_preview:
-                raise AgentToolRejected("agent_approval_preview_changed")
-            prepared_shell = None
-            if name == "ryn_shell_execute":
-                from . import workspace_artifacts
+        ledger_guard = nullcontext if name == "ryn_shell_execute" else (lambda: self.lock)
+        with self._operation_lock(operation_id):
+            with ledger_guard():
+                if self.processes.running_for_operation(context["task_id"], operation_id):
+                    raise AgentToolRejected("agent_process_already_running")
+                ledger = self.ledger_factory()
+                prior = ledger.get(operation_id)
+                if prior:
+                    if prior["binding"] != binding:
+                        raise AgentToolRejected("agent_operation_id_conflict")
+                    if prior["status"] == "confirmed":
+                        return prior["result"]
+                    if prior["status"] == "not_executed":
+                        raise AgentToolRejected(prior.get("error", "agent_local_operation_not_executed"))
+                    if (
+                        prior["status"] == "failed"
+                        and prior.get("no_mutation") is True
+                        and prior.get("cleanup_confirmed") is True
+                        and is_read_shell
+                        and verified_read_classification(
+                            prior,
+                            task_id=context["task_id"],
+                            workspace_root=policy["workspace_root"],
+                            operation_id=operation_id,
+                            tool=name,
+                            arguments=args,
+                        )
+                    ):
+                        raise AgentError(prior.get("error", "agent_read_interrupted"))
+                    unknown_err = AgentError("agent_write_outcome_unknown")
+                    if isinstance(prior.get("error_result"), dict):
+                        unknown_err.diagnostics = copy.deepcopy(prior["error_result"])
+                    raise unknown_err
+                preview = self.preview(name, args, context)
+                if bound_preview(preview) != bound_preview(expected_preview):
+                    raise AgentToolRejected("agent_approval_preview_changed")
+                prepared_shell = None
+                if name == "ryn_shell_execute":
+                    from . import workspace_artifacts
 
-                # Resolve optional executables and read-only preparation before
-                # recording dispatch. A missing rg is a correctable tool error.
-                command = prepare_shell_command(args)
-                cwd = self.path(args.get("cwd", "."), context, policy)
-                root = self.path(".", context, policy)
-                before = None if is_read_shell else workspace_artifacts.snapshot(root)
-                prepared_shell = (command, cwd, root, before)
-            is_browser_write = name.startswith("ryn_browser_")
-            if is_browser_write:
-                prior, created = ledger.begin_dispatched(
-                    binding,
-                    preview,
-                    operation_classification=host_classification,
-                    host_pid=os.getpid(),
-                    receipt_reserve=32768,
-                )
-            else:
-                prior, created = ledger.begin(binding, preview, receipt_reserve=32768)
-            if not created:
-                # Another controller may share the on-disk ledger. Its atomic
-                # begin wins even though this instance's earlier lookup was empty.
-                if prior.get("binding") != binding:
-                    raise AgentToolRejected("agent_operation_id_conflict")
-                if prior["status"] == "confirmed":
-                    return prior["result"]
-                if prior["status"] == "not_executed":
-                    raise AgentToolRejected(prior.get("error", "agent_local_operation_not_executed"))
-                if (
-                    prior["status"] == "failed"
-                    and prior.get("no_mutation") is True
-                    and prior.get("cleanup_confirmed") is True
-                    and is_read_shell
-                    and verified_read_classification(
-                        prior,
-                        task_id=context["task_id"],
-                        workspace_root=policy["workspace_root"],
-                        operation_id=operation_id,
-                        tool=name,
-                        arguments=args,
-                    )
-                ):
-                    raise AgentError(prior.get("error", "agent_read_interrupted"))
-                unknown_err = AgentError("agent_write_outcome_unknown")
-                if isinstance(prior.get("error_result"), dict):
-                    unknown_err.diagnostics = copy.deepcopy(prior["error_result"])
-                raise unknown_err
-            if cancelled():
-                ledger.update(operation_id, "not_executed", error="agent_cancelled", operation_classification=host_classification)
-                raise AgentToolRejected("agent_cancelled")
-            if not is_browser_write and name != "ryn_computer_action":
-                ledger.update(operation_id, "dispatched", operation_classification=host_classification, host_pid=os.getpid())
-
-            computer_ready_gate = None
-            if name == "ryn_computer_action":
-                def _computer_ready_gate(_validated_ready):
-                    if cancelled():
-                        raise AgentToolRejected(getattr(cancelled, "reason", None) or "agent_cancelled")
-                    if not self.allowed(context)() or not self.policy(context)["desktop_access"]:
-                        raise AgentToolRejected("agent_desktop_access_required")
-                    ledger.update(
-                        operation_id,
-                        "dispatched",
+                    # Resolve optional executables and read-only preparation before
+                    # recording dispatch. A missing rg is a correctable tool error.
+                    command = prepare_shell_command(args)
+                    cwd = self._shell_cwd(args.get("cwd", "."), context, policy)
+                    root = self.path(".", context, policy)
+                    before = None if is_read_shell else workspace_artifacts.snapshot(root)
+                    prepared_shell = (command, cwd, root, before)
+                is_browser_write = name.startswith("ryn_browser_")
+                if is_browser_write:
+                    prior, created = ledger.begin_dispatched(
+                        binding,
+                        preview,
                         operation_classification=host_classification,
                         host_pid=os.getpid(),
                         receipt_reserve=32768,
                     )
-                computer_ready_gate = _computer_ready_gate
+                else:
+                    prior, created = ledger.begin(binding, preview, receipt_reserve=32768)
+                if not created:
+                    # Another controller may share the on-disk ledger. Its atomic
+                    # begin wins even though this instance's earlier lookup was empty.
+                    if prior.get("binding") != binding:
+                        raise AgentToolRejected("agent_operation_id_conflict")
+                    if prior["status"] == "confirmed":
+                        return prior["result"]
+                    if prior["status"] == "not_executed":
+                        raise AgentToolRejected(prior.get("error", "agent_local_operation_not_executed"))
+                    if (
+                        prior["status"] == "failed"
+                        and prior.get("no_mutation") is True
+                        and prior.get("cleanup_confirmed") is True
+                        and is_read_shell
+                        and verified_read_classification(
+                            prior,
+                            task_id=context["task_id"],
+                            workspace_root=policy["workspace_root"],
+                            operation_id=operation_id,
+                            tool=name,
+                            arguments=args,
+                        )
+                    ):
+                        raise AgentError(prior.get("error", "agent_read_interrupted"))
+                    unknown_err = AgentError("agent_write_outcome_unknown")
+                    if isinstance(prior.get("error_result"), dict):
+                        unknown_err.diagnostics = copy.deepcopy(prior["error_result"])
+                    raise unknown_err
+                if cancelled():
+                    ledger.update(operation_id, "not_executed", error="agent_cancelled", operation_classification=host_classification)
+                    raise AgentToolRejected("agent_cancelled")
+                if not is_browser_write and name != "ryn_computer_action":
+                    ledger.update(operation_id, "dispatched", operation_classification=host_classification, host_pid=os.getpid())
+
+                computer_ready_gate = None
+                if name == "ryn_computer_action":
+                    def _computer_ready_gate(_validated_ready):
+                        if cancelled():
+                            raise AgentToolRejected(getattr(cancelled, "reason", None) or "agent_cancelled")
+                        if not self.allowed(context)() or not self.policy(context)["desktop_access"]:
+                            raise AgentToolRejected("agent_desktop_access_required")
+                        with self.lock:
+                            ledger.update(
+                                operation_id,
+                                "dispatched",
+                                operation_classification=host_classification,
+                                host_pid=os.getpid(),
+                                receipt_reserve=32768,
+                            )
+                    computer_ready_gate = _computer_ready_gate
 
             # Only a known pre-spawn rejection proves a dispatched shell did
             # nothing. Write failures after process creation remain uncertain;
@@ -1282,43 +1613,46 @@ class LocalTools:
                 )
             except AgentProcessStartRejected as exc:
                 failure("shell_start", exc)
-                ledger.update(operation_id, "not_executed", error=str(exc), operation_classification=host_classification)
+                with ledger_guard():
+                    ledger.update(operation_id, "not_executed", error=str(exc), operation_classification=host_classification)
                 raise
             except AgentToolRejected as exc:
                 if name.startswith("ryn_browser_") and not getattr(exc, "after_side_effect", False):
                     failure("browser_rejected", exc)
-                    ledger.update(operation_id, "not_executed", error=str(exc), operation_classification=host_classification)
+                    with ledger_guard():
+                        ledger.update(operation_id, "not_executed", error=str(exc), operation_classification=host_classification)
                     raise
                 if name == "ryn_computer_action":
-                    cur_row = ledger.get(operation_id) or {}
-                    if (
-                        cur_row.get("status") == "intent"
-                        and getattr(exc, "pre_dispatch", True)
-                        and not getattr(exc, "dispatched", False)
-                        and not getattr(exc, "commit_attempted", False)
-                    ):
+                    with ledger_guard():
+                        cur_row = ledger.get(operation_id) or {}
+                        if (
+                            cur_row.get("status") == "intent"
+                            and getattr(exc, "pre_dispatch", True)
+                            and not getattr(exc, "dispatched", False)
+                            and not getattr(exc, "commit_attempted", False)
+                        ):
+                            ledger.update(
+                                operation_id,
+                                "not_executed",
+                                error=str(exc),
+                                error_result=getattr(exc, "diagnostics", None) if isinstance(getattr(exc, "diagnostics", None), dict) else None,
+                                operation_classification=host_classification,
+                                receipt_reserve=0,
+                            )
+                            raise
+                        diag = (
+                            copy.deepcopy(getattr(exc, "diagnostics", None))
+                            if isinstance(getattr(exc, "diagnostics", None), dict)
+                            else {"error": str(exc), "phase": "post_dispatch", "dispatched": True}
+                        )
                         ledger.update(
                             operation_id,
-                            "not_executed",
+                            "dispatched",
                             error=str(exc),
-                            error_result=getattr(exc, "diagnostics", None) if isinstance(getattr(exc, "diagnostics", None), dict) else None,
+                            error_result=diag,
                             operation_classification=host_classification,
                             receipt_reserve=0,
                         )
-                        raise
-                    diag = (
-                        copy.deepcopy(getattr(exc, "diagnostics", None))
-                        if isinstance(getattr(exc, "diagnostics", None), dict)
-                        else {"error": str(exc), "phase": "post_dispatch", "dispatched": True}
-                    )
-                    ledger.update(
-                        operation_id,
-                        "dispatched",
-                        error=str(exc),
-                        error_result=diag,
-                        operation_classification=host_classification,
-                        receipt_reserve=0,
-                    )
                     unknown_err = AgentError("agent_write_outcome_unknown")
                     unknown_err.diagnostics = copy.deepcopy(diag)
                     raise unknown_err from exc
@@ -1327,7 +1661,8 @@ class LocalTools:
                     and not getattr(exc, "after_side_effect", False)
                 ):
                     failure("local_rejected", exc)
-                    ledger.update(operation_id, "not_executed", error=str(exc), operation_classification=host_classification)
+                    with ledger_guard():
+                        ledger.update(operation_id, "not_executed", error=str(exc), operation_classification=host_classification)
                     raise
                 failure("local_execute", exc)
                 raise AgentError("agent_local_operation_unconfirmed") from exc
@@ -1339,25 +1674,26 @@ class LocalTools:
                         else {"error": str(getattr(exc, "cause_code", None) or exc), "phase": "post_dispatch", "dispatched": True}
                     )
                     cause_code = str(getattr(exc, "cause_code", None) or diag.get("error") or exc)
-                    cur_row = ledger.get(operation_id) or {}
-                    if not getattr(exc, "callback_uncertain", False):
-                        ledger.update(
-                            operation_id,
-                            "dispatched",
-                            error=cause_code,
-                            error_result=diag,
-                            operation_classification=host_classification,
-                            receipt_reserve=0,
-                        )
-                    elif cur_row.get("status") in {"intent", "dispatched"}:
-                        ledger.update(
-                            operation_id,
-                            str(cur_row["status"]),
-                            error=cause_code,
-                            error_result=diag,
-                            operation_classification=host_classification,
-                            receipt_reserve=0,
-                        )
+                    with ledger_guard():
+                        cur_row = ledger.get(operation_id) or {}
+                        if not getattr(exc, "callback_uncertain", False):
+                            ledger.update(
+                                operation_id,
+                                "dispatched",
+                                error=cause_code,
+                                error_result=diag,
+                                operation_classification=host_classification,
+                                receipt_reserve=0,
+                            )
+                        elif cur_row.get("status") in {"intent", "dispatched"}:
+                            ledger.update(
+                                operation_id,
+                                str(cur_row["status"]),
+                                error=cause_code,
+                                error_result=diag,
+                                operation_classification=host_classification,
+                                receipt_reserve=0,
+                            )
                     unknown_err = AgentError("agent_write_outcome_unknown")
                     unknown_err.diagnostics = copy.deepcopy(diag)
                     raise unknown_err from exc
@@ -1434,13 +1770,14 @@ class LocalTools:
                         )
                         raise AgentError(err_code)
                     raise AgentError("agent_local_operation_unconfirmed")
-            ledger.update(
-                operation_id,
-                "confirmed",
-                result=result,
-                confirmed_at=datetime.now(timezone.utc).isoformat(),
-                operation_classification=host_classification,
-            )
+            with ledger_guard():
+                ledger.update(
+                    operation_id,
+                    "confirmed",
+                    result=result,
+                    confirmed_at=datetime.now(timezone.utc).isoformat(),
+                    operation_classification=host_classification,
+                )
             if name == "ryn_shell_execute":
                 # File delivery cannot change the confirmed execution outcome into an uncertain write.
                 try:
@@ -1461,20 +1798,26 @@ class LocalTools:
             if name == "ryn_table_export":
                 args = self._table_export_arguments(args, context)
             source = self.path(args["source_path"], context)
-            report = calculate(self.raw(source), source.suffix, args["recipe"], cancelled)
+            source_raw = self.read_window(source)
+            report = calculate(source_raw, source.suffix, args["recipe"], cancelled)
             if name == "ryn_table_calculate":
                 return summary(report)
             if report["calculation_sha256"] != args["expected_calculation_sha256"]:
                 raise AgentToolRejected("agent_table_input_changed")
             path = self.path(args["path"], context)
-            if path.exists() or not path.parent.is_dir():
-                raise AgentToolRejected("agent_table_new_output_required")
-            raw = export_bytes(report, path.suffix.lower())
-            if len(raw) > 8 * 1024 * 1024 or cancelled():
-                raise AgentToolRejected("agent_cancelled" if cancelled() else "agent_table_output_limit")
-            self.file_review(task_id, self.path(".", context)).apply([(path, None, raw, None)], operation_id=operation_id)
-            with path.open("rb") as output:
-                written = output.read(8 * 1024 * 1024 + 1)
+            with self._path_lock(path):
+                if path.exists() or not path.parent.is_dir():
+                    raise AgentToolRejected("agent_table_new_output_required")
+                raw = export_bytes(report, path.suffix.lower(), source_raw=source_raw, source_suffix=source.suffix, cancelled=cancelled)
+                if len(raw) > 8 * 1024 * 1024 or cancelled():
+                    raise AgentToolRejected("agent_cancelled" if cancelled() else "agent_table_output_limit")
+                policy = self.policy(context)
+                outside_ok = policy.get("permission_mode") == "automatic"
+                self.file_review(task_id, self.path(".", context, policy)).apply(
+                    [(path, None, raw, None)], operation_id=operation_id, outside_ok=outside_ok
+                )
+                with path.open("rb") as output:
+                    written = output.read(8 * 1024 * 1024 + 1)
             if written != raw:
                 raise AgentError("agent_table_export_readback_failed")
             result = {"written": True, "path": str(path), "sha256": sha(written), "bytes": len(written),
@@ -1491,19 +1834,20 @@ class LocalTools:
             from ..llm_package.adapters import AdapterError
             from ..llm_package.codex_image import generate
             path = self.path(args["path"], context)
-            self.preview(name, args, context)
-            try:
-                raw, info = generate(args["prompt"], transparent_background=args.get("transparent_background", False), cancelled=cancelled)
-            except AdapterError as exc:
-                raise AgentError("agent_image_generation_failed: " + str(exc)) from exc
-            if cancelled():
-                raise AgentToolRejected("agent_cancelled")
-            if self.path(args["path"], context) != path:
-                raise AgentToolRejected("agent_approval_preview_changed")
-            # Exclusive creation protects files created by another process while
-            # generation was pending. No image bytes enter the model transcript.
-            with path.open("xb") as output:
-                output.write(raw)
+            with self._path_lock(path):
+                self.preview(name, args, context)
+                try:
+                    raw, info = generate(args["prompt"], transparent_background=args.get("transparent_background", False), cancelled=cancelled)
+                except AdapterError as exc:
+                    raise AgentError("agent_image_generation_failed: " + str(exc)) from exc
+                if cancelled():
+                    raise AgentToolRejected("agent_cancelled")
+                if self.path(args["path"], context) != path:
+                    raise AgentToolRejected("agent_approval_preview_changed")
+                # Exclusive creation protects files created by another process while
+                # generation was pending. No image bytes enter the model transcript.
+                with path.open("xb") as output:
+                    output.write(raw)
             return {"written": True, "path": str(path), "sha256": sha(raw), "bytes": len(raw), **info}
         if name == "ryn_project_inspect":
             from .projects import inspect
@@ -1661,6 +2005,7 @@ class LocalTools:
                     "limitations": "Single original frame submitted to route carrier; semantic model response only, not mechanical proof of pixel recognition, animation, or hidden content."}
         if name == "ryn_local_environment":
             from .local_browser import find_browser
+            from .native_computer import environment_computer_fields
             cap = context.get("_image_capability") if isinstance(context.get("_image_capability"), dict) else None
             route_note = (
                 f" Selected route ({cap.get('image_transport', 'none')}) supports image input carrier (model support: {cap.get('model_image_support', 'unknown')})."
@@ -1670,7 +2015,8 @@ class LocalTools:
             )
             return {"os": platform.system(), **self.policy(context), "shells": [s for s in ("powershell", "pwsh", "cmd", "sh") if shutil.which(s)],
                     "rg_available": bool(resolve_rg_executable()),
-                    "browser_installed": bool(find_browser()), "computer_control_supported": os.name == "nt",
+                    "browser_installed": bool(find_browser()),
+                    **environment_computer_fields(self.store),
                     "shell_scope": "user_account_not_sandboxed",
                     **({"image_capability": cap} if cap is not None else {}),
                     "image_observation": ("ryn_render_inspect renders workspace SVG/HTML/image files and "
@@ -1684,10 +2030,12 @@ class LocalTools:
             if not path.is_file() or path.stat().st_size > MAX_RENDER_BYTES:
                 raise AgentToolRejected("agent_local_file_missing_or_too_large")
             raw = path.read_bytes()
-            if self._renderer is None:
-                self._renderer = Renderer(self.home)
-            result = self._renderer.inspect(path, raw, times=args.get("times"), track=args.get("track"),
-                                            width=args.get("width"), cancelled=cancelled)
+            with self.lock:
+                if self._renderer is None:
+                    self._renderer = Renderer(self.home)
+                renderer = self._renderer
+            result = renderer.inspect(path, raw, times=args.get("times"), track=args.get("track"),
+                                      width=args.get("width"), cancelled=cancelled)
             # The hash ties this observation to exact bytes: a later edit makes it stale.
             return {**result, "sha256": sha(raw), "bytes": len(raw)}
         if name == "ryn_file_wait":
@@ -1722,7 +2070,7 @@ class LocalTools:
             path = self.path(args["path"], context)
             offset = args.get("offset", 0)
             if name == "ryn_file_read":
-                raw, text = self.text(path)
+                raw, text, encoding = self.text(path)
                 file_sha = sha(raw)
                 total_lines = text.count("\n") + (0 if not text or text.endswith("\n") else 1)
                 if args.get("mode") == "indentation":
@@ -1732,6 +2080,7 @@ class LocalTools:
                     self._record_observed_files(context, {path: file_sha})
                     return self._repeat_note(task_id, {
                         "path": str(path), "text": "".join(chunk), "sha256": file_sha, "bytes": len(raw),
+                        "encoding": encoding,
                         "mode": "indentation", "anchor_line": args.get("anchor_line") or args.get("start_line") or 1,
                         "start_line": (first + 1) if lines else 1, "end_line": max(first + 1, end_line) if lines else 1,
                         "total_lines": total_lines,
@@ -1756,6 +2105,7 @@ class LocalTools:
                     self._record_observed_files(context, {path: file_sha})
                     return self._repeat_note(task_id, {
                         "path": str(path), "text": "".join(chunk), "sha256": file_sha, "bytes": len(raw),
+                        "encoding": encoding,
                         "start_line": first + 1, "end_line": end_line, "total_lines": total_lines,
                         "next_start_line": end_line + 1 if end_line < len(lines) else None, "next_offset": None})
                 if offset > len(text):
@@ -1775,6 +2125,7 @@ class LocalTools:
                 self._record_observed_files(context, {path: file_sha})
                 return self._repeat_note(task_id, {
                     "path": str(path), "text": text[offset:end], "sha256": file_sha, "bytes": len(raw),
+                    "encoding": encoding,
                     "start_line": start_line, "end_line": end_line, "total_lines": total_lines,
                     "next_start_line": end_line + 1 if end < len(text) else None,
                     "next_offset": end if end < len(text) else None})
@@ -1805,6 +2156,7 @@ class LocalTools:
             pattern_norm = file_pattern.replace("\\", "/") if isinstance(file_pattern, str) and file_pattern else None
             pattern_has_sep = bool(pattern_norm and "/" in pattern_norm)
             matches, scanned, skipped, binary, incomplete = [], 0, 0, 0, False
+            non_text, non_text_paths, too_large = 0, [], 0
             per_file = {}
             # The start path was validated once above and the walk never follows links, so
             # per-file path revalidation is unnecessary. Authorization is instead re-read
@@ -1845,8 +2197,34 @@ class LocalTools:
                     skipped += 1
                     continue
                 try:
-                    _, text = self.text(candidate)
-                except (AgentToolRejected, OSError):
+                    st = candidate.stat()
+                except OSError:
+                    skipped += 1
+                    continue
+                if st.st_size > MAX_FILE:
+                    too_large += 1
+                    continue
+                try:
+                    text = self.text(candidate)[1]
+                except AgentToolRejected as exc:
+                    code = str(exc)
+                    if code == "agent_local_file_not_utf8":
+                        non_text += 1
+                        if len(non_text_paths) < 10:
+                            non_text_paths.append(str(candidate))
+                    elif code in {"agent_local_file_too_large", "agent_local_file_missing_or_too_large"}:
+                        try:
+                            is_oversized = candidate.is_file() and candidate.stat().st_size > MAX_FILE
+                        except OSError:
+                            is_oversized = False
+                        if is_oversized:
+                            too_large += 1
+                        else:
+                            skipped += 1
+                    else:
+                        raise
+                    continue
+                except OSError:
                     skipped += 1
                     continue
                 for number, line in enumerate(text.splitlines(), 1):
@@ -1868,115 +2246,218 @@ class LocalTools:
                     "total_matches": len(matches), "files_matched": [{"path": p, "matches": c, "first_line": f} for p, (c, f) in ranked[:25]],
                     "files_matched_total": len(per_file),
                     "scanned_files": scanned, "skipped_files": skipped, "binary_files_skipped": binary,
+                    "non_text_files": non_text, "non_text_file_paths": non_text_paths,
+                    "too_large_files": too_large,
                     "incomplete": incomplete, "stopped_reason": stopped,
                     "pruned_directories": pruned[:20], "pruned_count": len(pruned)}
         if name == "ryn_apply_patch":
+            from . import local_patch
+            from .file_review import safe_path
             policy = self.policy(context)
-            plan = self._patch_plan(args, context, policy)
-            changes = []
-            for item in plan:
-                path, destination = item["path"], item["destination"]
-                group = uuid.uuid4().hex if destination is not None else None
-                if destination is not None:
-                    changes.extend([(destination, None, item["after"], group), (path, item["before"], None, group)])
-                else:
-                    changes.append((path, item["before"], item["after"], None))
-            self.file_review(task_id, policy["workspace_root"]).apply(changes, operation_id=operation_id)
-            files = []
-            observed_updates = {path: sha(after) if after is not None else None for path, _, after, _ in changes}
-            for item in plan:
-                path, target = item["path"], item["destination"] or item["path"]
-                files.append({"path": str(target), "action": item["action"],
-                              **({"from": str(path)} if item["destination"] is not None else {}),
-                              **({"sha256": sha(item["after"]), "bytes": len(item["after"])} if item["after"] is not None else {}),
-                              "removed_lines": item["summary"].get("removed_lines", 0),
-                              "added_lines": item["summary"].get("added_lines", 0)})
-            self._record_observed_files(context, observed_updates)
-            return {"applied": True, "files": files}
+            outside_ok = policy.get("permission_mode") == "automatic"
+            parsed_ops = local_patch.parse(args["patch"])
+            lock_targets = []
+            for op in parsed_ops:
+                safe_path(policy["workspace_root"], op["path"], outside_ok=outside_ok)
+                lock_targets.append(self.path(op["path"], context, policy))
+                if op.get("move_to"):
+                    safe_path(policy["workspace_root"], op["move_to"], outside_ok=outside_ok)
+                    lock_targets.append(self.path(op["move_to"], context, policy))
+            with self._path_lock(*lock_targets):
+                if isinstance(approved_preview, dict) and isinstance(approved_preview.get("files"), list):
+                    for pf in approved_preview["files"]:
+                        pf_path = Path(pf["path"])
+                        disk_sha = sha(self.raw(pf_path)) if pf_path.is_file() else None
+                        if disk_sha != pf.get("before_sha256"):
+                            raise AgentToolRejected(
+                                "agent_local_file_changed_read_again",
+                                correction=f"File '{pf_path.name}' changed on disk since last read in this task. Call ryn_file_read on '{pf_path.name}' to inspect the latest version before patching.",
+                                details={"path": str(pf_path), "expected_sha256": pf.get("before_sha256"), "actual_sha256": disk_sha, "field_path": "patch"},
+                            )
+                        if pf.get("destination"):
+                            dest_path = Path(pf["destination"])
+                            if dest_path.exists():
+                                raise AgentToolRejected(
+                                    "agent_local_file_changed_read_again",
+                                    correction=f"Destination '{dest_path.name}' changed on disk since preview/read. Call ryn_file_read first.",
+                                    details={"path": str(dest_path), "expected_sha256": None, "actual_sha256": sha(self.raw(dest_path)) if dest_path.is_file() else None, "field_path": "patch"},
+                                )
+                plan = self._patch_plan(args, context, policy)
+                changes = []
+                for item in plan:
+                    path, destination = item["path"], item["destination"]
+                    group = uuid.uuid4().hex if destination is not None else None
+                    if destination is not None:
+                        changes.extend([(destination, None, item["after"], group), (path, item["before"], None, group)])
+                    else:
+                        changes.append((path, item["before"], item["after"], None))
+                self.file_review(task_id, policy["workspace_root"]).apply(
+                    changes, operation_id=operation_id, outside_ok=outside_ok
+                )
+                files = []
+                observed_updates = {path: sha(after) if after is not None else None for path, _, after, _ in changes}
+                for item in plan:
+                    path, target = item["path"], item["destination"] or item["path"]
+                    files.append({"path": str(target), "action": item["action"],
+                                  **({"from": str(path)} if item["destination"] is not None else {}),
+                                  **({"sha256": sha(item["after"]), "bytes": len(item["after"])} if item["after"] is not None else {}),
+                                  "removed_lines": item["summary"].get("removed_lines", 0),
+                                  "added_lines": item["summary"].get("added_lines", 0)})
+                self._record_observed_files(context, observed_updates)
+                return {"applied": True, "files": files}
         if name in {"ryn_file_write", "ryn_file_edit", "ryn_file_manage"}:
             from .file_review import safe_path
-            root = self.policy(context)["workspace_root"]
-            safe_path(root, args["path"], allow_directory=name == "ryn_file_manage")
+            policy = self.policy(context)
+            root = policy["workspace_root"]
+            outside_ok = policy.get("permission_mode") == "automatic"
+            safe_path(root, args["path"], allow_directory=name == "ryn_file_manage", outside_ok=outside_ok)
             if args.get("destination"):
-                safe_path(root, args["destination"])
-            path = self.path(args["path"], context)
-            preview_before_sha = approved_preview.get("before_sha256") if isinstance(approved_preview, dict) else None
-            if name in {"ryn_file_write", "ryn_file_edit"}:
-                before_bytes = self.raw(path) if path.exists() else None
-                expected_sha = args.get("expected_sha256") or self._get_observed_sha256(context, path) or preview_before_sha
-                if before_bytes is not None and expected_sha is not None and expected_sha != sha(before_bytes):
-                    raise AgentToolRejected(
-                        "agent_local_file_changed_read_again",
-                        correction=f"File '{args['path']}' on disk does not match expected_sha256 (or changed since last read in this task). Call ryn_file_read on '{args['path']}' first.",
-                        details={"path": str(path), "expected_sha256": expected_sha, "actual_sha256": sha(before_bytes), "field_path": "expected_sha256"},
+                safe_path(root, args["destination"], outside_ok=outside_ok)
+            path = self.path(args["path"], context, policy)
+            dest_lock = self.path(args["destination"], context, policy) if args.get("destination") else None
+            with self._path_lock(path, dest_lock):
+                has_preview_before = isinstance(approved_preview, dict) and "before_sha256" in approved_preview
+                preview_before_sha = approved_preview.get("before_sha256") if has_preview_before else None
+                if name in {"ryn_file_write", "ryn_file_edit"}:
+                    if not path.parent.is_dir() or path.is_dir():
+                        raise AgentToolRejected(
+                            "agent_local_parent_missing_or_directory",
+                            correction=f"Parent directory for '{args['path']}' does not exist or target is a directory.",
+                            details={"path": str(path), "field_path": "path"},
+                        )
+                    before_bytes = self.raw(path) if path.exists() else None
+                    expected_sha = args.get("expected_sha256") or self._get_observed_sha256(context, path) or preview_before_sha
+                    if before_bytes is not None and (
+                        (expected_sha is not None and expected_sha != sha(before_bytes))
+                        or (expected_sha is None and has_preview_before and preview_before_sha is None)
+                    ):
+                        raise AgentToolRejected(
+                            "agent_local_file_changed_read_again",
+                            correction=f"File '{args['path']}' on disk does not match expected_sha256 (or changed since last read in this task). Call ryn_file_read on '{args['path']}' first.",
+                            details={"path": str(path), "expected_sha256": expected_sha, "actual_sha256": sha(before_bytes), "field_path": "expected_sha256"},
+                        )
+                    if before_bytes is None and has_preview_before and preview_before_sha is not None:
+                        raise AgentToolRejected(
+                            "agent_local_file_changed_read_again",
+                            correction=f"File '{args['path']}' changed on disk since last read in this task. Call ryn_file_read on '{args['path']}' first.",
+                            details={"path": str(path), "expected_sha256": expected_sha, "actual_sha256": None, "field_path": "expected_sha256"},
+                        )
+                    if before_bytes is None and args.get("expected_sha256"):
+                        raise AgentToolRejected(
+                            "agent_local_file_missing",
+                            correction=f"File '{args['path']}' does not exist. Omit expected_sha256 when creating a new file.",
+                            details={"path": str(path), "field_path": "path"},
+                        )
+                    if name == "ryn_file_edit" and before_bytes is None:
+                        raise AgentToolRejected(
+                            "agent_local_file_missing",
+                            correction=f"File '{args['path']}' does not exist. Use ryn_file_write or ryn_apply_patch to create new files.",
+                            details={"path": str(path), "field_path": "path"},
+                        )
+                elif args["action"] in {"delete", "move", "copy"}:
+                    if path.is_file():
+                        before_bytes = self.raw(path)
+                        expected_sha = args.get("expected_sha256") or self._get_observed_sha256(context, path) or preview_before_sha
+                        if expected_sha is not None and expected_sha != sha(before_bytes):
+                            raise AgentToolRejected(
+                                "agent_local_file_changed_read_again",
+                                correction=f"File '{args['path']}' on disk does not match expected_sha256 (or changed since last read in this task). Call ryn_file_read on '{args['path']}' first.",
+                                details={"path": str(path), "expected_sha256": expected_sha, "actual_sha256": sha(before_bytes), "field_path": "expected_sha256"},
+                            )
+                    elif has_preview_before and preview_before_sha is not None:
+                        raise AgentToolRejected(
+                            "agent_local_file_changed_read_again",
+                            correction=f"File '{args['path']}' changed on disk since last read in this task. Call ryn_file_read on '{args['path']}' first.",
+                            details={"path": str(path), "expected_sha256": preview_before_sha, "actual_sha256": None, "field_path": "path"},
+                        )
+                    elif args["action"] != "delete" or not path.is_dir() or any(path.iterdir()):
+                        raise AgentToolRejected("agent_local_file_or_empty_directory_required")
+                if name in {"ryn_file_write", "ryn_file_edit"}:
+                    if name == "ryn_file_edit":
+                        _, previous, target_encoding = self.text(path)
+                        content = apply_edit(previous, args, path=args["path"])
+                    else:
+                        if before_bytes is not None:
+                            try:
+                                previous, target_encoding = decode_text(before_bytes)
+                            except UnicodeError:
+                                previous, target_encoding = before_bytes.decode("utf-8-sig", errors="replace"), "utf-8"
+                        else:
+                            previous, target_encoding = "", "utf-8"
+                        content = args["content"]
+                    raw = encode_text(content, target_encoding, original_raw=before_bytes, path=args["path"])
+                    if len(raw) > MAX_FILE:
+                        raise AgentToolRejected("agent_local_file_too_large")
+                    self.file_review(task_id, root).apply(
+                        [(path, before_bytes, raw, None)], operation_id=operation_id, outside_ok=outside_ok
                     )
-                if before_bytes is None and args.get("expected_sha256"):
-                    raise AgentToolRejected(
-                        "agent_local_file_missing",
-                        correction=f"File '{args['path']}' does not exist. Omit expected_sha256 when creating a new file.",
-                        details={"path": str(path), "field_path": "path"},
-                    )
-            elif args["action"] in {"delete", "move", "copy"} and path.is_file():
-                before_bytes = self.raw(path)
-                expected_sha = args.get("expected_sha256") or self._get_observed_sha256(context, path) or preview_before_sha
-                if expected_sha is not None and expected_sha != sha(before_bytes):
-                    raise AgentToolRejected(
-                        "agent_local_file_changed_read_again",
-                        correction=f"File '{args['path']}' on disk does not match expected_sha256 (or changed since last read in this task). Call ryn_file_read on '{args['path']}' first.",
-                        details={"path": str(path), "expected_sha256": expected_sha, "actual_sha256": sha(before_bytes), "field_path": "expected_sha256"},
-                    )
-            if name in {"ryn_file_write", "ryn_file_edit"}:
-                previous = self.text(path)[1] if path.exists() else ""
-                content = args["content"] if name == "ryn_file_write" else apply_edit(previous, args, path=args["path"])
-                raw = content.encode("utf-8")
-                self.file_review(task_id, root).apply([(path, before_bytes, raw, None)], operation_id=operation_id)
-                new_sha = sha(raw)
-                self._record_observed_files(context, {path: new_sha})
-                return {"path": str(path), "sha256": new_sha, "bytes": len(raw), "written": True,
-                        **change_summary(previous, content)}
-            action = args["action"]
-            if action == "mkdir":
-                path.mkdir()
-                return {"path": str(path), "directory_created": True}
-            if action == "delete":
-                was_file = path.is_file()
-                if was_file:
-                    self.file_review(task_id, root).apply([(path, before_bytes, None, None)], operation_id=operation_id)
-                else:
-                    path.rmdir()
-                if was_file:
-                    self._record_observed_files(context, {path: None})
-                return {"path": str(path), "deleted": True}
-            destination = self.path(args["destination"], context)
-            group = uuid.uuid4().hex if action == "move" else None
-            changes = [(destination, None, before_bytes, group)]
-            if action == "move":
-                changes.append((path, before_bytes, None, group))
-            self.file_review(task_id, root).apply(changes, operation_id=operation_id)
-            dest_sha = sha(self.raw(destination))
-            self._record_observed_files(context, {destination: dest_sha, **({path: None} if action == "move" else {})})
-            return {"path": str(path), "destination": str(destination), "sha256": dest_sha, "action": action}
+                    new_sha = sha(raw)
+                    self._record_observed_files(context, {path: new_sha})
+                    return {"path": str(path), "sha256": new_sha, "bytes": len(raw), "encoding": target_encoding, "written": True,
+                            **change_summary(previous, content)}
+                action = args["action"]
+                if action == "mkdir":
+                    if path.exists() or not path.parent.is_dir():
+                        raise AgentToolRejected("agent_local_destination_exists_or_parent_missing")
+                    path.mkdir()
+                    return {"path": str(path), "directory_created": True}
+                if action == "delete":
+                    was_file = path.is_file()
+                    if was_file:
+                        self.file_review(task_id, root).apply(
+                            [(path, before_bytes, None, None)], operation_id=operation_id, outside_ok=outside_ok
+                        )
+                    else:
+                        path.rmdir()
+                    if was_file:
+                        self._record_observed_files(context, {path: None})
+                    return {"path": str(path), "deleted": True}
+                destination = dest_lock
+                if destination.exists() or not destination.parent.is_dir():
+                    raise AgentToolRejected("agent_local_destination_exists_or_parent_missing")
+                group = uuid.uuid4().hex if action == "move" else None
+                changes = [(destination, None, before_bytes, group)]
+                if action == "move":
+                    changes.append((path, before_bytes, None, group))
+                self.file_review(task_id, root).apply(changes, operation_id=operation_id, outside_ok=outside_ok)
+                dest_sha = sha(self.raw(destination))
+                self._record_observed_files(context, {destination: dest_sha, **({path: None} if action == "move" else {})})
+                return {"path": str(path), "destination": str(destination), "sha256": dest_sha, "action": action}
         if name == "ryn_shell_execute":
             from . import workspace_artifacts
+            from .execution_policy import shell_read
+            is_read = bool(shell_read(args))
             if prepared_shell is None:
-                from .execution_policy import shell_read
                 command = prepare_shell_command(args)
                 policy = self.policy(context)
-                cwd = self.path(args.get("cwd", "."), context, policy)
+                cwd = self._shell_cwd(args.get("cwd", "."), context, policy)
                 root = self.path(".", context, policy)
-                before = None if shell_read(args) else workspace_artifacts.snapshot(root)
+                before = None if is_read else workspace_artifacts.snapshot(root)
             else:
                 command, cwd, root, before = prepared_shell
+            timeout = (
+                args["timeout_seconds"]
+                if args.get("timeout_seconds") is not None
+                else (local_processes.DEFAULT_READ_SHELL_TIMEOUT if is_read else None)
+            )
+            explicit_stdin = args.get("stdin")
+            if explicit_stdin is not None:
+                stdin_mode = explicit_stdin
+            elif args.get("background") or args.get("yield_seconds") is not None:
+                stdin_mode = "pipe"
+            else:
+                stdin_mode = "closed"
             prior_running = self.processes.running_for_operation(task_id)
             ident = self.processes.start(
                 command,
                 cwd,
                 task_id,
-                args.get("timeout_seconds", 120),
-                self.allowed(context),
+                timeout,
+                self.process_allowed(context),
                 cancelled,
                 operation_id=operation_id or context.get("operation_id"),
                 tty=args.get("tty", False), rows=args.get("rows", 24), cols=args.get("cols", 80),
+                stdin_mode=stdin_mode,
             )
             item = self.processes.get(ident, task_id)
             if before is not None:
@@ -1985,6 +2466,13 @@ class LocalTools:
                 result = self.processes.read(ident, task_id, wait_seconds=0)
             elif args.get("yield_seconds") is not None:
                 result = self.processes.wait(ident, task_id, cancelled, yield_seconds=args["yield_seconds"])
+            elif not is_read:
+                result = self.processes.wait(
+                    ident,
+                    task_id,
+                    cancelled,
+                    yield_seconds=local_processes.DEFAULT_YIELD_SECONDS,
+                )
             else:
                 result = self.processes.wait(ident, task_id, cancelled)
             still_running_now = set(self.processes.running_for_operation(task_id))

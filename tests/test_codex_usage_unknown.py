@@ -161,7 +161,7 @@ def test_completed_api_formats_allow_unknown_without_zero_or_typeerror(protocol,
     assert chunks and final
     if protocol == "messages":
         start = json.loads(initial[0].split("data: ", 1)[1])
-        assert start["message"]["usage"] == {"input_tokens": None, "output_tokens": None}
+        assert start["message"]["usage"] == {"input_tokens": 0, "output_tokens": 0}
         end = next(json.loads(event.split("data: ", 1)[1]) for event in final if "event: message_delta\n" in event)
         assert end["usage"] == usage
     elif protocol == "responses":

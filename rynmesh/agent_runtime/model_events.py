@@ -120,9 +120,16 @@ class ModelEventStream:
             raise ModelEventError("invalid response output item")
         provider_index = chunk.get("output_index")
         call = None
-        if item.get("type") == "function_call":
-            call = {"id": item.get("call_id"), "type": "function",
-                    "function": {"name": item.get("name"), "arguments": item.get("arguments")}}
+        if item.get("type") in {"function_call", "custom_tool_call"}:
+            if item.get("type") == "custom_tool_call":
+                raw_input = item.get("input")
+                if not isinstance(raw_input, str):
+                    raise ModelEventError("invalid response custom tool input")
+                call = {"id": item.get("call_id"), "type": "function", "wire_kind": "custom",
+                        "function": {"name": item.get("name"), "arguments": json.dumps({"patch": raw_input}, ensure_ascii=False)}}
+            else:
+                call = {"id": item.get("call_id"), "type": "function",
+                        "function": {"name": item.get("name"), "arguments": item.get("arguments")}}
             if "namespace" in item:
                 call["namespace"] = item["namespace"]
             response_calls({"tool_calls": [call]})
@@ -197,8 +204,10 @@ class ModelEventStream:
                 call = self.calls.setdefault(index, {"id": "", "type": "function",
                                                       "function": {"name": "", "arguments": ""}})
                 if fragment.get("id"):
+                    if call["id"] and call["id"] != fragment["id"]:
+                        raise ModelEventError("tool fragment id changed")
                     call["id"] = fragment["id"]
-                for field in ("type", "namespace"):
+                for field in ("type", "namespace", "wire_kind"):
                     if field in fragment:
                         call[field] = fragment[field]
                 function = fragment.get("function") or {}

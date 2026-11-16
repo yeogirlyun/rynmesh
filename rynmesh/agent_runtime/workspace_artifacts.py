@@ -8,11 +8,14 @@ last receipt, so a file changed by something else is flagged, never silently pas
 """
 from __future__ import annotations
 
+from collections import OrderedDict
+import copy
 import hashlib
 import os
-import re
-import time
 from pathlib import Path
+import re
+import threading
+import time
 
 from .store import AgentError
 
@@ -39,6 +42,13 @@ CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; img-sr
 # deliverable extension. .js/.ts/.css are left out: "node.js" or "Next.js" in prose is a product, not a file.
 MENTION = re.compile(r"(?<![\w.-])([\w][\w.-]{0,120}\.(?:svg|png|jpe?g|gif|webp|html?|md|txt|csv|json|pdf|py|xlsx?|docx?|pptx?|zip))\b",
                      re.IGNORECASE)
+
+_HISTORY_CACHE_LIMIT = 32
+_DIGEST_CACHE_LIMIT = 512
+_DIGEST_MIN_AGE_NS = 2_000_000_000
+_CACHE_LOCK = threading.Lock()
+_HISTORY_CACHE: OrderedDict[tuple, dict] = OrderedDict()
+_DIGEST_CACHE: OrderedDict[tuple[str, int, int], str] = OrderedDict()
 
 
 def artifact_id(path) -> str:
@@ -75,8 +85,38 @@ def _remove(files, receipt, path):
         state.update(deleted=True, updated_at=receipt.get("confirmed_at") or receipt.get("started_at"))
 
 
-def history(row) -> dict:
-    """Replay confirmed file-tool receipts in order: the last known state of every touched path."""
+def _history_cache_key(row: dict) -> tuple:
+    raw_receipts = row.get("receipts") or []
+    last_r = raw_receipts[-1] if raw_receipts else None
+    last_sig = (
+        (last_r.get("operation_id"), last_r.get("status"), last_r.get("confirmed_at"))
+        if isinstance(last_r, dict)
+        else None
+    )
+    wfr = row.get("workspace_file_receipts") or {}
+    wfr_version = (
+        row.get("file_artifact_revision", 0),
+        len(wfr),
+        tuple(
+            (k, (v.get("confirmed_at") if isinstance(v, dict) else None))
+            for k, v in sorted(wfr.items())
+        ),
+    )
+    messages = row.get("messages") or []
+    ws_root = str((row.get("local_execution") or {}).get("workspace_root") or "")
+    return (
+        str(row.get("id") or ""),
+        ws_root,
+        len(raw_receipts),
+        last_sig,
+        wfr_version,
+        len(messages),
+        str(row.get("result") or ""),
+        tuple(row.get("referenced_file_ids") or ()),
+    )
+
+
+def _replay_history(row: dict) -> dict:
     files = {}
     receipts = [*row.get("receipts", []), *(row.get("workspace_file_receipts") or {}).values()]
     receipts.sort(key=lambda receipt: receipt.get("confirmed_at") or receipt.get("started_at") or "")
@@ -173,6 +213,23 @@ def history(row) -> dict:
     return files
 
 
+def history(row) -> dict:
+    """Replay confirmed file-tool receipts in order: the last known state of every touched path."""
+    key = _history_cache_key(row)
+    with _CACHE_LOCK:
+        cached = _HISTORY_CACHE.get(key)
+        if cached is not None:
+            _HISTORY_CACHE.move_to_end(key)
+            return copy.deepcopy(cached)
+    files = _replay_history(row)
+    with _CACHE_LOCK:
+        _HISTORY_CACHE[key] = copy.deepcopy(files)
+        _HISTORY_CACHE.move_to_end(key)
+        while len(_HISTORY_CACHE) > _HISTORY_CACHE_LIMIT:
+            _HISTORY_CACHE.popitem(last=False)
+    return files
+
+
 def snapshot(root) -> dict:
     """Bounded metadata inventory around a command; do not read unrelated file contents."""
     found, pending, visited, readable, directories = {}, [Path(root)], 0, True, set()
@@ -238,14 +295,28 @@ def _inside(path: Path, root: Path) -> Path | None:
 
 
 def _digest(path: Path):
-    size = path.stat().st_size
+    stat = path.stat()
+    size = stat.st_size
     if size > MAX_ARTIFACT_BYTES:
         return size, None
+    key = (str(path), size, stat.st_mtime_ns)
+    with _CACHE_LOCK:
+        cached = _DIGEST_CACHE.get(key)
+        if cached is not None:
+            _DIGEST_CACHE.move_to_end(key)
+            return size, cached
     hasher = hashlib.sha256()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             hasher.update(chunk)
-    return size, hasher.hexdigest()
+    digest = hasher.hexdigest()
+    if time.time_ns() - stat.st_mtime_ns >= _DIGEST_MIN_AGE_NS:
+        with _CACHE_LOCK:
+            _DIGEST_CACHE[key] = digest
+            _DIGEST_CACHE.move_to_end(key)
+            while len(_DIGEST_CACHE) > _DIGEST_CACHE_LIMIT:
+                _DIGEST_CACHE.popitem(last=False)
+    return size, digest
 
 
 def final_text(row) -> str:
@@ -309,16 +380,84 @@ def inspections(row) -> dict:
     return found
 
 
+def _shell_commands(row: dict) -> list[str]:
+    commands: list[str] = []
+    for receipt in [*row.get("receipts", []), *(row.get("workspace_file_receipts") or {}).values()]:
+        if not isinstance(receipt, dict) or receipt.get("status") != "confirmed":
+            continue
+        if receipt.get("tool") != "ryn_shell_execute":
+            continue
+        res = receipt.get("result")
+        if isinstance(res, dict) and res.get("not_executed"):
+            continue
+        cmd = (receipt.get("arguments") or {}).get("command")
+        if isinstance(cmd, str) and cmd:
+            commands.append(cmd)
+    return commands
+
+
+def _executed_by_shell(name: str, relative_path: str, commands: list[str]) -> bool:
+    if not commands:
+        return False
+    candidates = [name]
+    norm_rel = relative_path.replace("\\", "/")
+    if norm_rel and norm_rel != name:
+        candidates.append(norm_rel)
+    patterns = [
+        re.compile(rf"(?<![\w.-]){re.escape(candidate)}(?![\w.-])", re.IGNORECASE)
+        for candidate in candidates
+    ]
+    return any(pattern.search(cmd) for cmd in commands for pattern in patterns)
+
+
+def _extract_unbacked_mentions(answer: str, items: list[dict]) -> list[str]:
+    if not answer:
+        return []
+    backed_tokens = {
+        raw
+        for item in items
+        for raw in (
+            str(item.get("name") or ""),
+            str(item.get("path") or "").replace("\\", "/"),
+            str(item.get("path") or ""),
+            str(item.get("absolute_path") or ""),
+        )
+        if raw
+    }
+    backed_folded = {token.replace("\\", "/").casefold() for token in backed_tokens}
+    backed_spans = [
+        (m.start(), m.end())
+        for token in backed_tokens
+        for m in re.finditer(re.escape(token), answer, re.IGNORECASE)
+    ]
+    unbacked: list[str] = []
+    seen: set[str] = set()
+    for match in MENTION.finditer(answer):
+        if any(start <= match.start() and match.end() <= end for start, end in backed_spans):
+            continue
+        candidate = match.group(1)
+        folded = candidate.replace("\\", "/").casefold()
+        base_folded = Path(candidate).name.casefold()
+        if folded in backed_folded or base_folded in backed_folded or folded in seen:
+            continue
+        seen.add(folded)
+        unbacked.append(candidate)
+        if len(unbacked) >= 20:
+            break
+    return unbacked
+
+
 def listing(row) -> dict:
+    answer = final_text(row)
     root_value = (row.get("local_execution") or {}).get("workspace_root") or ""
     if not root_value:
-        return {"files": [], "unbacked_mentions": []}
+        return {"files": [], "unbacked_mentions": _extract_unbacked_mentions(answer, [])}
     root = Path(root_value)
-    answer = final_text(row)
     lowered = answer.casefold()
     answers_by_turn = _turn_answers(row)
     op_turns = _operation_turns(row)
     checked = inspections(row)
+    shell_commands = _shell_commands(row)
     items = []
     for state in history(row).values():
         if state["deleted"]:
@@ -380,6 +519,14 @@ def listing(row) -> dict:
         if item["source"] == "computer_observation":
             item["role"] = "supporting"
             continue
+        if (
+            is_helper
+            and item["created_by_task"]
+            and not item["mentioned_in_answer"]
+            and _executed_by_shell(item["name"], item["path"], shell_commands)
+        ):
+            item["role"] = "helper"
+            continue
         if is_helper and (item["source"] == "command" or has_non_helper or item not in named):
             item["role"] = "supporting"
             continue
@@ -392,14 +539,13 @@ def listing(row) -> dict:
             item["role"] = "deliverable" if (item in named if named else (document and item in present)) else "supporting"
         else:
             item["role"] = ("deliverable" if item in named else "supporting") if named else ("deliverable" if item in present else "supporting")
-    # Deliverables first, then most recently updated; the sorts are stable.
+    # Deliverables first, then supporting, then helpers, then most recently updated; the sorts are stable.
     items.sort(key=lambda item: item["updated_at"] or "", reverse=True)
-    items.sort(key=lambda item: (item["role"] != "deliverable", item["status"] == "missing"))
-    return {"files": items, "unbacked_mentions": []}
+    items.sort(key=lambda item: (item["role"] != "deliverable", item["role"] == "helper", item["status"] == "missing"))
+    return {"files": items, "unbacked_mentions": _extract_unbacked_mentions(answer, items)}
 
 
-def location(row, file_id) -> Path:
-    """Current bytes of one receipt-backed workspace file, for the owner's preview."""
+def _resolve_artifact(row, file_id) -> tuple[Path, dict]:
     root_value = (row.get("local_execution") or {}).get("workspace_root") or ""
     state = history(row).get(file_id) if root_value else None
     if state is None or state["deleted"]:
@@ -407,12 +553,17 @@ def location(row, file_id) -> Path:
     path = _inside(Path(state["path"]), Path(root_value))
     if path is None:
         raise AgentError("agent_artifact_unavailable")
+    return path, state
+
+
+def location(row, file_id) -> Path:
+    """Current bytes of one receipt-backed workspace file, for the owner's preview."""
+    path, _ = _resolve_artifact(row, file_id)
     return path
 
 
 def read(row, file_id) -> dict:
-    path = location(row, file_id)
-    state = history(row)[file_id]
+    path, state = _resolve_artifact(row, file_id)
     if path.stat().st_size > MAX_ARTIFACT_BYTES:
         raise AgentError("agent_artifact_too_large")
     raw = path.read_bytes()

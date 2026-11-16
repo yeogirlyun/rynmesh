@@ -505,8 +505,7 @@ def test_computer_access_permission_and_unknown_write_reconciliation(ext_env, tm
     runtime.update_settings(
         {
             "desktop_access": True,
-            "permission_mode": "automatic",
-            "allowed_write_tools": [crash_tool],
+            "permission_mode": "confirm_changes",
         }
     )
     model.responses = [
@@ -517,6 +516,17 @@ def test_computer_access_permission_and_unknown_write_reconciliation(ext_env, tm
     runtime.run_once()  # discover model step
     runtime.run_once()  # discover tool step
     runtime.run_once()  # crash_tool model step
+    runtime.run_once()  # crash_tool pauses at waiting_approval under confirm_changes
+    waiting2 = runtime.get(task2["id"])
+    assert waiting2["status"] == "waiting_approval"
+    runtime.action(
+        task2["id"],
+        {
+            "action": "approve",
+            "approval_id": waiting2["pending_approval"]["id"],
+            "expected_control_revision": waiting2["control_revision"],
+        },
+    )
     runtime.run_once()  # crash_tool tool step -> crashes after dispatch
     state2 = runtime.get(task2["id"])
     assert state2["status"] == "interrupted"
@@ -699,8 +709,7 @@ def test_post_send_rpc_error_and_inference_window_binding_change_regressions(ext
     # reconcile to 'unknown', and NEVER re-execute or retry on subsequent ticks.
     runtime.update_settings(
         {
-            "permission_mode": "automatic",
-            "allowed_write_tools": [crash_tool, mutate_tool],
+            "permission_mode": "confirm_changes",
         }
     )
     model.responses = [
@@ -712,6 +721,17 @@ def test_post_send_rpc_error_and_inference_window_binding_change_regressions(ext
     runtime.run_once()  # discover model step
     runtime.run_once()  # discover tool step
     runtime.run_once()  # crash_tool model step
+    runtime.run_once()  # crash_tool pauses at waiting_approval under confirm_changes
+    s_waiting = runtime.get(t_rpc["id"])
+    assert s_waiting["status"] == "waiting_approval"
+    runtime.action(
+        t_rpc["id"],
+        {
+            "action": "approve",
+            "approval_id": s_waiting["pending_approval"]["id"],
+            "expected_control_revision": s_waiting["control_revision"],
+        },
+    )
     runtime.run_once()  # crash_tool tool step -> server bumps counter to 1 then returns -32602
     s_rpc = runtime.get(t_rpc["id"])
     assert s_rpc["status"] == "interrupted"
@@ -725,6 +745,13 @@ def test_post_send_rpc_error_and_inference_window_binding_change_regressions(ext
     assert s_rpc_after["reconciliation"]["state"] == "unknown"
     counts_after_rpc = json.loads(counter1.read_text(encoding="utf-8"))
     assert counts_after_rpc["crash_after_dispatch"] == 1
+
+    runtime.update_settings(
+        {
+            "permission_mode": "automatic",
+            "allowed_write_tools": [crash_tool, mutate_tool],
+        }
+    )
 
     # 2. Binding change DURING model.complete inference window (same server_id, tool name, and schema,
     # but server args updated to point at script2 while model.complete is running):
@@ -1654,3 +1681,46 @@ def test_mcp_conversation_and_receipt_reopen_as_followup_context(ext_env, tmp_pa
             break
     assert reopened.get(created['id'])['result'] == 'I used the saved report context.'
     assert json.loads(counts.read_text()) == {'ping_info': 1}
+
+
+def test_s09_i2_adding_two_skills_past_eight_records_skills_limit_reached_event(tmp_path: Path):
+    home = tmp_path / "home_s09_i2"
+    workspace = tmp_path / "ws_s09_i2"
+    home.mkdir()
+    workspace.mkdir()
+    store = AgentStore(home / "agent", X25519PrivateKey.generate())
+    tools = _ExtensionHarnessTools(home, store)
+    model = _Model()
+    runtime = AgentRuntime(store, model, tools, _Catalog())
+    runtime.update_settings({"enabled": True, "model_id": "local:test", "workspace_root": str(workspace)})
+
+    ext_store = tools.extensions.store
+    for idx in range(1, 11):
+        sid = f"limit-skill-{idx}"
+        pkg = ext_store.allocate_package_dir("skill", sid)
+        pkg.mkdir(parents=True, exist_ok=True)
+        (pkg / "SKILL.md").write_text(f"# {sid}\nRule {idx}", encoding="utf-8")
+        ext_store.commit_imported_items(
+            plugins=[],
+            skills=[{"id": sid, "name": sid, "title": sid, "description": sid, "version": "1.0.0", "content": f"# {sid}\nRule {idx}", "package_dir": str(pkg)}],
+            mcp_servers=[],
+        )
+        ext_store.set_skill_enabled(sid, True)
+
+    model.responses = [_assistant(content="Turn 1 done.")]
+    first_eight = [f"limit-skill-{idx}" for idx in range(1, 9)]
+    created = runtime.create({"message": "Start", "skill_ids": first_eight})
+    runtime.run_once()
+    done = runtime.get(created["id"])
+    updated = runtime.add_message(
+        created["id"],
+        {
+            "message": "Now use $limit-skill-9 and $limit-skill-10",
+            "expected_control_revision": done["control_revision"],
+        },
+    )
+    assert [s["id"] for s in updated["skills"]] == first_eight
+    limit_ev = [e for e in updated["events"] if e["type"] == "skills_limit_reached"]
+    assert len(limit_ev) == 1
+    assert limit_ev[0]["dropped_skill_ids"] == ["limit-skill-9", "limit-skill-10"]
+    tools.close()

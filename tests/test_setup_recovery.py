@@ -194,10 +194,14 @@ def test_bad_recovery_record_preserves_files_and_fails_closed(tmp_path, damage):
     raw = json.dumps(record).encode()
     recovery.path.write_bytes(raw)
     manifest.write_bytes(b"newer bytes")
-    with pytest.raises(setup_recovery.SetupRecoveryError):
-        setup_recovery.SetupRecovery(tmp_path).restore()
+    restoring = setup_recovery.SetupRecovery(tmp_path)
+    assert restoring.restore() == "discarded"
+    assert restoring.pending is False
     assert manifest.read_bytes() == b"newer bytes"
-    assert recovery.path.read_bytes() == raw
+    assert not recovery.path.exists()
+    backups = list(recovery.path.parent.glob("setup-recovery.json.corrupt-*"))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == raw
 
 
 def test_recovery_capacity_and_failed_cleanup_keep_safe_receipt(tmp_path, monkeypatch):

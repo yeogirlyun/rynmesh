@@ -9,10 +9,13 @@ import RynAgentComposer from "./RynAgentComposer";
 import "./rynAgentText";
 
 const desktopDrop = vi.hoisted(() => ({ handler: undefined as ((event: NativeDropEvent) => void) | undefined }));
-vi.mock("../domain/dropDesktop", () => ({ listenNativeFileDrop: vi.fn(async (handler: (event: NativeDropEvent) => void) => {
-  desktopDrop.handler = handler;
-  return () => { if (desktopDrop.handler === handler) desktopDrop.handler = undefined; };
-}) }));
+vi.mock("../domain/dropDesktop", async importOriginal => ({
+  ...(await importOriginal<typeof import("../domain/dropDesktop")>()),
+  listenNativeFileDrop: vi.fn(async (handler: (event: NativeDropEvent) => void) => {
+    desktopDrop.handler = handler;
+    return () => { if (desktopDrop.handler === handler) desktopDrop.handler = undefined; };
+  }),
+}));
 
 type ComposerProps = ComponentProps<typeof RynAgentComposer>;
 const project: AgentProject = { id: "rynmesh", name: "rynmesh", path: "D:\\code\\rynmesh", generation: 1, entry_files: [], manifests: [], directories: [] };
@@ -202,11 +205,11 @@ it("accepts desktop native drops only inside the composer", async () => {
   const composer = view.container.querySelector(".ra-composer-shell") as HTMLElement;
   vi.spyOn(composer, "getBoundingClientRect").mockReturnValue({ x: 10, y: 100, left: 10, right: 500, top: 100, bottom: 400, width: 490, height: 300, toJSON: () => ({}) });
   await waitFor(() => expect(desktopDrop.handler).toBeDefined());
-  act(() => desktopDrop.handler?.({ type: "drop", x: 900, y: 200, paths: ["D:\\outside.txt"] }));
+  await act(async () => { desktopDrop.handler?.({ type: "drop", x: 900, y: 200, paths: ["D:\\outside.txt"] }); });
   expect(onAttachmentsChange).not.toHaveBeenCalled();
   act(() => desktopDrop.handler?.({ type: "over", x: 100, y: 200 }));
   expect(screen.getByText("Drop files to attach")).toBeInTheDocument();
-  act(() => desktopDrop.handler?.({ type: "drop", x: 100, y: 200, paths: ["D:\\Quarter 2\\sales.xlsx"] }));
+  await act(async () => { desktopDrop.handler?.({ type: "drop", x: 100, y: 200, paths: ["D:\\Quarter 2\\sales.xlsx"] }); });
   expect(onAttachmentsChange).toHaveBeenCalledExactlyOnceWith([expect.objectContaining({ name: "sales.xlsx", path: "D:\\Quarter 2\\sales.xlsx" })]);
   expect(screen.queryByText("Drop files to attach")).not.toBeInTheDocument();
 });

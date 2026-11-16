@@ -5,17 +5,22 @@ import { applyMcpServerHints, type ExtensionDataPolicy, type ExtensionMcpServer,
 export function McpDataPolicySummary({ policy, compact = false }: { policy?: ExtensionDataPolicy; compact?: boolean }) {
   const { i18n } = useTranslation();
   const tx = (zh: string, en: string) => i18n.language.startsWith("zh") ? zh : en;
-  const current = policy || { models: { mode: "any" }, memory: "allow" };
-  const restricted = current.models?.mode === "allowlist";
+  if (!policy) {
+    return <section className={compact ? undefined : "ae-section-card"} aria-label={tx("数据策略", "Data policy")}>
+      {compact ? <strong>{tx("数据策略", "Data policy")}</strong> : <h3>{tx("数据策略", "Data policy")}</h3>}
+      <p role="status">{tx("数据策略未知，请刷新", "Data policy unknown; please refresh.")}</p>
+    </section>;
+  }
+  const restricted = policy.models?.mode === "allowlist";
   return <section className={compact ? undefined : "ae-section-card"} aria-label={tx("数据策略", "Data policy")}>
     {compact ? <strong>{tx("数据策略", "Data policy")}</strong> : <h3>{tx("数据策略", "Data policy")}</h3>}
     <p>{restricted ? tx("模型：仅允许以下白名单", "Models: only the following allowlist") : tx("模型：不限制", "Models: unrestricted")}</p>
-    {current.models?.mode === "allowlist" ? current.models.allow.length ? <ul>{current.models.allow.map((rule, index) => <li key={index}>
+    {policy.models?.mode === "allowlist" ? policy.models.allow.length ? <ul>{policy.models.allow.map((rule, index) => <li key={index}>
       {"on_device" in rule ? tx("本机内置推理模型", "Built-in inference on this device")
         : "api_base_url_prefix" in rule ? <>{tx("API 地址范围：", "API address prefix: ")}<code>{rule.api_base_url_prefix}</code></>
           : <>{tx("模型 ID：", "Model ID: ")}<code>{rule.catalog_model_id}</code></>}
     </li>)}</ul> : <p>{tx("白名单为空，任何模型均不可使用这些工具。", "The allowlist is empty; no model can use these tools.")}</p> : null}
-    <p>{current.memory === "deny" ? tx("长期记忆：禁止。使用这些工具的任务不会生成自动长期记忆。", "Long-term memory: denied. Tasks using these tools do not create automatic long-term memories.")
+    <p>{policy.memory === "deny" ? tx("长期记忆：禁止。使用这些工具的任务不会生成自动长期记忆。", "Long-term memory: denied. Tasks using these tools do not create automatic long-term memories.")
       : restricted ? tx("长期记忆：策略允许；当前版本对模型受限任务仍禁用自动长期记忆，避免其他模型读取。", "Long-term memory: allowed by the policy; this version still disables automatic long-term memory for model-restricted tasks so other models cannot read it.")
         : tx("长期记忆：允许，仍遵循任务的其他设置。", "Long-term memory: allowed, subject to the task's other settings.")}</p>
     {!compact ? <p>{tx("策略来自导入包，在此只读；更改需重新导入。它约束正常的 Agent 运行，不防止本人修改本机源码或数据文件。", "This policy comes from the imported package and is read-only here; changes require reimporting. It governs normal Agent operation and does not prevent the owner from editing local source or data files.")}</p> : null}
@@ -55,7 +60,7 @@ export function McpDataPolicy({ server, onRefresh }: { server: ExtensionMcpServe
     <McpDataPolicySummary policy={server.data_policy} />
     {candidates.length ? <section className="ae-section-card" aria-label={tx("服务器只读提示", "Server read-only hints")}>
       <h3>{tx("按服务器提示设为只读", "Use server read-only hints")}</h3>
-      <p>{tx("服务器将以下工具标为只读。仅在你确认后，选中的工具才会免去每次调用确认。", "The server marks these tools as read-only. Selected tools skip per-call confirmation only after you explicitly confirm.")}</p>
+      <p>{tx("服务器将以下工具标为只读。确认模式下，确认后这些工具不再每次询问；自动处理模式本来就不询问，确认只读只影响并行和出错时是否中断任务。", "The server marks these tools as read-only. In confirmation mode, confirmed tools no longer ask each time; automatic mode never asks for approval anyway, so confirming read-only only affects parallel execution and whether errors interrupt the task.")}</p>
       <fieldset className="ae-subcard-fieldset" disabled={busy || !canReview}><legend>{tx("选择工具（默认不选）", "Choose tools (none selected by default)")}</legend>
         <div className="ae-inline-actions">
           <button type="button" className="ae-btn ae-btn-sm" onClick={() => { setReview(null); setError(false); setSaved(false); setSelected(candidates.map(candidate => candidate.name)); }}>{tx("选择全部", "Select all")}</button>
@@ -77,7 +82,7 @@ export function McpDataPolicy({ server, onRefresh }: { server: ExtensionMcpServe
         }}>{tx("检查只读设置", "Review read-only settings")}</button>
       </div>
       {review?.anchor === anchor ? <div className="ae-confirm-dialog" role="alertdialog" aria-label={tx("确认只读工具", "Confirm read-only tools")}>
-        <p>{tx("是否将这些工具设为只读，并跳过之后每次调用的确认？", "Mark these tools read-only and skip confirmation for their later calls?")}</p>
+        <p>{tx("是否将这些工具设为只读？确认模式下，确认后这些工具不再每次询问；自动处理模式本来就不询问，确认只读只影响并行和出错时是否中断任务。", "Mark these tools read-only? In confirmation mode, confirmed tools no longer ask each time; automatic mode never asks for approval anyway, so confirming read-only only affects parallel execution and whether errors interrupt the task.")}</p>
         <ul className="ae-confirm-tool-list">{review.payload.tools.map(item => <li key={item.name}><code>{item.name}</code></li>)}</ul>
         <div className="ae-inline-actions">
           <button type="button" className="ae-btn ae-btn-primary" disabled={busy} onClick={() => void apply()}>{tx("确认采用只读提示", "Confirm read-only hints")}</button>

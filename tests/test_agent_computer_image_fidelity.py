@@ -601,7 +601,7 @@ def test_canonical_request_analysis_text_compatibility_compression_invariance_an
     a_noisy = output_policy.analyze_request(_canonical_img_msg("image/png", noisy_png), [])
     a_jpeg = output_policy.analyze_request(_canonical_img_msg("image/jpeg", jpeg_1280), [])
 
-    expected_1280x900_tokens = 3 * ((1280 + 15) // 16) * ((900 + 15) // 16) + 1024  # 3 * 80 * 57 + 1024 = 14704
+    expected_1280x900_tokens = min(10000, (1280 * 900 + 749) // 750) + 85  # 1536 + 85 = 1621
     assert a_flat["estimated_image_tokens"] == expected_1280x900_tokens
     assert a_noisy["estimated_image_tokens"] == expected_1280x900_tokens
     assert a_jpeg["estimated_image_tokens"] == expected_1280x900_tokens
@@ -696,7 +696,7 @@ def test_independent_budget_context_and_transport_gates_before_model_call(tmp_pa
             // output_policy.ESTIMATED_BYTES_PER_TOKEN
             + output_policy.FRAMING_RESERVE_TOKENS
         )
-        assert pol["estimated_image_tokens"] == 14704
+        assert pol["estimated_image_tokens"] == 1621
         assert pol["estimated_input_tokens"] == pol["estimated_text_tokens"] + pol["estimated_image_tokens"]
         assert pol["projected_context_utf8_bytes"] == (
             pol["text_projection_utf8_bytes"]
@@ -760,19 +760,19 @@ def test_independent_budget_context_and_transport_gates_before_model_call(tmp_pa
             max_tokens = state["limits"]["max_total_tokens"]
             # A hard (owner) allowance; a default one would grow instead of refusing.
             budget.set_owner_limits(row, {"max_total_tokens": max_tokens})
-            # Leave only 10,000 tokens remaining (< 14,704 image tokens + output cap)
+            # Leave only 1,000 tokens remaining (< 1,621 image tokens)
             reservation = budget.reserve(
                 row,
                 "model",
                 "fixture",
-                input_bound=max_tokens - 10000,
+                input_bound=max_tokens - 1000,
                 output_bound=0,
                 seconds_bound=0,
             )
             budget.settle(
                 row,
                 reservation["id"],
-                usage={"input_tokens": max_tokens - 10000, "output_tokens": 0},
+                usage={"input_tokens": max_tokens - 1000, "output_tokens": 0},
                 elapsed_seconds=0.0,
             )
             _append_confirmed_mcp_turn(row, "call_b", "op_b", [art_b])

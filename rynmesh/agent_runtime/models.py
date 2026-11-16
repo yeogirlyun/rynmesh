@@ -12,6 +12,24 @@ from ..llm_package.reasoning import metadata as reasoning_metadata
 from ..llm_package.tool_capabilities import client_tools_contract
 from .image_capabilities import catalog_image_fields
 
+_SPACE_CATALOG_ERROR_REASONS = {
+    "space_catalog_unreachable": "无法连接设备（space_catalog_unreachable）",
+    "space_catalog_rate_limited": "请求过于频繁（space_catalog_rate_limited）",
+    "space_catalog_clock_skew": "两台设备系统时间相差过大，请校准时钟（space_catalog_clock_skew）",
+    "space_catalog_peer_not_allowed": "个人空间访问权限未放行（space_catalog_peer_not_allowed）",
+    "space_catalog_response_limit": "对端目录响应超出大小限制（space_catalog_response_limit）",
+    "space_catalog_response_invalid": "对端目录响应校验未通过（space_catalog_response_invalid）",
+    "space_catalog_capacity_exhausted": "目录刷新并发已满（space_catalog_capacity_exhausted）",
+    "space_catalog_request_rejected": "对端拒绝目录请求（space_catalog_request_rejected）",
+    "space_catalog_request_invalid": "目录请求格式无效（space_catalog_request_invalid）",
+    "space_catalog_refresh_superseded": "目录刷新已被新请求取代（space_catalog_refresh_superseded）",
+    "space_catalog_timeout": "等待目录刷新超时（space_catalog_timeout）",
+}
+
+
+def _format_catalog_error(code: str) -> str:
+    return _SPACE_CATALOG_ERROR_REASONS.get(code, code)
+
 
 class ModelCatalog:
     def __init__(self, services, store):
@@ -90,7 +108,36 @@ class ModelCatalog:
             # bridge plus the chat protocol still declares the same wire contract.
             declared = client_tools_contract(adapter, capabilities)
             supported = declared and value.get("chat_protocol") == "rynmesh.chat.v1"
-            available = bool(value.get("online") and value.get("ready", True))
+            is_stale = value.get("catalog_state") == "stale"
+            available = bool(
+                not is_stale
+                and value.get("available", True)
+                and value.get("online")
+                and value.get("ready", True)
+            )
+            is_cli = adapter in {"codex_cli", "antigravity_cli", "claude_cli"}
+            local_tool_support = "unsupported" if adapter == "claude_cli" else value.get("tool_support", "unknown")
+            if own and not is_cli and service_id not in source_index:
+                caps = getattr(self.store, "llm_tool_capabilities", None)
+                provider_for = self.services.get("provider_for") if isinstance(self.services, dict) else None
+                if caps is not None and callable(provider_for):
+                    mgr = provider_for(service_id)
+                    if mgr is not None and getattr(mgr, "manifest", None) is not None:
+                        stored_sup = caps.support(mgr.manifest)
+                        if stored_sup != "unknown":
+                            local_tool_support = stored_sup
+                if local_tool_support == "unsupported":
+                    supported = False
+            declared_claude_window = (
+                model_settings._known_vendor_context_window(manifest.get("model", ""))
+                if adapter == "claude_cli" and manifest.get("model")
+                else None
+            )
+            cli_basis = manifest.get("context_window_basis") if isinstance(manifest.get("context_window_basis"), str) else ""
+            window_known = (
+                (not is_cli and type(manifest.get("context_window")) is int)
+                or declared_claude_window is not None
+            )
             row = {"id": model_ref, "name": manifest.get("model_alias", service_id),
                    "source": "local_service" if own else "peer", "source_name": value.get("node_name", ""),
                    "service_id": service_id, "peer_id": peer_id, "adapter": adapter,
@@ -98,11 +145,19 @@ class ModelCatalog:
                    "model_id": manifest.get("model_alias", service_id), "source_id": "",
                    "destination_revision": "",
                    "available": available, "agent_supported": supported,
-                   "tool_support": "unsupported" if adapter == "claude_cli" else value.get("tool_support", "unknown"),
+                   **({"catalog_state": value["catalog_state"]} if "catalog_state" in value else {}),
+                   "tool_support": local_tool_support,
                    "agent_support_basis": "adapter_contract" if own else "provider_protocol_contract",
-                   "context_window": manifest.get("context_window", 32768),
-                   "context_window_known": adapter not in {"codex_cli", "antigravity_cli"} and type(manifest.get("context_window")) is int,
-                   "context_window_basis": "provider_manifest" if adapter not in {"codex_cli", "antigravity_cli"} and type(manifest.get("context_window")) is int else "unknown_fallback",
+                   **({"agent_support": "experimental"} if adapter == "antigravity_cli" else {}),
+                   "context_window": declared_claude_window if declared_claude_window is not None else manifest.get("context_window", 32768),
+                   "context_window_known": window_known,
+                   "context_window_basis": (
+                       "vendor_family_default"
+                       if declared_claude_window is not None
+                       else "provider_manifest"
+                       if window_known
+                       else (cli_basis or "unknown_fallback")
+                   ),
                    "streaming": "streaming" in capabilities or "buffered-streaming" in capabilities,
                    "max_output_tokens": manifest.get("max_output_tokens", 4096),
                    "sharing": bool(value.get("accepting_orders", value.get("publication_enabled", False))) if own else True,
@@ -111,10 +166,9 @@ class ModelCatalog:
                    "share_scope": ("personal_space" if "personal-space-only" in capabilities else
                                    "friends" if value.get("access_policy") == "explicit_friends" else "none") if own else "unknown"}
             row.update(catalog_image_fields(row, service_record=value))
-            if not own:
-                # The provider admits a peer order only when its prompt's UTF-8
-                # bytes plus output fit the window (one token per byte). Local
-                # services are called in-process without that check.
+            if not own and "context-estimate:v2" not in capabilities:
+                # Legacy peer providers without context-estimate:v2 admit an order only
+                # when its prompt's UTF-8 bytes plus output fit the window (1 byte/token).
                 row["context_admission_bytes_per_token"] = 1
             if provider_resource:
                 row.update(provider_resource=provider_resource, source_name=value.get("provider_name", value.get("node_name", "")),
@@ -149,9 +203,10 @@ class ModelCatalog:
                 if adapter == "openai_compatible" and bound is not None and len(native_protocols) == 1:
                     row["adapter"] = native_protocols[0]
                 row.update(catalog_image_fields(row, service_record=value))
-                if adapter in {"codex_cli", "antigravity_cli"}:
+                if adapter in {"codex_cli", "antigravity_cli", "claude_cli"}:
                     from ..llm_package.cli_models import context_metadata
-                    row.update(context_metadata(value.get("cli_models", []), fallback=row["context_window"]))
+                    fallback_basis = row.get("context_window_basis", "unknown_fallback")
+                    row.update(context_metadata(value.get("cli_models", []), fallback=row["context_window"], fallback_basis=fallback_basis))
                     if row["context_window_known"]:
                         row["context_window_basis"] = "provider_cli_model_metadata"
                     for upstream in value.get("cli_models", []):
@@ -166,7 +221,7 @@ class ModelCatalog:
                             "tool_support": support, "agent_supported": row["agent_supported"],
                             "destination_revision": peer_binding.revision(specific, self.store.peer_id),
                             "destination_binding_supported": child_bound is not None, "expected_model_binding": child_bound}
-                        rows[identifier].update(context_metadata([upstream], upstream["id"], fallback=row["context_window"]))
+                        rows[identifier].update(context_metadata([upstream], upstream["id"], fallback=row["context_window"], fallback_basis=fallback_basis))
                         max_output = upstream.get("max_output_tokens")
                         if not isinstance(max_output, int) and rows[identifier].get("context_window_known"):
                             max_output = model_settings._known_vendor_max_output_tokens(upstream["id"])
@@ -183,13 +238,26 @@ class ModelCatalog:
             support = record.get("tool_support", {}).get(model, "unknown")
             prior = rows.get(model_ref, {})
             policy = model_settings.public(record, model)
+            from . import model_profiles
+            source_adapter = (record.get("protocol") if record.get("protocol") in {"openai_responses", "anthropic_messages"}
+                              else "openai_compatible")
+            verified_custom_tools = model_profiles.supports_custom_tools({
+                "source": "local_api",
+                "adapter": source_adapter,
+                "provider": record.get("provider", ""),
+                "base_url": record.get("base_url", ""),
+                "model_id": model,
+                "tool_support": support,
+                "evidence": policy["evidence"],
+            })
             rows[model_ref] = {**prior, "id": model_ref, "name": record["name"] + " · " + model,
                 "source": "local_api", "source_name": record["name"], "source_id": record["id"],
+                "provider": str(record.get("provider") or ""),
                 "model_id": model, "service_id": service_id, "peer_id": self.store.peer_id,
                 "destination_revision": self.source_destination_revision(record, model),
                 "model_settings": policy, "rule_revision": policy.get("rule_revision", ""), "evidence": policy["evidence"],
-                "adapter": (record.get("protocol") if record.get("protocol") in {"openai_responses", "anthropic_messages"}
-                            else "openai_compatible"),
+                "adapter": source_adapter,
+                **({"custom_tools": True} if verified_custom_tools else {}),
                 "available": bool(prior.get("available") and record.get("enabled") and record.get("status") == "ready"),
                 "availability_basis": "configured_source_readiness_not_live_probe",
                 # A source's two-turn tool probe proves tools, not streaming.
@@ -243,9 +311,11 @@ class ModelCatalog:
                 rows[identifier] = {**row, "id": identifier, "name": model["name"],
                     "cli_model": model["id"], "cli_source": row["adapter"], "model_id": model["id"],
                     "source_name": "Codex" if row["adapter"] == "codex_cli" else "Antigravity",
-                    "tool_support": support, "agent_supported": row["agent_supported"]}
+                    "tool_support": support, "agent_supported": row["agent_supported"],
+                    **({"agent_support": model["agent_support"]} if model.get("agent_support") else {})}
                 from ..llm_package.cli_models import context_metadata
-                rows[identifier].update(context_metadata([model], model["id"], fallback=row["context_window"]))
+                local_fallback_basis = row.get("context_window_basis", "unknown_fallback")
+                rows[identifier].update(context_metadata([model], model["id"], fallback=row["context_window"], fallback_basis=local_fallback_basis))
                 max_output = model.get("max_output_tokens")
                 if not isinstance(max_output, int) and rows[identifier].get("context_window_known"):
                     max_output = model_settings._known_vendor_max_output_tokens(model["id"])
@@ -261,7 +331,7 @@ class ModelCatalog:
                 row.update(reasoning_metadata(default.get("supported_reasoning_efforts"), default.get("default_reasoning_effort")))
             row.update(catalog_image_fields(row, cli_model_row=default))
             from ..llm_package.cli_models import context_metadata
-            row.update(context_metadata(upstream, fallback=row["context_window"]))
+            row.update(context_metadata(upstream, fallback=row["context_window"], fallback_basis=row.get("context_window_basis", "unknown_fallback")))
             default_output = default.get("max_output_tokens")
             if not isinstance(default_output, int) and row.get("context_window_known"):
                 default_output = model_settings._known_vendor_max_output_tokens(default.get("id", ""))
@@ -278,6 +348,8 @@ class ModelCatalog:
             )
             usage_store = ModelUsageStore(usage_path)
         usage_snapshot = usage_store.read_cached()
+        space_catalog = self.services.get("space_catalog") if isinstance(self.services, dict) else None
+        last_errors = getattr(space_catalog, "last_errors", None)
         for row in rows.values():
             ms = row.get("model_settings")
             policy = (
@@ -291,10 +363,23 @@ class ModelCatalog:
             row["usage"] = usage
             if isinstance(ms, dict):
                 ms["usage"] = usage
-            row["description"] = ("模型当前不可用，请检查来源连接。" if not row["available"] else
-                "可供本机 Agent 使用；工具在本机执行。" if row["agent_supported"] else
-                "此接入只支持对话，不能执行 Agent 工具。" if row["adapter"] == "claude_cli" else
-                "此接入未声明助手工具协议支持。")
+            peer_err = None
+            if row["source"] == "peer" and isinstance(last_errors, dict):
+                entry = last_errors.get(row.get("peer_id", ""))
+                if isinstance(entry, tuple) and entry:
+                    peer_err = str(entry[0])
+                elif isinstance(entry, str) and entry:
+                    peer_err = entry
+            if peer_err and not row["available"]:
+                row["catalog_refresh_error"] = peer_err
+                row["description"] = f"目录刷新失败：{_format_catalog_error(peer_err)}"
+            elif row.get("catalog_state") == "stale":
+                row["description"] = "待确认（目录缓存已过期，使用前将自动刷新）"
+            else:
+                row["description"] = ("模型当前不可用，请检查来源连接。" if not row["available"] else
+                    "可供本机 Agent 使用；工具在本机执行。" if row["agent_supported"] else
+                    "此接入只支持对话，不能执行 Agent 工具。" if row["adapter"] == "claude_cli" else
+                    "此接入未声明助手工具协议支持。")
         return sorted(rows.values(), key=lambda row: (row["source"] == "peer", row["name"], row["id"]))
 
     def get_model(self, model_id):
@@ -317,16 +402,36 @@ class ModelCatalog:
         locator = next((row for row in records if row.get("peer_id")
             and model_id.startswith("peer/" + hashlib.sha256(row["peer_id"].encode()).hexdigest() + "/")
             and row.get("access_policy") == "personal_space"), None)
-        if locator is not None and self.store.personal_space.allows_ai(locator["peer_id"]):
+        space_catalog = self.services.get("space_catalog") if isinstance(self.services, dict) else None
+        refresh_error = None
+        if locator is not None and space_catalog is not None and self.store.personal_space.allows_ai(locator["peer_id"]):
+            peer_id = locator["peer_id"]
             try:
-                self.services["space_catalog"].refresh(locator)
-            except Exception:
-                pass  # No stale record is promoted to authenticated authority.
-        return self.get_model(model_id)
+                space_catalog.refresh(locator)
+            except Exception as exc:
+                last_errors = getattr(space_catalog, "last_errors", None)
+                entry = last_errors.get(peer_id) if isinstance(last_errors, dict) else None
+                if isinstance(entry, tuple) and entry:
+                    refresh_error = str(entry[0])
+                elif str(exc).startswith("space_catalog_"):
+                    refresh_error = str(exc)
+                else:
+                    refresh_error = "space_catalog_refresh_failed"
+                if isinstance(last_errors, dict) and peer_id not in last_errors:
+                    last_errors[peer_id] = (refresh_error, 0)
+        row = self.get_model(model_id)
+        if row is not None and refresh_error and not row.get("available"):
+            row["catalog_refresh_error"] = refresh_error
+            row["description"] = f"目录刷新失败：{_format_catalog_error(refresh_error)}"
+        return row
 
     def resolve(self, model_id, *, require_tools=True):
         row = self.get_model(model_id)
-        if model_id.startswith("peer/") and (not row or not row.get("destination_binding_supported")):
+        if model_id.startswith("peer/") and (
+            not row
+            or not row.get("destination_binding_supported")
+            or row.get("catalog_state") == "stale"
+        ):
             row = self.refresh_destination(model_id)
         if not row or not row["available"]:
             raise ValueError("agent_model_unavailable")

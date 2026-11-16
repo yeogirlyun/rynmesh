@@ -1,10 +1,12 @@
 """Persistent local node settings (auto_update, ...) at $RYNMESH_HOME/settings.json."""
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 from typing import Any
 
+from . import os_secret
 from .atomic_io import atomic_write_json
 
 _DEFAULTS: dict[str, Any] = {
@@ -25,6 +27,7 @@ _DEFAULTS: dict[str, Any] = {
     "notification_frequency": "immediate",
     "notification_quiet_start": 22,
     "notification_quiet_end": 8,
+    "llm_download_mirror": "",
 }
 _WHITELIST = set(_DEFAULTS)
 
@@ -43,14 +46,32 @@ class SettingsStore:
 
     def get(self) -> dict[str, Any]:
         data = dict(_DEFAULTS)
+        loaded_dict: dict[str, Any] | None = None
         try:
-            loaded = json.loads(self.path.read_text())
+            loaded = json.loads(self.path.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):
+                loaded_dict = loaded
                 for k in _WHITELIST:
                     if k in loaded:
                         data[k] = loaded[k]
         except (OSError, ValueError):
             pass
+        recap = data.get("recap")
+        if isinstance(recap, dict) and "smtp_password" in recap:
+            migrated = dict(recap)
+            raw_pw = str(migrated.pop("smtp_password", "") or "").strip()[:512]
+            if raw_pw:
+                migrated["smtp_password_protected"] = base64.b64encode(
+                    os_secret.protect(raw_pw.encode("utf-8"))
+                ).decode("ascii")
+            data["recap"] = migrated
+            if loaded_dict is not None:
+                try:
+                    to_write = dict(loaded_dict)
+                    to_write["recap"] = migrated
+                    atomic_write_json(self.path, to_write, indent=2, sort_keys=False)
+                except OSError:
+                    pass
         return data
 
     def patch(self, patch: dict[str, Any]) -> dict[str, Any]:
@@ -88,6 +109,12 @@ class SettingsStore:
                     data[k] = number
             elif k in {"ai_model", "node_name"}:
                 data[k] = str(v or "").strip()[:256]
+            elif k == "llm_download_mirror":
+                if v is not None and not isinstance(v, str):
+                    raise ValueError("llm_download_mirror must be an HTTPS URL")
+                from .llm_package.catalog import normalize_download_mirror
+
+                data[k] = normalize_download_mirror("" if v is None else v)
             elif k == "recap":
                 # Nested config block. Merged, not replaced, so a partial patch
                 # can't silently wipe SMTP credentials the caller didn't send.
@@ -95,8 +122,20 @@ class SettingsStore:
                     continue
                 merged = dict(data.get(k) or {})
                 for field, value in v.items():
-                    if field in {"to_address", "from_address", "smtp_host",
-                                 "smtp_user", "smtp_password", "base_url"}:
+                    if field == "smtp_password":
+                        merged.pop("smtp_password", None)
+                        if value is not None:
+                            raw_pw = str(value).strip()[:512]
+                            merged["smtp_password_protected"] = (
+                                base64.b64encode(os_secret.protect(raw_pw.encode("utf-8"))).decode("ascii")
+                                if raw_pw
+                                else ""
+                            )
+                    elif field == "smtp_password_protected":
+                        merged.pop("smtp_password", None)
+                        merged["smtp_password_protected"] = str(value or "").strip()[:8192]
+                    elif field in {"to_address", "from_address", "smtp_host",
+                                   "smtp_user", "base_url"}:
                         merged[field] = str(value or "").strip()[:512]
                     elif field in {"smtp_port", "per_source", "send_hour_utc"}:
                         try:

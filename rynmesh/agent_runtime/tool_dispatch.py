@@ -18,12 +18,19 @@ PARALLEL_READS = frozenset({"ryn_file_read", "ryn_file_list", "ryn_file_search",
                           "ryn_list_node_apps", "ryn_craft_tools", "ryn_craft_read", "ryn_web_search"})
 
 
-def supports_parallel(name, metadata):
+def supports_parallel(name, metadata, arguments=None, *, permission_mode=None):
     """Use host capabilities, never a model's claimed effect or annotations."""
-    return (metadata.get("effect") == "read"
-            and not metadata.get("requires_explicit_approval")
-            and not metadata.get("computer_access")
-            and (name in PARALLEL_READS or metadata.get("supports_parallel") is True))
+    if metadata.get("requires_explicit_approval") or metadata.get("computer_access"):
+        return False
+    if metadata.get("effect") == "read" and (
+        name in PARALLEL_READS or metadata.get("supports_parallel") is True
+    ):
+        return True
+    server_hint_read = bool(
+        metadata.get("server_hint_read")
+        or (metadata.get("extension_binding") or {}).get("server_hint_read")
+    )
+    return permission_mode == "automatic" and server_hint_read
 
 
 class ToolDispatchGate:

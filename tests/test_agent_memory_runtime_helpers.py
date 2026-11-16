@@ -376,7 +376,9 @@ def test_explicit_multi_clause_failure_atomicity_and_false_save_claim_guard(tmp_
     assert receipt["saved"] is False
     assert receipt["entries"] == []
     assert "agent_memory_entry_limit" in receipt["errors"][0]
-    assert guarded.startswith("记忆未保存")
+    assert "（主机注：本轮没有成功保存记忆，原因：" in guarded
+    assert "agent_memory_entry_limit" in guarded
+    assert "我已经为您记住了" not in guarded
 
     # Verify first clause was rolled back atomically: still exactly 7 entries on disk
     snap = store.inspect(memory.list_memories_snapshot)
@@ -698,3 +700,28 @@ def test_generic_multilingual_preference_and_llm_propose_grounding(tmp_path):
 
     store.transaction(run_generic_checks)
 
+
+def test_guard_false_memory_save_claim_preserves_explanations_and_replaces_sentence_only(tmp_path):
+    store, _ = _make_store(tmp_path)
+    dest = _dest(model_id="local/model-a", peer_id="self", source_id="src-a", rev="rev-a")
+
+    def run_guard_checks(data):
+        row_explain = _seed_task(
+            data,
+            task_id="t-explain",
+            message_id="m-explain",
+            text="Ryn 的记忆功能是怎么工作的？",
+            conversation_revision=0,
+            destination=dest,
+        )
+        explanation = "Ryn 的记忆功能会把你说的偏好记录到记忆里，自动化结束前也会更新记忆文件 memory.md。"
+        assert memory_runtime.guard_false_memory_save_claim(row_explain, explanation) == explanation
+
+        mixed = "祝你生日快乐！\n\n我已记住你的生日。\n\n需要订蛋糕吗？"
+        guarded_mixed = memory_runtime.guard_false_memory_save_claim(row_explain, mixed)
+        assert "祝你生日快乐！" in guarded_mixed
+        assert "需要订蛋糕吗？" in guarded_mixed
+        assert "我已记住你的生日" not in guarded_mixed
+        assert "（主机注：本轮没有成功保存记忆，原因：" in guarded_mixed
+
+    store.transaction(run_guard_checks)

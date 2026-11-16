@@ -198,8 +198,47 @@ def parse_heartbeat_response(text: str) -> dict[str, Any]:
     }
 
 
+MAX_RUNS_PER_AUTOMATION = 50
+ATTENTION_TIMEOUT_MS = 30 * 60 * 1000
+LOST_TASK_TIMEOUT_MS = 10 * 60 * 1000
+TERMINAL_TASK_STATUSES = frozenset({"completed", "failed", "cancelled"})
+ATTENTION_TASK_STATUSES = frozenset({"waiting_input", "waiting_approval", "interrupted", "paused"})
+AUTOMATION_RUN_STATUSES = frozenset(
+    {
+        "IN_PROGRESS",
+        "ACCEPTED",
+        "ARCHIVED",
+        "FAILED",
+        "CANCELLED",
+        "NEEDS_ATTENTION",
+        "SKIPPED_OVERLAP",
+        "SKIPPED",
+        "LOST",
+    }
+)
+
+
 def now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def parse_iso_ms(value: Any) -> int | None:
+    if isinstance(value, (int, float)):
+        return int(value)
+    if not isinstance(value, str):
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed_dt = dt.datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed_dt.tzinfo is None:
+        parsed_dt = parsed_dt.replace(tzinfo=dt.timezone.utc)
+    return int(parsed_dt.timestamp() * 1000)
 
 
 def ms_to_iso(ts_ms: int | None) -> str:
@@ -587,6 +626,74 @@ def compute_next_run_at(
     return slot_ms + jitter_ms
 
 
+def compute_missed_runs(
+    rrule_str: str | None,
+    next_run_at_ms: int | float | None,
+    current_ms: int,
+    *,
+    tz: dt.tzinfo | None = None,
+) -> int:
+    if not isinstance(next_run_at_ms, (int, float)):
+        return 0
+    due_ms = int(next_run_at_ms)
+    if due_ms <= 0 or current_ms <= due_ms:
+        return 0
+    parsed = parse_rrule_parts(rrule_str)
+    if parsed["count"] == 1 or parsed["repeat"] == "once":
+        return 0
+    elapsed = current_ms - due_ms
+    freq = parsed["freq"]
+    interval = max(1, int(parsed["interval"]))
+    byday = parsed["byday"]
+    if freq == "MINUTELY":
+        period_ms = interval * 60_000
+        return int(elapsed // period_ms) if elapsed >= period_ms else 0
+    if freq == "HOURLY":
+        period_ms = interval * 3_600_000
+        return int(elapsed // period_ms) if elapsed >= period_ms else 0
+    if freq == "DAILY" and not byday:
+        period_ms = interval * 86_400_000
+        return int(elapsed // period_ms) if elapsed >= period_ms else 0
+    missed = 0
+    cursor = due_ms
+    for _ in range(1000):
+        nxt = compute_next_run_at(
+            rrule_str,
+            after_ms=cursor,
+            tz=tz,
+            salt="",
+            automation_id="",
+            run_count=0,
+        )
+        if nxt is None or nxt <= cursor or nxt > current_ms:
+            break
+        missed += 1
+        cursor = nxt
+    return missed
+
+
+def prune_automation_runs_in_tx(
+    data: dict[str, Any],
+    automation_id: str,
+    *,
+    max_runs: int = MAX_RUNS_PER_AUTOMATION,
+) -> None:
+    target_id = str(automation_id or "").strip()
+    runs = data.get("automation_runs")
+    if not target_id or not isinstance(runs, dict):
+        return
+    matching: list[tuple[int, int, str]] = []
+    for idx, (rid, rec) in enumerate(runs.items()):
+        if isinstance(rec, dict) and str(rec.get("automation_id") or "") == target_id:
+            ts = parse_iso_ms(rec.get("created_at")) or 0
+            matching.append((ts, idx, str(rid)))
+    if len(matching) <= max_runs:
+        return
+    matching.sort(key=lambda item: (item[0], item[1]))
+    for _ts, _idx, rid in matching[: len(matching) - max_runs]:
+        runs.pop(rid, None)
+
+
 def _toml_quote(value: str) -> str:
     return json.dumps(str(value or ""), ensure_ascii=False)
 
@@ -603,6 +710,7 @@ def serialize_automation_toml(item: dict[str, Any]) -> str:
         f"desktop_access = {'true' if bool(item.get('desktop_access', True)) else 'false'}",
         f"workspace_root = {_toml_quote(str(item.get('workspace_root') or ''))}",
         f"target_task_id = {_toml_quote(str(item.get('target_task_id') or ''))}",
+        f"dedicated_chat = {'true' if bool(item.get('dedicated_chat', False)) else 'false'}",
         f"execution_environment = {_toml_quote(str(item.get('execution_environment') or 'local'))}",
         f"notification_policy = {_toml_quote(str(item.get('notification_policy') or 'default'))}",
         f"auto_archive = {'true' if bool(item.get('auto_archive', False)) else 'false'}",
@@ -757,6 +865,15 @@ def normalize_automation_record(
     if kind not in {"cron", "heartbeat"}:
         kind = default_kind
 
+    if "dedicated_chat" in raw and raw.get("dedicated_chat") is not None:
+        dedicated_chat = bool(raw.get("dedicated_chat"))
+    else:
+        dedicated_chat = bool(base.get("dedicated_chat", False))
+        if kind != "heartbeat":
+            dedicated_chat = False
+        elif "target_task_id" in raw and target_task_id != str(base.get("target_task_id") or "").strip():
+            dedicated_chat = False
+
     has_schedule_change = any(
         k in raw
         for k in (
@@ -817,13 +934,16 @@ def normalize_automation_record(
     if notification_policy not in {"all_runs", "failed_runs_only", "never"}:
         notification_policy = "all_runs"
 
-    auto_archive = bool(
-        raw.get("auto_archive")
-        if "auto_archive" in raw
-        else base.get("auto_archive", False)
-    )
+    labels = format_schedule_labels(rrule_str)
+    if "auto_archive" in raw and raw.get("auto_archive") is not None:
+        auto_archive = bool(raw.get("auto_archive"))
+    elif "auto_archive" in base:
+        auto_archive = bool(base.get("auto_archive"))
+    else:
+        auto_archive = labels["repeat"] == "once"
 
     run_count = int(raw.get("run_count", base.get("run_count", 0)) or 0)
+    missed_runs = int(raw.get("missed_runs", base.get("missed_runs", 0)) or 0)
     last_run_at = raw.get("last_run_at", base.get("last_run_at"))
     last_run_status = str(raw.get("last_run_status", base.get("last_run_status") or "")).strip()
     last_run_summary = str(raw.get("last_run_summary", base.get("last_run_summary") or "")).strip()
@@ -843,7 +963,6 @@ def normalize_automation_record(
             run_count=run_count,
         )
 
-    labels = format_schedule_labels(rrule_str)
     created_at = str(base.get("created_at") or raw.get("created_at") or now_str)
     updated_at = now_str
 
@@ -866,6 +985,7 @@ def normalize_automation_record(
         "desktop_access": desktop_access,
         "workspace_root": workspace_root,
         "target_task_id": target_task_id,
+        "dedicated_chat": dedicated_chat,
         "execution_environment": execution_environment,
         "notification_policy": notification_policy,
         "auto_archive": auto_archive,
@@ -877,6 +997,7 @@ def normalize_automation_record(
         "last_run_summary": last_run_summary,
         "last_task_id": last_task_id,
         "run_count": run_count,
+        "missed_runs": missed_runs,
         "memory_path": str(automation_memory_path(store, auto_id)),
         "toml_path": str(automation_toml_path(store, auto_id)),
         "created_at": created_at,
@@ -911,6 +1032,7 @@ def public_automation(store: Any, item: dict[str, Any]) -> dict[str, Any]:
         "desktop_access": bool(item.get("desktop_access", True)),
         "workspace_root": str(item.get("workspace_root") or ""),
         "target_task_id": str(item.get("target_task_id") or ""),
+        "dedicated_chat": bool(item.get("dedicated_chat", False)),
         "execution_environment": str(item.get("execution_environment") or "local"),
         "notification_policy": str(item.get("notification_policy") or "all_runs"),
         "auto_archive": bool(item.get("auto_archive", False)),
@@ -922,6 +1044,7 @@ def public_automation(store: Any, item: dict[str, Any]) -> dict[str, Any]:
         "last_run_summary": str(item.get("last_run_summary") or ""),
         "last_task_id": str(item.get("last_task_id") or ""),
         "run_count": int(item.get("run_count") or 0),
+        "missed_runs": int(item.get("missed_runs") or 0),
         "memory_path": str(automation_memory_path(store, auto_id)),
         "created_at": str(item.get("created_at") or ""),
         "updated_at": str(item.get("updated_at") or ""),
@@ -969,10 +1092,12 @@ def sync_automation_files(store: Any, automations: dict[str, Any], *, check_only
                 "kind",
                 "desktop_access",
                 "target_task_id",
+                "dedicated_chat",
                 "notification_policy",
                 "auto_archive",
             ):
-                if key in parsed and parsed[key] != existing.get(key):
+                existing_val = bool(existing.get(key, False)) if key == "dedicated_chat" else existing.get(key)
+                if key in parsed and parsed[key] != existing_val:
                     if check_only:
                         return True
                     merged = normalize_automation_record(store, parsed, existing=existing)
@@ -1065,6 +1190,14 @@ def delete_automation_in_tx(store: Any, data: dict[str, Any], automation_id: str
         return False
     delete_automation_files(store, target_id)
     removed = data["automations"].pop(target_id, None)
+    runs = data.get("automation_runs")
+    if isinstance(runs, dict):
+        for rid in [
+            rk
+            for rk, rv in runs.items()
+            if isinstance(rv, dict) and str(rv.get("automation_id") or "") == target_id
+        ]:
+            runs.pop(rid, None)
     return removed is not None
 
 
@@ -1228,6 +1361,8 @@ def execute_automation_tool_call_in_tx(
 def automation_developer_instructions(store: Any, row: dict[str, Any]) -> str:
     if str(row.get("source") or "") != "automation":
         return ""
+    if not str(row.get("automation_run_id") or "").strip():
+        return ""
     auto_id = str(row.get("automation_id") or "").strip()
     if not auto_id:
         return ""
@@ -1316,31 +1451,150 @@ def parse_automation_completion_output(text: str) -> dict[str, Any]:
     }
 
 
+def _extract_row_error(row: dict[str, Any], fallback: str) -> str:
+    err = row.get("error")
+    if isinstance(err, dict):
+        return str(err.get("message") or err.get("code") or fallback)
+    if isinstance(err, str) and err.strip():
+        return err.strip()
+    return fallback
+
+
+def _latest_turn_assistant_message(
+    messages: list[Any],
+    run_id: str,
+) -> tuple[dict[str, Any] | None, str]:
+    last_user_idx = -1
+    if run_id:
+        hb_msg_id = f"msg-hb-{run_id}"
+        for idx in range(len(messages) - 1, -1, -1):
+            msg = messages[idx]
+            if isinstance(msg, dict) and msg.get("message_id") == hb_msg_id:
+                last_user_idx = idx
+                break
+    if last_user_idx < 0:
+        for idx in range(len(messages) - 1, -1, -1):
+            msg = messages[idx]
+            if not isinstance(msg, dict) or msg.get("role") != "user":
+                continue
+            ui = msg.get("ui")
+            if isinstance(ui, dict) and ui.get("kind") == "subagent_notification":
+                continue
+            last_user_idx = idx
+            break
+    tail = messages[last_user_idx + 1 :] if last_user_idx >= 0 else []
+    for msg in reversed(tail):
+        if isinstance(msg, dict) and msg.get("role") == "assistant":
+            cand = str(msg.get("content") or "").strip()
+            if cand:
+                return msg, cand
+    return None, ""
+
+
+def settle_lost_automation_run_in_tx(
+    store: Any,
+    data: dict[str, Any],
+    run_rec: dict[str, Any],
+    *,
+    now_str: str | None = None,
+) -> None:
+    ensure_automation_state(data)
+    now_s = now_str or now_iso()
+    auto_id = str(run_rec.get("automation_id") or "").strip()
+    run_rec["status"] = "LOST"
+    run_rec["error"] = "task_removed"
+    run_rec["inbox_summary"] = "对应任务已被删除"
+    run_rec["decision"] = ""
+    run_rec["completed_at"] = now_s
+    run_rec["updated_at"] = now_s
+    auto_item = data["automations"].get(auto_id) if auto_id else None
+    if isinstance(auto_item, dict):
+        auto_item["last_run_status"] = "LOST"
+        auto_item["last_run_summary"] = "对应任务已被删除"
+        auto_item["updated_at"] = now_s
+        write_automation_files(store, auto_item)
+    if auto_id:
+        prune_automation_runs_in_tx(data, auto_id)
+
+
 def settle_automation_turn_in_tx(store: Any, data: dict[str, Any], row: dict[str, Any]) -> None:
     auto_id = str(row.get("automation_id") or "").strip()
     run_id = str(row.get("automation_run_id") or "").strip()
-    if not auto_id and not run_id:
+    if not run_id:
         return
 
     ensure_automation_state(data)
     inherit_task_policy_in_tx(data, row)
     status = str(row.get("status") or "").strip()
-    if status not in {"completed", "failed", "cancelled"}:
+    if status not in (TERMINAL_TASK_STATUSES | ATTENTION_TASK_STATUSES):
         return
 
-    assistant_msg: dict[str, Any] | None = None
-    assistant_text = ""
-    for msg in reversed(row.get("messages") or []):
-        if isinstance(msg, dict) and msg.get("role") == "assistant":
-            assistant_text = str(msg.get("content") or "").strip()
-            if assistant_text:
-                assistant_msg = msg
-                break
+    existing_run = data["automation_runs"].get(run_id)
+    if isinstance(existing_run, dict):
+        r_status = str(existing_run.get("status") or "").strip()
+        if status in ATTENTION_TASK_STATUSES:
+            if r_status != "IN_PROGRESS":
+                return
+        elif r_status not in {"IN_PROGRESS", "NEEDS_ATTENTION"}:
+            return
 
+    now_str = now_iso()
+    auto_item = data["automations"].get(auto_id) if auto_id else None
+    policy = str((auto_item or {}).get("notification_policy") or "all_runs").strip()
+    auto_name = str((auto_item or {}).get("name") or row.get("title") or "定时提醒")
+
+    if status in ATTENTION_TASK_STATUSES:
+        pending_input = row.get("pending_input") if isinstance(row.get("pending_input"), dict) else {}
+        pending_approval = row.get("pending_approval") if isinstance(row.get("pending_approval"), dict) else {}
+        detail = str(
+            pending_input.get("question")
+            or pending_approval.get("title")
+            or _extract_row_error(row, f"当前状态：{status}")
+        ).strip()
+        attn_summary = (
+            detail
+            if "定时任务需要处理" in detail
+            else f"定时任务需要处理：{detail}"
+        )[:240]
+        row["latest_turn_is_silent_heartbeat"] = policy == "never"
+        if policy != "never":
+            row["automation_notification"] = {
+                "id": run_id or f"notif-{now_ms()}",
+                "automation_id": auto_id,
+                "automation_name": auto_name,
+                "kind": str(row.get("automation_kind") or "heartbeat"),
+                "decision": "NOTIFY",
+                "title": "定时任务需要处理",
+                "message": attn_summary,
+                "task_id": str(row.get("id") or ""),
+                "status": "NEEDS_ATTENTION",
+                "created_at": now_str,
+            }
+        if run_id and isinstance(data["automation_runs"].get(run_id), dict):
+            run_rec = data["automation_runs"][run_id]
+            run_rec["status"] = "NEEDS_ATTENTION"
+            run_rec["decision"] = "NOTIFY" if policy != "never" else ""
+            run_rec["inbox_title"] = "定时任务需要处理"
+            run_rec["inbox_summary"] = attn_summary
+            run_rec["updated_at"] = now_str
+        if auto_id and isinstance(auto_item, dict):
+            auto_item["last_run_status"] = "NEEDS_ATTENTION"
+            auto_item["last_run_summary"] = attn_summary
+            auto_item["last_task_id"] = str(row.get("id") or "")
+            auto_item["updated_at"] = now_str
+            write_automation_files(store, auto_item)
+        if auto_id:
+            prune_automation_runs_in_tx(data, auto_id)
+        return
+
+    assistant_msg, assistant_text = _latest_turn_assistant_message(
+        list(row.get("messages") or []),
+        run_id,
+    )
     parsed = parse_automation_completion_output(assistant_text)
     hb = parsed["heartbeat"]
-    summary = parsed["inbox_summary"] or str((row.get("error") or {}).get("message") or status)
-    now_str = now_iso()
+    error_text = _extract_row_error(row, status)
+    summary = parsed["inbox_summary"] or error_text
 
     # Strip raw <heartbeat> and ::inbox-item tags from the visible assistant message & result
     if assistant_msg is not None and (hb["has_heartbeat_tag"] or INBOX_ITEM_RE.search(assistant_text)):
@@ -1349,41 +1603,64 @@ def settle_automation_turn_in_tx(store: Any, data: dict[str, Any], row: dict[str
         if isinstance(row.get("result"), str) and row.get("result"):
             row["result"] = display_text
 
-    auto_item = data["automations"].get(auto_id) if auto_id else None
-    policy = str((auto_item or {}).get("notification_policy") or "all_runs").strip()
-    hb_decision = str(hb.get("decision") or "").upper()
-    is_silent = (
-        hb_decision == "DONT_NOTIFY"
-        or policy == "never"
-        or (policy == "failed_runs_only" and status == "completed")
+    hb_decision = str(hb.get("decision") or "").upper() if assistant_msg is not None else ""
+    unattended_blocked = (
+        list(row.get("unattended_blocked") or [])
+        if isinstance(row.get("unattended_blocked"), list)
+        else []
     )
+    if status in {"failed", "cancelled"} or unattended_blocked:
+        is_silent = policy == "never"
+    else:
+        is_silent = (
+            policy == "never"
+            or policy == "failed_runs_only"
+            or hb_decision == "DONT_NOTIFY"
+        )
     row["latest_turn_is_silent_heartbeat"] = bool(is_silent)
 
-    if is_silent and str(row.get("automation_kind") or "") == "heartbeat":
+    if run_id and is_silent and str(row.get("automation_kind") or "") == "heartbeat":
         # Mark the latest heartbeat user & assistant messages as silent so UI hides them like Codex
         if assistant_msg is not None:
             ui_meta = dict(assistant_msg.get("ui") or {}) if isinstance(assistant_msg.get("ui"), dict) else {}
             ui_meta["kind"] = "silent_heartbeat"
             ui_meta["hidden"] = True
             assistant_msg["ui"] = ui_meta
+        hb_msg_id = f"msg-hb-{run_id}"
         for msg in reversed(row.get("messages") or []):
             if isinstance(msg, dict) and msg.get("role") == "user":
                 ui_meta = dict(msg.get("ui") or {}) if isinstance(msg.get("ui"), dict) else {}
-                if ui_meta.get("kind") == "heartbeat" or "<heartbeat>" in str(msg.get("content") or ""):
+                if (
+                    msg.get("message_id") == hb_msg_id
+                    or ui_meta.get("kind") == "heartbeat"
+                    or "<heartbeat>" in str(msg.get("content") or "")
+                ):
                     ui_meta["kind"] = "silent_heartbeat"
                     ui_meta["hidden"] = True
                     msg["ui"] = ui_meta
                 break
     elif not is_silent:
-        auto_name = str((auto_item or {}).get("name") or row.get("title") or "定时提醒")
-        notif_title = parsed["inbox_title"] or auto_name
-        notif_body = hb["message"] or parsed["cleaned_text"] or summary
+        if unattended_blocked:
+            notif_title = "定时任务需要处理"
+            blocked_names = ", ".join(
+                str(b.get("tool") or b) if isinstance(b, dict) else str(b)
+                for b in unattended_blocked[:5]
+            )
+            notif_body = f"以下操作需要批准而被跳过：{blocked_names}。{summary}"
+        elif status in {"failed", "cancelled"}:
+            notif_title = parsed["inbox_title"] or auto_name
+            notif_body = error_text if assistant_msg is None or hb_decision == "DONT_NOTIFY" else (
+                hb["message"] or parsed["cleaned_text"] or error_text
+            )
+        else:
+            notif_title = parsed["inbox_title"] or auto_name
+            notif_body = hb["message"] or parsed["cleaned_text"] or summary
         row["automation_notification"] = {
             "id": run_id or f"notif-{now_ms()}",
             "automation_id": auto_id,
             "automation_name": auto_name,
             "kind": str(row.get("automation_kind") or "heartbeat"),
-            "decision": hb_decision or "NOTIFY",
+            "decision": "NOTIFY",
             "title": notif_title,
             "message": str(notif_body or "")[:240],
             "task_id": str(row.get("id") or ""),
@@ -1391,26 +1668,38 @@ def settle_automation_turn_in_tx(store: Any, data: dict[str, Any], row: dict[str
             "created_at": now_str,
         }
 
+    if unattended_blocked:
+        row.pop("unattended_blocked", None)
+
     if run_id and isinstance(data["automation_runs"].get(run_id), dict):
         run_rec = data["automation_runs"][run_id]
-        run_rec["status"] = (
-            "ARCHIVED"
-            if is_silent
-            else ("ACCEPTED" if status == "completed" else status.upper())
-        )
-        run_rec["decision"] = hb_decision or ("DONT_NOTIFY" if is_silent else "NOTIFY")
+        if status == "completed":
+            run_rec["status"] = "ARCHIVED" if is_silent else "ACCEPTED"
+        else:
+            run_rec["status"] = status.upper()
+        run_rec["decision"] = hb_decision if assistant_msg is not None else ""
         run_rec["inbox_title"] = parsed["inbox_title"] or str(row.get("title") or "")
         run_rec["inbox_summary"] = summary
+        if unattended_blocked:
+            run_rec["blocked_operations"] = unattended_blocked
         run_rec["completed_at"] = now_str
         run_rec["updated_at"] = now_str
 
     if auto_id and isinstance(auto_item, dict):
-        auto_item["last_run_status"] = "completed" if status == "completed" else status
-        auto_item["last_run_summary"] = summary
-        auto_item["last_task_id"] = str(row.get("id") or "")
-        auto_item["updated_at"] = now_str
-        if auto_item.get("next_run_at") is None and str(auto_item.get("repeat") or "") == "once":
-            auto_item["status"] = "PAUSED"
-        write_automation_files(store, auto_item)
-        if summary and not memory_blocked(row) and not memory_blocked(auto_item):
-            append_automation_memory_note(store, auto_id, f"({status}) {summary}")
+        is_once = str(auto_item.get("repeat") or "") == "once"
+        if status == "completed" and is_once and bool(auto_item.get("auto_archive", False)):
+            delete_automation_files(store, auto_id)
+            data["automations"].pop(auto_id, None)
+        else:
+            auto_item["last_run_status"] = "completed" if status == "completed" else status
+            auto_item["last_run_summary"] = summary
+            auto_item["last_task_id"] = str(row.get("id") or "")
+            auto_item["updated_at"] = now_str
+            if auto_item.get("next_run_at") is None and is_once:
+                auto_item["status"] = "PAUSED"
+            write_automation_files(store, auto_item)
+            if summary and not memory_blocked(row) and not memory_blocked(auto_item):
+                append_automation_memory_note(store, auto_id, f"({status}) {summary}")
+
+    if auto_id:
+        prune_automation_runs_in_tx(data, auto_id)

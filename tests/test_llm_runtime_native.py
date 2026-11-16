@@ -25,6 +25,7 @@ from typing import Any
 
 import pytest
 
+import rynmesh
 import rynmesh.llm_package.https_only as llm_https_only
 import rynmesh.llm_package.lifecycle as llm_lifecycle
 import rynmesh.llm_package.runtime_docker as llm_runtime_docker
@@ -543,7 +544,7 @@ def test_prepare_extracts_marks_the_server_executable_and_writes_the_marker(tmp_
     llm_runtime_native.prepare(root=root, progress=lambda *event: stages.append(event))
 
     assert seen["url"].startswith("https://github.com/ggml-org/llama.cpp/releases/download/")
-    assert seen["agent"] == "Rynmesh/0.6"
+    assert seen["agent"] == f"Rynmesh/{rynmesh.__version__}"
     managed = llm_runtime_install.managed_root(root)
     server = managed / "build" / "bin" / binary
     assert server.is_file() and os.access(server, os.X_OK)
@@ -732,7 +733,8 @@ def test_start_fails_fast_when_the_server_exits_without_leaking_a_path(tmp_path,
     with pytest.raises(LifecycleError) as failure:
         llm_runtime_native.start(manifest)
     message = str(failure.value)
-    assert "exited during startup" in message
+    assert "启动阶段异常退出" in message or "exited during startup" in message
+    assert "see the runtime log" not in message.lower()
     assert "/" not in message and "\\" not in message
     assert not (root / "runtime" / "native-dead.pid").exists()
 

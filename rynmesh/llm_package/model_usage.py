@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import copy
+import json
+import logging
+import os
 import threading
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -13,14 +16,17 @@ from ..atomic_io import atomic_write_json, read_json
 from ..file_transactions import file_transaction
 from .adapters import AdapterError, actual_usage, cached_input_tokens
 
+_logger = logging.getLogger(__name__)
+
 MAX_USAGE_BYTES = 4 * 1024 * 1024
 MAX_MODEL_ENTRIES = 512
 MAX_RECENT_TASKS = 64
-MAX_DAILY_BUCKETS = 30
+MAX_DAILY_BUCKETS = 90
+MIN_GRANTED_MAX_TOKENS = 256
 QUOTA_FIELDS = ("requests_per_day", "tokens_per_day", "shared_tokens_per_day")
 # Shared usage is also kept per calling device for plugin peer providers
 # (company channel). Reporting only: no limit is derived from these buckets.
-MAX_PEER_ENTRIES = 200
+MAX_PEER_ENTRIES = 64
 PEER_CHANNELS = ("company",)
 PEER_COUNTERS = ("requests", "input_tokens", "output_tokens", "total_tokens")
 
@@ -124,6 +130,9 @@ def _empty_caller(day: str) -> dict[str, Any]:
     return {
         "day": day,
         "today_requests": 0,
+        "today_input_tokens": 0,
+        "today_output_tokens": 0,
+        "today_cached_tokens": 0,
         "today_tokens": 0,
         "requests": 0,
         "input_tokens": 0,
@@ -160,6 +169,7 @@ def _empty_entry(day: str) -> dict[str, Any]:
         "daily": [],
         "by_peer": {},
         "dispatched_tasks": [],
+        "dispatch_records": {},
         "completed_tasks": [],
     }
 
@@ -183,6 +193,17 @@ def _normalize_peers(raw: Any) -> dict[str, dict[str, Any]]:
         result[peer_id] = {"channel": clean["channel"], "name": clean["name"],
                            "last_used_at": last if isinstance(last, str) and last else None,
                            "daily": [days[d] for d in sorted(days)[-MAX_DAILY_BUCKETS:]]}
+    if len(result) > MAX_PEER_ENTRIES:
+        ranked = sorted(
+            result.keys(),
+            key=lambda pid: (
+                str(result[pid].get("last_used_at") or ""),
+                result[pid]["daily"][-1]["day"] if result[pid]["daily"] else "",
+                pid,
+            ),
+        )
+        for stale_pid in ranked[: len(result) - MAX_PEER_ENTRIES]:
+            result.pop(stale_pid, None)
     return result
 
 
@@ -221,7 +242,8 @@ def company_usage(data: dict[str, dict[str, Any]], *, day: str | None = None) ->
         for peer_id, bucket in _normalize_peers(data[key].get("by_peer")).items():
             if bucket["channel"] != "company":
                 continue
-            window = {k: sum(item[k] for item in bucket["daily"]) for k in PEER_COUNTERS}
+            recent_30 = bucket["daily"][-30:]
+            window = {k: sum(item[k] for item in recent_30) for k in PEER_COUNTERS}
             today = next((item for item in bucket["daily"] if item["day"] == day), None)
             rows.append({"model_key": key, "peer_id": peer_id, "name": bucket["name"],
                          "last_used_at": bucket["last_used_at"],
@@ -359,6 +381,9 @@ def _normalize_entry(raw: Any, day: str) -> dict[str, Any]:
             base["by_caller"][caller][k] = _nonneg_int(c_raw.get(k))
         if c_raw.get("day") == day:
             base["by_caller"][caller]["today_requests"] = _nonneg_int(c_raw.get("today_requests"))
+            base["by_caller"][caller]["today_input_tokens"] = _nonneg_int(c_raw.get("today_input_tokens"))
+            base["by_caller"][caller]["today_output_tokens"] = _nonneg_int(c_raw.get("today_output_tokens"))
+            base["by_caller"][caller]["today_cached_tokens"] = _nonneg_int(c_raw.get("today_cached_tokens"))
             base["by_caller"][caller]["today_tokens"] = _nonneg_int(c_raw.get("today_tokens"))
 
     raw_limits = raw.get("limits") if isinstance(raw.get("limits"), dict) else {}
@@ -372,6 +397,18 @@ def _normalize_entry(raw: Any, day: str) -> dict[str, Any]:
         items = raw.get(list_key)
         if isinstance(items, list):
             base[list_key] = [str(x) for x in items[-MAX_RECENT_TASKS:] if isinstance(x, str) and x]
+    raw_records = raw.get("dispatch_records")
+    if isinstance(raw_records, dict):
+        kept = set(base["dispatched_tasks"])
+        base["dispatch_records"] = {
+            tid: {
+                "caller": "shared" if rec.get("caller") == "shared" else "self",
+                "day": str(rec.get("day") or ""),
+                "peer_id": str(rec.get("peer_id") or ""),
+            }
+            for tid, rec in raw_records.items()
+            if isinstance(tid, str) and tid in kept and isinstance(rec, dict)
+        }
     return base
 
 
@@ -405,7 +442,18 @@ def _merge_legacy_and_canonical(existing: dict[str, Any], legacy: dict[str, Any]
     ):
         norm_existing["total"][k] = max(norm_existing["total"][k], norm_legacy["total"][k])
     for caller in ("self", "shared"):
-        for k in ("today_requests", "today_tokens", "requests", "input_tokens", "output_tokens", "cached_tokens", "total_tokens"):
+        for k in (
+            "today_requests",
+            "today_input_tokens",
+            "today_output_tokens",
+            "today_cached_tokens",
+            "today_tokens",
+            "requests",
+            "input_tokens",
+            "output_tokens",
+            "cached_tokens",
+            "total_tokens",
+        ):
             norm_existing["by_caller"][caller][k] = max(
                 norm_existing["by_caller"][caller][k],
                 norm_legacy["by_caller"][caller][k],
@@ -428,20 +476,32 @@ def _normalize_store_data(raw_data: Any, day: str) -> dict[str, dict[str, Any]]:
             normalized[key] = _merge_legacy_and_canonical(normalized[key], raw_val, day)
         else:
             normalized[key] = _normalize_entry(raw_val, day)
+    if len(normalized) > MAX_MODEL_ENTRIES:
+        sorted_keys = sorted(
+            normalized.keys(),
+            key=lambda k: str(normalized[k].get("total", {}).get("last_used_at") or ""),
+        )
+        for k in sorted_keys[: len(normalized) - MAX_MODEL_ENTRIES]:
+            normalized.pop(k, None)
     return normalized
 
 
-def effective_limits(entry: dict[str, Any], policy: dict[str, Any] | None = None) -> dict[str, int | None]:
+def effective_limits(
+    entry: dict[str, Any],
+    policy: dict[str, Any] | None = None,
+    quota: dict[str, Any] | None = None,
+) -> dict[str, int | None]:
     stored = entry.get("limits") if isinstance(entry.get("limits"), dict) else {}
+    merged_stored = {**stored, **(quota if isinstance(quota, dict) else {})}
     result: dict[str, int | None] = {}
     for key in QUOTA_FIELDS:
         policy_val = policy.get(key) if isinstance(policy, dict) and key in policy else None
         if type(policy_val) is int and policy_val >= 1:
             result[key] = policy_val
-        elif isinstance(policy, dict) and key in policy and policy.get(key) is None and stored.get(key) is None:
+        elif isinstance(policy, dict) and key in policy and policy.get(key) is None and merged_stored.get(key) is None:
             result[key] = None
         else:
-            s_val = stored.get(key)
+            s_val = merged_stored.get(key)
             result[key] = s_val if type(s_val) is int and s_val >= 1 else None
     return result
 
@@ -481,15 +541,22 @@ def format_public_usage(model_key: str, entry: dict[str, Any], *, policy: dict[s
     caller_view = copy.deepcopy(by_caller)
     for caller in ("self", "shared"):
         bucket = caller_view[caller]
+        today_in = bucket["today_input_tokens"]
+        today_out = bucket["today_output_tokens"]
+        today_cache = bucket["today_cached_tokens"]
         bucket["today"] = {
             "day": bucket.get("day") or day,
             "requests": bucket["today_requests"],
             "completed_requests": bucket["today_requests"],
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "cached_tokens": 0,
+            "input_tokens": today_in,
+            "output_tokens": today_out,
+            "cached_tokens": today_cache,
             "total_tokens": bucket["today_tokens"],
-            "cache_hit_rate": 0.0,
+            "cache_hit_rate": (
+                round(min(1.0, today_cache / today_in), 4)
+                if today_in > 0
+                else 0.0
+            ),
         }
         bucket["total"] = {
             "requests": bucket["requests"],
@@ -550,16 +617,132 @@ class ModelUsageStore:
         if p.name != "model-usage.json":
             p = (p / "llm" / "model-usage.json") if (p / "llm").is_dir() or p.name != "llm" else (p / "model-usage.json")
         self.path = p
+        self.quota_path = self.path.with_name("model-quota.json")
         self.lock_path = Path(str(self.path) + ".lock")
+        if not self.quota_path.exists() and self.path.exists():
+            self._migrate_legacy_quotas()
+
+    def _migrate_legacy_quotas(self) -> None:
+        with file_transaction(self.lock_path):
+            if self.quota_path.exists() or not self.path.exists():
+                return
+            try:
+                raw = json.loads(self.path.read_bytes().decode("utf-8"))
+            except (OSError, UnicodeDecodeError, ValueError):
+                return
+            if not isinstance(raw, dict):
+                return
+            migrated: dict[str, dict[str, int | None]] = {}
+            for raw_key, raw_entry in raw.items():
+                if not isinstance(raw_key, str) or not isinstance(raw_entry, dict):
+                    continue
+                raw_limits = raw_entry.get("limits")
+                if not isinstance(raw_limits, dict):
+                    continue
+                try:
+                    canonical = normalize_model_key(raw_key)
+                except ValueError:
+                    continue
+                cleaned = {
+                    k: (raw_limits[k] if type(raw_limits.get(k)) is int and raw_limits[k] >= 1 else None)
+                    for k in QUOTA_FIELDS
+                }
+                if any(v is not None for v in cleaned.values()):
+                    existing = migrated.get(canonical) or {}
+                    migrated[canonical] = {
+                        k: cleaned[k] if cleaned[k] is not None else existing.get(k)
+                        for k in QUOTA_FIELDS
+                    }
+            if migrated:
+                self._write_quota_unlocked(migrated)
+
+    def _read_quota_unlocked(self) -> dict[str, dict[str, int | None]]:
+        raw = read_json(self.quota_path, default={}, max_bytes=MAX_USAGE_BYTES)
+        if not isinstance(raw, dict):
+            return {}
+        quotas: dict[str, dict[str, int | None]] = {}
+        for raw_key, raw_limits in raw.items():
+            if not isinstance(raw_key, str) or not isinstance(raw_limits, dict):
+                continue
+            try:
+                canonical = normalize_model_key(raw_key)
+            except ValueError:
+                continue
+            quotas[canonical] = {
+                k: (raw_limits[k] if type(raw_limits.get(k)) is int and raw_limits[k] >= 1 else None)
+                for k in QUOTA_FIELDS
+            }
+        return quotas
+
+    def _write_quota_unlocked(self, quotas: dict[str, dict[str, int | None]]) -> None:
+        self.quota_path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(self.quota_path, quotas, max_bytes=MAX_USAGE_BYTES)
+
+    @staticmethod
+    def _apply_quotas(
+        data: dict[str, dict[str, Any]],
+        quotas: dict[str, dict[str, int | None]],
+        day: str,
+    ) -> None:
+        for canonical, q_limits in quotas.items():
+            entry = data.get(canonical)
+            if entry is None:
+                entry = _empty_entry(day)
+                data[canonical] = entry
+            entry["limits"] = effective_limits(entry, quota=q_limits)
+
+    def _combined_stamp(self) -> tuple[int, int, int, int] | None:
+        u_size = u_mtime = q_size = q_mtime = -1
+        exists_any = False
+        try:
+            st = self.path.stat()
+            u_size, u_mtime = st.st_size, st.st_mtime_ns
+            exists_any = True
+        except OSError:
+            u_size = u_mtime = -1
+        try:
+            qst = self.quota_path.stat()
+            q_size, q_mtime = qst.st_size, qst.st_mtime_ns
+            exists_any = True
+        except OSError:
+            q_size = q_mtime = -1
+        return (u_size, u_mtime, q_size, q_mtime) if exists_any else None
 
     def _read_unlocked(self, day: str) -> dict[str, dict[str, Any]]:
+        quotas = self._read_quota_unlocked()
         if not self.path.exists():
-            return {}
+            data: dict[str, dict[str, Any]] = {}
+            self._apply_quotas(data, quotas, day)
+            return data
+        oversize = False
         try:
-            raw = read_json(self.path, max_bytes=MAX_USAGE_BYTES)
-        except Exception:
-            return {}
-        return _normalize_store_data(raw, day)
+            size = self.path.stat().st_size
+            if size > MAX_USAGE_BYTES:
+                oversize = True
+                raw = json.loads(self.path.read_bytes().decode("utf-8"))
+            else:
+                raw = read_json(self.path, max_bytes=MAX_USAGE_BYTES)
+            if not isinstance(raw, dict):
+                raise ValueError("top-level usage payload is not an object")
+        except Exception as exc:
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            corrupt_path = self.path.with_name(f"{self.path.name}.corrupt-{stamp}")
+            if self.path.exists():
+                os.replace(self.path, corrupt_path)
+            _logger.warning(
+                "Model usage ledger %s unreadable (%s); moved to %s",
+                self.path.name,
+                type(exc).__name__,
+                corrupt_path.name,
+            )
+            data = {}
+            self._apply_quotas(data, quotas, day)
+            return data
+        data = _normalize_store_data(raw, day)
+        self._apply_quotas(data, quotas, day)
+        if oversize:
+            self._write_unlocked(data)
+        return data
 
     def _write_unlocked(self, data: dict[str, dict[str, Any]]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -571,21 +754,18 @@ class ModelUsageStore:
             for k in sorted_keys[: len(data) - MAX_MODEL_ENTRIES]:
                 data.pop(k, None)
         atomic_write_json(self.path, data, max_bytes=MAX_USAGE_BYTES)
-        try:
-            st = self.path.stat()
-            with _READ_CACHE_LOCK:
-                _READ_CACHE[str(self.path)] = ((st.st_size, st.st_mtime_ns), copy.deepcopy(data))
-        except OSError:
-            with _READ_CACHE_LOCK:
+        stamp = self._combined_stamp()
+        with _READ_CACHE_LOCK:
+            if stamp is not None:
+                _READ_CACHE[str(self.path)] = (stamp, copy.deepcopy(data))
+            else:
                 _READ_CACHE.pop(str(self.path), None)
 
     def read_cached(self) -> dict[str, dict[str, Any]]:
         day = _utc_today()
         key = str(self.path)
-        try:
-            st = self.path.stat()
-            stamp = (st.st_size, st.st_mtime_ns)
-        except OSError:
+        stamp = self._combined_stamp()
+        if stamp is None:
             with _READ_CACHE_LOCK:
                 _READ_CACHE.pop(key, None)
             return {}
@@ -595,8 +775,12 @@ class ModelUsageStore:
                 return _normalize_store_data(cached[1], day)
         with file_transaction(self.lock_path):
             data = self._read_unlocked(day)
+            post_stamp = self._combined_stamp()
         with _READ_CACHE_LOCK:
-            _READ_CACHE[key] = (stamp, copy.deepcopy(data))
+            if post_stamp is not None:
+                _READ_CACHE[key] = (post_stamp, copy.deepcopy(data))
+            else:
+                _READ_CACHE.pop(key, None)
         return data
 
     @staticmethod
@@ -633,7 +817,13 @@ class ModelUsageStore:
             return limits
 
     @staticmethod
-    def _enforce_limits(entry: dict[str, Any], limits: dict[str, int | None], caller: str) -> None:
+    def _enforce_limits(
+        entry: dict[str, Any],
+        limits: dict[str, int | None],
+        caller: str,
+        *,
+        max_tokens: int | None = None,
+    ) -> int | None:
         today = entry["today"]
         req_limit = limits.get("requests_per_day")
         if req_limit is not None and today["requests"] >= req_limit:
@@ -641,10 +831,25 @@ class ModelUsageStore:
         tok_limit = limits.get("tokens_per_day")
         if tok_limit is not None and today["total_tokens"] >= tok_limit:
             raise AdapterError("model_daily_quota_exhausted", code="model_daily_quota_exhausted")
-        if caller == "shared":
-            shared_limit = limits.get("shared_tokens_per_day")
-            if shared_limit is not None and today["shared_tokens"] >= shared_limit:
-                raise AdapterError("model_daily_quota_exhausted", code="model_daily_quota_exhausted")
+        shared_limit = limits.get("shared_tokens_per_day") if caller == "shared" else None
+        if shared_limit is not None and today["shared_tokens"] >= shared_limit:
+            raise AdapterError("model_daily_quota_exhausted", code="model_daily_quota_exhausted")
+
+        if type(max_tokens) is not int or max_tokens < 1:
+            return None
+
+        remaining: int | None = None
+        if tok_limit is not None:
+            remaining = tok_limit - today["total_tokens"]
+        if shared_limit is not None:
+            rem_shared = shared_limit - today["shared_tokens"]
+            remaining = rem_shared if remaining is None else min(remaining, rem_shared)
+
+        if remaining is not None and remaining < max_tokens:
+            if remaining >= MIN_GRANTED_MAX_TOKENS:
+                return remaining
+            raise AdapterError("model_daily_quota_exhausted", code="model_daily_quota_exhausted")
+        return max_tokens
 
     def admit_and_record_dispatch(
         self,
@@ -654,6 +859,7 @@ class ModelUsageStore:
         caller: str | None = None,
         task_id: str | None = None,
         enforce_quota: bool = True,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
         canonical = normalize_model_key(model_key)
         effective_caller = ("shared" if caller == "shared" else "self") if caller else current_usage_caller()
@@ -664,11 +870,22 @@ class ModelUsageStore:
             entry = data.get(canonical) or _empty_entry(day)
             limits = effective_limits(entry, policy)
             if enforce_quota:
-                self._enforce_limits(entry, limits, effective_caller)
+                granted_max = self._enforce_limits(entry, limits, effective_caller, max_tokens=max_tokens)
+            else:
+                granted_max = max_tokens if type(max_tokens) is int and max_tokens >= 1 else None
             if task_id and isinstance(task_id, str) and task_id in entry["dispatched_tasks"]:
-                return format_public_usage(canonical, entry, policy=policy)
+                return {**format_public_usage(canonical, entry, policy=policy), "granted_max_tokens": granted_max}
+            peer = current_usage_peer() if effective_caller == "shared" else None
             if task_id and isinstance(task_id, str):
                 entry["dispatched_tasks"] = [*entry["dispatched_tasks"][-(MAX_RECENT_TASKS - 1):], task_id]
+                records = entry.setdefault("dispatch_records", {})
+                records[task_id] = {
+                    "caller": effective_caller,
+                    "day": day,
+                    "peer_id": peer["peer_id"] if peer else "",
+                }
+                kept_ids = set(entry["dispatched_tasks"])
+                entry["dispatch_records"] = {k: v for k, v in records.items() if k in kept_ids}
             entry["today"]["requests"] += 1
             if effective_caller == "shared":
                 entry["today"]["shared_requests"] += 1
@@ -680,11 +897,67 @@ class ModelUsageStore:
             caller_bucket["requests"] += 1
             caller_bucket["today_requests"] += 1
             if effective_caller == "shared":
-                _record_peer(entry, current_usage_peer(), day, now_iso, requests=1)
+                _record_peer(entry, peer, day, now_iso, requests=1)
             _sync_today_to_daily(entry)
             data[canonical] = entry
             self._write_unlocked(data)
-            return format_public_usage(canonical, entry, policy=policy)
+            return {**format_public_usage(canonical, entry, policy=policy), "granted_max_tokens": granted_max}
+
+    def refund_dispatch(self, task_id: str | None, *, model_key: str | None = None) -> bool:
+        if not task_id or not isinstance(task_id, str):
+            return False
+        day = _utc_today()
+        with file_transaction(self.lock_path):
+            data = self._read_unlocked(day)
+            target_key: str | None = None
+            target_entry: dict[str, Any] | None = None
+            if model_key is not None:
+                canonical = normalize_model_key(model_key)
+                candidate = data.get(canonical)
+                if candidate and task_id in candidate.get("dispatched_tasks", []):
+                    target_key, target_entry = canonical, candidate
+            else:
+                for k, candidate in data.items():
+                    if task_id in candidate.get("dispatched_tasks", []):
+                        target_key, target_entry = k, candidate
+                        break
+            if target_entry is None or target_key is None or task_id in target_entry.get("completed_tasks", []):
+                return False
+            target_entry["dispatched_tasks"] = [t for t in target_entry["dispatched_tasks"] if t != task_id]
+            rec = target_entry.get("dispatch_records", {}).pop(task_id, {})
+            rec_caller = "shared" if rec.get("caller") == "shared" else "self"
+            rec_day = str(rec.get("day") or day)
+            peer_id = str(rec.get("peer_id") or "")
+
+            target_entry["total"]["requests"] = max(0, target_entry["total"]["requests"] - 1)
+            target_entry["by_caller"][rec_caller]["requests"] = max(
+                0, target_entry["by_caller"][rec_caller]["requests"] - 1
+            )
+            if rec_day == day:
+                target_entry["today"]["requests"] = max(0, target_entry["today"]["requests"] - 1)
+                if rec_caller == "shared":
+                    target_entry["today"]["shared_requests"] = max(
+                        0, target_entry["today"]["shared_requests"] - 1
+                    )
+                target_entry["by_caller"][rec_caller]["today_requests"] = max(
+                    0, target_entry["by_caller"][rec_caller]["today_requests"] - 1
+                )
+                if peer_id and peer_id in target_entry.get("by_peer", {}):
+                    peer_daily = target_entry["by_peer"][peer_id].get("daily") or []
+                    for p_item in peer_daily:
+                        if p_item.get("day") == day:
+                            p_item["requests"] = max(0, _nonneg_int(p_item.get("requests")) - 1)
+                new_daily = []
+                for d_item in target_entry.get("daily") or []:
+                    if d_item.get("day") == day:
+                        d_item["requests"] = target_entry["today"]["requests"]
+                        if d_item["requests"] == 0 and _nonneg_int(d_item.get("total_tokens")) == 0:
+                            continue
+                    new_daily.append(d_item)
+                target_entry["daily"] = new_daily
+            data[target_key] = target_entry
+            self._write_unlocked(data)
+            return True
 
     def record_completion(
         self,
@@ -775,6 +1048,9 @@ class ModelUsageStore:
             caller_bucket["output_tokens"] += add_out
             caller_bucket["cached_tokens"] += add_cache
             caller_bucket["total_tokens"] += add_total
+            caller_bucket["today_input_tokens"] += add_in
+            caller_bucket["today_output_tokens"] += add_out
+            caller_bucket["today_cached_tokens"] += add_cache
             caller_bucket["today_tokens"] += add_total
             if effective_caller == "shared":
                 _record_peer(entry, current_usage_peer(), day, now_iso,
@@ -803,10 +1079,14 @@ class ModelUsageStore:
                 for caller in ("self", "shared"):
                     entry["by_caller"][caller]["day"] = day
                     entry["by_caller"][caller]["today_requests"] = 0
+                    entry["by_caller"][caller]["today_input_tokens"] = 0
+                    entry["by_caller"][caller]["today_output_tokens"] = 0
+                    entry["by_caller"][caller]["today_cached_tokens"] = 0
                     entry["by_caller"][caller]["today_tokens"] = 0
                 for bucket in (entry.get("by_peer") or {}).values():
                     bucket["daily"] = [item for item in bucket.get("daily") or [] if item.get("day") != day]
                 entry["dispatched_tasks"] = []
+                entry["dispatch_records"] = {}
                 entry["completed_tasks"] = []
             data[canonical] = entry
             self._write_unlocked(data)
@@ -823,6 +1103,13 @@ class ModelUsageStore:
         validated = validate_quota_limits(limits)
         day = _utc_today()
         with file_transaction(self.lock_path):
+            quotas = self._read_quota_unlocked()
+            current_q = quotas.get(canonical) or {k: None for k in QUOTA_FIELDS}
+            for key, val in validated.items():
+                current_q[key] = val
+            quotas[canonical] = current_q
+            self._write_quota_unlocked(quotas)
+
             data = self._read_unlocked(day)
             entry = data.get(canonical) or _empty_entry(day)
             entry.setdefault("limits", {})

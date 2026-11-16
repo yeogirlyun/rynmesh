@@ -148,7 +148,13 @@ def test_edit_replaces_suffix_preserves_prefix_audit_and_rotates_provider_conver
     assert edited["conversation_event_cursor"] == edited["events"][-1]["seq"]
     assert "conversation_branches" not in edited
     saved = runtime.store.read()["tasks"][row["id"]]
-    assert "DISCARDED_FUTURE_QUESTION" in json.dumps(saved["conversation_branches"])
+    assert "DISCARDED_FUTURE_QUESTION" not in json.dumps(saved["conversation_branches"])
+    from rynmesh.agent_runtime import lifecycle
+    archived_branch = lifecycle.read_archived_conversation_branch(
+        runtime.store, row["id"], saved["conversation_branches"][-1]["archive_ref"]
+    )
+    assert archived_branch is not None
+    assert "DISCARDED_FUTURE_QUESTION" in json.dumps(archived_branch["messages"])
     assert "DISCARDED_FUTURE_QUESTION" not in json.dumps(runtime._context(saved))
     advance(runtime)
     assert requests[-1][0] != requests[-2][0]
@@ -367,3 +373,153 @@ def _run(runtime, failures):
         runtime.run_once()
     except BaseException as exc:
         failures.append(exc)
+
+
+def _attach_local_tools(runtime, tools, tmp_path):
+    from types import SimpleNamespace
+    from rynmesh.agent_runtime.local_tools import LocalTools
+    from rynmesh.agent_runtime.operation_ledger import OperationLedger
+
+    home = tmp_path / "local_home"
+    home.mkdir(parents=True, exist_ok=True)
+    local = LocalTools(SimpleNamespace(home=home), lambda: OperationLedger(home))
+    local.store = runtime.store
+    tools.local = local
+    return local
+
+
+def test_s02_i17_t1_background_process_triggers_running_work_reminder_before_reply(tmp_path):
+    import sys
+
+    runtime, model, tools, _ = make_runtime(
+        tmp_path,
+        assistant("Premature final reply while process runs."),
+        assistant("Checked background process; safe to finish now."),
+    )
+    local = _attach_local_tools(runtime, tools, tmp_path)
+    try:
+        row = runtime.create({"message": "Start a background job and summarize."})
+        proc_id = local.processes.start(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            tmp_path,
+            row["id"],
+        )
+        assert local.running_processes(row["id"]) == [proc_id]
+
+        # First model step replies without stopping/waiting -> re-queued with running_work reminder.
+        runtime.run_once()
+        mid = runtime.get(row["id"])
+        assert mid["status"] == "queued"
+        expected_note = (
+            f"Runtime note: processes or subagents this task started are still running ({proc_id}). "
+            "Wait for the result you need, or stop them, before the final reply."
+        )
+        assert any(m.get("content") == expected_note for m in mid["messages"])
+        assert any(
+            ev.get("type") == "turn_decision" and ev.get("reason") == "running_work"
+            for ev in mid["events"]
+        )
+        assert len(model.calls) == 1
+    finally:
+        local.processes.close()
+
+
+def test_s02_i17_t2_second_reply_completes_without_repeating_reminder(tmp_path):
+    import sys
+
+    runtime, model, tools, _ = make_runtime(
+        tmp_path,
+        assistant("First reply while server is running."),
+        assistant("Leaving the dev server running in background as requested."),
+    )
+    local = _attach_local_tools(runtime, tools, tmp_path)
+    try:
+        row = runtime.create({"message": "Keep dev server running in background."})
+        proc_id = local.processes.start(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            tmp_path,
+            row["id"],
+        )
+        assert local.running_processes(row["id"]) == [proc_id]
+
+        # Step 1 triggers reminder once; Step 2 completes directly even though process still runs.
+        runtime.run_once()
+        assert runtime.get(row["id"])["status"] == "queued"
+        runtime.run_once()
+        done = runtime.get(row["id"])
+        assert done["status"] == "completed"
+        assert done["result"] == "Leaving the dev server running in background as requested."
+        assert len(model.calls) == 2
+        running_work_events = [
+            ev for ev in done["events"] if ev.get("type") == "turn_decision" and ev.get("reason") == "running_work"
+        ]
+        assert len(running_work_events) == 1
+    finally:
+        local.processes.close()
+
+
+def test_s02_i17_t3_no_running_process_completes_without_reminder(tmp_path):
+    import sys
+
+    runtime, model, tools, _ = make_runtime(tmp_path, assistant("Completed cleanly."))
+    local = _attach_local_tools(runtime, tools, tmp_path)
+    try:
+        row = runtime.create({"message": "Run a fast command and reply."})
+        proc_id = local.processes.start([sys.executable, "-c", "print('done')"], tmp_path, row["id"])
+        local.processes.wait(proc_id, row["id"], lambda: False)
+        assert local.running_processes(row["id"]) == []
+
+        runtime.run_once()
+        done = runtime.get(row["id"])
+        assert done["status"] == "completed"
+        assert done["result"] == "Completed cleanly."
+        assert len(model.calls) == 1
+        assert not any(
+            ev.get("type") == "turn_decision" and ev.get("reason") == "running_work"
+            for ev in done["events"]
+        )
+        assert not any(
+            "processes or subagents this task started are still running" in (m.get("content") or "")
+            for m in done["messages"]
+        )
+    finally:
+        local.processes.close()
+
+
+def test_s02_i17_t4_running_subagent_triggers_running_work_reminder(tmp_path):
+    runtime, model, tools, _ = make_runtime(
+        tmp_path,
+        assistant("Replying before subagent finishes."),
+        assistant("Acknowledged running subagent and summarizing."),
+    )
+    local = _attach_local_tools(runtime, tools, tmp_path)
+    try:
+        parent = runtime.create({"message": "Delegate work to subagent."})
+        child = runtime.create({"message": "Subagent task."})
+
+        def _link_running_subagent(data):
+            data["tasks"][parent["id"]]["subagent_ids"] = [child["id"]]
+            data["tasks"][child["id"]].update(parent_task_id=parent["id"], status="running")
+
+        runtime.store.transaction(_link_running_subagent)
+
+        runtime.run_once()
+        mid = runtime.get(parent["id"])
+        assert mid["status"] == "queued"
+        expected_note = (
+            f"Runtime note: processes or subagents this task started are still running ({child['id']}). "
+            "Wait for the result you need, or stop them, before the final reply."
+        )
+        assert any(m.get("content") == expected_note for m in mid["messages"])
+        assert any(
+            ev.get("type") == "turn_decision" and ev.get("reason") == "running_work"
+            for ev in mid["events"]
+        )
+
+        runtime.run_once()
+        done = runtime.get(parent["id"])
+        assert done["status"] == "completed"
+        assert done["result"] == "Acknowledged running subagent and summarizing."
+        assert len(model.calls) == 2
+    finally:
+        local.processes.close()

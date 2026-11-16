@@ -36,7 +36,7 @@ def test_large_request_reaches_real_authenticated_api_adapter(tmp_path, text):
     install_inference_api(app, home=tmp_path, store=SimpleNamespace(peer_id='self'),
                           active_manager=lambda: manager, discover=lambda _: [],
                           execute_order=None, cancel_order=None)
-    with TestClient(app) as client:
+    with TestClient(app, base_url='http://127.0.0.1') as client:
         key = client.post('/api/local/llm/api-keys', json={'name': 'large-context-check'}).json()['key']
         payload = {'model': 'local/large', 'messages': [{'role': 'user', 'content': text}], 'max_tokens': 8}
         assert len(json.dumps(payload, ensure_ascii=False).encode()) > 1024 * 1024

@@ -37,7 +37,9 @@ from .types import RYNMESH_VERSION
 
 
 class PeerTransportError(RuntimeError):
-    pass
+    def __init__(self, *args: Any, server_time: int | None = None) -> None:
+        super().__init__(*args)
+        self.server_time = server_time
 
 
 # Browsing devices' content: listings are asked in parallel and each is bounded,
@@ -261,6 +263,8 @@ class HttpPeerClient:
         except TransportError as exc:
             if exc.reason == "too_large":
                 raise PeerTransportError("peer_media_too_large") from exc
+            if exc.reason == "unsupported_encoding":
+                raise PeerTransportError("peer_unsupported_encoding") from exc
             raise PeerTransportError(f"peer_http_error: {exc}") from exc
 
     def _json(self, path: str) -> dict[str, Any]:
@@ -297,12 +301,15 @@ class HttpPeerClient:
         except TransportError as exc:
             if exc.reason == "too_large":
                 raise PeerTransportError("peer_response_too_large") from None
+            if exc.reason == "unsupported_encoding":
+                raise PeerTransportError("peer_unsupported_encoding") from None
             # Keep plugin exception text out of the public error surface: a
             # third-party transport may include request/response bytes there.
             # The HTTP status is metadata, not body — carry it so a keyed
             # peer's 404 (key mismatch) is distinguishable from network loss.
             detail = f"http_{exc.status}" if exc.status else exc.reason
-            raise PeerTransportError(f"peer_http_error:{detail}") from None
+            st = exc.server_time if exc.status == 409 and type(exc.server_time) is int else None
+            raise PeerTransportError(f"peer_http_error:{detail}", server_time=st) from None
         if not raw.strip():
             # A 2xx with no body is a middlebox or a broken peer, never a
             # valid answer: treating it as {} once recorded settlements as
@@ -323,7 +330,8 @@ class HttpPeerClient:
         payload: dict[str, Any],
         *,
         max_event_bytes: int = 256 * 1024,
-        max_total_bytes: int = 8 * 1024 * 1024,
+        max_total_bytes: int | None = None,
+        max_output_tokens: int | None = None,
     ) -> Iterator[dict[str, Any]]:
         """POST JSON and validate a bounded UTF-8 NDJSON response incrementally.
 
@@ -335,7 +343,8 @@ class HttpPeerClient:
         stream = getattr(self.transport, "iter_post_bytes", None)
         if not callable(stream):
             raise PeerTransportError("peer_transport_stream_unsupported")
-        if max_event_bytes < 2 or max_total_bytes < max_event_bytes:
+        effective_total = peer_stream_total_limit(max_output_tokens) if max_total_bytes is None else max_total_bytes
+        if max_event_bytes < 2 or effective_total < max_event_bytes:
             raise PeerTransportError("peer_stream_limits_invalid")
         body = json.dumps(
             payload, separators=(",", ":"), sort_keys=True, ensure_ascii=False,
@@ -360,7 +369,7 @@ class HttpPeerClient:
                 body,
                 timeout_s=self.timeout_s,
                 max_chunk_bytes=min(64 * 1024, max_event_bytes),
-                max_total_bytes=max_total_bytes,
+                max_total_bytes=effective_total,
                 headers={"Content-Type": "application/json", "Accept": "application/x-ndjson"},
             )
             for chunk in chunks:
@@ -376,10 +385,16 @@ class HttpPeerClient:
         except UnicodeDecodeError:
             raise PeerTransportError("peer_stream_utf8_invalid") from None
         except TransportError as exc:
-            code = "peer_stream_too_large" if exc.reason == "too_large" else (
-                "peer_stream_limit_invalid" if exc.reason == "invalid_limit" else "peer_stream_failed"
-            )
+            if exc.reason == "too_large":
+                code = "peer_stream_too_large"
+            elif exc.reason == "invalid_limit":
+                code = "peer_stream_limit_invalid"
+            elif exc.reason == "unsupported_encoding":
+                code = "peer_unsupported_encoding"
+            else:
+                code = "peer_stream_failed"
             raise PeerTransportError(code) from None
+
         tail = buffered.rstrip("\r")
         if tail:
             yield decode_line(tail)
@@ -392,7 +407,18 @@ class HttpPeerClient:
         except TransportError as exc:
             if exc.reason == "too_large":
                 raise PeerTransportError("peer_response_too_large") from exc
+            if exc.reason == "unsupported_encoding":
+                raise PeerTransportError("peer_unsupported_encoding") from exc
             raise PeerTransportError(f"peer_http_error: {exc}") from exc
+
+
+MAX_NDJSON_STREAM_TOTAL_BYTES = 32 * 1024 * 1024
+MIN_NDJSON_STREAM_TOTAL_BYTES = 8 * 1024 * 1024
+
+
+def peer_stream_total_limit(max_output_tokens: int | None = None) -> int:
+    scaled = max_output_tokens * 16 if type(max_output_tokens) is int and max_output_tokens > 0 else 0
+    return min(MAX_NDJSON_STREAM_TOTAL_BYTES, max(MIN_NDJSON_STREAM_TOTAL_BYTES, scaled))
 
 
 def create_app(store: RynmeshStore | None = None):
@@ -677,6 +703,13 @@ def create_app(store: RynmeshStore | None = None):
         try:
             yield
         finally:
+            agent_runtime = getattr(lifespan_app.state, "agent_runtime", None)
+            agent_local = getattr(getattr(agent_runtime, "tools", None), "local", None)
+            agent_processes = getattr(agent_local, "processes", None)
+            if agent_processes is not None:
+                await _asyncio.to_thread(agent_processes.close)
+            if agent_local is not None:
+                await _asyncio.to_thread(agent_local.close)
             if drop_engine is not None:
                 await _asyncio.to_thread(drop_engine.stop)
             await registry.stop()
@@ -911,7 +944,8 @@ def create_app(store: RynmeshStore | None = None):
             "isSelf": is_self,
         }
 
-    from .peer_directory import FreshnessPolicy, add_advertised_providers, build_snapshot
+    from . import peer_directory as _peer_dir
+    from .peer_directory import FreshnessPolicy, add_advertised_providers
 
     # One freshness policy for devices and for the services they advertise.
     freshness = FreshnessPolicy.from_environment()
@@ -1092,7 +1126,7 @@ def create_app(store: RynmeshStore | None = None):
         for peer in active_store.discover_peers(
             network_id=network_id,
             include_self=False,
-            max_age_hours=float(os.environ.get("RYNMESH_DISCOVERY_MAX_AGE_HOURS", "24") or 24),
+            max_age_hours=FreshnessPolicy.from_environment().peer_record_max_age_hours,
             use_cache_on_error=True,
             cache_only=True,
         ).get("peers", []):
@@ -1227,7 +1261,7 @@ def create_app(store: RynmeshStore | None = None):
         capacities = active_store.list_job_capacities(
             network_id=network_id,
             capability=capability,
-            max_age_hours=float(os.environ.get("RYNMESH_DISCOVERY_MAX_AGE_HOURS", "24") or 24),
+            max_age_hours=FreshnessPolicy.from_environment().advertisement_max_age_hours,
         ).get("capacities", [])
         peer_names = {
             peer["id"]: peer["name"] for peer in discover_peer_items(network_id, include_self=True)
@@ -1372,11 +1406,20 @@ def create_app(store: RynmeshStore | None = None):
     @app.get("/api/local/node/status")
     def local_node_status(request: FastAPIRequest) -> dict[str, Any]:
         local_control(request)
+        from . import native_transport
+        from .private_permissions import key_protection_status
+        from .transport import transport_status
+
         network_id = control_network_id()
         local_items = active_store.list_local_content().get("content", [])
         return {
             "node_name": active_store.node_name,
             "peer_id": active_store.peer_id,
+            "key_protection": key_protection_status(active_store.home),
+            "transport": {
+                **transport_status(),
+                "native_p2p": native_transport.status(),
+            },
             "daemon_running": True,
             "desktop_managed": os.environ.get("RYNMESH_DESKTOP_MODE", "").strip().lower()
             in {"1", "true", "yes"},
@@ -1645,11 +1688,22 @@ def create_app(store: RynmeshStore | None = None):
             except Exception:
                 friend_ids = []
         with timer.phase("snapshot"):
-            snapshot = build_snapshot(
+            snapshot = _peer_dir.build_snapshot(
                 items, services, self_id=active_store.peer_id, network_id=network_id,
                 members=members, friend_ids=friend_ids, probe_for=peer_presence.get,
                 policy=freshness, now=datetime.now(timezone.utc),
             )
+            violations = _peer_dir.directory_violations(snapshot)
+            if violations:
+                snapshot = {**snapshot, "diagnostics": {"violations": violations}}
+                try:
+                    from . import diagnostic_events  # type: ignore[attr-defined]
+
+                    diagnostic_events.record("peer_directory", "directory_invariant_violation")
+                except ImportError:
+                    from .agent_runtime import diagnostic_log
+
+                    diagnostic_log.failure("peer_directory_violations", "agent_directory_invariant_violation")
         timer.finish()
         return snapshot
 
@@ -2032,6 +2086,7 @@ def create_app(store: RynmeshStore | None = None):
     def local_recap_settings(request: FastAPIRequest) -> dict[str, Any]:
         local_control(request)
         config = _recap_config()
+        has_pw = bool(config.smtp_password)
         return {
             "to_address": config.to_address,
             "from_address": config.from_address,
@@ -2042,7 +2097,8 @@ def create_app(store: RynmeshStore | None = None):
             "base_url": config.base_url,
             "per_source": config.per_source,
             # never echo the password back
-            "password_set": bool(config.smtp_password),
+            "has_smtp_password": has_pw,
+            "password_set": has_pw,
             "pdf_available": recap_service.pdf_available(),
             "send_hour_utc": int(_settings.get().get("recap", {}).get("send_hour_utc", 13)),
             "enabled": bool(_settings.get().get("recap", {}).get("enabled", False)),
@@ -2051,6 +2107,10 @@ def create_app(store: RynmeshStore | None = None):
 
     @app.patch("/api/local/recap/settings")
     async def local_recap_settings_update(request: FastAPIRequest) -> dict[str, Any]:
+        import base64
+
+        from . import os_secret
+
         local_control(request)
         body = await request.json()
         current = dict(_settings.get().get("recap", {}) or {})
@@ -2060,10 +2120,17 @@ def create_app(store: RynmeshStore | None = None):
             "smtp_host",
             "smtp_user",
             "base_url",
-            "smtp_password",
         ):
             if key in body:
                 current[key] = str(body[key])
+        if "smtp_password" in body:
+            raw_pw = str(body["smtp_password"] or "").strip()[:512]
+            current["smtp_password"] = None
+            current["smtp_password_protected"] = (
+                base64.b64encode(os_secret.protect(raw_pw.encode("utf-8"))).decode("ascii")
+                if raw_pw
+                else ""
+            )
         for key in ("smtp_port", "per_source", "send_hour_utc"):
             if key in body:
                 current[key] = int(body[key])
@@ -2644,8 +2711,10 @@ def create_app(store: RynmeshStore | None = None):
     # Beside the key that decrypts them, for the same reason: history belongs to
     # the identity the store owns, not to whatever $RYNMESH_HOME happens to say.
     _msg_store = _MsgStore(active_store.home)
-    _pubkey_cache: dict[str, str] = {}  # peer_id -> x25519 pub (TOFU)
+    _pubkey_cache: dict[str, str] = {}  # peer_id -> verified x25519 pub
     _msg_subscribers: list = []  # asyncio.Queue per SSE client
+    app.state.pubkey_cache = _pubkey_cache
+    app.state.security_events = []
     app.state.message_subscribers = _msg_subscribers
 
     def _resolve_endpoint(peer_id: str) -> str:
@@ -2662,9 +2731,9 @@ def create_app(store: RynmeshStore | None = None):
                 return str(ep).rstrip("/")
         return ""
 
-    def _resolve_pubkey(peer_id: str) -> str:
-        if peer_id in _pubkey_cache:
-            return _pubkey_cache[peer_id]
+    from . import mailbox_routes as _mailbox_routes
+
+    def _fetch_peer_pubkey(peer_id: str) -> str:
         ep = _resolve_endpoint(peer_id)
         if not ep:
             raise RuntimeError(f"no endpoint for peer {peer_id}")
@@ -2672,15 +2741,19 @@ def create_app(store: RynmeshStore | None = None):
 
         req = _urlreq.Request(ep + "/api/peer/pubkey", headers=network_key_header())
         with _urlreq.urlopen(req, timeout=10) as resp:
-            pub = json.load(resp)["x25519_pub"]
+            return str(json.load(resp)["x25519_pub"])
+
+    def _lookup_verified_pubkey(peer_id: str) -> str:
+        return _mailbox_routes.with_registry_fallback(
+            _fetch_peer_pubkey, store=active_store, cache={}, network_id=control_network_id
+        )(peer_id)
+
+    def _resolve_pubkey(peer_id: str) -> str:
+        if peer_id in _pubkey_cache:
+            return _pubkey_cache[peer_id]
+        pub = _lookup_verified_pubkey(peer_id)
         _pubkey_cache[peer_id] = pub
         return pub
-
-    from . import mailbox_routes as _mailbox_routes
-
-    _resolve_pubkey = _mailbox_routes.with_registry_fallback(
-        _resolve_pubkey, store=active_store, cache=_pubkey_cache, network_id=control_network_id
-    )
 
     def _transport(peer_id: str, header: dict) -> int:
         if os.environ.get("RYNMESH_MESSAGING_FORCE_MAILBOX", "").strip() == "1":
@@ -2858,12 +2931,58 @@ def create_app(store: RynmeshStore | None = None):
     def peer_pubkey() -> dict:
         return {"peer_id": active_store.peer_id, "x25519_pub": _peer_box.public_key_b64(_msg_priv)}
 
+    _PUBKEY_MISMATCH_WARNING = "对方身份密钥与记录不一致"
+
+    def _record_pubkey_mismatch(peer_id: str, reason: str) -> None:
+        ts = _dt.now(_UTC).isoformat(timespec="seconds")
+        event_row = {
+            "code": "peer_pubkey_mismatch",
+            "peer_id": peer_id,
+            "reason": reason,
+            "message": _PUBKEY_MISMATCH_WARNING,
+            "ts": ts,
+        }
+        app.state.security_events.append(event_row)
+        if len(app.state.security_events) > 200:
+            del app.state.security_events[:-200]
+        _audit().append(
+            "security",
+            _PUBKEY_MISMATCH_WARNING,
+            details={"code": "peer_pubkey_mismatch", "peer_id": peer_id, "reason": reason},
+        )
+        _publish(
+            {
+                "kind": "security_warning",
+                "code": "peer_pubkey_mismatch",
+                "from": peer_id,
+                "to": active_store.peer_id,
+                "warning": _PUBKEY_MISMATCH_WARNING,
+                "ts": ts,
+            }
+        )
+
     @app.post("/api/peer/msg")
     async def peer_msg(request: FastAPIRequest) -> dict:
         header = await request.json()
-        fp = header.get("from_pub")
-        if fp and header.get("from"):
-            _pubkey_cache.setdefault(str(header["from"]), str(fp))  # TOFU
+        if not isinstance(header, dict):
+            raise HTTPException(status_code=400, detail="invalid_payload")
+        sender = str(header.get("from") or "")
+        if not sender:
+            raise HTTPException(status_code=400, detail="missing_sender")
+        fp = str(header.get("from_pub") or "")
+        if sender in _pubkey_cache:
+            if not fp or fp != _pubkey_cache[sender]:
+                _record_pubkey_mismatch(sender, "cached_mismatch")
+                raise HTTPException(status_code=403, detail="peer_pubkey_mismatch")
+        else:
+            try:
+                expected_pub = await _asyncio.to_thread(_lookup_verified_pubkey, sender)
+            except Exception:
+                expected_pub = ""
+            if not fp or not expected_pub or fp != expected_pub:
+                _record_pubkey_mismatch(sender, "registry_mismatch" if expected_pub else "unverified_sender")
+                raise HTTPException(status_code=403, detail="peer_pubkey_mismatch")
+            _pubkey_cache[sender] = fp
         record = _messenger.receive(header)
         if not record.get("duplicate"):  # a retried POST must not double the stream
             _publish(record)

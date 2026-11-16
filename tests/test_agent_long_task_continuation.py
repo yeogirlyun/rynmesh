@@ -163,23 +163,25 @@ def test_default_budget_extends_visibly_and_stops_at_its_ceiling(tmp_path, monke
     small_segments(monkeypatch, steps=2)
     monkeypatch.setitem(budget.DEFAULT_LIMITS, "max_total_model_calls", 3)
     monkeypatch.setitem(budget.RANGES, "max_total_model_calls", (1, 7))
-    runtime, model, _, _ = make_runtime(tmp_path, *[inspect(i) for i in range(1, 20)])
+    runtime, model, _, _ = make_runtime(
+        tmp_path,
+        *[inspect(i) for i in range(1, 9)],
+        assistant("Finished past old ceiling."),
+    )
     row = runtime.create({"message": "Inspect many services"})
     advance(runtime, 40)
     done = runtime.get(row["id"])
-    assert len(model.calls) == 7
-    assert done["status"] == "failed" and done["error"] == "agent_model_call_budget_exhausted"
-    assert done["outcome"]["status"] == "budget_limited"
+    assert len(model.calls) == 9
+    assert done["status"] == "completed"
     assert done["budget"]["limit_sources"]["max_total_model_calls"] == "default"
-    assert done["outcome"]["budget_stop"]["source"] == "default"
     extended = [item for item in done["events"] if item["type"] == "budget_auto_extended"]
-    assert [item["extended"]["max_total_model_calls"] for item in extended] == [6, 7]
+    assert [item["extended"]["max_total_model_calls"] for item in extended] == [6, 9]
     assert all(item["reason"] == "default_policy" for item in extended)
 
 
 def test_legacy_task_without_limit_sources_is_not_relaxed_by_default_values(tmp_path, monkeypatch):
     small_segments(monkeypatch, steps=2)
-    monkeypatch.setitem(budget.DEFAULT_LIMITS, "max_total_model_calls", 3)
+    monkeypatch.setitem(budget.DEFAULT_LIMITS, "max_total_model_calls", 5)
     runtime, model, _, _ = make_runtime(tmp_path, *[inspect(i) for i in range(1, 20)])
     row = runtime.create({"message": "Inspect many services"})
 
@@ -187,24 +189,24 @@ def test_legacy_task_without_limit_sources_is_not_relaxed_by_default_values(tmp_
         legacy = data["tasks"][row["id"]]
         legacy.pop("limits_source")
         legacy["budget"].pop("limit_sources")
-        # Values equal the defaults; that alone must not prove default intent.
-        assert legacy["limits"]["max_steps"] == 2
-        assert legacy["budget"]["limits"]["max_total_model_calls"] == budget.DEFAULT_LIMITS["max_total_model_calls"]
+        # Non-default values stay hard legacy_unknown; default values without budget_changed migrate.
+        legacy["limits"]["max_steps"] = 3
+        legacy["budget"]["limits"]["max_total_model_calls"] = 4
     runtime.store.transaction(make_legacy)
     assert runtime.get(row["id"])["budget"]["limit_sources"]["max_total_model_calls"] == "legacy_unknown"
 
     advance(runtime, 10)
     first = runtime.get(row["id"])
-    assert len(model.calls) == 2
+    assert len(model.calls) == 3
     assert first["status"] == "failed" and first["error"] == "agent_step_limit"
     assert first["outcome"]["budget_stop"]["source"] == "legacy_unknown"
     assert not segment_events(first)
     runtime.add_message(row["id"], {"message": "继续", "expected_revision": first["revision"]})
     advance(runtime, 10)
     second = runtime.get(row["id"])
-    assert len(model.calls) == 3
+    assert len(model.calls) == 4
     assert second["status"] == "failed" and second["error"] == "agent_model_call_budget_exhausted"
-    assert second["budget"]["limits"]["max_total_model_calls"] == 3
+    assert second["budget"]["limits"]["max_total_model_calls"] == 4
     with pytest.raises(AgentError, match="agent_model_call_budget_exhausted"):
         runtime.add_message(row["id"], {"message": "继续", "expected_revision": second["revision"]})
     assert not any(item["type"] == "budget_auto_extended" for item in runtime.get(row["id"])["events"])
@@ -217,8 +219,14 @@ def test_limit_sources_for_default_owner_and_legacy_rows():
     budget.set_owner_limits(owner, {"max_total_tokens": 5000})
     assert budget.public(owner)["limit_sources"]["max_total_tokens"] == "owner"
     assert budget.public(owner)["limits"]["max_total_tokens"] == 5000
-    # Persisted rows from before limit sources existed.
+    # Persisted rows with default values and no budget_changed migrate to default;
+    # non-default values (or rows with budget_changed) remain legacy_unknown hard limits.
+    migrated = {"limits": {"max_seconds": 30}, "steps": 0, "elapsed_seconds": 0,
+                "budget": {"limits": dict(budget.DEFAULT_LIMITS), "round": 1, "records": [], "legacy_usage_unknown": False,
+                           "legacy_model_calls": 0, "legacy_tool_calls": 0, "legacy_seconds": 0.0}}
+    assert set(budget.public(migrated)["limit_sources"].values()) == {"default"}
     legacy = {"limits": {"max_seconds": 30}, "steps": 0, "elapsed_seconds": 0,
+              "events": [{"seq": 1, "type": "budget_changed"}],
               "budget": {"limits": dict(budget.DEFAULT_LIMITS), "round": 1, "records": [], "legacy_usage_unknown": False,
                          "legacy_model_calls": 0, "legacy_tool_calls": 0, "legacy_seconds": 0.0}}
     assert set(budget.public(legacy)["limit_sources"].values()) == {"legacy_unknown"}
@@ -510,7 +518,7 @@ def test_owner_followup_handles_default_time_budget_near_its_ceiling(tmp_path):
         state["legacy_seconds"] = budget.RANGES["max_total_seconds"][1] - 0.25
     runtime.store.transaction(spend)
     followed = runtime.add_message(task["id"], {"message": "Continue the work", "expected_revision": done["revision"]})
-    assert followed["budget"]["limits"]["max_total_seconds"] == budget.RANGES["max_total_seconds"][1]
+    assert followed["budget"]["limits"]["max_total_seconds"] == budget.RANGES["max_total_seconds"][1] + budget.DEFAULT_LIMITS["max_total_seconds"]
     assert followed["budget"]["lifetime"]["charged_seconds"] >= budget.RANGES["max_total_seconds"][1] - 0.25
     assert any("max_total_seconds" in item.get("extended", {}) for item in followed["events"]
                if item["type"] == "budget_auto_extended")

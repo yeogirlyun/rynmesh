@@ -278,8 +278,9 @@ def test_webdav_paths_and_untrusted_xml():
     )
     try:
         assert connector.url("报告.txt").endswith("/work/%E6%8A%A5%E5%91%8A.txt")
-        with pytest.raises(NasError):
-            connector.url("%2e%2e/secret")
+        assert connector.url("%2e%2e/secret").endswith("/work/%252e%252e/secret")
+        with pytest.raises(NasError, match="invalid_path"):
+            connector.url("../secret")
         connector.request = lambda *a, **k: b'<!DOCTYPE test [<!ENTITY a "bad">]><x />'
         with pytest.raises(NasError, match="invalid_directory"):
             connector.list("")
@@ -437,10 +438,13 @@ def test_writes_invalidate_directory_and_connections_are_reused(plugin):
     before = MemoryConnector.opened
     plugin.listing(source)
     plugin.listing(source)
-    assert MemoryConnector.opened == before + 1
+    assert MemoryConnector.opened == before + 2
+    write_before = MemoryConnector.opened
     plugin.operate(source, "write", "new.txt", b"new")
+    plugin.operate(source, "write", "second.txt", b"second")
+    assert MemoryConnector.opened == write_before + 1
     assert plugin.listing(source, cached=True)["entries"] is None
-    assert plugin.listing(source)["entries"][0]["name"] == "new.txt"
+    assert [e["name"] for e in plugin.listing(source)["entries"]] == ["new.txt", "second.txt"]
 
 
 def test_removed_source_cannot_repopulate_cache(plugin):

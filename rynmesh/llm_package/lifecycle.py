@@ -5,15 +5,26 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import socket
 import stat
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from . import catalog, runtime_docker, runtime_native
 from .adapters import AdapterError, adapter_from_manifest
+from .context_safety import CONTEXT_ESTIMATE_CAPABILITY
 from .errors import LifecycleError
-from .hardware import HardwareReport, detect_hardware, recommend, usable_memory_mb
+from .gguf_import import NativeModelError, inspect_model
+from .hardware import (
+    HardwareReport,
+    cap_local_context_window,
+    default_local_output_tokens,
+    detect_hardware,
+    recommend,
+    usable_memory_mb,
+)
 from .manifest import (
     LLMPackageManifest,
     PrivacyPolicy,
@@ -27,7 +38,7 @@ from .model_download import download as _download
 # The "light" catalog profile, kept available under its historical names:
 # existing tests/docs/CLI callers reference these three module constants.
 _LIGHT_PROFILE = catalog.profile_by_name("light")
-DEFAULT_MODEL_URL = _LIGHT_PROFILE.url
+DEFAULT_MODEL_URL = object.__getattribute__(_LIGHT_PROFILE, "url")
 DEFAULT_MODEL_SHA256 = _LIGHT_PROFILE.sha256
 DEFAULT_MODEL_REVISION = DEFAULT_MODEL_URL.split("/resolve/", 1)[1].split("/", 1)[0]
 GGUF_MAGIC = b"GGUF"
@@ -58,12 +69,19 @@ def select_runtime(preference: str = "auto", *, root: str | Path | None = None):
     if choice in {"native", RUNTIME_NATIVE}:
         ok, reason = runtime_native.available(root)
         if not ok:
-            raise LifecycleError(reason)
+            raise LifecycleError(reason, code="runtime_unavailable_for_platform")
         return runtime_native
     if choice in {"docker", RUNTIME_DOCKER}:
         ok, reason = runtime_docker.available()
         if not ok:
-            raise LifecycleError(reason)
+            docker_code = (
+                "docker_not_installed"
+                if reason == runtime_docker.DOCKER_NOT_INSTALLED_REASON
+                else "docker_engine_not_running"
+                if reason == runtime_docker.DOCKER_ENGINE_NOT_RUNNING_REASON
+                else None
+            )
+            raise LifecycleError(reason, code=docker_code)
         return runtime_docker
     if choice != "auto":
         raise LifecycleError("runtime preference must be auto, native, or docker")
@@ -73,8 +91,16 @@ def select_runtime(preference: str = "auto", *, root: str | Path | None = None):
     docker_ok, docker_reason = runtime_docker.available()
     if docker_ok:
         return runtime_docker
+    auto_code = (
+        "docker_not_installed"
+        if docker_reason == runtime_docker.DOCKER_NOT_INSTALLED_REASON
+        else "docker_engine_not_running"
+        if docker_reason == runtime_docker.DOCKER_ENGINE_NOT_RUNNING_REASON
+        else "runtime_unavailable_for_platform"
+    )
     raise LifecycleError(
-        f"no local inference runtime is available: {native_reason}; {docker_reason}"
+        f"no local inference runtime is available: {native_reason}; {docker_reason}",
+        code=auto_code,
     )
 
 
@@ -146,21 +172,91 @@ def validate_gguf(path: str | Path, *, report: HardwareReport | None = None,
             f"model needs about {estimated_memory} MiB but the conservative available limit is "
             f"{safe_memory} MiB; pass --accept-risk to override"
         )
+    declared_context = 8192
+    try:
+        inspected = inspect_model(source)
+        declared_context = int(inspected.get("context_window", 8192))
+    except NativeModelError:
+        declared_context = 8192
+    runtime_window = cap_local_context_window(
+        declared_context, safe_memory, weights_mb=int(size / 2**20)
+    )
     return {"path": str(source), "format": "GGUF", "size_bytes": size,
             "estimated_memory_mb": estimated_memory, "fits": fits,
+            "context_window": runtime_window,
             "fingerprint": fingerprint_file(source)}
 
 
-def wait_healthy(manifest: LLMPackageManifest, *, timeout_s: float = 120) -> dict[str, Any]:
+def _port_in_use(port: int) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+            return True
+    except OSError:
+        pass
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            probe.bind(("127.0.0.1", port))
+        return False
+    except OSError:
+        return True
+
+
+def _select_managed_port(port: int | None, *, root: Path, package_id: str) -> int:
+    if port is not None:
+        return int(port)
+    existing = runtime_native._read_record(runtime_native._pid_path(root, package_id))
+    if existing and existing.get("port", 0) > 0 and runtime_native._alive(existing["pid"], existing["server"], existing["port"]):
+        return int(existing["port"])
+    if not _port_in_use(18080):
+        return 18080
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+def _default_health_timeout(manifest: LLMPackageManifest) -> float:
+    size_bytes = 0
+    if manifest.model_path:
+        try:
+            size_bytes = int(Path(manifest.model_path).expanduser().stat().st_size)
+        except OSError:
+            size_bytes = 0
+    return min(600.0, 120.0 + (max(0, size_bytes) / (1024**3)) * 30.0)
+
+
+def wait_healthy(manifest: LLMPackageManifest, *, timeout_s: float | None = None) -> dict[str, Any]:
+    effective_timeout = _default_health_timeout(manifest) if timeout_s is None else float(timeout_s)
     adapter = adapter_from_manifest(manifest)
-    deadline = time.monotonic() + timeout_s
+    port = int(urlparse(manifest.base_url).port or 8080) if manifest.base_url else 8080
+    deadline = time.monotonic() + effective_timeout
     latest: dict[str, Any] = {"ok": False, "error": "not started"}
-    while time.monotonic() < deadline:
+    while True:
         latest = adapter.health()
         if latest.get("ok"):
             return latest
-        time.sleep(1)
-    raise LifecycleError(f"runtime did not become healthy: {latest.get('error', 'unknown error')}")
+        if manifest.runtime == RUNTIME_NATIVE:
+            st = runtime_native.state(manifest)
+            if not st.get("running") and st.get("status") != "adopted":
+                category = runtime_native.last_exit_category(manifest)
+                if category == "port_in_use" or (_port_in_use(port) and category == "unknown"):
+                    raise LifecycleError("端口被其他程序占用", code="runtime_port_in_use")
+                raise LifecycleError(f"运行时进程已退出（{category}）", code=f"runtime_exited_{category}")
+        elif manifest.runtime == RUNTIME_DOCKER:
+            st = runtime_docker.state(manifest)
+            if st.get("installed") and not st.get("running"):
+                raise LifecycleError("运行时进程已退出（unknown）", code="runtime_exited_unknown")
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(min(1.0, max(0.01, deadline - time.monotonic())))
+    if manifest.runtime in {RUNTIME_NATIVE, RUNTIME_DOCKER}:
+        if latest.get("error") == "model_not_found":
+            raise LifecycleError("端口被其他程序占用", code="runtime_port_in_use")
+        raise LifecycleError("模型仍在加载，健康等待超时", code="runtime_startup_timeout")
+    if _port_in_use(port) and latest.get("error") == "model_not_found":
+        raise LifecycleError("端口被其他程序占用", code="runtime_port_in_use")
+    raise LifecycleError(f"runtime did not become healthy: {latest.get('error', 'unknown error')}", code="runtime_startup_timeout")
 
 
 def self_test(manifest: LLMPackageManifest) -> dict[str, Any]:
@@ -218,6 +314,7 @@ def _resolve_install_profile(
             "context_window": metadata["context_window"],
             "max_concurrent": metadata["max_concurrent"],
             "estimated_memory_mb": metadata["estimated_memory_mb"],
+            "agent_capable": bool(metadata.get("agent_capable", False)),
             "license_id": "unknown",
             "license_notice": "Operator must review and comply with the model and runtime licenses.",
         }
@@ -246,19 +343,21 @@ def _resolve_install_profile(
         "name": resolved.profile, "url": resolved.url, "sha256": resolved.sha256,
         "size_bytes": resolved.size_bytes, "alias": resolved.model_alias,
         "context_window": resolved.context_window, "max_concurrent": resolved.max_concurrent,
-        "estimated_memory_mb": resolved.estimated_memory_mb, "license_id": resolved.license_id,
+        "estimated_memory_mb": resolved.estimated_memory_mb, "agent_capable": resolved.agent_capable,
+        "license_id": resolved.license_id,
         "license_notice": resolved.license_notice,
     }
 
 
 def install_managed(*, package_id: str = "local-small", root: str | Path | None = None,
-                    port: int = 18080, model_url: str = "", expected_sha256: str = "",
+                    port: int | None = None, model_url: str = "", expected_sha256: str = "",
                     expected_size_bytes: int | None = None,
                     accept_risk: bool = False, runtime: str = "auto", profile: str = "auto",
                     progress: ProgressCallback | None = None,
                     cancel_check: CancelCheck | None = None) -> dict[str, Any]:
     package_id = _validate_package_id(package_id)
     base = Path(root or default_root()).expanduser()
+    chosen_port = _select_managed_port(port, root=base, package_id=package_id)
     _progress(progress, cancel_check, "hardware", 5, "Checking available hardware")
     report = detect_hardware(base)
     choices = recommend(report)
@@ -290,13 +389,19 @@ def install_managed(*, package_id: str = "local-small", root: str | Path | None 
         )
     _progress(progress, cancel_check, "pull_runtime", 65, "Preparing the local inference runtime")
     backend.prepare(progress=progress, cancel_check=cancel_check, root=base)
+    weights_mb = int((selected.get("size_bytes") or 0) / 2**20)
+    runtime_window = cap_local_context_window(
+        int(selected["context_window"]), usable_memory_mb(report), weights_mb=weights_mb
+    )
+    runtime_output = default_local_output_tokens(runtime_window)
     manifest = LLMPackageManifest(
         package_id=package_id, mode="managed", public_model_alias=selected["alias"],
         adapter="openai_compatible", runtime=backend.RUNTIME_ID, model=selected["alias"],
-        model_path=str(model_path), model_owned=True, base_url=f"http://127.0.0.1:{port}",
+        capabilities=["text-generation", CONTEXT_ESTIMATE_CAPABILITY],
+        model_path=str(model_path), model_owned=True, base_url=f"http://127.0.0.1:{chosen_port}",
         runtime_dir=str(base) if backend.RUNTIME_ID == RUNTIME_NATIVE else "",
         checksum=checksum, model_fingerprint=checksum,
-        context_window=int(selected["context_window"]), max_output_tokens=256,
+        context_window=runtime_window, max_output_tokens=runtime_output,
         max_concurrent=int(selected["max_concurrent"]),
         hardware_requirements={"estimated_memory_mb": int(selected["estimated_memory_mb"])},
         install_source={"model_url": selected["url"], "profile": selected["name"],
@@ -324,24 +429,29 @@ def install_managed(*, package_id: str = "local-small", root: str | Path | None 
 
 
 def import_gguf(*, source: str | Path, package_id: str, alias: str,
-                root: str | Path | None = None, port: int = 18080,
+                root: str | Path | None = None, port: int | None = None,
                 accept_risk: bool = False, runtime: str = "auto",
                 progress: ProgressCallback | None = None,
                 cancel_check: CancelCheck | None = None) -> dict[str, Any]:
     package_id = _validate_package_id(package_id)
     base = Path(root or default_root()).expanduser()
+    chosen_port = _select_managed_port(port, root=base, package_id=package_id)
     _progress(progress, cancel_check, "validate_model", 10, "Validating the GGUF file in place")
     details = validate_gguf(source, allow_risk=accept_risk)
     _progress(progress, cancel_check, "runtime_check", 25, "Checking the local inference runtime")
     backend = select_runtime(runtime, root=base)
     _progress(progress, cancel_check, "pull_runtime", 40, "Preparing the local inference runtime")
     backend.prepare(progress=progress, cancel_check=cancel_check, root=base)
+    imported_window = int(details.get("context_window", 8192))
+    imported_output = default_local_output_tokens(imported_window)
     manifest = LLMPackageManifest(
         package_id=package_id, mode="import_gguf", public_model_alias=alias,
         adapter="openai_compatible", runtime=backend.RUNTIME_ID, model=alias,
-        model_path=details["path"], model_owned=False, base_url=f"http://127.0.0.1:{port}",
+        capabilities=["text-generation", CONTEXT_ESTIMATE_CAPABILITY],
+        model_path=details["path"], model_owned=False, base_url=f"http://127.0.0.1:{chosen_port}",
         runtime_dir=str(base) if backend.RUNTIME_ID == RUNTIME_NATIVE else "",
         checksum=details["fingerprint"], model_fingerprint=details["fingerprint"],
+        context_window=imported_window, max_output_tokens=imported_output,
         hardware_requirements={"estimated_memory_mb": details["estimated_memory_mb"]},
         install_source={**backend.install_source(None), "kind": "user_owned_read_only_gguf"},
     )
@@ -364,6 +474,52 @@ def import_gguf(*, source: str | Path, package_id: str, alias: str,
             "self_test": result}
 
 
+def _probe_local_api_limits(active: Any, model_name: str, timeout_s: float) -> tuple[int | None, int | None]:
+    """Read `context_window` / `max_output_tokens` from `/v1/models` or llama.cpp `/props`."""
+    detected_window: int | None = None
+    detected_output: int | None = None
+    try:
+        entries = active.models() if hasattr(active, "models") else []
+    except Exception:
+        entries = []
+    if isinstance(entries, list) and entries:
+        matched = next(
+            (
+                item for item in entries
+                if isinstance(item, dict)
+                and str(item.get("id") or item.get("name") or item.get("model") or "") == model_name
+            ),
+            entries[0] if len(entries) == 1 and isinstance(entries[0], dict) else None,
+        )
+        if isinstance(matched, dict):
+            for key in ("context_window", "context_length", "max_model_len"):
+                val = matched.get(key)
+                if type(val) is int and 256 <= val <= 2_000_000:
+                    detected_window = val
+                    break
+            for key in ("max_output_tokens", "max_completion_tokens"):
+                val = matched.get(key)
+                if type(val) is int and 1 <= val <= 393_216:
+                    detected_output = val
+                    break
+    if detected_window is None and hasattr(active, "_json"):
+        try:
+            props = active._json("/props", None, min(5.0, float(timeout_s)))
+        except Exception:
+            props = None
+        if isinstance(props, dict):
+            gen_settings = props.get("default_generation_settings")
+            candidates = [
+                gen_settings.get("n_ctx") if isinstance(gen_settings, dict) else None,
+                props.get("n_ctx"),
+            ]
+            for val in candidates:
+                if type(val) is int and 256 <= val <= 2_000_000:
+                    detected_window = val
+                    break
+    return detected_window, detected_output
+
+
 def connect_local_api(*, base_url: str, package_id: str, alias: str, model: str = "",
                       api_key_env: str = "", adapter: str = "openai_compatible",
                       root: str | Path | None = None, allow_non_loopback: bool = False,
@@ -378,7 +534,9 @@ def connect_local_api(*, base_url: str, package_id: str, alias: str, model: str 
     manifest = LLMPackageManifest(
         package_id=package_id, mode="ollama" if adapter == "ollama" else "openai_compatible",
         public_model_alias=alias, adapter=adapter, runtime=RUNTIME_EXTERNAL, base_url=base_url,
+        capabilities=["text-generation", CONTEXT_ESTIMATE_CAPABILITY],
         api_key_env=api_key_env, model=model, allow_non_loopback=allow_non_loopback,
+        context_window=8192, max_output_tokens=2048,
         install_source={"kind": "existing_local_service"},
     )
     active = adapter_from_manifest(manifest)
@@ -387,6 +545,18 @@ def connect_local_api(*, base_url: str, package_id: str, alias: str, model: str 
         raise LifecycleError(f"local API health check failed: {health.get('error', 'unknown error')}")
     if not manifest.model:
         manifest.model = str(health.get("model") or "")
+    detected_window, detected_output = _probe_local_api_limits(
+        active, manifest.model, manifest.timeout_seconds
+    )
+    if detected_window is not None:
+        manifest.context_window = detected_window
+        manifest.max_output_tokens = (
+            min(detected_output, detected_window)
+            if detected_output is not None
+            else default_local_output_tokens(detected_window)
+        )
+    elif detected_output is not None:
+        manifest.max_output_tokens = min(detected_output, manifest.context_window)
     capabilities = active.capabilities()
     if capabilities.get("streaming") and "streaming" not in manifest.capabilities:
         manifest.capabilities.append("streaming")
@@ -405,15 +575,21 @@ def connect_cli(*, kind: str, root: str | Path | None = None,
     """Prepare an installed CLI as a text-only provider without sharing credentials."""
     if kind not in {"codex_cli", "claude_cli", "antigravity_cli"}:
         raise LifecycleError("unsupported CLI kind")
+    from .cli_models import CLI_FALLBACK_MAX_OUTPUT_TOKENS, CLI_FALLBACK_WINDOWS
     title = {"codex_cli": "Codex CLI", "claude_cli": "Claude Code", "antigravity_cli": "Antigravity"}[kind]
-    cli_windows = {"codex_cli": 872000, "antigravity_cli": 1048576, "claude_cli": 1000000}
-    cli_outputs = {"codex_cli": 128000, "antigravity_cli": 128000, "claude_cli": 128000}
+    cli_windows = dict(CLI_FALLBACK_WINDOWS)
+    cli_outputs = {k: CLI_FALLBACK_MAX_OUTPUT_TOKENS for k in cli_windows}
     cli_concurrency = {"codex_cli": 16, "antigravity_cli": 16, "claude_cli": 8}
     manifest = LLMPackageManifest(
         package_id=kind.replace("_", "-"), mode=kind,
         public_model_alias=title, adapter=kind, runtime="external",
-        capabilities=["text-generation", "client-tools", "buffered-streaming"] if kind in {"codex_cli", "antigravity_cli"} else ["text-generation", "api-text-only"],
+        capabilities=(
+            ["text-generation", "client-tools", "buffered-streaming", CONTEXT_ESTIMATE_CAPABILITY]
+            if kind in {"codex_cli", "antigravity_cli"}
+            else ["text-generation", "api-text-only", CONTEXT_ESTIMATE_CAPABILITY]
+        ),
         context_window=cli_windows[kind], max_output_tokens=cli_outputs[kind],
+        context_window_basis="cli_default",
         timeout_seconds=300, max_concurrent=cli_concurrency[kind],
         privacy=PrivacyPolicy(policy_text="CLI content may be sent to the configured cloud model provider."),
         license_notice="The owner must sign in to this CLI locally and follow its terms.",

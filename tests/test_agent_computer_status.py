@@ -210,7 +210,7 @@ def assert_valid_computer_status_dto(payload: dict[str, Any], expected_task_id: 
     _assert_valid_evidence(plugin["evidence"])
 
     native = payload["native"]
-    assert set(native.keys()) == {
+    assert {
         "platform",
         "executable_presence",
         "status",
@@ -218,8 +218,25 @@ def assert_valid_computer_status_dto(payload: dict[str, Any], expected_task_id: 
         "protocol_version",
         "evidence",
         "reason_code",
+    } <= set(native.keys()) <= {
+        "platform",
+        "platform_supported",
+        "platform_name",
+        "emulated_x64",
+        "executable_presence",
+        "status",
+        "version",
+        "protocol_version",
+        "evidence",
+        "reason_code",
+        "reason",
+        "message",
     }
     assert native["platform"] in {"windows", "unsupported", "unknown"}
+    if "platform_supported" in native:
+        assert type(native["platform_supported"]) is bool
+    if "emulated_x64" in native:
+        assert type(native["emulated_x64"]) is bool
     assert native["executable_presence"] in {"present", "missing", "unknown"}
     assert native["status"] in {"unknown", "missing", "unverified", "ready", "incompatible", "error"}
     assert native["reason_code"] in CONTRACT_REASON_CODES
@@ -1515,4 +1532,3 @@ def test_observation_requires_correlated_receipts_and_tracks_selection_epoch(tmp
         assert obs_after["selection_epoch"] == orig_obs_epoch
         assert obs_after["matches_current_selection"] is False
         assert obs_after["selection_epoch"] != r_switched["context"]["selection_epoch"]
-

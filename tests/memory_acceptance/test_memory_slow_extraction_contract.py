@@ -34,6 +34,9 @@ def prepare_delayed_provider(env, monkeypatch, elapsed, action=None):
     fake_time = SimpleNamespace(
         time=lambda: wall_start + elapsed_clock["value"],
         monotonic=lambda: mono_start + elapsed_clock["value"],
+        localtime=lambda secs=None: time.localtime(
+            (wall_start + elapsed_clock["value"]) if secs is None else secs
+        ),
         strftime=time.strftime, gmtime=time.gmtime,
     )
     monkeypatch.setattr(worker, "time", fake_time)

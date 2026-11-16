@@ -16,6 +16,9 @@ pub enum ErrorCode {
     WindowMinimized,
     WindowOccluded,
     WindowCaptureProtected,
+    DesktopLocked,
+    ElementDisabled,
+    ElementOffscreen,
     ObservationUnavailable,
     UiaUnavailable,
     UiaElementStale,
@@ -50,6 +53,9 @@ impl ErrorCode {
             Self::WindowMinimized => "window_minimized",
             Self::WindowOccluded => "window_occluded",
             Self::WindowCaptureProtected => "window_capture_protected",
+            Self::DesktopLocked => "desktop_locked",
+            Self::ElementDisabled => "element_disabled",
+            Self::ElementOffscreen => "element_offscreen",
             Self::ObservationUnavailable => "observation_unavailable",
             Self::UiaUnavailable => "uia_unavailable",
             Self::UiaElementStale => "uia_element_stale",
@@ -85,6 +91,9 @@ impl ErrorCode {
             Self::WindowMinimized => "Target window is minimized and cannot be operated without restore.",
             Self::WindowOccluded => "Target point or window is occluded by an unrelated window.",
             Self::WindowCaptureProtected => "Target window is protected by display affinity and cannot be captured.",
+            Self::DesktopLocked => "Active input desktop is locked or switched to a secure desktop.",
+            Self::ElementDisabled => "Target UIA element is currently disabled.",
+            Self::ElementOffscreen => "Target UIA element is currently offscreen.",
             Self::ObservationUnavailable => "Window state observation could not be completed.",
             Self::UiaUnavailable => "Native COM UIA service is unavailable for the target window.",
             Self::UiaElementStale => "Target UIA element runtimeId is stale or not present in the window.",
@@ -124,6 +133,26 @@ pub enum ErrorStage {
     Session,
 }
 
+impl ErrorStage {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Protocol => "protocol",
+            Self::Validate => "validate",
+            Self::Observe => "observe",
+            Self::WaitingLock => "waiting_lock",
+            Self::Prepare => "prepare",
+            Self::Ready => "ready",
+            Self::Activating => "activating",
+            Self::Validating => "validating",
+            Self::InputStarted => "input_started",
+            Self::Commit => "commit",
+            Self::PostObserve => "post_observe",
+            Self::Cancel => "cancel",
+            Self::Session => "session",
+        }
+    }
+}
+
 /// Wire-level mutation state per frozen design: `none | possible | delivered`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -134,6 +163,14 @@ pub enum MutationState {
 }
 
 impl MutationState {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Possible => "possible",
+            Self::Delivered => "delivered",
+        }
+    }
+
     pub const fn max_monotonic(self, other: Self) -> Self {
         match (self, other) {
             (Self::Delivered, _) | (_, Self::Delivered) => Self::Delivered,
@@ -184,7 +221,6 @@ pub enum DiagnosticReason {
     MissingRequestId,
     MissingMethod,
     AlreadyInitialized,
-    SafetyConstraintDisabled,
     WorkerInstanceMismatch,
     HwndParseFailed,
     IsWindowFalse,
@@ -201,17 +237,62 @@ pub enum DiagnosticReason {
     ForegroundVerificationFailed,
     MinimizedRestoreDisallowed,
     MutexWaitTimeout,
-    MutexAbandoned,
     MutexReleaseFailed,
     DesktopIdentityLookupFailed,
+    DesktopLocked,
+    WindowCaptureProtected,
     SendInputShortCount,
     UiaPatternMissing,
+    UiaElementNotFound,
+    UiaComCallFailed,
+    UiaAppNotResponding,
+    ElementDisabled,
+    ElementOffscreen,
     PasswordRedacted,
     DirectLaunchDisallowed,
     CancelledBeforeLock,
     CancelledWhileReady,
     CancelledDuringExecution,
-    ParentStdinClosed,
+}
+
+/// Controlled window metadata attached to `ErrorDetails` (never interpolated into `message`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ErrorWindowSummary {
+    pub title: String,
+    pub exe: String,
+}
+
+impl ErrorWindowSummary {
+    pub fn sanitized(raw_title: &str, raw_exe_or_path: &str) -> Self {
+        let cleaned_title: String = raw_title
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect::<String>()
+            .trim()
+            .chars()
+            .take(80)
+            .collect();
+
+        let basename = raw_exe_or_path
+            .rsplit(|c| c == '\\' || c == '/')
+            .next()
+            .unwrap_or("")
+            .chars()
+            .map(|c| if c.is_control() { '_' } else { c })
+            .collect::<String>();
+        let trimmed_exe: String = basename.trim().chars().take(128).collect();
+        let exe = if trimmed_exe.is_empty() {
+            "unknown".to_string()
+        } else {
+            trimmed_exe
+        };
+
+        Self {
+            title: cleaned_title,
+            exe,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -226,6 +307,10 @@ pub struct ErrorDetails {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub foreground_hwnd: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub foreground_window: Option<ErrorWindowSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub occluding_window: Option<ErrorWindowSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub internal_mutation: Option<InternalMutationDetail>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<DiagnosticReason>,
@@ -238,6 +323,8 @@ impl ErrorDetails {
             hresult_hex: None,
             target_hwnd: None,
             foreground_hwnd: None,
+            foreground_window: None,
+            occluding_window: None,
             internal_mutation: None,
             reason: None,
         }
@@ -321,6 +408,27 @@ impl ProtocolError {
         self
     }
 
+    pub fn with_retryable(mut self, retryable: bool) -> Self {
+        self.retryable = retryable;
+        self
+    }
+
+    pub fn with_foreground_window(mut self, summary: Option<ErrorWindowSummary>) -> Self {
+        if let Some(s) = summary {
+            let d = self.details.get_or_insert_with(ErrorDetails::empty);
+            d.foreground_window = Some(s);
+        }
+        self
+    }
+
+    pub fn with_occluding_window(mut self, summary: Option<ErrorWindowSummary>) -> Self {
+        if let Some(s) = summary {
+            let d = self.details.get_or_insert_with(ErrorDetails::empty);
+            d.occluding_window = Some(s);
+        }
+        self
+    }
+
     /// Monotonically merges `min_detail` into this error so post-activation or post-input
     /// failures never regress to `mutation: none`.
     pub fn with_monotonic_mutation(mut self, min_detail: InternalMutationDetail) -> Self {
@@ -389,10 +497,10 @@ impl fmt::Display for ProtocolError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "[code={} stage={:?} mutation={:?}] {}",
+            "[code={} stage={} mutation={}] {}",
             self.code.as_str(),
-            self.stage,
-            self.mutation,
+            self.stage.as_str(),
+            self.mutation.as_str(),
             self.message
         )
     }

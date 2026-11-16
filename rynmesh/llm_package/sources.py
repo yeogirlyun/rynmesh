@@ -5,6 +5,8 @@ import base64
 import copy
 import hashlib
 import json
+import re
+import time
 import uuid
 from pathlib import Path
 from urllib.parse import urlparse
@@ -41,6 +43,9 @@ SOURCE_HTTP_SCHEMA = {
         "context_window_mode": {"type": "string", "enum": ["auto", "manual"]},
         "context_window": {"type": "integer", "minimum": 256, "maximum": 2000000},
         "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 393216},
+        "stream_idle_seconds": {"type": "integer", "minimum": 1, "maximum": 86400, "default": 120},
+        "max_request_seconds": {"type": "integer", "minimum": 1, "maximum": 86400, "default": 1800},
+        "prompt_cache": {"type": "string", "enum": ["auto", "off"]},
         "request_defaults": {"type": "object"},
     },
 }
@@ -190,25 +195,39 @@ class SourceStore:
         if not isinstance(shared, list) or any(not isinstance(m, str) or m not in models for m in shared):
             raise ValueError("shared_models must contain configured model IDs")
         shared = list(dict.fromkeys(shared))
+        max_output_explicit = True if "max_output_tokens" in body else bool(old["max_output_tokens_explicit"]) if "max_output_tokens_explicit" in old else False
         record = {"id": source_id or "src-" + uuid.uuid4().hex[:16], "kind": kind, "protocol": protocol,
                 "name": name, "provider": str(body.get("provider", old.get("provider", "custom")))[:80],
                 "base_url": base, "api_key": key.strip(), "models": models,
-                "context_window": context, "context_window_mode": mode, "max_output_tokens": output, "request_defaults": defaults,
+                "context_window": context, "context_window_mode": mode, "max_output_tokens": output,
+                "max_output_tokens_explicit": max_output_explicit, "request_defaults": defaults,
                 "sharing": bool(shared), "shared_models": shared,
                 "enabled": bool(body.get("enabled", old.get("enabled", True))),
                 "status": "needs_key" if kind == "api" and not key else "untested"}
+        for timeout_key in ("stream_idle_seconds", "max_request_seconds"):
+            if timeout_key in body:
+                if body[timeout_key] is not None:
+                    timeout_val = integer(body[timeout_key])
+                    if not 1 <= timeout_val <= 86400:
+                        raise ValueError("model_" + timeout_key + "_invalid")
+                    record[timeout_key] = timeout_val
+            elif timeout_key in old:
+                record[timeout_key] = old[timeout_key]
+        if "prompt_cache" in body:
+            if body["prompt_cache"] is not None:
+                if body["prompt_cache"] not in model_settings.PROMPT_CACHE_VALUES:
+                    raise ValueError("model_prompt_cache_invalid")
+                record["prompt_cache"] = body["prompt_cache"]
+        elif "prompt_cache" in old:
+            record["prompt_cache"] = old["prompt_cache"]
         record["_context_window_mode_explicit"] = "context_window_mode" in body
         same_endpoint = _same_configuration(record, old, ("kind", "provider", "base_url", "api_key", "protocol"))
         metadata = copy.deepcopy(old.get("model_metadata", {})) if same_endpoint else {}
         metadata.update(self._model_metadata_cache.get(self._metadata_key(record), {}))
         record["model_metadata"] = {model: metadata[model] for model in models if model in metadata}
         # A text test or a user-supplied flag cannot assert client-tool support.
-        fields = ("kind", "provider", "base_url", "api_key", "protocol", "models", "context_window", "max_output_tokens", "request_defaults")
         record["tool_support"] = {m: v for m, v in old.get("tool_support", {}).items() if m in models}
         record["model_settings"] = copy.deepcopy(old.get("model_settings", {}))
-        # Preserve unaffected sibling evidence when merely adding/removing a model.
-        if _same_configuration(record, old, (k for k in fields if k != "models")):
-            record["tool_support"] = {m: v for m, v in old.get("tool_support", {}).items() if m in models}
         model_settings.reconcile(record, old)
         if not models and output > (context if mode == "manual" else default_context):
             raise ValueError("model_output_exceeds_context")
@@ -255,22 +274,78 @@ class SourceStore:
             records.pop(source_id, None)
             self._write(records)
 
-    @staticmethod
-    def adapter(record, model=""):
+    def _record_model_capability(self, source_id: str, model: str, key: str, status: str) -> None:
+        if key not in {"prompt_cache_key", "cache_control"} or status not in {"supported", "unsupported"}:
+            return
+        with self.lock:
+            records = self.read()
+            rec = records.get(source_id)
+            if not rec or model not in rec.get("models", []):
+                return
+            row = rec.setdefault("model_settings", {}).setdefault(model, {})
+            ev = row.setdefault("evidence", {})
+            ev[key] = {"status": status, "checked_at": int(time.time())}
+            self._write(records)
+
+    def adapter(self_or_record, record_or_model="", model=""):
+        """Build an upstream HTTP adapter for a configured source/model.
+
+        ``timeout_s`` on the returned adapter is the per-read stream idle
+        timeout (default 120 s from ``stream_idle_seconds``), not a wall-clock
+        cap on the whole response; total request duration is bounded by the
+        caller's ``deadline`` budget.
+        """
+        if isinstance(self_or_record, SourceStore):
+            store_self: SourceStore | None = self_or_record
+            record = record_or_model
+            chosen_arg = model
+        else:
+            store_self = None
+            record = self_or_record
+            chosen_arg = model or record_or_model
         if record["kind"] == "api" and not record.get("api_key"):
             raise ValueError("请先填写 API Key")
         protocol = source_protocol(record)
         if protocol not in PROTOCOLS:
             raise ValueError("不支持的 API 协议")
-        adapter, protocol_kwargs = SourceAdapter, {}
+        selected_model = chosen_arg or next(iter(record["models"]), "")
+        policy = model_settings.effective(record, selected_model)
+        evidence = (record.get("model_settings", {}).get(selected_model, {}) or {}).get("evidence") or {}
+        pck_status = (evidence.get("prompt_cache_key") or {}).get("status")
+        prompt_cache_key_supported = True if pck_status == "supported" else False if pck_status == "unsupported" else None
+        cc_status = (evidence.get("cache_control") or {}).get("status")
+        cache_control_supported = False if cc_status == "unsupported" else True if cc_status == "supported" else None
+        ct_status = (evidence.get("custom_tools") or {}).get("status")
+        custom_tools_supported = False if ct_status == "unsupported" else True if ct_status == "supported" else None
+        source_id = record.get("id", "")
+        on_cap = (
+            (lambda k, st, _sid=source_id, _m=selected_model: store_self._record_model_capability(_sid, _m, k, st))
+            if store_self is not None and source_id and selected_model
+            else None
+        )
+        adapter_cls, protocol_kwargs = SourceAdapter, {}
         if protocol != "openai_chat":
             from .protocol_adapter import NativeProtocolAdapter
-            adapter, protocol_kwargs = NativeProtocolAdapter, {"protocol": protocol}
-        return adapter(base_url=record["base_url"], api_prefix="", api_key=record.get("api_key", ""),
-                             model=model or next(iter(record["models"]), ""),
-                             allow_non_loopback=record["kind"] == "api", timeout_s=180,
-                             request_defaults=model_settings.effective(record, model or next(iter(record["models"]), ""))["request_defaults"],
-                             **protocol_kwargs)
+            adapter_cls, protocol_kwargs = NativeProtocolAdapter, {
+                "protocol": protocol,
+                "cache_control_supported": cache_control_supported,
+                "custom_tools": custom_tools_supported,
+                "tool_support": record.get("tool_support", {}).get(selected_model, "unknown"),
+            }
+        return adapter_cls(
+            base_url=record["base_url"],
+            api_prefix="",
+            api_key=record.get("api_key", ""),
+            model=selected_model,
+            allow_non_loopback=record["kind"] == "api",
+            timeout_s=policy["stream_idle_seconds"],
+            request_defaults=policy["request_defaults"],
+            provider=record.get("provider", ""),
+            prompt_cache=policy.get("prompt_cache"),
+            prompt_cache_key_supported=prompt_cache_key_supported,
+            on_capability_evidence=on_cap,
+            **protocol_kwargs,
+        )
 
     def configure_model(self, source_id, body):
         if not isinstance(body, dict) or set(body) != {"model_id", "expected_rule_revision", "configuration"}:
@@ -300,43 +375,159 @@ class SourceStore:
     def model_service_id(record, model):
         return record["id"] + "-" + hashlib.sha256(model.encode()).hexdigest()[:12]
 
+    @staticmethod
+    def _probe_llamacpp_n_ctx(adapter) -> int | None:
+        if not hasattr(adapter, "_json"):
+            return None
+        timeout_s = min(5.0, float(getattr(adapter, "timeout_s", 5.0) or 5.0))
+        props = None
+        try:
+            props = adapter._json("/props", None, timeout_s)
+        except Exception:
+            base = str(getattr(adapter, "base_url", "") or "").rstrip("/")
+            if base.endswith("/v1") and len(base) > 3:
+                try:
+                    root_adapter = SourceAdapter(
+                        base_url=base[:-3],
+                        api_prefix="",
+                        api_key=getattr(adapter, "api_key", ""),
+                        model=getattr(adapter, "model", ""),
+                        allow_non_loopback=True,
+                        timeout_s=timeout_s,
+                    )
+                    props = root_adapter._json("/props", None, timeout_s)
+                except Exception:
+                    props = None
+        if not isinstance(props, dict):
+            return None
+        gen_settings = props.get("default_generation_settings")
+        for val in (
+            gen_settings.get("n_ctx") if isinstance(gen_settings, dict) else None,
+            props.get("n_ctx"),
+        ):
+            if type(val) is int and 256 <= val <= 2000000:
+                return val
+        return None
+
+    def _collect_probed_metadata(self, record, adapter) -> tuple[list[dict], dict]:
+        listing = adapter.models()
+        metadata = copy.deepcopy(record.get("model_metadata", {}))
+        metadata.update(copy.deepcopy(self._model_metadata_cache.get(self._metadata_key(record), {})))
+        listed_ids: list[str] = []
+        any_listed_window = False
+        for item in listing:
+            identifier = item.get("id") or item.get("name")
+            if not isinstance(identifier, str) or not identifier or len(identifier) > 160:
+                continue
+            listed_ids.append(identifier)
+            values = [item.get(key) for key in ("context_window", "context_length", "max_model_len")]
+            window = next((value for value in values if type(value) is int and 256 <= value <= 2000000), None)
+            if window is not None:
+                metadata[identifier] = {"context_window": window}
+                any_listed_window = True
+            out_values = [item.get(key) for key in ("max_output_tokens", "max_completion_tokens")]
+            max_out = next((value for value in out_values if type(value) is int and 1 <= value <= 393216), None)
+            if max_out is not None:
+                metadata.setdefault(identifier, {})["max_output_tokens"] = max_out
+            modalities = item.get("input_modalities")
+            if isinstance(modalities, list) and 0 < len(modalities) <= 8 and all(isinstance(m, str) and m.strip() for m in modalities):
+                metadata.setdefault(identifier, {})["input_modalities"] = [m.strip().lower() for m in modalities]
+        if not any_listed_window:
+            n_ctx = self._probe_llamacpp_n_ctx(adapter)
+            if n_ctx is not None:
+                for identifier in dict.fromkeys([*listed_ids, *record.get("models", [])]):
+                    if identifier and "context_window" not in metadata.get(identifier, {}):
+                        metadata.setdefault(identifier, {})["context_window"] = n_ctx
+        with self.lock:
+            key = self._metadata_key(record)
+            if len(self._model_metadata_cache) >= 64 and key not in self._model_metadata_cache:
+                self._model_metadata_cache.pop(next(iter(self._model_metadata_cache)))
+            self._model_metadata_cache[key] = copy.deepcopy(metadata)
+        record["model_metadata"] = {model: metadata[model] for model in record["models"] if model in metadata}
+        return listing, metadata
+
+    @staticmethod
+    def _update_record_window_basis(record, *, candidate_ids: list[str] | None = None) -> None:
+        models = record.get("models") or []
+        if models:
+            metas = [model_settings.context_metadata(record, m) for m in models]
+            if any(m["context_window_basis"] == "unknown_fallback" for m in metas):
+                record["context_window_basis"] = "unknown_fallback"
+            else:
+                record["context_window_basis"] = metas[0]["context_window_basis"]
+        elif record.get("context_window_mode") == "auto":
+            cands = candidate_ids or []
+            if not cands or any(model_settings._known_vendor_context_window(m) is None for m in cands):
+                record["context_window_basis"] = "unknown_fallback"
+
     def probe(self, record, *, models_only=False):
         adapter = self.adapter(record)
         if models_only:
-            listing = adapter.models()
-            # Some listings expose only IDs. Omission is not a declaration that
-            # a previously authenticated capacity changed; retain that cache.
-            metadata = copy.deepcopy(record.get("model_metadata", {}))
-            metadata.update(copy.deepcopy(self._model_metadata_cache.get(self._metadata_key(record), {})))
-            for item in listing:
-                identifier = item.get("id") or item.get("name")
-                if not isinstance(identifier, str) or not identifier or len(identifier) > 160:
-                    continue
-                values = [item.get(key) for key in ("context_window", "context_length", "max_model_len")]
-                window = next((value for value in values if type(value) is int and 256 <= value <= 2000000), None)
-                if window is not None:
-                    metadata[identifier] = {"context_window": window}
-                out_values = [item.get(key) for key in ("max_output_tokens", "max_completion_tokens")]
-                max_out = next((value for value in out_values if type(value) is int and 1 <= value <= 393216), None)
-                if max_out is not None:
-                    metadata.setdefault(identifier, {})["max_output_tokens"] = max_out
-                modalities = item.get("input_modalities")
-                if isinstance(modalities, list) and 0 < len(modalities) <= 8 and all(isinstance(m, str) and m.strip() for m in modalities):
-                    metadata.setdefault(identifier, {})["input_modalities"] = [m.strip().lower() for m in modalities]
-            with self.lock:
-                key = self._metadata_key(record)
-                if len(self._model_metadata_cache) >= 64 and key not in self._model_metadata_cache:
-                    self._model_metadata_cache.pop(next(iter(self._model_metadata_cache)))
-                self._model_metadata_cache[key] = copy.deepcopy(metadata)
-            # Drafts may discover IDs before they are selected. Only server-read
-            # metadata is cached; a browser-supplied model_metadata is ignored.
-            record["model_metadata"] = {model: metadata[model] for model in record["models"] if model in metadata}
-            return {"models": [str(item.get("id") or item.get("name")) for item in listing if item.get("id") or item.get("name")],
-                    "model_metadata": metadata}
+            listing, metadata = self._collect_probed_metadata(record, adapter)
+            listed_models = [str(item.get("id") or item.get("name")) for item in listing if item.get("id") or item.get("name")]
+            unmatched = [m for m in listed_models if "context_window" not in metadata.get(m, {})]
+            if record.get("models"):
+                self._update_record_window_basis(record)
+            elif unmatched:
+                self._update_record_window_basis(record, candidate_ids=unmatched)
+            return {
+                "models": listed_models,
+                "model_metadata": metadata,
+                **({"context_window_basis": record["context_window_basis"]} if "context_window_basis" in record else {}),
+            }
         if not record["models"]:
             raise ValueError("请先添加至少一个模型 ID")
-        result = adapter.chat({"messages": [{"role": "user", "content": "Reply briefly: OK"}],
-                               "max_tokens": min(4096, model_settings.effective(record, record["models"][0])["max_output_tokens"])}, task_id="source-test-" + uuid.uuid4().hex, timeout_s=90)
+        if record.get("context_window_mode") == "auto" and any(
+            "context_window" not in record.get("model_metadata", {}).get(m, {})
+            for m in record["models"]
+        ):
+            try:
+                self._collect_probed_metadata(record, adapter)
+            except Exception:
+                n_ctx = self._probe_llamacpp_n_ctx(adapter)
+                if n_ctx is not None:
+                    meta_map = copy.deepcopy(record.get("model_metadata", {}))
+                    for m in record["models"]:
+                        meta_map.setdefault(m, {})["context_window"] = n_ctx
+                    record["model_metadata"] = meta_map
+            model_settings.reconcile(record, copy.deepcopy(record))
+        self._update_record_window_basis(record)
+        primary_model = record["models"][0]
+        eff = model_settings.effective(record, primary_model)
+        max_probe_tokens = min(4096, eff["max_output_tokens"])
+        probe_body = {"messages": [{"role": "user", "content": "Reply briefly: OK"}], "max_tokens": max_probe_tokens}
+        should_probe_cache_key = (
+            source_protocol(record) == "openai_chat"
+            and eff.get("prompt_cache") == "auto"
+            and str(record.get("provider") or "").strip().lower() not in {"openai", "azure"}
+            and isinstance(adapter, OpenAICompatibleAdapter)
+        )
+        if should_probe_cache_key:
+            checked_ts = int(time.time())
+            try:
+                result = adapter.chat(
+                    {**probe_body, "prompt_cache_key": "ryn_probe_cache_key"},
+                    task_id="source-test-" + uuid.uuid4().hex,
+                    timeout_s=90,
+                    _probe_prompt_cache_key=True,
+                )
+                for m in record["models"]:
+                    record.setdefault("model_settings", {}).setdefault(m, {}).setdefault("evidence", {})["prompt_cache_key"] = {
+                        "status": "supported",
+                        "checked_at": checked_ts,
+                    }
+            except AdapterError as exc:
+                if exc.code in {"upstream_request_rejected", "upstream_http_failed"} and (exc.diagnostics or {}).get("http_status") in {400, 422}:
+                    for m in record["models"]:
+                        record.setdefault("model_settings", {}).setdefault(m, {}).setdefault("evidence", {})["prompt_cache_key"] = {
+                            "status": "unsupported",
+                            "checked_at": checked_ts,
+                        }
+                    result = adapter.chat(probe_body, task_id="source-test-" + uuid.uuid4().hex, timeout_s=90)
+                else:
+                    raise
+        else:
+            result = adapter.chat(probe_body, task_id="source-test-" + uuid.uuid4().hex, timeout_s=90)
         if not result.get("text"):
             raise AdapterError("模型未返回正文，请检查输出上限或推理参数")
         return {"ok": True, "model": adapter.model}
@@ -365,7 +556,7 @@ class SourceStore:
     @staticmethod
     def probe_adapter_image(adapter, max_output_tokens):
         messages = [{"role": "user", "content": [
-            {"type": "text", "text": "What colour is this square? Answer with one colour word."},
+            {"type": "text", "text": "Reply with the code RYN-RED if the square is red, otherwise RYN-OTHER"},
             {"type": "image_url", "image_url": {"url": IMAGE_PROBE_DATA_URL, "detail": "low"}}]}]
         try:
             result = adapter.chat({"messages": messages, "max_tokens": min(1024, max_output_tokens)},
@@ -375,11 +566,17 @@ class SourceStore:
                 return {"image_support": "unsupported"}
             raise
         text = str(result.get("text") or (result.get("message") or {}).get("content") or "").lower()
-        return {"image_support": "supported" if ("red" in text or "红" in text) else "unknown"}
+        if "ryn-other" in text and "ryn-red" not in text:
+            supported = False
+        elif "ryn-red" in text:
+            supported = True
+        else:
+            supported = bool(re.search(r"\b(?:red|crimson|scarlet|rojo|rouge|rot)\b", text) or "红" in text)
+        return {"image_support": "supported" if supported else "unknown"}
 
     @staticmethod
     def probe_adapter_tools(adapter, max_output_tokens):
-        from .chat import validate_tool_arguments
+        from .chat import new_call_id_nonce, normalize_call_id, validate_tool_arguments
 
         schema = {"type": "object", "properties": {"value": {"const": "ryn-tool-test"}},
                   "required": ["value"], "additionalProperties": False}
@@ -388,12 +585,25 @@ class SourceStore:
         first = adapter.chat({"messages": messages, "tools": [spec], "tool_choice": "required",
                               "max_tokens": min(4096, max_output_tokens)},
                              task_id="source-tools-" + uuid.uuid4().hex, timeout_s=60)
-        message = first.get("message") or {}
-        calls = message.get("tool_calls") or []
-        if len(calls) != 1 or calls[0].get("function", {}).get("name") != "ryn_capability_probe":
-            raise ValueError("model did not return a structured client tool call")
-        validate_tool_arguments(schema, json.loads(calls[0]["function"]["arguments"]))
-        messages += [message, {"role": "tool", "tool_call_id": calls[0]["id"], "content": "ryn-tool-test-ok"},
+        try:
+            message = copy.deepcopy(first.get("message") or {})
+            calls = message.get("tool_calls") or []
+            if len(calls) != 1 or not isinstance(calls[0], dict):
+                raise ValueError("model did not return a structured client tool call")
+            call = dict(calls[0])
+            fn = call.get("function")
+            if not isinstance(fn, dict) or fn.get("name") != "ryn_capability_probe":
+                raise ValueError("model did not return a structured client tool call")
+            raw_id = call.get("id")
+            if raw_id is not None and not isinstance(raw_id, str):
+                raise ValueError("model did not return a structured client tool call")
+            call_id = normalize_call_id(raw_id, 0, new_call_id_nonce())
+            call["id"] = call_id
+            message["tool_calls"] = [call]
+            validate_tool_arguments(schema, json.loads(fn["arguments"]))
+        except Exception:
+            raise ValueError("model did not return a structured client tool call") from None
+        messages += [message, {"role": "tool", "tool_call_id": call_id, "content": "ryn-tool-test-ok"},
                      {"role": "user", "content": "Return the tool result as text; do not call another tool."}]
         final = adapter.chat({"messages": messages, "tools": [spec], "tool_choice": "none",
                               "max_tokens": min(4096, max_output_tokens)},

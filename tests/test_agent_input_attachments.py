@@ -50,8 +50,10 @@ def test_native_drop_reads_real_file_and_rejects_directories(tmp_path):
     source = tmp_path / "native.txt"
     source.write_text("native content", encoding="utf-8")
     assert parse_attachments([{"name": source.name, "path": str(source)}])[0]["raw"] == b"native content"
-    with pytest.raises(AgentError, match="agent_attachment_unavailable"):
+    with pytest.raises(AgentError, match="agent_attachment_directory"):
         parse_attachments([{"name": "folder", "path": str(tmp_path)}])
+    with pytest.raises(AgentError, match="agent_attachment_unavailable"):
+        parse_attachments([{"name": "missing.txt", "path": str(tmp_path / "missing.txt")}])
 
 
 @pytest.mark.parametrize("files", [
@@ -73,10 +75,11 @@ def test_images_reach_provider_as_bounded_actual_image_parts(tmp_path):
                       parse_attachments([image_upload()]))
     projection = provider_messages([message])
     validated = validate_chat({"messages": projection})
-    assert validated["messages"][0]["content"][1]["type"] == "image_url"
-    image = validated["messages"][0]["content"][1]["image_url"]["url"]
+    assert validated["messages"][0]["content"][1] == {"type": "text", "text": "[Image #1]"}
+    assert validated["messages"][0]["content"][2]["type"] == "image_url"
+    image = validated["messages"][0]["content"][2]["image_url"]["url"]
     assert image.startswith("data:image/jpeg;base64,")
-    assert len(base64.b64decode(image.split(",", 1)[1])) <= 96 * 1024
+    assert len(base64.b64decode(image.split(",", 1)[1])) <= 512 * 1024
 
 
 def test_runtime_creation_continuation_and_edit_keep_attachments(tmp_path):

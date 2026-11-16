@@ -13,6 +13,7 @@ import socket
 import threading
 import time
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
@@ -20,9 +21,10 @@ from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 import httpx
 
 from ... import __version__
-from ...atomic_io import atomic_write_json, read_json
+from ...atomic_io import AtomicIOError, atomic_write_json, read_json
 from ...file_transactions import file_transaction
 from ...services import peer_box
+from ..diagnostic_log import failure as diagnostic_failure
 from ..diagnostic_log import oauth_event
 from ..store import AgentError
 from .company_authorization import CompanyAuthorizationChannel, record_revocation
@@ -186,31 +188,114 @@ COMPANY_PLUGIN_IDS = frozenset({"company-workspace", "company-dashboard", "compa
 
 
 class McpOAuthStore:
+    _MAX_CORRUPT_BACKUPS = 3
+
     def __init__(self, store):
         self.path, self.lock = store.root / "mcp_oauth.json", store.root / ".mcp_oauth.lock"
         self.key, self.pub = store.key, store.pub
         self._cached_stamp = None
         self._cached_value = None
+        self._pending_recovered = None
+
+    def _recover_corrupt(self, reason: str):
+        now = datetime.now(timezone.utc)
+        stamp = now.strftime("%Y%m%dT%H%M%S.%fZ")
+        backup = self.path.with_name(f"{self.path.name}.corrupt-{stamp}")
+        seq = 1
+        while backup.exists():
+            backup = self.path.with_name(f"{self.path.name}.corrupt-{stamp}-{seq}")
+            seq += 1
+        try:
+            self.path.replace(backup)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            raise McpOAuthError("agent_mcp_oauth_storage_unavailable") from None
+        try:
+            existing = []
+            for item in self.path.parent.glob(f"{self.path.name}.corrupt-*"):
+                try:
+                    existing.append((item.stat().st_mtime_ns, item.name, item))
+                except OSError:
+                    continue
+            existing.sort(key=lambda entry: (entry[0], entry[1]))
+            while len(existing) > self._MAX_CORRUPT_BACKUPS:
+                _, _, oldest = existing.pop(0)
+                try:
+                    oldest.unlink(missing_ok=True)
+                except OSError:
+                    pass
+        except OSError:
+            pass
+        oauth_event("credentials_recovered", reason=reason, code="agent_mcp_oauth_credentials_reset")
+        recovered = {"version": VERSION, "servers": {}, "recovered_at": now.isoformat()}
+        self._cached_stamp = None
+        self._cached_value = None
+        try:
+            self._write(recovered)
+        except McpOAuthError:
+            self._pending_recovered = copy.deepcopy(recovered)
+        return copy.deepcopy(recovered)
 
     def _read(self):
-        if not self.path.exists():
+        if self._pending_recovered is not None:
+            pending = copy.deepcopy(self._pending_recovered)
+            if not self.path.exists():
+                try:
+                    self._write(pending)
+                except McpOAuthError:
+                    return pending
+                return pending
+            self._pending_recovered = None
+        try:
+            st = self.path.stat()
+        except FileNotFoundError:
             self._cached_stamp = None
             self._cached_value = None
             return {"version": VERSION, "servers": {}}
-        try:
-            st = self.path.stat()
-            stamp = (st.st_mtime_ns, st.st_size)
-            if self._cached_stamp == stamp and self._cached_value is not None:
-                return copy.deepcopy(self._cached_value)
-            envelope = read_json(self.path, max_bytes=MAX_STORAGE)
-            value = json.loads(peer_box.open_sealed(self.key, self.pub, envelope["nonce"], envelope["ciphertext"], info=CHANNEL))
-            if value.get("version") != VERSION or not isinstance(value.get("servers"), dict):
-                raise ValueError
-            self._cached_stamp = stamp
-            self._cached_value = copy.deepcopy(value)
-            return value
-        except Exception:
+        except OSError:
             raise McpOAuthError("agent_mcp_oauth_storage_unavailable") from None
+        stamp = (st.st_mtime_ns, st.st_size)
+        if self._cached_stamp == stamp and self._cached_value is not None:
+            return copy.deepcopy(self._cached_value)
+        try:
+            envelope = read_json(self.path, max_bytes=MAX_STORAGE)
+        except AtomicIOError as exc:
+            cause = exc.__cause__
+            if isinstance(cause, FileNotFoundError):
+                self._cached_stamp = None
+                self._cached_value = None
+                return {"version": VERSION, "servers": {}}
+            if isinstance(cause, OSError):
+                raise McpOAuthError("agent_mcp_oauth_storage_unavailable") from None
+            return self._recover_corrupt("corrupt_envelope")
+        except FileNotFoundError:
+            self._cached_stamp = None
+            self._cached_value = None
+            return {"version": VERSION, "servers": {}}
+        except OSError:
+            raise McpOAuthError("agent_mcp_oauth_storage_unavailable") from None
+        except Exception:
+            return self._recover_corrupt("corrupt_envelope")
+        try:
+            plaintext = peer_box.open_sealed(
+                self.key, self.pub, envelope["nonce"], envelope["ciphertext"], info=CHANNEL
+            )
+        except Exception:
+            return self._recover_corrupt("decrypt_failed")
+        try:
+            value = json.loads(plaintext)
+            if (
+                not isinstance(value, dict)
+                or value.get("version") != VERSION
+                or not isinstance(value.get("servers"), dict)
+            ):
+                raise ValueError
+        except Exception:
+            return self._recover_corrupt("invalid_schema")
+        self._cached_stamp = stamp
+        self._cached_value = copy.deepcopy(value)
+        return value
 
     def _write(self, value):
         try:
@@ -219,11 +304,20 @@ class McpOAuthStore:
                 raise ValueError
             nonce, ciphertext = peer_box.seal(self.key, self.pub, raw, info=CHANNEL)
             atomic_write_json(self.path, {"version": VERSION, "nonce": nonce, "ciphertext": ciphertext}, max_bytes=MAX_STORAGE)
-            try:
-                st = self.path.stat()
-                self._cached_stamp = (st.st_mtime_ns, st.st_size)
-                self._cached_value = copy.deepcopy(value)
-            except OSError:
+            self._pending_recovered = None
+            if (
+                isinstance(value, dict)
+                and value.get("version") == VERSION
+                and isinstance(value.get("servers"), dict)
+            ):
+                try:
+                    st = self.path.stat()
+                    self._cached_stamp = (st.st_mtime_ns, st.st_size)
+                    self._cached_value = copy.deepcopy(value)
+                except OSError:
+                    self._cached_stamp = None
+                    self._cached_value = None
+            else:
                 self._cached_stamp = None
                 self._cached_value = None
         except Exception:
@@ -319,8 +413,11 @@ class McpOAuthManager:
         self._workspace_proof = None
         self.company_authorization = CompanyAuthorizationChannel(self)
         if self.credentials.read().get("company_authorization", {}).get("service"):
-            self.company_authorization.sync_bindings()
-            self.company_authorization.start()
+            try:
+                self.company_authorization.sync_bindings()
+                self.company_authorization.start()
+            except Exception as exc:
+                diagnostic_failure("oauth_company_init", exc)
 
     def _binding(self, server):
         return {"server_id": server["id"], "instance_id": server["instance_id"],
@@ -1094,12 +1191,26 @@ class McpOAuthManager:
         if not server or server.get("transport") != "streamable_http" or has_static_authorization(server) or (server.get("auth") or {}).get("mode") == "none":
             return {"state": "not_required", "expires_at": None, "scopes": [], "issuer_host": None, "error": None}
         row = self._row(server)
+        doc = self.credentials.read()
         tokens = row.get("tokens") or {}
-        state = "error" if row.get("error") else "logged_in" if tokens else "logged_out" if (server.get("auth") or {}).get("mode") == "oauth" or row.get("challenge") else "not_required"
+        needs_login = (
+            (server.get("auth") or {}).get("mode") == "oauth"
+            or bool(row.get("challenge"))
+        )
+        state = "error" if row.get("error") else "logged_in" if tokens else "logged_out" if needs_login else "not_required"
         if tokens and not tokens.get("refresh_token") and tokens.get("expires_at", 0) <= self.clock() + 60:
             state = "logged_out"
         if row.get("pending"):
             state = "pending"
+        error = row.get("error")
+        if (
+            not error
+            and state == "logged_out"
+            and not tokens
+            and not row.get("local_logged_out")
+            and doc.get("recovered_at")
+        ):
+            error = "agent_mcp_oauth_credentials_reset"
         # Opaque change marker lets local consumers reuse a short signed identity
         # lease while detecting logout, re-login and token replacement. Never
         # expose credentials (or use this marker as an authentication token).
@@ -1108,7 +1219,7 @@ class McpOAuthManager:
         ).encode()).hexdigest() if tokens else None
         return {"state": state, "session_revision": session_revision,
                 "expires_at": tokens.get("expires_at"), "scopes": row.get("granted_scopes", []),
-                "issuer_host": urlsplit(row.get("issuer", "")).hostname, "error": row.get("error")}
+                "issuer_host": urlsplit(row.get("issuer", "")).hostname, "error": error}
 
     def close(self):
         self.company_authorization.close()

@@ -112,6 +112,6 @@ def inspect_model(path: Path, cancel=lambda: False) -> dict:
             if not isinstance(name, str) or not isinstance(license_id, str):
                 raise NativeModelError("invalid_gguf")
             return {"name": name[:160], "file_name": path.name, "size_bytes": size,
-                    "architecture": arch, "context_window": min(context, 4096), "license_id": license_id[:120]}
+                    "architecture": arch, "context_window": context, "license_id": license_id[:120]}
         except (UnicodeError, struct.error, TypeError) as exc:
             raise NativeModelError("invalid_gguf") from exc

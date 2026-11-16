@@ -35,20 +35,43 @@ _CANDIDATE_TYPES = {"host", "srflx", "prflx"}
 
 _module: Any = None
 _import_failed = False
+_failure_reason: str | None = None
+
+
+def _reset_state() -> None:
+    """Reset cached native transport import state (used by unit tests)."""
+    global _module, _import_failed, _failure_reason
+    _module = None
+    _import_failed = False
+    _failure_reason = None
 
 
 def _load() -> Any:
-    global _module, _import_failed
+    global _module, _import_failed, _failure_reason
     if _module is None and not _import_failed:
         try:
             import ryn_transport  # type: ignore[import-not-found]
-        except ImportError:
+        except ImportError as exc:
             _import_failed = True
+            _failure_reason = "import_error"
+            log.warning(
+                "native P2P transport unavailable (%s): %s; falling back to aioice",
+                _failure_reason,
+                exc,
+            )
         else:
-            if getattr(ryn_transport, "PROTOCOL", "") == PROTOCOL:
+            actual = getattr(ryn_transport, "PROTOCOL", "")
+            if actual == PROTOCOL:
                 _module = ryn_transport
+                _failure_reason = None
             else:
                 _import_failed = True
+                _failure_reason = f"protocol_mismatch:{actual}"
+                log.warning(
+                    "native P2P transport unavailable (%s, expected %s); falling back to aioice",
+                    _failure_reason,
+                    PROTOCOL,
+                )
     return _module
 
 
@@ -56,6 +79,16 @@ def enabled() -> bool:
     if os.environ.get("RYNMESH_P2P_NATIVE", "auto").strip().lower() in {"0", "off", "false", "no"}:
         return False
     return _load() is not None
+
+
+def status() -> dict[str, Any]:
+    """Return read-only status of the optional native P2P transport extension."""
+    if os.environ.get("RYNMESH_P2P_NATIVE", "auto").strip().lower() in {"0", "off", "false", "no"}:
+        return {"enabled": False, "reason": "disabled"}
+    mod = _load()
+    if mod is not None:
+        return {"enabled": True, "reason": None}
+    return {"enabled": False, "reason": _failure_reason}
 
 
 # Peers whose last native attempt failed get aioice-only offers for a while
@@ -188,9 +221,11 @@ class StreamReader:
 
 
 def _frame(value: dict[str, Any]) -> bytes:
+    from .llm_package.p2p import P2PMessageTooLarge
+
     raw = json.dumps(value, separators=(",", ":")).encode("utf-8")
     if len(raw) > MAX_FRAME_BYTES:
-        raise ValueError("native session message too large")
+        raise P2PMessageTooLarge("native session message too large")
     return len(raw).to_bytes(4, "big") + raw
 
 

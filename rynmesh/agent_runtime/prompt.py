@@ -11,10 +11,11 @@ from . import planning
 from .inference_context import GUIDANCE as INFERENCE_GUIDANCE
 from .inference_context import projection as inference_projection
 from .operation_permissions import GUIDANCE as PERMISSION_GUIDANCE
-from .operation_permissions import projection as permission_projection
+from .operation_permissions import projection_with_counts as permission_projection_with_counts
 from .tool_menu import SPEC as TOOL_MENU_SPEC
 
-PROMPT_VERSION = "ryn-agent-loop-v14"
+PROMPT_VERSION = "ryn-agent-loop-v15"
+PROGRESS_TAIL_PREFIX = "Host data (not an owner message, not authorization):\n"
 
 SYSTEM = (
     "You are Ryn, an autonomous coding and workstation agent on the user's computer. Reply concisely in their language. "
@@ -78,6 +79,16 @@ _UNAVAILABLE_PLUGIN_RULE_SYSTEM = SYSTEM.replace(
     "fix, such as signing in, instead of saying the feature is unsupported. "
 )
 
+ACTION_RULES = (
+    "'Can you', 'I want' and 'help me' are requests to act; do not stop at a plan or a yes. "
+    "A question, explanation, diagnosis or status request is answered from evidence: inspect freely, but change nothing unless the owner also asked for a change. "
+    "If intent is unclear, proceed on the most likely reading and say which; an approval condition in a Skill or AGENTS.md applies only when met. "
+    "If an assumption changes what the owner asked for, state it and why. Answer pushback with evidence, not agreement. "
+    "When the owner points out a mistake or missed requirement, fix it; explain only if asked or if evidence supports your original approach. Admit real mistakes plainly; skip apologies otherwise. "
+    "Do not narrow the goal to what is easy to finish or pass existing tests; if work remains, say what is left and why. "
+    "Do not add warnings, disclaimers or approval steps for hypothetical risks. "
+)
+
 
 def obj(properties, required):
     return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
@@ -132,7 +143,8 @@ def select_base_instructions(*, model_base=None, persisted_base=None, session_ba
 
 
 def instruction_layers(row: dict, *, model_base=None, persisted_base=None, session_base=None,
-                       model_notes="", developer_instructions=None, project_guidance="") -> list[dict]:
+                       model_notes="", developer_instructions=None, project_guidance="",
+                       progress_placement: str = "header") -> list[dict]:
     """Build Ryn's internal instruction roles; adapters own provider compatibility.
 
     The base can be pinned in a task so switching providers does not silently
@@ -141,6 +153,8 @@ def instruction_layers(row: dict, *, model_base=None, persisted_base=None, sessi
     Model notes (model_profiles) are resolved per request for the current model
     and sit between the shared base and the permission/authority layer.
     """
+    if progress_placement not in {"header", "tail"}:
+        raise ValueError("invalid progress_placement")
     base = select_base_instructions(model_base=model_base, persisted_base=persisted_base,
                                     session_base=session_base)
     if session_base is None and model_base is None and base in (_LEGACY_BATCH_SYSTEM, _PRE_IMAGE_SYSTEM, _PRE_IMAGE_BRIEF_SYSTEM, _PRE_PLUGIN_SYSTEM, _PRE_STRICT_PLUGIN_SYSTEM,
@@ -151,9 +165,12 @@ def instruction_layers(row: dict, *, model_base=None, persisted_base=None, sessi
               "This task may request changes; the server enforces current owner permissions for every call.")
     if not isinstance(model_notes, str):
         raise ValueError("model notes must be text")
+    authority_content = policy + authority(row)
+    if progress_placement == "header":
+        authority_content += "\n" + progress_state(row)
     messages = [{"role": "developer", "content": base},
                 *([{"role": "developer", "content": model_notes}] if model_notes else []),
-                {"role": "developer", "content": policy + authority(row)}]
+                {"role": "developer", "content": authority_content}]
     if developer_instructions is not None:
         if not isinstance(developer_instructions, str):
             raise ValueError("developer instructions must be text")
@@ -186,20 +203,15 @@ def local_date() -> dict:
 
 
 def authority(row: dict) -> str:
-    goal = row["goal"]
-    # Owner messages remain separately verbatim in the history. This layer pins
-    # their identities/order and authoritative criteria, without duplicating text.
-    context = {"prompt_version": PROMPT_VERSION, "response_language": row.get("response_language", "en"), "goal_revision": goal["revision"],
-               "original_message_id": goal["original_message_id"],
-               "owner_constraint_order": [item["message_id"] for item in goal["constraints"]],
-               "criteria": [{key: item[key] for key in ("id", "kind", "required", "status")} for item in row["criteria"]],
-               "plan_revision": row["plan"]["revision"], "model_id": row["model_id"], "scope_revision": row["scope_revision"],
-               "inference_context": inference_projection(row)}
-    context["local_execution"] = row.get("local_execution") or {"workspace_root": "", "desktop_access": False}
-    if row.get("plan", {}).get("track_execution"):
-        context["planning_state"] = row.get("_current_planning_state") or planning.projection(row)
-        context["plan_revision"] = context["planning_state"]["plan_revision"]
-    context["os"] = platform.system()
+    context = {
+        "prompt_version": PROMPT_VERSION,
+        "response_language": row.get("response_language", "en"),
+        "model_id": row["model_id"],
+        "scope_revision": row["scope_revision"],
+        "inference_context": inference_projection(row),
+        "local_execution": row.get("local_execution") or {"workspace_root": "", "desktop_access": False},
+        "os": platform.system(),
+    }
     context.update(local_date())
     port = os.environ.get("RYNMESH_PEER_PORT", "")
     if 0 < len(port) <= 5 and port.isascii() and port.isdigit() and 0 < int(port) <= 65535:
@@ -211,9 +223,6 @@ def authority(row: dict) -> str:
         + (" For connected cloud drives (e.g. Baidu Netdisk / 百度网盘, Google Drive, OneDrive) and NAS resources, use ryn_list_resource_roots, ryn_list_resources, ryn_create_directory, ryn_upload_resource_file, and ryn_create_text_file directly instead of searching the local OS desktop or filesystem."
            if (row.get("scope") or {}).get("resource_grants") else "")
     )
-    permissions = permission_projection(row)
-    if permissions:
-        context["operation_permissions"] = permissions
     subagent_suffix = ""
     if isinstance(row.get("subagent_meta"), dict):
         from .subagents import role_guidance
@@ -223,20 +232,46 @@ def authority(row: dict) -> str:
         subagent_suffix = "\n" + MULTI_AGENT_COORDINATOR_GUIDANCE
     return ("\nServer control state: " + json.dumps(context, ensure_ascii=False, separators=(",", ":"))
             + "\nOwner corrections steer the task; host permission settings still apply. "
-            "workspace mode automatically runs workstation tools; read operations run without confirmation. "
+            + ACTION_RULES
+            + "workspace mode runs workstation tools and reads without confirmation. "
             "confirm_changes is the user's strict mode for other effects. "
-            "automatic mode is full access: the host runs every change, including plugin and configuration changes, without a dialog; "
-            "only explicit-approval tools (component installs, app operations) and desktop access keep their gates. "
+            "automatic mode is full access: the host runs every change (including plugin/config) without dialog; "
+            "only explicit-approval tools (installs, app ops) and desktop access keep gates. "
             "External configuration/access changes retain their host approval boundary in other modes. "
-            "When the owner delegates setup and asks to enter only a missing secret in a popup, author/run a local program "
-            "(using local_control_api when configuring Ryn) that collects and submits it locally without exposing secrets to model context; "
-            "use ryn_request_input kind=credential_ref only when full source connection facts also need owner input. "
-            "Connected models with an Agent tool bridge are ready to use; CLI sources need no HTTP credentials. "
+            "When delegated setup needs only a missing secret in a popup, run a local program "
+            "(via local_control_api for Ryn) to collect/submit it locally out of model context; "
+            "use ryn_request_input kind=credential_ref only when full connection facts are also needed. "
+            "Connected models with Agent tool bridge are ready; CLI sources need no HTTP credentials. "
             "Claims need matching subject/scope/time: unknown/missing is not no/never; local grants are not remote policy."
             + " " + INFERENCE_GUIDANCE
             + " " + PERMISSION_GUIDANCE
             + " " + planning.GUIDANCE
             + subagent_suffix)
+
+
+def progress_state(row: dict) -> str:
+    goal = row["goal"]
+    # Owner messages remain separately verbatim in the history. This layer pins
+    # their identities/order, criteria, plan progress and bounded write permissions.
+    state = {
+        "goal_revision": goal["revision"],
+        "original_message_id": goal["original_message_id"],
+        "owner_constraint_order": [item["message_id"] for item in goal["constraints"]],
+        "criteria": [{key: item[key] for key in ("id", "kind", "required", "status")} for item in row["criteria"]],
+        "plan_revision": row["plan"]["revision"],
+    }
+    if row.get("plan", {}).get("track_execution"):
+        state["planning_state"] = row.get("_current_planning_state") or planning.projection(row)
+        state["plan_revision"] = state["planning_state"]["plan_revision"]
+    permissions, permission_counts = permission_projection_with_counts(row)
+    if permissions:
+        state["operation_permissions"] = permissions
+        state["operation_permissions_counts"] = permission_counts
+    return "Server progress state: " + json.dumps(state, ensure_ascii=False, separators=(",", ":"))
+
+
+def progress_message(row: dict) -> dict:
+    return {"role": "user", "content": PROGRESS_TAIL_PREFIX + progress_state(row)}
 
 
 def plan_message(row: dict) -> list[dict]:

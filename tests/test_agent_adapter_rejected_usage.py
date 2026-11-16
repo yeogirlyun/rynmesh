@@ -139,7 +139,7 @@ def test_received_failure_is_settled_by_both_hosts_without_late_tools(node, monk
     else:
         assert flight["input_tokens"] == usage["prompt_tokens"] and flight["output_tokens"] == usage["completion_tokens"]
         assert flight["charged_tokens"] == sum(usage.values())
-    assert flight["request_policy"]["provider_timeout_seconds"] == 180
+    assert flight["request_policy"]["provider_timeout_seconds"] == 1800
     assert len(requests) == 1 and sources.path.read_bytes() == before
     assert "PRIVATE" not in json.dumps(runtime.get(task["id"]))
     assert not row.get("operation_receipts")

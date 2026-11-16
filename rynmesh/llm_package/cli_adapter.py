@@ -148,8 +148,8 @@ class CLIAgentAdapter:
 
     @staticmethod
     def _prompt(messages: list[dict[str, Any]]) -> str:
-        lines = ["Answer the conversation below. Return only the assistant answer. "
-                 "Do not inspect files, run commands, or use tools."]
+        lines = ["下面每行是一条 JSON 消息，字段 role、content；只回答最后的助手内容。"
+                 "不要查看文件、运行命令或使用工具。"]
         for message in messages:
             role = message.get("role")
             if role not in {"system", "developer", "user", "assistant"}:
@@ -159,12 +159,17 @@ class CLIAgentAdapter:
             content = message.get("content")
             if not isinstance(content, str):
                 raise AdapterError("CLI API mode supports text messages only")
-            lines.append(f"<{role}>\n{content}\n</{role}>")
-        return "\n\n".join(lines)
+            encoded = (
+                json.dumps({"role": role, "content": content}, ensure_ascii=False)
+                .replace("\u2028", "\\u2028")
+                .replace("\u2029", "\\u2029")
+            )
+            lines.append(encoded)
+        return "\n".join(lines)
 
     def _run(self, prompt: str, *, task_id: str, timeout_s: float,
              max_tokens: int) -> dict[str, Any]:
-        from .codex_session import private_workspace
+        from .codex_session import borrowed_cli_auth_file, private_workspace
 
         if self.kind == "antigravity_cli":
             from .antigravity_session import infer
@@ -180,67 +185,75 @@ class CLIAgentAdapter:
                 self._cancelled.discard(task_id)
                 raise AdapterError("task_cancelled")
         started = time.monotonic()
+        auth_diag: dict[str, Any] = {}
         with private_workspace(copy_auth=False) as (root, env):
             claude_home = root / "claude"
             claude_home.mkdir(mode=0o700)
             auth = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / ".credentials.json"
-            if auth.is_file():
-                if auth.stat().st_size > 1024 * 1024:
-                    raise AdapterError("CLI authentication file exceeds limit")
-                with (claude_home / ".credentials.json").open("xb") as output:
-                    os.chmod(output.name, 0o600)
-                    output.write(auth.read_bytes())
-            for key in ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"):
-                if key in os.environ:
-                    env[key] = os.environ[key]
-            env.pop("OPENAI_API_KEY", None)
-            env.update(CLAUDE_CONFIG_DIR=str(claude_home), CLAUDE_CODE_SIMPLE="1",
-                       CLAUDE_CODE_SKIP_PROMPT_HISTORY="1", DISABLE_TELEMETRY="1",
-                       DISABLE_ERROR_REPORTING="1", DISABLE_AUTOUPDATER="1")
-            args = [command, "-p", "--tools", "", "--permission-mode", "dontAsk",
-                    "--no-session-persistence", "--output-format", "json",
-                    "--setting-sources", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}']
-            # subprocess receives an argument vector: user messages never
-            # become shell commands or command-line flags.
-            try:
-                process = spawn(args, cwd=str(root), env=env, timeout=min(timeout_s, 300))
-            except OSError as exc:
-                raise AdapterError("could not start isolated CLI") from exc
-            with self._lock:
-                self._running[task_id] = process
-                cancelled_before_start = task_id in self._cancelled
-            if cancelled_before_start:
-                process.kill()
-            try:
-                stdout = communicate_bounded(process, prompt.encode(), timeout=min(timeout_s, 300), root=root)
-            except (OSError, RuntimeError) as exc:
-                raise AdapterError("CLI execution failed or exceeded limits") from exc
-            finally:
+            with borrowed_cli_auth_file(
+                auth,
+                claude_home / ".credentials.json",
+                timeout=min(timeout_s, 300),
+                diagnostics_out=auth_diag,
+            ):
+                for key in ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"):
+                    if key in os.environ:
+                        env[key] = os.environ[key]
+                env.pop("OPENAI_API_KEY", None)
+                env.update(CLAUDE_CONFIG_DIR=str(claude_home), CLAUDE_CODE_SIMPLE="1",
+                           CLAUDE_CODE_SKIP_PROMPT_HISTORY="1", DISABLE_TELEMETRY="1",
+                           DISABLE_ERROR_REPORTING="1", DISABLE_AUTOUPDATER="1")
+                args = [command, "-p", "--tools", "", "--permission-mode", "dontAsk",
+                        "--no-session-persistence", "--output-format", "json",
+                        "--setting-sources", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}']
+                # subprocess receives an argument vector: user messages never
+                # become shell commands or command-line flags.
+                try:
+                    process = spawn(args, cwd=str(root), env=env, timeout=min(timeout_s, 300))
+                except OSError as exc:
+                    raise AdapterError("could not start isolated CLI") from exc
                 with self._lock:
-                    self._running.pop(task_id, None)
-                    cancelled = task_id in self._cancelled
-                    self._cancelled.discard(task_id)
-            if cancelled:
-                raise AdapterError("task_cancelled")
-            if process.returncode:
-                # Do not expose raw CLI stderr: it can contain local paths or
-                # provider account details. Keep actionable, bounded errors.
-                raise AdapterError(f"{self.executable} exited with status {process.returncode}; check local login and CLI version")
-            if len(stdout) > 8 * 1024 * 1024:
-                raise AdapterError("CLI response exceeds the 8 MiB limit")
-            try:
-                payload = json.loads(stdout)
-                answer = payload.get("result")
-                usage = payload.get("usage") or {}
-            except (ValueError, TypeError, AttributeError) as exc:
-                raise AdapterError("Claude Code returned invalid JSON") from exc
-            if payload.get("is_error") or not isinstance(answer, str):
-                raise AdapterError("Claude Code did not return a text answer")
-            counts = actual_usage(usage)
-            return {"text": answer, "message": {"role": "assistant", "content": answer},
-                    **counts, "reported_usage": counts,
+                    self._running[task_id] = process
+                    cancelled_before_start = task_id in self._cancelled
+                if cancelled_before_start:
+                    process.kill()
+                try:
+                    stdout = communicate_bounded(process, prompt.encode(), timeout=min(timeout_s, 300), root=root)
+                except (OSError, RuntimeError) as exc:
+                    raise AdapterError("CLI execution failed or exceeded limits") from exc
+                finally:
+                    with self._lock:
+                        self._running.pop(task_id, None)
+                        cancelled = task_id in self._cancelled
+                        self._cancelled.discard(task_id)
+                if cancelled:
+                    raise AdapterError("task_cancelled")
+                if process.returncode:
+                    # Do not expose raw CLI stderr: it can contain local paths or
+                    # provider account details. Keep actionable, bounded errors.
+                    raise AdapterError(f"{self.executable} exited with status {process.returncode}; check local login and CLI version")
+                if len(stdout) > 8 * 1024 * 1024:
+                    raise AdapterError("CLI response exceeds the 8 MiB limit")
+                try:
+                    payload = json.loads(stdout)
+                    answer = payload.get("result")
+                    usage = payload.get("usage") or {}
+                except (ValueError, TypeError, AttributeError) as exc:
+                    raise AdapterError("Claude Code returned invalid JSON") from exc
+                if payload.get("is_error") or not isinstance(answer, str):
+                    raise AdapterError("Claude Code did not return a text answer")
+                counts = actual_usage(usage)
+                out = {
+                    "text": answer,
+                    "message": {"role": "assistant", "content": answer},
+                    **counts,
+                    "reported_usage": counts,
                     "duration_ms": int((time.monotonic() - started) * 1000),
-                    "finish_reason": "stop"}
+                    "finish_reason": "stop",
+                }
+        if "auth_writeback" in auth_diag:
+            out["diagnostics"] = {**(out.get("diagnostics") or {}), "auth_writeback": auth_diag["auth_writeback"]}
+        return out
 
     def infer(self, *, prompt: str, max_tokens: int, task_id: str,
               timeout_s: float, model: str = "") -> dict[str, Any]:
@@ -295,11 +308,30 @@ class CLIAgentAdapter:
 
     def _chat_inner(self, body: dict[str, Any], *, task_id: str, timeout_s: float,
                     on_event: Any = None, model: str = "", conversation_scope: dict | None = None) -> dict[str, Any]:
+        from .cli_images import normalize_cli_messages
+        from .codex_session import _proxy_configured
+
         with self._lock:
             if task_id in self._cancelled:
                 self._cancelled.discard(task_id)
                 raise AdapterError("task_cancelled")
-        body = validate_chat(body)
+        omitted_attachments = 0
+        if isinstance(body, dict) and isinstance(body.get("messages"), list):
+            normalized_messages, omitted_attachments = normalize_cli_messages(body["messages"])
+            if omitted_attachments > 0:
+                body = {**body, "messages": normalized_messages}
+        try:
+            body = validate_chat(
+                body,
+                default_max_tokens=None if self.kind in {"codex_cli", "antigravity_cli"} else 512,
+            )
+        except ValueError as exc:
+            if str(exc) == "unknown tool_choice function":
+                raise AdapterError(
+                    "named tool choice is not in tools",
+                    code="source_protocol_parameters_unsupported",
+                ) from None
+            raise
         for message in body["messages"]:
             # Native API continuation belongs only to its bound HTTP adapter.
             # CLI sessions must never stringify it into their prompt envelope.
@@ -309,40 +341,62 @@ class CLIAgentAdapter:
             raise AdapterError("CLI API mode does not support reasoning_effort for this CLI")
         if self.kind != "codex_cli" and any(isinstance(message.get("content"), list) for message in body["messages"]):
             raise AdapterError("CLI API mode does not support image input")
-        if self.kind in {"codex_cli", "antigravity_cli"}:
-            if self.kind == "codex_cli":
-                from .codex_session import chat
+        try:
+            if self.kind in {"codex_cli", "antigravity_cli"}:
+                if self.kind == "codex_cli":
+                    from .codex_session import chat
+                else:
+                    from .antigravity_session import chat
+                for key in ("temperature", "top_p", "stop", "enable_thinking"):
+                    if key in body:
+                        raise AdapterError(f"CLI API mode does not support {key}")
+                if self.kind == "codex_cli":
+                    if "max_tokens" not in body:
+                        from .cli_models import default_max_output_tokens
+                        body = {
+                            **body,
+                            "max_tokens": default_max_output_tokens("codex_cli", model, executable=self.executable),
+                        }
+                    # Codex forwards assistant text as it streams; proposals stay
+                    # buffered until validated, then end the stream.
+                    result = chat(self, body, task_id=task_id, timeout_s=min(timeout_s, 300), model=model,
+                                  on_event=on_event if body.get("stream") else None, scope=conversation_scope)
+                else:
+                    result = chat(self, body, task_id=task_id, timeout_s=min(timeout_s, 300), model=model)
+                    if body.get("stream") and on_event:
+                        # Buffered SSE: no provider turn remains alive awaiting tools.
+                        delta = dict(result["message"])
+                        if delta.get("tool_calls"):
+                            delta["tool_calls"] = [{"index": i, **call} for i, call in enumerate(delta["tool_calls"])]
+                        on_event({"choices": [{"index": 0, "delta": delta, "finish_reason": None}]})
+                        on_event({"choices": [{"index": 0, "delta": {}, "finish_reason": result["finish_reason"]}],
+                                  "usage": {"prompt_tokens": result["input_tokens"], "completion_tokens": result["output_tokens"],
+                                            "total_tokens": (result["input_tokens"] + result["output_tokens"]
+                                                             if result["input_tokens"] is not None and result["output_tokens"] is not None else None)}})
             else:
-                from .antigravity_session import chat
-            for key in ("temperature", "top_p", "stop", "enable_thinking"):
-                if key in body:
-                    raise AdapterError(f"CLI API mode does not support {key}")
-            if self.kind == "codex_cli":
-                # Codex forwards assistant text as it streams; proposals stay
-                # buffered until validated, then end the stream.
-                return chat(self, body, task_id=task_id, timeout_s=min(timeout_s, 300), model=model,
-                            on_event=on_event if body.get("stream") else None, scope=conversation_scope)
-            result = chat(self, body, task_id=task_id, timeout_s=min(timeout_s, 300), model=model)
-            if body.get("stream") and on_event:
-                # Buffered SSE: no provider turn remains alive awaiting tools.
-                delta = dict(result["message"])
-                if delta.get("tool_calls"):
-                    delta["tool_calls"] = [{"index": i, **call} for i, call in enumerate(delta["tool_calls"])]
-                on_event({"choices": [{"index": 0, "delta": delta, "finish_reason": None}]})
-                on_event({"choices": [{"index": 0, "delta": {}, "finish_reason": result["finish_reason"]}],
-                          "usage": {"prompt_tokens": result["input_tokens"], "completion_tokens": result["output_tokens"],
-                                    "total_tokens": (result["input_tokens"] + result["output_tokens"]
-                                                     if result["input_tokens"] is not None and result["output_tokens"] is not None else None)}})
-            return result
-        if body.get("tools") or body.get("tool_choice", "auto") not in ("auto", "none"):
-            raise AdapterError("CLI API mode does not support client tool calls")
-        for key in ("temperature", "top_p", "stop", "enable_thinking"):
-            if key in body:
-                raise AdapterError(f"CLI API mode does not support {key}")
-        if body.get("stream"):
-            raise AdapterError("CLI API mode does not support streaming yet")
-        return self._run(self._prompt(body["messages"]), task_id=task_id,
-                         timeout_s=timeout_s, max_tokens=int(body.get("max_tokens") or 512))
+                if body.get("tools") or body.get("tool_choice", "auto") not in ("auto", "none"):
+                    raise AdapterError("CLI API mode does not support client tool calls")
+                for key in ("temperature", "top_p", "stop", "enable_thinking"):
+                    if key in body:
+                        raise AdapterError(f"CLI API mode does not support {key}")
+                if body.get("stream"):
+                    raise AdapterError("CLI API mode does not support streaming yet")
+                result = self._run(self._prompt(body["messages"]), task_id=task_id,
+                                   timeout_s=timeout_s, max_tokens=int(body.get("max_tokens") or 512))
+        except AdapterError as exc:
+            diag = dict(getattr(exc, "diagnostics", None) or {})
+            if exc.code == "runtime_connection_failed" and "proxy_configured" not in diag:
+                diag["proxy_configured"] = _proxy_configured()
+            if omitted_attachments > 0:
+                diag["omitted_attachments"] = int(diag.get("omitted_attachments") or 0) + omitted_attachments
+            if diag:
+                exc.diagnostics = diag
+            raise
+        if omitted_attachments > 0:
+            diag = dict(result.get("diagnostics") or {})
+            diag["omitted_attachments"] = int(diag.get("omitted_attachments") or 0) + omitted_attachments
+            result["diagnostics"] = diag
+        return result
 
     def cancel(self, task_id: str) -> bool:
         with self._lock:

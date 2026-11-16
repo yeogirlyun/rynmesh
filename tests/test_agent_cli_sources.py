@@ -139,3 +139,43 @@ def test_optional_cli_diagnostic_does_not_disable_connected_model(tmp_path, monk
     assert receipt['result']['probe_passed'] is False and receipt['result']['tool_support'] == support
     assert tools.cli_sources.read()['antigravity_cli'] == original and not calls
     assert tools.verify(receipt, [{'verifier': 'local_cli_tool_test_state'}], context=runtime._execution_context(raw), cancelled=lambda: False)['status'] == 'unknown'
+
+
+def test_antigravity_default_max_tokens_overflow_finish_length_and_missing_tool_choice(monkeypatch):
+    from rynmesh.llm_package import antigravity_session, cli_models
+    from rynmesh.llm_package.adapters import AdapterError
+    from rynmesh.llm_package.cli_adapter import CLIAgentAdapter
+
+    seen_budgets = []
+    monkeypatch.setattr(cli_models, 'cached_models', lambda kind, exe: [
+        {'id': 'gemini-2.5-pro', 'name': 'Gemini 2.5 Pro', 'default': True, 'max_output_tokens': 65536, 'agent_support': 'experimental'},
+    ])
+    monkeypatch.setattr(antigravity_session, 'infer', lambda _a, _p, **kw: (
+        seen_budgets.append(kw['max_tokens']) or {'text': 'ok', 'message': {'role': 'assistant', 'content': 'ok'}, 'finish_reason': 'stop'}
+    ))
+    adapter = CLIAgentAdapter('antigravity_cli', executable='fixture-agy')
+    adapter.chat({'messages': [{'role': 'user', 'content': 'hello'}]}, task_id='ag-default-max', timeout_s=5, model='gemini-2.5-pro')
+    assert seen_budgets == [65536]
+
+    monkeypatch.undo()
+    monkeypatch.setattr(adapter, '_command_path', lambda: 'fixture-agy')
+    monkeypatch.setattr(antigravity_session, 'spawn', lambda *_a, **_kw: SimpleNamespace(returncode=0))
+    monkeypatch.setattr(antigravity_session, 'terminate', lambda _p: None)
+    monkeypatch.setattr(antigravity_session, 'communicate_bounded', lambda *_a, **_kw: json.dumps({
+        'status': 'SUCCESS',
+        'response': 'long reply',
+        'usage': {'input_tokens': 10, 'output_tokens': 200},
+    }))
+    over = adapter.chat({'messages': [{'role': 'user', 'content': 'short'}], 'max_tokens': 64}, task_id='ag-over', timeout_s=5)
+    assert over['finish_reason'] == 'length'
+    assert over['diagnostics']['output_limit_not_enforced'] is True
+
+    tool = {'type': 'function', 'function': {'name': 'probe', 'parameters': {'type': 'object'}}}
+    with pytest.raises(AdapterError) as info:
+        antigravity_session.chat(
+            adapter,
+            {'messages': [{'role': 'user', 'content': 'hi'}], 'tools': [tool], 'tool_choice': {'type': 'function', 'function': {'name': 'absent'}}},
+            task_id='ag-missing-choice',
+            timeout_s=5,
+        )
+    assert info.value.code == 'source_protocol_parameters_unsupported'

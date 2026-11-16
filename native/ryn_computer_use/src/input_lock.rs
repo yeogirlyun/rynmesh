@@ -20,7 +20,8 @@ use windows::Win32::Security::{
     TOKEN_QUERY, TOKEN_USER,
 };
 use windows::Win32::System::StationsAndDesktops::{
-    GetThreadDesktop, GetUserObjectInformationW, UOI_NAME,
+    CloseDesktop, GetThreadDesktop, GetUserObjectInformationW, OpenInputDesktop,
+    DESKTOP_READOBJECTS, HDESK, UOI_NAME,
 };
 use windows::Win32::System::Threading::{
     CreateMutexW, GetCurrentProcess, GetCurrentThreadId, OpenProcessToken, ReleaseMutex,
@@ -216,6 +217,75 @@ fn query_current_desktop_name() -> Result<String, ProtocolError> {
             ));
         }
         Ok(name)
+    }
+}
+
+struct DesktopCloseGuard(HDESK);
+
+impl Drop for DesktopCloseGuard {
+    fn drop(&mut self) {
+        if !self.0.is_invalid() {
+            unsafe {
+                let _ = CloseDesktop(self.0);
+            }
+        }
+    }
+}
+
+pub fn query_active_input_desktop_name() -> Result<String, u32> {
+    unsafe {
+        let hdesk = OpenInputDesktop(Default::default(), false, DESKTOP_READOBJECTS)
+            .map_err(|_| GetLastError().0)?;
+        let _guard = DesktopCloseGuard(hdesk);
+
+        let mut needed = 0u32;
+        let _ = GetUserObjectInformationW(
+            HANDLE(hdesk.0),
+            UOI_NAME,
+            None,
+            0,
+            Some(&mut needed),
+        );
+        if needed == 0 {
+            return Err(GetLastError().0);
+        }
+
+        let mut buf = vec![0u16; (needed as usize / 2) + 2];
+        GetUserObjectInformationW(
+            HANDLE(hdesk.0),
+            UOI_NAME,
+            Some(buf.as_mut_ptr() as *mut c_void),
+            needed,
+            Some(&mut needed),
+        )
+        .map_err(|_| GetLastError().0)?;
+
+        let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        let name = String::from_utf16_lossy(&buf[..len]).trim().to_string();
+        if name.is_empty() {
+            return Err(GetLastError().0);
+        }
+        Ok(name)
+    }
+}
+
+pub fn verify_active_desktop_matches_lock(
+    expected_desktop: &str,
+    active_desktop: Result<&str, u32>,
+) -> Result<(), ProtocolError> {
+    match active_desktop {
+        Ok(active) if active.eq_ignore_ascii_case(expected_desktop) => Ok(()),
+        Ok(_) => Err(ProtocolError::prepare(
+            ErrorCode::DesktopLocked,
+            DiagnosticReason::DesktopLocked,
+        )
+        .with_retryable(false)),
+        Err(win32_err) => Err(ProtocolError::prepare(
+            ErrorCode::DesktopLocked,
+            DiagnosticReason::DesktopLocked,
+        )
+        .with_win32_error(win32_err)
+        .with_retryable(false)),
     }
 }
 

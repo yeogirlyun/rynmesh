@@ -54,6 +54,7 @@ from .sharing import FriendSharingTool
 from .source_drafts import NAMES as SOURCE_NAMES
 from .source_drafts import SourceDrafts
 from .store import AgentError, AgentToolRejected, encoded
+from .tool_router import schema_rejection_error
 
 
 def _schema(properties=None, required=None):
@@ -75,8 +76,8 @@ _SPECS = {
     "ryn_discover_local_cli_sources": ("Discover supported CLI sources installed on THIS device, their setup status and sharing availability. Returns adapter kinds; detection is not login or inference proof. No shell commands, paths or secrets accepted.", "read", "low", _schema()),
     CLI_CONNECT: ("Connect a discovered installed CLI as a private local AI source. Runs a fixed login/chat probe under this task budget. Reuses existing configuration without resetting sharing. Does not install software, change default/current models or enable sharing. Requires exact setup preview approval. Connected models with an Agent tool bridge are ready to use; no separate tool test is required.", "write", "high", _schema({"kind": {"enum": list(CLI_KINDS)}}, ["kind"])),
     CLI_TEST: ("Optionally diagnose a configured local CLI using two fixed synthetic client-tool exchanges; persist diagnostic evidence. Charged to this task budget. No user data or real business tools execute. The diagnostic result does not enable or disable connected models and is not required before selecting or using one.", "read", "medium", _schema({"kind": {"enum": list(CLI_KINDS)}}, ["kind"])),
-    FRIEND_SHARING_NAME: ("Share one owned configured model with exactly one active friend in ONE approved transaction. Copy model_id from ryn_list_models id and relationship_id from ryn_list_devices friends. Atomically enables friends-only sharing, grants that recipient and revokes all other friend grants for this model. Preview lists all prior grants and the exact recipient. Use for a request to share a model with a specific friend/device; receiver connectivity is a separate check.", "write", "high",
-        _schema({"model_id": _STRING, "relationship_id": {"type": "string", "pattern": "^[a-f0-9]{32}$"}}, ["model_id", "relationship_id"])),
+    FRIEND_SHARING_NAME: ("Share one owned configured model with this active friend in ONE approved transaction (把模型分享给这位朋友；只有明确要求'只给他一个人'时才设为 true). Copy model_id from ryn_list_models id and relationship_id from ryn_list_devices friends. Keeps other friends' grants by default; set revoke_other_friends=true only when explicitly asked to share with this friend alone. When revoked_recipients is non-empty, name the revoked friends in your reply. Receiver connectivity is a separate check.", "write", "high",
+        _schema({"model_id": _STRING, "relationship_id": {"type": "string", "pattern": "^[a-f0-9]{32}$"}, "revoke_other_friends": {"type": "boolean", "default": False}}, ["model_id", "relationship_id"])),
     DEFAULT_MODEL_NAME: ("Set the default model for NEW tasks only. Read expected_settings_revision from ryn_get_agent_configuration and copy the exact catalog id from ryn_list_models. Requires approval; never changes this task, Agent enablement, permissions or sharing.", "write", "high",
         _schema({"model_id": _STRING, "expected_settings_revision": {"type": "integer", "minimum": 0}}, ["model_id", "expected_settings_revision"])),
     "ryn_list_source_configurations": ("Inspect Ryn's own configured AI source settings and credential-presence flags, not configuration inside arbitrary local projects. Never returns API keys; actual connection/tool capability needs explicit testing.", "read", "low", _schema()),
@@ -223,7 +224,7 @@ class RynTools:
         return ([copy.deepcopy(APP_VERIFIER)] if getattr(self.app.state, "node_apps", None) else []) + self.local.verification_specs() + copy.deepcopy(READ_SPECS) + [{"id": "local_cli_configuration_state", "tool_name": CLI_CONNECT, "kind": "mechanical", "effect": "write", "description": "Read attributable CLI setup and current configuration. Connected models use the adapter's Agent tool bridge without a separate probe.", "target_fields": ["kind"]},
                 {"id": "local_cli_tool_test_state", "tool_name": CLI_TEST, "kind": "mechanical", "effect": "read", "description": "Verify the attributable client-tool probe and unchanged installed CLI/configuration.", "target_fields": ["kind"]},
                 {"id": FRIEND_SHARING_VERIFIER, "tool_name": FRIEND_SHARING_NAME, "kind": "mechanical", "effect": "write",
-                 "description": "Verify the atomic sharing receipt, friends scope and exact recipient grants; receiver connectivity is separate.", "target_fields": ["model_id", "relationship_id"]},
+                 "description": "Verify the atomic sharing receipt, friends scope and recipient grants matching revoke_other_friends; receiver connectivity is separate.", "target_fields": ["model_id", "relationship_id", "revoke_other_friends"]},
                 {"id": "default_agent_model_state", "tool_name": DEFAULT_MODEL_NAME, "kind": "mechanical", "effect": "write",
                  "description": "Read the atomic default-model receipt and current saved settings; no inference or sharing claim.", "target_fields": []},
                 {"id": "model_sharing_state", "tool_name": "ryn_set_model_sharing", "kind": "mechanical", "effect": "write",
@@ -348,10 +349,23 @@ class RynTools:
                     "arguments_sha256": operation["arguments_sha256"], "result": copy.deepcopy(prior[1])}}
 
     def specs(self, context=None):
-        return [{"type": "function", "function": {"name": name, "description": row[0], "parameters": copy.deepcopy(row[3])}}
-                for name, row in {**_SPECS, **LOCAL_SPECS}.items()] + [copy.deepcopy(CODE_MODE_SPEC)] + self.diagnostics.specs() + (copy.deepcopy(APP_SPECS) if getattr(self.app.state, "node_apps", None) else []) + self.craft_plugins.specs() + self.craft.specs() + self.extensions.specs(context)
+        from .native_computer import filter_computer_tool_specs
+        raw = (
+            [{"type": "function", "function": {"name": name, "description": row[0], "parameters": copy.deepcopy(row[3])}}
+             for name, row in {**_SPECS, **LOCAL_SPECS}.items()]
+            + [copy.deepcopy(CODE_MODE_SPEC)]
+            + self.diagnostics.specs()
+            + (copy.deepcopy(APP_SPECS) if getattr(self.app.state, "node_apps", None) else [])
+            + self.craft_plugins.specs()
+            + self.craft.specs()
+            + self.extensions.specs(context)
+        )
+        return filter_computer_tool_specs(raw, store=self.store)
 
     def spec(self, name, context=None):
+        from .native_computer import computer_platform_status, is_computer_control_tool_name
+        if is_computer_control_tool_name(name) and not computer_platform_status(self.store)["supported"]:
+            return None
         if name == CODE_MODE_NAME:
             return copy.deepcopy(CODE_MODE_SPEC["function"])
         if self.extensions.handles(name):
@@ -418,15 +432,7 @@ class RynTools:
 
     @staticmethod
     def _schema_rejection(name: str, exc: Exception) -> AgentToolRejected:
-        cause = getattr(exc, "__cause__", None) or exc
-        path_parts = [re.sub(r"[^A-Za-z0-9_]", "", str(part))[:40] for part in getattr(cause, "absolute_path", ())]
-        field_path = "/".join(p for p in path_parts if p) or "<root>"
-        validator = re.sub(r"[^A-Za-z]", "", str(getattr(cause, "validator", "schema")))[:24] or "schema"
-        return AgentToolRejected(
-            "agent_tool_arguments_invalid",
-            correction=f"Invalid arguments for '{name}' at field '{field_path}' ({validator}). Check the tool parameter schema and retry.",
-            details={"tool": name, "field_path": field_path, "validator": validator},
-        )
+        return schema_rejection_error(name, exc)
 
     def _validate(self, name, arguments):
         self.metadata(name)
@@ -641,25 +647,74 @@ class RynTools:
                     raise AgentToolRejected("agent_cancelled")
                 # Reuse the same presence vs reachability semantics as Devices.
                 # A failed HTTP probe behind NAT never proves a device offline.
+                from ..services.peer_health import classify_agent_presence
+
+                presence_cache = getattr(self.app.state, "peer_presence", None)
                 known = {item["id"] for item in inputs}
                 inputs.extend({"id": peer_id, "isSelf": peer_id == self.store.peer_id} for peer_id in devices if peer_id not in known)
                 checked_inputs = {item["id"]: item for item in inputs[:64]}
-                evidence = {row["peerId"]: row for row in self.peer_health.check(list(checked_inputs.values()))}
+                evidence = {}
+                to_probe = []
+                for pid, item in checked_inputs.items():
+                    cached_obs = (
+                        presence_cache.get(pid)
+                        if presence_cache is not None and not item.get("isSelf")
+                        else None
+                    )
+                    if cached_obs is not None and cached_obs.get("source") == "drop_probe":
+                        evidence[pid] = cached_obs
+                    else:
+                        to_probe.append(item)
+                if to_probe:
+                    probed_rows = self.peer_health.check(to_probe)
+                    if presence_cache is not None:
+                        presence_cache.update([
+                            r for r in probed_rows if r.get("online") is not None or r.get("presenceSource") != "unknown"
+                        ])
+                    for r in probed_rows:
+                        pid = r["peerId"]
+                        latest = (
+                            presence_cache.get(pid)
+                            if presence_cache is not None and not checked_inputs.get(pid, {}).get("isSelf")
+                            else None
+                        )
+                        evidence[pid] = latest if (latest is not None and latest.get("source") == "drop_probe") else r
                 for peer_id, row in devices.items():
                     health = evidence.get(peer_id, {})
                     probe_input = checked_inputs.get(peer_id, {})
                     is_self = bool(probe_input.get("isSelf"))
-                    lan_probed = not is_self and any(isinstance(url, str) and url.startswith(("http://", "https://"))
-                                                     for url in probe_input.get("lanEndpoints", []))
-                    http_probed = not is_self and (lan_probed or str(probe_input.get("endpoint", "")).startswith(("http://", "https://")))
+                    classified = classify_agent_presence(health)
+                    ev_source = str(health.get("presenceSource") or health.get("source") or "unknown")
+                    lan_probed = not is_self and (
+                        bool(health.get("lanReachable"))
+                        or any(isinstance(url, str) and url.startswith(("http://", "https://"))
+                               for url in probe_input.get("lanEndpoints", []))
+                    )
+                    http_probed = not is_self and (
+                        lan_probed
+                        or bool(health.get("httpReachable"))
+                        or str(probe_input.get("endpoint", "")).startswith(("http://", "https://"))
+                    )
                     # PeerHealth's self shortcut proves this process is alive;
                     # it does not send an HTTP request. No endpoint is likewise
                     # untested, not a failed connectivity measurement.
-                    row.update(online=health.get("online"), last_seen=health.get("lastSeen", ""),
-                        checked_at=health.get("checkedAt", ""), evidence_source=health.get("presenceSource", "unknown"),
-                        http_probe_performed=http_probed, lan_probe_performed=lan_probed,
+                    row.update(
+                        online=classified["online"],
+                        presence_state=classified["presence_state"],
+                        observed_at=classified["observed_at"],
+                        source=classified["source"],
+                        last_seen=health.get("lastSeen", ""),
+                        checked_at=health.get("checkedAt", classified["observed_at"]),
+                        evidence_source=(
+                            ev_source
+                            if classified["online"] is not None or ev_source in {"self", "http", "heartbeat", "drop_probe"}
+                            else "unknown"
+                        ),
+                        http_probe_performed=http_probed,
+                        lan_probe_performed=lan_probed,
                         http_reachable=health.get("httpReachable") if http_probed else None,
-                        lan_reachable=health.get("lanReachable") if lan_probed else None)
+                        lan_reachable=health.get("lanReachable") if lan_probed else None,
+                    )
                 result = {"self_id": self.store.peer_id, "membership": space["membership"], "ai_access": space["ai_access"],
                     "devices": list(devices.values())[:64], "friends": friend_rows,
                     "evidence_note": "online=null means unknown; membership is not proof of connectivity. evidence_source=self proves only the executing process is alive; no HTTP/LAN probe is performed for self. Reachability=null means untested, not failed. HTTP failure alone does not prove offline."}

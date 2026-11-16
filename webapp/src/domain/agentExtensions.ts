@@ -16,6 +16,7 @@ export type ExtensionMcpOauthClientRegistration = "auto" | "cimd" | "dcr";
 export type ExtensionMcpStatus =
   | "disabled"
   | "ready"
+  | "Degraded"
   | "NeedsTest"
   | "NeedsAuth"
   | "NeedsPermission"
@@ -24,6 +25,11 @@ export type ExtensionMcpStatus =
   | "error"
   | string;
 export type ExtensionImportKind = "plugin" | "skill" | "mcp";
+
+export const DEFAULT_MCP_STARTUP_TIMEOUT_MS = 30000;
+export const MAX_MCP_STARTUP_TIMEOUT_MS = 300000;
+export const DEFAULT_MCP_TOOL_TIMEOUT_MS = 300000;
+export const MAX_MCP_TOOL_TIMEOUT_MS = 3600000;
 
 export const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 export const HEADER_KEY_RE = /^[A-Za-z0-9-]{1,128}$/;
@@ -64,6 +70,7 @@ export interface ExtensionMcpTool {
   description: string;
   enabled: boolean;
   component_enabled: boolean;
+  schema_invalid?: boolean;
   owner_read_only: boolean;
   effective_effect: "read" | "write";
   effective_risk?: "low" | "high";
@@ -92,6 +99,7 @@ export interface ExtensionMcpServer {
   deletable: boolean;
   plugin_id: string | null;
   computer_access: boolean;
+  inherit_user_home?: boolean;
   /** Effective state: true only when both component_enabled and parent_enabled are true. */
   enabled: boolean;
   /** Individual server enabled preference (retained even when parent plugin is disabled). */
@@ -357,6 +365,7 @@ export interface ExtensionMcpServerCreateInput {
   startup_timeout_ms?: number;
   tool_timeout_ms?: number;
   computer_access?: boolean;
+  inherit_user_home?: boolean;
   enabled_tools?: string[] | null;
   disabled_tools?: string[];
   read_only_tools?: string[];
@@ -382,6 +391,7 @@ export interface ExtensionMcpServerUpdateInput {
   startup_timeout_ms?: number;
   tool_timeout_ms?: number;
   computer_access?: boolean;
+  inherit_user_home?: boolean;
   enabled_tools?: string[] | null;
   disabled_tools?: string[];
   read_only_tools?: string[];
@@ -709,6 +719,7 @@ function normalizeMcpTool(raw: Record<string, unknown>): ExtensionMcpTool {
     description: typeof raw.description === "string" ? raw.description : "",
     enabled,
     component_enabled: componentEnabled,
+    schema_invalid: Boolean(raw.schema_invalid),
     owner_read_only: ownerReadOnly,
     effective_effect: raw.effective_effect === "read" || ownerReadOnly ? "read" : "write",
     effective_risk: raw.effective_risk === "low" || ownerReadOnly ? "low" : "high",
@@ -755,6 +766,7 @@ export function normalizeMcpServer(raw: Record<string, unknown>): ExtensionMcpSe
     deletable: raw.deletable !== undefined ? Boolean(raw.deletable) : !raw.builtin,
     plugin_id: typeof raw.plugin_id === "string" && raw.plugin_id ? raw.plugin_id : null,
     computer_access: Boolean(raw.computer_access),
+    inherit_user_home: Boolean(raw.inherit_user_home),
     enabled,
     component_enabled: componentEnabled,
     parent_enabled: parentEnabled,
@@ -782,8 +794,8 @@ export function normalizeMcpServer(raw: Record<string, unknown>): ExtensionMcpSe
         && typeof value.schema_sha256 === "string" && /^[0-9a-f]{64}$/.test(value.schema_sha256)))
       .map(value => ({ name: value.name, title: typeof value.title === "string" ? value.title : value.name, schema_sha256: value.schema_sha256 })) : [],
     has_secrets: typeof raw.has_secrets === "boolean" ? raw.has_secrets : Boolean(Object.keys(maskedEnvRaw).length || Object.keys(maskedHeadersRaw).length),
-    startup_timeout_ms: typeof raw.startup_timeout_ms === "number" ? raw.startup_timeout_ms : 10000,
-    tool_timeout_ms: typeof raw.tool_timeout_ms === "number" ? raw.tool_timeout_ms : 30000,
+    startup_timeout_ms: typeof raw.startup_timeout_ms === "number" ? raw.startup_timeout_ms : DEFAULT_MCP_STARTUP_TIMEOUT_MS,
+    tool_timeout_ms: typeof raw.tool_timeout_ms === "number" ? raw.tool_timeout_ms : DEFAULT_MCP_TOOL_TIMEOUT_MS,
     enabled_tools: enabledTools,
     disabled_tools: Array.isArray(raw.disabled_tools) ? raw.disabled_tools.map(String) : [],
     read_only_tools: Array.isArray(raw.read_only_tools) ? raw.read_only_tools.map(String) : [],

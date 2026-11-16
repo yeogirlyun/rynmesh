@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 import rynmesh.peer_transit_service as peer_transit_service
+from rynmesh.friends.store import FriendStore
 from rynmesh.llm_package.p2p import (
     _close_connection,
     apply_remote_signal,
@@ -31,7 +32,13 @@ from rynmesh.llm_package.p2p import (
     new_connection,
     selected_pair,
 )
-from rynmesh.peer_transit import PathMetrics, RouteManager, RoutePolicy, validate_ice_hop
+from rynmesh.peer_transit import (
+    PathMetrics,
+    RouteManager,
+    RoutePolicy,
+    messaging_public_key,
+    validate_ice_hop,
+)
 from rynmesh.peer_transit_service import (
     PeerTransitError,
     PeerTransitWorker,
@@ -41,6 +48,7 @@ from rynmesh.peer_transit_service import (
     send_file_via_peer,
 )
 from rynmesh.registry import FilePeerRegistry
+from rynmesh.services.peer_box import load_or_create_messaging_key
 from rynmesh.store import RynmeshStore
 
 try:
@@ -52,6 +60,22 @@ MARKER = b"RYNMESH-TRANSIT-PLAINTEXT-CHECK-2026"
 MAX_ACCEPTANCE_PEAK_MEMORY_BYTES = 128 * 1024 * 1024
 MAX_REGISTRY_CONTROL_RECORD_BYTES = 64 * 1024
 CONCURRENT_PROBE_BYTES = 1024 * 1024
+
+
+def _trust_source_on_target(target: RynmeshStore, source: RynmeshStore) -> None:
+    source_box = load_or_create_messaging_key(source.home / "messaging.x25519")
+    FriendStore(target.home).put_relationship(
+        {
+            "relationship_id": f"acceptance-{source.peer_id[:16]}",
+            "peer_id": source.peer_id,
+            "node_name": source.node_name,
+            "messaging_pub": messaging_public_key(source_box),
+            "endpoint": "https://acceptance-peer.example.invalid",
+            "status": "active",
+            "created_at": "2026-11-15T00:00:00+00:00",
+        },
+        b"\x22" * 32,
+    )
 
 
 def _prepare_work_root(work_root: Path) -> None:
@@ -597,6 +621,7 @@ def _control_plane_blackout_acceptance(root: Path, *, timeout_s: float) -> dict[
     target = RynmeshStore(home=root / "blackout-target", network_dir=root / "blackout-target-net")
     for store in (source, relay, target):
         store.registry = registry
+    _trust_source_on_target(target, source)
     network_id = "peer-transit-control-plane-blackout"
     inbox = root / "blackout-target-inbox"
     relay_worker = PeerTransitWorker(
@@ -820,11 +845,14 @@ def run_acceptance(
     concurrent_sessions: int,
     timeout_s: float,
     work_root: Path,
+    allow_any_source: bool = False,
 ) -> dict[str, Any]:
     # Hermetic acceptance uses real host ICE candidates and never contacts an
     # external STUN service.  A physical three-network run overrides this with
     # its chosen STUN endpoint to prove server-reflexive mappings.
     os.environ.setdefault("RYNMESH_P2P_STUN", "off")
+    if size_bytes > peer_transit_service.DEFAULT_MAX_FILE_BYTES:
+        os.environ.setdefault("RYNMESH_TRANSIT_MAX_FILE_BYTES", str(size_bytes))
     _prepare_work_root(work_root)
     registry_root = work_root / "registry"
     registry = FilePeerRegistry(registry_root)
@@ -833,6 +861,8 @@ def run_acceptance(
     target = RynmeshStore(home=work_root / "target", network_dir=work_root / "target-net")
     for store in (source, relay, target):
         store.registry = registry
+    if not allow_any_source:
+        _trust_source_on_target(target, source)
     network_id = "peer-transit-acceptance"
     frame_audit = _FrameAudit()
     worker_trace_lock = threading.Lock()
@@ -872,6 +902,7 @@ def run_acceptance(
         max_concurrent=max(8, concurrent_sessions),
         allow_direct=True,
         audit_session=session_auditor("target"),
+        trusted_source=(lambda _peer_id: True) if allow_any_source else None,
     )
     relay_worker.register()
     target_worker.register()
@@ -1242,6 +1273,7 @@ def main() -> int:
     parser.add_argument("--work-root", default="")
     parser.add_argument("--output", default="")
     parser.add_argument("--evidence", default="")
+    parser.add_argument("--allow-any-source", action="store_true")
     args = parser.parse_args()
     if args.size_mib < 1 or args.concurrent < 0:
         raise SystemExit("size-mib must be >= 1 and concurrent must be >= 0")
@@ -1259,6 +1291,7 @@ def main() -> int:
             concurrent_sessions=args.concurrent,
             timeout_s=args.timeout,
             work_root=root,
+            allow_any_source=args.allow_any_source,
         )
     except Exception as exc:  # noqa: BLE001 - persist exact acceptance failure
         report = {

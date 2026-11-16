@@ -10,14 +10,17 @@ REVISIONS = {
     "light": "872f8a96064a1242ac3a3359cad77c3042548405",
     "balanced": "91cad51170dc346986eccefdc2dd33a9da36ead9",
     "quality": "7dabda4d13d513e3e842b20f0d435c732f172cbe",
+    "agent": "13fb94bfda8c8cf22497dc57b78f391a9acb426a",
 }
 
 
 def test_catalog_has_exactly_three_ordered_profiles():
-    assert [profile.profile for profile in llm_catalog.PROFILES] == ["light", "balanced", "quality"]
+    assert [profile.profile for profile in llm_catalog.PROFILES] == [
+        "light", "balanced", "quality", "agent",
+    ]
 
 
-@pytest.mark.parametrize("name", ["light", "balanced", "quality"])
+@pytest.mark.parametrize("name", ["light", "balanced", "quality", "agent"])
 def test_each_profile_url_is_pinned_https_on_huggingface(name):
     profile = llm_catalog.profile_by_name(name)
     assert profile.url.startswith("https://huggingface.co/")
@@ -26,7 +29,7 @@ def test_each_profile_url_is_pinned_https_on_huggingface(name):
     assert "/resolve/main/" not in profile.url
 
 
-@pytest.mark.parametrize("name", ["light", "balanced", "quality"])
+@pytest.mark.parametrize("name", ["light", "balanced", "quality", "agent"])
 def test_each_profile_sha256_is_64_hex_chars(name):
     profile = llm_catalog.profile_by_name(name)
     assert len(profile.sha256) == 64
@@ -69,4 +72,4 @@ def test_catalog_module_has_no_network_or_subprocess_imports():
             imported.update(alias.name.split(".")[0] for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported.add(node.module.split(".")[0])
-    assert imported <= {"dataclasses", "__future__"}
+    assert imported <= {"dataclasses", "__future__", "logging", "os", "re"}

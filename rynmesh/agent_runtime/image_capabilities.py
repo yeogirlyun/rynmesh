@@ -152,6 +152,7 @@ MAX_CONTEXT_OPERATION_IMAGE_TOTAL_BYTES = 8 * 1024 * 1024
 MAX_LINKAGE_RECORDS = 16
 
 _HOST_NATIVE_SEAL_SECRET = os.urandom(32)
+_HOST_PROCESS_INSTANCE_ID = os.urandom(16).hex()
 _SAFE_SEGMENT_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 _ARTIFACT_FILENAME_RE = re.compile(r"image_[0-9]+\.(?:png|jpg|jpeg|webp|gif)\Z")
 _DATA_IMAGE_URL_RE = re.compile(
@@ -586,6 +587,13 @@ def require_route_image_support(
     )
 
 
+def is_image_content_part(part: Any) -> bool:
+    """Return True if a canonical content block represents an inline or input image."""
+    return isinstance(part, dict) and (
+        part.get("type") in {"image_url", "image", "input_image"} or "image_url" in part
+    )
+
+
 def message_has_image_input(messages: list[dict[str, Any]]) -> bool:
     """Return True if any canonical message carries an image content part."""
     if not isinstance(messages, list):
@@ -594,9 +602,7 @@ def message_has_image_input(messages: list[dict[str, Any]]) -> bool:
         if not isinstance(msg, dict) or not isinstance(msg.get("content"), list):
             continue
         for part in msg["content"]:
-            if not isinstance(part, dict):
-                continue
-            if part.get("type") in {"image_url", "image", "input_image"} or "image_url" in part:
+            if is_image_content_part(part):
                 return True
     return False
 
@@ -1201,6 +1207,7 @@ _ALLOWED_WINDOW_REF_KEYS = frozenset({
 })
 
 _CANONICAL_NATIVE_DESCRIPTOR_KEYS = frozenset({
+    "host_instance_id",
     "task_id",
     "operation_id",
     "observation_id",
@@ -1448,6 +1455,12 @@ def _normalize_native_observation_descriptor_fields(
     if "coordinate_authority" in descriptor and descriptor["coordinate_authority"] is not None:
         if descriptor["coordinate_authority"] is not True:
             raise ValueError("native_descriptor_untrusted_source")
+
+    if is_issuance:
+        raw_host_inst = descriptor.get("host_instance_id") or _HOST_PROCESS_INSTANCE_ID
+    else:
+        raw_host_inst = descriptor.get("host_instance_id")
+    host_instance_id = _strict_nonempty_str(raw_host_inst, "host_instance_id")
 
     task_id = _strict_nonempty_str(descriptor.get("task_id"), "task_id")
     operation_id = _strict_nonempty_str(descriptor.get("operation_id"), "operation_id")
@@ -1728,6 +1741,7 @@ def _normalize_native_observation_descriptor_fields(
         **({"payload_bytes": payload_bytes} if payload_bytes is not None else {}),
     }
     normalized: dict[str, Any] = {
+        "host_instance_id": host_instance_id,
         "task_id": task_id,
         "operation_id": operation_id,
         "observation_id": observation_id,
@@ -1775,8 +1789,14 @@ def _verify_sealed_native_descriptor_and_bindings(
         or descriptor.get("provenance") != "native_computer_observation"
         or descriptor.get("coordinate_authority") is not True
         or (set(descriptor.keys()) - (_CANONICAL_NATIVE_DESCRIPTOR_KEYS | {"_host_seal"}))
-        or not hmac.compare_digest(_compute_native_descriptor_seal(descriptor), raw_seal)
     ):
+        raise ValueError("native_descriptor_tampered_after_seal")
+
+    raw_host_inst = descriptor.get("host_instance_id")
+    if isinstance(raw_host_inst, str) and raw_host_inst.strip() and raw_host_inst.strip() != _HOST_PROCESS_INSTANCE_ID:
+        raise ValueError("native_observation_expired_after_restart")
+
+    if not hmac.compare_digest(_compute_native_descriptor_seal(descriptor), raw_seal):
         raise ValueError("native_descriptor_tampered_after_seal")
 
     try:
@@ -2795,12 +2815,15 @@ def materialize_operation_images(
             loaded["tool_call_id"] = call_id
             verified_items.append(loaded)
         except ValueError as exc:
-            rejected.append({
+            rej_item: dict[str, Any] = {
                 "tool_call_id": call_id,
                 "operation_id": op_id,
                 "path": _sanitize_artifact_path(art.get("path"), workspace_root) or "",
                 "reason": str(exc),
-            })
+            }
+            if str(exc) == "native_observation_expired_after_restart":
+                rej_item["message"] = "已重启，请重新观察"
+            rejected.append(rej_item)
 
     omitted_count = 0
     if len(verified_items) > max_images:

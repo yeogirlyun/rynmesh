@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import hashlib
 import hmac
 import json
@@ -22,7 +23,7 @@ from typing import Any, Callable
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 from fastapi import HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from rynmesh.ai_access.store import AIAccessError, AIAccessStore
 from rynmesh.atomic_io import atomic_write_json
@@ -51,6 +52,7 @@ from .consumer_cancellation import ConsumerOrderCancelled, cancellable_exchange
 from .consumer_commands import ConsumerCommands
 from .model_usage import ModelUsageStore, normalize_model_key, usage_caller_scope
 from .lifecycle import (
+    RUNTIME_EXTERNAL,
     LifecycleError,
     connect_cli,
     connect_local_api,
@@ -78,13 +80,15 @@ from .lifecycle import (
 from .lifecycle import (
     update as update_runtime,
 )
-from .manifest import LLMPackageManifest, ManifestError, load_manifest
+from .manifest import LLMPackageManifest, ManifestError, load_manifest, save_manifest
 from .model_usage import ModelUsageStore, normalize_model_key, usage_caller_scope
 from .p2p import (
     SIGNAL_LONG_POLL_S,
     IceSignal,
     P2PCapacityError,
     P2PError,
+    P2PMessageTooLarge,
+    P2PTimeoutError,
     consumer_exchange,
     provider_exchange,
     signal_poll_idle_max_s,
@@ -94,6 +98,7 @@ from .safety import MAX_OUTPUT, MAX_REQUEST, SharedSlots, install_body_limit
 from .service_view import annotate_services
 from .review import service_review
 from .setup_recovery import (
+    RECOVERY_DISCARDED_MESSAGE,
     RECOVERY_FAILED,
     SetupRecovery,
     SetupRecoveryError,
@@ -102,13 +107,16 @@ from .setup_recovery import (
 from .stream_protocol import (
     DEFAULT_MAX_EVENT_BYTES,
     DEFAULT_MAX_OUTPUT_BYTES,
+    DEFAULT_MAX_TERMINAL_BYTES,
+    PREVIEW_MAX_OUTPUT_BYTES,
     STREAM_PROTOCOL_VERSION,
+    STREAM_PROTOCOL_VERSION_V2,
     StreamEventBroker,
     StreamSequenceVerifier,
     seal_stream_delta,
 )
 from .streaming import events, peer_stream
-from .context_safety import context_request_fits
+from .context_safety import CONTEXT_ESTIMATE_CAPABILITY, context_overflow_detail, context_request_fits
 from .task_balance import TaskBalanceError, TaskBalanceLedger
 from .task_protocol import (
     TERMINAL_STATES,
@@ -132,9 +140,44 @@ def _positive_env(name: str, default: int) -> int:
     return value if value > 0 else default
 
 
+_MAX_SIGNED_P2P_ENVELOPE_BYTES = int(7.5 * 1024 * 1024)
+
+
+def _is_peer_stream_too_large(exc: BaseException | None) -> bool:
+    if exc is None:
+        return False
+    text = str(exc).strip()
+    if type(exc).__name__ == "PeerTransportError" and text in {"peer_stream_too_large", "peer_stream_event_too_large"}:
+        return True
+    return isinstance(exc, ValueError) and text in {"peer stream line limit exceeded", "peer stream limit exceeded"}
+
+
+def _peer_stream_timeout_code(exc: BaseException | None) -> str | None:
+    if exc is None:
+        return None
+    text = str(exc).strip()
+    if isinstance(exc, ValueError) and text in {"peer_stream_idle_timeout", "peer_stream_total_timeout"}:
+        return text
+    return None
+
+
 def _delivery_error_code(exc: Exception, *, transport: str) -> str:
+    if isinstance(exc, P2PMessageTooLarge) or isinstance(getattr(exc, "__cause__", None), P2PMessageTooLarge):
+        return "peer_request_too_large"
+    if _is_peer_stream_too_large(exc) or _is_peer_stream_too_large(getattr(exc, "__cause__", None)):
+        return "peer_stream_too_large"
+    stream_timeout = _peer_stream_timeout_code(exc) or _peer_stream_timeout_code(getattr(exc, "__cause__", None))
+    if stream_timeout:
+        return stream_timeout
+    if isinstance(exc, TaskProtocolError) and str(exc).strip() == context_overflow_detail():
+        return context_overflow_detail()
+    if isinstance(exc, TaskProtocolError) and str(exc) == "stream interrupted; automatic replay is disabled":
+        return "direct_stream_interrupted"
     if isinstance(exc, P2PCapacityError):
         return "p2p_capacity_exhausted"
+    reason = getattr(exc, "reason", None)
+    if isinstance(exc, P2PTimeoutError) and reason in {"idle_timeout", "total_timeout"}:
+        return "p2p_" + reason
     message = str(exc).strip().lower()
     if transport == "p2p" or isinstance(exc, P2PError) or "p2p" in message:
         if "distinct public egress" in message:
@@ -153,7 +196,7 @@ def _delivery_error_code(exc: Exception, *, transport: str) -> str:
 
 def _submission_error_code(detail: str) -> str:
     message = detail.strip().lower()
-    if message in RUNTIME_ERROR_CODES or message in {"service_unhealthy", "service_review_changed"}:
+    if message in RUNTIME_ERROR_CODES or message in {"service_unhealthy", "service_review_changed", "balance_insufficient", context_overflow_detail()}:
         return message
     if "insufficient development task balance" in message:
         return "insufficient_task_balance"
@@ -310,7 +353,11 @@ class ProviderService:
         permissions = AIAccessStore(store.home, relationship=relationships.relationship,
                                     sources=SourceStore(store.home, store.private_key_bytes, migrate=False))
         self.access_check = access_check or permissions.authorize
-        self._slots = SharedSlots(manifest.max_concurrent, task_store.root)
+        self._slots = SharedSlots(
+            manifest.max_concurrent,
+            task_store.root,
+            local_compute=manifest.runtime != RUNTIME_EXTERNAL,
+        )
         self._stream_slots = threading.BoundedSemaphore(manifest.max_concurrent + 1)
         self._lock = threading.Lock()
         self._running = 0
@@ -331,7 +378,9 @@ class ProviderService:
         self._provider_records_by_peer: Counter[str] = Counter()
         self.accepting_orders = True
         self._refresh_provider_record_counts(prune=True)
-        self.task_store.use_memory_responses()
+        self.task_store.use_memory_responses(
+            ttl_seconds=max(60.0, float(self.manifest.timeout_seconds) + 60.0),
+        )
 
     def _refresh_provider_record_counts(self, *, prune: bool = False) -> None:
         if prune:
@@ -419,7 +468,7 @@ class ProviderService:
             models = self.cli_models()
             if not models or (model and not any(item.get("id") == model for item in models)):
                 raise AdapterError("cli_model_unavailable", code="model_configuration_changed")
-            return context_metadata(models, model)["context_window"]
+            return context_metadata(models, model, kind=self.manifest.adapter)["context_window"]
         return self.manifest.context_window
 
     def public_status(self, *, benchmark: bool = False, cached_cli_models: bool = False) -> dict[str, Any]:
@@ -433,10 +482,13 @@ class ProviderService:
                 self.manifest.adapter, self.manifest.capabilities),
             "cancel": "best_effort",
         }
+        service_dict = self.manifest.public_dict()
+        if getattr(self.manifest, "stream_idle_seconds", None) is not None:
+            service_dict["stream_idle_seconds"] = self.manifest.stream_idle_seconds
         result: dict[str, Any] = {
             "configured": True,
             "ready": bool(health.get("ok")),
-            "service": self.manifest.public_dict(),
+            "service": service_dict,
             "online": bool(health.get("ok")) and self.accepting_orders,
             "accepting_orders": self.accepting_orders,
             "access_policy": "personal_space" if (
@@ -485,6 +537,7 @@ class ProviderService:
 
         if getattr(self.adapter, "supports_chat_messages", False):
             result["service"]["capabilities"] = list(dict.fromkeys([*result["service"].get("capabilities", []), CHAT_FORMAT]))
+        result["service"]["capabilities"] = list(dict.fromkeys([*result["service"].get("capabilities", []), CONTEXT_ESTIMATE_CAPABILITY]))
         result["node_messaging_pub"] = peer_box.public_key_b64(self.messaging_key)
         if benchmark and health.get("ok"):
             measured = self.adapter.infer(
@@ -554,11 +607,11 @@ class ProviderService:
             raise TaskProtocolError(str(exc)) from None
         if messages is not None and not getattr(self.adapter, "supports_chat_messages", False):
             raise TaskProtocolError("requested prompt format is not supported by this adapter")
-        max_tokens = min(int(body.get("max_tokens") or 64), self.manifest.max_output_tokens)
+        max_tokens = min(int(body.get("max_tokens") or self.manifest.max_output_tokens), self.manifest.max_output_tokens)
         if max_tokens < 1:
             raise TaskProtocolError("max_tokens is invalid")
         if not context_request_fits(prompt, output_tokens=max_tokens, context_window=self.context_window_for_model(body.get("cli_model", ""))):
-            raise TaskProtocolError("estimated context window exceeded")
+            raise TaskProtocolError(context_overflow_detail())
         reply_pub = str(body.get("reply_messaging_pub") or "")
         _validate_messaging_pub(reply_pub)
         max_amount = float(body.get("max_amount") or 0)
@@ -666,21 +719,18 @@ class ProviderService:
                 return self._sealed_failure(
                     task_id, reply_pub, str(outer["from_peer_id"]), "failed", _missing_provider_response_code(existing),
                 )
-            deadline = time.monotonic() + self.manifest.timeout_seconds + 30
-            while time.monotonic() < deadline:
-                # 0.25s keeps duplicate waits from monopolizing the threadpool
-                # with 20Hz disk reads while staying responsive.
-                time.sleep(0.25)
-                existing = self.task_store.get(task_id) or {}
+            existing = self.task_store.wait_terminal(
+                task_id, self.manifest.timeout_seconds + 30,
+            )
+            if existing is not None and existing.get("state") in TERMINAL_STATES:
                 encrypted = existing.get("encrypted_response")
-                if existing.get("state") in TERMINAL_STATES:
-                    if isinstance(encrypted, dict):
-                        if external_request:
-                            bound_authorize()
-                        return dict(encrypted)
-                    return self._sealed_failure(
-                        task_id, reply_pub, str(outer["from_peer_id"]), "failed", _missing_provider_response_code(existing),
-                    )
+                if isinstance(encrypted, dict):
+                    if external_request:
+                        bound_authorize()
+                    return dict(encrypted)
+                return self._sealed_failure(
+                    task_id, reply_pub, str(outer["from_peer_id"]), "failed", _missing_provider_response_code(existing),
+                )
             raise TaskProtocolError("duplicate task is still in progress")
         with self._lock:
             pending_cancel = self._pending_cancellations.pop(task_id, None)
@@ -689,12 +739,14 @@ class ProviderService:
             return self._failure(
                 task_id, reply_pub, str(outer["from_peer_id"]), "cancelled", "consumer_cancelled",
             )
+        stream_v2 = on_delta is not None and body.get("stream_protocol") == STREAM_PROTOCOL_VERSION_V2
+        negotiated_stream_protocol = STREAM_PROTOCOL_VERSION_V2 if stream_v2 else STREAM_PROTOCOL_VERSION
         metadata = {
             "consumer_peer_id": outer["from_peer_id"],
             "service_id": self.manifest.package_id,
             "request_hash": SignedPayload.from_dict(signed_request).subject_hash,
             **({"cli_model": cli_model} if cli_model else {}),
-            **({"stream_protocol": STREAM_PROTOCOL_VERSION} if on_delta is not None else {}),
+            **({"stream_protocol": negotiated_stream_protocol} if on_delta is not None else {}),
         }
         if not self._slots.acquire(blocking=False):
             return self._failure(task_id, reply_pub, outer["from_peer_id"], "rejected", "capacity_exhausted")
@@ -768,6 +820,8 @@ class ProviderService:
                         options = {"task_id": task_id, "timeout_s": self.manifest.timeout_seconds,
                                    "on_event": emit if chat.get("stream") else None,
                                    **({"model": cli_model} if cli_model else {})}
+                        if getattr(self.adapter, "supports_request_deadline", False) is True:
+                            options["deadline"] = time.monotonic() + self.manifest.timeout_seconds
                         if getattr(self.adapter, "supports_conversation_scope", False) is True:
                             # The signed sender is the requester; its window key only
                             # labels a conversation inside that sender's own group.
@@ -834,6 +888,7 @@ class ProviderService:
                 "task_id": task_id, "state": "succeeded", "service_id": self.manifest.package_id,
                 "model_alias": self.manifest.public_model_alias, "output": str(result["text"]),
                 **({"cli_model": cli_model} if cli_model else {}),
+                **({"stream_protocol": negotiated_stream_protocol} if on_delta is not None else {}),
                 **counts,
                 **({"cached_tokens": cached} if cached is not None else {}),
                 **billing, "reported_usage": counts,
@@ -847,7 +902,8 @@ class ProviderService:
                 sender_signing_key=self.store.private_key_bytes, recipient_messaging_pub=reply_pub,
                 expires_at=_expires(max(300, self.manifest.timeout_seconds * 2)),
             ).to_dict()
-            if on_delta is not None and len(json.dumps(encrypted, ensure_ascii=False).encode("utf-8")) > DEFAULT_MAX_EVENT_BYTES:
+            terminal_wire_limit = DEFAULT_MAX_TERMINAL_BYTES if stream_v2 else DEFAULT_MAX_EVENT_BYTES
+            if on_delta is not None and len(json.dumps(encrypted, ensure_ascii=False).encode("utf-8")) > terminal_wire_limit:
                 raise AdapterError("stream terminal exceeded wire limit")
             self.task_store.transition(
                 task_id=task_id, state="succeeded",
@@ -917,12 +973,14 @@ class ProviderService:
             raise TaskProtocolError("stream event limit is invalid")
         if not self._stream_slots.acquire(blocking=False):
             raise TaskProtocolError("stream subscriber capacity exhausted")
+        stream_v2 = body.get("stream_protocol") == STREAM_PROTOCOL_VERSION_V2
         events: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=32)
         disconnected = threading.Event()
         finished = threading.Event()
         deadline = time.monotonic() + self.manifest.timeout_seconds + 30
         sequence = 0
         output_bytes = 0
+        preview_truncated = False
 
         def publish(kind: str, value: Any) -> None:
             while not disconnected.is_set() and time.monotonic() < deadline:
@@ -933,12 +991,75 @@ class ProviderService:
                     continue
             raise AdapterError("task_cancelled")
 
+        def _utf8_pieces(text: str, max_bytes: int) -> list[str]:
+            if len(text.encode("utf-8")) <= max_bytes:
+                return [text]
+            pieces: list[str] = []
+            buf: list[str] = []
+            used = 0
+            for ch in text:
+                ch_bytes = len(ch.encode("utf-8"))
+                if buf and used + ch_bytes > max_bytes:
+                    pieces.append("".join(buf))
+                    buf = [ch]
+                    used = ch_bytes
+                else:
+                    buf.append(ch)
+                    used += ch_bytes
+            if buf:
+                pieces.append("".join(buf))
+            return pieces
+
         def on_delta(delta: str) -> None:
-            nonlocal sequence, output_bytes
+            nonlocal sequence, output_bytes, preview_truncated
             if disconnected.is_set() or (self.task_store.get(task_id) or {}).get("state") == "cancelled":
                 raise AdapterError("task_cancelled")
             if not isinstance(delta, str):
                 raise AdapterError("stream delta is invalid")
+            if not delta:
+                return
+            if stream_v2:
+                if preview_truncated:
+                    return
+                for piece in _utf8_pieces(delta, max(1, limit // 4)):
+                    piece_bytes = len(piece.encode("utf-8"))
+                    if output_bytes + piece_bytes > PREVIEW_MAX_OUTPUT_BYTES:
+                        preview_truncated = True
+                        state_envelope = seal_stream_delta(
+                            task_id=task_id,
+                            service_id=self.manifest.package_id,
+                            sequence=sequence,
+                            state="preview_truncated",
+                            stream_version=STREAM_PROTOCOL_VERSION_V2,
+                            sender_peer_id=self.store.peer_id,
+                            recipient_peer_id=str(outer["from_peer_id"]),
+                            sender_signing_key=self.store.private_key_bytes,
+                            recipient_messaging_pub=str(body.get("reply_messaging_pub") or ""),
+                            expires_at=_expires(max(300, self.manifest.timeout_seconds * 2)),
+                        )
+                        if len(json.dumps(state_envelope).encode("utf-8")) > limit:
+                            raise AdapterError("stream envelope exceeded negotiated event limit")
+                        publish("delta", state_envelope)
+                        sequence += 1
+                        return
+                    output_bytes += piece_bytes
+                    envelope = seal_stream_delta(
+                        task_id=task_id,
+                        service_id=self.manifest.package_id,
+                        sequence=sequence,
+                        delta=piece,
+                        stream_version=STREAM_PROTOCOL_VERSION_V2,
+                        sender_peer_id=self.store.peer_id,
+                        recipient_peer_id=str(outer["from_peer_id"]),
+                        sender_signing_key=self.store.private_key_bytes,
+                        recipient_messaging_pub=str(body.get("reply_messaging_pub") or ""),
+                        expires_at=_expires(max(300, self.manifest.timeout_seconds * 2)),
+                    )
+                    if len(json.dumps(envelope).encode("utf-8")) > limit:
+                        raise AdapterError("stream envelope exceeded negotiated event limit")
+                    publish("delta", envelope)
+                    sequence += 1
+                return
             output_bytes += len(delta.encode("utf-8"))
             if output_bytes > DEFAULT_MAX_OUTPUT_BYTES:
                 raise AdapterError("stream output exceeded provider limit")
@@ -1311,6 +1432,10 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         private_key_bytes=store.private_key_bytes,
     )
     _recover_consumer_orders(consumer_orders, balance, store)
+    consumer_orders.prune_terminal(
+        older_than=datetime.now(timezone.utc) - timedelta(days=7),
+        skip_awaiting_archive=True,
+    )
     manager: ProviderService | None = None
     manager_lock = threading.Lock()
     p2p_sessions: set[str] = set()
@@ -1498,12 +1623,14 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                             public_model_alias=record["name"] + " · " + model, adapter="openai_compatible",
                             model=model, base_url=record["base_url"], allow_non_loopback=record["kind"] == "api",
                             context_window=policy["context_window"], max_output_tokens=policy["max_output_tokens"], max_concurrent=policy["max_concurrent"],
-                            timeout_seconds=180, capabilities=["text-generation", "streaming", "client-tools",
+                            timeout_seconds=policy["max_request_seconds"], capabilities=["text-generation", "streaming", "client-tools",
                                 "explicit-friends" if policy["share_scope"] == "friends" else "personal-space-only",
                                 *(["protocol:" + record["protocol"]] if record.get("protocol") in
                                   {"openai_responses", "anthropic_messages"} else []),
                                 *({"supported": ["image-input"], "unsupported": ["image-unsupported"]}.get(image_state, [])),
-                                "image-carrier:" + SHARED_V2_CARRIER])
+                                "image-carrier:" + SHARED_V2_CARRIER,
+                                CONTEXT_ESTIMATE_CAPABILITY])
+                        manifest.stream_idle_seconds = policy["stream_idle_seconds"]
                         adapter = source_store.adapter(record, model)
                         if model in record.get("model_settings", {}):
                             adapter = ModelDispatchAdapter(source_store, record, model, adapter)
@@ -1564,6 +1691,11 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         })
         if recovered_setup == "restored":
             previous_setup_job["message"] = "Previous configuration restored after interrupted setup. Check model status or retry configuration."
+        elif recovered_setup == "discarded":
+            previous_setup_job.update({
+                "error_code": "setup_recovery_discarded",
+                "message": RECOVERY_DISCARDED_MESSAGE,
+            })
         elif recovered_setup == "failed":
             previous_setup_job.update({"error_code": "setup_recovery_failed", "message": RECOVERY_FAILED})
         write_setup_job(previous_setup_job)
@@ -1654,11 +1786,26 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                         continue
                     if manifest.adapter != kind:
                         continue
+                    from .cli_models import CLI_FALLBACK_MAX_OUTPUT_TOKENS, CLI_FALLBACK_WINDOWS
+                    legacy_cli_windows = {"codex_cli": 872000, "antigravity_cli": 1048576, "claude_cli": 1000000}
+                    refreshed_manifest = False
+                    if kind in CLI_FALLBACK_WINDOWS:
+                        if manifest.context_window == legacy_cli_windows.get(kind):
+                            manifest.context_window = CLI_FALLBACK_WINDOWS[kind]
+                            refreshed_manifest = True
+                        if manifest.max_output_tokens == 128000:
+                            manifest.max_output_tokens = CLI_FALLBACK_MAX_OUTPUT_TOKENS
+                            refreshed_manifest = True
+                        if not manifest.context_window_basis:
+                            manifest.context_window_basis = "cli_default"
+                            refreshed_manifest = True
                     if kind == "codex_cli":
                         # Preserve the existing binding fingerprint across this
                         # admission change; publication adds the transport contract.
                         manifest.capabilities = [c for c in manifest.capabilities if c not in {"api-text-only", "client-tools"}]
                         manifest.capabilities += [c for c in ("buffered-streaming",) if c not in manifest.capabilities]
+                    if refreshed_manifest:
+                        save_manifest(manifest, path)
                     current = ProviderService(
                         manifest=manifest, adapter=adapter_from_manifest(manifest),
                         store=store, task_store=provider_orders, balance=balance,
@@ -1686,10 +1833,12 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         package_id = str(body.get("package_id") or "local-small")
         alias = str(body.get("alias") or "rynmesh-local")
         root = home / "llm"
+        raw_port = body.get("port")
+        requested_port = int(raw_port) if raw_port is not None and not isinstance(raw_port, bool) else None
         if mode == "managed":
             return install_managed(
                 package_id=package_id, root=root,
-                port=int(body.get("port") or 18080),
+                port=requested_port,
                 accept_risk=bool(body.get("accept_risk", False)),
                 runtime=str(body.get("runtime") or "auto"),
                 profile=str(body.get("profile") or "auto"),
@@ -1698,7 +1847,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         if mode == "import-gguf":
             return import_gguf(
                 source=str(body.get("model_path") or ""), package_id=package_id,
-                alias=alias, root=root, port=int(body.get("port") or 18080),
+                alias=alias, root=root, port=requested_port,
                 accept_risk=bool(body.get("accept_risk", False)),
                 runtime=str(body.get("runtime") or "auto"),
                 progress=progress, cancel_check=cancel_check,
@@ -2355,11 +2504,30 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                             if order.get("state") in {"queued", "accepted", "running"})
         running = current._running if current else 0
         setup = read_setup_job().get("state") in {"queued", "running", "cancelling"}
+        agent_active_runs = 0
+        agent_waiting = 0
+        agent_task_titles: list[str] = []
+        agent_rt = getattr(app.state, "agent_runtime", None)
+        if agent_rt is not None and hasattr(agent_rt, "activity_counts"):
+            try:
+                counts = agent_rt.activity_counts()
+                agent_active_runs = int(counts.get("agent_active_runs", 0))
+                agent_waiting = int(counts.get("agent_waiting", 0))
+                raw_titles = counts.get("agent_task_titles")
+                if isinstance(raw_titles, list):
+                    agent_task_titles = [str(t)[:40] for t in raw_titles[:3] if isinstance(t, str) and t]
+            except Exception:
+                agent_active_runs = 0
+                agent_waiting = 0
+                agent_task_titles = []
         return {
             "desktop_managed": os.environ.get("RYNMESH_DESKTOP_MODE") == "1",
             "configured": current is not None,
             "sharing": bool(current and current.accepting_orders),
             "active_tasks": running + consuming,
+            "agent_active_runs": agent_active_runs,
+            "agent_waiting": agent_waiting,
+            "agent_task_titles": agent_task_titles,
             "setup_active": setup,
         }
 
@@ -2565,15 +2733,51 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         active_source_managers()
         return {"ok": True, "publication": refresh_publication() if was_shared else "not_needed"}
 
+    def _source_probe_error_response(exc: Exception, message: str) -> JSONResponse:
+        from .transport_failure import REASONS as _TRANSPORT_REASONS
+
+        http_status: int | None = None
+        network_reason: str | None = None
+        if isinstance(exc, AdapterError):
+            diag = exc.diagnostics if isinstance(exc.diagnostics, dict) else {}
+            raw_status = diag.get("http_status")
+            if type(raw_status) is int:
+                http_status = raw_status
+            raw_reason = diag.get("network_reason")
+            if isinstance(raw_reason, str) and raw_reason in _TRANSPORT_REASONS:
+                network_reason = raw_reason
+            error_code = exc.code if exc.code in RUNTIME_ERROR_CODES else "inference_failed"
+            if network_reason == "quota" or http_status == 429:
+                error_code = "model_daily_quota_exhausted"
+        else:
+            error_code = "source_request_invalid"
+        # Keep `detail` as the original Chinese string + `X-Ryn-Error-Code` header for
+        # legacy frontend (`aiSources.ts` does `new Error(result.detail)`), while also
+        # returning closed top-level fields (`message`, `error_code`, `network_reason`, `http_status`).
+        payload = {
+            "detail": message,
+            "message": message,
+            "error_code": error_code,
+            "network_reason": network_reason,
+            "http_status": http_status,
+        }
+        headers = {"X-Ryn-Error-Code": error_code}
+        if network_reason is not None:
+            headers["X-Ryn-Network-Reason"] = network_reason
+        if http_status is not None:
+            headers["X-Ryn-Http-Status"] = str(http_status)
+        return JSONResponse(status_code=400, content=payload, headers=headers)
+
     @app.post("/api/local/llm/sources/{source_id}/test")
     async def test_source(source_id: str):
         record = source_store.read().get(source_id)
         if not record:
             raise HTTPException(404, "来源不存在")
+        initial_record = copy.deepcopy(record)
         try:
             result = await asyncio.to_thread(source_store.probe, record)
             with source_store.lock:
-                if source_store.read().get(source_id) != record:
+                if source_store.read().get(source_id) != initial_record:
                     raise HTTPException(409, "配置已变更，请重新测试")
                 record["status"] = "ready"
                 checked = {"status": "passed", "checked_at": datetime.now(timezone.utc).isoformat(), "method": "fixed_chat"}
@@ -2583,7 +2787,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 source_store.save(record)
             return {**result, "source": source_store.public(record)}
         except (ValueError, AdapterError, OSError) as exc:
-            raise HTTPException(400, "连接测试失败：请检查地址、密钥、模型权限及请求参数") from exc
+            return _source_probe_error_response(exc, "连接测试失败：请检查地址、密钥、模型权限及请求参数")
 
     @app.post("/api/local/llm/sources/models")
     async def read_source_models(request: Request):
@@ -2592,7 +2796,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             record = source_store.prepare(body, str(body.get("id") or ""))
             return await asyncio.to_thread(source_store.probe, record, models_only=True)
         except (ValueError, TypeError, AdapterError, OSError) as exc:
-            raise HTTPException(400, "无法读取模型列表，可手动填写模型 ID；请检查地址和密钥") from exc
+            return _source_probe_error_response(exc, "无法读取模型列表，可手动填写模型 ID；请检查地址和密钥")
 
     @app.post("/api/local/llm/sources/{source_id}/models/test")
     async def test_source_model_tools(source_id: str, request: Request):
@@ -2775,6 +2979,12 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         except (AdapterError, OSError) as exc:
             raise HTTPException(503, str(exc)) from exc
 
+    def _route_error_detail(exc: Exception) -> str | dict[str, str]:
+        code = getattr(exc, "code", None)
+        if isinstance(code, str) and code:
+            return {"message": str(exc), "error_code": code}
+        return str(exc)
+
     @app.post("/api/local/llm/cli-services/{kind}/setup")
     async def local_cli_setup(kind: str) -> dict[str, Any]:
         if kind not in {"codex_cli", "claude_cli", "antigravity_cli"}:
@@ -2782,7 +2992,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         try:
             result = await asyncio.to_thread(connect_cli, kind=kind, root=home / "llm")
         except (LifecycleError, AdapterError, ManifestError, OSError, ValueError) as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise HTTPException(status_code=409, detail=_route_error_detail(exc)) from exc
         settings = read_cli_settings()
         sharing = bool(settings.get(kind, {}).get("publication_enabled"))
         settings[kind] = {"manifest": result["manifest"], "publication_enabled": sharing}
@@ -2864,12 +3074,12 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         if not setup_operation_lock.acquire(blocking=False):
             raise HTTPException(status_code=409, detail="another local model setup is already running")
         try:
-            if setup_recovery.pending:
-                raise HTTPException(status_code=409, detail=RECOVERY_FAILED)
+            if setup_recovery.pending or setup_recovery.path.exists():
+                setup_recovery.restore()
             result = await asyncio.to_thread(configure_llm, dict(await request.json()))
             return activate_configuration(result)
         except (LifecycleError, AdapterError, ManifestError, OSError, ValueError) as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise HTTPException(status_code=409, detail=_route_error_detail(exc)) from exc
         finally:
             setup_operation_lock.release()
 
@@ -2968,13 +3178,15 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 message = "Setup cancelled." if cancelled else (str(exc).strip() or "Local model setup failed")
                 if recovery_state == "failed":
                     message = RECOVERY_FAILED
+                elif recovery_state == "discarded":
+                    message = RECOVERY_DISCARDED_MESSAGE
                 elif recovery_state in {"unavailable", "missing"}:
                     message += " Previous configuration is unavailable. Check the local model service and retry configuration."
                 elif recovery_state == "restored":
                     message += " Previous configuration restored and its health check passed."
                 elif recovery_state == "not_needed":
                     message += " No previous model configuration required restoration."
-                recovery_error = recovery_state in {"failed", "unavailable", "missing"}
+                recovery_error = recovery_state in {"failed", "discarded", "unavailable", "missing"}
                 with setup_job_lock:
                     write_setup_job({
                         "job_id": job_id,
@@ -2982,7 +3194,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                         "stage": "recovery" if recovery_error else "cancelled" if cancelled else "failed",
                         "progress": 0,
                         "error_code": "setup_recovery_failed" if recovery_state == "failed" else
-                            "setup_previous_unavailable" if recovery_error else "setup_cancelled" if cancelled else "setup_failed",
+                            "setup_previous_unavailable" if recovery_error else "setup_cancelled" if cancelled else (getattr(exc, "code", None) or "setup_failed"),
                         "message": message,
                         "recovery_state": recovery_state,
                         "resume_configuration": resume_configuration,
@@ -3066,7 +3278,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             return {"ok": True, "action": action, "result": public_result,
                     "publication_enabled": False}
         except (LifecycleError, AdapterError, ManifestError, OSError, ValueError) as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise HTTPException(status_code=409, detail=_route_error_detail(exc)) from exc
 
     @app.get("/api/local/llm/service/status")
     def local_llm_service_status(request: Request) -> dict[str, Any]:
@@ -3096,7 +3308,19 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
 
     @app.get("/api/local/task-balance")
     def local_task_balance() -> dict[str, Any]:
-        return {**balance.summary(), "events": balance.events()}
+        try:
+            return {**balance.summary(), "events": balance.events()}
+        except TaskBalanceError as exc:
+            code = str(exc)
+            raise HTTPException(status_code=500 if code == "task_balance_corrupt" else 409, detail=code) from exc
+
+    @app.post("/api/local/llm/task-balance/dev-grant")
+    def local_llm_task_balance_dev_grant() -> dict[str, Any]:
+        try:
+            return balance.dev_grant()
+        except TaskBalanceError as exc:
+            code = str(exc)
+            raise HTTPException(status_code=500 if code == "task_balance_corrupt" else 409, detail=code) from exc
 
     @app.get("/api/local/llm/orders")
     def local_llm_orders() -> dict[str, Any]:
@@ -3171,11 +3395,16 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         service_id = current.manifest.package_id
         max_tokens = min(max_tokens, current.manifest.max_output_tokens)
         if not context_request_fits(prompt, output_tokens=max_tokens, context_window=current.context_window_for_model(body.get("cli_model", ""))):
-            raise HTTPException(400, "estimated context window exceeded")
+            raise HTTPException(400, context_overflow_detail())
         bindings = {"provider_peer_id": store.peer_id, "service_id": service_id,
                     "idempotency_key": str(body.get("idempotency_key") or task_id),
                     "request_fingerprint": _request_fingerprint(body, store.private_key_bytes)}
         try:
+            if consumer_orders._count >= 9000:
+                consumer_orders.prune_terminal(
+                    older_than=datetime.now(timezone.utc) - timedelta(days=7),
+                    skip_awaiting_archive=True,
+                )
             _, claimed = consumer_orders.claim(task_id=task_id, bindings=bindings)
         except TaskProtocolError as exc:
             raise HTTPException(409, str(exc)) from exc
@@ -3247,8 +3476,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         except Exception as exc:
             error_code = (
                 exc.code
-                if isinstance(exc, AdapterError)
-                and exc.code in {"model_daily_quota_exhausted", "model_configuration_changed", "runtime_busy"}
+                if isinstance(exc, AdapterError) and exc.code in RUNTIME_ERROR_CODES
                 else "local_cli_failed"
             )
             with terminal_commit_lock:
@@ -3284,18 +3512,28 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             decode_chat_prompt(prompt, prompt_format)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
-        try:
-            max_tokens = int(body.get("max_tokens") or 64)
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail="max_tokens must be a positive integer") from exc
-        if max_tokens < 1:
+        raw_max_tokens = body.get("max_tokens")
+        if isinstance(raw_max_tokens, bool):
             raise HTTPException(status_code=400, detail="max_tokens must be a positive integer")
+        if raw_max_tokens is None or raw_max_tokens == 0:
+            requested_max_tokens: int | None = None
+        else:
+            try:
+                requested_max_tokens = int(raw_max_tokens)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail="max_tokens must be a positive integer") from exc
+            if requested_max_tokens < 1:
+                raise HTTPException(status_code=400, detail="max_tokens must be a positive integer")
         if not provider_peer_id or not service_id or not prompt:
             raise HTTPException(status_code=400, detail="provider_peer_id, service_id, and prompt are required")
         if provider_peer_id == store.peer_id:
             local = provider_for(service_id)
             if local and (local.manifest.adapter in {"codex_cli", "claude_cli", "antigravity_cli"} or service_id in active_source_managers()):
-                return await execute_local_cli(body, local, prompt, max_tokens, chat)
+                local_max_tokens = min(
+                    int(requested_max_tokens or local.manifest.max_output_tokens),
+                    local.manifest.max_output_tokens,
+                )
+                return await execute_local_cli(body, local, prompt, local_max_tokens, chat)
         records = await asyncio.to_thread(discover, network_id, cache_registry=True,
                                          passive_registry="expected_model_binding" in body)
         external_resource = resource_of(body.get("expected_model_binding"))
@@ -3379,10 +3617,15 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             and (effective_transport == "p2p" or callable(getattr(get_transport(), "iter_post_bytes", None)))
             and not own_request
         )
-        if public_manifest.get("adapter") in {"codex_cli", "antigravity_cli"}:
-            from .cli_models import context_metadata
-            public_manifest["context_window"] = context_metadata(selected.get("cli_models", []), cli_model,
-                fallback=public_manifest.get("context_window", 32768))["context_window"]
+        if public_manifest.get("adapter") in {"codex_cli", "antigravity_cli", "claude_cli"}:
+            from .cli_models import context_metadata, fallback_window
+            adapter_kind = str(public_manifest.get("adapter") or "")
+            public_manifest["context_window"] = context_metadata(
+                selected.get("cli_models", []),
+                cli_model,
+                fallback=public_manifest.get("context_window", fallback_window(adapter_kind)),
+                kind=adapter_kind,
+            )["context_window"]
         try:
             # Only package_id/model_alias/context_window/max_output_tokens/
             # timeout_seconds/pricing are load-bearing here; the rest are
@@ -3415,17 +3658,17 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 status_code=409,
                 detail="provider discovery record is missing required manifest fields",
             ) from exc
-        max_tokens = min(max_tokens, manifest.max_output_tokens)
+        max_tokens = min(int(requested_max_tokens or manifest.max_output_tokens), manifest.max_output_tokens)
         if not context_request_fits(prompt, output_tokens=max_tokens, context_window=manifest.context_window):
             raise HTTPException(
                 status_code=400,
-                detail="estimated prompt and output exceed the Provider context window",
+                detail=context_overflow_detail(),
             )
         maximum = _estimate_price(manifest, prompt, max_tokens)
         if maximum > manifest.pricing.maximum_per_task:
             raise HTTPException(status_code=409, detail="estimated task cost exceeds provider maximum")
         if maximum > float(balance.summary().get("available") or 0):
-            raise HTTPException(status_code=409, detail="insufficient development Task Balance")
+            raise HTTPException(status_code=409, detail="balance_insufficient")
         task_id = str(body.get("task_id") or ("task_" + uuid.uuid4().hex))
         idempotency_key = str(body.get("idempotency_key") or task_id)
         requested_transport = str(body.get("transport") or "auto").strip().lower()
@@ -3460,6 +3703,11 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             **({"provider_resource": external_resource} if external_resource else {}),
         }
         try:
+            if consumer_orders._count >= 9000:
+                consumer_orders.prune_terminal(
+                    older_than=datetime.now(timezone.utc) - timedelta(days=7),
+                    skip_awaiting_archive=True,
+                )
             existing, claimed = consumer_orders.claim(task_id=task_id, bindings=bindings)
         except TaskProtocolError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -3565,6 +3813,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     **(
                         {
                             "response_mode": "stream-v1",
+                            "stream_protocol": STREAM_PROTOCOL_VERSION_V2,
                             "stream_event_max_bytes": DEFAULT_MAX_EVENT_BYTES,
                         }
                         if stream_direct
@@ -3579,6 +3828,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 expires_at=_expires(max(60, 2 * (manifest.timeout_seconds + 30) + 60)),
             )
             own_request = provider_peer_id == store.peer_id
+            signed_dict = signed.to_dict()
+            if not own_request and len(json.dumps(signed_dict).encode("utf-8")) > _MAX_SIGNED_P2P_ENVELOPE_BYTES:
+                raise P2PMessageTooLarge("signed task envelope exceeds 7.5 MiB")
             encrypted_response = None
             direct_error: Exception | None = None
             transport_evidence: dict[str, Any] = {}
@@ -3600,10 +3852,21 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             if chat and chat.get("stream") and transport_mode == "relay":
                 raise TaskProtocolError("streaming requires direct HTTP or P2P transport")
             sequence = 0
+            direct_stream_protocol = STREAM_PROTOCOL_VERSION
+            raw_idle = public_manifest.get("stream_idle_seconds")
+            stream_idle_s = (
+                float(raw_idle)
+                if isinstance(raw_idle, (int, float)) and not isinstance(raw_idle, bool) and raw_idle > 0
+                else 120.0
+            )
             p2p_verifier = StreamSequenceVerifier(
                 task_id=task_id, service_id=service_id, provider_peer_id=provider_peer_id,
                 recipient_peer_id=store.peer_id, recipient_messaging_key=messaging_key,
-                max_event_bytes=DEFAULT_MAX_EVENT_BYTES, max_output_bytes=DEFAULT_MAX_OUTPUT_BYTES,
+                max_event_bytes=DEFAULT_MAX_EVENT_BYTES,
+                max_output_bytes=PREVIEW_MAX_OUTPUT_BYTES,
+                max_terminal_bytes=DEFAULT_MAX_TERMINAL_BYTES,
+                protocol_version=STREAM_PROTOCOL_VERSION_V2,
+                negotiate=True,
             ) if stream_direct else None
 
             def receive_event(envelope: dict[str, Any]) -> None:
@@ -3611,9 +3874,14 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 if p2p_verifier is not None:
                     if (consumer_orders.get(task_id) or {}).get("state") == "cancelled":
                         raise TaskProtocolError("task_cancelled")
-                    delta = p2p_verifier.accept_delta(envelope)
+                    accepted = p2p_verifier.accept_delta(envelope)
                     sequence += 1
-                    stream_broker.publish(task_id, {"event": "delta", **delta})
+                    if accepted.get("ignored"):
+                        return
+                    if accepted.get("state") == "preview_truncated":
+                        stream_broker.publish(task_id, {"event": "state", "state": "preview_truncated"})
+                        return
+                    stream_broker.publish(task_id, {"event": "delta", **accepted})
                     return
                 outer, event = open_task(envelope, recipient_peer_id=store.peer_id,
                                          recipient_messaging_key=messaging_key, expected_kind="llm_stream")
@@ -3653,7 +3921,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 encrypted_response = await asyncio.to_thread(current.handle, signed.to_dict())
                 transport_evidence = {"transport": "local_runtime", "relay_used": False}
             def _consume_direct_stream() -> dict[str, Any]:
-                nonlocal sequence
+                nonlocal sequence, direct_stream_protocol
                 from rynmesh.peer_http import HttpPeerClient
 
                 from .external_transport import ExternalPeerTransport
@@ -3669,28 +3937,40 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     recipient_peer_id=store.peer_id,
                     recipient_messaging_key=messaging_key,
                     max_event_bytes=DEFAULT_MAX_EVENT_BYTES,
-                    max_output_bytes=DEFAULT_MAX_OUTPUT_BYTES,
+                    max_output_bytes=PREVIEW_MAX_OUTPUT_BYTES,
+                    max_terminal_bytes=DEFAULT_MAX_TERMINAL_BYTES,
+                    protocol_version=STREAM_PROTOCOL_VERSION_V2,
+                    negotiate=True,
                 )
                 terminal: dict[str, Any] | None = None
                 for envelope in client.iter_post_ndjson(
                     "/api/peer/llm/tasks/stream",
-                    signed.to_dict(),
-                    max_event_bytes=DEFAULT_MAX_EVENT_BYTES,
-                    max_total_bytes=16 * 1024 * 1024,
+                    signed_dict,
+                    max_event_bytes=DEFAULT_MAX_TERMINAL_BYTES,
+                    max_output_tokens=max_tokens,
                 ):
                     try:
                         kind = str(SignedPayload.from_dict(envelope).payload.get("kind") or "")
                     except Exception:
                         raise TaskProtocolError("stream envelope is invalid") from None
                     if kind == "llm_stream_delta":
-                        delta = verifier.accept_delta(envelope)
+                        accepted = verifier.accept_delta(envelope)
                         sequence += 1
-                        stream_broker.publish(
-                            task_id,
-                            {"event": "delta", **delta},
-                        )
+                        if accepted.get("ignored"):
+                            continue
+                        if accepted.get("state") == "preview_truncated":
+                            stream_broker.publish(
+                                task_id,
+                                {"event": "state", "state": "preview_truncated"},
+                            )
+                        else:
+                            stream_broker.publish(
+                                task_id,
+                                {"event": "delta", **accepted},
+                            )
                     elif kind == "llm_response":
                         verifier.accept_terminal(envelope)
+                        direct_stream_protocol = verifier.effective_version
                         terminal = envelope
                     else:
                         raise TaskProtocolError("stream envelope kind is invalid")
@@ -3741,7 +4021,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                         from .external_transport import response as external_response
                         encrypted_response = await asyncio.to_thread(
                             peer_stream, endpoint + "/api/peer/llm/tasks/stream", signed.to_dict(),
-                            timeout_s=manifest.timeout_seconds + 30, on_event=receive_event,
+                            timeout_s=manifest.timeout_seconds + 30, idle_s=stream_idle_s, on_event=receive_event,
                             **({"response_factory": external_response} if external_resource else {}),
                         )
                     else:
@@ -3757,14 +4037,18 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     transport_evidence = {
                         "transport": "peer_http_direct",
                         "relay_used": False,
-                        "stream_protocol": STREAM_PROTOCOL_VERSION if stream_direct else "",
+                        "stream_protocol": direct_stream_protocol if stream_direct else "",
                         **({"route": "lan", "discovery_source": "lan"} if is_lan else {}),
                     }
                     break
                 except Exception as exc:
                     encrypted_response = None
+                    if _is_peer_stream_too_large(exc):
+                        attempts.append({"transport": "direct", "error_code": "peer_stream_too_large"})
+                        raise
                     direct_error = exc
-                    attempts.append({"transport": "direct", "error_code": "direct_transport_failed"})
+                    timeout_code = _peer_stream_timeout_code(exc)
+                    attempts.append({"transport": "direct", "error_code": timeout_code or "direct_transport_failed"})
                     if sequence:
                         raise TaskProtocolError("stream interrupted; automatic replay is disabled") from exc
             if encrypted_response is None and transport_mode in {"auto", "p2p"}:
@@ -3816,11 +4100,18 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                         await asyncio.sleep(0.25)
                     raise TaskProtocolError("timed out waiting for provider ICE answer")
 
+                raw_idle = public_manifest.get("stream_idle_seconds")
+                p2p_stream_idle_s = (
+                    float(raw_idle)
+                    if isinstance(raw_idle, (int, float)) and not isinstance(raw_idle, bool) and raw_idle > 0
+                    else 120.0
+                )
                 try:
                     encrypted_response, transport_evidence = await cancellable_exchange(lambda: consumer_exchange(
                         signed_request=signed.to_dict(),
                         publish_offer=publish_offer,
                         timeout_s=manifest.timeout_seconds + 30,
+                        stream_idle_seconds=p2p_stream_idle_s,
                         connect_timeout_s=min(60, _positive_env("RYNMESH_P2P_CONNECT_TIMEOUT_S", 60)),
                         on_connected=lambda evidence: progress("p2p", evidence),
                         session_pool=ai_connections,
@@ -4036,6 +4327,11 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 task_id,
                 {"event": "error", "state": "failed", "error_code": error_code},
             )
+            if error_code in {"peer_stream_too_large", "peer_request_too_large", "direct_stream_interrupted", context_overflow_detail()}:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"peer_delivery_failed:{error_code}",
+                ) from exc
             reason = str(exc).strip() or type(exc).__name__
             raise HTTPException(
                 status_code=502,
@@ -4118,13 +4414,27 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 status_code=400,
                 detail="provider_peer_id, service_id, and prompt are required",
             )
-        try:
-            max_tokens = int(body.get("max_tokens") or 64)
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail="max_tokens must be a positive integer") from exc
-        if max_tokens < 1:
+        raw_max_tokens = body.get("max_tokens")
+        if isinstance(raw_max_tokens, bool):
             raise HTTPException(status_code=400, detail="max_tokens must be a positive integer")
-        body["max_tokens"] = max_tokens
+        if raw_max_tokens is None or raw_max_tokens == 0:
+            local_svc = (
+                provider_for(str(body.get("service_id") or ""))
+                if str(body.get("provider_peer_id") or "") == store.peer_id
+                else None
+            )
+            if local_svc is not None:
+                body["max_tokens"] = int(raw_max_tokens or local_svc.manifest.max_output_tokens)
+            else:
+                body.pop("max_tokens", None)
+        else:
+            try:
+                max_tokens = int(raw_max_tokens)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail="max_tokens must be a positive integer") from exc
+            if max_tokens < 1:
+                raise HTTPException(status_code=400, detail="max_tokens must be a positive integer")
+            body["max_tokens"] = max_tokens
         task_id = str(body.get("task_id") or ("task_" + uuid.uuid4().hex))
         try:
             existing = consumer_orders.get(task_id)

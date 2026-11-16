@@ -44,6 +44,34 @@ type PendingMemoryMutation =
   | { kind: "decide_candidate"; id: string; body: AgentMemoryCandidateDecisionInput }
   | { kind: "reset"; body: AgentMemoryResetInput };
 
+interface AgentMemoryCaptureStatus {
+  today_day?: string;
+  timezone_basis?: string;
+  daily_calls_used?: number;
+  daily_calls_budget?: number;
+  daily_tokens_used?: number;
+  daily_tokens_budget?: number;
+  queued_count?: number;
+  failed_count?: number;
+  last_error?: string | null;
+  next_retry_at?: number | null;
+}
+
+function formatRetryTimestamp(
+  retryAtSeconds: number | null | undefined,
+  text: (cn: string, en: string) => string,
+): string {
+  if (typeof retryAtSeconds !== "number" || !Number.isFinite(retryAtSeconds) || retryAtSeconds <= 0) {
+    return text("无", "none");
+  }
+  const dt = new Date(retryAtSeconds * 1000);
+  if (Number.isNaN(dt.getTime())) {
+    return text("无", "none");
+  }
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+}
+
 function formatOriginLabel(
   origin: string | undefined,
   text: (cn: string, en: string) => string,
@@ -94,7 +122,20 @@ function formatSourcesSummary(
 function exposureModeLabel(mode: AgentMemoryExposureMode, text: (cn: string, en: string) => string): string {
   if (mode === "destinations") return text("仅向所选接收方发送", "Send only to selected destinations");
   if (mode === "all_selected") return text("允许所有所选任务模型", "Allow all selected task models");
-  return text("仅本机保存，不发送给模型", "Store on this device; never send to models");
+  return text("仅本机保存（模型看不到）", "Store on this device only (invisible to models)");
+}
+
+function computeDefaultNewExposure(
+  allDestinations: AgentMemoryDestinationOption[],
+  defaultDest: AgentMemoryDestinationTuple | null,
+): { mode: AgentMemoryExposureMode; keys: string[] } {
+  const match = defaultDest
+    ? allDestinations.find(opt => opt.available && sameDestinationTuple(opt.destination, defaultDest))
+    : null;
+  if (match) {
+    return { mode: "destinations", keys: [destinationTupleKey(match.destination)] };
+  }
+  return { mode: "local_only", keys: [] };
 }
 
 function formatExposureSummary(
@@ -134,6 +175,7 @@ export function MemoryEditor({ projects = [], currentProject, initialOpen = fals
   const [open, setOpen] = useState(initialOpen);
   const [snapshot, setSnapshot] = useState<AgentMemorySnapshot | null>(null);
   const [destinations, setDestinations] = useState<AgentMemoryDestinationOption[]>([]);
+  const [defaultDestination, setDefaultDestination] = useState<AgentMemoryDestinationTuple | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [needsReload, setNeedsReload] = useState(false);
@@ -149,11 +191,11 @@ export function MemoryEditor({ projects = [], currentProject, initialOpen = fals
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<AgentMemoryEntry[] | null>(null);
 
-  // Add entry draft state (always defaults to local_only; never defaults to all_selected)
+  // Add entry draft state (defaults to current default task model destination; falls back to local_only when none available; never defaults to all_selected)
   const [newText, setNewText] = useState("");
   const [newScopeKind, setNewScopeKind] = useState<AgentMemoryScopeKind>(currentProject ? "project" : "personal");
   const [newProjectID, setNewProjectID] = useState(currentProject?.id || "");
-  const [newExposureMode, setNewExposureMode] = useState<AgentMemoryExposureMode>("local_only");
+  const [newExposureMode, setNewExposureMode] = useState<AgentMemoryExposureMode>("destinations");
   const [newDestinationKeys, setNewDestinationKeys] = useState<string[]>([]);
 
   // Edit entry state
@@ -190,6 +232,15 @@ export function MemoryEditor({ projects = [], currentProject, initialOpen = fals
       if (!mounted.current || seq !== loadSeq.current) return;
       setSnapshot(loadedSnapshot);
       setDestinations(loadedDestinations.destinations);
+      setDefaultDestination(loadedDestinations.default_destination);
+      if (!newText.trim()) {
+        const nextDefaultExp = computeDefaultNewExposure(
+          loadedDestinations.destinations,
+          loadedDestinations.default_destination,
+        );
+        setNewExposureMode(nextDefaultExp.mode);
+        setNewDestinationKeys(nextDefaultExp.keys);
+      }
       // Never pre-populate explicit extraction consent from saved settings or default_destination on load/reload
       setSelectedExtractionKey("");
       setNeedsReload(false);
@@ -248,8 +299,9 @@ export function MemoryEditor({ projects = [], currentProject, initialOpen = fals
       setSearchResults(null);
       if (mutation.kind === "create_entry") {
         setNewText("");
-        setNewExposureMode("local_only");
-        setNewDestinationKeys([]);
+        const nextDefaultExp = computeDefaultNewExposure(destinations, defaultDestination);
+        setNewExposureMode(nextDefaultExp.mode);
+        setNewDestinationKeys(nextDefaultExp.keys);
       } else if (mutation.kind === "update_entry") {
         setEditingID(null);
       } else if (mutation.kind === "delete_entry" && editingID === mutation.id) {
@@ -288,6 +340,10 @@ export function MemoryEditor({ projects = [], currentProject, initialOpen = fals
   };
 
   const availableDestinations = destinations.filter(item => item.available);
+  const defaultDestinationOption = defaultDestination
+    ? availableDestinations.find(item => sameDestinationTuple(item.destination, defaultDestination)) || null
+    : null;
+  const effectiveDefaultDest = defaultDestinationOption?.destination || null;
   const selectedExtractionOption = availableDestinations.find(
     item => destinationTupleKey(item.destination) === selectedExtractionKey,
   ) || null;
@@ -298,6 +354,54 @@ export function MemoryEditor({ projects = [], currentProject, initialOpen = fals
   const savedExtractionUnavailable = Boolean(
     savedExtractionDest && (!savedExtractionOption || !savedExtractionOption.available),
   );
+
+  const enableRecommendedCapture = () => {
+    if (!snapshot || busy || needsReload || pendingMutation || !effectiveDefaultDest) return;
+    void executeMutation({
+      kind: "settings",
+      body: {
+        expected_generation: snapshot.generation,
+        client_request_id: crypto.randomUUID(),
+        capture_enabled: true,
+        activation_policy: "automatic",
+        extraction_destination: effectiveDefaultDest,
+        default_exposure: {
+          mode: "selected_models",
+          allowed_destinations: [effectiveDefaultDest],
+        },
+      },
+    });
+  };
+
+  const allowCurrentModelForEntry = (entry: AgentMemoryEntry) => {
+    if (!snapshot || busy || needsReload || pendingMutation || !effectiveDefaultDest) return;
+    const retainedValid = entry.exposure_policy.mode === "destinations"
+      ? entry.exposure_policy.allowed_destinations.filter(tuple =>
+          destinations.some(opt => sameDestinationTuple(opt.destination, tuple)),
+        )
+      : [];
+    const nextAllowed = retainedValid.some(tuple => sameDestinationTuple(tuple, effectiveDefaultDest))
+      ? retainedValid
+      : [...retainedValid, effectiveDefaultDest];
+    const scope: AgentMemoryScopeInput = entry.scope.kind === "project"
+      ? { kind: "project", project_id: entry.scope.project_id }
+      : { kind: "personal", project_id: null };
+    void executeMutation({
+      kind: "update_entry",
+      id: entry.id,
+      body: {
+        expected_generation: snapshot.generation,
+        expected_entry_revision: entry.revision,
+        client_request_id: crypto.randomUUID(),
+        text: entry.text,
+        scope,
+        exposure_policy: {
+          mode: "destinations",
+          allowed_destinations: nextAllowed,
+        },
+      },
+    });
+  };
 
   const toggleUseMemory = (use_enabled: boolean) => {
     if (!snapshot || busy || needsReload || pendingMutation) return;
@@ -553,6 +657,46 @@ export function MemoryEditor({ projects = [], currentProject, initialOpen = fals
 
           {snapshot && (
             <>
+              {snapshot.memory_ledger_degraded && (
+                <p role="status">
+                  {text(
+                    "记忆账本已满，部分删除记录未登记",
+                    "Memory ledger is full; some deletion records were not logged.",
+                  )}
+                </p>
+              )}
+              {(() => {
+                const memBytes = typeof snapshot.memory_bytes === "number" ? snapshot.memory_bytes : 0;
+                const memLimit = typeof snapshot.memory_bytes_limit === "number" && snapshot.memory_bytes_limit > 0
+                  ? snapshot.memory_bytes_limit
+                  : (typeof snapshot.settings.budgets?.max_memory_bytes === "number" && snapshot.settings.budgets.max_memory_bytes > 0
+                    ? snapshot.settings.budgets.max_memory_bytes
+                    : 262144);
+                return memLimit > 0 && memBytes >= memLimit * 0.8 ? (
+                  <p role="status">
+                    {text(
+                      `记忆账本接近上限，可重置（当前 ${Math.round((memBytes / memLimit) * 100)}%，${memBytes}/${memLimit} 字节）`,
+                      `Memory ledger is approaching capacity (${Math.round((memBytes / memLimit) * 100)}%, ${memBytes}/${memLimit} bytes); you can reset memory to reclaim space.`,
+                    )}
+                  </p>
+                ) : null;
+              })()}
+              {(() => {
+                const maxTombstones = typeof snapshot.settings.budgets?.max_tombstones === "number"
+                  ? snapshot.settings.budgets.max_tombstones
+                  : 256;
+                const suppressedCount = snapshot.suppressed_slot_count ?? 0;
+                const nearSuppressionLimit = suppressedCount >= Math.floor(4096 * 0.8)
+                  || snapshot.tombstone_count >= Math.ceil(maxTombstones * 0.8);
+                return nearSuppressionLimit ? (
+                  <p role="status">
+                    {text(
+                      `已删除记录接近折叠上限（当前墓碑 ${snapshot.tombstone_count}/${maxTombstones}，已折叠 ${suppressedCount}/4096），旧记录会自动压缩；如需释放空间可清空长期记忆。`,
+                      `Deleted memory suppression slots are approaching capacity (${snapshot.tombstone_count}/${maxTombstones} tombstones, ${suppressedCount}/4096 compacted); older records compact automatically, or clear long-term memory to reclaim space.`,
+                    )}
+                  </p>
+                ) : null;
+              })()}
               <fieldset className="ra-tool-permissions">
                 <legend>{text("记忆开关", "Memory controls")}</legend>
                 <label className="ra-setting">
@@ -575,6 +719,27 @@ export function MemoryEditor({ projects = [], currentProject, initialOpen = fals
                 </label>
 
                 <div className="ra-memory-capture-controls">
+                  {(() => {
+                    const rawStatus = (snapshot as AgentMemorySnapshot & { capture_status?: AgentMemoryCaptureStatus }).capture_status;
+                    if (!rawStatus || typeof rawStatus !== "object") return null;
+                    const callsUsed = typeof rawStatus.daily_calls_used === "number" ? rawStatus.daily_calls_used : 0;
+                    const callsBudget = typeof rawStatus.daily_calls_budget === "number" ? rawStatus.daily_calls_budget : 32;
+                    const tokensUsed = typeof rawStatus.daily_tokens_used === "number" ? rawStatus.daily_tokens_used : 0;
+                    const tokensBudget = typeof rawStatus.daily_tokens_budget === "number" ? rawStatus.daily_tokens_budget : 65536;
+                    const queuedCount = typeof rawStatus.queued_count === "number" ? rawStatus.queued_count : 0;
+                    const lastErrorLabel = typeof rawStatus.last_error === "string" && rawStatus.last_error.trim()
+                      ? rawStatus.last_error.trim()
+                      : text("无", "none");
+                    const nextRetryLabel = formatRetryTimestamp(rawStatus.next_retry_at, text);
+                    return (
+                      <p className="ra-memory-capture-status">
+                        {text(
+                          `后台学习：今日 ${callsUsed}/${callsBudget}（按本机时区计日，Token ${tokensUsed}/${tokensBudget}，排队 ${queuedCount}），最近失败原因 ${lastErrorLabel}，下次重试 ${nextRetryLabel}`,
+                          `Background learning: today ${callsUsed}/${callsBudget} (counted by local time zone, tokens ${tokensUsed}/${tokensBudget}, queued ${queuedCount}), recent failure reason ${lastErrorLabel}, next retry ${nextRetryLabel}`,
+                        )}
+                      </p>
+                    );
+                  })()}
                   <p>
                     {snapshot.settings.capture_enabled
                       ? `${text("当前已保存激活模式", "Saved activation policy")}: ${
@@ -594,6 +759,18 @@ export function MemoryEditor({ projects = [], currentProject, initialOpen = fals
                         ? `${text("当前已启用提取目标", "Active extraction destination")}: ${savedExtractionOption?.label || savedExtractionDest.catalog_model_id}`
                         : `${text("上次保存的提取目标", "Previously saved extraction destination")}: ${savedExtractionOption?.label || savedExtractionDest.catalog_model_id}`}
                     </p>
+                  )}
+                  {!snapshot.settings.capture_enabled && defaultDestinationOption && (
+                    <div className="ra-approval-actions">
+                      <button
+                        type="button"
+                        className="ra-primary"
+                        disabled={locked}
+                        onClick={enableRecommendedCapture}
+                      >
+                        {text("推荐设置一键开启", "Enable with recommended settings")}
+                      </button>
+                    </div>
                   )}
                   <label>
                     <span>
@@ -627,6 +804,12 @@ export function MemoryEditor({ projects = [], currentProject, initialOpen = fals
                       </option>
                     </select>
                   </label>
+                  <p className="ra-memory-mode-note">
+                    {text(
+                      "这是记忆的设置，与任务的“自动处理”权限无关；选“人工审核”时后台学到的内容要在这里点接受才生效。",
+                      "This is a memory setting, independent of the task 'Automatic' permission mode; when 'Review each memory first' is selected, facts learned in the background take effect only after you click Accept here.",
+                    )}
+                  </p>
                   <label>
                     <span>
                       {text("后台提取目标接收方", "Background extraction destination")}
@@ -687,6 +870,12 @@ export function MemoryEditor({ projects = [], currentProject, initialOpen = fals
                           )}
                     </p>
                   )}
+                  <p className="ra-memory-model-switch-note">
+                    {text(
+                      "记忆只给选定的模型；换模型后到条目上点“允许当前模型使用”。",
+                      "Memories are shared only with selected models; after switching models, click 'Allow current model' on an entry.",
+                    )}
+                  </p>
                   <label className="ra-setting">
                     <span>
                       {text("从日常对话中提取并整合长期记忆", "Extract and consolidate long-term memory from conversations")}
@@ -759,6 +948,14 @@ export function MemoryEditor({ projects = [], currentProject, initialOpen = fals
                   <ul className="ra-memory-entries">
                     {activeEntries.map(entry => {
                       const exposureInfo = formatExposureSummary(entry.exposure_policy, destinations, text);
+                      const isInvisibleToModel = entry.exposure_policy.mode === "local_only"
+                        || (
+                          entry.exposure_policy.mode === "destinations"
+                          && Boolean(effectiveDefaultDest)
+                          && !entry.exposure_policy.allowed_destinations.some(tuple =>
+                            effectiveDefaultDest ? sameDestinationTuple(tuple, effectiveDefaultDest) : false,
+                          )
+                        );
                       return (
                         <li key={entry.id} className="ra-memory-entry">
                           {editingID === entry.id ? (
@@ -782,32 +979,28 @@ export function MemoryEditor({ projects = [], currentProject, initialOpen = fals
                                   onChange={event => setEditScopeKind(event.target.value as AgentMemoryScopeKind)}
                                 >
                                   <option value="personal">{text("个人范围", "Personal")}</option>
-                                  <option value="project">{text("仅本机项目范围", "Local project only")}</option>
+                                  {(knownProjects.length > 0 || entry.scope.kind === "project") && (
+                                    <option value="project">{text("仅本机项目范围", "Local project only")}</option>
+                                  )}
                                 </select>
                               </label>
                               {editScopeKind === "project" && (
                                 <label>
-                                  <span>{text("本机项目 ID", "Local project ID")}</span>
-                                  {knownProjects.length > 0 && (
-                                    <select
-                                      aria-label={text("选择已知项目", "Choose known project")}
-                                      value={knownProjects.some(item => item.id === editProjectID) ? editProjectID : ""}
-                                      disabled={locked}
-                                      onChange={event => { if (event.target.value) setEditProjectID(event.target.value); }}
-                                    >
-                                      <option value="">{text("手动输入或选择项目", "Enter or select project")}</option>
-                                      {knownProjects.map(project => (
-                                        <option key={project.id} value={project.id}>{project.name} ({project.id})</option>
-                                      ))}
-                                    </select>
-                                  )}
-                                  <input
-                                    aria-label={text("编辑本机项目 ID", "Edit local project ID")}
+                                  <span>{text("选择已知项目", "Choose known project")}</span>
+                                  <select
+                                    aria-label={text("选择已知项目", "Choose known project")}
                                     value={editProjectID}
                                     disabled={locked}
-                                    placeholder={text("输入本机项目 ID", "Enter local project ID")}
                                     onChange={event => setEditProjectID(event.target.value)}
-                                  />
+                                  >
+                                    <option value="">{text("请选择本机项目", "Choose local project")}</option>
+                                    {knownProjects.map(project => (
+                                      <option key={project.id} value={project.id}>{project.name} ({project.id})</option>
+                                    ))}
+                                    {entry.scope.project_id && !knownProjects.some(item => item.id === entry.scope.project_id) && (
+                                      <option value={entry.scope.project_id}>{entry.scope.project_id}</option>
+                                    )}
+                                  </select>
                                 </label>
                               )}
                               <label>
@@ -864,7 +1057,17 @@ export function MemoryEditor({ projects = [], currentProject, initialOpen = fals
                             </div>
                           ) : (
                             <div>
-                              <p className="ra-memory-text">{entry.text}</p>
+                              <p className="ra-memory-text">
+                                {entry.text}
+                                {isInvisibleToModel && (
+                                  <>
+                                    {" "}
+                                    <span className="ra-memory-invisible-badge">
+                                      {text("模型不可见", "Invisible to model")}
+                                    </span>
+                                  </>
+                                )}
+                              </p>
                               <small className="ra-memory-meta">
                                 {entry.scope.kind === "project"
                                   ? `${text("本机项目范围", "Local project")}: ${projectDisplayName(entry.scope.project_id)}`
@@ -885,6 +1088,16 @@ export function MemoryEditor({ projects = [], currentProject, initialOpen = fals
                                 </p>
                               )}
                               <div className="ra-approval-actions">
+                                {isInvisibleToModel && Boolean(effectiveDefaultDest) && (
+                                  <button
+                                    type="button"
+                                    className="ra-link"
+                                    disabled={locked}
+                                    onClick={() => allowCurrentModelForEntry(entry)}
+                                  >
+                                    {text("允许当前模型使用", "Allow current model")}
+                                  </button>
+                                )}
                                 <button type="button" className="ra-link" disabled={locked} onClick={() => startEditing(entry)}>
                                   {text("编辑", "Edit")}
                                 </button>
@@ -923,49 +1136,52 @@ export function MemoryEditor({ projects = [], currentProject, initialOpen = fals
                     <span>{text("适用范围", "Scope")}</span>
                     <select
                       aria-label={text("适用范围", "Scope")}
-                      value={newScopeKind}
+                      value={knownProjects.length > 0 ? newScopeKind : "personal"}
                       disabled={locked}
                       onChange={event => setNewScopeKind(event.target.value as AgentMemoryScopeKind)}
                     >
                       <option value="personal">{text("个人范围", "Personal")}</option>
-                      <option value="project">{text("仅本机项目范围", "Local project only")}</option>
+                      {knownProjects.length > 0 && (
+                        <option value="project">{text("仅本机项目范围", "Local project only")}</option>
+                      )}
                     </select>
                   </label>
-                  {newScopeKind === "project" && (
+                  {knownProjects.length > 0 && newScopeKind === "project" && (
                     <label>
                       <span>
-                        {text("本机项目 ID", "Local project ID")}
+                        {text("选择本机项目", "Select local project")}
                         <small>
                           {text(
-                            "仅在该本机项目内生效，不会默许扩大为个人范围。请指定明确的项目 ID。",
+                            "仅在该本机项目内生效，不会默许扩大为个人范围。",
                             "Applies only within this local project on this device and never silently expands to personal scope.",
                           )}
                         </small>
                       </span>
-                      {knownProjects.length > 0 && (
-                        <select
-                          aria-label={text("选择本机项目", "Select local project")}
-                          value={knownProjects.some(item => item.id === newProjectID) ? newProjectID : ""}
-                          disabled={locked}
-                          onChange={event => { if (event.target.value) setNewProjectID(event.target.value); }}
-                        >
-                          <option value="">{text("手动输入或选择项目", "Enter or select project")}</option>
-                          {knownProjects.map(project => (
-                            <option key={project.id} value={project.id}>{project.name} ({project.id})</option>
-                          ))}
-                        </select>
-                      )}
-                      <input
-                        aria-label={text("本机项目 ID", "Local project ID")}
-                        value={newProjectID}
+                      <select
+                        aria-label={text("选择本机项目", "Select local project")}
+                        value={knownProjects.some(item => item.id === newProjectID) ? newProjectID : ""}
                         disabled={locked}
-                        placeholder={text("输入本机项目 ID（必填）", "Enter local project ID (required)")}
                         onChange={event => setNewProjectID(event.target.value)}
-                      />
+                      >
+                        <option value="">{text("请选择本机项目", "Choose local project")}</option>
+                        {knownProjects.map(project => (
+                          <option key={project.id} value={project.id}>{project.name} ({project.id})</option>
+                        ))}
+                      </select>
                     </label>
                   )}
                   <label>
-                    <span>{text("模型接收方政策", "Model destination policy")}</span>
+                    <span>
+                      {text("模型接收方政策", "Model destination policy")}
+                      {newExposureMode === "local_only" && (
+                        <>
+                          {" "}
+                          <small className="ra-memory-local-only-warning" style={{ color: "#c62828" }}>
+                            {text("模型看不到", "Invisible to models")}
+                          </small>
+                        </>
+                      )}
+                    </span>
                     <select
                       aria-label={text("模型接收方政策", "Model destination policy")}
                       value={newExposureMode}

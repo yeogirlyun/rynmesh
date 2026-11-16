@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, Callable
@@ -16,8 +17,10 @@ from rynmesh.services.messaging_store import MessagingStore
 
 from .crypto import (
     PERMISSIONS,
+    FriendClockSkewError,
     FriendCryptoError,
     auth_headers,
+    check_permissions,
     endpoint_category,
     invite_uri,
     parse_invite,
@@ -25,7 +28,7 @@ from .crypto import (
     validate_endpoint,
     verify_auth,
 )
-from .store import FriendStore
+from .store import FriendStore, NonceStatus
 
 MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
 MAX_SHARED_CONTENT_BYTES = 5 * 1024 * 1024
@@ -56,7 +59,9 @@ _CARD_ID = re.compile(r"^[0-9a-f]{32}$")
 
 
 class FriendError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, server_time: int | None = None) -> None:
+        super().__init__(message)
+        self.server_time = server_time
 
 
 def _now() -> datetime:
@@ -90,6 +95,8 @@ class FriendService:
         self.import_content = import_content
         self.allow_loopback = allow_loopback
         self.clock = clock
+        self._sleep: Callable[[float], None] = time.sleep
+        self._clock_offsets: dict[str, int] = {}
         self.queue_mail: Callable | None = None
         self.import_generation: Callable | None = None
         self.verify_import: Callable | None = None
@@ -178,7 +185,10 @@ class FriendService:
 
     @staticmethod
     def _public_invite(payload: dict[str, Any]) -> dict[str, Any]:
-        public = {key: payload[key] for key in ("invite_id", "peer_id", "node_name", "endpoint", "permissions", "created_at", "expires_at")}
+        supported_perms, ignored_perms = check_permissions(payload.get("permissions"))
+        public = {key: payload[key] for key in ("invite_id", "peer_id", "node_name", "endpoint", "created_at", "expires_at")}
+        public["permissions"] = supported_perms
+        public["ignored_permissions"] = ignored_perms
         public["endpoints"] = list(payload.get("endpoints") or [payload["endpoint"]])
         public["network_id"] = str(payload.get("network_id") or "rynmesh-main")
         public["address_category"] = endpoint_category(str(payload["endpoint"]))
@@ -256,6 +266,7 @@ class FriendService:
             raise
         except Exception as exc:
             raise FriendError("could_not_join_friend") from exc
+        ignored_perms = list(getattr(signed, "ignored_permissions", None) or [])
         record = {
             "relationship_id": str(response["relationship_id"]),
             "invite_id": str(signed.payload["invite_id"]),
@@ -264,6 +275,7 @@ class FriendService:
             "endpoint": endpoint,
             "messaging_pub": inviter_pub,
             "permissions": list(PERMISSIONS),
+            "ignored_permissions": ignored_perms,
             "status": "active",
             "created_at": self.clock().isoformat(),
         }
@@ -297,11 +309,11 @@ class FriendService:
             verify_signed_payload(proof)
             if proof.public_key != body.get("peer_id") or proof.payload != unsigned:
                 raise FriendError("invalid_join")
-            if tuple(body.get("permissions") or ()) != PERMISSIONS:
-                raise FriendError("invalid_join")
+            _, join_ignored_perms = check_permissions(body.get("permissions"))
             if abs(int(self.clock().timestamp()) - int(body.get("timestamp", 0))) > 120:
                 raise FriendError("invalid_join")
             payload = signed_invite.payload
+            _, invite_ignored_perms = check_permissions(payload.get("permissions"))
             if (signed_invite.public_key != self.peer_id or payload.get("peer_id") != self.peer_id
                 or payload.get("secret_hash") != secret_hash(secret) or body["peer_id"] == self.peer_id):
                 raise FriendError("invalid_join")
@@ -317,6 +329,7 @@ class FriendService:
             self.ai_sharing.before_accept(payload, body)
         relationship_id = uuid.uuid4().hex
         relationship_secret = os.urandom(32)
+        combined_ignored = list(dict.fromkeys([*invite_ignored_perms, *join_ignored_perms]))
         record = {
             "relationship_id": relationship_id,
             "invite_id": str(payload["invite_id"]),
@@ -325,6 +338,7 @@ class FriendService:
             "endpoint": str(body["endpoint"]).rstrip("/"),
             "messaging_pub": str(body["messaging_pub"]),
             "permissions": list(PERMISSIONS),
+            "ignored_permissions": combined_ignored,
             "status": "active",
             "created_at": now_iso,
         }
@@ -352,7 +366,7 @@ class FriendService:
         return {
             key: value
             for key, value in record.items()
-            if key in {"relationship_id", "peer_id", "node_name", "endpoint", "permissions", "status",
+            if key in {"relationship_id", "peer_id", "node_name", "endpoint", "permissions", "ignored_permissions", "status",
                        "created_at", "revoked_at", "revocation_delivery"}
         }
 
@@ -368,6 +382,42 @@ class FriendService:
             raise FriendError("active_friend_required")
         return record, secret
 
+    @staticmethod
+    def _classify_peer_error(exc: BaseException) -> tuple[str | None, int | None]:
+        if isinstance(exc, (FriendError, FriendClockSkewError)):
+            code = str(exc)
+            if code == "friend_clock_skew":
+                st = getattr(exc, "server_time", None)
+                return "friend_clock_skew", int(st) if isinstance(st, int) else None
+            if code == "friend_rate_limited":
+                return "friend_rate_limited", None
+        resp = getattr(exc, "response", None)
+        if resp is not None:
+            status = getattr(resp, "status_code", None)
+            data: dict[str, Any] = {}
+            try:
+                parsed = resp.json()
+                if isinstance(parsed, dict):
+                    data = parsed
+            except Exception:
+                pass
+            detail = str(data.get("error") or data.get("detail") or "")
+            if status == 429 or detail == "friend_rate_limited":
+                return "friend_rate_limited", None
+            if detail == "friend_clock_skew":
+                st = data.get("server_time")
+                return "friend_clock_skew", int(st) if isinstance(st, int) else None
+        msg = str(exc)
+        if "http_429" in msg or msg == "friend_rate_limited":
+            return "friend_rate_limited", None
+        st = getattr(exc, "server_time", None)
+        if "http_409" in msg and type(st) is int:
+            return "friend_clock_skew", st
+        return None, None
+
+    def _effective_timestamp(self, peer_id: str) -> int:
+        return int(self.clock().timestamp()) + int(self._clock_offsets.get(peer_id, 0))
+
     def _request_wire(
         self,
         record: dict[str, Any],
@@ -377,33 +427,79 @@ class FriendService:
         *,
         max_response_bytes: int | None = None,
     ) -> dict[str, Any]:
+        peer_id = str(record["peer_id"])
         body = canonical_json(wire)
-        headers = auth_headers(
-            secret,
-            method="POST",
-            path=path,
-            body=body,
-            sender=self.peer_id,
-            receiver=str(record["peer_id"]),
-            relationship_id=str(record["relationship_id"]),
-            timestamp=int(self.clock().timestamp()),
-            nonce=uuid.uuid4().hex,
-        )
         kwargs = {"max_response_bytes": max_response_bytes} if max_response_bytes else {}
-        return self.post_json(str(record["endpoint"]), path, wire, headers, **kwargs)
+        skew_retried = False
+        rate_retries = 0
+        backoffs = (0.1, 0.25, 0.5)
+        while True:
+            headers = auth_headers(
+                secret,
+                method="POST",
+                path=path,
+                body=body,
+                sender=self.peer_id,
+                receiver=peer_id,
+                relationship_id=str(record["relationship_id"]),
+                timestamp=self._effective_timestamp(peer_id),
+                nonce=uuid.uuid4().hex,
+            )
+            try:
+                response = self.post_json(str(record["endpoint"]), path, wire, headers, **kwargs)
+            except Exception as exc:
+                err_code, server_time = self._classify_peer_error(exc)
+                if err_code == "friend_clock_skew":
+                    if not skew_retried and server_time is not None:
+                        skew_retried = True
+                        self._clock_offsets[peer_id] = int(server_time) - int(self.clock().timestamp())
+                        continue
+                    raise FriendError("friend_clock_skew", server_time=server_time) from None
+                if err_code == "friend_rate_limited":
+                    if rate_retries < len(backoffs):
+                        self._sleep(backoffs[rate_retries])
+                        rate_retries += 1
+                        continue
+                    raise FriendError("friend_rate_limited") from None
+                raise
+            if isinstance(response, dict) and response.get("error") in {"friend_clock_skew", "friend_rate_limited"}:
+                err_code = str(response["error"])
+                if err_code == "friend_clock_skew":
+                    st = response.get("server_time")
+                    if not skew_retried and isinstance(st, int):
+                        skew_retried = True
+                        self._clock_offsets[peer_id] = int(st) - int(self.clock().timestamp())
+                        continue
+                    raise FriendError("friend_clock_skew", server_time=st if isinstance(st, int) else None)
+                if rate_retries < len(backoffs):
+                    self._sleep(backoffs[rate_retries])
+                    rate_retries += 1
+                    continue
+                raise FriendError("friend_rate_limited")
+            return response
 
-    def _send_wire(self, record: dict[str, Any], secret: bytes, path: str, wire: dict[str, Any]) -> bool:
+    def _send_wire_with_reason(self, record: dict[str, Any], secret: bytes, path: str, wire: dict[str, Any]) -> tuple[bool, str]:
         try:
             response = self._request_wire(record, secret, path, wire)
             receipt = SignedPayload.from_dict(response["receipt"])
             verify_signed_payload(receipt)
-            return receipt.public_key == record["peer_id"] and receipt.payload == {
+            ok = receipt.public_key == record["peer_id"] and receipt.payload == {
                 "kind": "ryn.friend-receipt.v1", "receiver": record["peer_id"],
                 "sender": self.peer_id, "relationship_id": record["relationship_id"],
                 "path": path, "request_sha256": hashlib.sha256(canonical_json(wire)).hexdigest(),
             }
+            return ok, ""
+        except FriendError as exc:
+            code = str(exc)
+            if code in {"friend_clock_skew", "friend_rate_limited"}:
+                return False, code
+            return False, ""
         except Exception:
-            return False
+            return False, ""
+
+    def _send_wire(self, record: dict[str, Any], secret: bytes, path: str, wire: dict[str, Any]) -> bool:
+        ok, _ = self._send_wire_with_reason(record, secret, path, wire)
+        return ok
 
     def delivery_receipt(self, path: str, wire: dict[str, Any]) -> dict[str, Any]:
         """Called only after a received operation has committed durably."""
@@ -464,8 +560,15 @@ class FriendService:
             return
         path = str(local.get("delivery_path") or "/api/peer/friends/message")
         local["last_attempt_unix"] = self.clock().timestamp()
-        if self._send_wire(record, secret, path, local["wire"]):
+        sent_ok, wire_err = self._send_wire_with_reason(record, secret, path, local["wire"])
+        if sent_ok:
             local.update(delivered=True, delivery_state="delivered", wire=None, error="")
+            return
+        if wire_err == "friend_clock_skew":
+            local.update(delivered=False, delivery_state="failed", error="friend_clock_skew")
+            return
+        if wire_err == "friend_rate_limited" and self.queue_mail is None:
+            local.update(delivered=False, delivery_state="queued", error="rate_limited")
             return
         if self.queue_mail is None or local.get("delivery_state") == "mailbox":
             return
@@ -581,8 +684,17 @@ class FriendService:
             nonce = normalized.get("x-ryn-friend-nonce", "")
             now = int(self.clock().timestamp())
             verify_auth(secret, method="POST", path=path, body=body, sender=sender, receiver=self.peer_id, relationship_id=relationship_id, timestamp=timestamp, nonce=nonce, signature=normalized.get("x-ryn-friend-mac", ""), now=now)
-            if not nonce or len(nonce) > 128 or not self.store.remember_nonce(relationship_id, nonce, now=now, timestamp=timestamp):
+            if not nonce or len(nonce) > 128:
                 raise FriendCryptoError("friend_auth_failed")
+            nonce_status = self.store.remember_nonce(relationship_id, nonce, now=now, timestamp=timestamp)
+            if nonce_status == NonceStatus.RATE_LIMITED:
+                raise FriendError("friend_rate_limited")
+            if nonce_status != NonceStatus.ACCEPTED:
+                raise FriendCryptoError("friend_auth_failed")
+        except FriendError:
+            raise
+        except FriendClockSkewError as exc:
+            raise FriendError("friend_clock_skew", server_time=exc.server_time) from exc
         except Exception as exc:
             raise FriendError("friend_auth_failed") from exc
         return relationship
@@ -684,7 +796,7 @@ class FriendService:
                 "source_offline_job_id": str(card.get("source_offline_job_id", "")),
                 "expires_at": (self.clock() + timedelta(hours=1)).isoformat(),
             }
-        self.store.put_card(local)
+        self.store.put_card(local, now_iso=self.clock().isoformat())
         return local
 
     def retry_card(self, card_id: str) -> dict[str, Any]:
@@ -730,7 +842,7 @@ class FriendService:
             "fetch_state": "available" if clean["fetch_available"] else "metadata_only",
         }
         try:
-            self.store.put_card(row)
+            self.store.put_card(row, now_iso=self.clock().isoformat())
         except ValueError as exc:
             if str(exc) != 'friend_card_erased':
                 raise

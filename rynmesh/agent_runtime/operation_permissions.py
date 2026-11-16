@@ -3,14 +3,18 @@ from __future__ import annotations
 
 import hashlib
 
+from .protocol import bound_preview
 from .store import encoded
+
+
+DEFAULT_LIMIT = 16
 
 
 def fingerprint(value):
     return hashlib.sha256(encoded(value)).hexdigest()
 
 
-def projection(row):
+def projection(row, limit: int | None = DEFAULT_LIMIT):
     result = []
     for receipt in row.get("receipts", []):
         # Reads retain their complete audit receipts. They need no write
@@ -26,7 +30,7 @@ def projection(row):
         decision = receipt.get("permission_record")
         if isinstance(decision, dict):
             expected = {"operation_id": receipt["operation_id"], "arguments_sha256": fingerprint(receipt["arguments"]),
-                        "preview_sha256": fingerprint(receipt.get("preview")), "goal_revision": receipt["goal_revision"],
+                        "preview_sha256": fingerprint(bound_preview(receipt.get("preview"))), "goal_revision": receipt["goal_revision"],
                         "scope_revision": receipt["scope_revision"], "context_epoch": receipt["context_epoch"]}
             matching = (all(decision.get(key) == value for key, value in expected.items())
                         and receipt.get("arguments_sha256") == expected["arguments_sha256"]
@@ -48,8 +52,20 @@ def projection(row):
                 if fact["permission_basis"] != "unknown":
                     fact.update(**expected, control_revision=decision["control_revision"])
         result.append(fact)
+    if limit is not None:
+        return result[-limit:] if limit > 0 else []
     return result
 
 
-GUIDANCE = ("These operation_permissions are server-recorded historical dispatch decisions, not authority for new writes or proof of success. "
-            "Use them for approval facts; approval need not appear in user chat. Unknown does not mean never approved.")
+def projection_with_counts(row, limit: int = DEFAULT_LIMIT) -> tuple[list[dict], dict[str, int]]:
+    all_facts = projection(row, limit=None)
+    total = len(all_facts)
+    items = all_facts[-limit:] if limit > 0 else []
+    return items, {"total": total, "omitted": total - len(items)}
+
+
+GUIDANCE = (
+    "These operation_permissions are server-recorded historical dispatch decisions, not authority for new writes or proof of success. "
+    "Use them for approval facts; approval need not appear in user chat. Unknown does not mean never approved; "
+    "older operations are omitted from this list, not unapproved."
+)

@@ -766,31 +766,46 @@ it("creates, edits, searches, and deletes memory entries with nested scope, exac
     }),
   );
 
-  render(<MemoryEditor />);
+  render(
+    <MemoryEditor
+      projects={[
+        {
+          id: "proj-ryn",
+          name: "Ryn Project",
+          path: "/workspace/ryn",
+          generation: 2,
+          entry_files: [],
+          manifests: [],
+          directories: [],
+        },
+      ]}
+    />,
+  );
   await user.click(screen.getByRole("button", { name: "Long-term memory" }));
   await screen.findByText("Always run ruff before finishing Python edits");
 
   // Entry-1 has a stale/unavailable destination -> shows reselect warning and does not broaden to all_selected
   expect(screen.getByText(/Unavailable — reselect required/)).toBeInTheDocument();
 
-  // New entry defaults to local_only ("Store on this device; never send to models")
+  // New entry defaults to destinations with the current default task model pre-selected
   const policySelect = screen.getByLabelText("Model destination policy") as HTMLSelectElement;
-  expect(policySelect.value).toBe("local_only");
-  expect(screen.getByRole("option", { name: "Store on this device; never send to models" })).toBeInTheDocument();
+  expect(policySelect.value).toBe("destinations");
+  expect(screen.getByRole("option", { name: "Store on this device only (invisible to models)" })).toBeInTheDocument();
 
-  // Switch new entry scope to project -> requires explicit local project ID
+  // Switch new entry scope to project -> requires explicit local project selection from dropdown
   await user.selectOptions(screen.getByLabelText("Scope"), "project");
   const addButton = screen.getByRole("button", { name: "Add fact" });
   await user.type(screen.getByLabelText("New fact text"), "Frontend tests live in webapp/src");
   expect(addButton).toBeDisabled();
 
-  await user.type(screen.getByLabelText(/Local project ID/), "proj-ryn");
-  await user.selectOptions(policySelect, "destinations");
-  // Cannot add when mode="destinations" but no destination is checked
+  await user.selectOptions(screen.getByLabelText("Select local project"), "proj-ryn");
+  const addDestGroup = screen.getByRole("group", { name: "Choose allowed destinations" });
+  // Uncheck pre-selected default destination -> cannot add when mode="destinations" and no destination is checked
+  await user.click(within(addDestGroup).getByRole("checkbox", { name: "Claude 4 Sonnet · My Anthropic" }));
   expect(addButton).toBeDisabled();
 
   // Authorize native CLI destination (with empty source_id)
-  const cliCheckbox = screen.getByRole("checkbox", { name: "Gemini Local CLI" });
+  const cliCheckbox = within(addDestGroup).getByRole("checkbox", { name: "Gemini Local CLI" });
   await user.click(cliCheckbox);
   expect(addButton).toBeEnabled();
   await user.click(addButton);
@@ -1362,4 +1377,47 @@ it("displays accurate labels for manual, accepted_extraction, explicit_owner_cha
   expect(captureCheckbox).toBeChecked();
 });
 
+it("shows near-capacity suppression notice and ledger degraded notice in memory editor", async () => {
+  const i18nMod = await import("../i18n");
+  const prevLang = i18nMod.default.language;
+  await i18nMod.default.changeLanguage("zh-CN");
+  try {
+    server.use(
+      http.get("*/api/local/agent/memory/destinations", () => HttpResponse.json({
+        destinations: [],
+        default_destination: null,
+      })),
+      http.get("*/api/local/agent/memory", () => HttpResponse.json({
+        schema_version: 1,
+        generation: 12,
+        reset_epoch: 0,
+        policy_revision: 3,
+        settings: {
+          capture_enabled: false,
+          use_enabled: true,
+          activation_policy: "automatic",
+          extraction_model_id: "",
+          extraction_destination: null,
+          default_exposure: { mode: "selected_models", allowed_destinations: [] },
+          budgets: { max_tombstones: 256 },
+        },
+        entries: [],
+        candidates: [],
+        tombstone_count: 220,
+        suppressed_slot_count: 3500,
+        memory_ledger_degraded: {
+          at: 1700000000,
+          code: "agent_memory_byte_limit",
+          task_id: "task-1",
+          operation: "delete",
+        },
+      })),
+    );
 
+    render(<MemoryEditor initialOpen />);
+    await screen.findByText(/记忆账本已满，部分删除记录未登记/);
+    expect(screen.getByText(/接近.*上限/)).toBeInTheDocument();
+  } finally {
+    await i18nMod.default.changeLanguage(prevLang);
+  }
+});
