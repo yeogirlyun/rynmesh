@@ -96,6 +96,7 @@ from .safety import MAX_OUTPUT, MAX_REQUEST, SharedSlots, install_body_limit
 from .service_view import annotate_services
 from .review import service_review
 from .setup_recovery import (
+    RECOVERY_DISCARDED_MESSAGE,
     RECOVERY_FAILED,
     SetupRecovery,
     SetupRecoveryError,
@@ -1582,6 +1583,11 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         })
         if recovered_setup == "restored":
             previous_setup_job["message"] = "Previous configuration restored after interrupted setup. Check model status or retry configuration."
+        elif recovered_setup == "discarded":
+            previous_setup_job.update({
+                "error_code": "setup_recovery_discarded",
+                "message": RECOVERY_DISCARDED_MESSAGE,
+            })
         elif recovered_setup == "failed":
             previous_setup_job.update({"error_code": "setup_recovery_failed", "message": RECOVERY_FAILED})
         write_setup_job(previous_setup_job)
@@ -2902,7 +2908,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             raise HTTPException(status_code=409, detail="another local model setup is already running")
         try:
             if setup_recovery.pending:
-                raise HTTPException(status_code=409, detail=RECOVERY_FAILED)
+                setup_recovery.restore()
             result = await asyncio.to_thread(configure_llm, dict(await request.json()))
             return activate_configuration(result)
         except (LifecycleError, AdapterError, ManifestError, OSError, ValueError) as exc:
@@ -3005,13 +3011,15 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 message = "Setup cancelled." if cancelled else (str(exc).strip() or "Local model setup failed")
                 if recovery_state == "failed":
                     message = RECOVERY_FAILED
+                elif recovery_state == "discarded":
+                    message = RECOVERY_DISCARDED_MESSAGE
                 elif recovery_state in {"unavailable", "missing"}:
                     message += " Previous configuration is unavailable. Check the local model service and retry configuration."
                 elif recovery_state == "restored":
                     message += " Previous configuration restored and its health check passed."
                 elif recovery_state == "not_needed":
                     message += " No previous model configuration required restoration."
-                recovery_error = recovery_state in {"failed", "unavailable", "missing"}
+                recovery_error = recovery_state in {"failed", "discarded", "unavailable", "missing"}
                 with setup_job_lock:
                     write_setup_job({
                         "job_id": job_id,

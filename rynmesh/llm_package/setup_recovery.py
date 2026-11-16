@@ -11,6 +11,7 @@ import binascii
 import hashlib
 import json
 import re
+import time
 from pathlib import Path
 
 from rynmesh.atomic_io import atomic_write_bytes, atomic_write_json
@@ -20,6 +21,7 @@ from .errors import LifecycleError
 MAX_CONFIG_BYTES = 2 * 1024 * 1024
 MAX_JOURNAL_BYTES = 6 * 1024 * 1024
 RECOVERY_FAILED = "Previous configuration could not be restored. Check local storage and retry configuration."
+RECOVERY_DISCARDED_MESSAGE = "上次安装的恢复记录已损坏并已备份，旧配置未能恢复，请重新配置"
 
 
 def managed_resume_configuration(body: dict) -> dict | None:
@@ -47,14 +49,32 @@ class SetupRecovery:
         self.path = home / "llm" / "setup-recovery.json"
         self.settings = home / "llm" / "provider-settings.json"
         self.pending = self.path.exists()
+        self._discarded = False
+
+    def _quarantine_corrupt(self) -> Path:
+        stamp = time.strftime("%Y%m%d%H%M%S", time.gmtime())
+        backup = self.path.with_name(f"{self.path.name}.corrupt-{stamp}")
+        suffix = 1
+        while backup.exists():
+            backup = self.path.with_name(f"{self.path.name}.corrupt-{stamp}-{suffix}")
+            suffix += 1
+        self.path.replace(backup)
+        self.pending = False
+        self._discarded = True
+        return backup
 
     def _read(self) -> dict | None:
+        self._discarded = False
         try:
             if not self.path.exists():
                 self.pending = False
                 return None
             with self.path.open("rb") as source:
                 raw = source.read(MAX_JOURNAL_BYTES + 1)
+        except OSError as exc:
+            self.pending = True
+            raise SetupRecoveryError(RECOVERY_FAILED) from exc
+        try:
             if len(raw) > MAX_JOURNAL_BYTES:
                 raise ValueError
             record = json.loads(raw)
@@ -62,13 +82,28 @@ class SetupRecovery:
                 raise ValueError
             if record.get("state") not in {"pending", "committed"}:
                 raise ValueError
-            if record["state"] == "committed" and set(record) != {"version", "state"}:
-                raise ValueError
-            self.pending = record["state"] == "pending"
-            return record
-        except (OSError, ValueError) as exc:
-            self.pending = True
-            raise SetupRecoveryError(RECOVERY_FAILED) from exc
+            if record["state"] == "committed":
+                if set(record) != {"version", "state"}:
+                    raise ValueError
+            else:
+                if set(record) != {"version", "state", "manifest_path", "manifest", "settings"}:
+                    raise ValueError
+                target = record["manifest_path"]
+                if not isinstance(target, str) or (target and not Path(target).is_absolute()):
+                    raise ValueError
+                manifest_bytes = self._decode(record["manifest"])
+                self._decode(record["settings"])
+                if manifest_bytes is not None and not target:
+                    raise ValueError
+        except (ValueError, binascii.Error):
+            try:
+                self._quarantine_corrupt()
+            except OSError as exc:
+                self.pending = True
+                raise SetupRecoveryError(RECOVERY_FAILED) from exc
+            return None
+        self.pending = record["state"] == "pending"
+        return record
 
     @staticmethod
     def _snapshot(path: Path) -> dict | None:
@@ -114,10 +149,13 @@ class SetupRecovery:
     def restore(self) -> str:
         """Restore files, without claiming that the old model is running.
 
-        Returns absent, not_needed, restored, or missing. A failed write keeps
-        the original snapshot, so a new process can retry the same recovery.
+        Returns absent, discarded, not_needed, restored, or missing. A failed write
+        keeps the original snapshot, so a new process can retry the same recovery.
         """
         record = self._read()
+        if self._discarded:
+            self._discarded = False
+            return "discarded"
         if record is None or record["state"] == "committed":
             return "absent"
         try:
