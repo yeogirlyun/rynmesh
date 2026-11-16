@@ -130,7 +130,7 @@ def test_encrypted_loop_inspect_approve_change_verify(tmp_path):
     restored = AgentRuntime(AgentStore(tmp_path, key), model, tools, Catalog())
     restored.reconcile()
     assert restored.get(row["id"]) == done
-    with pytest.raises(AgentError, match="agent_state_unreadable"):
+    with pytest.raises(AgentError, match="agent_state_corrupt"):
         AgentStore(tmp_path, X25519PrivateKey.generate()).read()
 
 
@@ -609,7 +609,7 @@ def test_corrupt_optional_agent_state_does_not_stop_node_routes(tmp_path):
     assert app.state.agent_startup_error == "agent_state_unreadable"
     with TestClient(app) as client:
         assert client.get("/api/local/agent/models").status_code == 200
-        assert client.get("/api/local/agent/tasks").json()["detail"] == "agent_state_unreadable"
+        assert client.get("/api/local/agent/tasks").json()["detail"] == "agent_state_corrupt"
 
 
 def test_definitely_rejected_write_returns_to_model_without_ambiguous_marker(tmp_path):

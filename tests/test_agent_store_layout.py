@@ -1,14 +1,14 @@
 """Per-task encrypted storage: one root commits each task file by digest."""
-from concurrent.futures import ThreadPoolExecutor
 import json
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from test_agent_runtime import advance, assistant, make_runtime
 
 from rynmesh.agent_runtime import store as storage
-from rynmesh.agent_runtime.store import AgentError, AgentStore, encoded
+from rynmesh.agent_runtime.store import AgentStore, encoded
 from rynmesh.atomic_io import atomic_write_json
 from rynmesh.services import peer_box
 
@@ -51,8 +51,10 @@ def test_a_transaction_rewrites_only_the_task_it_changed(tmp_path):
     assert blobs(tmp_path) == before  # unchanged rows write nothing
     store.transaction(lambda data: data["tasks"]["b"]["messages"].append({"role": "assistant", "content": "x"}))
     after = blobs(tmp_path)
-    assert len(after) == 3 and len(set(before) & set(after)) == 2
-    assert [name for name in after if name not in before] == [store._index["b"]["file"]]
+    assert len(after) == 4 and [name for name in after if name not in before] == [store._index["b"]["file"]]
+    store.transaction(lambda data: data["settings"].update(enabled=True))
+    after_prev_advance = blobs(tmp_path)
+    assert len(after_prev_advance) == 3 and len(set(before) & set(after_prev_advance)) == 2
     reopened = AgentStore(tmp_path, store.key).read()
     assert reopened["tasks"]["b"]["messages"][-1]["content"] == "x" and set(reopened["tasks"]) == {"a", "b", "c"}
 
@@ -121,6 +123,8 @@ def test_removed_tasks_lose_their_file_and_orphans_are_swept(tmp_path):
     store = AgentStore(tmp_path, X25519PrivateKey.generate())
     seed(store, "a", "b")
     store.transaction(lambda data: data["tasks"].pop("a"))
+    # S13-I3 delays old blob deletion by one commit while sessions.json.prev still references 'a'.
+    store.transaction(lambda data: data["settings"].update(enabled=True))
     assert blobs(tmp_path) == [store._index["b"]["file"]]
     (tmp_path / storage.TASKS_DIR / ("0" * 24 + ".json")).write_text("{}")
     (tmp_path / storage.TASKS_DIR / (".b.json." + "a" * 32 + ".tmp")).write_text("{}")
@@ -136,8 +140,9 @@ def test_a_swapped_task_file_is_refused(tmp_path):
     a, b = (directory / names[0]).read_bytes(), (directory / names[1]).read_bytes()
     (directory / names[0]).write_bytes(b)
     (directory / names[1]).write_bytes(a)
-    with pytest.raises(AgentError, match="agent_state_unreadable"):
-        AgentStore(tmp_path, store.key).read()
+    reopened = AgentStore(tmp_path, store.key).read()
+    assert reopened["tasks"] == {}
+    assert set(reopened["damaged_tasks"]) == {"a", "b"}
 
 
 def test_history_above_old_quota_roundtrips_and_can_grow(tmp_path):
