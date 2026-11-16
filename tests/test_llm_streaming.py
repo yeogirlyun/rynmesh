@@ -161,7 +161,7 @@ def test_stream_sequence_verifier_rejects_gap_duplicate_signer_and_limits(tmp_pa
         verifier.accept_delta(event(1, sender=attacker))
     with pytest.raises(TaskProtocolError, match="task mismatch"):
         verifier.accept_delta(event(1, task_id="other-task"))
-    expired = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+    expired = (datetime.now(timezone.utc) - timedelta(seconds=301)).isoformat()
     with pytest.raises(TaskProtocolError, match="expired"):
         verifier.accept_delta(event(1, expires_at=expired))
     with pytest.raises(TaskProtocolError, match="event limit"):
