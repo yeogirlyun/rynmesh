@@ -75,6 +75,30 @@ def _resolve_automation_model(runtime: Any, data: dict[str, Any]) -> tuple[str, 
     return model_id, destination
 
 
+def _find_active_cron_task_id(
+    data: dict[str, Any],
+    automation_id: str,
+    item: dict[str, Any],
+) -> str | None:
+    tasks = data.get("tasks") or {}
+    last_tid = str(item.get("last_task_id") or "").strip()
+    if last_tid and isinstance(tasks.get(last_tid), dict):
+        t_row = tasks[last_tid]
+        if t_row.get("status") in {"queued", "running"} or bool(t_row.get("in_flight")):
+            return last_tid
+    for run in (data.get("automation_runs") or {}).values():
+        if not isinstance(run, dict) or str(run.get("automation_id") or "") != automation_id:
+            continue
+        if run.get("status") != "IN_PROGRESS":
+            continue
+        cand_tid = str(run.get("task_id") or "").strip()
+        if cand_tid and isinstance(tasks.get(cand_tid), dict):
+            t_row = tasks[cand_tid]
+            if t_row.get("status") in {"queued", "running"} or bool(t_row.get("in_flight")):
+                return cand_tid
+    return None
+
+
 def trigger_automation_in_tx(
     runtime: Any,
     data: dict[str, Any],
@@ -82,6 +106,7 @@ def trigger_automation_in_tx(
     *,
     force: bool = False,
     now_epoch_ms: int | None = None,
+    missed_runs: int | None = None,
 ) -> dict[str, Any]:
     automations.ensure_automation_state(data)
     target_id = str(automation_id or "").strip()
@@ -90,6 +115,16 @@ def trigger_automation_in_tx(
         raise AgentError("agent_automation_not_found")
 
     current_ms = int(now_epoch_ms if now_epoch_ms is not None else automations.now_ms())
+    if missed_runs is not None:
+        effective_missed = max(0, int(missed_runs))
+    elif not force and isinstance(item.get("next_run_at"), (int, float)):
+        effective_missed = automations.compute_missed_runs(
+            str(item.get("rrule") or ""),
+            item.get("next_run_at"),
+            current_ms,
+        )
+    else:
+        effective_missed = 0
     run_id = f"arun-{current_ms}-{secrets.token_hex(3)}"
     kind = str(item.get("kind") or "cron").strip().lower()
     prompt_text = str(item.get("prompt") or item.get("name") or "Execute scheduled automation.").strip()
@@ -181,6 +216,56 @@ def trigger_automation_in_tx(
         spawned_task_id = target_task_id
         spawned_row = target_row
     else:
+        active_prev_tid = _find_active_cron_task_id(data, target_id, item) if not force else None
+        if active_prev_tid:
+            salt = automations.ensure_jitter_salt(runtime.store)
+            next_ms = automations.compute_next_run_at(
+                str(item.get("rrule") or ""),
+                after_ms=current_ms,
+                salt=salt,
+                automation_id=target_id,
+                run_count=int(item.get("run_count") or 0),
+            )
+            if next_ms is None:
+                item["status"] = "PAUSED"
+                item["next_run_at"] = None
+                item["next_run_at_iso"] = ""
+            elif str(item.get("status") or "ACTIVE") == "ACTIVE":
+                item["next_run_at"] = next_ms
+                item["next_run_at_iso"] = automations.ms_to_iso(next_ms)
+            item["last_run_at"] = current_ms
+            item["last_run_at_iso"] = automations.ms_to_iso(current_ms)
+            item["last_run_status"] = "SKIPPED_OVERLAP"
+            item["missed_runs"] = effective_missed
+            item["updated_at"] = now_str
+            automations.write_automation_files(runtime.store, item)
+
+            skip_record = {
+                "id": run_id,
+                "automation_id": target_id,
+                "automation_name": str(item.get("name") or ""),
+                "kind": "cron",
+                "task_id": active_prev_tid,
+                "status": "SKIPPED_OVERLAP",
+                "decision": "",
+                "inbox_title": str(item.get("name") or ""),
+                "inbox_summary": "上一轮运行尚未结束，跳过本次时段",
+                "missed_runs": effective_missed,
+                "created_at": now_str,
+                "completed_at": now_str,
+                "updated_at": now_str,
+            }
+            data["automation_runs"][run_id] = skip_record
+            automations.prune_automation_runs_in_tx(data, target_id)
+            return {
+                "triggered": False,
+                "deferred": False,
+                "skipped_overlap": True,
+                "run": skip_record,
+                "task_id": None,
+                "automation": automations.public_automation(runtime.store, item),
+            }
+
         model_id, destination = _resolve_automation_model(runtime, data)
         workspace_root = (
             str(item.get("workspace_root") or "").strip()
@@ -241,6 +326,7 @@ def trigger_automation_in_tx(
     automations.inherit_task_policy_in_tx(data, spawned_row)
     run_count = int(item.get("run_count") or 0) + 1
     item["run_count"] = run_count
+    item["missed_runs"] = effective_missed
     item["last_run_at"] = current_ms
     item["last_run_at_iso"] = automations.ms_to_iso(current_ms)
     item["last_run_status"] = "running"
@@ -274,10 +360,12 @@ def trigger_automation_in_tx(
         "decision": "",
         "inbox_title": str(item.get("name") or ""),
         "inbox_summary": "",
+        "missed_runs": effective_missed,
         "created_at": now_str,
         "updated_at": now_str,
     }
     data["automation_runs"][run_id] = run_record
+    automations.prune_automation_runs_in_tx(data, target_id)
 
     return {
         "triggered": True,
@@ -307,10 +395,25 @@ class AutomationSchedulerWorker:
             due = item.get("next_run_at")
             if due is None or (isinstance(due, (int, float)) and int(due) <= current_ms):
                 return True
-        for run in data.get("automation_runs", {}).values():
-            if isinstance(run, dict) and run.get("status") == "IN_PROGRESS":
-                task = data["tasks"].get(str(run.get("task_id") or ""))
-                if task and task.get("status") in {"completed", "failed", "cancelled"}:
+        tasks = data.get("tasks") or {}
+        for run in (data.get("automation_runs") or {}).values():
+            if not isinstance(run, dict):
+                continue
+            r_status = run.get("status")
+            if r_status not in {"IN_PROGRESS", "NEEDS_ATTENTION"}:
+                continue
+            task = tasks.get(str(run.get("task_id") or ""))
+            if isinstance(task, dict):
+                t_status = task.get("status")
+                if t_status in automations.TERMINAL_TASK_STATUSES:
+                    return True
+                if r_status == "IN_PROGRESS" and t_status in automations.ATTENTION_TASK_STATUSES:
+                    created_ms = automations.parse_iso_ms(run.get("created_at"))
+                    if created_ms is not None and current_ms - created_ms >= automations.ATTENTION_TIMEOUT_MS:
+                        return True
+            elif r_status == "IN_PROGRESS":
+                created_ms = automations.parse_iso_ms(run.get("created_at"))
+                if created_ms is not None and current_ms - created_ms >= automations.LOST_TASK_TIMEOUT_MS:
                     return True
         return automations.sync_automation_files(self.runtime.store, records, check_only=True)
 
@@ -326,19 +429,34 @@ class AutomationSchedulerWorker:
                 automations.ensure_automation_state(data)
                 changed = automations.sync_automations_from_disk_in_tx(self.runtime.store, data)
 
-                # Settle any runs whose tasks have already reached a terminal state
+                current_ms = automations.now_ms()
+                # Settle terminal, stalled (NEEDS_ATTENTION), and orphaned (LOST) runs
                 tasks = data.get("tasks") or {}
                 for run_rec in list(data["automation_runs"].values()):
-                    if not isinstance(run_rec, dict) or run_rec.get("status") != "IN_PROGRESS":
+                    if not isinstance(run_rec, dict):
+                        continue
+                    r_status = run_rec.get("status")
+                    if r_status not in {"IN_PROGRESS", "NEEDS_ATTENTION"}:
                         continue
                     tid = str(run_rec.get("task_id") or "")
                     t_row = tasks.get(tid)
-                    if isinstance(t_row, dict) and t_row.get("status") in {"completed", "failed", "cancelled"}:
-                        automations.settle_automation_turn_in_tx(self.runtime.store, data, t_row)
-                        changed = True
+                    if isinstance(t_row, dict):
+                        t_status = t_row.get("status")
+                        if t_status in automations.TERMINAL_TASK_STATUSES:
+                            automations.settle_automation_turn_in_tx(self.runtime.store, data, t_row)
+                            changed = True
+                        elif r_status == "IN_PROGRESS" and t_status in automations.ATTENTION_TASK_STATUSES:
+                            created_ms = automations.parse_iso_ms(run_rec.get("created_at"))
+                            if created_ms is not None and current_ms - created_ms >= automations.ATTENTION_TIMEOUT_MS:
+                                automations.settle_automation_turn_in_tx(self.runtime.store, data, t_row)
+                                changed = True
+                    elif r_status == "IN_PROGRESS":
+                        created_ms = automations.parse_iso_ms(run_rec.get("created_at"))
+                        if created_ms is not None and current_ms - created_ms >= automations.LOST_TASK_TIMEOUT_MS:
+                            automations.settle_lost_automation_run_in_tx(self.runtime.store, data, run_rec)
+                            changed = True
 
-                current_ms = automations.now_ms()
-                due_ids: list[str] = []
+                due_items: list[tuple[str, int]] = []
                 for auto_id, item in data["automations"].items():
                     if not isinstance(item, dict):
                         continue
@@ -359,15 +477,21 @@ class AutomationSchedulerWorker:
                         changed = True
                         continue
                     if isinstance(next_ms, (int, float)) and int(next_ms) <= current_ms:
-                        due_ids.append(auto_id)
+                        missed = automations.compute_missed_runs(
+                            str(item.get("rrule") or ""),
+                            int(next_ms),
+                            current_ms,
+                        )
+                        due_items.append((auto_id, missed))
 
-                for auto_id in due_ids[:MAX_CLAIMS_PER_TICK]:
+                for auto_id, missed in due_items[:MAX_CLAIMS_PER_TICK]:
                     outcome = trigger_automation_in_tx(
                         self.runtime,
                         data,
                         auto_id,
                         force=False,
                         now_epoch_ms=current_ms,
+                        missed_runs=missed,
                     )
                     changed = True
                     if outcome.get("triggered") and outcome.get("task_id"):
