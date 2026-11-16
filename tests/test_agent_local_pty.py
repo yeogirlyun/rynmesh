@@ -204,7 +204,11 @@ def test_unsupported_platform_is_explicit(monkeypatch):
     from types import SimpleNamespace
 
     from rynmesh.agent_runtime import local_pty
+    monkeypatch.setattr(local_pty, "os", SimpleNamespace(name="unknown"))
+    with pytest.raises(AgentToolRejected, match="platform_unsupported"):
+        local_pty.check_pty_support()
     monkeypatch.setattr(local_pty, "os", SimpleNamespace(name="posix"))
+    monkeypatch.setitem(sys.modules, "pty", None)
     with pytest.raises(AgentToolRejected, match="platform_unsupported"):
         local_pty.check_pty_support()
 

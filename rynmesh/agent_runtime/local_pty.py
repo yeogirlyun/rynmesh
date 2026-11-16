@@ -23,12 +23,20 @@ _RETIRED_LOCK = threading.RLock()
 
 
 def check_pty_support():
-    if os.name != "nt":
-        raise AgentToolRejected("agent_pty_platform_unsupported")
-    try:
-        import winpty  # noqa: F401
-    except ImportError:
-        raise AgentToolRejected("agent_pty_dependency_missing_install_pywinpty") from None
+    if os.name == "nt":
+        try:
+            import winpty  # noqa: F401
+        except ImportError:
+            raise AgentToolRejected("agent_pty_dependency_missing_install_pywinpty") from None
+        return
+    if os.name == "posix":
+        try:
+            import pty  # noqa: F401
+            import termios  # noqa: F401
+        except ImportError:
+            raise AgentToolRejected("agent_pty_platform_unsupported") from None
+        return
+    raise AgentToolRejected("agent_pty_platform_unsupported")
 
 
 def validate_size(rows, cols):
@@ -260,8 +268,242 @@ class ConPtyProcess:
                 reader.join(2)
 
 
+class PosixPtyProcess:
+    """POSIX PTY process adapter matching the ConPtyProcess interface."""
+
+    backend = "posix_pty"
+
+    def __init__(self, args, cwd, env, rows=24, cols=80):
+        check_pty_support()
+        validate_size(rows, cols)
+        import fcntl
+        import pty
+        import struct
+        import termios
+
+        self._lock = threading.RLock()
+        self._dispose_lock = threading.Lock()
+        self._send_lock = threading.Lock()
+        self._output = queue.Queue(maxsize=64)
+        self._closed = threading.Event()
+        self._disposing = threading.Event()
+        self._events_done = threading.Event()
+        self._returncode = None
+        self._master_fd = None
+        self._proc = None
+        self.pid = None
+        self.error = None
+        self.rows, self.cols = rows, cols
+
+        master_fd, slave_fd = pty.openpty()
+        self._master_fd = master_fd
+        try:
+            fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+            self._proc = subprocess.Popen(
+                args,
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                start_new_session=True,
+                cwd=str(cwd),
+                env=env,
+            )
+            self.pid = self._proc.pid
+        except BaseException as exc:
+            try:
+                os.close(slave_fd)
+            except OSError:
+                pass
+            self.dispose()
+            if isinstance(exc, OSError):
+                raise AgentError("agent_pty_start_failed") from None
+            raise
+        else:
+            try:
+                os.close(slave_fd)
+            except OSError:
+                pass
+        self._reader = threading.Thread(target=self._receive, daemon=True, name="ryn-posix-pty-events")
+        self._reader.start()
+
+    def _close_master(self):
+        with self._lock:
+            fd = self._master_fd
+            self._master_fd = None
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+    def _receive(self):
+        import errno
+
+        try:
+            while not self._closed.is_set():
+                fd = self._master_fd
+                if fd is None:
+                    break
+                try:
+                    chunk = os.read(fd, 4096)
+                except OSError as exc:
+                    if exc.errno == errno.EINTR:
+                        continue
+                    if exc.errno not in (errno.EIO, errno.EBADF) and not self._disposing.is_set() and not self._closed.is_set():
+                        self.error = "agent_posix_pty_failed"
+                    break
+                if not chunk:
+                    break
+                while not self._closed.is_set():
+                    q = self._output
+                    if q is None:
+                        break
+                    try:
+                        q.put(chunk, timeout=0.1)
+                        break
+                    except queue.Full:
+                        if self._disposing.is_set():
+                            break
+                        continue
+        finally:
+            if self._proc is not None and self._returncode is None and not self._disposing.is_set():
+                try:
+                    self._returncode = self._proc.wait(timeout=0.5)
+                except subprocess.TimeoutExpired:
+                    pass
+            self._events_done.set()
+
+    def read_output(self):
+        while True:
+            q = self._output
+            if q is None:
+                return b""
+            try:
+                return q.get(timeout=0.1)
+            except queue.Empty:
+                if self._events_done.is_set():
+                    return b""
+
+    def release_buffers(self):
+        self._output = None
+        self._reader = None
+        self._closed = self._disposing = self._events_done = COMPLETED
+        self._lock = self._send_lock = _RETIRED_LOCK
+        self._dispose_lock = _RETIRED_LOCK
+
+    def poll(self):
+        if self._returncode is not None:
+            return self._returncode
+        proc = self._proc
+        if proc is None:
+            return 1
+        rc = proc.poll()
+        if rc is not None:
+            self._returncode = rc
+        return rc
+
+    def write_input(self, text):
+        import errno
+        import select
+
+        with self._send_lock:
+            if self.poll() is not None or self._closed.is_set() or self._disposing.is_set():
+                raise AgentToolRejected("agent_process_not_running")
+            fd = self._master_fd
+            if fd is None:
+                raise AgentToolRejected("agent_process_not_running")
+            raw = text.encode("utf-8") if isinstance(text, str) else bytes(text)
+            if not raw:
+                return
+            view = memoryview(raw)
+            deadline = time.monotonic() + 2.0
+            while view:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self.dispose()
+                    raise AgentError("agent_process_input_unconfirmed")
+                try:
+                    _, ready, _ = select.select([], [fd], [], remaining)
+                    if not ready:
+                        self.dispose()
+                        raise AgentError("agent_process_input_unconfirmed")
+                except (OSError, ValueError, TypeError):
+                    pass
+                try:
+                    written = os.write(fd, view)
+                except OSError as exc:
+                    if exc.errno == errno.EINTR:
+                        continue
+                    self.dispose()
+                    raise AgentError("agent_process_input_unconfirmed") from None
+                if written <= 0:
+                    self.dispose()
+                    raise AgentError("agent_process_input_unconfirmed")
+                view = view[written:]
+
+    def resize(self, rows, cols):
+        validate_size(rows, cols)
+        import fcntl
+        import struct
+        import termios
+
+        with self._send_lock:
+            if self.poll() is not None or self._closed.is_set() or self._disposing.is_set():
+                raise AgentToolRejected("agent_process_not_running")
+            fd = self._master_fd
+            if fd is None:
+                raise AgentToolRejected("agent_process_not_running")
+            try:
+                fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+            except OSError:
+                raise AgentError("agent_process_input_unconfirmed") from None
+            self.rows, self.cols = rows, cols
+
+    def dispose(self):
+        import signal
+
+        with self._dispose_lock:
+            if self._closed.is_set():
+                return
+            self._disposing.set()
+            killpg = getattr(os, "killpg", None)
+            sigkill = getattr(signal, "SIGKILL", 9)
+            if killpg is not None and self.pid is not None:
+                try:
+                    killpg(self.pid, sigkill)
+                except OSError:
+                    pass
+            if self._proc is not None:
+                if self._returncode is None:
+                    rc = self._proc.poll()
+                    if rc is not None:
+                        self._returncode = rc
+                try:
+                    rc = self._proc.wait(timeout=5)
+                    if self._returncode is None:
+                        self._returncode = rc
+                except subprocess.TimeoutExpired:
+                    try:
+                        self._proc.kill()
+                        rc = self._proc.wait(timeout=2)
+                        if self._returncode is None:
+                            self._returncode = rc
+                    except (OSError, subprocess.TimeoutExpired):
+                        pass
+            reader = getattr(self, "_reader", None)
+            if reader is not None and reader is not threading.current_thread():
+                reader.join(2)
+            self._closed.set()
+            self._close_master()
+            if reader is not None and reader is not threading.current_thread() and reader.is_alive():
+                reader.join(1)
+            if self._returncode is None:
+                self._returncode = 1
+            self._events_done.set()
+
+
 def terminate_session(process):
-    if isinstance(process, ConPtyProcess):
+    if isinstance(process, (ConPtyProcess, PosixPtyProcess)):
         process.dispose()
     else:
         terminate(process)
