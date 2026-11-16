@@ -131,11 +131,22 @@ def validate_tool_arguments(schema, arguments):
         raise err from matched
 
 
+PROMPT_CACHE_KEY_RE = re.compile(r"[A-Za-z0-9:_-]{1,64}\Z")
+
+
+def validate_prompt_cache_key(value: Any) -> str:
+    if not isinstance(value, str) or len(value.encode("utf-8")) > 64 or not PROMPT_CACHE_KEY_RE.fullmatch(value):
+        raise ValueError("invalid prompt_cache_key")
+    return value
+
+
 def validate_chat(value: dict[str, Any]) -> dict[str, Any]:
-    allowed = {"messages", "max_tokens", "temperature", "top_p", "stop", "tools", "tool_choice", "stream", "enable_thinking", "chat_template_kwargs", "reasoning_effort"}
+    allowed = {"messages", "max_tokens", "temperature", "top_p", "stop", "tools", "tool_choice", "stream", "enable_thinking", "chat_template_kwargs", "reasoning_effort", "prompt_cache_key"}
     if set(value) - allowed:
         raise ValueError("unsupported chat parameters: " + ", ".join(sorted(set(value) - allowed)))
     body = copy.deepcopy(value)
+    if "prompt_cache_key" in body:
+        validate_prompt_cache_key(body["prompt_cache_key"])
     if "reasoning_effort" in body:
         validate_effort(body["reasoning_effort"])
     if "chat_template_kwargs" in body:

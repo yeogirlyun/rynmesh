@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import hashlib
 import math
 import re
 import threading
@@ -604,6 +605,24 @@ class AgentRuntime(AgentLoop):
             native_artifact_loader=self._native_artifact_loader(),
         )
 
+    @staticmethod
+    def _prompt_cache_key(row: dict) -> str | None:
+        sub_meta = row.get("subagent_meta")
+        is_subagent = isinstance(sub_meta, dict) and bool(sub_meta.get("root_task_id") or row.get("parent_task_id"))
+        if is_subagent:
+            root_id = str(sub_meta.get("root_task_id") or row.get("parent_task_id") or row.get("id") or "")
+            raw_key = f"{root_id}:subagent" if root_id else ""
+        elif isinstance(row.get("fork"), dict) and isinstance(row["fork"].get("source_task_id"), str) and row["fork"]["source_task_id"]:
+            raw_key = row["fork"]["source_task_id"]
+        else:
+            raw_key = str(row.get("id") or "")
+        if not raw_key:
+            return None
+        if len(raw_key.encode("utf-8")) <= 64 and re.fullmatch(r"[A-Za-z0-9:_-]{1,64}", raw_key):
+            return raw_key
+        digest = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()[:48]
+        return f"{digest}:subagent" if is_subagent else digest
+
     def _complete(self, row: dict, messages: list, specs: list, cancelled, on_event, *, nested=False, stage=None, output_cap=None, request_id=None, image_context=None):
         # Measure the final provider-visible projection, including JSON string
         # escaping and validated inline image bounds, before reserving or dispatching inference.
@@ -667,6 +686,10 @@ class AgentRuntime(AgentLoop):
             if row.get("memory_conversation_epoch"):
                 conv_key = f"{conv_key}:mem:{row['memory_conversation_epoch']}"
             options["conversation"] = conv_key
+        if getattr(self.model, "supports_cache_key", False) is True:
+            cache_key = self._prompt_cache_key(row)
+            if cache_key:
+                options["cache_key"] = cache_key
         dispatch_messages = messages
         image_report = None
         if not nested and stage is None:

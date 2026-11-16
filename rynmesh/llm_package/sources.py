@@ -5,6 +5,7 @@ import base64
 import copy
 import hashlib
 import json
+import time
 import uuid
 from pathlib import Path
 from urllib.parse import urlparse
@@ -43,6 +44,7 @@ SOURCE_HTTP_SCHEMA = {
         "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 393216},
         "stream_idle_seconds": {"type": "integer", "minimum": 1, "maximum": 86400, "default": 120},
         "max_request_seconds": {"type": "integer", "minimum": 1, "maximum": 86400, "default": 1800},
+        "prompt_cache": {"type": "string", "enum": ["auto", "off"]},
         "request_defaults": {"type": "object"},
     },
 }
@@ -208,6 +210,13 @@ class SourceStore:
                     record[timeout_key] = timeout_val
             elif timeout_key in old:
                 record[timeout_key] = old[timeout_key]
+        if "prompt_cache" in body:
+            if body["prompt_cache"] is not None:
+                if body["prompt_cache"] not in model_settings.PROMPT_CACHE_VALUES:
+                    raise ValueError("model_prompt_cache_invalid")
+                record["prompt_cache"] = body["prompt_cache"]
+        elif "prompt_cache" in old:
+            record["prompt_cache"] = old["prompt_cache"]
         record["_context_window_mode_explicit"] = "context_window_mode" in body
         same_endpoint = _same_configuration(record, old, ("kind", "provider", "base_url", "api_key", "protocol"))
         metadata = copy.deepcopy(old.get("model_metadata", {})) if same_endpoint else {}
@@ -266,8 +275,20 @@ class SourceStore:
             records.pop(source_id, None)
             self._write(records)
 
-    @staticmethod
-    def adapter(record, model=""):
+    def _record_model_capability(self, source_id: str, model: str, key: str, status: str) -> None:
+        if key not in {"prompt_cache_key", "cache_control"} or status not in {"supported", "unsupported"}:
+            return
+        with self.lock:
+            records = self.read()
+            rec = records.get(source_id)
+            if not rec or model not in rec.get("models", []):
+                return
+            row = rec.setdefault("model_settings", {}).setdefault(model, {})
+            ev = row.setdefault("evidence", {})
+            ev[key] = {"status": status, "checked_at": int(time.time())}
+            self._write(records)
+
+    def adapter(self_or_record, record_or_model="", model=""):
         """Build an upstream HTTP adapter for a configured source/model.
 
         ``timeout_s`` on the returned adapter is the per-read stream idle
@@ -275,22 +296,53 @@ class SourceStore:
         cap on the whole response; total request duration is bounded by the
         caller's ``deadline`` budget.
         """
+        if isinstance(self_or_record, SourceStore):
+            store_self: SourceStore | None = self_or_record
+            record = record_or_model
+            chosen_arg = model
+        else:
+            store_self = None
+            record = self_or_record
+            chosen_arg = model or record_or_model
         if record["kind"] == "api" and not record.get("api_key"):
             raise ValueError("请先填写 API Key")
         protocol = source_protocol(record)
         if protocol not in PROTOCOLS:
             raise ValueError("不支持的 API 协议")
-        adapter, protocol_kwargs = SourceAdapter, {}
+        selected_model = chosen_arg or next(iter(record["models"]), "")
+        policy = model_settings.effective(record, selected_model)
+        evidence = (record.get("model_settings", {}).get(selected_model, {}) or {}).get("evidence") or {}
+        pck_status = (evidence.get("prompt_cache_key") or {}).get("status")
+        prompt_cache_key_supported = True if pck_status == "supported" else False if pck_status == "unsupported" else None
+        cc_status = (evidence.get("cache_control") or {}).get("status")
+        cache_control_supported = False if cc_status == "unsupported" else True if cc_status == "supported" else None
+        source_id = record.get("id", "")
+        on_cap = (
+            (lambda k, st, _sid=source_id, _m=selected_model: store_self._record_model_capability(_sid, _m, k, st))
+            if store_self is not None and source_id and selected_model
+            else None
+        )
+        adapter_cls, protocol_kwargs = SourceAdapter, {}
         if protocol != "openai_chat":
             from .protocol_adapter import NativeProtocolAdapter
-            adapter, protocol_kwargs = NativeProtocolAdapter, {"protocol": protocol}
-        selected_model = model or next(iter(record["models"]), "")
-        policy = model_settings.effective(record, selected_model)
-        return adapter(base_url=record["base_url"], api_prefix="", api_key=record.get("api_key", ""),
-                             model=selected_model,
-                             allow_non_loopback=record["kind"] == "api", timeout_s=policy["stream_idle_seconds"],
-                             request_defaults=policy["request_defaults"],
-                             **protocol_kwargs)
+            adapter_cls, protocol_kwargs = NativeProtocolAdapter, {
+                "protocol": protocol,
+                "cache_control_supported": cache_control_supported,
+            }
+        return adapter_cls(
+            base_url=record["base_url"],
+            api_prefix="",
+            api_key=record.get("api_key", ""),
+            model=selected_model,
+            allow_non_loopback=record["kind"] == "api",
+            timeout_s=policy["stream_idle_seconds"],
+            request_defaults=policy["request_defaults"],
+            provider=record.get("provider", ""),
+            prompt_cache=policy.get("prompt_cache"),
+            prompt_cache_key_supported=prompt_cache_key_supported,
+            on_capability_evidence=on_cap,
+            **protocol_kwargs,
+        )
 
     def configure_model(self, source_id, body):
         if not isinstance(body, dict) or set(body) != {"model_id", "expected_rule_revision", "configuration"}:
@@ -355,8 +407,42 @@ class SourceStore:
                     "model_metadata": metadata}
         if not record["models"]:
             raise ValueError("请先添加至少一个模型 ID")
-        result = adapter.chat({"messages": [{"role": "user", "content": "Reply briefly: OK"}],
-                               "max_tokens": min(4096, model_settings.effective(record, record["models"][0])["max_output_tokens"])}, task_id="source-test-" + uuid.uuid4().hex, timeout_s=90)
+        primary_model = record["models"][0]
+        eff = model_settings.effective(record, primary_model)
+        max_probe_tokens = min(4096, eff["max_output_tokens"])
+        probe_body = {"messages": [{"role": "user", "content": "Reply briefly: OK"}], "max_tokens": max_probe_tokens}
+        should_probe_cache_key = (
+            source_protocol(record) == "openai_chat"
+            and eff.get("prompt_cache") == "auto"
+            and str(record.get("provider") or "").strip().lower() not in {"openai", "azure"}
+            and isinstance(adapter, OpenAICompatibleAdapter)
+        )
+        if should_probe_cache_key:
+            checked_ts = int(time.time())
+            try:
+                result = adapter.chat(
+                    {**probe_body, "prompt_cache_key": "ryn_probe_cache_key"},
+                    task_id="source-test-" + uuid.uuid4().hex,
+                    timeout_s=90,
+                    _probe_prompt_cache_key=True,
+                )
+                for m in record["models"]:
+                    record.setdefault("model_settings", {}).setdefault(m, {}).setdefault("evidence", {})["prompt_cache_key"] = {
+                        "status": "supported",
+                        "checked_at": checked_ts,
+                    }
+            except AdapterError as exc:
+                if exc.code in {"upstream_request_rejected", "upstream_http_failed"} and (exc.diagnostics or {}).get("http_status") in {400, 422}:
+                    for m in record["models"]:
+                        record.setdefault("model_settings", {}).setdefault(m, {}).setdefault("evidence", {})["prompt_cache_key"] = {
+                            "status": "unsupported",
+                            "checked_at": checked_ts,
+                        }
+                    result = adapter.chat(probe_body, task_id="source-test-" + uuid.uuid4().hex, timeout_s=90)
+                else:
+                    raise
+        else:
+            result = adapter.chat(probe_body, task_id="source-test-" + uuid.uuid4().hex, timeout_s=90)
         if not result.get("text"):
             raise AdapterError("模型未返回正文，请检查输出上限或推理参数")
         return {"ok": True, "model": adapter.model}

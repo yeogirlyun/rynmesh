@@ -157,11 +157,18 @@ class OpenAICompatibleAdapter:
 
     def __init__(self, *, base_url: str, model: str = "", api_key_env: str = "",
                  allow_non_loopback: bool = False, timeout_s: float = 120.0,
-                 api_prefix: str = "/v1", api_key: str = "", request_defaults: dict | None = None) -> None:
+                 api_prefix: str = "/v1", api_key: str = "", request_defaults: dict | None = None,
+                 provider: str = "", prompt_cache: str | None = None,
+                 prompt_cache_key_supported: bool | None = None,
+                 on_capability_evidence: Callable[[str, str], None] | None = None) -> None:
         self.base_url = validate_local_url(base_url, allow_non_loopback=allow_non_loopback)
         self.model = model
         self.api_prefix = api_prefix
         self.request_defaults = dict(request_defaults or {})
+        self.provider = str(provider or "").strip().lower()
+        self.prompt_cache = prompt_cache if prompt_cache in {"auto", "off"} else None
+        self.prompt_cache_key_supported = prompt_cache_key_supported
+        self._on_capability_evidence = on_capability_evidence
         self.api_key_env = api_key_env
         # A literal loopback token for a Rynmesh-owned runtime (never logged,
         # never echoed in an error). An owner-configured `api_key_env` wins.
@@ -171,6 +178,17 @@ class OpenAICompatibleAdapter:
         self._active_responses: dict[str, Any] = {}
         self._lock = threading.Lock()
         self._metrics = AdapterMetrics()
+
+    def _allows_prompt_cache_key(self, *, force_probe: bool = False) -> bool:
+        if force_probe:
+            return True
+        if self.prompt_cache == "off":
+            return False
+        if self.prompt_cache_key_supported is False:
+            return False
+        if self.prompt_cache_key_supported is True:
+            return True
+        return self.provider in {"openai", "azure"}
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -333,7 +351,8 @@ class OpenAICompatibleAdapter:
             self._cancelled.discard(task_id)
 
     def chat(self, body: dict[str, Any], *, task_id: str, timeout_s: float | None = None,
-             on_event: Any = None, deadline: float | None = None) -> dict[str, Any]:
+             on_event: Any = None, deadline: float | None = None,
+             _probe_prompt_cache_key: bool = False) -> dict[str, Any]:
         # Runtime staging reads package metadata with stdlib-only Python.
         # Load structured-chat dependencies only when a chat is requested.
         from .chat import ChatAccumulator, validate_chat
@@ -353,6 +372,8 @@ class OpenAICompatibleAdapter:
             raise AdapterError("invalid_request_deadline")
 
         body = {**self.request_defaults, **validate_chat(body)}
+        if "prompt_cache_key" in body and not self._allows_prompt_cache_key(force_probe=_probe_prompt_cache_key):
+            body.pop("prompt_cache_key", None)
         model_id = str(body.get("model") or self.model or "").lower()
         base_url = str(self.base_url or "").lower()
         thinking_cfg = body.get("thinking")

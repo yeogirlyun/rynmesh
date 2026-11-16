@@ -5,7 +5,7 @@ import json
 import time
 from typing import Any
 
-from .chat import reported_token_count, validate_chat
+from .chat import reported_token_count, validate_chat, validate_prompt_cache_key
 
 
 def text_content(value: Any) -> str:
@@ -17,13 +17,17 @@ def text_content(value: Any) -> str:
 
 
 def normalize(body: dict[str, Any], protocol: str) -> dict[str, Any]:
-    common = {"model", "stream", "temperature", "top_p", "tools", "tool_choice"}
+    common = {"model", "stream", "temperature", "top_p", "tools", "tool_choice", "prompt_cache_key"}
     allowed = common | ({"messages", "max_tokens", "max_completion_tokens", "stop", "stream_options", "n", "enable_thinking", "chat_template_kwargs", "reasoning_effort"} if protocol == "chat" else
                         {"input", "instructions", "max_output_tokens", "store", "previous_response_id"} if protocol == "responses" else
                         {"messages", "system", "max_tokens", "stop_sequences"})
     if set(body) - allowed:
         raise ValueError("unsupported parameters: " + ", ".join(sorted(set(body) - allowed)))
+    if "prompt_cache_key" in body:
+        validate_prompt_cache_key(body["prompt_cache_key"])
     result = {key: body[key] for key in ("stream", "temperature", "top_p", "tool_choice") if key in body}
+    if "prompt_cache_key" in body and protocol in {"chat", "responses"}:
+        result["prompt_cache_key"] = body["prompt_cache_key"]
     if protocol == "chat":
         if body.get("n", 1) != 1:
             raise ValueError("only n=1 is supported")

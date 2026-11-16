@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -15,17 +16,82 @@ import urllib.request
 from .adapters import AdapterError, OpenAICompatibleAdapter, _openai_usage, _set_response_timeout, cached_input_tokens
 from .data_release import DataReleaseError
 from .data_release import urlopen as model_urlopen
-from .transport_failure import describe, read_http_failure
+from .transport_failure import (
+    _MAX_ERROR_BODY_BYTES,
+    _extract_envelope_fields,
+    _fallback_minimal_envelope,
+    describe,
+    read_http_failure,
+)
+
+_CACHE_CONTROL_LOCK = threading.Lock()
+_CACHE_CONTROL_UNSUPPORTED: set[tuple[str, str, str]] = set()
+
+
+def _payload_has_cache_control(obj) -> bool:
+    if isinstance(obj, dict):
+        return "cache_control" in obj or any(_payload_has_cache_control(v) for v in obj.values())
+    if isinstance(obj, list):
+        return any(_payload_has_cache_control(item) for item in obj)
+    return False
+
+
+def _read_http_failure_with_envelope(exc: urllib.error.HTTPError, phase: str):
+    envelope = None
+    try:
+        raw = exc.read(_MAX_ERROR_BODY_BYTES + 1)
+        if raw:
+            if len(raw) <= _MAX_ERROR_BODY_BYTES:
+                try:
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, dict):
+                        envelope = parsed
+                except (ValueError, TypeError):
+                    envelope = _fallback_minimal_envelope(raw)
+            else:
+                envelope = _fallback_minimal_envelope(raw)
+    except OSError:
+        envelope = None
+    return describe(exc, phase, envelope), envelope
+
+
+def _envelope_mentions_cache_control(envelope) -> bool:
+    if not isinstance(envelope, dict):
+        return False
+    code, err_type, param, msg = _extract_envelope_fields(envelope)
+    return "cache_control" in f"{code} {err_type} {param} {msg}".lower()
 
 
 class NativeProtocolAdapter(OpenAICompatibleAdapter):
     supports_developer_role = True
 
-    def __init__(self, *, protocol, **options):
+    def __init__(self, *, protocol, cache_control_supported: bool | None = None, **options):
         if protocol not in {"openai_responses", "anthropic_messages"}:
             raise ValueError("unsupported source protocol")
         super().__init__(**options)
         self.protocol = protocol
+        self._cache_control_supported = cache_control_supported
+
+    def _cache_control_key(self) -> tuple[str, str, str]:
+        return (self.base_url, self.api_prefix, self.model)
+
+    def _allows_cache_control(self) -> bool:
+        if self.prompt_cache == "off" or self._cache_control_supported is False:
+            return False
+        with _CACHE_CONTROL_LOCK:
+            if self._cache_control_key() in _CACHE_CONTROL_UNSUPPORTED:
+                return False
+        return True
+
+    def _mark_cache_control_unsupported(self) -> None:
+        self._cache_control_supported = False
+        with _CACHE_CONTROL_LOCK:
+            _CACHE_CONTROL_UNSUPPORTED.add(self._cache_control_key())
+        if callable(self._on_capability_evidence):
+            try:
+                self._on_capability_evidence("cache_control", "unsupported")
+            except Exception:
+                return
 
     def _headers(self):
         headers = super()._headers()
@@ -98,7 +164,7 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
         )
         last_byte = started
         is_sse = False
-        received_usage = received_finish = received_cached = None
+        received_usage = received_finish = received_cached = received_cache_creation = None
         phase = "request"
         decoder = None
 
@@ -135,16 +201,54 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                 raise AdapterError("model_not_found", code="model_not_found")
             validated = validate_chat(body)
             scope = self._scope()
-            try:
-                payload = make_request({**self.request_defaults, **validated}, self.protocol, self.model, scope)
-            except (ValueError, TypeError, KeyError):
-                # Unsupported features are rejected before egress. Never use
-                # a second protocol as an automatic fallback with task data.
-                raise AdapterError("source_protocol_parameters_unsupported", code="source_protocol_parameters_unsupported") from None
+            effective_prompt_cache = self.prompt_cache or "auto"
+            if self.protocol == "anthropic_messages" and not self._allows_cache_control():
+                effective_prompt_cache = "off"
             path = "/v1/responses" if self.protocol == "openai_responses" else "/v1/messages"
-            request = urllib.request.Request(self._endpoint(path), data=json.dumps(payload).encode("utf-8"),
-                                             headers=self._headers(), method="POST")
-            with model_urlopen(request, timeout=read_timeout()) as response:
+            for cache_attempt in range(2):
+                phase = "request"
+                try:
+                    payload = make_request(
+                        {**self.request_defaults, **validated},
+                        self.protocol,
+                        self.model,
+                        scope,
+                        prompt_cache=effective_prompt_cache,
+                    )
+                except (ValueError, TypeError, KeyError):
+                    # Unsupported features are rejected before egress. Never use
+                    # a second protocol as an automatic fallback with task data.
+                    raise AdapterError("source_protocol_parameters_unsupported", code="source_protocol_parameters_unsupported") from None
+                sent_cache_control = self.protocol == "anthropic_messages" and _payload_has_cache_control(payload)
+                request = urllib.request.Request(
+                    self._endpoint(path),
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers=self._headers(),
+                    method="POST",
+                )
+                try:
+                    resp_ctx = model_urlopen(request, timeout=read_timeout())
+                except urllib.error.HTTPError as exc:
+                    diag, envelope = _read_http_failure_with_envelope(exc, phase)
+                    exc.close()
+                    if (
+                        exc.code == 400
+                        and sent_cache_control
+                        and cache_attempt == 0
+                        and _envelope_mentions_cache_control(envelope)
+                    ):
+                        self._mark_cache_control_unsupported()
+                        effective_prompt_cache = "off"
+                        continue
+                    if diag.get("image_rejected"):
+                        err_code = "upstream_image_rejected"
+                    elif diag.get("network_reason") in {"request_rejected", "auth_rejected"}:
+                        err_code = "upstream_request_rejected"
+                    else:
+                        err_code = "upstream_http_failed"
+                    raise AdapterError(err_code, code=err_code, diagnostics=diag) from None
+                break
+            with resp_ctx as response:
                 phase = "read"
                 last_byte = time.monotonic()
                 with self._lock:
@@ -159,6 +263,10 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                     if isinstance(decoded, dict):
                         received_usage = _openai_usage(_usage(decoded.get("usage"), self.protocol))
                         received_cached = cached_input_tokens(decoded.get("usage"))
+                        if self.protocol == "anthropic_messages" and isinstance(decoded.get("usage"), dict):
+                            raw_cc = decoded["usage"].get("cache_creation_input_tokens")
+                            if type(raw_cc) is int and raw_cc >= 0:
+                                received_cache_creation = raw_cc
                         try:
                             received_finish = _finish(decoded, self.protocol)
                         except NativeStreamError:
@@ -176,7 +284,7 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                     data = []
 
                     def frame():
-                        nonlocal received_usage, received_finish, received_cached
+                        nonlocal received_usage, received_finish, received_cached, received_cache_creation
                         value = "\n".join(data)
                         if value == "[DONE]":
                             return
@@ -184,6 +292,7 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                         chunks = decoder.feed(event)
                         received_usage = _openai_usage(decoder.usage)
                         received_cached = decoder.cached_tokens
+                        received_cache_creation = decoder.cache_creation_input_tokens
                         received_finish = decoder.finish_reason
                         for chunk in chunks:
                             check()
@@ -217,6 +326,8 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                     result = decoder.result()
                     if received_cached is None:
                         received_cached = decoder.cached_tokens
+                    if received_cache_creation is None:
+                        received_cache_creation = decoder.cache_creation_input_tokens
             check()
             received_usage = _openai_usage(result.get("usage"))
             received_finish = result.get("finish_reason")
@@ -234,6 +345,7 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                     "finish_reason": received_finish, **received_usage,
                     "reported_usage": received_usage,
                     **({"cached_tokens": received_cached} if received_cached is not None else {}),
+                    **({"cache_creation_input_tokens": received_cache_creation} if received_cache_creation is not None else {}),
                     "duration_ms": duration}
         except DataReleaseError:
             raise
