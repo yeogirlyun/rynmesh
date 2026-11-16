@@ -40,14 +40,18 @@ R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 
 
 class PreviewError(ValueError):
-    pass
+    def __init__(self, code, *, details=None):
+        super().__init__(code)
+        self.details = details or {}
 
 
 class Package:
-    def __init__(self, raw, include_images=True):
+    def __init__(self, raw, include_images=True, *, max_package_bytes=None, max_xml_bytes=None):
+        self.max_package_bytes = MAX_PACKAGE_BYTES if max_package_bytes is None else max_package_bytes
+        self.max_xml_bytes = MAX_XML_BYTES if max_xml_bytes is None else max_xml_bytes
         self.archive = zipfile.ZipFile(io.BytesIO(raw))
         entries = self.archive.infolist()
-        if len(entries) > 5000 or sum(item.file_size for item in entries) > MAX_PACKAGE_BYTES:
+        if len(entries) > 5000 or sum(item.file_size for item in entries) > self.max_package_bytes:
             self.archive.close()
             raise PreviewError("agent_preview_limit")
         self.names = set(self.archive.namelist())
@@ -58,7 +62,7 @@ class Package:
 
     def xml(self, name):
         info = self.archive.getinfo(name)
-        if info.file_size > MAX_XML_BYTES:
+        if info.file_size > self.max_xml_bytes:
             raise PreviewError("agent_preview_limit")
         raw = self.archive.read(info)
         # ElementTree does not fetch external entities. Reject internal entities too,
@@ -117,26 +121,29 @@ def _image(package, path):
     return "data:image/" + kind + ";base64," + base64.b64encode(raw).decode("ascii")
 
 
-def _number(raw, style, styles, epoch):
+def _number(raw, style, styles, epoch, *, format_numbers=True):
     """Use cached values and familiar number/date formats; never evaluate formulas."""
+    if not raw:
+        return raw
     try:
         number = float(raw)
         code = styles[int(style)] if style and int(style) < len(styles) else ""
         if code.startswith("date:"):
             value = epoch + dt.timedelta(days=number)
             return value.strftime("%Y-%m-%d %H:%M" if number % 1 else "%Y-%m-%d")
-        if "%" in code:
-            decimals = len(re.search(r"\.([0#]+)", code)[1]) if re.search(r"\.([0#]+)", code) else 0
-            return f"{number * 100:,.{min(decimals, 6)}f}%"
-        if re.search(r"[0#],[0#]|0\.0", code):
-            decimals = len(re.search(r"\.([0#]+)", code)[1]) if re.search(r"\.([0#]+)", code) else 0
-            return f"{number:,.{min(decimals, 6)}f}"
+        if format_numbers:
+            if "%" in code:
+                decimals = len(re.search(r"\.([0#]+)", code)[1]) if re.search(r"\.([0#]+)", code) else 0
+                return f"{number * 100:,.{min(decimals, 6)}f}%"
+            if re.search(r"[0#],[0#]|0\.0", code):
+                decimals = len(re.search(r"\.([0#]+)", code)[1]) if re.search(r"\.([0#]+)", code) else 0
+                return f"{number:,.{min(decimals, 6)}f}"
     except (ValueError, OverflowError, IndexError):
         pass
     return raw
 
 
-def _spreadsheet(package):
+def _workbook_parts(package):
     workbook = package.xml("xl/workbook.xml")
     relationships = package.rels("xl/workbook.xml")
     strings = []
@@ -151,64 +158,166 @@ def _spreadsheet(package):
             code = formats.get(ident, "0%" if ident == 9 else "0.00%" if ident == 10 else "#,##0.00" if ident == 4 else "#,##0" if ident == 3 else "")
             # Ignore quoted labels, color/condition tokens and escaped literals.
             clean = re.sub(r'"[^"]*"|\[[^]]*\]|\\.', "", code)
-            styles.append("date:" + code if 14 <= ident <= 22 or 45 <= ident <= 47 or re.search(r"[ydhs]", clean, re.I) else code)
+            is_date = 14 <= ident <= 22 or 27 <= ident <= 36 or 45 <= ident <= 47 or 50 <= ident <= 58 or bool(re.search(r"[ydhs]", clean, re.I))
+            styles.append("date:" + code if is_date else code)
     properties = workbook.find(S + "workbookPr")
     epoch = dt.datetime(1904, 1, 1) if properties is not None and properties.get("date1904") in {"1", "true"} else dt.datetime(1899, 12, 30)
-    sheets = workbook.findall(f"{S}sheets/{S}sheet")
-    result = []
-    formulas_uncalculated = False
-    for sheet in sheets[:MAX_SHEETS]:
-        path = relationships.get(sheet.get(R + "id"))
-        if not path:
-            continue
-        root = package.xml(path)
-        rows, max_column, total_rows, truncated = [], 0, 0, False
-        for ordinal, row in enumerate(root.findall(f"{S}sheetData/{S}row"), 1):
-            index = int(row.get("r", str(ordinal)))
-            total_rows = max(total_rows, index)
-            cells = []
-            previous_column = 0
-            for cell in row.findall(S + "c"):
-                column = _column(cell.get("r")) if cell.get("r") else previous_column + 1
-                previous_column = column
-                max_column = max(max_column, column)
-                if index > MAX_ROWS or column > MAX_COLUMNS:
-                    truncated = True
+    return relationships, strings, styles, epoch, workbook.findall(f"{S}sheets/{S}sheet")
+
+
+def _cell_value(cell, strings, styles, epoch, *, format_numbers=True):
+    kind = cell.get("t")
+    v_node = cell.find(S + "v")
+    raw = (v_node.text or "") if v_node is not None else ""
+    formula = cell.find(S + "f")
+    if kind == "s":
+        value = strings[int(raw)] if raw.isdigit() and int(raw) < len(strings) else ""
+    elif kind == "inlineStr":
+        value = "".join(item.text or "" for item in cell.findall(f"{S}is//{S}t"))
+    elif kind == "b":
+        value = "TRUE" if raw == "1" else "FALSE"
+    elif kind in {"str", "e"}:
+        value = raw
+    elif kind == "d":
+        value = raw[:10] if re.match(r"^\d{4}-\d{2}-\d{2}T00:00:00", raw) else raw
+    else:
+        value = _number(raw, cell.get("s"), styles, epoch, format_numbers=format_numbers)
+    formula_text = (formula.text or "") if formula is not None else None
+    uncalculated = formula is not None and (v_node is None or (not raw and kind not in {"str", "inlineStr"}))
+    return value, formula_text, uncalculated
+
+
+def sheet_rows(raw, sheet=None, max_rows=5000, max_columns=64, *, _preview=False):
+    owns_package = not isinstance(raw, Package)
+    package = None
+    try:
+        package = (
+            Package(
+                raw,
+                include_images=False,
+                max_package_bytes=max(MAX_PACKAGE_BYTES, 256 * 1024 * 1024),
+                max_xml_bytes=max(MAX_XML_BYTES, 256 * 1024 * 1024),
+            )
+            if owns_package
+            else raw
+        )
+        relationships, strings, styles, epoch, sheets = _workbook_parts(package)
+        if _preview:
+            result = []
+            formulas_uncalculated = False
+            for item_sheet in sheets[:MAX_SHEETS]:
+                path = relationships.get(item_sheet.get(R + "id"))
+                if not path:
                     continue
-                kind = cell.get("t")
-                raw = cell.findtext(S + "v", "")
-                formula = cell.find(S + "f")
-                if kind == "s":
-                    value = strings[int(raw)] if raw.isdigit() and int(raw) < len(strings) else ""
-                elif kind == "inlineStr":
-                    value = "".join(item.text or "" for item in cell.findall(f"{S}is//{S}t"))
-                elif kind == "b":
-                    value = "TRUE" if raw == "1" else "FALSE"
+                root = package.xml(path)
+                rows, max_column, total_rows, truncated = [], 0, 0, False
+                for ordinal, row in enumerate(root.findall(f"{S}sheetData/{S}row"), 1):
+                    index = int(row.get("r", str(ordinal)))
+                    total_rows = max(total_rows, index)
+                    cells = []
+                    previous_column = 0
+                    for cell in row.findall(S + "c"):
+                        column = _column(cell.get("r")) if cell.get("r") else previous_column + 1
+                        previous_column = column
+                        max_column = max(max_column, column)
+                        if index > max_rows or column > max_columns:
+                            truncated = True
+                            continue
+                        value, formula_text, uncalculated = _cell_value(cell, strings, styles, epoch, format_numbers=True)
+                        if uncalculated:
+                            formulas_uncalculated = True
+                            value = "=" + (formula_text or "")
+                        if value or formula_text is not None:
+                            item = {"column": column, "value": package.text(value)}
+                            if formula_text is not None:
+                                item["formula"] = package.text("=" + formula_text)
+                            cells.append(item)
+                    if index <= max_rows:
+                        rows.append({"index": index, "cells": cells})
+                dimension = root.find(S + "dimension")
+                if dimension is not None:
+                    end = dimension.get("ref", "A1").split(":")[-1]
+                    match = re.search(r"(\d+)$", end)
+                    total_rows = max(total_rows, int(match[1]) if match else 0)
+                    max_column = max(max_column, _column(end))
+                result.append({"name": package.text(item_sheet.get("name", "Sheet")), "rows": rows, "total_rows": total_rows,
+                               "total_columns": max_column, "columns": min(max_column, max_columns),
+                               "hidden": item_sheet.get("state") in {"hidden", "veryHidden"},
+                               "truncated": truncated or total_rows > max_rows or max_column > max_columns})
+            return {"kind": "spreadsheet", "sheets": result, "formulas_uncalculated": formulas_uncalculated,
+                    "truncated": len(sheets) > MAX_SHEETS or package.truncated}
+
+        target_path = None
+        if sheet is None:
+            for item_sheet in sheets:
+                target_path = relationships.get(item_sheet.get(R + "id"))
+                if target_path:
+                    break
+            if not target_path:
+                return [], []
+        else:
+            matched = next((item_sheet for item_sheet in sheets if item_sheet.get("name") == sheet), None)
+            target_path = relationships.get(matched.get(R + "id")) if matched is not None else None
+            if not target_path:
+                raise PreviewError("agent_preview_sheet_not_found", details={"sheet": sheet})
+
+        root = package.xml(target_path)
+        xml_rows = root.findall(f"{S}sheetData/{S}row")
+        if not xml_rows:
+            return [], []
+
+        header_cells = {}
+        previous_column = 0
+        for cell in xml_rows[0].findall(S + "c"):
+            col = _column(cell.get("r")) if cell.get("r") else previous_column + 1
+            previous_column = col
+            if col > max_columns:
+                raise PreviewError("agent_preview_column_limit", details={"max_columns": max_columns})
+            value, _, uncalculated = _cell_value(cell, strings, styles, epoch, format_numbers=False)
+            if uncalculated:
+                raise PreviewError("agent_preview_formula_uncalculated", details={"row": 0, "column": cell.get("r") or str(col), "cell": cell.get("r") or ""})
+            header_cells[col] = value
+        width = max((col for col, val in header_cells.items() if val != ""), default=0)
+        if width == 0:
+            return [], []
+        headers = [header_cells.get(col, "") for col in range(1, width + 1)]
+
+        rows = []
+        for xml_row in xml_rows[1:]:
+            row_values = [""] * width
+            previous_column = 0
+            next_row_num = len(rows) + 1
+            for cell in xml_row.findall(S + "c"):
+                col = _column(cell.get("r")) if cell.get("r") else previous_column + 1
+                previous_column = col
+                if col > max_columns:
+                    raise PreviewError("agent_preview_column_limit", details={"max_columns": max_columns})
+                value, _, uncalculated = _cell_value(cell, strings, styles, epoch, format_numbers=False)
+                if uncalculated:
+                    col_label = headers[col - 1] if col <= width and headers[col - 1] else (cell.get("r") or str(col))
+                    raise PreviewError("agent_preview_formula_uncalculated", details={"row": next_row_num, "column": col_label, "cell": cell.get("r") or ""})
+                if col > width:
+                    if value != "":
+                        raise PreviewError("agent_preview_ragged_row", details={"row": next_row_num, "column": col})
                 else:
-                    value = _number(raw, cell.get("s"), styles, epoch)
-                formula_text = (formula.text or "") if formula is not None else None
-                if formula is not None and not raw:
-                    formulas_uncalculated = True
-                    value = "=" + formula_text
-                if value or formula is not None:
-                    item = {"column": column, "value": package.text(value)}
-                    if formula_text is not None:
-                        item["formula"] = package.text("=" + formula_text)
-                    cells.append(item)
-            if index <= MAX_ROWS:
-                rows.append({"index": index, "cells": cells})
-        dimension = root.find(S + "dimension")
-        if dimension is not None:
-            end = dimension.get("ref", "A1").split(":")[-1]
-            match = re.search(r"(\d+)$", end)
-            total_rows = max(total_rows, int(match[1]) if match else 0)
-            max_column = max(max_column, _column(end))
-        result.append({"name": package.text(sheet.get("name", "Sheet")), "rows": rows, "total_rows": total_rows,
-                       "total_columns": max_column, "columns": min(max_column, MAX_COLUMNS),
-                       "hidden": sheet.get("state") in {"hidden", "veryHidden"},
-                       "truncated": truncated or total_rows > MAX_ROWS or max_column > MAX_COLUMNS})
-    return {"kind": "spreadsheet", "sheets": result, "formulas_uncalculated": formulas_uncalculated,
-            "truncated": len(sheets) > MAX_SHEETS or package.truncated}
+                    row_values[col - 1] = value
+            if not any(v != "" for v in row_values):
+                continue
+            if next_row_num > max_rows:
+                raise PreviewError("agent_preview_row_limit", details={"max_rows": max_rows})
+            rows.append(row_values)
+        return headers, rows
+    except (KeyError, ValueError, OverflowError, ET.ParseError, zipfile.BadZipFile, RuntimeError) as exc:
+        if isinstance(exc, PreviewError):
+            raise
+        raise PreviewError("agent_preview_invalid") from None
+    finally:
+        if owns_package and package is not None:
+            package.archive.close()
+
+
+def _spreadsheet(package):
+    return sheet_rows(package, max_rows=MAX_ROWS, max_columns=MAX_COLUMNS, _preview=True)
 
 
 def _word_paragraph(package, paragraph):

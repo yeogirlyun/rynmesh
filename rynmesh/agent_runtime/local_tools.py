@@ -31,6 +31,7 @@ from .local_specs import NAMES, SPECS
 from .store import AgentError, AgentToolRejected, encoded
 
 MAX_FILE = 1024 * 1024
+READ_MAX_FILE = 64 * 1024 * 1024
 # Characters per ryn_file_read page. 6000 meant an 18 KB source file needed four model round trips.
 MAX_READ_CHARS = 12000
 MAX_SEARCH_FILES = 1000
@@ -798,14 +799,17 @@ class LocalTools:
                 )
         return path
 
-    def raw(self, path):
-        if not path.is_file() or path.stat().st_size > MAX_FILE:
+    def raw(self, path, *, max_bytes: int = MAX_FILE):
+        if not path.is_file() or path.stat().st_size > max_bytes:
             raise AgentToolRejected("agent_local_file_missing_or_too_large")
         with path.open("rb") as stream:
-            raw = stream.read(MAX_FILE + 1)
-        if len(raw) > MAX_FILE:
+            raw = stream.read(max_bytes + 1)
+        if len(raw) > max_bytes:
             raise AgentToolRejected("agent_local_file_too_large")
         return raw
+
+    def read_window(self, path, *, max_bytes: int = READ_MAX_FILE):
+        return self.raw(path, max_bytes=max_bytes)
 
     def text(self, path, *, with_encoding: bool = True):
         raw = self.raw(path)
@@ -1291,13 +1295,14 @@ class LocalTools:
             from .table_work import calculate, export_bytes, summary
             args = self._table_export_arguments(args, context)
             source = self.path(args["source_path"], context)
-            report = calculate(self.raw(source), source.suffix, args["recipe"])
+            source_raw = self.read_window(source)
+            report = calculate(source_raw, source.suffix, args["recipe"])
             if report["calculation_sha256"] != args["expected_calculation_sha256"]:
                 raise AgentToolRejected("agent_table_input_changed", correction="Recalculate the changed source/rules and review the new checks before exporting.")
             path = self.path(args["path"], context)
             if path.exists() or not path.parent.is_dir():
                 raise AgentToolRejected("agent_table_new_output_required")
-            raw = export_bytes(report, path.suffix.lower())
+            raw = export_bytes(report, path.suffix.lower(), source_raw=source_raw, source_suffix=source.suffix)
             if len(raw) > 8 * 1024 * 1024:
                 raise AgentToolRejected("agent_table_output_limit")
             return {**preview, "path": str(path), "sha256": sha(raw), "bytes": len(raw), "calculation": summary(report)}
@@ -1788,7 +1793,8 @@ class LocalTools:
             if name == "ryn_table_export":
                 args = self._table_export_arguments(args, context)
             source = self.path(args["source_path"], context)
-            report = calculate(self.raw(source), source.suffix, args["recipe"], cancelled)
+            source_raw = self.read_window(source)
+            report = calculate(source_raw, source.suffix, args["recipe"], cancelled)
             if name == "ryn_table_calculate":
                 return summary(report)
             if report["calculation_sha256"] != args["expected_calculation_sha256"]:
@@ -1797,7 +1803,7 @@ class LocalTools:
             with self._path_lock(path):
                 if path.exists() or not path.parent.is_dir():
                     raise AgentToolRejected("agent_table_new_output_required")
-                raw = export_bytes(report, path.suffix.lower())
+                raw = export_bytes(report, path.suffix.lower(), source_raw=source_raw, source_suffix=source.suffix, cancelled=cancelled)
                 if len(raw) > 8 * 1024 * 1024 or cancelled():
                     raise AgentToolRejected("agent_cancelled" if cancelled() else "agent_table_output_limit")
                 policy = self.policy(context)
