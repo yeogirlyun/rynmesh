@@ -491,3 +491,27 @@ def test_t4_over_byte_limit_allows_delete_and_reset_but_rejects_new_entry():
     assert data["memory"]["entries"] == {}
     snap = memory.get_memory_settings_snapshot(data)
     assert snap["memory_bytes"] < snap["memory_bytes_limit"] == 16384
+
+
+def test_s09_i33_memory_bytes_excludes_transient_control_requests_and_stays_invariant_on_replay(tmp_path: Path):
+    store = AgentStore(tmp_path / "agent", X25519PrivateKey.generate())
+    runtime = SimpleNamespace(store=store)
+    initial = memory.list_memories_snapshot(store.read())
+    payload = {
+        "expected_generation": initial["generation"],
+        "client_request_id": "req-idem-create-001",
+        "text": "HTTP 持久化记忆大小一致性校验",
+        "scope": {"kind": "personal"},
+        "exposure_policy": {"mode": "local_only"},
+    }
+    first = memory_integration.create_owner_memory_entry(runtime, payload)
+    replay = memory_integration.create_owner_memory_entry(runtime, payload)
+    with pytest.raises(AgentError, match="agent_request_conflict"):
+        memory_integration.create_owner_memory_entry(runtime, {**payload, "text": "CHANGED"})
+    with pytest.raises(AgentError, match="agent_memory_generation_conflict"):
+        memory_integration.create_owner_memory_entry(runtime, {**payload, "client_request_id": "req-idem-create-002"})
+    after = memory.list_memories_snapshot(store.read())
+    settings_after = memory.get_memory_settings_snapshot(store.read())
+    assert replay == first
+    assert after == first
+    assert settings_after["memory_bytes"] == first["memory_bytes"] > initial["memory_bytes"]

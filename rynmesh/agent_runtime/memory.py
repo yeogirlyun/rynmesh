@@ -685,6 +685,17 @@ _COMPACT_MANIFEST_KEYS = ("message_id", "conversation_revision", "content_sha256
 _SHRINK_IDEMPOTENCY_OPS = frozenset(
     {"delete_entry", "reset_memory", "forget_query", "owner_delete_entry", "owner_reset_memory"}
 )
+_TRANSIENT_LEDGER_KEYS = frozenset({"control_requests", "idempotency"})
+
+
+def _durable_memory_bytes(mem: dict[str, Any]) -> int:
+    """Compute serialized byte size of durable memory ledger content (excluding transient request caches)."""
+    durable = {
+        k: v
+        for k, v in mem.items()
+        if k not in _TRANSIENT_LEDGER_KEYS and not str(k).startswith("_")
+    }
+    return len(encoded(durable))
 
 
 def _is_terminal_job(job: dict[str, Any]) -> bool:
@@ -1102,8 +1113,7 @@ def _record_idempotency(
         and payload.get("decision") == "reject"
     )
     if not client_request_id:
-        mem["_pending_idempotency_shrink"] = is_shrink
-        return False, None
+        return False, ("shrink:" if is_shrink else None)
     if not isinstance(client_request_id, str) or len(client_request_id) > 128:
         raise AgentError("agent_memory_invalid_request_id")
     stable_payload = {
@@ -1117,8 +1127,7 @@ def _record_idempotency(
         if prior.get("fingerprint") != fp:
             raise AgentError("agent_request_conflict")
         return True, copy.deepcopy(prior.get("result"))
-    mem["_pending_idempotency_shrink"] = is_shrink
-    return False, fp
+    return False, (f"shrink:{fp}" if is_shrink else fp)
 
 
 def _save_idempotency(
@@ -1131,11 +1140,15 @@ def _save_idempotency(
     degraded_context: dict[str, Any] | None = None,
     root_data: dict[str, Any] | None = None,
 ) -> Any:
-    pending_shrink = bool(mem.pop("_pending_idempotency_shrink", False))
+    pending_shrink = False
+    actual_fp = fp
+    if isinstance(fp, str) and fp.startswith("shrink:"):
+        pending_shrink = True
+        actual_fp = fp[len("shrink:") :] or None
     effective_strict = (not pending_shrink) if strict_bytes is None else strict_bytes
-    if client_request_id and fp:
+    if client_request_id and actual_fp:
         mem["control_requests"][client_request_id] = {
-            "fingerprint": fp,
+            "fingerprint": actual_fp,
             "result": copy.deepcopy(result),
             "at": _now(),
         }
@@ -1617,7 +1630,7 @@ def _build_capture_status(mem: dict[str, Any]) -> dict[str, Any]:
 def get_memory_settings_snapshot(data: dict[str, Any]) -> dict[str, Any]:
     mem = read_memory_state(data)
     raw_mem = data.get("memory") if isinstance(data, dict) and isinstance(data.get("memory"), dict) else mem
-    memory_bytes = len(encoded(raw_mem))
+    memory_bytes = _durable_memory_bytes(raw_mem)
     memory_bytes_limit = int(mem["settings"]["budgets"].get("max_memory_bytes", MAX_MEMORY_BYTES))
     degraded = (
         (data.get("memory_ledger_degraded") if isinstance(data, dict) else None)
@@ -3751,7 +3764,7 @@ def list_memories_snapshot(
     candidates.sort(key=lambda c: (-float(c.get("updated_at") or 0.0), c["id"]))
 
     raw_mem = data.get("memory") if isinstance(data, dict) and isinstance(data.get("memory"), dict) else mem
-    memory_bytes = len(encoded(raw_mem))
+    memory_bytes = _durable_memory_bytes(raw_mem)
     memory_bytes_limit = int(mem["settings"]["budgets"].get("max_memory_bytes", MAX_MEMORY_BYTES))
     degraded = (
         (data.get("memory_ledger_degraded") if isinstance(data, dict) else None)
