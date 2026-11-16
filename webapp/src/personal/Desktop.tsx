@@ -7,7 +7,7 @@ import { isTauriDesktop } from "../domain/nodeUrl";
 import { DeviceArt, Modal, PageHeading } from "./components";
 import "./desktop.css";
 
-const initialPreferences: DesktopPreferences = { background: true, startup: false, startup_supported: true, silent_start: true, auto_recover: true, keep_awake: false, close_notice_seen: false };
+const initialPreferences: DesktopPreferences = { background: true, startup: false, startup_supported: true, awake_supported: true, silent_start: true, auto_recover: true, keep_awake: false, close_notice_seen: false };
 const exampleStatus: DesktopStatus = { node_online: true, configured: true, sharing: true, active_tasks: 0, agent_active_runs: 0, agent_waiting: 0, agent_task_titles: [], setup_active: false, recovery_attempts: 0, recovery: "healthy", awake_active: false, last_error: null };
 
 export function formatDesktopInterruptWarning(status: DesktopStatus | null | undefined, chinese = true): string {
@@ -107,7 +107,7 @@ export function DesktopPage() {
         <Toggle title={t("personal.keepRunningWhenClosed")} description={t("personal.closingTheWindowKeepsYourNodeAvailable")} checked={prefs?.background ?? false} disabled={disabled} onChange={() => void change("background")} />
       </Group>
       <Group icon={<Zap size={19} />} title={t("personal.availabilityRecovery")}>
-        <Toggle title={t("personal.keepAwakeWhileSharingAI")} description={t("personal.preventIdleSleepWhileSharingOrWorkingTheScreenCanTurnOff")} checked={prefs?.keep_awake ?? false} disabled={disabled || !prefs?.startup_supported} onChange={() => void change("keep_awake")} />
+        <Toggle title={t("personal.keepAwakeWhileSharingAI")} description={t("personal.preventIdleSleepWhileSharingOrWorkingTheScreenCanTurnOff")} checked={prefs?.keep_awake ?? false} disabled={disabled || !prefs?.awake_supported} onChange={() => void change("keep_awake")} />
         <Toggle title={t("personal.recoverTheNodeAutomatically")} description={t("personal.retryAfterAFailureWithALimitOfThreeAttempts")} checked={prefs?.auto_recover ?? false} disabled={disabled} onChange={() => void change("auto_recover")} />
         <div className="pf-desktop-recovery"><ShieldCheck size={16} /><span>{!status ? t("personal.waitingForNodeStatus") : status.node_online ? t("personal.nodeRespondingNormally") : status.recovery === "starting" ? t("personal.startingTheLocalNode") : status.recovery === "needs_attention" ? t("personal.automaticRecoveryStoppedRestartTheNodeOrOpenLogs") : status.recovery === "disabled" ? t("personal.automaticRecoveryIsTurnedOff") : status.recovery === "restarting" ? t("personal.restartingTheNode") : t("personal.waitingToRetry")}</span><small>{t("personal.count3Retries", { count: status?.recovery_attempts ?? 0 })}</small></div>
       </Group>

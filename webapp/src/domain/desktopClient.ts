@@ -3,6 +3,7 @@ export interface DesktopPreferences {
   background: boolean;
   startup: boolean;
   startup_supported: boolean;
+  awake_supported?: boolean;
   silent_start: boolean;
   auto_recover: boolean;
   keep_awake: boolean;

@@ -179,15 +179,288 @@ pub fn confirm_warning(current: Result<&RuntimeStatus, &str>) -> String {
     }
 }
 
-fn awake(enabled: bool) -> bool {
-    #[cfg(windows)] {
-        #[link(name = "kernel32")]
-        extern "system" { fn SetThreadExecutionState(flags: u32) -> u32; }
-        // Called and released on the same watchdog thread. The display may sleep.
-        let result = unsafe { SetThreadExecutionState(0x80000000 | if enabled { 1 } else { 0 }) };
-        return enabled && result != 0;
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn command_in_path(program: &str, path_env: Option<&std::ffi::OsStr>) -> bool {
+    let Some(paths) = path_env else { return false; };
+    std::env::split_paths(paths).any(|dir| {
+        let candidate = dir.join(program);
+        match std::fs::metadata(&candidate) {
+            Ok(meta) if meta.is_file() => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    (meta.permissions().mode() & 0o111) != 0
+                }
+                #[cfg(not(unix))]
+                {
+                    true
+                }
+            }
+            _ => false,
+        }
+    })
+}
+
+pub fn awake_supported() -> bool {
+    #[cfg(any(windows, target_os = "macos"))]
+    {
+        true
     }
-    #[cfg(not(windows))] { let _ = enabled; false }
+    #[cfg(target_os = "linux")]
+    {
+        command_in_path("systemd-inhibit", std::env::var_os("PATH").as_deref())
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    {
+        false
+    }
+}
+
+trait AwakeBackend {
+    type Guard;
+    fn acquire(&mut self) -> Option<Self::Guard>;
+    fn is_alive(&mut self, _guard: &mut Self::Guard) -> bool {
+        true
+    }
+    fn release(&mut self, guard: Self::Guard);
+}
+
+struct AwakeController<B: AwakeBackend> {
+    backend: B,
+    guard: Option<B::Guard>,
+}
+
+impl<B: AwakeBackend> AwakeController<B> {
+    fn new(backend: B) -> Self {
+        Self { backend, guard: None }
+    }
+
+    fn set(&mut self, enabled: bool) -> bool {
+        if !enabled {
+            if let Some(guard) = self.guard.take() {
+                self.backend.release(guard);
+            }
+            return false;
+        }
+        if let Some(guard) = self.guard.as_mut() {
+            if self.backend.is_alive(guard) {
+                return true;
+            }
+            if let Some(stale) = self.guard.take() {
+                self.backend.release(stale);
+            }
+        }
+        self.guard = self.backend.acquire();
+        self.guard.is_some()
+    }
+}
+
+impl<B: AwakeBackend> Drop for AwakeController<B> {
+    fn drop(&mut self) {
+        if let Some(guard) = self.guard.take() {
+            self.backend.release(guard);
+        }
+    }
+}
+
+#[cfg(windows)]
+struct WindowsAwakeBackend;
+
+#[cfg(windows)]
+impl WindowsAwakeBackend {
+    fn set_thread_state(enabled: bool) -> bool {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn SetThreadExecutionState(flags: u32) -> u32;
+        }
+        // Called and released on the same watchdog thread. The display may sleep.
+        let result = unsafe { SetThreadExecutionState(0x8000_0000 | if enabled { 1 } else { 0 }) };
+        enabled && result != 0
+    }
+}
+
+#[cfg(windows)]
+impl AwakeBackend for WindowsAwakeBackend {
+    type Guard = ();
+
+    fn acquire(&mut self) -> Option<Self::Guard> {
+        Self::set_thread_state(true).then_some(())
+    }
+
+    fn is_alive(&mut self, _guard: &mut Self::Guard) -> bool {
+        Self::set_thread_state(true)
+    }
+
+    fn release(&mut self, _guard: Self::Guard) {
+        let _ = Self::set_thread_state(false);
+    }
+}
+
+#[cfg(target_os = "macos")]
+struct MacOsAwakeBackend;
+
+#[cfg(target_os = "macos")]
+impl AwakeBackend for MacOsAwakeBackend {
+    type Guard = u32;
+
+    fn acquire(&mut self) -> Option<Self::Guard> {
+        use std::ffi::c_void;
+        const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
+        const K_IO_PM_ASSERTION_LEVEL_ON: u32 = 255;
+        // kIOPMAssertionTypePreventUserIdleSystemSleep == CFSTR("PreventUserIdleSystemSleep")
+        const ASSERTION_TYPE: &[u8] = b"PreventUserIdleSystemSleep";
+        const ASSERTION_NAME: &[u8] = b"Ryn";
+
+        #[link(name = "CoreFoundation", kind = "framework")]
+        extern "C" {
+            fn CFStringCreateWithBytes(
+                alloc: *const c_void,
+                bytes: *const u8,
+                num_bytes: isize,
+                encoding: u32,
+                is_external_representation: u8,
+            ) -> *const c_void;
+            fn CFRelease(cf: *const c_void);
+        }
+
+        #[link(name = "IOKit", kind = "framework")]
+        extern "C" {
+            fn IOPMAssertionCreateWithName(
+                assertion_type: *const c_void,
+                assertion_level: u32,
+                assertion_name: *const c_void,
+                assertion_id: *mut u32,
+            ) -> i32;
+        }
+
+        unsafe {
+            let kind = CFStringCreateWithBytes(
+                std::ptr::null(),
+                ASSERTION_TYPE.as_ptr(),
+                ASSERTION_TYPE.len() as isize,
+                K_CF_STRING_ENCODING_UTF8,
+                0,
+            );
+            if kind.is_null() {
+                return None;
+            }
+            let name = CFStringCreateWithBytes(
+                std::ptr::null(),
+                ASSERTION_NAME.as_ptr(),
+                ASSERTION_NAME.len() as isize,
+                K_CF_STRING_ENCODING_UTF8,
+                0,
+            );
+            if name.is_null() {
+                CFRelease(kind);
+                return None;
+            }
+            let mut assertion_id: u32 = 0;
+            let status = IOPMAssertionCreateWithName(
+                kind,
+                K_IO_PM_ASSERTION_LEVEL_ON,
+                name,
+                &mut assertion_id,
+            );
+            CFRelease(name);
+            CFRelease(kind);
+            if status == 0 {
+                Some(assertion_id)
+            } else {
+                None
+            }
+        }
+    }
+
+    fn release(&mut self, assertion_id: Self::Guard) {
+        #[link(name = "IOKit", kind = "framework")]
+        extern "C" {
+            fn IOPMAssertionRelease(assertion_id: u32) -> i32;
+        }
+        unsafe {
+            let _ = IOPMAssertionRelease(assertion_id);
+        }
+    }
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+struct SystemdInhibitBackend {
+    program: &'static str,
+}
+
+impl SystemdInhibitBackend {
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    const fn new(program: &'static str) -> Self {
+        Self { program }
+    }
+}
+
+impl AwakeBackend for SystemdInhibitBackend {
+    type Guard = std::process::Child;
+
+    fn acquire(&mut self) -> Option<Self::Guard> {
+        use std::process::{Command, Stdio};
+        Command::new(self.program)
+            .args(["--what=idle:sleep", "--why=Ryn", "sleep", "infinity"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()
+    }
+
+    fn is_alive(&mut self, child: &mut Self::Guard) -> bool {
+        matches!(child.try_wait(), Ok(None))
+    }
+
+    fn release(&mut self, mut child: Self::Guard) {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+struct UnsupportedAwakeBackend;
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+impl AwakeBackend for UnsupportedAwakeBackend {
+    type Guard = ();
+    fn acquire(&mut self) -> Option<Self::Guard> {
+        None
+    }
+    fn release(&mut self, _guard: Self::Guard) {}
+}
+
+#[cfg(windows)]
+type PlatformAwakeController = AwakeController<WindowsAwakeBackend>;
+#[cfg(target_os = "macos")]
+type PlatformAwakeController = AwakeController<MacOsAwakeBackend>;
+#[cfg(target_os = "linux")]
+type PlatformAwakeController = AwakeController<SystemdInhibitBackend>;
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+type PlatformAwakeController = AwakeController<UnsupportedAwakeBackend>;
+
+fn new_awake_controller() -> PlatformAwakeController {
+    #[cfg(windows)]
+    {
+        AwakeController::new(WindowsAwakeBackend)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        AwakeController::new(MacOsAwakeBackend)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        AwakeController::new(SystemdInhibitBackend::new("systemd-inhibit"))
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    {
+        AwakeController::new(UnsupportedAwakeBackend)
+    }
+}
+
+fn awake(controller: &mut PlatformAwakeController, enabled: bool) -> bool {
+    controller.set(enabled)
 }
 pub fn open_logs() -> Result<(), String> {
     std::process::Command::new(if cfg!(windows) { "explorer.exe" } else if cfg!(target_os = "macos") { "/usr/bin/open" } else { "xdg-open" })
@@ -264,6 +537,7 @@ const STARTUP_GRACE: Duration = Duration::from_secs(120);
 pub fn watchdog(app: tauri::AppHandle, status_item: tauri::menu::MenuItem<tauri::Wry>, share_item: tauri::menu::MenuItem<tauri::Wry>) {
     std::thread::spawn(move || {
         let mut recovery = Recovery::default();
+        let mut awake_controller = new_awake_controller();
         // Allow the one-file sidecar to extract and start before counting failures.
         let mut boot_deadline = Instant::now() + STARTUP_GRACE;
         loop {
@@ -274,7 +548,7 @@ pub fn watchdog(app: tauri::AppHandle, status_item: tauri::menu::MenuItem<tauri:
             if runtime.reset_recovery.swap(false, Ordering::SeqCst) { recovery = Recovery::default(); }
             let previous = runtime.status.lock().unwrap().clone();
             let mut status = watchdog_status(previous, read_status(node.port), || node::health_ok(node.port));
-            status.awake_active = awake(should_keep_awake(prefs.keep_awake, &status));
+            status.awake_active = awake(&mut awake_controller, should_keep_awake(prefs.keep_awake, &status));
             // A slow metadata/CLI refresh is not proof that the live node died.
             // Give a running child time to answer before interrupting its tasks;
             // exited children retain the ordinary three-failure crash recovery.
@@ -300,7 +574,7 @@ pub fn watchdog(app: tauri::AppHandle, status_item: tauri::menu::MenuItem<tauri:
             }
             std::thread::sleep(Duration::from_secs(3));
         }
-        awake(false);
+        awake(&mut awake_controller, false);
     });
 }
 #[cfg(test)]
@@ -439,5 +713,96 @@ mod tests {
             true
         });
         assert!(accepted);
+    }
+
+    #[test]
+    fn awake_on_off_on_holds_at_most_one_assertion_or_child() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        #[derive(Default)]
+        struct Tracker {
+            next_id: u32,
+            live_ids: Vec<u32>,
+            max_live: usize,
+            acquired: Vec<u32>,
+            released: Vec<u32>,
+        }
+
+        struct FakeBackend {
+            tracker: Rc<RefCell<Tracker>>,
+        }
+
+        impl AwakeBackend for FakeBackend {
+            type Guard = u32;
+
+            fn acquire(&mut self) -> Option<Self::Guard> {
+                let mut t = self.tracker.borrow_mut();
+                t.next_id += 1;
+                let id = t.next_id;
+                t.live_ids.push(id);
+                t.max_live = t.max_live.max(t.live_ids.len());
+                t.acquired.push(id);
+                Some(id)
+            }
+
+            fn release(&mut self, guard: Self::Guard) {
+                let mut t = self.tracker.borrow_mut();
+                t.live_ids.retain(|&id| id != guard);
+                t.released.push(guard);
+            }
+        }
+
+        let tracker = Rc::new(RefCell::new(Tracker::default()));
+        {
+            let mut controller = AwakeController::new(FakeBackend {
+                tracker: Rc::clone(&tracker),
+            });
+
+            // On (first tick + repeated watchdog tick): acquires once, holds 1
+            assert!(controller.set(true));
+            assert!(controller.set(true));
+            assert_eq!(tracker.borrow().live_ids, vec![1]);
+            assert_eq!(tracker.borrow().max_live, 1);
+            assert_eq!(tracker.borrow().acquired, vec![1]);
+            assert!(tracker.borrow().released.is_empty());
+
+            // Off (and repeated off tick): releases 1, holds 0
+            assert!(!controller.set(false));
+            assert!(!controller.set(false));
+            assert!(tracker.borrow().live_ids.is_empty());
+            assert_eq!(tracker.borrow().released, vec![1]);
+
+            // On again (on -> off -> on): acquires #2, still holds at most 1
+            assert!(controller.set(true));
+            assert!(controller.set(true));
+            assert_eq!(tracker.borrow().live_ids, vec![2]);
+            assert_eq!(tracker.borrow().max_live, 1);
+            assert_eq!(tracker.borrow().acquired, vec![1, 2]);
+            assert_eq!(tracker.borrow().released, vec![1]);
+        }
+
+        // Dropping an active controller cleans up the remaining assertion/child
+        assert!(tracker.borrow().live_ids.is_empty());
+        assert_eq!(tracker.borrow().released, vec![1, 2]);
+    }
+
+    #[test]
+    fn linux_awake_returns_false_when_systemd_inhibit_is_missing() {
+        let mut controller = AwakeController::new(SystemdInhibitBackend::new(
+            "ryn-nonexistent-systemd-inhibit-binary",
+        ));
+        assert!(!controller.set(true));
+        assert!(controller.guard.is_none());
+        assert!(!controller.set(false));
+
+        let empty_dir = std::env::temp_dir().join(format!(
+            "ryn-awake-path-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&empty_dir);
+        std::fs::create_dir_all(&empty_dir).unwrap();
+        assert!(!command_in_path("systemd-inhibit", Some(empty_dir.as_os_str())));
+        let _ = std::fs::remove_dir_all(&empty_dir);
     }
 }
