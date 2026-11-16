@@ -17,7 +17,6 @@ from rynmesh.agent_runtime import local_pty
 from rynmesh.agent_runtime.local_processes import Processes, prepare_shell_command
 from rynmesh.agent_runtime.store import AgentError
 
-WINDOWS = pytest.mark.skipif(os.name != "nt", reason="ConPTY requires Windows")
 PROBE_SCRIPT = Path(__file__).resolve().parents[1] / "docs" / "acceptance" / "conpty_terminal_query_probe.py"
 
 
@@ -63,10 +62,18 @@ def test_t1_conpty_input_normalization_stateful_rules_and_controls():
     assert sent == [("write", "hi\r"), ("write", "there\x7f\r")]
 
 
-@WINDOWS
 def test_t2_real_windows_read_host_accepts_lf_and_conpty_answers_terminal_queries(tmp_path):
     """T2: Windows 实机 Read-Host 收到以 \\n 结尾的输入后返回；终端查询实测脚本验证 ESC[6n/5n/18t 收到应答不卡住。"""
     assert PROBE_SCRIPT.is_file()
+    # Cross-platform query parser check (including split escape sequence across chunks).
+    r1, tail = local_pty._extract_terminal_query_replies("hello\x1b[6nworld\x1b[18", "")
+    assert r1 == ["\x1b[1;1R"] and tail == "\x1b[18"
+    r2, tail2 = local_pty._extract_terminal_query_replies("t\x1b[5n!", tail)
+    assert r2 == ["\x1b[8;24;80t", "\x1b[0n"] and tail2 == ""
+
+    if os.name != "nt":
+        return
+
     processes = Processes()
     try:
         args = prepare_shell_command(
@@ -123,10 +130,10 @@ def test_t3_host_oserror_reports_class_name_only_and_logs_start_failure(monkeypa
         pid = 42424
 
         def __init__(self, cols, rows, backend=None):
-            pass
+            self.size = (cols, rows)
 
         def spawn(self, appname, cmdline="", cwd=None, env=None):
-            pass
+            self.appname = appname
 
         def isalive(self):
             return True
@@ -195,23 +202,16 @@ def test_t3_host_oserror_reports_class_name_only_and_logs_start_failure(monkeypa
     # 2. Startup failure path in ConPtyProcess.__init__: preserves class name and writes body-free diagnostic log.
     p2, c2 = multiprocessing.Pipe()
     c2.send(("error", "agent_conpty_failed", "FileNotFoundError"))
-
-    class DummyHostProc:
-        pid = None
-        _popen = SimpleNamespace(_handle=1)
-
-        def start(self):
-            pass
-
-        def is_alive(self):
-            return False
-
-        def close(self):
-            pass
-
+    dummy_host = SimpleNamespace(
+        pid=None,
+        _popen=SimpleNamespace(_handle=1),
+        start=lambda: None,
+        is_alive=lambda: False,
+        close=lambda: None,
+    )
     dummy_ctx = SimpleNamespace(
         Pipe=lambda: (p2, SimpleNamespace(close=lambda: None)),
-        Process=lambda **kw: DummyHostProc(),
+        Process=lambda **kw: dummy_host,
     )
     monkeypatch.setattr(local_pty, "check_pty_support", lambda: None)
     monkeypatch.setattr(local_pty.multiprocessing, "get_context", lambda mode: dummy_ctx)
