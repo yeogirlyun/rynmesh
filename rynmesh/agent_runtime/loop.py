@@ -44,6 +44,8 @@ from .execution_policy import (
     PERMISSION_DENIED_CORRECTION,
     classify_operation,
     decide,
+    is_full_automatic,
+    verified_read_classification,
 )
 from .prompt import (
     INTERNAL_NAMES,
@@ -1984,33 +1986,74 @@ class AgentLoop:
                 if decision.action == "deny":
                     raise AgentToolRejected("agent_permission_denied", correction=PERMISSION_DENIED_CORRECTION)
                 if call["effect"] == "write":
-                    if row.get("model_history") and any(
-                        receipt["goal_revision"] == row["goal"]["revision"] and receipt["tool"] == call["name"]
-                        and receipt["arguments_sha256"] == digest(call["arguments"]) and receipt["status"] == "confirmed"
-                        and receipt.get("context_epoch", 0) != row.get("context_epoch", 0)
-                        for receipt in row.get("receipts", [])
+                    args_sha = digest(call["arguments"])
+                    last_owner_at = next((str(item.get("at") or "") for item in reversed(row["events"])
+                                          if item["type"] in OWNER_TURN_EVENTS), "")
+                    if (
+                        row.get("model_history")
+                        and "extension_binding" in call
+                        and any(
+                            receipt["goal_revision"] == row["goal"]["revision"]
+                            and receipt["tool"] == call["name"]
+                            and receipt["arguments_sha256"] == args_sha
+                            and receipt["status"] == "confirmed"
+                            and receipt.get("context_epoch", 0) != row.get("context_epoch", 0)
+                            and str(receipt.get("started_at") or "") > last_owner_at
+                            for receipt in row.get("receipts", [])
+                        )
                     ):
-                        raise AgentToolRejected("agent_operation_already_confirmed")
+                        raise AgentToolRejected(
+                            "agent_operation_already_confirmed",
+                            correction="这个调用在更早的上下文里已确认执行过，不要重复；如主人确实要再来一次，请先向主人确认。",
+                        )
                     if any(receipt["goal_revision"] == row["goal"]["revision"] and receipt["tool"] == call["name"]
-                           and receipt["arguments_sha256"] == digest(call["arguments"])
+                           and receipt["arguments_sha256"] == args_sha
                            and receipt.get("result", {}).get("error") == "owner_denied_operation" for receipt in row.get("receipts", [])):
                         raise AgentToolRejected("agent_owner_denied_operation", correction=OWNER_DENIED_CORRECTION)
                     # A write the tool already answered with an error may have partly
                     # applied. Refuse the identical call until the owner speaks again;
-                    # the model may check the state or change the arguments.
-                    last_owner_at = next((str(item.get("at") or "") for item in reversed(row["events"])
-                                          if item["type"] in OWNER_TURN_EVENTS), "")
-                    if any(receipt["goal_revision"] == row["goal"]["revision"] and receipt["tool"] == call["name"]
-                           and receipt["arguments_sha256"] == digest(call["arguments"])
-                           and str(receipt.get("started_at") or "") > last_owner_at
-                           and isinstance(receipt.get("result"), dict)
-                           and receipt["result"].get("side_effects") == "unknown"
-                           for receipt in row.get("receipts", [])):
-                        raise AgentToolRejected(
-                            "agent_repeated_failed_write",
-                            correction="This exact write already returned an error and may have partly applied. "
-                                       "Check the actual state with a read, change the arguments, or ask the owner.",
+                    # in full automatic mode, allow up to 2 retries when each retry is
+                    # preceded by a confirmed read after that failed write.
+                    latest_failed_write = next(
+                        (
+                            receipt
+                            for receipt in reversed(row.get("receipts", []))
+                            if receipt["goal_revision"] == row["goal"]["revision"]
+                            and receipt["tool"] == call["name"]
+                            and receipt["arguments_sha256"] == args_sha
+                            and str(receipt.get("started_at") or "") > last_owner_at
+                            and isinstance(receipt.get("result"), dict)
+                            and receipt["result"].get("side_effects") == "unknown"
+                        ),
+                        None,
+                    )
+                    if latest_failed_write is not None:
+                        full_auto = is_full_automatic(row, data["settings"])
+                        failed_started_at = str(latest_failed_write.get("started_at") or "")
+                        retry_key = call["name"] + args_sha
+                        retries_used = int((row.get("failed_write_retries") or {}).get(retry_key, 0))
+                        has_verified_read = full_auto and any(
+                            verified_read_classification(r, row=row)
+                            and r.get("goal_revision") == row["goal"]["revision"]
+                            and str(r.get("started_at") or "") > failed_started_at
+                            and r.get("status") == "confirmed"
+                            and not (isinstance(r.get("result"), dict) and r["result"].get("error"))
+                            for r in row.get("receipts", [])
                         )
+                        if full_auto and has_verified_read and retries_used < 2:
+                            row.setdefault("failed_write_retries", {})[retry_key] = retries_used + 1
+                        elif full_auto and retries_used >= 2:
+                            raise AgentToolRejected(
+                                "agent_repeated_failed_write",
+                                correction="This exact write already failed and exhausted its 2 automatic retries after read verification. "
+                                           "Change the arguments or ask the owner.",
+                            )
+                        else:
+                            raise AgentToolRejected(
+                                "agent_repeated_failed_write",
+                                correction="This exact write already returned an error and may have partly applied. "
+                                           "Check the actual state with a read, change the arguments, or ask the owner.",
+                            )
                     approved = row["approved"]
                     automatic = decision.action == "execute" and decision.basis == "automatic"
                     if decision.action == "ask":
