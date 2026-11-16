@@ -1,6 +1,7 @@
 """Overhaul S10-I24: Heartbeat busy/skip classification, continued_to chain routing, and binding settlement/instructions to automation_run_id."""
 from __future__ import annotations
 
+import datetime as dt
 from pathlib import Path
 from typing import Any
 
@@ -130,11 +131,34 @@ def _create_heartbeat(
     return res.json()["automation"]
 
 
-def test_t1_paused_task_skips_heartbeat_with_owner_paused_and_advances_schedule(tmp_path: Path):
+@pytest.mark.parametrize(
+    ("hour", "minute", "second", "microsecond"),
+    [
+        (19, 0, 10, 0),
+        (19, 20, 0, 0),
+        (19, 53, 36, 271_000),
+        (19, 59, 50, 0),
+    ],
+    ids=["top_of_hour_plus_10s", "mid_hour_20m", "late_hour_53m36s", "ten_sec_before_hour"],
+)
+def test_t1_paused_task_skips_heartbeat_with_owner_paused_and_advances_schedule(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    hour: int,
+    minute: int,
+    second: int,
+    microsecond: int,
+):
     """T1: 任务 paused → 心跳不改状态、run=SKIPPED(owner_paused)、下一次时间正常推进（覆盖改动 1）。"""
     _app, runtime, model, client, worker = _make_env(tmp_path)
     task = _create_finished_task(runtime, model)
     tid = task["id"]
+
+    local_tz = automations._local_tz()
+    fixed_dt = dt.datetime(2026, 11, 16, hour, minute, second, microsecond, tzinfo=local_tz)
+    fixed_now_ms = int(fixed_dt.timestamp() * 1000)
+    monkeypatch.setattr(automations, "now_ms", lambda: fixed_now_ms)
+
     hb = _create_heartbeat(client, tid)
     auto_id = hb["id"]
 
@@ -142,7 +166,7 @@ def test_t1_paused_task_skips_heartbeat_with_owner_paused_and_advances_schedule(
     runtime.store.transaction(lambda d: d["tasks"][tid].update(status="paused"))
     msg_count_before = len(runtime.get(tid)["messages"])
 
-    due_ms = automations.now_ms() - 5_000
+    due_ms = fixed_now_ms - 5_000
     runtime.store.transaction(lambda d: d["automations"][auto_id].update(next_run_at=due_ms))
 
     assert worker.run_once().activity is True
@@ -154,8 +178,22 @@ def test_t1_paused_task_skips_heartbeat_with_owner_paused_and_advances_schedule(
     listed = runtime.list_automations()
     auto_item = next(i for i in listed["items"] if i["id"] == auto_id)
     assert auto_item["status"] == "ACTIVE"
-    # Schedule advanced normally (~1 hour ahead, NOT 60-second busy deferral):
-    assert auto_item["next_run_at"] >= due_ms + 30 * 60 * 1000
+
+    expected_next = automations.compute_next_run_at(
+        auto_item["rrule"],
+        after_ms=fixed_now_ms,
+        salt=automations.ensure_jitter_salt(runtime.store),
+        automation_id=auto_id,
+        run_count=0,
+    )
+    assert auto_item["next_run_at"] == expected_next
+    assert auto_item["next_run_at"] > fixed_now_ms
+    assert auto_item["next_run_at"] != fixed_now_ms + 60_000
+    if minute == 0 and second == 10:
+        assert auto_item["next_run_at"] >= fixed_now_ms + 59 * 60 * 1000
+
+    # Skipped slot must not immediately re-trigger on the next scheduler tick:
+    assert worker.run_once().activity is False
 
     runs = [r for r in listed["runs"] if r["automation_id"] == auto_id]
     assert len(runs) == 1

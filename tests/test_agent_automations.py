@@ -537,7 +537,24 @@ def test_updating_time_or_name_preserves_multiday_weekly_schedule(tmp_path: Path
     assert "BYDAY=MO,WE" in after_name["rrule"]
 
 
-def test_heartbeat_skips_paused_task_with_owner_paused_reason_and_advances_schedule(tmp_path: Path):
+@pytest.mark.parametrize(
+    ("hour", "minute", "second", "microsecond"),
+    [
+        (19, 0, 10, 0),
+        (19, 20, 0, 0),
+        (19, 53, 36, 271_000),
+        (19, 59, 50, 0),
+    ],
+    ids=["top_of_hour_plus_10s", "mid_hour_20m", "late_hour_53m36s", "ten_sec_before_hour"],
+)
+def test_heartbeat_skips_paused_task_with_owner_paused_reason_and_advances_schedule(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    hour: int,
+    minute: int,
+    second: int,
+    microsecond: int,
+):
     app, runtime, model, client = _build_test_env(tmp_path)
     model.responses = [
         {
@@ -549,6 +566,11 @@ def test_heartbeat_skips_paused_task_with_owner_paused_reason_and_advances_sched
     base_task = runtime.create({"message": "主会话"})
     runtime.run_once()
     tid = base_task["id"]
+
+    local_tz = automations._local_tz()
+    fixed_dt = dt.datetime(2026, 11, 16, hour, minute, second, microsecond, tzinfo=local_tz)
+    fixed_now_ms = int(fixed_dt.timestamp() * 1000)
+    monkeypatch.setattr(automations, "now_ms", lambda: fixed_now_ms)
 
     hb = client.post(
         "/api/local/agent/automations",
@@ -564,7 +586,7 @@ def test_heartbeat_skips_paused_task_with_owner_paused_reason_and_advances_sched
     ).json()["automation"]
     auto_id = hb["id"]
 
-    due_ms = automations.now_ms() - 5_000
+    due_ms = fixed_now_ms - 5_000
     runtime.store.transaction(
         lambda d: (
             d["tasks"][tid].update(status="paused"),
@@ -577,7 +599,20 @@ def test_heartbeat_skips_paused_task_with_owner_paused_reason_and_advances_sched
     assert runtime.get(tid)["status"] == "paused"
     listed = runtime.list_automations()
     auto_item = next(i for i in listed["items"] if i["id"] == auto_id)
-    assert auto_item["next_run_at"] >= due_ms + 30 * 60 * 1000
+    expected_next = automations.compute_next_run_at(
+        auto_item["rrule"],
+        after_ms=fixed_now_ms,
+        salt=automations.ensure_jitter_salt(runtime.store),
+        automation_id=auto_id,
+        run_count=0,
+    )
+    assert auto_item["next_run_at"] == expected_next
+    assert auto_item["next_run_at"] > fixed_now_ms
+    assert auto_item["next_run_at"] != fixed_now_ms + 60_000
+    if minute == 0 and second == 10:
+        assert auto_item["next_run_at"] >= fixed_now_ms + 59 * 60 * 1000
+    assert worker.run_once().activity is False
+
     runs = [r for r in listed["runs"] if r["automation_id"] == auto_id]
     assert len(runs) == 1
     assert runs[0]["status"] == "SKIPPED"
