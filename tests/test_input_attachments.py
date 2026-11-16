@@ -289,3 +289,160 @@ def test_fork_task_with_reference_only_attachment_preserves_original_path(tmp_pa
         assert Path(copied_att["path"]).parent == (workspace / ".ryn" / "attachments" / child["id"])
         assert Path(copied_att["path"]).read_bytes() == b"small content"
 
+
+def _detailed_rgb_png(width: int, height: int, seed: int = 7) -> bytes:
+    """Deterministic detailed image whose 2048px JPEG exceeds 128 KiB (and >384 KiB at q=90 when noisy)."""
+    import random
+
+    rng = random.Random(seed)
+    # Build a small noisy tile and resize with BILINEAR/NEAREST to create rich high-frequency detail fast.
+    tile_w, tile_h = 320, 240
+    tile_bytes = rng.randbytes(tile_w * tile_h * 3)
+    tile = Image.frombytes("RGB", (tile_w, tile_h), tile_bytes)
+    img = tile.resize((width, height), Image.Resampling.BILINEAR)
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def test_s05_i8_t1_2560x1440_screenshot_sent_at_2048_and_within_512kib(tmp_path: Path):
+    from rynmesh.agent_runtime import image_capabilities, input_attachments
+    from rynmesh.agent_runtime.input_attachments import provider_content
+
+    assert input_attachments.MAX_IMAGE_BYTES == 512 * 1024
+
+    raw_png = _detailed_rgb_png(2560, 1440, seed=11)
+    prepared = parse_attachments([_b64_upload("screenshot.png", raw_png, "image/png")])
+    assert prepared is not None and len(prepared) == 1
+    item = prepared[0]
+    header, b64 = item["image_url"].split(",", 1)
+    assert header == "data:image/jpeg;base64"
+    sent_bytes = base64.b64decode(b64)
+    assert 96 * 1024 < len(sent_bytes) <= 512 * 1024
+    with Image.open(io.BytesIO(sent_bytes)) as sent_img:
+        assert sent_img.size == (2048, 1152)
+
+    store = SimpleNamespace(default_workspace=lambda: str(tmp_path))
+    msg = attach_to_message(store, {"id": "task_s05_i8_t1"}, {"role": "user", "content": "看图"}, prepared)
+    att = msg["attachments"][0]
+    assert (att["image_width"], att["image_height"]) == (2560, 1440)
+    assert (att["sent_width"], att["sent_height"]) == (2048, 1152)
+
+    # Step 6 verification: legacy shared route compresses >128 KiB image and reports it.
+    fitted, report = image_capabilities.fit_images_for_shared_route(
+        [{"role": "user", "content": provider_content(msg)}],
+        "inline-v1",
+    )
+    assert report["resized"] == 1
+    img_parts = [p for p in fitted[0]["content"] if p.get("type") == "image_url"]
+    assert len(base64.b64decode(img_parts[0]["image_url"]["url"].split(",", 1)[1])) <= 128 * 1024
+
+
+def test_s05_i8_t2_transparent_png_preserves_png_and_alpha():
+    img = Image.new("RGBA", (320, 200), (0, 0, 0, 0))
+    for x in range(80, 240):
+        for y in range(40, 160):
+            img.putpixel((x, y), (30, 140, 250, 128))
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+
+    prepared = parse_attachments([_b64_upload("badge.png", buf.getvalue(), "image/png")])
+    assert prepared is not None
+    url = prepared[0]["image_url"]
+    assert url.startswith("data:image/png;base64,")
+    decoded = base64.b64decode(url.split(",", 1)[1])
+    assert len(decoded) <= 512 * 1024
+    with Image.open(io.BytesIO(decoded)) as out:
+        assert out.format == "PNG"
+        rgba = out.convert("RGBA")
+        assert rgba.getpixel((0, 0))[3] == 0
+        assert rgba.getpixel((120, 100))[3] == 128
+
+
+def test_s05_i8_t3_manifest_line_includes_original_and_sent_dimensions_and_image_tag(tmp_path: Path):
+    raw_png = _detailed_rgb_png(2560, 1440, seed=21)
+    prepared = parse_attachments([
+        _b64_upload("readme.txt", b"hello", "text/plain"),
+        _b64_upload("dashboard.png", raw_png, "image/png"),
+    ])
+    store = SimpleNamespace(default_workspace=lambda: str(tmp_path))
+    msg = attach_to_message(store, {"id": "task_s05_i8_t3"}, {"role": "user", "content": "请检查截图"}, prepared)
+    saved_img = msg["attachments"][1]
+    expected_fragment = (
+        f'2. dashboard.png (image/png, {saved_img["size"]} bytes) [Image #1]，'
+        f'原图 2560x1440，已缩到 2048x1152，原件 local path: {saved_img["path"]}，要看细节用 ryn_image_inspect'
+    )
+    assert expected_fragment in msg["content"]
+
+
+def test_s05_i8_t4_provider_content_labels_match_manifest_order(tmp_path: Path):
+    from rynmesh.agent_runtime.input_attachments import provider_content
+
+    prepared = parse_attachments([
+        _b64_upload("notes.txt", b"first doc", "text/plain"),
+        _png_upload("first.png"),
+        _b64_upload("table.csv", b"a,b\n1,2\n", "text/csv"),
+        _png_upload("second.png"),
+    ])
+    store = SimpleNamespace(default_workspace=lambda: str(tmp_path))
+    msg = attach_to_message(store, {"id": "task_s05_i8_t4"}, {"role": "user", "content": "对比两张图"}, prepared)
+    assert "2. first.png" in msg["content"] and "[Image #1]" in msg["content"]
+    assert "4. second.png" in msg["content"] and "[Image #2]" in msg["content"]
+
+    parts = provider_content(msg)
+    assert isinstance(parts, list) and len(parts) == 5
+    assert parts[0] == {"type": "text", "text": msg["content"]}
+    assert parts[1] == {"type": "text", "text": "[Image #1]"}
+    assert parts[2] == {"type": "image_url", "image_url": {"url": msg["attachments"][1]["image_url"], "detail": "auto"}}
+    assert parts[3] == {"type": "text", "text": "[Image #2]"}
+    assert parts[4] == {"type": "image_url", "image_url": {"url": msg["attachments"][3]["image_url"], "detail": "auto"}}
+
+
+def test_s05_i8_t5_four_large_images_stay_within_total_budget():
+    import random
+
+    # High-entropy 2048x2048 images so each unbudgeted q=90 JPEG would exceed 384 KiB.
+    uploads = []
+    for idx in range(4):
+        rng = random.Random(100 + idx)
+        tile = Image.frombytes("RGB", (640, 640), rng.randbytes(640 * 640 * 3))
+        big = tile.resize((2400, 2000), Image.Resampling.NEAREST)
+        buf = io.BytesIO()
+        big.save(buf, "JPEG", quality=95)
+        uploads.append(_b64_upload(f"photo_{idx}.jpg", buf.getvalue(), "image/jpeg"))
+
+    prepared = parse_attachments(uploads)
+    assert prepared is not None and len(prepared) == 4
+    decoded_lengths = [len(base64.b64decode(item["image_url"].split(",", 1)[1])) for item in prepared]
+    assert all(size <= 512 * 1024 for size in decoded_lengths)
+    assert sum(decoded_lengths) <= int(1.5 * 1024 * 1024)
+
+
+def test_s05_i8_t6_legacy_attachment_record_without_meta_still_renders_manifest(tmp_path: Path):
+    from rynmesh.agent_runtime.input_attachments import provider_content
+
+    store = SimpleNamespace(default_workspace=lambda: str(tmp_path))
+    legacy_path = str(tmp_path / "legacy.png")
+    legacy_msg = {
+        "role": "user",
+        "content": "编辑旧消息",
+        "attachments": [
+            {
+                "id": "attachment_legacy_1",
+                "name": "legacy.png",
+                "media_type": "image/png",
+                "size": 4096,
+                "path": legacy_path,
+                "sha256": "0" * 64,
+                "image_url": "data:image/jpeg;base64," + base64.b64encode(b"jpeg").decode("ascii"),
+            }
+        ],
+    }
+    updated = attach_to_message(store, {"id": "task_s05_i8_t6"}, legacy_msg, None)
+    assert f"1. legacy.png (image/png, 4096 bytes) [Image #1]" in updated["content"]
+    assert f"local path: {legacy_path}" in updated["content"]
+    assert "ryn_image_inspect" in updated["content"]
+    parts = provider_content(updated)
+    assert parts[1] == {"type": "text", "text": "[Image #1]"}
+
+
