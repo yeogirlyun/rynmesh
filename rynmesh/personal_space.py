@@ -22,6 +22,7 @@ from pathlib import Path
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
+from .atomic_io import AtomicIOError, atomic_write_bytes, atomic_write_json
 from .crypto import SignedPayload, b64, sign_payload, verify_signed_payload
 from .jobs import (
     WorkOrder,
@@ -33,7 +34,7 @@ from .jobs import (
     verify_work_result,
 )
 from .llm_package.task_protocol import open_task, seal_task
-from .registry import _write_json_atomic
+from .private_permissions import ensure_private_file_acl, mark_key_protection
 from .services.peer_box import load_or_create_messaging_key, public_key_b64
 
 CAPABILITY = "rynmesh.personal-space.v1"
@@ -75,16 +76,32 @@ class PersonalSpace:
         self.tick_lock = threading.Lock()
         self.last_poll = 0.0
         self.last_error = ""
-        self.data = json.loads(self.path.read_text()) if self.path.exists() else {}
+        if self.path.exists():
+            self.data = json.loads(self.path.read_text(encoding="utf-8"))
+            ensure_private_file_acl(self.path, track_key_status=False)
+        else:
+            self.data = {}
         if self.data.get("snapshot"):
             self._verify(self.data["snapshot"], fresh=False)
 
     def _save(self):
-        _write_json_atomic(self.path, self.data)
         try:
-            self.path.chmod(0o600)
-        except OSError:
-            pass
+            atomic_write_json(self.path, self.data, indent=2, sort_keys=True, ensure_ascii=False, trailing_newline=True)
+            mark_key_protection(self.path, weak=False)
+        except AtomicIOError as exc:
+            if os.name == "nt" and isinstance(exc.__cause__, OSError):
+                atomic_write_json(
+                    self.path,
+                    self.data,
+                    indent=2,
+                    sort_keys=True,
+                    ensure_ascii=False,
+                    trailing_newline=True,
+                    mode=0o644,
+                )
+                mark_key_protection(self.path, weak=True)
+            else:
+                raise
 
     def _verify(self, raw, *, fresh=True, authority=None, space_id=None):
         signed = SignedPayload.from_dict(raw)
@@ -732,11 +749,12 @@ def restore_backup(bundle, password, destination):
     if signed.public_key != public_key_from_private(identity):
         raise SpaceError("Recovery identity mismatch.")
     root.mkdir(parents=True, exist_ok=True)
-    (root / "identity.ed25519").write_text(payload["identity"] + "\n")
-    (root / "space-messaging.key").write_bytes(base64.b64decode(payload["box"], validate=True))
-    _write_json_atomic(root / "personal-space.json", payload["state"])
-    for name in ("identity.ed25519", "space-messaging.key", "personal-space.json"):
-        (root / name).chmod(0o600)
+    atomic_write_bytes(root / "identity.ed25519", (payload["identity"] + "\n").encode("utf-8"))
+    atomic_write_bytes(root / "space-messaging.key", base64.b64decode(payload["box"], validate=True))
+    atomic_write_bytes(
+        root / "personal-space.json",
+        (json.dumps(payload["state"], indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode("utf-8"),
+    )
 
 
 def main():
