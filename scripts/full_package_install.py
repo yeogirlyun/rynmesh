@@ -112,6 +112,24 @@ def copy_new(source, target):
             shutil.rmtree(stage)
 
 
+def company_install_target(source, target):
+    """Reuse identical builds only; preserve differing builds for rollback."""
+    if target.is_symlink() or target.is_junction():
+        raise ValueError('Linked company runtime cannot be installed')
+    manifest = json.loads((source / 'runtime-manifest.json').read_text(encoding='utf-8'))
+    if target.exists():
+        try:
+            matches = all(sha(target / name) == digest for name, digest in manifest['files'].items())
+        except OSError:
+            matches = False
+        if not matches:
+            # A source revision does not identify its bundled Python/DLL build.
+            # Never overwrite files that an existing service may still be using.
+            target = target.with_name(target.name + '-' + uuid.uuid4().hex[:12])
+    copy_new(source, target)
+    return target
+
+
 def require_office_compat(cache, slug):
     from rynmesh.node_apps import craft_compat
     if slug in craft_compat.COMPAT and craft_compat.installed(cache, slug, current_only=True) is None:
@@ -365,7 +383,8 @@ def install(payload, destination, home):
             declarations_file, skills_root = active / DECLARATIONS, active / SKILLS
             runtime_manifest_path = active / 'runtime-manifest.json'
         else:
-            copy_new(payload / 'company', target)
+            target = company_install_target(payload / 'company', target)
+            version = target.name
             make_self_contained(target, declarations_file, skills_root)
             allow_desktop_user(target)
             runtime_manifest_path = payload / 'company/runtime-manifest.json'
