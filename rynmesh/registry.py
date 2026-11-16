@@ -932,8 +932,11 @@ def _open_registry_request(req: Request, *, timeout_s: float):
 
     for name, value in network_key_header().items():
         req.add_header(name, value)
+    # No Ryn proxy configured: keep urllib's environment-proxy behaviour,
+    # which registry requests have always relied on.
+    proxies = resolve_profile().proxies
     opener = build_opener(
-        ProxyHandler(resolve_profile().proxies),
+        ProxyHandler(proxies) if proxies else ProxyHandler(),
         HTTPSHandler(context=_https_context()),
     )
     return opener.open(req, timeout=timeout_s)
