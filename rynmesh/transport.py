@@ -104,20 +104,20 @@ def network_key() -> str:
     return os.environ.get("RYNMESH_NETWORK_KEY", "").strip()
 
 
-def network_key_header() -> dict[str, str]:
+def network_key_header(key: str | None = None) -> dict[str, str]:
     """Outbound auth header for peers running probe resistance.
 
     Returns ``{X-Ryn-Auth: <salted hash>}`` when a network key is configured,
     else ``{}``. Single source of truth for the header name + value derivation
     so every peer→peer caller authenticates identically.
     """
-    key = network_key()
-    if not key:
+    resolved = network_key() if key is None else key.strip()
+    if not resolved:
         return {}
     # Sent as a salted hash so the raw key is not echoed into peer logs.
     return {
         NETWORK_KEY_HEADER: hashlib.sha256(
-            ("rynmesh-net-key:" + key).encode("utf-8")
+            ("rynmesh-net-key:" + resolved).encode("utf-8")
         ).hexdigest()
     }
 

@@ -263,3 +263,142 @@ def test_directory_probes_so_the_device_poll_is_enough(tmp_path, monkeypatch):
     probed.clear()
     client.get("/api/local/directory?quick=1")
     assert probed == []
+
+
+def test_s13_i19_t4_stale_device_downgrades_ready_services_and_lan_probe_ignores_system_proxy(monkeypatch):
+    """T4: Devices with lastSeen > 180s downgrade ready services to stale (advertisement_stale), directory_violations reports I5, and _default_probe ignores system proxies."""
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    import threading
+    from rynmesh.services.peer_health import _default_probe
+
+    stale_seen = (NOW - timedelta(seconds=181)).isoformat()
+    rows = annotated([service("laptop")], members=["laptop"], allows_ai=lambda _p: True)
+    assert rows[0]["availability"]["state"] == "ready"
+
+    snap = snapshot([item(SELF), item("laptop", lastSeen=stale_seen)], rows, members=["laptop"])
+    laptop = next(p for p in snap["peers"] if p["id"] == "laptop")
+    assert laptop["freshness"]["stale"] is True
+    assert laptop["services"][0]["availability"] == {"state": "stale", "reason": "advertisement_stale"}
+    assert directory_violations(snap) == []
+
+    # Forged snapshot with stale=True + availability.state='ready' must report I5.
+    broken = {
+        "peers": [
+            {
+                "id": "laptop",
+                "relationship": "space_member",
+                "presence": {"state": "online", "basis": "http"},
+                "freshness": {"source": "registry", "age_s": 300, "stale": True},
+                "services": [{"peer_id": "laptop", "availability": {"state": "ready", "reason": "space_member"}}],
+            }
+        ]
+    }
+    violations = directory_violations(broken)
+    assert any(v.startswith("I5") for v in violations)
+
+    # F2: System proxy env vars must be ignored by _default_probe so LAN /health connects directly.
+    class OkHealthHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"status":"ok"}')
+
+        def log_message(self, *_args):
+            return
+
+    srv = HTTPServer(("127.0.0.1", 0), OkHealthHandler)
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        # Point ambient OS proxy variables to an unreachable port; direct opener must still succeed.
+        monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+        monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9")
+        monkeypatch.setenv("http_proxy", "http://127.0.0.1:9")
+        assert _default_probe(f"http://127.0.0.1:{srv.server_port}/health", {}, 2.0) is True
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_s13_i19_t5_metadata_link_local_and_loopback_endpoints_are_not_probed():
+    """T5: PeerHealthProbe refuses link-local (169.254.169.254), cloud metadata, and loopback endpoints without issuing HTTP requests."""
+    probed_urls = []
+    probe = PeerHealthProbe(probe=lambda url, _h, _t: (probed_urls.append(url), True)[1])
+    out = probe.check([
+        {"id": "meta-ip", "endpoint": "http://169.254.169.254/latest/meta-data"},
+        {"id": "meta-host", "endpoint": "http://metadata.google.internal:80"},
+        {"id": "loop-v4", "endpoint": "http://127.0.0.1:8791", "lanEndpoints": ["http://169.254.10.20:8791"]},
+        {"id": "loop-v6", "endpoint": "http://[::1]:8791"},
+    ])
+    assert probed_urls == []
+    assert all(r["httpReachable"] is False for r in out)
+
+
+def test_s13_i19_t6_two_hour_old_capacity_excluded_from_jobs_capacity(tmp_path, monkeypatch):
+    """T6: 2-hour-old capacity advertisement is excluded from /api/local/jobs/capacity under FreshnessPolicy (1h), while <1h stays."""
+    assert FreshnessPolicy.from_environment(
+        {"RYNMESH_ADVERTISEMENT_MAX_AGE_HOURS": "2.5", "RYNMESH_FRESH_WINDOW_S": "90"}
+    ) == FreshnessPolicy(peer_record_max_age_hours=24.0, advertisement_max_age_hours=2.5, fresh_window_s=90.0)
+
+    store, old_provider = _app_for(tmp_path, monkeypatch)
+    fresh_provider = RynmeshStore(home=tmp_path / "fresh_provider", network_dir=tmp_path / "network")
+
+    old_provider.register_job_capacity(capabilities=["cap.test"], network_id="rynmesh-main")
+    fresh_provider.register_job_capacity(capabilities=["cap.test"], network_id="rynmesh-main")
+
+    # Age old_provider's capacity record in the shared local registry directory to 2 hours ago.
+    import json
+
+    two_hours_ago = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
+    for cap_file in old_provider.registry.job_capacity_dir.glob("*.json"):
+        data = json.loads(cap_file.read_text(encoding="utf-8"))
+        payload = data.get("payload") if isinstance(data.get("payload"), dict) else data
+        if payload.get("peer_id") == old_provider.peer_id:
+            # Re-sign with updated_at = 2 hours ago so signature verification passes and only age filters it.
+            from rynmesh.crypto import sign_payload
+
+            payload["updated_at"] = two_hours_ago
+            signed = sign_payload(payload, private_key_bytes=old_provider.private_key_bytes).to_dict()
+            cap_file.write_text(json.dumps(signed), encoding="utf-8")
+
+    monkeypatch.setattr(PeerHealthProbe, "_check_one", lambda *_: False)
+    client = TestClient(create_app(store))
+    resp = client.get("/api/local/jobs/capacity?network_id=rynmesh-main")
+    assert resp.status_code == 200
+    body = resp.json()
+    items = body["capacities"] if isinstance(body, dict) and "capacities" in body else body
+    peer_ids = {item["peer_id"] for item in items}
+    assert fresh_provider.peer_id in peer_ids
+    assert old_provider.peer_id not in peer_ids
+
+
+def test_s13_i19_t7_directory_endpoint_attaches_diagnostics_violations_when_snapshot_broken(tmp_path, monkeypatch):
+    """T7: When snapshot contains a stale+ready violation, /api/local/directory includes diagnostics.violations."""
+    import rynmesh.peer_directory as peer_directory_mod
+
+    store, _ = _app_for(tmp_path, monkeypatch)
+    monkeypatch.setattr(PeerHealthProbe, "_check_one", lambda *_: False)
+    client = TestClient(create_app(store))
+
+    real_build = peer_directory_mod.build_snapshot
+
+    def broken_build(*args, **kwargs):
+        snap = real_build(*args, **kwargs)
+        snap["peers"].append({
+            "id": "stale-ready-peer",
+            "name": "StaleReady",
+            "isSelf": False,
+            "relationship": "space_member",
+            "presence": {"state": "online", "basis": "http"},
+            "reachability": {"http": True, "lan": False},
+            "freshness": {"source": "registry", "age_s": 600, "stale": True},
+            "services": [{"peer_id": "stale-ready-peer", "availability": {"state": "ready", "reason": "space_member"}}],
+        })
+        return snap
+
+    monkeypatch.setattr(peer_directory_mod, "build_snapshot", broken_build)
+    resp = client.get("/api/local/directory?quick=1")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "diagnostics" in body
+    assert any(v.startswith("I5") for v in body["diagnostics"]["violations"])

@@ -647,25 +647,74 @@ class RynTools:
                     raise AgentToolRejected("agent_cancelled")
                 # Reuse the same presence vs reachability semantics as Devices.
                 # A failed HTTP probe behind NAT never proves a device offline.
+                from ..services.peer_health import classify_agent_presence
+
+                presence_cache = getattr(self.app.state, "peer_presence", None)
                 known = {item["id"] for item in inputs}
                 inputs.extend({"id": peer_id, "isSelf": peer_id == self.store.peer_id} for peer_id in devices if peer_id not in known)
                 checked_inputs = {item["id"]: item for item in inputs[:64]}
-                evidence = {row["peerId"]: row for row in self.peer_health.check(list(checked_inputs.values()))}
+                evidence = {}
+                to_probe = []
+                for pid, item in checked_inputs.items():
+                    cached_obs = (
+                        presence_cache.get(pid)
+                        if presence_cache is not None and not item.get("isSelf")
+                        else None
+                    )
+                    if cached_obs is not None and cached_obs.get("source") == "drop_probe":
+                        evidence[pid] = cached_obs
+                    else:
+                        to_probe.append(item)
+                if to_probe:
+                    probed_rows = self.peer_health.check(to_probe)
+                    if presence_cache is not None:
+                        presence_cache.update([
+                            r for r in probed_rows if r.get("online") is not None or r.get("presenceSource") != "unknown"
+                        ])
+                    for r in probed_rows:
+                        pid = r["peerId"]
+                        latest = (
+                            presence_cache.get(pid)
+                            if presence_cache is not None and not checked_inputs.get(pid, {}).get("isSelf")
+                            else None
+                        )
+                        evidence[pid] = latest if (latest is not None and latest.get("source") == "drop_probe") else r
                 for peer_id, row in devices.items():
                     health = evidence.get(peer_id, {})
                     probe_input = checked_inputs.get(peer_id, {})
                     is_self = bool(probe_input.get("isSelf"))
-                    lan_probed = not is_self and any(isinstance(url, str) and url.startswith(("http://", "https://"))
-                                                     for url in probe_input.get("lanEndpoints", []))
-                    http_probed = not is_self and (lan_probed or str(probe_input.get("endpoint", "")).startswith(("http://", "https://")))
+                    classified = classify_agent_presence(health)
+                    ev_source = str(health.get("presenceSource") or health.get("source") or "unknown")
+                    lan_probed = not is_self and (
+                        bool(health.get("lanReachable"))
+                        or any(isinstance(url, str) and url.startswith(("http://", "https://"))
+                               for url in probe_input.get("lanEndpoints", []))
+                    )
+                    http_probed = not is_self and (
+                        lan_probed
+                        or bool(health.get("httpReachable"))
+                        or str(probe_input.get("endpoint", "")).startswith(("http://", "https://"))
+                    )
                     # PeerHealth's self shortcut proves this process is alive;
                     # it does not send an HTTP request. No endpoint is likewise
                     # untested, not a failed connectivity measurement.
-                    row.update(online=health.get("online"), last_seen=health.get("lastSeen", ""),
-                        checked_at=health.get("checkedAt", ""), evidence_source=health.get("presenceSource", "unknown"),
-                        http_probe_performed=http_probed, lan_probe_performed=lan_probed,
+                    row.update(
+                        online=classified["online"],
+                        presence_state=classified["presence_state"],
+                        observed_at=classified["observed_at"],
+                        source=classified["source"],
+                        last_seen=health.get("lastSeen", ""),
+                        checked_at=health.get("checkedAt", classified["observed_at"]),
+                        evidence_source=(
+                            ev_source
+                            if classified["online"] is not None or ev_source in {"self", "http", "heartbeat", "drop_probe"}
+                            else "unknown"
+                        ),
+                        http_probe_performed=http_probed,
+                        lan_probe_performed=lan_probed,
                         http_reachable=health.get("httpReachable") if http_probed else None,
-                        lan_reachable=health.get("lanReachable") if lan_probed else None)
+                        lan_reachable=health.get("lanReachable") if lan_probed else None,
+                    )
                 result = {"self_id": self.store.peer_id, "membership": space["membership"], "ai_access": space["ai_access"],
                     "devices": list(devices.values())[:64], "friends": friend_rows,
                     "evidence_note": "online=null means unknown; membership is not proof of connectivity. evidence_source=self proves only the executing process is alive; no HTTP/LAN probe is performed for self. Reachability=null means untested, not failed. HTTP failure alone does not prove offline."}
