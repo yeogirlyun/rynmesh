@@ -300,9 +300,88 @@ def test_t6_dotdot_traversal_paths_still_rejected() -> None:
         {"url": "http://dav.example.test/dav", "root": "work", "username": "u", "password": "p"}
     )
     try:
-        for bad in ("..", "../secret", "dir/../secret", "a/b/.."):
+        for bad in ("..", "../secret", "dir/../secret", "a/b/..", "../secret/"):
             with pytest.raises(NasError, match="invalid_path"):
                 relative_path(bad)
+            with pytest.raises(NasError, match="invalid_path"):
+                conn.url(bad)
+    finally:
+        conn.close()
+
+
+def test_t9a_webdav_root_list_issues_propfind_base_slash() -> None:
+    """Rework test 1: WebDAV root listing ('/' and '') issues PROPFIND <base>/ without failing relative_path."""
+    seen_urls: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        seen_urls.append(str(request.url))
+        return httpx.Response(
+            207,
+            content=(
+                b'<d:multistatus xmlns:d="DAV:">'
+                b'<d:response><d:href>/dav/work/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop></d:propstat></d:response>'
+                b'<d:response><d:href>/dav/work/top.txt</d:href><d:propstat><d:prop><d:getcontentlength>5</d:getcontentlength></d:prop></d:propstat></d:response>'
+                b"</d:multistatus>"
+            ),
+        )
+
+    conn = WebDAVConnector(
+        {"url": "http://dav.example.test/dav", "root": "work", "username": "u", "password": "p"}
+    )
+    conn.client.close()
+    conn.client = httpx.Client(
+        transport=httpx.MockTransport(respond),
+        auth=("u", "p"),
+        follow_redirects=False,
+    )
+    try:
+        assert conn.url("/") == "http://dav.example.test/dav/work/"
+        assert [e["name"] for e in conn.list("/")] == ["top.txt"]
+        assert seen_urls[-1] == "http://dav.example.test/dav/work/"
+        assert [e["name"] for e in conn.list("")] == ["top.txt"]
+        assert seen_urls[-1] == "http://dav.example.test/dav/work/"
+    finally:
+        conn.close()
+
+
+def test_t9b_webdav_subdir_list_preserves_trailing_slash_and_rejects_dotdot() -> None:
+    """Rework test 2 & 3: Subdirectory listing URL preserves trailing '/' (no 301), while '..' paths are still rejected."""
+    seen_urls: list[str] = []
+
+    def strict_slash_dav(request: httpx.Request) -> httpx.Response:
+        url_str = str(request.url)
+        seen_urls.append(url_str)
+        if not url_str.endswith("/"):
+            return httpx.Response(301, headers={"Location": url_str + "/"})
+        return httpx.Response(
+            207,
+            content=(
+                b'<d:multistatus xmlns:d="DAV:">'
+                b'<d:response><d:href>/dav/work/subdir/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop></d:propstat></d:response>'
+                b'<d:response><d:href>/dav/work/subdir/nested.txt</d:href><d:propstat><d:prop><d:getcontentlength>9</d:getcontentlength></d:prop></d:propstat></d:response>'
+                b"</d:multistatus>"
+            ),
+        )
+
+    conn = WebDAVConnector(
+        {"url": "http://dav.example.test/dav", "root": "work", "username": "u", "password": "p"}
+    )
+    conn.client.close()
+    conn.client = httpx.Client(
+        transport=httpx.MockTransport(strict_slash_dav),
+        auth=("u", "p"),
+        follow_redirects=False,
+    )
+    try:
+        sub_entries = conn.list("subdir")
+        assert [e["name"] for e in sub_entries] == ["nested.txt"]
+        assert seen_urls[-1] == "http://dav.example.test/dav/work/subdir/"
+
+        sub_page = conn.list_page("subdir")
+        assert [e["name"] for e in sub_page["entries"]] == ["nested.txt"]
+        assert seen_urls[-1] == "http://dav.example.test/dav/work/subdir/"
+
+        for bad in ("../secret", "../secret/", "subdir/../secret/"):
             with pytest.raises(NasError, match="invalid_path"):
                 conn.url(bad)
     finally:

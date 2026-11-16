@@ -198,11 +198,19 @@ class WebDAVConnector:
         )
 
     def url(self, path):
-        path = relative_path(path)
-        # relative_path already rejects ".."; quote(path, safe="/") encodes any
+        if not isinstance(path, str):
+            raise NasError("invalid_path")
+        if path in ("", "/"):
+            return self.root
+        trailing_slash = path.endswith("/")
+        stripped = path.rstrip("/")
+        if not stripped:
+            raise NasError("invalid_path")
+        relative_path(stripped)
+        # relative_path already rejects ".."; quote(..., safe="/") encodes any
         # literal "%" into "%25", so one server decode restores the filename
         # without turning encoded sequences into path traversal.
-        return self.root + quote(path, safe="/")
+        return self.root + quote(stripped, safe="/") + ("/" if trailing_slash else "")
 
     def request(self, method, path, *, limit=MAX_FILE, **kwargs):
         with self.client.stream(method, self.url(path), **kwargs) as response:
@@ -223,8 +231,9 @@ class WebDAVConnector:
             return bytes(data)
 
     def _collect_entries(self, path, *, max_entries=None, limit=4 * 1024 * 1024):
+        clean_path = "" if path in ("", "/") else relative_path(path.rstrip("/") if isinstance(path, str) else path)
         body = self.request(
-            "PROPFIND", path + ("/" if path else ""), headers={"Depth": "1"}, limit=limit
+            "PROPFIND", "/" if not clean_path else (clean_path + "/"), headers={"Depth": "1"}, limit=limit
         )
         if b"<!DOCTYPE" in body.upper() or b"<!ENTITY" in body.upper():
             raise NasError("invalid_directory_response", 502)
@@ -245,7 +254,7 @@ class WebDAVConnector:
             except (NasError, ValueError):
                 skipped += 1
                 continue
-            if child == path or child.rpartition("/")[0] != path:
+            if child == clean_path or child.rpartition("/")[0] != clean_path:
                 continue
             prop = item.find("{DAV:}propstat/{DAV:}prop")
             if prop is None:
