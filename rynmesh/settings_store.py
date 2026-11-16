@@ -28,8 +28,19 @@ _DEFAULTS: dict[str, Any] = {
     "notification_quiet_start": 22,
     "notification_quiet_end": 8,
     "llm_download_mirror": "",
+    "network_proxy": {"mode": "off", "url": ""},
 }
 _WHITELIST = set(_DEFAULTS)
+
+
+def _normalize_network_proxy(raw: Any) -> dict[str, str]:
+    if not isinstance(raw, dict):
+        return {"mode": "off", "url": ""}
+    mode = str(raw.get("mode") or "off").strip().lower()
+    if mode not in {"off", "system", "manual"}:
+        mode = "off"
+    url = str(raw.get("url") or "").strip()[:512]
+    return {"mode": mode, "url": url}
 
 _CHOICES = {
     "safety_policy": {"permissive", "standard", "strict"},
@@ -56,6 +67,7 @@ class SettingsStore:
                         data[k] = loaded[k]
         except (OSError, ValueError):
             pass
+        data["network_proxy"] = _normalize_network_proxy(data.get("network_proxy"))
         recap = data.get("recap")
         if isinstance(recap, dict) and "smtp_password" in recap:
             migrated = dict(recap)
@@ -115,6 +127,24 @@ class SettingsStore:
                 from .llm_package.catalog import normalize_download_mirror
 
                 data[k] = normalize_download_mirror("" if v is None else v)
+            elif k == "network_proxy":
+                if not isinstance(v, dict):
+                    continue
+                merged_proxy = _normalize_network_proxy(data.get("network_proxy"))
+                if "mode" in v:
+                    mode_val = str(v.get("mode") or "").strip().lower()
+                    if mode_val in {"off", "system", "manual"}:
+                        merged_proxy["mode"] = mode_val
+                if "url" in v:
+                    url_val = str(v.get("url") or "").strip()[:512]
+                    if url_val:
+                        from urllib.parse import urlparse
+
+                        parsed = urlparse(url_val)
+                        if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+                            raise ValueError("network_proxy.url must be an http:// or https:// URL")
+                    merged_proxy["url"] = url_val
+                data[k] = merged_proxy
             elif k == "recap":
                 # Nested config block. Merged, not replaced, so a partial patch
                 # can't silently wipe SMTP credentials the caller didn't send.

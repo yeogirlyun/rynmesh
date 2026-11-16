@@ -864,6 +864,7 @@ let settings: NodeSettings = {
   notification_quiet_end: 8,
   desktop_managed: true,
   network_id: "rynmesh-main",
+  network_proxy: { mode: "off", url: "" },
 };
 
 let recommendationProfile: RecommendationProfile = {

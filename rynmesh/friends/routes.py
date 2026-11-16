@@ -75,11 +75,16 @@ async def _body(request: Request, limit: int = MAX_WIRE_BYTES) -> dict[str, Any]
 def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
                     local_control: Callable, messaging_key: Any,
                     post_json: Callable | None = None) -> FriendService:
+    from urllib.parse import urlparse
+
     from ..peer_http import HttpPeerClient
+    from ..transport import get_pinned_transport
 
     def post(endpoint, path, payload, headers, *, max_response_bytes=2 * 1024 * 1024):
-        validate_endpoint(endpoint, allow_loopback=current().allow_loopback)
-        return HttpPeerClient(endpoint, timeout_s=5).post_json(
+        cleaned = validate_endpoint(endpoint, allow_loopback=current().allow_loopback)
+        host_ip = (urlparse(cleaned).hostname or "").strip("[]")
+        pinned = get_pinned_transport(cleaned, host_ip)
+        return HttpPeerClient(cleaned, timeout_s=5, transport=pinned).post_json(
             path, payload, headers=headers, max_bytes=max_response_bytes
         )
 

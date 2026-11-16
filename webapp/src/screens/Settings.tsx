@@ -97,7 +97,7 @@ export default function Settings() {
       </aside>
       <Panel className="settings-panel">
         {active === "Identity & storage" ? <IdentitySection settings={settings} onUpdate={update} /> : null}
-        {active === "Network" ? <NetworkSection settings={settings} /> : null}
+        {active === "Network" ? <NetworkSection settings={settings} onUpdate={update} /> : null}
         {active === "Trust & safety" ? (
           <TrustSection settings={settings} onConfirmUpdate={confirmUpdate} />
         ) : null}
@@ -352,15 +352,71 @@ function IdentitySection({
 
 function NetworkSection({
   settings,
+  onUpdate,
 }: {
   settings: NodeSettings;
+  onUpdate: (patch: Partial<NodeSettings>) => Promise<void>;
 }) {
   useUILanguage();
+  const proxy = settings.network_proxy ?? { mode: "off", url: "" };
+  const [proxyUrl, setProxyUrl] = useState(proxy.url);
+  useEffect(() => {
+    setProxyUrl(proxy.url);
+  }, [proxy.url]);
+
   return (
     <Section title={tr("Network")} icon={<Network size={22} />}>
       <div className="alert-callout">
         {tr("Desktop networking is configured automatically at startup. Advanced operators can override RYNMESH_* environment variables before launch.")}
       </div>
+      <div className="setting-row">
+        <span>
+          <b>{tr("Outbound proxy")}</b>
+          <small>{tr("代理只用于节点之间和注册中心的连接，不用于模型请求")}</small>
+        </span>
+        <select
+          aria-label={tr("Outbound proxy")}
+          value={proxy.mode}
+          onChange={(event) =>
+            void onUpdate({
+              network_proxy: {
+                mode: event.target.value as "off" | "system" | "manual",
+                url: proxyUrl,
+              },
+            })
+          }
+        >
+          <option value="off">{tr("Off")}</option>
+          <option value="system">{tr("Use system proxy")}</option>
+          <option value="manual">{tr("Manual proxy")}</option>
+        </select>
+      </div>
+      {proxy.mode === "manual" ? (
+        <div className="setting-row">
+          <span>
+            <b>{tr("Proxy URL")}</b>
+            <small>{tr("http:// or https:// CONNECT proxy")}</small>
+          </span>
+          <div className="setting-edit">
+            <input
+              aria-label={tr("Proxy URL")}
+              placeholder="http://127.0.0.1:7890"
+              value={proxyUrl}
+              onChange={(event) => setProxyUrl(event.target.value)}
+            />
+            <Button
+              icon={Save}
+              onClick={() =>
+                void onUpdate({
+                  network_proxy: { mode: "manual", url: proxyUrl.trim() },
+                })
+              }
+            >
+              {tr("Save proxy")}
+            </Button>
+          </div>
+        </div>
+      ) : null}
       <ReadOnly label={tr("Mode")} value={settings.desktop_managed ? tr("automatic desktop") : tr("operator managed")} />
       <ReadOnly label={tr("Network")} value={settings.network_id ?? "rynmesh-main"} />
       <ReadOnly label={tr("Registry URL")} value={settings.registry_url} />
