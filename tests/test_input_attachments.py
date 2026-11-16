@@ -208,3 +208,84 @@ def test_t7_directory_path_raises_agent_attachment_directory(tmp_path: Path):
     with pytest.raises(AgentError) as exc_missing:
         parse_attachments([{"name": "does_not_exist.txt", "path": str(missing)}])
     assert str(exc_missing.value) == "agent_attachment_unavailable"
+
+
+def test_fork_task_with_reference_only_attachment_preserves_original_path(tmp_path: Path):
+    import uuid
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    large = outside / "dataset-50mb.csv"
+    inside_large = workspace / "inside-50mb.log"
+    size_50mb = 50 * 1024 * 1024
+    for target in (large, inside_large):
+        with target.open("wb") as handle:
+            handle.seek(size_50mb - 1)
+            handle.write(b"\n")
+
+    app = FastAPI()
+    runtime = install_agent(
+        app,
+        store=object(),
+        home=tmp_path / "home",
+        workers=BackgroundWorkerRegistry(),
+        local_control=lambda _req: True,
+        messaging_key=X25519PrivateKey.generate(),
+        integrations=(Model(assistant("已分析")), Tools(), Catalog()),
+    )
+    with TestClient(app) as client:
+        assert client.put(
+            "/api/local/agent/settings",
+            json={"enabled": True, "model_id": "local:test", "workspace_root": str(workspace)},
+        ).status_code == 200
+
+        created = client.post(
+            "/api/local/agent/tasks",
+            json={
+                "message": "分析大文件与小附件",
+                "attachments": [
+                    {"name": inside_large.name, "path": str(inside_large)},
+                    {"name": large.name, "path": str(large)},
+                    _b64_upload("small.txt", b"small content", "text/plain"),
+                ],
+            },
+        )
+        assert created.status_code == 200, created.text
+        tid = created.json()["id"]
+        runtime.run_once()
+
+        boundaries_resp = client.get(f"/api/local/agent/tasks/{tid}/fork-boundaries")
+        assert boundaries_resp.status_code == 200, boundaries_resp.text
+        boundary = boundaries_resp.json()["boundaries"][-1]
+
+        fork_resp = client.post(
+            f"/api/local/agent/tasks/{tid}/fork",
+            json={
+                "client_request_id": str(uuid.uuid4()),
+                "title": "Forked with large reference",
+                "message_count": boundary["message_count"],
+                "token": boundary["token"],
+                "shared_workspace_confirmed": True,
+            },
+        )
+        assert fork_resp.status_code == 200, fork_resp.text
+        child = fork_resp.json()
+        child_attachments = child["messages"][0]["attachments"]
+        assert len(child_attachments) == 3
+
+        assert child_attachments[0]["reference_only"] is True
+        assert child_attachments[0]["path"] == str(inside_large.resolve())
+        assert child_attachments[0]["size"] == size_50mb
+
+        ref_att = child_attachments[1]
+        assert ref_att["reference_only"] is True
+        assert ref_att["path"] == str(large.resolve())
+        assert ref_att["size"] == size_50mb
+
+        copied_att = child_attachments[2]
+        assert copied_att["name"] == "small.txt"
+        assert Path(copied_att["path"]).parent == (workspace / ".ryn" / "attachments" / child["id"])
+        assert Path(copied_att["path"]).read_bytes() == b"small content"
+
