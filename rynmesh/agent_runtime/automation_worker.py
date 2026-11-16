@@ -199,24 +199,43 @@ def trigger_automation_in_tx(
     now_str = now()
 
     target_row: dict[str, Any] | None = None
+    target_updated = False
     if kind == "heartbeat" and target_task_id:
         resolved_tid, resolved_row = _resolve_heartbeat_target(runtime.store, data, target_task_id)
         if resolved_tid != target_task_id:
             target_task_id = resolved_tid
             item["target_task_id"] = target_task_id
+            target_updated = True
         target_row = resolved_row
-        if target_row is None and not force:
-            item["status"] = "PAUSED"
-            item["next_run_at"] = None
-            item["next_run_at_iso"] = ""
-            item["updated_at"] = now_str
-            automations.write_automation_files(runtime.store, item)
-            return {
-                "triggered": False,
-                "deferred": False,
-                "paused": True,
-                "automation": automations.public_automation(runtime.store, item),
-            }
+        if target_row is None:
+            if item.get("dedicated_chat"):
+                target_task_id = ""
+                item["target_task_id"] = ""
+            elif not force:
+                item["status"] = "PAUSED"
+                item["next_run_at"] = None
+                item["next_run_at_iso"] = ""
+                item["updated_at"] = now_str
+                automations.write_automation_files(runtime.store, item)
+                return {
+                    "triggered": False,
+                    "deferred": False,
+                    "paused": True,
+                    "automation": automations.public_automation(runtime.store, item),
+                }
+    elif kind == "heartbeat":
+        last_tid = str(item.get("last_task_id") or "").strip()
+        if (
+            last_tid
+            and isinstance(tasks.get(last_tid), dict)
+            and last_tid not in archives
+            and last_tid not in deleted_tasks
+        ):
+            target_task_id = last_tid
+            item["target_task_id"] = last_tid
+            item["dedicated_chat"] = True
+            target_updated = True
+            target_row = tasks[last_tid]
 
     if kind == "heartbeat" and target_task_id and isinstance(target_row, dict):
         is_ambiguous = control.ambiguous(target_row)
@@ -236,6 +255,9 @@ def trigger_automation_in_tx(
             defer_ms = current_ms + 60_000
             item["next_run_at"] = defer_ms
             item["next_run_at_iso"] = automations.ms_to_iso(defer_ms)
+            if target_updated:
+                item["updated_at"] = now_str
+                automations.write_automation_files(runtime.store, item)
             return {
                 "triggered": False,
                 "deferred": True,
@@ -351,7 +373,7 @@ def trigger_automation_in_tx(
                 "id": run_id,
                 "automation_id": target_id,
                 "automation_name": str(item.get("name") or ""),
-                "kind": "cron",
+                "kind": kind if kind == "heartbeat" else "cron",
                 "task_id": active_prev_tid,
                 "status": "SKIPPED_OVERLAP",
                 "decision": "",
@@ -381,6 +403,27 @@ def trigger_automation_in_tx(
         )
         desktop_access = bool(item.get("desktop_access", True))
         spawned_task_id = "agent_" + uuid.uuid4().hex
+        spawned_kind = "heartbeat" if kind == "heartbeat" else "cron"
+        auto_name = str(item.get("name") or "定时提醒").strip()
+        initial_message: dict[str, Any] = (
+            {
+                "role": "user",
+                "content": automations.format_heartbeat_user_message(
+                    automation_id=target_id,
+                    instructions=prompt_text,
+                    current_time_iso=now_str,
+                ),
+                "message_id": f"msg-hb-{run_id}",
+                "ui": {
+                    "kind": "heartbeat",
+                    "text": f"⏰ {auto_name}：{prompt_text}",
+                    "automation_id": target_id,
+                    "automation_name": auto_name,
+                },
+            }
+            if spawned_kind == "heartbeat"
+            else {"role": "user", "content": prompt_text}
+        )
         spawned_row = {
             "id": spawned_task_id,
             "client_request_id": None,
@@ -389,14 +432,14 @@ def trigger_automation_in_tx(
             "model_id": model_id,
             "status": "queued",
             "source": "automation",
-            "automation_kind": "cron",
+            "automation_kind": spawned_kind,
             "automation_id": target_id,
             "automation_run_id": run_id,
             "latest_turn_is_silent_heartbeat": False,
             "revision": 0,
             "created_at": now_str,
             "updated_at": now_str,
-            "messages": [{"role": "user", "content": prompt_text}],
+            "messages": [initial_message],
             "events": [],
             "pending_approval": None,
             "steps": 0,
@@ -427,8 +470,12 @@ def trigger_automation_in_tx(
         if destination is not None:
             spawned_row["model_destination"] = copy.deepcopy(destination)
         spawned_row["prompt_version"] = PROMPT_VERSION
-        event(spawned_row, "created", source="automation", automation_id=target_id, run_id=run_id, automation_kind="cron")
+        event(spawned_row, "created", source="automation", automation_id=target_id, run_id=run_id, automation_kind=spawned_kind)
         data.setdefault("tasks", {})[spawned_task_id] = spawned_row
+        if spawned_kind == "heartbeat":
+            target_task_id = spawned_task_id
+            item["target_task_id"] = spawned_task_id
+            item["dedicated_chat"] = True
 
     automations.inherit_task_policy_in_tx(data, spawned_row)
     run_count = int(item.get("run_count") or 0) + 1
@@ -447,7 +494,7 @@ def trigger_automation_in_tx(
         "id": run_id,
         "automation_id": target_id,
         "automation_name": str(item.get("name") or ""),
-        "kind": kind if (kind == "heartbeat" and target_task_id) else "cron",
+        "kind": kind if kind == "heartbeat" else "cron",
         "task_id": spawned_task_id,
         "status": "IN_PROGRESS",
         "decision": "",
