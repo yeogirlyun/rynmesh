@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -192,3 +193,33 @@ def save_manifest(manifest: LLMPackageManifest, path: str | Path) -> Path:
 
 def fingerprint_file(path: str | Path, *, chunk_size: int = 1024 * 1024) -> str:
     return sha256_file(path, chunk_size=chunk_size)
+
+
+def cached_fingerprint(path: str | Path, *, chunk_size: int = 1024 * 1024) -> str:
+    target = Path(path).expanduser()
+    stat_info = target.stat()
+    size = stat_info.st_size
+    mtime_ns = stat_info.st_mtime_ns
+    cache_path = target.with_name(target.name + ".ryn-sha256.json")
+    try:
+        cached = json.loads(cache_path.read_text(encoding="utf-8"))
+        if (
+            isinstance(cached, dict)
+            and cached.get("size") == size
+            and cached.get("mtime_ns") == mtime_ns
+            and isinstance(cached.get("sha256"), str)
+            and re.fullmatch(r"sha256:[0-9a-f]{64}", cached["sha256"])
+        ):
+            return cached["sha256"]
+    except (OSError, ValueError):
+        pass
+    digest = fingerprint_file(target, chunk_size=chunk_size)
+    try:
+        atomic_write_json(
+            cache_path,
+            {"size": size, "mtime_ns": mtime_ns, "sha256": digest},
+            sort_keys=True,
+        )
+    except OSError:
+        pass
+    return digest

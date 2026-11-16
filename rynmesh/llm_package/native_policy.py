@@ -31,8 +31,12 @@ class NativeModelPolicy:
             rows = self._read()
             sid = manifest.package_id
             previous = rows.get(sid)
-            if previous is None and len(rows) >= 128:
-                raise ValueError("native_model_policy_capacity_exhausted")
+            while previous is None and len(rows) >= 128:
+                evict_id = min(
+                    (key for key in rows if key != sid),
+                    key=lambda key: (str((rows[key] or {}).get("day") or ""), key),
+                )
+                rows.pop(evict_id, None)
             row = copy.deepcopy(previous) if previous else {"configuration": {
                 "max_output_tokens": manifest.max_output_tokens, "max_concurrent": 1,
                 "requests_per_day": None, "tokens_per_day": None, "shared_tokens_per_day": None},
@@ -50,6 +54,15 @@ class NativeModelPolicy:
                 rows[sid] = row
                 self._save(rows)
             return row
+
+    def remove(self, service_id):
+        with file_transaction(self.lock):
+            rows = self._read()
+            if service_id not in rows:
+                return False
+            rows.pop(service_id, None)
+            self._save(rows)
+            return True
 
     def current(self, service_id):
         with file_transaction(self.lock):

@@ -2,17 +2,28 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import platform
 import re
 import shutil
 import subprocess
+import threading
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 from . import catalog
+
+PROBE_CACHE_TTL_SECONDS = 60.0
+_PROBE_CACHE: dict[Any, tuple[float, Any]] = {}
+_PROBE_CACHE_LOCK = threading.Lock()
+
+
+def _probe_clock() -> float:
+    return time.monotonic()
 
 
 @dataclass
@@ -47,15 +58,15 @@ class HardwareReport:
 def _parse_vm_stat(text: str, page_size_default: int = 4096) -> int:
     """Parse macOS `vm_stat` output into available memory in MiB.
 
-    Available memory is the sum of free, inactive, and speculative pages,
-    using the page size reported in the `vm_stat` header (falling back to
-    `page_size_default` if it cannot be parsed).
+    Available memory is the sum of free, inactive, speculative, and purgeable
+    pages, using the page size reported in the `vm_stat` header (falling back
+    to `page_size_default` if it cannot be parsed).
     """
     page_size = page_size_default
     header_match = re.search(r"page size of (\d+) bytes", text)
     if header_match:
         page_size = int(header_match.group(1))
-    wanted = ("Pages free", "Pages inactive", "Pages speculative")
+    wanted = ("Pages free", "Pages inactive", "Pages speculative", "Pages purgeable")
     pages = 0
     for line in text.splitlines():
         for label in wanted:
@@ -120,6 +131,12 @@ def _nvidia() -> tuple[list[GPUInfo], str]:
     executable = shutil.which("nvidia-smi")
     if not executable:
         return [], "nvidia-smi not found; NVIDIA GPU/driver unavailable or not installed"
+    cache_key = ("nvidia", executable, subprocess.run)
+    now = _probe_clock()
+    with _PROBE_CACHE_LOCK:
+        cached = _PROBE_CACHE.get(cache_key)
+        if cached is not None and (now - cached[0]) < PROBE_CACHE_TTL_SECONDS:
+            return copy.deepcopy(cached[1])
     try:
         result = subprocess.run(
             [executable, "--query-gpu=name,memory.total,memory.free,driver_version", "--format=csv,noheader,nounits"],
@@ -128,11 +145,43 @@ def _nvidia() -> tuple[list[GPUInfo], str]:
         )
         gpus = []
         for line in result.stdout.splitlines():
-            name, total, free, driver = (part.strip() for part in line.split(",", 3))
-            gpus.append(GPUInfo(name, int(float(total)), int(float(free)), driver))
-        return gpus, "ok" if gpus else "nvidia-smi returned no GPUs"
-    except (OSError, subprocess.SubprocessError, ValueError) as exc:
-        return [], f"NVIDIA probe failed: {exc}"
+            if not line.strip():
+                continue
+            try:
+                name, total, free, driver = (part.strip() for part in line.split(",", 3))
+                gpus.append(GPUInfo(name, int(float(total)), int(float(free)), driver))
+            except ValueError:
+                continue
+        outcome = (gpus, "ok" if gpus else "nvidia-smi returned no GPUs")
+    except (OSError, subprocess.SubprocessError) as exc:
+        outcome = ([], f"NVIDIA probe failed: {exc}")
+    with _PROBE_CACHE_LOCK:
+        _PROBE_CACHE[cache_key] = (_probe_clock(), copy.deepcopy(outcome))
+    return outcome
+
+
+def _docker_info_available(docker: str) -> bool:
+    cache_key = ("docker_info", docker, subprocess.run)
+    now = _probe_clock()
+    with _PROBE_CACHE_LOCK:
+        cached = _PROBE_CACHE.get(cache_key)
+        if cached is not None and (now - cached[0]) < PROBE_CACHE_TTL_SECONDS:
+            return bool(cached[1])
+    container_ok = False
+    try:
+        subprocess.run(
+            [docker, "info", "--format", "{{json .ServerVersion}}"],
+            check=True,
+            capture_output=True,
+            timeout=8,
+            creationflags=0x08000000 if os.name == "nt" else 0,
+        )
+        container_ok = True
+    except (OSError, subprocess.SubprocessError):
+        pass
+    with _PROBE_CACHE_LOCK:
+        _PROBE_CACHE[cache_key] = (_probe_clock(), container_ok)
+    return container_ok
 
 
 def _native_runtime_available(root: str | Path | None = None) -> bool:
@@ -176,14 +225,7 @@ def detect_hardware(path: str | Path | None = None, *, runtime_root: str | Path 
     disk_free = shutil.disk_usage(disk_target).free // 2**20
     gpus, gpu_status = _nvidia()
     docker = shutil.which("docker")
-    container_ok = False
-    if docker:
-        try:
-            subprocess.run([docker, "info", "--format", "{{json .ServerVersion}}"], check=True,
-                           capture_output=True, timeout=8)
-            container_ok = True
-        except (OSError, subprocess.SubprocessError):
-            pass
+    container_ok = _docker_info_available(docker) if docker else False
     warnings = []
     if not ram_total:
         warnings.append("Could not determine total RAM; automatic managed installation is disabled.")
