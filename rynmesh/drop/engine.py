@@ -247,6 +247,7 @@ class DropEngine:
         peer_endpoints: Callable[[str], list[str]] | None = None,
         provider_peers: Callable[[], list[dict[str, Any]]] | None = None,
         provider_authorize: Callable[..., dict[str, Any]] | None = None,
+        presence: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.node = node
         self.home = Path(home)
@@ -257,6 +258,7 @@ class DropEngine:
         self._friend_peers = friend_peers
         self._provider_peers = provider_peers
         self._provider_authorize = provider_authorize
+        self._presence = presence
         self._provider_dirs: dict[str, PeerDirectory] = {}
         self._network_id = network_id
         self.p2p = DropP2P(store=node, network_id=network_id,
@@ -264,7 +266,7 @@ class DropEngine:
                            or any(row["peer_id"] == peer_id for row in self._provider_rows())
                            ) if DropP2P.supported(node) else None
         self.dir = PeerDirectory(store=node, network_id=network_id, relationship=self.relationship,
-                                 extra_endpoints=peer_endpoints, p2p=self.p2p)
+                                 extra_endpoints=peer_endpoints, p2p=self.p2p, presence=presence)
         self.boot_id = new_id()
         self.uploads_root = self.home / "drop" / "uploads"
         # events
@@ -400,6 +402,7 @@ class DropEngine:
                         row["provider_resource"] == resource and row["peer_id"] == peer
                         for row in self._provider_rows()) else "other",
                     extra_endpoints=lambda peer: list(self._provider_row(resource, peer).get("endpoints") or []),
+                    presence=self._presence,
                 )
             return self._provider_dirs[resource]
 

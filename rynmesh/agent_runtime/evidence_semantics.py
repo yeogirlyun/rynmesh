@@ -118,7 +118,7 @@ def observation_contract(name, result, *, read_at=None):
             contract["device_observations"] = [{
                 "peer_id": _peer_identity(device.get("peer_id")),
                 "source_checked_at": _time(device.get("checked_at")), "last_seen": _time(device.get("last_seen")),
-                "basis": _enum(device.get("evidence_source"), {"self", "http", "heartbeat", "heartbeat_expired"}),
+                "basis": _enum(device.get("evidence_source"), {"self", "http", "heartbeat", "heartbeat_expired", "drop_probe"}),
                 **{key: device.get(key) if type(device.get(key)) is bool else None
                    for key in ("online", "http_probe_performed", "lan_probe_performed")}}
                 for device in devices[:_LIMIT] if isinstance(device, dict)]

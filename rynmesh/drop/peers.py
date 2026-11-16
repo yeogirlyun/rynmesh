@@ -133,6 +133,7 @@ class PeerDirectory:
         extra_endpoints: Callable[[str], list[str]] | None = None,
         p2p: Any = None,
         network_auth: bool = True,
+        presence: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self._store = store
         # Internet path (ICE hole punching + QUIC) for own devices and friends
@@ -142,6 +143,7 @@ class PeerDirectory:
         self._relationship = relationship
         self._extra_endpoints = extra_endpoints
         self._network_auth = network_auth
+        self._presence = presence
         self._lock = threading.Lock()
         self._records: dict[str, dict[str, Any]] = {}
         self._records_at = 0.0
@@ -226,10 +228,26 @@ class PeerDirectory:
                 return cached
             result = self._probe_now(peer_id, urgent=fresh)
             self._probes[peer_id] = result
-            if result.online:
-                from .store import now_iso
+            from .store import now_iso
 
-                self._last_seen[peer_id] = now_iso()
+            checked_iso = now_iso()
+            if result.online:
+                self._last_seen[peer_id] = checked_iso
+            if self._presence is not None:
+                try:
+                    self._presence({
+                        "peerId": peer_id,
+                        "online": True if result.online else None,
+                        "checkedAt": checked_iso,
+                        "observed_at": checked_iso,
+                        "source": "drop_probe",
+                        "presenceSource": "drop_probe",
+                        "httpReachable": bool(result.online and result.endpoint and not is_p2p_endpoint(result.endpoint)),
+                        "lanReachable": bool(result.online and result.route == "lan"),
+                        "lastSeen": self._last_seen.get(peer_id) or "",
+                    })
+                except Exception:
+                    pass
             return result
 
     def request(self, endpoint: str, method: str, path: str, body: Any = None, *, timeout: float = 15.0

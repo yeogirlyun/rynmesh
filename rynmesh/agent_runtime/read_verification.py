@@ -98,6 +98,7 @@ def verify_read(tools, receipt, *, context, cancelled):
             value = copy.deepcopy(value)
             for row in value.get("devices", []):
                 row.pop("checked_at", None)
+                row.pop("observed_at", None)
                 row.pop("last_seen", None)
             return value
         matches = stable(prior) == stable(fresh)

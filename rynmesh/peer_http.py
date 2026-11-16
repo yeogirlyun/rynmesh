@@ -944,7 +944,8 @@ def create_app(store: RynmeshStore | None = None):
             "isSelf": is_self,
         }
 
-    from .peer_directory import FreshnessPolicy, add_advertised_providers, build_snapshot
+    from . import peer_directory as _peer_dir
+    from .peer_directory import FreshnessPolicy, add_advertised_providers
 
     # One freshness policy for devices and for the services they advertise.
     freshness = FreshnessPolicy.from_environment()
@@ -1125,7 +1126,7 @@ def create_app(store: RynmeshStore | None = None):
         for peer in active_store.discover_peers(
             network_id=network_id,
             include_self=False,
-            max_age_hours=float(os.environ.get("RYNMESH_DISCOVERY_MAX_AGE_HOURS", "24") or 24),
+            max_age_hours=FreshnessPolicy.from_environment().peer_record_max_age_hours,
             use_cache_on_error=True,
             cache_only=True,
         ).get("peers", []):
@@ -1260,7 +1261,7 @@ def create_app(store: RynmeshStore | None = None):
         capacities = active_store.list_job_capacities(
             network_id=network_id,
             capability=capability,
-            max_age_hours=float(os.environ.get("RYNMESH_DISCOVERY_MAX_AGE_HOURS", "24") or 24),
+            max_age_hours=FreshnessPolicy.from_environment().advertisement_max_age_hours,
         ).get("capacities", [])
         peer_names = {
             peer["id"]: peer["name"] for peer in discover_peer_items(network_id, include_self=True)
@@ -1687,11 +1688,22 @@ def create_app(store: RynmeshStore | None = None):
             except Exception:
                 friend_ids = []
         with timer.phase("snapshot"):
-            snapshot = build_snapshot(
+            snapshot = _peer_dir.build_snapshot(
                 items, services, self_id=active_store.peer_id, network_id=network_id,
                 members=members, friend_ids=friend_ids, probe_for=peer_presence.get,
                 policy=freshness, now=datetime.now(timezone.utc),
             )
+            violations = _peer_dir.directory_violations(snapshot)
+            if violations:
+                snapshot = {**snapshot, "diagnostics": {"violations": violations}}
+                try:
+                    from . import diagnostic_events  # type: ignore[attr-defined]
+
+                    diagnostic_events.record("peer_directory", "directory_invariant_violation")
+                except ImportError:
+                    from .agent_runtime import diagnostic_log
+
+                    diagnostic_log.failure("peer_directory_violations", "agent_directory_invariant_violation")
         timer.finish()
         return snapshot
 

@@ -47,11 +47,19 @@ class FreshnessPolicy:
     @classmethod
     def from_environment(cls, environ: Mapping[str, str] | None = None) -> "FreshnessPolicy":
         env = os.environ if environ is None else environ
-        try:
-            peers = float(env.get("RYNMESH_DISCOVERY_MAX_AGE_HOURS", "") or cls.peer_record_max_age_hours)
-        except ValueError:
-            peers = cls.peer_record_max_age_hours
-        return cls(peer_record_max_age_hours=peers if peers > 0 else cls.peer_record_max_age_hours)
+
+        def _pos_float(var: str, default: float) -> float:
+            try:
+                val = float(env.get(var, "") or default)
+            except ValueError:
+                return default
+            return val if val > 0 else default
+
+        return cls(
+            peer_record_max_age_hours=_pos_float("RYNMESH_DISCOVERY_MAX_AGE_HOURS", cls.peer_record_max_age_hours),
+            advertisement_max_age_hours=_pos_float("RYNMESH_ADVERTISEMENT_MAX_AGE_HOURS", cls.advertisement_max_age_hours),
+            fresh_window_s=_pos_float("RYNMESH_FRESH_WINDOW_S", cls.fresh_window_s),
+        )
 
 
 def add_advertised_providers(
@@ -159,8 +167,16 @@ def build_snapshot(
         age = None if is_self else _age_seconds(entry.get("lastSeen"), now)
         source = str(entry.get("discoverySource") or "")
         stale = (not is_self) and source != "lan" and age is not None and age > policy.fresh_window_s
+        peer_services = []
+        for svc in entry["services"]:
+            svc_copy = dict(svc)
+            avail = svc_copy.get("availability")
+            if stale and isinstance(avail, Mapping) and avail.get("state") == "ready":
+                svc_copy["availability"] = {"state": "stale", "reason": "advertisement_stale"}
+            peer_services.append(svc_copy)
         peers.append({
             **entry,
+            "services": peer_services,
             "isSelf": is_self,
             "relationship": relationship,
             "presence": presence,
@@ -192,16 +208,19 @@ def build_snapshot(
 
 
 def directory_violations(snapshot: Mapping[str, Any]) -> list[str]:
-    """Check the consistency invariants (I1-I3 in the design). Empty means consistent."""
+    """Check the consistency invariants (I1-I5 in the design). Empty means consistent."""
     problems: list[str] = []
     for peer in snapshot.get("peers", []):
+        is_stale = bool((peer.get("freshness") or {}).get("stale"))
         for service in peer.get("services", []):
             if service.get("peer_id") != peer["id"]:
                 problems.append(f"I1: service {service.get('peer_id')} listed under {peer['id']}")
             state = service.get("availability", {}).get("state")
-            if state == "ready" and peer["presence"]["state"] == "offline":
+            if state == "ready" and (peer.get("presence") or {}).get("state") == "offline":
                 problems.append(f"I3: ready service on offline device {peer['id']}")
-            if state == "ready" and peer["relationship"] == "discovered" \
+            if state == "ready" and peer.get("relationship") == "discovered" \
                     and service.get("availability", {}).get("reason") not in {"catalog_verified"}:
                 problems.append(f"I4: ready service on unconnected device {peer['id']}")
+            if state == "ready" and is_stale:
+                problems.append(f"I5: ready service on stale device {peer['id']}")
     return problems
