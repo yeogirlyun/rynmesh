@@ -1,12 +1,13 @@
-use crate::capture::capture_window_screenshot;
+use crate::capture::try_capture_window_screenshot;
 use crate::errors::{
     DiagnosticReason, ErrorCode, ErrorStage, InternalMutationDetail, ProtocolError,
 };
 use crate::focus::{ensure_window_focused, DEFAULT_FOCUS_DEADLINE_MS};
 use crate::input::{execute_resolved_action, resolve_action_plan, ResolvedActionPlan};
 use crate::input_lock::{
-    DesktopInputLock, DesktopInputLockGuard, DEFAULT_LOCK_WAIT_TIMEOUT_MS,
-    DEFAULT_READY_TICKET_TTL_MS, MAX_READY_TICKET_TTL_MS,
+    query_active_input_desktop_name, verify_active_desktop_matches_lock, DesktopInputLock,
+    DesktopInputLockGuard, DEFAULT_LOCK_WAIT_TIMEOUT_MS, DEFAULT_READY_TICKET_TTL_MS,
+    MAX_READY_TICKET_TTL_MS,
 };
 use crate::lifecycle::{generate_host_worker_nonce, LifecycleService};
 use crate::lifecycle_model::{
@@ -202,6 +203,7 @@ pub struct PhysicalActorEngine {
     active_ticket: Option<ActivePreparedTicket>,
     expired_tickets: HashSet<String>,
     completed_operations: HashMap<String, CompletedOperationRecord>,
+    active_desktop_probe: Arc<dyn Fn() -> Result<String, u32> + Send + Sync>,
 }
 
 impl PhysicalActorEngine {
@@ -229,6 +231,7 @@ impl PhysicalActorEngine {
             active_ticket: None,
             expired_tickets: HashSet::new(),
             completed_operations: HashMap::new(),
+            active_desktop_probe: Arc::new(query_active_input_desktop_name),
         })
     }
 
@@ -256,6 +259,7 @@ impl PhysicalActorEngine {
         let window_tracker = WindowIdentityTracker::from_service(lifecycle_service.clone());
         let snapshots = SnapshotStore::new();
         let input_lock = DesktopInputLock::new()?;
+        let expected_desktop = input_lock.identity().desktop_name.clone();
 
         Ok(Self {
             initialized: false,
@@ -270,7 +274,15 @@ impl PhysicalActorEngine {
             active_ticket: None,
             expired_tickets: HashSet::new(),
             completed_operations: HashMap::new(),
+            active_desktop_probe: Arc::new(move || Ok(expected_desktop.clone())),
         })
+    }
+
+    pub fn set_active_desktop_probe_for_test(
+        &mut self,
+        probe: Arc<dyn Fn() -> Result<String, u32> + Send + Sync>,
+    ) {
+        self.active_desktop_probe = probe;
     }
 
     pub fn is_shutting_down(&self) -> bool {
@@ -835,7 +847,7 @@ impl PhysicalActorEngine {
             }
         }
         let screenshot =
-            capture_window_screenshot(hwnd, &pre_geometry, &shot_opts, generate_artifact_id());
+            try_capture_window_screenshot(hwnd, &pre_geometry, &shot_opts, generate_artifact_id())?;
         let foreground = get_foreground_status(hwnd);
 
         // Post-observation re-verification: drain WinEvents, verify live OS tuple + geometry,
@@ -939,6 +951,12 @@ impl PhysicalActorEngine {
                 DiagnosticReason::CancelledBeforeLock,
             ));
         }
+
+        let active_desktop = (self.active_desktop_probe)();
+        verify_active_desktop_matches_lock(
+            &self.input_lock.identity().desktop_name,
+            active_desktop.as_deref().map_err(|&code| code),
+        )?;
 
         // Pre-lock side-effect-free validation of WindowRef, LifecycleStamp, stateToken, and ActionSpec
         let expected_stamp = self
@@ -1507,6 +1525,7 @@ impl PhysicalActorEngine {
         let release_res = ticket.lock_guard.release();
 
         let mut post_obs: Option<Observation> = None;
+        let mut post_obs_err: Option<String> = None;
         if let Some(ref post_opts) = params.post_observation {
             if post_opts.enabled.unwrap_or(true) {
                 let settle_ms = post_opts.settle_delay_ms.unwrap_or(40).min(1000);
@@ -1528,7 +1547,10 @@ impl PhysicalActorEngine {
                         .clone()
                         .or(Some(AccessibilityOptions::default())),
                 };
-                post_obs = self.handle_state_get(state_params).ok();
+                match self.handle_state_get(state_params) {
+                    Ok(obs) => post_obs = Some(obs),
+                    Err(err) => post_obs_err = Some(err.code.as_str().to_string()),
+                }
             }
         }
 
@@ -1558,6 +1580,7 @@ impl PhysicalActorEngine {
             mutation: "delivered".to_string(),
             focus_recovery: focus_summary,
             observation: post_obs,
+            post_observation_error: post_obs_err,
         };
 
         self.completed_operations.insert(
@@ -1646,12 +1669,8 @@ impl PhysicalActorEngine {
                 TerminalOperationOutcome::Failed(err) => Ok(ActionCancelResult {
                     cancelled: false,
                     operation_id: params.operation_id,
-                    stage: format!("{:?}", err.stage).to_lowercase(),
-                    mutation: match err.mutation {
-                        crate::errors::MutationState::None => "none".to_string(),
-                        crate::errors::MutationState::Possible => "possible".to_string(),
-                        crate::errors::MutationState::Delivered => "delivered".to_string(),
-                    },
+                    stage: err.stage.as_str().to_string(),
+                    mutation: err.mutation.as_str().to_string(),
                     input_lock_released: !self.input_lock.is_quarantined(),
                 }),
             };

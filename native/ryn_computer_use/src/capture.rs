@@ -1,6 +1,12 @@
-use crate::protocol::{ScreenshotArtifact, ScreenshotOptions, WindowGeometry, MAX_PNG_BYTES};
-use crate::windows::{enumerate_top_level_hwnds, get_window_geometry, get_window_pid_tid,
-    is_hwnd_related_to_target, is_window_capture_protected, is_window_cloaked};
+use crate::errors::{DiagnosticReason, ErrorCode, ProtocolError};
+use crate::protocol::{
+    ScreenshotArtifact, ScreenshotOptions, ScreenshotUnavailableReason, WindowGeometry,
+    MAX_PNG_BYTES,
+};
+use crate::windows::{
+    enumerate_top_level_hwnds, get_window_geometry, get_window_pid_tid, hwnd_to_u64,
+    is_hwnd_related_to_target, is_window_capture_protected, is_window_cloaked,
+};
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use png::{BitDepth, ColorType, Encoder};
@@ -16,15 +22,48 @@ use windows::Win32::UI::WindowsAndMessaging::{IsIconic, IsWindowVisible, WindowF
 
 const PW_RENDERFULLCONTENT_FLAG: u32 = 0x00000002;
 
-/// Phase-1 window-scoped PNG screenshot candidate using `PrintWindow` (`PW_RENDERFULLCONTENT`).
-/// Never silently crops the desktop screen buffer when another window occludes the target;
-/// instead reports `minimized`, `capture_protected`, or `unavailable` status honestly.
-pub fn capture_window_screenshot(
-    hwnd: HWND,
+pub struct ScreenshotCaptureProbe {
+    pub hwnd_u64: Option<u64>,
+    pub minimized: bool,
+    pub visible: bool,
+    pub cloaked: bool,
+    pub capture_protected: bool,
+    pub display_affinity_protected: bool,
+    pub occluded: bool,
+    pub max_png_bytes: usize,
+    pub print_result: Result<(Vec<u8>, &'static str), ()>,
+}
+
+impl ScreenshotCaptureProbe {
+    pub fn healthy_non_blank(width: u32, height: u32) -> Self {
+        let pixel_count = (width.max(1) as usize) * (height.max(1) as usize);
+        let mut rgba = vec![0u8; pixel_count * 4];
+        for px in rgba.chunks_exact_mut(4) {
+            px[0] = 64;
+            px[1] = 128;
+            px[2] = 192;
+            px[3] = 255;
+        }
+        Self {
+            hwnd_u64: Some(0x1001),
+            minimized: false,
+            visible: true,
+            cloaked: false,
+            capture_protected: false,
+            display_affinity_protected: false,
+            occluded: false,
+            max_png_bytes: MAX_PNG_BYTES,
+            print_result: Ok((rgba, "print_window_full_content")),
+        }
+    }
+}
+
+pub fn try_capture_window_screenshot_with_probe(
     geometry: &WindowGeometry,
     options: &ScreenshotOptions,
     artifact_id: String,
-) -> ScreenshotArtifact {
+    probe: ScreenshotCaptureProbe,
+) -> Result<ScreenshotArtifact, ProtocolError> {
     let enabled = options.enabled.unwrap_or(true);
     let client_only = options
         .mode
@@ -43,150 +82,147 @@ pub fn capture_window_screenshot(
     let origin_x = target_rect.left;
     let origin_y = target_rect.top;
     let z_index = 0u32;
-    let minimized = unsafe { IsIconic(hwnd).as_bool() };
-    let visible = unsafe { IsWindowVisible(hwnd).as_bool() };
-    let cloaked = is_window_cloaked(hwnd);
-    let capture_protected = is_window_capture_protected(hwnd);
-    let occluded = check_window_center_occluded(hwnd, &target_rect);
+
+    let make_unavailable = |status: &str,
+                            method: &str,
+                            w: u32,
+                            h: u32,
+                            min: bool,
+                            prot: bool,
+                            reason: Option<ScreenshotUnavailableReason>| {
+        ScreenshotArtifact {
+            id: artifact_id.clone(),
+            status: status.to_string(),
+            capture_method: method.to_string(),
+            mime_type: "image/png".to_string(),
+            width: w,
+            height: h,
+            origin_x,
+            origin_y,
+            z_index,
+            dpi: geometry.dpi,
+            scale_factor: geometry.scale_factor,
+            sha256: empty_sha256(),
+            data_base64: None,
+            minimized: min,
+            occluded: probe.occluded,
+            capture_protected: prot,
+            reason,
+        }
+    };
 
     if !enabled {
-        return ScreenshotArtifact {
-            id: artifact_id,
-            status: "unavailable".to_string(),
-            capture_method: "none".to_string(),
-            mime_type: "image/png".to_string(),
-            width: 0,
-            height: 0,
-            origin_x,
-            origin_y,
-            z_index,
-            dpi: geometry.dpi,
-            scale_factor: geometry.scale_factor,
-            sha256: empty_sha256(),
-            data_base64: None,
-            minimized,
-            occluded,
-            capture_protected,
-        };
+        return Ok(make_unavailable(
+            "unavailable",
+            "none",
+            0,
+            0,
+            probe.minimized,
+            probe.capture_protected,
+            Some(ScreenshotUnavailableReason::Disabled),
+        ));
     }
 
-    if minimized {
-        return ScreenshotArtifact {
-            id: artifact_id,
-            status: "minimized".to_string(),
-            capture_method: "none".to_string(),
-            mime_type: "image/png".to_string(),
-            width: 0,
-            height: 0,
-            origin_x,
-            origin_y,
-            z_index,
-            dpi: geometry.dpi,
-            scale_factor: geometry.scale_factor,
-            sha256: empty_sha256(),
-            data_base64: None,
-            minimized: true,
-            occluded,
-            capture_protected,
-        };
+    if probe.minimized {
+        return Ok(make_unavailable(
+            "minimized",
+            "none",
+            0,
+            0,
+            true,
+            probe.capture_protected,
+            None,
+        ));
     }
 
-    if capture_protected {
-        return ScreenshotArtifact {
-            id: artifact_id,
-            status: "capture_protected".to_string(),
-            capture_method: "none".to_string(),
-            mime_type: "image/png".to_string(),
-            width: 0,
-            height: 0,
-            origin_x,
-            origin_y,
-            z_index,
-            dpi: geometry.dpi,
-            scale_factor: geometry.scale_factor,
-            sha256: empty_sha256(),
-            data_base64: None,
-            minimized: false,
-            occluded,
-            capture_protected: true,
-        };
+    if !probe.visible {
+        return Ok(make_unavailable(
+            "unavailable",
+            "none",
+            0,
+            0,
+            false,
+            probe.capture_protected,
+            Some(ScreenshotUnavailableReason::NotVisible),
+        ));
     }
 
-    if !visible || cloaked || width == 0 || height == 0 || width > 8192 || height > 8192 {
-        return ScreenshotArtifact {
-            id: artifact_id,
-            status: "unavailable".to_string(),
-            capture_method: "none".to_string(),
-            mime_type: "image/png".to_string(),
-            width: 0,
-            height: 0,
-            origin_x,
-            origin_y,
-            z_index,
-            dpi: geometry.dpi,
-            scale_factor: geometry.scale_factor,
-            sha256: empty_sha256(),
-            data_base64: None,
-            minimized,
-            occluded,
-            capture_protected,
-        };
+    if probe.cloaked {
+        return Ok(make_unavailable(
+            "unavailable",
+            "none",
+            0,
+            0,
+            false,
+            probe.capture_protected,
+            Some(ScreenshotUnavailableReason::Cloaked),
+        ));
     }
 
-    match capture_via_print_window(hwnd, width, height, client_only) {
-        Ok((mut rgba, mut method_name)) => {
+    if width > 8192 || height > 8192 {
+        return Ok(make_unavailable(
+            "unavailable",
+            "none",
+            0,
+            0,
+            false,
+            probe.capture_protected,
+            Some(ScreenshotUnavailableReason::TooLarge),
+        ));
+    }
+
+    if width == 0 || height == 0 {
+        return Ok(make_unavailable(
+            "unavailable",
+            "none",
+            0,
+            0,
+            false,
+            probe.capture_protected,
+            Some(ScreenshotUnavailableReason::PrintFailed),
+        ));
+    }
+
+    match probe.print_result {
+        Ok((rgba, method_name)) => {
             if is_buffer_completely_blank(&rgba) {
-                return ScreenshotArtifact {
-                    id: artifact_id,
-                    status: "unavailable".to_string(),
-                    capture_method: method_name.to_string(),
-                    mime_type: "image/png".to_string(),
+                if probe.display_affinity_protected || probe.capture_protected {
+                    return Err(ProtocolError::observe(
+                        ErrorCode::WindowCaptureProtected,
+                        DiagnosticReason::WindowCaptureProtected,
+                    )
+                    .with_hwnds(probe.hwnd_u64, None));
+                }
+                return Ok(make_unavailable(
+                    "unavailable",
+                    method_name,
                     width,
                     height,
-                    origin_x,
-                    origin_y,
-                    z_index,
-                    dpi: geometry.dpi,
-                    scale_factor: geometry.scale_factor,
-                    sha256: empty_sha256(),
-                    data_base64: None,
-                    minimized,
-                    occluded,
-                    capture_protected,
-                };
+                    false,
+                    false,
+                    Some(ScreenshotUnavailableReason::Blank),
+                ));
             }
 
-            if composite_owned_popups(hwnd, &target_rect, &mut rgba) {
-                method_name = "print_window_with_owned_popups";
-            }
             match encode_rgba_to_png(&rgba, width, height) {
                 Ok(png_bytes) => {
-                    if png_bytes.len() > MAX_PNG_BYTES {
-                        return ScreenshotArtifact {
-                            id: artifact_id,
-                            status: "unavailable".to_string(),
-                            capture_method: method_name.to_string(),
-                            mime_type: "image/png".to_string(),
+                    if png_bytes.len() > probe.max_png_bytes {
+                        return Ok(make_unavailable(
+                            "unavailable",
+                            method_name,
                             width,
                             height,
-                            origin_x,
-                            origin_y,
-                            z_index,
-                            dpi: geometry.dpi,
-                            scale_factor: geometry.scale_factor,
-                            sha256: empty_sha256(),
-                            data_base64: None,
-                            minimized,
-                            occluded,
-                            capture_protected,
-                        };
+                            false,
+                            probe.capture_protected,
+                            Some(ScreenshotUnavailableReason::PngTooLarge),
+                        ));
                     }
                     let mut hasher = Sha256::new();
                     hasher.update(&png_bytes);
                     let sha256 = hex::encode(hasher.finalize());
                     let b64 = BASE64_STANDARD.encode(&png_bytes);
 
-                    ScreenshotArtifact {
+                    Ok(ScreenshotArtifact {
                         id: artifact_id,
                         status: "ok".to_string(),
                         capture_method: method_name.to_string(),
@@ -201,30 +237,148 @@ pub fn capture_window_screenshot(
                         sha256,
                         data_base64: Some(b64),
                         minimized: false,
-                        occluded,
+                        occluded: probe.occluded,
                         capture_protected: false,
-                    }
+                        reason: None,
+                    })
                 }
-                Err(_) => ScreenshotArtifact {
-                    id: artifact_id,
-                    status: "unavailable".to_string(),
-                    capture_method: method_name.to_string(),
-                    mime_type: "image/png".to_string(),
-                    width: 0,
-                    height: 0,
-                    origin_x,
-                    origin_y,
-                    z_index,
-                    dpi: geometry.dpi,
-                    scale_factor: geometry.scale_factor,
-                    sha256: empty_sha256(),
-                    data_base64: None,
-                    minimized,
-                    occluded,
-                    capture_protected,
-                },
+                Err(_) => Ok(make_unavailable(
+                    "unavailable",
+                    method_name,
+                    0,
+                    0,
+                    false,
+                    probe.capture_protected,
+                    Some(ScreenshotUnavailableReason::PrintFailed),
+                )),
             }
         }
+        Err(()) => {
+            if probe.display_affinity_protected || probe.capture_protected {
+                return Err(ProtocolError::observe(
+                    ErrorCode::WindowCaptureProtected,
+                    DiagnosticReason::WindowCaptureProtected,
+                )
+                .with_hwnds(probe.hwnd_u64, None));
+            }
+            Ok(make_unavailable(
+                "unavailable",
+                "none",
+                0,
+                0,
+                false,
+                false,
+                Some(ScreenshotUnavailableReason::PrintFailed),
+            ))
+        }
+    }
+}
+
+pub fn try_capture_window_screenshot(
+    hwnd: HWND,
+    geometry: &WindowGeometry,
+    options: &ScreenshotOptions,
+    artifact_id: String,
+) -> Result<ScreenshotArtifact, ProtocolError> {
+    let enabled = options.enabled.unwrap_or(true);
+    let client_only = options
+        .mode
+        .as_deref()
+        .map(|m| m.eq_ignore_ascii_case("client"))
+        .unwrap_or(false);
+    let target_rect = if client_only {
+        geometry.client_rect
+    } else {
+        geometry.window_rect
+    };
+    let width = target_rect.width.max(0) as u32;
+    let height = target_rect.height.max(0) as u32;
+    let minimized = unsafe { IsIconic(hwnd).as_bool() };
+    let visible = unsafe { IsWindowVisible(hwnd).as_bool() };
+    let cloaked = is_window_cloaked(hwnd);
+    let capture_protected = is_window_capture_protected(hwnd);
+    let occluded = check_window_center_occluded(hwnd, &target_rect);
+
+    let print_result = if enabled
+        && !minimized
+        && visible
+        && !cloaked
+        && width > 0
+        && height > 0
+        && width <= 8192
+        && height <= 8192
+    {
+        match capture_via_print_window(hwnd, width, height, client_only) {
+            Ok((mut rgba, mut method_name)) => {
+                if !is_buffer_completely_blank(&rgba)
+                    && composite_owned_popups(hwnd, &target_rect, &mut rgba)
+                {
+                    method_name = "print_window_with_owned_popups";
+                }
+                Ok((rgba, method_name))
+            }
+            Err(()) => Err(()),
+        }
+    } else {
+        Err(())
+    };
+    let post_affinity_protected = is_window_capture_protected(hwnd);
+
+    let probe = ScreenshotCaptureProbe {
+        hwnd_u64: Some(hwnd_to_u64(hwnd)),
+        minimized,
+        visible,
+        cloaked,
+        capture_protected,
+        display_affinity_protected: post_affinity_protected,
+        occluded,
+        max_png_bytes: MAX_PNG_BYTES,
+        print_result,
+    };
+    try_capture_window_screenshot_with_probe(geometry, options, artifact_id, probe)
+}
+
+/// Phase-1 window-scoped PNG screenshot candidate using `PrintWindow` (`PW_RENDERFULLCONTENT`).
+/// Never silently crops the desktop screen buffer when another window occludes the target;
+/// instead reports `minimized`, `capture_protected`, or `unavailable` status honestly.
+pub fn capture_window_screenshot(
+    hwnd: HWND,
+    geometry: &WindowGeometry,
+    options: &ScreenshotOptions,
+    artifact_id: String,
+) -> ScreenshotArtifact {
+    let client_only = options
+        .mode
+        .as_deref()
+        .map(|m| m.eq_ignore_ascii_case("client"))
+        .unwrap_or(false);
+    let target_rect = if client_only {
+        geometry.client_rect
+    } else {
+        geometry.window_rect
+    };
+    let occluded = check_window_center_occluded(hwnd, &target_rect);
+    match try_capture_window_screenshot(hwnd, geometry, options, artifact_id.clone()) {
+        Ok(art) => art,
+        Err(err) if err.code == ErrorCode::WindowCaptureProtected => ScreenshotArtifact {
+            id: artifact_id,
+            status: "capture_protected".to_string(),
+            capture_method: "none".to_string(),
+            mime_type: "image/png".to_string(),
+            width: 0,
+            height: 0,
+            origin_x: target_rect.left,
+            origin_y: target_rect.top,
+            z_index: 0,
+            dpi: geometry.dpi,
+            scale_factor: geometry.scale_factor,
+            sha256: empty_sha256(),
+            data_base64: None,
+            minimized: false,
+            occluded,
+            capture_protected: true,
+            reason: Some(ScreenshotUnavailableReason::Blank),
+        },
         Err(_) => ScreenshotArtifact {
             id: artifact_id,
             status: "unavailable".to_string(),
@@ -232,16 +386,17 @@ pub fn capture_window_screenshot(
             mime_type: "image/png".to_string(),
             width: 0,
             height: 0,
-            origin_x,
-            origin_y,
-            z_index,
+            origin_x: target_rect.left,
+            origin_y: target_rect.top,
+            z_index: 0,
             dpi: geometry.dpi,
             scale_factor: geometry.scale_factor,
             sha256: empty_sha256(),
             data_base64: None,
-            minimized,
+            minimized: false,
             occluded,
-            capture_protected,
+            capture_protected: false,
+            reason: Some(ScreenshotUnavailableReason::PrintFailed),
         },
     }
 }

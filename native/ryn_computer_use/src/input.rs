@@ -1,5 +1,6 @@
 use crate::errors::{
-    DiagnosticReason, ErrorCode, ErrorStage, InternalMutationDetail, ProtocolError,
+    DiagnosticReason, ErrorCode, ErrorStage, ErrorWindowSummary, InternalMutationDetail,
+    ProtocolError,
 };
 use crate::focus::verify_foreground_relation;
 use crate::protocol::{
@@ -11,10 +12,12 @@ use crate::uia::{
     execute_uia_focus, execute_uia_invoke, execute_uia_select, execute_uia_set_value,
     verify_live_element_for_commit_target,
 };
-use crate::windows::{hwnd_to_u64, is_hwnd_related_to_target};
+use crate::windows::{
+    hwnd_to_u64, is_hwnd_elevated_above_self, is_hwnd_related_to_target, summarize_hwnd_for_error,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use windows::Win32::Foundation::{HWND, POINT};
+use windows::Win32::Foundation::{GetLastError, SetLastError, ERROR_ACCESS_DENIED, HWND, POINT, WIN32_ERROR};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP,
     KEYEVENTF_UNICODE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN,
@@ -552,7 +555,7 @@ fn resolve_snapshot_element(
         .ok_or_else(|| {
             ProtocolError::validate(
                 ErrorCode::UiaElementStale,
-                DiagnosticReason::UiaPatternMissing,
+                DiagnosticReason::UiaElementNotFound,
             )
         })?;
 
@@ -560,7 +563,7 @@ fn resolve_snapshot_element(
         if &found.runtime_id != expected_rid {
             return Err(ProtocolError::validate(
                 ErrorCode::UiaElementStale,
-                DiagnosticReason::UiaPatternMissing,
+                DiagnosticReason::UiaElementNotFound,
             ));
         }
     }
@@ -572,10 +575,18 @@ fn resolve_snapshot_element(
         ));
     }
 
-    if !found.enabled || found.offscreen {
+    if !found.enabled {
         return Err(ProtocolError::validate(
-            ErrorCode::StateTokenStale,
-            DiagnosticReason::UiaPatternMissing,
+            ErrorCode::ElementDisabled,
+            DiagnosticReason::ElementDisabled,
+        )
+        .with_retryable(false));
+    }
+
+    if found.offscreen {
+        return Err(ProtocolError::validate(
+            ErrorCode::ElementOffscreen,
+            DiagnosticReason::ElementOffscreen,
         ));
     }
 
@@ -603,13 +614,19 @@ pub fn verify_hit_test_target(
             } else {
                 Some(hwnd_to_u64(hit))
             };
+            let occluding_summary = if hit.0.is_null() {
+                None
+            } else {
+                summarize_hwnd_for_error(hit)
+            };
             return Err(ProtocolError::commit(
                 ErrorCode::WindowOccluded,
                 stage,
                 internal_mutation,
                 DiagnosticReason::HitTestUnrelatedWindow,
             )
-            .with_hwnds(Some(hwnd_to_u64(target_hwnd)), hit_u64));
+            .with_hwnds(Some(hwnd_to_u64(target_hwnd)), hit_u64)
+            .with_occluding_window(occluding_summary));
         }
         Ok(())
     }
@@ -636,6 +653,15 @@ pub trait InputExecutionBackend {
         cancel_flag: &AtomicBool,
     ) -> Result<RectPx, ProtocolError>;
     fn send_input_batch(&mut self, inputs: &[INPUT]) -> usize;
+    fn last_send_input_error(&mut self) -> Option<u32> {
+        None
+    }
+    fn is_target_elevated_above_self(&mut self, _target_hwnd: HWND) -> bool {
+        false
+    }
+    fn describe_window(&mut self, _hwnd: HWND) -> Option<ErrorWindowSummary> {
+        None
+    }
     fn uia_focus(
         &mut self,
         target_hwnd: HWND,
@@ -665,7 +691,10 @@ pub trait InputExecutionBackend {
     fn sleep_ms(&mut self, ms: u64);
 }
 
-pub struct OsWin32InputBackend;
+#[derive(Default)]
+pub struct OsWin32InputBackend {
+    last_win32_error: Option<u32>,
+}
 
 impl InputExecutionBackend for OsWin32InputBackend {
     fn check_foreground(&mut self, target_hwnd: HWND) -> (bool, HWND) {
@@ -700,9 +729,31 @@ impl InputExecutionBackend for OsWin32InputBackend {
 
     fn send_input_batch(&mut self, inputs: &[INPUT]) -> usize {
         if inputs.is_empty() {
+            self.last_win32_error = None;
             return 0;
         }
-        unsafe { SendInput(inputs, std::mem::size_of::<INPUT>() as i32) as usize }
+        unsafe {
+            SetLastError(WIN32_ERROR(0));
+            let sent = SendInput(inputs, std::mem::size_of::<INPUT>() as i32) as usize;
+            if sent == 0 {
+                self.last_win32_error = Some(GetLastError().0);
+            } else {
+                self.last_win32_error = None;
+            }
+            sent
+        }
+    }
+
+    fn last_send_input_error(&mut self) -> Option<u32> {
+        self.last_win32_error
+    }
+
+    fn is_target_elevated_above_self(&mut self, target_hwnd: HWND) -> bool {
+        is_hwnd_elevated_above_self(target_hwnd)
+    }
+
+    fn describe_window(&mut self, hwnd: HWND) -> Option<ErrorWindowSummary> {
+        summarize_hwnd_for_error(hwnd)
     }
 
     fn uia_focus(
@@ -781,7 +832,7 @@ fn gate_cancel_and_foreground<B: InputExecutionBackend>(
         let cancel_reason = if stage == ErrorStage::Validating
             && current_mutation == InternalMutationDetail::FocusOnly
         {
-            DiagnosticReason::CancelledDuringExecution
+            DiagnosticReason::CancelledWhileReady
         } else {
             DiagnosticReason::CancelledDuringExecution
         };
@@ -795,6 +846,11 @@ fn gate_cancel_and_foreground<B: InputExecutionBackend>(
 
     let (fg_ok, fg_hwnd) = backend.check_foreground(target_hwnd);
     if !fg_ok {
+        let fg_summary = if fg_hwnd.0.is_null() {
+            None
+        } else {
+            backend.describe_window(fg_hwnd)
+        };
         return Err(ProtocolError::commit(
             ErrorCode::FocusFailed,
             stage,
@@ -808,7 +864,8 @@ fn gate_cancel_and_foreground<B: InputExecutionBackend>(
             } else {
                 Some(hwnd_to_u64(fg_hwnd))
             },
-        ));
+        )
+        .with_foreground_window(fg_summary));
     }
     Ok(())
 }
@@ -820,7 +877,7 @@ pub fn execute_resolved_action(
     plan: &ResolvedActionPlan,
     cancel_flag: &AtomicBool,
 ) -> Result<(), ProtocolError> {
-    let mut backend = OsWin32InputBackend;
+    let mut backend = OsWin32InputBackend::default();
     execute_resolved_action_with_backend(target_hwnd, plan, cancel_flag, &mut backend)
 }
 
@@ -871,7 +928,12 @@ pub fn execute_resolved_action_with_backend<B: InputExecutionBackend>(
                 InternalMutationDetail::FocusOnly,
             )?;
 
-            send_mouse_move(backend, actual_pt, InternalMutationDetail::FocusOnly)?;
+            send_mouse_move(
+                backend,
+                target_hwnd,
+                actual_pt,
+                InternalMutationDetail::FocusOnly,
+            )?;
 
             gate_cancel_and_foreground(
                 backend,
@@ -880,7 +942,7 @@ pub fn execute_resolved_action_with_backend<B: InputExecutionBackend>(
                 ErrorStage::InputStarted,
                 InternalMutationDetail::FocusOnly,
             )?;
-            send_mouse_button_click(backend, actual_pt, *button)?;
+            send_mouse_button_click(backend, target_hwnd, actual_pt, *button)?;
 
             if *double {
                 backend.sleep_ms(35);
@@ -910,7 +972,7 @@ pub fn execute_resolved_action_with_backend<B: InputExecutionBackend>(
                     ErrorStage::InputStarted,
                     InternalMutationDetail::UnknownOrPartial,
                 )?;
-                send_mouse_button_click(backend, actual_pt, *button)?;
+                send_mouse_button_click(backend, target_hwnd, actual_pt, *button)?;
             }
             Ok(())
         }
@@ -922,7 +984,12 @@ pub fn execute_resolved_action_with_backend<B: InputExecutionBackend>(
                 ErrorStage::Validating,
                 InternalMutationDetail::FocusOnly,
             )?;
-            send_mouse_move(backend, *screen_pt, InternalMutationDetail::FocusOnly)
+            send_mouse_move(
+                backend,
+                target_hwnd,
+                *screen_pt,
+                InternalMutationDetail::FocusOnly,
+            )
         }
 
         ResolvedExecutionOp::Scroll {
@@ -936,7 +1003,12 @@ pub fn execute_resolved_action_with_backend<B: InputExecutionBackend>(
                 ErrorStage::Validating,
                 InternalMutationDetail::FocusOnly,
             )?;
-            send_mouse_move(backend, *screen_pt, InternalMutationDetail::FocusOnly)?;
+            send_mouse_move(
+                backend,
+                target_hwnd,
+                *screen_pt,
+                InternalMutationDetail::FocusOnly,
+            )?;
 
             let mut scroll_started = false;
             if *delta_y != 0 {
@@ -953,7 +1025,7 @@ pub fn execute_resolved_action_with_backend<B: InputExecutionBackend>(
                     ErrorStage::InputStarted,
                     InternalMutationDetail::FocusOnly,
                 )?;
-                send_mouse_wheel(backend, MOUSEEVENTF_WHEEL, *delta_y)?;
+                send_mouse_wheel(backend, target_hwnd, MOUSEEVENTF_WHEEL, *delta_y)?;
                 scroll_started = true;
             }
             if *delta_x != 0 {
@@ -975,7 +1047,7 @@ pub fn execute_resolved_action_with_backend<B: InputExecutionBackend>(
                     ErrorStage::InputStarted,
                     mut_detail,
                 )?;
-                send_mouse_wheel(backend, MOUSEEVENTF_HWHEEL, *delta_x)?;
+                send_mouse_wheel(backend, target_hwnd, MOUSEEVENTF_HWHEEL, *delta_x)?;
             }
             Ok(())
         }
@@ -997,7 +1069,7 @@ pub fn execute_resolved_action_with_backend<B: InputExecutionBackend>(
                     ErrorStage::Validating,
                     InternalMutationDetail::FocusOnly,
                 )?;
-                send_mouse_move(backend, *pt, InternalMutationDetail::FocusOnly)?;
+                send_mouse_move(backend, target_hwnd, *pt, InternalMutationDetail::FocusOnly)?;
                 gate_cancel_and_foreground(
                     backend,
                     target_hwnd,
@@ -1005,7 +1077,7 @@ pub fn execute_resolved_action_with_backend<B: InputExecutionBackend>(
                     ErrorStage::InputStarted,
                     InternalMutationDetail::FocusOnly,
                 )?;
-                send_mouse_button_click(backend, *pt, MouseButtonKind::Left)?;
+                send_mouse_button_click(backend, target_hwnd, *pt, MouseButtonKind::Left)?;
                 pre_type_mutation = InternalMutationDetail::UnknownOrPartial;
                 backend.sleep_ms(20);
             }
@@ -1033,7 +1105,7 @@ pub fn execute_resolved_action_with_backend<B: InputExecutionBackend>(
                     ErrorStage::InputStarted,
                     mut_detail,
                 )?;
-                send_vk_tap(backend, *vk)?;
+                send_vk_tap(backend, target_hwnd, *vk)?;
             }
             Ok(())
         }
@@ -1046,7 +1118,7 @@ pub fn execute_resolved_action_with_backend<B: InputExecutionBackend>(
                 ErrorStage::InputStarted,
                 InternalMutationDetail::FocusOnly,
             )?;
-            send_vk_chord(backend, vks)
+            send_vk_chord(backend, target_hwnd, vks)
         }
 
         ResolvedExecutionOp::UiaInvoke { binding } => {
@@ -1082,8 +1154,47 @@ fn screen_to_virtual_desktop_normalized(screen_pt: [i32; 2]) -> (i32, i32) {
     }
 }
 
+fn classify_send_input_failure<B: InputExecutionBackend>(
+    backend: &mut B,
+    target_hwnd: HWND,
+    sent: usize,
+    failure_mutation: InternalMutationDetail,
+) -> ProtocolError {
+    if sent == 0 {
+        let win32_err = backend.last_send_input_error();
+        let blocked_by_uipi = win32_err == Some(ERROR_ACCESS_DENIED.0)
+            || backend.is_target_elevated_above_self(target_hwnd);
+        if blocked_by_uipi {
+            let mut err = ProtocolError::commit(
+                ErrorCode::InputBlockedByUipi,
+                ErrorStage::InputStarted,
+                failure_mutation,
+                DiagnosticReason::SendInputShortCount,
+            )
+            .with_retryable(false);
+            if let Some(code) = win32_err {
+                err = err.with_win32_error(code);
+            }
+            return err;
+        }
+    }
+    let mut err = ProtocolError::commit(
+        ErrorCode::InputFailed,
+        ErrorStage::InputStarted,
+        failure_mutation,
+        DiagnosticReason::SendInputShortCount,
+    );
+    if sent == 0 {
+        if let Some(code) = backend.last_send_input_error() {
+            err = err.with_win32_error(code);
+        }
+    }
+    err
+}
+
 fn send_mouse_move<B: InputExecutionBackend>(
     backend: &mut B,
+    target_hwnd: HWND,
     screen_pt: [i32; 2],
     failure_mutation: InternalMutationDetail,
 ) -> Result<(), ProtocolError> {
@@ -1103,11 +1214,11 @@ fn send_mouse_move<B: InputExecutionBackend>(
     };
     let sent = backend.send_input_batch(&[input]);
     if sent != 1 {
-        return Err(ProtocolError::commit(
-            ErrorCode::InputFailed,
-            ErrorStage::InputStarted,
+        return Err(classify_send_input_failure(
+            backend,
+            target_hwnd,
+            sent,
             failure_mutation,
-            DiagnosticReason::SendInputShortCount,
         ));
     }
     Ok(())
@@ -1120,6 +1231,7 @@ fn send_mouse_move<B: InputExecutionBackend>(
 /// Note: In-process compensation cannot protect against hard-kill (`TerminateProcess`) mid-batch.
 fn send_mouse_button_click<B: InputExecutionBackend>(
     backend: &mut B,
+    target_hwnd: HWND,
     screen_pt: [i32; 2],
     button: MouseButtonKind,
 ) -> Result<(), ProtocolError> {
@@ -1172,16 +1284,17 @@ fn send_mouse_button_click<B: InputExecutionBackend>(
             ));
         }
     }
-    Err(ProtocolError::commit(
-        ErrorCode::InputFailed,
-        ErrorStage::InputStarted,
+    Err(classify_send_input_failure(
+        backend,
+        target_hwnd,
+        sent,
         InternalMutationDetail::UnknownOrPartial,
-        DiagnosticReason::SendInputShortCount,
     ))
 }
 
 fn send_mouse_wheel<B: InputExecutionBackend>(
     backend: &mut B,
+    target_hwnd: HWND,
     flag: windows::Win32::UI::Input::KeyboardAndMouse::MOUSE_EVENT_FLAGS,
     delta: i32,
 ) -> Result<(), ProtocolError> {
@@ -1200,11 +1313,11 @@ fn send_mouse_wheel<B: InputExecutionBackend>(
     };
     let sent = backend.send_input_batch(&[input]);
     if sent != 1 {
-        return Err(ProtocolError::commit(
-            ErrorCode::InputFailed,
-            ErrorStage::InputStarted,
+        return Err(classify_send_input_failure(
+            backend,
+            target_hwnd,
+            sent,
             InternalMutationDetail::UnknownOrPartial,
-            DiagnosticReason::SendInputShortCount,
         ));
     }
     Ok(())
@@ -1280,11 +1393,11 @@ fn send_unicode_text<B: InputExecutionBackend>(
                 ));
             }
         }
-        return Err(ProtocolError::commit(
-            ErrorCode::InputFailed,
-            ErrorStage::InputStarted,
+        return Err(classify_send_input_failure(
+            backend,
+            target_hwnd,
+            sent,
             InternalMutationDetail::UnknownOrPartial,
-            DiagnosticReason::SendInputShortCount,
         ));
     }
     Ok(())
@@ -1292,6 +1405,7 @@ fn send_unicode_text<B: InputExecutionBackend>(
 
 fn send_vk_tap<B: InputExecutionBackend>(
     backend: &mut B,
+    target_hwnd: HWND,
     vk: VIRTUAL_KEY,
 ) -> Result<(), ProtocolError> {
     let down = INPUT {
@@ -1334,11 +1448,11 @@ fn send_vk_tap<B: InputExecutionBackend>(
             ));
         }
     }
-    Err(ProtocolError::commit(
-        ErrorCode::InputFailed,
-        ErrorStage::InputStarted,
+    Err(classify_send_input_failure(
+        backend,
+        target_hwnd,
+        sent,
         InternalMutationDetail::UnknownOrPartial,
-        DiagnosticReason::SendInputShortCount,
     ))
 }
 
@@ -1351,6 +1465,7 @@ fn send_vk_tap<B: InputExecutionBackend>(
 /// - If the release-only cleanup fails, returns `InputLockQuarantined`.
 fn send_vk_chord<B: InputExecutionBackend>(
     backend: &mut B,
+    target_hwnd: HWND,
     vks: &[VIRTUAL_KEY],
 ) -> Result<(), ProtocolError> {
     let n = vks.len();
@@ -1433,11 +1548,11 @@ fn send_vk_chord<B: InputExecutionBackend>(
         }
     }
 
-    Err(ProtocolError::commit(
-        ErrorCode::InputFailed,
-        ErrorStage::InputStarted,
+    Err(classify_send_input_failure(
+        backend,
+        target_hwnd,
+        sent,
         InternalMutationDetail::UnknownOrPartial,
-        DiagnosticReason::SendInputShortCount,
     ))
 }
 
