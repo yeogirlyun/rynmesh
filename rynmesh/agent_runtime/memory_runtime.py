@@ -1498,6 +1498,26 @@ def _replace_matching_claim_sentences(
     text: str,
     claim_matcher: Any,
     host_note: str,
+) -> str:
+    parts = _SENTENCE_BOUNDARY_RE.split(text)
+    out: list[str] = []
+    for idx in range(0, len(parts), 2):
+        seg = parts[idx]
+        delim = parts[idx + 1] if idx + 1 < len(parts) else ""
+        if seg and "（主机注：" not in seg and claim_matcher(seg):
+            leading_ws_len = len(seg) - len(seg.lstrip(" \t"))
+            leading_ws = seg[:leading_ws_len]
+            trailing_delim = delim if delim.startswith("\n") else ""
+            out.append(f"{leading_ws}{host_note}{trailing_delim}")
+        else:
+            out.append(seg + delim)
+    return "".join(out)
+
+
+def _append_note_to_matching_claim_sentences(
+    text: str,
+    claim_matcher: Any,
+    host_note: str,
     *,
     skip_substring: str | None = None,
 ) -> str:
@@ -1506,19 +1526,32 @@ def _replace_matching_claim_sentences(
     for idx in range(0, len(parts), 2):
         seg = parts[idx]
         delim = parts[idx + 1] if idx + 1 < len(parts) else ""
-        if (
-            seg
-            and "（主机注：" not in seg
-            and (skip_substring is None or skip_substring not in seg)
-            and claim_matcher(seg)
-        ):
-            leading_ws_len = len(seg) - len(seg.lstrip(" \t"))
-            leading_ws = seg[:leading_ws_len]
-            trailing_delim = delim if delim.startswith("\n") else ""
-            out.append(f"{leading_ws}{host_note}{trailing_delim}")
+        next_seg = parts[idx + 2] if idx + 2 < len(parts) else ""
+        already_noted = (
+            "（主机注：" in seg
+            or (skip_substring is not None and skip_substring in seg)
+            or next_seg.lstrip(" \t").startswith(host_note)
+        )
+        if seg and not already_noted and claim_matcher(seg):
+            if delim.startswith("\n"):
+                out.append(f"{seg}{host_note}{delim}")
+            else:
+                out.append(f"{seg}{delim}{host_note}")
         else:
             out.append(seg + delim)
     return "".join(out)
+
+
+def _has_identifiable_task_model_destination(row: dict[str, Any] | None) -> bool:
+    """Return False only for synthetic stub destination dicts that lack provider_peer_id."""
+    if not isinstance(row, dict):
+        return False
+    raw_dest = row.get("model_destination")
+    if raw_dest is None:
+        return True
+    if not isinstance(raw_dest, dict):
+        return False
+    return bool(str(raw_dest.get("provider_peer_id") or raw_dest.get("peer_id") or "").strip())
 
 
 def guard_false_memory_save_claim(row: dict[str, Any], content: str) -> str:
@@ -1569,8 +1602,8 @@ def guard_false_memory_save_claim(row: dict[str, Any], content: str) -> str:
     if isinstance(current_receipt, dict) and (
         current_receipt.get("applied") is True or current_receipt.get("saved") is True
     ):
-        if current_receipt.get("visible_to_model") is False:
-            return _replace_matching_claim_sentences(
+        if current_receipt.get("visible_to_model") is False and _has_identifiable_task_model_destination(row):
+            return _append_note_to_matching_claim_sentences(
                 text,
                 matches_claim,
                 "（主机注：已存本机，当前模型不可见）",

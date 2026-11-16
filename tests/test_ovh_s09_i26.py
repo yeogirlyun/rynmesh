@@ -215,30 +215,46 @@ def test_t2_unbacked_or_failed_or_invisible_claim_replaces_only_offending_senten
     assert "记忆已保存" not in guarded_propose
     assert "（主机注：本轮没有成功保存记忆，原因：" in guarded_propose
 
-    # 3. Saved locally with visible_to_model=False (S09-I24) -> notes saved on device & invisible to current model
-    def save_invisible(data: dict[str, Any]) -> dict[str, Any]:
-        r = _seed_row(
+    # 3. Saved locally with visible_to_model=False (S09-I24) -> keeps original claim sentence and appends host note right after it
+    def save_invisible(data: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        r_unbound = _seed_row(
             data,
             task_id="task-invis",
             message_id="m-invis",
             user_text="记住我的生日是 5 月 20 日",
             destination=None,
         )
-        memory_runtime.execute_explicit_owner_intent_in_tx(data, r)
-        return r
+        memory_runtime.execute_explicit_owner_intent_in_tx(data, r_unbound)
+        data.setdefault("memory", {}).setdefault("settings", {})["default_exposure"] = {
+            "mode": "restricted",
+            "allowed_destinations": [],
+        }
+        r_restricted = _seed_row(
+            data,
+            task_id="task-invis-bound",
+            message_id="m-invis-bound",
+            user_text="记住我的相机是富士 X-T5",
+            destination=DEST_BOUND,
+        )
+        memory_runtime.execute_explicit_owner_intent_in_tx(data, r_restricted)
+        return r_unbound, r_restricted
 
-    row_invis = store.transaction(save_invisible)
+    row_invis, row_restricted = store.transaction(save_invisible)
     assert row_invis["memory_last_receipt"]["saved"] is True
     assert row_invis["memory_last_receipt"]["visible_to_model"] is False
+    assert row_restricted["memory_last_receipt"]["saved"] is True
+    assert row_restricted["memory_last_receipt"]["visible_to_model"] is False
 
-    guarded_invis = memory_runtime.guard_false_memory_save_claim(
-        row_invis,
-        "好的，生日信息收到。\n我已记住你的生日。\n还有别的事吗？",
-    )
-    assert "好的，生日信息收到。" in guarded_invis
-    assert "还有别的事吗？" in guarded_invis
-    assert "我已记住你的生日" not in guarded_invis
-    assert "已存本机，当前模型不可见" in guarded_invis
+    for target_row in (row_invis, row_restricted):
+        guarded_invis = memory_runtime.guard_false_memory_save_claim(
+            target_row,
+            "好的，生日信息收到。\n我已记住你的生日。\n还有别的事吗？",
+        )
+        assert "好的，生日信息收到。" in guarded_invis
+        assert "还有别的事吗？" in guarded_invis
+        assert "我已记住你的生日。（主机注：已存本机，当前模型不可见）" in guarded_invis
+        # Idempotent if invoked a second time
+        assert memory_runtime.guard_false_memory_save_claim(target_row, guarded_invis) == guarded_invis
 
 
 def test_t3_intermediate_response_with_tool_calls_strips_only_forged_receipt_not_claims(
