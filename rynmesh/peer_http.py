@@ -3071,8 +3071,11 @@ def create_app(store: RynmeshStore | None = None):
     )
     peer_providers.extension_source = lambda: app.state.agent_runtime.tools.extensions.store.list_peer_providers_internal()
 
+    mcp_token_failures: dict[str, str] = {}
+
     def _mcp_token_for_plugin(plugin_id: str):
         from .agent_runtime.extensions.mcp_oauth import COMPANY_PLUGIN_IDS
+        from .agent_runtime.store import AgentError
         from .peer_providers.service import companion_servers
         ext = app.state.agent_runtime.tools.extensions
         provider = next((row for row in ext.store.list_peer_providers_internal()
@@ -3080,16 +3083,24 @@ def create_app(store: RynmeshStore | None = None):
         url = ((provider or {}).get("peer_provider") or {}).get("url")
         # The company workspace plugin signs in to its local service; the
         # company-issued sign-in may sit on a sibling company plugin.
+        failure = "peer_provider_companion_missing"
         for server in companion_servers(ext.store.list_mcp_servers_internal(), plugin_id, url, COMPANY_PLUGIN_IDS):
+            failure = "agent_mcp_token_unavailable"
             try:
                 token = ext.manager.oauth.access_token(server)
+            except AgentError as exc:
+                failure = str(exc)
+                continue
             except Exception:
                 continue
             if token:
+                mcp_token_failures.pop(plugin_id, None)
                 return token
+        mcp_token_failures[plugin_id] = failure
         return None
 
     peer_providers.mcp_token_source = _mcp_token_for_plugin
+    peer_providers.mcp_token_failure = mcp_token_failures.get
 
     # Installer-provided plugin runtimes update in the background; a runtime's
     # downloads are authorized by its provider's sign-in.

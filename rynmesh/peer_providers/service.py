@@ -56,7 +56,7 @@ def companion_servers(servers, plugin_id, provider_url, company_plugins=frozense
 class PeerProviderService:
     def __init__(self, home, store, messaging_key, *, transport=None, clock=time.time,
                  callback_factory=None, model_status=None, endpoints=None, extension_source=None,
-                 browser_open=None, mcp_token_source=None, mcp_workspace_source=None):
+                 browser_open=None, mcp_token_source=None, mcp_workspace_source=None, mcp_token_failure=None):
         self.store, self.messaging_key, self.clock = store, messaging_key, clock
         self.storage = SealedStore(home, messaging_key)
         self.oauth = OAuthClient(transport or request_json, clock=clock, callback_factory=callback_factory)
@@ -64,6 +64,8 @@ class PeerProviderService:
         self.endpoints = endpoints or (lambda: [])
         self.extension_source, self.browser_open = extension_source, browser_open
         self.mcp_token_source = mcp_token_source
+        self.mcp_token_failure = mcp_token_failure or (lambda plugin_id: None)
+        self._sign_in_errors = {}
         self.mcp_workspace_source = mcp_workspace_source
         self._lock = threading.RLock()
         self._rows = self.storage.read()
@@ -75,6 +77,7 @@ class PeerProviderService:
         self.storage.write(self._rows)
 
     def _clear(self, plugin_id):
+        self._sign_in_errors.pop(plugin_id, None)
         self._cache.pop(plugin_id, None)
         pending = self._pending.pop(plugin_id, None)
         if pending:
@@ -184,7 +187,9 @@ class PeerProviderService:
         return {"plugin_id": plugin_id, "resource": row["config"]["url"], "enabled": row["enabled"],
                 "status": "pending" if pending else "connected" if row.get("session") and row["enabled"] else "signed_out",
                 "bound": bool(row.get("binding") and row.get("session") and row["enabled"]),
-                "selected_service_ids": sorted(row.get("published", {}))}
+                "selected_service_ids": sorted(row.get("published", {})),
+                **({"sign_in_error": self._sign_in_errors[plugin_id]}
+                   if plugin_id in self._sign_in_errors and not row.get("session") else {})}
 
     def status(self, plugin_id=None):
         self.sync_from_extensions()
@@ -480,6 +485,11 @@ class PeerProviderService:
         row = self._get(plugin_id)
         if not row.get("session") and self.mcp_token_source is not None:
             mcp_token = self.mcp_token_source(plugin_id)
+            with self._lock:
+                if mcp_token:
+                    self._sign_in_errors.pop(plugin_id, None)
+                else:
+                    self._sign_in_errors[plugin_id] = self.mcp_token_failure(plugin_id) or "agent_mcp_token_unavailable"
             if mcp_token and self.clock() - self._companion_failed.get((plugin_id, mcp_token), float("-inf")) >= 300:
                 try:
                     session = await self.oauth.exchange_companion(row["config"], mcp_token)
