@@ -710,7 +710,15 @@ class AgentLoop:
                 queued = next(item for item in pending if item["call_id"] == record["call"]["call_id"])
                 queued["operation_id"] = record["call"]["operation_id"]
             if calls:
-                message["tool_calls"] = [{"id": call["call_id"], "type": "function", "function": {"name": call["name"], "arguments": call["arguments_json"]}} for call in pending]
+                message["tool_calls"] = [
+                    {
+                        "id": call["call_id"],
+                        "type": "function",
+                        **({"wire_kind": "custom"} if call.get("wire_kind") == "custom" else {}),
+                        "function": {"name": call["name"], "arguments": call["arguments_json"]},
+                    }
+                    for call in pending
+                ]
             prior_cont = selected.get("answer_continuation") or {}
             cont_count = (
                 int(prior_cont.get("count", 0) or 0)

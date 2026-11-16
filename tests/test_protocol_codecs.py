@@ -417,3 +417,311 @@ def test_t4_disabled_capability_is_byte_identical_to_baseline():
     assert dump_bytes(default_wire) == baseline_bytes
     assert dump_bytes(explicit_false_wire) == baseline_bytes
     assert dump_bytes(profile_false_wire) == baseline_bytes
+
+
+def test_t5_real_protocol_adapter_and_agent_runtime_custom_patch_round_trip(tmp_path, monkeypatch):
+    """返工补充：经真实 SourceStore.adapter -> NativeProtocolAdapter -> AgentRuntime 假 HTTP 层闭环，验证能力位开关、agent 历史保留 wire_kind='custom'、下一轮回放及关闭时字节不变。"""
+    import threading
+    from types import SimpleNamespace
+
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+
+    from rynmesh.agent_runtime.bridge import AgentModelBridge
+    from rynmesh.agent_runtime.local_tools import LocalTools
+    from rynmesh.agent_runtime.models import ModelCatalog
+    from rynmesh.agent_runtime.operation_ledger import OperationLedger
+    from rynmesh.agent_runtime.runtime import AgentRuntime
+    from rynmesh.agent_runtime.store import AgentStore
+    from rynmesh.llm_package import model_settings, protocol_adapter
+    from rynmesh.llm_package.protocol_adapter import NativeProtocolAdapter
+    from rynmesh.llm_package.sources import SourceStore
+
+    class _FakeHttpResponse:
+        def __init__(self, body_dict: dict):
+            self.body = json.dumps(body_dict).encode("utf-8")
+            self.headers = {"content-type": "application/json"}
+
+        def read(self, _limit=None):
+            return self.body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+    raw_patch = (
+        "*** Begin Patch\n"
+        "*** Update File: notes.txt\n"
+        "@@\n"
+        "-alpha\n"
+        "+beta\n"
+        "*** End Patch\n"
+    )
+    captured_requests: list[bytes] = []
+    turn_replies = [
+        {
+            "id": "resp_e2e_1",
+            "status": "completed",
+            "output": [
+                {
+                    "type": "custom_tool_call",
+                    "id": "ctc_e2e_1",
+                    "call_id": "call_e2e_patch_1",
+                    "name": "ryn_apply_patch",
+                    "input": raw_patch,
+                    "status": "completed",
+                }
+            ],
+            "usage": {"input_tokens": 30, "output_tokens": 20},
+        },
+        {
+            "id": "resp_e2e_2",
+            "status": "completed",
+            "output": [
+                {
+                    "type": "message",
+                    "id": "msg_e2e_2",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": "Updated notes.txt to beta."}],
+                }
+            ],
+            "usage": {"input_tokens": 45, "output_tokens": 10},
+        },
+    ]
+
+    def _fake_urlopen(request, timeout=None):
+        captured_requests.append(bytes(request.data))
+        return _FakeHttpResponse(turn_replies.pop(0))
+
+    monkeypatch.setattr(protocol_adapter, "model_urlopen", _fake_urlopen)
+
+    # 1) 能力位关闭（第三方 Responses 源 / 未验证源）经 NativeProtocolAdapter 请求字节完全不变
+    off_req = {
+        "messages": [{"role": "user", "content": "Edit notes.txt"}],
+        "tools": [_tool_spec("ryn_apply_patch"), _tool_spec("ryn_file_read")],
+        "max_tokens": 256,
+    }
+    off_adapter = NativeProtocolAdapter(
+        protocol="openai_responses",
+        base_url="https://proxy.example/v1",
+        provider="custom",
+        model="gpt-5-codex",
+        api_key="sk-test",
+        allow_non_loopback=True,
+    )
+    turn_replies.insert(
+        0,
+        {
+            "id": "resp_off",
+            "status": "completed",
+            "output": [
+                {
+                    "type": "message",
+                    "id": "msg_off",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": "ok"}],
+                }
+            ],
+            "usage": {"input_tokens": 10, "output_tokens": 2},
+        },
+    )
+    off_adapter.chat(copy.deepcopy(off_req), task_id="task_off", timeout_s=10)
+    off_sent_bytes = captured_requests.pop(0)
+    expected_off_payload = make_request(
+        copy.deepcopy(off_req),
+        RESPONSES,
+        "gpt-5-codex",
+        off_adapter._scope(),
+        prompt_cache="auto",
+        custom_tools=False,
+    )
+    assert off_sent_bytes == json.dumps(expected_off_payload).encode("utf-8")
+
+    # 2) 已验证的 OpenAI Responses 源：经 SourceStore.adapter -> NativeProtocolAdapter -> AgentRuntime 全链路运行
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "notes.txt").write_text("alpha\n", encoding="utf-8")
+
+    source_record = {
+        "id": "src-openai",
+        "name": "OpenAI Official",
+        "kind": "api",
+        "provider": "openai",
+        "protocol": "openai_responses",
+        "base_url": "https://api.openai.com/v1",
+        "api_key": "sk-fixture",
+        "enabled": True,
+        "status": "ready",
+        "destination_revision": "rev-openai-1",
+        "models": ["gpt-5-codex"],
+        "tool_support": {"gpt-5-codex": "supported"},
+        "model_metadata": {},
+        "model_settings": {},
+    }
+    real_adapter = SourceStore.adapter(source_record, "gpt-5-codex")
+    svc_id = "api-src-openai-gpt-5-codex"
+    model_id = "local/" + svc_id
+
+    source_store = SimpleNamespace(
+        read=lambda: {"src-openai": copy.deepcopy(source_record)},
+        lock=threading.Lock(),
+        model_service_id=lambda record, model: svc_id,
+        shared_models=lambda record: [],
+        path=tmp_path / "sources.json",
+    )
+    managers = {
+        svc_id: SimpleNamespace(
+            manifest=SimpleNamespace(timeout_seconds=60),
+            adapter=real_adapter,
+            _slots=threading.BoundedSemaphore(1),
+            _lock=threading.Lock(),
+            _running=0,
+            _source_revision=model_settings.fingerprint(source_record, "gpt-5-codex"),
+        )
+    }
+    discovered = [
+        {
+            "peer_id": "node-local",
+            "node_name": "Local",
+            "online": True,
+            "ready": True,
+            "chat_protocol": "rynmesh.chat.v1",
+            "service": {
+                "package_id": svc_id,
+                "adapter": "openai_compatible",
+                "runtime": "external",
+                "model_alias": "gpt-5-codex",
+                "capabilities": ["client-tools"],
+            },
+        }
+    ]
+    services = {
+        "source_store": source_store,
+        "discover": lambda _net: copy.deepcopy(discovered),
+        "provider_for": lambda sid: managers.get(sid),
+    }
+    node_store = SimpleNamespace(
+        peer_id="node-local",
+        personal_space=SimpleNamespace(allows_ai=lambda _peer: False),
+        llm_tool_capabilities=SimpleNamespace(support=lambda _manifest, _model: "supported"),
+    )
+    catalog = ModelCatalog(services, node_store)
+    assert model_profiles.resolve(catalog.get_model(model_id))["custom_tools"] is True
+
+    agent_store = AgentStore(tmp_path / "agent", X25519PrivateKey.generate())
+
+    class _LocalToolBridge:
+        def __init__(self, st, home_dir):
+            ledger = OperationLedger(home_dir)
+            self.local = LocalTools(SimpleNamespace(home=home_dir), lambda: ledger)
+            self.local.store = st
+
+        def specs(self):
+            return [_tool_spec("ryn_apply_patch"), _tool_spec("ryn_file_read")]
+
+        def metadata(self, name):
+            desc, eff, risk, _ = SPECS[name]
+            return {
+                "effect": eff,
+                "risk": risk,
+                "title": desc.split(".")[0],
+                "scope_context_supported": True,
+                "supports_preview": eff == "write",
+                "preview_precondition": eff == "write",
+            }
+
+        def preview(self, name, arguments, *, context=None):
+            return self.local.preview(name, arguments, context or {})
+
+        def prepare_scope(self, selection, *, owner_id, consumer_node_id, model_destination):
+            return {"resource_grants": [], "egress_grants": []}
+
+        def validate_context(self, context, *, cheap_only=False):
+            return None
+
+        def execute(self, name, arguments, *, operation_id, cancelled, context=None, expected_preview=None):
+            return self.local.execute(
+                name,
+                arguments,
+                operation_id=operation_id,
+                context=dict(context or {}),
+                expected_preview=expected_preview,
+                cancelled=cancelled,
+            )
+
+        def verification_specs(self):
+            return []
+
+        def verify(self, receipt, criteria, *, context, cancelled):
+            return {"status": "unknown", "evidence": {}, "checked_at": "fixed"}
+
+    runtime = AgentRuntime(
+        agent_store,
+        AgentModelBridge(services, catalog),
+        _LocalToolBridge(agent_store, tmp_path / "agent"),
+        catalog,
+        owner_id="owner-local",
+        consumer_node_id="node-local",
+    )
+    runtime.update_settings(
+        {
+            "enabled": True,
+            "workspace_root": str(workspace),
+            "permission_mode": "automatic",
+            "model_id": model_id,
+        }
+    )
+    created = runtime.create({"message": "Change alpha to beta in notes.txt", "model_id": model_id})
+
+    # 第 1 步模型请求：发出 custom 工具，接收 custom_tool_call，agent 历史写入 wire_kind="custom"
+    runtime.run_once()
+    assert len(captured_requests) == 1
+    step1_payload = json.loads(captured_requests[0].decode("utf-8"))
+    patch_tool_step1 = next(t for t in step1_payload["tools"] if t["name"] == "ryn_apply_patch")
+    assert patch_tool_step1 == {
+        "type": "custom",
+        "name": "ryn_apply_patch",
+        "description": SPECS["ryn_apply_patch"][0],
+        "format": {
+            "type": "grammar",
+            "syntax": "lark",
+            "definition": local_specs.APPLY_PATCH_LARK_GRAMMAR,
+        },
+    }
+
+    stored_after_step1 = runtime.store.read()["tasks"][created["id"]]
+    assistant_in_history = next(
+        m for m in stored_after_step1["messages"] if m.get("role") == "assistant" and m.get("tool_calls")
+    )
+    assert assistant_in_history["tool_calls"][0]["wire_kind"] == "custom"
+
+    # 工具执行轮次 + 后续模型轮次：模拟去掉 provider_state 以同时检验仅靠公开历史 wire_kind="custom" 的回放
+    def _drop_provider_state(data):
+        for msg in data["tasks"][created["id"]]["messages"]:
+            msg.pop("provider_state", None)
+
+    runtime.store.transaction(_drop_provider_state)
+
+    for _ in range(4):
+        runtime.run_once()
+        if runtime.get(created["id"])["status"] in {"completed", "failed"}:
+            break
+
+    assert runtime.get(created["id"])["status"] == "completed"
+    assert (workspace / "notes.txt").read_text(encoding="utf-8") == "beta\n"
+    assert len(captured_requests) == 2
+    step2_payload = json.loads(captured_requests[1].decode("utf-8"))
+    replay_call = next(item for item in step2_payload["input"] if item.get("type") == "custom_tool_call")
+    replay_out = next(item for item in step2_payload["input"] if item.get("type") == "custom_tool_call_output")
+    assert replay_call == {
+        "type": "custom_tool_call",
+        "call_id": "call_e2e_patch_1",
+        "name": "ryn_apply_patch",
+        "input": raw_patch,
+    }
+    assert replay_out["call_id"] == "call_e2e_patch_1"
+    assert json.loads(replay_out["output"])["applied"] is True
+
