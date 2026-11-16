@@ -34,7 +34,7 @@ beforeEach(() => {
 });
 
 it("polls without overlapping a slow check and reloads after recovery", async () => {
-  vi.useFakeTimers();
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
   let resolve!: (value: OpenedSiteStatus) => void;
   api.status.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
   const view = renderWindow(`/apps/sites/open/${KEY}`);
