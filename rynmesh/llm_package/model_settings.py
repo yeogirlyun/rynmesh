@@ -153,7 +153,7 @@ def defaults(record, model=None):
     return {"context_window": window,
             "max_output_tokens": max_output,
             "request_defaults": copy.deepcopy(record.get("request_defaults", {})),
-            "max_concurrent": _known_vendor_max_concurrent(model) or 1,
+            "max_concurrent": _known_vendor_max_concurrent(model) or (4 if record.get("kind") == "api" else 1),
             "requests_per_day": None,
             "tokens_per_day": None,
             "shared_tokens_per_day": None,

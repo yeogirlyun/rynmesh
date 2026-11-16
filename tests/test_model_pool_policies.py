@@ -101,6 +101,9 @@ def test_inflight_model_admission_survives_rule_rebuild_and_sibling_independent(
     app, _ = node
     record, _ = add_source(app, models=["a", "b"])
     sources = app.state.llm_agent_services["source_store"]
+    sources.configure_model(record["id"], {"model_id": "a", "expected_rule_revision": record["model_settings"]["a"]["rule_revision"],
+        "configuration": {"max_concurrent": 1}})
+    record = sources.read()[record["id"]]
     entered, release = threading.Event(), threading.Event()
     class Inner:
         def chat(self, body, **kwargs):
