@@ -101,13 +101,40 @@ for raw in sys.stdin.buffer:
         elif tname == "inspect_document":
             payload = {"characters": len(state["text"])}
         elif tname == "save_document":
-            with open(targs["path"], "wb") as f:
-                f.write(b"Ryn MCP boundary fixture; not a real DOCX\n" + state["text"].encode("utf-8"))
-            payload = {"saved": True}
+            if str(targs["path"]).endswith("partial-timeout.docx"):
+                with open(targs["path"], "wb") as f:
+                    f.write(b"Ryn MCP boundary fixture; not a real DOCX\nhalf-written body without trailer")
+                    f.flush()
+                    time.sleep(0.8)
+                    f.write(b"\nEOF_CENTRAL_DIR")
+                    f.flush()
+                payload = {"saved": True}
+            else:
+                with open(targs["path"], "wb") as f:
+                    f.write(
+                        b"Ryn MCP boundary fixture; not a real DOCX\n"
+                        + state["text"].encode("utf-8")
+                        + b"\nEOF_CENTRAL_DIR"
+                    )
+                payload = {"saved": True}
         elif tname == "open_document":
             with open(targs["path"], "rb") as f:
                 data = f.read()
-            state["text"] = data.split(b"\n", 1)[-1].decode("utf-8")
+            if not (
+                data.startswith(b"Ryn MCP boundary fixture; not a real DOCX\n")
+                and data.endswith(b"\nEOF_CENTRAL_DIR")
+            ):
+                send({
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "content": [{"type": "text", "text": "incomplete or truncated document"}],
+                        "isError": True,
+                    },
+                })
+                continue
+            body = data[len(b"Ryn MCP boundary fixture; not a real DOCX\n") : -len(b"\nEOF_CENTRAL_DIR")]
+            state["text"] = body.decode("utf-8")
             payload = {"opened": True}
         else:
             send({"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": "unknown"}})
@@ -530,3 +557,76 @@ def test_s08_i48_t6_same_operation_id_reexecutes_after_fixing_arguments(craft):
     assert saved["ok"] is True
     assert (craft.workspace / "fixed-output.docx").read_bytes() == PREFIX + b"initial fixed text"
     assert ledger.get("t6-save-same-op")["status"] == "confirmed"
+
+
+def test_s08_i48_t7_timeout_while_engine_still_writing_does_not_publish_partial_file(craft, tmp_path, monkeypatch):
+    # Scenario A: Real subprocess engine is still writing staged output when craft_mcp_timeout fires.
+    script = tmp_path / "partial_write_server.py"
+    script.write_text(REAL_SESSION_SERVER, encoding="utf-8")
+    real_spawn = craft_native.process_guard.spawn
+
+    def spawn_fixture(args, **kwargs):
+        return real_spawn([sys.executable, "-u", str(script)], **kwargs)
+
+    monkeypatch.setattr(craft_native.process_guard, "spawn", spawn_fixture)
+    monkeypatch.setattr(craft_native, "McpProcess", REAL_MCP_PROCESS)
+
+    runtime, _ = craft.runtime()
+    task = runtime.create({"message": "超时时引擎仍在写暂存文件不得发布半截文件"})
+    context = _context(task)
+    ledger = craft.tools.resource_writes.ledger
+
+    _act(craft, context, "new_document", operation="t7-new")
+    _act(craft, context, "type_text", {"text": "full intended document body"}, operation="t7-edit")
+
+    partial_args = _args("save_document", {"path": "partial-timeout.docx"})
+    partial_preview = craft.tools.preview(ACTION, partial_args, context=context)
+    session_proc = craft.tools.craft.sessions[(task["id"], "wordcraft")]["process"].process
+
+    monkeypatch.setitem(craft_agent.TOOL_TIMEOUTS, "output", 0.2)
+    with pytest.raises(AgentError, match="agent_write_outcome_unknown"):
+        craft.tools.execute(
+            ACTION,
+            partial_args,
+            context=context,
+            operation_id="t7-partial-write",
+            expected_preview=partial_preview,
+            cancelled=lambda: False,
+        )
+
+    assert session_proc.poll() is not None
+    assert not (craft.workspace / "partial-timeout.docx").exists()
+    assert ledger.get("t7-partial-write")["status"] == "dispatched"
+    op_meta = {
+        "operation_id": "t7-partial-write",
+        "tool": ACTION,
+        "arguments": partial_args,
+        "arguments_sha256": craft_agent.fingerprint(partial_args),
+    }
+    assert (
+        craft.tools.reconcile("t7-partial-write", context={**context, "operation": op_meta}, cancelled=lambda: False)["outcome"]
+        == "unknown"
+    )
+
+    # Scenario B: Engine process refuses to exit (poll() remains None after close), even if staged file has bytes.
+    monkeypatch.setitem(craft_agent.TOOL_TIMEOUTS, "output", 300.0)
+    monkeypatch.setattr(craft_native, "McpProcess", craft.backend.process)
+    _act(craft, context, "new_document", operation="t7-unstopped-new")
+    _act(craft, context, "type_text", {"text": "body"}, operation="t7-unstopped-edit")
+    unstopped_args = _args("save_document", {"path": "unstopped-timeout.docx"})
+    unstopped_preview = craft.tools.preview(ACTION, unstopped_args, context=context)
+    unstopped_session = craft.tools.craft.sessions[(task["id"], "wordcraft")]
+    unstopped_session["process"].process = SimpleNamespace(poll=lambda: None)
+    craft.backend.fail_next = "save_document"
+
+    with pytest.raises(AgentError, match="agent_write_outcome_unknown"):
+        craft.tools.execute(
+            ACTION,
+            unstopped_args,
+            context=context,
+            operation_id="t7-unstopped-write",
+            expected_preview=unstopped_preview,
+            cancelled=lambda: False,
+        )
+    assert not (craft.workspace / "unstopped-timeout.docx").exists()
+    assert ledger.get("t7-unstopped-write")["status"] == "dispatched"

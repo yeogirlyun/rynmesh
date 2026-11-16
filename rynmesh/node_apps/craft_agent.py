@@ -423,6 +423,18 @@ class CraftTools:
             ledger.begin(binding, preview or {}, receipt_reserve=4096)
         ledger.update(operation_id, "not_executed", binding=binding, preview=preview or {}, error=error_code)
 
+    @staticmethod
+    def _confirm_process_exited(mcp_process, wait_seconds=1.0):
+        mcp_process.close()
+        if not mcp_process.closed.is_set():
+            return False
+        deadline = time.monotonic() + wait_seconds
+        while mcp_process.process.poll() is None:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.02)
+        return True
+
     def _invoke_action(self, app, tool, normalized, preview, session, context, cancelled, *, operation_id=None):
         with tempfile.TemporaryDirectory(prefix=".ryn-craft-output-", dir=session["root"], ignore_cleanup_errors=True) as directory:
             prepared = copy.deepcopy(normalized)
@@ -456,26 +468,39 @@ class CraftTools:
                     tool, prepared, timeout=tool_timeout(app, tool), cancelled=cancelled
                 )
             except CraftError as exc:
-                if (
-                    str(exc) == "craft_mcp_timeout"
-                    and staged_outputs
-                    and all(p.is_file() and 0 < p.stat().st_size <= MAX_FILE for p in staged_outputs)
-                ):
-                    staged_manifest = [
-                        {"path": output, "sha256": file_hash(staged_outputs[index])}
-                        for index, output in enumerate(preview["new_outputs"])
-                    ]
-                    if all(
-                        file_hash(staged_outputs[index]) == staged_manifest[index]["sha256"]
-                        for index in range(len(staged_outputs))
+                if str(exc) == "craft_mcp_timeout" and staged_outputs:
+                    # Stop the task's engine process and confirm it has actually exited
+                    # before inspecting or publishing any staged output file.
+                    self.close_task(context["task_id"])
+                    if (
+                        self._confirm_process_exited(session["process"])
+                        and all(p.is_file() and 0 < p.stat().st_size <= MAX_FILE for p in staged_outputs)
                     ):
-                        if operation_id is not None:
-                            self.ledger().update(operation_id, "published", staged_outputs=staged_manifest)
-                        for index, item in enumerate(staged_manifest):
-                            try:
-                                self._publish(staged_outputs[index], Path(item["path"]))
-                            except OSError:
+                        snapshots = []
+                        verified_complete = True
+                        for index, output in enumerate(preview["new_outputs"]):
+                            staged = staged_outputs[index]
+                            stat_before = staged.stat()
+                            sha_before = file_hash(staged)
+                            validation = self._safe_reopen(app, staged, session, cancelled)
+                            stat_after = staged.stat()
+                            if (
+                                validation.get("status") != "reopened"
+                                or stat_after.st_size != stat_before.st_size
+                                or stat_after.st_mtime_ns != stat_before.st_mtime_ns
+                                or file_hash(staged) != sha_before
+                            ):
+                                verified_complete = False
                                 break
+                            snapshots.append({"path": output, "sha256": sha_before})
+                        if verified_complete and len(snapshots) == len(staged_outputs):
+                            if operation_id is not None:
+                                self.ledger().update(operation_id, "published", staged_outputs=snapshots)
+                            for index, item in enumerate(snapshots):
+                                try:
+                                    self._publish(staged_outputs[index], Path(item["path"]))
+                                except OSError:
+                                    break
                 raise
             result = data_result(raw_call)
             session["revision"] += 1
