@@ -2266,5 +2266,7 @@
   "The selected service changed. Open the current model before sharing.": "所选服务已变更，请打开当前模型后再共享。",
   "Ryn {{version}} will be installed as Ryn quits.": "退出时将安装 Ryn {{version}}。",
   "Ryn downloads new versions in the background. When one is ready, click Update next to the Ryn logo.": "Ryn 会在后台下载新版本，下好后点左上角 Ryn 旁边的「更新」即可。",
-  "Update settings": "更新设置"
+  "Update settings": "更新设置",
+  "Ryn node could not start. Retrying periodically; open logs from the tray.": "Ryn 节点无法启动，正在定期重试，可从托盘打开日志",
+  "Ryn node has recovered.": "Ryn 节点已恢复"
 }
