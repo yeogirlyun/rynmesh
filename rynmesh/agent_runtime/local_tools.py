@@ -731,12 +731,15 @@ class LocalTools:
             current_root = current.get("workspace_root") or self.store.default_workspace()
         if bound.get("workspace_root", "") != current_root:
             raise AgentToolRejected("agent_workspace_changed_new_task_required")
-        modes = set()
-        if current.get("permission_mode") in _PERMISSION_ORDER:
-            modes.add(current["permission_mode"])
+        settings_mode = current["permission_mode"] if current.get("permission_mode") in _PERMISSION_ORDER else "workspace"
         row_info = (data.get("tasks") or {}).get(task_id) if task_id else None
-        if isinstance(row_info, dict) and row_info.get("permission_mode") in _PERMISSION_ORDER:
-            modes.add(row_info["permission_mode"])
+        if isinstance(row_info, dict):
+            row_mode = row_info["permission_mode"] if row_info.get("permission_mode") in _PERMISSION_ORDER else "workspace"
+        elif context.get("permission_mode") in _PERMISSION_ORDER:
+            row_mode = context["permission_mode"]
+        else:
+            row_mode = "workspace"
+        modes = {settings_mode, row_mode}
         if context.get("permission_mode") in _PERMISSION_ORDER:
             modes.add(context["permission_mode"])
         effective_mode = next((m for m in _PERMISSION_ORDER if m in modes), "workspace")
@@ -745,6 +748,30 @@ class LocalTools:
             "desktop_access": bool(bound.get("desktop_access") and current.get("desktop_access")),
             "permission_mode": effective_mode,
         }
+
+    def _shell_cwd(self, value, context, policy=None):
+        policy = policy or self.policy(context)
+        if not policy["workspace_root"]:
+            raise AgentToolRejected("agent_workspace_required")
+        if value is None:
+            value = "."
+        if not isinstance(value, str) or not value or "\x00" in value:
+            raise AgentToolRejected("agent_local_path_invalid")
+        expanded = os.path.expanduser(value) if (value == "~" or value.startswith(("~/", "~\\"))) else value
+        requested = Path(expanded)
+        if policy.get("permission_mode") == "automatic" and requested.is_absolute():
+            if os.name == "nt" and _has_invalid_windows_parts(requested):
+                raise AgentToolRejected("agent_local_path_invalid")
+            cwd = requested.resolve()
+            if os.name == "nt" and _has_invalid_windows_parts(cwd):
+                raise AgentToolRejected("agent_local_path_invalid")
+            if not cwd.is_dir():
+                raise AgentToolRejected("agent_local_cwd_not_directory")
+            return cwd
+        cwd = self.path(value, context, policy)
+        if not cwd.is_dir():
+            raise AgentToolRejected("agent_local_cwd_not_directory")
+        return cwd
 
     def path(self, value, context, policy=None):
         policy = policy or self.policy(context)
@@ -1373,9 +1400,7 @@ class LocalTools:
                             raise AgentToolRejected("agent_local_destination_exists_or_parent_missing")
                         preview["destination"] = str(destination)
         elif name == "ryn_shell_execute":
-            cwd = self.path(args.get("cwd", "."), context)
-            if not cwd.is_dir():
-                raise AgentToolRejected("agent_local_cwd_not_directory")
+            cwd = self._shell_cwd(args.get("cwd", "."), context)
             shell = args.get("shell", "powershell" if os.name == "nt" else "sh")
             shell_command(shell, args["command"], tty=args.get("tty", False))
             preview.update(cwd=str(cwd), shell=shell, execution_scope="user_account_not_sandboxed")
@@ -1484,7 +1509,7 @@ class LocalTools:
                     # Resolve optional executables and read-only preparation before
                     # recording dispatch. A missing rg is a correctable tool error.
                     command = prepare_shell_command(args)
-                    cwd = self.path(args.get("cwd", "."), context, policy)
+                    cwd = self._shell_cwd(args.get("cwd", "."), context, policy)
                     root = self.path(".", context, policy)
                     before = None if is_read_shell else workspace_artifacts.snapshot(root)
                     prepared_shell = (command, cwd, root, before)
@@ -2389,7 +2414,7 @@ class LocalTools:
             if prepared_shell is None:
                 command = prepare_shell_command(args)
                 policy = self.policy(context)
-                cwd = self.path(args.get("cwd", "."), context, policy)
+                cwd = self._shell_cwd(args.get("cwd", "."), context, policy)
                 root = self.path(".", context, policy)
                 before = None if is_read else workspace_artifacts.snapshot(root)
             else:
