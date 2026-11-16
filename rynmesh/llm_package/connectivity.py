@@ -1,4 +1,4 @@
-"""Direct peer HTTP with separate connection and inference time budgets.
+"""Direct peer HTTP with separate connection, idle, and inference time budgets.
 
 Peer traffic must not follow redirects or a machine's HTTP proxy: an advertised
 LAN endpoint may be stale or belong to a different network after a move.
@@ -6,9 +6,9 @@ LAN endpoint may be stale or belong to a different network after a move.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import http.client
 import json
-from contextlib import contextmanager
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -16,7 +16,7 @@ from rynmesh.transport import network_key_header
 
 
 @contextmanager
-def peer_response(url: str, body: dict[str, Any], *, timeout_s: float):
+def peer_response(url: str, body: dict[str, Any], *, timeout_s: float, idle_s: float = 120.0):
     parsed = urlsplit(url)
     if (
         parsed.scheme not in {"http", "https"}
@@ -32,7 +32,7 @@ def peer_response(url: str, body: dict[str, Any], *, timeout_s: float):
     try:
         connection.connect()
         if connection.sock is not None:
-            connection.sock.settimeout(timeout_s)
+            connection.sock.settimeout(min(timeout_s, idle_s))
         path = parsed.path or "/"
         if parsed.query:
             path += "?" + parsed.query

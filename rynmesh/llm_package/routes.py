@@ -106,7 +106,10 @@ from .setup_recovery import (
 from .stream_protocol import (
     DEFAULT_MAX_EVENT_BYTES,
     DEFAULT_MAX_OUTPUT_BYTES,
+    DEFAULT_MAX_TERMINAL_BYTES,
+    PREVIEW_MAX_OUTPUT_BYTES,
     STREAM_PROTOCOL_VERSION,
+    STREAM_PROTOCOL_VERSION_V2,
     StreamEventBroker,
     StreamSequenceVerifier,
     seal_stream_delta,
@@ -148,11 +151,23 @@ def _is_peer_stream_too_large(exc: BaseException | None) -> bool:
     return isinstance(exc, ValueError) and text in {"peer stream line limit exceeded", "peer stream limit exceeded"}
 
 
+def _peer_stream_timeout_code(exc: BaseException | None) -> str | None:
+    if exc is None:
+        return None
+    text = str(exc).strip()
+    if isinstance(exc, ValueError) and text in {"peer_stream_idle_timeout", "peer_stream_total_timeout"}:
+        return text
+    return None
+
+
 def _delivery_error_code(exc: Exception, *, transport: str) -> str:
     if isinstance(exc, P2PMessageTooLarge) or isinstance(getattr(exc, "__cause__", None), P2PMessageTooLarge):
         return "peer_request_too_large"
     if _is_peer_stream_too_large(exc) or _is_peer_stream_too_large(getattr(exc, "__cause__", None)):
         return "peer_stream_too_large"
+    stream_timeout = _peer_stream_timeout_code(exc) or _peer_stream_timeout_code(getattr(exc, "__cause__", None))
+    if stream_timeout:
+        return stream_timeout
     if isinstance(exc, TaskProtocolError) and str(exc) == "stream interrupted; automatic replay is disabled":
         return "direct_stream_interrupted"
     if isinstance(exc, P2PCapacityError):
@@ -720,12 +735,14 @@ class ProviderService:
             return self._failure(
                 task_id, reply_pub, str(outer["from_peer_id"]), "cancelled", "consumer_cancelled",
             )
+        stream_v2 = on_delta is not None and body.get("stream_protocol") == STREAM_PROTOCOL_VERSION_V2
+        negotiated_stream_protocol = STREAM_PROTOCOL_VERSION_V2 if stream_v2 else STREAM_PROTOCOL_VERSION
         metadata = {
             "consumer_peer_id": outer["from_peer_id"],
             "service_id": self.manifest.package_id,
             "request_hash": SignedPayload.from_dict(signed_request).subject_hash,
             **({"cli_model": cli_model} if cli_model else {}),
-            **({"stream_protocol": STREAM_PROTOCOL_VERSION} if on_delta is not None else {}),
+            **({"stream_protocol": negotiated_stream_protocol} if on_delta is not None else {}),
         }
         if not self._slots.acquire(blocking=False):
             return self._failure(task_id, reply_pub, outer["from_peer_id"], "rejected", "capacity_exhausted")
@@ -867,6 +884,7 @@ class ProviderService:
                 "task_id": task_id, "state": "succeeded", "service_id": self.manifest.package_id,
                 "model_alias": self.manifest.public_model_alias, "output": str(result["text"]),
                 **({"cli_model": cli_model} if cli_model else {}),
+                **({"stream_protocol": negotiated_stream_protocol} if on_delta is not None else {}),
                 **counts,
                 **({"cached_tokens": cached} if cached is not None else {}),
                 **billing, "reported_usage": counts,
@@ -880,7 +898,8 @@ class ProviderService:
                 sender_signing_key=self.store.private_key_bytes, recipient_messaging_pub=reply_pub,
                 expires_at=_expires(max(300, self.manifest.timeout_seconds * 2)),
             ).to_dict()
-            if on_delta is not None and len(json.dumps(encrypted, ensure_ascii=False).encode("utf-8")) > DEFAULT_MAX_EVENT_BYTES:
+            terminal_wire_limit = DEFAULT_MAX_TERMINAL_BYTES if stream_v2 else DEFAULT_MAX_EVENT_BYTES
+            if on_delta is not None and len(json.dumps(encrypted, ensure_ascii=False).encode("utf-8")) > terminal_wire_limit:
                 raise AdapterError("stream terminal exceeded wire limit")
             self.task_store.transition(
                 task_id=task_id, state="succeeded",
@@ -950,12 +969,14 @@ class ProviderService:
             raise TaskProtocolError("stream event limit is invalid")
         if not self._stream_slots.acquire(blocking=False):
             raise TaskProtocolError("stream subscriber capacity exhausted")
+        stream_v2 = body.get("stream_protocol") == STREAM_PROTOCOL_VERSION_V2
         events: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=32)
         disconnected = threading.Event()
         finished = threading.Event()
         deadline = time.monotonic() + self.manifest.timeout_seconds + 30
         sequence = 0
         output_bytes = 0
+        preview_truncated = False
 
         def publish(kind: str, value: Any) -> None:
             while not disconnected.is_set() and time.monotonic() < deadline:
@@ -966,12 +987,75 @@ class ProviderService:
                     continue
             raise AdapterError("task_cancelled")
 
+        def _utf8_pieces(text: str, max_bytes: int) -> list[str]:
+            if len(text.encode("utf-8")) <= max_bytes:
+                return [text]
+            pieces: list[str] = []
+            buf: list[str] = []
+            used = 0
+            for ch in text:
+                ch_bytes = len(ch.encode("utf-8"))
+                if buf and used + ch_bytes > max_bytes:
+                    pieces.append("".join(buf))
+                    buf = [ch]
+                    used = ch_bytes
+                else:
+                    buf.append(ch)
+                    used += ch_bytes
+            if buf:
+                pieces.append("".join(buf))
+            return pieces
+
         def on_delta(delta: str) -> None:
-            nonlocal sequence, output_bytes
+            nonlocal sequence, output_bytes, preview_truncated
             if disconnected.is_set() or (self.task_store.get(task_id) or {}).get("state") == "cancelled":
                 raise AdapterError("task_cancelled")
             if not isinstance(delta, str):
                 raise AdapterError("stream delta is invalid")
+            if not delta:
+                return
+            if stream_v2:
+                if preview_truncated:
+                    return
+                for piece in _utf8_pieces(delta, max(1, limit // 4)):
+                    piece_bytes = len(piece.encode("utf-8"))
+                    if output_bytes + piece_bytes > PREVIEW_MAX_OUTPUT_BYTES:
+                        preview_truncated = True
+                        state_envelope = seal_stream_delta(
+                            task_id=task_id,
+                            service_id=self.manifest.package_id,
+                            sequence=sequence,
+                            state="preview_truncated",
+                            stream_version=STREAM_PROTOCOL_VERSION_V2,
+                            sender_peer_id=self.store.peer_id,
+                            recipient_peer_id=str(outer["from_peer_id"]),
+                            sender_signing_key=self.store.private_key_bytes,
+                            recipient_messaging_pub=str(body.get("reply_messaging_pub") or ""),
+                            expires_at=_expires(max(300, self.manifest.timeout_seconds * 2)),
+                        )
+                        if len(json.dumps(state_envelope).encode("utf-8")) > limit:
+                            raise AdapterError("stream envelope exceeded negotiated event limit")
+                        publish("delta", state_envelope)
+                        sequence += 1
+                        return
+                    output_bytes += piece_bytes
+                    envelope = seal_stream_delta(
+                        task_id=task_id,
+                        service_id=self.manifest.package_id,
+                        sequence=sequence,
+                        delta=piece,
+                        stream_version=STREAM_PROTOCOL_VERSION_V2,
+                        sender_peer_id=self.store.peer_id,
+                        recipient_peer_id=str(outer["from_peer_id"]),
+                        sender_signing_key=self.store.private_key_bytes,
+                        recipient_messaging_pub=str(body.get("reply_messaging_pub") or ""),
+                        expires_at=_expires(max(300, self.manifest.timeout_seconds * 2)),
+                    )
+                    if len(json.dumps(envelope).encode("utf-8")) > limit:
+                        raise AdapterError("stream envelope exceeded negotiated event limit")
+                    publish("delta", envelope)
+                    sequence += 1
+                return
             output_bytes += len(delta.encode("utf-8"))
             if output_bytes > DEFAULT_MAX_OUTPUT_BYTES:
                 raise AdapterError("stream output exceeded provider limit")
@@ -3661,6 +3745,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     **(
                         {
                             "response_mode": "stream-v1",
+                            "stream_protocol": STREAM_PROTOCOL_VERSION_V2,
                             "stream_event_max_bytes": DEFAULT_MAX_EVENT_BYTES,
                         }
                         if stream_direct
@@ -3699,10 +3784,21 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             if chat and chat.get("stream") and transport_mode == "relay":
                 raise TaskProtocolError("streaming requires direct HTTP or P2P transport")
             sequence = 0
+            direct_stream_protocol = STREAM_PROTOCOL_VERSION
+            raw_idle = public_manifest.get("stream_idle_seconds")
+            stream_idle_s = (
+                float(raw_idle)
+                if isinstance(raw_idle, (int, float)) and not isinstance(raw_idle, bool) and raw_idle > 0
+                else 120.0
+            )
             p2p_verifier = StreamSequenceVerifier(
                 task_id=task_id, service_id=service_id, provider_peer_id=provider_peer_id,
                 recipient_peer_id=store.peer_id, recipient_messaging_key=messaging_key,
-                max_event_bytes=DEFAULT_MAX_EVENT_BYTES, max_output_bytes=DEFAULT_MAX_OUTPUT_BYTES,
+                max_event_bytes=DEFAULT_MAX_EVENT_BYTES,
+                max_output_bytes=PREVIEW_MAX_OUTPUT_BYTES,
+                max_terminal_bytes=DEFAULT_MAX_TERMINAL_BYTES,
+                protocol_version=STREAM_PROTOCOL_VERSION_V2,
+                negotiate=True,
             ) if stream_direct else None
 
             def receive_event(envelope: dict[str, Any]) -> None:
@@ -3710,9 +3806,14 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 if p2p_verifier is not None:
                     if (consumer_orders.get(task_id) or {}).get("state") == "cancelled":
                         raise TaskProtocolError("task_cancelled")
-                    delta = p2p_verifier.accept_delta(envelope)
+                    accepted = p2p_verifier.accept_delta(envelope)
                     sequence += 1
-                    stream_broker.publish(task_id, {"event": "delta", **delta})
+                    if accepted.get("ignored"):
+                        return
+                    if accepted.get("state") == "preview_truncated":
+                        stream_broker.publish(task_id, {"event": "state", "state": "preview_truncated"})
+                        return
+                    stream_broker.publish(task_id, {"event": "delta", **accepted})
                     return
                 outer, event = open_task(envelope, recipient_peer_id=store.peer_id,
                                          recipient_messaging_key=messaging_key, expected_kind="llm_stream")
@@ -3752,7 +3853,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 encrypted_response = await asyncio.to_thread(current.handle, signed.to_dict())
                 transport_evidence = {"transport": "local_runtime", "relay_used": False}
             def _consume_direct_stream() -> dict[str, Any]:
-                nonlocal sequence
+                nonlocal sequence, direct_stream_protocol
                 from rynmesh.peer_http import HttpPeerClient
 
                 from .external_transport import ExternalPeerTransport
@@ -3768,13 +3869,16 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     recipient_peer_id=store.peer_id,
                     recipient_messaging_key=messaging_key,
                     max_event_bytes=DEFAULT_MAX_EVENT_BYTES,
-                    max_output_bytes=DEFAULT_MAX_OUTPUT_BYTES,
+                    max_output_bytes=PREVIEW_MAX_OUTPUT_BYTES,
+                    max_terminal_bytes=DEFAULT_MAX_TERMINAL_BYTES,
+                    protocol_version=STREAM_PROTOCOL_VERSION_V2,
+                    negotiate=True,
                 )
                 terminal: dict[str, Any] | None = None
                 for envelope in client.iter_post_ndjson(
                     "/api/peer/llm/tasks/stream",
                     signed_dict,
-                    max_event_bytes=DEFAULT_MAX_EVENT_BYTES,
+                    max_event_bytes=DEFAULT_MAX_TERMINAL_BYTES,
                     max_output_tokens=max_tokens,
                 ):
                     try:
@@ -3782,14 +3886,23 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     except Exception:
                         raise TaskProtocolError("stream envelope is invalid") from None
                     if kind == "llm_stream_delta":
-                        delta = verifier.accept_delta(envelope)
+                        accepted = verifier.accept_delta(envelope)
                         sequence += 1
-                        stream_broker.publish(
-                            task_id,
-                            {"event": "delta", **delta},
-                        )
+                        if accepted.get("ignored"):
+                            continue
+                        if accepted.get("state") == "preview_truncated":
+                            stream_broker.publish(
+                                task_id,
+                                {"event": "state", "state": "preview_truncated"},
+                            )
+                        else:
+                            stream_broker.publish(
+                                task_id,
+                                {"event": "delta", **accepted},
+                            )
                     elif kind == "llm_response":
                         verifier.accept_terminal(envelope)
+                        direct_stream_protocol = verifier.effective_version
                         terminal = envelope
                     else:
                         raise TaskProtocolError("stream envelope kind is invalid")
@@ -3840,7 +3953,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                         from .external_transport import response as external_response
                         encrypted_response = await asyncio.to_thread(
                             peer_stream, endpoint + "/api/peer/llm/tasks/stream", signed.to_dict(),
-                            timeout_s=manifest.timeout_seconds + 30, on_event=receive_event,
+                            timeout_s=manifest.timeout_seconds + 30, idle_s=stream_idle_s, on_event=receive_event,
                             **({"response_factory": external_response} if external_resource else {}),
                         )
                     else:
@@ -3856,7 +3969,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     transport_evidence = {
                         "transport": "peer_http_direct",
                         "relay_used": False,
-                        "stream_protocol": STREAM_PROTOCOL_VERSION if stream_direct else "",
+                        "stream_protocol": direct_stream_protocol if stream_direct else "",
                         **({"route": "lan", "discovery_source": "lan"} if is_lan else {}),
                     }
                     break
@@ -3866,7 +3979,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                         attempts.append({"transport": "direct", "error_code": "peer_stream_too_large"})
                         raise
                     direct_error = exc
-                    attempts.append({"transport": "direct", "error_code": "direct_transport_failed"})
+                    timeout_code = _peer_stream_timeout_code(exc)
+                    attempts.append({"transport": "direct", "error_code": timeout_code or "direct_transport_failed"})
                     if sequence:
                         raise TaskProtocolError("stream interrupted; automatic replay is disabled") from exc
             if encrypted_response is None and transport_mode in {"auto", "p2p"}:
