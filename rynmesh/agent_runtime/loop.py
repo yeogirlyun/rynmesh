@@ -1262,14 +1262,36 @@ class AgentLoop:
         def build(extra_mem: list[dict]) -> list[dict]:
             combined_guidance = [*(guidance or []), *extra_mem]
             prefix_plan = plan_message(prefix_row) if placement == "header" else ()
+            repairs = []
             if not checkpoint:
                 built = provider_messages(request_context.build_context(instructions, history, guidance=combined_guidance,
-                                                                        plan=prefix_plan, tail=tail))
+                                                                        plan=prefix_plan, tail=tail, repairs=repairs))
             else:
                 built = provider_messages(request_context.build_context(instructions, history, guidance=combined_guidance,
                                                                         plan=prefix_plan, checkpoint=checkpoint,
                                                                         checkpoint_note=note, tail=tail,
-                                                                        owner_budget=owner_budget))
+                                                                        owner_budget=owner_budget, repairs=repairs))
+            epoch = row.get("context_epoch", 0)
+
+            def repair_event(selected):
+                return next((ev for ev in selected["events"] if ev["type"] == "history_repaired"
+                             and ev.get("context_epoch", 0) == epoch), None)
+
+            if repairs and repair_event(row) is None:
+                def record(data):
+                    live = task(data, row["id"])
+                    if live.get("context_epoch", 0) != epoch:
+                        return None
+                    previous = repair_event(live)
+                    if previous is not None:
+                        return previous
+                    event(live, "history_repaired", repairs=repairs)
+                    return live["events"][-1]
+
+                recorded = self.store.transaction(record)
+                if recorded is not None:
+                    row["events"].append(recorded)
+                    row["event_cursor"] = max(row["event_cursor"], recorded["seq"])
             if has_history_reasoning:
                 for msg in built:
                     if isinstance(msg, dict) and msg.get("role") == "assistant" and "reasoning_content" not in msg:
