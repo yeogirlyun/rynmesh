@@ -1,3 +1,4 @@
+import { parseStorageHealth, type AgentStorageHealth } from "./agentStorageHealth";
 import { nodeControlUrl } from "./nodeUrl";
 
 export const COMPUTER_STATUS_SCHEMA_VERSION = 1 as const;
@@ -189,6 +190,7 @@ export interface ComputerStatusObservation {
 }
 
 export interface ComputerStatusDtoV1 {
+  storage_health?: AgentStorageHealth;
   schema_version: 1;
   snapshot_id: string;
   generated_at: string;
@@ -968,7 +970,9 @@ export function validateAndNormalizeComputerStatus(
   const model = normalizeModelSection(raw.model, model_id);
   const latest_observation = normalizeLatestObservation(raw.latest_observation, context);
 
+  const storage_health = parseStorageHealth(raw.storage_health);
   return {
+    ...(storage_health ? { storage_health } : {}),
     schema_version: 1,
     snapshot_id,
     generated_at,
