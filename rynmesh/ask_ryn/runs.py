@@ -198,7 +198,9 @@ class AskRunService:
             self._message(data, run, "complete" if state == "succeeded" else "cancelled" if state == "cancelled" else "interrupted" if state == "interrupted" else "failed", content, result)
             self.history._write(envelope, data)
 
-    def run_once(self) -> WorkerRunResult:
+    def run_once(self, cancelled=None) -> WorkerRunResult:
+        if cancelled is not None and cancelled.is_set():
+            return WorkerRunResult()
         commands = self.commands()
         if commands is None:
             return WorkerRunResult()

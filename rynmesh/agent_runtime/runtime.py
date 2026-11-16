@@ -4319,7 +4319,7 @@ class AgentRuntime(AgentLoop):
                 diagnostics=diagnostics,
             )
 
-    def run_continuously(self) -> WorkerRunResult:
+    def run_continuously(self, cancelled=None) -> WorkerRunResult:
         """Worker entry point: consecutive steps without a scheduler interval between them.
 
         run_once stays exactly one step. Only a step that ended normally continues
@@ -4329,6 +4329,8 @@ class AgentRuntime(AgentLoop):
         deadline = time.monotonic() + CONTINUE_SECONDS
         activity = False
         while True:
+            if cancelled is not None and cancelled.is_set():
+                return WorkerRunResult(activity=activity)
             result = self.run_once()
             if not result.activity:
                 return WorkerRunResult(activity=activity)

@@ -152,7 +152,9 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
     if getattr(app.state, "mailbox", None):
         wire_mailbox(mailbox=app.state.mailbox, service=current)
 
-    def tick():
+    def tick(cancelled=None):
+        if cancelled is not None and cancelled.is_set():
+            return WorkerRunResult()
         friends = [friend for friend in current().list_friends() if friend["status"] == "active" or friend.get("revocation_delivery") == "pending"]
         if not friends:
             return WorkerRunResult(activity=False)

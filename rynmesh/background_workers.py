@@ -12,14 +12,18 @@ import functools
 import inspect
 import logging
 import math
+import re
+import threading
 import time
 from collections.abc import Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 _MAX_ERROR_CHARS = 512
 
 _log = logging.getLogger(__name__)
+_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="ryn-bg")
 
 
 @dataclass(frozen=True)
@@ -88,6 +92,7 @@ class BackgroundWorkerSpec:
     policy: BackoffPolicy
     initial_delay_s: float = 0.0
     error_sink: Callable[[str], None] | None = None
+    run_timeout_s: float | None = None
 
     def __post_init__(self) -> None:
         if not self.name or not self.name.strip():
@@ -98,12 +103,20 @@ class BackgroundWorkerSpec:
             raise TypeError("run_once must be callable")
         if not math.isfinite(self.initial_delay_s) or self.initial_delay_s < 0:
             raise ValueError("initial_delay_s must be finite and non-negative")
+        if self.run_timeout_s is not None and (not math.isfinite(self.run_timeout_s) or self.run_timeout_s <= 0):
+            raise ValueError("run_timeout_s must be finite and positive")
         if self.error_sink is not None and not callable(self.error_sink):
             raise TypeError("error_sink must be callable")
 
 
 @dataclass
 class _WorkerState:
+    in_run: bool = False
+    cancelled: threading.Event = field(default_factory=threading.Event, repr=False)
+    invocation: asyncio.Future | None = field(default=None, repr=False)
+    abandoned: bool = False
+    last_warning_monotonic: float | None = None
+    logged_error: str = ""
     last_success_at: str = ""
     last_failure_at: str = ""
     last_started_monotonic: float | None = None
@@ -146,30 +159,47 @@ class BackgroundWorkerRegistry:
         self._started = False
 
     def register(self, spec: BackgroundWorkerSpec, *, replace: bool = False) -> None:
-        """Register one worker, allowed before or after `start()`.
-
-        A duplicate name without `replace=True` raises `ValueError`. With
-        `replace=True`, the running task (and any pending restart timer) for
-        that name is cancelled, a fresh state installed, and the new spec
-        spawned immediately if the registry is started — which lets an
-        installer be re-run over the same app (re-installed routes, a rebuilt
-        client, a re-entered lifespan) without the second pass colliding with
-        its own first one.
-        """
+        """Register a worker; replacements wait for the previous invocation to exit."""
         existing = self._specs.get(spec.name)
         if existing is not None and not replace:
             raise ValueError(f"background worker already registered: {spec.name}")
         if existing is not None:
-            old_task = self._tasks.pop(spec.name, None)
+            self._states[spec.name].cancelled.set()
+            old_task = self._tasks.get(spec.name)
             if old_task is not None:
                 old_task.cancel()
             old_timer = self._restart_timers.pop(spec.name, None)
             if old_timer is not None:
                 old_timer.cancel()
         self._specs[spec.name] = spec
-        self._states[spec.name] = _WorkerState()
+        self._states.setdefault(spec.name, _WorkerState())
         if self._started:
+            self._start_or_wait(spec)
+
+    def _start_or_wait(self, spec):
+        state = self._states[spec.name]
+        previous = self._tasks.get(spec.name)
+        pending = {future for future in (previous, state.invocation)
+                   if future is not None and not future.done()}
+        if pending:
+            self._restart_timers[spec.name] = asyncio.create_task(self._replace_when_stopped(spec, state, pending))
+        else:
+            self._states[spec.name] = _WorkerState()
             self._spawn(spec)
+
+    async def _replace_when_stopped(self, spec, state, pending):
+        try:
+            _, pending = await asyncio.wait(pending, timeout=self._stop_timeout_s)
+            if pending:
+                state.abandoned = True
+                _log.warning("background worker %s replacement waiting for abandoned invocation", spec.name)
+                await asyncio.wait(pending)
+            if self._started and self._specs.get(spec.name) is spec:
+                self._states[spec.name] = _WorkerState()
+                self._spawn(spec)
+        finally:
+            if self._restart_timers.get(spec.name) is asyncio.current_task():
+                self._restart_timers.pop(spec.name, None)
 
     def specs(self) -> tuple[BackgroundWorkerSpec, ...]:
         """Return a deterministic, immutable view of registered workers."""
@@ -181,7 +211,7 @@ class BackgroundWorkerRegistry:
             raise RuntimeError("background worker registry is already started")
         self._started = True
         for spec in self.specs():
-            self._spawn(spec)
+            self._start_or_wait(spec)
 
     async def stop(self) -> dict[str, list[str]]:
         """Cancel every worker and restart timer, bounded by `stop_timeout_s`."""
@@ -195,23 +225,29 @@ class BackgroundWorkerRegistry:
         # `_spawn` replaces it), so `asyncio.wait` below still has that task to
         # wait on and gives the event loop the turn the cancellation needs.
         self._restart_timers.clear()
+        for state in self._states.values():
+            state.cancelled.set()
         tasks = tuple(self._tasks.values())
         for task in tasks:
             task.cancel()
-        stopped: list[str] = []
-        abandoned: list[str] = []
-        if tasks:
-            names = {task: name for name, task in self._tasks.items()}
-            done, pending = await asyncio.wait(tasks, timeout=self._stop_timeout_s)
-            stopped = [names[task] for task in done]
-            abandoned = [names[task] for task in pending]
+        waits = {task: name for name, task in self._tasks.items()}
+        for name, state in self._states.items():
+            if state.invocation is not None:
+                waits[state.invocation] = name
+        pending = set()
+        if waits:
+            _, pending = await asyncio.wait(waits, timeout=self._stop_timeout_s)
+        abandoned = sorted({waits[future] for future in pending})
+        stopped = sorted(set(waits.values()) - set(abandoned))
+        for name in abandoned:
+            self._states[name].abandoned = True
         if abandoned:
             _log.warning(
                 "background workers did not stop within %.1fs: %s",
                 self._stop_timeout_s,
                 sorted(abandoned),
             )
-        self._tasks.clear()
+        self._tasks = {name: task for name, task in self._tasks.items() if not task.done()}
         for state in self._states.values():
             state.next_run_monotonic = None
         return {"stopped": sorted(stopped), "abandoned": sorted(abandoned)}
@@ -247,9 +283,18 @@ class BackgroundWorkerRegistry:
             error = state.error[:_MAX_ERROR_CHARS]
             restarts = state.restarts
             crash_class = state.crash_class
+            in_run = state.in_run
+            timeout = self._specs[name].run_timeout_s
+            running_for_s = max(0.0, self._monotonic() - last_started_monotonic) if in_run and last_started_monotonic is not None else 0.0
+            hung = bool(in_run and timeout is not None and running_for_s > timeout)
+            abandoned = state.abandoned
             values[name] = {
                 "name": name,
                 "running": running,
+                "in_run": in_run,
+                "hung": hung,
+                "running_for_s": running_for_s,
+                "abandoned": abandoned,
                 "last_success_at": last_success_at,
                 "last_failure_at": last_failure_at,
                 "last_started_monotonic": last_started_monotonic,
@@ -272,7 +317,7 @@ class BackgroundWorkerRegistry:
         task.add_done_callback(functools.partial(self._on_task_done, spec))
 
     def _on_task_done(self, spec: BackgroundWorkerSpec, task: asyncio.Task[None]) -> None:
-        if task.cancelled():
+        if task.cancelled() or self._specs.get(spec.name) is not spec or self._states[spec.name].cancelled.is_set():
             # Either stop() or a register(replace=True) cancelled this task
             # deliberately; neither is a crash.
             return
@@ -342,16 +387,26 @@ class BackgroundWorkerRegistry:
         )
         if delay_before_first_run:
             await self._wait(state, delay_before_first_run)
-        while True:
+        while not state.cancelled.is_set():
             state.last_started_monotonic = self._monotonic()
+            state.in_run = True
             try:
-                result = await self._invoke(spec.run_once)
+                try:
+                    result = await self._invoke(spec, state)
+                finally:
+                    if state.invocation is None or state.invocation.done():
+                        state.in_run = False
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 state.consecutive_failures += 1
                 state.last_failure_at = self._timestamp()
                 state.error = self._sanitize_error(exc)
+                now = self._monotonic()
+                if (state.consecutive_failures == 1 or state.logged_error != state.error
+                        or state.last_warning_monotonic is None or now - state.last_warning_monotonic >= 300):
+                    _log.warning("background worker %s failed: %s", spec.name, type(exc).__name__)
+                    state.last_warning_monotonic, state.logged_error = now, state.error
                 self._send_error(spec.error_sink, state)
                 error_delay = min(
                     max(error_delay, spec.policy.busy_delay_s)
@@ -378,13 +433,49 @@ class BackgroundWorkerRegistry:
                 delay = idle_delay
             await self._wait(state, delay)
 
-    async def _invoke(self, run_once: Callable[[], object]) -> object:
-        if inspect.iscoroutinefunction(run_once):
-            return await run_once()
-        result = await asyncio.to_thread(run_once)
-        if inspect.isawaitable(result):
-            return await result
-        return result
+    async def _invoke(self, spec, state) -> object:
+        run_once = spec.run_once
+        try:
+            accepts_cancelled = "cancelled" in inspect.signature(run_once).parameters
+        except (ValueError, TypeError):
+            accepts_cancelled = False
+        call = functools.partial(run_once, cancelled=state.cancelled) if accepts_cancelled else run_once
+        is_async = inspect.iscoroutinefunction(run_once)
+        if is_async:
+            future = asyncio.ensure_future(call())
+        else:
+            def invoke_sync():
+                if state.cancelled.is_set():
+                    return WorkerRunResult()
+                return call()
+            future = asyncio.get_running_loop().run_in_executor(_executor, invoke_sync)
+        state.invocation = future
+        try:
+            if spec.run_timeout_s is not None:
+                done, _ = await asyncio.wait({future}, timeout=spec.run_timeout_s)
+                if not done:
+                    from .agent_runtime.diagnostic_log import failure
+                    failure(f"background_worker_hung:{spec.name}", "agent_background_worker_hung",
+                            elapsed_seconds=self._monotonic() - state.last_started_monotonic)
+            result = await asyncio.shield(future)
+            if inspect.isawaitable(result):
+                is_async = True
+                future = state.invocation = asyncio.ensure_future(result)
+                result = await asyncio.shield(future)
+            return result
+        except asyncio.CancelledError:
+            if is_async:
+                future.cancel()
+            raise
+        finally:
+            def completed(done):
+                state.in_run = False
+                if not done.cancelled():
+                    done.exception()  # Retrieve failures if shutdown detached the awaiting task.
+            if future.done():
+                completed(future)
+            else:
+                future.add_done_callback(completed)
 
     async def _wait(self, state: _WorkerState, delay_s: float) -> None:
         state.next_run_monotonic = self._monotonic() + delay_s
@@ -409,6 +500,8 @@ class BackgroundWorkerRegistry:
         # Exception messages from service code can accidentally contain a
         # prompt, model output, key, URL, or private path. Retain the failure
         # class for diagnosis without copying arbitrary service data.
+        if type(exc).__module__.startswith("rynmesh.") and re.fullmatch(r"[a-z0-9_]{1,64}", str(exc)):
+            return f"{type(exc).__name__}: {exc}"
         value = f"{type(exc).__name__}: background worker invocation failed"
         return value[:_MAX_ERROR_CHARS]
 
