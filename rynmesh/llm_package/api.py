@@ -101,15 +101,24 @@ class InferenceKeys:
             raise HTTPException(401, "invalid_api_key")
         return row["id"]
 
-    def reserve(self, key_id: str, tokens: int):
+    def reserve(self, key_id: str, tokens: int, *, cap_to_remaining: bool = False) -> int:
         with self.lock:
             if self.active.get(key_id, 0) >= 2:
                 raise HTTPException(429, "project_concurrency_limit")
             with self.connect() as db:
+                if cap_to_remaining:
+                    row = db.execute(
+                        "SELECT token_limit - used AS remaining FROM keys WHERE id=? AND revoked=0",
+                        (key_id,),
+                    ).fetchone()
+                    if not row or int(row["remaining"]) < 1:
+                        raise HTTPException(429, "project_output_token_limit")
+                    tokens = min(tokens, int(row["remaining"]))
                 changed = db.execute("UPDATE keys SET used=used+? WHERE id=? AND revoked=0 AND used+?<=token_limit", (tokens, key_id, tokens)).rowcount
                 if not changed:
                     raise HTTPException(429, "project_output_token_limit")
             self.active[key_id] = self.active.get(key_id, 0) + 1
+            return tokens
 
     def finish(self, key_id: str, reserved: int, used: int):
         with self.lock:
@@ -298,6 +307,7 @@ def install_inference_api(app: Any, *, home: Path, store: Any, active_manager: A
                 requested_max if requested_max is not None else target["max_output_tokens"],
                 target["max_output_tokens"],
                 available,
+                393216,
             )
             task_id = "api_" + uuid.uuid4().hex
             manager = (local_manager_for(target["service_id"]) if local_manager_for
@@ -309,7 +319,11 @@ def install_inference_api(app: Any, *, home: Path, store: Any, active_manager: A
             if manager and not manager._slots.acquire(blocking=False):
                 raise HTTPException(429, "local_model_busy")
             try:
-                keys.reserve(key_id, chat["max_tokens"])
+                chat["max_tokens"] = keys.reserve(
+                    key_id,
+                    chat["max_tokens"],
+                    cap_to_remaining=requested_max is None,
+                )
             except Exception:
                 if manager:
                     manager._slots.release()
