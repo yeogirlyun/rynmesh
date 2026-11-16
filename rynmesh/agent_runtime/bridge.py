@@ -45,6 +45,9 @@ SLOT_WAIT_MAX_SECONDS = 120.0
 SLOT_POLL_INTERVAL_SECONDS = 0.2
 SLOT_QUEUE_EVENT_AFTER_SECONDS = 2.0
 BUSY_REASONS = frozenset({"node_slots", "service_slots", "memory_pressure", "gpu_temperature", "disk"})
+RESPONSE_TOO_LARGE_FEEDBACK = (
+    "上一次回复超过大小上限，没有执行任何工具。请把大段写入拆成多次较小的 apply_patch/写文件调用"
+)
 
 
 class AgentModelBridge:
@@ -140,11 +143,30 @@ class AgentModelBridge:
         detail = "the response was malformed"
         flags = {}
         try:
-            if len(json.dumps(result).encode()) > output_policy.MAX_RAW_RESPONSE_BYTES:
-                raise AgentModelResponseError(usage, finish, "agent_model_output_limit")
-            message = copy.deepcopy(data.get("message"))
-            if not isinstance(message, dict) or message.get("role") != "assistant":
+            raw_message = data.get("message")
+            if not isinstance(raw_message, dict) or raw_message.get("role") != "assistant":
                 raise ValueError
+            measured = {}
+            if "content" in raw_message and raw_message["content"] is not None:
+                measured["content"] = raw_message["content"]
+            if "tool_calls" in raw_message and raw_message["tool_calls"] is not None:
+                measured["tool_calls"] = raw_message["tool_calls"]
+            if len(json.dumps(measured, ensure_ascii=False).encode("utf-8")) > output_policy.MAX_RAW_RESPONSE_BYTES:
+                detail = RESPONSE_TOO_LARGE_FEEDBACK
+                raise ValueError
+            keep_provider_state = "provider_state" in raw_message
+            if keep_provider_state:
+                if len(json.dumps(raw_message["provider_state"], ensure_ascii=False).encode("utf-8")) > output_policy.MAX_PROVIDER_STATE_BYTES:
+                    keep_provider_state = False
+            message = {
+                k: copy.deepcopy(v)
+                for k, v in raw_message.items()
+                if k != "provider_state" or keep_provider_state
+            }
+            if isinstance(message.get("reasoning_content"), str):
+                rc_bytes = message["reasoning_content"].encode("utf-8")
+                if len(rc_bytes) > output_policy.MAX_REASONING_CONTENT_BYTES:
+                    message["reasoning_content"] = rc_bytes[:output_policy.MAX_REASONING_CONTENT_BYTES].decode("utf-8", errors="ignore")
             calls = response_calls(message)
             if not message.get("content") and not calls:
                 if finish == "content_filter":
@@ -360,8 +382,9 @@ class AgentModelBridge:
             with cleared_internal_image_scope():
                 try:
                     model_events.feed(chunk)
-                except ModelEventError:
-                    raise AdapterError("invalid model event envelope", code="upstream_response_invalid") from None
+                except ModelEventError as exc:
+                    err_code = "upstream_response_too_large" if "limit exceeded" in str(exc) else "upstream_response_invalid"
+                    raise AdapterError("invalid model event envelope", code=err_code) from None
 
         def cancel_transport():
             try:
@@ -491,12 +514,20 @@ class AgentModelBridge:
                 result = asyncio.run(self.services["execute_order"](request, emit) if streaming
                                      else self.services["execute_order"](request))
                 if not cancelled() and not expired() and result.get("state") != "succeeded":
+                    peer_err = result.get("error_code")
+                    if peer_err in {"upstream_response_too_large", "peer_stream_too_large"}:
+                        usage, finish = self._response_metadata(result, target)
+                        rejected = AgentModelResponseError(usage, None if finish == "length" else finish)
+                        rejected.request_id = task_id
+                        rejected.detail = RESPONSE_TOO_LARGE_FEEDBACK
+                        raise rejected
                     raise AgentError({"model_configuration_changed": "agent_model_destination_changed",
                                       "ai_permission_denied": "agent_model_destination_changed",
                                       "source_protocol_parameters_unsupported": "agent_model_protocol_unsupported",
                                       "source_protocol_response_invalid": "agent_model_protocol_invalid",
                                       "upstream_image_rejected": "agent_model_image_rejected",
-                                      "model_daily_quota_exhausted": "agent_model_quota_exhausted"}.get(result.get("error_code"), "agent_inference_failed"))
+                                      "model_daily_quota_exhausted": "agent_model_quota_exhausted",
+                                      "peer_request_too_large": "agent_model_context_overflow"}.get(peer_err, "agent_inference_failed"))
             stopped = cancelled()
             if stopped or expired():
                 usage, finish = self._response_metadata(result, target)
@@ -520,7 +551,23 @@ class AgentModelBridge:
                 err = AgentError("agent_inference_timeout")
                 err.request_id = task_id
                 raise err from None
-            raise AgentError("agent_model_destination_changed" if exc.detail == "model_configuration_changed" else "agent_inference_failed") from None
+            detail_code = str(exc.detail or "").strip()
+            if detail_code.startswith("peer_delivery_failed:"):
+                detail_code = detail_code.split(":", 1)[1]
+            if detail_code == "peer_stream_too_large":
+                rejected = AgentModelResponseError(None, None)
+                rejected.request_id = task_id
+                rejected.detail = RESPONSE_TOO_LARGE_FEEDBACK
+                raise rejected from None
+            if detail_code in {"peer_request_too_large", "request_too_large"}:
+                err = AgentError("agent_model_context_overflow")
+                err.request_id = task_id
+                raise err from None
+            if detail_code in {"direct_stream_interrupted", "p2p_stream_interrupted"}:
+                err = AgentError("agent_model_stream_interrupted")
+                err.request_id = task_id
+                raise err from None
+            raise AgentError("agent_model_destination_changed" if detail_code == "model_configuration_changed" else "agent_inference_failed") from None
         except AdapterError as exc:
             from .diagnostic_log import safe_diagnostics
             raw_diag = dict(getattr(exc, "diagnostics", None) or {})
@@ -538,16 +585,22 @@ class AgentModelBridge:
             diag = safe_diagnostics(raw_diag)
             if raw_diag.get("reason") in BUSY_REASONS:
                 diag["reason"] = raw_diag["reason"]
-            if exc.code == "upstream_response_invalid" and not cancelled() and not expired():
-                rejected = AgentModelResponseError(exc.reported_usage, exc.finish_reason)
+            if type(raw_diag.get("limit_bytes")) is int and raw_diag["limit_bytes"] > 0:
+                diag["limit_bytes"] = raw_diag["limit_bytes"]
+            if exc.code in {"upstream_response_invalid", "upstream_response_too_large"} and not cancelled() and not expired():
+                rej_finish = None if exc.code == "upstream_response_too_large" and exc.finish_reason == "length" else exc.finish_reason
+                rejected = AgentModelResponseError(exc.reported_usage, rej_finish)
                 rejected.request_id = task_id
                 if diag:
                     rejected.diagnostics = diag
-                rejected.detail = "The model response or client tool proposal was invalid. Return the required response format and tool names, and obey each argument schema and size limit. No proposed tool was executed."
-                from ..llm_package.codex_tools import FEEDBACK
-                feedback = FEEDBACK.get(getattr(exc, "proposal_feedback_code", None))
-                if feedback:
-                    rejected.detail = feedback + " No proposed tool was executed."
+                if exc.code == "upstream_response_too_large":
+                    rejected.detail = RESPONSE_TOO_LARGE_FEEDBACK
+                else:
+                    rejected.detail = "The model response or client tool proposal was invalid. Return the required response format and tool names, and obey each argument schema and size limit. No proposed tool was executed."
+                    from ..llm_package.codex_tools import FEEDBACK
+                    feedback = FEEDBACK.get(getattr(exc, "proposal_feedback_code", None))
+                    if feedback:
+                        rejected.detail = feedback + " No proposed tool was executed."
                 raise rejected from None
             # Adapters already reduce upstream errors to this closed code set.
             # Keep transport failures distinguishable without copying an HTTP

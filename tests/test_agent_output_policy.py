@@ -105,7 +105,7 @@ def test_bridge_structural_rejections_retain_only_safe_accounting(bad):
     result = {"message": {"role": "assistant", "content": "ok"}, "reported_usage": {"input_tokens": 11, "output_tokens": 8000},
               "finish_reason": "length"}
     if bad == "overflow":
-        result["message"]["reasoning_content"] = "PRIVATE" * 40000
+        result["message"]["content"] = "PRIVATE" * 40000
     elif bad == "role":
         result["message"]["role"] = "user"
     elif bad == "calls_type":
@@ -119,17 +119,16 @@ def test_bridge_structural_rejections_retain_only_safe_accounting(bad):
     assert error.value.usage == {"input_tokens": 11, "output_tokens": 8000}
     assert error.value.finish_reason == "length" and "PRIVATE" not in str(error.value)
     if bad == "overflow":
-        assert str(error.value) == "agent_model_output_limit"
+        assert str(error.value) == "agent_invalid_model_response"
+        assert "apply_patch" in error.value.detail
 
 
 @pytest.mark.parametrize("bad", ["overflow", "malformed"])
 def test_received_rejection_is_charged_in_actual_runtime(tmp_path, bad):
     runtime, model, _, _ = make_runtime(tmp_path)
     def rejected(*args):
-        raw = {"message": {"role": "assistant", "content": "ok" if bad == "overflow" else None},
+        raw = {"message": {"role": "assistant", "content": ("x" * (output_policy.MAX_RAW_RESPONSE_BYTES + 1)) if bad == "overflow" else None},
                "reported_usage": {"input_tokens": 31, "output_tokens": 7000}, "finish_reason": "length"}
-        if bad == "overflow":
-            raw["message"]["reasoning_content"] = "x" * (output_policy.MAX_RAW_RESPONSE_BYTES + 1)
         return AgentModelBridge._response(raw, {"source": "local_api"}, [], {})
     model.complete = rejected
     task = runtime.create({"message": "Explain"})

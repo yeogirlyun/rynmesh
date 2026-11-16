@@ -86,6 +86,7 @@ from .p2p import (
     IceSignal,
     P2PCapacityError,
     P2PError,
+    P2PMessageTooLarge,
     P2PTimeoutError,
     consumer_exchange,
     provider_exchange,
@@ -135,7 +136,25 @@ def _positive_env(name: str, default: int) -> int:
     return value if value > 0 else default
 
 
+_MAX_SIGNED_P2P_ENVELOPE_BYTES = int(7.5 * 1024 * 1024)
+
+
+def _is_peer_stream_too_large(exc: BaseException | None) -> bool:
+    if exc is None:
+        return False
+    text = str(exc).strip()
+    if type(exc).__name__ == "PeerTransportError" and text in {"peer_stream_too_large", "peer_stream_event_too_large"}:
+        return True
+    return isinstance(exc, ValueError) and text in {"peer stream line limit exceeded", "peer stream limit exceeded"}
+
+
 def _delivery_error_code(exc: Exception, *, transport: str) -> str:
+    if isinstance(exc, P2PMessageTooLarge) or isinstance(getattr(exc, "__cause__", None), P2PMessageTooLarge):
+        return "peer_request_too_large"
+    if _is_peer_stream_too_large(exc) or _is_peer_stream_too_large(getattr(exc, "__cause__", None)):
+        return "peer_stream_too_large"
+    if isinstance(exc, TaskProtocolError) and str(exc) == "stream interrupted; automatic replay is disabled":
+        return "direct_stream_interrupted"
     if isinstance(exc, P2PCapacityError):
         return "p2p_capacity_exhausted"
     reason = getattr(exc, "reason", None)
@@ -3656,6 +3675,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 expires_at=_expires(max(60, 2 * (manifest.timeout_seconds + 30) + 60)),
             )
             own_request = provider_peer_id == store.peer_id
+            signed_dict = signed.to_dict()
+            if not own_request and len(json.dumps(signed_dict).encode("utf-8")) > _MAX_SIGNED_P2P_ENVELOPE_BYTES:
+                raise P2PMessageTooLarge("signed task envelope exceeds 7.5 MiB")
             encrypted_response = None
             direct_error: Exception | None = None
             transport_evidence: dict[str, Any] = {}
@@ -3751,9 +3773,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 terminal: dict[str, Any] | None = None
                 for envelope in client.iter_post_ndjson(
                     "/api/peer/llm/tasks/stream",
-                    signed.to_dict(),
+                    signed_dict,
                     max_event_bytes=DEFAULT_MAX_EVENT_BYTES,
-                    max_total_bytes=16 * 1024 * 1024,
+                    max_output_tokens=max_tokens,
                 ):
                     try:
                         kind = str(SignedPayload.from_dict(envelope).payload.get("kind") or "")
@@ -3840,6 +3862,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     break
                 except Exception as exc:
                     encrypted_response = None
+                    if _is_peer_stream_too_large(exc):
+                        attempts.append({"transport": "direct", "error_code": "peer_stream_too_large"})
+                        raise
                     direct_error = exc
                     attempts.append({"transport": "direct", "error_code": "direct_transport_failed"})
                     if sequence:
@@ -4120,6 +4145,11 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 task_id,
                 {"event": "error", "state": "failed", "error_code": error_code},
             )
+            if error_code in {"peer_stream_too_large", "peer_request_too_large", "direct_stream_interrupted"}:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"peer_delivery_failed:{error_code}",
+                ) from exc
             reason = str(exc).strip() or type(exc).__name__
             raise HTTPException(
                 status_code=502,
