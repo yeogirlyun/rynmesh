@@ -59,13 +59,18 @@ def test_s13_i33_t1_truncated_primary_recovers_previous_configuration(tmp_path, 
     assert next(s for s in view["mcp_servers"] if s["id"] == "sample")["description"] == "previous description"
     assert view["recovered_from_prev"] is True
     assert view["recovery"]["status"] == "recovered_from_prev"
+    recovery_id = view["recovery"]["id"]
+    assert isinstance(recovery_id, str) and recovery_id
     restarted = ExtensionStore(store.root, key)
     assert restarted.overview()["recovered_from_prev"] is True
+    assert restarted.overview()["recovery"]["id"] == recovery_id
     restored = restarted.get_mcp_server_internal("sample")
     restarted.upsert_mcp_server({"description": "after recovery"}, server_id="sample",
                                expected_revision=restored["revision"])
     restarted.path.write_bytes(b"truncated again")
-    assert ExtensionStore(store.root, key).get_mcp_server_internal("sample")["description"] == "previous description"
+    second_recovery = ExtensionStore(store.root, key)
+    assert second_recovery.get_mcp_server_internal("sample")["description"] == "previous description"
+    assert second_recovery.overview()["recovery"]["id"] != recovery_id
 
 
 @pytest.mark.parametrize("lost_key", [False, True])

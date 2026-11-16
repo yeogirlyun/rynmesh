@@ -328,6 +328,7 @@ export interface ExtensionPlugin {
 }
 
 export interface ExtensionRecovery {
+  id?: string;
   status: "recovered_from_prev" | "reset";
   quarantine_path?: string;
 }
@@ -1077,7 +1078,7 @@ export function normalizeOverview(raw: Record<string, unknown>): ExtensionOvervi
   return {
     recovered_from_prev: raw.recovered_from_prev === true,
     ...(recovery && (recovery.status === "recovered_from_prev" || recovery.status === "reset")
-      ? { recovery: { status: recovery.status, ...(typeof recovery.quarantine_path === "string" ? { quarantine_path: recovery.quarantine_path } : {}) } as ExtensionRecovery }
+      ? { recovery: { status: recovery.status, ...(typeof recovery.id === "string" ? { id: recovery.id } : {}), ...(typeof recovery.quarantine_path === "string" ? { quarantine_path: recovery.quarantine_path } : {}) } as ExtensionRecovery }
       : {}),
     revision,
     generation,

@@ -582,6 +582,9 @@ function mergeReconciledOverview(
   next: ExtensionOverview,
 ): ExtensionOverview {
   if (!prev) return next;
+  // A new recovery event replaces the configuration, including older revisions.
+  // Responses from the same event still use the normal stale-response guards.
+  if (next.recovery && (!prev.recovery || (next.recovery.id && next.recovery.id !== prev.recovery.id))) return next;
   if (next.revision < prev.revision) {
     return prev;
   }

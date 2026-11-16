@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, expect, it, vi } from "vitest";
@@ -63,6 +63,42 @@ function renderExtensions() {
     <Routes><Route path="/agent/extensions" element={<AgentExtensions />} /></Routes>
   </MemoryRouter>);
 }
+
+it.each([
+  ["recovered_from_prev", false], ["recovered_from_prev", true],
+  ["reset", false], ["reset", true],
+] as const)("S13-I33 T1/T2 accepts a recovery rollback on an already open page (%s, prior notice %s)", async (status, priorNotice) => {
+  await i18n.changeLanguage("en");
+  const oldPlugin = { id: "removed", name: "removed", title: "Old plugin", enabled: false, revision: 5 };
+  let current: Record<string, unknown> = { revision: 5, desktop_access: false, plugins: [oldPlugin], skills: [], mcp_servers: [],
+    ...(priorNotice ? { recovery: { status: "recovered_from_prev", id: "prior-recovery" } } : {}) };
+  serveOverview({ status: "recovered_from_prev" });
+  server.use(http.get("*/api/local/agent/extensions", () => HttpResponse.json(current)));
+  renderExtensions();
+  expect(await screen.findByText("Old plugin")).toBeVisible();
+  current = { revision: status === "reset" ? 1 : 4, desktop_access: false, plugins: [], skills: [], mcp_servers: [],
+    recovery: { status, id: "next-recovery", quarantine_path: "agent/quarantine/new-event" } };
+  await userEvent.setup().click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() => expect(screen.queryByText("Old plugin")).not.toBeInTheDocument());
+  expect(await screen.findByText(status === "reset"
+    ? "Extension configuration was damaged and backed up to agent/quarantine/new-event. Please add your extensions again."
+    : "Restored the previous extension configuration.")).toBeVisible();
+});
+
+it("S13-I33 keeps rejecting stale responses from the same recovery event", async () => {
+  let current = { revision: 5, desktop_access: false, plugins: [{ id: "current", name: "current", title: "Current plugin", revision: 5 }], skills: [], mcp_servers: [],
+    recovery: { status: "recovered_from_prev", id: "same-event" } };
+  serveOverview({ status: "recovered_from_prev" });
+  server.use(http.get("*/api/local/agent/extensions", () => HttpResponse.json(current)));
+  renderExtensions();
+  expect(await screen.findByText("Current plugin")).toBeVisible();
+  current = { ...current, revision: 4, plugins: [{ id: "stale", name: "stale", title: "Stale plugin", revision: 4 }] };
+  const refresh = screen.getByRole("button", { name: "Refresh" });
+  await userEvent.setup().click(refresh);
+  await waitFor(() => expect(refresh).toBeEnabled());
+  expect(screen.getByText("Current plugin")).toBeVisible();
+  expect(screen.queryByText("Stale plugin")).not.toBeInTheDocument();
+});
 
 it("S13-I33 T5 opens the actual extension page from the task error action", async () => {
   const task: AgentTask = {

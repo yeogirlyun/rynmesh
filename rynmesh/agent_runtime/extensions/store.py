@@ -640,6 +640,7 @@ class ExtensionStore:
             else:
                 state["recovered_from_prev"] = True
                 state["recovery"] = {"status": "recovered_from_prev"}
+            state["recovery"]["id"] = uuid.uuid4().hex
             recovered = True
         self._load_tools(state)
         normalized = self._normalize_state(state)
