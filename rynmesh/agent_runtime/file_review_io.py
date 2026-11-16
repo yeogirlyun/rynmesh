@@ -5,13 +5,13 @@ from contextlib import ExitStack
 from .store import AgentToolRejected
 
 
-def replace_checked(path, root, expected, raw, mode, stamp):
+def replace_checked(path, root, expected, raw, mode, stamp, *, outside_ok=False):
     from .file_review import MAX_FILE, digest, fingerprint, safe_path
-    safe_path(root, str(path))
+    safe_path(root, str(path), outside_ok=outside_ok)
     # Only the explicitly requested file's parent chain is created/read.
     if raw is not None:
         path.parent.mkdir(parents=True, exist_ok=True)
-    safe_path(root, str(path))
+    safe_path(root, str(path), outside_ok=outside_ok)
     if os.name == "nt":
         import ctypes
         import msvcrt
@@ -40,7 +40,7 @@ def replace_checked(path, root, expected, raw, mode, stamp):
             for parent in reversed(path.parents):
                 handle = open_handle(parent, 0, 3, 3, 0x02200000)
                 stack.callback(close, handle)
-            safe_path(root, str(path))
+            safe_path(root, str(path), outside_ok=outside_ok)
             if fingerprint(path) != stamp:
                 raise AgentToolRejected("agent_review_file_changed")
             if expected is None and raw is None:
@@ -84,7 +84,7 @@ def replace_checked(path, root, expected, raw, mode, stamp):
     fd = os.open(path, flags, mode)
     with os.fdopen(fd, "r+b") as stream:
         fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
-        safe_path(root, str(path))
+        safe_path(root, str(path), outside_ok=outside_ok)
         if expected is not None and fingerprint(path) != stamp:
             raise AgentToolRejected("agent_review_file_changed")
         actual = stream.read(MAX_FILE + 1)
