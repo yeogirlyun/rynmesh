@@ -55,7 +55,16 @@ from .prompt import (
     progress_message,
     provider_messages,
 )
-from .protocol import bound_preview, digest, event, event_result, model_retry_authority, now, sanitized, task
+from .protocol import (
+    bound_preview,
+    digest,
+    event,
+    event_result,
+    model_retry_authority,
+    now,
+    sanitized,
+    task,
+)
 from .store import (
     READ_FAILED_THREE_TIMES_CORRECTION,
     READ_FAILED_TWICE_CORRECTION,
@@ -2279,6 +2288,7 @@ class AgentLoop:
                 # The receipt keeps the exact result; only the model-visible copy carries the budget notice.
                 notice = self._budget_notice(row)
                 shown = {**result, "server_note": notice} if notice and isinstance(result, dict) else result
+                shown = results.model_projection(call["name"], shown)
                 message = {"role": "tool", "tool_call_id": call["call_id"], "content": encoded(shown).decode(), "context_epoch": selected.get("context_epoch", 0)}
                 if isinstance(result, dict) and result.get("error"):
                     message["is_error"] = True
@@ -2483,6 +2493,7 @@ class AgentLoop:
                         max_bytes=selected["limits"]["max_output_chars"],
                     )
                 shown = {**result, "server_note": notice} if notice and index == len(batch) - 1 and isinstance(result, dict) else result
+                shown = results.model_projection(call["name"], shown)
                 message = {"role": "tool", "tool_call_id": call["call_id"], "content": encoded(shown).decode(),
                            "context_epoch": selected.get("context_epoch", 0)}
                 if failed or (isinstance(result, dict) and result.get("error")):
