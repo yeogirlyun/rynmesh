@@ -1681,3 +1681,46 @@ def test_mcp_conversation_and_receipt_reopen_as_followup_context(ext_env, tmp_pa
             break
     assert reopened.get(created['id'])['result'] == 'I used the saved report context.'
     assert json.loads(counts.read_text()) == {'ping_info': 1}
+
+
+def test_s09_i2_adding_two_skills_past_eight_records_skills_limit_reached_event(tmp_path: Path):
+    home = tmp_path / "home_s09_i2"
+    workspace = tmp_path / "ws_s09_i2"
+    home.mkdir()
+    workspace.mkdir()
+    store = AgentStore(home / "agent", X25519PrivateKey.generate())
+    tools = _ExtensionHarnessTools(home, store)
+    model = _Model()
+    runtime = AgentRuntime(store, model, tools, _Catalog())
+    runtime.update_settings({"enabled": True, "model_id": "local:test", "workspace_root": str(workspace)})
+
+    ext_store = tools.extensions.store
+    for idx in range(1, 11):
+        sid = f"limit-skill-{idx}"
+        pkg = ext_store.allocate_package_dir("skill", sid)
+        pkg.mkdir(parents=True, exist_ok=True)
+        (pkg / "SKILL.md").write_text(f"# {sid}\nRule {idx}", encoding="utf-8")
+        ext_store.commit_imported_items(
+            plugins=[],
+            skills=[{"id": sid, "name": sid, "title": sid, "description": sid, "version": "1.0.0", "content": f"# {sid}\nRule {idx}", "package_dir": str(pkg)}],
+            mcp_servers=[],
+        )
+        ext_store.set_skill_enabled(sid, True)
+
+    model.responses = [_assistant(content="Turn 1 done.")]
+    first_eight = [f"limit-skill-{idx}" for idx in range(1, 9)]
+    created = runtime.create({"message": "Start", "skill_ids": first_eight})
+    runtime.run_once()
+    done = runtime.get(created["id"])
+    updated = runtime.add_message(
+        created["id"],
+        {
+            "message": "Now use $limit-skill-9 and $limit-skill-10",
+            "expected_control_revision": done["control_revision"],
+        },
+    )
+    assert [s["id"] for s in updated["skills"]] == first_eight
+    limit_ev = [e for e in updated["events"] if e["type"] == "skills_limit_reached"]
+    assert len(limit_ev) == 1
+    assert limit_ev[0]["dropped_skill_ids"] == ["limit-skill-9", "limit-skill-10"]
+    tools.close()

@@ -467,6 +467,7 @@ def _legacy_untruncated_guidance(row: dict, full_text: str) -> str:
         "AGENTS.md rules apply to their directory tree; a deeper file wins over a higher one, "
         "and the owner's direct instructions win over both."
     )
+    stop_rule = "If you stop because of a rule in AGENTS.md, name the file and quote the rule."
     return (
         f"{env_block}\n\n"
         f"{rules_block}\n\n"
@@ -474,7 +475,8 @@ def _legacy_untruncated_guidance(row: dict, full_text: str) -> str:
         f"{scope_rule}\n\n"
         "<INSTRUCTIONS>\n"
         f"{full_text.rstrip(chr(10))}\n"
-        "</INSTRUCTIONS>"
+        "</INSTRUCTIONS>\n"
+        f"{stop_rule}"
     )
 
 
