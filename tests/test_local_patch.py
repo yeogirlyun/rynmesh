@@ -303,3 +303,58 @@ def test_s05_i2_t2_added_lines_use_first_line_ending_preferred():
     )[0]["hunks"]
     assert local_patch.apply_hunks("only_line", append_hunks).encode("utf-8") == b"only_line\nadded_line"
 
+
+def test_s05_i3_t1_lenient_envelope_unwraps_heredocs_and_code_fences_and_rejects_malformed():
+    """T1 (Change 1): unwraps 3 heredoc quote forms (with/without apply_patch prefix) and ```diff fences; rejects unclosed fence and <4 lines with unwrap note."""
+    inner_patch = "\n".join([
+        "*** Begin Patch",
+        "*** Update File: app.py",
+        "@@",
+        "-x = 1",
+        "+x = 2",
+        "*** End Patch",
+    ])
+
+    # 1. Three heredoc quote variants (bare and with 'apply_patch ' prefix) + 2. ```diff / ```patch / ``` fences
+    valid_wrapped = [
+        f"<<EOF\n{inner_patch}\nEOF",
+        f"<<'EOF'\n{inner_patch}\nEOF",
+        f'<<"EOF"\n{inner_patch}\nEOF',
+        f"apply_patch <<EOF\n{inner_patch}\nEOF",
+        f"apply_patch <<'EOF'\n{inner_patch}\nEOF",
+        f'apply_patch <<"EOF"\n{inner_patch}\nEOF',
+        f"```diff\n{inner_patch}\n```",
+        f"```\n{inner_patch}\n```",
+    ]
+    for wrapped in valid_wrapped:
+        ops = local_patch.parse(wrapped)
+        assert len(ops) == 1
+        assert ops[0]["kind"] == "update" and ops[0]["path"] == "app.py"
+        assert local_patch.apply_hunks("x = 1\n", ops[0]["hunks"]) == "x = 2\n"
+
+    # 3. Opening fence / heredoc without matching closing line -> still rejected as invalid_envelope
+    unclosed_cases = [
+        f"```diff\n{inner_patch}",
+        f"<<'EOF'\n{inner_patch}",
+        f"{inner_patch}\n```",
+    ]
+    for bad in unclosed_cases:
+        with pytest.raises(AgentToolRejected, match="agent_patch_invalid_envelope") as exc_info:
+            local_patch.parse(bad)
+        assert "heredoc" in exc_info.value.correction.lower() or "```" in exc_info.value.correction
+
+    # 4. Fewer than 4 lines -> still rejected even with heredoc or fence markers
+    short_cases = [
+        "<<EOF\n*** Begin Patch\nEOF",
+        "<<'EOF'\n*** End Patch\nEOF",
+        "```diff\n*** Begin Patch\n```",
+        "```diff\n```",
+        "<<EOF\nEOF",
+    ]
+    for short in short_cases:
+        assert len(short.splitlines()) < 4
+        with pytest.raises(AgentToolRejected, match="agent_patch_invalid_envelope") as exc_short:
+            local_patch.parse(short)
+        assert "heredoc" in exc_short.value.correction.lower() or "```" in exc_short.value.correction
+
+
