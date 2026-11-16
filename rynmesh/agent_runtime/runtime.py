@@ -2043,8 +2043,8 @@ class AgentRuntime(AgentLoop):
         message_text_val: str = "",
         *,
         default_project: bool = False,
+        warnings_out: list[dict] | None = None,
     ) -> list[dict]:
-        selector = self.extensions.store.select_skills if self.extensions is not None else knowledge.select
         enabled_catalog = (
             self.extensions.store.enabled_skills_catalog()
             if self.extensions is not None
@@ -2055,8 +2055,16 @@ class AgentRuntime(AgentLoop):
             for item in enabled_catalog
             if isinstance(item, dict) and isinstance(item.get("id"), str)
         }
-        selected = selector(explicit_ids)
+        explicit_warnings: list[dict] = []
+        if self.extensions is not None:
+            selected = list(self.extensions.store.select_skills(explicit_ids, warnings=explicit_warnings))
+        else:
+            selected = knowledge.select(explicit_ids)
+        if isinstance(explicit_ids, list) and len(explicit_ids) > 0 and not selected and explicit_warnings:
+            raise AgentError(str(explicit_warnings[0].get("reason") or "agent_skill_integrity_failed"))
         seen_ids = {str(item.get("id")) for item in selected if isinstance(item, dict)}
+        skipped_ids = {str(w.get("skill_id")) for w in explicit_warnings if w.get("skill_id")}
+        all_warnings: list[dict] = list(explicit_warnings)
 
         if isinstance(message_text_val, str) and "$" in message_text_val:
             mentioned_ids: list[str] = []
@@ -2065,27 +2073,74 @@ class AgentRuntime(AgentLoop):
                 message_text_val,
             ):
                 canonical_id = enabled_by_lower.get(match.group(1).lower())
-                if canonical_id and canonical_id not in seen_ids and canonical_id not in mentioned_ids:
+                if (
+                    canonical_id
+                    and canonical_id not in seen_ids
+                    and canonical_id not in skipped_ids
+                    and canonical_id not in mentioned_ids
+                ):
                     mentioned_ids.append(canonical_id)
             if mentioned_ids:
-                for item in selector(mentioned_ids):
+                mention_warnings: list[dict] = []
+                if self.extensions is not None:
+                    mentioned_selected = list(
+                        self.extensions.store.select_skills(mentioned_ids, warnings=mention_warnings)
+                    )
+                else:
+                    mentioned_selected = knowledge.select(mentioned_ids)
+                for item in mentioned_selected:
                     if item["id"] not in seen_ids:
                         selected.append(item)
                         seen_ids.add(item["id"])
+                all_warnings.extend(mention_warnings)
 
+        if warnings_out is not None:
+            warnings_out.extend(all_warnings)
         return selected
 
     @staticmethod
-    def _merge_task_skills(existing: list[dict] | None, additions: list[dict] | None) -> list[dict]:
+    def _merge_task_skills(
+        existing: list[dict] | None, additions: list[dict] | None
+    ) -> tuple[list[dict], list[str]]:
         merged = [copy.deepcopy(item) for item in (existing or []) if isinstance(item, dict)]
         seen = {str(item.get("id")) for item in merged if item.get("id")}
+        dropped: list[str] = []
         for item in additions or []:
-            if isinstance(item, dict) and item.get("id") and str(item["id"]) not in seen:
-                if len(merged) >= 8:
-                    break
-                merged.append(copy.deepcopy(item))
-                seen.add(str(item["id"]))
-        return merged
+            if isinstance(item, dict) and item.get("id"):
+                sid = str(item["id"])
+                if sid not in seen and sid not in dropped:
+                    if len(merged) >= 8:
+                        dropped.append(sid)
+                    else:
+                        merged.append(copy.deepcopy(item))
+                        seen.add(sid)
+        return merged, dropped
+
+    @staticmethod
+    def _record_skill_events_in_tx(
+        row: dict,
+        *,
+        skipped_warnings: list[dict] | None = None,
+        dropped_skill_ids: list[str] | None = None,
+    ) -> None:
+        for warn in skipped_warnings or []:
+            if isinstance(warn, dict) and warn.get("skill_id"):
+                event(
+                    row,
+                    "skill_skipped",
+                    skill_id=str(warn["skill_id"]),
+                    reason=str(warn.get("reason") or "agent_skill_integrity_failed"),
+                )
+        if dropped_skill_ids:
+            prior = [
+                str(sid) for sid in (row.get("dropped_skill_ids") or [])
+                if isinstance(sid, str) and sid
+            ]
+            for sid in dropped_skill_ids:
+                if sid not in prior:
+                    prior.append(sid)
+            row["dropped_skill_ids"] = prior
+            event(row, "skills_limit_reached", dropped_skill_ids=list(dropped_skill_ids), limit=8)
 
     def preferences(self) -> dict:
         return knowledge.preferences(self.store.read())
@@ -2385,7 +2440,8 @@ class AgentRuntime(AgentLoop):
             raise AgentError("agent_invalid_request")
         prepared = parse_attachments(value.get("attachments"))
         content = message_text(value.get("message") or ("Please review the attached files." if prepared else ""))
-        skills = self._resolve_skills(value.get("skill_ids"), content)
+        skipped_skills: list[dict] = []
+        skills = self._resolve_skills(value.get("skill_ids"), content, warnings_out=skipped_skills)
         budget.validate_limits(value.get("budget_limits", {}))
         request_id = value.get("client_request_id")
         if request_id is not None:
@@ -2473,7 +2529,12 @@ class AgentRuntime(AgentLoop):
                 truncation = projects.instructions_truncation(row)
                 if truncation is not None:
                     event(row, "project_instructions_truncated", **truncation)
-            row["skills"] = skills
+            if source is None:
+                merged_initial, dropped_skills = self._merge_task_skills([], skills)
+                row["skills"] = merged_initial
+            else:
+                dropped_skills = []
+                row["skills"] = skills
             row["verify_text_responses"] = settings.get("verify_text_responses", False)
             row["response_language"] = value.get("response_language") or "en"
             budget.initialize(row)
@@ -2504,14 +2565,15 @@ class AgentRuntime(AgentLoop):
                             "local_execution", "project", "model_destination", "model_destination_required",
                             "model_destination_confirmed", "scope", "scope_revision", "context_epoch",
                             "data_policy_state", "base_instructions", "prompt_version", "skills",
-                            "reasoning_effort", "response_language", "context_budget_provenance",
+                            "dropped_skill_ids", "reasoning_effort", "response_language", "context_budget_provenance",
                             "verify_text_responses"):
                     if key in source:
                         row[key] = copy.deepcopy(source[key])
                 modes = {row["permission_mode"], settings["permission_mode"]}
                 row["permission_mode"] = next(mode for mode in ("read_only", "confirm_changes", "workspace", "automatic") if mode in modes)
                 row["local_execution"]["desktop_access"] = bool(row["local_execution"].get("desktop_access") and settings.get("desktop_access"))
-                row["skills"] = self._merge_task_skills(row.get("skills"), skills)
+                merged_cont, dropped_skills = self._merge_task_skills(row.get("skills"), skills)
+                row["skills"] = merged_cont
                 if effort is not None:
                     row["reasoning_effort"] = effort
                 if not row["scope"].get("resource_grants"):
@@ -2533,6 +2595,11 @@ class AgentRuntime(AgentLoop):
                 source["continued_to"] = row["id"]
                 event(source, "continued_in_new_task", task_id=row["id"])
                 event(row, "continued_from", task_id=source["id"])
+            self._record_skill_events_in_tx(
+                row,
+                skipped_warnings=skipped_skills,
+                dropped_skill_ids=dropped_skills,
+            )
             memory_natural.stamp_task_owner_messages_in_tx(data, row)
             memory_integration.apply_owner_turn_memory_in_tx(self, data, row)
             event(row, "created")
@@ -2548,9 +2615,17 @@ class AgentRuntime(AgentLoop):
             raise AgentError("agent_invalid_request")
         prepared = parse_attachments(value.get("attachments"))
         content = message_text(value.get("message") or ("Please review the attached files." if prepared else ""))
-        added_skills = self._resolve_skills(value.get("skill_ids"), content)
+        skipped_skills: list[dict] = []
+        added_skills = self._resolve_skills(value.get("skill_ids"), content, warnings_out=skipped_skills)
         if "edit_message_index" in value:
-            return self._edit_message(task_id, value, content, prepared, added_skills=added_skills)
+            return self._edit_message(
+                task_id,
+                value,
+                content,
+                prepared,
+                added_skills=added_skills,
+                skipped_skills=skipped_skills,
+            )
         intent = value.get("intent")
         if intent not in {None, "steer", "information"}:
             raise AgentError("agent_invalid_request")
@@ -2581,7 +2656,7 @@ class AgentRuntime(AgentLoop):
                 shrunk = compact_goal_history(row)
                 if event_compaction.compact_until_small(row) or shrunk:
                     size = len(encoded(row))
-            if event_compaction.over_hard_limit(row, size, reserve_events=2):
+            if event_compaction.over_hard_limit(row, size, reserve_events=2 + len(skipped_skills) + 1):
                 raise ContinueInNewTask()
             effort = reasoning.validate(self._model_metadata(row["model_id"]), value["reasoning_effort"]) if "reasoning_effort" in value else None
             if row["status"] == "interrupted" and row["in_flight"]:
@@ -2608,9 +2683,13 @@ class AgentRuntime(AgentLoop):
             message = {"role": "user", "content": content, "message_id": "owner_" + uuid.uuid4().hex,
                        "ui": {"kind": "steer" if intent == "steer" else "information" if intent == "information" else "message", "text": content}}
             attach_to_message(self.store, row, message, prepared)
-            merged_skills = self._merge_task_skills(row.get("skills"), added_skills)
+            merged_skills, dropped_skills = self._merge_task_skills(row.get("skills"), added_skills)
+            prospective_dropped = list(
+                dict.fromkeys([*(row.get("dropped_skill_ids") or []), *dropped_skills])
+            )
             owners = [message for message in [*row["messages"], *row.get("pending_user_messages", [])] if message["role"] == "user"]
             prospective = {**row, "messages": [*owners, message], "skills": merged_skills,
+                           "dropped_skill_ids": prospective_dropped,
                            "context_checkpoint": None, "tool_menu": None}
             # Fixed instruction layers plus compacted-rule owner messages (including
             # this new message), an empty checkpoint and tool schemas form the pinned
@@ -2632,6 +2711,11 @@ class AgentRuntime(AgentLoop):
                 raise ContinueInNewTask()
             memory_natural.stamp_single_owner_message_in_tx(data, message)
             row["skills"] = merged_skills
+            self._record_skill_events_in_tx(
+                row,
+                skipped_warnings=skipped_skills,
+                dropped_skill_ids=dropped_skills,
+            )
             ended = row["status"] in {"completed", "failed", "interrupted", "cancelled"} or bool(row.get("turn_stopped"))
             if effort is not None:
                 # Running requests already own an immutable task snapshot.
@@ -2738,7 +2822,16 @@ class AgentRuntime(AgentLoop):
             body["project_id"] = old["project"]["id"]
         return self.create(body, _continuation={"id": task_id, "revision": old["revision"], "fingerprint": fingerprint})
 
-    def _edit_message(self, task_id: str, value: dict, content: str, prepared=None, *, added_skills=None) -> dict:
+    def _edit_message(
+        self,
+        task_id: str,
+        value: dict,
+        content: str,
+        prepared=None,
+        *,
+        added_skills=None,
+        skipped_skills=None,
+    ) -> dict:
         if value.get("intent") not in {None, "steer", "information"} or type(value["edit_message_index"]) is not int:
             raise AgentError("agent_invalid_request")
 
@@ -2767,16 +2860,26 @@ class AgentRuntime(AgentLoop):
                 raise AgentError("agent_task_limit")
             # Test the replacement owner's pinned floor before committing stop
             # intent. Discarded future constraints cannot consume its context.
-            merged_skills = self._merge_task_skills(row.get("skills"), added_skills)
+            merged_skills, dropped_skills = self._merge_task_skills(row.get("skills"), added_skills)
+            prospective_dropped = list(
+                dict.fromkeys([*(row.get("dropped_skill_ids") or []), *dropped_skills])
+            )
             retained = [*row["messages"][:index], replacement]
             owner_ids = {message.get("message_id") for message in retained if message["role"] == "user"}
-            prospective = {**row, "messages": retained, "skills": merged_skills, "context_checkpoint": None, "tool_menu": None,
+            prospective = {**row, "messages": retained, "skills": merged_skills,
+                           "dropped_skill_ids": prospective_dropped,
+                           "context_checkpoint": None, "tool_menu": None,
                            "goal": {**row["goal"], "constraints": [item for item in row["goal"]["constraints"] if item.get("message_id") in owner_ids]}}
             (future_specs, _), authority_bytes = self._menu(prospective)
             if authority_bytes + len(encoded(future_specs)) > self._context_limit(row):
                 raise AgentError("agent_context_limit")
             memory_natural.stamp_single_owner_message_in_tx(data, replacement)
             row["skills"] = merged_skills
+            self._record_skill_events_in_tx(
+                row,
+                skipped_warnings=skipped_skills,
+                dropped_skill_ids=dropped_skills,
+            )
             if "reasoning_effort" in value:
                 row["reasoning_effort"] = reasoning.validate(self._model_metadata(row["model_id"]), value["reasoning_effort"])
             row.update(status="paused", approved=None, pending_approval=None, pending_input=None,

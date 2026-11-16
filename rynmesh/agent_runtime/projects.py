@@ -472,6 +472,9 @@ AGENTS_MD_SCOPE_RULE = (
     "AGENTS.md rules apply to their directory tree; a deeper file wins over a higher one, "
     "and the owner's direct instructions win over both."
 )
+AGENTS_MD_STOP_RULE = (
+    "If you stop because of a rule in AGENTS.md, name the file and quote the rule."
+)
 
 
 def _project_is_git(project: dict) -> bool:
@@ -516,7 +519,8 @@ def guidance(row):
             f"{AGENTS_MD_SCOPE_RULE}\n\n"
             "<INSTRUCTIONS>\n"
             f"{text}\n"
-            "</INSTRUCTIONS>"
+            "</INSTRUCTIONS>\n"
+            f"{AGENTS_MD_STOP_RULE}"
         )
     total_display = ">64 KiB" if sliced["incomplete"] else f"{sliced['raw_bytes']} bytes"
     marker = (
@@ -530,7 +534,8 @@ def guidance(row):
         f"{AGENTS_MD_SCOPE_RULE}\n\n"
         "<INSTRUCTIONS>\n"
         f"{body}\n"
-        "</INSTRUCTIONS>"
+        "</INSTRUCTIONS>\n"
+        f"{AGENTS_MD_STOP_RULE}"
     )
 
 

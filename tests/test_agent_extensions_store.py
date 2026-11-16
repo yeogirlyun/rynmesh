@@ -544,3 +544,39 @@ env_http_headers = { "X-Env-Header" = "ORG_HEADER_TOKEN" }
     cleared = store.clear_mcp_app_data()
     assert cleared["cleared"] is True
     assert len(cleared["overview"]["mcp_servers"]) == len(committed["mcp_servers"])
+
+
+def test_s09_i2_tampered_skill_package_skipped_and_task_created_with_event(tmp_path: Path):
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+    from rynmesh.agent_runtime.runtime import AgentRuntime
+    from rynmesh.agent_runtime.store import AgentStore
+    from test_agent_extensions_runtime import _Catalog, _ExtensionHarnessTools, _Model
+
+    home = tmp_path / "home_s09_i2"
+    workspace = tmp_path / "ws_s09_i2"
+    home.mkdir()
+    workspace.mkdir()
+    agent_store = AgentStore(home / "agent", X25519PrivateKey.generate())
+    tools = _ExtensionHarnessTools(home, agent_store)
+    runtime = AgentRuntime(agent_store, _Model(), tools, _Catalog())
+    runtime.update_settings({"enabled": True, "model_id": "local:test", "workspace_root": str(workspace)})
+
+    ext_store = tools.extensions.store
+    for sid in ("good-one", "tampered-one"):
+        pkg = ext_store.allocate_package_dir("skill", sid)
+        pkg.mkdir(parents=True, exist_ok=True)
+        (pkg / "SKILL.md").write_text(f"# {sid}\nBody", encoding="utf-8")
+        (pkg / "ref.md").write_text("clean", encoding="utf-8")
+        ext_store.commit_imported_items(
+            plugins=[],
+            skills=[{"id": sid, "name": sid, "title": sid, "description": sid, "version": "1.0.0", "content": f"# {sid}\nBody", "package_dir": str(pkg)}],
+            mcp_servers=[],
+        )
+        ext_store.set_skill_enabled(sid, True)
+        if sid == "tampered-one":
+            (pkg / "ref.md").write_text("tampered!", encoding="utf-8")
+
+    created = runtime.create({"message": "Run check", "skill_ids": ["good-one", "tampered-one"]})
+    assert [s["id"] for s in created["skills"]] == ["good-one"]
+    assert any(e["type"] == "skill_skipped" and e.get("skill_id") == "tampered-one" for e in created["events"])
+    tools.close()

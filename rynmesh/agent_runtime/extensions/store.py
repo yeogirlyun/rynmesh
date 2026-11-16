@@ -25,7 +25,12 @@ from ...atomic_io import atomic_write_json, read_json
 from ...file_transactions import file_transaction
 from ...services import peer_box
 from ..data_policy import normalize_policy
-from ..knowledge import SKILLS as BUILTIN_SKILLS
+from ..knowledge import (
+    SKILL_CONTENT_MAX_BYTES,
+    SKILL_CONTINUATION_NOTE,
+    SKILLS as BUILTIN_SKILLS,
+    truncate_skill_content,
+)
 from ..store import AgentError, AgentToolRejected, encoded
 from .schema_normalize import normalize_mcp_input_schema
 from .views import normalize_views
@@ -49,6 +54,14 @@ MAX_TOOL_TIMEOUT_MS = 3600000
 DEFAULT_MAX_OUTPUT_CHARS = 32000
 MIN_MAX_OUTPUT_CHARS = 64
 MAX_MAX_OUTPUT_CHARS = 2_000_000
+
+
+class SelectedSkillsResult(list):
+    """List of selected skill snapshots carrying non-fatal integrity warnings."""
+
+    def __init__(self, items: list[dict[str, Any]] | None = None, *, warnings: list[dict[str, Any]] | None = None) -> None:
+        super().__init__(items or [])
+        self.warnings: list[dict[str, Any]] = list(warnings or [])
 
 
 def validate_peer_provider(value: Any) -> dict[str, Any]:
@@ -1180,10 +1193,15 @@ class ExtensionStore:
                     )
             return out
 
-    def select_skills(self, skill_ids: list[str] | None) -> list[dict[str, Any]]:
-        """Select and snapshot enabled built-in or imported skills for a new task."""
+    def select_skills(
+        self,
+        skill_ids: list[str] | None,
+        *,
+        warnings: list[dict[str, Any]] | None = None,
+    ) -> SelectedSkillsResult:
+        """Select and snapshot enabled built-in or imported skills for a task."""
         if skill_ids is None:
-            return []
+            return SelectedSkillsResult()
         if (
             not isinstance(skill_ids, list)
             or any(not isinstance(item, str) or not item for item in skill_ids)
@@ -1197,11 +1215,20 @@ class ExtensionStore:
             if len(skill_ids) > max(max_allowed, 1):
                 raise AgentError("agent_invalid_skills")
             selected: list[dict[str, Any]] = []
+            collected_warnings: list[dict[str, Any]] = []
             for item in skill_ids:
                 if item in BUILTIN_SKILLS:
                     if not builtin_enabled.get(item, True):
                         raise AgentError("agent_invalid_skills")
-                    selected.append(copy.deepcopy(BUILTIN_SKILLS[item]))
+                    b_snap = copy.deepcopy(BUILTIN_SKILLS[item])
+                    trunc_text, was_trunc = truncate_skill_content(
+                        str(b_snap.get("content", "")), SKILL_CONTENT_MAX_BYTES
+                    )
+                    b_snap["content"] = trunc_text
+                    if was_trunc:
+                        b_snap["truncated"] = True
+                        b_snap["continuation_note"] = SKILL_CONTINUATION_NOTE
+                    selected.append(b_snap)
                     continue
                 skill = state["skills"].get(item)
                 if not skill or not self._is_skill_effectively_enabled(skill, state):
@@ -1209,17 +1236,32 @@ class ExtensionStore:
                 pkg_dir_str = skill.get("package_dir")
                 if pkg_dir_str:
                     pkg_dir = Path(pkg_dir_str).resolve()
-                    manifest = compute_directory_manifest(pkg_dir)
-                    if skill.get("manifest_sha256") and manifest["manifest_sha256"] != skill["manifest_sha256"]:
-                        raise AgentError("agent_skill_integrity_failed")
+                    integrity_error: str | None = None
+                    try:
+                        manifest = compute_directory_manifest(pkg_dir)
+                        if skill.get("manifest_sha256") and manifest["manifest_sha256"] != skill["manifest_sha256"]:
+                            integrity_error = "agent_skill_integrity_failed"
+                    except AgentError:
+                        integrity_error = "agent_skill_integrity_failed"
+                    if integrity_error is not None:
+                        collected_warnings.append(
+                            {"skill_id": str(skill["id"]), "reason": integrity_error}
+                        )
+                        continue
+                trunc_content, was_truncated = truncate_skill_content(
+                    str(skill.get("content", "")), SKILL_CONTENT_MAX_BYTES
+                )
                 snapshot: dict[str, Any] = {
                     "id": skill["id"],
                     "version": str(skill.get("version", "1")),
                     "install_generation": int(skill.get("install_generation", 1)),
                     "title": skill.get("title") or skill.get("name") or skill["id"],
                     "description": str(skill.get("description") or skill.get("summary") or ""),
-                    "content": str(skill.get("content", "")),
+                    "content": trunc_content,
                 }
+                if was_truncated:
+                    snapshot["truncated"] = True
+                    snapshot["continuation_note"] = SKILL_CONTINUATION_NOTE
                 if skill.get("manifest_sha256"):
                     snapshot["manifest_sha256"] = skill["manifest_sha256"]
                 if skill.get("files"):
@@ -1227,7 +1269,9 @@ class ExtensionStore:
                         f["path"] for f in skill["files"] if isinstance(f, dict) and "path" in f
                     ]
                 selected.append(snapshot)
-            return selected
+            if warnings is not None:
+                warnings.extend(collected_warnings)
+            return SelectedSkillsResult(selected, warnings=collected_warnings)
 
     def get_skill_for_runtime(self, skill_id: str) -> dict[str, Any] | None:
         """Return an effectively enabled skill for runtime discovery/invocation, or None."""
