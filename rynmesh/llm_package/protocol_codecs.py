@@ -37,6 +37,7 @@ _LIMIT = 4 * 1024 * 1024
 _NAME = re.compile(r"[A-Za-z0-9_-]{1,64}\Z")
 _ID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 _SCOPE = re.compile(r"[a-f0-9]{64}\Z")
+_CACHE_KEY = re.compile(r"[A-Za-z0-9:_-]{1,64}\Z")
 _IMAGE = re.compile(r"data:(image/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+={0,2})\Z")
 
 
@@ -379,12 +380,44 @@ def _messages(body, protocol, scope):
     return output, system
 
 
+def _apply_messages_cache_breakpoints(payload: dict[str, Any]) -> None:
+    messages = payload.get("messages")
+    if not isinstance(messages, list):
+        return
+    # Anthropic cache creation charges 1.25x; only place ephemeral breakpoints
+    # after step 2 (from step 3 onward, once at least 2 assistant turns exist).
+    assistant_turns = sum(1 for msg in messages if isinstance(msg, dict) and msg.get("role") == "assistant")
+    if assistant_turns < 2:
+        return
+    marker = {"type": "ephemeral"}
+    system = payload.get("system")
+    if isinstance(system, list) and system and isinstance(system[-1], dict):
+        system[-1]["cache_control"] = dict(marker)
+    tools = payload.get("tools")
+    if isinstance(tools, list) and tools and isinstance(tools[-1], dict):
+        tools[-1]["cache_control"] = dict(marker)
+    user_msgs = [
+        msg for msg in messages
+        if isinstance(msg, dict) and msg.get("role") == "user"
+        and isinstance(msg.get("content"), list) and msg["content"]
+    ]
+    if len(user_msgs) >= 2 and isinstance(user_msgs[-2]["content"][-1], dict):
+        user_msgs[-2]["content"][-1]["cache_control"] = dict(marker)
+
+
 @_safe
-def make_request(body: dict[str, Any], protocol: str, model: str, scope: str) -> dict[str, Any]:
+def make_request(body: dict[str, Any], protocol: str, model: str, scope: str, *, prompt_cache: str | None = None) -> dict[str, Any]:
     """Convert canonical history/tools; this function never performs inference."""
     _check(protocol, model, scope)
-    if not isinstance(body, dict) or set(body) - {"messages", "max_tokens", "temperature", "top_p", "stop", "tools", "tool_choice", "stream", "reasoning_effort", "thinking", "enable_thinking", "chat_template_kwargs"}:
+    if not isinstance(body, dict) or set(body) - {"messages", "max_tokens", "temperature", "top_p", "stop", "tools", "tool_choice", "stream", "reasoning_effort", "thinking", "enable_thinking", "chat_template_kwargs", "prompt_cache_key", "prompt_cache"}:
         raise ValueError("unsupported native request parameter")
+    if "prompt_cache_key" in body:
+        cache_key = body["prompt_cache_key"]
+        if not isinstance(cache_key, str) or len(cache_key.encode("utf-8")) > 64 or not _CACHE_KEY.fullmatch(cache_key):
+            raise ValueError("invalid native prompt_cache_key")
+    eff_prompt_cache = prompt_cache if prompt_cache is not None else body.get("prompt_cache", "auto")
+    if eff_prompt_cache not in {"auto", "off"}:
+        raise ValueError("invalid native prompt_cache")
     maximum = body.get("max_tokens", 512)
     if type(maximum) is not int or maximum < 1 or type(body.get("stream", False)) is not bool:
         raise ValueError("invalid native request limits")
@@ -431,6 +464,8 @@ def make_request(body: dict[str, Any], protocol: str, model: str, scope: str) ->
             if not isinstance(body["reasoning_effort"], str) or not body["reasoning_effort"]:
                 raise ValueError("invalid native reasoning effort")
             result["reasoning"] = {"effort": body["reasoning_effort"]}
+        if eff_prompt_cache != "off" and "prompt_cache_key" in body:
+            result["prompt_cache_key"] = body["prompt_cache_key"]
     else:
         if "reasoning_effort" in body:
             raise ValueError("native Messages reasoning effort is not supported")
@@ -446,6 +481,9 @@ def make_request(body: dict[str, Any], protocol: str, model: str, scope: str) ->
             result["stop_sequences"] = [stop] if isinstance(stop, str) else stop
     if active_profile is not None:
         non_image_projection = project_protocol_request_without_admitted_images(result, protocol, active_profile)
+        if protocol == MESSAGES and eff_prompt_cache != "off":
+            _apply_messages_cache_breakpoints(non_image_projection)
+            _apply_messages_cache_breakpoints(result)
         _copy(non_image_projection)
         raw_limit = min(MAX_REQUEST, active_profile.max_raw_request_bytes)
         try:
@@ -454,6 +492,8 @@ def make_request(body: dict[str, Any], protocol: str, model: str, scope: str) ->
             return copy.deepcopy(result)
         except (TypeError, OverflowError, RecursionError):
             raise ValueError("invalid native protocol data") from None
+    if protocol == MESSAGES and eff_prompt_cache != "off":
+        _apply_messages_cache_breakpoints(result)
     return _copy(result)
 
 
@@ -524,6 +564,7 @@ class StreamDecoder:
         self.protocol, self.model, self.scope = protocol, model, scope
         self.usage = {"prompt_tokens": None, "completion_tokens": None}
         self.cached_tokens = None
+        self.cache_creation_input_tokens = None
         self.finish_reason = None
         self._native_usage = {}
         self._final = None
@@ -546,6 +587,9 @@ class StreamDecoder:
             self.usage = {key: value if value is not None else self.usage[key] for key, value in mapped.items()}
             if self.protocol == MESSAGES:
                 cached = _count(self._native_usage.get("cache_read_input_tokens"))
+                created = _count(self._native_usage.get("cache_creation_input_tokens"))
+                if created is not None:
+                    self.cache_creation_input_tokens = created
             else:
                 details = self._native_usage.get("input_tokens_details")
                 cached = _count(details.get("cached_tokens")) if isinstance(details, dict) else None

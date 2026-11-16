@@ -52,6 +52,7 @@ class AgentModelBridge:
     supports_reasoning_effort = True
     # The runtime passes its task id; only an opaque hash leaves this process.
     supports_conversation_key = True
+    supports_cache_key = True
     supports_model_events = True
 
 
@@ -168,9 +169,12 @@ class AgentModelBridge:
         cached = cached_input_tokens(data) if "reported_usage" in data or target["source"] != "peer" else None
         if cached is not None:
             flags["cached_tokens"] = cached
+        cache_created = data.get("cache_creation_input_tokens") if ("reported_usage" in data or target["source"] != "peer") else None
+        if type(cache_created) is int and cache_created >= 0:
+            flags["cache_creation_input_tokens"] = cache_created
         return {"message": message, "finish_reason": finish, "usage": usage, "output_policy": policy, **flags}
 
-    def complete(self, model_id, messages, tool_specs, cancelled, on_event=None, *, expected_destination=None, max_output_tokens=None, deadline=None, on_request_policy=None, reasoning_effort=None, conversation=None, request_id=None, data_policy_state=None):
+    def complete(self, model_id, messages, tool_specs, cancelled, on_event=None, *, expected_destination=None, max_output_tokens=None, deadline=None, on_request_policy=None, reasoning_effort=None, conversation=None, cache_key=None, request_id=None, data_policy_state=None):
         if cancelled():
             raise AgentError(cancellation_reason(cancelled))
         if deadline is not None:
@@ -261,6 +265,21 @@ class AgentModelBridge:
             chat = normalize({"messages": messages, "tools": tool_specs, "max_tokens": maximum}, "chat")
         if reasoning_effort is not None:
             chat["reasoning_effort"] = reasoning.validate(target, reasoning_effort)
+        if isinstance(cache_key, str) and cache_key and target.get("source") != "peer":
+            prompt_cache_mode = None
+            if isinstance(target.get("model_settings"), dict):
+                eff = target["model_settings"].get("effective")
+                if isinstance(eff, dict) and eff.get("prompt_cache") in {"auto", "off"}:
+                    prompt_cache_mode = eff["prompt_cache"]
+            if prompt_cache_mode is None and target.get("source") == "local_api" and "source_store" in self.services:
+                src_record = self.services["source_store"].read().get(target.get("source_id"), {})
+                if src_record:
+                    prompt_cache_mode = model_settings.effective(src_record, target.get("model_id", "")).get("prompt_cache")
+            if prompt_cache_mode not in {"auto", "off"}:
+                prompt_cache_mode = "auto" if target.get("adapter") in {"openai_responses", "anthropic_messages"} else "off"
+            if prompt_cache_mode == "auto":
+                from ..llm_package.chat import validate_prompt_cache_key
+                chat["prompt_cache_key"] = validate_prompt_cache_key(cache_key)
         streaming = bool(on_event and target.get("streaming"))
         if streaming:
             chat["stream"] = True

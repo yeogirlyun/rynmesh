@@ -16,11 +16,13 @@ FIELDS = {
     "shared_tokens_per_day",
     "share_scope",
     "image_input",
+    "prompt_cache",
     "stream_idle_seconds",
     "max_request_seconds",
     "stream_max_retries",
 }
 IMAGE_INPUT_VALUES = ("auto", "supported", "unsupported")
+PROMPT_CACHE_VALUES = ("auto", "off")
 # Model-name prefixes whose image input was confirmed with the owner's image test.
 # Add an entry only after that test passed on a real account; never from memory.
 KNOWN_VENDOR_IMAGE_INPUT: tuple[str, ...] = ()
@@ -144,6 +146,10 @@ def defaults(record, model=None):
     stream_idle = source_idle if type(source_idle) is int and 1 <= source_idle <= 86400 else 120
     max_request = source_max_request if type(source_max_request) is int and 1 <= source_max_request <= 86400 else 1800
     stream_max_retries = source_stream_retries if type(source_stream_retries) is int and 0 <= source_stream_retries <= 20 else 5
+    protocol = record.get("protocol", "openai_chat")
+    default_prompt_cache = "auto" if protocol in {"openai_responses", "anthropic_messages"} else "off"
+    source_prompt_cache = record.get("prompt_cache")
+    prompt_cache = source_prompt_cache if source_prompt_cache in PROMPT_CACHE_VALUES else default_prompt_cache
     return {"context_window": window,
             "max_output_tokens": max_output,
             "request_defaults": copy.deepcopy(record.get("request_defaults", {})),
@@ -153,6 +159,7 @@ def defaults(record, model=None):
             "shared_tokens_per_day": None,
             "share_scope": "personal_space",
             "image_input": "auto",
+            "prompt_cache": prompt_cache,
             "stream_idle_seconds": stream_idle,
             "max_request_seconds": max_request,
             "stream_max_retries": stream_max_retries}
@@ -176,6 +183,8 @@ def validate(values):
         raise ValueError("model_share_scope_invalid")
     if "image_input" in values and values["image_input"] not in IMAGE_INPUT_VALUES:
         raise ValueError("model_image_input_invalid")
+    if "prompt_cache" in values and values["prompt_cache"] not in PROMPT_CACHE_VALUES:
+        raise ValueError("model_prompt_cache_invalid")
     if quota is not None and (type(quota) is not int or not 1 <= quota <= 1000000):
         raise ValueError("model_requests_per_day_invalid")
     for tok_key in ("tokens_per_day", "shared_tokens_per_day"):
@@ -259,10 +268,15 @@ def image_input_state(record, model):
 
 def public(record, model):
     row = record.get("model_settings", {}).get(model, {})
+    raw_evidence = row.get("evidence", {})
+    evidence = {key: copy.deepcopy(raw_evidence.get(key, {"status": "unknown", "checked_at": None}))
+                for key in ("connection", "model_exists", "tools", "image")}
+    for extra_key in ("prompt_cache_key", "cache_control"):
+        if extra_key in raw_evidence:
+            evidence[extra_key] = copy.deepcopy(raw_evidence[extra_key])
     return {**copy.deepcopy(row), "effective": effective(record, model), **context_metadata(record, model),
             "inherited_fields": sorted(FIELDS - set(row.get("overrides", {}))),
-            "evidence": {key: copy.deepcopy(row.get("evidence", {}).get(key, {"status": "unknown", "checked_at": None}))
-                         for key in ("connection", "model_exists", "tools", "image")}}
+            "evidence": evidence}
 
 
 def fingerprint(record, model):
