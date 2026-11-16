@@ -7,7 +7,7 @@ import threading
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from rynmesh.llm_package.api import InferenceKeys, install_inference_api
@@ -989,3 +989,323 @@ def test_s01_i34_t12_provider_handle_execute_order_and_submit_order_default_max_
         assert st.get("state") == "succeeded", st
 
     assert seen_cli_max == [1536, 1536]
+
+
+# ---------------------------------------------------------------------------
+# S01-I29 tests (T1 - T4)
+# ---------------------------------------------------------------------------
+
+
+async def _asgi_call(app, *, method: str, path: str, headers: list[tuple[bytes, bytes]], receive_fn):
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": method,
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode("ascii"),
+        "query_string": b"",
+        "headers": headers,
+        "client": ("127.0.0.1", 50000),
+        "server": ("127.0.0.1", 8791),
+    }
+    status_code = None
+    resp_headers: dict[str, str] = {}
+    body_parts: list[bytes] = []
+
+    async def send(message):
+        nonlocal status_code
+        if message["type"] == "http.response.start":
+            status_code = message["status"]
+            for k, v in message.get("headers", []):
+                resp_headers[k.decode("latin1").lower()] = v.decode("latin1")
+        elif message["type"] == "http.response.body":
+            body_parts.append(message.get("body", b""))
+
+    await app(scope, receive_fn, send)
+    return status_code, resp_headers, b"".join(body_parts)
+
+
+def test_s01_i29_t1_slow_chunked_body_every_2s_for_30s_is_accepted(tmp_path):
+    adapter = ChatAdapter()
+    manifest = LLMPackageManifest(
+        package_id="test",
+        mode="openai_compatible",
+        public_model_alias="test-model",
+        base_url="http://127.0.0.1:1",
+        max_output_tokens=512,
+        context_window=8_000_000,
+    )
+    manager = SimpleNamespace(
+        adapter=adapter,
+        manifest=manifest,
+        _slots=threading.BoundedSemaphore(2),
+        _lock=threading.Lock(),
+        _running=0,
+    )
+    app = FastAPI()
+    install_inference_api(
+        app,
+        home=tmp_path,
+        store=SimpleNamespace(peer_id="self"),
+        active_manager=lambda: manager,
+        discover=lambda _: [],
+        execute_order=None,
+        cancel_order=None,
+    )
+    with TestClient(app) as client:
+        key = client.post("/api/local/llm/api-keys", json={"name": "slow-ok", "output_token_limit": 100000}).json()
+
+    # Build a ~15 MiB valid JSON payload split into 15 x 1 MiB chunks sent 2 s apart (30 s total)
+    blob = "x" * (15 * 1024 * 1024 - 256)
+    full_payload = json.dumps(
+        {
+            "model": "local/test",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 16,
+            "metadata": {"padding": blob},
+        }
+    ).encode("utf-8")
+    chunk_size = 1024 * 1024
+    chunks = [full_payload[i : i + chunk_size] for i in range(0, len(full_payload), chunk_size)]
+    assert len(chunks) == 15
+
+    async def scenario():
+        idx = 0
+
+        async def slow_receive():
+            nonlocal idx
+            if idx < len(chunks):
+                if idx > 0:
+                    await asyncio.sleep(2.0)
+                else:
+                    await asyncio.sleep(2.0)
+                part = chunks[idx]
+                idx += 1
+                return {"type": "http.request", "body": part, "more_body": idx < len(chunks)}
+            await asyncio.sleep(60)
+            return {"type": "http.disconnect"}
+
+        return await _asgi_call(
+            app,
+            method="POST",
+            path="/v1/chat/completions",
+            headers=[
+                (b"host", b"127.0.0.1:8791"),
+                (b"content-type", b"application/json"),
+                (b"authorization", ("Bearer " + key["key"]).encode("ascii")),
+            ],
+            receive_fn=slow_receive,
+        )
+
+    status, _headers, raw_body = asyncio.run(scenario())
+    assert status == 200, raw_body
+    assert json.loads(raw_body)["choices"][0]["message"]["content"] == "Hello world"
+
+
+def test_s01_i29_t2_idle_timeout_and_total_timeout_return_distinct_408_reasons(monkeypatch):
+    from rynmesh.llm_package import safety
+    from rynmesh.llm_package.safety import InferenceBodyLimit
+
+    raw_app = FastAPI()
+
+    @raw_app.post("/v1/chat/completions")
+    async def dummy():
+        return {"ok": True}
+
+    # 1. Default 15 s idle timeout without monkeypatching, plus 10 s silence with idle_timeout=8 s -> 408 request_body_idle_timeout
+    assert safety.BODY_IDLE_TIMEOUT_S == 15
+    app_default_idle = InferenceBodyLimit(raw_app)
+
+    async def default_15s_idle_scenario():
+        async def no_data_receive():
+            await asyncio.sleep(15.2)
+            return {"type": "http.request", "body": b"{}", "more_body": False}
+
+        return await _asgi_call(
+            app_default_idle,
+            method="POST",
+            path="/v1/chat/completions",
+            headers=[(b"host", b"127.0.0.1")],
+            receive_fn=no_data_receive,
+        )
+
+    st_def, _, body_def = asyncio.run(default_15s_idle_scenario())
+    assert st_def == 408
+    assert body_def == b"request_body_idle_timeout"
+
+    monkeypatch.setattr(safety, "BODY_IDLE_TIMEOUT_S", 8.0)
+    app_idle = InferenceBodyLimit(raw_app)
+
+    async def idle_10s_scenario():
+        sent_first = False
+
+        async def stalled_receive():
+            nonlocal sent_first
+            if not sent_first:
+                sent_first = True
+                return {"type": "http.request", "body": b'{"model":', "more_body": True}
+            await asyncio.sleep(10.0)
+            return {"type": "http.request", "body": b' "x"}', "more_body": False}
+
+        return await _asgi_call(
+            app_idle,
+            method="POST",
+            path="/v1/chat/completions",
+            headers=[(b"host", b"127.0.0.1")],
+            receive_fn=stalled_receive,
+        )
+
+    st_idle, _, body_idle = asyncio.run(idle_10s_scenario())
+    assert st_idle == 408
+    assert b"request_body_idle_timeout" in body_idle
+
+    # 2. Total timeout: steady trickle faster than idle_timeout exceeding total_timeout -> 408 request_body_total_timeout
+    app_total = InferenceBodyLimit(raw_app, idle_timeout=1.0, total_timeout=0.45)
+
+    async def total_timeout_scenario():
+        async def trickle_receive():
+            await asyncio.sleep(0.15)
+            return {"type": "http.request", "body": b" ", "more_body": True}
+
+        return await _asgi_call(
+            app_total,
+            method="POST",
+            path="/v1/chat/completions",
+            headers=[(b"host", b"127.0.0.1")],
+            receive_fn=trickle_receive,
+        )
+
+    st_tot, _, body_tot = asyncio.run(total_timeout_scenario())
+    assert st_tot == 408
+    assert b"request_body_total_timeout" in body_tot
+
+
+def test_s01_i29_t3_get_requests_bypass_http_slots_when_32_posts_occupy_all_slots(tmp_path):
+    client_sync, _adapter, _ = _make_api_with_manifest(tmp_path)
+    app = client_sync.app
+    auth_header = client_sync.headers["Authorization"].encode("ascii")
+
+    async def scenario():
+        all_32_in = asyncio.Event()
+        release_posts = asyncio.Event()
+        in_flight = 0
+
+        async def hold_post_slot():
+            nonlocal in_flight
+
+            async def blocking_receive():
+                nonlocal in_flight
+                in_flight += 1
+                if in_flight == 32:
+                    all_32_in.set()
+                await release_posts.wait()
+                return {"type": "http.disconnect"}
+
+            return await _asgi_call(
+                app,
+                method="POST",
+                path="/v1/chat/completions",
+                headers=[(b"host", b"127.0.0.1:8791"), (b"authorization", auth_header)],
+                receive_fn=blocking_receive,
+            )
+
+        post_tasks = [asyncio.create_task(hold_post_slot()) for _ in range(32)]
+        try:
+            await asyncio.wait_for(all_32_in.wait(), timeout=5.0)
+
+            # A 33rd POST is rejected with 429 because all 32 HTTP_SLOTS are full
+            async def empty_body():
+                return {"type": "http.request", "body": b"{}", "more_body": False}
+
+            st_post33, _, body_post33 = await _asgi_call(
+                app,
+                method="POST",
+                path="/v1/chat/completions",
+                headers=[(b"host", b"127.0.0.1:8791"), (b"authorization", auth_header)],
+                receive_fn=empty_body,
+            )
+            assert st_post33 == 429
+            assert b"inference_connection_limit" in body_post33
+
+            # GET status & model list requests still succeed with 200 without taking HTTP_SLOTS
+            for get_path in ("/v1/models", "/api/local/llm/api-access"):
+                st_get, _, body_get = await _asgi_call(
+                    app,
+                    method="GET",
+                    path=get_path,
+                    headers=[(b"host", b"127.0.0.1:8791"), (b"authorization", auth_header)],
+                    receive_fn=empty_body,
+                )
+                assert st_get == 200, (get_path, st_get, body_get)
+        finally:
+            release_posts.set()
+            await asyncio.gather(*post_tasks)
+
+    asyncio.run(scenario())
+
+
+def test_s01_i29_t4_413_returns_json_with_limit_bytes_and_image_compression_hint(tmp_path):
+    from rynmesh.llm_package.safety import MAX_REQUEST, install_body_limit, read_json
+
+    # 1. InferenceBodyLimit on /api/local/llm/ (16 MiB) and /api/peer/llm/ (64 MiB) + safety.read_json
+    custom_app = FastAPI()
+    install_body_limit(custom_app)
+
+    @custom_app.post("/api/local/llm/small-json")
+    async def small_json_route(request: Request):
+        return await read_json(request, limit=1024)
+
+    with TestClient(custom_app) as c:
+        r_small = c.post("/api/local/llm/small-json", content=b"x" * 2048)
+        assert r_small.status_code == 413
+        assert r_small.json() == {"detail": "request_too_large", "limit_bytes": 1024}
+
+        r_local = c.post(
+            "/api/local/llm/orders",
+            content=iter([b"a" * (MAX_REQUEST // 2 + 100), b"b" * (MAX_REQUEST // 2 + 100)]),
+        )
+        assert r_local.status_code == 413
+        assert r_local.json() == {"detail": "request_too_large", "limit_bytes": MAX_REQUEST}
+
+        r_peer = c.post(
+            "/api/peer/llm/task",
+            content=iter([b"a" * (2 * MAX_REQUEST + 100), b"b" * (2 * MAX_REQUEST + 100)]),
+        )
+        assert r_peer.status_code == 413
+        assert r_peer.json() == {"detail": "request_too_large", "limit_bytes": 4 * MAX_REQUEST}
+
+    # 2. Loopback /v1/ inference API 413 (both middleware and api.py:handle) includes limit_bytes AND Chinese multi-image compression hint
+    v1_client, _adapter, _ = _make_api_with_manifest(tmp_path)
+    r_v1 = v1_client.post(
+        "/v1/chat/completions",
+        content=iter([b"a" * (MAX_REQUEST // 2 + 100), b"b" * (MAX_REQUEST // 2 + 100)]),
+    )
+    assert r_v1.status_code == 413
+    r_v1_json = r_v1.json()
+    assert r_v1_json["limit_bytes"] == MAX_REQUEST
+    assert "多张图片时请先压缩或减少张数" in json.dumps(r_v1_json, ensure_ascii=False)
+
+    direct_app = FastAPI()
+    direct_app.state.inference_body_limit = True  # exercise api.py:handle stream limit directly
+    install_inference_api(
+        direct_app,
+        home=tmp_path / "direct_v1",
+        store=SimpleNamespace(peer_id="self"),
+        active_manager=lambda: None,
+        discover=lambda _: [],
+        execute_order=None,
+        cancel_order=None,
+    )
+    with TestClient(direct_app) as direct_client:
+        dk = direct_client.post("/api/local/llm/api-keys", json={"name": "d", "output_token_limit": 1000}).json()
+        r_direct = direct_client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer " + dk["key"]},
+            content=iter([b"a" * (MAX_REQUEST // 2 + 100), b"b" * (MAX_REQUEST // 2 + 100)]),
+        )
+        assert r_direct.status_code == 413
+        r_direct_json = r_direct.json()
+        assert r_direct_json["limit_bytes"] == MAX_REQUEST
+        assert "多张图片时请先压缩或减少张数" in r_direct_json["error"]["message"]
