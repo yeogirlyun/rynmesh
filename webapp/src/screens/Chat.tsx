@@ -37,6 +37,7 @@ export default function Chat() {
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [query, setQuery] = useState("");
+  const [mismatchPeers, setMismatchPeers] = useState<Record<string, string>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const selectedRef = useRef<Peer | null>(null);
@@ -58,8 +59,20 @@ export default function Chat() {
     setLoading(true);
     void (async () => {
       try {
-        const history = (await client.listMessages(selected.id)) as ChatRecord[];
-        if (alive) setMessages(Array.isArray(history) ? history : []);
+        const [history, activity] = await Promise.all([
+          client.listMessages(selected.id) as Promise<ChatRecord[]>,
+          client.getActivity().catch(() => []),
+        ]);
+        if (alive) {
+          setMessages(Array.isArray(history) ? history : []);
+          const hasMismatch = Array.isArray(activity) && activity.some((ev) => {
+            const rec = ev as unknown as { kind?: string; details?: { code?: string; peer_id?: string }; text?: string };
+            return rec.kind === "security" && rec.details?.code === "peer_pubkey_mismatch" && rec.details?.peer_id === selected.id;
+          });
+          if (hasMismatch) {
+            setMismatchPeers((prev) => ({ ...prev, [selected.id]: "对方身份密钥与记录不一致" }));
+          }
+        }
       } catch {
         if (alive) setMessages([]);
       } finally {
@@ -80,6 +93,14 @@ export default function Chat() {
       try {
         record = JSON.parse(event.data) as ChatRecord;
       } catch {
+        return;
+      }
+      if (record.code === "peer_pubkey_mismatch" && record.from) {
+        const warningText = record.warning || "对方身份密钥与记录不一致";
+        setMismatchPeers((prev) => ({ ...prev, [record.from]: warningText }));
+        if (selectedRef.current?.id === record.from) {
+          notify("warning", warningText);
+        }
         return;
       }
       const open = selectedRef.current;
@@ -164,6 +185,20 @@ export default function Chat() {
             ) : (
               <>
                 <ConversationHead peerId={selected.id} view={openView} />
+                {mismatchPeers[selected.id] ? (
+                  <div
+                    className="rq-cwarn"
+                    role="alert"
+                    style={{
+                      padding: "8px 20px",
+                      fontSize: "13px",
+                      borderBottom: "1px solid var(--hair)",
+                      color: "var(--warn)",
+                    }}
+                  >
+                    {mismatchPeers[selected.id]}
+                  </div>
+                ) : null}
                 <div className="rq-msgs" ref={scrollRef}>
                   {loading ? (
                     <LoadingConversation label={t("personal.messagesLoadingConversation")} />

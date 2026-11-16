@@ -19,6 +19,8 @@ export interface ChatRecord {
   text?: string;
   ts?: string;
   kind?: string;
+  code?: string;
+  warning?: string;
   delivered?: boolean;
   // "direct" when the peer took it on the wire, "mailbox" when the node handed
   // it to the network mailbox instead, absent when neither route accepted it.
