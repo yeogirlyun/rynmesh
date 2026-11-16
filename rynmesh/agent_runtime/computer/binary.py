@@ -6,12 +6,14 @@ import ctypes
 import hashlib
 import json
 import os
+import platform
 import re
 import struct
 import sys
 import threading
 import uuid
 import weakref
+from collections.abc import Mapping
 from ctypes import wintypes
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,13 +35,25 @@ MIN_BINARY_SIZE_BYTES = 512
 MAX_BINARY_SIZE_BYTES = 128 * 1024 * 1024
 
 SUPPORTED_TARGET_TRIPLE = "x86_64-pc-windows-msvc"
+SUPPORTED_TARGET_TRIPLES: tuple[str, ...] = (SUPPORTED_TARGET_TRIPLE,)
 IMAGE_FILE_MACHINE_AMD64 = 0x8664
+IMAGE_FILE_MACHINE_ARM64 = 0xAA64
 IMAGE_NT_OPTIONAL_HDR64_MAGIC = 0x020B
 IMAGE_FILE_EXECUTABLE_IMAGE = 0x0002
 IMAGE_FILE_DLL = 0x2000
 
+DEFAULT_ALLOW_ARM64_EMULATION: bool = False
+DEV_WORKER_ENV_VARS: tuple[str, ...] = (
+    "RYN_COMPUTER_USE_DEV_EXECUTABLE",
+    "RYNMESH_COMPUTER_USE_DEV_EXECUTABLE",
+)
+REPARSE_PATH_CORRECTION = "请把 Ryn 装在本地非链接目录"
+ARM64_WINDOWS_UNSUPPORTED_MESSAGE = "本机是 ARM 版 Windows，电脑控制暂不支持"
+ARM64_WINDOWS_EMULATED_MESSAGE = "ARM 版 Windows 上以仿真运行"
+NON_WINDOWS_X64_MESSAGE = "本机电脑控制仅支持 Windows x64"
+
 PACKAGE_MANIFEST_PATH = (
-    Path(__file__).resolve().parents[2] / "bin" / "computer-use-manifest.json"
+    Path(__file__).parents[2] / "bin" / "computer-use-manifest.json"
 )
 PACKAGED_EXECUTABLE_BASENAME = "ryn_computer_use.exe"
 
@@ -113,6 +127,34 @@ def _lexical_norm_path(value: str | Path | None) -> str | None:
     return os.path.normcase(os.path.normpath(raw))
 
 
+def resolve_env_dev_executable() -> str | list[str] | None:
+    """Return non-frozen development worker executable override from environment, or None."""
+    if bool(getattr(sys, "frozen", False)):
+        return None
+    for env_key in DEV_WORKER_ENV_VARS:
+        raw = os.environ.get(env_key, "")
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        trimmed = raw.strip()
+        if trimmed.startswith("["):
+            try:
+                parsed = json.loads(trimmed)
+                if isinstance(parsed, list) and parsed and all(isinstance(x, str) and x.strip() for x in parsed):
+                    return [str(x).strip() for x in parsed]
+            except Exception:
+                pass
+        extra_args_raw = os.environ.get("RYN_COMPUTER_USE_DEV_ARGS", "").strip()
+        if extra_args_raw.startswith("["):
+            try:
+                extra_parsed = json.loads(extra_args_raw)
+                if isinstance(extra_parsed, list) and all(isinstance(x, str) for x in extra_parsed):
+                    return [trimmed, *[str(x) for x in extra_parsed]]
+            except Exception:
+                pass
+        return trimmed
+    return None
+
+
 @dataclass(frozen=True)
 class BridgeConfigIdentity:
     """Immutable configuration identity frozen at NativeBridge / NativeWorkerClient construction."""
@@ -129,6 +171,7 @@ class BridgeConfigIdentity:
     expected_worker_version: str | None
     expected_protocol_version: str
     config_fingerprint: str
+    development_worker: bool = False
 
 
 def build_bridge_config_identity(
@@ -145,20 +188,31 @@ def build_bridge_config_identity(
     expected_protocol_version: str = PROTOCOL_SEMVER,
 ) -> BridgeConfigIdentity:
     """Construct a frozen `BridgeConfigIdentity` purely in memory (zero filesystem I/O)."""
+    effective_dev_exe = dev_executable
+    if (
+        effective_dev_exe is None
+        and bundled_executable is None
+        and manifest_path is None
+        and bundle_root is None
+        and artifact_resolver is None
+        and transport_factory is None
+    ):
+        effective_dev_exe = resolve_env_dev_executable()
+
     dev_tuple: tuple[str, ...] | None = None
-    if dev_executable is not None:
-        if isinstance(dev_executable, (str, Path)):
-            s = str(dev_executable).strip()
+    if effective_dev_exe is not None:
+        if isinstance(effective_dev_exe, (str, Path)):
+            s = str(effective_dev_exe).strip()
             dev_tuple = (_lexical_norm_path(s) or s,)
-        elif isinstance(dev_executable, (list, tuple)):
-            parts = [str(p).strip() for p in dev_executable]
+        elif isinstance(effective_dev_exe, (list, tuple)):
+            parts = [str(p).strip() for p in effective_dev_exe]
             if parts:
                 first_norm = _lexical_norm_path(parts[0]) or parts[0]
                 dev_tuple = (first_norm, *parts[1:])
             else:
                 dev_tuple = ()
         else:
-            dev_tuple = (str(dev_executable),)
+            dev_tuple = (str(effective_dev_exe),)
 
     resolver_tag: str | None = None
     resolver_mode: str | None = None
@@ -223,6 +277,7 @@ def build_bridge_config_identity(
         expected_worker_version=expected_worker_version,
         expected_protocol_version=expected_protocol_version,
         config_fingerprint=fingerprint,
+        development_worker=(dev_tuple is not None),
     )
 
 
@@ -385,6 +440,8 @@ class VerifiedArtifact:
     worker_version: str
     protocol_version: str
     target_triple: str
+    development_worker: bool = False
+    emulated_x64: bool = False
 
     def to_cache_dict(self) -> dict[str, Any]:
         return {
@@ -398,6 +455,8 @@ class VerifiedArtifact:
             "machine": self.pe_machine,
             "optionalHeaderMagic": self.pe_magic,
             "targetTriple": self.target_triple,
+            "developmentWorker": bool(self.development_worker),
+            "emulatedX64": bool(self.emulated_x64),
         }
 
 
@@ -450,6 +509,8 @@ class CachedBinding:
     worker_instance: str
     handshake_timestamp: str
     validated_handshake: dict[str, Any]
+    development_worker: bool = False
+    emulated_x64: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -458,6 +519,8 @@ class CachedBinding:
             "mode": self.mode,
             "verified": self.verified,
             "releaseVerified": self.release_verified,
+            "developmentWorker": bool(self.development_worker),
+            "emulatedX64": bool(self.emulated_x64),
             "manifestDigest": self.manifest_digest,
             "releaseId": self.release_id,
             "artifact": self.artifact,
@@ -483,19 +546,23 @@ def validate_safe_installed_filename(filename: Any, *, phase: str = "pre_dispatc
     """Validate that `installedFilename` is a strict, safe `.exe` basename with no traversal or device name."""
     if not isinstance(filename, str) or not filename:
         raise NativeBridgeRejected("agent_computer_manifest_invalid", phase=phase)
+    if ":" in filename:
+        raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase, reason="ads")
+    if (
+        ".." in filename
+        or filename.startswith((".", " "))
+        or filename.endswith((".", " "))
+    ):
+        raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase, reason="dot_segment")
     if (
         "/" in filename
         or "\\" in filename
-        or ":" in filename
-        or ".." in filename
-        or filename.startswith((".", " "))
-        or filename.endswith((".", " "))
         or any(ord(c) < 0x20 or ord(c) == 0x7F for c in filename)
     ):
         raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
-    if not _SAFE_BASENAME_RE.match(filename):
-        raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
     if _is_reserved_dos_segment(filename):
+        raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase, reason="reserved_name")
+    if not _SAFE_BASENAME_RE.match(filename):
         raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
     return filename
 
@@ -516,35 +583,40 @@ def validate_lexical_windows_path(
         raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
 
     # Reject UNC / extended device prefixes (`\\server\share`, `\\.\`, `\\?\`)
+    raw_upper = raw.upper()
+    if raw_upper.startswith(("\\\\?\\UNC\\", "//?/UNC/")):
+        raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase, reason="unc_path")
+    if raw.startswith(("\\\\.\\", "\\\\?\\", "//./", "//?/")):
+        raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase, reason="device_path")
     if raw.startswith("\\\\") or raw.startswith("//"):
-        raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
+        raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase, reason="unc_path")
+
     if "/" in raw:
-        # Reject forward-slash traversal or ambiguous mixed separators if relative
         raw_slash = raw.replace("/", "\\")
     else:
         raw_slash = raw
 
     if not _DRIVE_PATH_RE.match(raw_slash):
+        if any(seg in {".", ".."} for seg in raw_slash.split("\\") if seg):
+            raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase, reason="dot_segment")
         raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
 
     # Reject Alternate Data Streams (`:` anywhere after drive letter `X:`)
     after_drive = raw_slash[2:]
     if ":" in after_drive:
-        raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
+        raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase, reason="ads")
 
     # Inspect every path component before normalization so `..` or `.` or trailing dots/spaces are caught
     parts = [p for p in after_drive.split("\\") if p != ""]
     if not parts:
         raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
     for seg in parts:
-        if seg in {".", ".."}:
-            raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
-        if seg.endswith((".", " ")):
-            raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
+        if seg in {".", ".."} or seg.endswith((".", " ")):
+            raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase, reason="dot_segment")
         if any(ch in seg for ch in '<>"|?*'):
             raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
         if _is_reserved_dos_segment(seg):
-            raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
+            raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase, reason="reserved_name")
 
     normalized = os.path.normpath(raw_slash)
     if not _DRIVE_PATH_RE.match(normalized):
@@ -953,10 +1025,18 @@ def _get_kernel32() -> Any:
     return k32
 
 
-def verify_windows_x64_host(*, phase: str = "pre_dispatch") -> int:
-    """Verify the host OS is native Windows x86_64 (`0x8664`) via `IsWow64Process2`."""
-    if os.name != "nt":
-        raise NativeBridgeRejected("agent_computer_windows_required", phase=phase)
+def _last_win32_error() -> int:
+    err = int(ctypes.get_last_error() or 0)
+    if err <= 0 and os.name == "nt":
+        try:
+            err = int(ctypes.windll.kernel32.GetLastError() or 0)
+        except Exception:
+            err = 0
+    return err if err > 0 else 1
+
+
+def _query_native_machine(*, phase: str = "pre_dispatch") -> int:
+    """Query Win32 `IsWow64Process2` native machine constant (`0x8664` x64, `0xAA64` ARM64, etc.)."""
     k32 = _get_kernel32()
     fn = getattr(k32, "IsWow64Process2", None)
     if fn is None:
@@ -975,9 +1055,169 @@ def verify_windows_x64_host(*, phase: str = "pre_dispatch") -> int:
         ctypes.byref(native_machine),
     ):
         raise NativeBridgeRejected("agent_computer_arch_unsupported", phase=phase)
-    if int(native_machine.value) != IMAGE_FILE_MACHINE_AMD64:
-        raise NativeBridgeRejected("agent_computer_arch_unsupported", phase=phase)
     return int(native_machine.value)
+
+
+def _format_non_windows_platform_name(sys_plat: str, sys_name: str, arch: str) -> str:
+    low = (sys_plat or "").lower()
+    if low == "darwin" or sys_name.lower() == "darwin":
+        base = "macOS"
+    elif low.startswith("linux") or sys_name.lower() == "linux":
+        base = "Linux"
+    else:
+        base = sys_name or sys_plat or "Unknown"
+    return f"{base} ({arch})" if arch else base
+
+
+def platform_support(
+    *,
+    allow_arm64_emulation: bool | None = None,
+    settings: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Centralized platform capability and message descriptor for native computer control."""
+    sys_plat = str(sys.platform or "")
+    arch = str(platform.machine() or "").strip()
+    if os.name != "nt" or sys_plat != "win32":
+        sys_name = str(platform.system() or sys_plat or os.name)
+        return {
+            "supported": False,
+            "platform": "unsupported",
+            "platform_name": _format_non_windows_platform_name(sys_plat, sys_name, arch),
+            "os_name": os.name,
+            "sys_platform": sys_plat,
+            "native_machine": None,
+            "emulated_x64": False,
+            "target_triple": None,
+            "error_code": "agent_computer_windows_required",
+            "reason_code": "native_platform_unsupported",
+            "reason": None,
+            "message_zh": NON_WINDOWS_X64_MESSAGE,
+        }
+
+    if allow_arm64_emulation is None:
+        if isinstance(settings, Mapping) and (
+            "allow_arm64_computer_use" in settings or "computer_allow_arm64_emulation" in settings
+        ):
+            allow_arm64 = bool(
+                settings.get("allow_arm64_computer_use")
+                or settings.get("computer_allow_arm64_emulation")
+            )
+        else:
+            allow_arm64 = bool(DEFAULT_ALLOW_ARM64_EMULATION)
+    else:
+        allow_arm64 = bool(allow_arm64_emulation)
+
+    try:
+        native_mach = _query_native_machine(phase="pre_dispatch")
+    except NativeBridgeRejected:
+        return {
+            "supported": False,
+            "platform": "unsupported",
+            "platform_name": f"Windows ({arch or 'unknown'})",
+            "os_name": os.name,
+            "sys_platform": sys_plat,
+            "native_machine": None,
+            "emulated_x64": False,
+            "target_triple": None,
+            "error_code": "agent_computer_arch_unsupported",
+            "reason_code": "native_platform_unsupported",
+            "reason": None,
+            "message_zh": NON_WINDOWS_X64_MESSAGE,
+        }
+
+    if native_mach == IMAGE_FILE_MACHINE_AMD64:
+        return {
+            "supported": True,
+            "platform": "windows",
+            "platform_name": "Windows x64",
+            "os_name": os.name,
+            "sys_platform": sys_plat,
+            "native_machine": native_mach,
+            "emulated_x64": False,
+            "target_triple": SUPPORTED_TARGET_TRIPLE,
+            "error_code": None,
+            "reason_code": None,
+            "reason": None,
+            "message_zh": None,
+        }
+
+    if native_mach == IMAGE_FILE_MACHINE_ARM64:
+        if allow_arm64:
+            return {
+                "supported": True,
+                "platform": "windows",
+                "platform_name": "Windows ARM64",
+                "os_name": os.name,
+                "sys_platform": sys_plat,
+                "native_machine": native_mach,
+                "emulated_x64": True,
+                "target_triple": SUPPORTED_TARGET_TRIPLE,
+                "error_code": None,
+                "reason_code": None,
+                "reason": None,
+                "message_zh": ARM64_WINDOWS_EMULATED_MESSAGE,
+            }
+        return {
+            "supported": False,
+            "platform": "unsupported",
+            "platform_name": "Windows ARM64",
+            "os_name": os.name,
+            "sys_platform": sys_plat,
+            "native_machine": native_mach,
+            "emulated_x64": False,
+            "target_triple": None,
+            "error_code": "agent_computer_arch_unsupported",
+            "reason_code": "native_platform_unsupported",
+            "reason": "arm64_emulation_disabled",
+            "message_zh": ARM64_WINDOWS_UNSUPPORTED_MESSAGE,
+        }
+
+    return {
+        "supported": False,
+        "platform": "unsupported",
+        "platform_name": f"Windows ({hex(native_mach)})",
+        "os_name": os.name,
+        "sys_platform": sys_plat,
+        "native_machine": native_mach,
+        "emulated_x64": False,
+        "target_triple": None,
+        "error_code": "agent_computer_arch_unsupported",
+        "reason_code": "native_platform_unsupported",
+        "reason": None,
+        "message_zh": NON_WINDOWS_X64_MESSAGE,
+    }
+
+
+def verify_windows_x64_host(
+    *,
+    phase: str = "pre_dispatch",
+    allow_arm64_emulation: bool | None = None,
+) -> int:
+    """Verify the host OS is native Windows x86_64 (`0x8664`), or ARM64 (`0xAA64`) when emulation is enabled."""
+    if os.name != "nt" or sys.platform != "win32":
+        raise NativeBridgeRejected(
+            "agent_computer_windows_required",
+            phase=phase,
+            correction=NON_WINDOWS_X64_MESSAGE,
+        )
+    native_mach = _query_native_machine(phase=phase)
+    if native_mach == IMAGE_FILE_MACHINE_AMD64:
+        return native_mach
+    effective_allow = (
+        bool(DEFAULT_ALLOW_ARM64_EMULATION)
+        if allow_arm64_emulation is None
+        else bool(allow_arm64_emulation)
+    )
+    if native_mach == IMAGE_FILE_MACHINE_ARM64:
+        if effective_allow:
+            return native_mach
+        raise NativeBridgeRejected(
+            "agent_computer_arch_unsupported",
+            phase=phase,
+            reason="arm64_emulation_disabled",
+            correction=ARM64_WINDOWS_UNSUPPORTED_MESSAGE,
+        )
+    raise NativeBridgeRejected("agent_computer_arch_unsupported", phase=phase)
 
 
 def _close_win32_handle(handle: int | None) -> None:
@@ -993,24 +1233,66 @@ def _close_win32_handle(handle: int | None) -> None:
 def _check_no_ancestor_reparse_points(
     lexical_path: str,
     *,
+    root_path: str | None = None,
     missing_code: str = "agent_computer_executable_not_found",
     phase: str = "pre_dispatch",
 ) -> None:
-    """Walk every ancestor directory from drive root down to `lexical_path` and reject reparse points."""
+    """Reject UNC paths and reparse points at/below `root_path` (or from drive root when `root_path` is None)."""
+    raw = str(lexical_path or "")
+    raw_upper = raw.upper()
+    if raw_upper.startswith(("\\\\?\\UNC\\", "//?/UNC/")) or (
+        (raw.startswith("\\\\") or raw.startswith("//"))
+        and not raw.startswith(("\\\\.\\", "\\\\?\\", "//./", "//?/"))
+    ):
+        raise NativeBridgeRejected(
+            "agent_computer_path_unc",
+            phase=phase,
+            reason="unc_path",
+            correction=REPARSE_PATH_CORRECTION,
+        )
+
+    clean_lex = validate_lexical_windows_path(raw, phase=phase)
+    start_idx = 0
+    if root_path is not None:
+        clean_root = validate_lexical_windows_path(root_path, phase=phase)
+        root_segments = [s for s in clean_root[3:].split("\\") if s]
+        lex_segments = [s for s in clean_lex[3:].split("\\") if s]
+        if (
+            os.path.normcase(clean_lex[:3]) == os.path.normcase(clean_root[:3])
+            and len(lex_segments) >= len(root_segments)
+            and [os.path.normcase(s) for s in lex_segments[: len(root_segments)]]
+            == [os.path.normcase(s) for s in root_segments]
+        ):
+            start_idx = max(0, len(root_segments) - 1)
+
     k32 = _get_kernel32()
-    drive = lexical_path[:3]
-    rest = lexical_path[3:]
+    drive = clean_lex[:3]
+    rest = clean_lex[3:]
     segments = [s for s in rest.split("\\") if s]
     cur = drive.rstrip("\\")
     for idx, seg in enumerate(segments):
         cur = f"{cur}\\{seg}"
+        if idx < start_idx:
+            continue
         attrs = k32.GetFileAttributesW(cur)
         if attrs == _FILE_ATTRIBUTE_INVALID:
+            err = _last_win32_error()
             if idx == len(segments) - 1:
-                raise NativeBridgeRejected(missing_code, phase=phase)
-            raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
+                raise NativeBridgeRejected(missing_code, phase=phase, reason="open_failed", win32_error=err)
+            raise NativeBridgeRejected(
+                "agent_computer_path_invalid",
+                phase=phase,
+                reason="open_failed",
+                win32_error=err,
+            )
         if attrs & _FILE_ATTRIBUTE_REPARSE_POINT:
-            raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
+            raise NativeBridgeRejected(
+                "agent_computer_path_reparse_point",
+                phase=phase,
+                reason="reparse_below_root",
+                component=seg,
+                correction=REPARSE_PATH_CORRECTION,
+            )
 
 
 @dataclass(frozen=True)
@@ -1033,7 +1315,12 @@ def _query_handle_identity(
     k32 = _get_kernel32()
     info = _BY_HANDLE_FILE_INFORMATION()
     if not k32.GetFileInformationByHandle(wintypes.HANDLE(handle), ctypes.byref(info)):
-        raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
+        raise NativeBridgeRejected(
+            "agent_computer_path_invalid",
+            phase=phase,
+            reason="open_failed",
+            win32_error=_last_win32_error(),
+        )
 
     attrs = int(info.dwFileAttributes)
     is_dir = bool(attrs & _FILE_ATTRIBUTE_DIRECTORY)
@@ -1065,7 +1352,12 @@ def _query_handle_identity(
         wintypes.HANDLE(handle), buf, buf_len, _VOLUME_NAME_DOS
     )
     if chars == 0:
-        raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
+        raise NativeBridgeRejected(
+            "agent_computer_path_invalid",
+            phase=phase,
+            reason="open_failed",
+            win32_error=_last_win32_error(),
+        )
     if chars >= buf_len:
         buf_len = int(chars) + 2
         buf = ctypes.create_unicode_buffer(buf_len)
@@ -1073,11 +1365,21 @@ def _query_handle_identity(
             wintypes.HANDLE(handle), buf, buf_len, _VOLUME_NAME_DOS
         )
         if chars == 0 or chars >= buf_len:
-            raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
+            raise NativeBridgeRejected(
+                "agent_computer_path_invalid",
+                phase=phase,
+                reason="open_failed",
+                win32_error=_last_win32_error(),
+            )
 
     final_raw = buf.value
-    if final_raw.startswith("\\\\?\\UNC\\"):
-        raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
+    if final_raw.upper().startswith("\\\\?\\UNC\\"):
+        raise NativeBridgeRejected(
+            "agent_computer_path_unc",
+            phase=phase,
+            reason="unc_path",
+            correction=REPARSE_PATH_CORRECTION,
+        )
     if final_raw.startswith("\\\\?\\"):
         final_raw = final_raw[4:]
 
@@ -1229,13 +1531,112 @@ def load_authoritative_manifest(
     )
 
 
+def _resolve_frozen_install_root(*, phase: str = "pre_dispatch") -> tuple[str, _HandleIdentity]:
+    """Resolve `sys.executable` via Win32 handle `GetFinalPathNameByHandleW` to establish the authoritative install root.
+
+    Allows junctions/subst ABOVE the installation directory ("C 盘搬家"), while rejecting `\\?\\UNC\\`
+    and rejecting reparse points on `sys.executable` or the installation directory itself.
+    """
+    sys_exe_lex = validate_lexical_windows_path(sys.executable, phase=phase)
+    sys_parent_lex = validate_lexical_windows_path(Path(sys_exe_lex).parent, phase=phase)
+
+    k32 = _get_kernel32()
+    dir_h = k32.CreateFileW(
+        sys_parent_lex,
+        _FILE_READ_ATTRIBUTES,
+        _FILE_SHARE_READ | _FILE_SHARE_WRITE,
+        None,
+        _OPEN_EXISTING,
+        _FILE_FLAG_BACKUP_SEMANTICS | _FILE_FLAG_OPEN_REPARSE_POINT,
+        None,
+    )
+    if dir_h in _INVALID_HANDLE_VALUES or not dir_h:
+        raise NativeBridgeRejected(
+            "agent_computer_path_invalid",
+            phase=phase,
+            reason="open_failed",
+            win32_error=_last_win32_error(),
+        )
+    try:
+        dir_ident = _query_handle_identity(int(dir_h), phase=phase)
+    finally:
+        _close_win32_handle(int(dir_h))
+
+    if dir_ident.is_reparse:
+        raise NativeBridgeRejected(
+            "agent_computer_path_reparse_point",
+            phase=phase,
+            reason="reparse_below_root",
+            component=Path(sys_parent_lex).name,
+            correction=REPARSE_PATH_CORRECTION,
+        )
+    if not dir_ident.is_directory:
+        raise NativeBridgeRejected(
+            "agent_computer_path_invalid",
+            phase=phase,
+            reason="not_directory",
+        )
+
+    exe_h = k32.CreateFileW(
+        sys_exe_lex,
+        _FILE_READ_ATTRIBUTES,
+        _FILE_SHARE_READ | _FILE_SHARE_WRITE,
+        None,
+        _OPEN_EXISTING,
+        _FILE_FLAG_OPEN_REPARSE_POINT,
+        None,
+    )
+    if exe_h in _INVALID_HANDLE_VALUES or not exe_h:
+        raise NativeBridgeRejected(
+            "agent_computer_path_invalid",
+            phase=phase,
+            reason="open_failed",
+            win32_error=_last_win32_error(),
+        )
+    try:
+        exe_ident = _query_handle_identity(int(exe_h), phase=phase)
+    finally:
+        _close_win32_handle(int(exe_h))
+
+    if exe_ident.is_reparse:
+        raise NativeBridgeRejected(
+            "agent_computer_path_reparse_point",
+            phase=phase,
+            reason="reparse_below_root",
+            component=Path(sys_exe_lex).name,
+            correction=REPARSE_PATH_CORRECTION,
+        )
+    if exe_ident.is_directory:
+        raise NativeBridgeRejected(
+            "agent_computer_path_invalid",
+            phase=phase,
+            reason="not_directory",
+        )
+
+    exe_parent_final = validate_lexical_windows_path(Path(exe_ident.final_path).parent, phase=phase)
+    if os.path.normcase(exe_parent_final) != os.path.normcase(dir_ident.final_path):
+        raise NativeBridgeRejected(
+            "agent_computer_path_invalid",
+            phase=phase,
+            reason="final_path_mismatch",
+        )
+
+    _check_no_ancestor_reparse_points(
+        exe_ident.final_path,
+        root_path=dir_ident.final_path,
+        missing_code="agent_computer_path_invalid",
+        phase=phase,
+    )
+    return sys_parent_lex, dir_ident
+
+
 def _load_packaged_release_spec(*, phase: str = "pre_dispatch") -> ArtifactSpec:
     """Private packaged release loader.
 
     Accepts NO caller `manifest_path`, `bundle_root`, `bundled_executable`, or `mode` arguments.
-    Requires `sys.frozen` to be `True`, reads only the fixed packaged `PACKAGE_MANIFEST_PATH`,
-    pins the fixed bundle root `Path(sys.executable).parent` and executable basename
-    `ryn_computer_use.exe`, and issues a private `_PackagedReleaseCommitment`.
+    Requires `sys.frozen` to be `True`, resolves `sys.executable`'s final path via `GetFinalPathNameByHandleW`
+    as the installation root, rejects reparse points below the installation root and `\\?\\UNC\\` paths,
+    and issues a private `_PackagedReleaseCommitment`.
     """
     if not bool(getattr(sys, "frozen", False)):
         raise NativeBridgeRejected(
@@ -1244,46 +1645,18 @@ def _load_packaged_release_spec(*, phase: str = "pre_dispatch") -> ArtifactSpec:
         )
 
     verify_windows_x64_host(phase=phase)
-
-    sys_exe_lex = validate_lexical_windows_path(sys.executable, phase=phase)
-    fixed_root_lex = validate_lexical_windows_path(Path(sys_exe_lex).parent, phase=phase)
-    _check_no_ancestor_reparse_points(
-        fixed_root_lex,
-        missing_code="agent_computer_path_invalid",
-        phase=phase,
-    )
-
-    k32 = _get_kernel32()
-    root_handle_raw = k32.CreateFileW(
-        fixed_root_lex,
-        _FILE_READ_ATTRIBUTES,
-        _FILE_SHARE_READ | _FILE_SHARE_WRITE,
-        None,
-        _OPEN_EXISTING,
-        _FILE_FLAG_BACKUP_SEMANTICS | _FILE_FLAG_OPEN_REPARSE_POINT,
-        None,
-    )
-    if root_handle_raw in _INVALID_HANDLE_VALUES or not root_handle_raw:
-        raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
-    try:
-        root_ident = _query_handle_identity(int(root_handle_raw), phase=phase)
-    finally:
-        _close_win32_handle(int(root_handle_raw))
-
-    if (
-        not root_ident.is_directory
-        or root_ident.is_reparse
-        or os.path.normcase(root_ident.final_path) != os.path.normcase(fixed_root_lex)
-    ):
-        raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
+    sys_parent_lex, root_ident = _resolve_frozen_install_root(phase=phase)
 
     manifest_lex = validate_lexical_windows_path(PACKAGE_MANIFEST_PATH, phase=phase)
+    # Check reparse points below the lexical or final install root when manifest resides inside install root
     _check_no_ancestor_reparse_points(
         manifest_lex,
+        root_path=sys_parent_lex,
         missing_code="agent_computer_manifest_missing",
         phase=phase,
     )
 
+    k32 = _get_kernel32()
     m_handle_raw = k32.CreateFileW(
         manifest_lex,
         _GENERIC_READ,
@@ -1294,17 +1667,38 @@ def _load_packaged_release_spec(*, phase: str = "pre_dispatch") -> ArtifactSpec:
         None,
     )
     if m_handle_raw in _INVALID_HANDLE_VALUES or not m_handle_raw:
-        err = ctypes.get_last_error()
+        err = _last_win32_error()
         if err in {2, 3}:
             raise NativeBridgeRejected("agent_computer_manifest_missing", phase=phase)
-        raise NativeBridgeRejected("agent_computer_manifest_invalid", phase=phase)
+        raise NativeBridgeRejected(
+            "agent_computer_manifest_invalid",
+            phase=phase,
+            reason="open_failed",
+            win32_error=err,
+        )
 
     try:
         ident1 = _query_handle_identity(int(m_handle_raw), phase=phase)
-        if ident1.is_directory or ident1.is_reparse:
-            raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
-        if os.path.normcase(ident1.final_path) != os.path.normcase(manifest_lex):
-            raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
+        if ident1.is_reparse:
+            raise NativeBridgeRejected(
+                "agent_computer_path_reparse_point",
+                phase=phase,
+                reason="reparse_below_root",
+                component=Path(manifest_lex).name,
+                correction=REPARSE_PATH_CORRECTION,
+            )
+        if ident1.is_directory:
+            raise NativeBridgeRejected(
+                "agent_computer_path_invalid",
+                phase=phase,
+                reason="not_directory",
+            )
+        _check_no_ancestor_reparse_points(
+            ident1.final_path,
+            root_path=root_ident.final_path,
+            missing_code="agent_computer_manifest_missing",
+            phase=phase,
+        )
         if ident1.size <= 0 or ident1.size > MAX_MANIFEST_BYTES:
             raise NativeBridgeRejected("agent_computer_manifest_invalid", phase=phase)
         raw_bytes, computed_manifest_sha = _read_bounded_bytes_from_handle(
@@ -1741,6 +2135,7 @@ def verify_suspended_process_handle(
         raise NativeBridgeRejected(
             "agent_computer_process_identity_mismatch",
             phase=phase,
+            reason="open_failed",
         )
 
     k32 = _get_kernel32()
@@ -1762,6 +2157,8 @@ def verify_suspended_process_handle(
         raise NativeBridgeRejected(
             "agent_computer_process_identity_mismatch",
             phase=phase,
+            reason="open_failed",
+            win32_error=_last_win32_error(),
         )
 
     ft_create = _FILETIME()
@@ -1778,6 +2175,8 @@ def verify_suspended_process_handle(
         raise NativeBridgeRejected(
             "agent_computer_process_identity_mismatch",
             phase=phase,
+            reason="open_failed",
+            win32_error=_last_win32_error(),
         )
     creation_time_ft = (int(ft_create.dwHighDateTime) << 32) | int(
         ft_create.dwLowDateTime
@@ -1786,6 +2185,7 @@ def verify_suspended_process_handle(
         raise NativeBridgeRejected(
             "agent_computer_process_identity_mismatch",
             phase=phase,
+            reason="open_failed",
         )
 
     buf_len = wintypes.DWORD(1024)
@@ -1794,6 +2194,8 @@ def verify_suspended_process_handle(
         raise NativeBridgeRejected(
             "agent_computer_process_identity_mismatch",
             phase=phase,
+            reason="open_failed",
+            win32_error=_last_win32_error(),
         )
     image_path = validate_lexical_windows_path(buf.value, phase=phase)
 
@@ -1811,6 +2213,8 @@ def verify_suspended_process_handle(
         raise NativeBridgeRejected(
             "agent_computer_process_identity_mismatch",
             phase=phase,
+            reason="open_failed",
+            win32_error=_last_win32_error(),
         )
     try:
         img_ident = _query_handle_identity(int(img_handle), phase=phase)
@@ -1821,6 +2225,7 @@ def verify_suspended_process_handle(
         raise NativeBridgeRejected(
             "agent_computer_process_identity_mismatch",
             phase=phase,
+            reason="reparse_below_root" if img_ident.is_reparse else "image_path_mismatch",
         )
 
     if expected_artifact is not None:
@@ -1835,6 +2240,7 @@ def verify_suspended_process_handle(
             raise NativeBridgeRejected(
                 "agent_computer_process_identity_mismatch",
                 phase=phase,
+                reason="image_path_mismatch",
             )
 
     if expected_executable_path is not None:
@@ -1845,6 +2251,7 @@ def verify_suspended_process_handle(
             raise NativeBridgeRejected(
                 "agent_computer_process_identity_mismatch",
                 phase=phase,
+                reason="image_path_mismatch",
             )
 
     return VerifiedProcessIdentity(
@@ -1868,14 +2275,7 @@ def open_and_verify_artifact_lease(
     on_after_hash_before_return: Callable[[], None] | None = None,
     phase: str = "pre_dispatch",
 ) -> ArtifactLease:
-    """Pin the bundle directory and target executable handles, verifying containment, PE64, size, and SHA-256.
-
-    Release authority (`release_verified=True` and `_release_proof`) is minted ONLY when `spec`
-    carries an unaltered private `_PackagedReleaseCommitment` under a frozen runtime and
-    `bundle_root`/`candidate_executable` match the fixed packaged installation paths.
-    If `spec` carries a `_release_commitment` that was altered (e.g., via `dataclasses.replace`)
-    or paired with any non-fixed path/non-frozen runtime, this function fails closed before spawn.
-    """
+    """Pin the bundle directory and target executable handles, verifying containment, PE64, size, and SHA-256."""
     if not isinstance(spec, ArtifactSpec):
         raise NativeBridgeRejected("agent_computer_manifest_invalid", phase=phase)
 
@@ -1889,23 +2289,21 @@ def open_and_verify_artifact_lease(
                 phase=phase,
             )
 
-    verify_windows_x64_host(phase=phase)
+    native_mach = verify_windows_x64_host(phase=phase)
+    is_emulated_x64 = native_mach == IMAGE_FILE_MACHINE_ARM64
 
     root_lexical = validate_lexical_windows_path(bundle_root, phase=phase)
-    _check_no_ancestor_reparse_points(
-        root_lexical,
-        missing_code="agent_computer_path_invalid",
-        phase=phase,
-    )
-
     expected_exe_lexical = os.path.join(root_lexical, spec.installed_filename)
     if candidate_executable is not None:
         cand_lexical = validate_lexical_windows_path(
             candidate_executable, phase=phase
         )
-        # Candidate executable must be inside bundle_root and have the exact installedFilename
         if os.path.normcase(cand_lexical) != os.path.normcase(expected_exe_lexical):
-            raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
+            raise NativeBridgeRejected(
+                "agent_computer_path_invalid",
+                phase=phase,
+                reason="final_path_mismatch",
+            )
 
     if raw_commitment is not None:
         if (
@@ -1914,9 +2312,36 @@ def open_and_verify_artifact_lease(
             or os.path.normcase(expected_exe_lexical)
             != os.path.normcase(raw_commitment.fixed_executable_path)
         ):
-            raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
+            raise NativeBridgeRejected(
+                "agent_computer_path_invalid",
+                phase=phase,
+                reason="final_path_mismatch",
+            )
 
     k32 = _get_kernel32()
+    root_attrs = k32.GetFileAttributesW(root_lexical)
+    if root_attrs == _FILE_ATTRIBUTE_INVALID:
+        raise NativeBridgeRejected(
+            "agent_computer_path_invalid",
+            phase=phase,
+            reason="open_failed",
+            win32_error=_last_win32_error(),
+        )
+    if root_attrs & _FILE_ATTRIBUTE_REPARSE_POINT:
+        raise NativeBridgeRejected(
+            "agent_computer_path_reparse_point",
+            phase=phase,
+            reason="reparse_below_root",
+            component=Path(root_lexical).name,
+            correction=REPARSE_PATH_CORRECTION,
+        )
+    if not (root_attrs & _FILE_ATTRIBUTE_DIRECTORY):
+        raise NativeBridgeRejected(
+            "agent_computer_path_invalid",
+            phase=phase,
+            reason="not_directory",
+        )
+
     dir_handle_raw = k32.CreateFileW(
         root_lexical,
         _FILE_READ_ATTRIBUTES,
@@ -1927,29 +2352,65 @@ def open_and_verify_artifact_lease(
         None,
     )
     if dir_handle_raw in _INVALID_HANDLE_VALUES or not dir_handle_raw:
-        raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
+        raise NativeBridgeRejected(
+            "agent_computer_path_invalid",
+            phase=phase,
+            reason="open_failed",
+            win32_error=_last_win32_error(),
+        )
     dir_handle = int(dir_handle_raw)
     file_handle: int | None = None
 
     try:
         dir_ident = _query_handle_identity(dir_handle, phase=phase)
-        if not dir_ident.is_directory or dir_ident.is_reparse:
-            raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
-        if os.path.normcase(dir_ident.final_path) != os.path.normcase(root_lexical):
-            raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
+        if dir_ident.is_reparse:
+            raise NativeBridgeRejected(
+                "agent_computer_path_reparse_point",
+                phase=phase,
+                reason="reparse_below_root",
+                component=Path(root_lexical).name,
+                correction=REPARSE_PATH_CORRECTION,
+            )
+        if not dir_ident.is_directory:
+            raise NativeBridgeRejected(
+                "agent_computer_path_invalid",
+                phase=phase,
+                reason="not_directory",
+            )
 
         if on_before_open_file is not None:
             on_before_open_file()
 
+        target_exe_in_final_root = os.path.join(dir_ident.final_path, spec.installed_filename)
+        _check_no_ancestor_reparse_points(
+            target_exe_in_final_root,
+            root_path=dir_ident.final_path,
+            missing_code="agent_computer_executable_not_found",
+            phase=phase,
+        )
+
         attrs = k32.GetFileAttributesW(expected_exe_lexical)
         if attrs == _FILE_ATTRIBUTE_INVALID:
             raise NativeBridgeRejected(
-                "agent_computer_executable_not_found", phase=phase
+                "agent_computer_executable_not_found",
+                phase=phase,
+                reason="open_failed",
+                win32_error=_last_win32_error(),
             )
-        if (attrs & _FILE_ATTRIBUTE_REPARSE_POINT) or (
-            attrs & _FILE_ATTRIBUTE_DIRECTORY
-        ):
-            raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
+        if attrs & _FILE_ATTRIBUTE_REPARSE_POINT:
+            raise NativeBridgeRejected(
+                "agent_computer_path_reparse_point",
+                phase=phase,
+                reason="reparse_below_root",
+                component=spec.installed_filename,
+                correction=REPARSE_PATH_CORRECTION,
+            )
+        if attrs & _FILE_ATTRIBUTE_DIRECTORY:
+            raise NativeBridgeRejected(
+                "agent_computer_path_invalid",
+                phase=phase,
+                reason="not_directory",
+            )
 
         # Open executable with GENERIC_READ and FILE_SHARE_READ only (no WRITE, no DELETE)
         file_handle_raw = k32.CreateFileW(
@@ -1962,17 +2423,37 @@ def open_and_verify_artifact_lease(
             None,
         )
         if file_handle_raw in _INVALID_HANDLE_VALUES or not file_handle_raw:
-            err = ctypes.get_last_error()
+            err = _last_win32_error()
             if err in {2, 3}:
                 raise NativeBridgeRejected(
-                    "agent_computer_executable_not_found", phase=phase
+                    "agent_computer_executable_not_found",
+                    phase=phase,
+                    reason="open_failed",
+                    win32_error=err,
                 )
-            raise NativeBridgeRejected("agent_computer_binary_invalid", phase=phase)
+            raise NativeBridgeRejected(
+                "agent_computer_binary_invalid",
+                phase=phase,
+                reason="open_failed",
+                win32_error=err,
+            )
         file_handle = int(file_handle_raw)
 
         ident1 = _query_handle_identity(file_handle, phase=phase)
-        if ident1.is_directory or ident1.is_reparse:
-            raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
+        if ident1.is_reparse:
+            raise NativeBridgeRejected(
+                "agent_computer_path_reparse_point",
+                phase=phase,
+                reason="reparse_below_root",
+                component=spec.installed_filename,
+                correction=REPARSE_PATH_CORRECTION,
+            )
+        if ident1.is_directory:
+            raise NativeBridgeRejected(
+                "agent_computer_path_invalid",
+                phase=phase,
+                reason="not_directory",
+            )
 
         # Strict containment: final path must equal dir_ident.final_path + "\" + spec.installed_filename
         expected_final_exe = os.path.join(
@@ -1984,7 +2465,11 @@ def open_and_verify_artifact_lease(
             or os.path.normcase(str(Path(ident1.final_path).parent))
             != os.path.normcase(dir_ident.final_path)
         ):
-            raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
+            raise NativeBridgeRejected(
+                "agent_computer_path_invalid",
+                phase=phase,
+                reason="final_path_mismatch",
+            )
 
         if ident1.size < MIN_BINARY_SIZE_BYTES or ident1.size > MAX_BINARY_SIZE_BYTES:
             raise NativeBridgeRejected("agent_computer_binary_tampered", phase=phase)
@@ -2046,7 +2531,11 @@ def open_and_verify_artifact_lease(
                 or os.path.normcase(ident2.final_path)
                 != os.path.normcase(raw_commitment.fixed_executable_path)
             ):
-                raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
+                raise NativeBridgeRejected(
+                    "agent_computer_path_invalid",
+                    phase=phase,
+                    reason="final_path_mismatch",
+                )
 
             if mode == "production":
                 release_proof = _ReleaseLeaseProof(
@@ -2090,6 +2579,8 @@ def open_and_verify_artifact_lease(
             worker_version=spec.worker_version,
             protocol_version=spec.protocol_version,
             target_triple=spec.target_triple,
+            development_worker=False,
+            emulated_x64=is_emulated_x64,
         )
 
         lease = ArtifactLease(
@@ -2116,9 +2607,15 @@ def open_dev_executable_lease(
     expected_protocol_version: str = PROTOCOL_SEMVER,
     phase: str = "pre_dispatch",
 ) -> ArtifactLease:
-    """Resolve an explicit development/test executable command without claiming `verified=True`."""
-    if os.name != "nt":
-        raise NativeBridgeRejected("agent_computer_windows_required", phase=phase)
+    """Resolve an explicit non-frozen development/test executable command (`development_worker=True`)."""
+    if bool(getattr(sys, "frozen", False)):
+        raise NativeBridgeRejected(
+            "agent_computer_path_invalid",
+            phase=phase,
+            reason="dev_worker_forbidden_when_frozen",
+        )
+    native_mach = verify_windows_x64_host(phase=phase)
+    is_emulated_x64 = native_mach == IMAGE_FILE_MACHINE_ARM64
 
     if isinstance(dev_executable, (list, tuple)):
         if not dev_executable or not all(
@@ -2141,12 +2638,6 @@ def open_dev_executable_lease(
         )
 
     lexical_exe = validate_lexical_windows_path(raw_exe, phase=phase)
-    _check_no_ancestor_reparse_points(
-        lexical_exe,
-        missing_code="agent_computer_executable_not_found",
-        phase=phase,
-    )
-
     k32 = _get_kernel32()
     fh = k32.CreateFileW(
         lexical_exe,
@@ -2161,14 +2652,28 @@ def open_dev_executable_lease(
         raise NativeBridgeRejected(
             "agent_computer_executable_not_found",
             phase=phase,
+            reason="open_failed",
+            win32_error=_last_win32_error(),
         )
     try:
         ident = _query_handle_identity(int(fh), phase=phase)
     finally:
         _close_win32_handle(int(fh))
 
-    if ident.is_directory or ident.is_reparse:
-        raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
+    if ident.is_reparse:
+        raise NativeBridgeRejected(
+            "agent_computer_path_reparse_point",
+            phase=phase,
+            reason="reparse_below_root",
+            component=Path(lexical_exe).name,
+            correction=REPARSE_PATH_CORRECTION,
+        )
+    if ident.is_directory:
+        raise NativeBridgeRejected(
+            "agent_computer_path_invalid",
+            phase=phase,
+            reason="not_directory",
+        )
 
     parent_dir = str(Path(ident.final_path).parent)
     art = VerifiedArtifact(
@@ -2190,6 +2695,8 @@ def open_dev_executable_lease(
         worker_version=expected_worker_version or EXPECTED_WORKER_VERSION,
         protocol_version=expected_protocol_version,
         target_triple=SUPPORTED_TARGET_TRIPLE,
+        development_worker=True,
+        emulated_x64=is_emulated_x64,
     )
     return ArtifactLease(
         verified_artifact=art,
@@ -2200,16 +2707,7 @@ def open_dev_executable_lease(
 
 
 class ProductionBinaryResolver:
-    """Authoritative production binary resolver backed by fixed packaged `rynmesh/bin/computer-use-manifest.json`.
-
-    Under a frozen runtime (`sys.frozen is True`), any caller attempt to override
-    `manifest_path`, `bundle_root`, `bundled_executable`, `require_frozen=False`, or
-    worker/protocol identity is rejected before spawn, and only `_load_packaged_release_spec`
-    is used.
-    Under a non-frozen runtime (`sys.frozen is False`), default production resolution fails
-    closed (`agent_computer_executable_not_found`), and any explicit staged override runs
-    strictly in `mode='development'` with `release_verified=False` and `_release_proof=None`.
-    """
+    """Authoritative production binary resolver backed by fixed packaged `rynmesh/bin/computer-use-manifest.json`."""
 
     mode = "production"
 
@@ -2252,7 +2750,11 @@ class ProductionBinaryResolver:
 
         if bool(getattr(sys, "frozen", False)):
             if self._explicit_require_frozen is False:
-                raise NativeBridgeRejected("agent_computer_path_invalid", phase=phase)
+                raise NativeBridgeRejected(
+                    "agent_computer_path_invalid",
+                    phase=phase,
+                    reason="final_path_mismatch",
+                )
             if self.expected_worker_name != EXPECTED_WORKER_NAME or (
                 self.expected_worker_version is not None
                 and self.expected_worker_version != EXPECTED_WORKER_VERSION
@@ -2274,28 +2776,37 @@ class ProductionBinaryResolver:
                 )
                 if os.path.normcase(m_lex) != os.path.normcase(pkg_lex):
                     raise NativeBridgeRejected(
-                        "agent_computer_path_invalid", phase=phase
+                        "agent_computer_path_invalid",
+                        phase=phase,
+                        reason="final_path_mismatch",
                     )
-            sys_exe_lex = validate_lexical_windows_path(sys.executable, phase=phase)
-            fixed_root_lex = validate_lexical_windows_path(
-                Path(sys_exe_lex).parent, phase=phase
-            )
+
+            sys_parent_lex, root_ident = _resolve_frozen_install_root(phase=phase)
+            allowed_roots = {
+                os.path.normcase(sys_parent_lex),
+                os.path.normcase(root_ident.final_path),
+            }
             if self.bundle_root is not None:
                 b_lex = validate_lexical_windows_path(self.bundle_root, phase=phase)
-                if os.path.normcase(b_lex) != os.path.normcase(fixed_root_lex):
+                if os.path.normcase(b_lex) not in allowed_roots:
                     raise NativeBridgeRejected(
-                        "agent_computer_path_invalid", phase=phase
+                        "agent_computer_path_invalid",
+                        phase=phase,
+                        reason="final_path_mismatch",
                     )
             if self.bundled_executable is not None:
                 e_lex = validate_lexical_windows_path(
                     self.bundled_executable, phase=phase
                 )
-                fixed_exe_lex = os.path.join(
-                    fixed_root_lex, PACKAGED_EXECUTABLE_BASENAME
-                )
-                if os.path.normcase(e_lex) != os.path.normcase(fixed_exe_lex):
+                allowed_exes = {
+                    os.path.normcase(os.path.join(sys_parent_lex, PACKAGED_EXECUTABLE_BASENAME)),
+                    os.path.normcase(os.path.join(root_ident.final_path, PACKAGED_EXECUTABLE_BASENAME)),
+                }
+                if os.path.normcase(e_lex) not in allowed_exes:
                     raise NativeBridgeRejected(
-                        "agent_computer_path_invalid", phase=phase
+                        "agent_computer_path_invalid",
+                        phase=phase,
+                        reason="final_path_mismatch",
                     )
 
             spec = _load_packaged_release_spec(phase=phase)
@@ -2310,6 +2821,22 @@ class ProductionBinaryResolver:
                 on_after_hash_before_return=self.on_after_hash_before_return,
                 phase=phase,
             )
+
+        if (
+            self.manifest_path is None
+            and self.bundle_root is None
+            and self.bundled_executable is None
+            and self._explicit_require_frozen is None
+        ):
+            env_dev = resolve_env_dev_executable()
+            if env_dev is not None:
+                return open_dev_executable_lease(
+                    env_dev,
+                    expected_worker_name=self.expected_worker_name,
+                    expected_worker_version=self.expected_worker_version,
+                    expected_protocol_version=self.expected_protocol_version,
+                    phase=phase,
+                )
 
         spec = load_manifest(
             self.manifest_path,

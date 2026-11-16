@@ -665,6 +665,11 @@ class ExtensionStore:
     def _is_server_effectively_enabled(self, server: dict[str, Any], state: dict[str, Any]) -> bool:
         if not server.get("enabled", False):
             return False
+        if server.get("id") == COMPUTER_USE_SERVER_ID:
+            from ..computer.binary import platform_support
+
+            if not platform_support()["supported"]:
+                return False
         return self._is_parent_plugin_enabled(server.get("plugin_id"), state)
 
     def _check_expected_revision(
@@ -706,7 +711,14 @@ class ExtensionStore:
         desktop_access: bool = False,
     ) -> dict[str, Any]:
         is_computer_use = plugin["id"] == COMPUTER_USE_PLUGIN_ID
-        win_supported = os.name == "nt"
+        if is_computer_use:
+            from ..computer.binary import platform_support
+
+            cu_plat = platform_support()
+            win_supported = bool(cu_plat["supported"])
+        else:
+            cu_plat = None
+            win_supported = os.name == "nt"
         bundled_skills = [
             self._public_imported_skill(state["skills"][sid], state)
             for sid in plugin.get("skill_ids", [])
@@ -719,10 +731,12 @@ class ExtensionStore:
         ]
         status = "enabled" if plugin.get("enabled") else "disabled"
         status_reason = ""
+        status_message = ""
         if is_computer_use:
             if not win_supported:
                 status = "unavailable"
                 status_reason = "windows_only"
+                status_message = str((cu_plat or {}).get("message_zh") or "本机电脑控制仅支持 Windows x64")
             elif plugin.get("enabled") and not desktop_access:
                 status = "needs_permission"
                 status_reason = "desktop_access_disabled"
@@ -742,6 +756,7 @@ class ExtensionStore:
             "parent_enabled": True,
             "status": status,
             "status_reason": status_reason,
+            **({"status_message": status_message} if status_message else {}),
             "computer_access": bool(plugin.get("computer_access", False)),
             "skill_ids": list(plugin.get("skill_ids", [])),
             "mcp_server_ids": list(plugin.get("mcp_server_ids", [])),

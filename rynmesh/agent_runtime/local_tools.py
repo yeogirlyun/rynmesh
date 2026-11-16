@@ -1872,6 +1872,7 @@ class LocalTools:
                     "limitations": "Single original frame submitted to route carrier; semantic model response only, not mechanical proof of pixel recognition, animation, or hidden content."}
         if name == "ryn_local_environment":
             from .local_browser import find_browser
+            from .native_computer import environment_computer_fields
             cap = context.get("_image_capability") if isinstance(context.get("_image_capability"), dict) else None
             route_note = (
                 f" Selected route ({cap.get('image_transport', 'none')}) supports image input carrier (model support: {cap.get('model_image_support', 'unknown')})."
@@ -1881,7 +1882,8 @@ class LocalTools:
             )
             return {"os": platform.system(), **self.policy(context), "shells": [s for s in ("powershell", "pwsh", "cmd", "sh") if shutil.which(s)],
                     "rg_available": bool(resolve_rg_executable()),
-                    "browser_installed": bool(find_browser()), "computer_control_supported": os.name == "nt",
+                    "browser_installed": bool(find_browser()),
+                    **environment_computer_fields(self.store),
                     "shell_scope": "user_account_not_sandboxed",
                     **({"image_capability": cap} if cap is not None else {}),
                     "image_observation": ("ryn_render_inspect renders workspace SVG/HTML/image files and "

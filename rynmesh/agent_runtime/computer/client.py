@@ -25,6 +25,7 @@ from .binary import (
     VerifiedProcessIdentity,
     build_bridge_config_identity,
     open_dev_executable_lease,
+    resolve_env_dev_executable,
     resolve_owner_id,
     verify_lease_release_authority,
     verify_suspended_process_handle,
@@ -131,6 +132,20 @@ def acquire_worker_artifact_lease(
             expected_protocol_version=expected_protocol_version,
             phase="pre_dispatch",
         )
+    if (
+        bundled_executable is None
+        and manifest_path is None
+        and bundle_root is None
+    ):
+        env_dev = resolve_env_dev_executable()
+        if env_dev is not None:
+            return open_dev_executable_lease(
+                env_dev,
+                expected_worker_name=expected_worker_name,
+                expected_worker_version=expected_worker_version,
+                expected_protocol_version=expected_protocol_version,
+                phase="pre_dispatch",
+            )
     resolver = ProductionBinaryResolver(
         manifest_path=manifest_path,
         bundle_root=bundle_root,
@@ -1489,6 +1504,7 @@ class NativeWorkerClient:
         self._cached_handshake: dict[str, Any] | None = None
         self._cached_handshake_at: str | None = None
         self._cached_generation: int | None = None
+        self._last_error: dict[str, Any] | None = None
 
     @property
     def owner_id(self) -> str:
@@ -1567,6 +1583,8 @@ class NativeWorkerClient:
                     "mode": cfg.mode,
                     "verified": False,
                     "releaseVerified": False,
+                    "developmentWorker": bool(cfg.development_worker),
+                    "emulatedX64": False,
                     "ownerId": self._owner_id,
                     "configFingerprint": cfg.config_fingerprint,
                     "checkedAt": self._cached_checked_at,
@@ -1578,6 +1596,7 @@ class NativeWorkerClient:
                     "capabilities": None,
                     "limits": None,
                     "binding": None,
+                    "lastError": copy.deepcopy(self._last_error),
                 }
 
             binding_copy = copy.deepcopy(binding.to_dict())
@@ -1592,6 +1611,8 @@ class NativeWorkerClient:
                 "mode": binding.mode,
                 "verified": verified,
                 "releaseVerified": release_verified,
+                "developmentWorker": bool(binding.development_worker),
+                "emulatedX64": bool(binding.emulated_x64),
                 "ownerId": binding.owner_id,
                 "configFingerprint": binding.config_fingerprint,
                 "checkedAt": self._cached_checked_at,
@@ -1603,6 +1624,7 @@ class NativeWorkerClient:
                 "capabilities": hs["capabilities"],
                 "limits": hs["limits"],
                 "binding": binding_copy,
+                "lastError": copy.deepcopy(self._last_error),
             }
 
     def active_session_info(self) -> tuple[int | None, str | None, int | None]:
@@ -1751,10 +1773,17 @@ class NativeWorkerClient:
                     abort_check=_abort_check,
                     on_liveness_lost=self._on_session_liveness_lost,
                 )
-            except BaseException:
+            except BaseException as exc:
                 if lease is not None and new_session is None:
                     lease.close()
                 with self._cond:
+                    if isinstance(exc, NativeBridgeError):
+                        self._last_error = {
+                            "code": exc.code,
+                            "reason": exc.reason,
+                            "win32_error": getattr(exc, "win32_error", None),
+                            "observedAt": _utc_now_iso(),
+                        }
                     if self._active_connect_attempt is attempt_token:
                         self._active_connect_attempt = None
                         self._connecting = False
@@ -1840,9 +1869,12 @@ class NativeWorkerClient:
                         worker_instance=new_session.worker_instance,
                         handshake_timestamp=new_session.handshake_at,
                         validated_handshake=hs_copy,
+                        development_worker=bool(art is not None and art.development_worker),
+                        emulated_x64=bool(art is not None and art.emulated_x64),
                     )
                     self._session = new_session
                     self._cached_binding = binding
+                    self._last_error = None
                     self._cached_live = True
                     self._cached_checked_at = new_session.handshake_at
                     self._cached_handshake = hs_copy
@@ -1966,6 +1998,12 @@ class NativeWorkerClient:
         handshake_timeout: float | None = None,
     ) -> BridgeConfigIdentity:
         """Retire the active worker generation, mark cached binding stale, and apply new configuration."""
+        if dev_executable is not None and bool(getattr(sys, "frozen", False)):
+            raise NativeBridgeRejected(
+                "agent_computer_path_invalid",
+                phase="pre_dispatch",
+                reason="dev_worker_forbidden_when_frozen",
+            )
         new_cfg = build_bridge_config_identity(
             bundled_executable=bundled_executable,
             dev_executable=dev_executable,
@@ -2000,6 +2038,7 @@ class NativeWorkerClient:
             self._connecting = False
             self._cached_live = False
             self._cached_checked_at = _utc_now_iso()
+            self._last_error = None
             self._cond.notify_all()
             session = self._session
             if session is not None:
@@ -2024,6 +2063,7 @@ class NativeWorkerClient:
             self._connecting = False
             self._cached_live = False
             self._cached_checked_at = _utc_now_iso()
+            self._last_error = None
             self._cond.notify_all()
             session = self._session
             self._session = None

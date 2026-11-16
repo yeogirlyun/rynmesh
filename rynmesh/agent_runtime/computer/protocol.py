@@ -214,6 +214,18 @@ VALID_DIAGNOSTIC_REASONS = frozenset({
     "cancelled_before_lock",
     "cancelled_while_ready",
     "cancelled_during_execution",
+    "unc_path",
+    "device_path",
+    "ads",
+    "reserved_name",
+    "dot_segment",
+    "reparse_below_root",
+    "final_path_mismatch",
+    "open_failed",
+    "not_directory",
+    "image_path_mismatch",
+    "arm64_emulation_disabled",
+    "dev_worker_forbidden_when_frozen",
 })
 
 VALID_SCREENSHOT_REASONS = frozenset({
@@ -266,6 +278,8 @@ ALLOWLISTED_BRIDGE_ERROR_CODES = frozenset({
     "agent_computer_manifest_missing",
     "agent_computer_manifest_invalid",
     "agent_computer_path_invalid",
+    "agent_computer_path_reparse_point",
+    "agent_computer_path_unc",
     "agent_computer_pe_invalid",
     "agent_computer_binary_invalid",
     "agent_computer_binary_tampered",
@@ -439,6 +453,10 @@ BRIDGE_CORRECTIONS: dict[tuple[str, str | None], str] = {
         "to obtain a fresh state_token and fresh screenshot before calling computer_act_window again. "
         "Note that computer_observe_windows only lists windows and does not issue a state_token."
     ),
+    ("agent_computer_path_reparse_point", None): "请把 Ryn 装在本地非链接目录",
+    ("agent_computer_path_unc", None): "请把 Ryn 装在本地非链接目录",
+    ("agent_computer_arch_unsupported", "arm64_emulation_disabled"): "本机是 ARM 版 Windows，电脑控制暂不支持",
+    ("agent_computer_windows_required", None): "本机电脑控制仅支持 Windows x64",
 }
 
 
@@ -503,6 +521,7 @@ def sanitize_diagnostic(
     retryable: bool | None = None,
     foreground_window: dict[str, str] | None = None,
     occluding_window: dict[str, str] | None = None,
+    component: str | None = None,
 ) -> dict[str, Any]:
     """Build a strictly sanitized diagnostic dictionary containing only allowlisted enums and IDs.
 
@@ -566,6 +585,11 @@ def sanitize_diagnostic(
     occ_win = _sanitize_window_summary_dict(occluding_window)
     if occ_win is not None:
         out["occluding_window"] = occ_win
+    if isinstance(component, str):
+        base_comp = component.replace("/", "\\").rsplit("\\", 1)[-1].strip()
+        clean_comp = "".join("_" if ord(c) < 32 or ord(c) == 127 else c for c in base_comp)[:128]
+        if clean_comp and ".." not in clean_comp and ":" not in clean_comp:
+            out["component"] = clean_comp
     return out
 
 
@@ -601,6 +625,8 @@ class NativeBridgeError(AgentError):
         retryable: bool | None = None,
         foreground_window: dict[str, str] | None = None,
         occluding_window: dict[str, str] | None = None,
+        component: str | None = None,
+        correction: str | None = None,
     ) -> None:
         safe_code = (
             code
@@ -649,6 +675,7 @@ class NativeBridgeError(AgentError):
         self.retryable: bool | None = retryable if isinstance(retryable, bool) else None
         self.foreground_window = _sanitize_window_summary_dict(foreground_window)
         self.occluding_window = _sanitize_window_summary_dict(occluding_window)
+        self.win32_error = win32_error if type(win32_error) is int and 0 <= win32_error <= 0xFFFFFFFF else None
         self.diagnostics = sanitize_diagnostic(
             error_code=safe_code,
             phase=self.phase,
@@ -675,6 +702,14 @@ class NativeBridgeError(AgentError):
             retryable=self.retryable,
             foreground_window=self.foreground_window,
             occluding_window=self.occluding_window,
+            component=component,
+        )
+        self.component: str | None = self.diagnostics.get("component")
+        self.correction: str | None = (
+            correction
+            if isinstance(correction, str) and correction.strip()
+            else BRIDGE_CORRECTIONS.get((self.code, self.reason))
+            or BRIDGE_CORRECTIONS.get((self.code, None))
         )
 
 
@@ -688,7 +723,12 @@ class NativeBridgeRejected(NativeBridgeError, AgentToolRejected):
         kwargs["callback_uncertain"] = False
         kwargs.setdefault("phase", "pre_dispatch")
         NativeBridgeError.__init__(self, code, **kwargs)
-        AgentToolRejected.__init__(self, self.code, details=self.diagnostics)
+        AgentToolRejected.__init__(
+            self,
+            self.code,
+            correction=self.correction,
+            details=self.diagnostics,
+        )
 
 
 @dataclass(frozen=True)

@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, NoReturn
 
-from .computer.binary import resolve_owner_id
+from .computer.binary import platform_support, resolve_owner_id
 from .computer.coordinator import (
     NativeBridge,
     bind_node_native_bridge,
@@ -2974,12 +2974,83 @@ def bind_owner_native_computer(
         return facade
 
 
+_COMPUTER_CONTROL_PREFIXES = (
+    "ryn_computer_",
+    "mcp__computer_use__",
+    "mcp__plugin_computer_use_",
+    "mcp.computer_use.",
+    "computer_use.",
+)
+
+
+def is_computer_control_tool_name(name: str) -> bool:
+    """Return True if `name` is a legacy or builtin MCP desktop computer-control tool."""
+    if not isinstance(name, str):
+        return False
+    return name.startswith(_COMPUTER_CONTROL_PREFIXES)
+
+
+def computer_platform_status(store: Any = None) -> dict[str, Any]:
+    """Read current agent settings (read-only) and return `computer.platform_support(...)`."""
+    settings: dict[str, Any] | None = None
+    if store is not None:
+        try:
+            if hasattr(store, "inspect"):
+                raw_settings = store.inspect(lambda d: dict(d.get("settings") or {}) if isinstance(d, dict) else {})
+            elif hasattr(store, "read"):
+                raw_data = store.read()
+                raw_settings = dict(raw_data.get("settings") or {}) if isinstance(raw_data, dict) else {}
+            else:
+                raw_settings = None
+            if isinstance(raw_settings, dict):
+                settings = raw_settings
+        except Exception:
+            settings = None
+    return platform_support(settings=settings)
+
+
+def filter_computer_tool_specs(
+    specs: list[dict[str, Any]],
+    *,
+    store: Any = None,
+) -> list[dict[str, Any]]:
+    """Omit computer-control tools from the model tool menu on unsupported platforms."""
+    support = computer_platform_status(store)
+    if support.get("supported") is True:
+        return specs
+    return [
+        item
+        for item in specs
+        if not is_computer_control_tool_name(str((item.get("function") or {}).get("name") or ""))
+    ]
+
+
+def environment_computer_fields(store: Any = None) -> dict[str, Any]:
+    """Build `ryn_local_environment` fields explaining computer-control platform support."""
+    support = computer_platform_status(store)
+    supported = bool(support.get("supported"))
+    out: dict[str, Any] = {
+        "computer_control_supported": supported,
+        "computer_control_platform": str(support.get("platform_name") or ""),
+    }
+    if support.get("emulated_x64"):
+        out["computer_control_emulated_x64"] = True
+    msg = support.get("message_zh")
+    if isinstance(msg, str) and msg:
+        out["computer_control_reason"] = msg
+    return out
+
+
 __all__ = [
     "HostObservationArtifactEntry",
     "NativeComputerFacade",
     "TrustedWriteAuthorityStamp",
     "WindowObservationRecord",
     "bind_owner_native_computer",
+    "computer_platform_status",
+    "environment_computer_fields",
+    "filter_computer_tool_specs",
+    "is_computer_control_tool_name",
     "normalize_key_token",
     "validate_native_observation_descriptor",
 ]
