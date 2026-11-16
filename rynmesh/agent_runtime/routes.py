@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -413,6 +414,57 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
 
     from .file_preview import install_file_preview_routes
     install_file_preview_routes(app, call, local_control)
+
+    def _collect_open_roots() -> dict[str, Any]:
+        from ..drop.engine import default_receive_dir
+
+        drop_engine = getattr(app.state, "drop_engine", None)
+        drop_dir = drop_engine.receive_dir() if drop_engine is not None else default_receive_dir()
+        inbound_save_dirs = (
+            [row["save_dir"] for row in drop_engine.db.transfers_in(("completed",), direction="in") if row.get("save_dir")]
+            if drop_engine is not None
+            else []
+        )
+        workspace_root = ""
+        project_roots: list[str] = []
+        if startup_error is None:
+            try:
+                data = runtime.store.read()
+                workspace_root = str((data.get("settings") or {}).get("workspace_root") or "").strip()
+                for proj in (data.get("projects") or {}).values():
+                    if isinstance(proj, dict) and proj.get("enabled") and isinstance(proj.get("path"), str) and proj["path"].strip():
+                        project_roots.append(proj["path"].strip())
+            except (AgentError, OSError):
+                workspace_root = ""
+        try:
+            output_dir = runtime.store.default_workspace()
+        except (AgentError, OSError):
+            output_dir = str(runtime.store.root.resolve() / "files")
+
+        roots: list[str] = []
+        seen: set[str] = set()
+        for candidate in [drop_dir, *inbound_save_dirs, workspace_root, *project_roots, output_dir]:
+            if not candidate:
+                continue
+            p = Path(candidate)
+            if not p.is_absolute():
+                continue
+            norm = os.path.normcase(str(p))
+            if norm not in seen:
+                seen.add(norm)
+                roots.append(str(p))
+        return {
+            "roots": roots,
+            "drop_receive_dir": drop_dir,
+            "agent_workspace": workspace_root,
+            "agent_output_dir": output_dir,
+        }
+
+    @app.get("/api/local/desktop/open-roots")
+    async def desktop_open_roots(request: Request):
+        local_control(request)
+        payload = await asyncio.to_thread(_collect_open_roots)
+        return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
     extensions = getattr(tools, "extensions", None)
     if extensions is not None:
