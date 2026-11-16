@@ -40,6 +40,10 @@ _ID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 _SCOPE = re.compile(r"[a-f0-9]{64}\Z")
 _CACHE_KEY = re.compile(r"[A-Za-z0-9:_-]{1,64}\Z")
 _IMAGE = re.compile(r"data:(image/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+={0,2})\Z")
+_KNOWN_RESPONSE_ITEMS = frozenset({"message", "function_call", "reasoning"})
+_KNOWN_RESPONSE_PARTS = frozenset({"output_text", "refusal"})
+_KNOWN_MESSAGE_BLOCKS = frozenset({"text", "tool_use", "thinking", "redacted_thinking"})
+_KNOWN_MESSAGE_DELTAS = frozenset({"text_delta", "input_json_delta", "thinking_delta", "signature_delta", "citations_delta"})
 
 
 def _check(protocol, model, scope):
@@ -191,31 +195,37 @@ def _projection(message):
     return (_text(message.get("content")), [(call["id"], call["function"]["name"], _argument_identity(call["function"]["arguments"])) for call in _calls(message)])
 
 
-def _from_responses(output, *, nonce=""):
+def _from_responses(output, *, nonce="", allow_incomplete=False):
     if not isinstance(output, list) or len(output) > 512:
         raise ValueError("invalid native Responses output")
     active_nonce = nonce or new_call_id_nonce()
+    allowed_statuses = {None, "completed", "incomplete", "in_progress"} if allow_incomplete else {None, "completed"}
     texts, calls, refused = [], [], False
     for item in output:
-        if not isinstance(item, dict):
+        if not isinstance(item, dict) or not isinstance(item.get("type"), str) or not item.get("type"):
             raise ValueError("invalid native Responses item")
-        kind = item.get("type")
+        kind = item["type"]
         if kind == "message":
             if item.get("role") != "assistant" or not isinstance(item.get("content"), list):
                 raise ValueError("invalid native Responses message")
-            if item.get("status") not in {None, "completed"}:
+            if item.get("status") not in allowed_statuses:
                 raise ValueError("unfinished native response message")
             for part in item["content"]:
-                if not isinstance(part, dict):
+                if not isinstance(part, dict) or not isinstance(part.get("type"), str) or not part.get("type"):
                     raise ValueError("invalid native Responses content")
-                if part.get("type") == "output_text" and isinstance(part.get("text"), str):
+                ptype = part["type"]
+                if ptype == "output_text":
+                    if not isinstance(part.get("text"), str):
+                        raise ValueError("invalid native Responses content")
                     texts.append(part["text"])
-                elif part.get("type") == "refusal" and isinstance(part.get("refusal"), str):
+                elif ptype == "refusal":
+                    if not isinstance(part.get("refusal"), str):
+                        raise ValueError("invalid native Responses content")
                     texts.append(part["refusal"])
                     refused = True
-                else:
-                    raise ValueError("unsupported native Responses content")
         elif kind == "function_call":
+            if allow_incomplete:
+                continue
             if item.get("status") not in {None, "completed"}:
                 raise ValueError("unfinished native tool call")
             calls.append(_call({"id": item.get("call_id"), "function": {"name": item.get("name"), "arguments": item.get("arguments")}}, index=len(calls), nonce=active_nonce))
@@ -223,8 +233,6 @@ def _from_responses(output, *, nonce=""):
             # This opaque native item, including encrypted_content, is private.
             if "encrypted_content" in item and item["encrypted_content"] is not None and not isinstance(item["encrypted_content"], str):
                 raise ValueError("invalid native reasoning continuation")
-        else:
-            raise ValueError("unsupported native Responses output item")
     message = {"role": "assistant", "content": "".join(texts) or None}
     if calls:
         message["tool_calls"] = calls
@@ -232,27 +240,34 @@ def _from_responses(output, *, nonce=""):
     return message, refused
 
 
-def _from_messages(content, *, nonce=""):
+def _from_messages(content, *, nonce="", drop_tools=False):
     if not isinstance(content, list) or len(content) > 512:
         raise ValueError("invalid native Messages content")
     active_nonce = nonce or new_call_id_nonce()
     texts, calls = [], []
     for block in content:
-        if not isinstance(block, dict):
+        if not isinstance(block, dict) or not isinstance(block.get("type"), str) or not block.get("type"):
             raise ValueError("invalid native Messages block")
-        kind = block.get("type")
-        if kind == "text" and isinstance(block.get("text"), str):
+        kind = block["type"]
+        if kind == "text":
+            if not isinstance(block.get("text"), str):
+                raise ValueError("invalid native Messages block")
             texts.append(block["text"])
-        elif kind == "tool_use" and isinstance(block.get("input"), dict):
+        elif kind == "tool_use":
+            if drop_tools:
+                continue
+            if not isinstance(block.get("input"), dict):
+                raise ValueError("invalid native Messages block")
             arguments = json.dumps(block["input"], ensure_ascii=False, allow_nan=False, separators=(",", ":"))
             calls.append(_call({"id": block.get("id"), "function": {"name": block.get("name"), "arguments": arguments}}, index=len(calls), nonce=active_nonce))
-        elif kind == "thinking" and isinstance(block.get("thinking"), str):
+        elif kind == "thinking":
+            if not isinstance(block.get("thinking"), str):
+                raise ValueError("invalid native Messages block")
             if "signature" in block and not isinstance(block["signature"], str):
                 raise ValueError("invalid native thinking signature")
-        elif kind == "redacted_thinking" and isinstance(block.get("data"), str):
-            pass
-        else:
-            raise ValueError("unsupported native Messages block")
+        elif kind == "redacted_thinking":
+            if not isinstance(block.get("data"), str):
+                raise ValueError("invalid native Messages block")
     message = {"role": "assistant", "content": "".join(texts) or None}
     if calls:
         message["tool_calls"] = calls
@@ -260,19 +275,42 @@ def _from_messages(content, *, nonce=""):
     return message
 
 
-def _continuation(message, protocol, scope):
+def _filter_continuation_items(native: list[dict[str, Any]], protocol: str) -> list[dict[str, Any]]:
+    if protocol == RESPONSES:
+        filtered = []
+        for item in native:
+            kind = item.get("type")
+            if kind not in _KNOWN_RESPONSE_ITEMS:
+                continue
+            if kind == "message":
+                item = {**item, "content": [p for p in item["content"] if p.get("type") in _KNOWN_RESPONSE_PARTS]}
+            filtered.append(item)
+        return filtered
+    return [block for block in native if block.get("type") in _KNOWN_MESSAGE_BLOCKS]
+
+
+def _continuation(message, protocol, scope, diagnostics=None):
     state = message.get("provider_state")
     if not isinstance(state, dict) or state.get("protocol") != protocol or state.get("scope") != scope:
         return None  # Never transmit private state to another provider/model.
     data = state.get("data")
     key = "output" if protocol == RESPONSES else "content"
     if not isinstance(data, dict) or set(data) != {key}:
-        raise ValueError("invalid native continuation state")
-    native = _copy(data[key])
-    projected = _from_responses(native)[0] if protocol == RESPONSES else _from_messages(native)
-    if _projection(projected) != _projection(message):
-        raise ValueError("native continuation no longer matches conversation")
-    return native
+        if isinstance(diagnostics, dict):
+            diagnostics["provider_state_discarded"] = diagnostics.get("provider_state_discarded", 0) + 1
+        return None
+    expected = _projection(message)
+    try:
+        native = _copy(data[key])
+        projected = _from_responses(native)[0] if protocol == RESPONSES else _from_messages(native)
+        matched = _projection(projected) == expected
+    except ValueError:
+        matched = False
+    if not matched:
+        if isinstance(diagnostics, dict):
+            diagnostics["provider_state_discarded"] = diagnostics.get("provider_state_discarded", 0) + 1
+        return None
+    return _filter_continuation_items(native, protocol)
 
 
 def _tool_definitions(tools, protocol):
@@ -316,7 +354,7 @@ def _tool_choice(choice, protocol, names):
     return {"type": "function", "name": name} if protocol == RESPONSES else {"type": "tool", "name": name}
 
 
-def _messages(body, protocol, scope):
+def _messages(body, protocol, scope, diagnostics=None):
     history = body.get("messages")
     if not isinstance(history, list) or not history:
         raise ValueError("native messages must be a nonempty array")
@@ -359,7 +397,7 @@ def _messages(body, protocol, scope):
         calls = _calls(message, canonical=True)
         if calls and role != "assistant":
             raise ValueError("native tool calls require assistant role")
-        native = _continuation(message, protocol, scope) if role == "assistant" else None
+        native = _continuation(message, protocol, scope, diagnostics=diagnostics) if role == "assistant" else None
         if native is not None:
             if protocol == RESPONSES:
                 raw_ids = [item.get("call_id") for item in native if isinstance(item, dict) and item.get("type") == "function_call"]
@@ -425,7 +463,15 @@ def _apply_messages_cache_breakpoints(payload: dict[str, Any]) -> None:
 
 
 @_safe
-def make_request(body: dict[str, Any], protocol: str, model: str, scope: str, *, prompt_cache: str | None = None) -> dict[str, Any]:
+def make_request(
+    body: dict[str, Any],
+    protocol: str,
+    model: str,
+    scope: str,
+    *,
+    prompt_cache: str | None = None,
+    diagnostics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Convert canonical history/tools; this function never performs inference."""
     _check(protocol, model, scope)
     if not isinstance(body, dict) or set(body) - {"messages", "max_tokens", "temperature", "top_p", "stop", "tools", "tool_choice", "stream", "reasoning_effort", "thinking", "enable_thinking", "chat_template_kwargs", "prompt_cache_key", "prompt_cache"}:
@@ -459,7 +505,7 @@ def make_request(body: dict[str, Any], protocol: str, model: str, scope: str, *,
     active_profile = current_internal_image_profile()
     if active_profile is not None:
         verify_messages_against_profile(body.get("messages"), active_profile)
-    items, system = _messages(body, protocol, scope)
+    items, system = _messages(body, protocol, scope, diagnostics=diagnostics)
     result = {"model": model, "stream": body.get("stream", False), "max_output_tokens" if protocol == RESPONSES else "max_tokens": maximum}
     for key in ("temperature", "top_p"):
         if key in body:
@@ -516,6 +562,21 @@ def make_request(body: dict[str, Any], protocol: str, model: str, scope: str, *,
     return _copy(result)
 
 
+def _has_responses_text(raw: Any) -> bool:
+    output = raw.get("output") if isinstance(raw, dict) else None
+    if not isinstance(output, list):
+        return False
+    for item in output:
+        if isinstance(item, dict) and item.get("type") == "message" and isinstance(item.get("content"), list):
+            for part in item["content"]:
+                if isinstance(part, dict):
+                    if part.get("type") == "output_text" and isinstance(part.get("text"), str) and part["text"]:
+                        return True
+                    if part.get("type") == "refusal" and isinstance(part.get("refusal"), str) and part["refusal"]:
+                        return True
+    return False
+
+
 def _finish(raw, protocol):
     if protocol == MESSAGES:
         reason = raw.get("stop_reason")
@@ -533,8 +594,12 @@ def _finish(raw, protocol):
     if status == "incomplete":
         details = raw.get("incomplete_details")
         reason = details.get("reason") if isinstance(details, dict) else None
-        if reason in {"max_output_tokens", "content_filter"}:
-            return "length" if reason == "max_output_tokens" else "content_filter"
+        if reason == "max_output_tokens":
+            return "length"
+        if reason == "content_filter":
+            return "content_filter"
+        if _has_responses_text(raw):
+            return "length"
     raise ValueError("unsupported native Responses completion status")
 
 
@@ -546,25 +611,40 @@ def parse_response(raw: dict[str, Any], protocol: str, model: str, scope: str) -
         raise ValueError("invalid native response")
     raw = _copy(raw)
     finish = _finish(raw, protocol)
+    is_length = finish == "length"
     nonce = new_call_id_nonce()
     if protocol == RESPONSES:
-        message, refused = _from_responses(raw.get("output"), nonce=nonce)
+        message, refused = _from_responses(raw.get("output"), nonce=nonce, allow_incomplete=is_length)
         if refused:
             finish = "content_filter"
-        fn_items = [item for item in raw["output"] if isinstance(item, dict) and item.get("type") == "function_call"]
-        for item, norm_call in zip(fn_items, message.get("tool_calls", [])):
-            if not item.get("call_id"):
-                item["call_id"] = norm_call["id"]
-        data = {"output": raw["output"]}
+            is_length = False
+        if is_length:
+            kept_output = []
+            for item in raw["output"]:
+                if not isinstance(item, dict) or item.get("type") == "function_call":
+                    continue
+                if item.get("type") == "message" and item.get("status") not in {None, "completed"}:
+                    item = {**item, "status": "completed"}
+                kept_output.append(item)
+            data = {"output": kept_output}
+        else:
+            fn_items = [item for item in raw["output"] if isinstance(item, dict) and item.get("type") == "function_call"]
+            for item, norm_call in zip(fn_items, message.get("tool_calls", []), strict=False):
+                if not item.get("call_id"):
+                    item["call_id"] = norm_call["id"]
+            data = {"output": raw["output"]}
     else:
         if raw.get("role") != "assistant" or raw.get("type", "message") != "message":
             raise ValueError("invalid native Messages response")
-        message = _from_messages(raw.get("content"), nonce=nonce)
-        tool_blocks = [b for b in raw["content"] if isinstance(b, dict) and b.get("type") == "tool_use"]
-        for block, norm_call in zip(tool_blocks, message.get("tool_calls", [])):
-            if not block.get("id"):
-                block["id"] = norm_call["id"]
-        data = {"content": raw["content"]}
+        message = _from_messages(raw.get("content"), nonce=nonce, drop_tools=is_length)
+        if is_length:
+            data = {"content": [b for b in raw["content"] if isinstance(b, dict) and b.get("type") != "tool_use"]}
+        else:
+            tool_blocks = [b for b in raw["content"] if isinstance(b, dict) and b.get("type") == "tool_use"]
+            for block, norm_call in zip(tool_blocks, message.get("tool_calls", []), strict=False):
+                if not block.get("id"):
+                    block["id"] = norm_call["id"]
+            data = {"content": raw["content"]}
     calls = message.get("tool_calls", [])
     if calls:
         if finish in {"length", "content_filter"}:
@@ -594,6 +674,7 @@ class StreamDecoder:
         self.cached_tokens = None
         self.cache_creation_input_tokens = None
         self.finish_reason = None
+        self.ignored_events = 0
         self._native_usage = {}
         self._final = None
         self._failed = False
@@ -601,9 +682,12 @@ class StreamDecoder:
         self._started = False
         self._identity = None
         self._blocks = {}
+        self._ignored_blocks = set()
+        self._invalid_tool_json = set()
         self._stopped = set()
         self._arguments = {}
         self._items = {}
+        self._ignored_items = set()
         self._item_done = set()
         self._reason = None
         self._stop_sequence = None
@@ -650,6 +734,8 @@ class StreamDecoder:
 
     def _response_event(self, event):
         kind = event.get("type")
+        if kind == "ping":
+            return []
         if kind in {"response.created", "response.in_progress"}:
             response = event.get("response")
             if not isinstance(response, dict):
@@ -666,12 +752,35 @@ class StreamDecoder:
                 raise ValueError("invalid native response termination")
             if self._identity is not None and response.get("id") != self._identity:
                 raise ValueError("native response identity changed")
+            if (
+                kind == "response.incomplete"
+                and self._text
+                and isinstance(response.get("output"), list)
+                and not _has_responses_text(response)
+                and (not isinstance(response.get("incomplete_details"), dict)
+                     or response["incomplete_details"].get("reason") != "content_filter")
+            ):
+                response = {
+                    **response,
+                    "output": [
+                        *response["output"],
+                        {
+                            "id": "msg_partial",
+                            "type": "message",
+                            "role": "assistant",
+                            "status": "incomplete",
+                            "content": [{"type": "output_text", "text": self._text}],
+                        },
+                    ],
+                }
             self._update_usage(response.get("usage"))
             self.finish_reason = _finish(response, self.protocol)
             final_items = response.get("output")
             if not isinstance(final_items, list):
                 raise ValueError("invalid native final output")
             for index, item in self._items.items():
+                if self.finish_reason == "length" and item.get("type") == "function_call" and index >= len(final_items):
+                    continue
                 if index >= len(final_items):
                     raise ValueError("native output item missing from final response")
                 final_item = final_items[index]
@@ -681,16 +790,31 @@ class StreamDecoder:
                     for key in ("call_id", "name"):
                         if item.get(key) != final_item.get(key):
                             raise ValueError("native tool identity changed")
-                    observed = self._arguments.get(index, "")
-                    if observed and observed != final_item.get("arguments"):
-                        raise ValueError("native tool arguments changed after streaming")
+                    if self.finish_reason != "length":
+                        observed = self._arguments.get(index, "")
+                        if observed and observed != final_item.get("arguments"):
+                            raise ValueError("native tool arguments changed after streaming")
             return self._complete(response)
         if kind in {"response.output_text.delta", "response.refusal.delta"}:
             return self._delta(event.get("delta"))
         if kind in {"response.output_item.added", "response.output_item.done"}:
             index, item = event.get("output_index"), event.get("item")
-            if type(index) is not int or not 0 <= index < 512 or not isinstance(item, dict) or item.get("type") not in {"message", "function_call", "reasoning"}:
+            if (
+                type(index) is not int
+                or not 0 <= index < 512
+                or not isinstance(item, dict)
+                or not isinstance(item.get("type"), str)
+                or not item.get("type")
+            ):
                 raise ValueError("unsupported native output item event")
+            if item["type"] not in _KNOWN_RESPONSE_ITEMS:
+                if index in self._items:
+                    raise ValueError("native output item identity changed")
+                self._ignored_items.add(index)
+                self.ignored_events += 1
+                return []
+            if index in self._ignored_items:
+                raise ValueError("native output item identity changed")
             if index in self._item_done:
                 raise ValueError("native output item changed after completion")
             previous = self._items.get(index)
@@ -732,14 +856,23 @@ class StreamDecoder:
                 raise ValueError("native tool argument limit exceeded")
             return []
         if kind in {"response.content_part.added", "response.content_part.done"}:
+            if event.get("output_index") in self._ignored_items:
+                self.ignored_events += 1
+                return []
             part = event.get("part")
-            if not isinstance(part, dict) or part.get("type") not in {"output_text", "refusal"}:
+            if not isinstance(part, dict) or not isinstance(part.get("type"), str) or not part.get("type"):
                 raise ValueError("unsupported native response content event")
+            if part["type"] not in _KNOWN_RESPONSE_PARTS:
+                self.ignored_events += 1
+                return []
             return []
         if kind in {"response.output_text.done", "response.refusal.done", "response.output_text.annotation.added",
                     "response.reasoning_summary_part.added", "response.reasoning_summary_part.done",
                     "response.reasoning_summary_text.delta", "response.reasoning_summary_text.done",
                     "response.reasoning_text.delta", "response.reasoning_text.done"}:
+            return []
+        if isinstance(kind, str) and kind:
+            self.ignored_events += 1
             return []
         raise ValueError("unsupported native Responses stream event")
 
@@ -758,16 +891,29 @@ class StreamDecoder:
             raise ValueError("native Messages stream has no start")
         if kind == "content_block_start":
             index, block = event.get("index"), event.get("content_block")
-            if type(index) is not int or not 0 <= index < 512 or index in self._blocks or not isinstance(block, dict):
+            if (
+                type(index) is not int
+                or not 0 <= index < 512
+                or index in self._blocks
+                or index in self._ignored_blocks
+                or not isinstance(block, dict)
+                or not isinstance(block.get("type"), str)
+                or not block.get("type")
+            ):
                 raise ValueError("invalid native content block start")
-            if block.get("type") not in {"text", "tool_use", "thinking", "redacted_thinking"}:
-                raise ValueError("unsupported native Messages stream block")
+            if block["type"] not in _KNOWN_MESSAGE_BLOCKS:
+                self._ignored_blocks.add(index)
+                self.ignored_events += 1
+                return []
             self._blocks[index] = _copy(block)
             if block["type"] == "text":
                 return self._delta(block.get("text"))
             return []
         if kind == "content_block_delta":
             index, delta = event.get("index"), event.get("delta")
+            if index in self._ignored_blocks:
+                self.ignored_events += 1
+                return []
             block = self._blocks.get(index)
             if index in self._stopped or not isinstance(block, dict) or not isinstance(delta, dict):
                 raise ValueError("invalid native content delta")
@@ -797,13 +943,22 @@ class StreamDecoder:
             if dtype == "citations_delta" and block["type"] == "text" and isinstance(delta.get("citation"), dict):
                 block.setdefault("citations", []).append(_copy(delta["citation"]))
                 return []
+            if isinstance(dtype, str) and dtype and dtype not in _KNOWN_MESSAGE_DELTAS:
+                self.ignored_events += 1
+                return []
             raise ValueError("unsupported native Messages stream delta")
         if kind == "content_block_stop":
             index = event.get("index")
+            if index in self._ignored_blocks:
+                self.ignored_events += 1
+                return []
             if index not in self._blocks or index in self._stopped:
                 raise ValueError("invalid native block termination")
             if index in self._arguments:
-                self._blocks[index]["input"] = _object_arguments(self._arguments[index])
+                try:
+                    self._blocks[index]["input"] = _object_arguments(self._arguments[index])
+                except ValueError:
+                    self._invalid_tool_json.add(index)
             self._stopped.add(index)
             return []
         if kind == "message_delta":
@@ -817,18 +972,26 @@ class StreamDecoder:
                 self.finish_reason = _finish({"stop_reason": self._reason}, self.protocol)
             return []
         if kind == "message_stop":
-            if set(self._blocks) != self._stopped or sorted(self._blocks) != list(range(len(self._blocks))):
+            all_indices = set(self._blocks) | self._ignored_blocks
+            if set(self._blocks) != self._stopped or sorted(all_indices) != list(range(len(all_indices))):
                 raise ValueError("native message has unfinished content blocks")
+            if self._invalid_tool_json and self.finish_reason != "length":
+                raise ValueError("native tool arguments require a JSON object")
             return self._complete({"type": "message", "role": "assistant", "id": self._identity,
                                    "content": [self._blocks[index] for index in sorted(self._blocks)],
                                    "stop_reason": self._reason, "stop_sequence": self._stop_sequence,
                                    "usage": self._native_usage})
+        if isinstance(kind, str) and kind:
+            self.ignored_events += 1
+            return []
         raise ValueError("unsupported native Messages stream event")
 
     def feed(self, event: dict[str, Any]) -> list[dict[str, Any]]:
         if self._failed:
             raise ValueError("native stream is invalid")
         if self._final is not None:
+            if isinstance(event, dict) and (not event or event.get("type") == "ping"):
+                return []
             raise ValueError("native stream continued after termination")
         if not isinstance(event, dict):
             self._failed = True
@@ -850,4 +1013,7 @@ class StreamDecoder:
     def result(self) -> dict[str, Any]:
         if self._failed or self._final is None:
             raise ValueError("native stream terminated before completion")
-        return _copy(self._final)
+        out = _copy(self._final)
+        if self.ignored_events > 0:
+            out["diagnostics"] = {**(out.get("diagnostics") or {}), "ignored_stream_events": self.ignored_events}
+        return out

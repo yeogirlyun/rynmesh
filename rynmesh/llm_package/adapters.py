@@ -445,6 +445,7 @@ class OpenAICompatibleAdapter:
 
         phase = "request"
         call_id_nonce = new_call_id_nonce()
+        ignored_stream_events = 0
         try:
             if not streaming:
                 raw = self._json("/v1/chat/completions", body, read_timeout(), task_id=task_id, classify_errors=True)
@@ -477,6 +478,7 @@ class OpenAICompatibleAdapter:
                         finish = choice.get("finish_reason") or "stop"
                         received_usage, received_finish = observed_usage(usage), choice.get("finish_reason")
                     total = 0
+                    consecutive_bad_chunks = 0
                     while is_sse:
                         if task_id in self._cancelled:
                             raise AdapterError("task_cancelled")
@@ -516,7 +518,15 @@ class OpenAICompatibleAdapter:
                         data = line[5:].strip()
                         if data == b"[DONE]":
                             break
-                        chunk = json.loads(data)
+                        try:
+                            chunk = json.loads(data)
+                        except ValueError:
+                            consecutive_bad_chunks += 1
+                            ignored_stream_events += 1
+                            if consecutive_bad_chunks >= 3:
+                                raise failure("upstream_response_invalid") from None
+                            continue
+                        consecutive_bad_chunks = 0
                         if isinstance(chunk, dict) and chunk.get("error") is not None:
                             err_code, err_diag = classify_stream_error(chunk["error"], phase)
                             raise failure(err_code, err_diag)
@@ -553,6 +563,7 @@ class OpenAICompatibleAdapter:
             return {"text": message.get("content") or "", "message": message, "finish_reason": finish,
                     **counts, "reported_usage": counts,
                     **({"cached_tokens": cached} if cached is not None else {}),
+                    **({"diagnostics": {"ignored_stream_events": ignored_stream_events}} if ignored_stream_events > 0 else {}),
                     "duration_ms": int((time.monotonic() - started) * 1000)}
         except AdapterError as exc:
             if received_usage is not None:
