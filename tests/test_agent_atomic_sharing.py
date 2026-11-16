@@ -60,6 +60,7 @@ def receipt(args, result=None, operation_id="operation-one"):
 
 def test_one_commit_exact_receiver_and_private_metadata_survives_owner_edit(tmp_path, monkeypatch):
     sources, access, tool, relations, args = seed(tmp_path)
+    args = {**args, "revoke_other_friends": True}
     sid = args["model_id"][6:]
     # Legacy grants, including an inactive recipient, are fully previewed and
     # revoked in the same commit. They cannot reactivate upon renewed friendship.
@@ -179,6 +180,7 @@ def test_other_process_owner_edit_serializes_after_atomic_commit(tmp_path):
 
 def test_source_remove_readd_keeps_denials_and_new_source_never_inherits_grants(tmp_path):
     sources, access, tool, _, args = seed(tmp_path)
+    args = {**args, "revoke_other_friends": True}
     sid = args["model_id"][6:]
     access.set(sid, "a" * 32, allowed=True, expected_revision=0)
     execute(tool, args)
