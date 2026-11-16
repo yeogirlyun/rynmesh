@@ -570,52 +570,140 @@ def copy_codex_skill_bounded(src_dir: Path, dst_dir: Path) -> Path:
     return dst_root
 
 
+def _user_home() -> Path:
+    for var in ("HOME", "USERPROFILE"):
+        val = os.environ.get(var, "").strip()
+        if val:
+            return Path(val)
+    return Path.home()
+
+
 def default_codex_home() -> Path:
     env_home = os.environ.get("CODEX_HOME", "").strip()
     if env_home:
         return Path(env_home).expanduser()
-    return Path.home() / ".codex"
+    return _user_home() / ".codex"
+
+
+def default_ryn_home() -> Path:
+    env_home = os.environ.get("RYN_HOME", "").strip()
+    if env_home:
+        return Path(env_home).expanduser()
+    return _user_home() / ".ryn"
+
+
+def _find_git_project_root(start: Path) -> Path | None:
+    try:
+        current = start.expanduser().resolve()
+    except OSError:
+        current = start.expanduser()
+    for candidate in (current, *current.parents):
+        try:
+            if (candidate / ".git").exists():
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
+class SkillRootEntry(tuple):
+    """Keep the existing (path, scope) interface and attach workspace metadata."""
+
+    def __new__(cls, path: Path, scope: str, *, workspace_root: str | None = None):
+        entry = super().__new__(cls, (path, scope))
+        entry.workspace_root = workspace_root
+        entry.workspace_roots = [workspace_root] if workspace_root else []
+        return entry
+
+    def add_workspace_root(self, workspace_root: str) -> None:
+        if workspace_root not in self.workspace_roots:
+            self.workspace_roots.append(workspace_root)
 
 
 def default_local_skill_roots(workspace_roots: list[Path] | None = None) -> list[tuple[Path, str]]:
-    """Return ordered (directory_path, scope) roots matching Codex's local skill discovery."""
-    roots: list[tuple[Path, str]] = []
-    seen: set[str] = set()
+    """Return ordered (directory_path, scope) roots with Ryn first-class roots and upward git project layers."""
+    roots: list[SkillRootEntry] = []
+    seen: dict[str, SkillRootEntry] = {}
 
-    def _add(p: Path, scope: str) -> None:
+    def _add(p: Path, scope: str, *, workspace_root: str | None = None) -> None:
         try:
-            key = str(p.expanduser().resolve()).lower()
+            resolved = p.expanduser().resolve()
+            key = os.path.normcase(str(resolved))
         except OSError:
             return
-        if key not in seen:
-            seen.add(key)
-            roots.append((p.expanduser(), scope))
+        existing = seen.get(key)
+        if existing is not None:
+            if workspace_root:
+                existing.add_workspace_root(workspace_root)
+            return
+        entry = SkillRootEntry(p.expanduser(), scope, workspace_root=workspace_root)
+        seen[key] = entry
+        roots.append(entry)
 
-    for ws in workspace_roots or []:
-        if ws:
-            _add(ws / ".codex" / "skills", "repo")
-            _add(ws / ".agents" / "skills", "repo")
+    for raw_ws in workspace_roots or []:
+        if not raw_ws:
+            continue
+        ws_path = Path(raw_ws).expanduser()
+        try:
+            ws_resolved = ws_path.resolve()
+        except OSError:
+            ws_resolved = ws_path
+        git_root = _find_git_project_root(ws_resolved)
+        if git_root is not None and (ws_resolved == git_root or git_root in ws_resolved.parents):
+            chain = [ws_resolved]
+            for parent in ws_resolved.parents:
+                chain.append(parent)
+                if parent == git_root:
+                    break
+            layers = list(reversed(chain))
+        else:
+            layers = [ws_resolved]
+        for layer in layers:
+            layer_str = str(layer)
+            # Ryn's own repo root (.ryn/skills) takes priority at the same layer over .agents/.codex
+            _add(layer / ".ryn" / "skills", "repo", workspace_root=layer_str)
+            _add(layer / ".agents" / "skills", "repo", workspace_root=layer_str)
+            _add(layer / ".codex" / "skills", "repo", workspace_root=layer_str)
 
     codex_home = default_codex_home()
+    ryn_home = default_ryn_home()
     _add(codex_home / "skills" / ".system", "system")
+    _add(ryn_home / "skills", "user")
     _add(codex_home / "skills", "user")
-    _add(Path.home() / ".agents" / "skills", "user")
-    return roots
+    _add(_user_home() / ".agents" / "skills", "user")
+    return roots  # type: ignore[return-value]
+
+
+def _normalize_root_item(item: tuple[Path, str]) -> tuple[Path, str, list[str]]:
+    return Path(item[0]), item[1], list(getattr(item, "workspace_roots", []))
 
 
 def discover_local_skills(
     *,
     roots: list[tuple[Path, str]] | None = None,
     workspace_roots: list[Path] | None = None,
+    warnings: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Scan local Codex/Agent skill roots and return discovered skill records."""
+    """Scan local Ryn/Codex/Agent skill roots and return discovered skill records."""
     search_roots = roots if roots is not None else default_local_skill_roots(workspace_roots)
     discovered: list[dict[str, Any]] = []
-    seen_ids: set[str] = set()
+    seen_global_ids: set[str] = set()
+    seen_repo_ids_by_group: dict[str, set[str]] = {}
+    seen_source_dirs: set[str] = set()
 
-    for root_dir, scope in search_roots:
+    for raw_root in search_roots:
+        root_dir, scope, root_ws_list = _normalize_root_item(raw_root)
         if not root_dir.is_dir():
             continue
+        if scope == "repo" and root_ws_list:
+            first_ws = Path(root_ws_list[0])
+            git_anchor = _find_git_project_root(first_ws) or first_ws
+            repo_group_key = os.path.normcase(str(git_anchor.resolve()))
+        elif scope == "repo":
+            repo_group_key = "__legacy_repo__"
+        else:
+            repo_group_key = ""
+
         try:
             children = sorted(root_dir.iterdir(), key=lambda p: p.name.lower())
         except OSError:
@@ -643,32 +731,56 @@ def discover_local_skills(
             except OSError:
                 continue
 
+            resolved_child = str(child.resolve())
+            norm_child = os.path.normcase(resolved_child)
+            if norm_child in seen_source_dirs:
+                continue
+
             meta = extract_codex_skill_metadata(child, md_text, fallback_id=child.name)
             sid = meta["id"]
-            if not EXTENSION_ID_RE.match(sid) or sid in seen_ids:
+            if not EXTENSION_ID_RE.match(sid):
+                if warnings is not None:
+                    warnings.append({"path": str(skill_md.resolve()), "skill_id": sid, "reason": "invalid_id"})
                 continue
-            seen_ids.add(sid)
+
+            if scope == "repo":
+                group_seen = seen_repo_ids_by_group.setdefault(repo_group_key, set())
+                if sid in group_seen:
+                    if warnings is not None:
+                        warnings.append({"path": str(skill_md.resolve()), "skill_id": sid, "reason": "duplicate_id"})
+                    continue
+                group_seen.add(sid)
+            else:
+                if sid in seen_global_ids:
+                    if warnings is not None:
+                        warnings.append({"path": str(skill_md.resolve()), "skill_id": sid, "reason": "duplicate_id"})
+                    continue
+                seen_global_ids.add(sid)
+
+            seen_source_dirs.add(norm_child)
             manifest = compute_safe_codex_skill_manifest(child)
-            discovered.append(
-                {
-                    "id": sid,
-                    "name": meta["name"],
-                    "title": meta["title"],
-                    "description": meta["description"],
-                    "short_description": meta["short_description"],
-                    "summary": meta["summary"],
-                    "version": meta["version"],
-                    "content": meta["content"],
-                    "package_dir": str(child.resolve()),
-                    "skill_md_path": str(skill_md.resolve()),
-                    "scope": scope,
-                    "source_format": "codex_local",
-                    "files": manifest["files"],
-                    "manifest_sha256": manifest["manifest_sha256"],
-                    "interface": meta["interface"],
-                    "policy": meta["policy"],
-                }
-            )
+            record: dict[str, Any] = {
+                "id": sid,
+                "name": meta["name"],
+                "title": meta["title"],
+                "description": meta["description"],
+                "short_description": meta["short_description"],
+                "summary": meta["summary"],
+                "version": meta["version"],
+                "content": meta["content"],
+                "package_dir": resolved_child,
+                "skill_md_path": str(skill_md.resolve()),
+                "scope": scope,
+                "source_format": "codex_local",
+                "files": manifest["files"],
+                "manifest_sha256": manifest["manifest_sha256"],
+                "interface": meta["interface"],
+                "policy": meta["policy"],
+            }
+            if scope == "repo" and root_ws_list:
+                record["workspace_root"] = root_ws_list[0]
+                record["workspace_roots"] = list(root_ws_list)
+            discovered.append(record)
     return discovered
 
 

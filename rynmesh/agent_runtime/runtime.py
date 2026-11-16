@@ -11,10 +11,12 @@ import copy
 import hashlib
 import json
 import math
+import os
 import re
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 from ..background_workers import WorkerRunResult
@@ -370,6 +372,8 @@ class AgentRuntime(AgentLoop):
         self._step = threading.local()  # Whether this thread's last step ended normally.
         self._stream_lock = threading.Lock()
         self._streams = {}
+        self._skill_sync_lock = threading.Lock()
+        self._skill_sync_last_at: dict[str, float] = {}
         self._boot_id = "boot_" + uuid.uuid4().hex
         # Display only. Never used by admission, cancellation or persistence.
         self._active_run = None
@@ -2126,9 +2130,38 @@ class AgentRuntime(AgentLoop):
         self.store.transaction(sync_after_switch)
         return res
 
+    SKILL_SYNC_THROTTLE_SECONDS = 10.0
+
+    def _maybe_sync_workspace_skills(
+        self,
+        workspace_root: str | None,
+        *,
+        desktop_access: bool = False,
+    ) -> None:
+        if self.extensions is None or not workspace_root:
+            return
+        ws_path = Path(workspace_root).expanduser()
+        try:
+            ws_key = os.path.normcase(str(ws_path.resolve()))
+        except OSError:
+            ws_key = os.path.normcase(str(ws_path))
+        now_mono = time.monotonic()
+        with self._skill_sync_lock:
+            last_at = self._skill_sync_last_at.get(ws_key)
+            if last_at is not None and (now_mono - last_at) < self.SKILL_SYNC_THROTTLE_SECONDS:
+                return
+            self._skill_sync_last_at[ws_key] = now_mono
+        self.extensions.store.sync_discovered_skills(
+            workspace_roots=[ws_path],
+            desktop_access=desktop_access,
+        )
+
     def skills(self) -> dict:
         if self.extensions is not None:
-            return {"skills": self.extensions.store.enabled_skills_catalog()}
+            ws = self.store.inspect(lambda d: (d.get("settings") or {}).get("workspace_root"))
+            if not ws:
+                ws = self.store.default_workspace()
+            return {"skills": self.extensions.store.enabled_skills_catalog(workspace_root=ws)}
         return {"skills": knowledge.catalog()}
 
     def _resolve_skills(
@@ -2136,22 +2169,32 @@ class AgentRuntime(AgentLoop):
         explicit_ids: Any,
         message_text_val: str = "",
         *,
+        workspace_root: str | None = None,
         default_project: bool = False,
         warnings_out: list[dict] | None = None,
     ) -> list[dict]:
         enabled_catalog = (
-            self.extensions.store.enabled_skills_catalog()
+            self.extensions.store.enabled_skills_catalog(workspace_root=workspace_root)
             if self.extensions is not None
             else knowledge.catalog()
         )
-        enabled_by_lower = {
-            str(item["id"]).lower(): str(item["id"])
-            for item in enabled_catalog
-            if isinstance(item, dict) and isinstance(item.get("id"), str)
-        }
+        enabled_by_lower: dict[str, str] = {}
+        for item in enabled_catalog:
+            if isinstance(item, dict) and isinstance(item.get("id"), str):
+                cid = str(item["id"])
+                enabled_by_lower[cid.lower()] = cid
+                raw_name = item.get("name")
+                if isinstance(raw_name, str) and raw_name:
+                    enabled_by_lower.setdefault(raw_name.lower(), cid)
         explicit_warnings: list[dict] = []
         if self.extensions is not None:
-            selected = list(self.extensions.store.select_skills(explicit_ids, warnings=explicit_warnings))
+            selected = list(
+                self.extensions.store.select_skills(
+                    explicit_ids,
+                    workspace_root=workspace_root,
+                    warnings=explicit_warnings,
+                )
+            )
         else:
             selected = knowledge.select(explicit_ids)
         if isinstance(explicit_ids, list) and len(explicit_ids) > 0 and not selected and explicit_warnings:
@@ -2162,11 +2205,15 @@ class AgentRuntime(AgentLoop):
 
         if isinstance(message_text_val, str) and "$" in message_text_val:
             mentioned_ids: list[str] = []
+            missing_ids = self.extensions.store.missing_skill_ids() if self.extensions is not None else set()
             for match in re.finditer(
-                r"(?<![A-Za-z0-9_-])\$([A-Za-z0-9][A-Za-z0-9_-]{0,63})(?![A-Za-z0-9_-])",
+                r"(?<![A-Za-z0-9_-])\$([A-Za-z0-9][A-Za-z0-9_.-]{0,63})(?![A-Za-z0-9_-])",
                 message_text_val,
             ):
-                canonical_id = enabled_by_lower.get(match.group(1).lower())
+                token = match.group(1).rstrip(".")
+                canonical_id = enabled_by_lower.get(match.group(1).lower()) or enabled_by_lower.get(token.lower())
+                if canonical_id is None and token.lower() in missing_ids:
+                    raise AgentError("agent_invalid_skills")
                 if (
                     canonical_id
                     and canonical_id not in seen_ids
@@ -2178,7 +2225,11 @@ class AgentRuntime(AgentLoop):
                 mention_warnings: list[dict] = []
                 if self.extensions is not None:
                     mentioned_selected = list(
-                        self.extensions.store.select_skills(mentioned_ids, warnings=mention_warnings)
+                        self.extensions.store.select_skills(
+                            mentioned_ids,
+                            workspace_root=workspace_root,
+                            warnings=mention_warnings,
+                        )
                     )
                 else:
                     mentioned_selected = knowledge.select(mentioned_ids)
@@ -2534,8 +2585,6 @@ class AgentRuntime(AgentLoop):
             raise AgentError("agent_invalid_request")
         prepared = parse_attachments(value.get("attachments"))
         content = message_text(value.get("message") or ("Please review the attached files." if prepared else ""))
-        skipped_skills: list[dict] = []
-        skills = self._resolve_skills(value.get("skill_ids"), content, warnings_out=skipped_skills)
         budget.validate_limits(value.get("budget_limits", {}))
         request_id = value.get("client_request_id")
         if request_id is not None:
@@ -2545,12 +2594,36 @@ class AgentRuntime(AgentLoop):
             except ValueError:
                 raise AgentError("agent_invalid_request") from None
         fingerprint = digest({"request": value, "continuation_from": _continuation["id"]}) if _continuation else digest(value)
-        if request_id:
-            current = self.store.read()
-            existing = lifecycle.duplicate(self.store, current, request_id, fingerprint)
-            if existing is not None:
-                return public_task(existing, settings=current["settings"])
         configuration = self.store.read()
+        if request_id:
+            existing = lifecycle.duplicate(self.store, configuration, request_id, fingerprint)
+            if existing is not None:
+                return public_task(existing, settings=configuration["settings"])
+        cfg_settings = {**DEFAULT_SETTINGS, **configuration["settings"]}
+        task_workspace_root = cfg_settings.get("workspace_root") or self.store.default_workspace()
+        if value.get("project_id") is not None:
+            proj_id = value["project_id"]
+            proj_row = (configuration.get("projects") or {}).get(proj_id) if isinstance(proj_id, str) else None
+            if isinstance(proj_row, dict) and proj_row.get("enabled") and proj_row.get("path"):
+                task_workspace_root = str(proj_row["path"])
+        elif _continuation:
+            cont_src = configuration.get("tasks", {}).get(_continuation["id"])
+            if isinstance(cont_src, dict):
+                cont_ws = (cont_src.get("local_execution") or {}).get("workspace_root")
+                if cont_ws:
+                    task_workspace_root = str(cont_ws)
+        if cfg_settings.get("enabled"):
+            self._maybe_sync_workspace_skills(
+                task_workspace_root,
+                desktop_access=bool(cfg_settings.get("desktop_access", False)),
+            )
+        skipped_skills: list[dict] = []
+        skills = self._resolve_skills(
+            value.get("skill_ids"),
+            content,
+            workspace_root=task_workspace_root,
+            warnings_out=skipped_skills,
+        )
         uses_default = not value.get("model_id")
         model_id = value.get("model_id") or configuration["settings"]["model_id"]
         if not isinstance(model_id, str) or not model_id:
@@ -2709,8 +2782,23 @@ class AgentRuntime(AgentLoop):
             raise AgentError("agent_invalid_request")
         prepared = parse_attachments(value.get("attachments"))
         content = message_text(value.get("message") or ("Please review the attached files." if prepared else ""))
+
+        def _task_ws(data: dict) -> str | None:
+            row = data.get("tasks", {}).get(task_id)
+            if isinstance(row, dict):
+                ws = (row.get("local_execution") or {}).get("workspace_root")
+                if ws:
+                    return str(ws)
+            return (data.get("settings") or {}).get("workspace_root") or self.store.default_workspace()
+
+        task_ws = self.store.inspect(_task_ws)
         skipped_skills: list[dict] = []
-        added_skills = self._resolve_skills(value.get("skill_ids"), content, warnings_out=skipped_skills)
+        added_skills = self._resolve_skills(
+            value.get("skill_ids"),
+            content,
+            workspace_root=task_ws,
+            warnings_out=skipped_skills,
+        )
         if "edit_message_index" in value:
             return self._edit_message(
                 task_id,

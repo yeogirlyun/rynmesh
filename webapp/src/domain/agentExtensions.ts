@@ -197,6 +197,13 @@ export interface ExtensionSkillPolicy {
   allow_implicit_invocation?: boolean;
 }
 
+export interface ExtensionSkillRoot {
+  priority: number;
+  path: string;
+  scope: ExtensionSkillScope;
+  workspace_root?: string | null;
+}
+
 export interface ExtensionSkill {
   id: string;
   instance_id?: string;
@@ -220,6 +227,8 @@ export interface ExtensionSkill {
   parent_enabled: boolean;
   source_format: ExtensionSourceFormat;
   scope?: ExtensionSkillScope;
+  source_missing?: boolean;
+  workspace_roots?: string[];
   path?: string;
   package_dir?: string;
   interface?: ExtensionSkillInterface;
@@ -320,9 +329,11 @@ export interface ExtensionPlugin {
 
 export interface ExtensionOverview {
   revision: number;
+  generation?: number;
   updated_at?: string | null;
   desktop_access: boolean;
   windows_supported?: boolean;
+  skill_roots?: ExtensionSkillRoot[];
   plugins: ExtensionPlugin[];
   skills: ExtensionSkill[];
   mcp_servers: ExtensionMcpServer[];
@@ -903,6 +914,8 @@ export function normalizeSkill(raw: Record<string, unknown>): ExtensionSkill {
     parent_enabled: parentEnabled,
     source_format: typeof raw.source_format === "string" && raw.source_format ? raw.source_format : raw.builtin ? "builtin" : "skill_md",
     scope,
+    source_missing: Boolean(raw.source_missing),
+    workspace_roots: Array.isArray(raw.workspace_roots) ? raw.workspace_roots.map(String) : undefined,
     path: typeof raw.path === "string" ? raw.path : "",
     package_dir: typeof raw.package_dir === "string" ? raw.package_dir : "",
     interface: normalizeSkillInterface(raw.interface, title, shortDescription),
@@ -1041,11 +1054,25 @@ function normalizePeerProvider(raw: unknown): ExtensionPlugin["peer_provider"] {
 }
 
 export function normalizeOverview(raw: Record<string, unknown>): ExtensionOverview {
+  const revision = typeof raw.revision === "number" ? raw.revision : 1;
+  const generation = typeof raw.generation === "number" ? raw.generation : revision;
+  const skillRoots: ExtensionSkillRoot[] | undefined = Array.isArray(raw.skill_roots)
+    ? raw.skill_roots
+        .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && typeof item.path === "string"))
+        .map((item, idx) => ({
+          priority: typeof item.priority === "number" ? item.priority : idx + 1,
+          path: String(item.path),
+          scope: typeof item.scope === "string" && item.scope ? item.scope : "user",
+          workspace_root: typeof item.workspace_root === "string" ? item.workspace_root : null,
+        }))
+    : undefined;
   return {
-    revision: typeof raw.revision === "number" ? raw.revision : 1,
+    revision,
+    generation,
     updated_at: typeof raw.updated_at === "string" ? raw.updated_at : null,
     desktop_access: Boolean(raw.desktop_access),
     windows_supported: typeof raw.windows_supported === "boolean" ? raw.windows_supported : undefined,
+    ...(skillRoots ? { skill_roots: skillRoots } : {}),
     plugins: Array.isArray(raw.plugins)
       ? raw.plugins.filter((p): p is Record<string, unknown> => Boolean(p && typeof p === "object")).map(normalizePlugin)
       : [],

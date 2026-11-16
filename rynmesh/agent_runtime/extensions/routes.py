@@ -5,6 +5,7 @@ import asyncio
 import hmac
 import json
 import time
+from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import BackgroundTasks, HTTPException, Request
@@ -63,6 +64,12 @@ def install_extension_routes(
             )
         except Exception:
             return False
+
+    def _default_workspace_roots() -> list[Path] | None:
+        ws = runtime.store.inspect(
+            lambda data: (data.get("settings") or {}).get("workspace_root")
+        ) or runtime.store.default_workspace()
+        return [Path(ws)]
 
     async def _run(name: str, fn: Callable[[], Any]) -> Any:
         started = time.monotonic()
@@ -217,7 +224,10 @@ def install_extension_routes(
         local_control(request)
         return await _run(
             "overview",
-            lambda: extensions.overview(desktop_access=_desktop_access()),
+            lambda: extensions.overview(
+                desktop_access=_desktop_access(),
+                workspace_roots=_default_workspace_roots(),
+            ),
         )
 
     @app.post("/api/local/agent/extensions/mcp/servers")
@@ -592,6 +602,7 @@ def install_extension_routes(
         return await _run(
             "refresh_discovered_skills",
             lambda: extensions.store.sync_discovered_skills(
+                workspace_roots=_default_workspace_roots(),
                 desktop_access=_desktop_access(),
                 reset_uninstalled=bool(payload.get("reset_uninstalled", False)),
             ),
