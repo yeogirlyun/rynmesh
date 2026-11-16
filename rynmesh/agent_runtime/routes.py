@@ -13,6 +13,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from ..background_workers import BackgroundWorkerSpec, BackoffPolicy, WorkerRunResult
+from .artifact_transfers import ArtifactTransfers
 from .automation_worker import AUTOMATION_WORKER_NAME, AutomationSchedulerWorker
 from .computer_status import get_computer_status_response
 from .diagnostic_log import failure
@@ -61,6 +62,7 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
     startup_error = None
     try:
         runtime.reconcile()
+        ArtifactTransfers(runtime.store).sweep()
     except (AgentError, OSError) as exc:
         # The optional Agent's damaged encrypted history must not stop model
         # sharing, friends, or the rest of the node from starting.
