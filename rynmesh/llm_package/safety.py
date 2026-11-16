@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import platform
 import shutil
 import stat
 import subprocess
@@ -53,9 +54,14 @@ def private_storage_bytes(root: Path) -> int:
 
 NODE_SLOTS = threading.BoundedSemaphore(4)
 HTTP_SLOTS = threading.BoundedSemaphore(32)
+_GPU_SAMPLE_INTERVAL_SECONDS = 5.0
 _pressure_lock = threading.Lock()
 _pressure_checked = 0.0
 _pressure_ok = True
+_pressure_reason_cached: str | None = None
+_gpu_temperature: int | None = None
+_gpu_sampler_lock = threading.Lock()
+_gpu_sampler_thread: threading.Thread | None = None
 
 
 def install_body_limit(app):
@@ -65,6 +71,13 @@ def install_body_limit(app):
 
 
 def _available_memory():
+    if platform.system() == "Darwin":
+        from . import hardware
+        try:
+            _, available_mb = hardware._darwin_memory()
+            return available_mb * 1024**2
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return None
     if os.name == "nt":
         import ctypes
         class Memory(ctypes.Structure):
@@ -82,50 +95,103 @@ def _available_memory():
     return None
 
 
+def _read_gpu_temperature() -> int | None:
+    nvidia = shutil.which("nvidia-smi")
+    if not nvidia:
+        return None
+    try:
+        result = subprocess.run(
+            [nvidia, "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            timeout=2,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        temperatures = [int(line) for line in result.stdout.splitlines() if line.strip().isdigit()]
+        return max(temperatures) if temperatures else None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _gpu_sampler_loop() -> None:
+    global _gpu_temperature
+    while True:
+        _gpu_temperature = _read_gpu_temperature()
+        time.sleep(_GPU_SAMPLE_INTERVAL_SECONDS)
+
+
+def _ensure_gpu_sampler() -> None:
+    global _gpu_sampler_thread
+    if _gpu_sampler_thread is not None and _gpu_sampler_thread.is_alive():
+        return
+    with _gpu_sampler_lock:
+        if _gpu_sampler_thread is None or not _gpu_sampler_thread.is_alive():
+            _gpu_sampler_thread = threading.Thread(
+                target=_gpu_sampler_loop,
+                name="ryn-llm-gpu-temp",
+                daemon=True,
+            )
+            _gpu_sampler_thread.start()
+
+
+def _pressure_reason() -> str | None:
+    global _pressure_checked, _pressure_ok, _pressure_reason_cached
+    with _pressure_lock:
+        _ensure_gpu_sampler()
+        now = time.monotonic()
+        if now - _pressure_checked >= 5:
+            available = _available_memory()
+            mem_ok = available is None or available >= 256 * 1024**2
+            temp = _gpu_temperature
+            gpu_ok = temp is None or temp < 85
+            if not mem_ok:
+                _pressure_reason_cached = "memory_pressure"
+            elif not gpu_ok:
+                _pressure_reason_cached = "gpu_temperature"
+            else:
+                _pressure_reason_cached = None
+            _pressure_ok = _pressure_reason_cached is None
+            _pressure_checked = now
+        if not _pressure_ok:
+            return _pressure_reason_cached or "memory_pressure"
+        if _gpu_temperature is not None and _gpu_temperature >= 85:
+            _pressure_ok = False
+            _pressure_reason_cached = "gpu_temperature"
+            return "gpu_temperature"
+        return None
+
+
 def pressure_ok():
     """Admission circuit breaker, not a hardware damage guarantee."""
-    global _pressure_checked, _pressure_ok
-    with _pressure_lock:
-        if time.monotonic() - _pressure_checked < 5:
-            return _pressure_ok
-        available = _available_memory()
-        safe = available is None or available >= 256 * 1024**2
-        nvidia = shutil.which("nvidia-smi")
-        if nvidia:
-            try:
-                result = subprocess.run([nvidia, "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"],
-                    capture_output=True, timeout=2, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-                temperatures = [int(line) for line in result.stdout.splitlines() if line.strip().isdigit()]
-                if temperatures:
-                    safe = safe and max(temperatures) < 85
-            except (OSError, subprocess.TimeoutExpired):
-                pass  # GPU metrics unavailable; do not claim thermal enforcement.
-        _pressure_ok, _pressure_checked = safe, time.monotonic()
-        return safe
+    return _pressure_reason() is None
 
 
 class SharedSlots:
-    """Per-service and process-wide admission; callers cannot enlarge either."""
+    """本机算力来源共享进程级 4 槽，远端来源只受自身并发限制。"""
 
-    def __init__(self, capacity, path):
-        self._global_bounded = capacity <= 4
-        self.local = threading.BoundedSemaphore(capacity if capacity > 4 else min(capacity, 4))
+    def __init__(self, capacity, path, local_compute: bool = True):
+        self.local_compute = bool(local_compute)
+        self._global_bounded = self.local_compute
+        self.local = threading.BoundedSemaphore(capacity)
         self.path = path
 
-    def acquire(self, blocking=False):
+    def acquire_reason(self, blocking=False) -> str | None:
         try:
             check_disk(self.path)
         except RuntimeError:
-            return False
-        if not pressure_ok():
-            return False
-        if self._global_bounded and not NODE_SLOTS.acquire(blocking=False):
-            return False
+            return "disk"
+        if self.local_compute:
+            reason = _pressure_reason()
+            if reason is not None:
+                return reason
         if not self.local.acquire(blocking=False):
-            if self._global_bounded:
-                NODE_SLOTS.release()
-            return False
-        return True
+            return "service_slots"
+        if self._global_bounded and not NODE_SLOTS.acquire(blocking=False):
+            self.local.release()
+            return "node_slots"
+        return None
+
+    def acquire(self, blocking=False):
+        return self.acquire_reason(blocking=blocking) is None
 
     def release(self):
         self.local.release()

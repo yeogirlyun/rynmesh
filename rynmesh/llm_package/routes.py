@@ -51,6 +51,7 @@ from .consumer_cancellation import ConsumerOrderCancelled, cancellable_exchange
 from .consumer_commands import ConsumerCommands
 from .model_usage import ModelUsageStore, normalize_model_key, usage_caller_scope
 from .lifecycle import (
+    RUNTIME_EXTERNAL,
     LifecycleError,
     connect_cli,
     connect_local_api,
@@ -314,7 +315,11 @@ class ProviderService:
         permissions = AIAccessStore(store.home, relationship=relationships.relationship,
                                     sources=SourceStore(store.home, store.private_key_bytes, migrate=False))
         self.access_check = access_check or permissions.authorize
-        self._slots = SharedSlots(manifest.max_concurrent, task_store.root)
+        self._slots = SharedSlots(
+            manifest.max_concurrent,
+            task_store.root,
+            local_compute=manifest.runtime != RUNTIME_EXTERNAL,
+        )
         self._stream_slots = threading.BoundedSemaphore(manifest.max_concurrent + 1)
         self._lock = threading.Lock()
         self._running = 0

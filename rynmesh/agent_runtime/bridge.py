@@ -41,6 +41,11 @@ from .store import (
 )
 from .tools import RynTools
 
+SLOT_WAIT_MAX_SECONDS = 120.0
+SLOT_POLL_INTERVAL_SECONDS = 0.2
+SLOT_QUEUE_EVENT_AFTER_SECONDS = 2.0
+BUSY_REASONS = frozenset({"node_slots", "service_slots", "memory_pressure", "gpu_temperature", "disk"})
+
 
 class AgentModelBridge:
     supports_image_input = True
@@ -377,21 +382,54 @@ class AgentModelBridge:
         acquired = False
         try:
             if manager:
-                slot_wait_deadline = time.monotonic() + min(
-                    2.5,
-                    max(0.0, (request_deadline - time.monotonic()) if request_deadline is not None else 2.5),
+                wait_started = time.monotonic()
+                max_wait = float(SLOT_WAIT_MAX_SECONDS)
+                slot_wait_deadline = (
+                    min(wait_started + max_wait, request_deadline)
+                    if request_deadline is not None
+                    else wait_started + max_wait
                 )
+                acquire_reason_fn = getattr(manager._slots, "acquire_reason", None)
+                slot_reason = None
+                queue_notified = False
                 while True:
-                    acquired = manager._slots.acquire(blocking=False)
-                    if acquired or cancelled() or expired() or time.monotonic() >= slot_wait_deadline:
+                    if callable(acquire_reason_fn):
+                        slot_reason = acquire_reason_fn(blocking=False)
+                        acquired = slot_reason is None
+                    else:
+                        acquired = manager._slots.acquire(blocking=False)
+                        slot_reason = None if acquired else "service_slots"
+                    if acquired or cancelled() or expired():
                         break
-                    time.sleep(0.05)
+                    now = time.monotonic()
+                    if not queue_notified and now - wait_started >= SLOT_QUEUE_EVENT_AFTER_SECONDS:
+                        safe_on_event({
+                            "type": "model_queue",
+                            "reason": slot_reason or "service_slots",
+                            "model_id": model_id,
+                            "request_id": task_id,
+                        })
+                        queue_notified = True
+                    if now >= slot_wait_deadline:
+                        break
+                    next_try = min(slot_wait_deadline, now + SLOT_POLL_INTERVAL_SECONDS)
+                    for _ in range(4):
+                        if cancelled() or expired():
+                            break
+                        rem = next_try - time.monotonic()
+                        if rem <= 0:
+                            break
+                        time.sleep(min(0.05, rem))
                 if not acquired:
                     if cancelled():
                         raise AgentError(cancellation_reason(cancelled))
                     if expired():
                         raise AgentError("agent_inference_timeout")
-                    raise ValueError("agent_model_busy")
+                    err = AgentError("agent_model_busy")
+                    err.request_id = task_id
+                    if slot_reason in BUSY_REASONS:
+                        err.diagnostics = {"reason": slot_reason}
+                    raise err
                 with manager._lock:
                     manager._running += 1
             watcher.start()
@@ -425,6 +463,8 @@ class AgentModelBridge:
                     options["model"] = target["cli_model"]
                 if getattr(manager.adapter, "supports_request_deadline", False) is True:
                     options["deadline"] = request_deadline
+                if getattr(manager.adapter, "supports_cancel_callback", False) is True:
+                    options["cancelled"] = cancelled
                 if getattr(manager.adapter, "supports_conversation_scope", False) is True:
                     # This process is the authenticated requester of its own adapter.
                     options["conversation_scope"] = codex_threads.scope("local", window)
@@ -496,6 +536,8 @@ class AgentModelBridge:
             if isinstance(effective_settings, dict) and type(effective_settings.get("stream_max_retries")) is int:
                 raw_diag.setdefault("stream_max_retries", effective_settings["stream_max_retries"])
             diag = safe_diagnostics(raw_diag)
+            if raw_diag.get("reason") in BUSY_REASONS:
+                diag["reason"] = raw_diag["reason"]
             if exc.code == "upstream_response_invalid" and not cancelled() and not expired():
                 rejected = AgentModelResponseError(exc.reported_usage, exc.finish_reason)
                 rejected.request_id = task_id
