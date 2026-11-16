@@ -165,7 +165,9 @@ class FriendAICatalog:
     def records(self) -> list[dict]:
         return [record for snapshot in self.snapshots() for record in snapshot["services"]]
 
-    def run_once(self) -> bool:
+    def run_once(self, cancelled=None) -> bool:
+        if cancelled is not None and cancelled.is_set():
+            return False
         friends = [row for row in self.friends().list_friends() if row["status"] == "active"]
         if not friends:
             return False

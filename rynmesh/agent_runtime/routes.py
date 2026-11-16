@@ -84,11 +84,13 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
     app.state.agent_memory_worker = memory_worker
     automation_worker = AutomationSchedulerWorker(runtime)
     app.state.agent_automation_worker = automation_worker
-    workers.register(BackgroundWorkerSpec(name="ryn-agent", run_once=(lambda: WorkerRunResult()) if startup_error else runtime.run_continuously, policy=BackoffPolicy.fixed(0.5)), replace=True)
+    run_timeout_s = 3720.0 if startup_error else runtime.store.inspect(lambda data: 120.0 + max(
+        [data["settings"]["max_seconds"]] + [row.get("limits", {}).get("max_seconds", 0) for row in data["tasks"].values()]))
+    workers.register(BackgroundWorkerSpec(name="ryn-agent", run_once=(lambda: WorkerRunResult()) if startup_error else runtime.run_continuously, run_timeout_s=run_timeout_s, policy=BackoffPolicy.fixed(0.5)), replace=True)
     for slot in range(2, 7):
-        workers.register(BackgroundWorkerSpec(name=f"ryn-agent-{slot}", run_once=(lambda: WorkerRunResult()) if startup_error else runtime.run_continuously, policy=BackoffPolicy.fixed(0.5)), replace=True)
-    workers.register(BackgroundWorkerSpec(name=MEMORY_WORKER_NAME, run_once=(lambda: WorkerRunResult()) if startup_error else memory_worker.run_once, policy=BackoffPolicy.fixed(1.0)), replace=True)
-    workers.register(BackgroundWorkerSpec(name=AUTOMATION_WORKER_NAME, run_once=(lambda: WorkerRunResult()) if startup_error else automation_worker.run_once, policy=BackoffPolicy.fixed(2.0)), replace=True)
+        workers.register(BackgroundWorkerSpec(name=f"ryn-agent-{slot}", run_once=(lambda: WorkerRunResult()) if startup_error else runtime.run_continuously, run_timeout_s=run_timeout_s, policy=BackoffPolicy.fixed(0.5)), replace=True)
+    workers.register(BackgroundWorkerSpec(name=MEMORY_WORKER_NAME, run_once=(lambda: WorkerRunResult()) if startup_error else memory_worker.run_once, run_timeout_s=run_timeout_s, policy=BackoffPolicy.fixed(1.0)), replace=True)
+    workers.register(BackgroundWorkerSpec(name=AUTOMATION_WORKER_NAME, run_once=(lambda: WorkerRunResult()) if startup_error else automation_worker.run_once, run_timeout_s=run_timeout_s, policy=BackoffPolicy.fixed(2.0)), replace=True)
 
     @app.middleware("http")
     async def prevent_agent_caching(request: Request, call_next):

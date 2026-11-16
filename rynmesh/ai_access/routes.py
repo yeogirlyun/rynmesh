@@ -36,7 +36,7 @@ def install_ai_access(app: Any, *, home: str | Path, local_control: Callable,
             provider=lambda: app.state.ai_access.provider() if app.state.ai_access.provider else None)
         if workers:
             workers.register(BackgroundWorkerSpec(name="ai-access.discovery", initial_delay_s=3,
-                run_once=lambda: app.state.ai_access.catalog.run_once(),
+                run_once=lambda cancelled=None: app.state.ai_access.catalog.run_once(cancelled=cancelled),
                 policy=BackoffPolicy(busy_delay_s=10, idle_initial_s=10, idle_multiplier=1,
                                      idle_max_s=10, error_multiplier=2, error_max_s=60)), replace=True)
     if any(getattr(route, "name", "") == "ai_access_list" for route in app.routes):
