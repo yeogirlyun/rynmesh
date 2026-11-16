@@ -28,13 +28,13 @@ import socket
 import subprocess
 import sys
 import time
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 from urllib.parse import urlparse
 
 from .adapters import AdapterError, adapter_from_manifest
 from .errors import LifecycleError
-from .manifest import LLMPackageManifest, fingerprint_file
+from .manifest import LLMPackageManifest, cached_fingerprint
 from .runtime_native_install import (
     MARKER_NAME,
     RUNTIME_RELEASE,
@@ -53,6 +53,16 @@ RUNTIME_ID = "native_llama_cpp"
 
 STARTUP_GRACE_SECONDS = 2.0
 STOP_GRACE_SECONDS = 10.0
+WINDOWS_STOP_GRACE_SECONDS = 2.0
+_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+_CREATE_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_STILL_ACTIVE = 259
+_ERROR_INVALID_PARAMETER = 87
+
+
+def _quiet() -> dict[str, Any]:
+    return {"creationflags": _CREATE_NO_WINDOW} if os.name == "nt" else {}
 
 # `llama-server` ships two dangerous defaults for a loopback service: CORS open
 # to every origin (`--cors-origins *`) and no authentication, which together let
@@ -183,12 +193,16 @@ def _read_record(path: Path) -> dict[str, Any] | None:
         pid = int(value.get("pid"))
     except (TypeError, ValueError):
         return None
+    try:
+        port = int(value.get("port") or 0)
+    except (TypeError, ValueError):
+        port = 0
     return {"pid": pid, "server": str(value.get("server") or ""),
-            "api_key": str(value.get("api_key") or "")}
+            "api_key": str(value.get("api_key") or ""), "port": port}
 
 
 def _write_record(root: Path, package_id: str, pid: int, server_name: str,
-                  api_key: str = "") -> None:
+                  api_key: str = "", port: int = 0) -> None:
     """Record which process, running which server, with which key, this node owns.
 
     The server basename is what makes a reused pid recognizable as *not* ours
@@ -200,7 +214,7 @@ def _write_record(root: Path, package_id: str, pid: int, server_name: str,
     """
     path = _runtime_dir(root) / f"{package_id}.pid"
     payload = json.dumps({"pid": int(pid), "server": server_name, "api_key": api_key,
-                          "started": int(time.time())}, sort_keys=True)
+                          "port": int(port), "started": int(time.time())}, sort_keys=True)
     try:
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
@@ -225,13 +239,79 @@ def _command_matches(pid: int, server_name: str) -> bool:
         return server_name.encode() in cmdline
     try:
         result = subprocess.run(["ps", "-ww", "-o", "command=", "-p", str(pid)],
-                                capture_output=True, text=True, timeout=30)
+                                capture_output=True, text=True, timeout=30, **_quiet())
     except (OSError, subprocess.SubprocessError):
         return False  # Unverifiable: treat as stale, never signal it.
     return server_name in result.stdout
 
 
-def _alive(pid: int | None, server_name: str = "") -> bool:
+def _win32_kernel32():
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.QueryFullProcessImageNameW.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPWSTR,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    return kernel32
+
+
+def _win32_last_error() -> int:
+    import ctypes
+
+    return int(ctypes.get_last_error())
+
+
+def _windows_alive(pid: int, server_name: str = "", *, port: int | None = None) -> bool:
+    import ctypes
+
+    def fallback() -> bool:
+        return bool(port and port > 0 and _port_open(port))
+
+    try:
+        kernel32 = _win32_kernel32()
+        handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+    except (OSError, AttributeError, ValueError, OverflowError):
+        return fallback()
+    if not handle:
+        if _win32_last_error() == _ERROR_INVALID_PARAMETER:
+            return False
+        return fallback()
+    try:
+        exit_code = ctypes.c_ulong(0)
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            return fallback()
+        if exit_code.value != _STILL_ACTIVE:
+            return False
+        if not server_name:
+            return True
+        capacity = ctypes.c_ulong(32768)
+        buf = ctypes.create_unicode_buffer(capacity.value)
+        if not kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(capacity)):
+            return fallback()
+        exe_name = PureWindowsPath(buf.value[: capacity.value]).name.lower()
+        expected = PureWindowsPath(server_name).name.lower()
+        return exe_name == expected or (not expected.endswith(".exe") and exe_name == expected + ".exe")
+    except (OSError, AttributeError, ValueError):
+        return fallback()
+    finally:
+        try:
+            kernel32.CloseHandle(handle)
+        except (OSError, AttributeError):
+            pass
+
+
+def _alive(pid: int | None, server_name: str = "", port: int | None = None) -> bool:
     """True when `pid` is running and (given `server_name`) is still our server.
 
     Pids are reused, so a pidfile number alone never justifies signalling a
@@ -245,14 +325,7 @@ def _alive(pid: int | None, server_name: str = "") -> bool:
         _forget_child(pid)
         return False
     if os.name == "nt":
-        try:
-            result = subprocess.run(["tasklist", "/FI", f"PID eq {pid}"],
-                                    capture_output=True, text=True, timeout=30)
-        except (OSError, subprocess.SubprocessError):
-            return True  # Unknown: assume alive rather than spawn a second server.
-        if str(pid) not in result.stdout:
-            return False
-        return not server_name or server_name.lower() in result.stdout.lower()
+        return _windows_alive(pid, server_name, port=port)
     if server_name and not _command_matches(pid, server_name):
         return False
     try:
@@ -301,7 +374,7 @@ def _spawn(server: Path, command: list[str], root: Path, package_id: str,
            port: int) -> subprocess.Popen:
     detach: dict[str, Any] = {"start_new_session": True}
     if os.name == "nt":
-        detach = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+        detach = {"creationflags": _CREATE_NEW_PROCESS_GROUP | int(_quiet().get("creationflags", 0))}
     log = _runtime_dir(root) / f"{package_id}.log"
     try:
         # Keep only node-generated lifecycle metadata. Even error-level child
@@ -343,7 +416,7 @@ def start(manifest: LLMPackageManifest) -> None:
     model = Path(manifest.model_path).resolve()
     if not model.is_file():
         raise LifecycleError("configured model file is missing")
-    if manifest.checksum and fingerprint_file(model) != manifest.checksum:
+    if manifest.checksum and cached_fingerprint(model) != manifest.checksum:
         raise LifecycleError("configured model checksum no longer matches; refusing to start")
     port = int(urlparse(manifest.base_url).port or 8080)
     manifest.runtime_dir = str(root)
@@ -353,7 +426,7 @@ def start(manifest: LLMPackageManifest) -> None:
     # and probing first would read that as "nothing is here", spawn a second
     # server against the same port, and fail with "exited during startup".
     record = _read_record(pid_path)
-    if record is not None and _alive(record["pid"], record["server"]):
+    if record is not None and _alive(record["pid"], record["server"], port or record.get("port")):
         # Already running under this pidfile; never spawn a second server.
         # A retry after an install that failed between `start()` and saving
         # the manifest arrives here with no key, while the live server is
@@ -365,7 +438,7 @@ def start(manifest: LLMPackageManifest) -> None:
     if record is not None and record["pid"] > 0:
         _forget(pid_path, record["pid"])  # Stale, or a reused pid that is not ours.
     if _endpoint_serves_alias(manifest):
-        _write_record(root, manifest.package_id, 0, server.name)  # Owner-managed.
+        _write_record(root, manifest.package_id, 0, server.name, port=port)  # Owner-managed.
         return
     if not manifest.runtime_api_key:
         manifest.runtime_api_key = secrets.token_urlsafe(API_KEY_BYTES)
@@ -380,7 +453,7 @@ def start(manifest: LLMPackageManifest) -> None:
     _CHILDREN[process.pid] = process
     _PIDFILES[process.pid] = pid_path
     _write_record(root, manifest.package_id, process.pid, server.name,
-                  manifest.runtime_api_key)
+                  manifest.runtime_api_key, port=port)
     manifest.runtime_command = command
 
 
@@ -388,7 +461,7 @@ def _terminate(pid: int, *, force: bool) -> None:
     try:
         if os.name == "nt":
             subprocess.run(["taskkill", *(["/F"] if force else []), "/PID", str(pid)],
-                           capture_output=True, timeout=30)
+                           capture_output=True, timeout=30, **_quiet())
         else:
             os.kill(pid, signal.SIGKILL if force else signal.SIGTERM)
     except OSError:
@@ -410,8 +483,9 @@ def _forget(pid_path: Path | None, pid: int | None) -> None:
         _forget_child(pid)
 
 
-def _wait_gone(pid: int) -> bool:
-    deadline = time.monotonic() + STOP_GRACE_SECONDS
+def _wait_gone(pid: int, timeout: float | None = None) -> bool:
+    grace = STOP_GRACE_SECONDS if timeout is None else timeout
+    deadline = time.monotonic() + grace
     while time.monotonic() < deadline and _alive(pid):
         time.sleep(0.1)
     return not _alive(pid)
@@ -419,11 +493,12 @@ def _wait_gone(pid: int) -> bool:
 
 def _stop_pid(pid: int) -> bool:
     """Terminate, then (after the grace period) kill; True once it is gone."""
+    grace = WINDOWS_STOP_GRACE_SECONDS if os.name == "nt" else STOP_GRACE_SECONDS
     _terminate(pid, force=False)
-    if _wait_gone(pid):
+    if _wait_gone(pid, timeout=grace):
         return True
     _terminate(pid, force=True)
-    return _wait_gone(pid)
+    return _wait_gone(pid, timeout=grace)
 
 
 def stop(manifest: LLMPackageManifest) -> bool:
@@ -438,7 +513,8 @@ def stop(manifest: LLMPackageManifest) -> bool:
         return False
     if record["pid"] == 0:
         return False  # Adopted server: owner-managed, never stopped by Rynmesh.
-    if not _alive(record["pid"], record["server"]):
+    manifest_port = int(urlparse(manifest.base_url).port or 0) if manifest.base_url else 0
+    if not _alive(record["pid"], record["server"], manifest_port or record.get("port")):
         _forget(pid_path, record["pid"])  # Stale, or a reused pid that is not ours.
         return False
     stopped = _stop_pid(record["pid"])
@@ -483,7 +559,7 @@ def update(manifest: LLMPackageManifest) -> None:
     stop(manifest)
     for path in (root / "runtime").glob("*.pid"):
         record = _read_record(path)
-        if record and record["pid"] > 0 and _alive(record["pid"], record["server"]):
+        if record and record["pid"] > 0 and _alive(record["pid"], record["server"], record.get("port")):
             raise LifecycleError("stop other local model runtimes before repairing shared runtime files")
     download(root)
 
@@ -492,7 +568,12 @@ def state(manifest: LLMPackageManifest) -> dict[str, Any]:
     root = _runtime_root(manifest)
     installed = resolve_server(root) is not None
     record = _read_record(_pid_path(root, manifest.package_id))
-    running = _alive(record["pid"], record["server"]) if record else False
+    manifest_port = int(urlparse(manifest.base_url).port or 0) if manifest.base_url else 0
+    running = (
+        _alive(record["pid"], record["server"], manifest_port or record.get("port"))
+        if record
+        else False
+    )
     if record is not None and record["pid"] == 0:
         status = "adopted"
     elif running:

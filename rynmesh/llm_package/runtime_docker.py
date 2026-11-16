@@ -21,7 +21,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from .errors import LifecycleError
-from .manifest import LLMPackageManifest, fingerprint_file
+from .manifest import LLMPackageManifest, cached_fingerprint
 
 # The llama.cpp server flags are the same binary's either way, so the hardening
 # constants are defined once, next to the flag verification, in the native
@@ -29,6 +29,23 @@ from .manifest import LLMPackageManifest, fingerprint_file
 from .runtime_native import API_KEY_BYTES, CORS_ORIGINS, LOG_VERBOSITY
 
 RUNTIME_ID = "docker_llama_cpp"
+_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
+
+def _quiet() -> dict[str, Any]:
+    return {"creationflags": _CREATE_NO_WINDOW} if os.name == "nt" else {}
+
+
+def _docker_cpus(manifest: LLMPackageManifest) -> str:
+    override = (manifest.hardware_requirements or {}).get("cpus")
+    if override is not None and not isinstance(override, bool):
+        try:
+            value = float(override)
+            if value > 0:
+                return str(int(value) if value.is_integer() else value)
+        except (TypeError, ValueError):
+            pass
+    return str(max(1, (os.cpu_count() or 1) - 1))
 
 DEFAULT_IMAGE = (
     "ghcr.io/ggml-org/llama.cpp:server@"
@@ -77,6 +94,7 @@ def _docker_pull(
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        **_quiet(),
     )
     deadline = time.monotonic() + timeout_s
     try:
@@ -107,7 +125,7 @@ def _docker() -> str:
         raise LifecycleError("Docker is not installed; connect an existing local API or install Docker first")
     try:
         subprocess.run([executable, "info", "--format", "{{.ServerVersion}}"], check=True,
-                       capture_output=True, text=True, timeout=15)
+                       capture_output=True, text=True, timeout=15, **_quiet())
     except (OSError, subprocess.SubprocessError) as exc:
         raise LifecycleError("Docker is installed but its engine is not running") from exc
     return executable
@@ -142,7 +160,7 @@ def _docker_state(package_id: str) -> dict[str, Any]:
         return {"installed": False, "running": False, "status": "docker unavailable"}
     result = subprocess.run(
         [docker, "inspect", "--format", "{{json .State}}", _container_name(package_id)],
-        capture_output=True, text=True, timeout=15,
+        capture_output=True, text=True, timeout=15, **_quiet(),
     )
     if result.returncode:
         return {"installed": False, "running": False, "status": "not created"}
@@ -160,6 +178,7 @@ def _image_present(docker: str, image: str) -> bool:
         capture_output=True,
         text=True,
         timeout=15,
+        **_quiet(),
     )
     return result.returncode == 0
 
@@ -174,20 +193,20 @@ def _run_container(
     model = Path(manifest.model_path).resolve()
     if not model.is_file():
         raise LifecycleError("configured model file is missing")
-    if manifest.checksum and fingerprint_file(model) != manifest.checksum:
+    if manifest.checksum and cached_fingerprint(model) != manifest.checksum:
         raise LifecycleError("configured model checksum no longer matches; refusing to start")
     runtime_image = _pinned_runtime_image(manifest)
     if not _image_present(docker, runtime_image):
         _docker_pull(runtime_image, progress=progress, cancel_check=cancel_check, timeout_s=600)
     name = _container_name(manifest.package_id)
-    subprocess.run([docker, "rm", "-f", name], capture_output=True, timeout=30)
+    subprocess.run([docker, "rm", "-f", name], capture_output=True, timeout=30, **_quiet())
     port = int(urlparse(manifest.base_url).port or 8080)
     if not manifest.runtime_api_key:
         manifest.runtime_api_key = secrets.token_urlsafe(API_KEY_BYTES)
     command = [
         docker, "run", "-d", "--name", name, "--read-only", "--tmpfs", "/tmp:size=128m",
         "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "256",
-        "--cpus", str(min(2, max(0.5, (os.cpu_count() or 2) / 2))),
+        "--cpus", _docker_cpus(manifest),
         "--memory", str(max(1024, int(manifest.hardware_requirements.get("estimated_memory_mb", 2048))) * 1024**2),
         "--memory-swap", str(max(1024, int(manifest.hardware_requirements.get("estimated_memory_mb", 2048))) * 1024**2),
         "--log-driver", "none", "--ulimit", "core=0",
@@ -202,7 +221,7 @@ def _run_container(
         "--api-key", manifest.runtime_api_key, "--cors-origins", CORS_ORIGINS,
         "-lv", LOG_VERBOSITY,
     ]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    result = subprocess.run(command, capture_output=True, text=True, timeout=60, **_quiet())
     if result.returncode:
         raise LifecycleError("llama.cpp container failed to start (inspect Docker logs for details)")
 
@@ -242,17 +261,17 @@ def start(
 
 def stop(manifest: LLMPackageManifest) -> bool:
     result = subprocess.run([_docker(), "stop", _container_name(manifest.package_id)],
-                            capture_output=True, text=True, timeout=60)
+                            capture_output=True, text=True, timeout=60, **_quiet())
     return result.returncode == 0
 
 
 def remove(manifest: LLMPackageManifest) -> None:
     subprocess.run([_docker(), "rm", "-f", _container_name(manifest.package_id)],
-                   capture_output=True, timeout=60)
+                   capture_output=True, timeout=60, **_quiet())
 
 
 def update(manifest: LLMPackageManifest) -> None:
-    subprocess.run([_docker(), "pull", _pinned_runtime_image(manifest)], check=True, timeout=600)
+    subprocess.run([_docker(), "pull", _pinned_runtime_image(manifest)], check=True, timeout=600, **_quiet())
 
 
 def state(manifest: LLMPackageManifest) -> dict[str, Any]:

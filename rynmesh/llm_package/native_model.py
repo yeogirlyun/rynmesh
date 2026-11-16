@@ -22,6 +22,7 @@ from contextvars import ContextVar
 from pathlib import Path, PurePosixPath
 
 from .. import __version__
+from ..atomic_io import atomic_write_json
 from .adapters import AdapterError, OpenAICompatibleAdapter, deadline_options
 from .catalog import apply_download_mirror
 from .gguf_import import NativeModelError, inspect_model
@@ -46,6 +47,28 @@ ENGINES = {
     "macos-metal": [("llama-b11153-bin-macos-arm64.tar.gz", 11189602,
                      "9aa63c493ee501b10d2c51a4f6e7923843e5a75ede176a521df3cc55a1b83db0")],
 }
+
+
+def _pick_loopback_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        return int(listener.getsockname()[1])
+
+
+def _port_occupied_by_other(port: int) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+            return True
+    except OSError:
+        pass
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            probe.bind(("127.0.0.1", port))
+        return False
+    except OSError:
+        return True
 
 
 def digest_file(path: Path, cancel=lambda: False) -> str:
@@ -418,7 +441,7 @@ class NativeModel:
                 raise ValueError("native_model_not_installed")
             self.policies.configure(self.manifest, body)
             self._update_manifest()
-            return self.status()
+        return self.status()
 
     def rotate_model_binding(self):
         with self.lock:
@@ -446,27 +469,57 @@ class NativeModel:
         with self.lock:
             if self.state == "running" and self.process and self.process.poll() is not None:
                 self.state, self.error = "error", "runtime_exited"
-            try:
-                supported = bool(platform_key())
-            except NativeModelError:
-                supported = False
-            policy = self.policies.current(self.manifest.package_id)
-            usage = self.usage_store.public_usage(
-                "local/" + self.manifest.package_id,
-                policy=policy["configuration"] if policy else None,
-            )
-            return {"id": self.manifest.package_id, "name": self.metadata.get("name", ""), "file_name": self.metadata.get("file_name", ""),
-                    "size_bytes": self.metadata.get("size_bytes", 0), "state": "installing" if self.uploading else self.state,
-                    "stage": "uploading" if self.uploading else self.stage,
-                    "progress": self.upload_progress if self.uploading else self.progress, "error": self.error, "backend": self.backend,
-                    "supported": supported, "active_requests": self.active, **self.config,
-                    "usage": usage,
-                    "model_settings": {"configuration": policy["configuration"], "context_window": self.manifest.context_window,
-                        "rule_revision": policy["rule_revision"],
-                        "model_binding": self.policies.binding(self.manifest.package_id, policy),
-                        "usage": usage,
-                        "enforcement": {"output_tokens": "upstream_request_limit", "concurrency": "node_process",
-                                        "quota": "persisted_dispatch_attempts_utc_day"}} if policy else None}
+            package_id = self.manifest.package_id
+            context_window = self.manifest.context_window
+            name = self.metadata.get("name", "")
+            file_name = self.metadata.get("file_name", "")
+            size_bytes = self.metadata.get("size_bytes", 0)
+            state = "installing" if self.uploading else self.state
+            stage = "uploading" if self.uploading else self.stage
+            progress = self.upload_progress if self.uploading else self.progress
+            error = self.error
+            backend = self.backend
+            active = self.active
+            config = dict(self.config)
+        try:
+            supported = bool(platform_key())
+        except NativeModelError:
+            supported = False
+        policy = self.policies.current(package_id)
+        usage = self.usage_store.public_usage(
+            "local/" + package_id,
+            policy=policy["configuration"] if policy else None,
+        )
+        payload = {
+            "id": package_id,
+            "name": name,
+            "file_name": file_name,
+            "size_bytes": size_bytes,
+            "state": state,
+            "stage": stage,
+            "progress": progress,
+            "error": error,
+            "backend": backend,
+            "supported": supported,
+            "active_requests": active,
+            **config,
+            "usage": usage,
+            "model_settings": {
+                "configuration": policy["configuration"],
+                "context_window": context_window,
+                "rule_revision": policy["rule_revision"],
+                "model_binding": self.policies.binding(package_id, policy),
+                "usage": usage,
+                "enforcement": {
+                    "output_tokens": "upstream_request_limit",
+                    "concurrency": "node_process",
+                    "quota": "persisted_dispatch_attempts_utc_day",
+                },
+            } if policy else None,
+        }
+        if not supported:
+            payload["alternatives"] = ["connect_local_api"]
+        return payload
 
     def _report(self, stage, progress=None):
         if self.cancel_event.is_set() or self.closed:
@@ -483,28 +536,33 @@ class NativeModel:
             if action == "cancel":
                 if self.state == "installing" or self.uploading:
                     self.cancel_event.set()
-                return self.status()
-            if (self.worker and self.worker.is_alive()) or (self.uploading and not uploaded):
-                raise NativeModelError("model_busy")
-            if action == "import" and self.config["installed"]:
-                raise NativeModelError("model_already_installed")
-            if action == "start" and self.state == "running":
-                return self.status()
-            if action == "stop" and not self.process:
-                self.state = "stopped" if self.config["installed"] else "not_installed"
-                return self.status()
-            if action == "start" and not self.config["installed"]:
-                raise NativeModelError("model_not_installed")
-            if action == "import" and not source:
-                raise NativeModelError("select_model_file")
-            self.cancel_event.clear()
-            self.error, self.progress = "", None
-            self.state = {"start": "starting", "stop": "stopping", "uninstall": "stopping"}.get(action, "installing")
-            self.stage = "stopping" if action in {"stop", "uninstall"} else "checking"
-            self.worker = threading.Thread(target=self._run, args=(action, source, uploaded, file_name), daemon=True,
-                                           name="ryn-native-model")
-            self.worker.start()
+                early_return = True
+            else:
+                early_return = False
+                if (self.worker and self.worker.is_alive()) or (self.uploading and not uploaded):
+                    raise NativeModelError("model_busy")
+                if action == "import" and self.config["installed"]:
+                    raise NativeModelError("model_already_installed")
+                if action == "start" and self.state == "running":
+                    early_return = True
+                elif action == "stop" and not self.process:
+                    self.state = "stopped" if self.config["installed"] else "not_installed"
+                    early_return = True
+                elif action == "start" and not self.config["installed"]:
+                    raise NativeModelError("model_not_installed")
+                elif action == "import" and not source:
+                    raise NativeModelError("select_model_file")
+                else:
+                    self.cancel_event.clear()
+                    self.error, self.progress = "", None
+                    self.state = {"start": "starting", "stop": "stopping", "uninstall": "stopping"}.get(action, "installing")
+                    self.stage = "stopping" if action in {"stop", "uninstall"} else "checking"
+                    self.worker = threading.Thread(target=self._run, args=(action, source, uploaded, file_name), daemon=True,
+                                                   name="ryn-native-model")
+                    self.worker.start()
+        if early_return:
             return self.status()
+        return self.status()
 
     def _run(self, action, source, uploaded=False, file_name=""):
         try:
@@ -516,7 +574,9 @@ class NativeModel:
                 self._kill()
                 with self.lock:
                     if action == "uninstall":
+                        old_package_id = self.manifest.package_id
                         self.rotate_model_binding()
+                        self.policies.remove(old_package_id)
                         self.model_path.unlink(missing_ok=True)
                         self.config.update(installed=False, autostart=False, sharing=False)
                         self.metadata = {}
@@ -595,10 +655,56 @@ class NativeModel:
         self._report("runtime")
         if index.exists():
             try:
-                files = json.loads(index.read_text())
-                if files and all((directory / name).resolve().is_relative_to(directory.resolve()) and
-                                 digest_file(directory / name, self.cancel_event.is_set) == sha for name, sha in files.items()):
-                    return self._executable(directory)
+                raw_files = json.loads(index.read_text(encoding="utf-8"))
+                if isinstance(raw_files, dict) and raw_files:
+                    resolved_dir = directory.resolve()
+                    updated_files = {}
+                    dirty = False
+                    all_valid = True
+                    for name, entry in raw_files.items():
+                        target = directory / name
+                        if not target.is_file() or not target.resolve().is_relative_to(resolved_dir):
+                            all_valid = False
+                            break
+                        stat_info = target.stat()
+                        if isinstance(entry, dict):
+                            expected_sha = entry.get("sha256")
+                            if not isinstance(expected_sha, str) or not expected_sha:
+                                all_valid = False
+                                break
+                            if (
+                                entry.get("size") == stat_info.st_size
+                                and entry.get("mtime_ns") == stat_info.st_mtime_ns
+                            ):
+                                updated_files[name] = entry
+                                continue
+                            if digest_file(target, self.cancel_event.is_set) != expected_sha:
+                                all_valid = False
+                                break
+                            updated_files[name] = {
+                                "sha256": expected_sha,
+                                "size": stat_info.st_size,
+                                "mtime_ns": stat_info.st_mtime_ns,
+                            }
+                            dirty = True
+                        elif isinstance(entry, str) and entry:
+                            if digest_file(target, self.cancel_event.is_set) != entry:
+                                all_valid = False
+                                break
+                            updated_files[name] = {
+                                "sha256": entry,
+                                "size": stat_info.st_size,
+                                "mtime_ns": stat_info.st_mtime_ns,
+                            }
+                            dirty = True
+                        else:
+                            all_valid = False
+                            break
+                    if all_valid:
+                        executable = self._executable(directory)
+                        if dirty:
+                            atomic_write_json(index, updated_files)
+                        return executable
             except (OSError, ValueError, AttributeError):
                 pass
         base_url = _engine_base_url(self.home)
@@ -608,9 +714,16 @@ class NativeModel:
                      lambda n, total: self._report("runtime", int(n / total * 100)), self.cancel_event.is_set)
             extract_runtime(archive, directory)
         executable = self._executable(directory)
-        files = {p.relative_to(directory).as_posix(): digest_file(p, self.cancel_event.is_set)
-                 for p in directory.rglob("*") if p.is_file() and p != index}
-        index.write_text(json.dumps(files), encoding="utf-8")
+        files = {}
+        for p in directory.rglob("*"):
+            if p.is_file() and p != index and not p.name.startswith(".verified.json."):
+                stat_info = p.stat()
+                files[p.relative_to(directory).as_posix()] = {
+                    "sha256": digest_file(p, self.cancel_event.is_set),
+                    "size": stat_info.st_size,
+                    "mtime_ns": stat_info.st_mtime_ns,
+                }
+        atomic_write_json(index, files)
         return executable
 
     @staticmethod
@@ -622,57 +735,64 @@ class NativeModel:
         return matches[0]
 
     def _start(self, executable, backend):
-        self._report("starting")
-        self._kill()
-        with socket.socket() as listener:
-            listener.bind(("127.0.0.1", 0))
-            port = listener.getsockname()[1]
-        key = secrets.token_urlsafe(32)
-        command = [str(executable), "--model", str(self.model_path), "--alias", self.manifest.model,
-                   "--host", "127.0.0.1", "--port", str(port), "--api-key", key,
-                   "--ctx-size", str(self.manifest.context_window), "--parallel", "1", "--n-gpu-layers",
-                   "0" if backend.endswith("cpu") else "99", "--no-webui",
-                   "--jinja"]
-        if self.metadata.get("architecture", "").startswith("qwen"):
-            command += ["--chat-template-kwargs", '{"enable_thinking":false}']
-        options = {"cwd": str(executable.parent), "stdin": subprocess.DEVNULL,
-                   "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
-        if os.name == "nt":
-            from .process_guard import _windows_job
-            process = subprocess.Popen(command, creationflags=0x4 | 0x08000000, **options)
-            try:
-                process._ryn_job = _windows_job(process, memory_limit=0, cpu_rate=0)
-            except BaseException:
-                process.kill()
-                process.wait(timeout=5)
-                raise
-        else:
-            entry = [sys.executable, "--ryn-native-worker"] if getattr(sys, "frozen", False) else [sys.executable, str(Path(__file__).with_name("native_worker.py"))]
-            process = subprocess.Popen([*entry, str(os.getpid()), *command], start_new_session=True, **options)
-        with self.lock:
-            self.process = process
-            cancelled = self.closed or self.cancel_event.is_set()
-        if cancelled:
-            self._kill()
-            raise NativeModelError("cancelled")
-        upstream = OpenAICompatibleAdapter(base_url=f"http://127.0.0.1:{port}", model=self.manifest.model,
-                                            api_key=key, timeout_s=300)
-        deadline = time.monotonic() + 180
-        while not upstream.health().get("ok"):
+        for attempt in range(2):
             self._report("starting")
-            if process.poll() is not None:
-                raise NativeModelError("runtime_exited")
-            if time.monotonic() > deadline:
-                raise NativeModelError("startup_timeout")
-            self.cancel_event.wait(0.5)
-        self._report("testing")
-        result = upstream.infer(prompt="Reply with exactly: OK", max_tokens=32, task_id="native-self-test", timeout_s=90)
-        if not result.get("text", "").strip():
-            raise NativeModelError("self_test_failed")
-        self._report("ready")
-        with self.lock:
-            self.upstream = upstream
-            self.rotate_model_binding()
+            self._kill()
+            port = _pick_loopback_port()
+            key = secrets.token_urlsafe(32)
+            command = [str(executable), "--model", str(self.model_path), "--alias", self.manifest.model,
+                       "--host", "127.0.0.1", "--port", str(port), "--api-key", key,
+                       "--ctx-size", str(self.manifest.context_window), "--parallel", "1", "--n-gpu-layers",
+                       "0" if backend.endswith("cpu") else "99", "--no-webui",
+                       "--jinja"]
+            if self.metadata.get("architecture", "").startswith("qwen"):
+                command += ["--chat-template-kwargs", '{"enable_thinking":false}']
+            options = {"cwd": str(executable.parent), "stdin": subprocess.DEVNULL,
+                       "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+            if os.name == "nt":
+                from .process_guard import _windows_job
+                process = subprocess.Popen(command, creationflags=0x4 | 0x08000000, **options)
+                try:
+                    process._ryn_job = _windows_job(process, memory_limit=0, cpu_rate=0)
+                except BaseException:
+                    process.kill()
+                    process.wait(timeout=5)
+                    raise
+            else:
+                entry = [sys.executable, "--ryn-native-worker"] if getattr(sys, "frozen", False) else [sys.executable, str(Path(__file__).with_name("native_worker.py"))]
+                process = subprocess.Popen([*entry, str(os.getpid()), *command], start_new_session=True, **options)
+            with self.lock:
+                self.process = process
+                cancelled = self.closed or self.cancel_event.is_set()
+            if cancelled:
+                self._kill()
+                raise NativeModelError("cancelled")
+            upstream = OpenAICompatibleAdapter(base_url=f"http://127.0.0.1:{port}", model=self.manifest.model,
+                                                api_key=key, timeout_s=300)
+            deadline = time.monotonic() + 180
+            retry_port = False
+            while not upstream.health().get("ok"):
+                self._report("starting")
+                if process.poll() is not None:
+                    self._kill()
+                    if attempt == 0 and _port_occupied_by_other(port):
+                        retry_port = True
+                        break
+                    raise NativeModelError("runtime_exited")
+                if time.monotonic() > deadline:
+                    raise NativeModelError("startup_timeout")
+                self.cancel_event.wait(0.5)
+            if retry_port:
+                continue
+            self._report("testing")
+            result = upstream.infer(prompt="Reply with exactly: OK", max_tokens=32, task_id="native-self-test", timeout_s=90)
+            if not result.get("text", "").strip():
+                raise NativeModelError("self_test_failed")
+            self._report("ready")
+            with self.lock:
+                self.upstream = upstream
+                self.rotate_model_binding()
+            return
 
     def _kill(self):
         from .process_guard import terminate
