@@ -42,6 +42,8 @@ def decide_turn(*, pending_tool_calls=0, finish_reason="stop", end_turn=None,
     if pending_input:
         return TurnDecision("wait_input", "owner_input_pending")
     if finish_reason == "content_filter":
+        # First occurrence in a step injects guidance and retries in loop.py;
+        # keep interrupted here as the fallback for a repeated content filter.
         return TurnDecision("interrupted", "provider_stopped")
     if pending_tool_calls:
         return TurnDecision("execute_tools", "tool_calls_pending")

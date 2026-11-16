@@ -91,6 +91,11 @@ MAX_PARALLEL_READS = MAX_PARALLEL_TOOLS
 STREAM_MIN_PERSIST_SECONDS = 5.0
 STREAM_MAX_PERSIST_SECONDS = 30.0
 STREAM_PERSIST_CHARS = 512
+CONTENT_FILTER_GUIDANCE = (
+    "Runtime note: The model provider stopped the previous response due to a content filter. "
+    "Do not rephrase to bypass the filter, and do not split, obfuscate, or encode restricted content to work around it. "
+    "Briefly state what cannot be generated, offer a safe practical alternative, and continue any other authorized parts of the task."
+)
 
 
 # Events that start or redirect an owner turn.
@@ -102,7 +107,7 @@ def _is_owner_user_message(message: dict) -> bool:
     return (
         isinstance(message, dict)
         and message.get("role") == "user"
-        and (message.get("ui") or {}).get("kind") != "subagent_notification"
+        and (message.get("ui") or {}).get("kind") not in {"subagent_notification", "runtime_note"}
     )
 
 
@@ -578,18 +583,62 @@ class AgentLoop:
             except _StreamOverflow:
                 overflowed = True
                 response = {"message": {"content": "".join(stream_chunks)}, "finish_reason": "length"}
+            except AgentError as exc:
+                if str(exc) != "agent_model_content_filtered":
+                    raise
+                response = {"message": {"role": "assistant", "content": ""}, "finish_reason": "content_filter"}
             response_received = time.monotonic()
             if cancelled():
-                raise AgentError(cancelled.reason)
+                raise AgentError(getattr(cancelled, "reason", None) or "agent_cancelled")
             flush_stream()
             if not isinstance(response, dict) or not isinstance(response.get("message"), dict):
                 raise AgentError("agent_invalid_model_response")
             raw = response["message"]
             finish_reason = response.get("finish_reason", "stop")
             if finish_reason == "content_filter":
+                reads.abort()
+                step_index = int(selected.get("steps", 0))
+
+                def record_guidance(data):
+                    row = task(data, selected["id"])
+                    if row["status"] != "running" or row["control_revision"] != selected["_run_control_revision"]:
+                        row["in_flight"] = None
+                        row["elapsed_seconds"] += time.monotonic() - started
+                        memory_integration.settle_in_tx(data, row, event)
+                        return "aborted"
+                    marker = [row["goal"]["revision"], step_index]
+                    prior = row.get("content_filter_guidance_step")
+                    if isinstance(prior, (list, tuple)) and list(prior) == marker:
+                        return "repeat"
+                    row["in_flight"] = None
+                    row["steps"] = step_index
+                    row["elapsed_seconds"] += time.monotonic() - started
+                    row["content_filter_guidance_step"] = marker
+                    row["messages"].append({
+                        "role": "user",
+                        "content": CONTENT_FILTER_GUIDANCE,
+                        "ui": {"kind": "runtime_note", "hidden": True},
+                        "context_epoch": row.get("context_epoch", 0),
+                    })
+                    row["status"] = "queued"
+                    event_compaction.fold_stream_deltas(row)
+                    event(
+                        row,
+                        "content_filter_guidance",
+                        step=step,
+                        request_id=request_id,
+                        goal_revision=row["goal"]["revision"],
+                    )
+                    return "guided"
+
+                guidance_state = self.store.transaction(record_guidance)
+                if guidance_state != "repeat":
+                    return
                 raise AgentError("agent_model_content_filtered")
             if finish_reason == "cancelled":
-                raise AgentError("agent_model_response_stopped")
+                if cancelled():
+                    raise AgentError(getattr(cancelled, "reason", None) or "agent_cancelled")
+                raise AgentError("agent_model_upstream_failed")
             content = raw.get("content") or ""
             calls = raw.get("tool_calls") or []
             if not isinstance(content, str) or not isinstance(calls, list):
