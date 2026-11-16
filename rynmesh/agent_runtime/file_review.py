@@ -49,38 +49,93 @@ def _forbidden_segment(parts) -> str | None:
     return None
 
 
+IO_REPARSE_TAG_SYMLINK = getattr(stat, "IO_REPARSE_TAG_SYMLINK", 0xA000000C)
+IO_REPARSE_TAG_MOUNT_POINT = getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", 0xA0000003)
+IO_REPARSE_TAG_APPEXECLINK = getattr(stat, "IO_REPARSE_TAG_APPEXECLINK", 0x8000001B)
+IO_REPARSE_TAG_CLOUD = 0x9000001A
+IO_REPARSE_TAG_CLOUD_MASK = 0x0000F000
+
+
+def _is_cloud_reparse_tag(tag: int) -> bool:
+    return isinstance(tag, int) and (tag & ~IO_REPARSE_TAG_CLOUD_MASK) == IO_REPARSE_TAG_CLOUD
+
+
+def _is_forbidden_link_or_reparse(info) -> bool:
+    if stat.S_ISLNK(info.st_mode):
+        return True
+    if getattr(info, "st_file_attributes", 0) & 0x400:
+        tag = getattr(info, "st_reparse_tag", 0)
+        if tag in (IO_REPARSE_TAG_SYMLINK, IO_REPARSE_TAG_MOUNT_POINT, IO_REPARSE_TAG_APPEXECLINK):
+            return True
+        if _is_cloud_reparse_tag(tag):
+            return False
+        return True
+    return False
+
+
+def _resolve_root(root) -> tuple[Path, Path]:
+    lex_root = Path(os.path.abspath(root))
+    try:
+        real_root = Path(root).resolve(strict=True)
+    except FileNotFoundError:
+        if lex_root.is_symlink():
+            raise AgentToolRejected("agent_review_link_forbidden") from None
+        real_root = lex_root.resolve()
+    return lex_root, real_root
+
+
 def _display_review_path(step: dict, root: str, *, posix: bool = False) -> str:
     raw_path = step["path"]
     if step.get("outside_workspace"):
         return raw_path.replace("\\", "/") if posix else raw_path
+    p = Path(os.path.abspath(raw_path))
+    lex_root = Path(os.path.abspath(root))
+    base = lex_root
+    if not p.is_relative_to(lex_root):
+        try:
+            real_root = Path(root).resolve()
+            if p.is_relative_to(real_root):
+                base = real_root
+        except OSError:
+            pass
     try:
-        rel = os.path.relpath(raw_path, root)
+        rel = os.path.relpath(p, base)
     except ValueError:
         return raw_path.replace("\\", "/") if posix else raw_path
     return rel.replace("\\", "/") if posix else rel
 
 
 def safe_path(root, value, *, allow_directory=False, outside_ok=False):
-    """Validate lexical paths BEFORE resolving links (including Windows reparse points)."""
-    root = Path(os.path.abspath(root))
+    """Validate lexical paths BEFORE resolving links (below workspace root)."""
+    lex_root, real_root = _resolve_root(root)
     expanded = _expand_tilde_str(value)
     requested = Path(expanded)
     is_abs_request = requested.is_absolute()
     raw_str = expanded if isinstance(expanded, str) else str(requested)
     if is_abs_request:
-        try:
-            rel_raw = Path(raw_str).relative_to(root)
-            raw_parts = list(rel_raw.parts)
-        except ValueError:
+        req_abs = Path(os.path.abspath(raw_str))
+        if req_abs.is_relative_to(lex_root):
+            raw_parts = list(req_abs.relative_to(lex_root).parts)
+        elif req_abs.is_relative_to(real_root):
+            raw_parts = list(req_abs.relative_to(real_root).parts)
+        else:
             raw_parts = _raw_check_segments(raw_str)
     else:
         raw_parts = _raw_check_segments(raw_str)
-    path = Path(os.path.abspath(requested if is_abs_request else root / requested))
-    inside_root = path.is_relative_to(root)
-    if path == root or path.parent == path or (not inside_root and not (outside_ok and is_abs_request)):
+    path = Path(os.path.abspath(requested if is_abs_request else lex_root / requested))
+    in_lex = path.is_relative_to(lex_root)
+    in_real = path.is_relative_to(real_root)
+    inside_root = in_lex or in_real
+    if (
+        path == lex_root
+        or path == real_root
+        or path.parent == path
+        or (not inside_root and not (outside_ok and is_abs_request))
+    ):
         raise AgentToolRejected("agent_local_path_outside_workspace")
+    base_root = lex_root if in_lex else real_root
     check_parts = (
-        path.relative_to(root).parts
+        path.relative_to(base_root).parts
         if inside_root
         else tuple(p for p in path.parts if p != path.anchor)
     )
@@ -90,24 +145,39 @@ def safe_path(root, value, *, allow_directory=False, outside_ok=False):
             "agent_review_path_forbidden",
             details={"segment": bad_seg, "path": str(path)},
         )
-    for part in [*reversed(path.parents), path]:
+    if inside_root:
+        cur = base_root
+        lstat_targets = []
+        for seg in check_parts:
+            cur = cur / seg
+            lstat_targets.append(cur)
+    else:
+        try:
+            common = Path(os.path.commonpath([str(lex_root), str(path)]))
+            cur = common
+            lstat_targets = []
+            for seg in path.relative_to(common).parts:
+                cur = cur / seg
+                lstat_targets.append(cur)
+        except ValueError:
+            lstat_targets = [p for p in [*reversed(path.parents), path] if p.parent != p]
+    for part in lstat_targets:
         try:
             info = part.lstat()
         except FileNotFoundError:
             continue
-        if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+        if _is_forbidden_link_or_reparse(info):
             raise AgentToolRejected("agent_review_link_forbidden")
     resolved = path.resolve()
-    resolved_root = root.resolve()
     if inside_root:
-        if not resolved.is_relative_to(resolved_root):
+        if resolved == real_root or not resolved.is_relative_to(real_root):
             raise AgentToolRejected(
                 "agent_review_path_forbidden",
                 details={"segment": resolved.name or str(resolved), "path": str(path)},
             )
-        resolved_parts = resolved.relative_to(resolved_root).parts
+        resolved_parts = resolved.relative_to(real_root).parts
     else:
-        if resolved == resolved_root or resolved.parent == resolved:
+        if resolved == real_root or resolved.parent == resolved:
             raise AgentToolRejected(
                 "agent_review_path_forbidden",
                 details={"segment": resolved.name or str(resolved), "path": str(path)},
@@ -221,13 +291,14 @@ class FileReview:
             total = sum(p.stat().st_size for p in self.directory.parent.glob("*/*") if p.is_file())
             if used + growth + 32768 > MAX_BYTES or total + growth + 32768 > MAX_HOME_BYTES:
                 raise AgentToolRejected("agent_review_storage_limit")
-            root_abs = Path(os.path.abspath(self.root))
+            lex_root, real_root = _resolve_root(self.root)
             checked_changes = []
             for path, before, after, group in changes:
                 sp = safe_path(self.root, str(path), outside_ok=outside_ok)
                 if read_file(sp) != before:
                     raise AgentToolRejected("agent_local_file_changed_read_again")
-                checked_changes.append((sp, before, after, group, not sp.is_relative_to(root_abs)))
+                is_outside = not (sp.is_relative_to(lex_root) or sp.is_relative_to(real_root))
+                checked_changes.append((sp, before, after, group, is_outside))
             record = {"id": operation_id or uuid.uuid4().hex, "steps": []}
             for index, (sp, before, after, group, is_outside) in enumerate(checked_changes):
                 step_entry = {"path": str(sp), "before": self.blob(before), "after": self.blob(after),

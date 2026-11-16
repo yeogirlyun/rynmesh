@@ -4,6 +4,9 @@ from contextlib import ExitStack
 
 from .store import AgentToolRejected
 
+FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
+FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000
+
 
 def replace_checked(path, root, expected, raw, mode, stamp, *, outside_ok=False):
     from .file_review import MAX_FILE, digest, fingerprint, safe_path
@@ -34,11 +37,24 @@ def replace_checked(path, root, expected, raw, mode, stamp, *, outside_ok=False)
                 raise OSError(ctypes.get_last_error(), "file_busy_or_changed")
             return handle
 
+        from .file_review import _is_cloud_reparse_tag, _resolve_root
+
+        lex_root, real_root = _resolve_root(root)
         with ExitStack() as stack:
             # No FILE_SHARE_DELETE: ancestors cannot be replaced by a junction
-            # while the target is checked and modified. OPEN_REPARSE_POINT avoids following links.
+            # while the target is checked and modified. Only directories below
+            # root use OPEN_REPARSE_POINT; root and its ancestors open normally.
             for parent in reversed(path.parents):
-                handle = open_handle(parent, 0, 3, 3, 0x02200000)
+                below_root = (
+                    (parent != lex_root and parent.is_relative_to(lex_root))
+                    or (parent != real_root and parent.is_relative_to(real_root))
+                )
+                dir_flags = (
+                    FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT
+                    if below_root
+                    else FILE_FLAG_BACKUP_SEMANTICS
+                )
+                handle = open_handle(parent, 0, 3, 3, dir_flags)
                 stack.callback(close, handle)
             safe_path(root, str(path), outside_ok=outside_ok)
             if fingerprint(path) != stamp:
@@ -47,7 +63,15 @@ def replace_checked(path, root, expected, raw, mode, stamp, *, outside_ok=False)
                 if path.exists():
                     raise AgentToolRejected("agent_review_file_changed")
                 return
-            handle = open_handle(path, 0xC0010000, 0, 1 if expected is None else 3, 0x00200000)
+            target_flags = FILE_FLAG_OPEN_REPARSE_POINT
+            if expected is not None:
+                try:
+                    t_info = path.lstat()
+                    if (getattr(t_info, "st_file_attributes", 0) & 0x400) and _is_cloud_reparse_tag(getattr(t_info, "st_reparse_tag", 0)):
+                        target_flags = 0
+                except OSError:
+                    pass
+            handle = open_handle(path, 0xC0010000, 0, 1 if expected is None else 3, target_flags)
             # CREATE_NEW for absent targets; exclusive existing handle prevents
             # an editor from writing between the hash comparison and restoration.
             fd = msvcrt.open_osfhandle(handle, os.O_RDWR | os.O_BINARY)
