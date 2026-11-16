@@ -710,6 +710,7 @@ def serialize_automation_toml(item: dict[str, Any]) -> str:
         f"desktop_access = {'true' if bool(item.get('desktop_access', True)) else 'false'}",
         f"workspace_root = {_toml_quote(str(item.get('workspace_root') or ''))}",
         f"target_task_id = {_toml_quote(str(item.get('target_task_id') or ''))}",
+        f"dedicated_chat = {'true' if bool(item.get('dedicated_chat', False)) else 'false'}",
         f"execution_environment = {_toml_quote(str(item.get('execution_environment') or 'local'))}",
         f"notification_policy = {_toml_quote(str(item.get('notification_policy') or 'default'))}",
         f"auto_archive = {'true' if bool(item.get('auto_archive', False)) else 'false'}",
@@ -864,6 +865,15 @@ def normalize_automation_record(
     if kind not in {"cron", "heartbeat"}:
         kind = default_kind
 
+    if "dedicated_chat" in raw and raw.get("dedicated_chat") is not None:
+        dedicated_chat = bool(raw.get("dedicated_chat"))
+    else:
+        dedicated_chat = bool(base.get("dedicated_chat", False))
+        if kind != "heartbeat":
+            dedicated_chat = False
+        elif "target_task_id" in raw and target_task_id != str(base.get("target_task_id") or "").strip():
+            dedicated_chat = False
+
     has_schedule_change = any(
         k in raw
         for k in (
@@ -975,6 +985,7 @@ def normalize_automation_record(
         "desktop_access": desktop_access,
         "workspace_root": workspace_root,
         "target_task_id": target_task_id,
+        "dedicated_chat": dedicated_chat,
         "execution_environment": execution_environment,
         "notification_policy": notification_policy,
         "auto_archive": auto_archive,
@@ -1021,6 +1032,7 @@ def public_automation(store: Any, item: dict[str, Any]) -> dict[str, Any]:
         "desktop_access": bool(item.get("desktop_access", True)),
         "workspace_root": str(item.get("workspace_root") or ""),
         "target_task_id": str(item.get("target_task_id") or ""),
+        "dedicated_chat": bool(item.get("dedicated_chat", False)),
         "execution_environment": str(item.get("execution_environment") or "local"),
         "notification_policy": str(item.get("notification_policy") or "all_runs"),
         "auto_archive": bool(item.get("auto_archive", False)),
@@ -1080,10 +1092,12 @@ def sync_automation_files(store: Any, automations: dict[str, Any], *, check_only
                 "kind",
                 "desktop_access",
                 "target_task_id",
+                "dedicated_chat",
                 "notification_policy",
                 "auto_archive",
             ):
-                if key in parsed and parsed[key] != existing.get(key):
+                existing_val = bool(existing.get(key, False)) if key == "dedicated_chat" else existing.get(key)
+                if key in parsed and parsed[key] != existing_val:
                     if check_only:
                         return True
                     merged = normalize_automation_record(store, parsed, existing=existing)
