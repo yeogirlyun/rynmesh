@@ -195,7 +195,14 @@ class SourceStore:
         if not isinstance(shared, list) or any(not isinstance(m, str) or m not in models for m in shared):
             raise ValueError("shared_models must contain configured model IDs")
         shared = list(dict.fromkeys(shared))
-        max_output_explicit = True if "max_output_tokens" in body else bool(old["max_output_tokens_explicit"]) if "max_output_tokens_explicit" in old else False
+        # The settings form always sends its 4096 draft default, so only an
+        # explicit flag or a different value marks the limit as owner-chosen.
+        if isinstance(body.get("max_output_tokens_explicit"), bool):
+            max_output_explicit = body["max_output_tokens_explicit"]
+        elif "max_output_tokens" in body and output != 4096:
+            max_output_explicit = True
+        else:
+            max_output_explicit = bool(old.get("max_output_tokens_explicit", False))
         record = {"id": source_id or "src-" + uuid.uuid4().hex[:16], "kind": kind, "protocol": protocol,
                 "name": name, "provider": str(body.get("provider", old.get("provider", "custom")))[:80],
                 "base_url": base, "api_key": key.strip(), "models": models,
