@@ -290,14 +290,18 @@ def test_change6_content_filter_empty_and_non_empty_report_agent_model_content_f
         "choices": [{"index": 0, "message": {"role": "assistant", "content": content_text}, "finish_reason": "content_filter"}],
         "usage": {"prompt_tokens": 5, "completion_tokens": 2},
     }
-    with _scripted_server([{"status": 200, "raw": body}]) as (url, requests):
+    with _scripted_server([{"status": 200, "raw": body}, {"status": 200, "raw": body}]) as (url, requests):
         runtime, _, _, _ = _setup_runtime_source(app, store, url, protocol="openai_chat", suffix=f"cf-{len(content_text)}")
         created = runtime.create({"message": "Trigger content filter."})
+        runtime.run_once()
+        first_row = runtime.get(created["id"])
+        assert first_row["status"] == "queued"
+        assert any(e["type"] == "content_filter_guidance" for e in first_row["events"])
         runtime.run_once()
         row = runtime.get(created["id"])
         assert row["status"] == "failed"
         assert row["error"] == "agent_model_content_filtered"
-        assert len(requests) == 1
+        assert len(requests) == 2
         assert not any(e["type"] in {"model_retry_scheduled", "connection_paused"} for e in row["events"])
 
     # Native parse_response also allows empty content when finish == "content_filter"
