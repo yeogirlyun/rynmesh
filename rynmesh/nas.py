@@ -22,6 +22,9 @@ from xml.etree import ElementTree
 
 from cryptography.fernet import Fernet, InvalidToken
 
+from .atomic_io import AtomicIOError, atomic_write_bytes
+from .private_permissions import ensure_private_file_acl, mark_key_protection
+
 logger = logging.getLogger(__name__)
 
 MAX_FILE = 64 * 1024 * 1024
@@ -290,7 +293,11 @@ class NasPlugin:
         self.directory_cache = DirectoryCache(self)
 
     def _load_cipher(self):
-        return Fernet((self.directory / "key").read_bytes())
+        key_path = self.directory / "key"
+        raw = key_path.read_bytes()
+        cipher = Fernet(raw)
+        ensure_private_file_acl(key_path, track_key_status=True, logger=logger)
+        return cipher
 
     @staticmethod
     def _quarantine_file(path: Path, ts: int) -> None:
@@ -317,6 +324,19 @@ class NasPlugin:
         with self.lock:
             self._save()
 
+    @staticmethod
+    def _write_private(path: Path, data: bytes) -> None:
+        try:
+            atomic_write_bytes(path, data)
+            mark_key_protection(path, weak=False)
+        except AtomicIOError as exc:
+            if os.name == "nt" and isinstance(exc.__cause__, OSError):
+                atomic_write_bytes(path, data, mode=0o644)
+                mark_key_protection(path, weak=True)
+                logger.warning("Failed to restrict NAS Windows ACL (%s); wrote with fallback permissions", type(exc.__cause__).__name__)
+            else:
+                raise
+
     def _save(self):
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         if self.cipher is None:
@@ -333,15 +353,10 @@ class NasPlugin:
                     )
             if self.cipher is None:
                 key = Fernet.generate_key()
-                with key_path.open("xb") as handle:
-                    handle.write(key)
-                os.chmod(key_path, 0o600)
+                self._write_private(key_path, key)
                 self.cipher = Fernet(key)
-        data = self.cipher.encrypt(json.dumps(self.state).encode())
-        temp = self.directory / (uuid.uuid4().hex + ".tmp")
-        temp.write_bytes(data)
-        os.chmod(temp, 0o600)
-        temp.replace(self.directory / "state.enc")
+        data = self.cipher.encrypt(json.dumps(self.state).encode("utf-8"))
+        self._write_private(self.directory / "state.enc", data)
 
     def status(self):
         with self.lock:

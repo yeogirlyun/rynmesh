@@ -1384,11 +1384,14 @@ def create_app(store: RynmeshStore | None = None):
     @app.get("/api/local/node/status")
     def local_node_status(request: FastAPIRequest) -> dict[str, Any]:
         local_control(request)
+        from .private_permissions import key_protection_status
+
         network_id = control_network_id()
         local_items = active_store.list_local_content().get("content", [])
         return {
             "node_name": active_store.node_name,
             "peer_id": active_store.peer_id,
+            "key_protection": key_protection_status(active_store.home),
             "daemon_running": True,
             "desktop_managed": os.environ.get("RYNMESH_DESKTOP_MODE", "").strip().lower()
             in {"1", "true", "yes"},

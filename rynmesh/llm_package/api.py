@@ -4,10 +4,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import re
 import secrets
 import sqlite3
+import sys
 import threading
 import time
 import uuid
@@ -20,6 +22,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from rynmesh.node_auth import is_browser_cross_site, is_forwarded, is_loopback_addr
+from rynmesh.private_permissions import ensure_private_file_acl, restrict_windows_acl
 
 from . import codex_threads
 from .adapters import actual_usage
@@ -28,6 +31,9 @@ from .chat import completion
 from .safety import MAX_OUTPUT, MAX_REQUEST, install_body_limit
 from .service_view import is_usable
 from .streaming import events
+
+
+_logger = logging.getLogger(__name__)
 
 
 class InferenceKeys:
@@ -39,7 +45,17 @@ class InferenceKeys:
         with self.connect() as db:
             db.execute("CREATE TABLE IF NOT EXISTS keys (id TEXT PRIMARY KEY, digest TEXT UNIQUE, name TEXT, created REAL, revoked INTEGER DEFAULT 0, token_limit INTEGER, used INTEGER DEFAULT 0)")
             db.execute("CREATE TABLE IF NOT EXISTS model_aliases (name TEXT PRIMARY KEY, target TEXT NOT NULL)")
-        os.chmod(self.path, 0o600)
+        try:
+            os.chmod(self.path, 0o600)
+        except OSError:
+            pass
+        if sys.platform == "win32":
+            ensure_private_file_acl(
+                self.path,
+                track_key_status=False,
+                acl_fn=restrict_windows_acl,
+                logger=_logger,
+            )
 
     @contextmanager
     def connect(self):
