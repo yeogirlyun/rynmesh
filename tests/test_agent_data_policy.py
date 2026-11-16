@@ -99,7 +99,7 @@ def test_snapshots_intersect_deduplicate_and_survive_server_reimport():
     frozen = copy.deepcopy(state)
     assert merge_state(state, first) == state
     state = merge_state(state, snapshot_source({"id": "remote", "instance_id": "new", "data_policy": {"memory": "deny"}}))
-    assert len(state["sources"]) == 2 and state["revision"] == 2
+    assert len(state["sources"]) == 1 and state["revision"] == 2
     assert allows_task(state, context())
     assert not allows_task(state, context(source="peer"))
     assert memory_denied(state) and memory_denied({"data_policy_state": state})

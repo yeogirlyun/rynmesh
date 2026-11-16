@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import ipaddress
 import json
 import re
 from typing import Any
@@ -10,24 +11,50 @@ from urllib.parse import unquote, urlsplit
 
 from .store import AgentError
 
+MAX_POLICY_SOURCES = 64
+_LOOPBACK_IPV4 = ipaddress.IPv4Network("127.0.0.0/8")
+_LOOPBACK_IPV6 = ipaddress.IPv6Address("::1")
+
 
 def _invalid():
     raise AgentError("agent_invalid_data_policy")
 
 
-def _url(value: Any, *, prefix: bool = False):
+def _is_loopback_host(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    if isinstance(addr, ipaddress.IPv4Address):
+        return addr in _LOOPBACK_IPV4
+    return addr == _LOOPBACK_IPV6
+
+
+def _url(value: Any, *, prefix: bool = False, allow_loopback_http: bool = False):
     if not isinstance(value, str) or not value or len(value) > 8192:
         _invalid()
     if any(ord(ch) <= 32 or ord(ch) == 127 for ch in value) or "\\" in value or "#" in value:
         _invalid()
     try:
         parsed = urlsplit(value)
-        if parsed.scheme != "https" or not parsed.hostname or parsed.username is not None or parsed.password is not None:
+        if not parsed.hostname or parsed.username is not None or parsed.password is not None:
             _invalid()
-        if "@" in parsed.netloc or parsed.query or parsed.port == 0:
+        if "@" in parsed.netloc or parsed.query or parsed.port == 0 or "%" in parsed.hostname:
             _invalid()
-        host = parsed.hostname.encode("idna").decode("ascii").lower()
-        port = parsed.port or 443
+        try:
+            host = str(ipaddress.ip_address(parsed.hostname))
+        except ValueError:
+            host = parsed.hostname.encode("idna").decode("ascii").lower()
+        if parsed.scheme == "https":
+            port = parsed.port or 443
+        elif parsed.scheme == "http" and allow_loopback_http:
+            if parsed.port is None or not _is_loopback_host(host):
+                _invalid()
+            port = parsed.port
+        else:
+            _invalid()
         path = parsed.path or "/"
         if re.search(r"%(?![0-9a-fA-F]{2})", path) or re.search(r"%(?:2f|5c|2e|25)", path, re.I):
             _invalid()
@@ -69,7 +96,7 @@ def normalize_policy(value: Any) -> dict[str, Any]:
             if rule["on_device"] is not True:
                 _invalid()
         elif "api_base_url_prefix" in rule:
-            _url(rule["api_base_url_prefix"], prefix=True)
+            _url(rule["api_base_url_prefix"], prefix=True, allow_loopback_http=True)
         elif "catalog_model_id" in rule:
             identifier = rule["catalog_model_id"]
             if not isinstance(identifier, str) or not identifier or len(identifier) > 1024 or any(ord(ch) < 32 or ord(ch) == 127 for ch in identifier):
@@ -112,15 +139,25 @@ def allows(policy: Any, context: Any = None) -> bool:
         for rule in policy["models"]["allow"]:
             if rule.get("catalog_model_id") == model["id"]:
                 return True
-            if rule.get("on_device") is True and model.get("source") == "local_service" and model.get("runtime") == "native_llama_cpp" and context.get("consumer_node_id") and model.get("peer_id") == context["consumer_node_id"]:
-                return True
+            if rule.get("on_device") is True and context.get("consumer_node_id") and model.get("peer_id") == context["consumer_node_id"]:
+                if model.get("source") == "local_service" and model.get("runtime") == "native_llama_cpp":
+                    return True
+                if model.get("source") == "local_api" and model.get("source_id"):
+                    api_src = context.get("api_source")
+                    if isinstance(api_src, dict) and api_src.get("destination_revision") == destination["destination_revision"]:
+                        try:
+                            src_origin, _ = _url(api_src.get("base_url"), allow_loopback_http=True)
+                        except AgentError:
+                            src_origin = None
+                        if src_origin is not None and _is_loopback_host(src_origin[1]):
+                            return True
             if "api_base_url_prefix" in rule and model.get("source") == "local_api" and model.get("source_id"):
                 source = context.get("api_source")
                 if not isinstance(source, dict) or source.get("destination_revision") != destination["destination_revision"]:
                     continue
                 try:
-                    origin, path = _url(source.get("base_url"))
-                    allowed_origin, allowed_path = _url(rule["api_base_url_prefix"], prefix=True)
+                    origin, path = _url(source.get("base_url"), allow_loopback_http=True)
+                    allowed_origin, allowed_path = _url(rule["api_base_url_prefix"], prefix=True, allow_loopback_http=True)
                 except AgentError:
                     continue
                 if origin == allowed_origin and (path.startswith(allowed_path) or path == allowed_path.rstrip("/")):
@@ -150,6 +187,47 @@ def _state(value: Any) -> dict[str, Any]:
             "memory_deny": value.get("memory_deny", False) or any(s["policy"]["memory"] == "deny" for s in sources)}
 
 
+def _intersect_rule(r1: dict[str, Any], r2: dict[str, Any]) -> dict[str, Any] | None:
+    if r1 == r2:
+        return copy.deepcopy(r1)
+    if "on_device" in r1 and "api_base_url_prefix" in r2:
+        origin, _ = _url(r2["api_base_url_prefix"], prefix=True, allow_loopback_http=True)
+        return copy.deepcopy(r2) if _is_loopback_host(origin[1]) else None
+    if "api_base_url_prefix" in r1 and "on_device" in r2:
+        origin, _ = _url(r1["api_base_url_prefix"], prefix=True, allow_loopback_http=True)
+        return copy.deepcopy(r1) if _is_loopback_host(origin[1]) else None
+    if "api_base_url_prefix" in r1 and "api_base_url_prefix" in r2:
+        o1, p1 = _url(r1["api_base_url_prefix"], prefix=True, allow_loopback_http=True)
+        o2, p2 = _url(r2["api_base_url_prefix"], prefix=True, allow_loopback_http=True)
+        if o1 != o2:
+            return None
+        if p2.startswith(p1):
+            return copy.deepcopy(r2)
+        if p1.startswith(p2):
+            return copy.deepcopy(r1)
+    return None
+
+
+def _intersect_policies(p1: Any, p2: Any) -> dict[str, Any]:
+    left = normalize_policy(p1)
+    right = normalize_policy(p2)
+    memory = "deny" if (left["memory"] == "deny" or right["memory"] == "deny") else "allow"
+    m1, m2 = left["models"], right["models"]
+    if m1["mode"] == "any":
+        models = copy.deepcopy(m2)
+    elif m2["mode"] == "any":
+        models = copy.deepcopy(m1)
+    else:
+        combined: list[dict[str, Any]] = []
+        for r1 in m1["allow"]:
+            for r2 in m2["allow"]:
+                inter = _intersect_rule(r1, r2)
+                if inter is not None and inter not in combined:
+                    combined.append(inter)
+        models = {"mode": "allowlist", "allow": combined}
+    return normalize_policy({"models": models, "memory": memory})
+
+
 def merge_state(state: Any, snapshot: Any) -> dict[str, Any]:
     """Merge a source snapshot or inherited state without ever removing restrictions."""
     result = _state(state)
@@ -157,13 +235,49 @@ def merge_state(state: Any, snapshot: Any) -> dict[str, Any]:
     if snapshot is not None and not (isinstance(snapshot, dict) and ("sources" in snapshot or "data_policy_state" in snapshot)):
         incoming["sources"] = [snapshot_source(snapshot)]
     changed = incoming["memory_deny"] and not result["memory_deny"]
-    seen = {(item["instance_id"], item["policy_sha256"]) for item in result["sources"]}
-    for item in incoming["sources"]:
-        key = item["instance_id"], item["policy_sha256"]
-        if key not in seen:
-            result["sources"].append(item)
-            seen.add(key)
+
+    merged_sources: list[dict[str, Any]] = []
+    index_by_server: dict[str, int] = {}
+    for item in result["sources"]:
+        sid = item["server_id"]
+        if sid not in index_by_server:
+            index_by_server[sid] = len(merged_sources)
+            merged_sources.append(item)
+        else:
+            idx = index_by_server[sid]
+            existing = merged_sources[idx]
+            strict_pol = _intersect_policies(existing["policy"], item["policy"])
+            strict_snap = snapshot_source({"id": sid, "instance_id": item["instance_id"], "data_policy": strict_pol})
+            if strict_snap["policy_sha256"] != existing["policy_sha256"]:
+                merged_sources[idx] = strict_snap
             changed = True
+
+    for item in incoming["sources"]:
+        sid = item["server_id"]
+        if sid not in index_by_server:
+            index_by_server[sid] = len(merged_sources)
+            merged_sources.append(item)
+            changed = True
+        else:
+            idx = index_by_server[sid]
+            existing = merged_sources[idx]
+            strict_pol = _intersect_policies(existing["policy"], item["policy"])
+            strict_snap = snapshot_source({"id": sid, "instance_id": item["instance_id"], "data_policy": strict_pol})
+            if strict_snap["policy_sha256"] != existing["policy_sha256"]:
+                merged_sources[idx] = strict_snap
+                changed = True
+
+    if len(merged_sources) > MAX_POLICY_SOURCES:
+        overflow = len(merged_sources) - MAX_POLICY_SOURCES
+        oldest = merged_sources[:overflow + 1]
+        folded_pol = oldest[0]["policy"]
+        for old_item in oldest[1:]:
+            folded_pol = _intersect_policies(folded_pol, old_item["policy"])
+        folded_snap = snapshot_source({"id": "__compacted__", "instance_id": "compacted", "data_policy": folded_pol})
+        merged_sources = [folded_snap, *merged_sources[overflow + 1:]]
+        changed = True
+
+    result["sources"] = merged_sources
     result["memory_deny"] = result["memory_deny"] or incoming["memory_deny"] or any(item["policy"]["memory"] == "deny" for item in result["sources"])
     if changed:
         result["revision"] += 1
