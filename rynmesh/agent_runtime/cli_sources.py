@@ -11,7 +11,7 @@ from pathlib import Path
 
 from ..atomic_io import atomic_write_json
 from ..file_transactions import file_transaction
-from ..llm_package.adapters import adapter_from_manifest
+from ..llm_package.adapters import AdapterError, adapter_from_manifest
 from ..llm_package.cli_adapter import CLIAgentAdapter
 from ..llm_package.lifecycle import connect_cli
 from .default_model import DefaultModelTool
@@ -101,12 +101,13 @@ class CLISources:
                     watcher = threading.Thread(target=watch, daemon=True)
                     watcher.start()
                     try:
+                        effective_timeout = float(timeout_s) if remaining >= 15.0 else min(float(timeout_s), remaining)
                         if method == "infer":
                             result = adapter.infer(prompt=body, max_tokens=allowed, task_id=task_id,
-                                                   timeout_s=min(timeout_s, remaining))
+                                                   timeout_s=effective_timeout)
                         else:
                             result = adapter.chat({**body, "max_tokens": allowed}, task_id=task_id,
-                                                  timeout_s=min(timeout_s, remaining))
+                                                  timeout_s=effective_timeout)
                         if failure:
                             raise failure[0]
                         outer.check(context, cancelled)
@@ -157,12 +158,22 @@ class CLISources:
             else:
                 def self_test(manifest):
                     probe = self.metered(adapter_from_manifest(manifest), context, cancelled)
-                    result = probe.call("infer", "Reply with exactly: RYNMESH SELF TEST OK", 64,
-                                        "cli-selftest-" + uuid.uuid4().hex, 60)
+                    probe_timeout = float(getattr(manifest, "timeout_seconds", None) or 300)
+                    try:
+                        result = probe.call("infer", "Reply with exactly: RYNMESH SELF TEST OK", 64,
+                                            "cli-selftest-" + uuid.uuid4().hex, probe_timeout)
+                    except (AdapterError, TimeoutError) as exc:
+                        if isinstance(exc, TimeoutError) or getattr(exc, "code", "") == "inference_timeout":
+                            raise AgentToolRejected("agent_cli_chat_probe_timeout") from None
+                        raise AgentToolRejected("agent_cli_chat_probe_failed") from None
                     if not str(result.get("text") or "").strip():
                         raise AgentToolRejected("agent_cli_chat_probe_failed")
                     return {"ok": True}
-                connected = connect_cli(kind=kind, root=self.path.parent, cancel_check=cancelled, self_test_fn=self_test)
+                try:
+                    connected = connect_cli(kind=kind, root=self.path.parent, cancel_check=cancelled, self_test_fn=self_test)
+                except AgentToolRejected as exc:
+                    ledger.update(operation_id, "not_executed", error=str(exc))
+                    raise
                 result = {"configured": True, "kind": kind, "already_configured": False,
                           "agent_usable": CLIAgentAdapter(kind).capabilities()["tools"],
                           "model_id": "local/" + kind.replace("_", "-"), "publication_enabled": False, "chat_probe": "passed"}

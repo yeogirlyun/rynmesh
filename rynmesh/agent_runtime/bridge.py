@@ -91,6 +91,7 @@ MODEL_ERROR_CODES = frozenset({
     *_PEER_ERROR_MAP.values(),
     "agent_inference_failed",
     "agent_model_destination_unverifiable",
+    "agent_model_tools_unsupported",
 })
 
 
@@ -655,6 +656,24 @@ class AgentModelBridge:
                 diag["limit_bytes"] = raw_diag["limit_bytes"]
             if type(raw_diag.get("max_tokens")) is int and raw_diag["max_tokens"] > 0:
                 diag["max_tokens"] = raw_diag["max_tokens"]
+            if raw_diag.get("tools_unsupported") is True and raw_diag.get("http_status") == 400 and not cancelled() and not expired():
+                if manager is not None and getattr(manager, "manifest", None) is not None:
+                    from ..llm_package.tool_capabilities import ToolCapabilities
+
+                    caps = getattr(getattr(self.catalog, "store", None), "llm_tool_capabilities", None)
+                    if caps is None and getattr(getattr(self.catalog, "store", None), "home", None) is not None:
+                        caps = ToolCapabilities(self.catalog.store.home)
+                    if caps is not None:
+                        caps.save(manager.manifest, "unsupported", target.get("cli_model") or "")
+                err = (
+                    AgentModelResponseError(exc.reported_usage, exc.finish_reason, "agent_model_tools_unsupported")
+                    if isinstance(exc.reported_usage, dict)
+                    else AgentError("agent_model_tools_unsupported")
+                )
+                err.request_id = task_id
+                if diag:
+                    err.diagnostics = diag
+                raise err from None
             if exc.code == "upstream_output_limit_reached" and not cancelled() and not expired() and not has_output_limit_feedback(messages):
                 diag.setdefault("max_tokens", maximum)
                 rejected = AgentModelResponseError(exc.reported_usage, "length")
