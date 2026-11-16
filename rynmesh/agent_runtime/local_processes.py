@@ -809,6 +809,8 @@ class Processes:
                                        output_complete=item["reader_done"].is_set())
                         if item["process"].error:
                             payload["terminal_error"] = item["process"].error
+                            if getattr(item["process"], "error_detail", None):
+                                payload["terminal_error_detail"] = item["process"].error_detail
                             payload["stop_reason"] = item["reason"] or "terminal_transport_error"
                     if payload["empty_poll_count"] >= 2 and running:
                         payload["poll_notice"] = (
