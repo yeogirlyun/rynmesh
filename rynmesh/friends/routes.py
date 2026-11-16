@@ -140,6 +140,7 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
                     json.dumps({"detail": "friend_clock_skew", "error": "friend_clock_skew", "server_time": st}),
                     status_code=409,
                     media_type="application/json",
+                    headers={"X-Ryn-Server-Time": str(int(st))},
                 )
         return None
 

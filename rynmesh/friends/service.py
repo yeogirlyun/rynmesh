@@ -410,6 +410,9 @@ class FriendService:
         msg = str(exc)
         if "http_429" in msg or msg == "friend_rate_limited":
             return "friend_rate_limited", None
+        st = getattr(exc, "server_time", None)
+        if "http_409" in msg and type(st) is int:
+            return "friend_clock_skew", st
         return None, None
 
     def _effective_timestamp(self, peer_id: str) -> int:

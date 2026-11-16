@@ -54,6 +54,15 @@ _BROWSER_HEADERS = {
 }
 
 NETWORK_KEY_HEADER = "X-Ryn-Auth"
+SERVER_TIME_HEADER = "X-Ryn-Server-Time"
+
+
+def _parse_server_time(raw: Any) -> int | None:
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
 
 
 class TransportError(RuntimeError):
@@ -65,10 +74,11 @@ class TransportError(RuntimeError):
     """
 
     def __init__(self, message: str, *, reason: str = "http_error",
-                 status: int | None = None) -> None:
+                 status: int | None = None, server_time: int | None = None) -> None:
         super().__init__(message)
         self.reason = reason
         self.status = status
+        self.server_time = server_time
 
 
 
@@ -285,8 +295,13 @@ class StdlibHttpsTransport:
         except TransportError:
             raise
         except HTTPError as exc:
+            st = (
+                _parse_server_time(exc.headers.get(SERVER_TIME_HEADER))
+                if exc.code == 409 and exc.headers is not None
+                else None
+            )
             raise TransportError(f"http status {exc.code}", reason="http_error",
-                                 status=exc.code) from exc
+                                 status=exc.code, server_time=st) from exc
         except (URLError, TimeoutError, ssl.SSLError, OSError):
             raise TransportError("http request failed", reason="http_error") from None
 
@@ -446,8 +461,9 @@ class FrontedHttpsTransport:
                 pass
             raise TransportError("http request failed", reason="http_error") from None
         if (method == "POST" and not 200 <= resp.status < 300) or resp.status >= 400:
+            st = _parse_server_time(resp.getheader(SERVER_TIME_HEADER)) if resp.status == 409 else None
             conn.close()
-            raise TransportError(f"http status {resp.status}", reason="http_error", status=resp.status)
+            raise TransportError(f"http status {resp.status}", reason="http_error", status=resp.status, server_time=st)
         try:
             _check_content_encoding(resp)
         except TransportError:
@@ -874,7 +890,14 @@ class CdnWebSocketTransport:
         except (IndexError, ValueError) as exc:
             raise TransportError("ws: malformed HTTP status", reason="http_error") from exc
         if not 200 <= status < 300:
-            raise TransportError(f"http status {status}", reason="http_error", status=status)
+            st = None
+            if status == 409:
+                for line in lines[1:]:
+                    name, colon, value = line.partition(b":")
+                    if colon and name.strip().lower() == b"x-ryn-server-time":
+                        st = _parse_server_time(value.decode("latin-1"))
+                        break
+            raise TransportError(f"http status {status}", reason="http_error", status=status, server_time=st)
         encodings: list[str] = []
         for line in lines[1:]:
             name, colon, value = line.partition(b":")

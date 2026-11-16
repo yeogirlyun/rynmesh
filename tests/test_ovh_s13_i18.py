@@ -346,3 +346,89 @@ def test_t5_invite_with_unknown_extra_permission_is_accepted_and_records_ignored
     bad_uri = invite_uri(sign_payload(bad_payload, private_key_bytes=alice.identity_private), secret)
     with pytest.raises(FriendCryptoError, match="invalid_invite"):
         parse_invite(bad_uri, now=now, allow_loopback=True)
+
+
+def test_t6_clock_skew_over_real_post_json_and_transport_error(tmp_path, monkeypatch):
+    """返工补充：走真实 HttpPeerClient.post_json（假 Transport 对 409 抛 TransportError，丢弃响应体仅带响应头整数 server_time），发送方记下偏移并重试成功。"""
+    import email.message
+    from urllib.error import HTTPError
+    from urllib.parse import urlparse
+
+    from rynmesh.peer_http import HttpPeerClient
+    from rynmesh.transport import StdlibHttpsTransport, TransportError, TransportProfile
+
+    monkeypatch.setenv("RYNMESH_AUTO_REGISTER", "0")
+    monkeypatch.setenv("RYNMESH_DISABLE_DISCOVERY", "1")
+    monkeypatch.setenv("RYNMESH_MODEL_PROVIDER", "none")
+    monkeypatch.setenv("RYNMESH_LOCAL_TOKEN", "owner-tok")
+    monkeypatch.setenv("RYNMESH_FRIEND_ALLOW_LOOPBACK", "1")
+    monkeypatch.setenv("RYNMESH_FRIEND_ENDPOINT", "http://127.0.0.1:19201")
+
+    alice_app = create_app(RynmeshStore(home=tmp_path / "alice_real", network_dir=tmp_path / "net_real", node_name="AliceReal"))
+    with TestClient(alice_app) as alice_http:
+        alice_svc: FriendService = alice_app.state.friends.service
+        calls: list[int] = []
+
+        class _Fake409Transport:
+            def post_bytes(self, url: str, body: bytes, *, timeout_s: float, max_bytes: int, headers=None) -> bytes:
+                parsed = urlparse(url)
+                resp = alice_http.post(parsed.path, content=body, headers=headers or {})
+                calls.append(resp.status_code)
+                if resp.status_code >= 400:
+                    hdr_st = resp.headers.get("x-ryn-server-time")
+                    raise TransportError(
+                        f"http status {resp.status_code}",
+                        reason="http_error",
+                        status=resp.status_code,
+                        server_time=int(hdr_st) if hdr_st and hdr_st.isdigit() else None,
+                    )
+                return resp.content
+
+        fake_transport = _Fake409Transport()
+
+        def real_post_json(endpoint, path, payload, headers, *, max_response_bytes=2 * 1024 * 1024):
+            return HttpPeerClient(endpoint, timeout_s=5, transport=fake_transport).post_json(
+                path, payload, headers=headers, max_bytes=max_response_bytes
+            )
+
+        bob_home = tmp_path / "bob_real"
+        bob_rstore = RynmeshStore(home=bob_home, network_dir=tmp_path / "net_real", node_name="BobReal")
+        bob_msg = peer_box.load_or_create_messaging_key(bob_home / "messaging.x25519")
+        bob_svc = FriendService(
+            home=bob_home,
+            peer_id=bob_rstore.peer_id,
+            node_name="BobReal",
+            endpoint="http://127.0.0.1:19202",
+            identity_private=bob_rstore.private_key_bytes,
+            messaging_private=bob_msg,
+            post_json=real_post_json,
+            allow_loopback=True,
+        )
+
+        created = alice_svc.create_invite(reviewed_endpoint="http://127.0.0.1:19201")
+        bob_svc.join(created["invite_uri"])
+
+        base_time = datetime(2026, 11, 16, 12, 0, 0, tzinfo=UTC)
+        bob_svc.clock = lambda: base_time
+        alice_svc.clock = lambda: base_time + timedelta(minutes=5)
+
+        calls.clear()
+        sent = bob_svc.send_message(alice_svc.peer_id, text="real post_json skew calibration")
+        assert sent["delivered"] is True
+        assert calls == [409, 200]
+        assert bob_svc._clock_offsets.get(alice_svc.peer_id) == 300
+        assert alice_svc.history(bob_svc.peer_id)[0]["text"] == "real post_json skew calibration"
+
+    # Also verify StdlibHttpsTransport extracts X-Ryn-Server-Time from urllib HTTPError(409)
+    hdrs = email.message.Message()
+    hdrs["X-Ryn-Server-Time"] = "1700000300"
+    stdlib_transport = StdlibHttpsTransport(TransportProfile())
+
+    def _raise_409(req, timeout=None):
+        raise HTTPError(req.full_url, 409, "Conflict", hdrs, None)
+
+    monkeypatch.setattr(stdlib_transport._opener, "open", _raise_409)
+    with pytest.raises(TransportError) as t_exc:
+        stdlib_transport.post_bytes("http://127.0.0.1:19201/api/peer/friends/message", b"{}", timeout_s=5, max_bytes=1024)
+    assert t_exc.value.status == 409
+    assert t_exc.value.server_time == 1700000300

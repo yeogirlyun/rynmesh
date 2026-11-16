@@ -37,7 +37,9 @@ from .types import RYNMESH_VERSION
 
 
 class PeerTransportError(RuntimeError):
-    pass
+    def __init__(self, *args: Any, server_time: int | None = None) -> None:
+        super().__init__(*args)
+        self.server_time = server_time
 
 
 # Browsing devices' content: listings are asked in parallel and each is bounded,
@@ -306,7 +308,8 @@ class HttpPeerClient:
             # The HTTP status is metadata, not body — carry it so a keyed
             # peer's 404 (key mismatch) is distinguishable from network loss.
             detail = f"http_{exc.status}" if exc.status else exc.reason
-            raise PeerTransportError(f"peer_http_error:{detail}") from None
+            st = exc.server_time if exc.status == 409 and type(exc.server_time) is int else None
+            raise PeerTransportError(f"peer_http_error:{detail}", server_time=st) from None
         if not raw.strip():
             # A 2xx with no body is a middlebox or a broken peer, never a
             # valid answer: treating it as {} once recorded settlements as
