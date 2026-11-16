@@ -198,10 +198,7 @@ def write_permission_revoked(row: dict, settings: dict) -> bool:
         or bool(flight.get("computer_access"))
         or bool((flight.get("extension_binding") or {}).get("computer_access"))
     )
-    if has_computer_access and (
-        not settings.get("desktop_access")
-        or not (row.get("local_execution") or {}).get("desktop_access")
-    ):
+    if has_computer_access and not (row.get("local_execution") or {}).get("desktop_access"):
         return True
     if flight.get("effect") != "write":
         return False
@@ -211,7 +208,7 @@ def write_permission_revoked(row: dict, settings: dict) -> bool:
         workspace_root=(row.get("local_execution") or {}).get("workspace_root", ""),
     ):
         return False
-    if settings["permission_mode"] == "read_only":
+    if row["permission_mode"] == "read_only":
         return True
     if flight.get("authorization") == "automatic":
         return decide(flight, {"effect": flight["effect"],
@@ -380,16 +377,7 @@ class AgentRuntime(AgentLoop):
 
     def _effective_task_permission_mode(self, selected: dict, settings: dict | None = None) -> str:
         task_mode = selected.get("permission_mode", "workspace")
-        if settings is None:
-            settings_mode = self.store.inspect(
-                lambda data: (data.get("settings") or {}).get("permission_mode", "workspace")
-            )
-        else:
-            settings_mode = settings.get("permission_mode", "workspace")
-        order = ("read_only", "confirm_changes", "workspace", "automatic")
-        if task_mode not in order or settings_mode not in order:
-            return "read_only"
-        return order[min(order.index(task_mode), order.index(settings_mode))]
+        return task_mode if task_mode in PERMISSION_MODES else "read_only"
 
     def _execute_business_tool(self, selected, name, arguments, **options):
         if name == "ryn_code_exec":
@@ -2041,8 +2029,8 @@ class AgentRuntime(AgentLoop):
 
         def update(data):
             workspace_changed = "workspace_root" in values and values["workspace_root"] != data["settings"].get("workspace_root")
-            desktop_changed = "desktop_access" in values and bool(values["desktop_access"]) != bool(data["settings"].get("desktop_access"))
-            permission_changed = any(key in values and values[key] != data["settings"].get(key) for key in ("permission_mode", "allowed_write_tools", "workspace_root", "desktop_access"))
+            desktop_revoked = values.get("desktop_access") is False
+            permission_changed = desktop_revoked or any(key in values and values[key] != data["settings"].get(key) for key in ("allowed_write_tools", "workspace_root"))
             changed = any(data["settings"].get(key) != value for key, value in values.items())
             for key in budget.SEGMENT_LIMITS:
                 if key in values:
@@ -2064,9 +2052,9 @@ class AgentRuntime(AgentLoop):
             data["settings"].update(values)
             if permission_changed:
                 for row in data["tasks"].values():
-                    if desktop_changed and not row.get("archived"):
-                        row.setdefault("local_execution", {})["desktop_access"] = bool(data["settings"].get("desktop_access"))
                     if row["status"] not in TERMINAL:
+                        if desktop_revoked:
+                            row.setdefault("local_execution", {})["desktop_access"] = False
                         previous_updated_at = row["updated_at"]
                         preserve_activity = row["status"] in {"paused", "waiting_approval", "waiting_input"}
                         row.update(approved=None, pending_approval=None)
@@ -2736,8 +2724,6 @@ class AgentRuntime(AgentLoop):
                             "verify_text_responses"):
                     if key in source:
                         row[key] = copy.deepcopy(source[key])
-                modes = {row["permission_mode"], settings["permission_mode"]}
-                row["permission_mode"] = next(mode for mode in ("read_only", "confirm_changes", "workspace", "automatic") if mode in modes)
                 row["local_execution"]["desktop_access"] = bool(row["local_execution"].get("desktop_access") and settings.get("desktop_access"))
                 merged_cont, dropped_skills = self._merge_task_skills(row.get("skills"), skills)
                 row["skills"] = merged_cont
@@ -3077,7 +3063,7 @@ class AgentRuntime(AgentLoop):
         return self.store.transaction(edit)
 
     def action(self, task_id: str, value: dict) -> dict:
-        if set(value) - {"action", "expected_revision", "expected_control_revision", "expected_goal_revision", "approval_id", "pending_input_id", "answers", "client_request_id", "subagent_id", "target"}:
+        if set(value) - {"action", "permission_mode", "expected_revision", "expected_control_revision", "expected_goal_revision", "approval_id", "pending_input_id", "answers", "client_request_id", "subagent_id", "target"}:
             raise AgentError("agent_invalid_request")
         action = value.get("action")
 
@@ -3152,6 +3138,21 @@ class AgentRuntime(AgentLoop):
                 settle(row, event, data=data)
                 subagents.on_subagent_settled_in_tx(data, row)
                 subagents.cascade_stop_subagents_in_tx(data, row, reason="owner_pause", close=False)
+            elif action == "set_permission":
+                if not allowed_actions(row, data["settings"])["set_permission"]["enabled"]:
+                    raise AgentError("agent_invalid_transition")
+                mode = value.get("permission_mode")
+                if not isinstance(mode, str) or mode not in PERMISSION_MODES:
+                    raise AgentError("agent_invalid_permission_mode")
+                old_mode = row["permission_mode"]
+                row.update(permission_mode=mode, approved=None, pending_approval=None)
+                row.pop("task_grants", None)
+                if row["status"] == "waiting_approval":
+                    row["status"] = "paused"
+                row["control_revision"] += 1
+                event(row, "permission_changed", old_mode=old_mode, new_mode=mode)
+                if row.get("pending_input"):
+                    row["pending_input"]["control_revision"] = row["control_revision"]
             elif action == "resume":
                 if (row.get("fork") or {}).get("awaiting_instruction"):
                     raise AgentError("agent_fork_instruction_required")
@@ -3205,7 +3206,7 @@ class AgentRuntime(AgentLoop):
                 if not data["settings"]["enabled"]:
                     raise AgentError("agent_disabled")
                 if action == "approve":
-                    if "read_only" in {row["permission_mode"], data["settings"]["permission_mode"]}:
+                    if row["permission_mode"] == "read_only":
                         raise AgentError("agent_permission_denied")
                     row["approved"] = {**approval, "revision": row["revision"]}
                     event(row, "approved", approval_id=approval["id"], tool=approval["tool"])
@@ -3431,7 +3432,6 @@ class AgentRuntime(AgentLoop):
         )
         if not is_hint_read_unknown and (
             row.get("permission_mode") != "automatic"
-            or settings.get("permission_mode") != "automatic"
             or flight.get("authorization") != "automatic"
         ):
             return False

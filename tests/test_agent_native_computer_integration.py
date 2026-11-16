@@ -636,6 +636,8 @@ def test_ready_time_authority_and_approval_guards_yield_zero_commit(tmp_path: Pa
                 target = data["tasks"]["task_owned"]
                 if change == "desktop":  # noqa: B023 - this callback finishes within the current case.
                     data["settings"]["desktop_access"] = False
+                    # S13-I25 update_settings revokes the live task grant as well.
+                    target["local_execution"]["desktop_access"] = False
                 elif change == "task":  # noqa: B023 - this callback finishes within the current case.
                     target["status"] = "paused"
                 elif change == "control":  # noqa: B023 - this callback finishes within the current case.

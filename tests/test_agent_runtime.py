@@ -404,8 +404,9 @@ def test_automatic_never_silently_elevates_task_or_ignores_revocation(tmp_path, 
     row = runtime.create({"message": "share"})
     runtime.update_settings({"permission_mode": later})
     advance(runtime, 2)
-    assert runtime.get(row["id"])["status"] == "waiting_approval"
-    assert tools.calls == []
+    # Global defaults no longer revoke an existing task's selected mode.
+    assert runtime.get(row["id"])["status"] == ("queued" if created == "automatic" else "waiting_approval")
+    assert len(tools.calls) == (1 if created == "automatic" else 0)
 
 
 def test_unsupported_catalog_model_rejected_by_backend(tmp_path):
@@ -678,10 +679,10 @@ def test_revocation_after_authorization_consumed_stops_write_under_business_lock
     assert not thread.is_alive()
     done = runtime.get(row["id"])
     assert done["status"] == "queued"
-    assert done["events"][-1]["result"]["error"] == "agent_permission_denied"
-    assert done["events"][-1]["result"]["not_executed"]
+    # These are changes to future-task defaults, not explicit task revocations.
+    assert done["events"][-1]["result"]["shared"] is True
     assert runtime.store.read()["tasks"][row["id"]]["in_flight"] is None
-    assert not tools.shared and not tools.calls
+    assert tools.shared and len(tools.calls) == 1
 
 
 def test_active_time_budget_rejects_a_late_model_success(tmp_path, monkeypatch):

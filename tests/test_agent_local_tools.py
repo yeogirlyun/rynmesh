@@ -640,7 +640,10 @@ def test_real_browser_dom_fill_click_upload_and_screenshot(local):
         pytest.skip("Chromium is not installed")
     tools, context, workspace, state = local
     context["local_execution"]["desktop_access"] = True
-    state.transaction(lambda data: data["settings"].update(desktop_access=True))
+    def grant_desktop(data):
+        data["settings"]["desktop_access"] = True
+        data["tasks"][context["task_id"]]["local_execution"]["desktop_access"] = True
+    state.transaction(grant_desktop)
     tools._browser = Browser(tools.home, tools.processes, headless=True)
     (workspace / "form.html").write_text('<input id="name"><input id="upload" type="file"><button id="submit" onclick="document.querySelector(\'#answer\').textContent=document.querySelector(\'#name\').value">OK</button><p id="answer"></p>', encoding="utf-8")
     (workspace / "upload.txt").write_text("upload", encoding="utf-8")
@@ -816,6 +819,7 @@ def test_windows_accessibility_write_and_readback(local):
     tools, context, workspace, state = local
     context["local_execution"]["desktop_access"] = True
     state.transaction(lambda data: data["settings"].update(desktop_access=True))
+    state.transaction(lambda data: data["tasks"][context["task_id"]]["local_execution"].update(desktop_access=True))
     title = "Ryn acceptance " + uuid.uuid4().hex[:8]
     command = "Add-Type -AssemblyName System.Windows.Forms; $form=[Windows.Forms.Form]::new(); $form.Text='" + title + "'; $edit=[Windows.Forms.TextBox]::new(); $edit.Name='ryn_test_input'; $form.Controls.Add($edit); [void]$form.ShowDialog()"
     ident = tools.processes.start(shell_command("powershell", command), workspace, "task", 20, tools.allowed(context), lambda: False)

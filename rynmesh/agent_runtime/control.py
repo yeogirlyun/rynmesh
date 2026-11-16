@@ -142,7 +142,7 @@ def allowed_actions(row, settings):
                                                               or (status == "cancelled" and not flight))))
     possible = {"pause": active, "stop": active, "cancel": status not in {"completed", "failed", "cancelled"},
                 "resume": enabled and status in {"paused", "interrupted"} and (not flight or recoverable_read) and not uncertain,
-                "approve": enabled and status == "waiting_approval" and bool(row["pending_approval"]) and "read_only" not in {row["permission_mode"], settings["permission_mode"]},
+                "approve": enabled and status == "waiting_approval" and bool(row["pending_approval"]) and row["permission_mode"] != "read_only",
                 "deny": enabled and status == "waiting_approval" and bool(row["pending_approval"]),
                 "answer": enabled and status == "waiting_input" and bool(row.get("pending_input")) and row["pending_input"]["kind"] != "credential_ref",
                 "steer": mutable, "information": mutable, "scope": not uncertain and status != "cancelled",
@@ -152,6 +152,8 @@ def allowed_actions(row, settings):
     removable = owner_removable(row)
     possible.update(rename=True, archive=removable and not row.get("archived"), restore=bool(row.get("archived")), delete=removable)
     possible["budget"] = safe_lifecycle and status in {"paused", "completed", "failed"}
+    possible["set_permission"] = (not flight and not uncertain and not row.get("pending_control")
+                                  and status in {"paused", "waiting_input", "waiting_approval", "completed", "failed", "cancelled", "interrupted"})
     possible["source_credential"] = enabled and not flight and not uncertain and status in {"queued", "waiting_input", "paused", "completed", "failed"}
     possible["model"] = continuable or (not flight and not uncertain and status in {"paused", "completed", "failed", "waiting_input", "waiting_approval", "interrupted", "cancelled"}
                                         and (not row.get("pending_control") or (status == "cancelled" and row["pending_control"].get("kind") == "cancel")))

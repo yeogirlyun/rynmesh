@@ -698,8 +698,30 @@ export default function RynAgent() {
   };
   const updateSettings = async (update: Partial<AgentSettings>) => {
     if (mutationRef.current || resourceErrors.settings) return false;
+    const synchronizeReadOnly = update.permission_mode === "read_only" && settings?.permission_mode !== "read_only"
+      && tasks.some(item => !["completed", "failed", "cancelled", "interrupted"].includes(item.status))
+      && window.confirm(i18n.resolvedLanguage?.startsWith("zh") ? "是否同时把进行中的任务切到只读？" : "Also switch ongoing tasks to read only?");
     mutationRef.current = true; setBusy(true); setError("");
-    try { setSettings(await rynAgent.updateSettings(update)); await refresh(); return true; }
+    try {
+      setSettings(await rynAgent.updateSettings(update));
+      if (synchronizeReadOnly) {
+        const liveTasks = (await rynAgent.tasks()).tasks;
+        for (const summary of liveTasks) {
+          if (["completed", "failed", "cancelled", "interrupted"].includes(summary.status)) continue;
+          let current = await rynAgent.task(summary.id);
+          if (!canUseAgentAction(current, "set_permission")) {
+            current = await rynAgent.action(current, "pause");
+            while (current.run_state === "pausing") {
+              await new Promise(resolve => window.setTimeout(resolve, 250));
+              current = await rynAgent.task(current.id);
+            }
+          }
+          const changed = await submitControl({ task_id: current.id, route: "actions", body: permissionChangeBody(current, "read_only") });
+          acceptTask(changed);
+        }
+      }
+      await refresh(); return true;
+    }
     catch { setError("mutationError"); await refresh().catch(() => undefined); return false; }
     finally { mutationRef.current = false; setBusy(false); }
   };
@@ -715,6 +737,20 @@ export default function RynAgent() {
       else setControlUncertain(true);
       throw reason;
     }
+  };
+  const permissionChangeBody = (current: AgentTask, mode: AgentSettings["permission_mode"]) => ({
+    action: "set_permission", permission_mode: mode,
+    ...(current.allowed_actions ? { expected_control_revision: current.control_revision } : { expected_revision: current.revision }),
+    client_request_id: crypto.randomUUID(),
+  });
+  const changeTaskPermission = async (mode: AgentSettings["permission_mode"]) => {
+    if (!task || mutationRef.current || controlUncertain || !canUseAgentAction(task, "set_permission")) return;
+    mutationRef.current = true; setBusy(true); setError("");
+    try { acceptTask(await submitControl({ task_id: task.id, route: "actions", body: permissionChangeBody(task, mode) })); }
+    catch (reason) {
+      setError(mutationErrorKey(reason));
+      await rynAgent.task(task.id).then(acceptTask).catch(() => undefined);
+    } finally { mutationRef.current = false; setBusy(false); }
   };
   const action = async (kind: AgentAction) => {
     if (!task || mutationRef.current || (controlUncertain && !["pause", "stop", "cancel"].includes(kind)) || !canUseAgentAction(task, kind, true) || (resourceErrors.settings && !task.allowed_actions && !["pause", "stop", "cancel", "deny"].includes(kind))) return;
@@ -1260,7 +1296,7 @@ export default function RynAgent() {
             catch (reason) { setError(mutationErrorKey(reason)); }
             finally { mutationRef.current = false; setBusy(false); }
           }} />}
-          <RynAgentComposer key={`composer/${draftKey}`} topSlot={<>{task?.subagents && task.subagents.length > 0 && <SubagentComposerBar subagents={task.subagents} onSelectSubagent={subId => { setSelectedSubagentId(subId); setSubagentsDrawerOpen(true); }} onMentionSubagent={nickname => { changeDraft((draft ? `${draft.trimEnd()} ` : "") + `@${nickname} `); input.current?.focus(); }} onStopAll={() => { if (task) void rynAgent.stopAllSubagents(task).then(acceptTask).catch(() => undefined); }} />}{queuedListNode}</>} placeholder={task?.subagents && task.subagents.length > 0 ? `交代任务，或输入 ${(task.subagents.filter(s => !s.closed).length ? task.subagents.filter(s => !s.closed) : task.subagents).slice(0, 2).map(s => `@${s.nickname}`).join(" ")} 直接向子智能体发指令...` : undefined} attachments={draftAttachments.filter(file => !visiblePending?.attachments?.some(sent => sent.id === file.id))} imageWarning={imageWarning} onAttachmentsChange={attachments => setAttachmentsByDraft(current => ({ ...current, [draftKey]: [...(current[draftKey] || []).filter(file => visiblePending?.attachments?.some(sent => sent.id === file.id)), ...attachments] }))} onAttachmentsBusyChange={setAttachmentsBusy} project={currentProject} workspace={settings?.workspace_root} value={draft} inputRef={input} inputDisabled={(!task?.allowed_actions && !enabled) || detailLoading} busy={busy} onChange={changeDraft} onSend={() => void send()} onAlternateSend={handleAlternateSend} onProject={() => { setTasksCollapsed(false); save("ryn.agent.tasks", "open"); }} onSettings={() => setSettingsOpen(true)} settingsDisabled={!settingsReady} permissionMode={task ? task.permission_mode || "unknown" : settings?.permission_mode || "automatic"} permissionLocked={Boolean(selected)} onPermission={permission_mode => void updateSettings({ permission_mode })} modelPicker={modelSelect()} options={<><ExtensionModelAvailability modelID={task?.model_id || model} />          {!selected && enabled && <RynAgentScope key="new-scope" task={null} modelID={model} modelName={selectedModel?.name || model} destinationRevision={selectedModel?.destination_revision} sourceName={selectedModel?.source_name} sourceID={selectedModel?.source_id} providerID={selectedModel?.peer_id} initialSelection={scopeDraft?.scope} busy={busy || uncertain || controlUncertain} onSelect={(scope, model_id, destination_revision) => setScopeDraft({ scope, model_id, destination_revision })} />}{!selected && <SkillSelection value={skillIDs} onChange={setSkillIDs} disabled={busy || uncertain} />}<p className="ra-model-context">{task ? t("taskModel") : t("newTaskModel")}: {selectedModel?.name || task?.model_id || model || t("chooseModel")}{settings && <span> · {t("defaultModel")}: {models.find(item => item.id === settings.model_id)?.name || settings.model_id || t("chooseModel")}</span>}</p>{messageIntents.length > 1 && <select aria-label={t("messageIntent")} value={effectiveIntent} disabled={busy} onChange={event => setMessageIntent(event.target.value as AgentMessageIntent)}><option value="steer">{t("intentSteer")}</option><option value="information">{t("intentInformation")}</option></select>}{selectedExecuting && <select aria-label={t("followUpModeQueue")} value={followUpQueueMode} disabled={busy} onChange={event => setFollowUpQueueMode(event.target.value as FollowUpQueueMode)}><option value="steer">{t("followUpModeSteer")}</option><option value="queue">{t("followUpModeQueue")}</option></select>}{task?.allowed_actions && messageIntents.length > 0 && <p className="ra-model-context">{t(effectiveIntent === "steer" ? "steerHelp" : "informationHelp")}</p>}</>} sendButton={<>{stopButton}{selectedExecuting && Boolean(draft.trim() || draftAttachments.length) && <button type="button" className="ra-queue-send" aria-label={t("queueFollowUp")} title={t("queueFollowUpTitle")} disabled={!canSend} onClick={() => void send("queue")}><CornerDownRight size={14} /><span>{t("queueShort")}</span></button>}{(!stopButton || Boolean(draft.trim() || draftAttachments.length)) && <button type="button" className="ra-primary ra-send" aria-label={t(sendLabel)} disabled={!canSend} onClick={() => void send(selectedExecuting ? "steer" : undefined)}>{visiblePending?.phase === "sending" ? <LoaderCircle size={18} className="ra-spinner" /> : <ArrowUp size={18} />}</button>}</>} />
+          <RynAgentComposer key={`composer/${draftKey}`} topSlot={<>{task?.subagents && task.subagents.length > 0 && <SubagentComposerBar subagents={task.subagents} onSelectSubagent={subId => { setSelectedSubagentId(subId); setSubagentsDrawerOpen(true); }} onMentionSubagent={nickname => { changeDraft((draft ? `${draft.trimEnd()} ` : "") + `@${nickname} `); input.current?.focus(); }} onStopAll={() => { if (task) void rynAgent.stopAllSubagents(task).then(acceptTask).catch(() => undefined); }} />}{queuedListNode}</>} placeholder={task?.subagents && task.subagents.length > 0 ? `交代任务，或输入 ${(task.subagents.filter(s => !s.closed).length ? task.subagents.filter(s => !s.closed) : task.subagents).slice(0, 2).map(s => `@${s.nickname}`).join(" ")} 直接向子智能体发指令...` : undefined} attachments={draftAttachments.filter(file => !visiblePending?.attachments?.some(sent => sent.id === file.id))} imageWarning={imageWarning} onAttachmentsChange={attachments => setAttachmentsByDraft(current => ({ ...current, [draftKey]: [...(current[draftKey] || []).filter(file => visiblePending?.attachments?.some(sent => sent.id === file.id)), ...attachments] }))} onAttachmentsBusyChange={setAttachmentsBusy} project={currentProject} workspace={settings?.workspace_root} value={draft} inputRef={input} inputDisabled={(!task?.allowed_actions && !enabled) || detailLoading} busy={busy} onChange={changeDraft} onSend={() => void send()} onAlternateSend={handleAlternateSend} onProject={() => { setTasksCollapsed(false); save("ryn.agent.tasks", "open"); }} onSettings={() => setSettingsOpen(true)} settingsDisabled={!settingsReady} permissionMode={task ? task.permission_mode || "unknown" : settings?.permission_mode || "automatic"} permissionLocked={Boolean(selected) && (!task || !canUseAgentAction(task, "set_permission"))} onPermission={permission_mode => void (task ? changeTaskPermission(permission_mode) : updateSettings({ permission_mode }))} modelPicker={modelSelect()} options={<><ExtensionModelAvailability modelID={task?.model_id || model} />          {!selected && enabled && <RynAgentScope key="new-scope" task={null} modelID={model} modelName={selectedModel?.name || model} destinationRevision={selectedModel?.destination_revision} sourceName={selectedModel?.source_name} sourceID={selectedModel?.source_id} providerID={selectedModel?.peer_id} initialSelection={scopeDraft?.scope} busy={busy || uncertain || controlUncertain} onSelect={(scope, model_id, destination_revision) => setScopeDraft({ scope, model_id, destination_revision })} />}{!selected && <SkillSelection value={skillIDs} onChange={setSkillIDs} disabled={busy || uncertain} />}<p className="ra-model-context">{task ? t("taskModel") : t("newTaskModel")}: {selectedModel?.name || task?.model_id || model || t("chooseModel")}{settings && <span> · {t("defaultModel")}: {models.find(item => item.id === settings.model_id)?.name || settings.model_id || t("chooseModel")}</span>}</p>{messageIntents.length > 1 && <select aria-label={t("messageIntent")} value={effectiveIntent} disabled={busy} onChange={event => setMessageIntent(event.target.value as AgentMessageIntent)}><option value="steer">{t("intentSteer")}</option><option value="information">{t("intentInformation")}</option></select>}{selectedExecuting && <select aria-label={t("followUpModeQueue")} value={followUpQueueMode} disabled={busy} onChange={event => setFollowUpQueueMode(event.target.value as FollowUpQueueMode)}><option value="steer">{t("followUpModeSteer")}</option><option value="queue">{t("followUpModeQueue")}</option></select>}{task?.allowed_actions && messageIntents.length > 0 && <p className="ra-model-context">{t(effectiveIntent === "steer" ? "steerHelp" : "informationHelp")}</p>}</>} sendButton={<>{stopButton}{selectedExecuting && Boolean(draft.trim() || draftAttachments.length) && <button type="button" className="ra-queue-send" aria-label={t("queueFollowUp")} title={t("queueFollowUpTitle")} disabled={!canSend} onClick={() => void send("queue")}><CornerDownRight size={14} /><span>{t("queueShort")}</span></button>}{(!stopButton || Boolean(draft.trim() || draftAttachments.length)) && <button type="button" className="ra-primary ra-send" aria-label={t(sendLabel)} disabled={!canSend} onClick={() => void send(selectedExecuting ? "steer" : undefined)}>{visiblePending?.phase === "sending" ? <LoaderCircle size={18} className="ra-spinner" /> : <ArrowUp size={18} />}</button>}</>} />
 
         </div>}</>}
       </div>

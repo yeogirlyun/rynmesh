@@ -41,7 +41,7 @@ class CLISources:
         runtime = self.owner.runtime()
         data = runtime.store.read()
         row = self.owner.row(runtime, data, context)
-        if not data["settings"]["enabled"] or data["settings"]["permission_mode"] == "read_only" and context.get("_cli_write"):
+        if not data["settings"]["enabled"] or row["permission_mode"] == "read_only" and context.get("_cli_write"):
             raise AgentToolRejected("agent_permission_denied")
         return row
 

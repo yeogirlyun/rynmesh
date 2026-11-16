@@ -70,10 +70,9 @@ class DefaultModelTool:
                     or flight.get("authorization") not in {"approved", "automatic"}
                     or flight.get("preview") != expected_preview):
                 raise AgentToolRejected("agent_configuration_authority_changed")
-            if "read_only" in {row["permission_mode"], data["settings"]["permission_mode"]}:
+            if row["permission_mode"] == "read_only":
                 raise AgentToolRejected("agent_permission_denied")
-            if flight["authorization"] == "automatic" and (
-                    row["permission_mode"] != "automatic" or data["settings"]["permission_mode"] != "automatic"):
+            if flight["authorization"] == "automatic" and row["permission_mode"] != "automatic":
                 raise AgentToolRejected("agent_permission_denied")
             if data.get("settings_revision", 0) != args["expected_settings_revision"]:
                 raise AgentToolRejected("agent_settings_revision_conflict")
