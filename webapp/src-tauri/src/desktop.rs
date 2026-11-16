@@ -400,13 +400,28 @@ impl AwakeBackend for SystemdInhibitBackend {
 
     fn acquire(&mut self) -> Option<Self::Guard> {
         use std::process::{Command, Stdio};
-        Command::new(self.program)
-            .args(["--what=idle:sleep", "--why=Ryn", "sleep", "infinity"])
+        let mut cmd = Command::new(self.program);
+        cmd.args(["--what=idle:sleep", "--why=Ryn", "sleep", "infinity"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .ok()
+            .stderr(Stdio::null());
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::process::CommandExt;
+            let parent_pid = unsafe { libc::getpid() };
+            unsafe {
+                cmd.pre_exec(move || {
+                    if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    if libc::getppid() != parent_pid {
+                        libc::_exit(1);
+                    }
+                    Ok(())
+                });
+            }
+        }
+        cmd.spawn().ok()
     }
 
     fn is_alive(&mut self, child: &mut Self::Guard) -> bool {
