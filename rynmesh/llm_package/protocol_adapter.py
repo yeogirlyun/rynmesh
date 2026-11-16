@@ -187,7 +187,7 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
 
         def check():
             if task_id in self._cancelled:
-                raise AdapterError("task_cancelled")
+                raise AdapterError("task_cancelled", code="task_cancelled")
             now = time.monotonic()
             if deadline is not None and now >= deadline:
                 raise AdapterError("inference timed out", code="inference_timeout")
@@ -207,6 +207,9 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                 except Exception:
                     raise AdapterError("stream_delivery_failed", code="stream_delivery_failed") from None
 
+        with self._lock:
+            if task_id and task_id not in self._cancelled:
+                self._starting.add(task_id)
         try:
             check()
             if not self.model:
@@ -242,6 +245,7 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                     headers=self._headers(),
                     method="POST",
                 )
+                check()
                 try:
                     resp_ctx = model_urlopen(request, timeout=read_timeout())
                 except urllib.error.HTTPError as exc:
@@ -401,8 +405,8 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                 received_finish = decoder.finish_reason
             with self._lock:
                 self._metrics.failures += 1
-            if task_id in self._cancelled:
-                code, text = "inference_failed", "task_cancelled"
+            if task_id in self._cancelled or (isinstance(exc, AdapterError) and exc.code == "task_cancelled"):
+                code = text = "task_cancelled"
             elif isinstance(exc, AdapterError):
                 code, text = exc.code, str(exc)
             elif isinstance(exc, NativeStreamError):
@@ -430,5 +434,6 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
             raise AdapterError(text, code=code, reported_usage=received_usage, finish_reason=received_finish, diagnostics=diag) from None
         finally:
             with self._lock:
+                self._starting.discard(task_id)
                 self._active_responses.pop(task_id, None)
                 self._cancelled.discard(task_id)

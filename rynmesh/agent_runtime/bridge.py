@@ -64,6 +64,7 @@ _PEER_ERROR_MAP = {
     "model_daily_quota_exhausted": "agent_model_quota_exhausted",
     "peer_request_too_large": "agent_model_context_overflow",
     "estimated_context_window_exceeded": "agent_model_context_overflow",
+    "task_cancelled": "agent_cancelled",
 }
 _ADAPTER_ERROR_MAP = {
     "inference_timeout": "agent_inference_timeout",
@@ -83,6 +84,7 @@ _ADAPTER_ERROR_MAP = {
     "model_not_ready": "agent_model_unavailable",
     "model_not_found": "agent_model_unavailable",
     "runtime_unavailable": "agent_model_unavailable",
+    "task_cancelled": "agent_cancelled",
 }
 MODEL_ERROR_CODES = frozenset({
     *_ADAPTER_ERROR_MAP.values(),
@@ -683,6 +685,8 @@ class AgentModelBridge:
                 code = cancellation_reason(cancelled)
             elif expired():
                 code = "agent_inference_timeout"
+            elif exc.code == "task_cancelled":
+                code = cancellation_reason(cancelled)
             if isinstance(exc.reported_usage, dict):
                 err = AgentModelResponseError(exc.reported_usage, exc.finish_reason, code)
             else:
