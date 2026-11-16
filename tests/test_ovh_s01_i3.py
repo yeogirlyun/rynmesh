@@ -118,7 +118,7 @@ def _anthropic_status_server(responses: list[tuple[int, dict[str, str], bytes]])
         # Non-network retryable codes (malformed response / compaction) -> 1
         ("agent_invalid_model_response", {}, 1),
         ("agent_compaction_size_limit", {}, 1),
-        ("agent_compaction_incomplete", {}, 1),
+        ("agent_compaction_incomplete", {}, 2),
     ],
 )
 def test_t1_limit_table_driven(code, diagnostics, expected_limit):

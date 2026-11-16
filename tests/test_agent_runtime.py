@@ -476,7 +476,7 @@ def test_compaction_preserves_owner_constraints_closed_tool_groups_and_original_
     done = runtime.get(row["id"])
     assert done["status"] == "completed"
     assert done["messages"][:-1] == original
-    assert model.calls[0][2] == []  # Summary model has no executable tools.
+    assert model.calls[0][2] != [] and "Do not call tools" in model.calls[0][1][-1]["content"]
     projected = model.calls[1][1]
     owner_messages = [item["content"] for item in projected if item["role"] == "user"]
     assert "Inspect A. Never change B." in owner_messages

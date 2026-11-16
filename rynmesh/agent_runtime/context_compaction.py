@@ -44,6 +44,7 @@ SUFFIX_SHARE = 4
 LARGE_WINDOW_BYTES = 240_000
 SMALL_SUMMARY_CAP = 6000
 LARGE_SUMMARY_CAP = 16000
+MAX_SUMMARY_CAP = 48000
 MIN_SUMMARY_TARGET = 1024
 # Deterministic tool-activity ledger appended to checkpoint notes.
 LEDGER_MAX_BYTES = 3000
@@ -185,7 +186,7 @@ def worthwhile(capacity_bytes: int, projected_after_bytes: int, need_bytes: int)
 
 
 def summary_cap(hard_limit_bytes: int) -> int:
-    return LARGE_SUMMARY_CAP if hard_limit_bytes >= LARGE_WINDOW_BYTES else SMALL_SUMMARY_CAP
+    return max(SMALL_SUMMARY_CAP, min(MAX_SUMMARY_CAP, int(hard_limit_bytes) // 15))
 
 
 def summary_reserve(*, history_space: int, hard_limit_bytes: int, max_output_bytes: int) -> int:

@@ -72,7 +72,8 @@ def _install_auto_responder(model) -> None:
     def dynamic_complete(_model_id, messages, specs, _cancelled, _on_event=None, **_options):
         model.calls.append((_model_id, copy.deepcopy(messages), copy.deepcopy(specs)))
         first_text = str(messages[0].get("content") or "") if messages else ""
-        if "CONTEXT CHECKPOINT COMPACTION" in first_text:
+        last_text = str(messages[-1].get("content") or "") if messages else ""
+        if "CONTEXT CHECKPOINT COMPACTION" in first_text or "Server compaction request:" in last_text:
             return assistant(
                 "Goal: preserve active requirements from earlier owner messages.\n"
                 "Next: answer the latest owner request."
@@ -308,13 +309,21 @@ def test_t6_earlier_middle_owner_messages_only_appear_in_compaction_summary_inpu
     summary_calls = [
         msgs
         for _, msgs, _ in model.calls
-        if msgs and "CONTEXT CHECKPOINT COMPACTION" in str(msgs[0].get("content") or "")
+        if msgs
+        and (
+            "CONTEXT CHECKPOINT COMPACTION" in str(msgs[0].get("content") or "")
+            or "Server compaction request:" in str(msgs[-1].get("content") or "")
+        )
     ]
     assert summary_calls, "expected at least one compaction summary call"
-    summary_system = summary_calls[0][0]["content"]
-    assert "Goal" in summary_system
-    assert "not retained verbatim" in summary_system.lower() or "earlier owner messages" in summary_system.lower()
-    assert any(early_marker in str(msgs[-1].get("content") or "") for msgs in summary_calls)
+    summary_prompt = (
+        summary_calls[0][-1]["content"]
+        if "Server compaction request:" in str(summary_calls[0][-1].get("content") or "")
+        else summary_calls[0][0]["content"]
+    )
+    assert "Goal" in summary_prompt
+    assert "not retained verbatim" in summary_prompt.lower() or "earlier owner messages" in summary_prompt.lower()
+    assert any(early_marker in encoded(msgs).decode("utf-8") for msgs in summary_calls)
 
     _, final_main_msgs, _ = model.calls[-1]
     serialized_final = encoded(final_main_msgs).decode("utf-8")
