@@ -527,6 +527,13 @@ async fn stream_url_to_part(
     Ok(hex_lower(&hasher.finalize()[..]))
 }
 
+fn ensure_rustls_crypto_provider() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
+
 async fn download_candidates_to_cache(
     candidates: &[Url],
     cache_file: &Path,
@@ -535,6 +542,7 @@ async fn download_candidates_to_cache(
     mut on_progress: impl FnMut(u64, Option<u64>),
     mut verify_signature: impl FnMut(&[u8]) -> Result<(), String>,
 ) -> Result<(), String> {
+    ensure_rustls_crypto_provider();
     let mut builder = reqwest::Client::builder();
     if candidates
         .iter()
@@ -805,6 +813,7 @@ fn updated_from(previous: Option<&str>, current: &str) -> Option<String> {
 }
 
 pub fn initialize(app: &tauri::AppHandle) {
+    ensure_rustls_crypto_provider();
     let mut preferences = read_preferences(app);
     let current = app.package_info().version.to_string();
     let from = updated_from(preferences.last_version.as_deref(), &current);
@@ -1179,6 +1188,7 @@ mod tests {
             let _ = s1.write_all(head1.as_bytes());
             let _ = s1.write_all(&server_payload[..cut]);
             let _ = s1.flush();
+            let _ = s1.shutdown(std::net::Shutdown::Write);
             drop(s1);
 
             let (mut s2, _) = listener.accept().unwrap();
@@ -1287,12 +1297,13 @@ mod tests {
 
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
         let server = std::thread::spawn(move || {
             let (mut s, _) = listener.accept().unwrap();
             let _ = read_http_headers(&mut s);
             let _ = s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1024\r\n\r\n0123456789abcdef");
             let _ = s.flush();
-            std::thread::sleep(Duration::from_millis(250));
+            let _ = done_rx.recv_timeout(Duration::from_secs(2));
         });
 
         let pkg_url = url(&format!("http://{addr}/Ryn-0.9.2.exe"));
@@ -1300,13 +1311,14 @@ mod tests {
             std::slice::from_ref(&pkg_url),
             &cache_file,
             "0.9.2",
-            Duration::from_millis(50),
+            Duration::from_millis(150),
             |_, _| {},
             |_| Ok(()),
         )
         .await
         .unwrap_err();
 
+        let _ = done_tx.send(());
         let _ = server.join();
         assert_eq!(err, "update_download_idle_timeout");
         assert!(!cache_file.exists());

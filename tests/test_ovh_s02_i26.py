@@ -36,7 +36,10 @@ def test_t3_t4_streaming_range_resume_and_200_truncate_wired():
     updates_src = UPDATES_RS.read_text(encoding="utf-8")
 
     assert "reqwest" in cargo_toml
+    assert "rustls" in cargo_toml and '"ring"' in cargo_toml
     assert 'name = "aws-lc-rs"' not in cargo_lock
+    assert "rustls::crypto::ring::default_provider().install_default()" in updates_src
+    assert "ensure_rustls_crypto_provider();" in updates_src
     assert "attempt.download(" not in updates_src
     assert "update.download(" not in updates_src
     assert "bytes=" in updates_src

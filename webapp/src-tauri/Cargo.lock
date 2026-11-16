@@ -75,6 +75,7 @@ dependencies = [
  "png 0.17.16",
  "reqwest",
  "rfd 0.15.4",
+ "rustls",
  "serde",
  "serde_json",
  "sha2",
