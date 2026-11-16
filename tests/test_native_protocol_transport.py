@@ -136,9 +136,17 @@ def test_callback_error_no_retry_or_secret_exception():
 def test_cancel_before_dispatch_is_not_a_paid_request():
     with endpoint([]) as (url, requests):
         adapter = NativeProtocolAdapter(protocol="anthropic_messages", base_url=url, api_prefix="", model="test-model")
-        adapter.cancel("cancel-me")
-        with pytest.raises(AdapterError, match="task_cancelled"):
+        orig_scope = adapter._scope
+
+        def cancel_while_starting():
+            res = orig_scope()
+            assert adapter.cancel("cancel-me") is True
+            return res
+
+        adapter._scope = cancel_while_starting
+        with pytest.raises(AdapterError, match="task_cancelled") as caught:
             adapter.chat({"messages": [{"role": "user", "content": "go"}]}, task_id="cancel-me", timeout_s=3)
+        assert caught.value.code == "task_cancelled"
         assert requests == []
 
 
