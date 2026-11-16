@@ -78,7 +78,7 @@ def test_listing_comes_from_receipts_and_ranks_files_the_answer_names(tmp_path):
     # The inspection covered version 1 only, so the current version is not marked as checked.
     assert "render_inspected" not in pelican
     # Named in prose without any receipt: reported, never presented as a file.
-    assert listing["unbacked_mentions"] == []
+    assert listing["unbacked_mentions"] == ["ghost.svg"]
     assert all(item["name"] not in {"secret.txt", "outside.svg", "render_check.py", "lost.svg"} for item in listing["files"])
 
 
