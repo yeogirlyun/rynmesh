@@ -4,6 +4,7 @@ from __future__ import annotations
 import atexit
 import codecs
 import collections
+import locale
 import math
 import os
 import re
@@ -59,6 +60,49 @@ LOST_PROCESS_CORRECTION = (
     "Ryn may have restarted since this process was started; background processes do not survive a restart. "
     "Re-run the command if it is still needed, and do not read this process_id again."
 )
+
+
+def _windows_fallback_encoding() -> str:
+    preferred = (locale.getpreferredencoding(False) or "").strip().lower()
+    if preferred in {"", "utf-8", "utf8", "cp65001"} and hasattr(locale, "getencoding"):
+        preferred = (locale.getencoding() or "").strip().lower()
+    if preferred in {"", "utf-8", "utf8", "cp65001"}:
+        return "utf-8"
+    try:
+        codecs.lookup(preferred)
+        return preferred
+    except LookupError:
+        return "utf-8"
+
+
+class OutputDecoder:
+    """Incremental strict UTF-8 decoder with sticky Windows code-page fallback."""
+
+    def __init__(self) -> None:
+        self.encoding = "utf-8"
+        self._switched = False
+        self._decoder = codecs.getincrementaldecoder("utf-8")(errors="strict")
+
+    def decode(self, data: bytes, final: bool = False) -> str:
+        if self._switched:
+            return self._decoder.decode(data, final=final)
+        pending = self._decoder.getstate()[0]
+        try:
+            return self._decoder.decode(data, final=final)
+        except UnicodeDecodeError:
+            raw = pending + data
+            try:
+                raw.decode("utf-8", errors="strict")
+                split_at = len(raw)
+            except UnicodeDecodeError as raw_exc:
+                split_at = raw_exc.start
+            prefix = raw[:split_at].decode("utf-8")
+            remainder = raw[split_at:]
+            target = _windows_fallback_encoding() if os.name == "nt" else "utf-8"
+            self.encoding = target
+            self._switched = True
+            self._decoder = codecs.getincrementaldecoder(target)(errors="replace")
+            return prefix + self._decoder.decode(remainder, final=final)
 
 
 def _append_output(item: dict, text: str) -> None:
@@ -341,6 +385,8 @@ def child_environment(*, task_id: str | None = None, tty: bool = False) -> dict[
         ("GIT_PAGER", "cat"),
         ("GH_PAGER", "cat"),
         ("NO_COLOR", "1"),
+        ("PYTHONUTF8", "1"),
+        ("PYTHONIOENCODING", "utf-8"),
         ("RYN_VERSION", __version__),
     ):
         _set_env_case_aware(env, fixed_key, fixed_val)
@@ -497,7 +543,7 @@ class Processes:
                     process.wait(timeout=5)
                     raise
             ident = "process_" + uuid.uuid4().hex
-            decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+            decoder = OutputDecoder()
             started_mono = time.monotonic()
             item = {"process": process, "task_id": task_id, "operation_id": operation_id,
                     "timeout": timeout, "started_at": started_mono, "last_read_at": started_mono, "ended_at": None,
@@ -730,8 +776,10 @@ class Processes:
                         else:
                             item["last_empty_offset"] = None
                             item["empty_poll_count"] = 0
+                    output_encoding = getattr(item.get("decoder"), "encoding", None) or "utf-8"
                     payload = {"process_id": ident, "running": running,
                                "exit_code": exit_code, "output": text,
+                               "output_encoding": output_encoding,
                                "next_offset": end if end < total_chars else None, "output_length": total_chars,
                                "dropped_chars": dropped, "truncated": dropped > 0, "stop_reason": stop_reason,
                                "empty_poll_count": int(item.get("empty_poll_count", 0))}
