@@ -175,6 +175,8 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
         last_byte = started
         is_sse = False
         received_usage = received_finish = received_cached = received_cache_creation = None
+        request_diagnostics: dict[str, int] = {}
+        ignored_bad_frames = 0
         phase = "request"
         decoder = None
 
@@ -217,6 +219,7 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
             path = "/v1/responses" if self.protocol == "openai_responses" else "/v1/messages"
             for cache_attempt in range(2):
                 phase = "request"
+                request_diagnostics = {}
                 try:
                     payload = make_request(
                         {**self.request_defaults, **validated},
@@ -224,6 +227,7 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                         self.model,
                         scope,
                         prompt_cache=effective_prompt_cache,
+                        diagnostics=request_diagnostics,
                     )
                 except (ValueError, TypeError, KeyError):
                     # Unsupported features are rejected before egress. Never use
@@ -290,15 +294,24 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                     decoder = StreamDecoder(self.protocol, self.model, scope)
                     # SSE permits multiple data lines and comments. A blank
                     # line closes a frame; socket EOF is never a success marker.
-                    total = frame_size = 0
+                    total = frame_size = consecutive_bad_frames = 0
                     data = []
 
                     def frame():
                         nonlocal received_usage, received_finish, received_cached, received_cache_creation
+                        nonlocal consecutive_bad_frames, ignored_bad_frames
                         value = "\n".join(data)
                         if value == "[DONE]":
                             return
-                        event = json.loads(value)
+                        try:
+                            event = json.loads(value)
+                        except ValueError:
+                            consecutive_bad_frames += 1
+                            ignored_bad_frames += 1
+                            if consecutive_bad_frames >= 3:
+                                raise
+                            return
+                        consecutive_bad_frames = 0
                         chunks = decoder.feed(event)
                         received_usage = _openai_usage(decoder.usage)
                         received_cached = decoder.cached_tokens
@@ -333,6 +346,8 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                                 frame()
                             data = []
                             frame_size = 0
+                            if decoder._final is not None:
+                                break
                         elif line.startswith("data:"):
                             data.append(line[5:].removeprefix(" "))
                     if decoder._final is None and not decoder._failed:
@@ -349,6 +364,11 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
             if received_finish != "content_filter" and not message.get("content") and not message.get("tool_calls"):
                 raise ValueError("empty completion")
             duration = int((time.monotonic() - started) * 1000)
+            response_diagnostics = dict(request_diagnostics)
+            if decoder is not None:
+                ignored_total = decoder.ignored_events + ignored_bad_frames
+                if ignored_total > 0:
+                    response_diagnostics["ignored_stream_events"] = ignored_total
             with self._lock:
                 self._metrics.requests += 1
                 self._metrics.input_tokens += received_usage["input_tokens"] or 0
@@ -360,6 +380,7 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                     "reported_usage": received_usage,
                     **({"cached_tokens": received_cached} if received_cached is not None else {}),
                     **({"cache_creation_input_tokens": received_cache_creation} if received_cache_creation is not None else {}),
+                    **({"diagnostics": response_diagnostics} if response_diagnostics else {}),
                     "duration_ms": duration}
         except DataReleaseError:
             raise
