@@ -373,3 +373,78 @@ def test_t9_recently_written_file_within_two_seconds_is_not_cached(tmp_path: Pat
     assert open_count == 2
     stat = target.stat()
     assert (str(target.resolve()), stat.st_size, stat.st_mtime_ns) not in workspace_artifacts._DIGEST_CACHE
+
+
+def test_t10_mentioned_executed_script_is_visible_while_unmentioned_stays_helper(tmp_path: Path) -> None:
+    """Rework test: when the answer names script.py, it is classified as deliverable/supporting (visible in results); when unnamed, it stays helper."""
+    script = tmp_path / "script.py"
+    report = tmp_path / "report.md"
+    script.write_text("print('ok')\n", encoding="utf-8")
+    report.write_text("# Report\n", encoding="utf-8")
+
+    # 1. User asked for script.py (only file, executed to verify, named in answer) -> deliverable (not helper)
+    only_script_row = {
+        "id": "task-t10-only-script",
+        "local_execution": {"workspace_root": str(tmp_path)},
+        "receipts": [
+            _receipt(
+                "op1",
+                "ryn_file_write",
+                {"path": "script.py"},
+                {"path": str(script), "sha256": _sha(script.read_bytes()), "bytes": script.stat().st_size, "written": True},
+            ),
+            _receipt(
+                "op2",
+                "ryn_shell_execute",
+                {"command": "python script.py"},
+                {"running": False, "exit_code": 0, "workspace_files": []},
+            ),
+        ],
+        "result": "已编写并验证 script.py。",
+        "messages": [],
+    }
+    listed_only = {item["name"]: item for item in workspace_artifacts.listing(only_script_row)["files"]}
+    assert listed_only["script.py"]["mentioned_in_answer"] is True
+    assert listed_only["script.py"]["role"] == "deliverable"
+
+    # 2. Both report.md and script.py named in answer -> script.py is supporting (not helper)
+    both_named_row = {
+        "id": "task-t10-both-named",
+        "local_execution": {"workspace_root": str(tmp_path)},
+        "receipts": [
+            _receipt(
+                "op1",
+                "ryn_file_write",
+                {"path": "script.py"},
+                {"path": str(script), "sha256": _sha(script.read_bytes()), "bytes": script.stat().st_size, "written": True},
+            ),
+            _receipt(
+                "op2",
+                "ryn_shell_execute",
+                {"command": "python script.py"},
+                {"running": False, "exit_code": 0, "workspace_files": []},
+            ),
+            _receipt(
+                "op3",
+                "ryn_file_write",
+                {"path": "report.md"},
+                {"path": str(report), "sha256": _sha(report.read_bytes()), "bytes": report.stat().st_size, "written": True},
+            ),
+        ],
+        "result": "已生成 report.md，处理脚本见 script.py。",
+        "messages": [],
+    }
+    listed_both = {item["name"]: item for item in workspace_artifacts.listing(both_named_row)["files"]}
+    assert listed_both["report.md"]["role"] == "deliverable"
+    assert listed_both["script.py"]["mentioned_in_answer"] is True
+    assert listed_both["script.py"]["role"] == "supporting"
+
+    # 3. Answer does NOT name script.py -> script.py stays helper
+    unmentioned_row = {
+        **both_named_row,
+        "id": "task-t10-unmentioned",
+        "result": "已生成 report.md。",
+    }
+    listed_unmentioned = {item["name"]: item for item in workspace_artifacts.listing(unmentioned_row)["files"]}
+    assert listed_unmentioned["script.py"]["mentioned_in_answer"] is False
+    assert listed_unmentioned["script.py"]["role"] == "helper"

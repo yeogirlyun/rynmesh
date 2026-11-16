@@ -519,7 +519,12 @@ def listing(row) -> dict:
         if item["source"] == "computer_observation":
             item["role"] = "supporting"
             continue
-        if is_helper and item["created_by_task"] and _executed_by_shell(item["name"], item["path"], shell_commands):
+        if (
+            is_helper
+            and item["created_by_task"]
+            and not item["mentioned_in_answer"]
+            and _executed_by_shell(item["name"], item["path"], shell_commands)
+        ):
             item["role"] = "helper"
             continue
         if is_helper and (item["source"] == "command" or has_non_helper or item not in named):
