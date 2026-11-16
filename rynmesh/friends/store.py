@@ -5,6 +5,8 @@ import os
 import threading
 from contextlib import contextmanager
 from copy import deepcopy
+from datetime import UTC, datetime
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +16,30 @@ from rynmesh.file_transactions import file_transaction
 
 _LOCKS_GUARD = threading.Lock()
 _PROCESS_LOCKS: dict[str, threading.RLock] = {}
+NONCE_LIMIT = 4096
+
+
+class NonceStatus(str, Enum):
+    ACCEPTED = "accepted"
+    REPLAY = "replay"
+    RATE_LIMITED = "rate_limited"
+
+    def __bool__(self) -> bool:
+        return self is NonceStatus.ACCEPTED
+
+
+def _is_card_evictable(row: dict[str, Any], now_iso: str) -> bool:
+    if not isinstance(row, dict):
+        return False
+    expires_at = row.get("expires_at")
+    if (isinstance(expires_at, str) and expires_at and expires_at <= now_iso) or row.get("delivery_state") == "expired":
+        return True
+    has_downloaded = row.get("fetch_state") == "fetched" or row.get("downloaded") is True
+    if "read" in row or "read_at" in row:
+        is_read = row.get("read") is True or bool(row.get("read_at"))
+    else:
+        is_read = row.get("fetch_state") == "fetched"
+    return bool(is_read and has_downloaded)
 
 
 class FriendStore:
@@ -22,6 +48,7 @@ class FriendStore:
     def __init__(self, home: str | Path) -> None:
         self.root = Path(home) / "friends"
         self.state_path = self.root / "state.json"
+        self.nonces_path = self.root / "nonces.json"
         self.secrets_path = self.root / "secrets.json"
         key = str(self.root.resolve())
         with _LOCKS_GUARD:
@@ -71,6 +98,22 @@ class FriendStore:
         return {"version": "ryn.friends.v2", "invites": {}, "relationships": {},
                 "nonces": {}, "cards": {}, "secrets": {}}
 
+    def _read_nonces_unlocked(self, legacy_nonces: dict[str, Any] | None = None) -> dict[str, Any]:
+        merged = deepcopy(legacy_nonces) if isinstance(legacy_nonces, dict) else {}
+        if self.nonces_path.exists():
+            stored = read_json(self.nonces_path)
+            if not isinstance(stored, dict):
+                raise ValueError("friend_store_invalid")
+            merged.update(stored)
+        return merged
+
+    def _write_nonces_unlocked(self, nonces_map: dict[str, Any]) -> None:
+        atomic_write_json(self.nonces_path, nonces_map, ensure_ascii=False)
+
+    def _write_nonces(self, nonces_map: dict[str, Any]) -> None:
+        with self._guard():
+            self._write_nonces_unlocked(nonces_map)
+
     def _read(self, path: Path, fallback: dict[str, Any]) -> dict[str, Any]:
         value = read_json(path) if path.exists() else deepcopy(fallback)
         if not isinstance(value, dict):
@@ -82,6 +125,8 @@ class FriendStore:
             value.setdefault(key, {})
             if not isinstance(value[key], dict):
                 raise ValueError("friend_store_invalid")
+        if path == self.state_path and self.nonces_path.exists():
+            value["nonces"] = self._read_nonces_unlocked(value.get("nonces"))
         if version is None:
             # Merge the old two-file state once, after backing up both. Every
             # later acceptance/revocation commits credentials and state together.
@@ -177,7 +222,10 @@ class FriendStore:
     def patch_invite(self, invite_id: str, updates: dict) -> None:
         with self._guard():
             state = self._read(self.state_path, self._empty())
-            state['invites'][invite_id].update(updates)
+            invite = state["invites"].get(invite_id)
+            if not isinstance(invite, dict):
+                raise ValueError("invite_not_found")
+            invite.update(updates)
             self._write(self.state_path, state)
 
     def consume_invite(self, invite_id: str, secret_hash: str, now_iso: str) -> bool:
@@ -346,28 +394,44 @@ class FriendStore:
                 secrets.pop(f"revocation:{relationship_id}", None)
             self._write(self.state_path, state)
 
-    def remember_nonce(self, relationship_id: str, nonce: str, *, now: int, timestamp: int, limit: int = 512) -> bool:
+    def remember_nonce(
+        self, relationship_id: str, nonce: str, *, now: int, timestamp: int, limit: int = NONCE_LIMIT
+    ) -> NonceStatus:
         with self._guard():
-            state = self._read(self.state_path, self._empty())
-            previous = state["nonces"].get(relationship_id, {})
+            legacy_nonces: dict[str, Any] | None = None
+            if not self.nonces_path.exists() and self.state_path.exists():
+                raw_state = read_json(self.state_path)
+                if isinstance(raw_state, dict) and isinstance(raw_state.get("nonces"), dict):
+                    legacy_nonces = raw_state["nonces"]
+            all_nonces = self._read_nonces_unlocked(legacy_nonces)
+            previous = all_nonces.get(relationship_id, {})
             # Retain legacy entries for a full request window during migration.
             if isinstance(previous, list):
                 previous = dict.fromkeys(previous, now + 120)
             seen = {key: expires for key, expires in previous.items() if expires >= now}
-            if nonce in seen or len(seen) >= limit:
-                return False
+            if nonce in seen:
+                if seen != previous:
+                    all_nonces[relationship_id] = seen
+                    self._write_nonces_unlocked(all_nonces)
+                return NonceStatus.REPLAY
+            if len(seen) >= limit:
+                if seen != previous:
+                    all_nonces[relationship_id] = seen
+                    self._write_nonces_unlocked(all_nonces)
+                return NonceStatus.RATE_LIMITED
             seen[nonce] = timestamp + 120
-            state["nonces"][relationship_id] = seen
-            self._write(self.state_path, state)
-            return True
+            all_nonces[relationship_id] = seen
+            self._write_nonces_unlocked(all_nonces)
+            return NonceStatus.ACCEPTED
 
-    def put_card(self, record: dict[str, Any], *, limit: int = 500) -> None:
+    def put_card(self, record: dict[str, Any], *, limit: int = 500, now_iso: str | None = None) -> int:
         card_id = str(record.get("card_id", ""))
         if not card_id:
             raise ValueError("friend_card_id_required")
+        effective_now = now_iso or datetime.now(UTC).isoformat()
         with self._guard():
             state = self._read(self.state_path, self._empty())
-            from .card_cleanup import erased
+            from .card_cleanup import erased, mark_auto_erased
             if erased(state, card_id):
                 raise ValueError('friend_card_erased')
             cards = state.setdefault("cards", {})
@@ -375,11 +439,28 @@ class FriendStore:
             if prior is not None:
                 if any(prior.get(key) != record.get(key) for key in ("from", "to", "dir", "relationship_id", "card", "request_sha256")):
                     raise ValueError("friend_card_id_conflict")
-                return  # A duplicate must not reset downloaded content or delivery state.
+                return 0  # A duplicate must not reset downloaded content or delivery state.
+            evicted_ids: list[str] = []
+            if len(cards) >= limit:
+                needed = len(cards) - limit + 1
+                candidates = sorted(
+                    ((cid, row) for cid, row in cards.items() if _is_card_evictable(row, effective_now)),
+                    key=lambda pair: (str(pair[1].get("created_at", "")), str(pair[0])),
+                )
+                to_evict = [cid for cid, _ in candidates[: max(0, needed)]]
+                evicted_ids = mark_auto_erased(state, to_evict)
+                for cid in evicted_ids:
+                    cards.pop(cid, None)
             if len(cards) >= limit:
                 raise ValueError("friend_card_capacity_exhausted")
             cards[card_id] = deepcopy(record)
             self._write(self.state_path, state)
+            return len(evicted_ids)
+
+    def auto_cleaned_cards_count(self) -> int:
+        from .card_cleanup import auto_cleaned_count
+        with self._guard():
+            return auto_cleaned_count(self._read(self.state_path, self._empty()))
 
     def card_erased(self, card_id: str) -> bool:
         from .card_cleanup import erased

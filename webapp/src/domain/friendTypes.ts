@@ -4,6 +4,7 @@ export interface FriendRecord {
   node_name: string;
   endpoint: string;
   permissions: string[];
+  ignored_permissions?: string[];
   status: "active" | "revoked";
   created_at: string;
   revoked_at?: string;
@@ -21,6 +22,7 @@ export interface FriendInvitePreview {
   node_name: string;
   endpoint: string;
   permissions: string[];
+  ignored_permissions?: string[];
   created_at: string;
   expires_at: string;
   endpoints?: string[];

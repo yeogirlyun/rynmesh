@@ -53,6 +53,7 @@ SAFE_ERRORS = {
     "library_cleanup_pending", "library_cleanup_review_changed", "library_cleanup_files_changed",
     "library_cleanup_not_found", "library_cleanup_limit", "library_cleanup_backup_failed",
     "friend_probe_busy", "friend_probe_selection_invalid",
+    "friend_clock_skew", "friend_rate_limited",
 }
 
 
@@ -121,8 +122,27 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
             return await asyncio.to_thread(method, *args, **kwargs)
         except (FriendError, FriendCryptoError, ValueError, OSError) as exc:
             code = str(exc)
+            if code == "invite_not_found":
+                raise HTTPException(404, detail="invite_not_found") from None
+            if code == "friend_rate_limited":
+                raise HTTPException(429, detail="friend_rate_limited") from None
             raise HTTPException(409 if code in SAFE_ERRORS else 503,
                                 detail=code if code in SAFE_ERRORS else "friend_operation_unavailable") from None
+
+    def _peer_auth_error_response(exc: BaseException) -> Response | None:
+        if isinstance(exc, FriendError):
+            code = str(exc)
+            if code == "friend_rate_limited":
+                raise HTTPException(429, detail="friend_rate_limited") from None
+            if code == "friend_clock_skew":
+                st = exc.server_time if exc.server_time is not None else int(current().clock().timestamp())
+                return Response(
+                    json.dumps({"detail": "friend_clock_skew", "error": "friend_clock_skew", "server_time": st}),
+                    status_code=409,
+                    media_type="application/json",
+                    headers={"X-Ryn-Server-Time": str(int(st))},
+                )
+        return None
 
     if getattr(app.state, "mailbox", None):
         wire_mailbox(mailbox=app.state.mailbox, service=current)
@@ -178,7 +198,12 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
         body = await _body(request, 2048)
         try:
             return await asyncio.to_thread(respond, current(), body, request.headers)
-        except (FriendError, FriendCryptoError, KeyError, TypeError, ValueError, OSError):
+        except HTTPException:
+            raise
+        except (FriendError, FriendCryptoError, KeyError, TypeError, ValueError, OSError) as exc:
+            peer_resp = _peer_auth_error_response(exc)
+            if peer_resp is not None:
+                return peer_resp
             raise HTTPException(403, detail='friend_request_rejected') from None
 
     @app.get("/api/local/friends/capabilities")
@@ -344,7 +369,10 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
     @app.get("/api/local/friends/cards")
     async def cards(request: Request):
         control(request)
-        return {"cards": await call(visible_cards)}
+        return {
+            "cards": await call(visible_cards),
+            "auto_cleaned_cards": await call(current().store.auto_cleaned_cards_count),
+        }
 
     def visible_cards():
         rows = current().content_cards()
@@ -447,7 +475,12 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
         try:
             relationship = await asyncio.to_thread(current().verify_request, path="/api/peer/friends/content-card/fetch", body=canonical_json(body), headers=request.headers)
             return await asyncio.to_thread(current().serve_content_card, body, relationship)
-        except (FriendError, ValueError, OSError):
+        except HTTPException:
+            raise
+        except (FriendError, ValueError, OSError) as exc:
+            peer_resp = _peer_auth_error_response(exc)
+            if peer_resp is not None:
+                return peer_resp
             raise HTTPException(403, detail="friend_request_rejected") from None
 
     @app.get("/api/local/friends/{peer_id:path}/attachments/{message_id}")
@@ -521,7 +554,12 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
                 await asyncio.to_thread(current().verify_request, path=path, body=canonical_json(body), headers=request.headers)
                 await asyncio.to_thread(current().receive_message if operation == "message" else current().receive_content_card, body)
             return current().delivery_receipt(path, body)
-        except Exception:
+        except HTTPException:
+            raise
+        except Exception as exc:
+            peer_resp = _peer_auth_error_response(exc)
+            if peer_resp is not None:
+                return peer_resp
             raise HTTPException(403, detail="friend_request_rejected") from None
 
     return service

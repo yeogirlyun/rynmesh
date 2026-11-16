@@ -38,6 +38,7 @@ export default function FriendCards({ friends = [], focusCard, friend, onLoaded 
   useUILanguage();
   const { client, confirm } = useAppContext();
   const [cards, setCards] = useState<FriendContentCard[]>([]);
+  const [autoCleaned, setAutoCleaned] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
@@ -55,7 +56,7 @@ export default function FriendCards({ friends = [], focusCard, friend, onLoaded 
     const version = ++loadVersion.current;
     const result = await friendsApi.cards();
     if (version !== loadVersion.current) return;
-    setCards(result.cards); setLoaded(true); setLoadError(""); report.current?.(result.cards);
+    setCards(result.cards); setAutoCleaned(result.auto_cleaned_cards ?? 0); setLoaded(true); setLoadError(""); report.current?.(result.cards);
   };
   useEffect(() => {
     let active = true, running = false;
@@ -63,7 +64,7 @@ export default function FriendCards({ friends = [], focusCard, friend, onLoaded 
       if (running) return;
       running = true;
       const version = ++loadVersion.current;
-      try { const result = await friendsApi.cards(); if (active && version === loadVersion.current) { setCards(result.cards); setLoaded(true); setLoadError(""); report.current?.(result.cards); } }
+      try { const result = await friendsApi.cards(); if (active && version === loadVersion.current) { setCards(result.cards); setAutoCleaned(result.auto_cleaned_cards ?? 0); setLoaded(true); setLoadError(""); report.current?.(result.cards); } }
       catch { if (active && version === loadVersion.current) setLoadError(tr("Could not refresh shared content. Retry when the node is available.")); }
       finally { running = false; }
     };
@@ -90,6 +91,7 @@ export default function FriendCards({ friends = [], focusCard, friend, onLoaded 
       <button type="button" className="rf-ib rf-ib-sm" aria-label={tr("Refresh shared content")} title={tr("Refresh shared content")} disabled={busy} onClick={() => void act(refresh)}><RefreshCw size={14} strokeWidth={1.7} aria-hidden="true" /></button>
     </div>
     {error || loadError ? <p className="rq-banner rq-banner-bad" role="alert">{error || loadError}</p> : null}
+    {autoCleaned > 0 ? <p className="rq-banner" role="status">{tr("已自动清理 {{count}} 张旧卡片", { count: autoCleaned })}</p> : null}
     {!loaded ? <p className="rq-loading">{tr("Loading shared content…")}</p> : !shown.length ? <p className="rq-none-text">{tr("No shared content yet. Open an article and choose Share with a friend.")}</p> : shown.map((card) => {
       const out = card.dir === "out";
       const sender = friends.find((candidate) => candidate.peer_id === card.from)?.node_name ?? tr("a friend");
