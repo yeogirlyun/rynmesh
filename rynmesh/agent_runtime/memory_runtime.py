@@ -702,56 +702,81 @@ def verify_proposal_grounding_in_owner_message(proposal_text: str, owner_content
     return True
 
 
-def _derive_new_explicit_entry_exposure_policy(data: dict[str, Any]) -> dict[str, Any]:
-    """Derive initial entry exposure policy for a new explicit-owner fact from settings.default_exposure (fail-closed to local_only)."""
-    mem = data.get("memory") if isinstance(data, dict) else None
+def _verified_task_destination(row: dict[str, Any] | None) -> dict[str, str] | None:
+    if not isinstance(row, dict):
+        return None
+    raw_dest = row.get("model_destination")
+    if not isinstance(raw_dest, dict):
+        return None
+    norm = memory.normalize_destination(raw_dest)
+    if (
+        norm
+        and norm.get("catalog_model_id")
+        and norm.get("provider_peer_id")
+        and norm.get("destination_revision")
+    ):
+        return norm
+    return None
+
+
+def _derive_new_explicit_entry_exposure_policy(
+    data: dict[str, Any],
+    row: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Derive initial entry exposure policy for a new explicit-owner fact from settings.default_exposure or verified task destination."""
+    mem = memory.read_memory_state(data) if isinstance(data, dict) else None
     settings = mem.get("settings") if isinstance(mem, dict) else None
     default_exp = settings.get("default_exposure") if isinstance(settings, dict) else None
     if not isinstance(default_exp, dict):
+        task_dest = _verified_task_destination(row)
+        if task_dest is not None:
+            return {"mode": "destinations", "allowed_destinations": [task_dest]}
         return {"mode": "local_only", "allowed_destinations": []}
     mode = default_exp.get("mode")
     if not isinstance(mode, str) or mode.strip() not in {"destination", "selected_models"}:
         return {"mode": "local_only", "allowed_destinations": []}
     raw_dests = default_exp.get("allowed_destinations")
-    if not isinstance(raw_dests, list) or not raw_dests:
-        return {"mode": "local_only", "allowed_destinations": []}
     valid_dests: list[dict[str, str]] = []
-    for item in raw_dests:
-        if not isinstance(item, dict):
-            continue
-        cat_id = item.get("catalog_model_id")
-        peer_id = item.get("provider_peer_id")
-        src_id = item.get("source_id", "")
-        rev = item.get("destination_revision")
-        if (
-            not isinstance(cat_id, str)
-            or not cat_id.strip()
-            or not isinstance(peer_id, str)
-            or not peer_id.strip()
-            or not isinstance(src_id, str)
-            or not isinstance(rev, str)
-            or not rev.strip()
-        ):
-            continue
-        norm = memory.normalize_destination(
-            {
-                "catalog_model_id": cat_id.strip(),
-                "provider_peer_id": peer_id.strip(),
-                "source_id": src_id.strip(),
-                "destination_revision": rev.strip(),
-            }
-        )
-        if (
-            norm
-            and norm.get("catalog_model_id")
-            and norm.get("provider_peer_id")
-            and norm.get("destination_revision")
-            and norm not in valid_dests
-        ):
-            valid_dests.append(norm)
-    if not valid_dests:
-        return {"mode": "local_only", "allowed_destinations": []}
-    return {"mode": "destinations", "allowed_destinations": valid_dests}
+    if isinstance(raw_dests, list) and raw_dests:
+        for item in raw_dests:
+            if not isinstance(item, dict):
+                continue
+            cat_id = item.get("catalog_model_id")
+            peer_id = item.get("provider_peer_id")
+            src_id = item.get("source_id", "")
+            rev = item.get("destination_revision")
+            if (
+                not isinstance(cat_id, str)
+                or not cat_id.strip()
+                or not isinstance(peer_id, str)
+                or not peer_id.strip()
+                or not isinstance(src_id, str)
+                or not isinstance(rev, str)
+                or not rev.strip()
+            ):
+                continue
+            norm = memory.normalize_destination(
+                {
+                    "catalog_model_id": cat_id.strip(),
+                    "provider_peer_id": peer_id.strip(),
+                    "source_id": src_id.strip(),
+                    "destination_revision": rev.strip(),
+                }
+            )
+            if (
+                norm
+                and norm.get("catalog_model_id")
+                and norm.get("provider_peer_id")
+                and norm.get("destination_revision")
+                and norm not in valid_dests
+            ):
+                valid_dests.append(norm)
+    if valid_dests:
+        return {"mode": "destinations", "allowed_destinations": valid_dests}
+    task_dest = _verified_task_destination(row)
+    if task_dest is not None:
+        return {"mode": "destinations", "allowed_destinations": [task_dest]}
+    return {"mode": "local_only", "allowed_destinations": []}
 
 
 def _build_explicit_owner_upsert_payload(
@@ -763,6 +788,7 @@ def _build_explicit_owner_upsert_payload(
     text: str,
     sources: list[dict[str, Any]],
     keywords: list[str] | None = None,
+    row: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble explicit-owner upsert payload, deriving exposure_policy only when no active matching slot exists."""
     norm_scope = memory.normalize_scope(scope or {"kind": "personal"})
@@ -787,7 +813,7 @@ def _build_explicit_owner_upsert_payload(
     if keywords is not None:
         payload["keywords"] = list(keywords)
     if not has_existing_active:
-        payload["exposure_policy"] = _derive_new_explicit_entry_exposure_policy(data)
+        payload["exposure_policy"] = _derive_new_explicit_entry_exposure_policy(data, row=row)
     return payload
 
 
@@ -835,6 +861,7 @@ def execute_explicit_owner_intent_in_tx(
                             text=op["text"],
                             keywords=op.get("keywords", []),
                             sources=[src_ref],
+                            row=row,
                         ),
                         origin="explicit_owner_chat",
                     )
@@ -847,9 +874,21 @@ def execute_explicit_owner_intent_in_tx(
         errors.append(str(exc))
 
     applied_ok = bool(committed_entries or deleted_ids) and not errors
+    task_dest = _verified_task_destination(row)
+    if not applied_ok:
+        visible_to_model = False
+    elif committed_entries:
+        visible_to_model = any(
+            memory.exposure_allows_destination(entry.get("exposure_policy"), task_dest)
+            for entry in committed_entries
+            if isinstance(entry, dict)
+        )
+    else:
+        visible_to_model = True
     receipt = {
         "applied": applied_ok,
         "saved": applied_ok,
+        "visible_to_model": visible_to_model,
         "intent": analysis["intent"],
         "message_id": target_msg["message_id"],
         "conversation_revision": target_msg["conversation_revision"],
@@ -1225,12 +1264,17 @@ def execute_memory_tool_call_in_tx(
                         text=proposed_text,
                         keywords=final_keywords,
                         sources=[src_ref],
+                        row=row,
                     ),
                     origin="explicit_owner_chat",
                 )
+            task_dest = _verified_task_destination(row)
             receipt = {
                 "saved": True,
                 "applied": True,
+                "visible_to_model": memory.exposure_allows_destination(
+                    res["entry"].get("exposure_policy"), task_dest
+                ),
                 "status": "committed",
                 "operation": operation,
                 "message_id": msg_id,

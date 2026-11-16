@@ -3080,6 +3080,7 @@ def select_memories_for_task(
             "profile_summary": [],
             "navigation_index": [],
             "omitted_count": 0,
+            "excluded_by_exposure": 0,
             "policy_revision": mem["policy_revision"],
             "generation": mem["generation"],
             "reset_epoch": mem["reset_epoch"],
@@ -3107,6 +3108,7 @@ def select_memories_for_task(
     is_automatic_mode = str(settings.get("activation_policy") or "owner_review") == "automatic"
     verified_entries: list[dict[str, Any]] = []
     eligible: list[tuple[float, dict[str, Any]]] = []
+    excluded_by_exposure = 0
     for entry in mem["entries"].values():
         if entry.get("status") != "active":
             continue
@@ -3116,13 +3118,14 @@ def select_memories_for_task(
         if scope.get("kind") == "project":
             if not _project_scope_matches(scope, task_project_id, task_project_gen, require_generation_match=True):
                 continue
-        if not exposure_allows_destination(entry.get("exposure_policy"), task_dest):
-            continue
         sources = entry.get("sources") or []
         task_sources = [s for s in sources if s.get("source_type") == "task_message"]
         if task_sources and entry.get("origin") != "manual":
             if all(not verify_source_ref_against_state(data, s, for_background_job=False, for_active_entry=True)[0] for s in task_sources):
                 continue
+        if not exposure_allows_destination(entry.get("exposure_policy"), task_dest):
+            excluded_by_exposure += 1
+            continue
 
         verified_entries.append(entry)
         if not is_automatic_mode:
@@ -3195,6 +3198,7 @@ def select_memories_for_task(
         "navigation_index": navigation_index,
         "include_navigation": include_nav,
         "omitted_count": max(0, len(eligible) - len(selected)),
+        "excluded_by_exposure": excluded_by_exposure,
         "used_bytes": used_bytes + (nav_bytes if include_nav else 0),
         "max_bytes": max_bytes,
         "policy_revision": mem["policy_revision"],
