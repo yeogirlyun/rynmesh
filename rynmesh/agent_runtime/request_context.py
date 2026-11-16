@@ -145,7 +145,7 @@ def _select_compacted_owner_messages(
 
 
 
-def normalize_history(messages: list[dict]) -> list[dict]:
+def normalize_history(messages: list[dict], repairs: list | None = None) -> list[dict]:
     """Pair tool exchanges on a copy, retaining owner content and local metadata.
 
     A repaired missing output is not an execution receipt. Orphan and duplicate
@@ -166,7 +166,12 @@ def normalize_history(messages: list[dict]) -> list[dict]:
             continue
         ids = [call.get("id") for call in calls]
         if any(not isinstance(call_id, str) or not call_id for call_id in ids) or len(set(ids)) != len(ids):
-            raise ValueError("invalid historical tool call ids")
+            message.pop("tool_calls")
+            if not message.get("content"):
+                message["content"] = "[tool calls with invalid ids omitted]"
+            if repairs is not None:
+                repairs.append({"index": index - 1, "reason": "invalid_tool_call_ids", "calls": len(calls)})
+            ids = []  # Consume adjacent outputs below without projecting any of them.
         epoch = message.get("context_epoch", 0)
         outputs = {}
         while index < len(source) and source[index].get("role") == "tool":
@@ -201,7 +206,8 @@ def _checkpoint_boundary(history, through):
 
 
 def build_context(instructions, history, *, guidance=(), plan=(), checkpoint=None,
-                  checkpoint_note=None, tail=(), owner_budget: int = COMPACT_USER_MESSAGE_MAX_BYTES) -> list[dict]:
+                  checkpoint_note=None, tail=(), owner_budget: int = COMPACT_USER_MESSAGE_MAX_BYTES,
+                  repairs: list | None = None) -> list[dict]:
     """Assemble ordered layers while bounding compacted earlier owner messages.
 
     The caller supplies already scope-filtered history and a server-generated
@@ -211,7 +217,7 @@ def build_context(instructions, history, *, guidance=(), plan=(), checkpoint=Non
     """
     prefix = [*copy.deepcopy(instructions), *copy.deepcopy(guidance), *copy.deepcopy(plan)]
     if checkpoint is None:
-        return [*prefix, *normalize_history(history), *copy.deepcopy(tail)]
+        return [*prefix, *normalize_history(history, repairs=repairs), *copy.deepcopy(tail)]
     through = _checkpoint_boundary(history, checkpoint["through"])
     suffix_has_owner = any(
         isinstance(m, dict)
@@ -229,4 +235,4 @@ def build_context(instructions, history, *, guidance=(), plan=(), checkpoint=Non
     if not isinstance(checkpoint_note, str):
         raise ValueError("context checkpoint note must be text")
     return [*prefix, *owners, {"role": "assistant", "content": checkpoint_note},
-            *normalize_history(history[through:]), *copy.deepcopy(tail)]
+            *normalize_history(history[through:], repairs=repairs), *copy.deepcopy(tail)]

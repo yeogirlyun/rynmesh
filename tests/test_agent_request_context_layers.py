@@ -122,8 +122,8 @@ def test_old_checkpoint_inside_tool_exchange_retains_the_whole_exchange():
 def test_malformed_checkpoint_or_ambiguous_call_ids_are_not_guessed():
     with pytest.raises(ValueError, match="checkpoint"):
         build_context([], [], checkpoint={"through": True, "content": "summary"})
-    with pytest.raises(ValueError, match="call ids"):
-        normalize_history([call("same", "same")])
+    normalized = normalize_history([call("same", "same")])
+    assert normalized == [{"role": "assistant", "content": "[tool calls with invalid ids omitted]", "context_epoch": 0}]
 
 
 def test_control_state_carries_todays_local_date_at_day_precision(monkeypatch):
