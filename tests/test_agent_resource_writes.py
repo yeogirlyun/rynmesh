@@ -65,8 +65,10 @@ def test_confirmed_business_receipt_survives_new_registry_before_agent_receipt(w
     assert queried["outcome"] == "executed" and queried["receipt"]["result"] == result
     assert execute(restarted, context, args) == result
     assert len([e for e in server.audit if e["method"] == "PUT"]) == 1
-    raw = (store.home / "agent/business-operations.json").read_text()
-    assert args["content"] not in raw and "report.md" not in raw and "op-create" not in raw
+    record_files = [p for p in (store.home / "agent/business-operations").glob("*.json") if p.name != "_key_sentinel.json"]
+    assert len(record_files) == 1
+    raw = record_files[0].read_text()
+    assert args["content"] not in raw and "report.md" not in raw and "op-create" not in raw and "op-create" not in record_files[0].name
     checked = restarted.verify(operation(args), [{"verifier": "created_text_file_state"}], context=context, cancelled=lambda: False)
     assert checked["status"] == "passed" and checked["evidence"]["current_state_matches"]
     (root / "allowed/report.md").write_text("Independent later edit", encoding="utf-8")
@@ -171,7 +173,7 @@ def test_near_capacity_reserves_confirmed_receipt_before_any_put(writable, monke
     binding = writes.binding("ryn_create_text_file", args, "op-create", context)
     intent = {"binding": binding, "preview": preview, "status": "intent", "receipt_reserve": 4096}
     # Intent alone would fit. The exact required receipt reservation cannot.
-    monkeypatch.setattr(operation_ledger, "LIMIT", len(encoded({"op-create": intent})) + 4095)
+    monkeypatch.setattr(operation_ledger, "LIMIT", len(encoded(intent)) + 4095)
     with pytest.raises(AgentToolRejected, match="agent_operation_ledger_unavailable"):
         execute(tools, context, args)
     assert not any(e["method"] == "PUT" for e in server.audit)
@@ -181,13 +183,12 @@ def test_near_capacity_reserves_confirmed_receipt_before_any_put(writable, monke
 def test_other_operations_cannot_consume_first_receipt_reservation(tmp_path, monkeypatch):
     ledger = operation_ledger.OperationLedger(tmp_path)
     ledger.begin({"operation_id": "first"}, {})
-    first = ledger.get("first")
     second = {"binding": {"operation_id": "second"}, "preview": {}, "status": "intent", "receipt_reserve": 4096}
-    records = {"first": first, "second": second}
-    monkeypatch.setattr(operation_ledger, "LIMIT", len(encoded(records)) + 4096)
+    monkeypatch.setattr(operation_ledger, "LIMIT", len(encoded(second)) + 4095)
     with pytest.raises(AgentError, match="agent_operation_ledger_limit"):
         ledger.begin({"operation_id": "second"}, {})
     assert ledger.get("second") is None
+    monkeypatch.setattr(operation_ledger, "LIMIT", 16 * 1024 * 1024)
     ledger.update("first", "confirmed", result={"payload": "x" * 3000})
     assert ledger.get("first")["status"] == "confirmed"
 
@@ -195,8 +196,8 @@ def test_other_operations_cannot_consume_first_receipt_reservation(tmp_path, mon
 def test_forget_task_scrubs_ledger_content_but_keeps_no_replay_tombstone(writable):
     tools, context, args, _nas, _source, server, root, app, store = writable
     execute(tools, context, args)
-    orphan = tools.resource_writes.ledger.path.with_name(".business-operations.json.crashed.tmp")
-    orphan.write_bytes(tools.resource_writes.ledger.path.read_bytes())
+    orphan = tools.resource_writes.ledger.path / ".crashed.tmp"
+    orphan.write_bytes(b"crashed-temp-snapshot")
     tools.completed["deleted-task-op"] = ("fingerprint", {"private": "derived data"})
     tools.completed["other-task-op"] = ("fingerprint", {"keep": "other task evidence"})
     tools.forget_task(context["task_id"], operation_ids=["op-create", "deleted-task-op"])
