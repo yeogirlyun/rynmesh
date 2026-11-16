@@ -28,7 +28,7 @@ import { useAgentTaskAttention } from "./useAgentTaskAttention";
 import RynAgentInputCard from "./RynAgentInputCard";
 import RynAgentVerification from "./RynAgentVerification";
 import { MemoryEditor, PreferencesEditor, SkillSelection, TaskSkills } from "./RynAgentGuidance";
-import RynAgentBudget, { budgetStopMessage } from "./RynAgentBudget";
+import RynAgentBudget, { RynAgentNearLimitBanner, RynAgentOwnerStopExtendButton, budgetStopMessage } from "./RynAgentBudget";
 import { ArchivedTasks, TaskRecords, TaskResultFiles } from "./RynAgentRecords";
 import { TaskArtifacts, TurnDeliverables } from "./RynAgentArtifacts";
 import RynAgentTurnRail, { type TurnRailItem as AgentTurnRailItem } from "./RynAgentTurnRail";
@@ -1180,6 +1180,7 @@ export default function RynAgent() {
         {settingsReady && !enabled && task && <div className="ra-disabled-banner"><span>{t("historyDisabled")}</span><button disabled={busy} onClick={() => void updateSettings({ enabled: true, ...(model ? { model_id: model } : {}) })}>{t("enable")}</button></div>}
         {!detailLoading && task && <RynAgentTurnRail turns={turnRailItems} scrollRef={scroll} />}
         {!detailLoading && task && <RynAgentOverview key={task.id} task={task} />}
+        {!detailLoading && task && <RynAgentNearLimitBanner task={task} busy={busy || controlUncertain} onChange={acceptTask} />}
         <div ref={scroll} className="ra-scroll" aria-busy={detailLoading}>
 
           {detailLoading ? <div className="ra-empty" role="status">{t("loading")}</div> : task ? <div key={`thread/${task.id}`} className="ra-thread"><RynAgentForkSource task={task} onChoose={chooseTask} /><TaskArtifacts key={`artifacts/${task.id}`} task={task} maxTurnIndex={maxTurnIndex}>
@@ -1207,6 +1208,7 @@ export default function RynAgent() {
                 const help = agentErrorHelp(task.error!, zh);
                 const actions = help.actions.filter(kind => kind !== "switch_model" || canUseAgentAction(task, "model"));
                 return <section className="ra-task-error" role="alert"><strong>{t("error")}</strong><p>{budgetStopMessage(task, zh) ?? help.text}</p>
+                  <RynAgentOwnerStopExtendButton task={task} busy={busy || controlUncertain} onChange={acceptTask} />
                   {actions.length > 0 && <div className="ra-error-actions">{actions.map(kind => <button key={kind} type="button" disabled={busy} onClick={() => runErrorAction(kind)}>{agentErrorActionLabel(kind, zh)}</button>)}</div>}
                   <code>{task.error}</code></section>;
               })()}

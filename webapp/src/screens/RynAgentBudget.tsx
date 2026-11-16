@@ -2,11 +2,37 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AgentAPIError, canUseAgentAction, rynAgent, type AgentBudgetLimits, type AgentLimitSource, type AgentTask } from "../domain/rynAgent";
 
-type Request = { limits: Partial<AgentBudgetLimits>; run_max_seconds?: number; expected_control_revision: number; client_request_id: string };
+type Request = { limits: Partial<AgentBudgetLimits>; run_max_seconds?: number; release_legacy?: boolean; expected_control_revision: number; client_request_id: string };
 const budgetCodes: Record<string, keyof AgentBudgetLimits> = {
   agent_model_call_budget_exhausted: "max_total_model_calls", agent_tool_budget_exhausted: "max_total_tool_calls",
   agent_token_budget_exhausted: "max_total_tokens", agent_time_budget_exhausted: "max_total_seconds",
 };
+const DEFAULT_STEP_LIMITS: AgentBudgetLimits = {
+  max_total_model_calls: 128,
+  max_total_tool_calls: 256,
+  max_total_tokens: 2000000,
+  max_total_seconds: 3600,
+};
+const FALLBACK_RANGES: Record<keyof AgentBudgetLimits, [number, number]> = {
+  max_total_model_calls: [1, 100000],
+  max_total_tool_calls: [1, 400000],
+  max_total_tokens: [1000, 2000000000],
+  max_total_seconds: [10, 2592000],
+};
+
+function limitLabels(zh: boolean): Record<keyof AgentBudgetLimits, string> {
+  const text = (cn: string, en: string) => zh ? cn : en;
+  return {
+    max_total_model_calls: text("模型请求", "Model requests"),
+    max_total_tool_calls: text("工具调用", "Tool calls"),
+    max_total_tokens: "Token",
+    max_total_seconds: text("执行时间（秒）", "Execution time (seconds)"),
+  };
+}
+
+function canExtendBudget(task: AgentTask): boolean {
+  return canUseAgentAction(task, "budget", true) || canUseAgentAction(task, "budget_raise", false);
+}
 
 /** Why a run stopped at a limit, and how to continue. A hard limit is never raised by sending "continue". */
 export function budgetStopMessage(task: AgentTask, zh: boolean): string | null {
@@ -16,8 +42,8 @@ export function budgetStopMessage(task: AgentTask, zh: boolean): string | null {
     const label = { max_total_model_calls: text("模型请求次数", "model requests"), max_total_tool_calls: text("工具调用次数", "tool calls"), max_total_tokens: "Token", max_total_seconds: text("累计执行时间", "lifetime execution time") }[key];
     const source = task.outcome?.budget_stop?.source ?? task.budget?.limit_sources?.[key] ?? "legacy_unknown";
     return source === "default"
-      ? text(`${label}已达到系统允许的最大累计额度。默认额度会随任务进展自动延长，但不能超过这个上限。可缩小范围后新建任务。`, `The ${label} allowance reached the system maximum. Default allowances grow while the task progresses but cannot exceed this ceiling. Narrow the request and start a new task.`)
-      : text(`${label}已达到任务预算上限，任务已停止且未标记为完成。请先在「任务选项 → 任务预算与用量」中调高上限，再发送「继续」。`, `The task reached its ${label} limit and stopped without being marked complete. Raise the limit in Task Options → Task budget and usage, then send a follow-up to continue.`);
+      ? text(`${label}在旧版本记录中达到了当时系统允许的最大累计额度；当前版本默认额度不设硬上限，发送「继续」即可自动延长。`, `This task stopped at an older version's system maximum for ${label}. Default allowances no longer have a hard ceiling—send a follow-up to continue.`)
+      : text(`${label}已达到任务预算上限，任务已停止且未标记为完成。请点击「一键续额」或在「任务选项 → 任务预算与用量」中调高上限，再发送「继续」。`, `The task reached its ${label} limit and stopped without being marked complete. Use Extend allowance or Raise the limit in Task Options → Task budget and usage, then send a follow-up to continue.`);
   }
   if (task.error === "agent_step_limit" || task.error === "agent_time_limit") {
     return text("已达到本次运行的上限（你设置的单轮上限，或旧任务保留的上限）。发送「继续」开始新一轮运行。", "This run reached its run limit (set by you, or kept from an older task). Send a follow-up to start a new run.");
@@ -27,14 +53,101 @@ export function budgetStopMessage(task: AgentTask, zh: boolean): string | null {
   }
   return null;
 }
-const ranges: Record<keyof AgentBudgetLimits, [number, number]> = { max_total_model_calls: [1, 1024], max_total_tool_calls: [1, 4096], max_total_tokens: [1000, 20000000], max_total_seconds: [10, 86400] };
+
+export function RynAgentOwnerStopExtendButton({ task, busy, onChange }: { task: AgentTask; busy: boolean; onChange: (task: AgentTask) => void }) {
+  const { i18n } = useTranslation();
+  const zh = i18n.language.startsWith("zh");
+  const [extending, setExtending] = useState(false);
+  const key = budgetCodes[task.error || ""];
+  if (!key || !task.budget) return null;
+  const source = task.outcome?.budget_stop?.source ?? task.budget.limit_sources?.[key];
+  if (source !== "owner") return null;
+  const [, maxBound] = task.budget.ranges?.[key] ?? FALLBACK_RANGES[key];
+  const nextVal = Math.min(maxBound, task.budget.limits[key] + DEFAULT_STEP_LIMITS[key]);
+  const disabled = busy || extending || !canExtendBudget(task) || typeof task.control_revision !== "number" || nextVal <= task.budget.limits[key];
+  return (
+    <button
+      type="button"
+      className="ra-link"
+      disabled={disabled}
+      onClick={async () => {
+        if (disabled) return;
+        setExtending(true);
+        try {
+          const updated = await rynAgent.updateBudget(task.id, {
+            limits: { [key]: nextVal },
+            expected_control_revision: task.control_revision!,
+            client_request_id: crypto.randomUUID(),
+          });
+          onChange(updated);
+        } catch {
+          /* Handled on next refresh / retry in budget card */
+        } finally {
+          setExtending(false);
+        }
+      }}
+    >
+      {zh ? "一键续额" : "Extend allowance"}
+    </button>
+  );
+}
+
+export function RynAgentNearLimitBanner({ task, busy, onChange }: { task: AgentTask; busy: boolean; onChange: (task: AgentTask) => void }) {
+  const { i18n } = useTranslation();
+  const zh = i18n.language.startsWith("zh");
+  const [extendingKey, setExtendingKey] = useState<keyof AgentBudgetLimits | null>(null);
+  const near = task.budget?.near_limit;
+  if (!task.budget || !near || near.length === 0) return null;
+  const labels = limitLabels(zh);
+  const allowExtend = canExtendBudget(task) && typeof task.control_revision === "number";
+  return (
+    <div className="ra-banner ra-budget-near-limit" role="note">
+      {near.map(limitKey => {
+        const [, maxBound] = task.budget!.ranges?.[limitKey] ?? FALLBACK_RANGES[limitKey];
+        const currentVal = task.budget!.limits[limitKey];
+        const nextVal = Math.min(maxBound, currentVal + DEFAULT_STEP_LIMITS[limitKey]);
+        const itemDisabled = busy || extendingKey !== null || !allowExtend || nextVal <= currentVal;
+        return (
+          <div key={limitKey} className="ra-budget-near-limit-item">
+            <span>{zh ? `即将达到你设的 ${labels[limitKey]} 上限` : `Approaching your ${labels[limitKey]} limit`}</span>
+            <button
+              type="button"
+              className="ra-link"
+              disabled={itemDisabled}
+              onClick={async () => {
+                if (itemDisabled) return;
+                setExtendingKey(limitKey);
+                try {
+                  const updated = await rynAgent.updateBudget(task.id, {
+                    limits: { [limitKey]: nextVal },
+                    expected_control_revision: task.control_revision!,
+                    client_request_id: crypto.randomUUID(),
+                  });
+                  onChange(updated);
+                } catch {
+                  /* User can also adjust manually in budget card */
+                } finally {
+                  setExtendingKey(null);
+                }
+              }}
+            >
+              {zh ? "一键续额" : "Extend allowance"}
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function readPending(key: string): Request | null {
   try { const item = JSON.parse(sessionStorage.getItem(key) || "null"); return item && typeof item.client_request_id === "string" && typeof item.expected_control_revision === "number" && item.limits ? item : null; } catch { return null; }
 }
 
 export default function RynAgentBudget({ task, busy, onChange }: { task: AgentTask; busy: boolean; onChange: (task: AgentTask) => void }) {
   const { i18n } = useTranslation();
-  const text = (cn: string, en: string) => i18n.language.startsWith("zh") ? cn : en;
+  const zh = i18n.language.startsWith("zh");
+  const text = (cn: string, en: string) => zh ? cn : en;
   const key = `ryn.agent.pending-budget.${task.id}`;
   const [pending, setPending] = useState<Request | null>(() => readPending(key));
   const [editing, setEditing] = useState(false);
@@ -45,23 +158,26 @@ export default function RynAgentBudget({ task, busy, onChange }: { task: AgentTa
   const [error, setError] = useState("");
   if (!task.budget) return null;
   const data = task.budget;
-  const labels: Record<keyof AgentBudgetLimits, string> = {
-    max_total_model_calls: text("模型请求", "Model requests"), max_total_tool_calls: text("工具调用", "Tool calls"),
-    max_total_tokens: "Token", max_total_seconds: text("执行时间（秒）", "Execution time (seconds)"),
+  const activeRanges: Record<keyof AgentBudgetLimits, [number, number]> = {
+    max_total_model_calls: data.ranges?.max_total_model_calls ?? FALLBACK_RANGES.max_total_model_calls,
+    max_total_tool_calls: data.ranges?.max_total_tool_calls ?? FALLBACK_RANGES.max_total_tool_calls,
+    max_total_tokens: data.ranges?.max_total_tokens ?? FALLBACK_RANGES.max_total_tokens,
+    max_total_seconds: data.ranges?.max_total_seconds ?? FALLBACK_RANGES.max_total_seconds,
   };
+  const labels = limitLabels(zh);
   const sourceLabel = (name: keyof AgentBudgetLimits) => {
     const source: AgentLimitSource = data.limit_sources?.[name] ?? "legacy_unknown";
     const ceiling = data.default_ceilings?.[name];
-    return source === "default" ? text(`默认，随进展自动延长${ceiling ? `（最高 ${ceiling.toLocaleString()}）` : ""}`, `Default, grows with progress${ceiling ? ` (up to ${ceiling.toLocaleString()})` : ""}`)
+    return source === "default" ? text(`默认，随进展自动延长${ceiling != null ? `（最高 ${ceiling.toLocaleString()}）` : ""}`, `Default, grows with progress${ceiling != null ? ` (up to ${ceiling.toLocaleString()})` : ""}`)
       : source === "owner" ? text("你设置的硬上限", "Your hard limit") : text("旧任务，按硬上限处理", "Older task, treated as hard");
   };
   const allowed = canUseAgentAction(task, "budget");
-  const valid = draft && (runSeconds === null || (Number.isInteger(runSeconds) && runSeconds >= 10 && runSeconds <= 3600)) && Object.entries(ranges).every(([name, [min, max]]) => Number.isInteger(draft[name as keyof AgentBudgetLimits]) && draft[name as keyof AgentBudgetLimits] >= min && draft[name as keyof AgentBudgetLimits] <= max);
+  const valid = draft && (runSeconds === null || (Number.isInteger(runSeconds) && runSeconds >= 10 && runSeconds <= 3600)) && Object.entries(activeRanges).every(([name, [min, max]]) => Number.isInteger(draft[name as keyof AgentBudgetLimits]) && draft[name as keyof AgentBudgetLimits] >= min && draft[name as keyof AgentBudgetLimits] <= max);
   const remember = (value: Request | null) => { setPending(value); try { if (value) sessionStorage.setItem(key, JSON.stringify(value)); else sessionStorage.removeItem(key); } catch { /* Memory retry remains available. */ } };
   const save = async () => {
     if (busy || saving || (!pending && (!valid || !allowed || revision === null))) return;
     // Only changed limits are sent; the server treats every submitted key as the owner's hard limit.
-    const changed = pending || !draft ? {} : Object.fromEntries((Object.keys(ranges) as Array<keyof AgentBudgetLimits>).filter(name => draft[name] !== data.limits[name]).map(name => [name, draft[name]])) as Partial<AgentBudgetLimits>;
+    const changed = pending || !draft ? {} : Object.fromEntries((Object.keys(activeRanges) as Array<keyof AgentBudgetLimits>).filter(name => draft[name] !== data.limits[name]).map(name => [name, draft[name]])) as Partial<AgentBudgetLimits>;
     const body = pending || { limits: changed, ...(runSeconds === null || runSeconds === task.limits?.max_seconds ? {} : { run_max_seconds: runSeconds }), expected_control_revision: revision!, client_request_id: crypto.randomUUID() };
     remember(body); setSaving(true); setError("");
     try { const updated = await rynAgent.updateBudget(task.id, body); remember(null); setEditing(false); onChange(updated); }
@@ -70,6 +186,21 @@ export default function RynAgentBudget({ task, busy, onChange }: { task: AgentTa
         remember(null); setEditing(false);
         setError(text("任务状态或额度已变化，请核对最新记录后重新编辑。", "The task state or limits changed. Review the current record before editing again."));
       } else setError(text("保存结果未确认。仅重试原版本和原额度，不会自动继续任务。", "Save is unconfirmed. Retry uses the original version and limits; it does not resume the task."));
+    } finally { setSaving(false); }
+  };
+  const releaseLegacy = async () => {
+    if (busy || saving || !allowed || typeof task.control_revision !== "number") return;
+    setSaving(true); setError("");
+    try {
+      const updated = await rynAgent.updateBudget(task.id, {
+        limits: {},
+        release_legacy: true,
+        expected_control_revision: task.control_revision,
+        client_request_id: crypto.randomUUID(),
+      });
+      onChange(updated);
+    } catch {
+      setError(text("任务状态或额度已变化，请核对最新记录后重新编辑。", "The task state or limits changed. Review the current record before editing again."));
     } finally { setSaving(false); }
   };
   const known = (value: number | null | undefined) => value == null ? text("未知", "Unknown") : value > 0 && value < 0.01 ? "< 0.01" : value.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -88,9 +219,13 @@ export default function RynAgentBudget({ task, busy, onChange }: { task: AgentTa
     agent_step_limit: text("本轮请求次数达到上限", "This round's request limit was reached"),
     agent_time_limit: text("本次运行时间达到上限", "The run time limit was reached"),
   };
-  return <details className="ra-budget" open={pending || editing || Boolean(reasons[task.error || ""]) ? true : undefined}>
+  const legacyBudgetStopped = task.outcome?.budget_stop?.source === "legacy_unknown";
+  return <details className="ra-budget" open={pending || editing || Boolean(reasons[task.error || ""]) || Boolean(data.near_limit?.length) ? true : undefined}>
     <summary>{text("任务预算与用量", "Task budget and usage")}</summary>
+    <RynAgentNearLimitBanner task={task} busy={busy || saving} onChange={onChange} />
     {reasons[task.error || ""] && <p role="status">{reasons[task.error!]}</p>}
+    <RynAgentOwnerStopExtendButton task={task} busy={busy || saving} onChange={onChange} />
+    {legacyBudgetStopped && <button type="button" className="ra-link" disabled={busy || saving || !allowed} onClick={() => void releaseLegacy()}>{text("解除旧上限", "Release legacy limits")}</button>}
     <p>{text("本次运行时限（秒）", "Run time limit (seconds)")}: {known(timing?.elapsed_seconds)} / {known(timing?.max_seconds ?? task.limits?.max_seconds)} · {timing?.measurement === "live" ? text("本次查询快照", "Snapshot at this query") : text("已记录时间", "Recorded time")}</p>
     <p>{text("运行时限包含请求准备、校验和模型/工具执行；等待审批、等待输入、暂停和排队不计时。正在停止的操作仍计时。", "The run limit includes request preparation, validation, and model/tool execution; waiting for approval or input, pauses, and queue time are excluded. An operation that is still stopping continues to count.")}</p>
     {task.limits_source?.max_seconds === "default" && <p>{text(`默认单轮时长只用于分段：到达后自动保存进度并继续下一段，不会结束任务${task.execution_segment && task.execution_segment.index > 1 ? `（当前第 ${task.execution_segment.index} 段）` : ""}。`, `The default run length only splits work into segments: when reached, progress is saved and the next segment starts automatically${task.execution_segment && task.execution_segment.index > 1 ? ` (segment ${task.execution_segment.index})` : ""}.`)}</p>}
@@ -102,7 +237,7 @@ export default function RynAgentBudget({ task, busy, onChange }: { task: AgentTa
     {!data.lifetime.usage_complete && <p>{text("部分实际用量未知，按派发前预留额度保守计入。未知不等于零。", "Some measured usage is unknown; pre-dispatch reservations remain charged conservatively. Unknown does not mean zero.")}</p>}
     {data.lifetime.legacy_usage_unknown && <p>{text("旧版本记录不完整；累计调用至少为", "Legacy records are incomplete; known lifetime call floors are")}: {data.lifetime.charged_model_calls ?? 0} {text("次模型请求、", "model requests,")} {data.lifetime.charged_tool_calls ?? 0} {text("次工具调用。历史未记录的 Token 无法补算。", "tool calls. Unrecorded historical tokens cannot be reconstructed.")}</p>}
     <p>{text("费用：未知。继续或重启不会清空累计用量；保存新上限不会自动继续任务。只有你修改过的上限会成为硬上限。", "Cost: unknown. Continuing or restarting preserves lifetime usage; saving limits does not resume the task. Only the limits you change become hard limits.")}</p>
-    {(editing || pending) && <div className="ra-budget-inputs">{(Object.keys(ranges) as Array<keyof AgentBudgetLimits>).map(name => <label key={name}><span>{labels[name]}</span><input type="number" min={ranges[name][0]} max={ranges[name][1]} step={1} value={(pending?.limits || draft)?.[name] ?? ""} disabled={saving || busy || Boolean(pending)} onChange={event => setDraft(current => current ? { ...current, [name]: Number(event.target.value) } : current)} /></label>)}</div>}
+    {(editing || pending) && <div className="ra-budget-inputs">{(Object.keys(activeRanges) as Array<keyof AgentBudgetLimits>).map(name => <label key={name}><span>{labels[name]}</span><input type="number" min={activeRanges[name][0]} max={activeRanges[name][1]} step={1} value={(pending?.limits || draft)?.[name] ?? ""} disabled={saving || busy || Boolean(pending)} onChange={event => setDraft(current => current ? { ...current, [name]: Number(event.target.value) } : current)} /></label>)}</div>}
     {error && <p role="alert">{error}</p>}
     {(editing || pending) && (runSeconds !== null || pending?.run_max_seconds !== undefined) && <label className="ra-setting"><span>{text("单轮运行时限（秒）", "Run limit (seconds)")}</span><input type="number" min={10} max={3600} step={1} value={pending?.run_max_seconds ?? runSeconds ?? ""} disabled={saving || busy || Boolean(pending)} onChange={event => setRunSeconds(Number(event.target.value))} /></label>}
     <div className="ra-approval-actions">{editing || pending ? <><button className="ra-primary" disabled={busy || saving || (!pending && (!valid || !allowed))} onClick={() => void save()}>{pending ? text("核对原保存请求", "Check original save") : text("保存预算", "Save limits")}</button>{!pending && <button className="ra-link" disabled={saving} onClick={() => setEditing(false)}>{text("取消编辑", "Cancel editing")}</button>}</> : <button className="ra-link" disabled={busy || !allowed} onClick={() => { setDraft({ ...data.limits }); setRunSeconds(task.limits?.max_seconds ?? null); setRevision(task.control_revision!); setEditing(true); setError(""); }}>{text("调整预算", "Adjust limits")}</button>}</div>

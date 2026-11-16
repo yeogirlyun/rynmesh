@@ -736,7 +736,8 @@ class AgentRuntime(AgentLoop):
                 raise AgentError("agent_request_deadline_unavailable")
             # Process-local monotonic values never enter durable task state.
             # Preparation and reservation time consume this same active tick.
-            options["deadline"] = row["_run_started"] + budget.run_seconds_left(row, row["_run_lifetime_remaining"])
+            seconds_left = budget.run_seconds_left(row, row["_run_lifetime_remaining"])
+            options["deadline"] = row["_run_started"] + seconds_left if math.isfinite(seconds_left) else None
             def record_request_policy(policy):
                 self.store.transaction(lambda data: budget.record_request_policy(task(data, row["id"]), policy))
             options["on_request_policy"] = record_request_policy
@@ -1628,9 +1629,14 @@ class AgentRuntime(AgentLoop):
         return credential_control.change(self, task_id, value, revoke=revoke)
 
     def update_budget(self, task_id: str, value: dict) -> dict:
-        if set(value) - {"expected_control_revision", "client_request_id", "limits", "run_max_seconds"}:
+        if set(value) - {"expected_control_revision", "client_request_id", "limits", "run_max_seconds", "release_legacy"}:
             raise AgentError("agent_invalid_request")
+        release_legacy = value.get("release_legacy", False)
+        if not isinstance(release_legacy, bool):
+            raise AgentError("agent_invalid_budget")
         requested = value.get("limits")
+        if requested is None and release_legacy:
+            requested = {}
         budget.validate_limits(requested)
         run_max = value.get("run_max_seconds")
         if "run_max_seconds" in value and (type(run_max) is not int or not 10 <= run_max <= 3600):
@@ -1643,12 +1649,16 @@ class AgentRuntime(AgentLoop):
             if not allowed_actions(row, data["settings"])["budget"]["enabled"]:
                 raise AgentError("agent_invalid_transition")
             state = budget.initialize(row)
-            budget.set_owner_limits(row, requested)
+            released = budget.release_legacy_limits(row) if release_legacy else []
+            if requested:
+                budget.set_owner_limits(row, requested)
             if run_max is not None:
                 row["limits"]["max_seconds"] = run_max
                 row.setdefault("limits_source", {})["max_seconds"] = "owner"
             event(row, "budget_changed", limits=state["limits"], run_max_seconds=row["limits"]["max_seconds"],
-                  owner_limits=sorted(requested), limit_sources=budget.public(row)["limit_sources"])
+                  owner_limits=sorted(requested),
+                  **({"released_legacy_limits": released} if release_legacy else {}),
+                  limit_sources=budget.public(row)["limit_sources"])
             remember_request(row, value)
             return public_task(row, settings=data["settings"])
         return self.store.transaction(update)
@@ -2071,56 +2081,14 @@ class AgentRuntime(AgentLoop):
                 row["reasoning_effort"] = effort
             budget.new_round(row)
             if ended:
-                b_state = budget.public(row)
-                b_limits = row["budget"]["limits"]
-                b_life = b_state["lifetime"]
-                auto_extended = {}
-                tok_threshold = min(500000, max(1000, b_limits["max_total_tokens"] // 4))
                 wrap_reason = (row.get("outcome") or {}).get("budget_wrap_up_reason")
-                # Only default allowances grow on an owner turn. Owner and legacy
-                # limits stay as set; the checks below refuse a turn they cannot fund.
-                if not budget.is_hard(row, "max_total_tokens") and (b_limits["max_total_tokens"] - b_life["charged_tokens"] <= tok_threshold or wrap_reason == "token_budget_low" or row.get("error") == "agent_token_budget_exhausted"):
-                    new_tok = min(
-                        budget.RANGES["max_total_tokens"][1],
-                        max(b_limits["max_total_tokens"], b_life["charged_tokens"]) + budget.DEFAULT_LIMITS["max_total_tokens"],
-                    )
-                    if new_tok > b_limits["max_total_tokens"]:
-                        b_limits["max_total_tokens"] = new_tok
-                        auto_extended["max_total_tokens"] = new_tok
-                if not budget.is_hard(row, "max_total_model_calls") and (b_limits["max_total_model_calls"] - b_life["charged_model_calls"] <= 0 or wrap_reason == "model_call_budget_low"):
-                    new_mc = min(
-                        budget.RANGES["max_total_model_calls"][1],
-                        max(b_limits["max_total_model_calls"], b_life["charged_model_calls"]) + budget.DEFAULT_LIMITS["max_total_model_calls"],
-                    )
-                    if new_mc > b_limits["max_total_model_calls"]:
-                        b_limits["max_total_model_calls"] = new_mc
-                        auto_extended["max_total_model_calls"] = new_mc
-                if isinstance(row.get("outcome"), dict):
-                    row["outcome"].pop("budget_wrap_up_reason", None)
-                    row["outcome"].pop("budget_limited", None)
-                if not budget.is_hard(row, "max_total_tool_calls") and b_limits["max_total_tool_calls"] - b_life["charged_tool_calls"] <= 0:
-                    new_tc = min(
-                        budget.RANGES["max_total_tool_calls"][1],
-                        max(b_limits["max_total_tool_calls"], b_life["charged_tool_calls"]) + budget.DEFAULT_LIMITS["max_total_tool_calls"],
-                    )
-                    if new_tc > b_limits["max_total_tool_calls"]:
-                        b_limits["max_total_tool_calls"] = new_tc
-                        auto_extended["max_total_tool_calls"] = new_tc
-                sec_threshold = min(60.0, max(5.0, b_limits["max_total_seconds"] * 0.1))
-                if not budget.is_hard(row, "max_total_seconds") and budget.time_remaining(row) <= sec_threshold:
-                    new_sec = min(
-                        budget.RANGES["max_total_seconds"][1],
-                        int(math.ceil(max(b_limits["max_total_seconds"], b_life["charged_seconds"]))) + budget.DEFAULT_LIMITS["max_total_seconds"],
-                    )
-                    if new_sec > b_limits["max_total_seconds"]:
-                        b_limits["max_total_seconds"] = new_sec
-                        auto_extended["max_total_seconds"] = new_sec
-                if auto_extended:
-                    event(row, "budget_auto_extended", limits=copy.deepcopy(b_limits), extended=auto_extended,
-                          round=row["budget"]["round"], reason="default_policy")
-                if b_life["charged_tokens"] >= b_limits["max_total_tokens"]:
+                budget.extend_defaults_for_owner_turn(row, wrap_reason)
+                b_state = budget.public(row)
+                b_limits = b_state["limits"]
+                b_life = b_state["lifetime"]
+                if budget.is_hard(row, "max_total_tokens") and b_life["charged_tokens"] >= b_limits["max_total_tokens"]:
                     raise AgentError("agent_token_budget_exhausted")
-                if b_life["charged_model_calls"] >= b_limits["max_total_model_calls"]:
+                if budget.is_hard(row, "max_total_model_calls") and b_life["charged_model_calls"] >= b_limits["max_total_model_calls"]:
                     raise AgentError("agent_model_call_budget_exhausted")
                 if budget.time_remaining(row) <= 0:
                     raise AgentError("agent_time_budget_exhausted")
@@ -2624,11 +2592,7 @@ class AgentRuntime(AgentLoop):
         budget_state = budget.public(row)
         limits = budget_state["limits"]
         lifetime = budget_state["lifetime"]
-        if (
-            (budget.is_hard(row, "max_total_tool_calls") and lifetime["charged_tool_calls"] >= limits["max_total_tool_calls"])
-            or lifetime["charged_model_calls"] >= budget.RANGES["max_total_model_calls"][1]
-            or lifetime["charged_tokens"] >= budget.RANGES["max_total_tokens"][1]
-        ):
+        if budget.is_hard(row, "max_total_tool_calls") and lifetime["charged_tool_calls"] >= limits["max_total_tool_calls"]:
             return False
         op_id = flight.get("operation_id")
         if isinstance(op_id, str) and op_id in (row.get("auto_acknowledged_operations") or []):
