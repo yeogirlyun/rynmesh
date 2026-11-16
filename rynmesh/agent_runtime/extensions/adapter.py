@@ -21,7 +21,7 @@ from jsonschema import validate as jsonschema_validate
 from ...atomic_io import atomic_write_bytes
 from ...llm_package.chat import validate_tool_arguments, validate_tool_schema
 from ...services import peer_box
-from .. import data_policy
+from .. import data_policy, results
 from ..native_computer import NativeComputerFacade, bind_owner_native_computer
 from ..store import AgentError, AgentToolRejected, encoded
 from .imports import ExtensionImportManager
@@ -33,6 +33,7 @@ from .mcp_transport import (
 from .schema_normalize import normalize_mcp_input_schema, sanitize
 from .store import (
     COMPUTER_USE_SERVER_ID,
+    DEFAULT_MAX_OUTPUT_CHARS,
     ExtensionStore,
     _canon_sha256,
     compute_model_tool_name,
@@ -130,9 +131,24 @@ ALLOWED_IMAGE_MIMES: dict[str, tuple[str, str]] = {
     "image/webp": (".webp", "WEBP"),
     "image/gif": (".gif", "GIF"),
 }
+RESOURCE_BLOB_EXTENSIONS: dict[str, str] = {
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+    "application/pdf": ".pdf",
+    "text/csv": ".csv",
+    "application/zip": ".zip",
+    "application/x-zip-compressed": ".zip",
+    "image/png": ".png",
+    "image/jpeg": ".jpeg",
+    "image/jpg": ".jpeg",
+}
 MAX_MCP_IMAGE_BYTES = 4 * 1024 * 1024
 MAX_MCP_IMAGE_PIXELS = 16_000_000
-MAX_TEXT_BLOCK_CHARS = 32_000
+MAX_MCP_BLOB_BYTES = 25 * 1024 * 1024
+MAX_MCP_RESOURCE_BLOBS = 8
+MAX_STRUCTURED_LIST_ITEMS = 5000
+MAX_STRUCTURED_DEPTH = 12
 # Shown to the model with a tool-reported error from a change tool.
 TOOL_ERROR_NOTE = (
     "The tool itself replied with this error. Ryn did not and will not resend this call. "
@@ -141,6 +157,8 @@ TOOL_ERROR_NOTE = (
 )
 
 _SAFE_PATH_SEGMENT_RE = re.compile(r"[^A-Za-z0-9_.-]+")
+_STRICT_BASE64_RE = re.compile(r"^[A-Za-z0-9+/]+={0,2}$")
+_ASCII_WS_RE = re.compile(r"\s+")
 
 
 def _safe_segment(value: str, fallback: str = "item") -> str:
@@ -174,15 +192,36 @@ def _looks_like_image_base64(value: str, known_b64: set[str]) -> bool:
     )
 
 
+def _is_valid_base64_blob(value: str) -> bool:
+    compact = re.sub(r"[\r\n]+", "", value.strip())
+    if len(compact) < 16 or len(compact) % 4 != 0:
+        return False
+    if not _STRICT_BASE64_RE.fullmatch(compact):
+        return False
+    try:
+        base64.b64decode(compact, validate=True)
+    except (ValueError, binascii.Error):
+        return False
+    return True
+
+
 def _strip_raw_images(
     value: Any,
     *,
     known_b64: set[str] | None = None,
     artifacts_by_b64: dict[str, dict[str, Any]] | None = None,
+    max_output_chars: int = DEFAULT_MAX_OUTPUT_CHARS,
     depth: int = 0,
-) -> Any:
-    if depth > 12:
-        return None
+    _counts: dict[str, int] | None = None,
+) -> tuple[Any, dict[str, int]]:
+    counts = (
+        _counts
+        if _counts is not None
+        else {"omitted_items": 0, "depth_cut": 0, "omitted_strings": 0, "omitted_binary": 0}
+    )
+    if depth > MAX_STRUCTURED_DEPTH:
+        counts["depth_cut"] += 1
+        return "[深度超限已省略]", counts
     known = known_b64 or set()
     by_b64 = artifacts_by_b64 or {}
     if isinstance(value, dict):
@@ -208,30 +247,60 @@ def _strip_raw_images(
                 ):
                     if vs in by_b64:
                         matched_art = by_b64[vs]
+                    if vs not in known:
+                        counts["omitted_binary"] += 1
                     out[ks] = None
                     continue
-                if ks in _IMAGE_DATA_KEYS and len(v) > MAX_TEXT_BLOCK_CHARS:
-                    out[ks] = None
+                if ks in _IMAGE_DATA_KEYS and len(v) > max_output_chars:
+                    if _looks_like_image_base64(vs, known) or _is_valid_base64_blob(vs):
+                        counts["omitted_binary"] += 1
+                        out[ks] = None
+                    else:
+                        omitted_chars = len(v) - max_output_chars
+                        counts["omitted_strings"] += 1
+                        out[ks] = f"{v[:max_output_chars]}...[已截断 {omitted_chars} 字符]"
                     continue
-            out[ks] = _strip_raw_images(
-                v, known_b64=known, artifacts_by_b64=by_b64, depth=depth + 1
+            child_val, _ = _strip_raw_images(
+                v,
+                known_b64=known,
+                artifacts_by_b64=by_b64,
+                max_output_chars=max_output_chars,
+                depth=depth + 1,
+                _counts=counts,
             )
+            out[ks] = child_val
         if matched_art is not None:
             for ak in ("path", "sha256", "bytes", "mime_type", "width", "height"):
                 out.setdefault(ak, matched_art[ak])
-        return out
+        return out, counts
     if isinstance(value, list):
-        return [
-            _strip_raw_images(item, known_b64=known, artifacts_by_b64=by_b64, depth=depth + 1)
-            for item in value[:200]
+        items = [
+            _strip_raw_images(
+                item,
+                known_b64=known,
+                artifacts_by_b64=by_b64,
+                max_output_chars=max_output_chars,
+                depth=depth + 1,
+                _counts=counts,
+            )[0]
+            for item in value[:MAX_STRUCTURED_LIST_ITEMS]
         ]
+        if len(value) > MAX_STRUCTURED_LIST_ITEMS:
+            omitted_n = len(value) - MAX_STRUCTURED_LIST_ITEMS
+            counts["omitted_items"] += omitted_n
+            items.append({"_truncated": True, "omitted_items": omitted_n})
+        return items, counts
     if isinstance(value, str):
         vs = value.strip()
         if vs in known or vs.lower().startswith("data:image/"):
-            return None
-        if len(value) > MAX_TEXT_BLOCK_CHARS:
-            return value[:MAX_TEXT_BLOCK_CHARS] + "...[truncated]"
-    return value
+            if vs not in known:
+                counts["omitted_binary"] += 1
+            return None, counts
+        if len(value) > max_output_chars:
+            omitted_chars = len(value) - max_output_chars
+            counts["omitted_strings"] += 1
+            return f"{value[:max_output_chars]}...[已截断 {omitted_chars} 字符]", counts
+    return value, counts
 
 
 class ExtensionToolAdapter:
@@ -1105,6 +1174,17 @@ class ExtensionToolAdapter:
             headers["Authorization"] = "Bearer " + token
         return headers, authority
 
+    def _server_max_output_chars(self, server_id: Any) -> int:
+        if isinstance(server_id, str) and server_id:
+            try:
+                srv = self.store.get_mcp_server_internal(server_id, require_enabled=False)
+                val = srv.get("max_output_chars")
+                if isinstance(val, int) and not isinstance(val, bool) and val > 0:
+                    return val
+            except Exception:
+                pass
+        return DEFAULT_MAX_OUTPUT_CHARS
+
     def _normalize_mcp_result(
         self,
         raw_result: dict[str, Any],
@@ -1112,15 +1192,37 @@ class ExtensionToolAdapter:
         binding: dict[str, Any],
         context: dict[str, Any],
         operation_id: str | None,
-        allow_image_rejection: bool = True,
+        allow_image_rejection: bool | None = None,
     ) -> dict[str, Any]:
+        if allow_image_rejection is None:
+            allow_image_rejection = binding.get("effective_effect") == "write"
+        max_output_chars = self._server_max_output_chars(binding.get("server_id"))
         is_error = bool(raw_result.get("isError", False))
         raw_blocks = raw_result.get("content")
         blocks = raw_blocks if isinstance(raw_blocks, list) else []
+        blocks_total = len(blocks)
+        chars_original = 0
+        for raw_blk in blocks:
+            if not isinstance(raw_blk, dict):
+                continue
+            raw_bt = str(raw_blk.get("type") or "").strip()
+            if raw_bt == "text":
+                chars_original += len(str(raw_blk.get("text") or ""))
+            elif raw_bt == "resource" and isinstance(raw_blk.get("resource"), dict):
+                rt = raw_blk["resource"].get("text")
+                if isinstance(rt, str):
+                    chars_original += len(rt)
+
         text_parts: list[str] = []
+        full_text_parts: list[str] = []
         normalized_blocks: list[dict[str, Any]] = []
+        full_normalized_blocks: list[dict[str, Any]] = []
         plain_text_blocks: list[dict[str, Any]] = []
+        full_plain_text_blocks: list[dict[str, Any]] = []
         resource_text_parts: list[str] = []
+        full_resource_text_parts: list[str] = []
+        plain_text_clipped = False
+        resource_text_clipped = False
         artifacts: list[dict[str, Any]] = []
         files: list[dict[str, Any]] = []
         seen_b64: set[str] = set()
@@ -1131,17 +1233,25 @@ class ExtensionToolAdapter:
         image_idx = 0
         img_cap = context.get("_image_capability") if isinstance(context, dict) else None
         route_supports_images = bool(isinstance(img_cap, dict) and img_cap.get("supports_image_input"))
+        max_blob_b64_chars = ((MAX_MCP_BLOB_BYTES + 2) // 3) * 4
 
         for block in blocks[:64]:
             if not isinstance(block, dict):
                 continue
             b_type = str(block.get("type") or "").strip()
             if b_type == "text":
-                txt = str(block.get("text") or "")[:MAX_TEXT_BLOCK_CHARS]
+                raw_txt = str(block.get("text") or "")
+                if len(raw_txt) > max_output_chars:
+                    plain_text_clipped = True
+                txt = raw_txt[:max_output_chars]
                 text_parts.append(txt)
+                full_text_parts.append(raw_txt)
                 block_entry = {"type": "text", "text": txt}
+                full_entry = {"type": "text", "text": raw_txt}
                 plain_text_blocks.append(block_entry)
+                full_plain_text_blocks.append(full_entry)
                 normalized_blocks.append(block_entry)
+                full_normalized_blocks.append(full_entry)
             elif b_type == "image":
                 mime = str(block.get("mimeType") or block.get("mime_type") or "").strip().lower()
                 b64_data = block.get("data")
@@ -1198,102 +1308,260 @@ class ExtensionToolAdapter:
                     }
                     artifacts.append(art_entry)
                     artifacts_by_b64[cleaned] = art_entry
-                    normalized_blocks.append(
-                        {
-                            "type": "image",
-                            **art_entry,
-                            "note": (
-                                "Saved to workspace file; verified operation screenshot pixels are attached to the active turn on image-capable routes."
-                                if route_supports_images
-                                else "Saved to workspace file; pixels have not been visually inspected by the model yet. Call ryn_image_inspect on path if visual inspection is needed."
-                            ),
-                        }
-                    )
+                    img_block = {
+                        "type": "image",
+                        **art_entry,
+                        "note": (
+                            "Saved to workspace file; verified operation screenshot pixels are attached to the active turn on image-capable routes."
+                            if route_supports_images
+                            else "Saved to workspace file; pixels have not been visually inspected by the model yet. Call ryn_image_inspect on path if visual inspection is needed."
+                        ),
+                    }
+                    normalized_blocks.append(img_block)
+                    full_normalized_blocks.append(img_block)
                 except (binascii.Error, ValueError, AgentError):
                     if allow_image_rejection:
                         raise AgentError("agent_mcp_image_invalid") from None
-                    normalized_blocks.append(
-                        {
-                            "type": "image",
-                            "error": "agent_mcp_image_invalid",
-                            "note": "Image payload was invalid or exceeded safety limits and was omitted.",
-                        }
-                    )
+                    img_err_block = {
+                        "type": "image",
+                        "error": "agent_mcp_image_invalid",
+                        "note": "Image payload was invalid or exceeded safety limits and was omitted.",
+                    }
+                    normalized_blocks.append(img_err_block)
+                    full_normalized_blocks.append(img_err_block)
             elif b_type == "resource":
                 # Never dereference local file URIs from external MCP servers.
                 res_obj = block.get("resource") if isinstance(block.get("resource"), dict) else {}
                 blob = res_obj.get("blob")
                 if isinstance(blob, str):
                     seen_b64.add(blob)
-                    extensions = {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
-                                  "application/pdf": ".pdf", "text/csv": ".csv"}
-                    mime = res_obj.get("mimeType")
-                    if mime not in extensions or len(blob) > 2800000 or files:
-                        raise AgentError("agent_mcp_artifact_invalid")
-                    try:
-                        raw_bytes = base64.b64decode(blob, validate=True)
-                    except (ValueError, binascii.Error):
-                        raise AgentError("agent_mcp_artifact_invalid") from None
-                    if not raw_bytes or len(raw_bytes) > 2 * 1024 * 1024:
-                        raise AgentError("agent_mcp_artifact_invalid")
-                    rel_path = f".ryn/mcp/{safe_task}/{safe_op}/export{extensions[mime]}"
-                    target_path = self.local.path(rel_path, context)
-                    target_path.parent.mkdir(parents=True, exist_ok=True)
-                    atomic_write_bytes(target_path, raw_bytes)
-                    file_sha = hashlib.sha256(raw_bytes).hexdigest()
-                    if hasattr(self.local, "_record_observed_files"):
-                        self.local._record_observed_files(context, {target_path: file_sha})
-                    entry = {"path": rel_path, "sha256": file_sha, "bytes": len(raw_bytes), "mime_type": mime}
-                    files.append(entry)
-                    normalized_blocks.append({"type": "text", "text": "File saved to task workspace: " + rel_path})
+                    seen_b64.add(blob.strip())
+                    raw_mime = str(res_obj.get("mimeType") or res_obj.get("mime_type") or "").strip().lower()
+                    mime_base = raw_mime.split(";", 1)[0].strip()
+                    ext = RESOURCE_BLOB_EXTENSIONS.get(mime_base, ".bin")
+                    effective_mime = mime_base or "application/octet-stream"
+                    if len(files) >= MAX_MCP_RESOURCE_BLOBS:
+                        skip_note = "[文件数量超过上限 8 个，已跳过]"
+                        skip_entry = {"type": "text", "text": skip_note}
+                        text_parts.append(skip_note)
+                        full_text_parts.append(skip_note)
+                        resource_text_parts.append(skip_note)
+                        full_resource_text_parts.append(skip_note)
+                        normalized_blocks.append(skip_entry)
+                        full_normalized_blocks.append(skip_entry)
+                    else:
+                        compact_b64 = _ASCII_WS_RE.sub("", blob)
+                        if len(compact_b64) > max_blob_b64_chars:
+                            skip_note = "[文件超过 25 MiB 上限，已跳过]"
+                            skip_entry = {"type": "text", "text": skip_note}
+                            text_parts.append(skip_note)
+                            full_text_parts.append(skip_note)
+                            resource_text_parts.append(skip_note)
+                            full_resource_text_parts.append(skip_note)
+                            normalized_blocks.append(skip_entry)
+                            full_normalized_blocks.append(skip_entry)
+                        else:
+                            raw_bytes = b""
+                            decode_failed = False
+                            if not compact_b64:
+                                decode_failed = True
+                            else:
+                                try:
+                                    raw_bytes = base64.b64decode(compact_b64, validate=True)
+                                except (ValueError, binascii.Error):
+                                    decode_failed = True
+                            if decode_failed or not raw_bytes:
+                                skip_note = "[文件内容无效或为空，已跳过]"
+                                skip_entry = {"type": "text", "text": skip_note}
+                                text_parts.append(skip_note)
+                                full_text_parts.append(skip_note)
+                                resource_text_parts.append(skip_note)
+                                full_resource_text_parts.append(skip_note)
+                                normalized_blocks.append(skip_entry)
+                                full_normalized_blocks.append(skip_entry)
+                            elif len(raw_bytes) > MAX_MCP_BLOB_BYTES:
+                                skip_note = "[文件超过 25 MiB 上限，已跳过]"
+                                skip_entry = {"type": "text", "text": skip_note}
+                                text_parts.append(skip_note)
+                                full_text_parts.append(skip_note)
+                                resource_text_parts.append(skip_note)
+                                full_resource_text_parts.append(skip_note)
+                                normalized_blocks.append(skip_entry)
+                                full_normalized_blocks.append(skip_entry)
+                            else:
+                                file_idx = len(files)
+                                stem = "export" if file_idx == 0 else f"export_{file_idx}"
+                                rel_path = f".ryn/mcp/{safe_task}/{safe_op}/{stem}{ext}"
+                                target_path = self.local.path(rel_path, context)
+                                target_path.parent.mkdir(parents=True, exist_ok=True)
+                                atomic_write_bytes(target_path, raw_bytes, max_bytes=MAX_MCP_BLOB_BYTES)
+                                file_sha = hashlib.sha256(raw_bytes).hexdigest()
+                                if hasattr(self.local, "_record_observed_files"):
+                                    self.local._record_observed_files(context, {target_path: file_sha})
+                                entry = {
+                                    "path": rel_path,
+                                    "sha256": file_sha,
+                                    "bytes": len(raw_bytes),
+                                    "mime_type": effective_mime,
+                                }
+                                files.append(entry)
+                                saved_block = {"type": "text", "text": "File saved to task workspace: " + rel_path}
+                                normalized_blocks.append(saved_block)
+                                full_normalized_blocks.append(saved_block)
                 inline_text = res_obj.get("text")
                 if isinstance(inline_text, str) and inline_text:
-                    clipped = inline_text[:MAX_TEXT_BLOCK_CHARS]
+                    if len(inline_text) > max_output_chars:
+                        resource_text_clipped = True
+                    clipped = inline_text[:max_output_chars]
                     text_parts.append(clipped)
+                    full_text_parts.append(inline_text)
                     resource_text_parts.append(clipped)
+                    full_resource_text_parts.append(inline_text)
                     normalized_blocks.append({"type": "text", "text": clipped})
+                    full_normalized_blocks.append({"type": "text", "text": inline_text})
+            elif b_type == "resource_link":
+                uri_str = str(block.get("uri") or "").strip()[:1024]
+                name_str = str(block.get("name") or block.get("title") or "").strip()[:256]
+                if name_str and uri_str:
+                    link_text = f"[resource_link: {name_str} ({uri_str})]"
+                elif uri_str:
+                    link_text = f"[resource_link: {uri_str}]"
+                elif name_str:
+                    link_text = f"[resource_link: {name_str}]"
+                else:
+                    link_text = "[resource_link 内容未展示]"
+                link_entry = {"type": "text", "text": link_text}
+                text_parts.append(link_text)
+                full_text_parts.append(link_text)
+                resource_text_parts.append(link_text)
+                full_resource_text_parts.append(link_text)
+                normalized_blocks.append(link_entry)
+                full_normalized_blocks.append(link_entry)
+            else:
+                safe_type = re.sub(r"[\x00-\x1f\x7f]+", "", b_type)[:64] or "unknown"
+                unk_text = f"[{safe_type} 内容未展示]"
+                unk_entry = {"type": "text", "text": unk_text}
+                text_parts.append(unk_text)
+                full_text_parts.append(unk_text)
+                resource_text_parts.append(unk_text)
+                full_resource_text_parts.append(unk_text)
+                normalized_blocks.append(unk_entry)
+                full_normalized_blocks.append(unk_entry)
 
-        clean_structured = _strip_raw_images(
+        clean_structured, sc_counts = _strip_raw_images(
             raw_result.get("structuredContent"),
             known_b64=seen_b64,
             artifacts_by_b64=artifacts_by_b64,
+            max_output_chars=max_output_chars,
         )
-        if isinstance(clean_structured, dict) and clean_structured and not is_error and plain_text_blocks:
-            # Like Codex, a successful result with structured content reaches the
-            # model once: MCP text blocks are its serialized copy. Images, saved
-            # files and embedded resources stay; error replies stay unchanged.
+        structured_was_truncated = any(
+            sc_counts[k] > 0 for k in ("omitted_items", "depth_cut", "omitted_strings", "omitted_binary")
+        )
+        dedup_plain_text = (
+            isinstance(clean_structured, dict)
+            and bool(clean_structured)
+            and not is_error
+            and bool(plain_text_blocks)
+            and not structured_was_truncated
+        )
+        if dedup_plain_text:
+            # Like Codex, a successful result with untruncated structured content reaches
+            # the model once: MCP text blocks are its serialized copy. Images, saved
+            # files and embedded resources stay; error replies and truncated structured
+            # replies keep both copies so the model loses nothing.
             dropped = {id(b) for b in plain_text_blocks}
             normalized_blocks = [b for b in normalized_blocks if id(b) not in dropped]
             text_parts = resource_text_parts
-        normalized: dict[str, Any] = {
-            "server_id": binding["server_id"],
-            "tool": binding["original_tool_name"],
-            "model_tool_name": binding["model_tool_name"],
-            "is_error": is_error,
-            "content": normalized_blocks,
-            "text": "\n".join(text_parts),
-        }
-        if is_error:
-            normalized["error"] = "agent_mcp_tool_returned_error"
-        if isinstance(clean_structured, dict):
-            if not is_error:
-                from ..downloads import issue_refs
-                downloads = issue_refs(clean_structured, binding, context, self)
-                if downloads:
-                    normalized["text"] = "Download with ryn_download_file: " + json.dumps(downloads, ensure_ascii=False)
-            normalized["structuredContent"] = clean_structured
-        if files or artifacts:
-            normalized["mcp_artifacts"] = [*artifacts, *files]
-        if files:
-            normalized["files"] = files
-        if artifacts:
-            normalized["images"] = copy.deepcopy(artifacts)
-            normalized["image_path"] = artifacts[0]["path"]
-            normalized["image_note"] = (
-                "Image bytes were saved to the workspace and verified operation screenshot pixels are attached to the active turn on image-capable routes."
-                if route_supports_images
-                else "Image bytes were saved to the workspace and have not been visually inspected yet. Use ryn_image_inspect with the saved path if the selected model supports image input."
-            )
+            full_dropped = {id(b) for b in full_plain_text_blocks}
+            full_normalized_blocks = [b for b in full_normalized_blocks if id(b) not in full_dropped]
+            full_text_parts = full_resource_text_parts
+
+        kept_text_clipped = resource_text_clipped or (plain_text_clipped and not dedup_plain_text)
+
+        def _assemble(blocks_val: list[dict[str, Any]], parts_val: list[str]) -> dict[str, Any]:
+            out_dict: dict[str, Any] = {
+                "server_id": binding["server_id"],
+                "tool": binding["original_tool_name"],
+                "model_tool_name": binding["model_tool_name"],
+                "is_error": is_error,
+                "content": blocks_val,
+                "text": "\n".join(parts_val),
+            }
+            if blocks_total > 64 or kept_text_clipped:
+                out_dict["truncated"] = {
+                    "blocks_total": blocks_total,
+                    "chars_original": chars_original,
+                }
+            if is_error:
+                out_dict["error"] = "agent_mcp_tool_returned_error"
+            if isinstance(clean_structured, dict):
+                if not is_error:
+                    from ..downloads import issue_refs
+                    downloads = issue_refs(clean_structured, binding, context, self)
+                    if downloads:
+                        out_dict["text"] = "Download with ryn_download_file: " + json.dumps(downloads, ensure_ascii=False)
+                out_dict["structuredContent"] = clean_structured
+                if structured_was_truncated:
+                    sc_meta: dict[str, int] = {
+                        "omitted_items": sc_counts["omitted_items"],
+                        "depth_cut": sc_counts["depth_cut"],
+                        "omitted_strings": sc_counts["omitted_strings"],
+                    }
+                    if sc_counts["omitted_binary"] > 0:
+                        sc_meta["omitted_binary"] = sc_counts["omitted_binary"]
+                    out_dict["structured_truncated"] = sc_meta
+            if files or artifacts:
+                out_dict["mcp_artifacts"] = [*artifacts, *files]
+            if files:
+                out_dict["files"] = files
+            if artifacts:
+                out_dict["images"] = copy.deepcopy(artifacts)
+                out_dict["image_path"] = artifacts[0]["path"]
+                out_dict["image_note"] = (
+                    "Image bytes were saved to the workspace and verified operation screenshot pixels are attached to the active turn on image-capable routes."
+                    if route_supports_images
+                    else "Image bytes were saved to the workspace and have not been visually inspected yet. Use ryn_image_inspect with the saved path if the selected model supports image input."
+                )
+            return out_dict
+
+        normalized = _assemble(normalized_blocks, text_parts)
+        if kept_text_clipped and operation_id:
+            agent_store = getattr(self.local, "store", None)
+            task_id_raw = context.get("task_id") if isinstance(context, dict) else None
+            if agent_store is not None and isinstance(task_id_raw, str) and task_id_raw:
+                full_normalized = _assemble(full_normalized_blocks, full_text_parts)
+                call_stub = {
+                    "name": str(binding.get("model_tool_name") or binding.get("original_tool_name") or "mcp"),
+                    "operation_id": str(operation_id),
+                }
+
+                def _persist_full_mcp_result(data: dict[str, Any]) -> tuple[dict[str, Any], int] | None:
+                    row = (data.get("tasks") or {}).get(task_id_raw)
+                    if not isinstance(row, dict):
+                        return None
+                    ref = results.save(agent_store, row, call_stub, full_normalized)
+                    row.setdefault("result_refs", []).append(ref)
+                    task_max = int((row.get("limits") or {}).get("max_output_chars") or max_output_chars)
+                    return ref, task_max
+
+                try:
+                    saved_pair = agent_store.transaction(_persist_full_mcp_result)
+                except Exception:
+                    saved_pair = None
+                if saved_pair is not None:
+                    reference, task_max_chars = saved_pair
+                    inline_cap = max(512, min(max_output_chars, task_max_chars))
+                    formatted = results.format_reference_result(
+                        call_stub["name"],
+                        full_normalized,
+                        reference,
+                        max_bytes=inline_cap,
+                    )
+                    if "truncated" in full_normalized:
+                        formatted["truncated"] = full_normalized["truncated"]
+                    if "structured_truncated" in full_normalized:
+                        formatted["structured_truncated"] = full_normalized["structured_truncated"]
+                    return formatted
         return normalized
 
     def execute(
@@ -1428,7 +1696,7 @@ class ExtensionToolAdapter:
                 binding=binding,
                 context=context,
                 operation_id=operation_id,
-                allow_image_rejection=True,
+                allow_image_rejection=False,
             )
 
         # Write tool path: requires preview match and durable OperationLedger transitions

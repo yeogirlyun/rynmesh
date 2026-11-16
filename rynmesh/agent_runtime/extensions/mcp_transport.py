@@ -74,9 +74,16 @@ SUPPORTED_PROTOCOL_VERSIONS = {
     "2024-11-05",
 }
 MAX_REQUEST_BYTES = 512 * 1024
-MAX_OUTPUT_BYTES = 4 * 1024 * 1024
+MAX_OUTPUT_BYTES = 8 * 1024 * 1024
+MAX_TOOL_CALL_OUTPUT_BYTES = 40 * 1024 * 1024
 MAX_LINE_BYTES = 8 * 1024 * 1024
 MAX_TOOL_CALL_LINE_BYTES = 40 * 1024 * 1024
+
+
+def _max_response_bytes(method: str | None = None) -> int:
+    if method in {"tools/call", "tools/prepare"}:
+        return int(MAX_TOOL_CALL_OUTPUT_BYTES)
+    return int(MAX_OUTPUT_BYTES)
 MAX_TOOL_PAGES = 16
 MAX_DISCOVERED_TOOLS = 256
 SESSION_IDLE_SECONDS = 1800.0
@@ -1440,11 +1447,17 @@ class StreamableHttpMcpSession:
         return error
 
     @staticmethod
-    def _check_content_length(response: httpx.Response, *, dispatched: bool) -> None:
+    def _check_content_length(
+        response: httpx.Response,
+        *,
+        dispatched: bool,
+        max_bytes: int | None = None,
+    ) -> None:
+        limit = int(MAX_OUTPUT_BYTES) if max_bytes is None else int(max_bytes)
         cl_header = response.headers.get("Content-Length") or response.headers.get("content-length")
         if cl_header:
             try:
-                if int(cl_header) > MAX_OUTPUT_BYTES:
+                if int(cl_header) > limit:
                     raise McpTransportError("agent_mcp_output_limit", dispatched=dispatched)
             except ValueError:
                 pass
@@ -1660,7 +1673,8 @@ class StreamableHttpMcpSession:
                             retry_after=retry_after_sec,
                             details=http_details,
                         )
-                    self._check_content_length(response, dispatched=True)
+                    resp_limit = _max_response_bytes(method)
+                    self._check_content_length(response, dispatched=True, max_bytes=resp_limit)
                     sess_hdr = response.headers.get("Mcp-Session-Id") or response.headers.get("mcp-session-id")
                     if sess_hdr:
                         self.session_id = sess_hdr.strip()
@@ -1681,7 +1695,7 @@ class StreamableHttpMcpSession:
                             method=method,
                         )
                         total += len(chunk)
-                        if total > MAX_OUTPUT_BYTES:
+                        if total > resp_limit:
                             raise McpTransportError(
                                 "agent_mcp_output_limit",
                                 dispatched=True,
@@ -2025,7 +2039,8 @@ class StreamableHttpMcpSession:
                                     http_status=int(resp.status_code),
                                 )
                             if not retry:
-                                self._check_content_length(resp, dispatched=False)
+                                notif_limit = _max_response_bytes("notifications/initialized")
+                                self._check_content_length(resp, dispatched=False, max_bytes=notif_limit)
                                 notif_total = 0
                                 for chunk in resp.iter_bytes():
                                     self._check_deadline(
@@ -2037,7 +2052,7 @@ class StreamableHttpMcpSession:
                                         method="notifications/initialized",
                                     )
                                     notif_total += len(chunk)
-                                    if notif_total > MAX_OUTPUT_BYTES:
+                                    if notif_total > notif_limit:
                                         raise McpTransportError("agent_mcp_output_limit", dispatched=False)
                     if not retry:
                         break
