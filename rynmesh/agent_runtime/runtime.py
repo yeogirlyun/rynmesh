@@ -474,11 +474,16 @@ class AgentRuntime(AgentLoop):
         business_specs = self._business_specs(row) if business_specs is None else business_specs
         if any(spec["function"]["name"] in ALL_INTERNAL_NAMES for spec in business_specs):
             raise AgentError("agent_tool_definition_changed")
-        pinned = {**row, "messages": [message for message in row["messages"] if message["role"] == "user"],
-                  "context_checkpoint": None, "_exclude_optional_memory": True}
-        authority_bytes = len(encoded(self._context(pinned)))
         # Tool schemas share the calibrated input capacity used by dispatch and compaction.
         max_context_bytes = self._effective_capacity(row, max_context_bytes)[0]
+        owners = [message for message in row["messages"] if message["role"] == "user"]
+        trailing_unanswered_owner = bool(row["messages"] and row["messages"][-1].get("role") == "user")
+        pinned_through = max(0, len(owners) - (1 if trailing_unanswered_owner else 0))
+        pinned = {**row, "messages": owners,
+                  "context_checkpoint": {"through": pinned_through, "content": ""},
+                  "_exclude_optional_memory": True,
+                  "_max_context_bytes_override": max_context_bytes}
+        authority_bytes = len(encoded(self._context(pinned)))
         desktop = tool_menu.BROWSER_TOOLS if (row.get("local_execution") or {}).get("desktop_access") else ()
         if desktop:
             # Expose installed desktop schemas immediately; dispatch still checks
@@ -2065,13 +2070,14 @@ class AgentRuntime(AgentLoop):
             owners = [message for message in [*row["messages"], *row.get("pending_user_messages", [])] if message["role"] == "user"]
             prospective = {**row, "messages": [*owners, message], "skills": merged_skills,
                            "context_checkpoint": None, "tool_menu": None}
-            # Every owner message stays in every request. Once they no longer fit
-            # the model's context together, continue in a linked new conversation
-            # (its first message carries a bounded summary). A message too large
-            # on its own is refused as before.
+            # Fixed instruction layers plus compacted-rule owner messages (including
+            # this new message), an empty checkpoint and tool schemas form the pinned
+            # floor. Continue in a linked new conversation only when that floor no
+            # longer fits capacity; a message too large on its own is still refused.
+            capacity = self._effective_capacity(row)[0]
             try:
                 (future_specs, _), authority_bytes = self._menu(prospective)
-                too_large = authority_bytes + len(encoded(future_specs)) > self._context_limit(row)
+                too_large = authority_bytes + len(encoded(future_specs)) > capacity
             except AgentError as exc:
                 if str(exc) != "agent_tool_schema_limit":
                     raise
@@ -2162,7 +2168,7 @@ class AgentRuntime(AgentLoop):
             (specs, _), authority_bytes = self._menu(alone)
         except AgentError:
             return False
-        return authority_bytes + len(encoded(specs)) <= self._context_limit(row)
+        return authority_bytes + len(encoded(specs)) <= self._effective_capacity(row)[0]
 
     def _continue_in_new_task(self, task_id: str, value: dict, content: str) -> dict:
         """The conversation is too large even after condensing: continue it in a new, linked one."""

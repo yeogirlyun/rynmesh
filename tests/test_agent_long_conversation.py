@@ -144,15 +144,15 @@ def test_owner_messages_that_outgrow_the_model_context_continue_in_a_new_convers
     row = runtime.create({"message": "Start."})
     advance(runtime)
     tid, continued = row["id"], None
-    for turn in range(12):
+    for turn in range(6):
         out = send(runtime, tid, f"Part {turn}: " + "detail " * 1400)
-        if out["id"] != tid:
-            continued = out
-            break
+        assert out["id"] == tid
         advance(runtime)
-    # Every owner message is kept in every request; when they no longer fit, the
-    # conversation continues instead of refusing the message (agent_tool_schema_limit).
-    assert continued is not None and continued["continued_from"] == row["id"]
+    # Compacted earlier owner messages stay bounded, so normal turns continue in place;
+    # when the pinned floor plus a large new owner message outgrows the window while
+    # still fitting a fresh summary-seeded task, the conversation continues in a new one.
+    continued = send(runtime, tid, "Final large batch: " + "detail " * 8500)
+    assert continued["id"] != tid and continued["continued_from"] == row["id"]
     assert runtime.get(row["id"])["continued_to"] == continued["id"]
     advance(runtime)
     assert runtime.get(continued["id"])["status"] == "completed"

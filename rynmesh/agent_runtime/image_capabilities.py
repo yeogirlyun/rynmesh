@@ -587,6 +587,13 @@ def require_route_image_support(
     )
 
 
+def is_image_content_part(part: Any) -> bool:
+    """Return True if a canonical content block represents an inline or input image."""
+    return isinstance(part, dict) and (
+        part.get("type") in {"image_url", "image", "input_image"} or "image_url" in part
+    )
+
+
 def message_has_image_input(messages: list[dict[str, Any]]) -> bool:
     """Return True if any canonical message carries an image content part."""
     if not isinstance(messages, list):
@@ -595,9 +602,7 @@ def message_has_image_input(messages: list[dict[str, Any]]) -> bool:
         if not isinstance(msg, dict) or not isinstance(msg.get("content"), list):
             continue
         for part in msg["content"]:
-            if not isinstance(part, dict):
-                continue
-            if part.get("type") in {"image_url", "image", "input_image"} or "image_url" in part:
+            if is_image_content_part(part):
                 return True
     return False
 

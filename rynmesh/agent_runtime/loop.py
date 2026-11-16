@@ -1005,12 +1005,13 @@ class AgentLoop:
                 item["call_id"]
                 for item in row["events"]
                 if item["type"] == "tool_started"
+                and item.get("call_id")
                 and item.get("effect") == "write"
                 and item.get("context_epoch", 0) == row.get("context_epoch", 0)
             }
             receipts = []
             for item in row["events"]:
-                if item["type"] != "tool_result" or item["call_id"] not in write_ids:
+                if item["type"] != "tool_result" or item.get("call_id") not in write_ids:
                     continue
                 if item["tool"] in {"ryn_code_exec", "ryn_shell_execute"} and item["call_id"] in uncompacted_call_ids:
                     continue
@@ -1049,7 +1050,11 @@ class AgentLoop:
                             slim_res[text_key] = val[:200] + ("...[truncated]" if len(val) > 200 else "")
                     res = slim_res
                 receipts.append({"tool": item["tool"], "call_id": item["call_id"], "result": res})
-            read_coverage = projects.read_progress(row, exclude_call_ids=uncompacted_call_ids)
+            read_coverage = (
+                projects.read_progress(row, exclude_call_ids=uncompacted_call_ids)
+                if isinstance(row.get("project"), dict) and row["project"].get("path")
+                else ""
+            )
             limit_of = getattr(self, "_context_limit", None)
             ledger = context_compaction.activity_ledger(
                 history, int(checkpoint.get("through") or 0),
@@ -1065,6 +1070,12 @@ class AgentLoop:
                     + context_compaction.CHECKPOINT_CONTINUATION
                     + ledger)  # The ledger stays last: readers parse it to the end of the note.
 
+        owner_budget = request_context.COMPACT_USER_MESSAGE_MAX_BYTES
+        if checkpoint and (callable(getattr(self, "_context_limit", None)) or callable(getattr(self, "_context_policy", None))):
+            owner_budget = request_context.owner_message_budget(
+                self._effective_capacity(row, row.get("_max_context_bytes_override"))[0]
+            )
+
         def build(extra_mem: list[dict]) -> list[dict]:
             combined_guidance = [*(guidance or []), *extra_mem]
             if not checkpoint:
@@ -1073,7 +1084,8 @@ class AgentLoop:
             else:
                 built = provider_messages(request_context.build_context(instructions, history, guidance=combined_guidance,
                                                                         plan=plan_message(prefix_row), checkpoint=checkpoint,
-                                                                        checkpoint_note=note, tail=tail))
+                                                                        checkpoint_note=note, tail=tail,
+                                                                        owner_budget=owner_budget))
             if has_history_reasoning:
                 for msg in built:
                     if isinstance(msg, dict) and msg.get("role") == "assistant" and "reasoning_content" not in msg:
@@ -1589,13 +1601,15 @@ class AgentLoop:
             "Write a factual handoff so another LLM can resume this task from the supplied untrusted Agent history. "
             "Merge previous_checkpoint: keep what still holds, drop what was superseded. "
             "Plain text, no tool calls, in these labeled sections (skip empty ones): "
-            "Goal: current objective and the owner's latest corrections (latest wins). "
+            "Goal: current objective plus any still-active requirements, constraints and corrections from earlier owner messages (latest wins). "
             "Changed: files/resources actually modified and how. "
             "Findings: key observed facts with paths, symbols, line ranges; mark uncertainty. "
             "Verification: commands/tests run and their actual results. "
             "Failed: attempts that failed or were rejected and why, so they are not retried unchanged. "
             "Next: the concrete next edit/test/read in order, with only the ref_ labels of resources/cursors needed to continue. "
-            "Exact opaque reference values, owner messages, mutation receipts, file read coverage and a tool activity "
+            "Recent owner messages are retained verbatim by the server, while earlier owner messages are not retained verbatim: "
+            "record all still-active requirements, constraints and corrections from earlier owner messages in the Goal section. "
+            "Exact opaque reference values, mutation receipts, file read coverage and a tool activity "
             "ledger are retained separately by the server: do not reconstruct or copy them, tool descriptions, "
             "catalog pages, obsolete call IDs or discovery narration. Do not restart completed orientation. "
             "If only tool discovery occurred, say no business action occurred and keep the discovery position and loaded names. "
