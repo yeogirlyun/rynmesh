@@ -93,6 +93,7 @@ RUNTIME_ERROR_CODES = frozenset({
     "upstream_stream_truncated",
     "source_protocol_parameters_unsupported",
     "source_protocol_response_invalid",
+    "upstream_context_overflow",
     "upstream_image_rejected",
     "upstream_stream_error",
     "upstream_request_rejected",
