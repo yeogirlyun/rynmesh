@@ -28,6 +28,34 @@ pub struct RuntimeState {
     pub action_busy: AtomicBool,
 }
 
+const LOW_FREQ_RECOVERY_SECS: u64 = 600;
+pub const NOTIFY_NEEDS_ATTENTION_KEY: &str =
+    "Ryn node could not start. Retrying periodically; open logs from the tray.";
+pub const NOTIFY_RECOVERED_KEY: &str = "Ryn node has recovered.";
+
+pub fn next_recovery_notification(
+    notified_attention: &mut bool,
+    recovery_state: &str,
+    auto_recover: bool,
+) -> Option<&'static str> {
+    if !auto_recover {
+        *notified_attention = false;
+        return None;
+    }
+    if recovery_state == "needs_attention" {
+        if !*notified_attention {
+            *notified_attention = true;
+            return Some(NOTIFY_NEEDS_ATTENTION_KEY);
+        }
+        return None;
+    }
+    if recovery_state == "healthy" && *notified_attention {
+        *notified_attention = false;
+        return Some(NOTIFY_RECOVERED_KEY);
+    }
+    None
+}
+
 #[derive(Default)]
 pub struct Recovery { pub attempts: u8, failures: u8, healthy_ticks: u8, next: Option<Instant>, failed_since: Option<Instant> }
 impl Recovery {
@@ -47,9 +75,14 @@ impl Recovery {
         self.failures = self.failures.saturating_add(1);
         let failed_since = *self.failed_since.get_or_insert(now);
         if !enabled || self.failures < 3 || now.saturating_duration_since(failed_since) < grace
-            || self.attempts >= 3 || self.next.is_some_and(|t| now < t) { return false; }
-        self.attempts += 1;
-        self.next = Some(now + Duration::from_secs(15 * 2_u64.pow(self.attempts as u32 - 1)));
+            || self.next.is_some_and(|t| now < t) { return false; }
+        self.attempts = self.attempts.saturating_add(1);
+        let delay_secs = if self.attempts >= 3 {
+            LOW_FREQ_RECOVERY_SECS
+        } else {
+            (15 * 2_u64.pow(self.attempts as u32 - 1)).min(LOW_FREQ_RECOVERY_SECS)
+        };
+        self.next = Some(now + Duration::from_secs(delay_secs));
         true
     }
 }
@@ -552,6 +585,7 @@ const STARTUP_GRACE: Duration = Duration::from_secs(120);
 pub fn watchdog(app: tauri::AppHandle, status_item: tauri::menu::MenuItem<tauri::Wry>, share_item: tauri::menu::MenuItem<tauri::Wry>) {
     std::thread::spawn(move || {
         let mut recovery = Recovery::default();
+        let mut notified_attention = false;
         let mut awake_controller = new_awake_controller();
         // Allow the one-file sidecar to extract and start before counting failures.
         let mut boot_deadline = Instant::now() + STARTUP_GRACE;
@@ -572,6 +606,11 @@ pub fn watchdog(app: tauri::AppHandle, status_item: tauri::menu::MenuItem<tauri:
                 prefs.auto_recover && !runtime.action_busy.load(Ordering::SeqCst), Instant::now(), grace);
             status.recovery_attempts = recovery.attempts;
             status.recovery = if status.node_online { "healthy" } else if Instant::now() < boot_deadline { "starting" } else if !prefs.auto_recover { "disabled" } else if should_restart { "restarting" } else if recovery.attempts >= 3 { "needs_attention" } else { "waiting" }.into();
+            if let Some(notice_key) = next_recovery_notification(&mut notified_attention, &status.recovery, prefs.auto_recover) {
+                use tauri_plugin_notification::NotificationExt;
+                let body = tr(notice_key);
+                let _ = app.notification().builder().title("Ryn").body(&body).show();
+            }
             let text = tr(tray_status_key(&status));
             let _ = status_item.set_text(&text);
             let _ = share_item.set_text(tr(if status.sharing { "Pause AI Sharing" } else { "Resume AI Sharing" }));
@@ -656,8 +695,81 @@ mod tests {
         for _ in 0..2 { assert!(!r.check(false, true, now + Duration::from_secs(15))); }
         assert!(r.check(false, true, now + Duration::from_secs(15)));
         assert!(r.check(false, true, now + Duration::from_secs(45)));
-        assert!(!r.check(false, true, now + Duration::from_secs(1000)));
+        assert!(!r.check(false, true, now + Duration::from_secs(644)));
         for _ in 0..20 { r.check(true, true, now); } assert_eq!(r.attempts, 0);
+    }
+    #[test]
+    fn low_frequency_retry_waits_ten_minutes_after_three_failures() {
+        let now = Instant::now();
+        let mut r = Recovery::default();
+        // Rapid budget: 3 restarts at +0s, +15s, +45s.
+        assert!(!r.check(false, true, now));
+        assert!(!r.check(false, true, now));
+        assert!(r.check(false, true, now));
+        assert!(r.check(false, true, now + Duration::from_secs(15)));
+        let third_at = now + Duration::from_secs(45);
+        assert!(r.check(false, true, third_at));
+        assert_eq!(r.attempts, 3);
+
+        // Within 10 minutes (< 600s) after the 3rd restart, no restart is allowed.
+        for elapsed in [1_u64, 60, 300, 599] {
+            assert!(!r.check(false, true, third_at + Duration::from_secs(elapsed)));
+        }
+
+        // At +600s (10 minutes), one low-frequency restart is allowed and capped at 10m again.
+        let fourth_at = third_at + Duration::from_secs(600);
+        assert!(r.check(false, true, fourth_at));
+        assert_eq!(r.attempts, 4);
+        assert!(!r.check(false, true, fourth_at + Duration::from_secs(599)));
+        assert!(r.check(false, true, fourth_at + Duration::from_secs(600)));
+    }
+    #[test]
+    fn healthy_twenty_ticks_resets_low_frequency_recovery() {
+        let now = Instant::now();
+        let mut r = Recovery::default();
+        assert!(!r.check(false, true, now));
+        assert!(!r.check(false, true, now));
+        assert!(r.check(false, true, now));
+        assert!(r.check(false, true, now + Duration::from_secs(15)));
+        assert!(r.check(false, true, now + Duration::from_secs(45)));
+        assert!(r.check(false, true, now + Duration::from_secs(645)));
+        assert_eq!(r.attempts, 4);
+
+        for _ in 0..19 {
+            assert!(!r.check(true, true, now + Duration::from_secs(700)));
+        }
+        assert_eq!(r.attempts, 4);
+        assert!(!r.check(true, true, now + Duration::from_secs(701)));
+        assert_eq!(r.attempts, 0);
+        assert!(r.next.is_none());
+    }
+    #[test]
+    fn recovery_notification_deduplicates_attention_and_recovery_transitions() {
+        let mut notified = false;
+        // Normal startup and healthy ticks never emit notifications.
+        assert_eq!(next_recovery_notification(&mut notified, "starting", true), None);
+        assert_eq!(next_recovery_notification(&mut notified, "healthy", true), None);
+
+        // First entry into needs_attention notifies once; subsequent ticks or low-freq retries do not.
+        assert_eq!(
+            next_recovery_notification(&mut notified, "needs_attention", true),
+            Some(NOTIFY_NEEDS_ATTENTION_KEY)
+        );
+        assert_eq!(next_recovery_notification(&mut notified, "needs_attention", true), None);
+        assert_eq!(next_recovery_notification(&mut notified, "restarting", true), None);
+        assert_eq!(next_recovery_notification(&mut notified, "starting", true), None);
+        assert_eq!(next_recovery_notification(&mut notified, "needs_attention", true), None);
+
+        // Returning to healthy notifies once and resets state.
+        assert_eq!(
+            next_recovery_notification(&mut notified, "healthy", true),
+            Some(NOTIFY_RECOVERED_KEY)
+        );
+        assert_eq!(next_recovery_notification(&mut notified, "healthy", true), None);
+
+        // Disabled auto_recover never notifies.
+        assert_eq!(next_recovery_notification(&mut notified, "needs_attention", false), None);
+        assert!(!notified);
     }
     #[test]
     fn disabled_recovery_never_restarts() {

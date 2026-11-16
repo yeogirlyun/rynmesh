@@ -2266,5 +2266,7 @@
   "The selected service changed. Open the current model before sharing.": "The selected service changed. Open the current model before sharing.",
   "Ryn {{version}} will be installed as Ryn quits.": "Ryn {{version}} will be installed as Ryn quits.",
   "Ryn downloads new versions in the background. When one is ready, click Update next to the Ryn logo.": "Ryn downloads new versions in the background. When one is ready, click Update next to the Ryn logo.",
-  "Update settings": "Update settings"
+  "Update settings": "Update settings",
+  "Ryn node could not start. Retrying periodically; open logs from the tray.": "Ryn node could not start. Retrying periodically; open logs from the tray.",
+  "Ryn node has recovered.": "Ryn node has recovered."
 }
