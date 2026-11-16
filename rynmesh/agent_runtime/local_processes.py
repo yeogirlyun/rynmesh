@@ -16,6 +16,7 @@ import uuid
 from collections.abc import Mapping
 from pathlib import Path
 
+from .. import __version__
 from ..llm_package.process_guard import _windows_job
 from . import login_environment
 from .git_safety import (
@@ -302,7 +303,21 @@ def _start_environment_warmup() -> None:
     ).start()
 
 
-def child_environment():
+def _pop_env_case_aware(env: dict[str, str], key: str) -> None:
+    if os.name == "nt":
+        target = key.upper()
+        for existing in [k for k in env if k.upper() == target]:
+            env.pop(existing, None)
+    else:
+        env.pop(key, None)
+
+
+def _set_env_case_aware(env: dict[str, str], key: str, value: str) -> None:
+    _pop_env_case_aware(env, key)
+    env[key] = value
+
+
+def child_environment(*, task_id: str | None = None, tty: bool = False) -> dict[str, str]:
     """The node's own configuration and secrets must not reach model-driven commands.
 
     RYNMESH_LOCAL_TOKEN/RYNMESH_NETWORK_KEY would hand node control to any command the model
@@ -319,6 +334,27 @@ def child_environment():
                 env[key] = value
     else:
         _merge_windows_registry_path(env)
+
+    # Fixed child overrides (applied after login/registry merge, before bundled rg PATH prepend).
+    for fixed_key, fixed_val in (
+        ("PAGER", "cat"),
+        ("GIT_PAGER", "cat"),
+        ("GH_PAGER", "cat"),
+        ("NO_COLOR", "1"),
+        ("RYN_VERSION", __version__),
+    ):
+        _set_env_case_aware(env, fixed_key, fixed_val)
+    if not tty:
+        _set_env_case_aware(env, "TERM", "dumb")
+    else:
+        existing_term = next((env[k] for k in env if (k.upper() == "TERM" if os.name == "nt" else k == "TERM")), None)
+        if existing_term == "dumb":
+            _pop_env_case_aware(env, "TERM")
+    if task_id is not None:
+        _set_env_case_aware(env, "RYN_TASK_ID", str(task_id))
+    else:
+        _pop_env_case_aware(env, "RYN_TASK_ID")
+
     bundled = _bundled_rg_executable()
     if bundled:
         sep = ";" if os.name == "nt" else ":"
@@ -424,7 +460,7 @@ class Processes:
                         "global_limit": MAX_GLOBAL_PROCESSES,
                     },
                 )
-            proc_env = child_environment()
+            proc_env = child_environment(task_id=task_id, tty=tty)
             for extra_env in (getattr(args, "env_overrides", None), env_overrides):
                 if isinstance(extra_env, Mapping):
                     for key, value in extra_env.items():
