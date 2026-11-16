@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 import threading
 import time
 import uuid
@@ -18,6 +19,44 @@ from .task_protocol import TaskProtocolError, open_task, seal_task
 PATH = "/api/peer/llm/space-catalog"
 MAX_BYTES = 64 * 1024
 FRESH_SECONDS = 120
+ENVELOPE_TTL_SECONDS = 300
+_CLOSED_CODE_RE = re.compile(r"space_catalog_[a-z0-9_]{1,80}")
+
+
+def _service_sort_key(row: dict) -> tuple[str, str]:
+    service = row.get("service") if isinstance(row, dict) else None
+    if not isinstance(service, dict):
+        return ("", "")
+    name = str(service.get("model_alias") or service.get("name") or service.get("package_id") or "")
+    pkg = str(service.get("package_id") or "")
+    return (name, pkg)
+
+
+def _classify_refresh_error(exc: BaseException, *, transport_failed: bool) -> str:
+    if transport_failed:
+        detail_code = getattr(exc, "detail_code", None)
+        if (
+            isinstance(detail_code, str)
+            and _CLOSED_CODE_RE.fullmatch(detail_code)
+            and detail_code != "space_catalog_transport_unavailable"
+        ):
+            return detail_code
+        text = str(exc)
+        if isinstance(exc, TaskProtocolError) and _CLOSED_CODE_RE.fullmatch(text):
+            if text != "space_catalog_transport_unavailable":
+                return text
+        if text.startswith("peer_http_error:"):
+            tail = text.rsplit(":", 1)[-1]
+            if _CLOSED_CODE_RE.fullmatch(tail) and tail != "space_catalog_transport_unavailable":
+                return tail
+        return "space_catalog_unreachable"
+    if isinstance(exc, TaskProtocolError):
+        text = str(exc)
+        if _CLOSED_CODE_RE.fullmatch(text):
+            return text
+        if text.startswith("task envelope expired"):
+            return "space_catalog_clock_skew"
+    return "space_catalog_response_invalid"
 
 
 class SpaceModelCatalog:
@@ -29,13 +68,15 @@ class SpaceModelCatalog:
         self.outgoing_slots = threading.BoundedSemaphore(2)
         self.last_requests, self.cache, self.tickets = {}, {}, {}
         self.refreshes = {}
+        self.last_errors = {}
+        self.skipped_rows = 0
 
     def _local_generation(self, peer):
         permission = self.store.personal_space.model_permission(peer)
         return hashlib.sha256(json.dumps(permission, sort_keys=True).encode()).hexdigest()
 
     def _seal(self, body, task_id, kind, recipient, recipient_key):
-        expiry = datetime.fromtimestamp(self.clock() + 60, timezone.utc).isoformat()
+        expiry = datetime.fromtimestamp(self.clock() + ENVELOPE_TTL_SECONDS, timezone.utc).isoformat()
         return seal_task(body=body, task_id=task_id, kind=kind, sender_peer_id=self.store.peer_id,
             recipient_peer_id=recipient, sender_signing_key=self.store.private_key_bytes,
             recipient_messaging_pub=recipient_key, expires_at=expiry).to_dict()
@@ -76,11 +117,20 @@ class SpaceModelCatalog:
                 if valid(status.get("model_binding"), provider.manifest.package_id):
                     rows.append({**status, "network_id": self.network_id()})
             if len(rows) > 100:
-                raise TaskProtocolError("space_catalog_capacity_exhausted")
+                rows = sorted(rows, key=_service_sort_key)[:100]
             body = {"task_id": outer["task_id"], "services": rows, "space_permission": permission,
                     "provider_messaging_pub": peer_box.public_key_b64(self.key)}
             if len(json.dumps(body).encode()) > MAX_BYTES:
-                raise TaskProtocolError("space_catalog_capacity_exhausted")
+                rows = sorted(rows, key=_service_sort_key)
+                while rows:
+                    body["services"] = rows
+                    if len(json.dumps(body).encode()) <= MAX_BYTES:
+                        break
+                    rows.pop()
+                else:
+                    body["services"] = []
+                    if len(json.dumps(body).encode()) > MAX_BYTES:
+                        raise TaskProtocolError("space_catalog_capacity_exhausted")
             return self._seal(body, outer["task_id"], "space_model_catalog_response", sender, request["reply_messaging_pub"])
         finally:
             self.slots.release()
@@ -99,13 +149,18 @@ class SpaceModelCatalog:
             else:
                 prior_generation, future = existing
                 if prior_generation != generation:
+                    self.last_errors[peer] = ("space_catalog_peer_not_allowed", self.clock())
                     raise TaskProtocolError("space_catalog_peer_not_allowed")
         if existing is not None:
             try:
-                rows = future.result(timeout=20)
+                rows = future.result(timeout=30)
             except TimeoutError:
-                raise TaskProtocolError("space_catalog_refresh_failed") from None
+                with self.lock:
+                    self.last_errors[peer] = ("space_catalog_timeout", self.clock())
+                raise TaskProtocolError("space_catalog_timeout") from None
             if self._local_generation(peer) != generation:
+                with self.lock:
+                    self.last_errors[peer] = ("space_catalog_peer_not_allowed", self.clock())
                 raise TaskProtocolError("space_catalog_peer_not_allowed")
             return copy.deepcopy(rows)
         try:
@@ -122,7 +177,9 @@ class SpaceModelCatalog:
     def _refresh(self, advertised):
         peer = advertised["peer_id"]
         local_generation = self._local_generation(peer)
-        if not self.outgoing_slots.acquire(blocking=False):
+        if not self.outgoing_slots.acquire(timeout=10):
+            with self.lock:
+                self.last_errors[peer] = ("space_catalog_capacity_exhausted", self.clock())
             raise TaskProtocolError("space_catalog_capacity_exhausted")
         task_id = "space-catalog-" + uuid.uuid4().hex
         with self.lock:
@@ -148,14 +205,23 @@ class SpaceModelCatalog:
             _validate_messaging_pub(body["provider_messaging_pub"])
             from .peer_binding import expected
             rows, identifiers = [], set()
+            skipped = 0
             for status in body["services"]:
-                service_id = status["service"]["package_id"]
+                if not isinstance(status, dict):
+                    skipped += 1
+                    continue
+                service = status.get("service")
+                service_id = service.get("package_id") if isinstance(service, dict) else None
+                if not isinstance(service_id, str) or not service_id or service_id in identifiers:
+                    skipped += 1
+                    continue
                 record = {**status, "peer_id": peer, "consumer_peer_id": self.store.peer_id, "binding_verified": True,
                     "consumer_access_generation": local_generation,
                     "space_permission": body["space_permission"], "node_messaging_pub": body["provider_messaging_pub"],
                     "access": "personal_space", "updated_at": datetime.fromtimestamp(self.clock(), timezone.utc).isoformat()}
-                if service_id in identifiers or expected(record, self.store.peer_id) is None:
-                    raise TaskProtocolError("space_catalog_response_invalid")
+                if expected(record, self.store.peer_id) is None:
+                    skipped += 1
+                    continue
                 identifiers.add(service_id)
                 rows.append(record)
             if self._local_generation(peer) != local_generation:
@@ -163,18 +229,27 @@ class SpaceModelCatalog:
             with self.lock:
                 if self.tickets.get(peer) != task_id:
                     raise TaskProtocolError("space_catalog_refresh_superseded")
+                self.skipped_rows += skipped
+                self.last_errors.pop(peer, None)
                 if peer not in self.cache and len(self.cache) >= 64:
                     self.cache.pop(min(self.cache, key=lambda k: self.cache[k]["checked_at"]))
-                self.cache[peer] = {"checked_at": self.clock(), "services": rows, "local_generation": local_generation}
+                self.cache[peer] = {
+                    "checked_at": self.clock(),
+                    "services": rows,
+                    "local_generation": local_generation,
+                    "skipped_rows": skipped,
+                }
             return copy.deepcopy(rows)
-        except Exception:
+        except Exception as exc:
+            code = _classify_refresh_error(exc, transport_failed=transport_failed)
             with self.lock:
+                self.last_errors[peer] = (code, self.clock())
                 # A failed connection is not a new catalog. Keep the previous
                 # signed snapshot only until its original expiry; records()
                 # still checks the current membership generation on every read.
                 if self.tickets.get(peer) == task_id and not transport_failed:
                     self.cache.pop(peer, None)
-            raise TaskProtocolError("space_catalog_refresh_failed") from None
+            raise TaskProtocolError(code) from None
         finally:
             self.outgoing_slots.release()
             with self.lock:
@@ -190,6 +265,19 @@ class SpaceModelCatalog:
                 current = self._local_generation(peer)
             except (ValueError, RuntimeError, OSError):
                 continue
-            if 0 <= self.clock() - cached["checked_at"] <= FRESH_SECONDS and current == cached["local_generation"]:
+            if current != cached["local_generation"]:
+                continue
+            age = self.clock() - cached["checked_at"]
+            if 0 <= age <= FRESH_SECONDS:
                 rows.extend(cached["services"])
+            elif age > FRESH_SECONDS:
+                rows.extend(
+                    {
+                        **service,
+                        "catalog_state": "stale",
+                        "available": False,
+                        "binding_verified": False,
+                    }
+                    for service in cached["services"]
+                )
         return rows

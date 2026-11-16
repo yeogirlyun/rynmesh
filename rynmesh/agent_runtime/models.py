@@ -12,6 +12,24 @@ from ..llm_package.reasoning import metadata as reasoning_metadata
 from ..llm_package.tool_capabilities import client_tools_contract
 from .image_capabilities import catalog_image_fields
 
+_SPACE_CATALOG_ERROR_REASONS = {
+    "space_catalog_unreachable": "无法连接设备（space_catalog_unreachable）",
+    "space_catalog_rate_limited": "请求过于频繁（space_catalog_rate_limited）",
+    "space_catalog_clock_skew": "两台设备系统时间相差过大，请校准时钟（space_catalog_clock_skew）",
+    "space_catalog_peer_not_allowed": "个人空间访问权限未放行（space_catalog_peer_not_allowed）",
+    "space_catalog_response_limit": "对端目录响应超出大小限制（space_catalog_response_limit）",
+    "space_catalog_response_invalid": "对端目录响应校验未通过（space_catalog_response_invalid）",
+    "space_catalog_capacity_exhausted": "目录刷新并发已满（space_catalog_capacity_exhausted）",
+    "space_catalog_request_rejected": "对端拒绝目录请求（space_catalog_request_rejected）",
+    "space_catalog_request_invalid": "目录请求格式无效（space_catalog_request_invalid）",
+    "space_catalog_refresh_superseded": "目录刷新已被新请求取代（space_catalog_refresh_superseded）",
+    "space_catalog_timeout": "等待目录刷新超时（space_catalog_timeout）",
+}
+
+
+def _format_catalog_error(code: str) -> str:
+    return _SPACE_CATALOG_ERROR_REASONS.get(code, code)
+
 
 class ModelCatalog:
     def __init__(self, services, store):
@@ -90,7 +108,13 @@ class ModelCatalog:
             # bridge plus the chat protocol still declares the same wire contract.
             declared = client_tools_contract(adapter, capabilities)
             supported = declared and value.get("chat_protocol") == "rynmesh.chat.v1"
-            available = bool(value.get("online") and value.get("ready", True))
+            is_stale = value.get("catalog_state") == "stale"
+            available = bool(
+                not is_stale
+                and value.get("available", True)
+                and value.get("online")
+                and value.get("ready", True)
+            )
             row = {"id": model_ref, "name": manifest.get("model_alias", service_id),
                    "source": "local_service" if own else "peer", "source_name": value.get("node_name", ""),
                    "service_id": service_id, "peer_id": peer_id, "adapter": adapter,
@@ -98,6 +122,7 @@ class ModelCatalog:
                    "model_id": manifest.get("model_alias", service_id), "source_id": "",
                    "destination_revision": "",
                    "available": available, "agent_supported": supported,
+                   **({"catalog_state": value["catalog_state"]} if "catalog_state" in value else {}),
                    "tool_support": "unsupported" if adapter == "claude_cli" else value.get("tool_support", "unknown"),
                    "agent_support_basis": "adapter_contract" if own else "provider_protocol_contract",
                    "context_window": manifest.get("context_window", 32768),
@@ -278,6 +303,8 @@ class ModelCatalog:
             )
             usage_store = ModelUsageStore(usage_path)
         usage_snapshot = usage_store.read_cached()
+        space_catalog = self.services.get("space_catalog") if isinstance(self.services, dict) else None
+        last_errors = getattr(space_catalog, "last_errors", None)
         for row in rows.values():
             ms = row.get("model_settings")
             policy = (
@@ -291,10 +318,23 @@ class ModelCatalog:
             row["usage"] = usage
             if isinstance(ms, dict):
                 ms["usage"] = usage
-            row["description"] = ("模型当前不可用，请检查来源连接。" if not row["available"] else
-                "可供本机 Agent 使用；工具在本机执行。" if row["agent_supported"] else
-                "此接入只支持对话，不能执行 Agent 工具。" if row["adapter"] == "claude_cli" else
-                "此接入未声明助手工具协议支持。")
+            peer_err = None
+            if row["source"] == "peer" and isinstance(last_errors, dict):
+                entry = last_errors.get(row.get("peer_id", ""))
+                if isinstance(entry, tuple) and entry:
+                    peer_err = str(entry[0])
+                elif isinstance(entry, str) and entry:
+                    peer_err = entry
+            if peer_err and not row["available"]:
+                row["catalog_refresh_error"] = peer_err
+                row["description"] = f"目录刷新失败：{_format_catalog_error(peer_err)}"
+            elif row.get("catalog_state") == "stale":
+                row["description"] = "待确认（目录缓存已过期，使用前将自动刷新）"
+            else:
+                row["description"] = ("模型当前不可用，请检查来源连接。" if not row["available"] else
+                    "可供本机 Agent 使用；工具在本机执行。" if row["agent_supported"] else
+                    "此接入只支持对话，不能执行 Agent 工具。" if row["adapter"] == "claude_cli" else
+                    "此接入未声明助手工具协议支持。")
         return sorted(rows.values(), key=lambda row: (row["source"] == "peer", row["name"], row["id"]))
 
     def get_model(self, model_id):
@@ -317,16 +357,36 @@ class ModelCatalog:
         locator = next((row for row in records if row.get("peer_id")
             and model_id.startswith("peer/" + hashlib.sha256(row["peer_id"].encode()).hexdigest() + "/")
             and row.get("access_policy") == "personal_space"), None)
-        if locator is not None and self.store.personal_space.allows_ai(locator["peer_id"]):
+        space_catalog = self.services.get("space_catalog") if isinstance(self.services, dict) else None
+        refresh_error = None
+        if locator is not None and space_catalog is not None and self.store.personal_space.allows_ai(locator["peer_id"]):
+            peer_id = locator["peer_id"]
             try:
-                self.services["space_catalog"].refresh(locator)
-            except Exception:
-                pass  # No stale record is promoted to authenticated authority.
-        return self.get_model(model_id)
+                space_catalog.refresh(locator)
+            except Exception as exc:
+                last_errors = getattr(space_catalog, "last_errors", None)
+                entry = last_errors.get(peer_id) if isinstance(last_errors, dict) else None
+                if isinstance(entry, tuple) and entry:
+                    refresh_error = str(entry[0])
+                elif str(exc).startswith("space_catalog_"):
+                    refresh_error = str(exc)
+                else:
+                    refresh_error = "space_catalog_refresh_failed"
+                if isinstance(last_errors, dict) and peer_id not in last_errors:
+                    last_errors[peer_id] = (refresh_error, 0)
+        row = self.get_model(model_id)
+        if row is not None and refresh_error and not row.get("available"):
+            row["catalog_refresh_error"] = refresh_error
+            row["description"] = f"目录刷新失败：{_format_catalog_error(refresh_error)}"
+        return row
 
     def resolve(self, model_id, *, require_tools=True):
         row = self.get_model(model_id)
-        if model_id.startswith("peer/") and (not row or not row.get("destination_binding_supported")):
+        if model_id.startswith("peer/") and (
+            not row
+            or not row.get("destination_binding_supported")
+            or row.get("catalog_state") == "stale"
+        ):
             row = self.refresh_destination(model_id)
         if not row or not row["available"]:
             raise ValueError("agent_model_unavailable")
