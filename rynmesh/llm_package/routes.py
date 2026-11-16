@@ -158,7 +158,7 @@ def _delivery_error_code(exc: Exception, *, transport: str) -> str:
 
 def _submission_error_code(detail: str) -> str:
     message = detail.strip().lower()
-    if message in RUNTIME_ERROR_CODES or message in {"service_unhealthy", "service_review_changed"}:
+    if message in RUNTIME_ERROR_CODES or message in {"service_unhealthy", "service_review_changed", "balance_insufficient"}:
         return message
     if "insufficient development task balance" in message:
         return "insufficient_task_balance"
@@ -3133,7 +3133,19 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
 
     @app.get("/api/local/task-balance")
     def local_task_balance() -> dict[str, Any]:
-        return {**balance.summary(), "events": balance.events()}
+        try:
+            return {**balance.summary(), "events": balance.events()}
+        except TaskBalanceError as exc:
+            code = str(exc)
+            raise HTTPException(status_code=500 if code == "task_balance_corrupt" else 409, detail=code) from exc
+
+    @app.post("/api/local/llm/task-balance/dev-grant")
+    def local_llm_task_balance_dev_grant() -> dict[str, Any]:
+        try:
+            return balance.dev_grant()
+        except TaskBalanceError as exc:
+            code = str(exc)
+            raise HTTPException(status_code=500 if code == "task_balance_corrupt" else 409, detail=code) from exc
 
     @app.get("/api/local/llm/orders")
     def local_llm_orders() -> dict[str, Any]:
@@ -3467,7 +3479,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         if maximum > manifest.pricing.maximum_per_task:
             raise HTTPException(status_code=409, detail="estimated task cost exceeds provider maximum")
         if maximum > float(balance.summary().get("available") or 0):
-            raise HTTPException(status_code=409, detail="insufficient development Task Balance")
+            raise HTTPException(status_code=409, detail="balance_insufficient")
         task_id = str(body.get("task_id") or ("task_" + uuid.uuid4().hex))
         idempotency_key = str(body.get("idempotency_key") or task_id)
         requested_transport = str(body.get("transport") or "auto").strip().lower()

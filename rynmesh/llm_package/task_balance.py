@@ -21,20 +21,34 @@ snapshot is rebuilt by replaying the category.
 from __future__ import annotations
 
 import json
+import logging
 import math
+import os
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from rynmesh.atomic_io import atomic_write_json, migration_backup
 
+_logger = logging.getLogger(__name__)
+
 LEDGER_VERSION = "rynmesh-dev-task-balance-v1"
 SNAPSHOT_VERSION = "rynmesh-dev-task-balance-view-v2"
 TERMINAL_HOLD_STATES = {"settled", "released"}
 CURRENCY = "DEV_TASK_BALANCE"
+DEV_GRANT_THRESHOLD = 10.0
+_SNAPSHOT_RETENTION_DAYS = 30
 _RECENT_EVENTS = 200
+_KIND_PRIORITY = {
+    "opening": 0,
+    "hold": 1,
+    "rehold": 2,
+    "settle": 3,
+    "release": 4,
+    "earning": 5,
+}
 
 # Local transition kind -> signed credit event kind.
 _CREDIT_KINDS = {
@@ -68,6 +82,69 @@ def _token_count(value: Any) -> int | None:
     raise TaskBalanceError("token count must be a non-negative integer or unknown")
 
 
+def _parse_iso(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    text = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+
+def _prune_old_entries(value: dict[str, Any]) -> None:
+    now_dt = _parse_iso(_now()) or datetime.now(timezone.utc)
+    cutoff = now_dt - timedelta(days=_SNAPSHOT_RETENTION_DAYS)
+    holds = value.get("holds")
+    if isinstance(holds, dict):
+        stale_holds = [
+            task_id
+            for task_id, hold in holds.items()
+            if isinstance(hold, dict)
+            and hold.get("state") in TERMINAL_HOLD_STATES
+            and (ended := _parse_iso(hold.get("settled_at") or hold.get("released_at"))) is not None
+            and ended < cutoff
+        ]
+        for task_id in stale_holds:
+            del holds[task_id]
+    earnings = value.get("earnings")
+    if isinstance(earnings, dict):
+        stale_earnings = [
+            key
+            for key, item in earnings.items()
+            if isinstance(item, dict)
+            and (created := _parse_iso(item.get("created_at"))) is not None
+            and created < cutoff
+        ]
+        for key in stale_earnings:
+            del earnings[key]
+
+
+def _event_kind_priority(event: Any) -> int:
+    phase = str(event.metadata.get("phase") or event.reason or "")
+    if phase in _KIND_PRIORITY:
+        return _KIND_PRIORITY[phase]
+    return {
+        "task_balance_opening": 0,
+        "task_hold": 1,
+        "task_settle": 3,
+        "task_release": 4,
+        "task_earning": 5,
+    }.get(event.kind, 6)
+
+
+def _event_sort_key(event: Any) -> tuple[Any, ...]:
+    raw_seq = event.metadata.get("sequence")
+    has_seq = type(raw_seq) is int
+    return (
+        event.created_at,
+        (0, raw_seq) if has_seq else (1, 0),
+        _event_kind_priority(event),
+        event.dedupe_key,
+    )
+
+
 class TaskBalanceLedger:
     """A local simulated balance. Not money, a deposit, or a payment system."""
 
@@ -86,6 +163,9 @@ class TaskBalanceLedger:
         self._ledger = credit_ledger
         self._peer_id = peer_id
         self._private_key = private_key_bytes
+        self._folded = 0
+        self._last_dedupe_key = ""
+        self._sequence = 0
         if credit_ledger is not None and not (peer_id and private_key_bytes):
             raise TaskBalanceError("ledger-backed Task Balance needs peer_id and private_key_bytes")
         with self._lock:
@@ -107,6 +187,30 @@ class TaskBalanceLedger:
                 "earned": state["earned"],
                 "currency": CURRENCY,
                 "ledger_backed": self._ledger is not None,
+                "replay_skipped": int(state.get("replay_skipped") or 0),
+            }
+
+    def dev_grant(self) -> dict[str, Any]:
+        with self._lock:
+            state = self._read()
+            if float(state["available"]) >= DEV_GRANT_THRESHOLD:
+                raise TaskBalanceError("dev_grant_not_needed")
+            grant_seq = int(state.get("dev_grant_count") or 0) + 1
+            dedupe = f"opening:dev_grant:{grant_seq}"
+            state["dev_grant_count"] = grant_seq
+            state["available"] = _amount(float(state["available"]) + self.initial_dev_balance)
+            self._append_credit(
+                "opening",
+                "",
+                self.initial_dev_balance,
+                dedupe,
+                {"source": "dev_grant", "grant_seq": grant_seq},
+            )
+            self._write(state)
+            return {
+                **self.summary(),
+                "granted": self.initial_dev_balance,
+                "dedupe_key": dedupe,
             }
 
     def hold(self, *, task_id: str, amount: float, service_id: str, provider_peer_id: str,
@@ -294,40 +398,61 @@ class TaskBalanceLedger:
         if len(state["events"]) > _RECENT_EVENTS:
             del state["events"][: len(state["events"]) - _RECENT_EVENTS]
 
-    def _append_credit(self, kind, task_id, amount, dedupe, metadata) -> None:
+    def _append_credit(self, kind, task_id, amount, dedupe, metadata, *, created_at: str = "") -> None:
         if self._ledger is None:
             return
+        next_seq = self._sequence + 1
         result = self._ledger.record(
             subject_peer_id=self._peer_id, issuer_peer_id=self._peer_id,
             private_key_bytes=self._private_key, kind=_CREDIT_KINDS[kind], amount=amount,
             role="consumer" if kind in {"hold", "rehold", "settle", "release"} else "provider",
             category=_task_balance_category(), subject_id=task_id, dedupe_key=dedupe,
-            reason=kind, metadata={"phase": kind, **dict(metadata)},
+            reason=kind, metadata={"phase": kind, "sequence": next_seq, **dict(metadata)},
+            created_at=created_at or _now(),
         )
         if result.get("status") == "recorded":
             self._folded += 1
+            self._last_dedupe_key = dedupe
+            self._sequence = next_seq
 
     # ---- ledger-backed initialization / replay ---------------------------
     def _initialize_ledger_backed(self) -> None:
         self._folded = 0
+        self._last_dedupe_key = ""
+        self._sequence = 0
         existing = None
         if self.path.exists():
             try:
-                existing = json.loads(self.path.read_text(encoding="utf-8"))
+                loaded = json.loads(self.path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    existing = loaded
             except (OSError, json.JSONDecodeError):
                 existing = None
-        category_count = self._category_event_count()
-        if existing and existing.get("version") == SNAPSHOT_VERSION:
-            if int(existing.get("folded_events") or 0) == category_count:
+        events = self._category_events()
+        category_count = len(events)
+        last_key = events[-1]["dedupe_key"] if events else ""
+        if (
+            existing
+            and existing.get("version") == SNAPSHOT_VERSION
+            and existing.get("development_only")
+            and isinstance(existing.get("holds"), dict)
+            and isinstance(existing.get("events"), list)
+        ):
+            if (
+                int(existing.get("folded_events") or 0) == category_count
+                and str(existing.get("last_dedupe_key") or "") == last_key
+            ):
                 self._folded = category_count
+                self._last_dedupe_key = last_key
+                self._sequence = int(existing.get("sequence") or 0)
                 return
-            self._write(self._replay())
+            self._write(self._replay(events))
             return
         if existing and existing.get("version") == LEDGER_VERSION and category_count == 0:
             self._migrate_legacy(existing)
             return
         if category_count:
-            self._write(self._replay())
+            self._write(self._replay(events))
             return
         state = self._fresh_state(SNAPSHOT_VERSION)
         # The opening grant must land in the snapshot as well as the ledger;
@@ -366,24 +491,41 @@ class TaskBalanceLedger:
             subject_peer_id=self._peer_id, category=_task_balance_category(),
         )
         events = [CreditEvent.from_payload(item.payload) for item in signed]
-        events.sort(key=lambda event: (event.created_at, event.dedupe_key))
-        return [{"kind": e.kind, "amount": float(e.amount), "task_id": e.subject_id,
-                 "created_at": e.created_at, "metadata": dict(e.metadata),
-                 "dedupe_key": e.dedupe_key} for e in events]
+        events.sort(key=_event_sort_key)
+        return [
+            {
+                "kind": e.kind,
+                "amount": float(e.amount),
+                "task_id": e.subject_id,
+                "created_at": e.created_at,
+                "metadata": dict(e.metadata),
+                "dedupe_key": e.dedupe_key,
+                "sequence": e.metadata.get("sequence") if type(e.metadata.get("sequence")) is int else None,
+            }
+            for e in events
+        ]
 
     def _category_event_count(self) -> int:
         return len(self._category_events())
 
-    def _replay(self) -> dict[str, Any]:
+    def _replay(self, events: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         state = self._fresh_state(SNAPSHOT_VERSION)
-        events = self._category_events()
+        if events is None:
+            events = self._category_events()
         for item in events:
             meta = item["metadata"]
             kind, task_id, amount = item["kind"], item["task_id"], _amount(item["amount"])
             try:
                 if kind == "task_balance_opening":
                     state["available"] = _amount(float(state["available"]) + amount)
-                    state["earned"] = _amount(float(meta.get("earned") or 0))
+                    if "earned" in meta:
+                        state["earned"] = _amount(float(meta.get("earned") or 0))
+                    if item["dedupe_key"].startswith("opening:dev_grant:"):
+                        suffix = item["dedupe_key"].rsplit(":", 1)[-1]
+                        if suffix.isdigit():
+                            state["dev_grant_count"] = max(
+                                int(state.get("dev_grant_count") or 0), int(suffix)
+                            )
                 elif kind == "task_hold":
                     self._apply_hold(
                         state, task_id=task_id, amount=amount,
@@ -417,12 +559,21 @@ class TaskBalanceLedger:
                         consumer_peer_id=str(meta.get("consumer_peer_id") or ""),
                         replay=True, created_at=item["created_at"],
                     )
-            except TaskBalanceError:
-                # A transition that was invalid at write time cannot exist in
-                # the ledger; one that is invalid only under replay ordering
-                # (equal timestamps) is skipped rather than aborting the view.
+            except TaskBalanceError as exc:
+                state["replay_skipped"] = int(state.get("replay_skipped") or 0) + 1
+                _logger.warning(
+                    "Task Balance replay skipped invalid transition kind=%s dedupe_key=%s: %s",
+                    kind,
+                    item["dedupe_key"],
+                    exc,
+                )
                 continue
         self._folded = len(events)
+        self._last_dedupe_key = events[-1]["dedupe_key"] if events else ""
+        self._sequence = max(
+            (item["sequence"] for item in events if item.get("sequence") is not None),
+            default=0,
+        )
         return state
 
     # ---- persistence -----------------------------------------------------
@@ -431,23 +582,57 @@ class TaskBalanceLedger:
             "version": version, "development_only": True,
             "available": self.initial_dev_balance if version == LEDGER_VERSION else 0.0,
             "held": 0.0, "earned": 0.0, "holds": {}, "earnings": {}, "events": [],
+            "sequence": 0, "replay_skipped": 0,
         }
 
-    def _read(self) -> dict[str, Any]:
+    def _load_raw(self) -> dict[str, Any]:
         try:
             value = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            raise TaskBalanceError(f"cannot read Task Balance ledger: {exc}") from exc
+            raise TaskBalanceError("task_balance_corrupt") from exc
         expected = LEDGER_VERSION if self._ledger is None else SNAPSHOT_VERSION
-        if value.get("version") != expected or not value.get("development_only"):
-            raise TaskBalanceError("not a development Task Balance ledger")
+        if (
+            not isinstance(value, dict)
+            or value.get("version") != expected
+            or not value.get("development_only")
+            or not isinstance(value.get("holds"), dict)
+            or not isinstance(value.get("events"), list)
+        ):
+            raise TaskBalanceError("task_balance_corrupt")
         value.setdefault("earnings", {})
+        value.setdefault("replay_skipped", 0)
+        if self._ledger is not None:
+            self._folded = int(value.get("folded_events") or 0)
+            self._last_dedupe_key = str(value.get("last_dedupe_key") or "")
+            self._sequence = int(value.get("sequence") or 0)
         return value
 
+    def _quarantine_corrupt_file(self) -> None:
+        if not self.path.exists():
+            return
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        corrupt_path = self.path.with_name(f"{self.path.name}.corrupt-{stamp}")
+        os.replace(self.path, corrupt_path)
+
+    def _read(self) -> dict[str, Any]:
+        with self._lock:
+            try:
+                return self._load_raw()
+            except TaskBalanceError:
+                if self._ledger is not None:
+                    self._write(self._replay())
+                    return self._load_raw()
+                self._quarantine_corrupt_file()
+                raise TaskBalanceError("task_balance_corrupt") from None
+
     def _write(self, value: dict[str, Any]) -> None:
+        _prune_old_entries(value)
+        value["sequence"] = self._sequence
+        value.setdefault("replay_skipped", 0)
         if self._ledger is not None:
             value["folded_events"] = self._folded
-        atomic_write_json(self.path, value, indent=2, sort_keys=True)
+            value["last_dedupe_key"] = self._last_dedupe_key
+        atomic_write_json(self.path, value, sort_keys=True)
 
 
 def _task_balance_category() -> str:

@@ -394,7 +394,7 @@ def test_task_balance_ledger_format_unchanged(tmp_path: Path) -> None:
 
     raw = path.read_text(encoding="utf-8")
     parsed = json.loads(raw)
-    assert raw == json.dumps(parsed, indent=2, sort_keys=True)
+    assert raw == json.dumps(parsed, sort_keys=True)
 
 
 def test_reader_cache_format_unchanged(tmp_path: Path) -> None:

@@ -313,6 +313,7 @@ class FileCreditLedger:
         reason: str = "",
         dedupe_key: str = "",
         metadata: dict[str, Any] | None = None,
+        created_at: str = "",
     ) -> dict[str, Any]:
         event = CreditEvent(
             subject_peer_id=subject_peer_id,
@@ -326,6 +327,7 @@ class FileCreditLedger:
             reason=reason,
             dedupe_key=dedupe_key,
             metadata=dict(metadata or {}),
+            **({"created_at": created_at} if created_at else {}),
         )
         signed = sign_credit_event(event, private_key_bytes=private_key_bytes)
         return self.append(signed)
