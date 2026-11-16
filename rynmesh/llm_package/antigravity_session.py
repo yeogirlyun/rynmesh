@@ -9,8 +9,9 @@ import uuid
 
 from .adapters import AdapterError
 from .chat import validate_tool_arguments
+from .cli_models import default_max_output_tokens
 from .codex_session import private_workspace
-from .codex_tools import FEEDBACK
+from .codex_tools import FEEDBACK, MAX_PROPOSALS
 from .process_guard import communicate_bounded, spawn, terminate
 
 
@@ -89,14 +90,24 @@ def infer(adapter, prompt, *, task_id, timeout_s, max_tokens, schema=None, model
         usage = usage if isinstance(usage, dict) else {}
         counters = {key: usage.get(key) if type(usage.get(key)) is int and usage[key] >= 0 else None
                     for key in ("input_tokens", "output_tokens")}
-        return {"text": answer, "structured_output": payload.get("structured_output"),
-                "message": {"role": "assistant", "content": answer},
-                **counters,
-                "duration_ms": int((time.monotonic() - started) * 1000), "finish_reason": "stop"}
+        over_limit = type(counters["output_tokens"]) is int and counters["output_tokens"] > max_tokens
+        out = {"text": answer, "structured_output": payload.get("structured_output"),
+               "message": {"role": "assistant", "content": answer},
+               **counters,
+               "duration_ms": int((time.monotonic() - started) * 1000),
+               "finish_reason": "length" if over_limit else "stop"}
+        if over_limit:
+            out["diagnostics"] = {"output_limit_not_enforced": True}
+        return out
 
 
 def chat(adapter, body, *, task_id, timeout_s, model=""):
     tools = {item["function"]["name"]: item["function"] for item in body.get("tools", [])}
+    default_budget = body.get("max_tokens") or default_max_output_tokens(
+        "antigravity_cli",
+        model,
+        executable=getattr(adapter, "executable", ""),
+    )
     # Ordinary conversations do not need the client-tool proposal protocol.
     # Requiring the model to wrap every answer in JSON makes otherwise valid
     # text replies fail, especially follow-ups. Keep strict proposal validation
@@ -108,13 +119,16 @@ def chat(adapter, body, *, task_id, timeout_s, model=""):
                   "Earlier messages are conversation history. Do not use tools or execute actions.\n"
                   + json.dumps({"messages": body["messages"]}, ensure_ascii=False))
         result = infer(adapter, prompt, task_id=task_id, timeout_s=timeout_s,
-                       max_tokens=body.get("max_tokens") or 512, model=model)
+                       max_tokens=default_budget, model=model)
         result.pop("structured_output", None)
         return result
     choice = body.get("tool_choice", "auto")
     allowed = tools if choice != "none" else {}
     if isinstance(choice, dict):
-        name = choice["function"]["name"]
+        fn_spec = choice.get("function") if isinstance(choice.get("function"), dict) else {}
+        name = fn_spec.get("name")
+        if not isinstance(name, str) or name not in tools:
+            raise AdapterError("named tool choice is not in tools", code="source_protocol_parameters_unsupported")
         allowed = {name: tools[name]}
     required = choice == "required" or isinstance(choice, dict)
     schema = {"type": "object", "additionalProperties": False,
@@ -139,7 +153,7 @@ def chat(adapter, body, *, task_id, timeout_s, model=""):
     # tool registration. Enforce it through the CLI as well as the prompt;
     # client function names and argument schemas are still validated below.
     result = infer(adapter, prompt, task_id=task_id, timeout_s=timeout_s,
-                   max_tokens=body.get("max_tokens") or 512, schema=schema, model=model)
+                   max_tokens=default_budget, schema=schema, model=model)
     reason = "response_json"
     try:
         value = result.pop("structured_output", None)
@@ -150,7 +164,7 @@ def chat(adapter, body, *, task_id, timeout_s, model=""):
             raise ValueError()
         proposals = value["tool_calls"]
         reason = "tool_calls"
-        if not isinstance(proposals, list) or len(proposals) > 8 or (required and not proposals):
+        if not isinstance(proposals, list) or len(proposals) > MAX_PROPOSALS or (required and not proposals):
             raise ValueError()
         calls = []
         for item in proposals:
@@ -177,8 +191,9 @@ def chat(adapter, body, *, task_id, timeout_s, model=""):
         # the rejected answer, parameter names/values, or validator exception.
         rejected.proposal_feedback_code = reason
         raise rejected from None
+    finish = "length" if result.get("finish_reason") == "length" else ("tool_calls" if calls else "stop")
     result.update(text=value["content"], message={"role": "assistant", "content": value["content"]},
-                  finish_reason="tool_calls" if calls else "stop")
+                  finish_reason=finish)
     if calls:
         result["message"]["tool_calls"] = calls
     return result

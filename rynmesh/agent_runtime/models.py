@@ -136,6 +136,7 @@ class ModelCatalog:
                    **({"catalog_state": value["catalog_state"]} if "catalog_state" in value else {}),
                    "tool_support": "unsupported" if adapter == "claude_cli" else value.get("tool_support", "unknown"),
                    "agent_support_basis": "adapter_contract" if own else "provider_protocol_contract",
+                   **({"agent_support": "experimental"} if adapter == "antigravity_cli" else {}),
                    "context_window": declared_claude_window if declared_claude_window is not None else manifest.get("context_window", 32768),
                    "context_window_known": window_known,
                    "context_window_basis": (
@@ -285,7 +286,8 @@ class ModelCatalog:
                 rows[identifier] = {**row, "id": identifier, "name": model["name"],
                     "cli_model": model["id"], "cli_source": row["adapter"], "model_id": model["id"],
                     "source_name": "Codex" if row["adapter"] == "codex_cli" else "Antigravity",
-                    "tool_support": support, "agent_supported": row["agent_supported"]}
+                    "tool_support": support, "agent_supported": row["agent_supported"],
+                    **({"agent_support": model["agent_support"]} if model.get("agent_support") else {})}
                 from ..llm_package.cli_models import context_metadata
                 local_fallback_basis = row.get("context_window_basis", "unknown_fallback")
                 rows[identifier].update(context_metadata([model], model["id"], fallback=row["context_window"], fallback_basis=local_fallback_basis))

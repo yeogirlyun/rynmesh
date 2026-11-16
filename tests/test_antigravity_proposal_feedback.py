@@ -85,7 +85,7 @@ def test_invalid_proposal_keeps_only_safe_real_usage_and_finish_metadata(monkeyp
     ({"content": "", "tool_calls": {}, PRIVATE: True}, "auto", "response_shape"),
     ({"content": "", "tool_calls": {}}, "auto", "tool_calls"),
     ({"content": "", "tool_calls": []}, "required", "tool_calls"),
-    ({"content": "", "tool_calls": [{"name": "inspect_service", "arguments": {}}] * 9}, "auto", "tool_calls"),
+    ({"content": "", "tool_calls": [{"name": "inspect_service", "arguments": {}}] * 17}, "auto", "tool_calls"),
     ({"content": "", "tool_calls": [{"name": {PRIVATE: True}, "arguments": {}}]}, "auto", "tool_name"),
     ({"content": "", "tool_calls": [{"name": "inspect_service", "arguments": "{}"}]}, "auto", "arguments_object"),
     ({"content": "", "tool_calls": [{"name": "inspect_service", "arguments": []}]}, "auto", "arguments_object"),
