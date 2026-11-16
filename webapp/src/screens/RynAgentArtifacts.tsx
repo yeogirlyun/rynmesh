@@ -12,7 +12,11 @@ import RynAgentPreviewSurface, { AgentPreviewHostContext } from "./RynAgentPrevi
 import "../personal/nas.css";
 
 // Tool results that can add, change or remove a task's workspace files or their render evidence.
-const FILE_TOOLS = new Set(["ryn_file_write", "ryn_file_edit", "ryn_file_manage", "ryn_apply_patch", "ryn_file_read", "ryn_render_inspect", "ryn_image_generate", "ryn_shell_execute", "ryn_process_read", "ryn_process_stop"]);
+export const FILE_TOOLS = new Set(["ryn_file_write", "ryn_file_edit", "ryn_file_manage", "ryn_apply_patch", "ryn_file_read", "ryn_render_inspect", "ryn_image_generate", "ryn_table_export", "ryn_download_file", "ryn_shell_execute", "ryn_process_read", "ryn_process_stop"]);
+
+export function latestFileToolResultSeq(task: Pick<AgentTask, "events">): number | undefined {
+  return task.events.filter(e => e.type === "tool_result" && e.tool && FILE_TOOLS.has(e.tool)).at(-1)?.seq;
+}
 const EMPTY_FILES: AgentFileArtifact[] = [];
 // A listing error that is not a connection or server failure is retried this often, then left to Refresh.
 const ARTIFACT_PERSISTENT_RETRY_MS = 15000;
@@ -176,7 +180,7 @@ export function TaskArtifacts({ task, maxTurnIndex = 0, children }: { task: Agen
   const [error, setError] = useState(false);
   const [reload, setReload] = useState(0);
   const writes = task.events.filter(e => e.type === "tool_result" && e.tool === "ryn_create_text_file").length;
-  const fileResults = task.events.filter(e => e.type === "tool_result" && e.tool && FILE_TOOLS.has(e.tool)).at(-1)?.seq;
+  const fileResults = latestFileToolResultSeq(task);
   const finished = !isAgentActive(agentTaskState(task));
   useEffect(() => { setListing(null); setChosenFile(""); }, [task.id]);
   useEffect(() => {

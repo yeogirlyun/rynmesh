@@ -329,17 +329,26 @@ def test_junction_replacement_after_snapshot_blocks_undo(env):
 
 def test_capacity_rejects_before_mutation_and_missing_blob_disables_undo(env, monkeypatch):
     from rynmesh.agent_runtime import file_review
+    from rynmesh.agent_runtime.file_review import FileReview
     e = env
-    monkeypatch.setattr(file_review, "MAX_BYTES", 10)
+    orig_save = FileReview.save
+    monkeypatch.setattr(FileReview, "save", lambda *_a, **_k: (_ for _ in ()).throw(OSError("manifest unwritable")))
     with pytest.raises(AgentError, match="agent_review_storage_limit"):
         write(e, "x", "not written")
     assert not (e.workspace / "x").exists()
+    monkeypatch.setattr(FileReview, "save", orig_save)
+    monkeypatch.setattr(file_review, "MAX_BYTES", 10)
+    write(e, "degraded", "hash only")
+    assert (e.workspace / "degraded").read_bytes() == b"hash only"
+    assert get(e)["snapshot_skipped"] == 1
     monkeypatch.setattr(file_review, "MAX_BYTES", 8 * 1024 * 1024)
     (e.workspace / "x").write_bytes(b"original")
     write(e, "x", "after")
-    original_copy = get(e)["files"][0]["original_copy"]
+    by_path = {f["path"]: f for f in get(e)["files"]}
+    original_copy = by_path["x"]["original_copy"]
     Path(original_copy).unlink()
-    assert get(e)["files"][0]["can_undo"] is False
+    by_path_after = {f["path"]: f for f in get(e)["files"]}
+    assert by_path_after["x"]["can_undo"] is False
     assert not preview(e)["can_undo"]
     assert undo(e)["status"] == "conflict"
     assert (e.workspace / "x").read_bytes() == b"after"

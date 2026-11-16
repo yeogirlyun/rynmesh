@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { agentFileChanges, type ChangeReview, type UndoPreview, type UndoResult } from "../domain/agentFileChanges";
 import "./RynAgentFileChanges.css";
 
-export default function RynAgentFileChanges({ taskId, revision }: { taskId: string; revision: number }) {
+export default function RynAgentFileChanges({ taskId, changeKey }: { taskId: string; changeKey?: number | string }) {
   const { i18n } = useTranslation();
   const zh = i18n.language.startsWith("zh");
   const text = (cn: string, en: string) => zh ? cn : en;
@@ -12,7 +12,11 @@ export default function RynAgentFileChanges({ taskId, revision }: { taskId: stri
     intervening_changes: text("本任务多次修改之间存在其他修改，无法整段安全撤销。", "Other edits occurred between this task's writes; combined undo is unsafe."),
     interrupted_file_operation: text("文件操作中断，修改归属未确认。", "File operation interrupted; ownership is unconfirmed."),
     snapshot_missing: text("快照缺失或损坏。", "Snapshot is missing or damaged."),
+    snapshot_skipped_limit: text("超出快照限额，只记录了哈希，不可撤销。", "Snapshot skipped due to limit (hash recorded only; cannot undo)."),
   }[code] || code);
+  const formatError = (raw: string) => raw === "file_review_timeout"
+    ? text("读取文件审阅超时（30 秒），请刷新重试。 (file_review_timeout)", "File review request timed out after 30s; refresh to retry. (file_review_timeout)")
+    : raw;
   const [open, setOpen] = useState(false);
   const [review, setReview] = useState<ChangeReview | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
@@ -23,15 +27,16 @@ export default function RynAgentFileChanges({ taskId, revision }: { taskId: stri
   useEffect(() => {
     if (!open) return;
     let disposed = false;
+    setError("");
     agentFileChanges.review(taskId).then(data => { if (!disposed) setReview(data); })
-      .catch(err => { if (!disposed) setError(String(err.message)); });
+      .catch(err => { if (!disposed) setError(formatError(String((err as Error)?.message ?? err))); });
     return () => { disposed = true; };
-  }, [taskId, revision, open]);
+  }, [taskId, changeKey, open]);
   async function load() { setReview(await agentFileChanges.review(taskId)); }
   async function prepare(ids?: string[]) {
     setBusy(true); setError(""); setResult(null); setPreview(null);
     try { setPreview({ data: await agentFileChanges.preview(taskId, ids), ids, requestId: crypto.randomUUID() }); }
-    catch (err) { setError(String((err as Error).message)); }
+    catch (err) { setError(formatError(String((err as Error).message))); }
     finally { setBusy(false); }
   }
   async function undo() {
@@ -42,7 +47,7 @@ export default function RynAgentFileChanges({ taskId, revision }: { taskId: stri
       setResult(value); setPreview(null); setSelected([]); await load();
     } catch (err) {
       // Keep the same idempotency key for a lost-response retry; read durable progress.
-      setError(`${text("结果未确认，请刷新检查操作记录；重试使用同一操作号。", "Result unconfirmed. Refresh operation history; retry uses the same request ID.")} ${(err as Error).message}`);
+      setError(`${text("结果未确认，请刷新检查操作记录；重试使用同一操作号。", "Result unconfirmed. Refresh operation history; retry uses the same request ID.")} ${formatError((err as Error).message)}`);
       await load().catch(() => undefined);
     } finally { setBusy(false); }
   }
@@ -50,6 +55,7 @@ export default function RynAgentFileChanges({ taskId, revision }: { taskId: stri
   const resultView = (value: UndoResult) => <div className="ra-file-change-result" role="status">
     <strong>{value.status === "completed" ? text("撤销完成", "Undo completed") : value.status === "conflict" ? text("冲突：未执行撤销", "Conflict: undo not applied") : text("撤销中断，请检查逐文件结果", "Undo interrupted: inspect each file result")}</strong>
     {value.completed.length > 0 && <p>{text("已恢复：", "Restored: ")}{value.completed.join(", ")}</p>}
+    {value.skipped?.map(item => <p key={item.path}>{text("已跳过（不可撤销）：", "Skipped (cannot undo): ")}{item.path} — {reason(item.reason)}</p>)}
     {value.remaining?.map(item => <p key={item.path}>{item.path} — {item.state}</p>)}
     {value.conflicts?.map(item => <p key={item.path}>{item.path} — {reason(item.reason)}</p>)}
   </div>;
@@ -57,18 +63,19 @@ export default function RynAgentFileChanges({ taskId, revision }: { taskId: stri
     <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}>{text("查看文件修改与撤销", "Review file changes and undo")}</button>
     {open && <>
       <p>{text("只撤销本任务文件工具的修改；会话历史和外部服务操作保持原样。重命名两端一起撤销。", "Undo this task's file-tool changes. Conversation history and external service actions remain. Rename endpoints are restored together.")}</p>
-      <p className="ra-file-change-muted">{text("快照限额：单文件 2 MiB、每任务 8 MiB / 64 路径 / 256 次操作，总计 256 MiB。超限在修改前拒绝。", "Snapshot limits: 2 MiB per file, 8 MiB / 64 paths / 256 operations per task, 256 MiB total. Over-limit writes are rejected before modification.")}</p>
-      <button disabled={busy} onClick={() => { setError(""); load().catch(err => setError(err.message)); }}>{text("刷新修改列表", "Refresh changes")}</button>
+      <p className="ra-file-change-muted">{text("快照限额：单文件 2 MiB、每任务 8 MiB / 64 路径 / 256 次操作，总计 256 MiB。超限的修改照常写入，但只记哈希、不可撤销。", "Snapshot limits: 2 MiB per file, 8 MiB / 64 paths / 256 operations per task, 256 MiB total. Over-limit changes are still written, but only hashes are recorded and they cannot be undone.")}</p>
+      <button disabled={busy} onClick={() => { setError(""); load().catch(err => setError(formatError(err.message))); }}>{text("刷新修改列表", "Refresh changes")}</button>
       {error && <p role="alert">{error}</p>}
       {!review && !error && <p>{text("读取快照中…", "Loading snapshots…")}</p>}
+      {!!review?.snapshot_skipped && <p role="status">{text(`共 ${review.snapshot_skipped} 项修改超出快照限额，只记哈希、不可撤销。`, `${review.snapshot_skipped} change(s) exceeded snapshot limits (hash recorded only; cannot undo).`)}</p>}
       {review?.task_busy && <p>{text("请先暂停任务，待工具和后台进程停止后再撤销。", "Pause the task and stop its tools/background processes before undo.")}</p>}
       {review?.files.map(file => <article key={file.path}>
         <div className="ra-file-change-heading"><label><input type="checkbox" checked={selected.includes(file.id)} disabled={busy || !file.can_undo}
           onChange={ev => { setPreview(null); setSelected(ev.target.checked ? [...new Set([...selected, file.id])] : selected.filter(id => id !== file.id)); }} />
           <strong>{file.path}</strong></label><span>{labels[file.status] || file.status}{file.rename_group ? text(" · 重命名关联", " · Linked rename") : ""}</span></div>
-        <small>{file.problem ? text("文件操作记录（状态待核实）", "File operation record (unconfirmed)") : text("确认文件工具修改", "Confirmed file-tool change")} · {file.before_bytes ?? "?"} → {file.after_bytes ?? "?"} {text("字节", "B")} · {file.media_type}</small>
+        <small>{file.problem === "interrupted_file_operation" ? text("文件操作记录（状态待核实）", "File operation record (unconfirmed)") : file.problem === "snapshot_skipped_limit" ? text("确认文件工具修改（仅记哈希）", "Confirmed file-tool change (hash only)") : text("确认文件工具修改", "Confirmed file-tool change")} · {file.before_bytes ?? "?"} → {file.after_bytes ?? "?"} {text("字节", "B")} · {file.media_type}</small>
         {(file.conflict || file.problem) && <p role="alert">{text("不可安全撤销：", "Cannot safely undo: ")}{reason(file.conflict || file.problem || "")}</p>}
-        {file.binary ? <p>{text("二进制文件：不提供文本 diff", "Binary file: no text diff")}</p> : <details><summary>{text("查看 diff", "View diff")}</summary><pre tabIndex={0}>{file.diff || text("无文本差异", "No text difference")}</pre>{file.diff_truncated && <p>{text("diff 预览已截断；撤销使用完整快照。", "Diff preview truncated; undo uses complete snapshots.")}</p>}</details>}
+        {file.binary ? <p>{text("二进制文件：不提供文本 diff", "Binary file: no text diff")}</p> : <details><summary>{text("查看 diff", "View diff")}</summary><pre tabIndex={0}>{file.diff || (file.problem === "snapshot_skipped_limit" ? text("超出快照限额，未保存文本快照", "No text snapshot saved (exceeded snapshot limit)") : text("无文本差异", "No text difference"))}</pre>{file.diff_truncated && <p>{text("diff 预览已截断；撤销使用完整快照。", "Diff preview truncated; undo uses complete snapshots.")}</p>}</details>}
         <button disabled={busy || !file.can_undo || review.task_busy} onClick={() => prepare([file.id])}>{text("预览撤销此文件", "Preview undo for this file")}</button>
       </article>)}
       {review && !review.files.length && <p>{text("没有待撤销的已确认文件修改。", "No confirmed file changes to undo.")}</p>}
@@ -79,6 +86,7 @@ export default function RynAgentFileChanges({ taskId, revision }: { taskId: stri
       {preview && <section className="ra-file-change-preview" aria-label={text("撤销预览", "Undo preview")}>
         <h4>{text("撤销预览", "Undo preview")}</h4>
         {preview.data.items.map(item => <p key={item.path}>{item.path} — {item.before.sha256 === null ? text("删除本任务新建文件", "Remove task-created file") : text("恢复修改前快照", "Restore original snapshot")} ({item.after.bytes} → {item.before.bytes} {text("字节", "B")})</p>)}
+        {preview.data.skipped?.map(item => <p key={item.path}>{text("将跳过（不可撤销）：", "Will skip (cannot undo): ")}{item.path} — {reason(item.reason)}</p>)}
         {preview.data.conflicts.map(item => <p role="alert" key={item.path}>{text("冲突，整批未执行：", "Conflict, entire batch blocked: ")}{item.path} — {reason(item.reason)}</p>)}
         <button disabled={busy || !preview.data.can_undo} onClick={undo}>{text("确认撤销这些文件", "Confirm undo these files")}</button>
         <button disabled={busy} onClick={() => setPreview(null)}>{text("取消", "Cancel")}</button>
