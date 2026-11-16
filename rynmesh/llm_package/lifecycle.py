@@ -496,9 +496,10 @@ def connect_cli(*, kind: str, root: str | Path | None = None,
     """Prepare an installed CLI as a text-only provider without sharing credentials."""
     if kind not in {"codex_cli", "claude_cli", "antigravity_cli"}:
         raise LifecycleError("unsupported CLI kind")
+    from .cli_models import CLI_FALLBACK_MAX_OUTPUT_TOKENS, CLI_FALLBACK_WINDOWS
     title = {"codex_cli": "Codex CLI", "claude_cli": "Claude Code", "antigravity_cli": "Antigravity"}[kind]
-    cli_windows = {"codex_cli": 872000, "antigravity_cli": 1048576, "claude_cli": 1000000}
-    cli_outputs = {"codex_cli": 128000, "antigravity_cli": 128000, "claude_cli": 128000}
+    cli_windows = dict(CLI_FALLBACK_WINDOWS)
+    cli_outputs = {k: CLI_FALLBACK_MAX_OUTPUT_TOKENS for k in cli_windows}
     cli_concurrency = {"codex_cli": 16, "antigravity_cli": 16, "claude_cli": 8}
     manifest = LLMPackageManifest(
         package_id=kind.replace("_", "-"), mode=kind,
@@ -509,6 +510,7 @@ def connect_cli(*, kind: str, root: str | Path | None = None,
             else ["text-generation", "api-text-only", CONTEXT_ESTIMATE_CAPABILITY]
         ),
         context_window=cli_windows[kind], max_output_tokens=cli_outputs[kind],
+        context_window_basis="cli_default",
         timeout_seconds=300, max_concurrent=cli_concurrency[kind],
         privacy=PrivacyPolicy(policy_text="CLI content may be sent to the configured cloud model provider."),
         license_notice="The owner must sign in to this CLI locally and follow its terms.",

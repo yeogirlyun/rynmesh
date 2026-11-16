@@ -52,6 +52,7 @@ class LLMPackageManifest:
     capabilities: list[str] = field(default_factory=lambda: ["text-generation"])
     context_window: int = _DEFAULT_LIMIT_UNSET
     max_output_tokens: int = _DEFAULT_LIMIT_UNSET
+    context_window_basis: str = ""
     max_concurrent: int = 1
     queue_limit: int = 0
     timeout_seconds: float = 120.0
@@ -142,6 +143,7 @@ class LLMPackageManifest:
             "capabilities": list(self.capabilities),
             "context_window": self.context_window,
             "max_output_tokens": self.max_output_tokens,
+            **({"context_window_basis": self.context_window_basis} if self.context_window_basis else {}),
             "max_concurrent": self.max_concurrent,
             "queue_limit": self.queue_limit,
             "timeout_seconds": self.timeout_seconds,

@@ -23,15 +23,28 @@ def _discovery_lock(kind, executable):
         return _discovery_locks.setdefault((kind, executable), threading.Lock())
 
 
-def context_metadata(models, model="", *, fallback=32768):
+CLI_FALLBACK_WINDOWS = {
+    "codex_cli": 128000,
+    "claude_cli": 200000,
+    "antigravity_cli": 65536,
+}
+CLI_FALLBACK_MAX_OUTPUT_TOKENS = 32000
+
+
+def fallback_window(kind: str, default: int = 32768) -> int:
+    return CLI_FALLBACK_WINDOWS.get(kind, default)
+
+
+def context_metadata(models, model="", *, fallback=None, kind="", fallback_basis="unknown_fallback"):
     """Read only the selected/default model's declared window, never a caller hint."""
+    effective_fallback = fallback if fallback is not None else fallback_window(kind, 32768)
     selected = next((row for row in models if row.get("id") == model), {}) if model else next(
         (row for row in models if row.get("default")), {})
     window = selected.get("context_window")
     known = type(window) is int and 256 <= window <= 2000000
-    return {"context_window": window if known else fallback,
+    return {"context_window": window if known else effective_fallback,
             "context_window_known": known,
-            "context_window_basis": "installed_cli_model_cache" if known else "unknown_fallback"}
+            "context_window_basis": "installed_cli_model_cache" if known else fallback_basis}
 
 
 def cached_models(kind, executable):
@@ -84,10 +97,10 @@ def parse_antigravity_models(output):
     default_row = {"id": "", "name": "CLI default", "default": True}
     default_windows = [row["context_window"] for row in models if "context_window" in row]
     if default_windows:
-        default_row["context_window"] = max(default_windows)
+        default_row["context_window"] = min(default_windows)
     default_outputs = [row["max_output_tokens"] for row in models if "max_output_tokens" in row]
     if default_outputs:
-        default_row["max_output_tokens"] = max(default_outputs)
+        default_row["max_output_tokens"] = min(default_outputs)
     return [default_row, *models]
 
 
