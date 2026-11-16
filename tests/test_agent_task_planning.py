@@ -281,3 +281,47 @@ def test_failed_read_can_be_recorded_blocked_then_replanned_to_available_input(t
     assert any(plan.get("replan_reason") for plan in raw["plan_history"])
     assert len(raw["receipts"]) == 2  # No retry loop or repeated write.
     runtime.tools.local.processes.close()
+
+
+def test_t3_execution_guidance_clarifies_only_outcome_changing_choices_and_qa_avoids_writes(tmp_path):
+    """T3 (Changes 3, 4, 9, 11): EXECUTION_GUIDANCE replaces 'Clarify ambiguous outcomes' with outcome-changing rule; Q&A/diagnosis inspects without writes."""
+    assert "Clarify ambiguous outcomes before solving a different problem" not in planning.EXECUTION_GUIDANCE
+    assert (
+        "Ask first only when a choice would materially change the outcome, otherwise proceed on the most likely reading and state it; "
+        "preserve the user's named scope and time window."
+    ) in planning.EXECUTION_GUIDANCE
+
+    # First tracked plan update surfaces the updated EXECUTION_GUIDANCE in its receipt.
+    runtime0, _, _, _ = make_runtime(tmp_path / "guidance_receipt")
+    t0 = runtime0.create({"message": "Plan multi-step diagnosis"})
+    row0 = runtime0.store.read()["tasks"][t0["id"]]
+    res0 = update(row0, proposal())
+    assert "Ask first only when a choice would materially change the outcome" in res0["execution_guidance"]
+    assert "preserve the user's named scope and time window" in res0["execution_guidance"]
+
+    # Diagnostic Q&A request ("为什么这个测试失败"): receives M165 read-only diagnosis rule, inspects evidence, performs zero writes.
+    diag_dir = tmp_path / "diag"
+    diag_dir.mkdir()
+    runtime, model, workspace = workstation(
+        diag_dir,
+        assistant(name="ryn_file_read", args={"path": "test_calc.py"}),
+        assistant("测试失败原因是 add(2, 3) 断言写成了 6，实际返回 5；未修改任何文件。"),
+        mode="automatic",
+    )
+    try:
+        (workspace / "test_calc.py").write_text("def test_add():\n    assert 2 + 3 == 6\n", encoding="utf-8")
+        task = runtime.create({"message": "为什么这个测试失败"})
+        done = until(runtime, task["id"])
+        assert done["status"] == "completed"
+        req_text = json.dumps(model.calls[0][1], ensure_ascii=False)
+        assert (
+            "A question, explanation, diagnosis or status request is answered from evidence: "
+            "inspect freely, but change nothing unless the owner also asked for a change."
+        ) in req_text
+        stored = runtime.store.read()["tasks"][task["id"]]
+        assert [r["tool"] for r in stored["receipts"]] == ["ryn_file_read"]
+        assert not any(r.get("effect") == "write" for r in stored["receipts"])
+        assert (workspace / "test_calc.py").read_text(encoding="utf-8") == "def test_add():\n    assert 2 + 3 == 6\n"
+    finally:
+        runtime.tools.local.processes.close()
+
