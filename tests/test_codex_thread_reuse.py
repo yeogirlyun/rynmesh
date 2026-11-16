@@ -678,7 +678,7 @@ def test_local_api_key_is_the_requester_for_api_clients(tmp_path):
     install_inference_api(app, home=tmp_path, store=SimpleNamespace(peer_id="self"), active_manager=lambda: None,
                           local_manager_for=lambda service_id: manager if service_id == "codex-cli" else None,
                           discover=lambda _: [], execute_order=None, cancel_order=None)
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
     for name in ("one", "two"):
         key = client.post("/api/local/llm/api-keys", json={"name": name}).json()["key"]
         response = client.post("/v1/chat/completions", headers={"Authorization": "Bearer " + key},

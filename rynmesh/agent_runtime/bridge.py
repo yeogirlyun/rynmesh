@@ -527,7 +527,8 @@ class AgentModelBridge:
                                       "source_protocol_response_invalid": "agent_model_protocol_invalid",
                                       "upstream_image_rejected": "agent_model_image_rejected",
                                       "model_daily_quota_exhausted": "agent_model_quota_exhausted",
-                                      "peer_request_too_large": "agent_model_context_overflow"}.get(peer_err, "agent_inference_failed"))
+                                      "peer_request_too_large": "agent_model_context_overflow",
+                                      "estimated_context_window_exceeded": "agent_model_context_overflow"}.get(peer_err, "agent_inference_failed"))
             stopped = cancelled()
             if stopped or expired():
                 usage, finish = self._response_metadata(result, target)
@@ -559,7 +560,7 @@ class AgentModelBridge:
                 rejected.request_id = task_id
                 rejected.detail = RESPONSE_TOO_LARGE_FEEDBACK
                 raise rejected from None
-            if detail_code in {"peer_request_too_large", "request_too_large"}:
+            if detail_code in {"peer_request_too_large", "request_too_large", "estimated_context_window_exceeded"}:
                 err = AgentError("agent_model_context_overflow")
                 err.request_id = task_id
                 raise err from None

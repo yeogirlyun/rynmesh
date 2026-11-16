@@ -115,7 +115,7 @@ from .stream_protocol import (
     seal_stream_delta,
 )
 from .streaming import events, peer_stream
-from .context_safety import context_request_fits
+from .context_safety import CONTEXT_ESTIMATE_CAPABILITY, context_overflow_detail, context_request_fits
 from .task_balance import TaskBalanceError, TaskBalanceLedger
 from .task_protocol import (
     TERMINAL_STATES,
@@ -168,6 +168,8 @@ def _delivery_error_code(exc: Exception, *, transport: str) -> str:
     stream_timeout = _peer_stream_timeout_code(exc) or _peer_stream_timeout_code(getattr(exc, "__cause__", None))
     if stream_timeout:
         return stream_timeout
+    if isinstance(exc, TaskProtocolError) and str(exc).strip() == context_overflow_detail():
+        return context_overflow_detail()
     if isinstance(exc, TaskProtocolError) and str(exc) == "stream interrupted; automatic replay is disabled":
         return "direct_stream_interrupted"
     if isinstance(exc, P2PCapacityError):
@@ -193,7 +195,7 @@ def _delivery_error_code(exc: Exception, *, transport: str) -> str:
 
 def _submission_error_code(detail: str) -> str:
     message = detail.strip().lower()
-    if message in RUNTIME_ERROR_CODES or message in {"service_unhealthy", "service_review_changed", "balance_insufficient"}:
+    if message in RUNTIME_ERROR_CODES or message in {"service_unhealthy", "service_review_changed", "balance_insufficient", context_overflow_detail()}:
         return message
     if "insufficient development task balance" in message:
         return "insufficient_task_balance"
@@ -534,6 +536,7 @@ class ProviderService:
 
         if getattr(self.adapter, "supports_chat_messages", False):
             result["service"]["capabilities"] = list(dict.fromkeys([*result["service"].get("capabilities", []), CHAT_FORMAT]))
+        result["service"]["capabilities"] = list(dict.fromkeys([*result["service"].get("capabilities", []), CONTEXT_ESTIMATE_CAPABILITY]))
         result["node_messaging_pub"] = peer_box.public_key_b64(self.messaging_key)
         if benchmark and health.get("ok"):
             measured = self.adapter.infer(
@@ -607,7 +610,7 @@ class ProviderService:
         if max_tokens < 1:
             raise TaskProtocolError("max_tokens is invalid")
         if not context_request_fits(prompt, output_tokens=max_tokens, context_window=self.context_window_for_model(body.get("cli_model", ""))):
-            raise TaskProtocolError("estimated context window exceeded")
+            raise TaskProtocolError(context_overflow_detail())
         reply_pub = str(body.get("reply_messaging_pub") or "")
         _validate_messaging_pub(reply_pub)
         max_amount = float(body.get("max_amount") or 0)
@@ -1624,7 +1627,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                                 *(["protocol:" + record["protocol"]] if record.get("protocol") in
                                   {"openai_responses", "anthropic_messages"} else []),
                                 *({"supported": ["image-input"], "unsupported": ["image-unsupported"]}.get(image_state, [])),
-                                "image-carrier:" + SHARED_V2_CARRIER])
+                                "image-carrier:" + SHARED_V2_CARRIER,
+                                CONTEXT_ESTIMATE_CAPABILITY])
                         manifest.stream_idle_seconds = policy["stream_idle_seconds"]
                         adapter = source_store.adapter(record, model)
                         if model in record.get("model_settings", {}):
@@ -3331,7 +3335,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         service_id = current.manifest.package_id
         max_tokens = min(max_tokens, current.manifest.max_output_tokens)
         if not context_request_fits(prompt, output_tokens=max_tokens, context_window=current.context_window_for_model(body.get("cli_model", ""))):
-            raise HTTPException(400, "estimated context window exceeded")
+            raise HTTPException(400, context_overflow_detail())
         bindings = {"provider_peer_id": store.peer_id, "service_id": service_id,
                     "idempotency_key": str(body.get("idempotency_key") or task_id),
                     "request_fingerprint": _request_fingerprint(body, store.private_key_bytes)}
@@ -3594,7 +3598,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         if not context_request_fits(prompt, output_tokens=max_tokens, context_window=manifest.context_window):
             raise HTTPException(
                 status_code=400,
-                detail="estimated prompt and output exceed the Provider context window",
+                detail=context_overflow_detail(),
             )
         maximum = _estimate_price(manifest, prompt, max_tokens)
         if maximum > manifest.pricing.maximum_per_task:
@@ -4259,7 +4263,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 task_id,
                 {"event": "error", "state": "failed", "error_code": error_code},
             )
-            if error_code in {"peer_stream_too_large", "peer_request_too_large", "direct_stream_interrupted"}:
+            if error_code in {"peer_stream_too_large", "peer_request_too_large", "direct_stream_interrupted", context_overflow_detail()}:
                 raise HTTPException(
                     status_code=502,
                     detail=f"peer_delivery_failed:{error_code}",

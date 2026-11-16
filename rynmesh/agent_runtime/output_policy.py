@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import hashlib
 
+from ..llm_package.context_safety import ESTIMATED_BYTES_PER_TOKEN
 from ..llm_package.image_input_profile import (
     MAX_INTERNAL_RAW_REQUEST_BYTES,
     MAX_INTERNAL_REQUEST_IMAGES,
@@ -27,7 +28,6 @@ ANSWER_PREVIEW_BYTES = 64 * 1024
 MAX_TOOL_CALL_ARGUMENT_BYTES = 96 * 1024
 UNKNOWN_CONTEXT_WINDOW_TOKENS = 32768
 FRAMING_RESERVE_TOKENS = 512
-ESTIMATED_BYTES_PER_TOKEN = 3
 ESTIMATE_BASIS = "serialized_utf8_bytes_div_3_ceil_plus_512_framing_heuristic"
 RYN_ADMISSION_ESTIMATE_BASIS = "serialized_utf8_bytes_as_tokens_ryn_provider_admission"
 IMAGE_ESTIMATE_BASIS = "text_utf8_div_3_ceil_plus_512_and_image_patch16_x3_plus_1024_heuristic"

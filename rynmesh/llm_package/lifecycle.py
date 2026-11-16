@@ -12,6 +12,7 @@ from typing import Any
 
 from . import catalog, runtime_docker, runtime_native
 from .adapters import AdapterError, adapter_from_manifest
+from .context_safety import CONTEXT_ESTIMATE_CAPABILITY
 from .errors import LifecycleError
 from .gguf_import import NativeModelError, inspect_model
 from .hardware import (
@@ -318,6 +319,7 @@ def install_managed(*, package_id: str = "local-small", root: str | Path | None 
     manifest = LLMPackageManifest(
         package_id=package_id, mode="managed", public_model_alias=selected["alias"],
         adapter="openai_compatible", runtime=backend.RUNTIME_ID, model=selected["alias"],
+        capabilities=["text-generation", CONTEXT_ESTIMATE_CAPABILITY],
         model_path=str(model_path), model_owned=True, base_url=f"http://127.0.0.1:{port}",
         runtime_dir=str(base) if backend.RUNTIME_ID == RUNTIME_NATIVE else "",
         checksum=checksum, model_fingerprint=checksum,
@@ -366,6 +368,7 @@ def import_gguf(*, source: str | Path, package_id: str, alias: str,
     manifest = LLMPackageManifest(
         package_id=package_id, mode="import_gguf", public_model_alias=alias,
         adapter="openai_compatible", runtime=backend.RUNTIME_ID, model=alias,
+        capabilities=["text-generation", CONTEXT_ESTIMATE_CAPABILITY],
         model_path=details["path"], model_owned=False, base_url=f"http://127.0.0.1:{port}",
         runtime_dir=str(base) if backend.RUNTIME_ID == RUNTIME_NATIVE else "",
         checksum=details["fingerprint"], model_fingerprint=details["fingerprint"],
@@ -452,6 +455,7 @@ def connect_local_api(*, base_url: str, package_id: str, alias: str, model: str 
     manifest = LLMPackageManifest(
         package_id=package_id, mode="ollama" if adapter == "ollama" else "openai_compatible",
         public_model_alias=alias, adapter=adapter, runtime=RUNTIME_EXTERNAL, base_url=base_url,
+        capabilities=["text-generation", CONTEXT_ESTIMATE_CAPABILITY],
         api_key_env=api_key_env, model=model, allow_non_loopback=allow_non_loopback,
         context_window=8192, max_output_tokens=2048,
         install_source={"kind": "existing_local_service"},
@@ -499,7 +503,11 @@ def connect_cli(*, kind: str, root: str | Path | None = None,
     manifest = LLMPackageManifest(
         package_id=kind.replace("_", "-"), mode=kind,
         public_model_alias=title, adapter=kind, runtime="external",
-        capabilities=["text-generation", "client-tools", "buffered-streaming"] if kind in {"codex_cli", "antigravity_cli"} else ["text-generation", "api-text-only"],
+        capabilities=(
+            ["text-generation", "client-tools", "buffered-streaming", CONTEXT_ESTIMATE_CAPABILITY]
+            if kind in {"codex_cli", "antigravity_cli"}
+            else ["text-generation", "api-text-only", CONTEXT_ESTIMATE_CAPABILITY]
+        ),
         context_window=cli_windows[kind], max_output_tokens=cli_outputs[kind],
         timeout_seconds=300, max_concurrent=cli_concurrency[kind],
         privacy=PrivacyPolicy(policy_text="CLI content may be sent to the configured cloud model provider."),

@@ -189,7 +189,7 @@ def test_public_api_rechecks_cli_capacity_and_does_not_dispatch_old_large_window
     app = FastAPI()
     install_inference_api(app, home=tmp_path / "api", store=SimpleNamespace(peer_id="self"),
         active_manager=lambda: manager, discover=lambda _: [], execute_order=None, cancel_order=None)
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         key = client.post("/api/local/llm/api-keys", json={"name": "fixture"}).json()["key"]
         headers = {"Authorization": "Bearer " + key}
         request = {"model": "local/codex-cli", "messages": [{"role": "user", "content": "x" * 150000}], "max_tokens": 8}
@@ -197,5 +197,5 @@ def test_public_api_rechecks_cli_capacity_and_does_not_dispatch_old_large_window
         fixture.models[0]["context_window"] = 16000
         fixture.expire()
         rejected = client.post("/v1/chat/completions", headers=headers, json=request)
-        assert rejected.status_code == 400 and "context window" in rejected.text
+        assert rejected.status_code == 400 and "estimated_context_window_exceeded" in rejected.text
         assert len(calls) == 1

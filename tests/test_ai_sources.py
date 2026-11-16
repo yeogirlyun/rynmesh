@@ -68,7 +68,7 @@ def test_source_draft_test_catalog_chat_and_api(tmp_path, monkeypatch):
     monkeypatch.setattr(SourceAdapter, "chat", lambda *_, **__: {
         "text": "source reply", "message": {"role": "assistant", "content": "source reply"},
         "finish_reason": "stop", "input_tokens": 3, "output_tokens": 2, "duration_ms": 1})
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         draft = client.put("/api/local/llm/sources/new", json=source()).json()
         assert draft["status"] == "needs_key" and not draft["has_key"]
         sid = draft["id"]
