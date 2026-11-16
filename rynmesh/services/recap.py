@@ -59,14 +59,26 @@ class RecapConfig:
 
     @classmethod
     def from_settings(cls, settings: Mapping[str, Any], *, port: int) -> "RecapConfig":
+        import base64
+
+        from .. import os_secret
+
         raw = dict(settings.get("recap", {}) or {})
+        smtp_pw = str(raw.get("smtp_password", "") or "")
+        if not smtp_pw:
+            prot_b64 = str(raw.get("smtp_password_protected", "") or "").strip()
+            if prot_b64:
+                try:
+                    smtp_pw = os_secret.unprotect(base64.b64decode(prot_b64)).decode("utf-8")
+                except (ValueError, UnicodeDecodeError):
+                    smtp_pw = ""
         return cls(
             to_address=str(raw.get("to_address", "")),
             from_address=str(raw.get("from_address", "") or raw.get("smtp_user", "")),
             smtp_host=str(raw.get("smtp_host", "")),
             smtp_port=int(raw.get("smtp_port", 587) or 587),
             smtp_user=str(raw.get("smtp_user", "")),
-            smtp_password=str(raw.get("smtp_password", "")),
+            smtp_password=smtp_pw,
             use_tls=bool(raw.get("use_tls", True)),
             base_url=str(raw.get("base_url", "") or f"http://127.0.0.1:{port}"),
             per_source=max(1, min(PER_SOURCE_MAX, int(raw.get("per_source", PER_SOURCE_DEFAULT) or PER_SOURCE_DEFAULT))),

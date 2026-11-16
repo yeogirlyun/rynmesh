@@ -150,8 +150,13 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
 
     @app.get("/api/local/friends", name="friend_list")
     async def list_friends(request: Request):
+        from .. import os_secret
+
         control(request)
-        return {"friends": await call(current().list_friends)}
+        return {
+            "friends": await call(current().list_friends),
+            "secret_protection": os_secret.protection_mode(),
+        }
 
     @app.get('/api/local/friends/diagnostics')
     async def diagnostics(request: Request):

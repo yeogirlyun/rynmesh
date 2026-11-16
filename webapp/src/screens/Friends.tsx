@@ -22,12 +22,13 @@ import "./friends-refresh.css";
 type FriendTab = "msgs" | "cards" | "ai" | "conn";
 
 export default function Friends() {
-  useUILanguage();
+  const lang = useUILanguage();
   const deepLink = useInviteDeepLink();
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const { confirm } = useAppContext();
   const [friends, setFriends] = useState<FriendRecord[]>([]);
+  const [secretProtection, setSecretProtection] = useState<"dpapi" | "keychain" | "file" | undefined>(undefined);
   const [loaded, setLoaded] = useState(false);
   const [invite, setInvite] = useState<FriendInviteResult | null>(null);
   const [reach, setReach] = useState<{ endpoint: string; address_category: string } | null>(null);
@@ -63,7 +64,7 @@ export default function Friends() {
   const load = useCallback(async () => {
     const [result, invitations, joins] = await Promise.all([friendsApi.list(), friendsApi.invites(), friendsApi.aiJoins()]);
     setOperations(joins.operations);
-    setFriends(result.friends); setLoaded(true); setLoadError("");
+    setFriends(result.friends); setSecretProtection(result.secret_protection); setLoaded(true); setLoadError("");
     setInvite((current) => {
       const stored = invitations.invites.find((row) => row.invite_id === current?.invite.invite_id);
       return stored && (stored.status !== "active" || Date.parse(stored.expires_at) <= Date.now()) ? null : current;
@@ -174,6 +175,7 @@ export default function Friends() {
     </header>
     {pageError || loadError ? <div className="rq-banner rq-banner-bad" role="alert"><p>{pageError || loadError}</p><button type="button" className="rf-btn rf-btn-sm" disabled={busy} onClick={() => void act(load)}>{tr("Refresh friends")}</button></div> : null}
     {pageNotice ? <p className="rq-banner rq-banner-ok" role="status">{pageNotice}</p> : null}
+    {secretProtection === "file" ? <Banner tone="warn" role="status"><p>{lang.startsWith("zh") ? "本机未加密保存" : "Stored unencrypted on this device (本机未加密保存)"}</p></Banner> : null}
     {selected && selected === urlPeer && loaded && !picked ? <Banner tone="warn" role="alert"><p>{tr("This friend is unavailable or access was removed.")}</p></Banner> : null}
 
     <FriendBand friends={activeFriends.length} verified={verified} usingAi={usingAi} />

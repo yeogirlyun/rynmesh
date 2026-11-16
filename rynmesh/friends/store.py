@@ -8,6 +8,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from rynmesh import os_secret
 from rynmesh.atomic_io import atomic_write_json, migration_backup, read_json
 from rynmesh.file_transactions import file_transaction
 
@@ -25,6 +26,12 @@ class FriendStore:
         key = str(self.root.resolve())
         with _LOCKS_GUARD:
             self._lock = _PROCESS_LOCKS.setdefault(key, threading.RLock())
+        if self.state_path.exists() or self.secrets_path.exists():
+            try:
+                with self._guard():
+                    self._read(self.state_path, self._empty())
+            except (OSError, ValueError):
+                pass
 
     @contextmanager
     def _guard(self):
@@ -86,17 +93,57 @@ class FriendStore:
                     raise OSError("friend_store_backup_failed")
             value.update(version="ryn.friends.v2", secrets=secrets)
             self._write(path, value)
-        if not isinstance(value.get("secrets"), dict):
+            value.pop("secrets_protected", None)
+            return value
+        if "secrets" in value and not isinstance(value["secrets"], dict):
             raise ValueError("friend_store_invalid")
+        if "secrets_protected" in value and not isinstance(value["secrets_protected"], dict):
+            raise ValueError("friend_store_invalid")
+        if "secrets" not in value and "secrets_protected" not in value:
+            raise ValueError("friend_store_invalid")
+
+        if os_secret.protection_mode() == "file":
+            if value.get("secrets_protected"):
+                raise ValueError("friend_store_invalid")
+            value.setdefault("secrets", {})
+            value.pop("secrets_protected", None)
+            return value
+
+        raw_protected = value.get("secrets_protected") or {}
+        raw_plain = value.get("secrets") if "secrets" in value else None
+        decoded: dict[str, str] = {}
+        for k, prot_b64 in raw_protected.items():
+            if not isinstance(k, str) or not isinstance(prot_b64, str):
+                raise ValueError("friend_store_invalid")
+            plain_bytes = os_secret.unprotect(base64.b64decode(prot_b64, validate=True))
+            decoded[k] = base64.b64encode(plain_bytes).decode("ascii")
+        had_legacy_plain = isinstance(raw_plain, dict) and ("secrets_protected" not in value or bool(raw_plain))
+        if isinstance(raw_plain, dict):
+            for k, plain_b64 in raw_plain.items():
+                if not isinstance(k, str) or not isinstance(plain_b64, str):
+                    raise ValueError("friend_store_invalid")
+                decoded.setdefault(k, plain_b64)
+        value.pop("secrets_protected", None)
+        value["secrets"] = decoded
+        if had_legacy_plain and path.exists():
+            self._write(path, value)
         return value
 
     def _write(self, path: Path, value: dict[str, Any]) -> None:
-        atomic_write_json(path, value, ensure_ascii=False, indent=2)
+        to_write = deepcopy(value)
+        if os_secret.protection_mode() != "file":
+            raw_secrets = to_write.pop("secrets", {}) or {}
+            protected_map: dict[str, str] = {}
+            for k, plain_b64 in raw_secrets.items():
+                secret_bytes = base64.b64decode(plain_b64, validate=True)
+                protected_map[k] = base64.b64encode(os_secret.protect(secret_bytes)).decode("ascii")
+            to_write["secrets_protected"] = protected_map
+        atomic_write_json(path, to_write, ensure_ascii=False, indent=2)
 
     def state(self) -> dict[str, Any]:
         with self._guard():
             return {key: value for key, value in self._read(self.state_path, self._empty()).items()
-                    if key != "secrets"}
+                    if key not in {"secrets", "secrets_protected"}}
 
     def secrets(self) -> dict[str, str]:
         with self._guard():
