@@ -31,7 +31,7 @@ import RynAgentVerification from "./RynAgentVerification";
 import { MemoryEditor, PreferencesEditor, SkillSelection, TaskSkills } from "./RynAgentGuidance";
 import RynAgentBudget, { RynAgentNearLimitBanner, RynAgentOwnerStopExtendButton, budgetStopMessage } from "./RynAgentBudget";
 import { ArchivedTasks, TaskRecords, TaskResultFiles } from "./RynAgentRecords";
-import { TaskArtifacts, TurnDeliverables } from "./RynAgentArtifacts";
+import { latestFileToolResultSeq, TaskArtifacts, TurnDeliverables } from "./RynAgentArtifacts";
 import RynAgentTurnRail, { type TurnRailItem as AgentTurnRailItem } from "./RynAgentTurnRail";
 import AgentTaskComputerStatus from "./AgentTaskComputerStatus";
 import { AutomationChatCard, AutomationDialog, AutomationsPanel, extractTurnAutomations, HeartbeatWakeupDivider } from "./RynAgentAutomations";
@@ -1231,7 +1231,7 @@ export default function RynAgent() {
             {task.continued_to && <div className="ra-banner" role="note"><span>{t("continuedToHelp")}</span><button type="button" onClick={() => chooseTask(task.continued_to!)}>{t("openContinuedConversation")}</button></div>}
             {imageNotice && <p className="ra-turn-evidence" role="note">{t(imageNotice)}</p>}
             {task.result && <section className="ra-result"><strong>{t("result")}</strong><ChatMarkdown fileLinks>{task.result}</ChatMarkdown></section>}
-            <RynAgentFileChanges key={`changes/${task.id}`} taskId={task.id} revision={task.revision} />
+            <RynAgentFileChanges key={`changes/${task.id}`} taskId={task.id} changeKey={latestFileToolResultSeq(task)} />
             <TaskResultFiles key={`results/${task.id}`} task={task} />
             </TaskArtifacts>
               <RynAgentConnection task={task} modelName={selectedModel?.source_name || selectedModel?.name || task.model_id} busy={busy || controlUncertain || !settingsReady} enabled={Boolean(enabled)} onAction={kind => void action(kind)} />

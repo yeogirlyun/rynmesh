@@ -194,6 +194,13 @@ def safe_path(root, value, *, allow_directory=False, outside_ok=False):
     return path
 
 
+_UNSET = object()
+
+
+def _meta(data):
+    return {"sha256": None, "bytes": 0} if data is None else {"sha256": digest(data), "bytes": len(data)}
+
+
 def read_file(path):
     if not path.exists():
         return None
@@ -203,6 +210,19 @@ def read_file(path):
         data = stream.read(MAX_FILE + 1)
     if len(data) > MAX_FILE:
         raise AgentToolRejected("agent_review_file_limit")
+    return data
+
+
+def _read_existing(path, *, max_bytes=MAX_FILE):
+    if not path.exists():
+        return None
+    limit = max(MAX_FILE, max_bytes)
+    if path.stat().st_size > limit:
+        return _UNSET
+    with path.open("rb") as stream:
+        data = stream.read(limit + 1)
+    if len(data) > limit:
+        return _UNSET
     return data
 
 
@@ -277,44 +297,185 @@ class FileReview:
         """changes: (path, exact before bytes, intended after bytes, rename group)."""
         with file_transaction(self.lock):
             state = self.load()
-            if len(state["records"]) >= MAX_OPERATIONS:
-                raise AgentToolRejected("agent_review_operation_limit")
-            paths = {s["path"] for r in state["records"] for s in r["steps"]}
-            paths.update(str(p) for p, _, _, _ in changes)
-            if len(paths) > MAX_FILES:
-                raise AgentToolRejected("agent_review_file_count_limit")
-            blobs = {digest(raw): raw for _, before, after, _ in changes for raw in (before, after) if raw is not None}
-            if any(len(raw) > MAX_FILE for raw in blobs.values()):
-                raise AgentToolRejected("agent_review_file_limit")
-            growth = sum(len(raw) for key, raw in blobs.items() if not (self.directory / (key + ".blob")).exists())
-            used = sum(p.stat().st_size for p in self.directory.glob("*") if p.is_file())
-            total = sum(p.stat().st_size for p in self.directory.parent.glob("*/*") if p.is_file())
-            if used + growth + 32768 > MAX_BYTES or total + growth + 32768 > MAX_HOME_BYTES:
-                raise AgentToolRejected("agent_review_storage_limit")
             lex_root, real_root = _resolve_root(self.root)
             checked_changes = []
             for path, before, after, group in changes:
                 sp = safe_path(self.root, str(path), outside_ok=outside_ok)
-                if read_file(sp) != before:
+                actual = _read_existing(sp, max_bytes=len(before) if before is not None else 0)
+                if actual is _UNSET or actual != before:
                     raise AgentToolRejected("agent_local_file_changed_read_again")
                 is_outside = not (sp.is_relative_to(lex_root) or sp.is_relative_to(real_root))
                 checked_changes.append((sp, before, after, group, is_outside))
-            record = {"id": operation_id or uuid.uuid4().hex, "steps": []}
-            for index, (sp, before, after, group, is_outside) in enumerate(checked_changes):
-                step_entry = {"path": str(sp), "before": self.blob(before), "after": self.blob(after),
-                    "mode": stat.S_IMODE(sp.stat().st_mode) if sp.exists() else 0o644,
-                    "group": group, "state": "pending", "before_stamp": fingerprint(sp), "order": [len(state["records"]), index]}
-                if is_outside:
-                    step_entry["outside_workspace"] = True
-                record["steps"].append(step_entry)
-            state["records"].append(record)
-            self.reserve_progress(state)
-            self.save(state)  # All snapshots durable BEFORE the first workspace mutation.
+
+            normal_records = [r for r in state["records"] if not r.get("overflow_summary")]
+            over_op_limit = len(normal_records) >= MAX_OPERATIONS
+            snapshotted_paths = {
+                os.path.normcase(s["path"])
+                for r in state["records"]
+                for s in r.get("steps", [])
+                if s.get("snapshot", True) is not False
+            }
+            unsnapshotted_paths = {
+                os.path.normcase(s["path"])
+                for r in state["records"]
+                for s in r.get("steps", [])
+                if s.get("snapshot", True) is False
+            }
+            used = sum(p.stat().st_size for p in self.directory.glob("*") if p.is_file()) if self.directory.exists() else 0
+            total = sum(p.stat().st_size for p in self.directory.parent.glob("*/*") if p.is_file()) if self.directory.parent.exists() else 0
+            existing_blobs = {p.stem for p in self.directory.glob("*.blob") if p.is_file()} if self.directory.exists() else set()
+
+            order_major = state.get("next_order", len(state["records"]))
+            state["next_order"] = order_major + 1
+            mutation_plan = []
+
+            if over_op_limit:
+                summary_rec = next((r for r in state["records"] if r.get("overflow_summary")), None)
+                if summary_rec is None:
+                    summary_rec = {"id": "overflow_summary", "overflow_summary": True, "overflow_operations": 0, "steps": []}
+                    state["records"].append(summary_rec)
+                summary_rec["overflow_operations"] = summary_rec.get("overflow_operations", 0) + 1
+                summary_rec["last_operation_id"] = operation_id or uuid.uuid4().hex
+                by_norm = {os.path.normcase(s["path"]): s for s in summary_rec["steps"]}
+                for index, (sp, before, after, group, is_outside) in enumerate(checked_changes):
+                    expected_meta = _meta(before)
+                    expected_stamp = fingerprint(sp)
+                    mode = stat.S_IMODE(sp.stat().st_mode) if sp.exists() else 0o644
+                    norm_sp = os.path.normcase(str(sp))
+                    existing_step = by_norm.get(norm_sp)
+                    if existing_step is not None:
+                        existing_step["after"] = _meta(after)
+                        existing_step["snapshot"] = False
+                        existing_step["state"] = "pending"
+                        existing_step["order"] = [order_major, index]
+                        if group:
+                            existing_step["group"] = group
+                        if is_outside:
+                            existing_step["outside_workspace"] = True
+                        existing_step.pop("undone", None)
+                        mutation_plan.append((existing_step, expected_meta, expected_stamp, after))
+                    elif len(summary_rec["steps"]) < 512:
+                        step_entry = {
+                            "path": str(sp),
+                            "before": expected_meta,
+                            "after": _meta(after),
+                            "snapshot": False,
+                            "mode": mode,
+                            "group": group,
+                            "state": "pending",
+                            "before_stamp": expected_stamp,
+                            "order": [order_major, index],
+                        }
+                        if is_outside:
+                            step_entry["outside_workspace"] = True
+                        summary_rec["steps"].append(step_entry)
+                        by_norm[norm_sp] = step_entry
+                        mutation_plan.append((step_entry, expected_meta, expected_stamp, after))
+                    else:
+                        summary_rec["extra_skipped"] = summary_rec.get("extra_skipped", 0) + 1
+                        transient = {
+                            "path": str(sp),
+                            "before": expected_meta,
+                            "after": _meta(after),
+                            "snapshot": False,
+                            "mode": mode,
+                            "group": group,
+                            "state": "pending",
+                            "before_stamp": expected_stamp,
+                            **({"outside_workspace": True} if is_outside else {}),
+                        }
+                        mutation_plan.append((transient, expected_meta, expected_stamp, after))
+            else:
+                # Evaluate rename groups atomically so paired move endpoints share the same snapshot decision.
+                units = []
+                group_buckets = {}
+                for index, item in enumerate(checked_changes):
+                    grp = item[3]
+                    if grp is not None:
+                        if grp not in group_buckets:
+                            bucket = []
+                            group_buckets[grp] = bucket
+                            units.append(bucket)
+                        group_buckets[grp].append((index, *item))
+                    else:
+                        units.append([(index, *item)])
+
+                step_decisions = {}
+                for unit in units:
+                    unit_norms = {os.path.normcase(str(sp)) for _, sp, *_ in unit}
+                    new_paths = unit_norms - snapshotted_paths
+                    oversize_file = any(
+                        (before is not None and len(before) > MAX_FILE) or (after is not None and len(after) > MAX_FILE)
+                        for _, _, before, after, _, _ in unit
+                    )
+                    can_snap = not (unit_norms & unsnapshotted_paths) and len(snapshotted_paths) + len(new_paths) <= MAX_FILES and not oversize_file
+                    unit_blobs = {}
+                    unit_growth = 0
+                    if can_snap:
+                        unit_blobs = {
+                            digest(raw): raw
+                            for _, _, before, after, _, _ in unit
+                            for raw in (before, after)
+                            if raw is not None
+                        }
+                        unit_growth = sum(len(raw) for key, raw in unit_blobs.items() if key not in existing_blobs)
+                        if used + unit_growth + 32768 > MAX_BYTES or total + unit_growth + 32768 > MAX_HOME_BYTES:
+                            can_snap = False
+                    if can_snap:
+                        try:
+                            for raw in unit_blobs.values():
+                                self.blob(raw)
+                        except OSError:
+                            can_snap = False
+                        else:
+                            snapshotted_paths.update(new_paths)
+                            existing_blobs.update(unit_blobs)
+                            used += unit_growth
+                            total += unit_growth
+                    if not can_snap:
+                        unsnapshotted_paths.update(unit_norms)
+                    for idx, *_ in unit:
+                        step_decisions[idx] = can_snap
+
+                record = {"id": operation_id or uuid.uuid4().hex, "steps": []}
+                for index, (sp, before, after, group, is_outside) in enumerate(checked_changes):
+                    snapped = step_decisions[index]
+                    before_meta = self.blob(before) if snapped else _meta(before)
+                    after_meta = self.blob(after) if snapped else _meta(after)
+                    before_stamp = fingerprint(sp)
+                    step_entry = {
+                        "path": str(sp),
+                        "before": before_meta,
+                        "after": after_meta,
+                        **({} if snapped else {"snapshot": False}),
+                        "mode": stat.S_IMODE(sp.stat().st_mode) if sp.exists() else 0o644,
+                        "group": group,
+                        "state": "pending",
+                        "before_stamp": before_stamp,
+                        "order": [order_major, index],
+                    }
+                    if is_outside:
+                        step_entry["outside_workspace"] = True
+                    record["steps"].append(step_entry)
+                    mutation_plan.append((step_entry, before_meta, before_stamp, after))
+                state["records"].append(record)
+
             try:
-                for step in record["steps"]:
+                self.save(state)  # Manifest durable BEFORE the first workspace mutation.
+            except OSError:
+                raise AgentToolRejected("agent_review_storage_limit") from None
+            try:
+                for step, expected_meta, expected_stamp, after_raw in mutation_plan:
                     step["state"] = "writing"
                     self.save(state)
-                    self.replace(step, step["before"], step["after"], outside_ok=outside_ok or bool(step.get("outside_workspace")))
+                    self.replace(
+                        step,
+                        expected_meta,
+                        step["after"],
+                        outside_ok=outside_ok or bool(step.get("outside_workspace")),
+                        raw_bytes=after_raw if step.get("snapshot", True) is False else _UNSET,
+                        expected_stamp=expected_stamp,
+                    )
                     step["after_stamp"] = fingerprint(Path(step["path"]))
                     step["state"] = "applied"
                     self.save(state)
@@ -323,13 +484,17 @@ class FileReview:
                     exc.after_side_effect = True
                 raise
 
-    def replace(self, step, expected, target, *, outside_ok=False):
+    def replace(self, step, expected, target, *, outside_ok=False, raw_bytes=_UNSET, expected_stamp=_UNSET):
         eff_outside = bool(outside_ok or step.get("outside_workspace"))
         path = safe_path(self.root, step["path"], outside_ok=eff_outside)
-        raw = self.content(target)
+        raw = self.content(target) if raw_bytes is _UNSET else raw_bytes
         # Recheck immediately at the mutation boundary, in addition to whole-batch preflight.
         from .file_review_io import replace_checked
-        stamp = step.get("after_stamp") if expected is step["after"] else step.get("before_stamp")
+        stamp = (
+            (step.get("after_stamp") if expected is step["after"] else step.get("before_stamp"))
+            if expected_stamp is _UNSET
+            else expected_stamp
+        )
         replace_checked(path, self.root, expected["sha256"], raw, step["mode"], stamp, outside_ok=eff_outside)
 
     def recover(self, state, *, outside_ok=False):
@@ -368,6 +533,12 @@ class FileReview:
             for step in record["steps"]:
                 if step.get("undone"):
                     continue
+                is_skipped = step.get("snapshot", True) is False
+                step_view = (
+                    {**step, "can_undo": False, "reason": "snapshot_skipped_limit"}
+                    if is_skipped
+                    else {**step, "can_undo": step.get("state") == "applied"}
+                )
                 touching = [g for g in groups if os.path.normcase(step["path"]) in g["paths"] or (step.get("group") and step["group"] in g["links"])]
                 group = {"paths": set(), "links": set(), "steps": []}
                 for previous in touching:
@@ -378,14 +549,16 @@ class FileReview:
                 group["paths"].add(os.path.normcase(step["path"]))
                 if step.get("group"):
                     group["links"].add(step["group"])
-                group["steps"].append(step)
+                group["steps"].append(step_view)
                 groups.append(group)
         for group in groups:
             group["id"] = digest(json.dumps(sorted(group["paths"])).encode())[:24]
+            group["can_undo"] = all(s.get("snapshot", True) is not False for s in group["steps"])
         return groups
 
     def net(self, group):
         paths, problem = {}, None
+        group_skipped = any(s.get("snapshot", True) is False for s in group["steps"])
         for step in sorted(group["steps"], key=lambda s: s.get("order", [0, 0])):
             if step["state"] != "applied":
                 problem = "interrupted_file_operation"
@@ -393,20 +566,39 @@ class FileReview:
             previous = paths.get(key)
             if previous and (previous["after"] != step["before"] or previous.get("after_stamp") != step.get("before_stamp")):
                 problem = "intervening_changes"
-            paths[key] = {**step, "before": previous["before"] if previous else step["before"],
-                                   "mode": previous["mode"] if previous else step["mode"]}
+            step_skipped = (
+                group_skipped
+                or step.get("snapshot", True) is False
+                or (previous is not None and previous.get("snapshot", True) is False)
+            )
+            merged = {
+                **step,
+                "before": previous["before"] if previous else step["before"],
+                "mode": previous["mode"] if previous else step["mode"],
+            }
+            if step_skipped:
+                merged["snapshot"] = False
+                merged["can_undo"] = False
+                merged["reason"] = problem or "snapshot_skipped_limit"
+            paths[key] = merged
         return list(paths.values()), problem
 
     def plan(self, state, ids=None):
         groups = self.groups(state)
         if ids is not None and (not isinstance(ids, list) or not ids or any(not isinstance(i, str) for i in ids) or set(ids) - {g["id"] for g in groups}):
             raise AgentError("agent_review_selection_changed")
-        items, conflicts = [], []
+        items, conflicts, skipped = [], [], []
         for group in groups:
             if ids is not None and group["id"] not in ids:
                 continue
             net, problem = self.net(group)
             for item in net:
+                rel_path = _display_review_path(item, self.root)
+                if item.get("snapshot", True) is False and problem is None:
+                    skipped.append({"path": rel_path, "can_undo": False, "reason": "snapshot_skipped_limit"})
+                    if ids is not None:
+                        conflicts.append({"path": rel_path, "reason": "snapshot_skipped_limit"})
+                    continue
                 try:
                     self.content(item["before"])
                     self.content(item["after"])
@@ -415,10 +607,10 @@ class FileReview:
                 except (OSError, AgentError) as exc:
                     reason = str(exc) if isinstance(exc, AgentError) else "file_unavailable"
                 if reason:
-                    conflicts.append({"path": _display_review_path(item, self.root), "reason": reason})
+                    conflicts.append({"path": rel_path, "reason": reason})
                 items.append(item)
-        token = digest(json.dumps({"items": items, "ids": ids}, sort_keys=True).encode())
-        return {"token": token, "items": items, "conflicts": conflicts, "can_undo": bool(items) and not conflicts}
+        token = digest(json.dumps({"items": items, "skipped": skipped, "ids": ids}, sort_keys=True).encode())
+        return {"token": token, "items": items, "conflicts": conflicts, "skipped": skipped, "can_undo": bool(items) and not conflicts}
 
     def preview(self, ids=None):
         with file_transaction(self.lock):
@@ -440,16 +632,30 @@ class FileReview:
                 return self.undo_result(prior)
             plan = self.plan(state, ids)
             if plan["conflicts"]:
-                return {"status": "conflict", "conflicts": plan["conflicts"], "completed": []}
+                return {"status": "conflict", "conflicts": plan["conflicts"], "skipped": plan["skipped"], "completed": []}
+            if token == plan["token"] and ids is None and not plan["items"] and plan["skipped"]:
+                undo = {
+                    "id": request_id,
+                    "token": token,
+                    "status": "completed",
+                    "record_ids": [r["id"] for r in state["records"]],
+                    "items": [],
+                    "skipped": plan["skipped"],
+                }
+                state["undos"].append(undo)
+                self.save(state)
+                return self.undo_result(undo)
             if token != plan["token"] or not plan["can_undo"]:
                 raise AgentError("agent_review_preview_changed")
             if len(state["undos"]) >= MAX_OPERATIONS:
                 raise AgentError("agent_review_operation_limit")
             undo = {"id": request_id, "token": token, "status": "running", "record_ids": [r["id"] for r in state["records"]],
-                    "items": [{**item, "state": "pending"} for item in plan["items"]]}
+                    "items": [{**item, "state": "pending"} for item in plan["items"]], "skipped": plan["skipped"]}
             state["undos"].append(undo)
-            self.reserve_progress(state)
-            self.save(state)
+            try:
+                self.save(state)
+            except OSError:
+                raise AgentError("agent_review_storage_unavailable") from None
             try:
                 for item in undo["items"]:
                     # No application after an uncertain/failed step, and no automatic retry.
@@ -472,9 +678,12 @@ class FileReview:
             return self.undo_result(undo)
 
     def undo_result(self, undo):
-        return {"id": undo["id"], "status": undo["status"],
-                "completed": [_display_review_path(i, self.root) for i in undo["items"] if i["state"] in {"done", "recovered"}],
-                "remaining": [{"path": _display_review_path(i, self.root), "state": i["state"]} for i in undo["items"] if i["state"] not in {"done", "recovered"}]}
+        result = {"id": undo["id"], "status": undo["status"],
+                  "completed": [_display_review_path(i, self.root) for i in undo["items"] if i["state"] in {"done", "recovered"}],
+                  "remaining": [{"path": _display_review_path(i, self.root), "state": i["state"]} for i in undo["items"] if i["state"] not in {"done", "recovered"}]}
+        if "skipped" in undo:
+            result["skipped"] = undo["skipped"]
+        return result
 
     def review(self):
         from .local_tools import (
@@ -489,38 +698,46 @@ class FileReview:
             state = self.load()
             self.recover(state)
             files = []
+            snapshot_skipped = sum(r.get("extra_skipped", 0) for r in state["records"] if r.get("overflow_summary"))
             for group in self.groups(state):
                 net, problem = self.net(group)
                 for step in net:
+                    is_skipped = step.get("snapshot", True) is False
+                    if is_skipped:
+                        snapshot_skipped += 1
                     if step["before"] == step["after"] and not problem:
                         continue
                     relative = _display_review_path(step, self.root, posix=True)
                     before, after = step["before"], step["after"]
+                    eff_problem = problem or ("snapshot_skipped_limit" if is_skipped else None)
                     entry = {"id": group["id"], "path": relative, "status": "created" if before["sha256"] is None else "deleted" if after["sha256"] is None else "modified",
                              "existed_before": before["sha256"] is not None, "sha256": after["sha256"], "test_file": bool(TEST_PATH.search(relative)),
-                             "before_bytes": before["bytes"], "after_bytes": after["bytes"], "source": "file_tool", "can_undo": not problem,
-                             "rename_group": len(group["paths"]) > 1, "problem": problem, "media_type": mimetypes.guess_type(relative)[0] or "application/octet-stream",
+                             "before_bytes": before["bytes"], "after_bytes": after["bytes"], "source": "file_tool", "can_undo": not eff_problem and not is_skipped,
+                             "rename_group": len(group["paths"]) > 1, "problem": eff_problem, "media_type": mimetypes.guess_type(relative)[0] or "application/octet-stream",
+                             **({"snapshot": False} if is_skipped else {}),
                              **({"outside_workspace": True} if step.get("outside_workspace") else {})}
-                    try:
-                        original, current = self.content(before), self.content(after)
-                        if before["sha256"]:
-                            entry["original_copy"] = str(self.directory / (before["sha256"] + ".blob"))
-                        if Path(relative).suffix.lower() in SEARCH_BINARY_SUFFIXES or b"\0" in (original or b"") + (current or b""):
-                            raise UnicodeError()
-                        a, b = (original or b"").decode("utf-8-sig"), (current or b"").decode("utf-8-sig")
-                        summary = change_summary(a, b)
-                        entry.update(summary)
-                        entry["diff"] = summary.get("diff", "")[:REVIEW_DIFF_CHARS]
-                        entry["diff_truncated"] = not summary or "(diff truncated)" in summary.get("diff", "") or len(summary.get("diff", "")) >= REVIEW_DIFF_CHARS
-                        dropped = [line for line in removed_lines(a, b) if line and CHECK_LINE.search(line)]
-                        if dropped:
-                            entry["removed_check_like_lines"] = dropped[:10]
-                    except UnicodeError:
-                        entry["binary"] = True
-                    except (OSError, AgentError):
-                        entry.update(can_undo=False, problem="snapshot_missing")
+                    if not is_skipped:
+                        try:
+                            original, current = self.content(before), self.content(after)
+                            if before["sha256"]:
+                                entry["original_copy"] = str(self.directory / (before["sha256"] + ".blob"))
+                            if Path(relative).suffix.lower() in SEARCH_BINARY_SUFFIXES or b"\0" in (original or b"") + (current or b""):
+                                raise UnicodeError()
+                            a, b = (original or b"").decode("utf-8-sig"), (current or b"").decode("utf-8-sig")
+                            summary = change_summary(a, b)
+                            entry.update(summary)
+                            entry["diff"] = summary.get("diff", "")[:REVIEW_DIFF_CHARS]
+                            entry["diff_truncated"] = not summary or "(diff truncated)" in summary.get("diff", "") or len(summary.get("diff", "")) >= REVIEW_DIFF_CHARS
+                            dropped = [line for line in removed_lines(a, b) if line and CHECK_LINE.search(line)]
+                            if dropped:
+                                entry["removed_check_like_lines"] = dropped[:10]
+                        except UnicodeError:
+                            entry["binary"] = True
+                        except (OSError, AgentError):
+                            entry.update(can_undo=False, problem="snapshot_missing")
                     files.append(entry)
-            return {"files": files, "files_total": len(files), "digest": digest(json.dumps(files, sort_keys=True).encode()) if files else None,
+            return {"files": files, "files_total": len(files), "snapshot_skipped": snapshot_skipped,
+                    "digest": digest(json.dumps(files, sort_keys=True).encode()) if files else None,
                     "undo_operations": [self.undo_result(u) for u in state["undos"][-10:]],
                     "limits": {"task_bytes": MAX_BYTES, "home_bytes": MAX_HOME_BYTES, "files": MAX_FILES, "operations": MAX_OPERATIONS},
                     "not_covered": "Shell/build observations are not proof of Agent ownership and cannot be undone. External services and conversation history are not reverted."}
