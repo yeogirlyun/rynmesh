@@ -2493,6 +2493,7 @@ def create_app(store: RynmeshStore | None = None):
             "desktop_managed": os.environ.get("RYNMESH_DESKTOP_MODE", "").strip().lower()
             in {"1", "true", "yes"},
             "network_id": control_network_id(),
+            "network_proxy": stored["network_proxy"],
         }
 
     @app.patch("/api/local/settings")

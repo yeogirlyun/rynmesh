@@ -240,6 +240,11 @@ export interface PublishPrepResult {
   provenance_head: string;
 }
 
+export interface NetworkProxySettings {
+  mode: "off" | "system" | "manual";
+  url: string;
+}
+
 export interface NodeSettings {
   node_name: string;
   node_storage: string;
@@ -264,6 +269,7 @@ export interface NodeSettings {
   notification_quiet_end: number;
   desktop_managed?: boolean;
   network_id?: string;
+  network_proxy?: NetworkProxySettings;
 }
 
 export interface SearchAskRoutingOp {
