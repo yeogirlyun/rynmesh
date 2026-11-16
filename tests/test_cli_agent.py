@@ -280,7 +280,7 @@ def test_cli_is_a_distinct_model_in_local_api_and_rejects_unsupported_features(t
     install_inference_api(app, home=tmp_path, store=SimpleNamespace(peer_id="self"),
                           active_manager=lambda: None, local_manager_for=lambda service_id: manager if service_id == "codex-cli" else None,
                           discover=lambda _: [], execute_order=None, cancel_order=None)
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
     key = client.post("/api/local/llm/api-keys", json={"name": "laptop app", "output_token_limit": 100}).json()["key"]
     client.headers["Authorization"] = "Bearer " + key
     assert [item["id"] for item in client.get("/v1/models").json()["data"]] == ["local/codex-cli"]
@@ -369,7 +369,7 @@ def test_remote_cli_is_exposed_through_laptop_api_with_strict_p2p(tmp_path):
     install_inference_api(app, home=tmp_path, store=SimpleNamespace(peer_id="laptop-peer"),
                           active_manager=lambda: None, discover=lambda _: discovered,
                           execute_order=execute, cancel_order=lambda _: None)
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
     key = client.post("/api/local/llm/api-keys", json={"name": "IDE"}).json()["key"]
     target = client.get("/api/local/llm/api-access").json()["targets"][0]
     assert target["rynmesh"]["adapter"] == "claude_cli"

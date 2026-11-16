@@ -28,6 +28,7 @@ from . import codex_threads
 from .adapters import actual_usage
 from .api_formats import StreamFormat, convert_response, normalize_with_ignored, sse
 from .chat import completion
+from .context_safety import context_overflow_detail, estimate_context_safety_tokens
 from .safety import MAX_OUTPUT, MAX_REQUEST, install_body_limit
 from .service_view import is_usable
 from .streaming import events
@@ -136,7 +137,7 @@ def install_inference_api(app: Any, *, home: Path, store: Any, active_manager: A
 
     def authorize(request: Request) -> str:
         host = urlparse("http://" + request.headers.get("host", "")).hostname
-        if not is_loopback_addr(request.client.host if request.client else "") or is_forwarded(request.headers) or is_browser_cross_site(request.headers) or host not in {"127.0.0.1", "::1", "localhost", "testserver"}:
+        if not is_loopback_addr(request.client.host if request.client else "") or is_forwarded(request.headers) or is_browser_cross_site(request.headers) or host not in {"127.0.0.1", "::1", "localhost"}:
             raise HTTPException(403, "inference_api_is_loopback_only")
         bearer = request.headers.get("authorization", "")
         token = bearer[7:] if bearer.lower().startswith("bearer ") else request.headers.get("x-api-key", "")
@@ -304,10 +305,10 @@ def install_inference_api(app: Any, *, home: Path, store: Any, active_manager: A
             # Client defaults often describe a larger model (e.g. 128k output).
             # A requested maximum is a ceiling, so fit it to the selected model
             # and estimated remaining context before reserving quota or routing.
-            estimated_input = max(1, (len(json.dumps(chat, ensure_ascii=False)) + 3) // 4)
+            estimated_input = estimate_context_safety_tokens(json.dumps(chat, ensure_ascii=False))
             available = target["context_window"] - estimated_input
             if available < 1:
-                raise HTTPException(400, "estimated context window exceeded")
+                raise HTTPException(400, context_overflow_detail())
             requested_max = chat.get("max_tokens")
             chat["max_tokens"] = min(
                 requested_max if requested_max is not None else target["max_output_tokens"],
@@ -354,7 +355,7 @@ def install_inference_api(app: Any, *, home: Path, store: Any, active_manager: A
                         current_window = (manager.context_window_for_model() if target["adapter"] in
                                           {"codex_cli", "antigravity_cli"} else manager.manifest.context_window)
                         if estimated_input + chat["max_tokens"] > current_window:
-                            raise ValueError("estimated context window exceeded")
+                            raise ValueError(context_overflow_detail())
                     if local_binding is not None:
                         result = await asyncio.to_thread(manager.adapter.call_bound, "chat", local_binding,
                             authorize_context, chat, task_id=task_id, timeout_s=manager.manifest.timeout_seconds,

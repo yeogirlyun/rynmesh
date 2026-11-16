@@ -62,7 +62,7 @@ def test_s01_i34_fix_omitted_max_tokens_caps_to_remaining_project_quota_and_reje
         execute_order=None,
         cancel_order=None,
     )
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         # 1. Default API key (100_000 limit) < model max_output_tokens (128_000): omitted max_tokens caps to 100_000
         default_key = client.post("/api/local/llm/api-keys", json={"name": "default"}).json()
         r1 = client.post(

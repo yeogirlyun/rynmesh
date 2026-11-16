@@ -66,7 +66,7 @@ def api(tmp_path):
     app = FastAPI()
     install_inference_api(app, home=tmp_path, store=SimpleNamespace(peer_id="self"), active_manager=lambda: manager,
                           discover=lambda _: [], execute_order=None, cancel_order=None)
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
     key = client.post("/api/local/llm/api-keys", json={"name": "agent", "output_token_limit": 1000}).json()
     client.headers["Authorization"] = "Bearer " + key["key"]
     return client, adapter, key
@@ -187,13 +187,14 @@ def test_large_client_output_budget_is_capped_before_quota_reservation(api, prot
 
 
 def test_output_budget_fits_remaining_context_without_truncating_prompt(api):
+    from rynmesh.llm_package.context_safety import estimate_context_safety_tokens
     client, adapter, _ = api
-    text = "x" * 15000
+    text = "x" * 11500
     body = {"model": "local/test", "messages": [{"role": "user", "content": text}], "max_tokens": 128000}
     response = client.post("/v1/chat/completions", json=body)
     assert response.status_code == 200, response.text
     assert 0 < adapter.last_body["max_tokens"] < 512
-    assert (len(json.dumps(adapter.last_body, ensure_ascii=False)) + 3) // 4 + adapter.last_body["max_tokens"] <= 4096
+    assert estimate_context_safety_tokens(json.dumps(adapter.last_body, ensure_ascii=False)) + adapter.last_body["max_tokens"] <= 4096
     assert adapter.last_body["messages"][0]["content"] == text
     body["messages"][0]["content"] = "x" * 17000
     assert client.post("/v1/chat/completions", json=body).status_code == 400
@@ -228,7 +229,7 @@ def test_alias_pins_remote_provider_when_discovery_changes(tmp_path):
         app = FastAPI()
         install_inference_api(app, home=tmp_path, store=SimpleNamespace(peer_id="self"), active_manager=lambda: None,
                               discover=lambda _: providers, execute_order=execute, cancel_order=lambda _: None)
-        return TestClient(app)
+        return TestClient(app, base_url="http://127.0.0.1")
 
     client = client_for_node()
     key = client.post("/api/local/llm/api-keys", json={"name": "agent"}).json()["key"]
@@ -311,7 +312,7 @@ def test_inference_key_cannot_manage_node(tmp_path, monkeypatch):
     monkeypatch.delenv("RYNMESH_LLM_SERVICE_MANIFEST", raising=False)
     from rynmesh.peer_http import create_app
     app = create_app(RynmeshStore(home=tmp_path / "node", network_dir=tmp_path / "net"))
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         denied = client.post("/api/local/llm/api-keys", json={"name": "agent"})
         assert denied.status_code == 403
         key = client.post("/api/local/llm/api-keys", json={"name": "agent"}, headers={"x-ryn-local-token": "desktop-secret"}).json()["key"]
@@ -424,7 +425,7 @@ def _make_api_with_manifest(tmp_path, *, max_output_tokens=2048, context_window=
         execute_order=None,
         cancel_order=None,
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
     key = client.post("/api/local/llm/api-keys", json={"name": "agent", "output_token_limit": 100000}).json()
     client.headers["Authorization"] = "Bearer " + key["key"]
     return client, adapter, manager
@@ -1298,7 +1299,7 @@ def test_s01_i29_t4_413_returns_json_with_limit_bytes_and_image_compression_hint
         execute_order=None,
         cancel_order=None,
     )
-    with TestClient(direct_app) as direct_client:
+    with TestClient(direct_app, base_url="http://127.0.0.1") as direct_client:
         dk = direct_client.post("/api/local/llm/api-keys", json={"name": "d", "output_token_limit": 1000}).json()
         r_direct = direct_client.post(
             "/v1/chat/completions",

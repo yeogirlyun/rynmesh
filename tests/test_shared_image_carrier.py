@@ -78,4 +78,4 @@ def test_context_estimate_counts_an_inline_image_as_a_bounded_cost():
     prompt = '{"messages":[{"role":"user","content":[{"type":"text","text":"看图"},{"type":"image_url","image_url":{"url":"' + image + '"}}]}]}'
     assert estimate_context_safety_tokens(prompt) < 4000 + IMAGE_CONTEXT_TOKENS
     assert context_request_fits(prompt, output_tokens=4096, context_window=32768)
-    assert estimate_context_safety_tokens("中文" * 10) == len(("中文" * 10).encode())
+    assert estimate_context_safety_tokens("中文" * 10) == len("中文" * 10)

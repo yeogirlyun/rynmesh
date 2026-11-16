@@ -25,6 +25,7 @@ from .. import __version__
 from ..atomic_io import atomic_write_json
 from .adapters import AdapterError, OpenAICompatibleAdapter, deadline_options
 from .catalog import apply_download_mirror
+from .context_safety import CONTEXT_ESTIMATE_CAPABILITY
 from .gguf_import import NativeModelError, inspect_model
 from .hardware import _memory, _nvidia, cap_local_context_window, default_local_output_tokens
 from .manifest import LLMPackageManifest
@@ -425,7 +426,7 @@ class NativeModel:
             runtime="native_llama_cpp", model=name, context_window=context,
             max_output_tokens=output_tokens, timeout_seconds=300,
             model_fingerprint="sha256:" + sha if sha else "", license_id=self.metadata.get("license_id", "unknown"),
-            capabilities=["text-generation", "streaming", "personal-space-only"],
+            capabilities=["text-generation", "streaming", "personal-space-only", CONTEXT_ESTIMATE_CAPABILITY],
         )
         if sha:
             policy = self.policies.ensure(self.manifest, self.config["sharing"])

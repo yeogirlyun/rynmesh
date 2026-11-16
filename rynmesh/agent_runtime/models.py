@@ -136,10 +136,9 @@ class ModelCatalog:
                    "share_scope": ("personal_space" if "personal-space-only" in capabilities else
                                    "friends" if value.get("access_policy") == "explicit_friends" else "none") if own else "unknown"}
             row.update(catalog_image_fields(row, service_record=value))
-            if not own:
-                # The provider admits a peer order only when its prompt's UTF-8
-                # bytes plus output fit the window (one token per byte). Local
-                # services are called in-process without that check.
+            if not own and "context-estimate:v2" not in capabilities:
+                # Legacy peer providers without context-estimate:v2 admit an order only
+                # when its prompt's UTF-8 bytes plus output fit the window (1 byte/token).
                 row["context_admission_bytes_per_token"] = 1
             if provider_resource:
                 row.update(provider_resource=provider_resource, source_name=value.get("provider_name", value.get("node_name", "")),

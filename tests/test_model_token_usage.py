@@ -41,7 +41,7 @@ def test_unified_usage_mounted_on_all_model_types_and_legacy_migrated(node):
         encoding="utf-8",
     )
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         # 1. Check /api/local/llm/sources mounts unified usage
         sources_resp = client.get("/api/local/llm/sources").json()["sources"]
         src = next(item for item in sources_resp if item["id"] == record["id"])

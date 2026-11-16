@@ -1,15 +1,18 @@
 """Tokenizer-independent context safety bounds shared by LLM admission paths.
 
-Pricing may continue to use a chars/4 estimate. Context admission must not:
-that heuristic under-counts CJK, combining marks, and emoji. UTF-8 byte length
-is intentionally conservative until a trusted provider tokenizer is available.
+Pricing may continue to use a chars/4 estimate. Context admission uses
+ceil(ascii_bytes / 3) + non_ascii_chars (counting each CJK/emoji code point as
+one token) plus a bounded token cost per inline image.
 """
 
 from __future__ import annotations
 
 import re
 
+ESTIMATED_BYTES_PER_TOKEN = 3
 CONTEXT_SAFETY_MARGIN_TOKENS = 128
+CONTEXT_OVERFLOW_DETAIL = "estimated_context_window_exceeded"
+CONTEXT_ESTIMATE_CAPABILITY = "context-estimate:v2"
 # An inline image costs the model a bounded number of tokens, not one per byte
 # of its base64 text. This is above common vision pricing for a large image.
 IMAGE_CONTEXT_TOKENS = 3000
@@ -27,7 +30,15 @@ def estimate_context_safety_tokens(text: str) -> int:
         return ""
 
     stripped = _INLINE_IMAGE.sub(drop, text)
-    return max(1, len(stripped.encode("utf-8")) + images * IMAGE_CONTEXT_TOKENS)
+    ascii_bytes = len(stripped) if stripped.isascii() else sum(1 for ch in stripped if ord(ch) < 128)
+    non_ascii_chars = len(stripped) - ascii_bytes
+    text_tokens = (ascii_bytes + ESTIMATED_BYTES_PER_TOKEN - 1) // ESTIMATED_BYTES_PER_TOKEN + non_ascii_chars
+    return max(1, text_tokens + images * IMAGE_CONTEXT_TOKENS)
+
+
+def context_overflow_detail() -> str:
+    """Return the closed error detail code for estimated context window overflow."""
+    return CONTEXT_OVERFLOW_DETAIL
 
 
 def context_request_fits(

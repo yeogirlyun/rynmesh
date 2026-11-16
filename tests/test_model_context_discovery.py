@@ -145,6 +145,6 @@ def test_signed_cli_provider_uses_selected_window_not_32k_or_caller_capacity(cli
     response = open_task(p.provider.handle(wire("gemini-3.8-flash-medium", "large-context")),
         recipient_peer_id=p.child.store.peer_id, recipient_messaging_key=p.keys[1], expected_kind="llm_response")[1]
     assert response["state"] == "succeeded" and len(p.calls) == 1
-    with pytest.raises(TaskProtocolError, match="context window"):
+    with pytest.raises(TaskProtocolError, match="estimated_context_window_exceeded"):
         p.provider.handle(wire("unverified", "small-context"))
     assert len(p.calls) == 1
