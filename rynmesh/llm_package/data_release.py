@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 
 _restricted = ContextVar("ryn_model_data_release", default=None)
+_STDLIB_URLOPEN = urllib.request.urlopen
 
 
 class DataReleaseError(RuntimeError):
@@ -30,9 +31,7 @@ def model_request_scope(*, restricted=False, before_dispatch=None):
 
 def urlopen(request, **kwargs):
     scope = _restricted.get()
-    if scope is None:
-        return urllib.request.urlopen(request, **kwargs)
-    if scope[0] is not None:
+    if scope is not None and scope[0] is not None:
         try:
             scope[0]()
         except Exception as exc:
@@ -40,5 +39,11 @@ def urlopen(request, **kwargs):
             if code not in {"agent_model_destination_changed", "agent_extension_model_not_allowed"}:
                 code = "agent_model_destination_changed"
             raise DataReleaseError(code) from None
+    if scope is None and urllib.request.urlopen is not _STDLIB_URLOPEN:
+        return urllib.request.urlopen(request, **kwargs)
     # A fresh opener avoids the process-wide opener and refuses every redirect.
-    return urllib.request.build_opener(_NoRedirect()).open(request, **kwargs)
+    context = kwargs.pop("context", None)
+    handlers = [_NoRedirect()]
+    if context is not None:
+        handlers.append(urllib.request.HTTPSHandler(context=context))
+    return urllib.request.build_opener(*handlers).open(request, **kwargs)
