@@ -980,7 +980,71 @@ class AgentLoop:
                         msg["reasoning_content"] = ""
             return image_capabilities.compact_native_observation_history(row, built)
 
+        def _maybe_record_memory_not_injected() -> None:
+            if row.get("_exclude_optional_memory") or not row.get("_memory_use_enabled"):
+                return
+            active_in_scope = int(row.get("_memory_active_in_scope") or 0)
+            if active_in_scope <= 0:
+                return
+            skip_reason = row.get("_memory_skip_reason")
+            excluded_count = int((memory_selection or {}).get("excluded_by_exposure") or 0)
+            selected_empty = not bool((memory_selection or {}).get("selected"))
+            if isinstance(skip_reason, str) and skip_reason.strip():
+                reason = skip_reason.strip()
+            elif excluded_count > 0 and selected_empty:
+                reason = "excluded_by_exposure"
+            else:
+                return
+            epoch_now = int(row.get("context_epoch", 0) or 0)
+
+            def _has_same_event(events_list: list) -> bool:
+                return any(
+                    isinstance(ev, dict)
+                    and ev.get("type") == "memory_not_injected"
+                    and int(ev.get("context_epoch", 0) or 0) == epoch_now
+                    and ev.get("reason") == reason
+                    for ev in events_list
+                )
+
+            if _has_same_event(row.get("events") or []):
+                return
+
+            tid = row.get("id")
+            if hasattr(self, "store") and isinstance(tid, str) and tid:
+                def _persist_not_injected(data: dict) -> dict | None:
+                    tasks_map = data.get("tasks") if isinstance(data, dict) else None
+                    live = tasks_map.get(tid) if isinstance(tasks_map, dict) else None
+                    if not isinstance(live, dict):
+                        return None
+                    if _has_same_event(live.get("events") or []):
+                        for existing_ev in reversed(live.get("events") or []):
+                            if (
+                                isinstance(existing_ev, dict)
+                                and existing_ev.get("type") == "memory_not_injected"
+                                and int(existing_ev.get("context_epoch", 0) or 0) == epoch_now
+                                and existing_ev.get("reason") == reason
+                            ):
+                                return copy.deepcopy(existing_ev)
+                        return None
+                    event(live, "memory_not_injected", reason=reason, excluded=excluded_count)
+                    return copy.deepcopy(live["events"][-1])
+
+                recorded_ev = self.store.transaction(_persist_not_injected)
+                if isinstance(recorded_ev, dict):
+                    row.setdefault("events", [])
+                    if not _has_same_event(row["events"]):
+                        row["events"].append(recorded_ev)
+                        row["event_cursor"] = max(int(row.get("event_cursor") or 0), int(recorded_ev.get("seq") or 0))
+                    return
+
+            row.setdefault("event_cursor", len(row.get("events") or []))
+            row.setdefault("revision", 1)
+            row.setdefault("events", [])
+            event(row, "memory_not_injected", reason=reason, excluded=excluded_count)
+
         def tag(msgs: list[dict], *, has_memory: bool) -> list[dict]:
+            if not has_memory:
+                _maybe_record_memory_not_injected()
             disclosed = bool(has_memory or row.get("_disclosed_restricted_prefs"))
             wrapped = memory_integration.ContextMessages(msgs)
             wrapped.disclosed_memory = disclosed

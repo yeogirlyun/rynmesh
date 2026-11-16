@@ -531,15 +531,16 @@ def current_host_memory_operation_note(runtime: Any, row: dict[str, Any]) -> str
     else:
         reason = None
 
-    envelope = {
-        "host_memory_operation_result": {
-            "intent": intent,
-            "applied": applied,
-            "saved_count": saved_count,
-            "deleted_count": deleted_count,
-            "reason": reason,
-        }
+    op_result: dict[str, Any] = {
+        "intent": intent,
+        "applied": applied,
+        "saved_count": saved_count,
+        "deleted_count": deleted_count,
+        "reason": reason,
     }
+    if applied and intent in {"remember", "update"} and isinstance(receipt.get("visible_to_model"), bool):
+        op_result["visible_to_model"] = receipt["visible_to_model"]
+    envelope = {"host_memory_operation_result": op_result}
     return json.dumps(envelope, ensure_ascii=False, separators=(",", ":")) + "\n" + _HOST_MEMORY_OPERATION_INSTRUCTION
 
 
@@ -576,7 +577,7 @@ def select_guidance_and_memory(
     exclude_optional_memory: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     """Read filtered preferences and eligible active memories for `row` without mutating store state."""
-    ok_dest, bound_dest, _ = verify_task_destination_for_memory(runtime, row)
+    ok_dest, bound_dest, dest_reason = verify_task_destination_for_memory(runtime, row)
     row_for_prefs = (
         {**row, "model_destination": bound_dest}
         if ok_dest and bound_dest is not None
@@ -599,28 +600,73 @@ def select_guidance_and_memory(
                 for item in (filtered_prefs.get("items") or [])
             )
         )
+        mem_state = memory.read_memory_state(data) if isinstance(data, dict) else memory.default_memory_state()
+        use_enabled = bool((mem_state.get("settings") or {}).get("use_enabled", True))
+        task_project = row.get("project") if isinstance(row.get("project"), dict) else None
+        task_pid = task_project.get("id") if task_project else None
+        task_pgen = task_project.get("generation") if task_project else None
+        active_in_scope = 0
+        if use_enabled:
+            for entry in (mem_state.get("entries") or {}).values():
+                if not isinstance(entry, dict) or entry.get("status") != "active":
+                    continue
+                scope = entry.get("scope") or {}
+                if scope.get("owner_id", "local_owner") != "local_owner":
+                    continue
+                if scope.get("kind") == "project":
+                    if not memory._project_scope_matches(scope, task_pid, task_pgen, require_generation_match=True):
+                        continue
+                sources = entry.get("sources") or []
+                task_sources = [s for s in sources if s.get("source_type") == "task_message"]
+                if task_sources and entry.get("origin") != "manual":
+                    if all(
+                        not memory.verify_source_ref_against_state(
+                            data, s, for_background_job=False, for_active_entry=True
+                        )[0]
+                        for s in task_sources
+                    ):
+                        continue
+                active_in_scope += 1
+
         if exclude_optional_memory or row.get("_exclude_optional_memory"):
-            return filtered_prefs, None, disclosed_restricted_prefs
+            return filtered_prefs, None, disclosed_restricted_prefs, use_enabled, active_in_scope
         if isinstance(row.get("project"), dict):
             try:
                 projects.validate_binding(data, row["project"])
             except AgentError:
-                return filtered_prefs, None, disclosed_restricted_prefs
+                return filtered_prefs, None, disclosed_restricted_prefs, use_enabled, active_in_scope
         if not ok_dest or bound_dest is None:
-            return filtered_prefs, None, disclosed_restricted_prefs
+            return filtered_prefs, None, disclosed_restricted_prefs, use_enabled, active_in_scope
         row_for_select = {**row, "model_destination": bound_dest}
         selection = memory.select_memories_for_task(
             data,
             row_for_select,
         )
-        return filtered_prefs, selection, disclosed_restricted_prefs
+        return filtered_prefs, selection, disclosed_restricted_prefs, use_enabled, active_in_scope
 
     if hasattr(runtime.store, "inspect"):
-        prefs, selection, disclosed_restricted_prefs = runtime.store.inspect(inspect_state)
+        prefs, selection, disclosed_restricted_prefs, use_enabled, active_in_scope = runtime.store.inspect(
+            inspect_state
+        )
     else:
-        prefs, selection, disclosed_restricted_prefs = inspect_state(runtime.store.read())
+        prefs, selection, disclosed_restricted_prefs, use_enabled, active_in_scope = inspect_state(
+            runtime.store.read()
+        )
     if not (exclude_optional_memory or row.get("_exclude_optional_memory")):
         row["_disclosed_restricted_prefs"] = bool(disclosed_restricted_prefs)
+        row["_memory_use_enabled"] = bool(use_enabled)
+        row["_memory_active_in_scope"] = int(active_in_scope)
+        if not ok_dest or bound_dest is None:
+            row["_memory_skip_reason"] = dest_reason or "destination_unverifiable"
+        elif (
+            isinstance(selection, dict)
+            and int(selection.get("excluded_by_exposure") or 0) > 0
+            and not selection.get("selected")
+            and not (selection.get("include_navigation") and selection.get("navigation_index"))
+        ):
+            row["_memory_skip_reason"] = "excluded_by_exposure"
+        else:
+            row["_memory_skip_reason"] = None
     base_guidance = knowledge.messages(row, prefs, memory_selection=None)
     return base_guidance, selection
 

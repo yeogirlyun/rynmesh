@@ -766,31 +766,46 @@ it("creates, edits, searches, and deletes memory entries with nested scope, exac
     }),
   );
 
-  render(<MemoryEditor />);
+  render(
+    <MemoryEditor
+      projects={[
+        {
+          id: "proj-ryn",
+          name: "Ryn Project",
+          path: "/workspace/ryn",
+          generation: 2,
+          entry_files: [],
+          manifests: [],
+          directories: [],
+        },
+      ]}
+    />,
+  );
   await user.click(screen.getByRole("button", { name: "Long-term memory" }));
   await screen.findByText("Always run ruff before finishing Python edits");
 
   // Entry-1 has a stale/unavailable destination -> shows reselect warning and does not broaden to all_selected
   expect(screen.getByText(/Unavailable — reselect required/)).toBeInTheDocument();
 
-  // New entry defaults to local_only ("Store on this device; never send to models")
+  // New entry defaults to destinations with the current default task model pre-selected
   const policySelect = screen.getByLabelText("Model destination policy") as HTMLSelectElement;
-  expect(policySelect.value).toBe("local_only");
-  expect(screen.getByRole("option", { name: "Store on this device; never send to models" })).toBeInTheDocument();
+  expect(policySelect.value).toBe("destinations");
+  expect(screen.getByRole("option", { name: "Store on this device only (invisible to models)" })).toBeInTheDocument();
 
-  // Switch new entry scope to project -> requires explicit local project ID
+  // Switch new entry scope to project -> requires explicit local project selection from dropdown
   await user.selectOptions(screen.getByLabelText("Scope"), "project");
   const addButton = screen.getByRole("button", { name: "Add fact" });
   await user.type(screen.getByLabelText("New fact text"), "Frontend tests live in webapp/src");
   expect(addButton).toBeDisabled();
 
-  await user.type(screen.getByLabelText(/Local project ID/), "proj-ryn");
-  await user.selectOptions(policySelect, "destinations");
-  // Cannot add when mode="destinations" but no destination is checked
+  await user.selectOptions(screen.getByLabelText("Select local project"), "proj-ryn");
+  const addDestGroup = screen.getByRole("group", { name: "Choose allowed destinations" });
+  // Uncheck pre-selected default destination -> cannot add when mode="destinations" and no destination is checked
+  await user.click(within(addDestGroup).getByRole("checkbox", { name: "Claude 4 Sonnet · My Anthropic" }));
   expect(addButton).toBeDisabled();
 
   // Authorize native CLI destination (with empty source_id)
-  const cliCheckbox = screen.getByRole("checkbox", { name: "Gemini Local CLI" });
+  const cliCheckbox = within(addDestGroup).getByRole("checkbox", { name: "Gemini Local CLI" });
   await user.click(cliCheckbox);
   expect(addButton).toBeEnabled();
   await user.click(addButton);
