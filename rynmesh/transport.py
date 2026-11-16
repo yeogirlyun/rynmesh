@@ -86,6 +86,7 @@ class TransportProfile:
     # The stdlib transport documents these as a plugin-only capability.
     sni: str = ""
     connect_host: str = ""
+    requested_unknown: bool = False
 
 
 def network_key() -> str:
@@ -184,6 +185,7 @@ def resolve_profile() -> TransportProfile:
     # Default: camouflage — browser-like, broad TLS compatibility. A name that
     # matches a registered plugin transport is preserved so get_transport can
     # dispatch to it (with camouflage defaults as its base profile).
+    known = name == "camouflage" or name in _REGISTRY
     return TransportProfile(
         name=name if name in _REGISTRY else "camouflage",
         headers=dict(_BROWSER_HEADERS),
@@ -192,6 +194,7 @@ def resolve_profile() -> TransportProfile:
         proxies=proxies,
         sni=os.environ.get("RYNMESH_TLS_SNI", "").strip(),
         connect_host=os.environ.get("RYNMESH_CONNECT_HOST", "").strip(),
+        requested_unknown=not known,
     )
 
 
@@ -1012,6 +1015,8 @@ class CdnWebSocketTransport:
 TransportFactory = Callable[[TransportProfile], Transport]
 _REGISTRY: dict[str, TransportFactory] = {}
 _CACHE: dict[str, Transport] = {}
+_LAST_EFFECTIVE: dict[str, Any] | None = None
+_LAST_PROFILE: TransportProfile | None = None
 
 
 def register_transport(name: str, factory: TransportFactory) -> None:
@@ -1021,6 +1026,68 @@ def register_transport(name: str, factory: TransportFactory) -> None:
 
 # Built-in plugin registrations -------------------------------------------
 register_transport("cdn-ws", lambda profile: CdnWebSocketTransport(profile))
+
+
+def _record_effective(
+    profile: TransportProfile,
+    *,
+    effective: str | None,
+    degraded_reason: str | None,
+) -> None:
+    global _LAST_EFFECTIVE, _LAST_PROFILE
+    _LAST_PROFILE = profile
+    _LAST_EFFECTIVE = {
+        "requested": profile.name,
+        "effective": effective,
+        "requested_unknown": profile.requested_unknown,
+        "degraded_reason": degraded_reason,
+    }
+
+
+def _inspect_effective(profile: TransportProfile, transport: Transport) -> None:
+    if getattr(transport, "_ech_active", None) is False:
+        if not hasattr(ssl.SSLContext, "set_ech_config_list"):
+            reason = "ech_unavailable"
+        elif not os.environ.get("RYNMESH_ECH_CONFIGS", "").strip():
+            reason = "ech_configs_missing"
+        else:
+            reason = "ech_config_invalid"
+        _record_effective(profile, effective="sni_fronting", degraded_reason=reason)
+        return
+    if profile.name in _REGISTRY:
+        eff = profile.name
+    elif isinstance(transport, FrontedHttpsTransport):
+        eff = "fronted_https"
+    else:
+        eff = "stdlib_https"
+    _record_effective(
+        profile,
+        effective=eff,
+        degraded_reason="unknown_transport" if profile.requested_unknown else None,
+    )
+
+
+def last_effective() -> dict[str, Any] | None:
+    """Return a copy of the last effective transport record, if any."""
+    return dict(_LAST_EFFECTIVE) if _LAST_EFFECTIVE is not None else None
+
+
+def transport_status() -> dict[str, Any]:
+    """Resolve and return the effective transport status for node status reporting."""
+    current = resolve_profile()
+    if _LAST_EFFECTIVE is None or _LAST_PROFILE != current:
+        try:
+            get_transport(current)
+        except TransportError:
+            pass
+    if _LAST_EFFECTIVE is not None:
+        return dict(_LAST_EFFECTIVE)
+    return {
+        "requested": current.name,
+        "effective": None,
+        "requested_unknown": current.requested_unknown,
+        "degraded_reason": "unknown_transport" if current.requested_unknown else None,
+    }
 
 
 def get_transport(profile: TransportProfile | None = None) -> Transport:
@@ -1035,26 +1102,40 @@ def get_transport(profile: TransportProfile | None = None) -> Transport:
             ";".join(f"{k}={v}" for k, v in sorted(active.proxies.items())),
             active.sni,
             active.connect_host,
+            str(active.requested_unknown),
         ]
     )
     cached = _CACHE.get(cache_key)
     if cached is not None:
+        _inspect_effective(active, cached)
         return cached
     factory = _REGISTRY.get(active.name)
     if factory:
-        transport: Transport = factory(active)
+        try:
+            transport: Transport = factory(active)
+        except TransportError as exc:
+            _record_effective(
+                active,
+                effective=None,
+                degraded_reason=exc.reason or "config_error",
+            )
+            raise
     elif active.sni or active.connect_host:
         # Real SNI/connect/Host split (defeats SNI filtering, substitutes for ECH).
         transport = FrontedHttpsTransport(active)
     else:
         transport = StdlibHttpsTransport(active)
     _CACHE[cache_key] = transport
+    _inspect_effective(active, transport)
     return transport
 
 
 def reset_transport_cache() -> None:
     """Drop cached transports (tests after env changes)."""
+    global _LAST_EFFECTIVE, _LAST_PROFILE
     _CACHE.clear()
+    _LAST_EFFECTIVE = None
+    _LAST_PROFILE = None
 
 def stamp_network_key(headers: dict[str, str]) -> dict[str, str]:
     """Return ``headers`` with the mesh credential enforced, case-insensitively.
