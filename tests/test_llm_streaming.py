@@ -695,3 +695,152 @@ def test_consumer_direct_stream_publishes_local_sse_and_keeps_settlement_termina
     stored = (tmp_path / "consumer" / "llm" / "consumer-orders" / "consumer-stream.json").read_text()
     assert "PRIVATE_CONSUMER_PROMPT" not in stored
     assert '"delta"' not in stored
+
+
+def test_t5_slow_consumer_pausing_20s_merges_content_deltas_without_failing() -> None:
+    """T5: When the stream consumer pauses for 20s (> 15s timeout), content-only deltas coalesce instead of failing, while tool/usage/finish chunks flush in order."""
+    import asyncio
+    import time
+
+    from rynmesh.llm_package.streaming import events
+
+    total_chunks = 80
+    tool_chunk = {
+        "choices": [
+            {
+                "index": 0,
+                "delta": {
+                    "tool_calls": [
+                        {"index": 0, "id": "call_1", "function": {"name": "lookup", "arguments": "{}"}}
+                    ]
+                },
+            }
+        ]
+    }
+    usage_chunk = {"choices": [], "usage": {"prompt_tokens": 1, "completion_tokens": total_chunks}}
+
+    async def scenario() -> tuple[list[dict[str, object]], dict[str, object]]:
+        resumed = threading.Event()
+
+        def producer(emit) -> dict[str, object]:
+            for idx in range(total_chunks):
+                emit({"choices": [{"index": 0, "delta": {"content": f"w{idx} "}}]})
+                if idx >= 35:
+                    time.sleep(0.05)
+            # Wait for consumer to resume draining so non-content chunks use the normal 15s blocking path in order
+            assert resumed.wait(timeout=25)
+            emit(tool_chunk)
+            emit(usage_chunk)
+            return {"text": "".join(f"w{idx} " for idx in range(total_chunks)), "usage": {"prompt_tokens": 1, "completion_tokens": total_chunks}}
+
+        async def run(emit):
+            return await asyncio.to_thread(producer, emit)
+
+        received_events: list[dict[str, object]] = []
+        final_result: dict[str, object] = {}
+        paused = False
+        async for kind, value in events(run, lambda: None):
+            if kind == "event":
+                received_events.append(value)
+                if not paused:
+                    paused = True
+                    # Pause 20.2s (> 15s emit timeout) while queue fills and remaining deltas arrive
+                    await asyncio.sleep(20.2)
+                    resumed.set()
+            elif kind == "result":
+                final_result = value
+        return received_events, final_result
+
+    received_events, final_result = asyncio.run(scenario())
+    # Last two events are the unmerged tool_chunk and usage_chunk; preceding events are coalesced content chunks
+    assert received_events[-2] == tool_chunk
+    assert received_events[-1] == usage_chunk
+    content_events = received_events[:-2]
+    assert len(content_events) < total_chunks
+    merged_text = "".join(
+        str(ev["choices"][0]["delta"]["content"])  # type: ignore[index]
+        for ev in content_events
+    )
+    expected_text = "".join(f"w{idx} " for idx in range(total_chunks))
+    assert merged_text == expected_text
+    assert final_result["text"] == expected_text
+
+
+def test_t6_peer_stream_idle_timeout_total_timeout_and_bad_json_tolerance() -> None:
+    """T6: peer_stream raises peer_stream_idle_timeout on silence > idle_s, peer_stream_total_timeout on total budget, skips single bad JSON / non-object lines, and fails on 3 consecutive bad lines."""
+    import time
+
+    from rynmesh.llm_package.streaming import peer_stream
+
+    mode = ["idle"]
+
+    class StreamScenarioHandler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            try:
+                current = mode[0]
+                if current == "idle":
+                    self.wfile.write(b'data: {"payload":{"kind":"llm_stream","seq":0}}\n\n')
+                    self.wfile.flush()
+                    time.sleep(0.6)
+                elif current == "total":
+                    for i in range(10):
+                        self.wfile.write(f'data: {{"payload":{{"kind":"llm_stream","seq":{i}}}}}\n\n'.encode())
+                        self.wfile.flush()
+                        time.sleep(0.08)
+                elif current == "one_bad_json":
+                    self.wfile.write(b'data: {"payload":{"kind":"llm_stream","seq":0}}\n\n')
+                    self.wfile.write(b"data: {corrupted-json-line\n\n")
+                    self.wfile.write(b'data: ["not_an_object"]\n\n')
+                    self.wfile.write(b'data: {"payload":{"kind":"llm_stream","seq":1}}\n\n')
+                    self.wfile.write(b'data: {"payload":"not_an_object_payload"}\n\n')
+                    self.wfile.write(b'data: {"payload":{"kind":"llm_response","ok":true}}\n\n')
+                    self.wfile.flush()
+                elif current == "three_bad_lines":
+                    self.wfile.write(b"data: {bad-1\n\n")
+                    self.wfile.write(b"data: [1,2,3]\n\n")
+                    self.wfile.write(b'data: {"payload":null}\n\n')
+                    self.wfile.write(b'data: {"payload":{"kind":"llm_response","ok":true}}\n\n')
+                    self.wfile.flush()
+            except OSError:
+                pass
+
+        def log_message(self, *_args) -> None:
+            return None
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), StreamScenarioHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    url = f"http://127.0.0.1:{server.server_port}/stream"
+    try:
+        # 1) Silence longer than idle_s -> peer_stream_idle_timeout (well before 5.0s total timeout)
+        mode[0] = "idle"
+        seen_idle: list[dict] = []
+        t0 = time.monotonic()
+        with pytest.raises(ValueError, match="peer_stream_idle_timeout"):
+            peer_stream(url, {"q": 1}, timeout_s=5.0, idle_s=0.15, on_event=seen_idle.append)
+        assert time.monotonic() - t0 < 2.0
+        assert len(seen_idle) == 1
+
+        # 2) Continuous events exceeding timeout_s -> peer_stream_total_timeout
+        mode[0] = "total"
+        with pytest.raises(ValueError, match="peer_stream_total_timeout"):
+            peer_stream(url, {"q": 2}, timeout_s=0.22, idle_s=1.0, on_event=lambda _e: None)
+
+        # 3) Bad JSON / non-object payload (< 3 consecutive) are skipped and stream still succeeds
+        mode[0] = "one_bad_json"
+        seen_good: list[dict] = []
+        terminal = peer_stream(url, {"q": 3}, timeout_s=5.0, idle_s=1.0, on_event=seen_good.append)
+        assert [item["payload"]["seq"] for item in seen_good] == [0, 1]
+        assert terminal == {"payload": {"kind": "llm_response", "ok": True}}
+
+        # 4) 3 consecutive bad lines raise an error
+        mode[0] = "three_bad_lines"
+        with pytest.raises(ValueError):
+            peer_stream(url, {"q": 4}, timeout_s=5.0, idle_s=1.0, on_event=lambda _e: None)
+    finally:
+        server.shutdown()
+        thread.join(timeout=3)

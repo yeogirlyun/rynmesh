@@ -1,4 +1,4 @@
-"""Private-AI stream-v1 envelopes and bounded process-memory event state.
+"""Private-AI stream-v1/v2 envelopes and bounded process-memory event state.
 
 Delta plaintext is intentionally never accepted by ``TaskOrderStore``.  It
 exists only in the adapter, signed+sealed wire envelopes, this bounded memory
@@ -7,20 +7,23 @@ state, and (after the UI slice lands) the current browser session.
 
 from __future__ import annotations
 
-import threading
-import time
 from collections import deque
 from dataclasses import dataclass
+import json
+import threading
+import time
 from typing import Any
 
 from .task_protocol import TERMINAL_STATES, TaskProtocolError, open_task, seal_task
 
 STREAM_PROTOCOL_VERSION = "rynmesh.llm.stream.v1"
+STREAM_PROTOCOL_VERSION_V2 = "rynmesh.llm.stream.v2"
 STREAM_DELTA_KIND = "llm_stream_delta"
 DEFAULT_MAX_EVENT_BYTES = 256 * 1024
-# The final response repeats the complete output inside one sealed/base64
-# envelope. Keeping plaintext at 128 KiB ensures that terminal NDJSON line also
-# remains below the 256 KiB wire-event ceiling.
+DEFAULT_MAX_TERMINAL_BYTES = 4 * 1024 * 1024
+PREVIEW_MAX_OUTPUT_BYTES = 1024 * 1024
+# Stream-v1 keeps plaintext at 128 KiB so the legacy terminal NDJSON line also
+# stays below the 256 KiB v1 wire-event ceiling.
 DEFAULT_MAX_OUTPUT_BYTES = 128 * 1024
 
 
@@ -29,7 +32,9 @@ def seal_stream_delta(
     task_id: str,
     service_id: str,
     sequence: int,
-    delta: str,
+    delta: str = "",
+    state: str | None = None,
+    stream_version: str = STREAM_PROTOCOL_VERSION,
     sender_peer_id: str,
     recipient_peer_id: str,
     sender_signing_key: bytes,
@@ -39,15 +44,28 @@ def seal_stream_delta(
     """Create one independently authenticated and encrypted stream event."""
     if sequence < 0:
         raise TaskProtocolError("stream sequence is invalid")
-    if not isinstance(delta, str) or not delta:
-        raise TaskProtocolError("stream delta is empty")
-    body = {
-        "stream_version": STREAM_PROTOCOL_VERSION,
-        "task_id": task_id,
-        "service_id": service_id,
-        "sequence": sequence,
-        "delta": delta,
-    }
+    if stream_version not in {STREAM_PROTOCOL_VERSION, STREAM_PROTOCOL_VERSION_V2}:
+        raise TaskProtocolError("stream protocol version unsupported")
+    if state is not None:
+        if stream_version != STREAM_PROTOCOL_VERSION_V2 or state != "preview_truncated":
+            raise TaskProtocolError("stream state is invalid")
+        body: dict[str, Any] = {
+            "stream_version": stream_version,
+            "task_id": task_id,
+            "service_id": service_id,
+            "sequence": sequence,
+            "state": state,
+        }
+    else:
+        if not isinstance(delta, str) or not delta:
+            raise TaskProtocolError("stream delta is empty")
+        body = {
+            "stream_version": stream_version,
+            "task_id": task_id,
+            "service_id": service_id,
+            "sequence": sequence,
+            "delta": delta,
+        }
     return seal_task(
         body=body,
         task_id=task_id,
@@ -71,9 +89,18 @@ class StreamSequenceVerifier:
     recipient_messaging_key: Any
     max_event_bytes: int = DEFAULT_MAX_EVENT_BYTES
     max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES
+    max_terminal_bytes: int = DEFAULT_MAX_TERMINAL_BYTES
+    protocol_version: str = STREAM_PROTOCOL_VERSION
+    negotiate: bool = False
     next_sequence: int = 0
     output_bytes: int = 0
     terminal: bool = False
+    truncated: bool = False
+    _negotiated_version: str | None = None
+
+    @property
+    def effective_version(self) -> str:
+        return self._negotiated_version or self.protocol_version
 
     def accept_delta(self, envelope: dict[str, Any]) -> dict[str, Any]:
         if self.terminal:
@@ -88,8 +115,18 @@ class StreamSequenceVerifier:
             raise TaskProtocolError("stream task mismatch")
         if outer.get("from_peer_id") != self.provider_peer_id:
             raise TaskProtocolError("stream signer is not the selected provider")
-        if str(body.get("stream_version") or "") != STREAM_PROTOCOL_VERSION:
-            raise TaskProtocolError("stream protocol version unsupported")
+        version = str(body.get("stream_version") or "")
+        if self._negotiated_version is not None:
+            if version != self._negotiated_version:
+                raise TaskProtocolError("stream protocol version unsupported")
+        elif self.negotiate and self.protocol_version == STREAM_PROTOCOL_VERSION_V2:
+            if version not in {STREAM_PROTOCOL_VERSION, STREAM_PROTOCOL_VERSION_V2}:
+                raise TaskProtocolError("stream protocol version unsupported")
+            self._negotiated_version = version
+        else:
+            if version != self.protocol_version:
+                raise TaskProtocolError("stream protocol version unsupported")
+            self._negotiated_version = version
         if str(body.get("service_id") or "") != self.service_id:
             raise TaskProtocolError("stream service mismatch")
         sequence = body.get("sequence")
@@ -97,14 +134,32 @@ class StreamSequenceVerifier:
             raise TaskProtocolError("stream sequence is invalid")
         if sequence != self.next_sequence:
             raise TaskProtocolError("stream sequence is not contiguous")
+        is_v2 = self._negotiated_version == STREAM_PROTOCOL_VERSION_V2
+        if is_v2 and body.get("state") == "preview_truncated" and "delta" not in body:
+            self.next_sequence += 1
+            already = self.truncated
+            self.truncated = True
+            if already:
+                return {"sequence": sequence, "ignored": True, "truncated": True}
+            return {"sequence": sequence, "state": "preview_truncated", "truncated": True}
         delta = body.get("delta")
         if not isinstance(delta, str) or not delta:
             raise TaskProtocolError("stream delta is empty")
         event_bytes = len(delta.encode("utf-8"))
         if event_bytes > self.max_event_bytes:
             raise TaskProtocolError("stream delta exceeds event limit")
-        if self.output_bytes + event_bytes > self.max_output_bytes:
-            raise TaskProtocolError("stream output exceeds total limit")
+        if is_v2:
+            if self.truncated:
+                self.next_sequence += 1
+                return {"sequence": sequence, "ignored": True, "truncated": True}
+            if self.output_bytes + event_bytes > self.max_output_bytes:
+                self.next_sequence += 1
+                self.truncated = True
+                return {"sequence": sequence, "state": "preview_truncated", "truncated": True}
+        else:
+            effective_limit = DEFAULT_MAX_OUTPUT_BYTES if self.negotiate else self.max_output_bytes
+            if self.output_bytes + event_bytes > effective_limit:
+                raise TaskProtocolError("stream output exceeds total limit")
         self.next_sequence += 1
         self.output_bytes += event_bytes
         return {"sequence": sequence, "delta": delta}
@@ -126,6 +181,25 @@ class StreamSequenceVerifier:
             raise TaskProtocolError("stream terminal service mismatch")
         if str(body.get("state") or "") not in TERMINAL_STATES:
             raise TaskProtocolError("stream terminal state is invalid")
+        if self._negotiated_version is None:
+            if self.negotiate and self.protocol_version == STREAM_PROTOCOL_VERSION_V2:
+                self._negotiated_version = (
+                    STREAM_PROTOCOL_VERSION_V2
+                    if body.get("stream_protocol") == STREAM_PROTOCOL_VERSION_V2
+                    else STREAM_PROTOCOL_VERSION
+                )
+            else:
+                self._negotiated_version = self.protocol_version
+        terminal_limit = (
+            self.max_terminal_bytes
+            if self._negotiated_version == STREAM_PROTOCOL_VERSION_V2
+            else DEFAULT_MAX_EVENT_BYTES
+        )
+        wire_bytes = len(
+            json.dumps(envelope, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        )
+        if wire_bytes > terminal_limit:
+            raise TaskProtocolError("stream terminal exceeds wire limit")
         self.terminal = True
         return body
 
@@ -138,7 +212,7 @@ class StreamEventBroker:
         *,
         max_tasks: int = 128,
         max_events_per_task: int = 256,
-        max_snapshot_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
+        max_snapshot_bytes: int = PREVIEW_MAX_OUTPUT_BYTES,
     ) -> None:
         if max_tasks < 1 or max_events_per_task < 1 or max_snapshot_bytes < 1:
             raise ValueError("broker limits must be positive")
@@ -150,10 +224,16 @@ class StreamEventBroker:
         self._snapshots: dict[str, tuple[int, str]] = {}
         self._order: deque[str] = deque()
         self._expires: dict[str, float] = {}
+        self._stale_at: dict[str, float] = {}
+        self._truncated: set[str] = set()
 
     def _prune(self) -> None:
+        now = time.monotonic()
         for task_id, deadline in list(self._expires.items()):
-            if time.monotonic() >= deadline:
+            if now >= deadline:
+                self.forget(task_id)
+        for task_id, deadline in list(self._stale_at.items()):
+            if now >= deadline:
                 self.forget(task_id)
 
     def publish(self, task_id: str, event: dict[str, Any]) -> None:
@@ -169,10 +249,16 @@ class StreamEventBroker:
                     # successful compute into a failed/billable retry.
                     return
                 while len(self._tasks) >= self.max_tasks:
-                    evicted = self._order.popleft()
+                    evicted = next((tid for tid in self._order if tid in self._expires), None)
+                    if evicted is not None:
+                        self._order.remove(evicted)
+                    else:
+                        evicted = self._order.popleft()
                     self._tasks.pop(evicted, None)
                     self._snapshots.pop(evicted, None)
                     self._expires.pop(evicted, None)
+                    self._stale_at.pop(evicted, None)
+                    self._truncated.discard(evicted)
                 self._tasks[task_id] = deque(maxlen=self.max_events_per_task)
                 self._order.append(task_id)
             if kind == "delta":
@@ -180,20 +266,32 @@ class StreamEventBroker:
                 delta = event.get("delta")
                 if sequence < 0 or not isinstance(delta, str):
                     raise TaskProtocolError("stream broker delta is invalid")
+                if task_id in self._truncated:
+                    self._stale_at[task_id] = time.monotonic() + 3600
+                    return
                 previous_sequence, previous_text = self._snapshots.get(task_id, (-1, ""))
                 if sequence != previous_sequence + 1:
                     raise TaskProtocolError("stream broker delta sequence is not contiguous")
                 snapshot = previous_text + delta
                 if len(snapshot.encode("utf-8")) > self.max_snapshot_bytes:
-                    raise TaskProtocolError("stream broker snapshot exceeds output limit")
+                    self._truncated.add(task_id)
+                    self._stale_at[task_id] = time.monotonic() + 3600
+                    self._tasks[task_id].append({"event": "state", "state": "preview_truncated"})
+                    return
                 self._snapshots[task_id] = (sequence, snapshot)
+            if kind == "state" and event.get("state") == "preview_truncated":
+                if task_id in self._truncated:
+                    self._stale_at[task_id] = time.monotonic() + 3600
+                    return
+                self._truncated.add(task_id)
             if kind in {"complete", "error"}:
                 # Final output lives in the established retained-result store.
                 # This buffer only tells a reader to reconcile that original task.
                 event = {k: event[k] for k in ("event", "task_id", "state", "error_code") if k in event}
                 self._expires[task_id] = time.monotonic() + 60
+                self._stale_at.pop(task_id, None)
             else:
-                self._expires[task_id] = time.monotonic() + 3600
+                self._stale_at[task_id] = time.monotonic() + 3600
             self._tasks[task_id].append(dict(event))
 
     def replay(self, task_id: str, *, after_sequence: int = -1) -> list[dict[str, Any]]:
@@ -234,6 +332,8 @@ class StreamEventBroker:
             self._tasks.pop(task_id, None)
             self._snapshots.pop(task_id, None)
             self._expires.pop(task_id, None)
+            self._stale_at.pop(task_id, None)
+            self._truncated.discard(task_id)
             try:
                 self._order.remove(task_id)
             except ValueError:
