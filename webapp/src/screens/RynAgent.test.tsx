@@ -1508,7 +1508,8 @@ it("uses the backend queue for enqueue, send now, and node-owned turn completion
   await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   await screen.findByText("Already steering");
   for (const text of ["Wait until this turn ends", "Second queued item"]) {
-    await user.type(screen.getByRole("textbox"), text);
+    await user.click(screen.getByRole("textbox"));
+    await user.paste(text);
     await user.click(screen.getByRole("button", { name: "Queue follow-up" }));
     await waitFor(() => expect(screen.getByRole("textbox")).toHaveValue(""));
   }
