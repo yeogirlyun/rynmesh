@@ -96,8 +96,13 @@ def _known_vendor_value(model, table) -> int | None:
     return None
 
 
-def _known_vendor_context_window(model) -> int | None:
+def known_vendor_context_window(model) -> int | None:
+    """Return the existing family default; deployments may declare a smaller window."""
     return _known_vendor_value(model, KNOWN_VENDOR_CONTEXT_WINDOWS)
+
+
+# Existing API/CLI callers still use the private name.
+_known_vendor_context_window = known_vendor_context_window
 
 
 def _known_vendor_max_output_tokens(model) -> int | None:
