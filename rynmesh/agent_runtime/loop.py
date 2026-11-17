@@ -42,7 +42,7 @@ from . import (
 )
 from .execution_policy import (
     OWNER_DENIED_CORRECTION,
-    PERMISSION_DENIED_CORRECTION,
+    PERMISSION_DENIED_CORRECTIONS,
     classify_operation,
     decide,
     is_full_automatic,
@@ -1970,6 +1970,8 @@ class AgentLoop:
         # Paging cannot turn the same unavailable resource into a new read.
         resource_ref = call["arguments"].get("resource_ref") if call["name"] == "ryn_read_resource" else None
         for receipt in reversed(row.get("receipts", [])):
+            if receipt.get("result", {}).get("error") == "agent_shell_timeout":
+                continue
             same_read = (receipt["arguments"].get("resource_ref") == resource_ref if resource_ref is not None
                          else receipt["arguments_sha256"] == arguments_hash)
             if (receipt["tool"] != call["name"] or not same_read
@@ -2133,7 +2135,7 @@ class AgentLoop:
                     raise AgentToolRejected("agent_read_retry_limit")
                 decision = decide(call, meta, row, data["settings"])
                 if decision.action == "deny":
-                    raise AgentToolRejected("agent_permission_denied", correction=PERMISSION_DENIED_CORRECTION)
+                    raise AgentToolRejected("agent_permission_denied", correction=PERMISSION_DENIED_CORRECTIONS[decision.basis])
                 if call["effect"] == "write":
                     args_sha = digest(call["arguments"])
                     last_owner_at = next((str(item.get("at") or "") for item in reversed(row["events"])
@@ -2494,9 +2496,8 @@ class AgentLoop:
                 except AgentError as exc:
                     code = str(exc) if str(exc).startswith("agent_") else "agent_operation_failed"
                     extra = {}
-                    if isinstance(exc, AgentToolRejected):
-                        if getattr(exc, "correction", None):
-                            extra["correction"] = sanitized(exc.correction[:1600])
+                    if getattr(exc, "correction", None):
+                        extra["correction"] = sanitized(exc.correction[:1600])
                     if isinstance(getattr(exc, "details", None), dict) and exc.details:
                         extra["details"] = sanitized(copy.deepcopy(exc.details))
                     return {"error": code, "not_executed": isinstance(exc, AgentToolRejected), "no_mutation": True, **extra}, True, max(0.0, time.monotonic() - call_started)

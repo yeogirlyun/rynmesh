@@ -646,6 +646,12 @@ def _read_indentation_block(
     return start_idx, chunk
 
 
+def _shell_timeout_details(args, result):
+    """Use the same bounded evidence for the first timeout and a durable replay."""
+    return {"output": result["output"][-4000:], "stop_reason": result["stop_reason"],
+            "timeout_seconds": args.get("timeout_seconds") or local_processes.DEFAULT_READ_SHELL_TIMEOUT}
+
+
 class LocalTools:
     def __init__(self, store, ledger):
         from .native_computer import bind_owner_native_computer
@@ -1698,13 +1704,15 @@ class LocalTools:
                             arguments=args,
                         )
                     ):
-                        raise AgentError(prior.get("error", "agent_read_interrupted"))
+                        raise AgentError(prior.get("error", "agent_read_interrupted"),
+                            details=_shell_timeout_details(args, prior["result"])
+                            if prior.get("error") == "agent_shell_timeout" else None)
                     unknown_err = AgentError("agent_write_outcome_unknown")
                     if isinstance(prior.get("error_result"), dict):
                         unknown_err.diagnostics = copy.deepcopy(prior["error_result"])
                     raise unknown_err
                 preview = self.preview(name, args, context)
-                if bound_preview(preview) != bound_preview(expected_preview):
+                if not (is_read_shell and expected_preview is None) and bound_preview(preview) != bound_preview(expected_preview):
                     raise AgentToolRejected("agent_approval_preview_changed")
                 prepared_shell = None
                 if name == "ryn_shell_execute":
@@ -1936,7 +1944,7 @@ class LocalTools:
                             result=result,
                             operation_classification=host_classification,
                         )
-                        raise AgentError("agent_shell_timeout")
+                        raise AgentError("agent_shell_timeout", details=_shell_timeout_details(args, result))
                     raise AgentError("agent_local_operation_unconfirmed")
                 if cancelled() or result.get("stop_reason") in {"permission_or_task_stopped", "owner_or_agent_stopped"}:
                     err_code = getattr(cancelled, "reason", None) or (

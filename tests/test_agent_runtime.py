@@ -157,8 +157,8 @@ def test_read_only_and_live_permission_change_enforced(tmp_path):
     advance(runtime, 2)
     result = runtime.get(row["id"])["events"][-1]["result"]
     assert result["error"] == "agent_permission_denied"
-    from rynmesh.agent_runtime.execution_policy import PERMISSION_DENIED_CORRECTION
-    assert result["correction"] == PERMISSION_DENIED_CORRECTION
+    from rynmesh.agent_runtime.execution_policy import PERMISSION_DENIED_CORRECTIONS
+    assert result["correction"] == PERMISSION_DENIED_CORRECTIONS["read_only"]
     assert tools.calls == []
 
 

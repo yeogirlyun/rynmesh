@@ -66,8 +66,9 @@ UNKNOWN_WINDOW_CONTEXT_CHARS = 120000
 class AgentError(ValueError):
     """Stable public error code, never an external exception's raw message."""
 
-    def __init__(self, code: str = "", *, details: dict | None = None):
+    def __init__(self, code: str = "", *, correction: str | None = None, details: dict | None = None):
         super().__init__(code)
+        self.correction = correction if isinstance(correction, str) and correction else REJECTION_CORRECTIONS.get(code)
         self.details = dict(details) if isinstance(details, dict) else None
 
 
@@ -121,6 +122,9 @@ READ_FAILED_THREE_TIMES_CORRECTION = (
     "query if one really covers the need. Otherwise go on with the rest and say in your reply what could not "
     "be read, so the owner can decide whether to try again.")
 REJECTION_CORRECTIONS = {
+    "agent_shell_timeout": (
+        "The command was stopped at its timeout. Narrow it, give a larger timeout_seconds, "
+        "or run it with background=true and read its output."),
     "agent_desktop_access_required": (
         "Desktop access is turned off for this task and nothing ran. Do not control the screen, the browser or "
         "other apps another way (a shell command, a script or a different tool). Continue with what needs no "
