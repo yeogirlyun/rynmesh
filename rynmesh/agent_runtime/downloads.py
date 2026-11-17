@@ -11,8 +11,8 @@ from urllib.parse import unquote, urljoin, urlsplit
 
 import httpx
 
-from .store import AgentToolRejected
-from .web_search import validate_public_http_url
+from .store import AgentError, AgentToolRejected
+from .web_search import pinned_stream, resolve_public_http_url
 
 
 MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024
@@ -75,6 +75,10 @@ def save(local, source, context, cancelled):
         raise AgentToolRejected("agent_download_proxy_error", correction="The system proxy could not transfer the file; check its configuration and connection.") from None
     except httpx.RequestError:
         raise AgentToolRejected("agent_download_network_error", correction="The file transfer failed before it was saved.") from None
+    except AgentError:
+        raise
+    except ValueError:
+        raise AgentToolRejected("agent_download_redirect_invalid", correction="The server redirected to an address that is not an http(s) URL.") from None
 
 
 def _download(local, source, context, cancelled):
@@ -94,12 +98,19 @@ def _download(local, source, context, cancelled):
         if cancelled():
             raise AgentToolRejected("agent_cancelled")
         if authority is None:
-            url = validate_public_http_url(url)
-        elif origin(url) != authority:
-            raise AgentToolRejected("agent_download_redirect_outside_plugin")
+            url, _, ips = resolve_public_http_url(url, tool="ryn_download_file")
+        else:
+            try:
+                current_origin = origin(url)
+            except ValueError:
+                raise AgentToolRejected("agent_download_redirect_invalid", correction="The server redirected to an address that is not an http(s) URL.") from None
+            if current_origin != authority:
+                raise AgentToolRejected("agent_download_redirect_outside_plugin")
         proxy = proxies.get(urlsplit(url).scheme) or proxies.get("all")
         with httpx.Client(timeout=35, trust_env=False, proxy=proxy) as client:
-            with client.stream("GET", url, headers=headers) as response:
+            stream = (pinned_stream(client, "GET", url, ips, headers)
+                      if authority is None and not proxy else client.stream("GET", url, headers=headers))
+            with stream as response:
                 if response.is_redirect and response.headers.get("location"):
                     url = urljoin(url, response.headers["location"])
                     continue

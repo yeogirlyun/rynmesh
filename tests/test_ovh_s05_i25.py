@@ -53,7 +53,7 @@ def test_t1_proxy_and_public_target_validation(local, transfer):
     result = execute(tools, context, "ryn_download_file", {"source": URL})
     assert Path(result["path"]).read_bytes() == b"hello world"
     assert calls[0]["proxy"] == PROXY and calls[0]["trust_env"] is False
-    with pytest.raises(AgentToolRejected, match="agent_web_search_blocked_url"):
+    with pytest.raises(AgentToolRejected, match="agent_download_blocked_url"):
         downloads.save(tools, "http://127.0.0.1/private", context, lambda: False)
     assert len(requests) == 1
 
