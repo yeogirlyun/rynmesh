@@ -2,14 +2,17 @@
 from __future__ import annotations
 
 import copy
+import base64
 import difflib
 import fnmatch
 import hashlib
 import json
 import os
 import platform
+import queue
 import re
 import shutil
+import subprocess
 import threading
 import tempfile
 import time
@@ -39,6 +42,7 @@ READ_MAX_FILE = 64 * 1024 * 1024
 MAX_READ_CHARS = 12000
 MAX_SEARCH_FILES = 1000
 MAX_SEARCH_SECONDS = 30.0
+MAX_RG_MATCHES = 5000
 # Generated or vendored trees. Searching one of them explicitly (path inside it) still works.
 SEARCH_SKIP_DIRS = frozenset({".git", "node_modules", ".venv", "venv", "target", "__pycache__",
                               ".pytest_cache", ".ruff_cache", ".mypy_cache", ".tox"})
@@ -321,6 +325,127 @@ def gitignored_directory_names(root):
 
     return (frozenset(name for name in anywhere if not reincluded(name)),
             frozenset(name for name in root_only if not reincluded(name)))
+
+
+def _search_page(matches, per_file, offset, **coverage):
+    ranked = sorted(per_file.items(), key=lambda item: (-item[1][0], item[0]))
+    return {"matches": matches[offset:offset + 50],
+            "next_offset": offset + 50 if offset + 50 < len(matches) else None,
+            "total_matches": len(matches),
+            "files_matched": [{"path": p, "matches": c, "first_line": f} for p, (c, f) in ranked[:50]],
+            "files_matched_total": len(per_file), **coverage}
+
+
+def _rg_search(executable, path, args, cancelled, check_policy):
+    """Read bounded rg JSON while keeping idle processes cancellable."""
+    argv = [executable, "--json", "--line-number", "--max-columns", "300", "--max-count", "200",
+            "--max-filesize", "8M", "--sort", "path", "--no-require-git"]
+    if not args.get("regex", False):
+        argv.append("-F")
+    if not args.get("case_sensitive", True):
+        argv.append("-i")
+    if args.get("file_pattern"):
+        argv += ["--glob" if args.get("case_sensitive", True) else "--iglob",
+                 args["file_pattern"].replace("\\", "/")]
+    for name in sorted(SEARCH_SKIP_DIRS):
+        argv += ["--glob", f"!**/{name}/**"]
+    directory = path.parent if path.is_file() else path
+    argv += ["--", args["query"], path.name if path.is_file() else "."]
+    lines = queue.Queue(maxsize=128)
+    done = threading.Event()
+    matches, per_file = [], {}
+    scanned, binary, stopped = 0, 0, None
+    started = last_policy = time.monotonic()
+    with tempfile.TemporaryFile() as errors:
+        process = subprocess.Popen(argv, cwd=directory, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.PIPE, stderr=errors,
+                                   env=local_processes.child_environment(),
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+        def read_lines():
+            for line in iter(process.stdout.readline, b""):
+                while not done.is_set():
+                    try:
+                        lines.put(line, timeout=0.1)
+                        break
+                    except queue.Full:
+                        continue
+                if done.is_set():
+                    return
+            while not done.is_set():
+                try:
+                    lines.put(None, timeout=0.1)
+                    return
+                except queue.Full:
+                    continue
+
+        reader = threading.Thread(target=read_lines, daemon=True)
+        reader.start()
+
+        def json_text(value):
+            return value["text"] if "text" in value else base64.b64decode(value["bytes"]).decode("utf-8", errors="replace")
+
+        try:
+            while True:
+                if cancelled():
+                    raise AgentToolRejected("agent_cancelled")
+                now = time.monotonic()
+                if now - started >= MAX_SEARCH_SECONDS:
+                    stopped = "time_limit"
+                    break
+                if now - last_policy >= 1.0:
+                    check_policy()
+                    last_policy = now
+                try:
+                    line = lines.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                if line is None:
+                    break
+                event = json.loads(line)
+                data = event["data"]
+                if event["type"] == "match":
+                    candidate = str(directory / json_text(data["path"]))
+                    number = data["line_number"]
+                    matches.append({"path": candidate, "line": number,
+                                    "text": json_text(data["lines"]).rstrip("\r\n")[:300]})
+                    entry = per_file.setdefault(candidate, [0, number])
+                    entry[0] += 1
+                    if len(matches) >= MAX_RG_MATCHES:
+                        stopped = "match_limit"
+                        break
+                elif event["type"] == "end":
+                    scanned += 1
+                    if data.get("binary_offset") is not None:
+                        binary += 1
+                        candidate = str(directory / json_text(data["path"]))
+                        matches = [match for match in matches if match["path"] != candidate]
+                        per_file.pop(candidate, None)
+                    elif data["stats"]["matched_lines"] >= 200:
+                        stopped = "match_limit"
+                elif event["type"] == "summary":
+                    scanned = data["stats"]["searches"]
+        finally:
+            done.set()
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+            reader.join()
+            process.stdout.close()
+        errors.seek(0)
+        diagnostic = errors.read(4096).decode("utf-8", errors="replace")
+    if stopped is None and process.returncode not in (0, 1):
+        if args.get("regex") and "regex" in diagnostic.lower():
+            return None  # Python-valid expressions such as lookaround need the existing scanner.
+        raise AgentToolRejected("agent_file_search_failed", correction=diagnostic[:1000])
+    return _search_page(matches, per_file, args.get("offset", 0), engine="rg",
+                        scanned_files=scanned, skipped_files=0, binary_files_skipped=binary,
+                        non_text_files=0, non_text_file_paths=[], too_large_files=0,
+                        incomplete=stopped is not None, stopped_reason=stopped,
+                        pruned_directories=[], pruned_count=0,
+                        coverage="rg ignore rules and binary detection; maximum 8 MiB/file, 200 matching lines/file, "
+                                 "5000 matching lines total. UTF-8 search; non-UTF-8/GBK files are not transcoded "
+                                 "(ASCII can match). Skipped/ignored/oversized file counts are not enumerated by rg.")
 
 
 def walk_files(start, workspace_root, skip, root_only, pruned, cancelled):
@@ -2104,6 +2229,11 @@ class LocalTools:
                         correction="The search query is not a valid regular expression. Fix the regex syntax or set regex=false for literal substring search.",
                         details={"query": args["query"][:160], "field_path": "query", "reason": str(exc)[:160]},
                     ) from None
+            rg = resolve_rg_executable()
+            if rg:
+                result = _rg_search(rg, path, args, cancelled, lambda: self.policy(context))
+                if result is not None:
+                    return result
             query_literal = args["query"] if case_sensitive else args["query"].casefold()
             pattern_norm = file_pattern.replace("\\", "/") if isinstance(file_pattern, str) and file_pattern else None
             pattern_has_sep = bool(pattern_norm and "/" in pattern_norm)
@@ -2192,16 +2322,12 @@ class LocalTools:
                         if len(matches) >= 1000:
                             incomplete, stopped = True, "match_limit"
                             break
-            # A page of 15 matches in traversal order cannot rank a broad term; the per-file counts can.
-            ranked = sorted(per_file.items(), key=lambda item: (-item[1][0], item[0]))
-            return {"matches": matches[offset:offset + 15], "next_offset": offset + 15 if offset + 15 < len(matches) else None,
-                    "total_matches": len(matches), "files_matched": [{"path": p, "matches": c, "first_line": f} for p, (c, f) in ranked[:25]],
-                    "files_matched_total": len(per_file),
-                    "scanned_files": scanned, "skipped_files": skipped, "binary_files_skipped": binary,
-                    "non_text_files": non_text, "non_text_file_paths": non_text_paths,
-                    "too_large_files": too_large,
-                    "incomplete": incomplete, "stopped_reason": stopped,
-                    "pruned_directories": pruned[:20], "pruned_count": len(pruned)}
+            # A page in traversal order cannot rank a broad term; the per-file counts can.
+            return _search_page(matches, per_file, offset, engine="python",
+                                scanned_files=scanned, skipped_files=skipped, binary_files_skipped=binary,
+                                non_text_files=non_text, non_text_file_paths=non_text_paths,
+                                too_large_files=too_large, incomplete=incomplete, stopped_reason=stopped,
+                                pruned_directories=pruned[:20], pruned_count=len(pruned))
         if name == "ryn_apply_patch":
             from . import local_patch
             from .file_review import safe_path

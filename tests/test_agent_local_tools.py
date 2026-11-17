@@ -59,7 +59,8 @@ def test_file_create_edit_search_and_readback(local):
     assert tools.perform("ryn_file_search", {"path": ".", "query": "世界"}, context, lambda: False)["matches"][0]["line"] == 1
 
 
-def test_search_prunes_generated_directories_and_reads_store_once(local):
+def test_search_prunes_generated_directories_and_reads_store_once(local, monkeypatch):
+    monkeypatch.setattr("rynmesh.agent_runtime.local_tools.resolve_rg_executable", lambda: None)
     tools, context, workspace, state = local
     (workspace / ".gitignore").write_text("generated-cache/\n*.log\n", encoding="utf-8")
     generated = workspace / "generated-cache"
@@ -83,11 +84,12 @@ def test_search_prunes_generated_directories_and_reads_store_once(local):
     # One policy read for the start path and one for the root; never one per scanned file.
     assert len(reads) <= 4
     explicit = tools.perform("ryn_file_search", {"path": "generated-cache", "query": "needle"}, context, lambda: False)
-    assert explicit["scanned_files"] == 30 and len(explicit["matches"]) == 15 and explicit["next_offset"] == 15
+    assert explicit["scanned_files"] == 30 and len(explicit["matches"]) == 30 and explicit["next_offset"] is None
 
 
 def test_search_reaches_shallow_source_before_deep_generated_trees(local, monkeypatch):
     from rynmesh.agent_runtime import local_tools
+    monkeypatch.setattr(local_tools, "resolve_rg_executable", lambda: None)
     tools, context, workspace, _ = local
     deep = workspace / "aaa" / "b" / "c" / "d"
     deep.mkdir(parents=True)
@@ -101,7 +103,8 @@ def test_search_reaches_shallow_source_before_deep_generated_trees(local, monkey
     assert any(Path(match["path"]).name == "real.py" for match in result["matches"])
 
 
-def test_gitignore_pruning_is_partial_and_conservative(local):
+def test_gitignore_pruning_is_partial_and_conservative(local, monkeypatch):
+    monkeypatch.setattr("rynmesh.agent_runtime.local_tools.resolve_rg_executable", lambda: None)
     tools, context, workspace, _ = local
     (workspace / "build").mkdir()
     (workspace / "build" / "a.txt").write_text("needle\n", encoding="utf-8")
@@ -438,6 +441,7 @@ def test_shell_environment_does_not_inherit_node_configuration_or_secrets(local,
 
 def test_search_has_a_wall_clock_bound_and_reports_why_it_stopped(local, monkeypatch):
     from rynmesh.agent_runtime import local_tools
+    monkeypatch.setattr(local_tools, "resolve_rg_executable", lambda: None)
     tools, context, workspace, _ = local
     (workspace / "a.txt").write_text("needle\n", encoding="utf-8")
     monkeypatch.setattr(local_tools, "MAX_SEARCH_SECONDS", 0.0)
@@ -450,7 +454,8 @@ def test_search_has_a_wall_clock_bound_and_reports_why_it_stopped(local, monkeyp
     assert result["incomplete"] is True and result["stopped_reason"] == "file_limit"
 
 
-def test_search_skips_binary_suffixes_without_reading(local):
+def test_search_skips_binary_suffixes_without_reading(local, monkeypatch):
+    monkeypatch.setattr("rynmesh.agent_runtime.local_tools.resolve_rg_executable", lambda: None)
     tools, context, workspace, _ = local
     (workspace / "image.png").write_bytes(b"needle\x00\x01")
     (workspace / "notes.txt").write_text("needle\n", encoding="utf-8")
@@ -459,7 +464,8 @@ def test_search_skips_binary_suffixes_without_reading(local):
     assert result["binary_files_skipped"] == 1 and result["scanned_files"] == 1
 
 
-def test_search_stops_when_agent_is_disabled_or_cancelled_mid_scan(local):
+def test_search_stops_when_agent_is_disabled_or_cancelled_mid_scan(local, monkeypatch):
+    monkeypatch.setattr("rynmesh.agent_runtime.local_tools.resolve_rg_executable", lambda: None)
     tools, context, workspace, state = local
     for index in range(250):
         (workspace / f"f{index:03d}.txt").write_text("nothing\n", encoding="utf-8")
