@@ -124,7 +124,8 @@ class StreamedReads:
     def _normalize(self, raw, *, index=0):
         call = normalize_tool_calls([raw], self.specs, existing_call_ids=self.normalized_ids,
                                     metadata=self.metadata, internal_names=INTERNAL_NAMES,
-                                    rewrite_ids_seed=self.request_id, index_offset=index)[0]
+                                    rewrite_ids_seed=self.request_id, index_offset=index,
+                                    workspace_root=(self.stamp.get("local_execution") or {}).get("workspace_root"))[0]
         self.normalized_ids.add(call["call_id"])
         if "provider_call_id" in call:
             # Keep the original wire item in the coordinator for reconciliation,
