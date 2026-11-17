@@ -166,7 +166,7 @@ export interface AgentMessage {
   content: string | null;
   tool_call_id?: string;
   tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
-  ui?: { kind: "input_answer" | "source_credential" | "verification_feedback" | "change_review" | "steer" | "information" | "message" | "heartbeat" | "silent_heartbeat" | "partial_recovery"; text?: string; prompt?: string; pending_input_id?: string; fields?: Array<{ label: string; value: string }>; endpoint?: string; has_credential?: boolean; hidden?: boolean; automation_id?: string; automation_name?: string };
+  ui?: { kind: "turn_aborted" | "input_answer" | "source_credential" | "verification_feedback" | "change_review" | "steer" | "information" | "message" | "heartbeat" | "silent_heartbeat" | "partial_recovery"; text?: string; prompt?: string; pending_input_id?: string; fields?: Array<{ label: string; value: string }>; endpoint?: string; has_credential?: boolean; hidden?: boolean; automation_id?: string; automation_name?: string };
 }
 export interface AgentEvent {
   seq: number;

@@ -40,6 +40,7 @@ MAX_BYTES = sys.maxsize
 DEFAULT_SETTINGS = {
     "enabled": False, "model_id": "", "permission_mode": "workspace", "allowed_write_tools": [],
     "workspace_root": "", "desktop_access": False, "verify_text_responses": False,
+    "interrupt_message_enabled": True,
     # None follows the selected model's declared token window, reserving output
     # and framing. An integer remains an owner-selected UTF-8 request-byte cap.
     # The legacy field name is retained for saved sessions and API compatibility.

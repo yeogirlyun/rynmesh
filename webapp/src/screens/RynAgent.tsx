@@ -1065,7 +1065,7 @@ export default function RynAgent() {
   useEffect(() => { setSelectedSubagentId(null); }, [task?.id]);
   const newScopeReady = !scopeDraft?.scope.resources.length || (scopeDraft.scope.allow_model_data && scopeDraft.model_id === model && Boolean(scopeDraft.destination_revision) && scopeDraft.destination_revision === selectedModel?.destination_revision);
   const visibleMessages = task?.messages.filter((message, index, messages) =>
-    (message.role === "user" || message.role === "assistant") && (message.content || message.tool_calls?.length)
+    message.ui?.hidden !== true && (message.role === "user" || message.role === "assistant") && (message.content || message.tool_calls?.length)
     && !(task.result && index === messages.length - 1 && message.role === "assistant" && message.content === task.result),
   ) || [];
   const transcript = groupAgentMessages(visibleMessages);

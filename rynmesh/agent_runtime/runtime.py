@@ -116,6 +116,13 @@ UNKNOWN_OUTCOME_NOTE = (
     "Before doing it again, check the actual state with read-only tools. Do not assume it failed and do not "
     "repeat it blindly."
 )
+TURN_ABORTED_NOTE = (
+    "<turn_aborted>\n"
+    "The user intentionally interrupted the previous turn. Background processes may still be running, "
+    "and interrupted tools may have partially executed. Before continuing or retrying, use read-only "
+    "tools to check the current state.\n"
+    "</turn_aborted>"
+)
 MCP_UNKNOWN_OUTCOME_HINT = "先用只读工具核对再决定是否重试"
 VISUAL_SUFFIXES = (".svg", ".html", ".htm", ".png", ".jpg", ".jpeg", ".gif", ".webp")
 
@@ -1999,8 +2006,9 @@ class AgentRuntime(AgentLoop):
         validate_configuration(values)
         if "enabled" in values and type(values["enabled"]) is not bool:
             raise AgentError("agent_invalid_settings")
-        if "verify_text_responses" in values and type(values["verify_text_responses"]) is not bool:
-            raise AgentError("agent_invalid_settings")
+        for key in ("verify_text_responses", "interrupt_message_enabled"):
+            if key in values and type(values[key]) is not bool:
+                raise AgentError("agent_invalid_settings")
         if "model_id" in values and (not isinstance(values["model_id"], str) or len(values["model_id"]) > 1024):
             raise AgentError("agent_invalid_settings")
         if "permission_mode" in values and values["permission_mode"] not in PERMISSION_MODES:
@@ -3110,6 +3118,12 @@ class AgentRuntime(AgentLoop):
                     if stream:
                         row["messages"].append({"role": "assistant", "content": stream["text"],
                                                 "context_epoch": row.get("context_epoch", 0), "interrupted": True})
+                    if data["settings"].get("interrupt_message_enabled", True):
+                        while row["messages"] and row["messages"][-1].get("ui", {}).get("kind") == "turn_aborted":
+                            row["messages"].pop()
+                        row["messages"].append({"role": "user", "content": TURN_ABORTED_NOTE,
+                                                "ui": {"kind": "turn_aborted", "hidden": True},
+                                                "context_epoch": row.get("context_epoch", 0)})
                     row.update(status="paused", pending_approval=None, approved=None, pending_input=None,
                                pending_control={"kind": "stop"}, turn_stopped=True)
                     event(row, "paused", operation_in_flight=bool(row["in_flight"]), reason="owner_stopped")
