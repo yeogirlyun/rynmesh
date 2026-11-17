@@ -194,13 +194,16 @@ def test_T6_s13_i66_success_publishes_hash_checked_media_then_atomic_manifest(fe
     def atomic(path, value, **kwargs):
         if Path(path).name == 'manifest.json':
             assert not list(fetched.directory.glob('*.part'))
-            assert (fetched.directory/(fetched.directory.name+'.media')).read_bytes() == fetched.data['media']
+            published_media = fetched.data['calls'][-1].with_suffix('')
+            assert published_media.read_bytes() == fetched.data['media']
             writes.append(Path(path))
         return original(path, value, **kwargs)
     monkeypatch.setattr(atomic_io, 'atomic_write_json', atomic)
     result = fetched.store.fetch_peer_content_full('http://peer.test', fetched.id, expected_peer_id=fetched.publisher.peer_id)
     assert fetched.data['calls'][0].name.endswith('.media.part')
-    assert Path(result['media_path']).read_bytes() == fetched.data['media']
+    published_media = atomic_io.fs_path(Path(result['media_path']))
+    assert published_media == fetched.data['calls'][-1].with_suffix('')
+    assert published_media.read_bytes() == fetched.data['media']
     assert json.loads((fetched.directory/'manifest.json').read_text()) == fetched.data['manifest'].to_dict()
     assert len(writes) == 1
     assert not list(fetched.directory.glob('*.part'))
