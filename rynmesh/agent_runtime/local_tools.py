@@ -34,7 +34,7 @@ from .local_processes import (
     shell_command,
 )
 from .local_specs import NAMES, SPECS
-from .protocol import bound_preview
+from .protocol import bound_preview, sanitized
 from .store import AgentError, AgentToolRejected, encoded
 
 MAX_FILE = 1024 * 1024
@@ -644,6 +644,14 @@ def _read_indentation_block(
         chunk.append(line)
         size += len(line)
     return start_idx, chunk
+
+
+def _local_operation_unconfirmed(exc):
+    details = None
+    if hasattr(exc, "applied_paths"):
+        details = sanitized({"applied_paths": exc.applied_paths[:20], "failed_path": exc.failed_path,
+                             "note": "Files listed were written; re-read them before retrying."})
+    return AgentError("agent_local_operation_unconfirmed", details=details)
 
 
 def _shell_timeout_details(args, result):
@@ -1877,7 +1885,7 @@ class LocalTools:
                         ledger.update(operation_id, "not_executed", error=str(exc), operation_classification=host_classification)
                     raise
                 failure("local_execute", exc)
-                raise AgentError("agent_local_operation_unconfirmed") from exc
+                raise _local_operation_unconfirmed(exc) from exc
             except Exception as exc:
                 if name == "ryn_computer_action":
                     diag = (
@@ -1929,7 +1937,7 @@ class LocalTools:
                         and not recovered.get("cleanup_error")
                     ):
                         raise AgentError(err_code) from exc
-                raise AgentError("agent_local_operation_unconfirmed") from exc
+                raise _local_operation_unconfirmed(exc) from exc
             if is_read_shell:
                 if result.get("stop_reason") == "timeout":
                     recovered = self.recover_operation(
