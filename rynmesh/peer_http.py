@@ -28,6 +28,8 @@ from urllib.parse import quote, urlencode, urlparse
 from . import recommendation_service
 from . import transport_plugins as _transport_plugins  # noqa: F401 — registers reality/meek/ech
 from .background_workers import BackgroundWorkerRegistry, BackgroundWorkerSpec, BackoffPolicy
+from .atomic_io import AtomicIOError
+from .diagnostic_events import record
 from .credits import CreditEvent, CreditLedgerError
 from .crypto import SignedPayload
 from .recommendation_profile import RecommendationProfileStore
@@ -594,7 +596,7 @@ def create_app(store: RynmeshStore | None = None):
                 os.environ.get("RYNMESH_NETWORK_ID", "rynmesh-main").strip() or "rynmesh-main"
             )
             try:
-                active_store.register_node(network_id=network_id)
+                await _asyncio.to_thread(active_store.register_node, network_id=network_id)
                 lifespan_app.state.registration_error = ""
             except RegistryError as exc:
                 lifespan_app.state.registration_error = str(exc)
@@ -1478,38 +1480,46 @@ def create_app(store: RynmeshStore | None = None):
 
     @app.post("/api/local/jobs/capacity/register")
     async def local_register_job_capacity(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         body = await request.json()
-        return active_store.register_job_capacity(
-            owner="manual",
-            capabilities=tuple(str(item) for item in body.get("capabilities", []) if str(item)),
-            network_id=control_network_id(body.get("network_id")),
-            capacity_units=int(body.get("capacity_units") or 1),
-            max_concurrent=int(body.get("max_concurrent") or 1),
-            price_credits=dict(body.get("price_credits", {}) or {}),
-            polling_interval_sec=int(body.get("polling_interval_sec") or 30),
-            metadata=dict(body.get("metadata", {}) or {}),
-        )
+
+        def work():
+            return active_store.register_job_capacity(
+                owner="manual",
+                capabilities=tuple(str(item) for item in body.get("capabilities", []) if str(item)),
+                network_id=control_network_id(body.get("network_id")),
+                capacity_units=int(body.get("capacity_units") or 1),
+                max_concurrent=int(body.get("max_concurrent") or 1),
+                price_credits=dict(body.get("price_credits", {}) or {}),
+                polling_interval_sec=int(body.get("polling_interval_sec") or 30),
+                metadata=dict(body.get("metadata", {}) or {}),
+            )
+
+        return await run_in_threadpool(work)
 
     @app.post("/api/local/jobs/work-orders")
     async def local_submit_work_order(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         body = await request.json()
-        return active_store.submit_work_order(
-            provider_peer_id=str(body.get("provider_peer_id", "")),
-            capability=str(body.get("capability", "")),
-            operation=str(body.get("operation", "")),
-            params=dict(body.get("params", {}) or {}),
-            network_id=control_network_id(body.get("network_id")),
-            input_content_ids=tuple(
-                str(item) for item in body.get("input_content_ids", []) if str(item)
-            ),
-            max_credit_cost=float(body.get("max_credit_cost") or 0.0),
-            idempotency_key=str(body.get("idempotency_key", "")),
-            result_policy=dict(body.get("result_policy", {}) or {}),
-            expires_at=str(body.get("expires_at", "")),
-            expires_in_hours=float(body.get("expires_in_hours") or 6.0),
-        )
+
+        def work():
+            return active_store.submit_work_order(
+                provider_peer_id=str(body.get("provider_peer_id", "")),
+                capability=str(body.get("capability", "")),
+                operation=str(body.get("operation", "")),
+                params=dict(body.get("params", {}) or {}),
+                network_id=control_network_id(body.get("network_id")),
+                input_content_ids=tuple(
+                    str(item) for item in body.get("input_content_ids", []) if str(item)
+                ),
+                max_credit_cost=float(body.get("max_credit_cost") or 0.0),
+                idempotency_key=str(body.get("idempotency_key", "")),
+                result_policy=dict(body.get("result_policy", {}) or {}),
+                expires_at=str(body.get("expires_at", "")),
+                expires_in_hours=float(body.get("expires_in_hours") or 6.0),
+            )
+
+        return await run_in_threadpool(work)
 
     @app.get("/api/local/jobs/work-orders")
     def local_work_orders(
@@ -1546,12 +1556,16 @@ def create_app(store: RynmeshStore | None = None):
 
     @app.post("/api/local/egress/connect")
     async def local_egress_connect(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         body = await request.json()
-        return egress_controller.connect(
-            region=str(body.get("region") or "CN"),
-            provider_peer_id=str(body.get("provider_peer_id") or ""),
-        )
+
+        def work():
+            return egress_controller.connect(
+                region=str(body.get("region") or "CN"),
+                provider_peer_id=str(body.get("provider_peer_id") or ""),
+            )
+
+        return await run_in_threadpool(work)
 
     @app.get("/api/local/egress/status")
     def local_egress_status(request: FastAPIRequest, region: str = "CN") -> dict[str, Any]:
@@ -1570,9 +1584,13 @@ def create_app(store: RynmeshStore | None = None):
 
     @app.post("/api/local/egress/disconnect")
     async def local_egress_disconnect(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         body = await request.json()
-        return egress_controller.disconnect(region=str(body.get("region") or "CN"))
+
+        def work():
+            return egress_controller.disconnect(region=str(body.get("region") or "CN"))
+
+        return await run_in_threadpool(work)
 
     from .services.peer_health import PeerHealthProbe, PeerPresenceCache
 
@@ -1666,7 +1684,7 @@ def create_app(store: RynmeshStore | None = None):
     @app.get("/api/local/directory")
     async def local_directory(request: FastAPIRequest) -> dict[str, Any]:
         """Devices and their services as one snapshot (docs/PEER_DIRECTORY_REDESIGN.md, P2)."""
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         from datetime import datetime, timezone
 
         network_id = control_network_id()
@@ -1690,41 +1708,45 @@ def create_app(store: RynmeshStore | None = None):
                         lambda: discover_services(network_id, cache_registry=True, passive_registry=True))
             except Exception:
                 services = []  # Devices stay listed when the service catalog is unavailable.
-        members: list[str] = []
-        friend_ids: list[str] = []
-        with timer.phase("membership"):
-            try:
-                status = active_store.personal_space.status()
-                if status.get("membership") == "active":
-                    members = [m["peer_id"] for m in status.get("members", []) if not m.get("removed")]
-            except Exception:
-                members = []
-            try:
-                friends_state = getattr(app.state, "friends", None)
-                if friends_state is not None:
-                    friend_ids = [str(row.get("peer_id")) for row in friends_state.service.store.list_relationships()
-                                  if row.get("peer_id")]
-            except Exception:
-                friend_ids = []
-        with timer.phase("snapshot"):
-            snapshot = _peer_dir.build_snapshot(
-                items, services, self_id=active_store.peer_id, network_id=network_id,
-                members=members, friend_ids=friend_ids, probe_for=peer_presence.get,
-                policy=freshness, now=datetime.now(timezone.utc),
-            )
-            violations = _peer_dir.directory_violations(snapshot)
-            if violations:
-                snapshot = {**snapshot, "diagnostics": {"violations": violations}}
+
+        def work():
+            members: list[str] = []
+            friend_ids: list[str] = []
+            with timer.phase("membership"):
                 try:
-                    from . import diagnostic_events  # type: ignore[attr-defined]
+                    status = active_store.personal_space.status()
+                    if status.get("membership") == "active":
+                        members = [m["peer_id"] for m in status.get("members", []) if not m.get("removed")]
+                except Exception:
+                    members = []
+                try:
+                    friends_state = getattr(app.state, "friends", None)
+                    if friends_state is not None:
+                        friend_ids = [str(row.get("peer_id")) for row in friends_state.service.store.list_relationships()
+                                      if row.get("peer_id")]
+                except Exception:
+                    friend_ids = []
+            with timer.phase("snapshot"):
+                snapshot = _peer_dir.build_snapshot(
+                    items, services, self_id=active_store.peer_id, network_id=network_id,
+                    members=members, friend_ids=friend_ids, probe_for=peer_presence.get,
+                    policy=freshness, now=datetime.now(timezone.utc),
+                )
+                violations = _peer_dir.directory_violations(snapshot)
+                if violations:
+                    snapshot = {**snapshot, "diagnostics": {"violations": violations}}
+                    try:
+                        from . import diagnostic_events  # type: ignore[attr-defined]
 
-                    diagnostic_events.record("peer_directory", "directory_invariant_violation")
-                except ImportError:
-                    from .agent_runtime import diagnostic_log
+                        diagnostic_events.record("peer_directory", "directory_invariant_violation")
+                    except ImportError:
+                        from .agent_runtime import diagnostic_log
 
-                    diagnostic_log.failure("peer_directory_violations", "agent_directory_invariant_violation")
-        timer.finish()
-        return snapshot
+                        diagnostic_log.failure("peer_directory_violations", "agent_directory_invariant_violation")
+            timer.finish()
+            return snapshot
+
+        return await run_in_threadpool(work)
 
     @app.get("/api/local/content")
     def local_content(request: FastAPIRequest) -> list[dict[str, Any]]:
@@ -1966,28 +1988,32 @@ def create_app(store: RynmeshStore | None = None):
 
     @app.post("/api/local/ai/model")
     async def local_ai_select_model(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         body = await request.json()
-        model = str(body.get("model", "") or "").strip()
-        if model:
-            installed = {
-                entry["name"] for entry in model_provider_module.OllamaProvider().installed()
+
+        def work():
+            model = str(body.get("model", "") or "").strip()
+            if model:
+                installed = {
+                    entry["name"] for entry in model_provider_module.OllamaProvider().installed()
+                }
+                if model not in installed:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"model_not_installed: pull it first with `ollama pull {model}`",
+                    )
+            # "" clears the choice and returns to automatic selection.
+            _settings.patch({"ai_model": model})
+            _reset_model_provider()
+            provider = _model_provider()
+            return {
+                "ok": True,
+                "selected": model,
+                "provider": provider.id if provider else None,
+                "model": getattr(provider, "model", None) if provider else None,
             }
-            if model not in installed:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"model_not_installed: pull it first with `ollama pull {model}`",
-                )
-        # "" clears the choice and returns to automatic selection.
-        _settings.patch({"ai_model": model})
-        _reset_model_provider()
-        provider = _model_provider()
-        return {
-            "ok": True,
-            "selected": model,
-            "provider": provider.id if provider else None,
-            "model": getattr(provider, "model", None) if provider else None,
-        }
+
+        return await run_in_threadpool(work)
 
     @app.get("/api/local/sources")
     def local_sources(request: FastAPIRequest) -> list[dict[str, Any]]:
@@ -1996,16 +2022,20 @@ def create_app(store: RynmeshStore | None = None):
 
     @app.post("/api/local/sources")
     async def local_sources_add(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         body = await request.json()
-        tags = body.get("tags")
-        try:
-            return _digest_service().add_source(
-                str(body.get("url", "")),
-                tags=[str(tag) for tag in tags] if isinstance(tags, list) else None,
-            )
-        except DigestError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        def work():
+            tags = body.get("tags")
+            try:
+                return _digest_service().add_source(
+                    str(body.get("url", "")),
+                    tags=[str(tag) for tag in tags] if isinstance(tags, list) else None,
+                )
+            except DigestError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return await run_in_threadpool(work)
 
     @app.delete("/api/local/sources/{source_id}")
     def local_sources_remove(source_id: str, request: FastAPIRequest) -> dict[str, Any]:
@@ -2055,12 +2085,16 @@ def create_app(store: RynmeshStore | None = None):
 
     @app.post("/api/local/readlater")
     async def local_readlater(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         body = await request.json()
-        try:
-            return _digest_service().save_link(str(body.get("url", "")), now_unix=time.time())
-        except DigestError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        def work():
+            try:
+                return _digest_service().save_link(str(body.get("url", "")), now_unix=time.time())
+            except DigestError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return await run_in_threadpool(work)
 
     @app.get("/api/local/watchers")
     def local_watchers(request: FastAPIRequest) -> list[dict[str, Any]]:
@@ -2069,14 +2103,18 @@ def create_app(store: RynmeshStore | None = None):
 
     @app.post("/api/local/watchers")
     async def local_watchers_add(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         body = await request.json()
-        try:
-            return _digest_service().add_watcher(
-                str(body.get("url", "")), note=str(body.get("note", ""))
-            )
-        except DigestError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        def work():
+            try:
+                return _digest_service().add_watcher(
+                    str(body.get("url", "")), note=str(body.get("note", ""))
+                )
+            except DigestError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return await run_in_threadpool(work)
 
     @app.delete("/api/local/watchers/{watcher_id}")
     def local_watchers_remove(watcher_id: str, request: FastAPIRequest) -> dict[str, Any]:
@@ -2275,101 +2313,128 @@ def create_app(store: RynmeshStore | None = None):
 
     @app.post("/api/local/digest/steer")
     async def local_digest_steer(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         body = await request.json()
-        result = _digest_service().steer(str(body.get("text", "")))
-        _digest_service().build(now_unix=time.time())
-        _audit().append(
-            "rec",
-            "Recommendation direction updated",
-            details={"interest_count": len(result["interests"]), "avoid_count": len(result["avoids"])},
-        )
-        return result
 
-    @app.post("/api/local/digest/feedback")
-    async def local_digest_feedback(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
-        body = await request.json()
-        if not isinstance(body, dict):
-            raise HTTPException(status_code=400, detail="feedback_not_object")
-        try:
-            result = _digest_service().feedback(
-                str(body.get("item_id", "")), str(body.get("action", ""))
-            )
+        def work():
+            result = _digest_service().steer(str(body.get("text", "")))
             _digest_service().build(now_unix=time.time())
             _audit().append(
                 "rec",
-                f"Recommendation feedback recorded: {body.get('action', '')}",
-                details={"action": str(body.get("action", ""))},
-                item_id=str(body.get("item_id", "")),
+                "Recommendation direction updated",
+                details={"interest_count": len(result["interests"]), "avoid_count": len(result["avoids"])},
             )
             return result
-        except DigestError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except (OSError, ValueError):
-            raise HTTPException(status_code=503, detail="recommendation_feedback_unavailable") from None
+
+        return await run_in_threadpool(work)
+
+    @app.post("/api/local/digest/feedback")
+    async def local_digest_feedback(request: FastAPIRequest) -> dict[str, Any]:
+        await run_in_threadpool(local_control, request)
+        body = await request.json()
+
+        def work():
+            if not isinstance(body, dict):
+                raise HTTPException(status_code=400, detail="feedback_not_object")
+            try:
+                result = _digest_service().feedback(
+                    str(body.get("item_id", "")), str(body.get("action", ""))
+                )
+                _digest_service().build(now_unix=time.time())
+                _audit().append(
+                    "rec",
+                    f"Recommendation feedback recorded: {body.get('action', '')}",
+                    details={"action": str(body.get("action", ""))},
+                    item_id=str(body.get("item_id", "")),
+                )
+                return result
+            except DigestError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except (OSError, ValueError):
+                raise HTTPException(status_code=503, detail="recommendation_feedback_unavailable") from None
+
+        return await run_in_threadpool(work)
 
     @app.post("/api/local/recommendations")
     async def local_recommendations(request: FastAPIRequest) -> list[dict[str, Any]]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         try:
             body = await request.json()
         except json.JSONDecodeError:
             body = {}
-        now_unix = time.time()
-        # Asking devices for their listings must not stall the event loop
-        # (it serves health checks and the Agent's reads).
-        items = await run_in_threadpool(network_content, control_network_id())
-        items.extend(_digest_service().recommendation_items())
-        profile_signals = _recommendation_profile.signals()
-        return recommendation_service.recommend_from_items(
-            items,
-            now_unix=now_unix,
-            query=str(body.get("query", "") or ""),
-            limit=int(body.get("limit", 6) or 6),
-            profile=profile_signals,
-        )
+
+        def work():
+            now_unix = time.time()
+            # Asking devices for their listings must not stall the event loop
+            # (it serves health checks and the Agent's reads).
+            items = network_content(control_network_id())
+            items.extend(_digest_service().recommendation_items())
+            profile_signals = _recommendation_profile.signals()
+            return recommendation_service.recommend_from_items(
+                items,
+                now_unix=now_unix,
+                query=str(body.get("query", "") or ""),
+                limit=int(body.get("limit", 6) or 6),
+                profile=profile_signals,
+            )
+
+        return await run_in_threadpool(_recommendation_call, work)
+
+    def _recommendation_call(fn):
+        try:
+            return fn()
+        except ValueError as exc:
+            record("recommendation", "recommendation_profile_invalid", exc)
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        except (AtomicIOError, OSError) as exc:
+            record("recommendation", "recommendation_profile_unavailable", exc)
+            raise HTTPException(status_code=503, detail="recommendation_profile_unavailable") from None
 
     @app.get("/api/local/recommendations/profile")
     def local_recommendations_profile(request: FastAPIRequest) -> dict[str, Any]:
         local_control(request)
-        return _recommendation_profile.public()
+        return _recommendation_call(_recommendation_profile.public)
 
     @app.patch("/api/local/recommendations/profile")
     async def local_recommendations_profile_update(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         body = await request.json()
-        if not isinstance(body, dict):
-            raise HTTPException(status_code=400, detail="recommendation_profile_not_object")
-        profile = _recommendation_profile.patch(body)
-        if "direction" in body:
-            _digest_service().steer(profile["direction"])
-        _digest_service().build(now_unix=time.time())
-        _audit().append(
-            "rec",
-            "Recommendation profile updated",
-            details={
-                "topic_count": len(profile["topics"]),
-                "platform_count": len(profile["platforms"]),
-                "has_direction": bool(profile["direction"]),
-            },
-        )
-        return profile
+
+        def work():
+            if not isinstance(body, dict):
+                raise HTTPException(status_code=400, detail="recommendation_profile_not_object")
+            profile = _recommendation_profile.patch(body)
+            if "direction" in body:
+                _digest_service().steer(profile["direction"])
+            _digest_service().build(now_unix=time.time())
+            _audit().append(
+                "rec",
+                "Recommendation profile updated",
+                details={
+                    "topic_count": len(profile["topics"]),
+                    "platform_count": len(profile["platforms"]),
+                    "has_direction": bool(profile["direction"]),
+                },
+            )
+            return profile
+
+        return await run_in_threadpool(_recommendation_call, work)
 
     @app.post("/api/local/recommendations/feedback")
     async def local_recommendations_feedback(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         body = await request.json()
-        content_id = str(body.get("contentId", "") or "")
-        candidates = await run_in_threadpool(network_content, control_network_id())
-        candidates.extend(_digest_service().recommendation_items())
-        item = next(
-            (candidate for candidate in candidates if candidate.get("content_id") == content_id),
-            None,
-        )
-        if item is None:
-            raise HTTPException(status_code=404, detail="recommendation_content_not_found")
-        try:
+
+        def work():
+            content_id = str(body.get("contentId", "") or "")
+            candidates = network_content(control_network_id())
+            candidates.extend(_digest_service().recommendation_items())
+            item = next(
+                (candidate for candidate in candidates if candidate.get("content_id") == content_id),
+                None,
+            )
+            if item is None:
+                raise HTTPException(status_code=404, detail="recommendation_content_not_found")
             profile = _recommendation_profile.feedback(item, str(body.get("action", "")))
             if str(body.get("action", "")) != "neutral":
                 app.state.first_run.record("first_signal_recorded")
@@ -2381,36 +2446,38 @@ def create_app(store: RynmeshStore | None = None):
                 item_id=content_id,
             )
             return profile
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return await run_in_threadpool(_recommendation_call, work)
 
     @app.post("/api/local/search-ask")
     async def local_search_ask(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         body = await request.json()
-        query = str(body.get("text", "")).strip()
-        digest = _digest_service().last_digest() or {}
-        provider = _model_provider()
-        # Evaluated before the model call; it used to run on the event loop.
-        content_items = await run_in_threadpool(network_content, control_network_id())
-        result = await _asyncio.to_thread(
-            ask_service.answer,
-            query,
-            provider=provider,
-            digest_items=digest.get("items", []),
-            content_items=content_items,
-        )
-        _audit().append(
-            "rec",
-            "Search & Ask completed" if provider is not None else "Search & Ask had no model",
-            details={
-                "provider": getattr(provider, "id", None),
-                "model": getattr(provider, "model", None),
-                "network_access": getattr(provider, "id", None) == "anthropic",
-                "query_length": len(query),
-            },
-        )
-        return result
+
+        def work():
+            query = str(body.get("text", "")).strip()
+            digest = _digest_service().last_digest() or {}
+            provider = _model_provider()
+            content_items = network_content(control_network_id())
+            result = ask_service.answer(
+                query,
+                provider=provider,
+                digest_items=digest.get("items", []),
+                content_items=content_items,
+            )
+            _audit().append(
+                "rec",
+                "Search & Ask completed" if provider is not None else "Search & Ask had no model",
+                details={
+                    "provider": getattr(provider, "id", None),
+                    "model": getattr(provider, "model", None),
+                    "network_access": getattr(provider, "id", None) == "anthropic",
+                    "query_length": len(query),
+                },
+            )
+            return result
+
+        return await run_in_threadpool(work)
 
     @app.post("/api/local/publish/prepare")
     async def local_publish_prepare(request: FastAPIRequest) -> dict[str, Any]:
@@ -2600,32 +2667,36 @@ def create_app(store: RynmeshStore | None = None):
 
     @app.post("/api/local/privacy/erase")
     async def local_privacy_erase(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         body = await request.json()
-        requested = body.get("scopes", []) if isinstance(body, dict) else []
-        scopes = {str(scope) for scope in requested if str(scope)}
-        allowed = {"history", "profile", "cache", "audit", "onboarding"}
-        if not scopes or not scopes.issubset(allowed):
-            raise HTTPException(status_code=400, detail="privacy_erase_scopes_invalid")
-        if "history" in scopes:
-            app.state.consumption_store.clear()
-        if "profile" in scopes:
-            _recommendation_profile.clear()
-            _digest_service().clear_personalization()
-        if "cache" in scopes:
-            _digest_service().clear_cached_content()
-            app.state.reader_cache.clear()
-        if "audit" in scopes:
-            _audit().clear()
-        if "onboarding" in scopes:
-            app.state.first_run.store.reset()
-        if "audit" not in scopes:
-            _audit().append(
-                "verify",
-                "Personal assistant data erased",
-                details={"scopes": sorted(scopes)},
-            )
-        return {"ok": True, "erased": sorted(scopes)}
+
+        def work():
+            requested = body.get("scopes", []) if isinstance(body, dict) else []
+            scopes = {str(scope) for scope in requested if str(scope)}
+            allowed = {"history", "profile", "cache", "audit", "onboarding"}
+            if not scopes or not scopes.issubset(allowed):
+                raise HTTPException(status_code=400, detail="privacy_erase_scopes_invalid")
+            if "history" in scopes:
+                app.state.consumption_store.clear()
+            if "profile" in scopes:
+                _recommendation_profile.clear()
+                _digest_service().clear_personalization()
+            if "cache" in scopes:
+                _digest_service().clear_cached_content()
+                app.state.reader_cache.clear()
+            if "audit" in scopes:
+                _audit().clear()
+            if "onboarding" in scopes:
+                app.state.first_run.store.reset()
+            if "audit" not in scopes:
+                _audit().append(
+                    "verify",
+                    "Personal assistant data erased",
+                    details={"scopes": sorted(scopes)},
+                )
+            return {"ok": True, "erased": sorted(scopes)}
+
+        return await run_in_threadpool(work)
 
     @app.get("/api/v1/node")
     def node_info() -> dict[str, Any]:
@@ -2678,24 +2749,28 @@ def create_app(store: RynmeshStore | None = None):
         cannot inflate themselves. Dedup handled by the ledger.
         """
         body = await request.json()
-        try:
-            signed = SignedPayload.from_dict(body)
-            peeked = CreditEvent.from_payload(signed.payload)
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"invalid_payload: {exc}") from exc
-        if peeked.kind not in ("preview_served", "full_served"):
-            raise HTTPException(status_code=400, detail="kind_not_acceptable")
-        if peeked.issuer_peer_id == peeked.subject_peer_id:
-            raise HTTPException(status_code=400, detail="self_attestation_rejected")
-        try:
-            result = active_store.credit_ledger.append(signed)
-        except CreditLedgerError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {
-            "ok": True,
-            "status": result.get("status", ""),
-            "event_id": result.get("event_id", ""),
-        }
+
+        def work():
+            try:
+                signed = SignedPayload.from_dict(body)
+                peeked = CreditEvent.from_payload(signed.payload)
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"invalid_payload: {exc}") from exc
+            if peeked.kind not in ("preview_served", "full_served"):
+                raise HTTPException(status_code=400, detail="kind_not_acceptable")
+            if peeked.issuer_peer_id == peeked.subject_peer_id:
+                raise HTTPException(status_code=400, detail="self_attestation_rejected")
+            try:
+                result = active_store.credit_ledger.append(signed)
+            except CreditLedgerError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            return {
+                "ok": True,
+                "status": result.get("status", ""),
+                "event_id": result.get("event_id", ""),
+            }
+
+        return await run_in_threadpool(work)
 
     @app.get("/api/v1/clips/{clip_id}/manifest")
     def manifest(clip_id: str) -> dict[str, Any]:

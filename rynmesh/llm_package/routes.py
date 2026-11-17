@@ -2604,26 +2604,31 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     async def save_source(source_id: str, request: Request):
         try:
             body = await request.json()
-            with store.personal_space.lock, source_store.lock:
-                if source_id != "new" and source_id not in source_store.read():
-                    raise HTTPException(404, "来源不存在")
-                if "expected_source_revision" in body:
-                    expected_source_revision = body.pop("expected_source_revision")
-                    if source_store.read().get(source_id, {}).get("source_revision") != expected_source_revision:
-                        raise HTTPException(409, "source_revision_conflict")
-                record = source_store.prepare(body, "" if source_id == "new" else source_id)
-                state = store.personal_space.status()
-                from .model_settings import effective
-                space_shared = any(effective(record, m)["share_scope"] == "personal_space" for m in record["shared_models"])
-                if space_shared and (state.get("membership") != "active" or state.get("ai_access") != "space"):
-                    raise HTTPException(409, "请先加入个人空间并开启 AI 访问，再分享来源")
-                old = source_store.read().get(record["id"], {})
-                if (all(record.get(k) == old.get(k) for k in ("base_url", "api_key", "kind", "provider"))
-                        and record.get("protocol", "openai_chat") == old.get("protocol", "openai_chat")):
-                    record["status"] = old.get("status", record["status"])
-                saved = source_store.save(record)
-            active_source_managers()
-            if old.get("sharing") or record.get("sharing"):
+
+            def persist_source():
+                with store.personal_space.lock, source_store.lock:
+                    if source_id != "new" and source_id not in source_store.read():
+                        raise HTTPException(404, "来源不存在")
+                    if "expected_source_revision" in body:
+                        expected_source_revision = body.pop("expected_source_revision")
+                        if source_store.read().get(source_id, {}).get("source_revision") != expected_source_revision:
+                            raise HTTPException(409, "source_revision_conflict")
+                    record = source_store.prepare(body, "" if source_id == "new" else source_id)
+                    state = store.personal_space.status()
+                    from .model_settings import effective
+                    space_shared = any(effective(record, m)["share_scope"] == "personal_space" for m in record["shared_models"])
+                    if space_shared and (state.get("membership") != "active" or state.get("ai_access") != "space"):
+                        raise HTTPException(409, "请先加入个人空间并开启 AI 访问，再分享来源")
+                    old = source_store.read().get(record["id"], {})
+                    if (all(record.get(k) == old.get(k) for k in ("base_url", "api_key", "kind", "provider"))
+                            and record.get("protocol", "openai_chat") == old.get("protocol", "openai_chat")):
+                        record["status"] = old.get("status", record["status"])
+                    saved = source_store.save(record)
+                active_source_managers()
+                return saved, bool(old.get("sharing") or record.get("sharing"))
+
+            saved, publication_needed = await asyncio.to_thread(persist_source)
+            if publication_needed:
                 saved["publication"] = await asyncio.to_thread(refresh_publication)
             return saved
         except (ValueError, TypeError, AdapterError) as exc:
