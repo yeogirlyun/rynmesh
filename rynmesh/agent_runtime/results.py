@@ -200,7 +200,8 @@ def _truncate_encoded_result(value: object, raw: bytes, max_bytes: int) -> bytes
     )
 
 
-def save(store, row, call, value):
+def seal(store, row, call, value):
+    """Write immutable ciphertext before the caller's reference transaction."""
     raw = encoded(value)
     was_truncated = False
     original_bytes = len(raw)
@@ -220,6 +221,11 @@ def save(store, row, call, value):
     nonce, ciphertext = peer_box.seal(store.key, store.pub, raw, info=CHANNEL)
     atomic_write_json(path(store, row["id"], result_id), {"nonce": nonce, "ciphertext": ciphertext}, max_bytes=3 * MAX_RESULT_BYTES)
     return reference
+
+
+def save(store, row, call, value):
+    """Compatibility entry point; callers register the returned reference."""
+    return seal(store, row, call, value)
 
 
 def checkpoint_note(row: dict) -> str:

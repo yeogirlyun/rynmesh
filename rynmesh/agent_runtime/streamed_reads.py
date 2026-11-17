@@ -213,6 +213,24 @@ class StreamedReads:
         return self.runtime.store.transaction(admit)
 
     def _complete_record(self, prepared, outcome, elapsed):
+        value = copy.deepcopy(outcome)
+        if len(encoded(value["result"])) > self.selected["limits"]["max_output_chars"]:
+            try:
+                reference = results.seal(self.runtime.store, self.selected, prepared["call"], value["result"])
+                if value.get("origin"):
+                    reference["resource_origin"] = value["origin"]
+                value.update(
+                    reference=reference,
+                    result=results.format_reference_result(
+                        prepared["call"]["name"],
+                        value["result"],
+                        reference,
+                        max_bytes=self.selected["limits"]["max_output_chars"],
+                        note="Full output is encrypted locally. Use ryn_read_result for bounded pages.",
+                    ),
+                )
+            except AgentError as exc:
+                value.update(failed=True, result={"error": _safe_error(exc), "not_executed": False, "no_mutation": True})
         def finish(data):
             row = data["tasks"].get(self.selected["id"])
             if row is None:
@@ -222,25 +240,8 @@ class StreamedReads:
             budget.settle(row, prepared["reservation_id"], elapsed_seconds=0 if self.parent_operation_id else elapsed)
             if entry is None or entry.get("state") == "complete":
                 return
-            value = copy.deepcopy(outcome)
-            if len(encoded(value["result"])) > self.selected["limits"]["max_output_chars"]:
-                try:
-                    reference = results.save(self.runtime.store, self.selected, prepared["call"], value["result"])
-                    if value.get("origin"):
-                        reference["resource_origin"] = value["origin"]
-                    row.setdefault("result_refs", []).append(reference)
-                    value.update(
-                        reference=reference,
-                        result=results.format_reference_result(
-                            prepared["call"]["name"],
-                            value["result"],
-                            reference,
-                            max_bytes=self.selected["limits"]["max_output_chars"],
-                            note="Full output is encrypted locally. Use ryn_read_result for bounded pages.",
-                        ),
-                    )
-                except AgentError as exc:
-                    value.update(failed=True, result={"error": _safe_error(exc), "not_executed": False, "no_mutation": True})
+            if value.get("reference"):
+                row.setdefault("result_refs", []).append(value["reference"])
             if value["failed"]:
                 self.runtime._note_last_read_attempt(row, prepared["call"], value["result"])
             entry.update(value, state="complete")

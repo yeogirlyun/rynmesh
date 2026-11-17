@@ -17,6 +17,7 @@ from pathlib import Path
 from fastapi import Request
 
 from ..atomic_io import atomic_write_bytes, fs_path
+from ..file_transactions import file_transaction
 from . import budget, lifecycle, results
 from .file_review import safe_path
 from .input_attachments import MAX_FILE_BYTES
@@ -147,6 +148,7 @@ def _write_copy(store, target, raw, boundary, plaintext_hash=None):
         if native.stat().st_size > (3 * results.MAX_RESULT_BYTES if plaintext_hash else MAX_FILE_BYTES):
             raise AgentError("agent_fork_staging_changed")
         saved = native.read_bytes()
+        saved_hash = hashlib.sha256(saved).hexdigest()
         if plaintext_hash:
             from ..services import peer_box
             try:
@@ -159,7 +161,7 @@ def _write_copy(store, target, raw, boundary, plaintext_hash=None):
             matches = saved == raw
         if not matches:
             raise AgentError("agent_fork_staging_changed")
-        return
+        return saved_hash
     temporary = fs_path(target.with_name(target.name + ".fork-" + uuid.uuid4().hex + ".tmp"))
     try:
         atomic_write_bytes(temporary, raw)
@@ -171,9 +173,10 @@ def _write_copy(store, target, raw, boundary, plaintext_hash=None):
             os.link(temporary, native)
     finally:
         temporary.unlink(missing_ok=True)
+    return hashlib.sha256(raw).hexdigest()
 
 
-def _copy_references(runtime, source, child):
+def _copy_references(runtime, source, child, written):
     store = runtime.store
     root = Path(child["local_execution"]["workspace_root"])
     paths, total, writes = {}, 0, []
@@ -240,7 +243,8 @@ def _copy_references(runtime, source, child):
     if total > MAX_REFERENCE_BYTES or len(writes) > MAX_REFERENCES:
         raise AgentError("agent_fork_reference_limit")
     for target, raw, boundary, plaintext_hash in writes:
-        _write_copy(store, target, raw, boundary, plaintext_hash)
+        checksum = _write_copy(store, target, raw, boundary, plaintext_hash)
+        written.append((target, boundary, checksum))
 
 
 def create(runtime, source_id, value):
@@ -262,10 +266,10 @@ def create(runtime, source_id, value):
     if callable(relieve):
         relieve("fork", exclude={source_id}, need_tasks=1)
 
-    def commit(data):
+    def prepare(data):
         existing = lifecycle.duplicate(runtime.store, data, request_id, fingerprint)
         if existing is not None:
-            return public_task(copy.deepcopy(existing), settings=data["settings"])
+            return None, public_task(copy.deepcopy(existing), settings=data["settings"])
         settings = {**DEFAULT_SETTINGS, **data["settings"]}
         if not settings["enabled"]:
             raise AgentError("agent_disabled")
@@ -331,18 +335,64 @@ def create(runtime, source_id, value):
             local.policy(runtime._execution_context(row), data)
         elif row["local_execution"]["workspace_root"] != (settings.get("workspace_root") or runtime.store.default_workspace()):
             raise AgentError("agent_workspace_changed_new_task_required")
-        _copy_references(runtime, source, row)
-        if len(encoded(row)) > 2 * 1024 * 1024:
-            raise AgentError("agent_task_limit")
-        event(row, "created")
-        event(row, "fork_created", source_task_id=source_id, message_count=value["message_count"], shared_workspace=True)
-        data["tasks"][child_id] = row
-        return public_task(copy.deepcopy(row), settings=settings)
+        return source, row
 
+    child_id = "agent_" + uuid.uuid5(uuid.NAMESPACE_URL, "ryn-fork:" + request_id).hex
+    # The namespace is deterministic. Serialize retries of this request only;
+    # unrelated tasks and forks never wait for its file copies.
     try:
-        return runtime.store.transaction(commit)
-    except AgentToolRejected as exc:
-        raise AgentError(str(exc)) from None
+        with file_transaction(runtime.store.root / "forks" / (child_id + ".lock")):
+            written = []
+            try:
+                source, staged = runtime.store.inspect(prepare)
+                if source is None:
+                    return staged
+                _copy_references(runtime, source, staged, written)
+                source_hashes = {ref["id"]: ref["sha256"] for ref in source.get("result_refs", [])
+                                 if any(item["id"] == ref["id"] for item in staged["result_refs"])}
+
+                def commit(data):
+                    current, row = prepare(data)
+                    if current is None:
+                        return row
+                    hashes = {ref["id"]: ref["sha256"] for ref in current.get("result_refs", [])}
+                    if (any(hashes.get(key) != checksum for key, checksum in source_hashes.items())
+                            or current.get("context_checkpoint") != source.get("context_checkpoint")):
+                        raise AgentError("agent_fork_boundary_changed")
+                    # Validate the bytes actually published, including reused files;
+                    # no decryption, encryption or file publication in this transaction.
+                    for target, boundary, checksum in written:
+                        safe_path(boundary, str(target))
+                        with fs_path(target).open("rb") as stream:
+                            actual = hashlib.sha256()
+                            while chunk := stream.read(1024 * 1024):
+                                actual.update(chunk)
+                        if actual.hexdigest() != checksum:
+                            raise AgentError("agent_fork_staging_changed")
+                    for key in ("messages", "goal", "context_checkpoint", "result_refs"):
+                        if key in staged:
+                            row[key] = copy.deepcopy(staged[key])
+                        else:
+                            row.pop(key, None)
+                    if len(encoded(row)) > 2 * 1024 * 1024:
+                        raise AgentError("agent_task_limit")
+                    event(row, "created")
+                    event(row, "fork_created", source_task_id=source_id, message_count=value["message_count"], shared_workspace=True)
+                    data["tasks"][child_id] = row
+                    return public_task(copy.deepcopy(row), settings={**DEFAULT_SETTINGS, **data["settings"]})
+
+                return runtime.store.transaction(commit)
+            except Exception as exc:
+                # Stale/changed copies cannot be reused. Disk failures retain the
+                # existing retry behavior; the same request can reuse valid copies.
+                discard = str(exc) in {"agent_fork_boundary_changed", "agent_fork_staging_changed"}
+                if discard and written and not runtime.store.inspect(lambda data: child_id in data["tasks"]):
+                    for target, boundary, _checksum in written:
+                        safe_path(boundary, str(target))
+                        fs_path(target).unlink(missing_ok=True)
+                if isinstance(exc, AgentToolRejected):
+                    raise AgentError(str(exc)) from None
+                raise
     except OSError:
         raise AgentError("agent_fork_storage_unavailable") from None
 
