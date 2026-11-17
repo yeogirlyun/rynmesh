@@ -2699,9 +2699,17 @@ def create_app(store: RynmeshStore | None = None):
         def work():
             requested = body.get("scopes", []) if isinstance(body, dict) else []
             scopes = {str(scope) for scope in requested if str(scope)}
-            allowed = {"history", "profile", "cache", "audit", "onboarding"}
+            allowed = {"history", "profile", "cache", "audit", "onboarding", "agent_history", "agent_memory"}
             if not scopes or not scopes.issubset(allowed):
                 raise HTTPException(status_code=400, detail="privacy_erase_scopes_invalid")
+            if scopes & {"agent_history", "agent_memory"}:
+                from .agent_runtime.store import AgentError
+                try:
+                    app.state.agent_runtime.erase_owner_data(scopes)
+                except AgentError as exc:
+                    raise HTTPException(status_code=409, detail=str(exc)) from None
+                except OSError:
+                    raise HTTPException(status_code=409, detail="agent_task_cleanup_failed") from None
             if "history" in scopes:
                 app.state.consumption_store.clear()
             if "profile" in scopes:

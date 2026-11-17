@@ -4922,7 +4922,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
 
         result = erase_consumer_results(consumer_orders, background_orders, background_orders_lock, task_ids)
         for task_id in task_ids:
-            stream_broker.forget(task_id)
+            if task_id not in result['skipped_active']:
+                stream_broker.forget(task_id)
         return result
 
     return ConsumerCommands(submit_order, order_status, local_llm_cancel, acknowledge_result, discover, erase_results)

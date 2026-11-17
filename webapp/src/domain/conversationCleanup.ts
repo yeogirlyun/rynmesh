@@ -6,6 +6,7 @@ export interface CleanupReview {
   has_unassigned_draft: boolean; active_tasks: number; backup_files: number; backup_bytes: number; order_results: number;
 }
 export interface CleanupJob {
+  skipped_active?: string[];
   id: string; sequence?: number; done: CleanupStep[]; pending: CleanupStep[]; cancelled: boolean;
   local_copies_complete: boolean; browser_cleanup_required: boolean; remote_confirmed: boolean; identities: number;
 }

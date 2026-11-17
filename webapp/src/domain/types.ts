@@ -214,7 +214,7 @@ export interface PrivacyStatus {
   cloud_ai_enabled: boolean;
 }
 
-export type PrivacyEraseScope = "history" | "profile" | "cache" | "audit" | "onboarding";
+export type PrivacyEraseScope = "history" | "profile" | "cache" | "audit" | "onboarding" | "agent_history" | "agent_memory";
 export type PersonalDataExport = Record<string, unknown> & {
   version: number;
   exported_at: string;

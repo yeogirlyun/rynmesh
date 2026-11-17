@@ -231,7 +231,10 @@ export function PrivacySection({
         <Button icon={Trash2} variant="danger" onClick={() => erase(["audit"], tr("Clear assistant audit?"), tr("This permanently erases the local record of assistant activity."))}>
           {tr("Clear audit")}
         </Button>
+        <Button icon={Trash2} variant="danger" onClick={() => erase(["agent_history"], "清除 Agent 历史？", "将先停止所有 Agent 任务，再永久清除任务、归档、检查点、附件和本机结果文件。此操作不可撤销。不会删除模型来源凭据和插件，也不删除项目中的业务文件。")}>清除 Agent 历史</Button>
+        <Button icon={Trash2} variant="danger" onClick={() => erase(["agent_memory"], "清除 Agent 记忆？", "将先停止所有 Agent 任务，再永久清除记忆条目与候选。任务历史和文件保留。此操作不可撤销。不会删除模型来源凭据和插件。")}>清除 Agent 记忆</Button>
       </div>
+      <p>Agent 清理不会删除模型来源凭据和插件。</p>
       <div className="privacy-audit">
         {client.mode === "live" ? <PrivateCopiesPanel /> : null}
         <div className="privacy-audit-head"><Activity size={16} /><b>{tr("Recent assistant activity")}</b></div>

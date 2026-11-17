@@ -92,6 +92,7 @@ export default function ConversationCleanupPanel() {
     {jobs.length ? <ol className={styles.jobs}>{jobs.map((job, index) => <li key={job.id}>
       <h4>Cleanup {job.sequence ?? jobs.length - index}</h4>
       <p>{job.cancelled ? "Cancelled before erasure" : job.local_copies_complete ? "Reviewed node copies cleared" : "Unfinished"}</p>
+      {job.skipped_active?.length ? <p role="status">有 {job.skipped_active.length} 个进行中的问答稍后再清</p> : null}
       {job.done.length ? <p>Completed: {job.done.map((step) => labels[step]).join(", ")}</p> : null}
       {job.pending.length ? <p>Remaining: {job.pending.map((step) => labels[step]).join(", ")}</p> : null}
       {!job.cancelled ? <p>Browser cleanup is tracked separately below. {job.remote_confirmed ? "Remote devices confirmed." : "Remote devices remain unconfirmed."}</p> : null}

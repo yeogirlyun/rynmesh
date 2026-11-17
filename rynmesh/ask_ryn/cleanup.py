@@ -187,6 +187,7 @@ class ConversationCleanup:
     @staticmethod
     def _public(job):
         return {'id': job['id'], 'done': list(job['done']), 'pending': [] if job.get('cancelled') else list(STEPS[len(job['done']):]),
+            'skipped_active': list(job.get('skipped_active', [])),
             'cancelled': bool(job.get('cancelled')),
             'local_copies_complete': job['done'] == list(STEPS), 'browser_cleanup_required': True,
             'remote_confirmed': False, 'identities': job['plan']['identity_count'] if job.get('compacted') else len(job['plan']['identifiers']),
@@ -333,7 +334,11 @@ class ConversationCleanup:
                 elif step == 'search':
                     self.search.rebuild(force=True)
                 else:
-                    self.erase_order_results(deepcopy(job['plan']['task_ids']))
+                    result = self.erase_order_results(deepcopy(job['plan']['task_ids']))
+                    job['skipped_active'] = result.get('skipped_active', []) if isinstance(result, dict) else []
+                    if job['skipped_active']:
+                        self._save(envelope, data)
+                        break  # Finished results are gone; retain active IDs for resume.
                 job['done'].append(step)
                 self._save(envelope, data)
             return self._public(job)
