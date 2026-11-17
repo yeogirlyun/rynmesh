@@ -54,7 +54,7 @@ from .sharing import FriendSharingTool
 from .source_drafts import NAMES as SOURCE_NAMES
 from .source_drafts import SourceDrafts
 from .store import AgentError, AgentToolRejected, encoded
-from . import results
+from . import diagnostic_log, results
 from .tool_router import schema_rejection_error
 
 
@@ -163,6 +163,7 @@ class RynTools:
         self.lock = threading.RLock()
         self.completed = OrderedDict()
         self.peer_health = PeerHealthProbe(timeout_s=1.5, max_concurrency=8)
+        self.peer_health_lock = threading.Lock()
         self.resources = ResourceTools(app)
         self.resource_writes = ResourceWrites(self.resources, getattr(store, "home", None))
         self.source_drafts = SourceDrafts(services.get("source_store"), getattr(store, "home", None), lambda: self.resource_writes.ledger, services)
@@ -208,22 +209,30 @@ class RynTools:
         return self.local.recover_operation(task_id, operation_id, **kwargs)
 
     def forget_task(self, task_id, *, operation_ids):
-        try:
-            ArtifactTransfers(self.local.store).forget_task(task_id)
-            self.resource_writes.forget_task(task_id)
-            self.source_drafts.forget_task(task_id)
-            self.friend_sharing.forget_task(task_id)
-            self.local.forget_baselines(task_id)
-            self.craft.close_task(task_id)
-            self.extensions.forget_task(task_id, operation_ids=operation_ids)
-            self.code_mode.forget_task(task_id)
-            if getattr(self, "native_computer", None) is not None:
-                self.native_computer.forget_task(task_id)
-        except Exception:
-            raise AgentError("agent_task_cleanup_failed") from None
+        cleanups = [
+            ("artifacts", lambda: ArtifactTransfers(self.local.store).forget_task(task_id)),
+            ("resource_writes", lambda: self.resource_writes.forget_task(task_id)),
+            ("source_drafts", lambda: self.source_drafts.forget_task(task_id)),
+            ("friend_sharing", lambda: self.friend_sharing.forget_task(task_id)),
+            ("local", lambda: self.local.forget_baselines(task_id)),
+            ("craft", lambda: self.craft.close_task(task_id)),
+            ("extensions", lambda: self.extensions.forget_task(task_id, operation_ids=operation_ids)),
+            ("code_mode", lambda: self.code_mode.forget_task(task_id)),
+        ]
+        if getattr(self, "native_computer", None) is not None:
+            cleanups.append(("native_computer", lambda: self.native_computer.forget_task(task_id)))
+        failures = []
+        for name, cleanup in cleanups:
+            try:
+                cleanup()
+            except Exception as exc:
+                failures.append((name, type(exc).__name__))
+                diagnostic_log.failure("task_cleanup", exc, module=name)
         with self.lock:
             for operation_id in operation_ids:
                 self.completed.pop(operation_id, None)
+        if failures:
+            raise AgentError("agent_task_cleanup_failed") from None
 
     def create_source_credential(self, task_id, body, **kwargs):
         return self.source_drafts.credential(task_id, body, **kwargs)
@@ -631,6 +640,24 @@ class RynTools:
             return bounded_result(self.resources.execute(name, arguments, context=context, cancelled=cancelled),
                                   opaque_keys={"resource_ref", "next_cursor", "listing_snapshot"}, strict=True, long_text_keys={"text": 8192})
         fingerprint = hashlib.sha256(json.dumps([name, arguments], sort_keys=True).encode()).hexdigest()
+        if name in {"ryn_list_models", "ryn_list_devices", "ryn_inspect_services"}:
+            with self.lock:
+                if cancelled():
+                    raise AgentToolRejected("agent_cancelled")
+                prior = self.completed.get(operation_id)
+                if prior:
+                    if prior[0] != fingerprint:
+                        raise AgentToolRejected("agent_operation_id_conflict")
+                    return copy.deepcopy(prior[1])
+            result = bounded_result(self._read_only_result(name, arguments, cancelled))
+            with self.lock:
+                prior = self.completed.get(operation_id)
+                if prior and prior[0] != fingerprint:
+                    raise AgentToolRejected("agent_operation_id_conflict")
+                self.completed[operation_id] = (fingerprint, result)
+                while len(self.completed) > 256:
+                    self.completed.popitem(last=False)
+            return copy.deepcopy(result)
         with self.lock:
             if cancelled():
                 raise AgentToolRejected("agent_cancelled")
@@ -639,111 +666,7 @@ class RynTools:
                 if prior[0] != fingerprint:
                     raise AgentToolRejected("agent_operation_id_conflict")
                 return copy.deepcopy(prior[1])
-            if name == "ryn_list_models":
-                result = {"models": self.catalog.list_models()}
-            elif name == "ryn_list_devices":
-                space = self._space()
-                fields = ("peer_id", "node_name", "name", "role", "removed", "status", "relationship_id")
-                friends = getattr(self.app.state, "friends", None)
-                devices = {row["peer_id"]: {k: row[k] for k in fields if k in row} for row in space.get("members", [])}
-                friend_rows = [{k: row[k] for k in fields if k in row} for row in friends.service.list_friends()] if friends else []
-                for row in friend_rows:
-                    devices.setdefault(row["peer_id"], dict(row))
-                devices.setdefault(self.store.peer_id, {"peer_id": self.store.peer_id, "name": self.store.node_name})
-                try:
-                    discovered = self.store.discover_peers(network_id=self.catalog.network, include_self=True,
-                        max_age_hours=24, use_cache_on_error=True).get("peers", [])[:64]
-                except Exception:
-                    discovered = []
-                inputs = []
-                for row in discovered:
-                    peer_id = row["peer_id"]
-                    devices.setdefault(peer_id, {"peer_id": peer_id, "name": row.get("node_name", "")})
-                    inputs.append({"id": peer_id, "isSelf": peer_id == self.store.peer_id,
-                        "endpoint": next((url for url in row.get("endpoints", []) if isinstance(url, str) and url.startswith(("http://", "https://"))), ""),
-                        "lanEndpoints": row.get("lan_endpoints", [])[:4], "lastSeen": row.get("updated_at", ""),
-                        "discoverySource": row.get("discovery_source", "")})
-                if cancelled():
-                    raise AgentToolRejected("agent_cancelled")
-                # Reuse the same presence vs reachability semantics as Devices.
-                # A failed HTTP probe behind NAT never proves a device offline.
-                from ..services.peer_health import classify_agent_presence
-
-                presence_cache = getattr(self.app.state, "peer_presence", None)
-                known = {item["id"] for item in inputs}
-                inputs.extend({"id": peer_id, "isSelf": peer_id == self.store.peer_id} for peer_id in devices if peer_id not in known)
-                checked_inputs = {item["id"]: item for item in inputs[:64]}
-                evidence = {}
-                to_probe = []
-                for pid, item in checked_inputs.items():
-                    cached_obs = (
-                        presence_cache.get(pid)
-                        if presence_cache is not None and not item.get("isSelf")
-                        else None
-                    )
-                    if cached_obs is not None and cached_obs.get("source") == "drop_probe":
-                        evidence[pid] = cached_obs
-                    else:
-                        to_probe.append(item)
-                if to_probe:
-                    probed_rows = self.peer_health.check(to_probe)
-                    if presence_cache is not None:
-                        presence_cache.update([
-                            r for r in probed_rows if r.get("online") is not None or r.get("presenceSource") != "unknown"
-                        ])
-                    for r in probed_rows:
-                        pid = r["peerId"]
-                        latest = (
-                            presence_cache.get(pid)
-                            if presence_cache is not None and not checked_inputs.get(pid, {}).get("isSelf")
-                            else None
-                        )
-                        evidence[pid] = latest if (latest is not None and latest.get("source") == "drop_probe") else r
-                for peer_id, row in devices.items():
-                    health = evidence.get(peer_id, {})
-                    probe_input = checked_inputs.get(peer_id, {})
-                    is_self = bool(probe_input.get("isSelf"))
-                    classified = classify_agent_presence(health)
-                    ev_source = str(health.get("presenceSource") or health.get("source") or "unknown")
-                    lan_probed = not is_self and (
-                        bool(health.get("lanReachable"))
-                        or any(isinstance(url, str) and url.startswith(("http://", "https://"))
-                               for url in probe_input.get("lanEndpoints", []))
-                    )
-                    http_probed = not is_self and (
-                        lan_probed
-                        or bool(health.get("httpReachable"))
-                        or str(probe_input.get("endpoint", "")).startswith(("http://", "https://"))
-                    )
-                    # PeerHealth's self shortcut proves this process is alive;
-                    # it does not send an HTTP request. No endpoint is likewise
-                    # untested, not a failed connectivity measurement.
-                    row.update(
-                        online=classified["online"],
-                        presence_state=classified["presence_state"],
-                        observed_at=classified["observed_at"],
-                        source=classified["source"],
-                        last_seen=health.get("lastSeen", ""),
-                        checked_at=health.get("checkedAt", classified["observed_at"]),
-                        evidence_source=(
-                            ev_source
-                            if classified["online"] is not None or ev_source in {"self", "http", "heartbeat", "drop_probe"}
-                            else "unknown"
-                        ),
-                        http_probe_performed=http_probed,
-                        lan_probe_performed=lan_probed,
-                        http_reachable=health.get("httpReachable") if http_probed else None,
-                        lan_reachable=health.get("lanReachable") if lan_probed else None,
-                    )
-                result = {"self_id": self.store.peer_id, "membership": space["membership"], "ai_access": space["ai_access"],
-                    "devices": list(devices.values())[:64], "friends": friend_rows,
-                    "evidence_note": "online=null means unknown; membership is not proof of connectivity. evidence_source=self proves only the executing process is alive; no HTTP/LAN probe is performed for self. Reachability=null means untested, not failed. HTTP failure alone does not prove offline."}
-            elif name == "ryn_inspect_services":
-                access = getattr(self.app.state, "ai_access", None)
-                result = {"models": self.catalog.list_models(), "friend_grants": access.store.list() if access else [],
-                          "friend_grants_scope": {"provider_peer_id": self.store.peer_id, "direction": "local_outgoing",
-                                                  "remote_provider_grants": "unknown"}}
-            elif name == "ryn_set_model_sharing":
+            if name == "ryn_set_model_sharing":
                 sources = self.services["source_store"]
                 space_service = getattr(self.store, "personal_space", None)
                 native = getattr(self.app.state, "native_model", None)
@@ -801,3 +724,113 @@ class RynTools:
             while len(self.completed) > 256:
                 self.completed.popitem(last=False)
             return copy.deepcopy(result)
+
+    def _read_only_result(self, name, arguments, cancelled):
+        if cancelled():
+            raise AgentToolRejected("agent_cancelled")
+        if name == "ryn_list_models":
+            result = {"models": self.catalog.list_models()}
+        elif name == "ryn_list_devices":
+            space = self._space()
+            fields = ("peer_id", "node_name", "name", "role", "removed", "status", "relationship_id")
+            friends = getattr(self.app.state, "friends", None)
+            devices = {row["peer_id"]: {k: row[k] for k in fields if k in row} for row in space.get("members", [])}
+            friend_rows = [{k: row[k] for k in fields if k in row} for row in friends.service.list_friends()] if friends else []
+            for row in friend_rows:
+                devices.setdefault(row["peer_id"], dict(row))
+            devices.setdefault(self.store.peer_id, {"peer_id": self.store.peer_id, "name": self.store.node_name})
+            try:
+                discovered = self.store.discover_peers(network_id=self.catalog.network, include_self=True,
+                    max_age_hours=24, use_cache_on_error=True).get("peers", [])[:64]
+            except Exception:
+                discovered = []
+            inputs = []
+            for row in discovered:
+                peer_id = row["peer_id"]
+                devices.setdefault(peer_id, {"peer_id": peer_id, "name": row.get("node_name", "")})
+                inputs.append({"id": peer_id, "isSelf": peer_id == self.store.peer_id,
+                    "endpoint": next((url for url in row.get("endpoints", []) if isinstance(url, str) and url.startswith(("http://", "https://"))), ""),
+                    "lanEndpoints": row.get("lan_endpoints", [])[:4], "lastSeen": row.get("updated_at", ""),
+                    "discoverySource": row.get("discovery_source", "")})
+            if cancelled():
+                raise AgentToolRejected("agent_cancelled")
+            # Reuse the same presence vs reachability semantics as Devices.
+            # A failed HTTP probe behind NAT never proves a device offline.
+            from ..services.peer_health import classify_agent_presence
+
+            presence_cache = getattr(self.app.state, "peer_presence", None)
+            known = {item["id"] for item in inputs}
+            inputs.extend({"id": peer_id, "isSelf": peer_id == self.store.peer_id} for peer_id in devices if peer_id not in known)
+            checked_inputs = {item["id"]: item for item in inputs[:64]}
+            evidence = {}
+            to_probe = []
+            for pid, item in checked_inputs.items():
+                cached_obs = (
+                    presence_cache.get(pid)
+                    if presence_cache is not None and not item.get("isSelf")
+                    else None
+                )
+                if cached_obs is not None and cached_obs.get("source") == "drop_probe":
+                    evidence[pid] = cached_obs
+                else:
+                    to_probe.append(item)
+            if to_probe:
+                with self.peer_health_lock:
+                    probed_rows = self.peer_health.check(to_probe)
+                if presence_cache is not None:
+                    presence_cache.update([
+                        r for r in probed_rows if r.get("online") is not None or r.get("presenceSource") != "unknown"
+                    ])
+                for r in probed_rows:
+                    pid = r["peerId"]
+                    latest = (
+                        presence_cache.get(pid)
+                        if presence_cache is not None and not checked_inputs.get(pid, {}).get("isSelf")
+                        else None
+                    )
+                    evidence[pid] = latest if (latest is not None and latest.get("source") == "drop_probe") else r
+            for peer_id, row in devices.items():
+                health = evidence.get(peer_id, {})
+                probe_input = checked_inputs.get(peer_id, {})
+                is_self = bool(probe_input.get("isSelf"))
+                classified = classify_agent_presence(health)
+                ev_source = str(health.get("presenceSource") or health.get("source") or "unknown")
+                lan_probed = not is_self and (
+                    bool(health.get("lanReachable"))
+                    or any(isinstance(url, str) and url.startswith(("http://", "https://"))
+                           for url in probe_input.get("lanEndpoints", []))
+                )
+                http_probed = not is_self and (
+                    lan_probed
+                    or bool(health.get("httpReachable"))
+                    or str(probe_input.get("endpoint", "")).startswith(("http://", "https://"))
+                )
+                # PeerHealth's self shortcut proves this process is alive;
+                # it does not send an HTTP request. No endpoint is likewise
+                # untested, not a failed connectivity measurement.
+                row.update(
+                    online=classified["online"],
+                    presence_state=classified["presence_state"],
+                    observed_at=classified["observed_at"],
+                    source=classified["source"],
+                    last_seen=health.get("lastSeen", ""),
+                    checked_at=health.get("checkedAt", classified["observed_at"]),
+                    evidence_source=(
+                        ev_source
+                        if classified["online"] is not None or ev_source in {"self", "http", "heartbeat", "drop_probe"}
+                        else "unknown"
+                    ),
+                    http_probe_performed=http_probed,
+                    lan_probe_performed=lan_probed,
+                    http_reachable=health.get("httpReachable") if http_probed else None,
+                    lan_reachable=health.get("lanReachable") if lan_probed else None,
+                )
+            result = {"self_id": self.store.peer_id, "membership": space["membership"], "ai_access": space["ai_access"],
+                "devices": list(devices.values())[:64], "friends": friend_rows,
+                "evidence_note": "online=null means unknown; membership is not proof of connectivity. evidence_source=self proves only the executing process is alive; no HTTP/LAN probe is performed for self. Reachability=null means untested, not failed. HTTP failure alone does not prove offline."}
+        elif name == "ryn_inspect_services":
+            access = getattr(self.app.state, "ai_access", None)
+            result = {"models": self.catalog.list_models(), "friend_grants": access.store.list() if access else [],
+                      "friend_grants_scope": {"provider_peer_id": self.store.peer_id, "direction": "local_outgoing",
+                                              "remote_provider_grants": "unknown"}}
+        return result

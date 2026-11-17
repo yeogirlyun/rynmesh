@@ -117,6 +117,13 @@ def storage_relief(trigger, *, archived, before_bytes, after_bytes, tasks):
 
 
 def failure(stage, exc, *, elapsed_seconds=None, diagnostics=None, **context_fields):
+    if stage == "task_cleanup":
+        module = context_fields.get("module", "unknown")
+        if not isinstance(module, str) or not _SAFE_ENUM.fullmatch(module):
+            module = "unknown"
+        name = re.sub(r"[^A-Za-z0-9_]", "", type(exc).__name__)[:80]
+        _log.warning("agent_failure stage=task_cleanup module=%s exception_type=%s", module, name)
+        return
     chain, seen, current = [], set(), exc if isinstance(exc, BaseException) else None
     while current is not None and id(current) not in seen and len(chain) < 5:
         seen.add(id(current))
