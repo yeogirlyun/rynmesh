@@ -2038,6 +2038,19 @@ class AgentRuntime(AgentLoop):
             selected_model = self._model_metadata(values["model_id"])
             if selected_model is None or not selected_model.get("available") or selected_model.get("agent_supported") is not True:
                 raise AgentError("agent_model_unavailable")
+        if "default_subagent_model_id" in values:
+            model_id = values["default_subagent_model_id"]
+            if not isinstance(model_id, str) or len(model_id) > 1024:
+                raise AgentError("agent_invalid_settings")
+            if model_id:
+                model = self._model_metadata(model_id)
+                if model is None or not model.get("available") or model.get("agent_supported") is not True:
+                    raise AgentError("agent_model_unavailable")
+        if values.get("default_subagent_reasoning_effort") is not None:
+            try:
+                reasoning.validate_effort(values["default_subagent_reasoning_effort"])
+            except ValueError:
+                raise AgentError("agent_invalid_reasoning_effort") from None
         if ("max_context_chars" in values and values["max_context_chars"] is not None
                 and (type(values["max_context_chars"]) is not int or not 4000 <= values["max_context_chars"] <= 2000000)):
             raise AgentError("agent_invalid_settings")
@@ -2128,6 +2141,33 @@ class AgentRuntime(AgentLoop):
         if hasattr(self.catalog, "get_model"):
             return sanitized(self.catalog.get_model(model_id))
         return next((row for row in self.models() if row.get("id") == model_id), None)
+
+    def _resolve_subagent_spawn(self, parent: dict, args: dict) -> dict:
+        """Resolve catalog capabilities outside the active-store transaction."""
+        settings = self.settings()
+        fork_all = args.get("fork_turns") == "all"
+        model_id = (parent["model_id"] if fork_all else
+                    args.get("model_id") or settings.get("default_subagent_model_id") or parent["model_id"])
+        model = self._model_metadata(model_id)
+        if model is None or not model.get("available") or model.get("agent_supported") is not True:
+            choices = sorted(row["id"] for row in self.models() if row.get("available") and row.get("agent_supported") is True)[:5]
+            raise AgentToolRejected("agent_subagent_model_unknown", correction="Choose an available agent model: " + ", ".join(choices))
+        explicit = not fork_all and args.get("reasoning_effort") is not None
+        requested = (parent.get("reasoning_effort") if fork_all else args.get("reasoning_effort") or
+                     settings.get("default_subagent_reasoning_effort") or parent.get("reasoning_effort"))
+        effort = None
+        if requested is not None:
+            try:
+                effort = reasoning.validate(model, requested)
+            except AgentError:
+                if explicit:
+                    supported = reasoning.metadata(model.get("supported_reasoning_efforts")).get("supported_reasoning_efforts", [])
+                    raise AgentToolRejected("agent_reasoning_effort_unsupported",
+                        correction="Supported reasoning efforts for this model: " + (", ".join(supported) or "none exposed")) from None
+        capabilities = reasoning.metadata(model.get("supported_reasoning_efforts"), model.get("default_reasoning_effort"))
+        return {**args, "resolved_model_id": model_id, "resolved_effort": effort,
+                "effective_effort": effort or capabilities.get("default_reasoning_effort"),
+                "resolved_destination": self._destination(model)}
 
     def preview_model_switch(self, task_id: str, model_id: str) -> dict:
         return model_switch.preview(self, task_id, model_id)

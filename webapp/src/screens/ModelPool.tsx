@@ -218,6 +218,13 @@ export default function ModelPool({ sources, cli, native, peers, loading, error,
     setAgentErrors(value => ({ ...value, settings: false }));
     setFeedback(text("助手默认模型已更新，分享设置保持不变。", "Default model updated. Sharing is unchanged."));
   });
+  const chooseSubagentModel = (model_id: string) => void run("subagent-model", async () => {
+    const updated = await rynAgent.updateSettings({ default_subagent_model_id: model_id });
+    ++settingsWriteRevision.current;
+    setSettings(updated);
+    setAgentErrors(value => ({ ...value, settings: false }));
+    setFeedback(text("子 agent 默认模型已保存。", "Subagent default model saved."));
+  });
   const unavailableLabel = (row: PoolRow) => !row.catalog ? agentLoading.models ? text("正在读取助手模型…", "Loading assistant models…") : text("助手状态暂不可用", "Assistant status unavailable")
     : !row.catalog.available ? text("模型当前不可用", "Model unavailable")
     : row.catalog.source === "peer" && row.catalog.destination_binding_supported === false ? text("接入信息暂不可核对", "Destination unavailable")
@@ -276,6 +283,15 @@ export default function ModelPool({ sources, cli, native, peers, loading, error,
     <section className="mp-agent-strip" aria-label={text("可选助手", "Optional assistant")}>
       <span className="mp-agent-icon"><Sparkles size={19} /></span><div><strong>{text("Ryn 助手", "Ryn Agent")}</strong><small>{!settings ? agentLoading.settings ? text("正在读取助手状态…", "Loading assistant status…") : text("助手状态暂不可用", "Assistant status unavailable") : settings.enabled ? text("已启用", "Enabled") : text("可选功能", "Optional")}</small>{settings && <p>{settings.enabled ? text("默认使用 ", "Default model: ") + (catalog.find(model => model.id === settings.model_id)?.name || settings.model_id || text("尚未选择", "Not selected")) : text("让 Ryn 帮你处理任务，也可以继续手动操作。", "Let Ryn handle tasks, or keep using the manual controls.")}</p>}</div>
       <Link to={href("/agent")}>{!settings || settings.enabled ? text("打开助手 →", "Open assistant →") : text("了解并启用 →", "Explore and enable →")}</Link>
+      {settings && <label>{text("子 agent 默认模型", "Subagent default model")}
+        <select aria-label={text("子 agent 默认模型", "Subagent default model")} value={settings.default_subagent_model_id || ""}
+          disabled={Boolean(busy) || agentLoading.models || agentErrors.models} onChange={event => chooseSubagentModel(event.target.value)}>
+          <option value="">{text("沿用父任务模型", "Use parent task model")}</option>
+          {settings.default_subagent_model_id && !catalog.some(model => model.id === settings.default_subagent_model_id && canUseAgentModel(model)) &&
+            <option value={settings.default_subagent_model_id} disabled>{settings.default_subagent_model_id} ({text("当前不可用", "Unavailable")})</option>}
+          {catalog.filter(canUseAgentModel).map(model => <option key={model.id} value={model.id}>{model.name}</option>)}
+        </select>
+      </label>}
     </section>
     {hasAnyUsage && (
       <section className="mp-codex-usage-card" aria-label={text("Token 每日用量", "Daily token usage")}>
