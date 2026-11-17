@@ -129,7 +129,7 @@ def test_resolution_is_stable_and_never_repeats_a_note():
 
 def test_override_validation_rejects_unknown_profiles_and_route_mismatch():
     lookup = {CODEX_MODEL: codex_row(), API_MODEL: api_row("anthropic_messages")}.get
-    assert model_profiles.validate_overrides({CODEX_MODEL: "generic"}, lookup) == {CODEX_MODEL: "generic"}
+    assert model_profiles.validate_overrides({CODEX_MODEL: "generic"}, lookup) == {CODEX_MODEL: {"profile": "generic"}}
     for value, code in (({CODEX_MODEL: "bogus"}, "model_profile_overrides_invalid"),
                         ({API_MODEL: "codex-cli"}, "model_profile_route_mismatch"),
                         ({"": "generic"}, "model_profile_overrides_invalid"),
@@ -339,7 +339,7 @@ def test_codex_and_api_routes_receive_their_own_notes_and_parameters_at_the_prov
     assert codex_record | {"instructions_sha256": None} == {
         "catalog": model_profiles.CATALOG, "profile": "codex-cli", "revision": 1, "basis": "route", "route": "codex_cli",
         "fallback_reason": None, "override_status": None, "notes": ["codex_backend_tools"], "instructions": "sent",
-        "instructions_sha256": None, "reasoning_effort": "high"}
+        "instructions_sha256": None, "reasoning_effort": "high", "facts": dict.fromkeys(model_profiles.FACTS)}
     assert (api_record["profile"], api_record["basis"], api_record["fallback_reason"], api_record["route"]) == (
         "generic", "fallback", "no_route_profile", "anthropic_messages")
     assert api_record["notes"] == ["image_input_unavailable"] and api_record["reasoning_effort"] is None

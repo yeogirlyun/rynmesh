@@ -44,6 +44,14 @@ def _cli_output(row, upstream):
         row.update(max_output_tokens=4096, max_output_tokens_known=False, max_output_basis="unknown_fallback")
 
 
+def _model_facts(row, upstream):
+    from .model_profiles import CAPACITY_FACTS, FACTS, _valid_fact
+    # Capacity values retain their existing known/basis handling above.
+    for name in FACTS.keys() - CAPACITY_FACTS:
+        if name in upstream and _valid_fact(name, upstream[name]):
+            row[name] = upstream[name]
+
+
 class ModelCatalog:
     def __init__(self, services, store):
         self.services, self.store = services, store
@@ -185,6 +193,7 @@ class ModelCatalog:
                    "sharing_configuration_known": False,
                    "share_scope": ("personal_space" if "personal-space-only" in capabilities else
                                    "friends" if value.get("access_policy") == "explicit_friends" else "none") if own else "unknown"}
+            _model_facts(row, manifest)
             row.update(catalog_image_fields(row, service_record=value))
             if is_cli:
                 _cli_output(row, {"id": manifest.get("model", "")})
@@ -250,6 +259,7 @@ class ModelCatalog:
                             rows[identifier]["context_window_basis"] = "provider_cli_model_metadata"
                         if adapter == "codex_cli":
                             rows[identifier].update(reasoning_metadata(upstream.get("supported_reasoning_efforts"), upstream.get("default_reasoning_effort")))
+                        _model_facts(rows[identifier], upstream)
                         rows[identifier].update(catalog_image_fields(rows[identifier], service_record=value, cli_model_row=upstream))
         # Include drafts/offline sources so absence never masquerades as deletion.
         for service_id, (record, model) in source_index.items():
@@ -345,10 +355,12 @@ class ModelCatalog:
                     self._bind_cli(rows[identifier], manager, model["id"], cached=display_only)
                 if row["adapter"] == "codex_cli":
                     rows[identifier].update(reasoning_metadata(model.get("supported_reasoning_efforts"), model.get("default_reasoning_effort")))
+                _model_facts(rows[identifier], model)
                 rows[identifier].update(catalog_image_fields(rows[identifier], cli_model_row=model))
             default = next((model for model in upstream if model.get("default")), {})
             if row["adapter"] == "codex_cli":
                 row.update(reasoning_metadata(default.get("supported_reasoning_efforts"), default.get("default_reasoning_effort")))
+            _model_facts(row, default)
             row.update(catalog_image_fields(row, cli_model_row=default))
             from ..llm_package.cli_models import context_metadata
             row.update(context_metadata(upstream, fallback=row["context_window"], fallback_basis=row.get("context_window_basis", "unknown_fallback")))
