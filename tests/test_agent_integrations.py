@@ -47,7 +47,7 @@ def add_source(app, *, support="supported", models=None):
     return record, "local/" + sources.model_service_id(record, record["models"][0])
 
 
-def fake_upstream(monkeypatch, messages, *, json_only=False, finish_reason=None, usage="default"):
+def fake_upstream(monkeypatch, messages, *, json_only=False, finish_reason=None, usage="default", compaction_summary=None):
     requests = []
     returned_usage = {"prompt_tokens": 20, "completion_tokens": 10} if usage == "default" else usage
 
@@ -76,6 +76,9 @@ def fake_upstream(monkeypatch, messages, *, json_only=False, finish_reason=None,
     @contextmanager
     def urlopen(request, **kwargs):
         requests.append(json.loads(request.data))
+        if compaction_summary is not None and str(requests[-1]["messages"][-1].get("content") or "").startswith("Server compaction request:"):
+            yield Response({"role": "assistant", "content": compaction_summary})
+            return
         message = messages.pop(0)
         yield Response(message(requests[-1]) if callable(message) else message)
 
@@ -382,7 +385,9 @@ def test_runtime_real_tools_preview_approval_change_and_verify(node, monkeypatch
         call("ryn_list_models", call_id="inspect"),
         call("ryn_set_model_sharing", json.dumps({"model_id": model_id, "enabled": True}), call_id="change"),
         call("ryn_list_models", call_id="verify"), {"role": "assistant", "content": "Verified model-a shared; model-b private."},
-        passed_checker], json_only=True)
+        passed_checker], json_only=True,
+        # S12-I16 retains usage fields, so these real model listings can trigger compaction.
+        compaction_summary="Owner requested sharing only model-a. Inspection and approved sharing change succeeded; verify current sharing.")
     runtime = AgentRuntime(AgentStore(store.home / "agent-test", peer_box.load_or_create_messaging_key(store.home / "messaging.x25519")), model, tools, catalog)
     runtime.update_settings({"enabled": True, "model_id": model_id, "verify_text_responses": True})
     task = runtime.create({"message": "Inspect and share only model-a"})
@@ -402,7 +407,9 @@ def test_runtime_real_tools_preview_approval_change_and_verify(node, monkeypatch
     done = runtime.get(task["id"])
     assert done["status"] == "completed", done
     assert sources.read()[record["id"]]["shared_models"] == ["model-a"]
-    evidence = json.loads(requests[-2]["messages"][-2]["content"])
+    evidence = next(json.loads(message["content"]) for request in reversed(requests)
+                    for message in reversed(request["messages"])
+                    if message.get("role") == "tool" and message.get("tool_call_id") == "verify")
     assert [row["sharing"] for row in evidence["models"]] == [True, False]
     assert "secret-do-not-export" not in json.dumps(done)
     assert all(not request.get("stream") for request in requests)
