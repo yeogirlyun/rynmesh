@@ -86,6 +86,7 @@ def rewrite(row: dict, control: dict, emit, *, data: dict | None = None, store: 
     from . import memory, memory_integration
 
     row.pop("retired_writes", None)
+    row.pop("task_grants", None)
     index, replacement = control["message_index"], control.get("message")
     messages = row["messages"]
     previous_revision = row.get("conversation_revision", 0)

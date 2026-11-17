@@ -47,6 +47,7 @@ from .execution_policy import (
     decide,
     is_full_automatic,
     parallel_read,
+    task_grant_proof,
     verified_read_classification,
 )
 from .prompt import (
@@ -2171,6 +2172,7 @@ class AgentLoop:
                 nonlocal authorized_classification
                 row = task(data, selected["id"])
                 authorization = "read"
+                grant_proof = None
                 if row["status"] != "running" or not data["settings"]["enabled"] or row["control_revision"] != selected["_run_control_revision"]:
                     row["in_flight"] = None
                     row["elapsed_seconds"] += time.monotonic() - started
@@ -2302,6 +2304,9 @@ class AgentLoop:
                         raise AgentError("agent_approval_preview_changed")
                     if automatic and not approved:
                         event(row, "automatically_authorized", tool=call["name"], arguments_sha256=digest(call["arguments"]), preview=preview)
+                    if decision.basis == "task_grant" and not approved:
+                        grant_proof = task_grant_proof(call, meta, row)
+                        event(row, "task_grant_authorized", tool=call["name"], **grant_proof)
                     authorization = "approved" if approved else decision.basis
                 usage_reservation = budget.reserve(row, "tool", call["name"])
                 authorized_classification = classification
@@ -2316,7 +2321,8 @@ class AgentLoop:
                     "preview_sha256": digest(bound_preview(preview)), "goal_revision": row["goal"]["revision"],
                     "scope_revision": row["scope_revision"], "context_epoch": row.get("context_epoch", 0),
                     "control_revision": row["control_revision"],
-                    **({"approval_id": approved["id"]} if authorization == "approved" else {})}
+                    **({"approval_id": approved["id"]} if authorization == "approved" else {}),
+                    **(grant_proof or {})}
                 verification.record(row, call, "intent", now(), flight=row["in_flight"])
                 row["approved"] = None  # One-shot capability, consumed durably before execution.
                 event(row, "tool_started", tool=call["name"], call_id=call["call_id"],

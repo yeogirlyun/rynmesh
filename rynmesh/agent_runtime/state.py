@@ -182,6 +182,7 @@ def record_goal_history(row: dict) -> None:
 def owner_update(row: dict, message: dict) -> None:
     """Called only after the authenticated owner entry point validates input."""
     record_goal_history(row)
+    row.pop("task_grants", None)
     goal = row["goal"]
     goal["revision"] += 1
     goal["constraints"].append({"id": "constraint:" + message["message_id"], "text": message["content"], "source": "user",
