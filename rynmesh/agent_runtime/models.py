@@ -32,6 +32,18 @@ def _format_catalog_error(code: str) -> str:
     return _SPACE_CATALOG_ERROR_REASONS.get(code, code)
 
 
+def _cli_output(row, upstream):
+    value = upstream.get("max_output_tokens")
+    basis = "provider_cli_model_metadata"
+    if type(value) is not int:
+        value = model_settings._known_vendor_max_output_tokens(upstream.get("id", ""))
+        basis = "vendor_family_default"
+    if type(value) is int and 0 < value <= row["context_window"]:
+        row.update(max_output_tokens=value, max_output_tokens_known=True, max_output_basis=basis)
+    else:
+        row.update(max_output_tokens=4096, max_output_tokens_known=False, max_output_basis="unknown_fallback")
+
+
 class ModelCatalog:
     def __init__(self, services, store):
         self.services, self.store = services, store
@@ -40,6 +52,11 @@ class ModelCatalog:
         # are rebuilt from the current provider and exact model binding.
         self._cli_metadata = {}
         self._cli_metadata_lock = threading.Lock()
+        self._learned_output_limits = {}
+
+    def learn_output_limit(self, target, cap):
+        with self._cli_metadata_lock:
+            self._learned_output_limits[(target["id"], target.get("destination_revision", ""))] = cap
 
     @staticmethod
     def destination(row):
@@ -161,12 +178,16 @@ class ModelCatalog:
                    ),
                    "streaming": "streaming" in capabilities or "buffered-streaming" in capabilities,
                    "max_output_tokens": manifest.get("max_output_tokens", 4096),
+                   "max_output_tokens_known": type(manifest.get("max_output_tokens")) is int,
+                   "max_output_basis": "provider_manifest" if type(manifest.get("max_output_tokens")) is int else "unknown_fallback",
                    "sharing": bool(value.get("accepting_orders", value.get("publication_enabled", False))) if own else True,
                    "sharing_basis": "local_service_advertisement" if own else "remote_catalog_advertisement",
                    "sharing_configuration_known": False,
                    "share_scope": ("personal_space" if "personal-space-only" in capabilities else
                                    "friends" if value.get("access_policy") == "explicit_friends" else "none") if own else "unknown"}
             row.update(catalog_image_fields(row, service_record=value))
+            if is_cli:
+                _cli_output(row, {"id": manifest.get("model", "")})
             if not own and "context-estimate:v2" not in capabilities:
                 # Legacy peer providers without context-estimate:v2 admit an order only
                 # when its prompt's UTF-8 bytes plus output fit the window (1 byte/token).
@@ -208,6 +229,7 @@ class ModelCatalog:
                     from ..llm_package.cli_models import context_metadata
                     fallback_basis = row.get("context_window_basis", "unknown_fallback")
                     row.update(context_metadata(value.get("cli_models", []), fallback=row["context_window"], fallback_basis=fallback_basis))
+                    _cli_output(row, next((model for model in value.get("cli_models", []) if model.get("default")), {}))
                     if row["context_window_known"]:
                         row["context_window_basis"] = "provider_cli_model_metadata"
                     for upstream in value.get("cli_models", []):
@@ -223,11 +245,7 @@ class ModelCatalog:
                             "destination_revision": peer_binding.revision(specific, self.store.peer_id),
                             "destination_binding_supported": child_bound is not None, "expected_model_binding": child_bound}
                         rows[identifier].update(context_metadata([upstream], upstream["id"], fallback=row["context_window"], fallback_basis=fallback_basis))
-                        max_output = upstream.get("max_output_tokens")
-                        if not isinstance(max_output, int) and rows[identifier].get("context_window_known"):
-                            max_output = model_settings._known_vendor_max_output_tokens(upstream["id"])
-                        if isinstance(max_output, int) and 0 < max_output <= rows[identifier]["context_window"]:
-                            rows[identifier]["max_output_tokens"] = max_output
+                        _cli_output(rows[identifier], upstream)
                         if rows[identifier]["context_window_known"]:
                             rows[identifier]["context_window_basis"] = "provider_cli_model_metadata"
                         if adapter == "codex_cli":
@@ -265,6 +283,8 @@ class ModelCatalog:
                 "streaming": False,
                 "agent_supported": True, "tool_support": support, "agent_support_basis": "adapter_contract",
                 "context_window": policy["effective"]["context_window"], "max_output_tokens": policy["effective"]["max_output_tokens"],
+                "max_output_tokens_known": policy["effective"]["max_output_tokens_known"],
+                "max_output_basis": policy["effective"]["max_output_basis"],
                 "context_window_basis": policy["context_window_basis"], "context_window_known": policy["context_window_known"],
                 "sharing": model in sources.shared_models(record), "share_scope": policy["effective"]["share_scope"],
                 "sharing_basis": "local_configuration", "sharing_configuration_known": True,
@@ -320,11 +340,7 @@ class ModelCatalog:
                 from ..llm_package.cli_models import context_metadata
                 local_fallback_basis = row.get("context_window_basis", "unknown_fallback")
                 rows[identifier].update(context_metadata([model], model["id"], fallback=row["context_window"], fallback_basis=local_fallback_basis))
-                max_output = model.get("max_output_tokens")
-                if not isinstance(max_output, int) and rows[identifier].get("context_window_known"):
-                    max_output = model_settings._known_vendor_max_output_tokens(model["id"])
-                if isinstance(max_output, int) and 0 < max_output <= rows[identifier]["context_window"]:
-                    rows[identifier]["max_output_tokens"] = max_output
+                _cli_output(rows[identifier], model)
                 if row["available"]:
                     self._bind_cli(rows[identifier], manager, model["id"], cached=display_only)
                 if row["adapter"] == "codex_cli":
@@ -336,11 +352,7 @@ class ModelCatalog:
             row.update(catalog_image_fields(row, cli_model_row=default))
             from ..llm_package.cli_models import context_metadata
             row.update(context_metadata(upstream, fallback=row["context_window"], fallback_basis=row.get("context_window_basis", "unknown_fallback")))
-            default_output = default.get("max_output_tokens")
-            if not isinstance(default_output, int) and row.get("context_window_known"):
-                default_output = model_settings._known_vendor_max_output_tokens(default.get("id", ""))
-            if isinstance(default_output, int) and 0 < default_output <= row["context_window"]:
-                row["max_output_tokens"] = default_output
+            _cli_output(row, default)
         usage_store = getattr(sources, "usage_store", None)
         if usage_store is None:
             from pathlib import Path
@@ -355,6 +367,10 @@ class ModelCatalog:
         space_catalog = self.services.get("space_catalog") if isinstance(self.services, dict) else None
         last_errors = getattr(space_catalog, "last_errors", None)
         for row in rows.values():
+            with self._cli_metadata_lock:
+                learned = self._learned_output_limits.get((row["id"], row.get("destination_revision", "")))
+            if learned is not None and row.get("max_output_tokens_known") is False:
+                row.update(max_output_tokens=learned, max_output_tokens_known=True, max_output_basis="upstream_learned")
             ms = row.get("model_settings")
             policy = (
                 ms.get("effective")
