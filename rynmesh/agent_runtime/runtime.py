@@ -152,6 +152,8 @@ def public_task(row: dict, *, summary: bool = False, settings: dict | None = Non
     result["completion_event_seq"] = next((item["seq"] for item in reversed(row.get("events", []))
                                            if item["type"] == "completed"), 0)
     result.setdefault("archived", False)
+    result["waiting_for_subagents"] = bool(row.get("subagent_wait") and row["status"] == "queued"
+                                           and row.get("queue") and row["queue"][0]["call_id"] == row["subagent_wait"]["call_id"])
     result["skills"] = [{key: value for key, value in skill.items() if key != "content"} for skill in row.get("skills", [])]
     result["budget"] = budget.public(row)
     result["run_timing"] = timing.snapshot(row, active_run=active_run, monotonic_now=monotonic_now)
@@ -2513,7 +2515,7 @@ class AgentRuntime(AgentLoop):
                 return current
             # Unchanged since the caller's copy: only fields that move on their own.
             return {"id": task_id, "revision": row["revision"], "unchanged": True,
-                    **{key: current[key] for key in ("run_timing", "budget", "allowed_actions", "run_state", "streaming", "subagents") if key in current}}
+                    **{key: current[key] for key in ("run_timing", "budget", "allowed_actions", "run_state", "streaming", "subagents", "waiting_for_subagents") if key in current}}
         found = self.store.inspect(view)
         if found is not None:
             return found
@@ -3004,8 +3006,12 @@ class AgentRuntime(AgentLoop):
                 row.update(steps=0, elapsed_seconds=0.0)
                 budget.restart_segment_audit(row)
             event(row, "goal_changed" if intent == "steer" else "information_added" if intent else "message_added", goal_revision=row["goal"]["revision"])
-            close_queue(row, event, "agent_owner_changed")
-            settle(row, event, data=data)
+            # A suspended wait must return its steering receipt before the
+            # owner turn cancels the remaining proposals and enters history.
+            if not (row.get("subagent_wait") and row["status"] == "queued" and row.get("queue")):
+                row.pop("subagent_wait", None)
+                close_queue(row, event, "agent_owner_changed")
+                settle(row, event, data=data)
             if row.get("subagent_ids") and "@" in content:
                 routed_ids: set[str] = set()
                 for token in re.findall(r"@([A-Za-z0-9_-]+)", content):
@@ -4472,7 +4478,7 @@ class AgentRuntime(AgentLoop):
                     "pending_control": bool(row.get("pending_control")),
                     "kind": (row.get("in_flight") or {}).get("kind")}
                     for key, row in data["tasks"].items()},
-                "queued": any(row["status"] == "queued" and retry_policy.ready(row) for row in data["tasks"].values()),
+                "queued": any(row["status"] == "queued" and retry_policy.ready(row) and subagents.wait_ready(data, row) for row in data["tasks"].values()),
                 "waiting": any(row["status"] == "waiting_approval" and row.get("queue") for row in data["tasks"].values()),
                 "unresolved": next((row["id"] for row in data["tasks"].values()
                                     if ambiguous(row) and row.get("reconciliation", {}).get("state") == "pending"), None)})
@@ -4484,7 +4490,7 @@ class AgentRuntime(AgentLoop):
                 if peek["waiting"]:
                     self._refresh_waiting_reads(self._waiting_policy_snapshot())
                     # A released dialog is claimable in this same tick.
-                    peek["queued"] = self.store.inspect(lambda data: any(row["status"] == "queued" and retry_policy.ready(row) for row in data["tasks"].values()))
+                    peek["queued"] = self.store.inspect(lambda data: any(row["status"] == "queued" and retry_policy.ready(row) and subagents.wait_ready(data, row) for row in data["tasks"].values()))
                 unresolved = task(self.store.read(), peek["unresolved"]) if peek["unresolved"] else None
                 if unresolved:
                     self._run_lock.release()
@@ -4500,8 +4506,10 @@ class AgentRuntime(AgentLoop):
                         if row["status"] == "queued":
                             row["status"] = "paused"
                         continue
-                    if row["status"] != "queued" or not retry_policy.ready(row):
+                    if row["status"] != "queued" or not retry_policy.ready(row) or not subagents.wait_ready(data, row):
                         continue
+                    if row.get("subagent_wait") and (not row["queue"] or row["queue"][0]["call_id"] != row["subagent_wait"]["call_id"]):
+                        row.pop("subagent_wait")
                     retry_policy.charge_wait(row)
                     if budget.time_remaining(row) <= 0:
                         budget.stop_for_limit(row, "agent_time_budget_exhausted")
