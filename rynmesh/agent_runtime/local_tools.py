@@ -963,7 +963,8 @@ class LocalTools:
         directory = self._baseline_dir(task_id)
         from ..file_transactions import file_transaction
         if directory is not None:
-            with file_transaction(directory.parent / ".review.lock"):
+            review = self.file_review(task_id, str(directory.parent))
+            with file_transaction(review.lock), review._usage_transaction():
                 if directory is not None and directory.is_dir():
                     for item in directory.iterdir():
                         try:
@@ -974,6 +975,8 @@ class LocalTools:
                         directory.rmdir()
                     except OSError:
                         pass
+                if not directory.exists():
+                    review._adjust_usage(-review._usage["tasks"].get(directory.name, 0))
         if getattr(self, "_browser", None) is not None:
             self._browser.close_task(task_id)
         if getattr(self, "native_computer", None) is not None:
