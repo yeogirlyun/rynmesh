@@ -216,7 +216,7 @@ it("keeps a chat-only default unselectable while another supported model remains
   const defaultRow = (await screen.findByText("助手默认")).closest(".mp-model") as HTMLElement;
   expect(within(defaultRow).queryByRole("button", { name: /用于助手/ })).not.toBeInTheDocument();
   expect(within(defaultRow).getByText("不支持助手工具")).toBeVisible();
-  const otherRow = screen.getByText("model-b").closest(".mp-model") as HTMLElement;
+  const otherRow = screen.getByText("model-b", { selector: ".mp-model strong" }).closest(".mp-model") as HTMLElement;
   await user.click(within(otherRow).getByRole("button", { name: "用于助手" }));
   await waitFor(() => expect(within(otherRow).getByText("助手默认")).toBeVisible());
   expect(settingsWrites).toHaveBeenCalledExactlyOnceWith({ model_id: "local/b" });

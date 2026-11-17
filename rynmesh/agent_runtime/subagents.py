@@ -10,6 +10,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
 
+from ..llm_package.reasoning import validate_effort
+
 from . import budget
 from .control import ambiguous, close_queue, settle
 from .protocol import event, event_result, now
@@ -176,7 +178,7 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
                         "items": {"type": "string", "minLength": 1, "maxLength": 260},
                     },
                     "model_id": {"type": "string", "minLength": 1, "maxLength": 128},
-                    "reasoning_effort": {"type": "string", "enum": ["low", "medium", "high"]},
+                    "reasoning_effort": {"type": "string"},
                 },
             },
         },
@@ -418,8 +420,11 @@ def validate_subagent_tool(name: str, arguments: dict) -> dict:
             write_scope = [item.strip().replace("\\", "/") for item in raw_scope[:32]]
         model_id = str(arguments.get("model_id") or "").strip() or None
         effort = str(arguments.get("reasoning_effort") or "").strip().lower() or None
-        if effort is not None and effort not in {"low", "medium", "high"}:
-            raise AgentToolRejected("agent_invalid_tool_arguments", correction="reasoning_effort must be low, medium, or high.")
+        if effort is not None:
+            try:
+                validate_effort(effort)
+            except ValueError:
+                raise AgentToolRejected("agent_invalid_tool_arguments", correction="reasoning_effort must be a supported effort name.") from None
         return {
             "task_name": _slug_task_name(task_name),
             "prompt": prompt,
@@ -724,9 +729,9 @@ def spawn_agent_in_tx(data: dict, parent_row: dict, args: dict) -> dict:
     fork_turns = str(args.get("fork_turns") or "none")
     write_scope = list(args.get("write_scope") or [])
     prompt = str(args.get("prompt") or "").strip()
-    model_id = str(args.get("model_id") or parent_row.get("model_id") or settings.get("model_id") or "")
-    explicit_effort = args.get("reasoning_effort") or parent_row.get("reasoning_effort")
-    effort = explicit_effort or ("low" if role == "awaiter" else "medium")
+    model_id = str(args.get("resolved_model_id") or parent_row.get("model_id") or settings.get("model_id") or "")
+    explicit_effort = args.get("resolved_effort")
+    effort = args.get("effective_effort")
 
     parent_perm = str(parent_row.get("permission_mode") or settings.get("permission_mode") or "workspace")
     if role == "explorer" or parent_perm == "read_only":
@@ -826,8 +831,9 @@ def spawn_agent_in_tx(data: dict, parent_row: dict, args: dict) -> dict:
     child_row["skills"] = copy.deepcopy(parent_row.get("skills") or [])
     child_row["verify_text_responses"] = False
     child_row["response_language"] = parent_row.get("response_language") or "zh-CN"
-    child_row["model_destination"] = copy.deepcopy(parent_row.get("model_destination"))
-    if parent_row.get("model_destination_confirmed"):
+    same_model = model_id == parent_row.get("model_id")
+    child_row["model_destination"] = copy.deepcopy(parent_row.get("model_destination") if same_model else args["resolved_destination"])
+    if same_model and parent_row.get("model_destination_confirmed"):
         child_row["model_destination_confirmed"] = True
     if parent_row.get("scope"):
         child_row["scope"] = copy.deepcopy(parent_row["scope"])
@@ -1473,7 +1479,7 @@ def project_subagent_summary(child_row: dict) -> dict:
         "is_waiting": is_waiting,
         "closed": bool(meta.get("closed")),
         "model_id": str(child_row.get("model_id") or ""),
-        "reasoning_effort": str(child_row.get("reasoning_effort") or meta.get("display_effort") or "medium"),
+        "reasoning_effort": str(child_row.get("reasoning_effort") or meta.get("display_effort") or ""),
         "steps": steps,
         "step_index": step_index,
         "estimated_total_steps": est_total,

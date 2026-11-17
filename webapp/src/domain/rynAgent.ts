@@ -83,6 +83,8 @@ export interface AgentSettings {
   storage_health?: AgentStorageHealth;
   enabled: boolean;
   model_id: string;
+  default_subagent_model_id?: string;
+  default_subagent_reasoning_effort?: string | null;
   permission_mode: "workspace" | "read_only" | "confirm_changes" | "automatic";
   allowed_write_tools: string[];
   workspace_root?: string;
