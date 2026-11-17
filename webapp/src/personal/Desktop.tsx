@@ -54,6 +54,7 @@ export function DesktopPage() {
   const [error, setError] = useState("");
   const [confirmation, setConfirmation] = useState<"restart" | "quit" | null>(null);
   const [help, setHelp] = useState(false);
+  const chinese = (i18n.resolvedLanguage ?? i18n.language).startsWith("zh");
   const href = (path: string) => `${path}${demo ? "?client=fixture" : ""}`;
   useEffect(() => {
     if (!native) return;
@@ -96,7 +97,7 @@ export function DesktopPage() {
     {!native && !demo && <div className="pf-desktop-message">{t("personal.desktopControlsAreAvailableInTheInstalledWindowsApp")}</div>}
     <section className="pf-desktop-overview">
       <div className="pf-desktop-device"><DeviceArt /></div>
-      <div className="pf-desktop-overview-copy"><span className="pf-desktop-eyebrow">{t("personal.thisCOMPUTER")}</span><h2>{title}</h2><p>{status?.sharing ? t("personal.yourPermittedDevicesCanRequestAIFromThisNode") : t("personal.keepYourComputerConnectedOnYourTerms")}</p><div className="pf-desktop-badges"><span><i className={status?.node_online ? "online" : ""} />{status?.node_online ? t("personal.nodeRunning") : t("personal.nodeNotReady")}</span><span>{status ? t("personal.countAgentTasks", { count: status.agent_active_runs ?? 0 }) : t("personal.checkingTasks")}</span>{status && <span>{t("personal.countModelRequests", { count: status.active_tasks ?? 0 })}</span>}{status && (status.agent_waiting ?? 0) > 0 && <span>{t("personal.countWaitingForYou", { count: status.agent_waiting ?? 0 })}</span>}<span>{status?.awake_active ? t("personal.keepingSystemAwake") : t("personal.systemSleepAllowed")}</span></div></div>
+      <div className="pf-desktop-overview-copy"><span className="pf-desktop-eyebrow">{t("personal.thisCOMPUTER")}</span><h2>{title}</h2><p>{status?.sharing ? t("personal.yourPermittedDevicesCanRequestAIFromThisNode") : t("personal.keepYourComputerConnectedOnYourTerms")}</p><div className="pf-desktop-badges"><span><i className={status?.node_online ? "online" : ""} />{status?.node_online ? t("personal.nodeRunning") : t("personal.nodeNotReady")}</span><span>{status ? t("personal.countAgentTasks", { count: Math.max(status.agent_active_runs ?? 0, status.agent_tasks ?? 0) }) : t("personal.checkingTasks")}</span>{status && <span>{t("personal.countModelRequests", { count: Math.max(0, status.active_tasks - (status.agent_tasks ?? 0)) })}</span>}{status && (status.agent_waiting ?? 0) > 0 && <span>{t("personal.countWaitingForYou", { count: status.agent_waiting ?? 0 })}</span>}<span>{status?.awake_active ? t("personal.keepingSystemAwake") : t("personal.systemSleepAllowed")}</span></div></div>
       <button className="pf-button" disabled={busy || !status?.node_online || !status.configured || (!demo && !native)} onClick={() => void action(status?.sharing ? "pause" : "resume")}>{status?.sharing ? <Pause size={15} /> : <Play size={15} />}{status?.sharing ? t("personal.pauseAISharing") : t("personal.resumeAISharing")}</button>
     </section>
     {(error || notice) && <div className={`pf-desktop-message${error ? " error" : ""}`} role={error ? "alert" : "status"}>{error ? <Info size={17} /> : <Check size={17} />}<span>{error || notice}</span></div>}
@@ -107,7 +108,7 @@ export function DesktopPage() {
         <Toggle title={t("personal.keepRunningWhenClosed")} description={t("personal.closingTheWindowKeepsYourNodeAvailable")} checked={prefs?.background ?? false} disabled={disabled} onChange={() => void change("background")} />
       </Group>
       <Group icon={<Zap size={19} />} title={t("personal.availabilityRecovery")}>
-        <Toggle title={t("personal.keepAwakeWhileSharingAI")} description={t("personal.preventIdleSleepWhileSharingOrWorkingTheScreenCanTurnOff")} checked={prefs?.keep_awake ?? false} disabled={disabled || !prefs?.awake_supported} onChange={() => void change("keep_awake")} />
+        <Toggle title={chinese ? "共享 AI 或 Agent 任务运行时防止空闲休眠" : "Prevent idle sleep while sharing AI or running Agent tasks"} description={t("personal.preventIdleSleepWhileSharingOrWorkingTheScreenCanTurnOff")} checked={prefs?.keep_awake ?? false} disabled={disabled || !prefs?.awake_supported} onChange={() => void change("keep_awake")} />
         <Toggle title={t("personal.recoverTheNodeAutomatically")} description={t("personal.retryAfterAFailureWithALimitOfThreeAttempts")} checked={prefs?.auto_recover ?? false} disabled={disabled} onChange={() => void change("auto_recover")} />
         <div className="pf-desktop-recovery"><ShieldCheck size={16} /><span>{!status ? t("personal.waitingForNodeStatus") : status.node_online ? t("personal.nodeRespondingNormally") : status.recovery === "starting" ? t("personal.startingTheLocalNode") : status.recovery === "needs_attention" ? t("personal.automaticRecoveryStoppedRestartTheNodeOrOpenLogs") : status.recovery === "disabled" ? t("personal.automaticRecoveryIsTurnedOff") : status.recovery === "restarting" ? t("personal.restartingTheNode") : t("personal.waitingToRetry")}</span><small>{t("personal.count3Retries", { count: status?.recovery_attempts ?? 0 })}</small></div>
       </Group>

@@ -26,13 +26,13 @@ def test_desktop_control_requires_local_auth_even_with_network_key(tmp_path, mon
         assert client.post("/api/local/desktop/sharing", json={"enabled": True}).status_code == 403
         response = client.get("/api/local/desktop/status", headers={"x-ryn-local-token": "test-desktop-token"})
         assert response.status_code == 200
-        assert response.json() == {"desktop_managed": True, "configured": False, "sharing": False, "active_tasks": 0, "setup_active": False}
+        assert response.json() == {"desktop_managed": True, "configured": False, "sharing": False, "active_tasks": 0, "agent_tasks": 0, "agent_active_runs": 0, "agent_waiting": 0, "agent_task_titles": [], "setup_active": False}
         health = client.get("/api/local/desktop/health", headers={"x-ryn-local-token": "test-desktop-token"})
         assert health.status_code == 200
         assert health.json() == {"desktop_managed": True}
 
 
-def test_desktop_health_responds_while_status_waits_for_provider_settings(tmp_path, monkeypatch):
+def test_desktop_health_and_status_do_not_wait_for_provider_settings(tmp_path, monkeypatch):
     monkeypatch.setenv("RYNMESH_DESKTOP_MODE", "1")
     monkeypatch.delenv("RYNMESH_LLM_SERVICE_MANIFEST", raising=False)
     home = tmp_path / "node"
@@ -57,11 +57,11 @@ def test_desktop_health_responds_while_status_waits_for_provider_settings(tmp_pa
     with TestClient(app) as client, ThreadPoolExecutor(max_workers=2) as requests:
         status = requests.submit(client.get, "/api/local/desktop/status")
         try:
-            assert started.wait(2), "metadata request did not enter its provider read"
+            assert status.result(timeout=2).status_code == 200
             health = requests.submit(client.get, "/api/local/desktop/health").result(timeout=2)
             assert health.status_code == 200
             assert health.json() == {"desktop_managed": True}
-            assert not status.done()
+            assert not started.is_set(), "watchdog must use the cached provider"
         finally:
             release.set()
         assert status.result(timeout=2).status_code == 200
