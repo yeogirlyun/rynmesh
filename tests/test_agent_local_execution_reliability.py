@@ -261,7 +261,12 @@ def test_read_only_shell_exception_and_timeout_produce_error_receipt_and_continu
     assert shell_receipts[0]["status"] == "failed"
     assert shell_receipts[0]["result"] == {"error": "agent_read_interrupted", "not_executed": False, "no_mutation": True}
     assert shell_receipts[1]["status"] == "failed"
-    assert shell_receipts[1]["result"] == {"error": "agent_shell_timeout", "not_executed": False, "no_mutation": True}
+    from rynmesh.agent_runtime.store import REJECTION_CORRECTIONS
+    timed_out = shell_receipts[1]
+    raw_output = tools.local.ledger_factory().get(timed_out["operation_id"])["result"]["output"]
+    assert timed_out["result"] == {"error": "agent_shell_timeout", "not_executed": False, "no_mutation": True,
+        "correction": REJECTION_CORRECTIONS["agent_shell_timeout"],
+        "details": {"output": raw_output[-4000:], "stop_reason": "timeout", "timeout_seconds": 5}}
     for r in shell_receipts:
         ledger_entry = tools.local.ledger_factory().get(r["operation_id"])
         assert ledger_entry["status"] == "failed"

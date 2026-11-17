@@ -59,6 +59,12 @@ OWNER_DENIED_CORRECTION = (
 PERMISSION_DENIED_CORRECTION = (
     "Current host permissions do not allow this operation and nothing ran. Do not work around the setting "
     "with another tool. Continue with what the permissions allow and say in your reply which setting blocks the rest.")
+PERMISSION_DENIED_CORRECTIONS = {
+    "read_only": (
+        "This task is read-only; shell commands with unsafe pipes, redirection or non-read programs count as changes. "
+        "Use ryn_file_read / ryn_file_search."),
+    "invalid_policy": PERMISSION_DENIED_CORRECTION,
+}
 
 
 POWERSHELL_NON_ASCII_SYNTAX_CHARS = frozenset({

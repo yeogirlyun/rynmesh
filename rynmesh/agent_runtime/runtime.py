@@ -665,6 +665,11 @@ class AgentRuntime(AgentLoop):
                     )
                 except AgentError as exc:
                     code = str(exc) if str(exc).startswith("agent_") else "agent_operation_failed"
+                    extra = {}
+                    if getattr(exc, "correction", None):
+                        extra["correction"] = sanitized(exc.correction[:1600])
+                    if isinstance(getattr(exc, "details", None), dict) and exc.details:
+                        extra["details"] = sanitized(copy.deepcopy(exc.details))
                     if code == "agent_mcp_outcome_unknown_reported":
                         return (
                             {
@@ -673,13 +678,14 @@ class AgentRuntime(AgentLoop):
                                 "not_executed": False,
                                 "hint": MCP_UNKNOWN_OUTCOME_HINT,
                                 "note": UNKNOWN_OUTCOME_NOTE,
+                                **extra,
                             },
                             "unknown",
                             True,
                             max(0.0, time.monotonic() - call_started),
                         )
                     return (
-                        {"error": code, "outcome": "unknown", "not_executed": False, "note": UNKNOWN_OUTCOME_NOTE},
+                        {"error": code, "outcome": "unknown", "not_executed": False, "note": UNKNOWN_OUTCOME_NOTE, **extra},
                         "unknown",
                         True,
                         max(0.0, time.monotonic() - call_started),
@@ -4853,6 +4859,7 @@ class AgentRuntime(AgentLoop):
                     code,
                     started,
                     read_connection=exc.connection if isinstance(exc, AgentReadFailure) else None,
+                    correction=getattr(exc, "correction", None),
                     details=getattr(exc, "details", None),
                     diagnostics=getattr(exc, "diagnostics", None),
                     error_text=err_text,

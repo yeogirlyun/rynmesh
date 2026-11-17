@@ -293,7 +293,7 @@ class StreamedReads:
                        "origin": copy.deepcopy(result.get("origin")) if isinstance(result, dict) and prepared["meta"].get("scope_context_supported") else None}
         except Exception as exc:
             extra = {}
-            if isinstance(exc, AgentToolRejected):
+            if isinstance(exc, AgentError):
                 if getattr(exc, "correction", None):
                     extra["correction"] = sanitized(exc.correction[:1600])
                 if getattr(exc, "details", None):
