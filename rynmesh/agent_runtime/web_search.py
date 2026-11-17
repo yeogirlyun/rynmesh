@@ -29,6 +29,7 @@ import socket
 import threading
 import time
 import urllib.request
+from contextlib import ExitStack, contextmanager
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Callable
@@ -217,25 +218,43 @@ def validate_public_http_url(
     dns_resolver: Callable[[str], list[str]] | None = None,
     resolve: bool = True,
     proxy_active: bool = False,
+    tool: str = NAME,
 ) -> str:
     """Validate that `url` is a public HTTP(S) URL permitted by SSRF rules and `allowed_domains`."""
+    return resolve_public_http_url(
+        url, allowed_domains=allowed_domains, dns_resolver=dns_resolver,
+        resolve=resolve, proxy_active=proxy_active, tool=tool,
+    )[0]
+
+
+def resolve_public_http_url(
+    url: str,
+    *,
+    allowed_domains: list[str] | None = None,
+    dns_resolver: Callable[[str], list[str]] | None = None,
+    resolve: bool = True,
+    proxy_active: bool = False,
+    tool: str = NAME,
+) -> tuple[str, str, list[str]]:
+    """Return the URL, hostname and addresses approved by the public URL policy."""
+    prefix = "agent_download" if tool == "ryn_download_file" else "agent_web_search"
     if not isinstance(url, str) or not url.strip():
-        raise AgentToolRejected("agent_web_search_invalid_url", correction="URL must be a non-empty http(s) string.")
+        raise AgentToolRejected(f"{prefix}_invalid_url", correction="URL must be a non-empty http(s) string.")
     candidate = url.strip()
     parsed = urlparse(candidate)
     if parsed.scheme.lower() not in {"http", "https"}:
         raise AgentToolRejected(
-            "agent_web_search_blocked_url",
-            correction="Only http:// and https:// URLs are supported by ryn_web_search.",
+            f"{prefix}_blocked_url",
+            correction=f"Only http:// and https:// URLs are supported by {tool}.",
         )
     if parsed.username or parsed.password:
         raise AgentToolRejected(
-            "agent_web_search_blocked_url",
+            f"{prefix}_blocked_url",
             correction="URLs with embedded credentials are not allowed.",
         )
     hostname = (parsed.hostname or "").strip().lower().rstrip(".")
     if not hostname:
-        raise AgentToolRejected("agent_web_search_invalid_url", correction="URL is missing a valid hostname.")
+        raise AgentToolRejected(f"{prefix}_invalid_url", correction="URL is missing a valid hostname.")
 
     # Block localhost, single-label hosts, and internal suffixes
     if (
@@ -244,7 +263,7 @@ def validate_public_http_url(
         or ("." not in hostname and ":" not in hostname)
     ):
         raise AgentToolRejected(
-            "agent_web_search_blocked_url",
+            f"{prefix}_blocked_url",
             correction=f"Host '{hostname}' is a local or internal address and is blocked by SSRF policy.",
         )
 
@@ -257,36 +276,57 @@ def validate_public_http_url(
 
     if is_literal_ip and _is_forbidden_ip(hostname, resolved=False):
         raise AgentToolRejected(
-            "agent_web_search_blocked_url",
+            f"{prefix}_blocked_url",
             correction=f"IP address '{hostname}' is non-public and blocked by SSRF policy.",
         )
 
     if allowed_domains and not domain_matches(hostname, allowed_domains):
         raise AgentToolRejected(
-            "agent_web_search_domain_not_allowed",
+            f"{prefix}_domain_not_allowed",
             correction=f"Host '{hostname}' is not in the allowed domains list: {', '.join(allowed_domains)}.",
         )
 
+    resolved_ips = [hostname] if is_literal_ip else []
     if resolve and not is_literal_ip:
         resolver = dns_resolver or _default_dns_resolver
         resolved_ips = resolver(hostname)
         if not resolved_ips:
             if not proxy_active:
                 raise AgentToolRejected(
-                    "agent_web_search_dns_failed",
+                    f"{prefix}_dns_failed",
                     correction=f"Could not resolve hostname '{hostname}'.",
                 )
         for ip_text in resolved_ips:
             if _is_forbidden_ip(ip_text, resolved=True):
                 raise AgentToolRejected(
-                    "agent_web_search_blocked_url",
+                    f"{prefix}_blocked_url",
                     correction=(
                         f"Host '{hostname}' resolved to non-public IP {ip_text}; "
                         "if you use a proxy/TUN fake-ip, set RYN_WEB_SEARCH_ALLOW_CIDRS."
                     ),
                 )
 
-    return candidate
+    return candidate, hostname, resolved_ips
+
+
+@contextmanager
+def pinned_stream(client, method, url, ips, headers):
+    """Connect only to approved addresses, retaining virtual-host and TLS identity."""
+    original = httpx.URL(url)
+    request_headers = httpx.Headers(headers)
+    request_headers["Host"] = original.netloc.decode("ascii")
+    with ExitStack() as stack:
+        for index, ip in enumerate(ips):
+            try:
+                response = stack.enter_context(client.stream(
+                    method, original.copy_with(host=ip), headers=request_headers,
+                    extensions={"sni_hostname": original.raw_host.decode("ascii")},
+                ))
+                break
+            except (httpx.ConnectError, httpx.ConnectTimeout):
+                if index == len(ips) - 1:
+                    raise
+        yield response
 
 
 def _default_dns_resolver(hostname: str) -> list[str]:
@@ -988,13 +1028,13 @@ class WebSearchEngine:
     def _fetch_http_bytes(self, url: str, allowed_domains: list[str]) -> tuple[bytes, str, str]:
         """Fetch raw HTTP response bytes with SSRF and redirect hop verification."""
         first_url = readable_url(url)
-        current_url = validate_public_http_url(
-            first_url,
-            allowed_domains=allowed_domains,
-            dns_resolver=self._dns_resolver,
-            proxy_active=self._proxy_active(first_url),
-        )
         if self._http_fetcher is not None:
+            current_url = validate_public_http_url(
+                first_url,
+                allowed_domains=allowed_domains,
+                dns_resolver=self._dns_resolver,
+                proxy_active=self._proxy_active(first_url),
+            )
             data, final_url, content_type = self._http_fetcher(current_url, allowed_domains)
             validate_public_http_url(
                 final_url,
@@ -1009,33 +1049,36 @@ class WebSearchEngine:
             "Accept": "text/html,application/xhtml+xml,text/plain,text/markdown,application/json;q=0.9,*/*;q=0.5",
             "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8",
         }
-        with httpx.Client(timeout=DEFAULT_TIMEOUT_S, follow_redirects=False, headers=headers) as client:
-            for _ in range(MAX_REDIRECTS + 1):
-                resp = client.get(current_url)
-                if resp.status_code in {301, 302, 303, 307, 308}:
-                    location = resp.headers.get("location")
-                    if not location:
-                        break
-                    next_url = readable_url(urljoin(current_url, location.strip()))
-                    current_url = validate_public_http_url(
-                        next_url,
-                        allowed_domains=allowed_domains,
-                        dns_resolver=self._dns_resolver,
-                        proxy_active=self._proxy_active(next_url),
-                    )
-                    continue
-                if resp.status_code >= 400:
-                    raise AgentToolRejected(
-                        "agent_web_search_fetch_failed",
-                        correction=f"HTTP {resp.status_code} when fetching '{current_url}'.",
-                    )
-                content_type = str(resp.headers.get("content-type") or "text/html").lower()
-                raw_bytes = resp.content[:MAX_FETCH_BYTES]
-                return raw_bytes, current_url, content_type
-            raise AgentToolRejected(
-                "agent_web_search_too_many_redirects",
-                correction=f"Exceeded {MAX_REDIRECTS} redirects while fetching '{url}'.",
+        current_url = first_url
+        for _ in range(MAX_REDIRECTS + 1):
+            proxy_active = self._proxy_active(current_url)
+            current_url, _, ips = resolve_public_http_url(
+                current_url, allowed_domains=allowed_domains,
+                dns_resolver=self._dns_resolver, proxy_active=proxy_active,
             )
+            with httpx.Client(timeout=DEFAULT_TIMEOUT_S, follow_redirects=False,
+                              headers=headers, trust_env=proxy_active) as client:
+                stream = (client.stream("GET", current_url) if proxy_active
+                          else pinned_stream(client, "GET", current_url, ips, headers))
+                with stream as resp:
+                    if resp.status_code in {301, 302, 303, 307, 308}:
+                        location = resp.headers.get("location")
+                        if not location:
+                            break
+                        current_url = readable_url(urljoin(current_url, location.strip()))
+                        continue
+                    if resp.status_code >= 400:
+                        raise AgentToolRejected(
+                            "agent_web_search_fetch_failed",
+                            correction=f"HTTP {resp.status_code} when fetching '{current_url}'.",
+                        )
+                    content_type = str(resp.headers.get("content-type") or "text/html").lower()
+                    raw_bytes = resp.read()[:MAX_FETCH_BYTES]
+                    return raw_bytes, current_url, content_type
+        raise AgentToolRejected(
+            "agent_web_search_too_many_redirects",
+            correction=f"Exceeded {MAX_REDIRECTS} redirects while fetching '{url}'.",
+        )
 
     def _load_or_fetch_page(
         self,
