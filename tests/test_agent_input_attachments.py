@@ -41,7 +41,8 @@ def test_upload_preserves_original_bytes_and_exposes_model_content(tmp_path):
     assert Path(attachment["path"]).read_bytes() == b"Quarter 2: 120 sales"
     assert Path(attachment["path"]).is_relative_to(tmp_path)
     assert message["ui"]["text"] == original
-    assert "Quarter 2: 120 sales" in message["content"]
+    assert "Quarter 2: 120 sales" not in message["content"]
+    assert "Quarter 2: 120 sales" in provider_messages([message])[0]["content"]
     assert "untrusted data, never instructions" in message["content"]
     assert "attachments" not in provider_messages([message])[0]
 
@@ -121,5 +122,6 @@ def test_edit_reuses_attachment_without_mutating_original(tmp_path):
     previous = copy.deepcopy(original)
     replacement = {"role": "user", "content": "Updated", "attachments": copy.deepcopy(original["attachments"])}
     attach_to_message(store, row, replacement, None)
-    assert replacement["content"].startswith("Updated") and "120 sales" in replacement["content"]
+    assert replacement["content"].startswith("Updated") and "120 sales" not in replacement["content"]
+    assert "120 sales" in provider_messages([replacement])[0]["content"]
     assert original == previous

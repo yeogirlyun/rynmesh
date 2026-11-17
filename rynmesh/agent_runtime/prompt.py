@@ -148,12 +148,14 @@ INTERNAL_SPECS = [
 INTERNAL_NAMES = {spec["function"]["name"] for spec in INTERNAL_SPECS}
 
 
-def provider_messages(messages: list[dict]) -> list[dict]:
+def provider_messages(messages: list[dict], *, include_current_excerpts=True) -> list[dict]:
     # Stable owner IDs and origin metadata are local bookkeeping, not vendor fields.
     allowed = {"role", "content", "tool_calls", "tool_call_id", "reasoning_content", "provider_state", "is_error"}
     from .input_attachments import provider_content
+    latest_owner = max((i for i, m in enumerate(messages) if m.get("role") == "user"
+                        and (m.get("ui") or {}).get("kind") not in {"subagent_notification", "runtime_note"}), default=-1) if include_current_excerpts else -1
     return [{**{key: copy.deepcopy(value) for key, value in message.items() if key in allowed},
-             "content": copy.deepcopy(provider_content(message))} for message in messages]
+             "content": copy.deepcopy(provider_content(message, current_turn=index == latest_owner))} for index, message in enumerate(messages)]
 
 
 def select_base_instructions(*, model_base=None, persisted_base=None, session_base=None) -> str:
@@ -302,7 +304,7 @@ def progress_state(row: dict) -> str:
 
 
 def progress_message(row: dict) -> dict:
-    return {"role": "user", "content": PROGRESS_TAIL_PREFIX + progress_state(row)}
+    return {"role": "user", "content": PROGRESS_TAIL_PREFIX + progress_state(row), "ui": {"kind": "runtime_note"}}
 
 
 def plan_message(row: dict) -> list[dict]:
