@@ -31,10 +31,19 @@ def replace_checked(path, root, expected, raw, mode, stamp, *, outside_ok=False)
         disposition.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
         disposition.restype = wintypes.BOOL
 
-        def open_handle(p, access, share, creation, flags):
+        def open_handle(p, access, share, creation, flags, *, target=False):
             handle = create(str(p), access, share, None, creation, flags, None)
             if handle == wintypes.HANDLE(-1).value:
-                raise OSError(ctypes.get_last_error(), "file_busy_or_changed")
+                error = ctypes.get_last_error()
+                if target and error in {32, 33}:
+                    exc = AgentToolRejected(
+                        "agent_local_file_in_use",
+                        correction="The file is open in another program (for example Excel or Word). Ask the owner to close it, then retry.",
+                        details={"path": str(p)},
+                    )
+                    exc.nothing_written = True
+                    raise exc
+                raise OSError(error, "file_busy_or_changed")
             return handle
 
         from .file_review import _is_cloud_reparse_tag, _resolve_root
@@ -71,7 +80,7 @@ def replace_checked(path, root, expected, raw, mode, stamp, *, outside_ok=False)
                         target_flags = 0
                 except OSError:
                     pass
-            handle = open_handle(path, 0xC0010000, 0, 1 if expected is None else 3, target_flags)
+            handle = open_handle(path, 0xC0010000, 0, 1 if expected is None else 3, target_flags, target=True)
             # CREATE_NEW for absent targets; exclusive existing handle prevents
             # an editor from writing between the hash comparison and restoration.
             fd = msvcrt.open_osfhandle(handle, os.O_RDWR | os.O_BINARY)
