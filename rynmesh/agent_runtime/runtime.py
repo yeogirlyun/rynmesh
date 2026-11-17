@@ -1099,6 +1099,7 @@ class AgentRuntime(AgentLoop):
                 "control_revision": row["control_revision"], "scope_revision": row["scope_revision"],
                 "settings_revision": self.store.inspect(lambda data: data.get("settings_revision", 0)),
                 "local_execution": copy.deepcopy(row.get("local_execution") or {}),
+                "result_budget_bytes": row["limits"]["max_output_chars"],
                 "model_destination": model_destination,
                 "resource_grants": resource_grants,
                 "egress_grants": egress_grants, "resource_origins": list(origins.values())}
