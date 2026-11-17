@@ -11,7 +11,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timezone
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 from ..agent_runtime.store import AgentError, AgentToolRejected, encoded
@@ -88,6 +88,7 @@ class CraftTools:
         self.app, self.local, self.ledger = app, local, ledger
         self.sessions = {}
         self.lock = threading.RLock()
+        self.ledger_lock = threading.RLock()
 
     @property
     def manager(self):
@@ -137,63 +138,103 @@ class CraftTools:
             raise AgentToolRejected("craft_automation_platform_unsupported")
         return row
 
+    @staticmethod
+    def _session_expired(app):
+        return AgentToolRejected(
+            "agent_craft_session_expired_reopen_saved_file",
+            correction=f"The headless '{app}' document session expired or closed. Call {TOOLS}(app='{app}') first to start a fresh session, then reopen any saved file.",
+        )
+
+    @staticmethod
+    def _close_sessions(sessions):
+        for session in sessions:
+            with session["lock"]:
+                session["process"].close()
+
     def _session(self, app, context, cancelled):
         root = self.local.path(".", context)
         generation = self.manager.generation(app)
         key = (context["task_id"], app)
-        for other, existing in list(self.sessions.items()):
-            if other != key and (self._ended(existing) or time.monotonic() - existing["created"] > SESSION_SECONDS):
-                self.sessions.pop(other)["process"].close()
-        session = self.sessions.get(key)
-        if session and (session["root"] != root or session["generation"] != generation
-                        or self._ended(session) or time.monotonic() - session["created"] > SESSION_SECONDS):
-            session["process"].close()
-            del self.sessions[key]
-            # An existing task must explicitly discover a new session after loss.
-            raise AgentToolRejected(
-                "agent_craft_session_expired_reopen_saved_file",
-                correction=f"The headless '{app}' document session expired or closed. Call {TOOLS}(app='{app}') first to start a fresh session, then reopen any saved file.",
-            )
-        if session:
-            return session
-        if len(self.sessions) >= 16:
-            raise AgentToolRejected("agent_craft_session_limit")
-        executable = craft_native.installed_runtime(self.manager.cache, app)
-        binding = copy.deepcopy(context["local_execution"])
-        task_id = context["task_id"]
-
-        def session_cancelled():
-            try:
-                control = self.local.store.read_control(task_id)
-                task = control["tasks"][task_id]
-                return (not control["settings"]["enabled"] or task["status"] in {"cancelled", "failed", "interrupted"}
-                        or task["local_execution"] != binding or self.manager.generation(app) != generation)
-            except Exception:
-                return True
-
-        process = craft_native.McpProcess(executable, root, app, cancelled=session_cancelled)
+        retired = []
         try:
-            process.initialize(cancelled=cancelled)
-            definitions = process.tools_list(cancelled=cancelled).get("tools", [])
-            allowed = READ_TOOLS[app] | ACTION_TOOLS[app]
-            tools = {}
-            for item in definitions:
-                if item.get("name") in allowed:
-                    item = copy.deepcopy(item)
-                    item["inputSchema"]["additionalProperties"] = False
-                    # Upstream supports implicit save-in-place; Ryn always saves a new file.
-                    if (app, item["name"]) in OUTPUT_TOOLS:
-                        item["inputSchema"]["required"] = list(dict.fromkeys([*item["inputSchema"].get("required", []), "path"]))
-                    tools[item["name"]] = item
-            if not tools:
-                raise CraftError("craft_automation_tool_catalog_invalid")
-        except Exception:
-            process.close()
-            raise
-        session = {"process": process, "root": root, "generation": generation, "tools": tools,
-                   "id": uuid.uuid4().hex, "revision": 0, "created": time.monotonic(), "executable": executable}
-        self.sessions[key] = session
-        return session
+            with self.lock:
+                for other, existing in list(self.sessions.items()):
+                    if other != key and (self._ended(existing) or time.monotonic() - existing["created"] > SESSION_SECONDS):
+                        # A busy document must not make an unrelated lookup wait.
+                        if existing["lock"].acquire(blocking=False):
+                            try:
+                                existing["closing"] = True
+                                retired.append(self.sessions.pop(other))
+                            finally:
+                                existing["lock"].release()
+                session = self.sessions.get(key)
+                if session and (session["root"] != root or session["generation"] != generation
+                                or self._ended(session) or time.monotonic() - session["created"] > SESSION_SECONDS):
+                    session["closing"] = True
+                    retired.append(self.sessions.pop(key))
+                    raise self._session_expired(app)
+                if session:
+                    return session
+                if len(self.sessions) >= 16:
+                    raise AgentToolRejected("agent_craft_session_limit")
+                executable = craft_native.installed_runtime(self.manager.cache, app)
+                binding = copy.deepcopy(context["local_execution"])
+                task_id = context["task_id"]
+
+                def session_cancelled():
+                    try:
+                        control = self.local.store.read_control(task_id)
+                        task = control["tasks"][task_id]
+                        return (not control["settings"]["enabled"] or task["status"] in {"cancelled", "failed", "interrupted"}
+                                or task["local_execution"] != binding or self.manager.generation(app) != generation)
+                    except Exception:
+                        return True
+
+                process = craft_native.McpProcess(executable, root, app, cancelled=session_cancelled)
+                try:
+                    process.initialize(cancelled=cancelled)
+                    definitions = process.tools_list(cancelled=cancelled).get("tools", [])
+                    allowed = READ_TOOLS[app] | ACTION_TOOLS[app]
+                    tools = {}
+                    for item in definitions:
+                        if item.get("name") in allowed:
+                            item = copy.deepcopy(item)
+                            item["inputSchema"]["additionalProperties"] = False
+                            # Upstream supports implicit save-in-place; Ryn always saves a new file.
+                            if (app, item["name"]) in OUTPUT_TOOLS:
+                                item["inputSchema"]["required"] = list(dict.fromkeys([*item["inputSchema"].get("required", []), "path"]))
+                            tools[item["name"]] = item
+                    if not tools:
+                        raise CraftError("craft_automation_tool_catalog_invalid")
+                except Exception:
+                    process.close()
+                    raise
+                session = {"process": process, "root": root, "generation": generation, "tools": tools,
+                           "lock": threading.RLock(), "closing": False,
+                           "id": uuid.uuid4().hex, "revision": 0, "created": time.monotonic(), "executable": executable}
+                self.sessions[key] = session
+                return session
+        finally:
+            self._close_sessions(retired)
+
+    @contextmanager
+    def _locked_session(self, app, context, cancelled):
+        session = self._session(app, context, cancelled)
+        expired = False
+        try:
+            with session["lock"]:
+                if session["closing"] or self._ended(session):
+                    expired = True
+                    raise self._session_expired(app)
+                yield session
+        finally:
+            if expired:
+                with self.lock:
+                    key = (context["task_id"], app)
+                    if self.sessions.get(key) is session:
+                        self.sessions.pop(key)
+                    session["closing"] = True
+                self._close_sessions([session])
 
     @staticmethod
     def _ended(session):
@@ -301,37 +342,40 @@ class CraftTools:
             outputs.append(str(path))
         return args, inputs, outputs, replace_targets
 
-    def _preview(self, name, args, context):
-        with self.lock:
-            app = args["app"]
-            row = self._enabled(app)
-            self.local.policy(context)
-            if name == INSTALL:
-                platform = craft_native.runtime_status(self.manager.cache, app)["platform"]
-                release = AUTOMATION[app][platform]
-                return {"title": "Install Ryn application document component", "app": app, "version": CRAFT[app]["tag"],
-                        "generation": self.manager.generation(app), "asset": release["asset"], "sha256": release["sha256"],
-                        "already_installed": row.get("automation_installed", False)}
-            with self.manager.lease(app):
-                session = self._session(app, context, lambda: False)
-                if args["tool"] not in ACTION_TOOLS[app]:
-                    exec_tool = READ if args["tool"] in READ_TOOLS[app] else TOOLS
-                    raise AgentToolRejected(
-                        "agent_craft_action_required",
-                        correction=f"Tool '{args['tool']}' is not an action tool for '{app}'. Use {exec_tool} instead.",
-                    )
-                normalized, inputs, outputs, replace_targets = self._arguments(app, args["tool"], args["arguments"], session, context)
-                return {"title": "Use Ryn application document", "app": app, "version": CRAFT[app]["tag"],
-                        "session_id": session["id"], "session_revision": session["revision"], "generation": session["generation"],
-                        "workspace_root": str(session["root"]), "operation": {"tool": args["tool"], "arguments": normalized},
-                        "inputs": inputs, "new_outputs": outputs, "session_kind": "task_headless_document",
-                        **({"replace_targets": replace_targets,
-                            "overwrite_notice": "Existing files are backed up through file review. New output bytes over 2 MiB or review quota limits are hash-only and cannot be undone (no undo snapshot)."}
-                           if replace_targets else {})}
+    def _preview(self, name, args, context, *, session=None):
+        app = args["app"]
+        row = self._enabled(app)
+        self.local.policy(context)
+        if name == INSTALL:
+            platform = craft_native.runtime_status(self.manager.cache, app)["platform"]
+            release = AUTOMATION[app][platform]
+            return {"title": "Install Ryn application document component", "app": app, "version": CRAFT[app]["tag"],
+                    "generation": self.manager.generation(app), "asset": release["asset"], "sha256": release["sha256"],
+                    "already_installed": row.get("automation_installed", False)}
+        if session is None:
+            with self.manager.lease(app), self._locked_session(app, context, lambda: False) as session:
+                return self._document_preview(app, args, context, session)
+        return self._document_preview(app, args, context, session)
 
-    def preview(self, name, args, context):
+    def _document_preview(self, app, args, context, session):
+        if args["tool"] not in ACTION_TOOLS[app]:
+            exec_tool = READ if args["tool"] in READ_TOOLS[app] else TOOLS
+            raise AgentToolRejected(
+                "agent_craft_action_required",
+                correction=f"Tool '{args['tool']}' is not an action tool for '{app}'. Use {exec_tool} instead.",
+            )
+        normalized, inputs, outputs, replace_targets = self._arguments(app, args["tool"], args["arguments"], session, context)
+        return {"title": "Use Ryn application document", "app": app, "version": CRAFT[app]["tag"],
+                "session_id": session["id"], "session_revision": session["revision"], "generation": session["generation"],
+                "workspace_root": str(session["root"]), "operation": {"tool": args["tool"], "arguments": normalized},
+                "inputs": inputs, "new_outputs": outputs, "session_kind": "task_headless_document",
+                **({"replace_targets": replace_targets,
+                    "overwrite_notice": "Existing files are backed up through file review. New output bytes over 2 MiB or review quota limits are hash-only and cannot be undone (no undo snapshot)."}
+                   if replace_targets else {})}
+
+    def preview(self, name, args, context, *, session=None):
         try:
-            return self._preview(name, args, context)
+            return self._preview(name, args, context, session=session)
         except CraftError as exc:
             raise AgentToolRejected(str(exc)) from None
 
@@ -442,12 +486,47 @@ class CraftTools:
             return {"overwritten": True, "previous_sha256": files[0]["previous_sha256"]}
         return {}
 
-    @staticmethod
-    def _record_not_executed(ledger, binding, preview, error_code):
+    def _ledger_call(self, method, *args, **kwargs):
+        with self.ledger_lock:
+            return getattr(self.ledger(), method)(*args, **kwargs)
+
+    def _record_not_executed(self, binding, preview, error_code):
+        with self.ledger_lock:
+            ledger = self.ledger()
+            operation_id = binding["operation_id"]
+            if ledger.get(operation_id) is None:
+                ledger.begin(binding, preview or {}, receipt_reserve=4096)
+            ledger.update(operation_id, "not_executed", binding=binding, preview=preview or {}, error=error_code)
+
+    def _prior_result(self, binding, context):
         operation_id = binding["operation_id"]
-        if ledger.get(operation_id) is None:
-            ledger.begin(binding, preview or {}, receipt_reserve=4096)
-        ledger.update(operation_id, "not_executed", binding=binding, preview=preview or {}, error=error_code)
+        prior = self._ledger_call("get", operation_id)
+        if prior is None:
+            return None, None
+        if prior.get("status") == "retired":
+            raise AgentToolRejected("agent_operation_retired")
+        if prior["status"] == "not_executed":
+            prior_binding = prior.get("binding") or {}
+            if any(prior_binding.get(key) != binding[key]
+                   for key in ("operation_id", "tool", "task_id", "local_execution")):
+                raise AgentToolRejected("agent_operation_id_conflict")
+            return prior, None
+        if prior["binding"] != binding:
+            raise AgentToolRejected("agent_operation_id_conflict")
+        if prior["status"] == "confirmed":
+            return prior, prior["result"]
+        if prior["status"] == "published":
+            reconciled = self.reconcile(
+                operation_id,
+                {**context, "operation": {"operation_id": operation_id, "tool": binding["tool"],
+                                           "arguments_sha256": binding["arguments_sha256"]}},
+            )
+            if reconciled.get("outcome") == "executed":
+                result = self._bounded(reconciled["receipt"]["result"])
+                self._ledger_call("update", operation_id, "confirmed", result=result,
+                                  confirmed_at=datetime.now(timezone.utc).isoformat())
+                return prior, result
+        raise AgentError("agent_write_outcome_unknown")
 
     @staticmethod
     def _confirm_process_exited(mcp_process, wait_seconds=1.0):
@@ -507,7 +586,7 @@ class CraftTools:
                 if str(exc) == "craft_mcp_timeout" and staged_outputs:
                     # Stop the task's engine process and confirm it has actually exited
                     # before inspecting or publishing any staged output file.
-                    self.close_task(context["task_id"])
+                    session["process"].close()
                     if (
                         self._confirm_process_exited(session["process"])
                         and all(p.is_file() and 0 < p.stat().st_size <= MAX_FILE for p in staged_outputs)
@@ -533,7 +612,7 @@ class CraftTools:
                                                  if output in replace_targets else {})})
                         if verified_complete and len(snapshots) == len(staged_outputs):
                             if operation_id is not None:
-                                self.ledger().update(operation_id, "published", staged_outputs=snapshots)
+                                self._ledger_call("update", operation_id, "published", staged_outputs=snapshots)
                             for index, item in enumerate(snapshots):
                                 try:
                                     self._publish_output(staged_outputs[index], Path(item["path"]), before_bytes.get(item["path"]), context, operation_id)
@@ -554,7 +633,7 @@ class CraftTools:
                     for index, output in enumerate(preview["new_outputs"])
                 ]
                 if operation_id is not None:
-                    self.ledger().update(operation_id, "published", staged_outputs=staged_manifest)
+                    self._ledger_call("update", operation_id, "published", staged_outputs=staged_manifest)
                 for index, item in enumerate(staged_manifest):
                     output = item["path"]
                     path = Path(output)
@@ -579,159 +658,147 @@ class CraftTools:
     def execute(self, name, args, *, context, operation_id, expected_preview=None, cancelled):
         if cancelled():
             raise AgentToolRejected("agent_cancelled")
-        with self.lock:
-            engine_dispatched = False
-            try:
-                app = args["app"]
-                row = self._enabled(app)
-                self.local.policy(context)
-                if name == TOOLS and not row.get("editing_supported"):
-                    return {"app": app, "ready": False, "setup_tool": INSTALL, "download_started": False}
+        engine_dispatched = False
+        close_after = False
+        try:
+            app = args["app"]
+            row = self._enabled(app)
+            self.local.policy(context)
+            if name == TOOLS and not row.get("editing_supported"):
+                return {"app": app, "ready": False, "setup_tool": INSTALL, "download_started": False}
+            with ExitStack() as stack:
+                session = None
                 if name in {TOOLS, READ}:
-                    with self.manager.lease(app):
-                        session = self._session(app, context, cancelled)
-                        if name == TOOLS:
-                            definitions = session["tools"]
-                            if args.get("tool"):
-                                if args["tool"] not in definitions:
-                                    supported = sorted(definitions.keys())
-                                    raise AgentToolRejected(
-                                        "agent_craft_tool_not_supported",
-                                        correction=f"Tool '{args['tool']}' is not supported by '{app}'. Supported tools: {', '.join(supported)}.",
-                                        details={"app": app, "tool": args["tool"], "supported_tools": supported},
-                                    )
-                                tools = [definitions[args["tool"]]]
-                            else:
-                                tools = [{"name": item["name"], "description": item.get("description", ""),
-                                          "execution_tool": READ if item["name"] in READ_TOOLS[app] else ACTION,
-                                          "inputSchema": self._compact_schema(item.get("inputSchema"))}
-                                         for item in definitions.values()]
-                            result = {"app": app, "ready": True, "session_id": session["id"], "tools": tools,
-                                    "session_kind": "task_headless_document",
-                                    "saves_require_new_path": self.local.policy(context)["permission_mode"] != "automatic",
-                                    "overwrites_require_backup": True,
-                                    "unsaved_editor_window_access": False}
-                            if not args.get("tool"):
-                                result["next_cursor"] = None
-                                for item in sorted(tools, key=lambda item: len(encoded(item["description"])), reverse=True):
-                                    if len(encoded(result)) <= 16 * 1024:
+                    stack.enter_context(self.manager.lease(app))
+                    session = stack.enter_context(self._locked_session(app, context, cancelled))
+                    if name == TOOLS:
+                        definitions = session["tools"]
+                        if args.get("tool"):
+                            if args["tool"] not in definitions:
+                                supported = sorted(definitions.keys())
+                                raise AgentToolRejected(
+                                    "agent_craft_tool_not_supported",
+                                    correction=f"Tool '{args['tool']}' is not supported by '{app}'. Supported tools: {', '.join(supported)}.",
+                                    details={"app": app, "tool": args["tool"], "supported_tools": supported},
+                                )
+                            tools = [definitions[args["tool"]]]
+                        else:
+                            tools = [{"name": item["name"], "description": item.get("description", ""),
+                                      "execution_tool": READ if item["name"] in READ_TOOLS[app] else ACTION,
+                                      "inputSchema": self._compact_schema(item.get("inputSchema"))}
+                                     for item in definitions.values()]
+                        result = {"app": app, "ready": True, "session_id": session["id"], "tools": tools,
+                                "session_kind": "task_headless_document",
+                                "saves_require_new_path": self.local.policy(context)["permission_mode"] != "automatic",
+                                "overwrites_require_backup": True,
+                                "unsaved_editor_window_access": False}
+                        if not args.get("tool"):
+                            result["next_cursor"] = None
+                            for item in sorted(tools, key=lambda item: len(encoded(item["description"])), reverse=True):
+                                if len(encoded(result)) <= 16 * 1024:
+                                    break
+                                item["description"] = item["description"][:300]
+                            # Large definitions may not fit even after description trimming.
+                            # Page them rather than silently discard schemas or short descriptions.
+                            cursor = args.get("cursor", 0)
+                            if cursor > len(tools):
+                                raise AgentToolRejected("agent_invalid_tool_cursor")
+                            result["tools"] = []
+                            result["next_cursor"] = None
+                            for index in range(cursor, len(tools)):
+                                result["next_cursor"] = index + 1 if index + 1 < len(tools) else None
+                                result["tools"].append(tools[index])
+                                if len(encoded(result)) > 16 * 1024:
+                                    result["tools"].pop()
+                                    if not result["tools"]:
+                                        summary = {key: value for key, value in tools[index].items() if key != "inputSchema"}
+                                        summary["definition_query"] = {"app": app, "tool": tools[index]["name"]}
+                                        result["tools"].append(summary)
+                                        result["next_cursor"] = index + 1 if index + 1 < len(tools) else None
                                         break
-                                    item["description"] = item["description"][:300]
-                                # Large definitions may not fit even after description trimming.
-                                # Page them rather than silently discard schemas or short descriptions.
-                                cursor = args.get("cursor", 0)
-                                if cursor > len(tools):
-                                    raise AgentToolRejected("agent_invalid_tool_cursor")
-                                result["tools"] = []
-                                result["next_cursor"] = None
-                                for index in range(cursor, len(tools)):
-                                    result["next_cursor"] = index + 1 if index + 1 < len(tools) else None
-                                    result["tools"].append(tools[index])
-                                    if len(encoded(result)) > 16 * 1024:
-                                        result["tools"].pop()
-                                        if not result["tools"]:
-                                            summary = {key: value for key, value in tools[index].items() if key != "inputSchema"}
-                                            summary["definition_query"] = {"app": app, "tool": tools[index]["name"]}
-                                            result["tools"].append(summary)
-                                            result["next_cursor"] = index + 1 if index + 1 < len(tools) else None
-                                            break
-                                        result["next_cursor"] = index
-                                        break
-                            return result
-                        if args["tool"] not in READ_TOOLS[app]:
-                            exec_tool = ACTION if args["tool"] in ACTION_TOOLS[app] else TOOLS
-                            raise AgentToolRejected(
-                                "agent_craft_read_only_tool_required",
-                                correction=f"Tool '{args['tool']}' is not a read-only tool for '{app}'. Use {exec_tool} instead (or call {TOOLS}(app='{app}') to list read/action tools).",
-                                details={"app": app, "tool": args["tool"], "read_tools": sorted(READ_TOOLS[app])},
-                            )
-                        normalized, _, _, _ = self._arguments(app, args["tool"], args["arguments"], session, context)
-                        result = self._aliases(
-                            data_result(session["process"].tools_call(
-                                args["tool"], normalized, timeout=tool_timeout(app, args["tool"]), cancelled=cancelled
-                            )),
-                            session.get("path_aliases", {}),
+                                    result["next_cursor"] = index
+                                    break
+                        return result
+                    if args["tool"] not in READ_TOOLS[app]:
+                        exec_tool = ACTION if args["tool"] in ACTION_TOOLS[app] else TOOLS
+                        raise AgentToolRejected(
+                            "agent_craft_read_only_tool_required",
+                            correction=f"Tool '{args['tool']}' is not a read-only tool for '{app}'. Use {exec_tool} instead (or call {TOOLS}(app='{app}') to list read/action tools).",
+                            details={"app": app, "tool": args["tool"], "read_tools": sorted(READ_TOOLS[app])},
                         )
-                        return self._bounded({"app": app, "session_id": session["id"], "session_revision": session["revision"], **result}, args.get("offset", 0))
+                    normalized, _, _, _ = self._arguments(app, args["tool"], args["arguments"], session, context)
+                    result = self._aliases(
+                        data_result(session["process"].tools_call(
+                            args["tool"], normalized, timeout=tool_timeout(app, args["tool"]), cancelled=cancelled
+                        )),
+                        session.get("path_aliases", {}),
+                    )
+                    return self._bounded({"app": app, "session_id": session["id"], "session_revision": session["revision"], **result}, args.get("offset", 0))
                 binding = {"operation_id": operation_id, "tool": name, "task_id": context["task_id"],
                            "arguments_sha256": fingerprint(args), "local_execution": context["local_execution"]}
-                ledger = self.ledger()
-                prior = ledger.get(operation_id)
-                if prior:
-                    if prior.get("status") == "retired":
-                        raise AgentToolRejected("agent_operation_retired")
-                    if prior["status"] == "not_executed":
-                        prior_binding = prior.get("binding") or {}
-                        if (
-                            prior_binding.get("operation_id") != operation_id
-                            or prior_binding.get("tool") != name
-                            or prior_binding.get("task_id") != context["task_id"]
-                            or prior_binding.get("local_execution") != context["local_execution"]
-                        ):
-                            raise AgentToolRejected("agent_operation_id_conflict")
-                    else:
-                        if prior["binding"] != binding:
-                            raise AgentToolRejected("agent_operation_id_conflict")
-                        if prior["status"] == "confirmed":
-                            return prior["result"]
-                        if prior["status"] == "published":
-                            reconciled = self.reconcile(
-                                operation_id,
-                                {**context, "operation": {"operation_id": operation_id, "tool": name, "arguments_sha256": binding["arguments_sha256"]}},
-                            )
-                            if reconciled.get("outcome") == "executed":
-                                result = self._bounded(reconciled["receipt"]["result"])
-                                ledger.update(operation_id, "confirmed", result=result, confirmed_at=datetime.now(timezone.utc).isoformat())
-                                return result
-                        raise AgentError("agent_write_outcome_unknown")
+                prior, replayed = self._prior_result(binding, context)
+                if replayed is not None:
+                    return replayed
+                if name != INSTALL:
+                    try:
+                        stack.enter_context(self.manager.lease(app))
+                        session = stack.enter_context(self._locked_session(app, context, cancelled))
+                    except CraftError as exc:
+                        self._record_not_executed(binding, None, str(exc))
+                        raise AgentToolRejected(str(exc)) from None
+                    except AgentToolRejected as exc:
+                        self._record_not_executed(binding, None, str(exc))
+                        raise
+                    # A peer may have finished this operation while we waited for its session.
+                    prior, replayed = self._prior_result(binding, context)
+                    if replayed is not None:
+                        return replayed
                 try:
-                    preview = self.preview(name, args, context)
+                    preview = self.preview(name, args, context, session=session)
                 except AgentToolRejected as exc:
-                    self._record_not_executed(ledger, binding, None, str(exc))
+                    self._record_not_executed(binding, None, str(exc))
                     raise
                 if preview != expected_preview:
                     raise AgentToolRejected("agent_approval_preview_changed")
                 if prior is None:
-                    ledger.begin(binding, preview, receipt_reserve=32768)
+                    self._ledger_call("begin", binding, preview, receipt_reserve=32768)
                 else:
-                    ledger.update(operation_id, "intent", binding=binding, preview=preview, receipt_reserve=32768, error=None)
+                    self._ledger_call("update", operation_id, "intent", binding=binding, preview=preview, receipt_reserve=32768, error=None)
                 if cancelled():
-                    ledger.update(operation_id, "not_executed", error="agent_cancelled")
+                    self._ledger_call("update", operation_id, "not_executed", error="agent_cancelled")
                     raise AgentToolRejected("agent_cancelled")
                 try:
                     if name == INSTALL:
                         engine_dispatched = True
-                        ledger.update(operation_id, "dispatched")
+                        self._ledger_call("update", operation_id, "dispatched")
                         self.manager.install_automation(app)
                         result = {"app": app, "installed": True, "version": CRAFT[app]["tag"], "tools_discovery": TOOLS}
                     else:
-                        with self.manager.lease(app):
-                            session = self._session(app, context, cancelled)
-                            normalized, _, outputs, replace_targets = self._arguments(app, args["tool"], args["arguments"], session, context)
-                            for output in outputs:
-                                if not any(item["path"] == output for item in replace_targets):
-                                    self.local.baseline(context["task_id"], Path(output))
-                            engine_dispatched = True
-                            ledger.update(operation_id, "dispatched")
-                            result = self._invoke_action(
-                                app, args["tool"], normalized, preview, session, context, cancelled, operation_id=operation_id
-                            )
+                        normalized, _, outputs, replace_targets = self._arguments(app, args["tool"], args["arguments"], session, context)
+                        for output in outputs:
+                            if not any(item["path"] == output for item in replace_targets):
+                                self.local.baseline(context["task_id"], Path(output))
+                        engine_dispatched = True
+                        self._ledger_call("update", operation_id, "dispatched")
+                        result = self._invoke_action(
+                            app, args["tool"], normalized, preview, session, context, cancelled, operation_id=operation_id
+                        )
                     result = self._bounded(result)
-                    ledger.update(operation_id, "confirmed", result=result, confirmed_at=datetime.now(timezone.utc).isoformat())
+                    self._ledger_call("update", operation_id, "confirmed", result=result, confirmed_at=datetime.now(timezone.utc).isoformat())
                     return result
                 except AgentToolRejected as exc:
                     if not engine_dispatched:
-                        ledger.update(operation_id, "not_executed", error=str(exc))
+                        self._ledger_call("update", operation_id, "not_executed", error=str(exc))
                         raise
-                    self.close_task(context["task_id"])
+                    close_after = True
                     raise AgentError("agent_write_outcome_unknown") from exc
                 except CraftError as exc:
                     if not engine_dispatched:
-                        ledger.update(operation_id, "not_executed", error=str(exc))
+                        self._ledger_call("update", operation_id, "not_executed", error=str(exc))
                         raise AgentToolRejected(str(exc)) from None
+                    close_after = True
                     if name == INSTALL:
-                        self.close_task(context["task_id"])
-                        ledger.update(operation_id, "not_executed", error=str(exc))
+                        self._ledger_call("update", operation_id, "not_executed", error=str(exc))
                         raise AgentToolRejected(str(exc)) from None
                     if str(exc) == "craft_mcp_timeout":
                         reconciled = self.reconcile(
@@ -745,9 +812,8 @@ class CraftTools:
                                 "session_revision": session["revision"],
                                 "reconciled_after_timeout": True,
                             })
-                            ledger.update(operation_id, "confirmed", result=result, confirmed_at=datetime.now(timezone.utc).isoformat())
+                            self._ledger_call("update", operation_id, "confirmed", result=result, confirmed_at=datetime.now(timezone.utc).isoformat())
                             return result
-                    self.close_task(context["task_id"])
                     raise AgentError("agent_write_outcome_unknown") from None
                 except Exception as exc:
                     if engine_dispatched:
@@ -757,20 +823,23 @@ class CraftTools:
                         )
                         if reconciled.get("outcome") == "executed":
                             result = self._bounded(reconciled["receipt"]["result"])
-                            ledger.update(operation_id, "confirmed", result=result, confirmed_at=datetime.now(timezone.utc).isoformat())
+                            self._ledger_call("update", operation_id, "confirmed", result=result, confirmed_at=datetime.now(timezone.utc).isoformat())
                             return result
-                    self.close_task(context["task_id"])
+                    close_after = True
                     raise AgentError("agent_write_outcome_unknown") from exc
-            except CraftError as exc:
-                if name in {ACTION, INSTALL} and engine_dispatched and self.ledger().get(operation_id):
-                    self.close_task(context["task_id"])
-                    raise AgentError("agent_write_outcome_unknown") from None
-                raise AgentToolRejected(str(exc)) from None
+        except CraftError as exc:
+            if name in {ACTION, INSTALL} and engine_dispatched and self._ledger_call("get", operation_id):
+                close_after = True
+                raise AgentError("agent_write_outcome_unknown") from None
+            raise AgentToolRejected(str(exc)) from None
+        finally:
+            if close_after:
+                self.close_task(context["task_id"])
 
     def reconcile(self, operation_id, context):
         context = context or {}
         operation = context.get("operation")
-        row = self.ledger().get(operation_id)
+        row = self._ledger_call("get", operation_id)
         if not row:
             return {"outcome": "unknown"}
         binding = row.get("binding") or {}
@@ -859,11 +928,15 @@ class CraftTools:
 
     def close_task(self, task_id):
         with self.lock:
-            for key in [key for key in self.sessions if key[0] == task_id]:
-                self.sessions.pop(key)["process"].close()
+            sessions = [self.sessions.pop(key) for key in list(self.sessions) if key[0] == task_id]
+            for session in sessions:
+                session["closing"] = True
+        self._close_sessions(sessions)
 
     def close(self):
         with self.lock:
-            for session in self.sessions.values():
-                session["process"].close()
+            sessions = list(self.sessions.values())
+            for session in sessions:
+                session["closing"] = True
             self.sessions.clear()
+        self._close_sessions(sessions)
