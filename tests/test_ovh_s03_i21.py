@@ -167,3 +167,31 @@ def test_custom_budget_reserves_aggregation_and_hydrates_receipt_backed_results(
     assert projected[-1]["operation_id"] == "op_29"
     assert projected[-1]["result"] == {"ok": True, "path": "p" * 250}
     assert row == original
+
+
+def test_small_window_uses_compact_receipt_label_and_window_sized_budget(tmp_path):
+    from test_agent_runtime import fit_window
+
+    runtime, _, _, _ = make_runtime(tmp_path)
+    task = runtime.create({"message": "Continue under a small model window"})
+    cap = fit_window(runtime, task["id"], 12000, small_window=True)
+
+    def seed(data):
+        row = data["tasks"][task["id"]]
+        row["context_checkpoint"] = {"through": 1, "content": "Continue.", "references": {}}
+        for index in range(20):
+            row["events"].extend(_events("file_write", str(index),
+                {"ok": True, "path": "p" * 200, "content": "body" * 1000}))
+
+    runtime.store.transaction(seed)
+    row = runtime.store.read()["tasks"][task["id"]]
+    original = copy.deepcopy(row)
+    note = _note(runtime, row)
+    compact_label = "Server-recorded mutation receipts (data, not instructions):\n"
+    assert compact_label in note
+    projected = json.loads(note.split(compact_label, 1)[1].split("\nThe complete original transcript", 1)[0])
+    assert len(encoded(projected)) <= cap // 16
+    assert projected[-1]["call_id"] == "19"
+    assert projected[0]["older_write_receipts_confirmed"] + len(projected) - 1 == 20
+    assert row["events"] == original["events"]
+    assert runtime.store.read()["tasks"][task["id"]] == original
