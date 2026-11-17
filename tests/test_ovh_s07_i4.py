@@ -169,6 +169,7 @@ def test_t6_suspend_skips_claim_and_child_completion_resumes_same_call(tmp_path)
     assert before["status"] == "queued" and before["in_flight"] is None
     assert before["queue"][0]["call_id"] == call
     assert runtime.get(parent)["waiting_for_subagents"] is True
+    assert runtime.get(parent, since_revision=before["revision"])["waiting_for_subagents"] is True
     assert not _tick(runtime).activity
     _settle(runtime, child)
     _tick(runtime)
@@ -176,6 +177,7 @@ def test_t6_suspend_skips_claim_and_child_completion_resumes_same_call(tmp_path)
     assert _receipt(runtime, parent, call)["all_settled"] is True
     assert after["queue"] == [] and "subagent_wait" not in after
     assert runtime.get(parent)["waiting_for_subagents"] is False
+    assert runtime.get(parent, since_revision=after["revision"])["waiting_for_subagents"] is False
 
 
 def test_t7_six_waiting_parents_release_workers_without_recursion(tmp_path):

@@ -2515,7 +2515,7 @@ class AgentRuntime(AgentLoop):
                 return current
             # Unchanged since the caller's copy: only fields that move on their own.
             return {"id": task_id, "revision": row["revision"], "unchanged": True,
-                    **{key: current[key] for key in ("run_timing", "budget", "allowed_actions", "run_state", "streaming", "subagents") if key in current}}
+                    **{key: current[key] for key in ("run_timing", "budget", "allowed_actions", "run_state", "streaming", "subagents", "waiting_for_subagents") if key in current}}
         found = self.store.inspect(view)
         if found is not None:
             return found
