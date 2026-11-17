@@ -91,6 +91,7 @@ class SourceStore:
         self.lock_path = home / "llm" / ".sharing.lock"
         self._active_models = {}
         self._model_metadata_cache = {}
+        self._write_generation = 0
         self.recovered = None
         with self.lock:
             try:
@@ -128,8 +129,18 @@ class SourceStore:
             except (json.JSONDecodeError, UnicodeDecodeError) as exc:
                 raise SourceStoreDamaged("invalid_json") from exc
 
+    @property
+    def version(self):
+        try:
+            stat = self.path.stat()
+        except FileNotFoundError:
+            return (None, None, self._write_generation)
+        return (stat.st_mtime_ns, stat.st_size, self._write_generation)
+
     def _write(self, records):
-        atomic_write_bytes(self.path, self.cipher.encrypt(json.dumps(records).encode()))
+        with self.lock:
+            atomic_write_bytes(self.path, self.cipher.encrypt(json.dumps(records).encode()))
+            self._write_generation += 1
 
     def public(self, record=None):
         if record is None and isinstance(self, dict):
