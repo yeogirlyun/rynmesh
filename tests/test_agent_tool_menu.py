@@ -67,6 +67,7 @@ def test_discovery_prepares_once_outside_state_lock_and_rejects_stale_commit(tmp
     runtime.tools = ManyTools()
     runtime.update_settings({"max_context_chars": 12000})
     created = runtime.create({"message": "Inspect the service."})
+    fit_window(runtime, created["id"], 12000, small_window=True)
     advance(runtime)
     task_id = created["id"]
     runtime.store.transaction(lambda data: data["tasks"][task_id].update(status="running"))
@@ -123,6 +124,7 @@ def test_twelve_k_runtime_discovers_then_dispatches_and_restores_menu(tmp_path):
     tools = runtime.tools = ManyTools()
     runtime.update_settings({"max_context_chars": 12000})
     task = runtime.create({"message": "Inspect the one service."})
+    cap = fit_window(runtime, task["id"], 12000, small_window=True)
     advance(runtime, 2)
     saved = runtime.store.read()["tasks"][task["id"]]
     assert saved["tool_menu"]["loaded_names"] == ["inspect_service"]
@@ -133,7 +135,7 @@ def test_twelve_k_runtime_discovers_then_dispatches_and_restores_menu(tmp_path):
     assert restored.get(task["id"])["status"] == "completed"
     assert [call[0] for call in tools.calls] == ["inspect_service"]
     assert "inspect_service" in {s["function"]["name"] for s in model.calls[1][2]}
-    assert all(len(encoded(call[1])) + len(encoded(call[2])) <= 12000 for call in model.calls)
+    assert all(len(encoded(call[1])) + len(encoded(call[2])) <= cap for call in model.calls)
     events = restored.get(task["id"])["events"]
     assert any(e["type"] == "tool_result" and e.get("tool") == tool_menu.NAME for e in events)
     # A later correction must use the same small-window menu floor, rather
@@ -149,6 +151,7 @@ def test_unexposed_tool_cannot_skip_discovery(tmp_path):
     runtime.tools = ManyTools()
     runtime.update_settings({"max_context_chars": 12000})
     task = runtime.create({"message": "Inspect the service."})
+    fit_window(runtime, task["id"], 12000, small_window=True)
     advance(runtime, 2)
     saved = runtime.store.read()["tasks"][task["id"]]
     assert saved["status"] == "queued"
@@ -185,6 +188,7 @@ def test_loading_write_tool_still_requires_exact_approval(tmp_path):
     runtime.tools = ManyTools()
     runtime.update_settings({"max_context_chars": 12000})
     task = runtime.create({"message": "Share service svc1."})
+    fit_window(runtime, task["id"], 12000, small_window=True)
     advance(runtime, 4)
     row = runtime.get(task["id"])
     assert row["status"] == "waiting_approval"
@@ -195,7 +199,7 @@ def test_loading_write_tool_still_requires_exact_approval(tmp_path):
 @pytest.mark.parametrize("oversized", [False, True])
 def test_closed_latest_exchange_can_be_compacted_when_no_shorter_prefix_fits(tmp_path, oversized):
     responses = (
-        [assistant("x" * 4000), assistant("Read complete.")]
+        [assistant("x" * 20000), assistant("Read complete.")]
         if oversized
         else [assistant("Observed fixture evidence; no writes performed."), assistant("Read complete.")]
     )
@@ -203,6 +207,7 @@ def test_closed_latest_exchange_can_be_compacted_when_no_shorter_prefix_fits(tmp
     runtime.tools = ManyTools()
     runtime.update_settings({"max_context_chars": 12000})
     task = runtime.create({"message": "Inspect only svc1. Never share anything."})
+    cap = fit_window(runtime, task["id"], 12000, small_window=True)
     def seed(data):
         data["tasks"][task["id"]]["messages"].extend([
             {**assistant(name="inspect_service", args={"service_id": "svc1"}, call_id="observed")["message"],
@@ -215,7 +220,7 @@ def test_closed_latest_exchange_can_be_compacted_when_no_shorter_prefix_fits(tmp
     if oversized:
         # S03-I5: oversized summaries with maximum > 256 are UTF-8 truncated to maximum across all window sizes.
         assert current["status"] == "completed"
-        assert 256 < len(current["context_checkpoint"]["content"].encode("utf-8")) < 4000
+        assert 256 < len(current["context_checkpoint"]["content"].encode("utf-8")) < 20000
         assert not runtime.tools.calls
         runtime = AgentRuntime(AgentStore(tmp_path, key), model, runtime.tools, runtime.catalog)
         current = runtime.store.read()["tasks"][task["id"]]
@@ -225,7 +230,7 @@ def test_closed_latest_exchange_can_be_compacted_when_no_shorter_prefix_fits(tmp
     assert all("PRIVATE_PROVIDER_CONTINUATION" not in json.dumps(call[1]) for call in model.calls)
     assert len(model.calls) == 2 and not model.calls[0][2]
     assert any(message["content"] == original[0]["content"] for message in model.calls[-1][1])
-    assert all(len(encoded(call[1])) + len(encoded(call[2])) <= 12000 for call in model.calls)
+    assert all(len(encoded(call[1])) + len(encoded(call[2])) <= cap for call in model.calls)
 
 
 def test_every_catalog_entry_is_reachable_and_binding_change_clears_loads():
