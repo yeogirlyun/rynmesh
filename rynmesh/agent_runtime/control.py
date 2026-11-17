@@ -219,7 +219,7 @@ def settle(row, emit, data=None):
     if pending_users and control.get("mid_turn"):
         note = MID_TURN_NOTES.get((pending_users[-1].get("ui") or {}).get("kind"))
         if note:
-            row["messages"].append({"role": "assistant", "content": note,
+            row["messages"].append({"role": "user", "content": note, "synthetic": True,
                                     "context_epoch": row.get("context_epoch", 0),
                                     "ui": {"kind": "runtime_note", "hidden": True}})
     if control["kind"] == "information" and row["status"] == "running":

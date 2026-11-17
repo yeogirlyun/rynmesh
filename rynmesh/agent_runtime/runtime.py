@@ -62,7 +62,7 @@ from .control import (
 )
 from .input_attachments import attach_to_message, parse_attachments
 from . import context_compaction
-from .loop import ALL_INTERNAL_NAMES, ALL_INTERNAL_SPECS, OWNER_TURN_EVENTS, AgentLoop
+from .loop import ALL_INTERNAL_NAMES, ALL_INTERNAL_SPECS, OWNER_TURN_EVENTS, AgentLoop, _is_owner_user_message
 from .prompt import (
     HISTORY_TOOL_NAMES,
     INTERNAL_NAMES,
@@ -1043,8 +1043,8 @@ class AgentRuntime(AgentLoop):
             raise AgentError("agent_tool_definition_changed")
         # Tool schemas share the calibrated input capacity used by dispatch and compaction.
         max_context_bytes = self._effective_capacity(row, max_context_bytes)[0]
-        owners = [message for message in row["messages"] if message["role"] == "user"]
-        trailing_unanswered_owner = bool(row["messages"] and row["messages"][-1].get("role") == "user")
+        owners = [message for message in row["messages"] if _is_owner_user_message(message)]
+        trailing_unanswered_owner = bool(row["messages"] and _is_owner_user_message(row["messages"][-1]))
         pinned_through = max(0, len(owners) - (1 if trailing_unanswered_owner else 0))
         pinned = {**row, "messages": owners,
                   "context_checkpoint": {"through": pinned_through, "content": ""},
@@ -1101,7 +1101,7 @@ class AgentRuntime(AgentLoop):
         if "_history_override" in row:
             return copy.deepcopy(row["_history_override"])
         epoch = row.get("context_epoch", 0)
-        return [message for message in row["messages"] if message["role"] == "user" or message.get("context_epoch", 0) == epoch]
+        return [message for message in row["messages"] if _is_owner_user_message(message) or message.get("context_epoch", 0) == epoch]
 
     def _execution_context(self, row: dict, operation_id=None, *, cheap_only=False) -> dict:
         origins = {}
@@ -3118,7 +3118,7 @@ class AgentRuntime(AgentLoop):
             prospective_dropped = list(
                 dict.fromkeys([*(row.get("dropped_skill_ids") or []), *dropped_skills])
             )
-            owners = [message for message in [*row["messages"], *row.get("pending_user_messages", [])] if message["role"] == "user"]
+            owners = [message for message in [*row["messages"], *row.get("pending_user_messages", [])] if _is_owner_user_message(message)]
             prospective = {**row, "messages": [*owners, message], "skills": merged_skills,
                            "dropped_skill_ids": prospective_dropped,
                            "context_checkpoint": None, "tool_menu": None}

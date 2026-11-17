@@ -10,6 +10,7 @@ from test_agent_runtime import advance, approve, assistant, fit_window, make_run
 from test_agent_tool_menu import ManyTools
 
 from rynmesh.agent_runtime import tool_menu
+from rynmesh.agent_runtime.control import MID_TURN_NOTES
 from rynmesh.agent_runtime.prompt import PROGRESS_TAIL_PREFIX
 from rynmesh.agent_runtime.runtime import AgentRuntime
 from rynmesh.agent_runtime.store import AgentStore, encoded
@@ -106,7 +107,8 @@ def test_real_resource_tools_reach_body_and_approved_artifact_under_pressure(wri
                 return assistant(json.dumps({"status": "passed", "summary": "Created content was mechanically read back.",
                     "uncovered_requirements": [], "evidence_refs": [e["id"] for e in payload["evidence"]]}))
             assert [m["content"] for m in messages if m["role"] == "user"
-                    and not str(m.get("content") or "").startswith(PROGRESS_TAIL_PREFIX)] == owners
+                    and not str(m.get("content") or "").startswith(PROGRESS_TAIL_PREFIX)
+                    and m.get("content") not in MID_TURN_NOTES.values()] == owners
             state, references = {}, {}
             for m in messages:
                 if m.get("content", "").startswith("Historical checkpoint"):

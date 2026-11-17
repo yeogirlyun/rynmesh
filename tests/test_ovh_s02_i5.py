@@ -61,7 +61,7 @@ def test_t1_running_owner_intent_reaches_model_once_after_settlement_and_restart
     notes = [m for m in saved["messages"] if m.get("ui", {}).get("kind") == "runtime_note"]
     assert len(notes) == 1
     assert notes[0]["content"] == NOTES[intent]
-    assert notes[0]["role"] == "assistant" and notes[0]["ui"]["hidden"] is True
+    assert notes[0]["role"] == "user" and notes[0]["ui"]["hidden"] is True
     assert notes[0]["context_epoch"] == epoch
     owner_index = next(i for i, m in enumerate(saved["messages"]) if m.get("content") == "Owner mid-turn direction")
     assert saved["messages"][owner_index + 1] == notes[0]
@@ -72,7 +72,8 @@ def test_t1_running_owner_intent_reaches_model_once_after_settlement_and_restart
     assert sum(m.get("content") == NOTES[intent] for m in requests[-1]) == 1
     assert not any(m.get("content") == NOTES["information" if intent == "steer" else "steer"] for m in requests[-1])
     assert next(m for m in requests[-1] if m.get("content") == NOTES[intent]) == {
-        "role": "assistant", "content": NOTES[intent]}
+        "role": "user", "content": NOTES[intent]}
+    assert requests[-1][-1]["role"] != "assistant"
 
 
 @pytest.mark.parametrize("intent", ["steer", "information"])
@@ -110,3 +111,35 @@ def test_checkpoint_continuation_keeps_small_window_fixed_text_budget():
 
     assert len(CHECKPOINT_CONTINUATION.encode("utf-8")) <= 234
     assert CHECKPOINT_CONTINUATION.endswith(FINAL_CHECK)
+
+
+def test_runtime_notes_are_not_counted_or_pinned_as_owner_messages(tmp_path):
+    from rynmesh.agent_runtime.loop import _is_owner_user_message
+    from rynmesh.agent_runtime import request_context
+
+    runtime, _, _, _ = make_runtime(tmp_path)
+    task = runtime.create({"message": "Original owner request"})
+    _send(runtime, task["id"], "steer", "Owner clarification")
+    row = runtime.store.read()["tasks"][task["id"]]
+    notes = [m for m in row["messages"] if m.get("ui", {}).get("kind") == "runtime_note"]
+    assert len(notes) == 1 and notes[0]["role"] == "user"
+    assert not _is_owner_user_message(notes[0])
+    assert len([m for m in row["messages"] if _is_owner_user_message(m)]) == 2
+    # This is the existing UI's visible owner-turn predicate.
+    assert len([m for m in row["messages"] if m["role"] == "user" and not m.get("ui", {}).get("hidden")]) == 2
+    compacted = request_context.build_context([], row["messages"],
+        checkpoint={"through": len(row["messages"]), "content": "Continue"})
+    assert [m["content"] for m in compacted if m["role"] == "user"] == [
+        "Original owner request", "Owner clarification"]
+
+    without_note = copy.deepcopy(row)
+    without_note["messages"] = [m for m in without_note["messages"] if m not in notes]
+    assert runtime._menu(row)[1] == runtime._menu(without_note)[1]
+    scoped = {**row, "context_epoch": 1}
+    assert notes[0] not in runtime._history(scoped)
+    assert len([m for m in runtime._history(scoped) if _is_owner_user_message(m)]) == 2
+
+    from rynmesh.agent_runtime import memory_runtime
+    latest = memory_runtime.latest_authentic_owner_message(row)
+    assert latest["content"] == "Owner clarification"
+    assert latest["message_id"] == row["messages"][-2]["message_id"]
