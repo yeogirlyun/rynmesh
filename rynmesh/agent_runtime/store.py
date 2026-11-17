@@ -42,6 +42,7 @@ DEFAULT_SETTINGS = {
     "workspace_root": "", "desktop_access": False, "verify_text_responses": False,
     "web_search_mode": "", "web_allowed_domains": [],
     "interrupt_message_enabled": True,
+    "owner_instructions": "",
     "default_subagent_model_id": "", "default_subagent_reasoning_effort": None,
     "project_doc_fallback_filenames": ["CLAUDE.md"],
     # None follows the selected model's declared token window, reserving output

@@ -2121,6 +2121,10 @@ class AgentRuntime(AgentLoop):
             names = values["project_doc_fallback_filenames"]
             if not isinstance(names, list) or any(not projects.valid_fallback_name(name) for name in names):
                 raise AgentError("agent_invalid_settings")
+        if "owner_instructions" in values:
+            instructions = values["owner_instructions"]
+            if not isinstance(instructions, str) or len(instructions.encode("utf-8")) > 40960:
+                raise AgentError("agent_invalid_settings")
         if "compact_prompt" in values:
             cp = values["compact_prompt"]
             if not isinstance(cp, str) or len(cp.encode("utf-8")) > self.COMPACT_PROMPT_MAX_BYTES or "\x00" in cp:

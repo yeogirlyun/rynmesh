@@ -181,7 +181,7 @@ PLAN_MODE_GUIDANCE = (
 
 
 def instruction_layers(row: dict, *, model_base=None, persisted_base=None, session_base=None,
-                       model_notes="", developer_instructions=None, project_guidance="",
+                       model_notes="", owner_instructions="", developer_instructions=None, project_guidance="",
                        progress_placement: str = "header") -> list[dict]:
     """Build Ryn's internal instruction roles; adapters own provider compatibility.
 
@@ -211,6 +211,12 @@ def instruction_layers(row: dict, *, model_base=None, persisted_base=None, sessi
     messages = [{"role": "developer", "content": base},
                 *([{"role": "developer", "content": model_notes}] if model_notes else []),
                 {"role": "developer", "content": authority_content}]
+    if not isinstance(owner_instructions, str):
+        raise ValueError("owner instructions must be text")
+    if owner_instructions:
+        messages.append({"role": "developer", "content":
+                         "Owner's standing instructions; host permissions and the current request still take precedence:\n"
+                         + owner_instructions})
     if developer_instructions is not None:
         if not isinstance(developer_instructions, str):
             raise ValueError("developer instructions must be text")

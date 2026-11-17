@@ -1200,6 +1200,8 @@ class AgentLoop:
         model_notes = profile["instructions"]
         instructions = instruction_layers(prefix_row, persisted_base=row.get("base_instructions"),
                                           model_notes=model_notes,
+                                          owner_instructions=self.store.inspect(
+                                              lambda data: data["settings"].get("owner_instructions", "")),
                                           developer_instructions=host_memory_note,
                                           project_guidance=projects.guidance(row),
                                           progress_placement=placement)
