@@ -592,8 +592,12 @@ def article_to_lines(article: dict[str, Any]) -> list[str]:
         for block in blocks:
             if not isinstance(block, dict):
                 continue
-            btype = str(block.get("type") or "p")
-            if btype == "h":
+            btype = str(block.get("type") or block.get("tag") or "p")
+            if btype == "tr":
+                text = _WHITESPACE_RE.sub(" ", str(block.get("text") or "")).strip()
+                if text:
+                    lines.append(f"| {text} |")
+            elif btype == "h":
                 level = max(1, min(6, int(block.get("level") or 2)))
                 text = _WHITESPACE_RE.sub(" ", str(block.get("text") or "")).strip()
                 if text:
@@ -635,6 +639,8 @@ def article_to_lines(article: dict[str, Any]) -> list[str]:
         lines.append("[PDF text extraction truncated]")
     if article.get("fetch_truncated"):
         lines.append(_TRUNCATED_PAGE_NOTICE)
+    if article.get("truncated"):
+        lines.append(f"[Extraction stopped at {len(blocks or [])} blocks]")
     return lines
 
 
@@ -1168,7 +1174,8 @@ class WebSearchEngine:
             existing_ref = ref_id or session["by_url"].get(validated_url)
             if existing_ref and existing_ref in session["refs"]:
                 entry = session["refs"][existing_ref]
-                if isinstance(entry.get("lines"), list) and entry["lines"]:
+                if (isinstance(entry.get("lines"), list) and entry["lines"]
+                        and not (entry.get("article") or {}).get("access_required")):
                     return {
                         "ref_id": existing_ref,
                         "url": str(entry["url"]),
@@ -1182,6 +1189,8 @@ class WebSearchEngine:
         cached_article = self.reader_cache.get(validated_url, now=stamp, allow_stale=(mode == "cached"))
         if cached_article is None and readable_url(validated_url) != validated_url:
             cached_article = self.reader_cache.get(readable_url(validated_url), now=stamp, allow_stale=(mode == "cached"))
+        if isinstance(cached_article, dict) and cached_article.get("access_required"):
+            cached_article = None
         if isinstance(cached_article, dict) and _pdf_url(validated_url) and not cached_article.get("pdf_checked"):
             cached_article = None  # Old versions parsed these PDF bytes as HTML.
         if isinstance(cached_article, dict):
@@ -1234,7 +1243,7 @@ class WebSearchEngine:
             }
             lines = [f"# {title}", f"Source: {final_url}", *raw_lines]
         else:
-            article_obj = extract_readable(raw_bytes, url=final_url, content_type=content_type)
+            article_obj = extract_readable(raw_bytes, url=final_url, content_type=content_type, max_blocks=4000)
             lines = article_to_lines(article_obj)
             if len(lines) <= 2:
                 fallback = _FallbackTextParser()
@@ -1250,14 +1259,18 @@ class WebSearchEngine:
         if truncated:
             article_obj["fetch_truncated"] = True
             if not article_obj.get("pdf_text_unavailable"):
-                lines.append(_TRUNCATED_PAGE_NOTICE)
+                if article_obj.get("truncated"):
+                    lines.insert(len(lines) - 1, _TRUNCATED_PAGE_NOTICE)
+                else:
+                    lines.append(_TRUNCATED_PAGE_NOTICE)
         article_obj["pdf_checked"] = True
         article_obj["url"] = validated_url
         article_obj["fetched_at"] = int(time.time())
-        try:
-            self.reader_cache.put(validated_url, article_obj, now=time.time())
-        except Exception:
-            pass
+        if not article_obj.get("access_required"):
+            try:
+                self.reader_cache.put(validated_url, article_obj, now=time.time())
+            except Exception:
+                pass
 
         assigned_ref = self._register_ref(
             session,
