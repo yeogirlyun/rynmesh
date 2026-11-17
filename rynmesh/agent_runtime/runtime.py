@@ -98,7 +98,7 @@ RETRYABLE_MODEL_ERRORS = {"agent_inference_timeout", "agent_model_connection_fai
                           "agent_model_upstream_failed", "agent_model_stream_interrupted",
                           "agent_invalid_model_response", "agent_compaction_size_limit", "agent_compaction_incomplete"}
 PUBLIC_FIELDS = ("fork", "id", "client_request_id", "title", "model_id", "reasoning_effort", "status", "revision", "created_at", "updated_at",
-                 "messages", "pending_user_messages", "events", "pending_approval", "steps", "result", "error", "connection_recovery", "limits", "permission_mode", "allowed_write_tools",
+                 "messages", "pending_user_messages", "open_questions", "events", "pending_approval", "steps", "result", "error", "connection_recovery", "limits", "permission_mode", "allowed_write_tools",
                  "model_destination", "local_execution", "project", "verification_evidence", "reconciliation", "archived", "result_refs", "file_artifact_revision",
                  "conversation_revision", "conversation_event_cursor", "source", "automation_id", "automation_run_id", "automation_kind",
                  "latest_turn_is_silent_heartbeat", "automation_notification", "parent_task_id", "subagent_ids",
@@ -153,6 +153,7 @@ def public_task(row: dict, *, summary: bool = False, settings: dict | None = Non
     result["completion_event_seq"] = next((item["seq"] for item in reversed(row.get("events", []))
                                            if item["type"] == "completed"), 0)
     result.setdefault("archived", False)
+    result.setdefault("open_questions", [])
     result.setdefault("context_exhausted", False)
     result["waiting_for_subagents"] = bool(row.get("subagent_wait") and row["status"] == "queued"
                                            and row.get("queue") and row["queue"][0]["call_id"] == row["subagent_wait"]["call_id"])
@@ -1879,6 +1880,7 @@ class AgentRuntime(AgentLoop):
             if ambiguous(row) or row["status"] == "cancelled":
                 raise AgentError("agent_operation_unresolved" if ambiguous(row) else "agent_invalid_transition")
             row["scope_revision"] += 1
+            row["open_questions"] = []
             row["scope"] = {**copy.deepcopy(scope), "revision": row["scope_revision"], "selection": copy.deepcopy(value["scope"])}
             row["model_destination"] = copy.deepcopy(destination)
             # Do not erase encrypted audit evidence. A new provider projection
@@ -3036,6 +3038,7 @@ class AgentRuntime(AgentLoop):
                     raise AgentError(exhausted)  # A new turn never bypasses a hard budget.
             if intent != "information" or ended:
                 owner_update(row, message)
+                row["open_questions"] = []
             # Clearing automation_run_id switches off unattended developer instructions
             # and post-turn automation settlement while keeping source/automation_id for UI provenance.
             row.update(approved=None, pending_approval=None, pending_input=None, result="",
@@ -3212,6 +3215,7 @@ class AgentRuntime(AgentLoop):
             row.update(status="paused", approved=None, pending_approval=None, pending_input=None,
                        latest_turn_is_silent_heartbeat=False, automation_run_id=None,
                        pending_control={"kind": "edit_message", "message_index": index, "message": replacement})
+            row["open_questions"] = []
             row.pop("unattended_blocked", None)
             event(row, "message_edit_requested", message_index=index, operation_in_flight=bool(row["in_flight"]))
             close_queue(row, event, "agent_owner_changed")
@@ -3408,11 +3412,15 @@ class AgentRuntime(AgentLoop):
                 row.update(pending_approval=None, status="queued")
             elif action == "answer":
                 pending = row.get("pending_input")
-                if row["status"] != "waiting_input" or not pending or value.get("pending_input_id") != pending["id"]:
+                nonblocking = False
+                if not pending or pending["id"] != value.get("pending_input_id"):
+                    pending = next((q for q in row.get("open_questions", []) if q["id"] == value.get("pending_input_id")), None)
+                    nonblocking = True
+                if not pending or (not nonblocking and row["status"] != "waiting_input"):
                     raise AgentError("agent_input_mismatch")
                 if not data["settings"]["enabled"]:
                     raise AgentError("agent_disabled")
-                if pending["goal_revision"] != row["goal"]["revision"] or pending["scope_revision"] != row["scope_revision"] or pending["control_revision"] != row["control_revision"]:
+                if pending["goal_revision"] != row["goal"]["revision"] or pending["scope_revision"] != row["scope_revision"] or (not nonblocking and pending["control_revision"] != row["control_revision"]):
                     raise AgentError("agent_input_mismatch")
                 if pending["kind"] == "credential_ref":
                     raise AgentError("agent_secure_credential_form_required")
@@ -3421,21 +3429,39 @@ class AgentRuntime(AgentLoop):
                 if not isinstance(answers, dict) or set(answers) - set(fields):
                     raise AgentError("agent_invalid_answer")
                 for key, field in fields.items():
+                    if not answers:
+                        break  # An explicit empty answer asks us to use an assumption.
                     answer = answers.get(key)
                     if answer is None and not field["required"]:
                         continue
                     if not isinstance(answer, str) or not answer.strip() or len(answer) > 2000 or (field["type"] == "choice" and answer not in {o["value"] for o in field["options"]}):
                         raise AgentError("agent_invalid_answer")
                 message = {"role": "user", "message_id": "owner_" + uuid.uuid4().hex,
-                           "content": "Owner supplied information (not new permission): " + encoded(answers).decode(),
+                           "content": ("Owner supplied information (not new permission): " + encoded(answers).decode()) if answers else
+                                      "No answer was given: continue with your best stated assumption; do not ask the same question again.",
                            "ui": {"kind": "input_answer", "prompt": pending["prompt"], "pending_input_id": pending["id"],
                                   "fields": [{"label": fields[key]["label"], "value": next((option["label"] for option in fields[key].get("options", []) if option["value"] == answer), answer)}
                                              for key, answer in answers.items()]}}
                 memory_natural.stamp_single_owner_message_in_tx(data, message)
-                row["messages"].append(message)
                 budget.new_round(row)
-                row.update(pending_input=None, status="queued")
-                event(row, "input_answered", pending_input_id=pending["id"])
+                if nonblocking:
+                    row["open_questions"] = [q for q in row["open_questions"] if q["id"] != pending["id"]]
+                    if row.get("in_flight") or row.get("queue") or row["status"] == "running":
+                        row.setdefault("pending_user_messages", []).append(message)
+                        if not row.get("pending_control"):
+                            row["pending_control"] = {"kind": "information"}
+                    else:
+                        row["messages"].append(message)
+                        if row["status"] not in {"waiting_input", "waiting_approval"}:
+                            if row["status"] in {"completed", "failed", "paused", "cancelled", "interrupted"}:
+                                row.update(steps=0, elapsed_seconds=0.0, result="", error=None)
+                                budget.restart_segment_audit(row)
+                            row["status"] = "queued"
+                    event(row, "input_answered", pending_input_id=pending["id"], blocking=False)
+                else:
+                    row["messages"].append(message)
+                    row.update(pending_input=None, status="queued")
+                    event(row, "input_answered", pending_input_id=pending["id"])
             elif action == "reconcile":
                 if not allowed_actions(row, data["settings"])["reconcile"]["enabled"] or not hasattr(self.tools, "reconcile"):
                     raise AgentError("agent_invalid_transition")

@@ -813,10 +813,11 @@ export default function RynAgent() {
       return false;
     } finally { mutationRef.current = false; setBusy(false); }
   };
-  const answer = async (answers: Record<string, string>) => {
-    if (!task?.pending_input || mutationRef.current || controlUncertain || !canUseAgentAction(task, "answer")) return;
+  const answer = async (answers: Record<string, string>, questionId?: string) => {
+    const question = questionId ? task?.open_questions?.find(item => item.id === questionId) : task?.pending_input;
+    if (!task || !question || mutationRef.current || controlUncertain || !canUseAgentAction(task, "answer")) return;
     mutationRef.current = true; setBusy(true); setError("");
-    try { acceptTask(await submitControl({ task_id: task.id, route: "actions", body: agentAnswerBody(task, answers) })); }
+    try { acceptTask(await submitControl({ task_id: task.id, route: "actions", body: agentAnswerBody(task, answers, question) })); }
     catch (reason) {
       setError(reason instanceof AgentAPIError && reason.status === 409 ? "inputConflict" : "mutationError");
       await rynAgent.task(task.id).then(acceptTask).catch(() => undefined);
@@ -1303,6 +1304,7 @@ export default function RynAgent() {
             {!visiblePending && <ExecutionProgress task={task} />}
 
             {task.pending_input && (task.pending_input.kind === "credential_ref" ? <RynAgentInputCard key={`${task.id}/${task.pending_input.id}`} task={task} busy={busy || controlUncertain} onSaved={acceptTask} onChangeMethod={() => { changeDraft(t("cliSourceClarification")); setMessageIntent("steer"); input.current?.focus(); }} /> : <InputRequest key={`${task.id}/${task.pending_input.id}`} task={task} busy={busy || controlUncertain} onAnswer={answer} />)}
+            {(task.open_questions || []).map(question => <InputRequest key={`${task.id}/${question.id}`} task={task} question={question} busy={busy || controlUncertain} onAnswer={answers => answer(answers, question.id)} />)}
             {task.pending_approval && <ApprovalCard approval={task.pending_approval} controlled={Boolean(task.allowed_actions)} enabled={canUseAgentAction(task, "approve", Boolean(enabled))} canDeny={canUseAgentAction(task, "deny", !settingsReady || Boolean(enabled))} busy={busy || controlUncertain} waiting={agentTaskState(task) === "waiting_approval"} onAction={action} />}
             {task.status === "interrupted" && <div className="ra-banner ra-interrupted-banner"><span>{t(task.error === "agent_node_restarted" ? "restartHelp" : task.allowed_actions?.information?.reason === "agent_reconciliation_running" ? "reconcilingHelp" : "interruptedHelp")} <code>{task.error}</code></span>{canResumeAgentTask(task) && (task.allowed_actions || enabled) && <button type="button" className="ra-primary ra-banner-resume" disabled={busy || controlUncertain} onClick={() => void action("resume")}><Play size={14} />{t("resume")}</button>}</div>}
             {!hasConnectionRecovery(task) && task.status === "paused" && canResumeAgentTask(task) && (task.allowed_actions || enabled) && <div className="ra-banner ra-paused-banner"><span>{t("pausedBannerHelp")}</span><button type="button" className="ra-primary ra-banner-resume" disabled={busy || controlUncertain} onClick={() => void action("resume")}><Play size={14} />{t("continueConversation")}</button></div>}
@@ -1383,9 +1385,8 @@ function TaskProgress({ task, settings }: { task: AgentTask; settings?: AgentSet
   </>;
 }
 
-function InputRequest({ task, busy, onAnswer }: { task: AgentTask; busy: boolean; onAnswer: (answers: Record<string, string>) => Promise<void> }) {
+function InputRequest({ task, question = task.pending_input!, busy, onAnswer }: { task: AgentTask; question?: NonNullable<AgentTask["pending_input"]>; busy: boolean; onAnswer: (answers: Record<string, string>) => Promise<void> }) {
   const { t } = useTranslation("rynAgent");
-  const question = task.pending_input!;
   const storageKey = `ryn.agent.answer-draft.${task.id}.${question.id}`;
   const [answers, setAnswers] = useState<Record<string, string>>(() => { try { return JSON.parse(saved(storageKey) || "{}"); } catch { return {}; } });
   useEffect(() => { save(storageKey, JSON.stringify(answers)); }, [answers, storageKey]);
@@ -1395,9 +1396,10 @@ function InputRequest({ task, busy, onAnswer }: { task: AgentTask; busy: boolean
   const valid = supported && question.fields.every(field => !field.required || Boolean(answers[field.id]?.trim())) && question.fields.every(field => field.type !== "choice" || !answers[field.id] || field.options?.some(option => option.value === answers[field.id]));
   return <section className="ra-input-request ra-approval" aria-label={t("inputRequest")}>
     <strong>{t("inputRequest")}</strong><ChatMarkdown>{question.prompt}</ChatMarkdown>
+    {question.blocking === false && <p>{t("nonblockingQuestionHelp")}</p>}
     <p>{t("answerHelp")}</p>
     {needsSecureInput ? <p>{t("secureInputHelp")} <Link to="/services/sources">{t("configureModels")}</Link></p> : supported ? <div className="ra-answer-fields">{question.fields.map(field => <label key={field.id}><span>{field.label}{field.required ? ` · ${t("requiredField")}` : ""}</span>{field.type === "choice" ? <select value={answers[field.id] || ""} disabled={busy} onChange={event => setAnswers(current => ({ ...current, [field.id]: event.target.value }))}><option value="">{t("chooseAnswer")}</option>{field.options?.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select> : <input value={answers[field.id] || ""} disabled={busy} autoComplete="off" onChange={event => setAnswers(current => ({ ...current, [field.id]: event.target.value }))} />}</label>)}</div> : <p>{t("unsupportedInputHelp")}</p>}
-    {supported && task.allowed_actions?.answer && <div className="ra-approval-actions"><button className="ra-primary" disabled={busy || !allowed || !valid} onClick={() => void onAnswer(answers)}>{t("answerQuestion")}</button></div>}
+    {supported && task.allowed_actions?.answer && <div className="ra-approval-actions"><button className="ra-primary" disabled={busy || !allowed || !valid} onClick={() => void onAnswer(answers)}>{t("answerQuestion")}</button><button disabled={busy || !allowed} onClick={() => void onAnswer({})}>{t("continueWithAssumption")}</button></div>}
   </section>;
 }
 

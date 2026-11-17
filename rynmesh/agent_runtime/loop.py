@@ -836,6 +836,10 @@ class AgentLoop:
                 event(row, "assistant", content=message["content"], tool_count=len(pending),
                       step=step, request_id=request_id, attempt=attempt, timing=timing)
                 event_compaction.fold_stream_deltas(row)
+                if (row.get("pending_control") or {}).get("kind") == "information":
+                    row["status"] = "queued"
+                    memory_integration.settle_in_tx(data, row, event)
+                    return  # Keep this response and queued calls; show the answer next step.
                 if overflowed and row.get("stream_read_journal"):
                     row["stream_read_journal"] = [
                         entry for entry in row["stream_read_journal"] if entry.get("parent_operation_id")
@@ -2894,13 +2898,20 @@ class AgentLoop:
                         raise AgentToolRejected("agent_invalid_control_proposal")
                     if (field["type"] == "credential_ref") != (args["kind"] == "credential_ref"):
                         raise AgentToolRejected("agent_invalid_control_proposal")
-                pending = {"id": "input_" + uuid.uuid4().hex, "kind": args["kind"], "prompt": args["prompt"],
+                blocking = args.get("blocking", True) is not False or args["kind"] == "credential_ref"
+                if not blocking and len(row.get("open_questions", [])) >= 4:
+                    raise AgentToolRejected("agent_open_question_limit",
+                        correction="Answer an open question before asking another; at most four questions can remain open.")
+                pending = {"id": "input_" + uuid.uuid4().hex, "kind": args["kind"], "prompt": args["prompt"], "blocking": blocking,
                            "fields": copy.deepcopy(fields), "goal_revision": row["goal"]["revision"],
                            "scope_revision": row["scope_revision"], "business_revision": None, "created_at": now()}
-                row["pending_input"] = pending
-                event(row, "input_requested", pending_input_id=pending["id"])
+                if blocking:
+                    row["pending_input"] = pending
+                else:
+                    row.setdefault("open_questions", []).append(pending)
+                event(row, "input_requested", pending_input_id=pending["id"], blocking=blocking)
                 pending["control_revision"] = row["control_revision"]
-                result = {"accepted": True, "pending_input_id": pending["id"], "waiting_for_owner": True}
+                result = {"accepted": True, "pending_input_id": pending["id"], "waiting_for_owner": blocking}
             message = {"role": "tool", "tool_call_id": call["call_id"], "content": encoded(result).decode(), "context_epoch": selected.get("context_epoch", 0)}
             if isinstance(result, dict) and result.get("error"):
                 message["is_error"] = True
@@ -2912,7 +2923,7 @@ class AgentLoop:
             row["in_flight"] = None
             row["elapsed_seconds"] += max(0.0, time.monotonic() - started)
             row["status"] = "waiting_input" if row["pending_input"] else "queued"
-            if call["name"] == "ryn_wait_agent" and row.get("pending_control"):
+            if row.get("pending_control"):
                 memory_integration.settle_in_tx(data, row, event)
             if row["pending_input"]:
                 # A model cannot precompute a mutation beyond unanswered input.

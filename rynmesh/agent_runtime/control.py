@@ -144,7 +144,7 @@ def allowed_actions(row, settings):
                 "resume": enabled and status in {"paused", "interrupted"} and (not flight or recoverable_read) and not uncertain,
                 "approve": enabled and status == "waiting_approval" and bool(row["pending_approval"]) and row["permission_mode"] != "read_only",
                 "deny": enabled and status == "waiting_approval" and bool(row["pending_approval"]),
-                "answer": enabled and status == "waiting_input" and bool(row.get("pending_input")) and row["pending_input"]["kind"] != "credential_ref",
+                "answer": enabled and (bool(row.get("open_questions")) or (status == "waiting_input" and bool(row.get("pending_input")) and row["pending_input"]["kind"] != "credential_ref")),
                 "steer": mutable, "information": mutable, "scope": not uncertain and status != "cancelled",
                 "reconcile": enabled and ((uncertain and row.get("reconciliation", {}).get("attempts", 0) < 3) or recoverable_read)
                              and row.get("reconciliation", {}).get("state") not in {"pending", "running"}}
@@ -197,7 +197,9 @@ def settle(row, emit, data=None):
         retry_policy.stop(row)
     if not control or row.get("in_flight"):
         return
-    if control["kind"] != "pause":
+    if control["kind"] == "information" and row.get("queue"):
+        return  # Pair every proposed tool result before appending owner information.
+    if control["kind"] not in {"pause", "information"}:
         row.pop("verification", None)
         close_queue(row, emit, "agent_owner_changed" if control["kind"] in {"steer", "scope", "permissions"} else "agent_cancelled", keep_flight=False)
     if control["kind"] in {"edit_message", "rollback"}:
@@ -207,6 +209,8 @@ def settle(row, emit, data=None):
         return
     pending_users = row.pop("pending_user_messages", [])
     row["messages"].extend(pending_users)
+    if control["kind"] == "information" and row["status"] == "running":
+        row["status"] = "queued"
     if pending_users and isinstance(data, dict):
         from . import memory_integration
         memory_integration.apply_owner_turn_memory_in_tx(None, data, row)
