@@ -1483,71 +1483,46 @@ it("continues an interrupted restart conversation directly by sending a follow-u
   await screen.findByRole("button", { name: "Pause" });
 });
 
-it("supports mid-turn steer vs queued follow-up messages and auto-dispatches queued messages on turn completion", async () => {
+it("uses the backend queue for enqueue, send now, and node-owned turn completion", async () => {
   await i18n.changeLanguage("en");
-  localStorage.removeItem("ryn.agent.followUpQueueMode");
-  localStorage.removeItem("ryn.agent.queuedMessages");
-  const running = controlled({
-    status: "running",
-    run_state: "running",
-    pending_user_messages: [{ role: "user", content: "Already steering", ui: { kind: "steer", text: "Already steering" } }],
-  });
-  const backend = api(true, [running]);
-  const user = userEvent.setup();
-  mount();
+  let current = controlled({ status: "running", run_state: "running", queued_messages: [],
+    pending_user_messages: [{ role: "user", content: "Already steering", ui: { kind: "steer", text: "Already steering" } }] });
+  const backend = api(true, [current]), enqueues = vi.fn(), updates = vi.fn();
+  server.use(
+    http.post("*/api/local/agent/tasks/task-1/queue", async ({ request }) => {
+      const body = await request.json() as { message: string; client_request_id: string }; enqueues(body);
+      current = { ...current, revision: current.revision + 1, queued_messages: [...current.queued_messages!, {
+        id: body.client_request_id, seq: current.queued_messages!.length + 1, message: body.message, intent: "steer", created_at: "2026-11-17T00:00:00Z" }] };
+      backend.setTasks([current]); return HttpResponse.json(current);
+    }),
+    http.patch("*/api/local/agent/tasks/task-1/queue/:item", async ({ params, request }) => {
+      updates(await request.json());
+      const item = current.queued_messages!.find(item => item.id === params.item)!;
+      current = { ...current, revision: current.revision + 1,
+        queued_messages: current.queued_messages!.filter(entry => entry.id !== item.id),
+        messages: [...current.messages, { role: "user", content: item.message }] };
+      backend.setTasks([current]); return HttpResponse.json(current);
+    }),
+  );
+  const control = vi.spyOn(rynAgent, "control"), user = userEvent.setup(); mount();
   await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   await screen.findByText("Already steering");
-
-  await user.type(screen.getByRole("textbox"), "Wait until this turn ends");
-  await user.click(screen.getByRole("button", { name: "Queue follow-up" }));
-  expect(screen.getByRole("textbox")).toHaveValue("");
-  const queueRegion = await screen.findByRole("region", { name: "Queued follow-up messages" });
-  expect(within(queueRegion).getByText("Wait until this turn ends")).toBeVisible();
-
-  await user.type(screen.getByRole("textbox"), "Second queued item");
-  await user.click(screen.getByRole("button", { name: "Queue follow-up" }));
-  expect(within(queueRegion).getByText("Second queued item")).toBeVisible();
-
-  const steered = controlled({
-    revision: running.revision + 1,
-    control_revision: 8,
-    status: "running",
-    run_state: "running",
-    messages: [...running.messages, { role: "user", content: "Wait until this turn ends" }],
-  });
-  const controlSpy = vi.spyOn(rynAgent, "control").mockImplementationOnce(async () => {
-    backend.setTasks([steered]);
-    return steered;
-  });
-  await user.click(within(queueRegion).getAllByRole("button", { name: "Steer queued message now" })[0]);
-  expect(controlSpy).toHaveBeenCalledWith("task-1", "messages", expect.objectContaining({ message: "Wait until this turn ends", intent: "steer" }));
-  await waitFor(() => expect(within(queueRegion).queryByText("Wait until this turn ends")).not.toBeInTheDocument());
-  expect(within(queueRegion).getByText("Second queued item")).toBeVisible();
-
-  const afterAutoDrain = controlled({
-    revision: steered.revision + 2,
-    control_revision: 10,
-    status: "running",
-    run_state: "running",
-    messages: [...steered.messages, { role: "assistant", content: "Turn 1 finished" }, { role: "user", content: "Second queued item" }],
-  });
-  controlSpy.mockImplementationOnce(async () => {
-    backend.setTasks([afterAutoDrain]);
-    return afterAutoDrain;
-  });
-  backend.setTasks([{
-    ...steered,
-    revision: steered.revision + 1,
-    control_revision: 9,
-    status: "completed",
-    run_state: "ended",
-    result: "Turn 1 finished",
-    messages: [...steered.messages, { role: "assistant", content: "Turn 1 finished" }],
-    allowed_actions: { information: { enabled: true, reason: null, requires_control_revision: true } },
-  }]);
-  window.dispatchEvent(new Event("focus"));
-  await waitFor(() => expect(controlSpy).toHaveBeenCalledTimes(2), { timeout: 3000 });
-  expect(controlSpy).toHaveBeenLastCalledWith("task-1", "messages", expect.objectContaining({ message: "Second queued item" }));
+  for (const text of ["Wait until this turn ends", "Second queued item"]) {
+    await user.type(screen.getByRole("textbox"), text);
+    await user.click(screen.getByRole("button", { name: "Queue follow-up" }));
+    await waitFor(() => expect(screen.getByRole("textbox")).toHaveValue(""));
+  }
+  const queue = screen.getByRole("region", { name: "Queued follow-up messages" });
+  expect(enqueues).toHaveBeenCalledTimes(2);
+  await user.click(within(queue).getAllByRole("button", { name: "Steer queued message now" })[0]);
+  await waitFor(() => expect(updates).toHaveBeenCalledWith({ send_now: true }));
+  await waitFor(() => expect(within(queue).queryByText("Wait until this turn ends")).not.toBeInTheDocument());
+  current = { ...current, revision: current.revision + 1, status: "queued", run_state: "queued", queued_messages: [],
+    messages: [...current.messages, { role: "assistant", content: "Turn 1 finished" }, { role: "user", content: "Second queued item" }] };
+  backend.setTasks([current]); window.dispatchEvent(new Event("focus"));
+  await screen.findByText("Turn 1 finished");
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Queued follow-up messages" })).not.toBeInTheDocument());
+  expect(control).not.toHaveBeenCalled();
 });
 
 const LIST_ERROR = "Could not refresh the task list. The selected task and saved draft remain available.";

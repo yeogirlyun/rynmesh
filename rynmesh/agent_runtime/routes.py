@@ -448,6 +448,28 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
     async def action(task_id: str, request: Request):
         return await call("action", task_id, await body(request))
 
+    @app.get("/api/local/agent/tasks/{task_id}/queue")
+    async def get_queued(task_id: str, request: Request):
+        local_control(request)
+        return await call("get_queued", task_id)
+
+    @app.post("/api/local/agent/tasks/{task_id}/queue")
+    async def queue_message(task_id: str, request: Request):
+        return await call("queue_message", task_id, await body(request, 28 * 1024 * 1024))
+
+    @app.patch("/api/local/agent/tasks/{task_id}/queue/{item_id}")
+    async def update_queued(task_id: str, item_id: str, request: Request):
+        return await call("update_queued", task_id, item_id, await body(request, 28 * 1024 * 1024))
+
+    @app.delete("/api/local/agent/tasks/{task_id}/queue/{item_id}")
+    async def delete_queued(task_id: str, item_id: str, request: Request):
+        local_control(request)
+        return await call("delete_queued", task_id, item_id)
+
+    @app.post("/api/local/agent/tasks/{task_id}/queue/reorder")
+    async def reorder_queued(task_id: str, request: Request):
+        return await call("reorder_queued", task_id, await body(request))
+
     @app.get("/api/local/agent/tasks/{task_id}/events")
     async def events(task_id: str, request: Request, after: int = 0):
         local_control(request)

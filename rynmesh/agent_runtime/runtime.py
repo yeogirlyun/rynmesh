@@ -110,7 +110,7 @@ PUBLIC_FIELDS = ("fork", "id", "client_request_id", "title", "model_id", "reason
                  "model_destination", "local_execution", "project", "verification_evidence", "reconciliation", "archived", "result_refs", "file_artifact_revision",
                  "conversation_revision", "conversation_event_cursor", "source", "automation_id", "automation_run_id", "automation_kind",
                  "latest_turn_is_silent_heartbeat", "automation_notification", "parent_task_id", "subagent_ids",
-                 "limits_source", "execution_segment", "archive_reason", "continued_from", "continued_to", "context_exhausted", *PUBLIC_STATE_FIELDS)
+                 "limits_source", "execution_segment", "archive_reason", "continued_from", "continued_to", "context_exhausted", "queued_messages", "queued_messages_paused_reason", *PUBLIC_STATE_FIELDS)
 CONTINUATION_PREFIX = ("[Continued from an earlier conversation that grew too long. The summary below was "
                        "written by Ryn from that conversation; it is context, not a new instruction.]\n\n")
 CONTINUATION_SEPARATOR = "\n\n[The owner's new message follows.]\n\n"
@@ -165,6 +165,8 @@ def public_task(row: dict, *, summary: bool = False, settings: dict | None = Non
     result.setdefault("context_exhausted", False)
     result["waiting_for_subagents"] = bool(row.get("subagent_wait") and row["status"] == "queued"
                                            and row.get("queue") and row["queue"][0]["call_id"] == row["subagent_wait"]["call_id"])
+    result.setdefault("queued_messages", [])
+    result.setdefault("queued_messages_paused_reason", None)
     result["skills"] = [{key: value for key, value in skill.items() if key != "content"} for skill in row.get("skills", [])]
     result["budget"] = budget.public(row)
     result["run_timing"] = timing.snapshot(row, active_run=active_run, monotonic_now=monotonic_now)
@@ -3128,6 +3130,15 @@ class AgentRuntime(AgentLoop):
                 row["continued_from"] = source["id"]
                 row["continuation_request_fingerprint"] = _continuation["fingerprint"]
                 row["continuation_root"] = source.get("continuation_root", source["id"])
+                row["queued_messages"] = source.pop("queued_messages", [])
+                if _continuation.get("queued_item_id"):
+                    row["queued_messages"] = [item for item in row["queued_messages"]
+                                              if item["id"] != _continuation["queued_item_id"]]
+                row["queued_message_seq"] = source.get("queued_message_seq", 0)
+                source.pop("queued_messages_paused_reason", None)
+                row["queued_messages_paused_reason"] = None
+                self._queue_size(row)
+                source["queued_messages"] = []
                 source["continued_to"] = row["id"]
                 source["context_exhausted"] = False
                 event(source, "continued_in_new_task", task_id=row["id"])
@@ -3147,21 +3158,215 @@ class AgentRuntime(AgentLoop):
             self._queued_since[created["id"]] = time.monotonic()
         return created
 
+    def get_queued(self, task_id: str) -> dict:
+        def read(data):
+            row = lifecycle.find(self.store, data, task_id)
+            return {"queued_messages": copy.deepcopy(row.get("queued_messages", [])),
+                    "queued_messages_paused_reason": row.get("queued_messages_paused_reason")}
+        return self.store.inspect(read)
+
+    @staticmethod
+    def _queue_writable(row: dict) -> None:
+        if row.get("archived"):
+            raise AgentError("agent_task_archived")
+        if row.get("continued_to"):
+            raise AgentError("agent_task_continued")
+
+    def _queued_value(self, row: dict, value: dict) -> dict:
+        if set(value) - {"message", "intent", "attachments", "reasoning_effort", "client_request_id", "paused_reason"}:
+            raise AgentError("agent_invalid_request")
+        if value.get("paused_reason") not in (None, "paused", "failed", "interrupted", "cancelled"):
+            raise AgentError("agent_invalid_request")
+        prepared = parse_attachments(value.get("attachments"))
+        content = message_text(value.get("message") or ("Please review the attached files." if prepared else ""))
+        intent = value.get("intent", "information")
+        if intent not in ("steer", "information"):
+            raise AgentError("agent_invalid_request")
+        # The queue is part of the task's bounded encrypted row, not a second archive.
+        if len(content.encode("utf-8")) > 1024 * 1024:
+            raise AgentError("agent_task_limit")
+        result = {"message": content, "intent": intent}
+        if "reasoning_effort" in value:
+            result["reasoning_effort"] = reasoning.validate(self._model_metadata(row["model_id"]), value["reasoning_effort"])
+        if prepared is not None:
+            holder = {"content": content}
+            attach_to_message(self.store, row, holder, prepared)
+            result["attachments"] = [{key: item[key] for key in ("id", "name", "media_type", "path", "size")}
+                                     for item in holder.get("attachments", [])]
+        return result
+
+    @staticmethod
+    def _queue_size(row: dict) -> None:
+        if len(encoded(row)) > event_compaction.TASK_BYTES_HARD_LIMIT:
+            raise AgentError("agent_task_limit")
+
+    def queue_message(self, task_id: str, value: dict) -> dict:
+        def enqueue(data):
+            row = lifecycle.find(self.store, data, task_id)
+            self._queue_writable(row)
+            receipt = {**value, "queue_operation": "enqueue"}
+            if request_replayed(row, receipt):
+                return public_task(row, settings=data["settings"])
+            items = row.setdefault("queued_messages", [])
+            if len(items) >= 100:
+                raise AgentError("agent_queue_limit")
+            item = self._queued_value(row, value)
+            row["queued_message_seq"] = row.get("queued_message_seq", 0) + 1
+            item.update(id=value.get("client_request_id") or str(uuid.uuid4()),
+                        seq=row["queued_message_seq"], created_at=now())
+            items.append(item)
+            if value.get("paused_reason"):
+                row["queued_messages_paused_reason"] = value["paused_reason"]
+            event(row, "message_queued", item_id=item["id"])
+            remember_request(row, receipt)
+            self._queue_size(row)
+            if row["status"] == "completed":
+                self._dispatch_queued_in_tx(data, row)
+            return public_task(row, settings=data["settings"])
+        result = self.store.transaction(enqueue)
+        if result.get("queued_messages_paused_reason") == "continuation_required":
+            return self._continue_queued(task_id, result["queued_messages"][0]["id"])
+        return result
+
+    def update_queued(self, task_id: str, item_id: str, value: dict) -> dict:
+        def update(data):
+            row = lifecycle.find(self.store, data, task_id)
+            self._queue_writable(row)
+            item = next((item for item in row.get("queued_messages", []) if item["id"] == item_id), None)
+            if item is None:
+                raise AgentError("agent_queue_item_not_found")
+            if value == {"send_now": True}:
+                self._dispatch_queued_in_tx(data, row, item_id=item_id)
+            else:
+                merged = {key: item[key] for key in ("message", "intent", "reasoning_effort") if key in item}
+                merged.update(value)
+                replacement = self._queued_value(row, merged)
+                if "attachments" not in value and "attachments" in item:
+                    replacement["attachments"] = item["attachments"]
+                item.update(replacement)
+                event(row, "queued_message_updated", item_id=item_id)
+            self._queue_size(row)
+            return public_task(row, settings=data["settings"])
+        try:
+            return self.store.transaction(update)
+        except ContinueInNewTask:
+            return self._continue_queued(task_id, item_id)
+
+    def _continue_queued(self, task_id: str, item_id: str) -> dict:
+        old = self.store.inspect(lambda data: task(data, task_id))
+        item = next(item for item in old["queued_messages"] if item["id"] == item_id)
+        value = {key: item[key] for key in ("message", "reasoning_effort") if key in item}
+        if item.get("attachments"):
+            value["attachments"] = [{key: file[key] for key in ("name", "media_type", "path")}
+                                    for file in item["attachments"]]
+        return self._continue_in_new_task(task_id, value, item["message"], queued_item_id=item_id)
+
+    def delete_queued(self, task_id: str, item_id: str) -> dict:
+        def delete(data):
+            row = lifecycle.find(self.store, data, task_id)
+            self._queue_writable(row)
+            items = row.get("queued_messages", [])
+            index = next((i for i, item in enumerate(items) if item["id"] == item_id), None)
+            if index is None:
+                raise AgentError("agent_queue_item_not_found")
+            items.pop(index)
+            event(row, "queued_message_deleted", item_id=item_id)
+            return public_task(row, settings=data["settings"])
+        return self.store.transaction(delete)
+
+    def reorder_queued(self, task_id: str, value: dict) -> dict:
+        def reorder(data):
+            row = lifecycle.find(self.store, data, task_id)
+            self._queue_writable(row)
+            ids = value.get("ids")
+            items = row.get("queued_messages", [])
+            if (set(value) != {"ids"} or not isinstance(ids, list)
+                    or not all(isinstance(item, str) for item in ids)
+                    or len(ids) != len(items) or set(ids) != {item["id"] for item in items}):
+                raise AgentError("agent_invalid_request")
+            by_id = {item["id"]: item for item in items}
+            row["queued_messages"] = [by_id[item_id] for item_id in ids]
+            event(row, "queued_messages_reordered")
+            return public_task(row, settings=data["settings"])
+        return self.store.transaction(reorder)
+
+    def _dispatch_queued_in_tx(self, data: dict, row: dict, *, item_id: str | None = None) -> str | None:
+        items = row.get("queued_messages", [])
+        if not items or (item_id is None and row.get("queued_messages_paused_reason")):
+            return
+        item = next(item for item in items if item["id"] == item_id) if item_id else items[0]
+        value = {key: item[key] for key in ("message", "reasoning_effort") if key in item}
+        value.update(intent=item["intent"], expected_control_revision=row["control_revision"],
+                     expected_goal_revision=row["goal"]["revision"])
+        if item_id and row["status"] in {"queued", "running", "waiting_input", "waiting_approval"}:
+            value["intent"] = "steer"
+        if item.get("attachments"):
+            value["attachments"] = [{key: file[key] for key in ("name", "media_type", "path")}
+                                    for file in item["attachments"]]
+        # Admission can reject an unavailable attachment or a budget/context limit.
+        # Keep the completed answer and the original queue if that happens.
+        saved = copy.deepcopy(data) if item_id is None else None
+        items.remove(item)
+        try:
+            self._add_in_tx(data, row, value)
+        except (AgentError, ContinueInNewTask) as exc:
+            if saved is None:
+                raise
+            row_id = row["id"]
+            row.clear()
+            row.update(saved["tasks"][row_id])
+            data.clear()
+            data.update(saved)
+            data["tasks"][row_id] = row
+            reason = "continuation_required" if isinstance(exc, ContinueInNewTask) else str(exc)
+            row["queued_messages_paused_reason"] = reason
+            event(row, "queued_messages_paused", reason=reason)
+            return item["id"] if isinstance(exc, ContinueInNewTask) else None
+        row["queued_messages_paused_reason"] = None
+        event(row, "queued_message_dispatched", item_id=item["id"])
+
     def add_message(self, task_id: str, value: dict) -> dict:
+        if set(value) - {"message", "intent", "expected_revision", "expected_control_revision", "expected_goal_revision", "client_request_id", "reasoning_effort", "edit_message_index", "attachments", "skill_ids"}:
+            raise AgentError("agent_invalid_request")
+        if "edit_message_index" in value:
+            prepared = parse_attachments(value.get("attachments"))
+            content = message_text(value.get("message") or ("Please review the attached files." if prepared else ""))
+
+            def _task_ws(data: dict) -> str | None:
+                row = data.get("tasks", {}).get(task_id)
+                if isinstance(row, dict):
+                    ws = (row.get("local_execution") or {}).get("workspace_root")
+                    if ws:
+                        return str(ws)
+                return (data.get("settings") or {}).get("workspace_root") or self.store.default_workspace()
+
+            task_ws = self.store.inspect(_task_ws)
+            skipped_skills: list[dict] = []
+            added_skills = self._resolve_skills(
+                value.get("skill_ids"),
+                content,
+                workspace_root=task_ws,
+                warnings_out=skipped_skills,
+            )
+            return self._edit_message(
+                task_id, value, content, prepared,
+                added_skills=added_skills, skipped_skills=skipped_skills,
+            )
+
+        try:
+            return self.store.transaction(lambda data: self._add_in_tx(data, task(data, task_id), value))
+        except ContinueInNewTask:
+            return self._continue_in_new_task(task_id, value, message_text(value.get("message") or "Please review the attached files."))
+
+    def _add_in_tx(self, data: dict, row: dict, value: dict) -> dict:
+        """Admit both immediate owner messages and durable queued follow-ups."""
         if set(value) - {"message", "intent", "expected_revision", "expected_control_revision", "expected_goal_revision", "client_request_id", "reasoning_effort", "edit_message_index", "attachments", "skill_ids"}:
             raise AgentError("agent_invalid_request")
         prepared = parse_attachments(value.get("attachments"))
         content = message_text(value.get("message") or ("Please review the attached files." if prepared else ""))
 
-        def _task_ws(data: dict) -> str | None:
-            row = data.get("tasks", {}).get(task_id)
-            if isinstance(row, dict):
-                ws = (row.get("local_execution") or {}).get("workspace_root")
-                if ws:
-                    return str(ws)
-            return (data.get("settings") or {}).get("workspace_root") or self.store.default_workspace()
-
-        task_ws = self.store.inspect(_task_ws)
+        task_ws = ((row.get("local_execution") or {}).get("workspace_root")
+                   or data["settings"].get("workspace_root") or self.store.default_workspace())
         skipped_skills: list[dict] = []
         added_skills = self._resolve_skills(
             value.get("skill_ids"),
@@ -3169,194 +3374,180 @@ class AgentRuntime(AgentLoop):
             workspace_root=task_ws,
             warnings_out=skipped_skills,
         )
-        if "edit_message_index" in value:
-            return self._edit_message(
-                task_id,
-                value,
-                content,
-                prepared,
-                added_skills=added_skills,
-                skipped_skills=skipped_skills,
-            )
         requested_intent = value.get("intent")
         if requested_intent not in {None, "auto", "steer", "information"}:
             raise AgentError("agent_invalid_request")
-
-        def add(data):
-            row = task(data, task_id)
-            intent = requested_intent
-            if intent == "auto":
-                intent = "steer" if row["status"] in {"queued", "running", "waiting_approval", "waiting_input"} else None
-            if row.get("continued_to"):
-                raise ContinueInNewTask()
-            if request_replayed(row, value):
-                return public_task(row, settings=data["settings"])
-            check_version(row, value, goal=intent is not None and requested_intent != "auto")
-            if not data["settings"]["enabled"]:
-                raise AgentError("agent_disabled")
-            if row.get("context_exhausted"):
-                raise ContinueInNewTask()
-            if acknowledgeable(row):
-                if intent is not None and not allowed_actions(row, data["settings"])[intent]["enabled"]:
-                    raise AgentError("agent_operation_unresolved")
-                self._acknowledge_unknown_in_tx(row)
-            resumable_interrupted = row["status"] == "interrupted" and (not row["in_flight"] or recoverable_read_in_flight(row)) and not ambiguous(row)
-            if intent is None and ((row["status"] not in {"completed", "failed", "paused", "cancelled"} and not resumable_interrupted) or (row["in_flight"] and not resumable_interrupted) or row["queue"] or row["pending_approval"] or row["pending_input"]):
-                raise AgentError("agent_task_busy")
+        intent = requested_intent
+        if intent == "auto":
+            intent = "steer" if row["status"] in {"queued", "running", "waiting_approval", "waiting_input"} else None
+        if row.get("continued_to"):
+            raise ContinueInNewTask()
+        if request_replayed(row, value):
+            return public_task(row, settings=data["settings"])
+        check_version(row, value, goal=intent is not None and requested_intent != "auto")
+        if not data["settings"]["enabled"]:
+            raise AgentError("agent_disabled")
+        if row.get("context_exhausted"):
+            raise ContinueInNewTask()
+        if acknowledgeable(row):
             if intent is not None and not allowed_actions(row, data["settings"])[intent]["enabled"]:
-                raise AgentError("agent_operation_unresolved" if ambiguous(row) else "agent_invalid_transition")
-            # A long conversation is condensed, never refused. Only if it is
-            # still too large does it continue in a new linked conversation.
-            size = len(encoded(row))
-            if event_compaction.needs_compaction(row, size):
-                # Full goal copies from older builds go first: they repeat every earlier message.
-                shrunk = compact_goal_history(row)
-                removed = event_compaction.compact_until_small(row)
-                if not lifecycle.eligible(row):
-                    removed += event_compaction.compact_in_turn(row)
-                if removed or shrunk:
-                    size = len(encoded(row))
-            if event_compaction.over_hard_limit(row, size, reserve_events=2 + len(skipped_skills) + 1):
-                if lifecycle.eligible(row):
-                    raise ContinueInNewTask()
-                event_compaction.note_near_limit(row, size, reserve_events=2 + len(skipped_skills) + 1)
-            effort = reasoning.validate(self._model_metadata(row["model_id"]), value["reasoning_effort"]) if "reasoning_effort" in value else None
-            if row["status"] == "interrupted" and row["in_flight"]:
-                if not recoverable_read_in_flight(row) or ambiguous(row):
-                    raise AgentError("agent_operation_unresolved")
-                flight = row["in_flight"]
-                err_code = row.get("error") or "agent_read_interrupted"
-                cleanup_ok, recovery = self._recover_read_operation_details(row, flight, error=err_code)
-                if not cleanup_ok:
-                    raise AgentError("agent_operation_unresolved")
-                if flight.get("effect") == "write":
-                    self._settle_interrupted_read(row, flight, err_code, recovery=recovery)
-                row["in_flight"] = None
-                row["approved"] = None
-            # Recover old, unbound conversations when the owner continues them.
-            # Never relocate an existing workspace or change an in-flight grant.
-            if (not (row.get("local_execution") or {}).get("workspace_root")
-                    and not data["settings"].get("workspace_root")
-                    and not row.get("in_flight") and not ambiguous(row)):
-                row.setdefault("local_execution", {})["workspace_root"] = self.store.default_workspace()
-            # Original evidence survives compaction, so its archive size is not
-            # the next prompt size. Only immutable owner constraints form a hard
-            # context floor; the normal loop may compact the remaining history.
-            message = {"role": "user", "content": content, "message_id": "owner_" + uuid.uuid4().hex,
-                       "ui": {"kind": "steer" if intent == "steer" else "information" if intent == "information" else "message", "text": content}}
-            attach_to_message(self.store, row, message, prepared)
-            merged_skills, dropped_skills = self._merge_task_skills(row.get("skills"), added_skills)
-            prospective_dropped = list(
-                dict.fromkeys([*(row.get("dropped_skill_ids") or []), *dropped_skills])
-            )
-            owners = [message for message in [*row["messages"], *row.get("pending_user_messages", [])] if _is_owner_user_message(message)]
-            prospective = {**row, "messages": [*owners, message], "skills": merged_skills,
-                           "dropped_skill_ids": prospective_dropped,
-                           "context_checkpoint": None, "tool_menu": None}
-            # Fixed instruction layers plus compacted-rule owner messages (including
-            # this new message), an empty checkpoint and tool schemas form the pinned
-            # floor. Continue in a linked new conversation only when that floor no
-            # longer fits capacity; a message too large on its own is still refused.
-            capacity = self._effective_capacity(row)[0]
-            try:
-                (future_specs, _), authority_bytes = self._menu(prospective)
-                too_large = authority_bytes + len(encoded(future_specs)) > capacity
-            except AgentError as exc:
-                if str(exc) != "agent_tool_schema_limit":
-                    raise
-                too_large = True
-            if too_large:
-                if not self._continuation_fits(row, prospective, message, content):
-                    raise AgentError("agent_context_limit")
+                raise AgentError("agent_operation_unresolved")
+            self._acknowledge_unknown_in_tx(row)
+        resumable_interrupted = row["status"] == "interrupted" and (not row["in_flight"] or recoverable_read_in_flight(row)) and not ambiguous(row)
+        if intent is None and ((row["status"] not in {"completed", "failed", "paused", "cancelled"} and not resumable_interrupted) or (row["in_flight"] and not resumable_interrupted) or row["queue"] or row["pending_approval"] or row["pending_input"]):
+            raise AgentError("agent_task_busy")
+        if intent is not None and not allowed_actions(row, data["settings"])[intent]["enabled"]:
+            raise AgentError("agent_operation_unresolved" if ambiguous(row) else "agent_invalid_transition")
+        # A long conversation is condensed, never refused. Only if it is
+        # still too large does it continue in a new linked conversation.
+        size = len(encoded(row))
+        if event_compaction.needs_compaction(row, size):
+            # Full goal copies from older builds go first: they repeat every earlier message.
+            shrunk = compact_goal_history(row)
+            removed = event_compaction.compact_until_small(row)
+            if not lifecycle.eligible(row):
+                removed += event_compaction.compact_in_turn(row)
+            if removed or shrunk:
+                size = len(encoded(row))
+        if event_compaction.over_hard_limit(row, size, reserve_events=2 + len(skipped_skills) + 1):
+            if lifecycle.eligible(row):
                 raise ContinueInNewTask()
-            if len(encoded(row)) + len(encoded(message)) > event_compaction.TASK_BYTES_HARD_LIMIT:
-                raise ContinueInNewTask()
-            memory_natural.stamp_single_owner_message_in_tx(data, message)
-            row["skills"] = merged_skills
-            self._record_skill_events_in_tx(
-                row,
-                skipped_warnings=skipped_skills,
-                dropped_skill_ids=dropped_skills,
-            )
-            ended = row["status"] in {"completed", "failed", "interrupted", "cancelled"} or bool(row.get("turn_stopped"))
-            if effort is not None:
-                # Running requests already own an immutable task snapshot.
-                # This preference starts with the next admitted request.
-                row["reasoning_effort"] = effort
-            budget.new_round(row)
-            if ended:
-                wrap_reason = (row.get("outcome") or {}).get("budget_wrap_up_reason")
-                budget.extend_defaults_for_owner_turn(row, wrap_reason)
-                b_state = budget.public(row)
-                b_limits = b_state["limits"]
-                b_life = b_state["lifetime"]
-                if budget.is_hard(row, "max_total_tokens") and b_life["charged_tokens"] >= b_limits["max_total_tokens"]:
-                    raise AgentError("agent_token_budget_exhausted")
-                if budget.is_hard(row, "max_total_model_calls") and b_life["charged_model_calls"] >= b_limits["max_total_model_calls"]:
-                    raise AgentError("agent_model_call_budget_exhausted")
-                if budget.time_remaining(row) <= 0:
-                    raise AgentError("agent_time_budget_exhausted")
-            elif row["status"] == "paused" and not row.get("in_flight"):
-                exhausted = budget.exhausted_hard_limit(row)
-                if exhausted:
-                    raise AgentError(exhausted)  # A new turn never bypasses a hard budget.
-            if intent != "information" or ended:
-                owner_update(row, message)
-                row["open_questions"] = []
-            # Clearing automation_run_id switches off unattended developer instructions
-            # and post-turn automation settlement while keeping source/automation_id for UI provenance.
-            row.update(approved=None, pending_approval=None, pending_input=None, result="",
-                       latest_turn_is_silent_heartbeat=False, automation_run_id=None)
-            row.pop("unattended_blocked", None)
-            if row.get("fork"):
-                row["fork"]["awaiting_instruction"] = False
-            row.setdefault("pending_user_messages", []).append(message)
-            was_stopped = row.pop("turn_stopped", False)
-            row.pop("retired_writes", None)
-            row["pending_control"] = {"kind": "steer", "remain_paused": row["status"] == "paused" and bool(row.get("in_flight")) and intent is not None and not was_stopped}
-            if not ended:
-                row["pending_control"]["mid_turn"] = True
-            if ended or intent is None or was_stopped or (row["status"] == "paused" and not row.get("in_flight")):
-                row.update(steps=0, elapsed_seconds=0.0)
-                budget.restart_segment_audit(row)
-            event(row, "goal_changed" if intent == "steer" else "information_added" if intent else "message_added", goal_revision=row["goal"]["revision"])
-            # A suspended wait must return its steering receipt before the
-            # owner turn cancels the remaining proposals and enters history.
-            if not (row.get("subagent_wait") and row["status"] == "queued" and row.get("queue")):
-                row.pop("subagent_wait", None)
-                close_queue(row, event, "agent_owner_changed")
-                settle(row, event, data=data)
-            if row.get("subagent_ids") and "@" in content:
-                routed_ids: set[str] = set()
-                for token in re.findall(r"@([A-Za-z0-9_-]+)", content):
-                    tok_low = token.strip().lower()
-                    if not tok_low or tok_low in {"all", "*"}:
-                        continue
-                    try:
-                        matched = subagents.resolve_subagent_targets(data, row, token)
-                        for child in matched:
-                            cid = child.get("id")
-                            if not cid or cid in routed_ids:
-                                continue
-                            meta = child.get("subagent_meta") or {}
-                            nick_low = str(meta.get("nickname") or "").lower()
-                            tname_low = str(meta.get("task_name") or "").lower()
-                            if tok_low not in {nick_low, tname_low}:
-                                continue
-                            if not meta.get("closed"):
-                                routed_ids.add(cid)
-                                if child.get("status") == "running" or child.get("in_flight"):
-                                    subagents.send_message_in_tx(data, row, {"target": cid, "message": content})
-                                else:
-                                    subagents.followup_task_in_tx(data, row, {"target": cid, "prompt": content})
-                    except Exception:
-                        pass
-            remember_request(row, value)
-            return public_task(row, settings=data["settings"], data=data)
+            event_compaction.note_near_limit(row, size, reserve_events=2 + len(skipped_skills) + 1)
+        effort = reasoning.validate(self._model_metadata(row["model_id"]), value["reasoning_effort"]) if "reasoning_effort" in value else None
+        if row["status"] == "interrupted" and row["in_flight"]:
+            if not recoverable_read_in_flight(row) or ambiguous(row):
+                raise AgentError("agent_operation_unresolved")
+            flight = row["in_flight"]
+            err_code = row.get("error") or "agent_read_interrupted"
+            cleanup_ok, recovery = self._recover_read_operation_details(row, flight, error=err_code)
+            if not cleanup_ok:
+                raise AgentError("agent_operation_unresolved")
+            if flight.get("effect") == "write":
+                self._settle_interrupted_read(row, flight, err_code, recovery=recovery)
+            row["in_flight"] = None
+            row["approved"] = None
+        # Recover old, unbound conversations when the owner continues them.
+        # Never relocate an existing workspace or change an in-flight grant.
+        if (not (row.get("local_execution") or {}).get("workspace_root")
+                and not data["settings"].get("workspace_root")
+                and not row.get("in_flight") and not ambiguous(row)):
+            row.setdefault("local_execution", {})["workspace_root"] = self.store.default_workspace()
+        # Original evidence survives compaction, so its archive size is not
+        # the next prompt size. Only immutable owner constraints form a hard
+        # context floor; the normal loop may compact the remaining history.
+        message = {"role": "user", "content": content, "message_id": "owner_" + uuid.uuid4().hex,
+                   "ui": {"kind": "steer" if intent == "steer" else "information" if intent == "information" else "message", "text": content}}
+        attach_to_message(self.store, row, message, prepared)
+        merged_skills, dropped_skills = self._merge_task_skills(row.get("skills"), added_skills)
+        prospective_dropped = list(
+            dict.fromkeys([*(row.get("dropped_skill_ids") or []), *dropped_skills])
+        )
+        owners = [message for message in [*row["messages"], *row.get("pending_user_messages", [])] if _is_owner_user_message(message)]
+        prospective = {**row, "messages": [*owners, message], "skills": merged_skills,
+                       "dropped_skill_ids": prospective_dropped,
+                       "context_checkpoint": None, "tool_menu": None}
+        # Fixed instruction layers plus compacted-rule owner messages (including
+        # this new message), an empty checkpoint and tool schemas form the pinned
+        # floor. Continue in a linked new conversation only when that floor no
+        # longer fits capacity; a message too large on its own is still refused.
+        capacity = self._effective_capacity(row)[0]
         try:
-            return self.store.transaction(add)
-        except ContinueInNewTask:
-            return self._continue_in_new_task(task_id, value, content)
+            (future_specs, _), authority_bytes = self._menu(prospective)
+            too_large = authority_bytes + len(encoded(future_specs)) > capacity
+        except AgentError as exc:
+            if str(exc) != "agent_tool_schema_limit":
+                raise
+            too_large = True
+        if too_large:
+            if not self._continuation_fits(row, prospective, message, content):
+                raise AgentError("agent_context_limit")
+            raise ContinueInNewTask()
+        if len(encoded(row)) + len(encoded(message)) > event_compaction.TASK_BYTES_HARD_LIMIT:
+            raise ContinueInNewTask()
+        row["queued_messages_paused_reason"] = None
+        memory_natural.stamp_single_owner_message_in_tx(data, message)
+        row["skills"] = merged_skills
+        self._record_skill_events_in_tx(
+            row,
+            skipped_warnings=skipped_skills,
+            dropped_skill_ids=dropped_skills,
+        )
+        ended = row["status"] in {"completed", "failed", "interrupted", "cancelled"} or bool(row.get("turn_stopped"))
+        if effort is not None:
+            # Running requests already own an immutable task snapshot.
+            # This preference starts with the next admitted request.
+            row["reasoning_effort"] = effort
+        budget.new_round(row)
+        if ended:
+            wrap_reason = (row.get("outcome") or {}).get("budget_wrap_up_reason")
+            budget.extend_defaults_for_owner_turn(row, wrap_reason)
+            b_state = budget.public(row)
+            b_limits = b_state["limits"]
+            b_life = b_state["lifetime"]
+            if budget.is_hard(row, "max_total_tokens") and b_life["charged_tokens"] >= b_limits["max_total_tokens"]:
+                raise AgentError("agent_token_budget_exhausted")
+            if budget.is_hard(row, "max_total_model_calls") and b_life["charged_model_calls"] >= b_limits["max_total_model_calls"]:
+                raise AgentError("agent_model_call_budget_exhausted")
+            if budget.time_remaining(row) <= 0:
+                raise AgentError("agent_time_budget_exhausted")
+        elif row["status"] == "paused" and not row.get("in_flight"):
+            exhausted = budget.exhausted_hard_limit(row)
+            if exhausted:
+                raise AgentError(exhausted)  # A new turn never bypasses a hard budget.
+        if intent != "information" or ended:
+            owner_update(row, message)
+            row["open_questions"] = []
+        # Clearing automation_run_id switches off unattended developer instructions
+        # and post-turn automation settlement while keeping source/automation_id for UI provenance.
+        row.update(approved=None, pending_approval=None, pending_input=None, result="",
+                   latest_turn_is_silent_heartbeat=False, automation_run_id=None)
+        row.pop("unattended_blocked", None)
+        if row.get("fork"):
+            row["fork"]["awaiting_instruction"] = False
+        row.setdefault("pending_user_messages", []).append(message)
+        was_stopped = row.pop("turn_stopped", False)
+        row.pop("retired_writes", None)
+        row["pending_control"] = {"kind": "steer", "remain_paused": row["status"] == "paused" and bool(row.get("in_flight")) and intent is not None and not was_stopped}
+        if not ended:
+            row["pending_control"]["mid_turn"] = True
+        if ended or intent is None or was_stopped or (row["status"] == "paused" and not row.get("in_flight")):
+            row.update(steps=0, elapsed_seconds=0.0)
+            budget.restart_segment_audit(row)
+        event(row, "goal_changed" if intent == "steer" else "information_added" if intent else "message_added", goal_revision=row["goal"]["revision"])
+        # A suspended wait must return its steering receipt before the
+        # owner turn cancels the remaining proposals and enters history.
+        if not (row.get("subagent_wait") and row["status"] == "queued" and row.get("queue")):
+            row.pop("subagent_wait", None)
+            close_queue(row, event, "agent_owner_changed")
+            settle(row, event, data=data)
+        if row.get("subagent_ids") and "@" in content:
+            routed_ids: set[str] = set()
+            for token in re.findall(r"@([A-Za-z0-9_-]+)", content):
+                tok_low = token.strip().lower()
+                if not tok_low or tok_low in {"all", "*"}:
+                    continue
+                try:
+                    matched = subagents.resolve_subagent_targets(data, row, token)
+                    for child in matched:
+                        cid = child.get("id")
+                        if not cid or cid in routed_ids:
+                            continue
+                        meta = child.get("subagent_meta") or {}
+                        nick_low = str(meta.get("nickname") or "").lower()
+                        tname_low = str(meta.get("task_name") or "").lower()
+                        if tok_low not in {nick_low, tname_low}:
+                            continue
+                        if not meta.get("closed"):
+                            routed_ids.add(cid)
+                            if child.get("status") == "running" or child.get("in_flight"):
+                                subagents.send_message_in_tx(data, row, {"target": cid, "message": content})
+                            else:
+                                subagents.followup_task_in_tx(data, row, {"target": cid, "prompt": content})
+                except Exception:
+                    pass
+        remember_request(row, value)
+        row["queued_messages_paused_reason"] = None
+        return public_task(row, settings=data["settings"], data=data)
 
     def _continuation_fits(self, row: dict, prospective: dict, message: dict, content: str) -> bool:
         """Whether this message, as the first message of a continued conversation, fits the model."""
@@ -3370,7 +3561,7 @@ class AgentRuntime(AgentLoop):
             return False
         return authority_bytes + len(encoded(specs)) <= self._effective_capacity(row)[0]
 
-    def _continue_in_new_task(self, task_id: str, value: dict, content: str) -> dict:
+    def _continue_in_new_task(self, task_id: str, value: dict, content: str, *, queued_item_id: str | None = None) -> dict:
         """The conversation is too large even after condensing: continue it in a new, linked one."""
         old = lifecycle.find(self.store, self.store.read(), task_id)
         fingerprint = digest({"source_task_id": task_id, **{k: v for k, v in value.items()
@@ -3396,7 +3587,8 @@ class AgentRuntime(AgentLoop):
                 body[key] = value[key]
         if isinstance(old.get("project"), dict) and old["project"].get("id"):
             body["project_id"] = old["project"]["id"]
-        return self.create(body, _continuation={"id": task_id, "revision": old["revision"], "fingerprint": fingerprint})
+        return self.create(body, _continuation={"id": task_id, "revision": old["revision"], "fingerprint": fingerprint,
+                                                "queued_item_id": queued_item_id})
 
     def _auto_continue_context_exhausted(self, task_id: str) -> None:
         row = self.store.read().get("tasks", {}).get(task_id)
@@ -3647,6 +3839,7 @@ class AgentRuntime(AgentLoop):
                 budget.restart_segment_audit(row)
                 for key in ("budget_limited", "budget_stop", "budget_wrap_up_reason"):
                     row.get("outcome", {}).pop(key, None)
+                row["queued_messages_paused_reason"] = None
                 retry_policy.resume(row)
                 row["status"] = "waiting_input" if row["pending_input"] else "waiting_approval" if row["pending_approval"] else "queued"
                 row["error"] = None

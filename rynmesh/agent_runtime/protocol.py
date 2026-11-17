@@ -125,6 +125,10 @@ def hydrated_events(row: dict, events: list) -> list:
 
 
 def event(row: dict, kind: str, **fields) -> None:
+    # Every stop path (including budget/recovery stops) preserves owner follow-ups.
+    if row.get("queued_messages") and (row.get("status") in {"failed", "paused", "interrupted", "cancelled"}
+                                       or kind == "paused"):
+        row["queued_messages_paused_reason"] = row["status"] if kind != "paused" else "paused"
     fields = _receipt_backed(row, kind, fields)
     row["event_cursor"] += 1
     if kind in CONTROL_EVENTS and not (kind == "input_answered" and fields.get("blocking") is False):
