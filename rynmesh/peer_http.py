@@ -1412,6 +1412,10 @@ def create_app(store: RynmeshStore | None = None):
 
         network_id = control_network_id()
         local_items = active_store.list_local_content().get("content", [])
+        try:
+            pending_recs = _digest_service().discovery_status().get("unread_count")
+        except (OSError, ValueError):
+            pending_recs = None
         return {
             "node_name": active_store.node_name,
             "peer_id": active_store.peer_id,
@@ -1434,7 +1438,7 @@ def create_app(store: RynmeshStore | None = None):
             "fetched_items": sum(
                 1 for item in local_items if item.get("publisher_peer_id") != active_store.peer_id
             ),
-            "pending_recs": 0,
+            **({"pending_recs": pending_recs} if pending_recs is not None else {}),
             "version": f"ryn-node {RYNMESH_VERSION}",
             "uptime_seconds": int(time.monotonic() - started_at),
             "workers": app.state.background_workers.status(),
@@ -2483,7 +2487,6 @@ def create_app(store: RynmeshStore | None = None):
             "rank_default": stored["rank_default"],
             "publish_visibility": stored["publish_visibility"],
             "fetch_budget_mb": int(stored["fetch_budget_mb"]),
-            "fetch_used_mb": 0,
             "fetch_timeout_s": int(stored["fetch_timeout_s"]),
             "onboarding_version": int(stored["onboarding_version"]),
             "notifications_enabled": bool(stored["notifications_enabled"]),

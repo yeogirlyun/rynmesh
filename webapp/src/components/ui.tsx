@@ -134,6 +134,7 @@ const eventIcons: Record<ProvenanceEvent["kind"], IconComponent> = {
 };
 
 const safetyMeta: Record<SafetyOutcome, { tone: Tone; icon: IconComponent; label: string }> = {
+  not_applicable: { tone: "muted", icon: ShieldOff, get label() { return tr("Not applicable"); } },
   passed: { tone: "ok", icon: ShieldCheck, get label() { return tr("Passed"); } },
   pending: { tone: "warn", icon: Shield, get label() { return tr("Pending"); } },
   flagged: { tone: "warn", icon: ShieldAlert, get label() { return tr("Flagged"); } },
@@ -142,6 +143,7 @@ const safetyMeta: Record<SafetyOutcome, { tone: Tone; icon: IconComponent; label
 };
 
 const provenanceMeta: Record<ProvenanceStatus, { tone: Tone; icon: IconComponent; label: string }> = {
+  not_applicable: { tone: "muted", icon: CircleDashed, get label() { return tr("Not applicable"); } },
   signed: { tone: "ok", icon: BadgeCheck, get label() { return tr("Signed"); } },
   partial: { tone: "warn", icon: Link2, get label() { return tr("Partial"); } },
   unsigned: { tone: "muted", icon: CircleDashed, get label() { return tr("Unsigned"); } },
@@ -519,12 +521,12 @@ export function ContentRow({
         <span>{publisher?.name ?? tr("unknown")}</span>
         {provider && provider.id !== publisher?.id ? <small>{tr("via")} {provider.name}</small> : null}
       </td>
-      <td>{publisher ? <TierBadge tier={publisher.tier} compact /> : null}</td>
+      <td>{publisher && !item.starter ? <TierBadge tier={publisher.tier} compact /> : null}</td>
       <td>
-        <SafetyBadge outcome={item.safety_outcome} />
+        {item.starter ? <Chip tone="muted">{tr("Guide example")}</Chip> : <SafetyBadge outcome={item.safety_outcome} />}
       </td>
       <td>
-        <ProvBadge status={item.provenance_status} />
+        {!item.starter ? <ProvBadge status={item.provenance_status} /> : null}
       </td>
       <td>
         <FetchChip status={item.fetch_status} />
@@ -570,6 +572,7 @@ export function RecommendationCard({
         <div className="content-kicker">
           <KindIcon kind={item.content_kind} />
           <span>{tr(item.content_kind)}</span>
+          {item.starter ? <Chip tone="muted">{tr("Guide example")}</Chip> : null}
           <ReviewBasisBadge basis={rec.review_basis} />
         </div>
         <h2>{item.title}</h2>
@@ -667,8 +670,10 @@ export function RecommendationCard({
               label: item.starter ? tr("Source choice") : item.external ? tr("Source") : tr("Publisher"),
               value: item.starter || item.external ? item.source_peer_name ?? item.source_platform ?? "starter" : <PeerPill peer={publisher} />,
             },
-            { label: tr("Safety"), value: <SafetyBadge outcome={item.safety_outcome} /> },
-            { label: tr("Provenance"), value: <ProvBadge status={item.provenance_status} /> },
+            ...(!item.starter ? [
+              { label: tr("Safety"), value: <SafetyBadge outcome={item.safety_outcome} /> },
+              { label: tr("Provenance"), value: <ProvBadge status={item.provenance_status} /> },
+            ] : []),
             { label: tr("Weight"), value: <WeightBar value={item.distribution_weight} /> },
             { label: tr("Priority"), value: <span className="mono">{Math.round(rec.priority * 100)}%</span> },
           ]}

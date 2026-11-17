@@ -555,19 +555,14 @@ function FetchSection({
   onUpdate: (patch: Partial<NodeSettings>) => Promise<void>;
 }) {
   useUILanguage();
-  const pct = Math.round((settings.fetch_used_mb / settings.fetch_budget_mb) * 100);
   return (
     <Section title={tr("Fetch limits")} icon={<HardDrive size={22} />}>
       <KV
         rows={[
-          { label: tr("Daily budget"), value: `${settings.fetch_budget_mb} MB` },
-          { label: tr("Used today"), value: `${settings.fetch_used_mb} MB` },
+          { label: tr("Daily budget"), value: `${settings.fetch_budget_mb == null ? "—" : `${settings.fetch_budget_mb} MB`} · ${tr("Not yet effective")}` },
           { label: tr("Timeout"), value: `${settings.fetch_timeout_s}s` },
         ]}
       />
-      <div className={`budget-bar${pct > 80 ? " budget-warn" : ""}`}>
-        <span style={{ width: `${Math.min(100, pct)}%` }} />
-      </div>
       <SettingInput
         label={tr("Fetch timeout seconds")}
         value={String(settings.fetch_timeout_s)}
