@@ -103,10 +103,16 @@ def test_native_protocol_failure_is_terminal_without_second_model_request(node, 
         row = runtime.get(task["id"])
         stored = runtime.store.read()["tasks"][task["id"]]
         assert row["status"] == "failed", row
-        assert len(requests) == 1
+        retries = [event for event in row["events"] if event["type"] == "model_retry_scheduled"]
+        if failure == "truncated":
+            # S01-I18: an output-limit stop gets one retry with "write smaller" feedback;
+            # the truncated tool call itself is never executed.
+            assert len(requests) == 2 and len(retries) == 1
+            assert row["error"] == "agent_model_output_limit_reached"
+        else:
+            assert len(requests) == 1 and not retries
+            assert row["error"] == ("agent_model_request_rejected" if failure.startswith("http_") else "agent_model_protocol_invalid")
         assert requests[0]["path"] == ("/v1/responses" if protocol == "openai_responses" else "/v1/messages")
-        assert row["error"] == ("agent_model_request_rejected" if failure.startswith("http_") else "agent_model_protocol_invalid")
-        assert not any(event["type"] == "model_retry_scheduled" for event in row["events"])
         assert not any(event["type"] == "tool_call" for event in row["events"])
         assert not stored.get("operation_receipts") and not stored["queue"]
         assert sources.path.read_bytes() == source_before
