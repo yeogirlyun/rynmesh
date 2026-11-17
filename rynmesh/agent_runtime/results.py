@@ -241,10 +241,15 @@ def checkpoint_note(row: dict) -> str:
     ]
     if not active:
         return ""
-    return (
+    note = (
         "\nRetained large result references (use ryn_read_result): "
-        + json.dumps(active[:16], ensure_ascii=False, separators=(",", ":"))
+        + json.dumps(active[-16:], ensure_ascii=False, separators=(",", ":"))
     )
+    if len(active) > 16:
+        note += "\n" + json.dumps({"older_result_ids_omitted": len(active) - 16}, separators=(",", ":"))
+        note += "\nUse ryn_history_search with the tool_name filter to recover older result IDs."
+    return note
+
 
 
 def _compacted_history_slice(row: dict) -> list[dict]:
