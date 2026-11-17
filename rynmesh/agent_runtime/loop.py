@@ -2752,9 +2752,18 @@ class AgentLoop:
         reference = None
         if call["name"] == "ryn_read_result":
             self._validate_context(selected)
-            page = results.page(self.store, selected, args["result_id"], args.get("offset", 0),
-                                max(64, min(4096, (selected["limits"]["max_output_chars"] - 512) // 6)), provider=True)
-            _, reference = results.read(self.store, selected, args["result_id"], provider=True)
+            result_budget = selected["limits"]["max_output_chars"] - 512
+            limit = min(args.get("limit", results.MAX_PAGE_CHARS), result_budget)
+            if "pattern" in args or "line_start" in args:
+                page, reference = results.lines(
+                    self.store, selected, args["result_id"], pattern=args.get("pattern"),
+                    context_lines=args.get("context_lines", 1), line_start=args.get("line_start"),
+                    line_count=args.get("line_count", 100), max_bytes=limit,
+                    provider=True, return_reference=True)
+            else:
+                page, reference = results.page(
+                    self.store, selected, args["result_id"], args.get("offset", 0), limit,
+                    max_bytes=result_budget, provider=True, return_reference=True)
         elif call["name"] in HISTORY_TOOL_NAMES:
             self._validate_context(selected)
             page = self._history_tool_result(selected, call["name"], args)
