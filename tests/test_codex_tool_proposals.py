@@ -95,7 +95,18 @@ def test_private_workspace_cleanup_does_not_mask_result_when_windows_file_is_loc
     {"content": "", "tool_calls": [], "extra": "untrusted"},
 ])
 def test_invalid_proposal_never_reaches_client(monkeypatch, proposal):
+    """Malformed replies fail in the adapter; unknown targets pair a host rejection."""
     monkeypatch.setattr(codex_session, "_native_chat", lambda *args, **kwargs: {"text": json.dumps(proposal)})
+    if proposal["tool_calls"] and proposal["tool_calls"][0]["name"] == "exec_command":
+        from rynmesh.agent_runtime.tool_router import normalize_tool_calls
+        result = CLIAgentAdapter("codex_cli").chat({"messages": [{"role": "user", "content": "hello"}],
+                                                   "tools": [TOOL], "tool_choice": "required"}, task_id="probe", timeout_s=1)
+        calls = normalize_tool_calls(result["message"]["tool_calls"], [TOOL],
+                                     metadata=lambda _name: pytest.fail("unknown tool reached metadata"))
+        assert calls[0]["name"] == "exec_command"
+        assert calls[0]["error_result"]["error"] == "agent_unknown_tool"
+        assert calls[0]["error_result"]["not_executed"] and calls[0]["error_result"]["no_mutation"]
+        return
     with pytest.raises(AdapterError, match="invalid client tool proposal") as rejected:
         CLIAgentAdapter("codex_cli").chat({"messages": [{"role": "user", "content": "hello"}],
                                          "tools": [TOOL], "tool_choice": "required"}, task_id="probe", timeout_s=1)
