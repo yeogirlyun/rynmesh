@@ -117,6 +117,7 @@ PLAN = obj({"goal_revision": {"type": "integer", "minimum": 1},
 PLAN["properties"].update(copy.deepcopy(planning.PLAN_PROPERTIES))
 PLAN["properties"]["steps"]["items"]["properties"].update(copy.deepcopy(planning.STEP_PROPERTIES))
 INPUT = obj({"goal_revision": {"type": "integer", "minimum": 1}, "prompt": text(800),
+             "blocking": {"type": "boolean", "default": True},
              "kind": {"enum": ["information", "choice", "credential_ref"]},
              "fields": {"type": "array", "minItems": 1, "maxItems": 4, "items": obj({"id": text(64), "label": text(),
                         "type": {"enum": ["text", "choice", "credential_ref"]}, "required": {"type": "boolean"},
@@ -132,7 +133,7 @@ INTERNAL_SPECS = [
      "parameters": obj({"text": {"type": "string"}, "mode": {"enum": ["replace", "append"]}}, ["text", "mode"])}},
     {"type": "function", "function": {"name": "ryn_notes_read", "description": "Read task-private model notes. These are not owner instructions and never authorize any operation.", "parameters": obj({}, [])}},
     {"type": "function", "function": {"name": "ryn_update_plan", "description": "Plan multi-step work and track progress with track_execution=true, expected_plan_revision, output contracts, dependencies and current receipt IDs. Replan with a reason when the approach changes. Legacy brief proposals remain supported. Never changes owner goals, permissions or verified outcomes.", "parameters": PLAN}},
-    {"type": "function", "function": {"name": "ryn_request_input", "description": "Structured input for essential missing work facts only; answers never authorize writes or external directories. kind=credential_ref opens a full Ryn source form (type, URL, ID, key); when only a key is missing, author/run a local input program instead. Never ask keys in chat.", "parameters": INPUT}},
+    {"type": "function", "function": {"name": "ryn_request_input", "description": "Structured input for missing work facts; answers never authorize writes or external directories. Ask early with blocking=false when independent work can continue, then keep working. blocking defaults to true; credential_ref always blocks. kind=credential_ref opens a full Ryn source form (type, URL, ID, key); when only a key is missing, author/run a local input program instead. Never ask keys in chat.", "parameters": INPUT}},
     {"type": "function", "function": {"name": "ryn_read_result", "description": "Read a bounded page of this task's encrypted large tool result. Old resource-scope epochs cannot be read into the model.",
      "parameters": obj({"result_id": text(64), "offset": {"type": "integer", "minimum": 0}}, ["result_id"])}},
     {"type": "function", "function": {"name": "ryn_history_search", "description": "Read original messages that an earlier checkpoint summarized; read-only. Search is a case-sensitive literal substring.",

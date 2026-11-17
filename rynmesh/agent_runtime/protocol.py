@@ -127,7 +127,7 @@ def hydrated_events(row: dict, events: list) -> list:
 def event(row: dict, kind: str, **fields) -> None:
     fields = _receipt_backed(row, kind, fields)
     row["event_cursor"] += 1
-    if kind in CONTROL_EVENTS:
+    if kind in CONTROL_EVENTS and not (kind == "input_answered" and fields.get("blocking") is False):
         row["control_revision"] += 1
     elapsed = row.get("elapsed_seconds")
     timing = ({"run_elapsed_seconds": elapsed}

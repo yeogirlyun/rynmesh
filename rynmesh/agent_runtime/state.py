@@ -56,7 +56,8 @@ def synchronize(row: dict) -> None:
     row["run_state"] = ({"completed": "ended", "failed": "ended", "cancelled": "ended",
                          "interrupted": "reconciling" if row.get("error") == "agent_write_outcome_unknown" else "paused"}
                         .get(row["status"], row["status"]))
-    if row.get("pending_control") and row.get("in_flight") and row["status"] != "cancelled":
+    if (row.get("pending_control") and row["pending_control"]["kind"] != "information"
+            and row.get("in_flight") and row["status"] != "cancelled"):
         row["run_state"] = "pausing"
     if row.get("error") == "agent_write_outcome_unknown":
         row["outcome"].update(status="unknown", uncertainties=["A dispatched write has no confirmed outcome."])

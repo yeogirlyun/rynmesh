@@ -34,6 +34,7 @@ export interface AgentOutcome {
 export interface AgentAllowedAction { enabled: boolean; reason: string | null; requires_control_revision: boolean; }
 export type AgentMessageIntent = "steer" | "information";
 export interface AgentPendingInput {
+  blocking?: boolean;
   id: string; kind: "information" | "choice" | "credential_ref"; prompt: string;
   fields: Array<{ id: string; label: string; type: "text" | "choice" | "credential_ref"; required: boolean; options?: Array<{ value: string; label: string }> }>;
   goal_revision: number; control_revision: number; scope_revision: number; business_revision: unknown; created_at: number | string;
@@ -228,6 +229,7 @@ export interface AgentTaskSummary {
   execution_segment?: { index: number; started_seq: number };
   allowed_actions?: Record<string, AgentAllowedAction>;
   pending_input?: AgentPendingInput | null;
+  open_questions?: AgentPendingInput[];
   scope_revision?: number;
   model_destination?: AgentModelDestination;
   archived?: boolean;
@@ -569,8 +571,8 @@ export function agentActionBody(task: AgentTask, action: AgentAction): Record<st
   return { action, expected_control_revision: task.control_revision, client_request_id: crypto.randomUUID(),
     ...((action === "approve" || action === "deny") && task.pending_approval ? { approval_id: task.pending_approval.id } : {}) };
 }
-export function agentAnswerBody(task: AgentTask, answers: Record<string, string>): Record<string, unknown> {
-  return { action: "answer", pending_input_id: task.pending_input?.id, expected_goal_revision: task.pending_input?.goal_revision,
+export function agentAnswerBody(task: AgentTask, answers: Record<string, string>, question = task.pending_input): Record<string, unknown> {
+  return { action: "answer", pending_input_id: question?.id, expected_goal_revision: question?.goal_revision,
     expected_control_revision: task.control_revision, answers, client_request_id: crypto.randomUUID() };
 }
 export function agentScopeBody(snapshot: AgentScopeSnapshot, scope: AgentScopeSelection): Record<string, unknown> {
