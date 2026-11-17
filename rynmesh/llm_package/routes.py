@@ -558,6 +558,7 @@ class ProviderService:
             raise TaskProtocolError("unhealthy service cannot be published online")
         self.store.register_node(capabilities=["publish", "seed", CAPABILITY], network_id=network_id)
         return self.store.register_job_capacity(
+            owner=CAPABILITY,
             capabilities=[CAPABILITY], network_id=network_id,
             capacity_units=self.manifest.max_concurrent,
             max_concurrent=self.manifest.max_concurrent,
@@ -2141,24 +2142,28 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         """Refresh the configured provider's short-lived discovery record."""
         current = active_manager()
         cli = {**active_cli_managers(), **active_source_managers()}
-        if current is None and not cli and not force:
-            return {"configured": False, "online": False}
         settings = read_provider_settings()
+        network_id = str(settings.get("network_id") or "rynmesh-main")
+        if current is None and not cli and not force:
+            store.withdraw_job_capacity(CAPABILITY, network_id)
+            return {"configured": False, "online": False}
         available = ([current] if current and current.accepting_orders else []) + [
             item for item in cli.values() if item.accepting_orders and "explicit-friends" not in item.manifest.capabilities
         ]
         statuses = [item.public_status(benchmark=False) for item in available]
-        network_id = str(settings.get("network_id") or "rynmesh-main")
-        store.register_node(capabilities=["publish", "seed", CAPABILITY], network_id=network_id)
-        store.register_job_capacity(
-            capabilities=[CAPABILITY], network_id=network_id,
-            capacity_units=sum(item.manifest.max_concurrent for item in available),
-            max_concurrent=sum(item.manifest.max_concurrent for item in available),
-            price_credits={}, polling_interval_sec=15,
-            metadata={"llm_service": statuses[0] if current and current.accepting_orders else {},
-                      "llm_services": statuses,
-                      "billing": "development_task_balance_not_credits"},
-        )
+        if available:
+            store.register_node(capabilities=["publish", "seed", CAPABILITY], network_id=network_id)
+            store.register_job_capacity(
+                owner=CAPABILITY, capabilities=[CAPABILITY], network_id=network_id,
+                capacity_units=sum(item.manifest.max_concurrent for item in available),
+                max_concurrent=sum(item.manifest.max_concurrent for item in available),
+                price_credits={}, polling_interval_sec=15,
+                metadata={"llm_service": statuses[0] if current and current.accepting_orders else {},
+                          "llm_services": statuses,
+                          "billing": "development_task_balance_not_credits"},
+            )
+        else:
+            store.withdraw_job_capacity(CAPABILITY, network_id)
         publication_pending_path.unlink(missing_ok=True)
         return {"configured": True, "online": any(item["online"] for item in statuses),
                 "publication_enabled": bool(statuses), "services": statuses}

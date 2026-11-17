@@ -496,10 +496,13 @@ def test_per_model_share_immediately_publishes_and_last_delete_withdraws(node):
         # The stable service IDs make the explicit model selection observable in discovery.
         advertised = [service for capacity in capacities for service in capacity.get("metadata", {}).get("llm_services", [])]
         assert [service["service"]["model_alias"] for service in advertised] == ["Owner API · model-b"]
+        advertised_hash = capacities[0]["record_hash"]
         assert not (store.home / "llm" / "publication-pending.json").exists()
         assert client.delete(f"/api/local/llm/sources/{record['id']}").json()["publication"] == "published"
         capacities = store.list_job_capacities(network_id="rynmesh-main", capability=CAPABILITY, max_age_hours=1)["capacities"]
-        assert not [service for capacity in capacities for service in capacity.get("metadata", {}).get("llm_services", [])]
+        # S13-I58: the last owner stops renewing; its signed record expires naturally.
+        assert CAPABILITY not in store._advertised_capacity.get("rynmesh-main", {})
+        assert capacities[0]["record_hash"] == advertised_hash
         assert not (store.home / "llm" / "publication-pending.json").exists()
 
 
@@ -508,27 +511,31 @@ def test_failed_last_model_withdrawal_retries_from_existing_publication_worker(n
     record, _ = add_source(app)
     store.personal_space.create("Test space")
     store.personal_space.set_policy("space")
-    original = store.register_job_capacity
+    original = store.registry.publish_job_capacity
     with TestClient(app) as client:
         assert client.put(f"/api/local/llm/sources/{record['id']}", json={"shared_models": ["model-a"]}).json()["publication"] == "published"
+        # A remaining owner requires an immediate signed replacement on withdrawal.
+        store.register_job_capacity(owner="manual", capabilities=["other-service"], metadata={"manual": True})
         failed_publications = []
-        def offline(**payload):
+        def offline(payload):
             failed_publications.append(payload)
             raise OSError("registry offline")
-        monkeypatch.setattr(store, "register_job_capacity", offline)
+        monkeypatch.setattr(store.registry, "publish_job_capacity", offline)
         assert client.delete(f"/api/local/llm/sources/{record['id']}").json()["publication"] == "pending"
         assert len(failed_publications) == 1
-        assert failed_publications[0]["metadata"]["llm_services"] == []
+        assert failed_publications[0].payload["capabilities"] == ["other-service"]
+        assert failed_publications[0].payload["metadata"] == {"manual": True}
         pending = store.home / "llm" / "publication-pending.json"
         assert pending.exists()
         capacities = store.list_job_capacities(network_id="rynmesh-main", capability=CAPABILITY, max_age_hours=1)["capacities"]
         advertised = [service for capacity in capacities for service in capacity.get("metadata", {}).get("llm_services", [])]
         assert [service["service"]["model_alias"] for service in advertised] == ["Owner API · model-a"]
-        monkeypatch.setattr(store, "register_job_capacity", original)
+        monkeypatch.setattr(store.registry, "publish_job_capacity", original)
         app.state.background_workers._specs["llm.publish-refresh"].run_once()
         assert not pending.exists()
         capacities = store.list_job_capacities(network_id="rynmesh-main", capability=CAPABILITY, max_age_hours=1)["capacities"]
         assert not [service for capacity in capacities for service in capacity.get("metadata", {}).get("llm_services", [])]
+        assert store.list_job_capacities()["capacities"][0]["capabilities"] == ["other-service"]
 
 
 def test_native_service_probe_persists_verified_capability_without_guessing(node, monkeypatch):

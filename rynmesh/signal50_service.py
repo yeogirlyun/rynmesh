@@ -41,39 +41,47 @@ def main(argv: list[str] | None = None) -> int:
     if not token:
         raise Signal50ServiceError("signal50_api_token_required")
 
-    registration = store.register_job_capacity(
-        capabilities=(capability,),
-        network_id=network_id,
-        capacity_units=1,
-        max_concurrent=1,
-        price_credits={capability: float(args.price_credits)},
-        polling_interval_sec=int(args.poll_sec),
-        metadata=_service_metadata(
-            api_url=api_url,
-            action_id=DEFAULT_ACTION_ID,
-            relay_url=args.relay_url or _default_relay_url(),
-            work_dir=args.work_dir,
-            media_ops_url=args.media_ops_url,
-        ),
-    )
+    def register_capacity():
+        return store.register_job_capacity(
+            owner="signal50",
+            capabilities=(capability,),
+            network_id=network_id,
+            capacity_units=1,
+            max_concurrent=1,
+            price_credits={capability: float(args.price_credits)},
+            polling_interval_sec=int(args.poll_sec),
+            metadata=_service_metadata(
+                api_url=api_url,
+                action_id=DEFAULT_ACTION_ID,
+                relay_url=args.relay_url or _default_relay_url(),
+                work_dir=args.work_dir,
+                media_ops_url=args.media_ops_url,
+            ),
+        )
+
+    registration = register_capacity()
     print(json.dumps({"event": "capacity_registered", "result": registration}, sort_keys=True))
 
-    while True:
-        _service_once(
-            store,
-            network_id=network_id,
-            capability=capability,
-            api_url=api_url,
-            token=token,
-            job_timeout_sec=float(args.job_timeout_sec),
-            work_dir=Path(args.work_dir).expanduser(),
-            lock_file=Path(args.lock_file).expanduser(),
-            relay_url=args.relay_url or _default_relay_url(),
-            signal50_repo=args.signal50_repo,
-            max_scenes_default=int(args.max_scenes_default or 0),
-            media_ops_url=args.media_ops_url,
-        )
-        time.sleep(float(args.poll_sec))
+    try:
+        while True:
+            _service_once(
+                store,
+                network_id=network_id,
+                capability=capability,
+                api_url=api_url,
+                token=token,
+                job_timeout_sec=float(args.job_timeout_sec),
+                work_dir=Path(args.work_dir).expanduser(),
+                lock_file=Path(args.lock_file).expanduser(),
+                relay_url=args.relay_url or _default_relay_url(),
+                signal50_repo=args.signal50_repo,
+                max_scenes_default=int(args.max_scenes_default or 0),
+                media_ops_url=args.media_ops_url,
+            )
+            time.sleep(float(args.poll_sec))
+            register_capacity()
+    finally:
+        store.withdraw_job_capacity("signal50", network_id)
 
 
 def _service_once(
