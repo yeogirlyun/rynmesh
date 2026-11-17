@@ -188,7 +188,11 @@ def test_permission_revocation_between_proposal_and_dispatch_wins(tmp_path):
         assistant(name="ryn_file_write", args={"path": "report.txt", "content": "hello"}))
     task = runtime.create({"message": "Create report.txt"})
     advance(runtime)
+    # S13-I25: the global choice applies to new tasks; the running task switches through its own permission.
     runtime.update_settings({"permission_mode": "read_only"})
+    for body in ({"action": "pause"}, {"action": "set_permission", "permission_mode": "read_only"},
+                 {"action": "resume"}):
+        runtime.action(task["id"], {**body, "expected_control_revision": runtime.get(task["id"])["control_revision"]})
     advance(runtime)
     assert not (workspace / "report.txt").exists()
     assert runtime.get(task["id"])["events"][-1]["result"]["error"] == "agent_permission_denied"

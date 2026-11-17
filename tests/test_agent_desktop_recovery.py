@@ -185,7 +185,9 @@ def test_materialized_screenshot_projection_triggers_compaction_before_complete(
     summaries = []
 
     def complete(model_id, messages, tool_specs, cancelled, on_event):
-        if not tool_specs:
+        # Since S03-I5 a summary reuses the main prefix (tools included) and ends with the compaction request.
+        if not tool_specs or str((messages[-1] if messages else {}).get("content") or "").startswith(
+                "Server compaction request:"):
             summaries.append(messages)
             return assistant("Compacted step_a and step_b history.")
         # Trailing screenshot must still be present on the main model call after compaction
