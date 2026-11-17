@@ -287,7 +287,9 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                         self._mark_cache_control_unsupported()
                         effective_prompt_cache = "off"
                         continue
-                    if diag.get("image_rejected"):
+                    if diag.get("network_reason") == "context_overflow":
+                        err_code = "upstream_context_overflow"
+                    elif diag.get("image_rejected"):
                         err_code = "upstream_image_rejected"
                     elif diag.get("network_reason") in {"request_rejected", "auth_rejected"}:
                         err_code = "upstream_request_rejected"
@@ -451,7 +453,9 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
             elif isinstance(exc, urllib.error.HTTPError):
                 diag = read_http_failure(exc, phase)
                 exc.close()
-                if diag.get("image_rejected"):
+                if diag.get("network_reason") == "context_overflow":
+                    code = text = "upstream_context_overflow"
+                elif diag.get("image_rejected"):
                     code = text = "upstream_image_rejected"
                 elif diag.get("network_reason") in {"request_rejected", "auth_rejected"}:
                     code = text = "upstream_request_rejected"
