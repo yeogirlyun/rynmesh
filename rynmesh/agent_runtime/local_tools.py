@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import base64
+import codecs
 import difflib
 import fnmatch
 import hashlib
@@ -38,6 +39,7 @@ from .store import AgentError, AgentToolRejected, encoded
 
 MAX_FILE = 1024 * 1024
 READ_MAX_FILE = 64 * 1024 * 1024
+STREAM_READ_THRESHOLD = 8 * 1024 * 1024
 # Characters per ryn_file_read page. 6000 meant an 18 KB source file needed four model round trips.
 MAX_READ_CHARS = 12000
 MAX_SEARCH_FILES = 1000
@@ -507,12 +509,32 @@ def _line_indent(line: str) -> int | None:
 _HEADER_PREFIXES = ("#", "//", "/*", "*", "*/", "@", "#[", "///", "--")
 
 
+def _read_page_chars(context):
+    window = context.get("context_window_chars")
+    return max(MAX_READ_CHARS, min(48000, window // 16)) if type(window) is int else MAX_READ_CHARS
+
+
+def _decode_stream_sample(raw, *, final=False):
+    candidates = ("utf-16",) if raw.startswith((b"\xff\xfe", b"\xfe\xff")) else (
+        ("utf-8-sig",) if raw.startswith(b"\xef\xbb\xbf") else ("utf-8", "gb18030"))
+    for codec in candidates:
+        decoder = codecs.getincrementaldecoder(codec)()
+        try:
+            decoder.decode(raw, final=final)
+            pending = len(decoder.getstate()[0])
+            return decode_text(raw[:-pending] if pending else raw)
+        except UnicodeError:
+            continue
+    raise UnicodeError("not a supported text window")
+
+
 def _read_indentation_block(
     lines: list[str],
     args: dict,
     path: Path,
     raw_path: str,
     total_lines: int,
+    max_chars=None,
 ) -> tuple[int, list[str]]:
     """Codex read_file.rs-aligned indentation block reader."""
     anchor_1based = args.get("anchor_line") or args.get("start_line") or 1
@@ -611,9 +633,13 @@ def _read_indentation_block(
         end_idx -= 1
 
     selected = lines[start_idx:min(end_idx, start_idx + max_lines)]
+    max_chars = MAX_READ_CHARS if max_chars is None else max_chars
     chunk, size = [], 0
     for line in selected:
-        if chunk and size + len(line) > MAX_READ_CHARS:
+        if not chunk and len(line) > max_chars:
+            chunk.append(line[:max_chars])
+            break
+        if size + len(line) > max_chars:
             break
         chunk.append(line)
         size += len(line)
@@ -913,8 +939,73 @@ class LocalTools:
             raise AgentToolRejected("agent_local_file_too_large")
         return raw
 
-    def read_window(self, path, *, max_bytes: int = READ_MAX_FILE):
-        return self.raw(path, max_bytes=max_bytes)
+    def read_window(self, path, *, max_bytes: int = READ_MAX_FILE, offset=0, limit=None):
+        if limit is None:
+            return self.raw(path, max_bytes=max_bytes)
+        if not path.is_file() or path.stat().st_size > max_bytes:
+            raise AgentToolRejected("agent_local_file_missing_or_too_large")
+        with path.open("rb") as stream:
+            stream.seek(offset)
+            return stream.read(limit)
+
+    def _large_read_page(self, path, args, context, cancelled):
+        if args.get("start_line") is not None or args.get("mode") == "indentation":
+            raise AgentToolRejected("agent_local_large_file_requires_offset",
+                correction="Files above 8 MiB use byte-offset pages. Read with offset=0, then continue with next_offset.")
+        size, offset = path.stat().st_size, args.get("offset", 0)
+        if offset > size:
+            raise AgentToolRejected("agent_local_offset_invalid",
+                correction=f"Use a byte offset between 0 and {size}.", details={"field_path": "offset", "bytes": size})
+        head = self.read_window(path, limit=65536)
+        try:
+            _, encoding = _decode_stream_sample(head)
+        except UnicodeError:
+            raise AgentToolRejected("agent_local_file_not_utf8") from None
+        hasher = hashlib.sha256()
+        hashed = 0
+        with path.open("rb") as stream:
+            while block := stream.read(1024 * 1024):
+                if cancelled():
+                    raise AgentToolRejected("agent_cancelled")
+                hashed += len(block)
+                if hashed > READ_MAX_FILE:
+                    raise AgentToolRejected("agent_local_file_too_large")
+                hasher.update(block)
+        maximum = _read_page_chars(context)
+        raw = self.read_window(path, offset=offset, limit=maximum * 4 + 4)
+        codec = "utf-8" if encoding == "utf-8-sig" else encoding
+        bom = {"utf-8-sig": b"\xef\xbb\xbf", "utf-16-le": b"\xff\xfe", "utf-16-be": b"\xfe\xff"}.get(encoding, b"")
+        prefix = len(bom) if offset == 0 else 0
+        decoder = codecs.getincrementaldecoder(codec)()
+        try:
+            try:
+                text = decoder.decode(raw[prefix:], final=offset + len(raw) >= size)
+            except UnicodeDecodeError:
+                if encoding != "utf-8" or not head.isascii():
+                    raise
+                # An ASCII-only header cannot distinguish UTF-8 from GB18030.
+                encoding = codec = "gb18030"
+                decoder = codecs.getincrementaldecoder(codec)()
+                text = decoder.decode(raw, final=offset + len(raw) >= size)
+            pending = len(decoder.getstate()[0])
+            consumed = raw[prefix:len(raw) - pending if pending else len(raw)]
+            # Reuse the established strict binary/control-character checks.
+            decode_text(bom + consumed)
+        except UnicodeError:
+            raise AgentToolRejected("agent_local_file_not_utf8") from None
+        text = text[:maximum]
+        next_offset = offset + prefix + len(text.encode(codec))
+        if next_offset < size:
+            boundary = text.rfind("\n")
+            if boundary >= 0:
+                text = text[:boundary + 1]
+                next_offset = offset + prefix + len(text.encode(codec))
+        file_sha = hasher.hexdigest()
+        self._record_observed_files(context, {path: file_sha})
+        return {"path": str(path), "text": text, "sha256": file_sha, "bytes": size, "encoding": encoding,
+                "offset": offset, "offset_unit": "bytes", "start_line": None, "end_line": None,
+                "total_lines": None, "next_start_line": None, "next_offset": next_offset if next_offset < size else None,
+                **({"line_truncated": True} if next_offset < size and text and not text.endswith("\n") else {})}
 
     def text(self, path, *, with_encoding: bool = True):
         raw = self.raw(path)
@@ -2179,12 +2270,20 @@ class LocalTools:
             path = self.path(args["path"], context)
             offset = args.get("offset", 0)
             if name == "ryn_file_read":
-                raw, text, encoding = self.text(path)
+                if path.is_file() and path.stat().st_size > STREAM_READ_THRESHOLD:
+                    return self._repeat_note(task_id, self._large_read_page(path, args, context, cancelled))
+                raw = self.read_window(path)
+                try:
+                    text, encoding = decode_text(raw)
+                except UnicodeError:
+                    raise AgentToolRejected("agent_local_file_not_utf8") from None
+                maximum = _read_page_chars(context)
                 file_sha = sha(raw)
                 total_lines = text.count("\n") + (0 if not text or text.endswith("\n") else 1)
                 if args.get("mode") == "indentation":
                     lines = text.splitlines(keepends=True)
-                    first, chunk = _read_indentation_block(lines, args, path, args["path"], total_lines)
+                    first, chunk = _read_indentation_block(lines, args, path, args["path"], total_lines, maximum)
+                    line_truncated = bool(chunk and len(lines[first]) > maximum)
                     end_line = first + len(chunk)
                     self._record_observed_files(context, {path: file_sha})
                     return self._repeat_note(task_id, {
@@ -2193,9 +2292,11 @@ class LocalTools:
                         "mode": "indentation", "anchor_line": args.get("anchor_line") or args.get("start_line") or 1,
                         "start_line": (first + 1) if lines else 1, "end_line": max(first + 1, end_line) if lines else 1,
                         "total_lines": total_lines,
-                        "next_start_line": end_line + 1 if end_line < len(lines) else None, "next_offset": None})
+                        "next_start_line": end_line + 1 if not line_truncated and end_line < len(lines) else None,
+                        "next_offset": sum(map(len, lines[:first])) + len(chunk[0]) if line_truncated else None,
+                        **({"line_truncated": True} if line_truncated else {})})
                 if args.get("start_line") is not None:
-                    # Line-addressed paging: lines are never split and the page reports its line range.
+                    # Prefer complete lines; an oversized first line has an offset continuation.
                     lines = text.splitlines(keepends=True)
                     first = args["start_line"] - 1
                     if first >= max(len(lines), 1):
@@ -2206,24 +2307,30 @@ class LocalTools:
                         )
                     chunk, size = [], 0
                     for line in lines[first:first + args.get("max_lines", 400)]:
-                        if chunk and size + len(line) > MAX_READ_CHARS:
+                        if not chunk and len(line) > maximum:
+                            chunk.append(line[:maximum])
+                            break
+                        if size + len(line) > maximum:
                             break
                         chunk.append(line)
                         size += len(line)
                     end_line = first + len(chunk)
+                    line_truncated = bool(chunk and len(lines[first]) > maximum)
                     self._record_observed_files(context, {path: file_sha})
                     return self._repeat_note(task_id, {
                         "path": str(path), "text": "".join(chunk), "sha256": file_sha, "bytes": len(raw),
                         "encoding": encoding,
                         "start_line": first + 1, "end_line": end_line, "total_lines": total_lines,
-                        "next_start_line": end_line + 1 if end_line < len(lines) else None, "next_offset": None})
+                        "next_start_line": end_line + 1 if not line_truncated and end_line < len(lines) else None,
+                        "next_offset": sum(map(len, lines[:first])) + len(chunk[0]) if line_truncated else None,
+                        **({"line_truncated": True} if line_truncated else {})})
                 if offset > len(text):
                     raise AgentToolRejected(
                         "agent_local_offset_invalid",
                         correction=f"File '{args['path']}' has {len(text)} characters; offset={offset} is out of range.",
                         details={"path": str(path), "total_chars": len(text), "field_path": "offset"},
                     )
-                end = min(len(text), offset + MAX_READ_CHARS)
+                end = min(len(text), offset + maximum)
                 if end < len(text):
                     # End the page on a line boundary when the page contains one.
                     boundary = text.rfind("\n", offset, end)
@@ -2236,8 +2343,9 @@ class LocalTools:
                     "path": str(path), "text": text[offset:end], "sha256": file_sha, "bytes": len(raw),
                     "encoding": encoding,
                     "start_line": start_line, "end_line": end_line, "total_lines": total_lines,
-                    "next_start_line": end_line + 1 if end < len(text) else None,
-                    "next_offset": end if end < len(text) else None})
+                    "next_start_line": end_line + 1 if end < len(text) and text[end - 1:end] == "\n" else None,
+                    "next_offset": end if end < len(text) else None,
+                    **({"line_truncated": True} if end < len(text) and text[end - 1:end] != "\n" else {})})
             if name == "ryn_file_list":
                 if not path.is_dir():
                     raise AgentToolRejected(

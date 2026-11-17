@@ -1580,6 +1580,9 @@ class AgentRuntime(AgentLoop):
         context = self._execution_context(selected, operation_id)
         context["selected_skills"] = copy.deepcopy(selected.get("skills") or [])
         current_model = self._model_metadata(selected["model_id"]) or {}
+        context["context_window_chars"] = output_policy.context_budget(
+            current_model, selected["limits"].get("max_context_chars"),
+            provenance=selected.get("context_budget_provenance"))["effective_max_context_bytes"]
         context["_image_capability"] = image_capabilities.evaluate_image_capability(
             current_model, model_client=self.model)
         def inspect_image(messages, cancelled, *, source_artifact=None, linkage_out=None):
