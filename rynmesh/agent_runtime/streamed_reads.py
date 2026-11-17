@@ -2,7 +2,7 @@
 
 Workers never change model history, its in-flight marker, or the pending queue.
 The host must accept the final assistant before publish, and remove the consumed
-queue prefix itself. Abort joins every admitted worker, including on mismatch.
+queue prefix itself. Abort bounds its wait; abandoned reads cannot republish a discarded journal.
 """
 from __future__ import annotations
 
@@ -258,7 +258,8 @@ class StreamedReads:
     def _run(self, prepared):
         started, deferred = time.monotonic(), {}
         call = prepared["call"]
-        deadline = float("inf") if self.parent_operation_id else started + prepared["reserved_seconds"]
+        deadline = started + (min(self.selected["limits"]["max_seconds"], 600)
+                              if self.parent_operation_id else prepared["reserved_seconds"])
         def cancelled():
             if self.cancelled() or (prepared.get("_nested_cancelled") and prepared["_nested_cancelled"]()):
                 cancelled.reason = getattr(self.cancelled, "reason", "agent_cancelled")
@@ -308,9 +309,19 @@ class StreamedReads:
     def _collect(self, records):
         if self.records is None:
             self.records = []
+            if not records:
+                return []
+            def snapshot():
+                try:
+                    current = self.runtime.store.read()["tasks"].get(self.selected["id"], {})
+                    return {entry["call"]["operation_id"]: entry
+                            for entry in current.get("stream_read_journal", [])}, None
+                except Exception as exc:
+                    return {}, _safe_error(exc)
+            entries, read_error = snapshot()
             for record in records:
                 prepared = record["admission"]
-                persistence_error = None
+                persistence_error = read_error
                 if record["error"] is not None:
                     outcome = prepared.get("_outcome") or {"result": {"error": "agent_stream_read_interrupted", "no_mutation": True},
                                                            "failed": True, "deferred": {}, "origin": None}
@@ -318,12 +329,10 @@ class StreamedReads:
                         self._complete_record(prepared, outcome, prepared.get("_elapsed", 0.0))
                     except Exception as exc:
                         persistence_error = _safe_error(exc)
-                try:
-                    current = self.runtime.store.read()["tasks"].get(self.selected["id"], {})
-                except Exception as exc:
-                    current, persistence_error = {}, _safe_error(exc)
-                entry = next((entry for entry in current.get("stream_read_journal", [])
-                              if entry["call"]["operation_id"] == prepared["call"]["operation_id"]), None)
+                    entries, read_error = snapshot()
+                    if read_error:
+                        persistence_error = read_error
+                entry = entries.get(prepared["call"]["operation_id"])
                 if entry is not None and entry.get("state") == "complete":
                     self.records.append(copy.deepcopy(entry))
                 else:

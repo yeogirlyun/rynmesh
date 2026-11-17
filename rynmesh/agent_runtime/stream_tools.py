@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import copy
 import json
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 
+from . import output_policy
 from .output_policy import MAX_RAW_RESPONSE_BYTES
 from .tool_dispatch import MAX_PARALLEL_TOOLS
 
@@ -20,6 +21,10 @@ class StreamToolMismatch(RuntimeError):
     def __init__(self):
         super().__init__("stream tool item changed in final response")
         self.stream_results = []
+
+
+class StreamReadAbandoned(RuntimeError):
+    """A read did not finish within the cancellation drain allowance."""
 
 
 def _identity(raw):
@@ -118,15 +123,19 @@ class StreamToolCoordinator:
             error.stream_results = self.close()
             raise error
 
-    def drain(self, final_calls=None):
+    def drain(self, final_calls=None, *, abort=False):
         if final_calls is not None:
             self.reconcile(final_calls)
         self.closed = True
         if self.results is None:
+            unfinished = set()
             if self.executor is not None:
-                # Admitted reads finish under the host cancellation token. Do
-                # not abandon futures or discard receipts on cancel/error.
-                self.executor.shutdown(wait=True)
+                if abort or self.cancelled():
+                    futures = [entry["future"] for entry in self.started.values() if entry["future"] is not None]
+                    _, unfinished = wait(futures, timeout=output_policy.STREAM_READ_CANCEL_TIMEOUT_S)
+                    self.executor.shutdown(wait=False, cancel_futures=True)
+                else:
+                    self.executor.shutdown(wait=True)
             self.results = []
             for index in sorted(self.started):
                 entry = self.started[index]
@@ -134,6 +143,8 @@ class StreamToolCoordinator:
                 try:
                     if entry["future"] is None:
                         raise entry["submission_error"]
+                    if entry["future"] in unfinished:
+                        raise StreamReadAbandoned()
                     record.update(result=entry["future"].result(), error=None)
                 except BaseException as exc:
                     record.update(result=None, error=exc)
@@ -141,7 +152,7 @@ class StreamToolCoordinator:
         return list(self.results)
 
     def close(self):
-        return self.drain()
+        return self.drain(abort=True)
 
     def cancel(self):
         return self.close()
