@@ -226,7 +226,7 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
         if max_context_bytes >= ADDITIVE_CAPACITY
         else min(seed_limit, max_context_bytes // 10)
     )
-    released = bool(same and not pins_changed and prior.get("pins_released"))
+    released = bool(same and not pins_changed and prior.get("pins_released") and not prior.get("degraded"))
     if pins_changed:
         removed_candidates = set(prior_candidates) - set(requested_pins)
         loaded = [name for name in loaded if name not in removed_candidates]
@@ -259,9 +259,19 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
     while mode == "directory" and loaded and len(encoded(exposure(loaded))) > limit:
         loaded = loaded[1:]
     exposed = exposure(loaded)
+    degraded = None
     if len(encoded(exposed)) > limit:
-        # Never spend a summary request trying to shrink an immutable schema.
-        raise AgentError("agent_tool_schema_limit")
+        # Controls must remain discoverable even when their schemas crowd out
+        # the menu. Release pins too before asking for a larger model.
+        catalog = all_specs
+        binding.update(catalog_revision=catalog_revision(catalog), lazy_controls=True)
+        exposed = [directory_spec(catalog)]
+        loaded, pinned, released = [], [], True
+        degraded = "directory_only"
+        if len(encoded(exposed)) > limit:
+            raise AgentToolRejected("agent_tool_schema_limit", correction="请换更大上下文的模型")
+    elif mode == "directory" and lazy and not loaded and not pinned and len(encoded(full_specs)) > limit:
+        degraded, released = "directory_only", True
     next_state = {**binding, "mode": mode, "loaded_names": loaded,
                   "revision": prior.get("revision", 0)}
     if pinned or prior.get("pinned_names"):
@@ -270,6 +280,8 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
         next_state["pinned_candidates"] = requested_pins
     if released:
         next_state["pins_released"] = True
+    if degraded:
+        next_state.update(degraded=degraded, pinned_names=[])
     if any(prior.get(key) != value for key, value in next_state.items() if key != "revision"):
         next_state["revision"] += 1
     return copy.deepcopy(exposed), next_state
