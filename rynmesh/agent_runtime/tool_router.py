@@ -142,7 +142,8 @@ def _reject(call, code, message, *, details=None):
 
 def normalize_tool_calls(calls, specs, *, existing_call_ids=(), metadata=None,
                          internal_names=(),
-                         max_argument_bytes=MAX_TOOL_CALL_ARGUMENT_BYTES):
+                         max_argument_bytes=MAX_TOOL_CALL_ARGUMENT_BYTES,
+                         rewrite_ids_seed=None, index_offset=0):
     """Return request-ordered calls with deep-copied schemas or paired errors.
 
     Accepts normalized chat calls and Responses function_call items. Original
@@ -150,6 +151,9 @@ def normalize_tool_calls(calls, specs, *, existing_call_ids=(), metadata=None,
     empty dict on rejection and must never be executed when error_result exists.
     Schema validation reuses Ryn's shared validator. Permissions, effects,
     approval, operation ids and result accounting remain the host's authority.
+    A request seed repairs invalid/reused ids deterministically; without it,
+    identity checks remain strict. index_offset is the completed stream item's
+    position in the full response, so early and final normalization agree.
     """
     if type(max_argument_bytes) is not int or not 1 <= max_argument_bytes <= MAX_TOOL_CALL_ARGUMENT_BYTES:
         raise ValueError("invalid tool-call budget")
@@ -166,15 +170,20 @@ def normalize_tool_calls(calls, specs, *, existing_call_ids=(), metadata=None,
     # Preflight all identities/argument sizes before even consulting metadata.
     seen = set(existing_call_ids)
     entries = []
-    for raw in calls:
+    for index, raw in enumerate(calls, start=index_offset):
         if not isinstance(raw, dict):
             raise ToolCallProtocolError("invalid_calls")
         response_item = raw.get("type") == "function_call"
         call_id = raw.get("call_id") if response_item else raw.get("id")
-        if not isinstance(call_id, str) or not CALL_ID.fullmatch(call_id):
-            raise ToolCallProtocolError("invalid_call_id")
-        if call_id in seen:
-            raise ToolCallProtocolError("duplicate_call_id")
+        provider_call_id = call_id
+        invalid_id = not isinstance(call_id, str) or not CALL_ID.fullmatch(call_id)
+        needs_rewrite = invalid_id or call_id in seen
+        if needs_rewrite:
+            if rewrite_ids_seed is None:
+                raise ToolCallProtocolError("invalid_call_id" if invalid_id else "duplicate_call_id")
+            call_id = "call_ryn_" + hashlib.sha256(
+                f"{rewrite_ids_seed}:{index}:{provider_call_id}".encode()
+            ).hexdigest()[:24]
         seen.add(call_id)
         function = raw if response_item else raw.get("function")
         function = function if isinstance(function, dict) else {}
@@ -182,7 +191,7 @@ def normalize_tool_calls(calls, specs, *, existing_call_ids=(), metadata=None,
         arguments_json = arguments if isinstance(arguments, str) else _json(arguments)
         if len(arguments_json.encode()) > max_argument_bytes:
             raise ToolCallProtocolError("arguments_too_large", code="agent_model_output_limit")
-        entries.append((raw, function, call_id, arguments, arguments_json))
+        entries.append((raw, function, call_id, arguments, arguments_json, needs_rewrite, provider_call_id))
 
     catalog = {}
     for spec in specs:
@@ -192,7 +201,7 @@ def normalize_tool_calls(calls, specs, *, existing_call_ids=(), metadata=None,
         catalog[function["name"]] = copy.deepcopy(function)
     internal_names = frozenset(internal_names)
     normalized = []
-    for raw, function, call_id, original_arguments, arguments_json in entries:
+    for raw, function, call_id, original_arguments, arguments_json, rewritten, provider_call_id in entries:
         raw_name = function.get("name")
         valid_name = isinstance(raw_name, str) and bool(TOOL_NAME.fullmatch(raw_name))
         namespace = raw.get("namespace")
@@ -220,6 +229,8 @@ def normalize_tool_calls(calls, specs, *, existing_call_ids=(), metadata=None,
                 "schema_snapshot": copy.deepcopy(snapshot),
                 "schema_sha256": _schema_digest(snapshot) if snapshot is not None else None,
                 "effect": None, "error_result": None}
+        if rewritten:
+            call["provider_call_id"] = copy.deepcopy(provider_call_id)
         if raw.get("wire_kind") == "custom":
             call["wire_kind"] = "custom"
         if bad_type:
