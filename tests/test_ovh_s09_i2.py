@@ -145,7 +145,7 @@ def test_t2_20kb_skill_truncated_to_8000_bytes_with_continuation_hint_and_legacy
     assert "ryn_read_skill_file" in json.dumps(snap, ensure_ascii=False)
 
     rendered = knowledge.messages({"skills": [snap]}, {"revision": 0, "items": []})
-    assert len(rendered) == 1
+    assert len(rendered) == 2  # Skill fragment followed by the JSON skill-usage guidance.
     assert rendered[0]["role"] == "user"
     assert "ryn_read_skill_file" in rendered[0]["content"]
     assert "续读" in rendered[0]["content"]
