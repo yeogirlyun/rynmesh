@@ -67,7 +67,7 @@ class DefaultModelTool:
             if (row["status"] != "running" or not data["settings"]["enabled"]
                     or flight.get("operation_id") != operation_id or flight.get("name") != NAME
                     or flight.get("arguments") != args or flight.get("dispatched") is not True
-                    or flight.get("authorization") not in {"approved", "automatic"}
+                    or flight.get("authorization") not in {"approved", "automatic", "task_grant"}
                     or flight.get("preview") != expected_preview):
                 raise AgentToolRejected("agent_configuration_authority_changed")
             if row["permission_mode"] == "read_only":

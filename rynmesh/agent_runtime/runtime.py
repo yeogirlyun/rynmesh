@@ -204,7 +204,7 @@ def revision(row: dict, expected: Any) -> None:
 
 
 def write_permission_revoked(row: dict, settings: dict) -> bool:
-    from .execution_policy import decide, verified_read_classification
+    from .execution_policy import decide, task_grant_proof, verified_read_classification
     flight = row.get("in_flight") or {}
     has_computer_access = (
         str(flight.get("name") or "").startswith(("ryn_browser_", "ryn_computer_"))
@@ -223,6 +223,8 @@ def write_permission_revoked(row: dict, settings: dict) -> bool:
         return False
     if row["permission_mode"] == "read_only":
         return True
+    if flight.get("authorization") == "task_grant":
+        return task_grant_proof(flight, {}, row) is None
     if flight.get("authorization") == "automatic":
         return decide(flight, {"effect": flight["effect"],
             "computer_access": flight.get("computer_access"),
@@ -1926,6 +1928,7 @@ class AgentRuntime(AgentLoop):
             for criterion in row["criteria"]:
                 criterion.update(status="pending", evidence_refs=[])
             row.update(pending_approval=None, approved=None, pending_input=None)
+            row.pop("task_grants", None)
             row["pending_control"] = {"kind": "scope", "remain_paused": row["status"] in {"paused", "completed", "failed", "interrupted"} or not data["settings"]["enabled"]}
             event(row, "scope_changed", scope_revision=row["scope_revision"])
             close_queue(row, event, "agent_scope_changed")
@@ -2017,6 +2020,7 @@ class AgentRuntime(AgentLoop):
                 data["settings"]["workspace_root"] = root
                 data["settings_revision"] = data.get("settings_revision", 0) + 1
             row.setdefault("local_execution", {})["workspace_root"] = data["settings"]["workspace_root"]
+            row.pop("task_grants", None)
             row["observed_files"] = {}
             close_queue(row, event, "agent_owner_changed")
             row.update(pending_input=None, approved=None, status="queued", error=None, result="", steps=0, elapsed_seconds=0.0)
@@ -2114,6 +2118,11 @@ class AgentRuntime(AgentLoop):
 
         def update(data):
             workspace_changed = "workspace_root" in values and values["workspace_root"] != data["settings"].get("workspace_root")
+            if any(key in values and values[key] != data["settings"].get(key)
+                   for key in ("permission_mode", "allowed_write_tools", "workspace_root", "desktop_access")):
+                for row in data["tasks"].values():
+                    if row["status"] not in TERMINAL:
+                        row.pop("task_grants", None)
             desktop_revoked = bool(data["settings"].get("desktop_access")) and values.get("desktop_access") is False
             permission_changed = desktop_revoked or any(key in values and values[key] != data["settings"].get(key) for key in ("allowed_write_tools", "workspace_root"))
             changed = any(data["settings"].get(key) != value for key, value in values.items())
@@ -3332,9 +3341,11 @@ class AgentRuntime(AgentLoop):
         return self.store.transaction(edit)
 
     def action(self, task_id: str, value: dict) -> dict:
-        if set(value) - {"action", "permission_mode", "expected_revision", "expected_control_revision", "expected_goal_revision", "approval_id", "pending_input_id", "answers", "client_request_id", "subagent_id", "target", "message_index"}:
+        if set(value) - {"action", "permission_mode", "expected_revision", "expected_control_revision", "expected_goal_revision", "approval_id", "pending_input_id", "answers", "client_request_id", "subagent_id", "target", "message_index", "remember"}:
             raise AgentError("agent_invalid_request")
         action = value.get("action")
+        if value.get("remember") not in {None, "task"} or (value.get("remember") and action != "approve"):
+            raise AgentError("agent_invalid_request")
 
         def apply(data):
             row = task(data, task_id)
@@ -3507,7 +3518,17 @@ class AgentRuntime(AgentLoop):
                     if row["permission_mode"] == "read_only":
                         raise AgentError("agent_permission_denied")
                     row["approved"] = {**approval, "revision": row["revision"]}
-                    event(row, "approved", approval_id=approval["id"], tool=approval["tool"])
+                    remembered = {}
+                    if value.get("remember") == "task":
+                        from .execution_policy import approval_keys
+                        keys = approval_keys(call, {**self.tools.metadata(call["name"]),
+                            "workspace_root": (row.get("local_execution") or {}).get("workspace_root", "")})
+                        grants = row.setdefault("task_grants", {})
+                        if keys and len(set(grants) | set(keys)) <= 256:
+                            grants.update({key: {"approval_id": approval["id"], "task_id": row["id"],
+                                "goal_revision": row["goal"]["revision"], "scope_revision": row["scope_revision"]} for key in keys})
+                            remembered = {"remember": "task", "approval_keys": keys}
+                    event(row, "approved", approval_id=approval["id"], tool=approval["tool"], **remembered)
                 else:
                     from .execution_policy import OWNER_DENIED_CORRECTION
                     denied = {"error": "owner_denied_operation", "not_executed": True, "no_mutation": True,
@@ -4170,7 +4191,7 @@ class AgentRuntime(AgentLoop):
                 result["outcome"] == "executed" and context_valid
                 and row["status"] == "interrupted" and not row.get("pending_control")
                 and not row.get("pending_input") and not row.get("pending_approval")
-                and flight.get("authorization") in {"approved", "automatic"}
+                and flight.get("authorization") in {"approved", "automatic", "task_grant"}
                 and flight.get("control_revision") == row["control_revision"]
                 and flight.get("goal_revision") == row["goal"]["revision"]
                 and flight.get("scope_revision") == row["scope_revision"]

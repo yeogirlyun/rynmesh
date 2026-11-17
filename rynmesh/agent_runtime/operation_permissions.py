@@ -45,6 +45,16 @@ def projection(row, limit: int | None = DEFAULT_LIMIT):
                         fact.update(permission_basis="owner_approved", approval_id=decision["approval_id"], approved_at=accepted["at"])
                 elif basis == "automatic" and receipt["effect"] == "write":
                     fact["permission_basis"] = "automatic_policy"
+                elif basis == "task_grant":
+                    approval_ids = decision.get("approval_ids") or []
+                    accepted = [event for event in row["events"] if event["type"] == "approved"
+                                and event.get("remember") == "task" and event.get("approval_id") in approval_ids]
+                    granted_keys = {key for event in accepted for key in event.get("approval_keys", [])}
+                    required_keys = decision.get("approval_keys") or []
+                    origin = next((event for event in accepted if event.get("approval_id") == decision.get("approval_id")), None)
+                    if origin and required_keys and set(required_keys).issubset(granted_keys):
+                        fact.update(permission_basis="owner_task_grant", approval_id=decision["approval_id"],
+                                    approval_ids=approval_ids, approved_at=origin["at"])
                 elif basis == "read" and receipt["effect"] == "write":
                     # Shell effects stay conservatively journalled as writes,
                     # even when the host granted a literal read without a dialog.

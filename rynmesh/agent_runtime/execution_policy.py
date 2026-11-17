@@ -122,6 +122,7 @@ def literal_command(command, shell):
     if shell == "powershell" and any(ch in POWERSHELL_NON_ASCII_SYNTAX_CHARS for ch in command):
         return None
     words, word, quote = [], [], None
+    has_token = False
     index = 0
     while index < len(command):
         char = command[index]
@@ -140,20 +141,22 @@ def literal_command(command, shell):
                 word.append(char)
         elif char in "'\"":
             quote = char
+            has_token = True
         elif char in ";&|<>`$(){}#":
             return None
         elif char == "\\" and shell == "sh":
             return None
         elif char.isspace():
-            if word:
+            if word or has_token:
                 words.append("".join(word))
                 word = []
+                has_token = False
         else:
             word.append(char)
         index += 1
     if quote:
         return None
-    if word:
+    if word or has_token:
         words.append("".join(word))
     return words or None
 
@@ -627,6 +630,48 @@ def is_full_automatic(row: dict, settings: dict) -> bool:
     return isinstance(row, dict) and row.get("permission_mode") == "automatic"
 
 
+def approval_keys(call, metadata):
+    """Host-normalized, opaque keys for an owner's task-local permission."""
+    name, arguments = call["name"], call.get("arguments") or {}
+    root = Path(metadata.get("workspace_root") or Path.cwd()).resolve()
+    def path_key(path):
+        return os.path.normcase(str((root / path).resolve()))
+    binding = call.get("extension_binding")
+    if binding:
+        parts = [(binding["server_id"], binding.get("plugin_id"), binding["original_tool_name"])]
+    elif name == "ryn_shell_execute":
+        shell = arguments.get("shell", "powershell" if os.name == "nt" else "sh")
+        words = literal_command(arguments.get("command"), shell)
+        command = ("literal", words) if words is not None else ("exact", arguments.get("command", ""))
+        parts = [(name, command, path_key(arguments.get("cwd", ".")), shell, bool(arguments.get("tty", False)))]
+    elif name in {"ryn_file_write", "ryn_file_edit", "ryn_apply_patch"}:
+        if name == "ryn_apply_patch":
+            from .local_patch import parse
+            paths = [path for operation in parse(arguments["patch"])
+                     for path in (operation["path"], operation.get("move_to")) if path]
+        else:
+            paths = [arguments["path"]]
+        parts = [(name, path_key(path)) for path in paths]
+    else:
+        parts = [(name,)]
+    return list(dict.fromkeys(hashlib.sha256(encoded(part)).hexdigest() for part in parts))
+
+
+def task_grant_proof(call, metadata, row):
+    keys = approval_keys(call, {**metadata, "workspace_root": (row.get("local_execution") or {}).get("workspace_root", "")})
+    grants = row.get("task_grants") or {}
+    approvals = []
+    for key in keys:
+        grant = grants.get(key) or {}
+        if (grant.get("task_id") != row["id"] or grant.get("goal_revision") != row["goal"]["revision"]
+                or grant.get("scope_revision") != row["scope_revision"] or not grant.get("approval_id")):
+            return None
+        approvals.append(grant["approval_id"])
+    if not approvals:
+        return None
+    return {"approval_keys": keys, "approval_ids": list(dict.fromkeys(approvals)), "approval_id": approvals[0]}
+
+
 def decide(call, metadata, row, settings):
     mode = row["permission_mode"]
     if mode not in MODES:
@@ -645,6 +690,8 @@ def decide(call, metadata, row, settings):
         return Decision("execute", "approved")
     if metadata.get("requires_explicit_approval"):
         return Decision("ask", "explicit_approval")
+    if mode in {"workspace", "confirm_changes"} and row.get("task_grants") and task_grant_proof(call, metadata, row):
+        return Decision("execute", "task_grant")
     if mode == "confirm_changes":
         return Decision("ask", "confirm_changes")
     # This alias is authored by the host only after verifying the builtin
