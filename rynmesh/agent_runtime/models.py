@@ -5,6 +5,7 @@ import copy
 import hashlib
 import os
 import threading
+import time
 
 from ..llm_package import model_settings, peer_binding
 from ..llm_package.model_usage import ModelUsageStore
@@ -61,10 +62,26 @@ class ModelCatalog:
         self._cli_metadata = {}
         self._cli_metadata_lock = threading.Lock()
         self._learned_output_limits = {}
+        self._catalog_cache = {}
+        self._catalog_lock = threading.RLock()
+        self._diagnostics = {}
+        self._usage_store = getattr(self.services.get("source_store"), "usage_store", None)
+        if self._usage_store is None:
+            from pathlib import Path
+            store_home = getattr(self.store, "home", None)
+            usage_path = (store_home / "llm" / "model-usage.json" if store_home is not None
+                          else getattr(self.services.get("source_store"), "path", Path(".")).parent / "model-usage.json")
+            self._usage_store = ModelUsageStore(usage_path)
+
+    def catalog_diagnostics(self):
+        with self._catalog_lock:
+            return copy.deepcopy(self._diagnostics)
 
     def learn_output_limit(self, target, cap):
         with self._cli_metadata_lock:
             self._learned_output_limits[(target["id"], target.get("destination_revision", ""))] = cap
+        with self._catalog_lock:
+            self._catalog_cache.clear()
 
     @staticmethod
     def destination(row):
@@ -95,10 +112,26 @@ class ModelCatalog:
                    destination_revision=peer_binding.local_revision(binding, row["peer_id"]) if valid else "")
 
     def list_models(self, *, selected_model_id=None, display_only=False):
-        sources = self.services["source_store"]
-        records = sources.read()
-        source_index = {sources.model_service_id(record, model): (record, model)
-                        for record in records.values() for model in record["models"]}
+        with self._catalog_lock:
+            sources_revision = getattr(self.services["source_store"], "version", None)
+            usage_revision = (self._usage_store._combined_stamp(), self._usage_store.utc_day())
+            key = (selected_model_id, display_only, sources_revision, usage_revision)
+            now = time.monotonic()
+            self._catalog_cache = {k: v for k, v in self._catalog_cache.items()
+                                   if now - v[0] < 2 and k[2:] == key[2:]}
+            snapshot = self._catalog_cache.get(key)
+        if snapshot is None:
+            inputs = self._catalog_inputs(selected_model_id=selected_model_id, display_only=display_only)
+            with self._catalog_lock:
+                self._catalog_cache[key] = (now, inputs)
+        else:
+            inputs = snapshot[1]
+        # Cache metadata inputs, never invocation authority. CLI bindings and
+        # capabilities are rebuilt against the current provider on every call.
+        return self._build_models(*inputs, selected_model_id=selected_model_id, display_only=display_only)
+
+    def _catalog_inputs(self, *, selected_model_id=None, display_only=False):
+        records = self.services["source_store"].read()
         try:
             discover = self.services.get("discover_agent", self.services["discover"])
             if display_only:
@@ -113,8 +146,17 @@ class ModelCatalog:
                 discovered = discover(self.network)
             else:
                 discovered = discover(self.network)
-        except Exception:
+        except Exception as exc:
+            with self._catalog_lock:
+                self._diagnostics["discovery"] = {
+                    "stage": "discover", "error_type": type(exc).__name__, "at": time.time()}
             discovered = []
+        return records, discovered, self._usage_store.read_cached()
+
+    def _build_models(self, records, discovered, usage_snapshot, *, selected_model_id=None, display_only=False):
+        sources = self.services["source_store"]
+        source_index = {sources.model_service_id(record, model): (record, model)
+                        for record in records.values() for model in record["models"]}
         rows = {}
         for value in discovered:
             manifest = value.get("service") or {}
@@ -333,7 +375,11 @@ class ModelCatalog:
                     self._bind_cli(row, manager, cached=display_only)
                     with self._cli_metadata_lock:
                         self._cli_metadata[row["id"]] = {"manager": manager, "models": copy.deepcopy(upstream)}
-            except Exception:
+            except Exception as exc:
+                with self._catalog_lock:
+                    self._diagnostics.setdefault("cli_models", {})[row["id"]] = {
+                        "stage": "cli_models", "source": row["id"],
+                        "error_type": type(exc).__name__, "at": time.time()}
                 row.update(available=False, local_model_binding=None,
                            destination_binding_supported=False, destination_revision="")
                 continue
@@ -365,17 +411,7 @@ class ModelCatalog:
             from ..llm_package.cli_models import context_metadata
             row.update(context_metadata(upstream, fallback=row["context_window"], fallback_basis=row.get("context_window_basis", "unknown_fallback")))
             _cli_output(row, default)
-        usage_store = getattr(sources, "usage_store", None)
-        if usage_store is None:
-            from pathlib import Path
-            store_home = getattr(self.store, "home", None)
-            usage_path = (
-                store_home / "llm" / "model-usage.json"
-                if store_home is not None
-                else getattr(sources, "path", Path(".")).parent / "model-usage.json"
-            )
-            usage_store = ModelUsageStore(usage_path)
-        usage_snapshot = usage_store.read_cached()
+        usage_store = self._usage_store
         space_catalog = self.services.get("space_catalog") if isinstance(self.services, dict) else None
         last_errors = getattr(space_catalog, "last_errors", None)
         for row in rows.values():
@@ -427,6 +463,8 @@ class ModelCatalog:
 
     def refresh_destination(self, model_id):
         """Refresh metadata only; never send task text to repair discovery."""
+        with self._catalog_lock:
+            self._catalog_cache.clear()
         try:
             records = self.services["discover"](self.network)
         except Exception as exc:
@@ -452,6 +490,8 @@ class ModelCatalog:
                     refresh_error = "space_catalog_refresh_failed"
                 if isinstance(last_errors, dict) and peer_id not in last_errors:
                     last_errors[peer_id] = (refresh_error, 0)
+        with self._catalog_lock:
+            self._catalog_cache.clear()
         row = self.get_model(model_id)
         if row is not None and refresh_error and not row.get("available"):
             row["catalog_refresh_error"] = refresh_error
