@@ -373,6 +373,7 @@ def apply_owner_turn_memory_in_tx(runtime: Any, data: dict[str, Any], row: dict[
     receipt = memory_runtime.execute_explicit_owner_intent_in_tx(data, row, owner_msg=latest)
     if not receipt.get("applied"):
         row["memory_last_receipt"] = {
+            **copy.deepcopy(receipt),
             "applied": False,
             "saved": False,
             "intent": receipt.get("intent", "none"),
@@ -411,6 +412,7 @@ def apply_owner_turn_memory_in_tx(runtime: Any, data: dict[str, Any], row: dict[
 
 
 _SAFE_HOST_MEMORY_REASON_CODES = frozenset({
+    "forget_ambiguous",
     "no_matching_memory",
     "not_applied",
     "operation_failed",
@@ -427,10 +429,16 @@ _SAFE_HOST_MEMORY_REASON_CODES = frozenset({
     "agent_memory_missing_owner_source",
 })
 
-_HOST_MEMORY_OPERATION_INSTRUCTION = (
-    "Host memory operations in this result already executed independently of business read_only controls; "
-    "do not call business tools or repeat a plan to perform them; naturally and briefly confirm the actual "
-    "recorded result, including failure/no-op accurately. Do not expose JSON field names, receipts or "
+_HOST_MEMORY_OPERATION_APPLIED_INSTRUCTION = (
+    "本条记忆操作已由主机执行，不要重复；消息里的其它工作照常完成，只简短确认记忆结果。 "
+    "The host already performed these memory operations; do not repeat them. Complete the other requested work normally. "
+)
+_HOST_MEMORY_OPERATION_FAILED_INSTRUCTION = (
+    "记忆操作未执行，不要声称已保存/已删除；按消息其余内容正常处理。 "
+    "The memory operation was not applied; do not claim it was saved or deleted. Handle the rest of the request normally. "
+)
+_HOST_MEMORY_OPERATION_REPLY_GUIDANCE = (
+    "Do not expose JSON field names, receipts or "
     "implementation details in the normal user reply unless the owner explicitly requests diagnostics. "
     "No genuine result means no positive save/delete claim."
 )
@@ -524,9 +532,10 @@ def current_host_memory_operation_note(runtime: Any, row: dict[str, Any]) -> str
 
     saved_count = len(valid_entries) if raw_applied and intent in {"remember", "update"} else 0
     deleted_count = len(valid_deleted) if raw_applied and intent == "forget" else 0
+    rejected_count = len([ident for ident in receipt.get("rejected_ids", []) if isinstance(ident, str) and ident]) if raw_applied and intent == "forget" else 0
     applied = bool(
         raw_applied
-        and (saved_count > 0 if intent in {"remember", "update"} else deleted_count > 0)
+        and (saved_count > 0 if intent in {"remember", "update"} else deleted_count + rejected_count > 0)
     )
     if not applied:
         saved_count = 0
@@ -550,10 +559,18 @@ def current_host_memory_operation_note(runtime: Any, row: dict[str, Any]) -> str
         "deleted_count": deleted_count,
         "reason": reason,
     }
+    if rejected_count:
+        op_result["rejected_count"] = rejected_count
+    if receipt.get("needs_confirmation"):
+        op_result["needs_confirmation"] = True
+        op_result["candidate_count"] = len(receipt.get("candidates") or [])
     if applied and intent in {"remember", "update"} and isinstance(receipt.get("visible_to_model"), bool):
         op_result["visible_to_model"] = receipt["visible_to_model"]
     envelope = {"host_memory_operation_result": op_result}
-    return json.dumps(envelope, ensure_ascii=False, separators=(",", ":")) + "\n" + _HOST_MEMORY_OPERATION_INSTRUCTION
+    instruction = _HOST_MEMORY_OPERATION_APPLIED_INSTRUCTION if applied else _HOST_MEMORY_OPERATION_FAILED_INSTRUCTION
+    if receipt.get("needs_confirmation"):
+        instruction += "Multiple memories matched. Ask which specific entry to forget, then use its exact fact_key; never delete all by default. "
+    return json.dumps(envelope, ensure_ascii=False, separators=(",", ":")) + "\n" + instruction + _HOST_MEMORY_OPERATION_REPLY_GUIDANCE
 
 
 def settle_in_tx(data: dict[str, Any], row: dict[str, Any], emit) -> None:
