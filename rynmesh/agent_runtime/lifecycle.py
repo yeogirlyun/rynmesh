@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+from pathlib import Path
 
 from ..file_transactions import file_transaction
 from . import subagents
@@ -161,6 +162,11 @@ def delete_rows_in_tx(data, rows, stamp, *, on_mutate=None, keyed=None):
         operation_ids.update(e["operation_id"] for e in row.get("events", []) if isinstance(e.get("operation_id"), str))
         tombstone.update(deleted_at=stamp(), control_requests={}, control_revision=row["control_revision"],
                          cleanup_pending=True, operation_ids=sorted(operation_ids))
+        tombstone["attachment_dirs"] = list(dict.fromkeys(
+            str(Path(file["path"]).parent)
+            for message in row.get("messages", [])
+            for file in message.get("attachments", []) if isinstance(file.get("path"), str)
+        ))[:8]
         if task_id == ids[-1]:
             tombstone["descendant_ids"] = ids[:-1]
             if keyed is not None:
