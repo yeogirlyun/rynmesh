@@ -1,4 +1,5 @@
 import RynAgentStorageHealth from "./RynAgentStorageHealth";
+import { tr } from "../uiI18n";
 import { parseStorageHealth } from "../domain/agentStorageHealth";
 import RynAgentFork, { RynAgentForkSource } from "./RynAgentFork";
 import RynAgentFileChanges from "./RynAgentFileChanges";
@@ -1384,6 +1385,12 @@ function ApprovalCard({ approval, controlled, enabled, canDeny, busy, waiting, o
   const sourceDraft = approval.tool === "ryn_commit_source_draft";
   const defaultModel = approval.tool === "ryn_set_default_agent_model";
   const localFile = approval.tool.startsWith("ryn_file_") && typeof preview.path === "string";
+  const shell = approval.tool === "ryn_shell_execute";
+  const shellArgs = approval.arguments;
+  const dangerLabels = {
+    forced_rm: tr("Forced removal"), force_delete: tr("Forced deletion"),
+    open_url: tr("Opens an external URL"), wrapper_depth: tr("Command nesting exceeds inspection depth"),
+  };
   const defaultTarget = record(preview.model);
   const configuration = record(preview.configuration);
   const sourceTest = record(preview.test);
@@ -1403,6 +1410,15 @@ function ApprovalCard({ approval, controlled, enabled, canDeny, busy, waiting, o
   return <section className="ra-approval" aria-label={t("approval")}>
     <div className="ra-result-head"><ListChecks size={18} /><strong>{t(sharing ? "modelSharingChange" : friend ? "friendAccessChange" : sourceDraft ? "sourceConfigChange" : defaultModel ? "defaultModelChange" : "approval")}</strong></div>
     <p>{t("approvalHelp")}</p>
+    {approval.reason === "dangerous_command" && <p role="alert">
+      <strong>{tr("Dangerous command")}</strong>{approval.dangerous_reason ? <> · <span>{dangerLabels[approval.dangerous_reason]}</span></> : null}
+    </p>}
+    {shell && <dl className="ra-change-summary">
+      <dt>{tr("Command")}</dt><dd><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{String(shellArgs.command ?? "")}</pre></dd>
+      <dt>{tr("Working directory")}</dt><dd><code>{String(shellArgs.cwd ?? preview.cwd ?? ".")}</code></dd>
+      <dt>{tr("Shell")}</dt><dd>{String(shellArgs.shell ?? tr("Default shell"))}</dd>
+      <dt>{tr("Timeout")}</dt><dd>{typeof shellArgs.timeout_seconds === "number" ? `${shellArgs.timeout_seconds}s` : tr("No timeout")}</dd>
+    </dl>}
     {serviceFields.length > 0 && <dl className="ra-change-summary">{serviceFields.map((field, index) =>
       typeof field.label === "string" && typeof field.value === "string"
         ? <Fragment key={index}><dt>{field.label}</dt><dd style={{ whiteSpace: "pre-wrap" }}>{field.value}</dd></Fragment>
