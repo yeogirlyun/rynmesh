@@ -18,6 +18,7 @@ from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ..services.document_text import decode_text
 from . import local_processes
 from .diagnostic_log import failure
 from .local_processes import (
@@ -64,55 +65,6 @@ def _has_invalid_windows_parts(path_obj: Path) -> bool:
         for part in path_obj.parts
         if part not in {path_obj.anchor, ".", ".."}
     )
-
-
-def _control_char_ratio(text: str, *, include_pua: bool = False) -> float:
-    if not text:
-        return 0.0
-    suspicious = 0
-    for ch in text:
-        cp = ord(ch)
-        if (cp < 32 and ch not in ("\t", "\n", "\r", "\f", "\b", "\x1b")) or cp == 0x7F or (0x80 <= cp <= 0x9F):
-            suspicious += 1
-        elif include_pua and ((0xE000 <= cp <= 0xF8FF) or cp >= 0xF0000):
-            suspicious += 1
-    return suspicious / len(text)
-
-
-def decode_text(raw: bytes) -> tuple[str, str]:
-    """Decode text bytes: UTF-8 BOM -> UTF-16 BOM -> strict UTF-8 -> gb18030 -> UnicodeDecodeError."""
-    if not isinstance(raw, (bytes, bytearray, memoryview)):
-        raise TypeError("decode_text requires a bytes-like object")
-    data = bytes(raw)
-    if not data:
-        return "", "utf-8"
-    if data.startswith(b"\xef\xbb\xbf"):
-        text = data[3:].decode("utf-8", errors="strict")
-        if "\x00" in text or "\ufffd" in text or _control_char_ratio(text) > 0.05:
-            raise UnicodeDecodeError("utf-8-sig", data, 0, len(data), "binary control bytes")
-        return text, "utf-8-sig"
-    if data.startswith(b"\xff\xfe") and not data.startswith(b"\xff\xfe\x00\x00"):
-        text = data[2:].decode("utf-16-le", errors="strict")
-        if "\x00" in text or "\ufffd" in text or _control_char_ratio(text) > 0.02:
-            raise UnicodeDecodeError("utf-16-le", data, 0, len(data), "binary control bytes")
-        return text, "utf-16-le"
-    if data.startswith(b"\xfe\xff"):
-        text = data[2:].decode("utf-16-be", errors="strict")
-        if "\x00" in text or "\ufffd" in text or _control_char_ratio(text) > 0.02:
-            raise UnicodeDecodeError("utf-16-be", data, 0, len(data), "binary control bytes")
-        return text, "utf-16-be"
-    try:
-        text = data.decode("utf-8", errors="strict")
-    except UnicodeDecodeError:
-        pass
-    else:
-        if "\x00" in text or "\ufffd" in text or _control_char_ratio(text) > 0.05:
-            raise UnicodeDecodeError("utf-8", data, 0, len(data), "binary control bytes")
-        return text, "utf-8"
-    text = data.decode("gb18030", errors="strict")
-    if "\x00" in text or "\ufffd" in text or _control_char_ratio(text, include_pua=True) > 0.02:
-        raise UnicodeDecodeError("gb18030", data, 0, len(data), "binary or excessive control/PUA characters")
-    return text, "gb18030"
 
 
 def encode_text(

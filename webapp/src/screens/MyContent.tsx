@@ -1,4 +1,4 @@
-import { tr } from "../uiI18n";
+import { tr, uiLocale } from "../uiI18n";
 import { Archive, CheckCircle2, Eye, FileUp, FolderOpen, Pause, Play, RotateCcw, Search, ShieldCheck, Sparkles, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -113,8 +113,11 @@ export default function MyContent() {
       await client.importLibraryFile({ filename: file.name, mime, data_base64: bytesBase64(await file.arrayBuffer()) });
       switchView("files");
       notify("ok", `${file.name} copied into private managed storage`);
-    } catch {
-      notify("danger", "That file could not be imported safely");
+    } catch (cause) {
+      const encodingUnknown = cause instanceof Error && cause.message.endsWith("library_import_encoding_unknown");
+      notify("danger", encodingUnknown
+        ? (uiLocale().startsWith("zh") ? "无法识别文件编码。请另存为 UTF-8 后重新导入。" : "The file encoding could not be recognized. Save it as UTF-8 and import it again.")
+        : "That file could not be imported safely");
     } finally {
       if (fileInput.current) fileInput.current.value = "";
     }
@@ -168,7 +171,7 @@ export default function MyContent() {
       <PageHeader eyebrow={tr("Private library")} title={tr("My Content")}
         context={tr("Saved items, reading progress, local files, and sources—owned and managed on this device.")}
         actions={<><Chip tone="ok" icon={ShieldCheck}>{tr("private by default")}</Chip><Button icon={FileUp} onClick={() => fileInput.current?.click()}>{tr("Import file")}</Button></>} />
-      <input ref={fileInput} hidden type="file" accept=".txt,.md,.markdown,.pdf,text/plain,text/markdown,application/pdf"
+      <input ref={fileInput} hidden type="file" accept=".txt,.md,.markdown,.csv,.pdf,.docx,.xlsx,.pptx,text/plain,text/markdown,text/csv,application/pdf"
         onChange={(event) => void importFile(event.target.files?.[0])} />
       <nav className={styles.tabs} aria-label={tr("My Content views")}>
         {tabs.map((tab) => <button type="button" key={tab.view} className={view === tab.view ? styles.active : ""}

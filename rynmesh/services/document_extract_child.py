@@ -29,6 +29,7 @@ import sys
 from pathlib import Path
 
 from rynmesh.services.document_extract import (
+    FAILED_ENCODING_UNKNOWN,
     FAILED_MEMORY,
     FAILED_NOT_TEXT,
     FAILED_TOO_LARGE,
@@ -42,7 +43,9 @@ from rynmesh.services.document_extract import (
     classify,
 )
 
-_KINDS = ("text", "markdown", "pdf", "unknown")
+from rynmesh.services.document_text import OfficeLimitError, decode_text, read_office
+
+_KINDS = ("text", "markdown", "pdf", "office", "unknown")
 
 # Built at import time, while the process is still healthy: the MemoryError
 # handler must not have to allocate a payload under memory pressure.
@@ -185,6 +188,10 @@ def _read_pdf(data: bytes, limit: int) -> tuple[str, dict]:
     return "\n".join(parts), coverage
 
 
+def _read_office(data: bytes) -> str:
+    return read_office(data, MAX_OUTPUT_CHARS)
+
+
 def _extract(path: Path, kind: str) -> tuple[str, str, dict | None]:
     """Return bounded text, failure code and optional PDF page coverage."""
 
@@ -193,12 +200,19 @@ def _extract(path: Path, kind: str) -> tuple[str, str, dict | None]:
         return "", FAILED_TOO_LARGE, None
     if kind in {"text", "markdown"}:
         try:
-            return data.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n"), "", None
-        except UnicodeDecodeError:
-            return "", FAILED_NOT_TEXT, None
+            text, _encoding = decode_text(data)
+            return text.replace("\r\n", "\n").replace("\r", "\n"), "", None
+        except UnicodeDecodeError as exc:
+            binary = (b"\x00" in data or "binary" in exc.reason
+                      or sum(byte < 32 and byte not in {8, 9, 10, 12, 13, 27} for byte in data) > len(data) * 0.05)
+            return "", FAILED_NOT_TEXT if binary else FAILED_ENCODING_UNKNOWN, None
     try:
+        if kind == "office":
+            return _read_office(data), "", None
         text, coverage = _read_pdf(data, MAX_OUTPUT_CHARS)
         return text, "", coverage
+    except OfficeLimitError:
+        return "", FAILED_TOO_LARGE, None
     except MemoryError:
         raise
     except Exception:  # noqa: BLE001 - a malformed document is not a crash
@@ -221,7 +235,7 @@ def main() -> int:
         _emit(FAILED_UNREADABLE, kind)
         return 0
 
-    if kind not in {"text", "markdown"} and not (kind == "pdf" and pdf_available()):
+    if kind not in {"text", "markdown", "office"} and not (kind == "pdf" and pdf_available()):
         _emit(STATUS_UNSUPPORTED, kind)
         return 0
 
