@@ -80,7 +80,7 @@ def owner_messages(messages):
     return [
         m["content"]
         for m in messages
-        if m["role"] == "user" and not str(m.get("content") or "").startswith(PROGRESS_TAIL_PREFIX)
+        if m["role"] == "user" and not str(m.get("content") or "").startswith((PROGRESS_TAIL_PREFIX, "<environment_context>"))
     ]
 
 

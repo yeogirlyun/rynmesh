@@ -119,10 +119,10 @@ def test_t1_generic_prefix_byte_identical_across_criteria_plan_and_auto_shell_wr
         assert len(ws_model.calls) == 2
         req1_msgs = ws_model.calls[0][1]
         req2_msgs = ws_model.calls[1][1]
-        # req1_msgs = [dev(SYSTEM), dev(authority), user("Run a quick check in shell"), user(progress_state_1)]
-        # First 3 messages (instructions + owner history) must be 100% byte-identical in req2_msgs!
-        assert len(req1_msgs) == 4
-        assert _encoded_bytes(req1_msgs[:3]) == _encoded_bytes(req2_msgs[:3])
+        # The stable environment layer precedes owner history and volatile progress.
+        assert len(req1_msgs) == 5
+        assert req1_msgs[2]["content"].startswith("<environment_context>")
+        assert _encoded_bytes(req1_msgs[:4]) == _encoded_bytes(req2_msgs[:4])
         assert _encoded_bytes(req1_msgs[-1:]) != _encoded_bytes(req2_msgs[-1:])
         tail_prog_2 = _parse_labelled_json(req2_msgs[-1]["content"], "Server progress state")
         assert len(tail_prog_2["operation_permissions"]) == 1

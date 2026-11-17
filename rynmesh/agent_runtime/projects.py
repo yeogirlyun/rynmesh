@@ -5,6 +5,7 @@ import copy
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -550,17 +551,20 @@ def _project_is_git(project: dict) -> bool:
 def guidance(row):
     project = row.get("project")
     workspace = row.get("workspace_instructions")
-    if not project and not workspace:
-        return ""
     path = (project.get("path") if project else (row.get("local_execution") or {}).get("workspace_root")) or ""
+    shell = ("pwsh" if shutil.which("pwsh") else "powershell") if os.name == "nt" else "sh"
     info = {key: project[key] for key in ("name", "path", "entry_files", "manifests", "directories") if key in project} if project else None
     project_block = f"  <project>{json.dumps(info, ensure_ascii=False, separators=(',', ':'))}</project>\n" if project else ""
+    cwd_block = f"  <cwd>{path}</cwd>\n" if path else ""
     env_block = (
         "<environment_context>\n"
-        f"  <cwd>{path}</cwd>\n"
+        f"{cwd_block}"
+        f"  <shell>{shell}</shell>\n"
         f"{project_block}"
         "</environment_context>"
     )
+    if not project and not workspace:
+        return env_block
     rules = (
         [GIT_SAFETY_RULE, ENGINEERING_RULE, TEST_HYGIENE_RULE]
         if _project_is_git(project or workspace)
