@@ -6,6 +6,7 @@ export function localEventSource(url: string, options?: EventSourceInit): EventS
   if (!isTauriDesktop()) return new EventSource(url, options);
   class DesktopEvents extends EventTarget {
     onmessage: ((event: MessageEvent) => void) | null = null;
+    onopen: ((event: Event) => void) | null = null;
     onerror: (() => void) | null = null;
     private controller = new AbortController();
     private timer: ReturnType<typeof setTimeout> | undefined;
@@ -20,6 +21,9 @@ export function localEventSource(url: string, options?: EventSourceInit): EventS
           headers: { ...await localControlHeaders(), ...(this.lastId ? { "Last-Event-ID": this.lastId } : {}) },
         });
         if (!response.ok || !response.body) throw new Error("stream_unavailable");
+        const opened = new Event("open");
+        this.dispatchEvent(opened);
+        this.onopen?.(opened);
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let pending = "", event = "message", data: string[] = [];

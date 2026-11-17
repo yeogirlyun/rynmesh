@@ -1438,6 +1438,7 @@
   "Request expired. The coordinator must be online; try again.": "Request expired. The coordinator must be online; try again.",
   "Use a name between 1 and 32 characters.": "Use a name between 1 and 32 characters.",
   "space_name_invalid": "Use a name between 1 and 32 characters.",
+  "attachment_too_large": "Chat attachments are limited to 5 MiB. Use device file transfer for larger files.",
   "space_name_rejected": "Device name is too long to sync.",
   "Invalid invitation.": "Invalid invitation.",
   "Invalid space signature.": "Invalid space signature.",

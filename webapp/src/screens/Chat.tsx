@@ -1,4 +1,4 @@
-import { useUILanguage } from "../uiI18n";
+import { tr, useUILanguage } from "../uiI18n";
 import { localEventSource } from "../domain/localEventSource";
 import { useTranslation } from "react-i18next";
 import { Lock, Paperclip, SendHorizontal } from "lucide-react";
@@ -37,6 +37,7 @@ export default function Chat() {
   const [attachment, setAttachment] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
+  const [streamRevision, setStreamRevision] = useState(0);
   const [query, setQuery] = useState("");
   const [mismatchPeers, setMismatchPeers] = useState<Record<string, string>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -50,7 +51,7 @@ export default function Chat() {
     if (!selected && conversationPeers[0]) setSelected(conversationPeers[0]);
   }, [conversationPeers, selected]);
 
-  // Load history when the open peer changes.
+  // Reload history after a stream reconnect, including events dropped by a slow subscription.
   useEffect(() => {
     if (!selected) {
       setMessages([]);
@@ -83,12 +84,13 @@ export default function Chat() {
     return () => {
       alive = false;
     };
-  }, [client, selected]);
+  }, [client, selected, streamRevision]);
 
   // Subscribe once to the SSE stream; append records for the open peer.
   useEffect(() => {
     if (client.mode === "fixture") return;
     const source = localEventSource(client.messagesStreamUrl());
+    source.onopen = () => setStreamRevision((value) => value + 1);
     source.onmessage = (event) => {
       let record: ChatRecord;
       try {
@@ -223,7 +225,16 @@ export default function Chat() {
                 </div>
                 <div className="rq-cdock">
                   <div className="rq-cbar">
-                    <input ref={fileInputRef} type="file" className="rf-sr" tabIndex={-1} aria-label={t("personal.messagesAttachAFile")} onChange={(event) => setAttachment(event.target.files?.[0] ?? null)} />
+                    <input ref={fileInputRef} type="file" className="rf-sr" tabIndex={-1} aria-label={t("personal.messagesAttachAFile")} onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file && file.size > 5 * 1024 * 1024) {
+                        notify("danger", tr("attachment_too_large"));
+                        event.target.value = "";
+                        setAttachment(null);
+                        return;
+                      }
+                      setAttachment(file ?? null);
+                    }} />
                     <button type="button" className="rf-ib rq-cattach" title={t("personal.messagesAttachAFile")} onClick={() => fileInputRef.current?.click()}>
                       <Paperclip size={17} strokeWidth={1.7} aria-hidden="true" />
                       <span className="rf-sr">{attachment ? attachment.name : t("personal.messagesAttach")}</span>
@@ -247,6 +258,7 @@ export default function Chat() {
                     </button>
                   </div>
                   <small>{t("personal.messagesEnterToSendShiftEnterForANewLine")}</small>
+                  <small>{tr("attachment_too_large")}</small>
                 </div>
               </>
             )}

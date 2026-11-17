@@ -257,7 +257,7 @@ export function makeLiveNodeClient(baseUrl = "/api/local"): NodeClient {
       requestJson(`${baseUrl}/egress/disconnect`, { method: "POST", body: JSON.stringify(req ?? {}) }),
     listMessages: (peerId) => requestJson(`${baseUrl}/messages?peer_id=${encodeURIComponent(peerId)}`),
     sendMessage: (req) =>
-      requestJson(`${baseUrl}/messages/send`, { method: "POST", body: JSON.stringify(req) }),
+      requestJson(`${baseUrl}/messages/send`, { method: "POST", body: JSON.stringify(req) }, true),
     messagesStreamUrl: () => `${baseUrl}/messages/stream`,
   };
 }

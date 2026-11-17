@@ -1438,6 +1438,7 @@
   "Request expired. The coordinator must be online; try again.": "请求已过期。请确认协调设备在线后重试。",
   "Use a name between 1 and 32 characters.": "名称长度须为 1 至 32 个字符。",
   "space_name_invalid": "名称长度须为 1 至 32 个字符。",
+  "attachment_too_large": "聊天附件最大 5 MiB，请通过设备传文件发送较大文件。",
   "space_name_rejected": "名字过长未同步",
   "Invalid invitation.": "邀请信息无效。",
   "Invalid space signature.": "空间签名无效。",
