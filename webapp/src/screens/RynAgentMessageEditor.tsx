@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { Check, Copy, Pencil } from "lucide-react";
+import { Check, Copy, Pencil, Undo2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import "./RynAgentMessageEditor.css";
 
@@ -7,15 +7,18 @@ interface Props {
   text: string;
   disabled: boolean;
   onSend(text: string): Promise<boolean>;
+  onRollback?(): Promise<boolean>;
+  rollbackDisabled?: boolean;
   children: ReactNode;
 }
 
-export default function RynAgentMessageEditor({ text, disabled, onSend, children }: Props) {
+export default function RynAgentMessageEditor({ text, disabled, onSend, onRollback, rollbackDisabled, children }: Props) {
   const { t } = useTranslation("rynAgent");
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(text);
   const [sending, setSending] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [confirmRollback, setConfirmRollback] = useState(false);
   const submit = async () => {
     if (disabled || sending || !value.trim()) return;
     setSending(true);
@@ -49,7 +52,21 @@ export default function RynAgentMessageEditor({ text, disabled, onSend, children
       >
         <Pencil size={14} />
       </button>
+      {onRollback && <button type="button" className="ra-edit-message" aria-label={t("rollbackMessage")}
+        title={t("rollbackMessage")} disabled={disabled || rollbackDisabled || sending}
+        onClick={() => setConfirmRollback(true)}><Undo2 size={14} /></button>}
     </div>
+    {confirmRollback && <div className="ra-message-editor" role="dialog" aria-label={t("rollbackMessage")}>
+      <p>{t("rollbackMessageHelp")}</p>
+      <div className="ra-message-editor-buttons">
+        <button type="button" disabled={sending} onClick={() => setConfirmRollback(false)}>{t("cancelEditMessage")}</button>
+        <button type="button" disabled={disabled || rollbackDisabled || sending} onClick={async () => {
+          setSending(true);
+          try { if (await onRollback?.()) setConfirmRollback(false); }
+          finally { setSending(false); }
+        }}>{t("rollbackMessage")}</button>
+      </div>
+    </div>}
   </>;
   return <form className="ra-message-editor" onSubmit={event => { event.preventDefault(); void submit(); }}>
     <textarea autoFocus aria-label={t("editMessageText")} value={value} disabled={sending} rows={Math.max(3, Math.min(12, value.split("\n").length))} onChange={event => setValue(event.target.value)} onKeyDown={event => {

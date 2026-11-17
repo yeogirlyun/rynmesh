@@ -3147,7 +3147,7 @@ class AgentRuntime(AgentLoop):
         return self.store.transaction(edit)
 
     def action(self, task_id: str, value: dict) -> dict:
-        if set(value) - {"action", "permission_mode", "expected_revision", "expected_control_revision", "expected_goal_revision", "approval_id", "pending_input_id", "answers", "client_request_id", "subagent_id", "target"}:
+        if set(value) - {"action", "permission_mode", "expected_revision", "expected_control_revision", "expected_goal_revision", "approval_id", "pending_input_id", "answers", "client_request_id", "subagent_id", "target", "message_index"}:
             raise AgentError("agent_invalid_request")
         action = value.get("action")
 
@@ -3173,6 +3173,29 @@ class AgentRuntime(AgentLoop):
                 subagents.interrupt_agent_in_tx(data, row, {"target": "all"})
                 remember_request(row, value)
                 return public_task(row, settings=data["settings"], data=data)
+            elif action == "rollback":
+                if not data["settings"]["enabled"]:
+                    raise AgentError("agent_disabled")
+                if not allowed_actions(row, data["settings"])["rollback"]["enabled"]:
+                    raise AgentError("agent_operation_unresolved" if ambiguous(row) else "agent_invalid_transition")
+                index = value.get("message_index")
+                if (type(index) is not int or index < 0 or index >= len(row["messages"])
+                        or row["messages"][index].get("role") != "user"
+                        or row["messages"][index].get("ui", {}).get("hidden")):
+                    raise AgentError("agent_invalid_message_index")
+                if not any(m["role"] == "user" and not m.get("ui", {}).get("hidden") for m in row["messages"][:index]):
+                    raise AgentError("agent_rollback_first_message_use_edit")
+                if event_compaction.needs_compaction(row, len(encoded(row))):
+                    event_compaction.compact_until_small(row)
+                if len(row["events"]) >= 998 or len(encoded(row)) > 2 * 1024 * 1024:
+                    raise AgentError("agent_task_limit")
+                row.update(status="paused", approved=None, pending_approval=None, pending_input=None,
+                           latest_turn_is_silent_heartbeat=False, automation_run_id=None,
+                           pending_control={"kind": "rollback", "message_index": index})
+                row.pop("unattended_blocked", None)
+                event(row, "message_rollback_requested", message_index=index, operation_in_flight=bool(row["in_flight"]))
+                close_queue(row, event, "agent_owner_changed")
+                settle(row, event, data=data)
             elif action == "cancel":
                 retry_policy.stop(row)
                 if row["status"] not in {"completed", "failed", "cancelled"}:
@@ -3760,7 +3783,7 @@ class AgentRuntime(AgentLoop):
                 if flight or row["status"] == "running" or row.get("approved"):
                     was_cancelled = row["status"] == "cancelled" or (row.get("pending_control") or {}).get("kind") == "cancel"
                     was_paused = row["status"] == "paused" or (row.get("pending_control") or {}).get("kind") in {"pause", "stop"}
-                    was_editing = (row.get("pending_control") or {}).get("kind") == "edit_message"
+                    was_editing = (row.get("pending_control") or {}).get("kind") in {"edit_message", "rollback"}
                     steer_pending = (row.get("pending_control") or {}).get("kind") in {"steer", "scope", "permissions"}
                     workspace_root = (row.get("local_execution") or {}).get("workspace_root", "")
                     is_verified_read = bool(

@@ -161,6 +161,7 @@ def allowed_actions(row, settings):
     if (row.get("fork") or {}).get("awaiting_instruction"):
         possible["resume"] = False
         possible["edit_message"] = False
+    possible["rollback"] = possible["edit_message"]
     if row.get("archived"):
         possible = {action: allowed if action in {"rename", "restore", "delete"} else False for action, allowed in possible.items()}
     if row.get("continued_to"):
@@ -199,7 +200,7 @@ def settle(row, emit, data=None):
     if control["kind"] != "pause":
         row.pop("verification", None)
         close_queue(row, emit, "agent_owner_changed" if control["kind"] in {"steer", "scope", "permissions"} else "agent_cancelled", keep_flight=False)
-    if control["kind"] == "edit_message":
+    if control["kind"] in {"edit_message", "rollback"}:
         from .conversation import rewrite
         rewrite(row, control, emit, data=data)
         row.pop("pending_control", None)
