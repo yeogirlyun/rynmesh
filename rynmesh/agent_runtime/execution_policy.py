@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .store import encoded
+from .tool_dispatch import PARALLEL_READS
 
 MODES = frozenset({"workspace", "read_only", "confirm_changes", "automatic"})
 WORKSPACE_TOOLS = frozenset({
@@ -494,6 +495,17 @@ def shell_read(arguments, workspace_root=None):
         if not _segment_read_ok(words, shell, in_pipe=(op == "|")):
             return False
     return _within_workspace(arguments, [w for _, w in parsed], shell, workspace_root)
+
+
+def parallel_read(name, arguments, metadata, *, workspace_root=None):
+    """One host-owned capability check for queued, streamed and gated reads."""
+    if metadata.get("requires_explicit_approval") or metadata.get("computer_access"):
+        return False
+    if name == "ryn_shell_execute":
+        return shell_read(arguments, workspace_root=workspace_root)
+    return metadata.get("effect") == "read" and (
+        name in PARALLEL_READS or metadata.get("supports_parallel") is True
+    )
 
 
 def classify_operation(name, arguments, metadata, *, operation_id="", task_id="", workspace_root="",

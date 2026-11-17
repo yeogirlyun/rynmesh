@@ -45,6 +45,7 @@ from .execution_policy import (
     classify_operation,
     decide,
     is_full_automatic,
+    parallel_read,
     verified_read_classification,
 )
 from .prompt import (
@@ -143,7 +144,8 @@ class AgentLoop:
             return self.tools.execute(name, arguments, **options)
         meta = self.tools.metadata(name)
         with self._tool_dispatch_gate.enter(
-            selected["id"], parallel=supports_parallel(name, meta), cancelled=options["cancelled"]
+            selected["id"], parallel=supports_parallel(name, meta, arguments,
+                workspace_root=(selected.get("local_execution") or {}).get("workspace_root")), cancelled=options["cancelled"]
         ):
             return self.tools.execute(name, arguments, **options)
 
@@ -2028,9 +2030,18 @@ class AgentLoop:
             if call["name"] in ALL_INTERNAL_NAMES:
                 self._internal_tool(selected, started)
                 return
-            batch = selected["queue"][:MAX_PARALLEL_READS]
-            batch = batch[:next((index for index, item in enumerate(batch)
-                                 if item["name"] not in PARALLEL_READS or item["effect"] != "read" or item.get("internal") or item.get("error_result")), len(batch))]
+            batch = []
+            for item in selected["queue"][:MAX_PARALLEL_READS]:
+                if item.get("internal") or item.get("error_result"):
+                    break
+                try:
+                    meta = self.tools.metadata(item["name"])
+                except AgentError:
+                    break
+                if not parallel_read(item["name"], item["arguments"], meta,
+                        workspace_root=(selected.get("local_execution") or {}).get("workspace_root")):
+                    break
+                batch.append(item)
             if len(batch) > 1:
                 batch_handled, batch_prep_persistence = self._tool_batch(
                     selected, batch, cancelled, started,
@@ -2358,12 +2369,20 @@ class AgentLoop:
                 meta = self.tools.metadata(call["name"])
             except AgentError:
                 return False, prep_persistence_seconds
-            if meta.get("effect") != "read" or meta.get("requires_explicit_approval") or meta.get("computer_access") or "extension_binding" in call or call["name"] not in specs:
+            if (meta.get("effect") != call["effect"] or call["name"] not in specs
+                    or not parallel_read(call["name"], call["arguments"], meta,
+                        workspace_root=(selected.get("local_execution") or {}).get("workspace_root"))):
                 return False, prep_persistence_seconds
             try:
+                if "extension_binding" in call:
+                    self.tools.verify_extension_binding(call)
+                    if meta.get("extension_binding") != call["extension_binding"]:
+                        return False, prep_persistence_seconds
                 if "schema_snapshot" in call:
                     assert_schema_unchanged(call, specs[call["name"]])
                 validate(call["arguments"], specs[call["name"]]["parameters"])
+                from .read_reliability import check_shell_retry
+                check_shell_retry(selected, call)
             except (ValidationError, AgentToolRejected):
                 return False, prep_persistence_seconds
             metas[call["call_id"]] = meta
@@ -2374,6 +2393,14 @@ class AgentLoop:
             if (row["status"] != "running" or not data["settings"]["enabled"]
                     or row["control_revision"] != selected["_run_control_revision"]
                     or [item["call_id"] for item in row["queue"][:len(batch)]] != call_ids):
+                return None
+            try:
+                for call in batch:
+                    if "extension_binding" in call:
+                        self.tools.verify_extension_binding(call)
+                        if self.tools.metadata(call["name"]).get("extension_binding") != call["extension_binding"]:
+                            return None
+            except AgentError:
                 return None
             if any(decide(call, metas[call["call_id"]], row, data["settings"]).action != "execute"
                    or self._read_retries_exhausted(row, call) for call in batch):
@@ -2446,6 +2473,8 @@ class AgentLoop:
                     ctx["_deferred_observed_files"] = deferred_observed_files
                     ctx["_deferred_observed_lock"] = deferred_observed_lock
                     ctx["_observed_files_snapshot"] = observed_snapshot
+                    if "extension_binding" in call:
+                        ctx["extension_binding"] = copy.deepcopy(call["extension_binding"])
                     options["context"] = ctx
                 try:
                     res = sanitized_tool_result(self._execute_business_tool(selected, call["name"], copy.deepcopy(call["arguments"]), **options))
