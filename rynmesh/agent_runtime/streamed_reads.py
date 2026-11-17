@@ -17,7 +17,7 @@ from jsonschema import ValidationError, validate
 from . import budget, diagnostic_log, output_policy, results, verification
 from .execution_policy import classify_operation, decide
 from .prompt import INTERNAL_NAMES
-from .protocol import digest, event, model_retry_authority, now, sanitized, task
+from .protocol import digest, event, model_retry_authority, now, sanitized, sanitized_tool_result, task
 from .store import AgentError, AgentToolRejected, encoded
 from .stream_tools import StreamToolCoordinator
 from .tool_dispatch import MAX_PARALLEL_TOOLS
@@ -282,7 +282,7 @@ class StreamedReads:
                     context["extension_binding"] = copy.deepcopy(call["extension_binding"])
                 options["context"] = context
             with diagnostic_log.context_scope(task_id=self.selected["id"], operation_id=call["operation_id"]):
-                result = sanitized(self.runtime._execute_business_tool(self.selected, call["name"], copy.deepcopy(call["arguments"]), **options))
+                result = sanitized_tool_result(self.runtime._execute_business_tool(self.selected, call["name"], copy.deepcopy(call["arguments"]), **options))
             outcome = {"result": result, "failed": False, "deferred": deferred,
                        "origin": copy.deepcopy(result.get("origin")) if isinstance(result, dict) and prepared["meta"].get("scope_context_supported") else None}
         except Exception as exc:

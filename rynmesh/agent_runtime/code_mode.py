@@ -40,7 +40,7 @@ from .chrome_runtime import PACKAGE_ROOT as CHROME_RUNTIME_DIR
 from .js_runtime.manager import sanitized_worker_env
 from .local_browser import find_browser
 from .output_policy import MAX_RAW_RESPONSE_BYTES, MAX_TOOL_CALL_ARGUMENT_BYTES
-from .protocol import sanitized
+from .protocol import sanitized, sanitized_tool_result
 from .store import AgentToolRejected, encoded
 from .tool_dispatch import MAX_PARALLEL_TOOLS, ToolDispatchGate, supports_parallel
 
@@ -1623,12 +1623,12 @@ class CodeModeRunner:
             try:
                 dispatch = ctx.get("_dispatch_child_tool")
                 if callable(dispatch):
-                    res = sanitized(dispatch(raw_name, copy.deepcopy(raw_args), **exec_kwargs))
+                    res = sanitized_tool_result(dispatch(raw_name, copy.deepcopy(raw_args), **exec_kwargs))
                 else:
                     # Standalone tool hosts retain the same admission policy.
                     with self._dispatch_gate.enter(task_id, parallel=supports_parallel(raw_name, meta),
                                                    cancelled=child_cancelled):
-                        res = sanitized(self.parent_tools.execute(raw_name, copy.deepcopy(raw_args), **exec_kwargs))
+                        res = sanitized_tool_result(self.parent_tools.execute(raw_name, copy.deepcopy(raw_args), **exec_kwargs))
                 if child_ctx is not None and isinstance(child_ctx.get("_deferred_observed_files"), dict):
                     parent_deferred = ctx.get("_deferred_observed_files")
                     if isinstance(parent_deferred, dict):
