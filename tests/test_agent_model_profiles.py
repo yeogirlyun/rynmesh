@@ -373,7 +373,8 @@ def test_switch_and_restart_reresolve_without_old_notes_or_parameters(world):
     assert world.run(task["id"])["status"] == "completed"
     restarted = world.http_payloads[-1]
     assert restarted["system"][:2] == after_switch["system"][:2]  # shared base + notes; authority moves on
-    assert [r["profile"] for r in world.records(task["id"])] == ["codex-cli", "generic", "generic"]
+    # S13-I53 folds records older than the previous round into round totals; the codex-cli round is gone.
+    assert [r["profile"] for r in world.records(task["id"])] == ["generic", "generic"]
 
 
 def test_owner_override_changes_the_dispatched_request_but_never_the_tools(world):

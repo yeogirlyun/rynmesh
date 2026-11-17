@@ -261,6 +261,8 @@ def test_t3_consumer_auto_prunes_old_terminal_while_keeping_awaiting_archive_and
         consumer_instances[-1]._count = 9000
         with TestClient(app2) as client2:
             assert client2.post("/api/local/llm/cli-services/codex_cli/setup").status_code == 200
+            # S01-I42: admission reads the inventory snapshot; the background worker fills it.
+            app2.state.llm_agent_services["provider_for"]("codex-cli").adapter.refresh_inventory()
             res = client2.post(
                 "/api/local/llm/orders",
                 json={

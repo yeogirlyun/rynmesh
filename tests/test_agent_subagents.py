@@ -663,9 +663,10 @@ def test_s07_i7_t5_all_internal_specs_size_cap_and_core_tools_pinned():
     from rynmesh.agent_runtime.loop import ALL_INTERNAL_SPECS
     from rynmesh.agent_runtime.store import encoded
 
-    # Current ALL_INTERNAL_SPECS serializes to 12579 UTF-8 bytes; cap at 13840 (~10% headroom).
+    # ALL_INTERNAL_SPECS serialized to 12579 UTF-8 bytes; S03-I12 added the two history tools (~0.8 KB) and
+    # other items added more. Now 14296 bytes; cap at 15700 (~10% headroom).
     all_internal_bytes = len(encoded(ALL_INTERNAL_SPECS))
-    assert all_internal_bytes <= 13840
+    assert all_internal_bytes <= 15700
 
     business = [
         {"type": "function", "function": {"name": name, "description": desc, "parameters": schema}}

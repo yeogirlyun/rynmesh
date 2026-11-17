@@ -450,7 +450,7 @@ def test_t7_remote_large_request_precheck_and_compaction_flow(
 
         # Part 7b: Remote task in AgentRuntime with large multi-turn history exceeding remote window capacity
         # compacts history first and then succeeds on remote retry/dispatch!
-        p.providers["a"].manifest.context_window = 48_000
+        p.providers["a"].manifest.context_window = 16_000
         p.providers["a"].manifest.max_output_tokens = 2048
         p.consumer.refresh(p.alice.peer_id)
         catalog_peer = next(row for row in catalog.list_models() if row["source"] == "peer")

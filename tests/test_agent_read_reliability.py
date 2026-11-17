@@ -39,13 +39,13 @@ def test_quoted_code_comments_bounded_programs_and_unrelated_reads_remain_usable
 
 def test_managed_wait_has_a_real_attempt_limit_and_can_recover(local, monkeypatch):
     tools, context, workspace, _ = local
-    original, calls = tools.text, []
-    def text(path):
+    original, calls = tools.read_window, []
+    def text(path, **kwargs):
         calls.append(path)
         if len(calls) == 2:
             path.write_text("ready", encoding="utf-8")
-        return original(path)
-    monkeypatch.setattr(tools, "text", text)
+        return original(path, **kwargs)
+    monkeypatch.setattr(tools, "read_window", text)
     result = tools.perform("ryn_file_wait", {"path": "later.txt", "max_attempts": 3, "retry_delay_seconds": 0}, context, lambda: False)
     assert result["text"] == "ready" and result["attempts"] == 2 and len(calls) == 2
 
@@ -54,11 +54,11 @@ def test_managed_wait_counts_earlier_failures_and_cancels_promptly(local, monkey
     tools, context, workspace, store = local
     receipt = row(str(workspace / "missing.txt"), str(workspace))["receipts"][0]
     store.transaction(lambda data: data["tasks"]["task"].setdefault("receipts", []).append(receipt))
-    original, calls = tools.text, []
-    def text(path):
+    original, calls = tools.read_window, []
+    def text(path, **kwargs):
         calls.append(path)
-        return original(path)
-    monkeypatch.setattr(tools, "text", text)
+        return original(path, **kwargs)
+    monkeypatch.setattr(tools, "read_window", text)
     result = tools.perform("ryn_file_wait", {"path": "missing.txt", "retry_delay_seconds": 0}, context, lambda: False)
     assert result["error"] == "agent_file_retry_exhausted" and result["attempts"] == 2 and len(calls) == 2
     calls.clear()

@@ -130,7 +130,7 @@ def test_t4_peer_stream_too_large_propagates_closed_code_and_feedback_retries_di
 
     mode = {"kind": "too_large", "observed_limits": [], "attempt": 0}
 
-    def fake_peer_stream(url, body, *, timeout_s, on_event, response_factory=None):
+    def fake_peer_stream(url, body, *, timeout_s, on_event, idle_s=120.0, response_factory=None):
         mode["attempt"] += 1
         outer_payload = body["payload"]
         task_id = outer_payload["task_id"]
