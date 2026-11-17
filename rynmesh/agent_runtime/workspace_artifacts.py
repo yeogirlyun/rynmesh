@@ -232,9 +232,14 @@ def history(row) -> dict:
 
 def snapshot(root) -> dict:
     """Bounded metadata inventory around a command; do not read unrelated file contents."""
+    from .local_tools import gitignored_directory_names
+
     found, pending, visited, readable, directories = {}, [Path(root)], 0, True, set()
     deadline = time.monotonic() + 1.0
-    skip = {".git", "node_modules", ".venv", "venv", "__pycache__", "target", ".next", ".ryn", ".codex_scratch"}
+    skip = {".git", "node_modules", ".venv", "venv", "__pycache__", "target", ".next", ".ryn", ".codex_scratch",
+            "dist", "build", "out", ".gradle", ".idea", "coverage"}
+    anywhere, root_only = gitignored_directory_names(root)
+    skip.update(anywhere)
     while pending and visited < 5000 and time.monotonic() < deadline:
         directory = pending.pop()
         complete_directory = True
@@ -248,7 +253,7 @@ def snapshot(root) -> dict:
                     if entry.is_symlink():
                         continue
                     if entry.is_dir(follow_symlinks=False):
-                        if entry.name not in skip:
+                        if entry.name not in skip and not (directory == Path(root) and entry.name in root_only):
                             pending.append(Path(entry.path))
                     elif entry.is_file(follow_symlinks=False):
                         stat = entry.stat(follow_symlinks=False)
@@ -261,9 +266,9 @@ def snapshot(root) -> dict:
     return {"files": found, "directories": directories, "complete": readable and not pending and visited < 5000 and time.monotonic() < deadline}
 
 
-def command_files(root, before) -> list[dict]:
+def command_files(root, before) -> dict:
     after = snapshot(root)
-    changes = []
+    changes, total = [], 0
     # An incomplete baseline cannot prove a newly seen file was created by this command.
     for value, stamp in after["files"].items():
         old = before["files"].get(value)
@@ -272,6 +277,9 @@ def command_files(root, before) -> list[dict]:
         path = _inside(Path(value), Path(root))
         if path is None:
             continue
+        total += 1
+        if len(changes) >= 64:
+            continue
         try:
             size, digest = _digest(path)
         except OSError:
@@ -279,11 +287,14 @@ def command_files(root, before) -> list[dict]:
             size, digest = stamp[0], None
         changes.append({"path": str(path), "sha256": digest, "bytes": size, "created": old is None, "modified_ns": stamp[1],
                         "attribution": "observed_during_command", "creator_confirmed": False})
-        if len(changes) >= 64:
-            break
     if after["complete"]:
-        changes.extend({"path": value, "deleted": True} for value in before["files"] if value not in after["files"])
-    return changes[:64]
+        for value in before["files"]:
+            if value not in after["files"]:
+                total += 1
+                if len(changes) < 64:
+                    changes.append({"path": value, "deleted": True})
+    return {"files": changes, "inventory_complete": before["complete"] and after["complete"],
+            "truncated": total > len(changes), "total_changes": total, "after": after}
 
 
 def _inside(path: Path, root: Path) -> Path | None:
@@ -447,11 +458,36 @@ def _extract_unbacked_mentions(answer: str, items: list[dict]) -> list[str]:
     return unbacked
 
 
+def _inventory_notices(row):
+    receipts = [*row.get("receipts", []), *(row.get("workspace_file_receipts") or {}).values()]
+    op_turns = _operation_turns(row)
+    origins, commands = {}, {}
+    for receipt in receipts:
+        if receipt.get("status") != "confirmed":
+            continue
+        result = receipt.get("result") or {}
+        if not isinstance(result, dict):
+            continue
+        key = result.get("process_id") or receipt.get("operation_id")
+        turn = op_turns.get(receipt.get("operation_id"), max(0, (receipt.get("goal_revision") or 1) - 1))
+        if receipt.get("tool") == "ryn_shell_execute":
+            origins[key] = turn
+        if "workspace_files_complete" in result or "workspace_files_total" in result:
+            commands[key] = (turn, result)
+    by_turn = {}
+    for key, (turn, result) in commands.items():
+        notice = by_turn.setdefault(str(origins.get(key, turn)), {"incomplete_inventory": False, "additional_changes": 0})
+        notice["incomplete_inventory"] |= result.get("workspace_files_complete", True) is False
+        notice["additional_changes"] += max(0, result.get("workspace_files_total", 0) - len(result.get("workspace_files", [])))
+    return {"incomplete_inventory": any(n["incomplete_inventory"] for n in by_turn.values()),
+            "additional_changes": sum(n["additional_changes"] for n in by_turn.values()), "inventory_by_turn": by_turn}
+
+
 def listing(row) -> dict:
     answer = final_text(row)
     root_value = (row.get("local_execution") or {}).get("workspace_root") or ""
     if not root_value:
-        return {"files": [], "unbacked_mentions": _extract_unbacked_mentions(answer, [])}
+        return {"files": [], "unbacked_mentions": _extract_unbacked_mentions(answer, []), **_inventory_notices(row)}
     root = Path(root_value)
     lowered = answer.casefold()
     answers_by_turn = _turn_answers(row)
@@ -542,7 +578,7 @@ def listing(row) -> dict:
     # Deliverables first, then supporting, then helpers, then most recently updated; the sorts are stable.
     items.sort(key=lambda item: item["updated_at"] or "", reverse=True)
     items.sort(key=lambda item: (item["role"] != "deliverable", item["role"] == "helper", item["status"] == "missing"))
-    return {"files": items, "unbacked_mentions": _extract_unbacked_mentions(answer, items)}
+    return {"files": items, "unbacked_mentions": _extract_unbacked_mentions(answer, items), **_inventory_notices(row)}
 
 
 def _resolve_artifact(row, file_id) -> tuple[Path, dict]:

@@ -43,6 +43,8 @@ MAX_READ_CHARS = 12000
 MAX_SEARCH_FILES = 1000
 MAX_SEARCH_SECONDS = 30.0
 MAX_RG_MATCHES = 5000
+_INVENTORY_FILE_TOOLS = frozenset({"ryn_file_write", "ryn_file_edit", "ryn_file_manage", "ryn_apply_patch",
+                                    "ryn_download_file", "ryn_image_generate", "ryn_table_export", "ryn_craft_action"})
 # Generated or vendored trees. Searching one of them explicitly (path inside it) still works.
 SEARCH_SKIP_DIRS = frozenset({".git", "node_modules", ".venv", "venv", "target", "__pycache__",
                               ".pytest_cache", ".ruff_cache", ".mypy_cache", ".tox"})
@@ -635,6 +637,7 @@ class LocalTools:
         self._renderer = None
         self._web_search = None
         self._reads = {}
+        self._workspace_snapshots = {}
         if self.home is not None:
             try:
                 from .local_browser import sweep_orphan_profiles
@@ -705,6 +708,21 @@ class LocalTools:
                     if not entry[1]:
                         self._path_locks.pop(key, None)
 
+    def _inventory_signature(self, task_id):
+        row = self.store.read().get("tasks", {}).get(task_id, {})
+        return tuple((r.get("operation_id"), r.get("confirmed_at")) for r in row.get("receipts", [])
+                     if r.get("status") == "confirmed" and r.get("tool") in _INVENTORY_FILE_TOOLS)
+
+    def _before_command_snapshot(self, root, task_id):
+        from . import workspace_artifacts
+        with self.lock:
+            now = time.monotonic()
+            self._workspace_snapshots = {key: item for key, item in self._workspace_snapshots.items() if now - item[1] <= 2}
+            previous = self._workspace_snapshots.get(task_id)
+            if previous and previous[0] == root and previous[2] == self._inventory_signature(task_id):
+                return previous[3]
+            return workspace_artifacts.snapshot(root)
+
     def _command_artifacts(self, result, task_id):
         from . import workspace_artifacts
         if result.get("running"):
@@ -713,12 +731,19 @@ class LocalTools:
         with self.lock:
             if "workspace_files" not in item and item.get("workspace_snapshot"):
                 root, before = item.pop("workspace_snapshot")
-                item["workspace_files"] = workspace_artifacts.command_files(root, before)
-            return {**result, "workspace_files": item.get("workspace_files", [])}
+                signature = self._inventory_signature(task_id)
+                changes = workspace_artifacts.command_files(root, before)
+                item["workspace_files"] = changes["files"]
+                item["workspace_files_complete"] = changes["inventory_complete"]
+                item["workspace_files_truncated"] = changes["truncated"]
+                item["workspace_files_total"] = changes["total_changes"]
+                self._workspace_snapshots[task_id] = (root, time.monotonic(), signature, changes["after"])
+            return {**result, "workspace_files": item.get("workspace_files", []),
+                    **{key: item[key] for key in ("workspace_files_complete", "workspace_files_truncated", "workspace_files_total") if key in item}}
 
     def _publish_command_artifacts(self, result, context, operation_id):
         """Persist completed command outputs even when the model never polls the process."""
-        if result.get("running") or not result.get("workspace_files"):
+        if result.get("running") or (not result.get("workspace_files") and "workspace_files_complete" not in result):
             return not result.get("running")
         record = self.ledger_factory().get(operation_id)
         if not record or record.get("status") != "confirmed" or record["binding"].get("task_id") != context["task_id"]:
@@ -733,7 +758,8 @@ class LocalTools:
             receipts[operation_id] = {"operation_id": operation_id, "tool": "ryn_shell_execute", "status": "confirmed",
                                       "goal_revision": context.get("goal_revision") or row.get("goal", {}).get("revision"),
                                       "confirmed_at": datetime.now(timezone.utc).isoformat(),
-                                      "result": {"workspace_files": result["workspace_files"]}}
+                                      "result": {key: value for key, value in result.items()
+                                                 if key.startswith("workspace_files") or key == "process_id"}}
             row["file_artifact_revision"] = row.get("file_artifact_revision", 0) + 1
             row["revision"] += 1
             return True
@@ -1595,7 +1621,7 @@ class LocalTools:
                     command = prepare_shell_command(args)
                     cwd = self._shell_cwd(args.get("cwd", "."), context, policy)
                     root = self.path(".", context, policy)
-                    before = None if is_read_shell else workspace_artifacts.snapshot(root)
+                    before = None if is_read_shell else self._before_command_snapshot(root, context["task_id"])
                     prepared_shell = (command, cwd, root, before)
                 is_browser_write = name.startswith("ryn_browser_")
                 if is_browser_write:
@@ -1853,6 +1879,8 @@ class LocalTools:
                     confirmed_at=datetime.now(timezone.utc).isoformat(),
                     operation_classification=host_classification,
                 )
+                if name in _INVENTORY_FILE_TOOLS:
+                    self._workspace_snapshots.pop(context["task_id"], None)
             if name == "ryn_shell_execute":
                 # File delivery cannot change the confirmed execution outcome into an uncertain write.
                 try:
@@ -2511,7 +2539,7 @@ class LocalTools:
                 policy = self.policy(context)
                 cwd = self._shell_cwd(args.get("cwd", "."), context, policy)
                 root = self.path(".", context, policy)
-                before = None if is_read else workspace_artifacts.snapshot(root)
+                before = None if is_read else self._before_command_snapshot(root, task_id)
             else:
                 command, cwd, root, before = prepared_shell
             timeout = (
