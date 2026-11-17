@@ -820,15 +820,35 @@ class AgentRuntime(AgentLoop):
         with self._active_lock:
             return next((run.copy() for run in self._active_runs.values() if run["task_id"] == task_id), None)
 
-    def activity_counts(self) -> dict[str, Any]:
+    def active_run_count(self) -> int:
+        """Memory-only watchdog count; never wait for task or process writers."""
+        acquired = self._active_lock.acquire(blocking=False)
+        try:
+            running = len(self._active_runs)
+        finally:
+            if acquired:
+                self._active_lock.release()
+        processes = getattr(self.tools, "processes", None) or getattr(
+            getattr(self.tools, "local", None), "processes", None
+        )
+        if processes is not None:
+            running += sum(item["process"].poll() is None
+                           for item in tuple(processes.items.values()))
+        return running
+
+    def activity_counts(self, *, cached_only: bool = False) -> dict[str, Any]:
         """Lightweight task activity summary for the desktop watchdog without copying histories."""
-        with self._active_lock:
+        acquired = self._active_lock.acquire(blocking=not cached_only)
+        try:
             running = len(self._active_runs)
             active_task_ids = [
                 run["task_id"]
-                for run in self._active_runs.values()
+                for run in tuple(self._active_runs.values())
                 if isinstance(run, dict) and isinstance(run.get("task_id"), str)
             ]
+        finally:
+            if acquired:
+                self._active_lock.release()
         active_id_set = set(active_task_ids)
 
         def _view(data: dict) -> dict[str, Any]:
@@ -894,6 +914,11 @@ class AgentRuntime(AgentLoop):
                 "agent_task_titles": titles,
             }
 
+        if cached_only:
+            # Published snapshots are immutable; do not reload changed disk state
+            # (which could wait for a transaction) in the native watchdog.
+            published = self.store._published
+            return _view(published[1] if published is not None else {})
         return self.store.inspect(_view)
 
     def _start_stream(self, selected, step):

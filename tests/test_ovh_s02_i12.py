@@ -127,7 +127,8 @@ def test_t1_desktop_status_and_activity_counts_with_running_queued_retrying_and_
         assert resp.status_code == 200
         status = resp.json()
         assert status["desktop_managed"] is True
-        assert status["active_tasks"] == 0
+        assert status["active_tasks"] == 1
+        assert status["agent_tasks"] == 1
         assert status["agent_active_runs"] == 2
         assert status["agent_waiting"] == 1
         assert status["agent_task_titles"] == [long_title[:40], "排队中的代码检查任务"]

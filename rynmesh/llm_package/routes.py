@@ -2585,22 +2585,22 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     def desktop_status() -> dict[str, Any]:
         # No model health probes or Registry requests: the native watchdog must
         # remain responsive even when an external model runtime is unavailable.
-        try:
-            current = active_manager()
-        except (OSError, ValueError, ManifestError, AdapterError):
-            current = None
-        with background_orders_lock:
-            consuming = sum(1 for order in background_orders.values()
-                            if order.get("state") in {"queued", "accepted", "running"})
+        current = manager
+        consuming = sum(1 for order in tuple(background_orders.values())
+                        if order.get("state") in {"queued", "accepted", "running"})
         running = current._running if current else 0
         setup = read_setup_job().get("state") in {"queued", "running", "cancelling"}
         agent_active_runs = 0
         agent_waiting = 0
         agent_task_titles: list[str] = []
         agent_rt = getattr(app.state, "agent_runtime", None)
+        try:
+            agent_tasks = agent_rt.active_run_count() if agent_rt is not None else 0
+        except Exception:
+            agent_tasks = 0
         if agent_rt is not None and hasattr(agent_rt, "activity_counts"):
             try:
-                counts = agent_rt.activity_counts()
+                counts = agent_rt.activity_counts(cached_only=True)
                 agent_active_runs = int(counts.get("agent_active_runs", 0))
                 agent_waiting = int(counts.get("agent_waiting", 0))
                 raw_titles = counts.get("agent_task_titles")
@@ -2614,7 +2614,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             "desktop_managed": os.environ.get("RYNMESH_DESKTOP_MODE") == "1",
             "configured": current is not None,
             "sharing": bool(current and current.accepting_orders),
-            "active_tasks": running + consuming,
+            "active_tasks": running + consuming + agent_tasks,
+            "agent_tasks": agent_tasks,
             "agent_active_runs": agent_active_runs,
             "agent_waiting": agent_waiting,
             "agent_task_titles": agent_task_titles,
