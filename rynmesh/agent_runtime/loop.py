@@ -22,6 +22,7 @@ from ..llm_package.chat import validate_provider_state, validate_tool_arguments
 from . import (
     automations,
     budget,
+    goals,
     checkpoint_refs,
     context_compaction,
     diagnostic_log,
@@ -2701,6 +2702,8 @@ class AgentLoop:
         """Persist a bounded model proposal; never confer business authority."""
         call = selected["queue"][0]
         args = call["arguments"]
+        if call["name"] in goals.TOOL_NAMES:
+            goals.check_subagent(selected)
         spec = next(item["function"] for item in ALL_INTERNAL_SPECS if item["function"]["name"] == call["name"])
         discovery = None
         if "schema_snapshot" in call and call["name"] != tool_menu.NAME:
@@ -2710,6 +2713,7 @@ class AgentLoop:
                 memory_integration.MEMORY_TOOL_NAMES
                 | automations.AUTOMATION_TOOL_NAMES
                 | subagents.SUBAGENT_TOOL_NAMES
+                | goals.TOOL_NAMES
             ):
                 current = spec
             assert_schema_unchanged(call, current)
@@ -2773,6 +2777,7 @@ class AgentLoop:
                     *memory_integration.MEMORY_TOOL_NAMES,
                     *automations.AUTOMATION_TOOL_NAMES,
                     *subagents.SUBAGENT_TOOL_NAMES,
+                    *goals.TOOL_NAMES,
                 }
                 and args["goal_revision"] != row["goal"]["revision"]
             ):
@@ -2906,6 +2911,12 @@ class AgentLoop:
                     result = memory_runtime.execute_memory_tool_call_in_tx(data, row, call["name"], args)
                     if result.get("applied") or result.get("deleted_ids"):
                         memory_integration.propagate_memory_revocation_in_tx(data)
+            elif call["name"] == "ryn_get_goal":
+                result = goals.tool_get(row, args)
+            elif call["name"] == "ryn_create_goal":
+                result = goals.tool_create(row, args)
+            elif call["name"] == "ryn_update_goal":
+                result = goals.tool_update(row, args)
             elif call["name"] == "ryn_update_plan":
                 result = planning.update(row, args)
                 row["criteria_proposals"] = [{**copy.deepcopy(proposal), "proposal_origin": "model", "accepted": False,

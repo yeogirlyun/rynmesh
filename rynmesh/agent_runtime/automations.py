@@ -68,39 +68,34 @@ AUTOMATION_TOOL_SPECS: list[dict[str, Any]] = [
         "function": {
             "name": AUTOMATION_UPDATE_TOOL,
             "description": (
-                "Manage scheduled tasks/reminders (automations). "
-                "Default kind='heartbeat' to wake this chat; use 'cron' for a new chat."
+                "Schedule tasks/reminders. "
+                "Default heartbeat: this chat; cron: new chat."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {
-                        "type": "string",
                         "enum": ["create", "update", "pause", "resume", "delete", "list"],
                     },
                     "id": {"type": "string"},
                     "name": {"type": "string"},
                     "prompt": {"type": "string"},
                     "kind": {
-                        "type": "string",
                         "enum": ["heartbeat", "cron"],
                     },
                     "repeat": {
-                        "type": "string",
                         "enum": ["daily", "weekdays", "weekly", "hourly", "minutely", "once"],
                     },
-                    "time": {"type": "string", "description": "24h HH:MM local time"},
+                    "time": {"type": "string", "description": "Local 24h HH:MM"},
                     "delay_minutes": {"type": "integer"},
                     "interval_minutes": {"type": "integer"},
                     "weekday": {
-                        "type": "string",
                         "enum": ["MO", "TU", "WE", "TH", "FR", "SA", "SU"],
                     },
                     "interval_hours": {"type": "integer"},
                     "rrule": {"type": "string"},
                     "desktop_access": {"type": "boolean"},
                     "notification_policy": {
-                        "type": "string",
                         "enum": ["all_runs", "failed_runs_only", "never"],
                     },
                 },
