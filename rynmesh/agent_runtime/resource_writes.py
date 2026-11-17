@@ -16,7 +16,7 @@ NAMES = {
     "ryn_upload_resource_file": "create_file",
     "ryn_create_directory": "create_directory",
 }
-MAX_TEXT_BYTES = 16 * 1024
+MAX_TEXT_BYTES = 64 * 1024
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 
@@ -83,7 +83,9 @@ class ResourceWrites:
                     reject("agent_file_name_invalid")
             except NasError:
                 reject("agent_file_name_invalid")
-            if name == "ryn_create_text_file" and PurePosixPath(filename).suffix.lower() not in {".txt", ".md"}:
+            if name == "ryn_create_text_file" and PurePosixPath(filename).suffix.lower() not in {
+                ".txt", ".md", ".csv", ".tsv", ".json", ".yaml", ".yml", ".log", ".html",
+            }:
                 reject("agent_resource_format_unsupported")
             data = args.get("content", "").encode("utf-8")
             if len(data) > MAX_TEXT_BYTES:

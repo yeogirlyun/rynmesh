@@ -430,6 +430,11 @@ class ResourceTools:
         if cancelled():
             reject("agent_cancelled")
         self.validate_context(context)
+        result_budget = context.get("result_budget_bytes")
+        # Older direct callers have no task output budget and retain their
+        # original page/byte ceilings. Runtime calls always supply the budget.
+        list_output_limit = 16 * 1024 if result_budget is None else 96 * 1024
+        read_output_limit = 18 * 1024 if result_budget is None else 96 * 1024
         if name == "ryn_list_resource_roots":
             with self.nas.lock if context.get("resource_grants") else nullcontext():
                 roots = [{"resource_ref": g["root_resource_ref"], "actions": g["actions"],
@@ -464,7 +469,8 @@ class ResourceTools:
                     reject("agent_resource_version_changed")
                 offset = cursor.get("offset", 0)
                 entries = []
-                for entry in page["entries"][offset:offset + 50]:
+                page_size = 50 if result_budget is None else min(50, max(10, result_budget // 400))
+                for entry in page["entries"][offset:offset + page_size]:
                     path = relative_path(entry["path"])
                     if path.rpartition("/")[0] != item["path"] or len(path.encode()) > 512:
                         reject("agent_resource_listing_invalid")
@@ -472,7 +478,7 @@ class ResourceTools:
                          **{k: item[k] for k in ("grant_id", "owner_id", "consumer_node_id")}, "task_id": context["task_id"]})
                     candidate = {"resource_ref": ref, "name": entry["name"][:128], "name_truncated": len(entry["name"]) > 128,
                                  "directory": bool(entry["directory"]), "size": entry.get("size")}
-                    if len(encoded([*entries, candidate])) > 16 * 1024:
+                    if len(encoded([*entries, candidate])) > list_output_limit:
                         break
                     entries.append(candidate)
                 next_offset = offset + len(entries)
@@ -500,9 +506,10 @@ class ResourceTools:
                 if name == "ryn_search_resource":
                     pattern = re.compile(re.escape(args["query"]), 0 if args.get("case_sensitive", False) else re.IGNORECASE)
                     matches = []
+                    page_size = 6 if result_budget is None else min(20, max(6, result_budget // 1200))
                     next_cursor = ""
                     for found in pattern.finditer(value, offset):
-                        if len(matches) == 6:
+                        if len(matches) == page_size:
                             next_cursor = self._next_cursor(binding, offset=found.start(), content_version=version)
                             break
                         start, end = max(0, found.start() - 150), min(len(value), found.end() + 350)
@@ -514,7 +521,8 @@ class ResourceTools:
                               "coverage": "Literal text search in the authorized bounded decoded/extracted document only; not semantic search or proof of complete document understanding.",
                               **{k: content[k] for k in ("extraction_truncated", "extraction_coverage", "extraction_pages") if k in content}}
                 else:
-                    text = value[offset:offset + 8000]
+                    page_size = 8000 if result_budget is None else min(20000, max(2000, result_budget // 4))
+                    text = value[offset:offset + page_size]
                     end = offset + len(text)
                     next_cursor = self._next_cursor(binding, offset=end, content_version=version) if end < len(value) else ""
                     result = {"text": text, "truncated": bool(next_cursor) or content.get("extraction_truncated", False), "next_cursor": next_cursor,
@@ -552,9 +560,9 @@ class ResourceTools:
                            **({"listing_snapshot": listing_snapshot} if listing_snapshot else {})}}
 
         if name == "ryn_read_resource":
-            while len(encoded(output)) > 18 * 1024:
+            while len(encoded(output)) > read_output_limit:
                 raw = output["text"].encode("utf-8")
-                excess = len(encoded(output)) - 18 * 1024
+                excess = len(encoded(output)) - read_output_limit
                 text = raw[:max(0, len(raw) - excess)].decode("utf-8", errors="ignore")
                 if not text:
                     reject("agent_resource_output_limit")
@@ -571,7 +579,7 @@ class ResourceTools:
             listing_snapshot = snapshot()
             if listing_snapshot:
                 output["origin"]["listing_snapshot"] = listing_snapshot
-            while len(encoded(output)) > 16 * 1024 or len(listing_snapshot) > 4096:
+            while len(encoded(output)) > list_output_limit or len(listing_snapshot) > 4096:
                 if len(entries) <= 1:
                     reject("agent_resource_output_limit")
                 entries.pop()
