@@ -1426,6 +1426,8 @@
   "Could not reach the coordination service. Pending requests will retry.": "无法连接协调服务，待处理请求将自动重试。请检查网络连接。",
   "Request expired. The coordinator must be online; try again.": "请求已过期。请确认协调设备在线后重试。",
   "Use a name between 1 and 32 characters.": "名称长度须为 1 至 32 个字符。",
+  "space_name_invalid": "名称长度须为 1 至 32 个字符。",
+  "space_name_rejected": "名字过长未同步",
   "Invalid invitation.": "邀请信息无效。",
   "Invalid space signature.": "空间签名无效。",
   "Space authority does not match the invitation.": "空间协调设备与邀请信息不匹配。",
