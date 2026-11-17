@@ -350,7 +350,9 @@ def test_content_stream_ignores_other_shapes(text):
 
 
 def test_rejected_proposal_closes_the_thread(codex):
-    codex.replies.extend([propose(path="a.txt"), propose("exec_command", path="x"), propose(path="b.txt")])
+    # Unknown strings now pair a rejection; a non-string name still abandons
+    # the invalid provider turn and must close its private thread.
+    codex.replies.extend([propose(path="a.txt"), propose(None, path="x"), propose(path="b.txt")])
     adapter, messages = CLIAgentAdapter("codex_cli"), conversation()
     step(adapter, messages, "s1")
     with pytest.raises(AdapterError) as rejected:

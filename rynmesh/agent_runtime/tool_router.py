@@ -226,7 +226,11 @@ def normalize_tool_calls(calls, specs, *, existing_call_ids=(), metadata=None,
             normalized.append(_reject(call, "agent_unknown_tool", "This tool payload is not in the request's function catalog."))
             continue
         if snapshot is None:
-            normalized.append(_reject(call, "agent_unknown_tool", "Choose a tool from the tools offered in this request."))
+            if name == "ryn_proposal_overflow":
+                normalized.append(_reject(call, "agent_tool_proposal_overflow",
+                    "Too many tool proposals in one reply; this one was not executed. Send it again in the next step."))
+            else:
+                normalized.append(_reject(call, "agent_unknown_tool", "Choose a tool from the tools offered in this request."))
             continue
         try:
             if isinstance(original_arguments, str):
