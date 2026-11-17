@@ -30,7 +30,7 @@ from .git_safety import (
 )
 from .local_pty import COMPLETED, ConPtyProcess, PosixPtyProcess, check_pty_support, input_unconfirmed, validate_size
 from .local_pty import terminate_session as terminate
-from .store import AgentToolRejected
+from .store import AgentToolRejected, encoded
 
 _DEFAULT_CONPTY_CLS = ConPtyProcess
 
@@ -51,10 +51,10 @@ POWERSHELL_PROFILE_FALLBACK_NOTICE = (
 
 HEAD_KEEP_CHARS = 512 * 1024
 TAIL_KEEP_CHARS = 512 * 1024
-PAGE_CHARS = 6000
-HEAD_CHARS = 2000
+PAGE_CHARS = 12000
+HEAD_CHARS = PAGE_CHARS // 3
 DEFAULT_READ_WAIT = 10
-MAX_READ_WAIT = 20
+MAX_READ_WAIT = 300
 DEFAULT_YIELD_SECONDS = 10
 DEFAULT_READ_SHELL_TIMEOUT = 120
 MAX_TASK_PROCESSES = 16
@@ -210,6 +210,30 @@ def _read_contiguous(item: dict, start: int, end: int) -> str:
     if end > tail_start:
         parts.append(_slice_tail(item, max(0, start - tail_start), end - tail_start))
     return "".join(parts)
+
+
+def _output_page(item, offset, running, max_chars):
+    total_chars, head = item["total_chars"], item["head"]
+    head_end, dropped = len(head), item["dropped_chars"]
+    tail_start = head_end + dropped
+    head_chars = max_chars // 3
+    if offset == -1:
+        start = max(tail_start if dropped else 0, total_chars - max_chars)
+        return _read_contiguous(item, start, total_chars), total_chars
+    if offset == 0 and not running and total_chars > max_chars and (not dropped or head_end > 0):
+        # Keep the true head and tail; the omitted middle remains pageable.
+        end = min(head_chars, head_end if dropped else total_chars)
+        head_part = _read_contiguous(item, 0, end)
+        tail_pos = max(tail_start if dropped else end, total_chars - (max_chars - len(head_part)))
+        tail_part = _read_contiguous(item, tail_pos, total_chars)
+        return (head_part + f"\n... [{tail_pos - end} characters omitted; ryn_process_read offset={end} reads them] ...\n" + tail_part), end
+    if dropped and offset < head_end:
+        end = min(head_end, offset + max_chars)
+        return head[offset:end], end
+    if dropped and offset < tail_start:
+        return f"[{tail_start - offset} characters dropped]\n", tail_start
+    end = min(total_chars, offset + max_chars)
+    return _read_contiguous(item, offset, end), end
 
 
 class AgentProcessStartRejected(AgentToolRejected):
@@ -744,7 +768,11 @@ class Processes:
             return item
 
     def read(self, ident, task_id, offset=0, *, wait_seconds=DEFAULT_READ_WAIT, cancelled=None,
-             coalesce_empty_poll=False, tail=False, _wait_limit=MAX_READ_WAIT):
+             coalesce_empty_poll=False, tail=False, max_chars=PAGE_CHARS,
+             _wait_limit=MAX_READ_WAIT, _max_output_bytes=None):
+        if type(max_chars) is not int:
+            raise AgentToolRejected("agent_invalid_process_max_chars")
+        max_chars = min(40000, max(1000, max_chars))
         if (type(wait_seconds) not in {int, float} or not math.isfinite(wait_seconds)
                 or not 0 <= wait_seconds <= _wait_limit):
             raise AgentToolRejected("agent_invalid_process_wait")
@@ -771,40 +799,24 @@ class Processes:
                 running = item["process"].poll() is None
                 remaining = deadline - time.monotonic()
                 has_unread = (total_chars > 0) if offset == -1 else (offset < total_chars)
-                if (has_unread and running) or (not running and item["reader_done"].is_set()) or remaining <= 0:
+                page_full = has_unread and (total_chars - max(0, offset) >= max_chars)
+                if has_unread and _max_output_bytes is not None and not page_full:
+                    text, _ = _output_page(item, offset, running, max_chars)
+                    page_full = len(encoded(text)) >= _max_output_bytes
+                if (page_full and running) or (not running and item["reader_done"].is_set()) or remaining <= 0:
                     head = item["head"]
-                    head_end = len(head)
                     dropped = item["dropped_chars"]
-                    tail_start = head_end + dropped
-                    if offset == -1:
-                        min_start = tail_start if dropped > 0 else 0
-                        start = max(min_start, total_chars - PAGE_CHARS)
-                        end = total_chars
-                        text = _read_contiguous(item, start, end)
-                    elif offset == 0 and not running and total_chars > PAGE_CHARS and (dropped == 0 or head_end > 0):
-                        # Failures and summaries are usually at the end of a finished
-                        # command: show its head and tail; the middle stays pageable.
-                        if dropped == 0:
-                            end = min(HEAD_CHARS, total_chars)
-                            head_part = _read_contiguous(item, 0, end)
-                            tail_pos = max(end, total_chars - (PAGE_CHARS - len(head_part)))
-                        else:
-                            end = min(HEAD_CHARS, head_end)
-                            head_part = head[:end]
-                            tail_pos = max(tail_start, total_chars - (PAGE_CHARS - len(head_part)))
-                        tail_part = _read_contiguous(item, tail_pos, total_chars)
-                        text = (head_part
-                                + f"\n... [{tail_pos - end} characters omitted; ryn_process_read offset={end} reads them] ...\n"
-                                + tail_part)
-                    elif dropped > 0 and offset < head_end:
-                        end = min(head_end, offset + PAGE_CHARS)
-                        text = head[offset:end]
-                    elif dropped > 0 and offset < tail_start:
-                        end = tail_start
-                        text = f"[{tail_start - offset} characters dropped]\n"
-                    else:
-                        end = min(total_chars, offset + PAGE_CHARS)
-                        text = _read_contiguous(item, offset, end)
+                    text, end = _output_page(item, offset, running, max_chars)
+                    if _max_output_bytes is not None and len(encoded(text)) > _max_output_bytes:
+                        low, high = 1, max_chars
+                        while low < high:
+                            middle = (low + high + 1) // 2
+                            candidate, _ = _output_page(item, offset, running, middle)
+                            if len(encoded(candidate)) <= _max_output_bytes:
+                                low = middle
+                            else:
+                                high = middle - 1
+                        text, end = _output_page(item, offset, running, low)
                     exit_code = item["process"].poll()
                     stop_reason = item["reason"] or (
                         None if running else ("exited" if exit_code == 0 else "exited_nonzero" if exit_code is not None else "terminated")
@@ -960,7 +972,10 @@ class Processes:
                 break
             if deadline is not None and time.monotonic() >= deadline:
                 return self.read(ident, task_id, wait_seconds=0)
-            time.sleep(0.05)
+            with self.changed:
+                if item["process"].poll() is None:
+                    remaining = None if deadline is None else max(0, deadline - time.monotonic())
+                    self.changed.wait(.1 if remaining is None else min(.1, remaining))
         item["reader_done"].wait(2)
         if item.get("tty"):
             item["cleanup_done"].wait(5)

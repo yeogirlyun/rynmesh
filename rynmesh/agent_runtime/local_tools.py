@@ -2723,8 +2723,12 @@ class LocalTools:
                 result["partial_command_error"] = True
             return self._command_artifacts(result, task_id)
         if name == "ryn_process_read":
+            budget = context.get("result_budget_bytes", 20000)
+            output_bytes = budget - min(2000, budget // 2)
+            max_chars = min(args.get("max_chars", 12000), max(1000, output_bytes))
             return self._command_artifacts(self.processes.read(args["process_id"], task_id, args.get("offset", 0),
-                wait_seconds=args.get("wait_seconds", 10), cancelled=cancelled, coalesce_empty_poll=True), task_id)
+                wait_seconds=args.get("wait_seconds", 10), cancelled=cancelled, coalesce_empty_poll=True,
+                max_chars=max_chars, _max_output_bytes=output_bytes), task_id)
         if name == "ryn_process_stop":
             return self._command_artifacts(self.processes.stop(args["process_id"], task_id), task_id)
         if name == "ryn_process_write":
