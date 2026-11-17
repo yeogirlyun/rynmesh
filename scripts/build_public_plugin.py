@@ -25,7 +25,7 @@ def build(package, *, revision, key):
     files = {}
     with zipfile.ZipFile(data, "w", zipfile.ZIP_DEFLATED) as archive:
         for p in paths:
-            name, content = p.relative_to(package).as_posix(), p.read_bytes()
+            name, content = p.relative_to(package).as_posix(), p.read_bytes().replace(b"\r\n", b"\n")
             files[name] = hashlib.sha256(content).hexdigest()
             entry = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
             entry.compress_type = zipfile.ZIP_DEFLATED
@@ -54,11 +54,14 @@ def main():
     output = Path(args.output).resolve()
     if key.is_relative_to(root) or output.is_relative_to(root):
         parser.error("Signing key and build output must be outside the repository")
-    if subprocess.check_output(["git", "branch", "--show-current"], text=True).strip() != "develop":
-        parser.error("Build releases from develop")
+    revision = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    integrated = subprocess.check_output(["git", "rev-parse", "develop"], text=True).strip()
+    if revision != integrated:
+        parser.error("Build releases from the current integrated develop commit")
     if subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], text=True).strip():
         parser.error("Commit all tracked changes before building")
-    revision = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    if subprocess.check_output(["git", "ls-files", "--others", "--exclude-standard", "--", str(package)], text=True).strip():
+        parser.error("Do not publish untracked package files")
     name, raw, catalog = build(package, revision=revision, key=key.read_bytes())
     source = json.loads((root / "rynmesh/public_plugins/source.json").read_text(encoding="utf-8"))
     verify_catalog(catalog, source["public_key"])
