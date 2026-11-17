@@ -180,6 +180,24 @@ def assess(*, request_bytes: int, capacity_bytes: int, step_bytes: int, calibrat
             "step_bytes": step_bytes, "margin_bytes": margin, "need_bytes": need, "near_limit": headroom < need}
 
 
+def remaining_notice(usage: dict | None, level: int) -> tuple[str | None, int]:
+    """Emit each low-headroom threshold once within the current context window."""
+    if not usage:
+        return None, level
+    capacity, density = usage["capacity_bytes"], usage["bytes_per_token"]
+    if capacity <= 0 or density <= 0:
+        return None, level
+    remaining = max(0, capacity - usage["request_bytes"])
+    next_level = 2 if remaining < capacity * .15 else 1 if remaining < capacity * .30 else 0
+    if next_level <= level:
+        return None, level
+    tokens, percent = int(remaining / density), int(remaining * 100 / capacity)
+    return (
+        f"Server context notice: about {tokens} tokens ({percent}%) of this context window remain. "
+        "Finish the current step or record key findings in the plan or files; "
+        "older turns will be summarized automatically.", next_level)
+
+
 def worthwhile(capacity_bytes: int, projected_after_bytes: int, need_bytes: int) -> bool:
     """A proactive checkpoint must buy several steps, or it waits for a hard overflow."""
     return capacity_bytes - projected_after_bytes >= MIN_STEPS_AFTER_COMPACTION * need_bytes
