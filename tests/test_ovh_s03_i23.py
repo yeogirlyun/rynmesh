@@ -207,3 +207,23 @@ def test_T3_s03_i23_safe_value_error_context_code_also_auto_continues(tmp_path):
     assert source['error'] == 'agent_context_limit'
     assert source.get('continued_to') and source['context_exhausted'] is False
     assert len(runtime.store.read()['tasks']) == 2
+
+
+def test_T1_s03_i23_completed_compaction_then_new_observation_still_exhausts_window(tmp_path):
+    runtime, model, row = exhaust(tmp_path)
+    runtime.catalog = WindowCatalog(32000, 4096)
+    seed(runtime, row['id'], [m for i in range(12) for m in exchange(str(i), 'old observation '*800)])
+    def summarize(model_id, messages, specs, cancelled, on_event, **kwargs):
+        model.calls.append((model_id, messages, specs))
+        assert is_compaction_call(messages, specs)
+        # A new closed observation arrives while the older prefix is summarized.
+        seed(runtime, row['id'], exchange('late-observation', 'late result '*12000))
+        return assistant('Goal: Finish the analysis. Earlier observations were read; continue analyzing.')
+    model.complete = summarize
+    runtime.run_once()
+    saved = runtime.get(row['id'])
+    assert any(e['type'] == 'context_compacted' for e in saved['events'])
+    assert saved['status'] == 'failed' and saved['context_exhausted'] is True
+    event = next(e for e in saved['events'] if e['type'] == 'context_exhausted')
+    assert event['request_bytes'] > event['capacity_bytes']
+    assert len(model.calls) == 1  # The over-window main request never dispatches.
