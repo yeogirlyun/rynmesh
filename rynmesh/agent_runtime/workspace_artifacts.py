@@ -134,7 +134,7 @@ def _replay_history(row: dict) -> dict:
         if tool == "ryn_craft_action" and result.get("ok"):
             for item in result.get("files", []):
                 if isinstance(item, dict) and item.get("path") and item.get("sha256"):
-                    _touch(files, receipt, item["path"], item["sha256"], True)
+                    _touch(files, receipt, item["path"], item["sha256"], not item.get("overwritten", False))
         elif tool in {"ryn_shell_execute", "ryn_process_read", "ryn_process_stop"}:
             for item in result.get("workspace_files", []):
                 if not isinstance(item, dict) or not item.get("path"):
