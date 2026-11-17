@@ -782,7 +782,13 @@ class LocalTools:
             return
         def save(data):
             row = data.get("tasks", {}).get(context["task_id"])
-            if not row or row.get("local_execution") != context["local_execution"]:
+            bound = dict((row or {}).get("local_execution") or {})
+            expected = dict(context["local_execution"])
+            # Web restrictions do not change a completed command's file binding.
+            for key in ("web_search_mode", "web_allowed_domains"):
+                bound.pop(key, None)
+                expected.pop(key, None)
+            if not row or bound != expected:
                 return False
             receipts = row.setdefault("workspace_file_receipts", {})
             if operation_id in receipts:

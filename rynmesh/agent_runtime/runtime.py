@@ -48,6 +48,7 @@ from . import (
     tool_menu,
     verification,
 )
+from .web_search import normalize_domains, restrict_web_policy
 from .control import (
     acknowledgeable,
     allowed_actions,
@@ -2124,6 +2125,27 @@ class AgentRuntime(AgentLoop):
             cp = values["compact_prompt"]
             if not isinstance(cp, str) or len(cp.encode("utf-8")) > self.COMPACT_PROMPT_MAX_BYTES or "\x00" in cp:
                 raise AgentError("agent_invalid_settings")
+        if "web_search_mode" in values:
+            mode = values["web_search_mode"]
+            if not isinstance(mode, str) or mode not in {"", "cached", "disabled"}:
+                raise AgentError("agent_invalid_settings")
+        if "web_allowed_domains" in values:
+            domains = values["web_allowed_domains"]
+            if not isinstance(domains, list) or len(domains) > 32:
+                raise AgentError("agent_invalid_settings")
+            normalized = []
+            for domain in domains:
+                if not isinstance(domain, str):
+                    raise AgentError("agent_invalid_settings")
+                try:
+                    item = normalize_domains([domain])
+                except (AgentToolRejected, ValueError):
+                    raise AgentError("agent_invalid_settings") from None
+                if not item or len(item[0]) > 253:
+                    raise AgentError("agent_invalid_settings")
+                if item[0] not in normalized:
+                    normalized.append(item[0])
+            values["web_allowed_domains"] = normalized
         from .local_tools import validate_configuration
         validate_configuration(values)
         if "enabled" in values and type(values["enabled"]) is not bool:
@@ -2198,6 +2220,10 @@ class AgentRuntime(AgentLoop):
                 # The owner's own pick is never replaced by a later shipped default.
                 data[PERMISSION_MODE_SOURCE] = "owner"
             data["settings"].update(values)
+            if {"web_search_mode", "web_allowed_domains"} & values.keys():
+                for row in data["tasks"].values():
+                    bound = row.setdefault("local_execution", {})
+                    bound.update(restrict_web_policy(bound, data["settings"]))
             if permission_changed:
                 for row in data["tasks"].values():
                     if row["status"] not in TERMINAL:
@@ -2972,6 +2998,7 @@ class AgentRuntime(AgentLoop):
             if effort is not None:
                 row["reasoning_effort"] = effort
             row["local_execution"] = {"workspace_root": settings.get("workspace_root") or self.store.default_workspace(), "desktop_access": settings.get("desktop_access", False)}
+            row["local_execution"].update(restrict_web_policy({}, settings))
             if value.get("project_id") is not None:
                 row["project"] = copy.deepcopy(projects.selected(data, value["project_id"], refresh=True))
                 row["local_execution"].update(workspace_root=row["project"]["path"],
@@ -3025,6 +3052,7 @@ class AgentRuntime(AgentLoop):
                     if key in source:
                         row[key] = copy.deepcopy(source[key])
                 row["local_execution"]["desktop_access"] = bool(row["local_execution"].get("desktop_access") and settings.get("desktop_access"))
+                row["local_execution"].update(restrict_web_policy(row["local_execution"], settings))
                 merged_cont, dropped_skills = self._merge_task_skills(row.get("skills"), skills)
                 row["skills"] = merged_cont
                 if effort is not None:

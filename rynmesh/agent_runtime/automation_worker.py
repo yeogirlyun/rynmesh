@@ -16,6 +16,7 @@ from .prompt import PROMPT_VERSION, select_base_instructions
 from .protocol import event, now
 from .state import initialize, owner_update
 from .store import DEFAULT_SETTINGS, AgentError
+from .web_search import restrict_web_policy
 
 AUTOMATION_WORKER_NAME = "ryn-agent-automations"
 MAX_CLAIMS_PER_TICK = 3
@@ -461,6 +462,7 @@ def trigger_automation_in_tx(
         spawned_row["local_execution"] = {
             "workspace_root": workspace_root,
             "desktop_access": desktop_access,
+            **restrict_web_policy({}, settings),
         }
         spawned_row["skills"] = []
         spawned_row["verify_text_responses"] = False

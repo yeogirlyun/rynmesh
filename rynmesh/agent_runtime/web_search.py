@@ -161,6 +161,24 @@ def domain_matches(hostname: str, allowed_domains: list[str]) -> bool:
     return any(host == dom or host.endswith("." + dom) for dom in allowed_domains)
 
 
+def restrict_web_policy(bound: dict, settings: dict) -> dict:
+    """Bind the intersection of a task's web authority and current settings."""
+    order = {"": 0, "cached": 1, "disabled": 2}
+    mode = max((bound.get("web_search_mode", ""), settings.get("web_search_mode", "")), key=order.__getitem__)
+    previous = bound.get("web_allowed_domains") or []
+    current = settings.get("web_allowed_domains") or []
+    if previous and current:
+        domains = list(dict.fromkeys(
+            [d for d in previous if domain_matches(d, current)] +
+            [d for d in current if domain_matches(d, previous)]))
+        if not domains:
+            # [] means unrestricted to the engine, not an empty intersection.
+            mode, domains = "disabled", list(previous)
+    else:
+        domains = list(previous or current)
+    return {"web_search_mode": mode, "web_allowed_domains": domains}
+
+
 def _allowed_resolved_networks() -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
     raw = (os.environ.get("RYN_WEB_SEARCH_ALLOW_CIDRS") or "").strip()
     if not raw:
@@ -1296,7 +1314,7 @@ class WebSearchEngine:
         if mode == "disabled":
             raise AgentToolRejected(
                 "agent_web_search_disabled",
-                correction="Web search is disabled for this task or configuration.",
+                correction="联网被设置禁用（Web search is disabled by task settings or configuration）.",
             )
 
         allowed_domains = self._effective_domains(args, context)
