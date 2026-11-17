@@ -2402,23 +2402,41 @@ class AgentRuntime(AgentLoop):
     def create_automation(self, value: dict) -> dict:
         if not isinstance(value, dict):
             raise AgentError("agent_invalid_request")
-        item = self.store.transaction(lambda data: automations.create_or_update_automation_in_tx(self.store, data, value))
+        def _save(data):
+            try:
+                return automations.create_or_update_automation_in_tx(self.store, data, value)
+            except AgentError as exc:
+                if str(exc) != "agent_automation_write_failed":
+                    raise
+                return {"_file_write_error": str(exc)}
+        item = self.store.transaction(_save)
+        if item.get("_file_write_error"):
+            raise AgentError(item["_file_write_error"])
         return {"automation": item}
 
     def update_automation(self, automation_id: str, value: dict) -> dict:
         if not isinstance(value, dict) or not str(automation_id or "").strip():
             raise AgentError("agent_invalid_request")
+        automation_id = automations._validated_automation_id(automation_id)
         def _upd(data):
             automations.ensure_automation_state(data)
             if automation_id not in data["automations"]:
                 raise AgentError("agent_automation_not_found")
-            return automations.create_or_update_automation_in_tx(self.store, data, value, automation_id=automation_id)
+            try:
+                return automations.create_or_update_automation_in_tx(self.store, data, value, automation_id=automation_id)
+            except AgentError as exc:
+                if str(exc) != "agent_automation_write_failed":
+                    raise
+                return {"_file_write_error": str(exc)}
         item = self.store.transaction(_upd)
+        if item.get("_file_write_error"):
+            raise AgentError(item["_file_write_error"])
         return {"automation": item}
 
     def delete_automation(self, automation_id: str) -> dict:
         if not str(automation_id or "").strip():
             raise AgentError("agent_invalid_request")
+        automation_id = automations._validated_automation_id(automation_id)
         deleted = self.store.transaction(lambda data: automations.delete_automation_in_tx(self.store, data, automation_id))
         if not deleted:
             raise AgentError("agent_automation_not_found")
@@ -2427,6 +2445,7 @@ class AgentRuntime(AgentLoop):
     def run_automation_now(self, automation_id: str) -> dict:
         if not str(automation_id or "").strip():
             raise AgentError("agent_invalid_request")
+        automation_id = automations._validated_automation_id(automation_id)
         outcome = self.store.transaction(
             lambda data: automation_worker.trigger_automation_in_tx(self, data, automation_id, force=True)
         )

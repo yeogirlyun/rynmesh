@@ -417,7 +417,9 @@ def test_t6_owner_followup_clears_automation_turn_effects_without_hiding_reply_o
     auto_after_hb1 = next(i for i in state_after_hb1["items"] if i["id"] == auto_id)
     assert auto_after_hb1["last_run_summary"] == "第一次心跳摘要AAA"
     mem_after_hb1 = mem_path.read_text(encoding="utf-8")
-    assert "第一次心跳摘要AAA" in mem_after_hb1
+    assert "第一次心跳摘要AAA" not in mem_after_hb1
+    hb1_run_id = runtime.store.read()["tasks"][tid]["automation_run_id"]
+    assert f"(completed) run={hb1_run_id} decision=NOTIFY" in mem_after_hb1
     task_after_hb1 = runtime.get(tid)
     notif_after_hb1 = task_after_hb1.get("automation_notification")
 
@@ -537,10 +539,13 @@ def test_t7_subsequent_heartbeat_after_owner_message_restores_instructions_and_s
     auto_after_hb2 = next(i for i in state_after_hb2["items"] if i["id"] == auto_id)
     assert auto_after_hb2["last_run_summary"] == "第二次心跳摘要CCC"
     mem_text = mem_path.read_text(encoding="utf-8")
-    assert mem_text.count("第二次心跳摘要CCC") == 1
+    assert "第二次心跳摘要CCC" not in mem_text
+    hb2_run_id = runtime.store.read()["tasks"][tid]["automation_run_id"]
+    hb2_note = f"(completed) run={hb2_run_id} decision=NOTIFY"
+    assert mem_text.count(hb2_note) == 1
 
     # Calling settle_automation_turn_in_tx again on the already-settled run must be a no-op:
     runtime.store.transaction(
         lambda d: automations.settle_automation_turn_in_tx(runtime.store, d, d["tasks"][tid])
     )
-    assert mem_path.read_text(encoding="utf-8").count("第二次心跳摘要CCC") == 1
+    assert mem_path.read_text(encoding="utf-8") == mem_text

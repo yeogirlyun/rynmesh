@@ -1132,6 +1132,7 @@ class AgentLoop:
                                           project_guidance=projects.guidance(row),
                                           progress_placement=placement)
         guidance, memory_selection = memory_integration.select_guidance_and_memory(self, row)
+        guidance = [*guidance, *automations.automation_memory_messages(self.store, row)]
         # The retry after a structurally invalid response is told what was wrong, once, so that the
         # identical invalid call is not simply generated again (nothing in it was executed).
         rejection = row.get("rejected_response_note")
