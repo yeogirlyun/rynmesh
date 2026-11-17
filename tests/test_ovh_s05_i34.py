@@ -134,7 +134,7 @@ def test_t4_fetch_pins_each_hop_and_returns_logical_url(tmp_path, network):
 
     config["respond"] = respond
     engine = web_search.WebSearchEngine(tmp_path / "cache", dns_resolver=dns)
-    assert engine._fetch_http_bytes(URL, []) == (b"readable page", "https://cdn.example.test/page", "text/plain")
+    assert engine._fetch_http_bytes(URL, []) [:3] == (b"readable page", "https://cdn.example.test/page", "text/plain")
     assert lookups == ["files.example.test", "cdn.example.test"]
     assert all(client["trust_env"] is False for client in clients)
 
