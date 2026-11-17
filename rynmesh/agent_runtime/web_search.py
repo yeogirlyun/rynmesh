@@ -23,6 +23,7 @@ import copy
 import hashlib
 import ipaddress
 import json
+import locale
 import os
 import re
 import socket
@@ -30,6 +31,7 @@ import threading
 import time
 import urllib.request
 from contextlib import ExitStack, contextmanager
+from concurrent.futures import ThreadPoolExecutor
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Callable
@@ -621,6 +623,7 @@ class WebSearchEngine:
         self._lock = threading.Lock()
         # task_id -> {"context_epoch": int, "scope_revision": int, "next_id": int, "refs": dict[str, dict], "by_url": dict[str, str]}
         self._task_sessions: dict[str, dict[str, Any]] = {}
+        self._backend_health: dict[str, dict[str, float]] = {}
 
     def forget_task(self, task_id: str) -> None:
         with self._lock:
@@ -775,6 +778,8 @@ class WebSearchEngine:
             for item in results
             if isinstance(item, dict) and item.get("url")
         ]
+        if not hits:
+            return None
         try:
             filtered_count = max(0, int(raw.get("filtered") or 0))
         except (TypeError, ValueError):
@@ -873,11 +878,12 @@ class WebSearchEngine:
         candidates.sort(key=lambda item: (-item[0], item[1]["url"]))
         return [item for _, item in candidates[:max_results]]
 
-    def _live_search(self, query: str, max_results: int, allowed_domains: list[str]) -> tuple[list[dict[str, str]], int]:
+    def _live_search(self, query: str, max_results: int, allowed_domains: list[str], cancelled=None):
+        failures, any_success = [], True
         if self._search_provider is not None:
             raw_hits = self._search_provider(query, max_results, allowed_domains)
         else:
-            raw_hits = self._default_search_router(query, max_results, allowed_domains)
+            raw_hits, failures, any_success = self._default_search_router(query, max_results, allowed_domains, cancelled=cancelled)
 
         filtered: list[dict[str, str]] = []
         filtered_count = 0
@@ -906,124 +912,96 @@ class WebSearchEngine:
             })
             if len(filtered) >= max_results:
                 break
-        return filtered, filtered_count
+        return filtered, filtered_count, failures, any_success
 
-    def _default_search_router(self, query: str, max_results: int, allowed_domains: list[str]) -> list[dict[str, str]]:
-        """Route search queries across configured JSON search APIs or zero-config HTML search."""
+    def _zero_config_order(self):
+        region = (os.environ.get("RYN_WEB_SEARCH_REGION") or "").strip().lower()
+        if not region:
+            language = locale.getlocale()[0] or ""
+            region = "cn" if language.lower().startswith("zh") else ""
+        return ["bing", "duckduckgo"] if region == "cn" else ["duckduckgo", "bing"]
+
+    def _default_search_router(self, query, max_results, allowed_domains, cancelled=None):
+        """Try configured and existing HTML backends, retaining only safe diagnostics."""
         effective_query = query.strip()
         if allowed_domains and len(allowed_domains) <= 3 and "site:" not in effective_query.lower():
-            site_clause = " OR ".join(f"site:{d}" for d in allowed_domains)
-            effective_query = f"{effective_query} ({site_clause})"
-
+            effective_query += " (" + " OR ".join(f"site:{d}" for d in allowed_domains) + ")"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
             "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
         }
-
-        # 1. SearXNG JSON endpoint (if configured)
-        searxng_url = (os.environ.get("RYN_WEB_SEARCH_SEARXNG_URL") or "").strip()
-        if searxng_url:
+        configured = {
+            "searxng": (os.environ.get("RYN_WEB_SEARCH_SEARXNG_URL") or "").strip(),
+            "tavily": (os.environ.get("RYN_WEB_SEARCH_TAVILY_API_KEY") or "").strip(),
+            "brave": (os.environ.get("RYN_WEB_SEARCH_BRAVE_API_KEY") or "").strip(),
+        }
+        zero_order = self._zero_config_order()
+        bing_host = "cn.bing.com" if zero_order[0] == "bing" else "www.bing.com"
+        backends = [name for name, value in configured.items() if value] + zero_order
+        stamp = time.monotonic()
+        with self._lock:
+            health = copy.deepcopy(self._backend_health)
+        def priority(name):
+            state = health.get(name, {})
+            success, failure = state.get("last_success", 0), state.get("last_failure", 0)
+            return (-success if success > failure else 0,
+                    name in zero_order and failure > success and stamp - failure < 600)
+        backends.sort(key=priority)
+        failures, any_success = [], False
+        for name in backends:
+            if callable(cancelled) and cancelled():
+                raise AgentToolRejected("agent_cancelled")
+            success = False
+            reason = "parse_empty"
             try:
-                with httpx.Client(timeout=DEFAULT_TIMEOUT_S, follow_redirects=True, headers=headers) as client:
-                    resp = client.get(searxng_url, params={"q": effective_query, "format": "json"})
-                    if resp.status_code == 200:
-                        payload = resp.json()
-                        items = payload.get("results") if isinstance(payload, dict) else []
-                        if isinstance(items, list) and items:
-                            return [
-                                {
-                                    "url": str(r.get("url") or ""),
-                                    "title": str(r.get("title") or ""),
-                                    "snippet": str(r.get("content") or r.get("snippet") or ""),
-                                }
-                                for r in items[: max_results * 2]
-                                if isinstance(r, dict) and r.get("url")
-                            ]
+                with httpx.Client(timeout=httpx.Timeout(DEFAULT_TIMEOUT_S, connect=4.0),
+                                  follow_redirects=True, headers=headers) as client:
+                    if name == "searxng":
+                        response = client.get(configured[name], params={"q": effective_query, "format": "json"})
+                    elif name == "tavily":
+                        request = {"api_key": configured[name], "query": query.strip(), "max_results": max_results}
+                        if allowed_domains:
+                            request["include_domains"] = allowed_domains
+                        response = client.post("https://api.tavily.com/search", json=request)
+                    elif name == "brave":
+                        response = client.get("https://api.search.brave.com/res/v1/web/search",
+                            params={"q": effective_query, "count": max_results},
+                            headers={"Accept": "application/json", "X-Subscription-Token": configured[name]})
+                    elif name == "duckduckgo":
+                        response = client.get("https://html.duckduckgo.com/html/", params={"q": effective_query})
+                    else:
+                        response = client.get(f"https://{bing_host}/search?q={quote_plus(effective_query)}")
+                    if response.status_code != 200:
+                        reason = f"http_{response.status_code}"
+                        hits = []
+                    elif name in zero_order:
+                        parser = _BingHtmlParser() if name == "bing" else _DuckDuckGoHtmlParser()
+                        parser.feed(response.text)
+                        parser.close()
+                        hits = parser.results[:max_results * 2]
+                        success = True
+                    else:
+                        payload = response.json()
+                        items = (payload.get("web") or {}).get("results", []) if name == "brave" else payload.get("results", [])
+                        if not isinstance(items, list):
+                            raise ValueError("invalid search results")
+                        hits = [{"url": str(item.get("url") or ""), "title": str(item.get("title") or ""),
+                                 "snippet": str(item.get("content") or item.get("snippet") or item.get("description") or "")}
+                                for item in items[:max_results * 2] if isinstance(item, dict) and item.get("url")]
+                        success = True
+            except httpx.TimeoutException:
+                reason, hits = "timeout", []
+            except (ValueError, TypeError, AttributeError):
+                reason, hits = "parse_empty", []
             except Exception:
-                pass
-
-        # 2. Tavily API (if configured)
-        tavily_key = (os.environ.get("RYN_WEB_SEARCH_TAVILY_API_KEY") or "").strip()
-        if tavily_key:
-            try:
-                body: dict[str, Any] = {
-                    "api_key": tavily_key,
-                    "query": query.strip(),
-                    "max_results": max_results,
-                }
-                if allowed_domains:
-                    body["include_domains"] = allowed_domains
-                with httpx.Client(timeout=DEFAULT_TIMEOUT_S) as client:
-                    resp = client.post("https://api.tavily.com/search", json=body)
-                    if resp.status_code == 200:
-                        payload = resp.json()
-                        items = payload.get("results") if isinstance(payload, dict) else []
-                        if isinstance(items, list) and items:
-                            return [
-                                {
-                                    "url": str(r.get("url") or ""),
-                                    "title": str(r.get("title") or ""),
-                                    "snippet": str(r.get("content") or ""),
-                                }
-                                for r in items[: max_results * 2]
-                                if isinstance(r, dict) and r.get("url")
-                            ]
-            except Exception:
-                pass
-
-        # 3. Brave Search API (if configured)
-        brave_key = (os.environ.get("RYN_WEB_SEARCH_BRAVE_API_KEY") or "").strip()
-        if brave_key:
-            try:
-                with httpx.Client(timeout=DEFAULT_TIMEOUT_S) as client:
-                    resp = client.get(
-                        "https://api.search.brave.com/res/v1/web/search",
-                        params={"q": effective_query, "count": max_results},
-                        headers={**headers, "Accept": "application/json", "X-Subscription-Token": brave_key},
-                    )
-                    if resp.status_code == 200:
-                        payload = resp.json()
-                        items = ((payload.get("web") or {}).get("results")) if isinstance(payload, dict) else []
-                        if isinstance(items, list) and items:
-                            return [
-                                {
-                                    "url": str(r.get("url") or ""),
-                                    "title": str(r.get("title") or ""),
-                                    "snippet": str(r.get("description") or ""),
-                                }
-                                for r in items[: max_results * 2]
-                                if isinstance(r, dict) and r.get("url")
-                            ]
-            except Exception:
-                pass
-
-        # 4. Zero-config DuckDuckGo HTML endpoint
-        try:
-            with httpx.Client(timeout=DEFAULT_TIMEOUT_S, follow_redirects=True, headers=headers) as client:
-                resp = client.get("https://html.duckduckgo.com/html/", params={"q": effective_query})
-                if resp.status_code == 200 and resp.text:
-                    parser = _DuckDuckGoHtmlParser()
-                    parser.feed(resp.text)
-                    parser.close()
-                    if parser.results:
-                        return parser.results[: max_results * 2]
-        except Exception:
-            pass
-
-        # 5. Zero-config Bing HTML fallback
-        try:
-            with httpx.Client(timeout=DEFAULT_TIMEOUT_S, follow_redirects=True, headers=headers) as client:
-                resp = client.get(f"https://www.bing.com/search?q={quote_plus(effective_query)}")
-                if resp.status_code == 200 and resp.text:
-                    parser = _BingHtmlParser()
-                    parser.feed(resp.text)
-                    parser.close()
-                    if parser.results:
-                        return parser.results[: max_results * 2]
-        except Exception:
-            pass
-
-        return []
+                reason, hits = "connect_error", []
+            with self._lock:
+                self._backend_health.setdefault(name, {})["last_success" if success else "last_failure"] = time.monotonic()
+            any_success |= success
+            if hits:
+                return hits, failures, any_success
+            failures.append({"backend": name, "reason": reason})
+        return [], failures, any_success
 
     def _fetch_http_bytes(self, url: str, allowed_domains: list[str]) -> tuple[bytes, str, str]:
         """Fetch raw HTTP response bytes with SSRF and redirect hop verification."""
@@ -1251,12 +1229,13 @@ class WebSearchEngine:
         if raw_queries:
             searches_out: list[dict[str, Any]] = []
             flat_results: list[dict[str, Any]] = []
-            for q in raw_queries:
+            def search_one(q):
                 if callable(cancelled) and cancelled():
                     raise AgentToolRejected("agent_cancelled")
                 cached_entry = self._get_cached_query_entry(q, allowed_domains)
                 used_cache = False
                 filtered_count = 0
+                failures, any_success = [], True
                 if cached_entry is not None:
                     hits = cached_entry[0][:max_results]
                     filtered_count = cached_entry[1]
@@ -1265,9 +1244,17 @@ class WebSearchEngine:
                     hits = self._search_cached_articles(q, allowed_domains, max_results, session)
                     used_cache = True
                 else:
-                    hits, filtered_count = self._live_search(q, max_results, allowed_domains)
-                    self._put_cached_query(q, allowed_domains, hits, filtered=filtered_count)
+                    hits, filtered_count, failures, any_success = self._live_search(
+                        q, max_results, allowed_domains, cancelled=cancelled)
+                    if callable(cancelled) and cancelled():
+                        raise AgentToolRejected("agent_cancelled")
+                    if hits and any_success:
+                        self._put_cached_query(q, allowed_domains, hits, filtered=filtered_count)
+                return q, hits, used_cache, filtered_count, failures, any_success
 
+            with ThreadPoolExecutor(max_workers=min(len(raw_queries), MAX_QUERIES_PER_CALL)) as pool:
+                query_results = list(pool.map(search_one, raw_queries))
+            for q, hits, used_cache, filtered_count, failures, any_success in query_results:
                 enriched_hits: list[dict[str, Any]] = []
                 for hit in hits:
                     ref_id = self._register_ref(
@@ -1287,12 +1274,21 @@ class WebSearchEngine:
                     if not any(r["ref_id"] == ref_id for r in flat_results):
                         flat_results.append(item)
 
-                searches_out.append({
+                search_result = {
                     "query": q,
                     "cached": used_cache,
                     "filtered": filtered_count,
                     "results": enriched_hits,
-                })
+                }
+                if not any_success:
+                    search_result.update(error="agent_web_search_unavailable", backends_failed=failures)
+                searches_out.append(search_result)
+            if all("error" in result for result in searches_out):
+                failed = sorted({f"{item['backend']} ({item['reason']})"
+                                 for result in searches_out for item in result["backends_failed"]})
+                raise AgentToolRejected("agent_web_search_unavailable", correction=(
+                    "Search backends failed: " + ", ".join(failed)
+                    + ". Retry later, configure RYN_WEB_SEARCH_* backends, or open a known URL directly."))
             output["searches"] = searches_out
             output["results"] = flat_results
 
