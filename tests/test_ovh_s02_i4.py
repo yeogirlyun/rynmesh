@@ -76,7 +76,8 @@ def test_t3_waiting_approval_auto_uses_steer_and_closes_old_authority(tmp_path):
     changed = _auto(runtime, parent["id"])
     assert changed["status"] == "queued" and changed["pending_approval"] is None
     assert changed["goal"]["revision"] == waiting["goal"]["revision"] + 1
-    assert changed["messages"][-1]["ui"]["kind"] == "steer"
+    assert changed["messages"][-2]["ui"]["kind"] == "steer"
+    assert changed["messages"][-1]["ui"] == {"kind": "runtime_note", "hidden": True}
     receipt = next(json.loads(m["content"]) for m in changed["messages"] if m["role"] == "tool")
     assert receipt["error"] == "agent_owner_changed" and receipt["not_executed"] is True
     with pytest.raises(AgentError, match="agent_approval_mismatch"):
@@ -100,7 +101,8 @@ def test_other_active_states_auto_becomes_steer(tmp_path, status):
     assert runtime.get(parent["id"])["status"] == status
     changed = _auto(runtime, parent["id"])
     assert changed["status"] == "queued" and changed["pending_input"] is None
-    assert changed["messages"][-1]["ui"]["kind"] == "steer"
+    assert changed["messages"][-2]["ui"]["kind"] == "steer"
+    assert changed["messages"][-1]["ui"] == {"kind": "runtime_note", "hidden": True}
 
 
 def test_auto_still_requires_current_revision_and_node_authorization(tmp_path):

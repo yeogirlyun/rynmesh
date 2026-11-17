@@ -10,6 +10,13 @@ from .store import AgentError, encoded
 
 MAX_CONTROL_REQUESTS = 256
 
+MID_TURN_NOTES = {
+    "steer": ("This owner message changes the goal: follow it, keep earlier requirements that it does not replace. "
+              "Cover every open request; answer status questions briefly, then continue."),
+    "information": ("This owner message adds information: keep the original goal. "
+                    "Cover every open request; answer status questions briefly, then continue."),
+}
+
 # A reconciliation holds owner input only while it can still finish. Local
 # commands never produce a completion receipt, so an "unknown" result must not
 # lock the conversation: the owner may continue and the model is told.
@@ -209,6 +216,12 @@ def settle(row, emit, data=None):
         return
     pending_users = row.pop("pending_user_messages", [])
     row["messages"].extend(pending_users)
+    if pending_users and control.get("mid_turn"):
+        note = MID_TURN_NOTES.get((pending_users[-1].get("ui") or {}).get("kind"))
+        if note:
+            row["messages"].append({"role": "assistant", "content": note,
+                                    "context_epoch": row.get("context_epoch", 0),
+                                    "ui": {"kind": "runtime_note", "hidden": True}})
     if control["kind"] == "information" and row["status"] == "running":
         row["status"] = "queued"
     if pending_users and isinstance(data, dict):

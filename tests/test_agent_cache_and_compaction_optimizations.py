@@ -644,7 +644,7 @@ def test_checkpoint_note_tells_the_main_model_the_task_continues(tmp_path):
     # The note precedes the turns that followed the checkpoint and is resent on every later request,
     # so it must point at them as well as at Next, and must not claim the task is unfinished.
     assert "Next and the messages after this note" in CHECKPOINT_CONTINUATION
-    assert "still open" not in CHECKPOINT_CONTINUATION
+    assert "Before the final reply, check it answers the latest owner request and any earlier ones still open." in CHECKPOINT_CONTINUATION
     # S03-I12 adds required recovery/current-state guidance to the existing note budget.
     history_guidance = ("Use ryn_history_search/ryn_history_read to recover exact details the summary omitted. "
                         "Before relying on file or process state recorded here, read the current state again.")

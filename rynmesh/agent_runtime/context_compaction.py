@@ -128,12 +128,12 @@ def receipt_projection(row: dict, uncompacted_call_ids: set, max_bytes: int) -> 
 # for compaction (openai/codex rust-v0.167.0 model instructions); wording is Ryn's.
 # The note is rebuilt on every later request and sits before the turns that came
 # after the checkpoint, so it points at those turns too: Next alone goes stale as
-# the work moves on, and "still open" is untrue once the task is done and the
-# owner sends a follow-up.
+# the work moves on. The final check covers earlier requests only if still open,
+# including when the owner sends a follow-up after completed work.
 CHECKPOINT_CONTINUATION = (
-    "\nOlder turns were condensed into this checkpoint; that does not end or restart the task. Carry on from "
-    "Next and the messages after this note without redoing finished steps or reports. "
-    "The latest owner message is the current direction.")
+    "\nContinue from Next and the messages after this note, following the latest owner direction; "
+    "do not restart or redo finished work. "
+    "Before the final reply, check it answers the latest owner request and any earlier ones still open.")
 # Pinned in every request, so omitted in small windows where the floor is tight.
 CHECKPOINT_RECOVERY = (
     " Use ryn_history_search/ryn_history_read to recover exact details the summary omitted. "

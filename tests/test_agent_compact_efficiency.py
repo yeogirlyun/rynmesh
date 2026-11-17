@@ -146,7 +146,9 @@ def test_real_resource_tools_reach_body_and_approved_artifact_under_pressure(wri
     runtime = AgentRuntime(AgentStore(store.home / "agent", key), model, tools, catalog, consumer_node_id="local")
     runtime.update_settings({"enabled": True, "model_id": "fixture",
                              "max_steps": 24, "max_seconds": 600, "verify_text_responses": True})
-    task = runtime.create({"message": owners[0], "budget_limits": {"max_total_model_calls": 12},
+    # S02-I5 adds the mandatory mid-turn owner note before the first request.
+    # At 16KB it forces extra compaction; keep the same hard call-count check.
+    task = runtime.create({"message": owners[0], "budget_limits": {"max_total_model_calls": 13},
         "scope": {"resources": [{"connection_id": source["id"], "root_path": "allowed",
             "actions": ["list", "read_ai", "create_file"]}], "allow_model_data": True},
         "expected_destination_revision": "rev1"})
@@ -186,7 +188,7 @@ def test_real_resource_tools_reach_body_and_approved_artifact_under_pressure(wri
     assert (root / "allowed/observations.txt").read_text(encoding="utf-8") == source_text
     assert max(pressure) > cap and restarted and summary_sources
     assert len(summary_sources) < len([1 for _, specs in calls if specs])
-    assert len(calls) <= 12 and runtime.get(task["id"])["budget"]["lifetime"]["model_calls"] == len(calls)
+    assert len(calls) <= 13 and runtime.get(task["id"])["budget"]["lifetime"]["model_calls"] == len(calls)
     assert done["goal"]["revision"] == 2 and done["scope_revision"] == 1 and done.get("context_epoch", 0) == 0
     assert done["limits"]["max_context_chars"] == cap
     assert len([e for e in server.audit if e["method"] == "PUT"]) == 1
