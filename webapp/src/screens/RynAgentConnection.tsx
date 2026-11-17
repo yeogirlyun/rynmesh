@@ -21,11 +21,13 @@ export default function RynAgentConnection(props: ConnectionProps) {
   const zh = i18n.language.startsWith("zh");
   const { task } = props;
   const mismatch = task.events?.find(event => event.type === "model_mismatch");
+  const continued = task.events?.some(event => event.type === "interrupted" && event.continued === true);
   const failure = task.error ? [...(task.events || [])].reverse().find(event => event.type === "failed") : undefined;
   const diagnostics = failure?.diagnostics as { network_reason?: string; reset_at?: number } | undefined;
   const reset = diagnostics?.reset_at;
   const seconds = typeof reset === "number" && Number.isFinite(reset) ? Math.max(0, Math.ceil(reset - Date.now() / 1000)) : null;
   return <>
+    {continued && <p role="status">{zh ? "已自动续跑" : "Interrupted work resumed automatically"}</p>}
     {mismatch && <p role="note">{zh ? "服务端返回的模型与请求不同" : "The server returned a different model"}: {String(mismatch.requested_model)} → {String(mismatch.server_model)}</p>}
     {diagnostics?.network_reason === "quota" && seconds !== null && <p role="status">{zh ? `模型额度已用完，约 ${seconds} 秒后恢复。` : `Model quota exhausted; expected to recover in about ${seconds}s.`}</p>}
     {diagnostics?.network_reason === "region_blocked" && <p role="status">{zh ? "该线路在当前地区被拦截，请换线路" : "This route is blocked in your region. Choose another route."}</p>}

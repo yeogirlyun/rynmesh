@@ -261,8 +261,8 @@ def test_restart_preserves_waiting_approval_but_revokes_queued_approval(tmp_path
     approve(restarted, row["id"])
     restarted.reconcile()
     interrupted = restarted.get(row["id"])
-    assert interrupted["status"] == "interrupted"
-    restarted.action(row["id"], {"action": "resume", "expected_revision": interrupted["revision"]})
+    assert interrupted["status"] == "queued" and interrupted["error"] is None
+    assert restarted.store.read()["tasks"][row["id"]]["approved"] is None
     advance(restarted)
     assert restarted.get(row["id"])["status"] == "waiting_approval"
     assert tools.calls == []
