@@ -40,6 +40,7 @@ MAX_BYTES = sys.maxsize
 DEFAULT_SETTINGS = {
     "enabled": False, "model_id": "", "permission_mode": "workspace", "allowed_write_tools": [], "denied_tools": [],
     "workspace_root": "", "desktop_access": False, "verify_text_responses": False,
+    "web_search_mode": "", "web_allowed_domains": [],
     "interrupt_message_enabled": True,
     "default_subagent_model_id": "", "default_subagent_reasoning_effort": None,
     "project_doc_fallback_filenames": ["CLAUDE.md"],
