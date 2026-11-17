@@ -218,7 +218,8 @@ def test_large_window_keeps_complete_history_while_budget_is_ample(tmp_path):
     assert limit >= 240_000 and len(encoded(history)) > 24_000
     decision = pressure(runtime, row)
     assert decision["compact"] is False and decision["reason"] == "headroom"
-    assert decision["capacity_bytes"] == limit and decision["headroom_bytes"] > 10 * decision["need_bytes"]
+    assert 0 < decision["capacity_bytes"] < limit and decision["headroom_bytes"] > 10 * decision["need_bytes"]
+    assert 2 <= decision["bytes_per_token"] < 3  # First-request CJK prior, before usage calibration.
     advance(runtime)
     assert len(model.calls) == 1 and model.calls[0][2]  # one main request, no summary request
     sent = [m for m in model.calls[0][1] if m["role"] == "tool"]
@@ -397,7 +398,8 @@ def test_dense_chinese_usage_compacts_before_the_byte_estimate_overflows(tmp_pat
             break
         row = seed(runtime, task["id"], exchange(f"doc_{index}", "资料内容：" + "中文段落。" * 300))
     before = pressure(runtime, row)
-    assert before["capacity_bytes"] == limit and not before["near_limit"]
+    assert 0 < before["capacity_bytes"] < limit
+    assert 2 <= before["bytes_per_token"] < 3
     size = before["request_bytes"]
 
     def report_usage(data):
@@ -415,6 +417,7 @@ def test_dense_chinese_usage_compacts_before_the_byte_estimate_overflows(tmp_pat
     ratio = size / int(size / 1.8)
     assert after["bytes_per_token"] == pytest.approx(1.8, rel=0.01)
     assert after["capacity_bytes"] == int((32_000 - 4096 - 512) * ratio) < limit
+    assert after["capacity_bytes"] < before["capacity_bytes"]  # Real 1.8 bytes/token overrides the prior.
     assert after["request_bytes"] == size < limit  # the byte estimate alone would dispatch it
     assert after["compact"] and after["reason"] == "projected_overflow"
     advance(runtime)

@@ -108,12 +108,15 @@ def observed_bytes_per_token(row) -> float | None:
     return None
 
 
-def applied_density(policy: dict | None, bytes_per_token: float | None) -> float | None:
-    """The bytes/token ratio that tightens capacity, or None when the default estimate stands.
+def applied_density(policy: dict | None, bytes_per_token: float | None, cjk_share: float = 0.0) -> float | None:
+    """Use the CJK prior before usage exists, including for an assumed window.
 
-    Applies only to a declared window and to text denser than the default;
-    sparser text never loosens the admission limit.
+    Once calibrated, retain the measured-density policy; the request's prior
+    must not override the provider's observation.
     """
+    if (bytes_per_token is None and cjk_share > 0 and isinstance(policy, dict)
+            and policy.get("admission_bytes_per_token", DEFAULT_BYTES_PER_TOKEN) == DEFAULT_BYTES_PER_TOKEN):
+        return max(2.0, DEFAULT_BYTES_PER_TOKEN - cjk_share)
     if (bytes_per_token is None or bytes_per_token >= DEFAULT_BYTES_PER_TOKEN
             or not isinstance(policy, dict) or not policy.get("context_window_known")):
         return None
@@ -121,7 +124,7 @@ def applied_density(policy: dict | None, bytes_per_token: float | None) -> float
 
 
 def input_capacity(hard_limit_bytes: int, policy: dict | None = None, bytes_per_token: float | None = None,
-                   density_penalty: float = 1.0) -> int:
+                   density_penalty: float = 1.0, *, cjk_share: float = 0.0) -> int:
     """Request bytes that fit the input side of the model window.
 
     The hard limit already reserves the configured output and framing tokens
@@ -130,7 +133,7 @@ def input_capacity(hard_limit_bytes: int, policy: dict | None = None, bytes_per_
     An upstream rejection adds a persistent penalty until fresh main usage calibrates it.
     """
     capacity = int(hard_limit_bytes)
-    density = applied_density(policy, bytes_per_token)
+    density = applied_density(policy, bytes_per_token, cjk_share)
     if density is not None:
         tokens = (int(policy.get("context_window_tokens") or 0) - int(policy.get("reserved_output_tokens") or 0)
                   - int(policy.get("framing_reserve_tokens") or 0))
