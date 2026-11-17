@@ -1865,6 +1865,7 @@ class AgentLoop:
                     and selected["elapsed_seconds"] + time.monotonic() - started >= row["limits"]["max_seconds"]):
                 raise AgentError("agent_time_limit")
             row["context_checkpoint"] = checkpoint
+            results.prune(self.store, row)
             row["context_notice_level"] = 0
             row.pop("context_usage", None)
             row["model_retry_count"] = 0

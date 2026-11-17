@@ -12,7 +12,7 @@ from cryptography.exceptions import InvalidTag
 from ..atomic_io import atomic_write_json, read_json
 from ..services import peer_box
 from . import diagnostic_log
-from .store import AgentError, encoded
+from .store import AgentError, AgentToolRejected, encoded
 
 MAX_RESULT_BYTES = 2 * 1024 * 1024
 CHANNEL = b"rynmesh-agent-result-v1"
@@ -325,6 +325,8 @@ def read(store, row, result_id, *, provider=False):
         if provider and isinstance(result_id, str) and row.get("context_checkpoint"):
             return _read_compacted_entry(row, result_id)
         raise AgentError("agent_result_not_found")
+    if reference.get("expired"):
+        raise AgentToolRejected("agent_result_expired", correction="This old result expired after the local storage limit was reached. Read the original source again if it is still authorized; this reference cannot be restored by retrying.")
     if provider and reference["context_epoch"] != row.get("context_epoch", 0):
         raise AgentError("agent_result_scope_changed")
     try:
@@ -371,3 +373,37 @@ def purge(store, task_id):
     for file in directory.iterdir():
         if re.fullmatch(r"result_[a-f0-9]{32}\.json|\.result_[a-f0-9]{32}\.json\.[a-f0-9]{32}\.tmp", file.name):
             file.unlink()
+
+
+RESULT_STORAGE_BYTES = 64 * 1024 * 1024
+
+
+def prune(store, row):
+    """Retire old, unprotected results and invisible unreferenced ciphertext."""
+    refs = row.get("result_refs", [])
+    directory = store.root / "results" / hashlib.sha256(row["id"].encode()).hexdigest()
+    if not directory.exists():
+        return
+    if not directory.resolve().is_relative_to((store.root / "results").resolve()):
+        raise AgentError("agent_result_cleanup_failed")
+    checkpoint = encoded(row.get("context_checkpoint") or {})
+    retained = {ref["id"]: ref for ref in refs if not ref.get("expired")}
+    files = []
+    for file in directory.iterdir():
+        if not re.fullmatch(r"result_[a-f0-9]{32}\.json", file.name):
+            continue
+        ref = retained.get(file.stem)
+        if ref is None:
+            file.unlink()
+        else:
+            info = file.stat()
+            files.append((info.st_mtime_ns, file, ref, info.st_size))
+    total = sum(size for _, _, _, size in files)
+    for _, file, ref, size in sorted(files, key=lambda item: item[0]):
+        if total <= RESULT_STORAGE_BYTES:
+            break
+        if ref.get("context_epoch", 0) >= row.get("context_epoch", 0) or ref["id"].encode() in checkpoint:
+            continue
+        file.unlink()
+        ref["expired"] = True
+        total -= size

@@ -50,7 +50,7 @@ from .js_state import (
 from .prompt import INTERNAL_NAMES
 from .protocol import event as default_event_emitter
 from .store import AgentError, encoded
-from .tool_delivery import DeliveryToken, is_js_child_call
+from .tool_delivery import DeliveryToken, is_js_child_call, outbox_payload
 from .tool_router import ToolCallProtocolError, _function_spec, normalize_tool_calls
 
 
@@ -676,7 +676,7 @@ def _match_committed_outbox_entry(
         or outbox_entry["outcome"] != tok.outcome
         or outbox_entry["not_executed"] != tok.not_executed
         or outbox_entry["result_ref"] != tok.result_ref
-        or outbox_entry["payload"] != tok.payload
+        or outbox_payload(row, outbox_entry) != tok.payload
         or outbox_entry["payload_sha256"] != tok.payload_sha256
         or outbox_entry["payload_sha256"] != tok_payload_sha
         or outbox_entry["recorded_at"] != tok.recorded_at
@@ -884,7 +884,7 @@ def select_delivery(
             reason="ryn_js_live_identity_mismatch",
         )
 
-    payload = copy.deepcopy(outbox_entry["payload"])
+    payload = outbox_payload(row, outbox_entry)
     if len(encoded(payload)) > MAX_RESULT_BYTES:
         return DeliveryPlan(
             action="continuation_lost",

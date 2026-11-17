@@ -1888,7 +1888,7 @@ class AgentRuntime(AgentLoop):
 
     def load_project(self, value: dict) -> dict:
         def register_and_sync(data):
-            res = projects.register(data, value)
+            res = projects.register(data, value, store=self.store)
             memory_integration.propagate_memory_revocation_in_tx(data)
             return res
         return self.store.transaction(register_and_sync)

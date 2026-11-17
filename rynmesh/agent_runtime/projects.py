@@ -83,14 +83,14 @@ def overview(root):
     return result
 
 
-def register(data, value):
+def register(data, value, *, store=None):
     if set(value) - {"path"}:
         raise AgentError("agent_invalid_request")
     root = root_path(value.get("path"))
     info = overview(root)
     ident = project_id(root)
     projects = data.setdefault("projects", {})
-    if ident not in projects and len(projects) >= 32:
+    if not (projects.get(ident) or {}).get("enabled") and sum(bool(item.get("enabled")) for item in projects.values()) >= 32:
         raise AgentError("agent_project_limit")
     existing = projects.get(ident)
     if existing:
@@ -98,7 +98,23 @@ def register(data, value):
     generation = (existing or {}).get("generation", 1)
     if existing and not existing.get("enabled"):
         generation += 1
-    projects[ident] = {"id": ident, **info, "enabled": True, "generation": generation}
+    projects[ident] = {"id": ident, **info, "enabled": True, "generation": generation,
+                       "created_at": (existing or {}).get("created_at", time.time())}
+    if len(projects) > 128:
+        rows = list(data.get("tasks", {}).values())
+        if store is not None:
+            from . import lifecycle
+            rows.extend(lifecycle.find(store, data, tid) for tid in data.get("archives", {}))
+        else:
+            rows.extend(data.get("archives", {}).values())
+        referenced = {(row.get("local_execution") or {}).get("project_id") for row in rows}
+        referenced.update((row.get("project") or {}).get("id") for row in rows)
+        removable = [key for key, item in projects.items() if not item.get("enabled") and key not in referenced]
+        removable.sort(key=lambda key: projects[key].get("created_at", 0))
+        for key in removable[:max(0, len(projects) - 128)]:
+            del projects[key]
+        if len(projects) > 128:
+            raise AgentError("agent_project_limit")
     data["selected_project_id"] = ident
     return projects[ident]
 
