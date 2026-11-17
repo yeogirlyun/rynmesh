@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import PurePosixPath
 
 from . import budget
-from .control import close_queue, settle
+from .control import ambiguous, close_queue, settle
 from .protocol import event, event_result, now
 from .state import SCHEMA_VERSION, initialize, owner_update
 from .store import DEFAULT_SETTINGS, AgentError, AgentToolRejected
@@ -948,6 +948,28 @@ def followup_task_in_tx(data: dict, parent_row: dict, args: dict) -> dict:
     }
 
 
+def _stop_child_in_tx(data, child, *, kind, close):
+    """Keep dispatched operations accountable until their real response settles."""
+    if close:
+        child.setdefault("subagent_meta", {})["closed"] = True
+    if ambiguous(child):
+        child["pending_control"] = {"kind": kind}
+        return True
+    active = {"queued", "running", "waiting_approval", "waiting_input", "pausing"}
+    if close:
+        active.add("paused")
+    if child.get("status") not in active and not child.get("in_flight"):
+        return False
+    close_queue(child, event, "agent_cancelled")
+    child.update(pause_requested=True, status="cancelled" if kind == "cancel" else "paused",
+                 pending_control={"kind": kind}, pending_approval=None, pending_input=None,
+                 updated_at=now_iso())
+    event(child, "cancelled" if kind == "cancel" else "paused", operation_in_flight=bool(child.get("in_flight")))
+    settle(child, event, data=data)
+    on_subagent_settled_in_tx(data, child)
+    return True
+
+
 def interrupt_agent_in_tx(data: dict, parent_row: dict, args: dict) -> dict:
     targets = resolve_subagent_targets(data, parent_row, args["target"])
     interrupted: list[dict] = []
@@ -955,16 +977,7 @@ def interrupt_agent_in_tx(data: dict, parent_row: dict, args: dict) -> dict:
     for child in targets:
         meta = child.setdefault("subagent_meta", {})
         prev_status = child.get("status")
-        if prev_status in {"queued", "running", "waiting_approval", "waiting_input", "pausing"}:
-            close_queue(child, event, "agent_cancelled", keep_flight=False)
-            child["pause_requested"] = True
-            child["status"] = "paused"
-            child["in_flight"] = None
-            child["pending_approval"] = None
-            child["pending_input"] = None
-            child["updated_at"] = now
-            meta["settled_at_ms"] = now_ms()
-            on_subagent_settled_in_tx(data, child)
+        if _stop_child_in_tx(data, child, kind="pause", close=False):
             cascade_stop_subagents_in_tx(data, child, reason="subagent_interrupted", close=False)
         interrupted.append({
             "agent_id": child["id"],
@@ -984,17 +997,7 @@ def close_agent_in_tx(data: dict, parent_row: dict, args: dict) -> dict:
     for child in targets:
         meta = child.setdefault("subagent_meta", {})
         prev_status = child.get("status")
-        meta["closed"] = True
-        if prev_status in {"queued", "running", "waiting_approval", "waiting_input", "pausing", "paused"}:
-            close_queue(child, event, "agent_cancelled", keep_flight=False)
-            child["pause_requested"] = True
-            child["status"] = "cancelled"
-            child["in_flight"] = None
-            child["pending_approval"] = None
-            child["pending_input"] = None
-            child["updated_at"] = now
-            meta["settled_at_ms"] = now_ms()
-            on_subagent_settled_in_tx(data, child)
+        _stop_child_in_tx(data, child, kind="cancel", close=True)
         cascade_stop_subagents_in_tx(data, child, reason="subagent_closed", close=True)
         closed_list.append({
             "agent_id": child["id"],
@@ -1165,6 +1168,8 @@ def format_notification_tag(notif: dict) -> str:
     }
     if notif.get("diff_stats"):
         payload["diff_stats"] = notif["diff_stats"]
+    if notif.get("operation_in_flight"):
+        payload["operation_in_flight"] = True
     return f"<subagent_notification>\n{json.dumps(payload, ensure_ascii=False)}\n</subagent_notification>"
 
 
@@ -1520,6 +1525,14 @@ def on_subagent_settled_in_tx(data: dict, child_row: dict) -> dict | None:
                 if isinstance(msg, dict) and msg.get("role") == "assistant" and str(msg.get("content") or "").strip():
                     summary_text = str(msg.get("content")).strip()
                     break
+    operation_in_flight = bool(child_row.get("in_flight"))
+    if operation_in_flight:
+        summary_text += "\n最后一个操作仍在完成，结果稍后补报"
+    elif status in {"paused", "cancelled"}:
+        receipt = next((entry for entry in reversed(child_row.get("receipts", []))
+                        if entry.get("status") == "confirmed" and "result" in entry), None)
+        if receipt is not None:
+            summary_text = "Last operation result: " + json.dumps(receipt["result"], ensure_ascii=False)
     notif = {
         "id": f"subnotif_{uuid.uuid4().hex[:12]}",
         "agent_id": str(child_row.get("id") or ""),
@@ -1531,6 +1544,7 @@ def on_subagent_settled_in_tx(data: dict, child_row: dict) -> dict | None:
         "diff_stats": diff_stats,
         "created_at": now_iso(),
         "delivered": False,
+        **({"operation_in_flight": True} if operation_in_flight else {}),
     }
     meta["last_notification"] = notif
     parent_row = (data.get("tasks") or {}).get(parent_id)
@@ -1552,31 +1566,14 @@ def cascade_stop_subagents_in_tx(data: dict, parent_row: dict, *, reason: str = 
     """Stop/interrupt all active subagents belonging to parent_row (recursively)."""
     tasks = data.get("tasks") or {}
     stopped_ids: list[str] = []
-    now = now_iso()
 
     def _stop_tree(row: dict):
         for cid in list(row.get("subagent_ids") or []):
             child = tasks.get(cid)
             if not isinstance(child, dict):
                 continue
-            meta = child.setdefault("subagent_meta", {})
-            if close:
-                meta["closed"] = True
-            target_statuses = (
-                {"queued", "running", "waiting_approval", "waiting_input", "pausing", "paused"}
-                if close
-                else {"queued", "running", "waiting_approval", "waiting_input", "pausing"}
-            )
-            if child.get("status") in target_statuses:
-                child["pause_requested"] = True
-                child["status"] = "cancelled" if close else "paused"
-                child["in_flight"] = None
-                child["pending_approval"] = None
-                child["pending_input"] = None
-                child["updated_at"] = now
-                meta["settled_at_ms"] = now_ms()
+            if _stop_child_in_tx(data, child, kind="cancel" if close else "pause", close=close):
                 stopped_ids.append(cid)
-                on_subagent_settled_in_tx(data, child)
             _stop_tree(child)
 
     _stop_tree(parent_row)

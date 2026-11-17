@@ -2296,12 +2296,14 @@ class AgentLoop:
                     row.setdefault("result_refs", []).append(reference)
                 row["messages"].append(message)
                 verification.record(row, call, "confirmed", now(), result=result)
-                row["queue"].pop(0)
+                row["queue"] = [item for item in row["queue"] if item["call_id"] != call["call_id"]]
                 event(row, "tool_result", tool=call["name"], call_id=call["call_id"], operation_id=call["operation_id"],
                       step=row["steps"], result=result, context_epoch=selected.get("context_epoch", 0), timing=tool_timing)
                 if row["status"] == "running":
                     row["status"] = "queued"
                 memory_integration.settle_in_tx(data, row, event)
+                if row.get("parent_task_id") and row["status"] in {"paused", "cancelled"}:
+                    subagents.on_subagent_settled_in_tx(data, row)
             self.store.transaction(finish)
 
     def _tool_rejection(self, selected: dict, call: dict, started: float) -> None:
@@ -2518,6 +2520,8 @@ class AgentLoop:
             if row["status"] == "running":
                 row["status"] = "queued"
             memory_integration.settle_in_tx(data, row, event)
+            if row.get("parent_task_id") and row["status"] in {"paused", "cancelled"}:
+                subagents.on_subagent_settled_in_tx(data, row)
         self.store.transaction(finish)
         return True, prep_persistence_seconds
 
