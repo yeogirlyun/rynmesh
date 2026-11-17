@@ -476,8 +476,11 @@ class AgentModelBridge:
                     on_event(event)
 
         model_events = ModelEventStream(safe_on_event if on_event else None, stopped=lambda: cancelled() or expired())
+        stream_event_seen = False
 
         def emit(chunk):
+            nonlocal stream_event_seen
+            stream_event_seen = True
             with cleared_internal_image_scope():
                 try:
                     model_events.feed(chunk)
@@ -595,7 +598,7 @@ class AgentModelBridge:
                 if getattr(manager.adapter, "supports_conversation_scope", False) is True:
                     # This process is the authenticated requester of its own adapter.
                     options["conversation_scope"] = codex_threads.scope("local", window)
-                for attempt in range(2):
+                for attempt in range(3):
                     try:
                         with internal_image_scope(image_profile), model_request_scope(restricted=restricted, before_dispatch=check_data_release):
                             if expected_destination is not None and target["source"] == "local_service":
@@ -605,7 +608,19 @@ class AgentModelBridge:
                         break
                     except AdapterError as exc:
                         diagnostics = exc.diagnostics
-                        if (attempt or target.get("max_output_tokens_known") is not False or maximum <= 4096
+                        stream_failure = (exc.code in {"upstream_stream_error", "upstream_stream_truncated"}
+                                          or diagnostics.get("streaming_unsupported") is True)
+                        if streaming and target["source"] == "local_api" and stream_failure:
+                            self.catalog.mark_streaming_unknown(target)
+                            if not stream_event_seen and not cancelled() and not expired():
+                                check_data_release()
+                                streaming = False
+                                chat.pop("stream", None)
+                                options["on_event"] = None
+                                if request_deadline is not None:
+                                    options["timeout_s"] = max(0.0, request_deadline - time.monotonic())
+                                continue
+                        if (learned_output is not None or target.get("max_output_tokens_known") is not False or maximum <= 4096
                                 or diagnostics.get("http_status") != 400 or diagnostics.get("output_tokens_too_large") is not True
                                 or cancelled() or expired()):
                             raise

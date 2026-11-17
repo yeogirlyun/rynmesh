@@ -83,6 +83,18 @@ class ModelCatalog:
         with self._catalog_lock:
             self._catalog_cache.clear()
 
+    def mark_streaming_unknown(self, target):
+        sources = self.services["source_store"]
+        with sources.lock:
+            record = sources.read().get(target["source_id"])
+            if not record or self.source_destination_revision(record, target["model_id"]) != target.get("destination_revision"):
+                return
+            record.setdefault("streaming_support", {})[target["model_id"]] = "unknown"
+            record.setdefault("streaming_checked_at", {})[target["model_id"]] = time.time()
+            sources.save(record)
+        with self._catalog_lock:
+            self._catalog_cache.clear()
+
     @staticmethod
     def destination(row):
         return {"catalog_model_id": row["id"], "provider_peer_id": row.get("peer_id", ""),
@@ -343,8 +355,8 @@ class ModelCatalog:
                 **({"custom_tools": True} if verified_custom_tools else {}),
                 "available": bool(prior.get("available") and record.get("enabled") and record.get("status") == "ready"),
                 "availability_basis": "configured_source_readiness_not_live_probe",
-                # A source's two-turn tool probe proves tools, not streaming.
-                "streaming": False,
+                "streaming": record.get("streaming_support", {}).get(model) == "supported",
+                "streaming_basis": "source_probe" if model in record.get("streaming_support", {}) else "unverified",
                 "agent_supported": True, "tool_support": support, "agent_support_basis": "adapter_contract",
                 "context_window": policy["effective"]["context_window"], "max_output_tokens": policy["effective"]["max_output_tokens"],
                 "max_output_tokens_known": policy["effective"]["max_output_tokens_known"],

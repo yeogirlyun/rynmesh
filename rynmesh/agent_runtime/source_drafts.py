@@ -217,7 +217,7 @@ class SourceDrafts:
                     "draft_id": row["draft_id"], "source_id": row["source_id"], "version": row["version"], "configuration": row["configuration"],
                     "has_credential": row["has_credential"], "credential_version": row["credential_version"],
                     "expected_source_revision": row["expected_source_revision"], "test": row["test"],
-                    "probe_requests_maximum": len(row["configuration"]["models"]) * (3 if args.get("test_tools") else 1) if name == "ryn_test_source_draft" else 0,
+                    "probe_requests_maximum": len(row["configuration"]["models"]) * (4 if args.get("test_tools") else 2) if name == "ryn_test_source_draft" else 0,
                     "post_save_probe_requests_maximum": len(row["configuration"]["models"]) if name == "ryn_commit_source_draft" else 0}
 
     def _record(self, row, credential):
@@ -229,7 +229,7 @@ class SourceDrafts:
         record["tool_support"] = {}
         return record
 
-    def _probe(self, record, *, test_tools, cancelled, authorize=lambda: None, progress=None, meter=None):
+    def _probe(self, record, *, test_tools, cancelled, authorize=lambda: None, progress=None, meter=None, probe_streaming=False):
         if not callable(meter):
             raise AgentError("agent_probe_budget_unavailable")
         progress = progress if progress is not None else {"requests": 0}
@@ -242,7 +242,7 @@ class SourceDrafts:
                 def __init__(self, inner, model_id):
                     self.inner, self.model_id = inner, model_id
 
-                def chat(self, body, *, task_id, timeout_s):
+                def chat(self, body, *, task_id, timeout_s, on_event=None):
                     if cancelled():
                         reject("agent_cancelled")
                     def invoke(allowed, remaining_seconds, budget_guard):
@@ -283,8 +283,9 @@ class SourceDrafts:
                                     raise AgentError("agent_time_budget_exhausted")
                                 budget_guard()
                                 progress["requests"] += 1
-                                result = self.inner.chat({**body, "max_tokens": allowed}, task_id=task_id,
-                                                         timeout_s=timeout)
+                                options = {"on_event": on_event} if on_event is not None else {}
+                                result = self.inner.chat({**body, "max_tokens": min(allowed, body["max_tokens"])}, task_id=task_id,
+                                                         timeout_s=timeout, **options)
                             except Exception:
                                 if failure:
                                     raise failure[0] from None
@@ -305,7 +306,8 @@ class SourceDrafts:
                         reject("agent_cancelled")
                     return result
             bounded = BoundedAdapter(adapter, model)
-            item = {"model_id": model, "chat": "failed", "tool_support": "unknown", "checked_at": time.time()}
+            item = {"model_id": model, "chat": "failed", "tool_support": "unknown", "checked_at": time.time(),
+                    "streaming_support": "unknown", "streaming_checked_at": None}
             try:
                 response = bounded.chat({"messages": [{"role": "user", "content": "Reply briefly: OK"}],
                                          "max_tokens": min(1024, record["max_output_tokens"])},
@@ -322,6 +324,21 @@ class SourceDrafts:
                 item["error_code"] = "agent_source_tool_probe_failed" if item["chat"] == "passed" else "agent_source_chat_probe_failed"
                 if test_tools:
                     item["tool_support"] = "unsupported"
+            if probe_streaming and item["chat"] == "passed":
+                item["streaming_support"] = "unknown"
+                streamed = []
+                try:
+                    bounded.chat({"messages": [{"role": "user", "content": "Reply: OK"}], "stream": True, "max_tokens": 2},
+                        task_id="source-draft-stream-" + uuid.uuid4().hex, timeout_s=15, on_event=lambda event: streamed.append(True))
+                    item["streaming_support"] = "supported" if streamed else "unsupported"
+                except AgentError:
+                    raise
+                except AdapterError as exc:
+                    if exc.diagnostics.get("streaming_unsupported") is True:
+                        item["streaming_support"] = "unsupported"
+                except (ValueError, OSError, KeyError, TypeError):
+                    pass
+                item["streaming_checked_at"] = time.time()
             evidence.append(item)
         failed_models = [e["model_id"] for e in evidence if e["chat"] != "passed"]
         return {"chat_passed": any(e["chat"] == "passed" for e in evidence), "failed_models": failed_models,
@@ -371,7 +388,7 @@ class SourceDrafts:
                             reject("agent_source_draft_version_conflict")
                         self._record(current, current_credential)
                 test = self._probe(record, test_tools=args.get("test_tools", False), cancelled=cancelled,
-                                   authorize=authorize_probe, progress=progress, meter=context.get("_model_probe"))
+                                   authorize=authorize_probe, progress=progress, meter=context.get("_model_probe"), probe_streaming=True)
                 with self.sources.lock, self._lock():
                     state = self._read()
                     current, credential = self._draft(state, args, context)
@@ -416,6 +433,8 @@ class SourceDrafts:
                     record.update(
                         status="ready",
                         tool_support={e["model_id"]: e["tool_support"] for e in test["models"] if e["model_id"] in passed_models},
+                        streaming_support={e["model_id"]: e.get("streaming_support", "unknown") for e in test["models"] if e["model_id"] in passed_models},
+                        streaming_checked_at={e["model_id"]: e.get("streaming_checked_at") for e in test["models"] if e["model_id"] in passed_models},
                     )
                     ledger.update(operation_id, "dispatched")
                     dispatched = True

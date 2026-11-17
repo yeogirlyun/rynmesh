@@ -252,6 +252,9 @@ def describe(exc, phase="request", envelope=None):
         code_l, type_l, msg_l = code.lower(), err_type.lower(), msg.lower()
         tokens = [t for t in (code, err_type) if t]
         tokens_l = [t.lower() for t in tokens]
+        if exc.code in {400, 422} and (param.lower() in {"stream", "body.stream"}
+                or ("stream" in msg_l and any(word in msg_l for word in _REFUSAL_WORDS))):
+            result["streaming_unsupported"] = True
 
         if exc.code == 400 and any(name in (param + " " + msg).lower() for name in
                                    ("max_tokens", "max_completion_tokens", "max_output_tokens")) and any(
