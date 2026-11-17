@@ -530,6 +530,7 @@
   "messagesCopyDeviceId": "复制设备 ID",
   "messagesAttachAFile": "添加附件",
   "messagesDelivered": "已送达",
+  "messagesDownloadedAsFile": "已作为文件下载",
   "messagesQueued": "已排队",
   "messagesDeliveredWhenComesOnline": "{{name}} 上线后送达",
   "messagesQueuedViaTheNetworkMailboxDeliveredWhenThePeerComesOnline": "已通过网络信箱排队；对方上线后送达",

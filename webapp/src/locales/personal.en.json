@@ -530,6 +530,7 @@
   "messagesCopyDeviceId": "Copy device ID",
   "messagesAttachAFile": "Attach a file",
   "messagesDelivered": "Delivered",
+  "messagesDownloadedAsFile": "Downloaded as a file",
   "messagesQueued": "queued",
   "messagesDeliveredWhenComesOnline": "delivered when {{name}} comes online",
   "messagesQueuedViaTheNetworkMailboxDeliveredWhenThePeerComesOnline": "Queued via the network mailbox; delivered when the peer comes online",

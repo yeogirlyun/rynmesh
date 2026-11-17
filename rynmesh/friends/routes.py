@@ -500,6 +500,7 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
         raw = await call(current().messages.load_attachment, row["attachment"].get("blob_id", message_id))
         return Response(raw, media_type="application/octet-stream", headers={
             "Content-Disposition": "attachment", "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox; default-src 'none'",
             "Cache-Control": "no-store",
         })
 

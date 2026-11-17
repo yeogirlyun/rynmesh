@@ -119,6 +119,7 @@ export function MessageBubble({ record, url, peerName }: { record: ChatRecord; u
   const { t } = useTranslation();
   const desktop = isTauriDesktop();
   const [attachment, setAttachment] = useState({ source: "", blob: "" });
+  const [downloaded, setDownloaded] = useState(false);
   useEffect(() => {
     if (!desktop || !url) return;
     const controller = new AbortController();
@@ -137,11 +138,13 @@ export function MessageBubble({ record, url, peerName }: { record: ChatRecord; u
   const attachmentUrl = desktop ? (attachment.source === url ? attachment.blob : "") : url;
   const out = record.dir === "out";
   const att = record.attachment;
+  const raster = att && ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(att.mime.split(";")[0].trim().toLowerCase());
   return <div className={`rq-cmsg ${out ? "out" : "in"}`}>
     {record.text ? <div className="rq-cbubble">{record.text}</div> : null}
-    {att ? (attachmentUrl ? (record.kind === "image"
+    {att ? (attachmentUrl ? (record.kind === "image" && raster
       ? <img className="rq-cimg" src={attachmentUrl} alt={att.filename} />
-      : <a className="rf-btn rq-cfile" href={attachmentUrl} download={att.filename}><Paperclip size={14} strokeWidth={1.8} aria-hidden="true" /><span className="rf-ell">{att.filename}</span></a>) : <span>{att.filename}</span>) : null}
+      : <a className="rf-btn rq-cfile" href={attachmentUrl} download={att.filename} onClick={() => setDownloaded(true)}><Paperclip size={14} strokeWidth={1.8} aria-hidden="true" /><span className="rf-ell">{att.filename}</span></a>) : <span>{att.filename}</span>) : null}
+    {downloaded && <small role="status">{t("personal.messagesDownloadedAsFile")}</small>}
     <small className="rq-cmeta">
       {formatClock(record.ts)}
       {out && record.delivered ? <span className="rq-cstate rq-cstate-ok"> · <span>✓</span> {t("personal.messagesDelivered")}</span> : null}
