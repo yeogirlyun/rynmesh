@@ -36,9 +36,14 @@ def test_rejected_summary_does_not_dispatch_above_calibrated_input_capacity(tmp_
     decision = pressure(runtime, runtime.store.read()["tasks"][task["id"]])
     assert decision["compact"] and decision["request_bytes"] > decision["capacity_bytes"]
     advance(runtime)
-    assert any(not specs for _, _, specs in model.calls), "No summary was attempted"
+    # Since S03-I5 a summary reuses the main request prefix (tools included) and
+    # ends with the server compaction request.
+    def is_summary(messages, specs):
+        return not specs or str((messages[-1] if messages else {}).get("content") or "").startswith(
+            "Server compaction request:")
+    assert any(is_summary(messages, specs) for _, messages, specs in model.calls), "No summary was attempted"
     main_sizes = [len(encoded(messages)) + len(encoded(specs))
-                  for _, messages, specs in model.calls if specs]
+                  for _, messages, specs in model.calls if not is_summary(messages, specs)]
     assert all(size <= decision["capacity_bytes"] for size in main_sizes), {
         "main_request_bytes": main_sizes, "calibrated_capacity_bytes": decision["capacity_bytes"],
         "uncalibrated_hard_limit_bytes": limit}
