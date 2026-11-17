@@ -58,8 +58,20 @@ ROUTES = {
     "openai_responses": "openai_responses",
     "anthropic_messages": "anthropic_messages",
     "codex_cli": "codex_cli",
+    "claude_cli": "claude_cli",
     "antigravity_cli": "antigravity_cli",
 }
+
+FACTS = {
+    "parallel_tool_calls": {"type": "boolean"},
+    "max_tool_output_bytes": {"type": "integer", "minimum": 1},
+    "verbosity": {"type": "string", "enum": ("low", "medium", "high")},
+    "patch_tool": {"type": "string", "enum": ("function", "freeform")},
+    "context_window": {"type": "integer", "minimum": 256, "maximum": 2000000},
+    "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 393216},
+}
+ROUTE_FACTS = {route: dict.fromkeys(FACTS) for route in set(ROUTES.values())}
+CAPACITY_FACTS = frozenset({"context_window", "max_output_tokens"})
 
 HEADER = ("Model route notes (facts about the current model connection; they never override owner "
           "instructions, workspace rules or host permissions):")
@@ -156,13 +168,59 @@ def capability_notes(model: dict | None) -> tuple:
     return ()
 
 
+def _valid_fact(name, value):
+    if value is None:
+        return True
+    definition = FACTS[name]
+    expected = {"boolean": bool, "integer": int, "string": str}[definition["type"]]
+    if type(value) is not expected:
+        return False
+    if "enum" in definition:
+        return value in definition["enum"]
+    return (("minimum" not in definition or value >= definition["minimum"])
+            and ("maximum" not in definition or value <= definition["maximum"]))
+
+
+def _capacity_facts_allowed(model):
+    return (isinstance(model, dict) and (model.get("source") in {"local_service", "peer"}
+            or route_of(model) in {"codex_cli", "claude_cli", "antigravity_cli"}))
+
+
+def _facts_for_entry(model, entry):
+    model = model if isinstance(model, dict) else {}
+    facts = dict(ROUTE_FACTS.get(route_of(model), dict.fromkeys(FACTS)))
+    for name in FACTS:
+        if name not in model:
+            continue
+        if name in CAPACITY_FACTS and (not _capacity_facts_allowed(model)
+                or model.get(name + "_known") is False):
+            continue
+        value = model.get(name)
+        if _valid_fact(name, value):
+            facts[name] = value
+    if isinstance(entry, dict):
+        for name, value in entry.get("facts", {}).items():
+            if name in FACTS and _valid_fact(name, value) and (
+                    name not in CAPACITY_FACTS or _capacity_facts_allowed(model)):
+                facts[name] = value
+    return facts
+
+
+def facts_for(model: dict | None, overrides=None) -> dict:
+    """Resolve route defaults, catalog fields, then exact model-id owner facts."""
+    model_id = model.get("id") if isinstance(model, dict) else None
+    entry = overrides.get(model_id) if isinstance(overrides, dict) else None
+    return _facts_for_entry(model, entry)
+
+
 def resolve(model: dict | None, *, override=None) -> dict:
     """Pick one profile for this model; the result holds no task or owner data."""
     route = route_of(model)
     override_status = None
     profile = basis = fallback_reason = None
-    if override is not None:
-        candidate = PROFILES.get(override) if isinstance(override, str) else None
+    profile_override = override.get("profile") if isinstance(override, dict) else override
+    if profile_override is not None:
+        candidate = PROFILES.get(profile_override) if isinstance(profile_override, str) else None
         if candidate is None:
             override_status = "unknown_profile"
         elif not _fits(candidate, route):
@@ -177,7 +235,9 @@ def resolve(model: dict | None, *, override=None) -> dict:
         profile, basis = PROFILES["generic"], "fallback"
         fallback_reason = ("model_unavailable" if model is None else
                            "unknown_route" if route == "unknown" else "no_route_profile")
-    notes = (*profile.notes, *capability_notes(model))
+    facts = _facts_for_entry(model, override)
+    parallel_notes = (("single_tool_call", "emit at most one tool call per response"),) if facts["parallel_tool_calls"] is False else ()
+    notes = (*profile.notes, *capability_notes(model), *parallel_notes)
     text = HEADER + "".join("\n- " + body for _, body in notes) if notes else ""
     custom_tools = (
         profile.custom_tools
@@ -187,12 +247,13 @@ def resolve(model: dict | None, *, override=None) -> dict:
     return {"catalog": CATALOG, "profile": profile.id, "revision": profile.revision, "basis": basis,
             "route": route, "fallback_reason": fallback_reason, "override_status": override_status,
             "notes": [note_id for note_id, _ in notes], "instructions": text,
-            "progress_placement": profile.progress_placement, "custom_tools": custom_tools}
+            "progress_placement": profile.progress_placement, "custom_tools": custom_tools, "facts": facts}
 
 
 def overrides_from(settings) -> dict:
     value = settings.get(SETTING) if isinstance(settings, dict) else None
-    return value if isinstance(value, dict) else {}
+    return {key: {"profile": entry} if isinstance(entry, str) else entry
+            for key, entry in value.items()} if isinstance(value, dict) else {}
 
 
 def for_task(runtime, row: dict, model: dict | None = None) -> dict:
@@ -215,17 +276,39 @@ def for_task(runtime, row: dict, model: dict | None = None) -> dict:
 
 
 def validate_overrides(value, lookup=None) -> dict:
-    """Owner configuration: exact catalog ids to known profiles that fit the route."""
+    """Normalize legacy profiles and validate owner facts on exact catalog ids."""
     if not isinstance(value, dict) or len(value) > MAX_OVERRIDES:
         raise ValueError("model_profile_overrides_invalid")
-    for model_id, profile_id in value.items():
+    normalized = {}
+    for model_id, entry in value.items():
+        if isinstance(entry, str):
+            entry = {"profile": entry}
         if (not isinstance(model_id, str) or not 1 <= len(model_id) <= 1024
-                or not isinstance(profile_id, str) or profile_id not in PROFILES):
+                or not isinstance(entry, dict) or set(entry) - {"profile", "facts"}):
             raise ValueError("model_profile_overrides_invalid")
         model = lookup(model_id) if callable(lookup) else None
-        if model is not None and not _fits(PROFILES[profile_id], route_of(model)):
-            raise ValueError("model_profile_route_mismatch")
-    return dict(value)
+        if "profile" in entry:
+            profile_id = entry["profile"]
+            if not isinstance(profile_id, str) or profile_id not in PROFILES:
+                raise ValueError("model_profile_overrides_invalid")
+            if model is not None and not _fits(PROFILES[profile_id], route_of(model)):
+                raise ValueError("model_profile_route_mismatch")
+        facts = entry.get("facts", {})
+        if not isinstance(facts, dict) or any(name not in FACTS or not _valid_fact(name, fact)
+                                               for name, fact in facts.items()):
+            raise ValueError("model_profile_facts_invalid")
+        if model is not None and not _capacity_facts_allowed(model) and any(
+                name in CAPACITY_FACTS and fact is not None for name, fact in facts.items()):
+            raise ValueError("model_profile_fact_route_mismatch")
+        effective = _facts_for_entry(model, entry)
+        # Unknown/offline models can still retain a complete owner's declaration.
+        window = effective["context_window"] if model is not None else facts.get("context_window")
+        output = effective["max_output_tokens"] if model is not None else facts.get("max_output_tokens")
+        if window is not None and output is not None and output > window:
+            raise ValueError("model_profile_facts_invalid")
+        normalized[model_id] = {**({"profile": entry["profile"]} if "profile" in entry else {}),
+                                **({"facts": dict(facts)} if "facts" in entry else {})}
+    return normalized
 
 
 def request_record(selection: dict, messages, options: dict) -> dict:
@@ -240,4 +323,5 @@ def request_record(selection: dict, messages, options: dict) -> dict:
     record["instructions"] = "none" if not text else "sent" if sent else "not_in_request"
     record["instructions_sha256"] = hashlib.sha256(text.encode()).hexdigest()[:16] if text else None
     record["reasoning_effort"] = options.get("reasoning_effort")
+    record["facts"] = dict(selection["facts"])
     return record
