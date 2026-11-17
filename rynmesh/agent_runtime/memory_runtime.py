@@ -64,24 +64,20 @@ MEMORY_TOOL_SPECS = (
         "function": {
             "name": MEMORY_PROPOSE_TOOL,
             "description": (
-                "Propose a structured memory operation (remember, update, or forget) when the owner's "
-                "current message states or updates a durable personal/project fact, skill, or preference, "
-                "or asks to remember, update/correct, or forget a memory (in any language). "
-                "The host verifies authentic owner origin and source grounding before committing."
+                "Propose durable owner facts/skills/preferences or memory requests; host checks source. "
+                "Any owner language; text must reuse their current message words; do not translate, paraphrase or normalize."
             ),
             "parameters": {
                 "type": "object",
                 "required": ["operation"],
                 "properties": {
                     "operation": {
-                        "type": "string",
                         "enum": ["remember", "update", "forget"],
                     },
                     "category": {"type": "string", "maxLength": 64},
                     "fact_key": {"type": "string", "maxLength": 128},
                     "text": {"type": "string", "maxLength": 500},
                     "scope_kind": {
-                        "type": "string",
                         "enum": ["personal", "project"],
                     },
                     "keywords": {
