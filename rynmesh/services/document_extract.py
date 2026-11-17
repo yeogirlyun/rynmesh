@@ -210,6 +210,7 @@ def extract_document(
     max_output_chars: int = MAX_OUTPUT_CHARS,
     timeout_s: float = TIMEOUT_S,
     memory_bytes: int = MEMORY_BYTES,
+    page_markers: bool = False,
     spawn: Callable[..., subprocess.Popen] | None = None,
 ) -> dict[str, Any]:
     """Extract bounded plain text from ``path`` in a child process.
@@ -238,6 +239,7 @@ def extract_document(
     child_env["RYNMESH_DOC_EXTRACT_MAX_INPUT_BYTES"] = str(max_input_bytes)
     child_env["RYNMESH_DOC_EXTRACT_MAX_OUTPUT_CHARS"] = str(max_output_chars)
     child_env["RYNMESH_DOC_EXTRACT_MEMORY_BYTES"] = str(memory_bytes)
+    child_env["RYNMESH_DOC_EXTRACT_PAGE_MARKERS"] = "1" if page_markers else "0"
     # Injectable launchers retain the Popen contract; production always receives
     # the caller's actual budget, including on Windows.
     launcher = spawn or (lambda args, **options: _spawn_worker(args, memory_bytes=memory_bytes, **options))
