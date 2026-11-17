@@ -61,7 +61,9 @@ LEDGER_WINDOW_SHARE = 32
 CHECKPOINT_CONTINUATION = (
     "\nOlder turns were condensed into this checkpoint; that does not end or restart the task. Carry on from "
     "Next and the messages after this note without redoing finished steps or reports. "
-    "The latest owner message is the current direction.")
+    "The latest owner message is the current direction. "
+    "Use ryn_history_search/ryn_history_read to recover exact details the summary omitted. "
+    "Before relying on file or process state recorded here, read the current state again.")
 
 _LEDGER_SKIP_TOOLS = frozenset({"ryn_update_plan"})
 _BODY_KEYS = frozenset({"content", "text", "patch", "code", "input", "data", "body", "script",
