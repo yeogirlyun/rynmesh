@@ -36,6 +36,7 @@ from .cli_sources import CLISources
 from .code_mode import NAME as CODE_MODE_NAME
 from .code_mode import SPEC as CODE_MODE_SPEC
 from .code_mode import CodeModeRunner
+from .tool_dispatch import PARALLEL_READS
 from .default_model import NAME as DEFAULT_MODEL_NAME
 from .default_model import DefaultModelTool
 from .diagnostics import NAMES as DIAGNOSTIC_NAMES
@@ -423,6 +424,12 @@ class RynTools:
         return None
 
     def metadata(self, name):
+        record = self._metadata_record(name)
+        record.setdefault("supports_parallel", record.get("effect") == "read" and name in (
+            PARALLEL_READS | {"ryn_read_resource", "ryn_list_resources", "ryn_image_inspect"}))
+        return record
+
+    def _metadata_record(self, name):
         if name == CODE_MODE_NAME:
             return {"effect": "read", "title": "Execute CodeMode JS", "risk": "low",
                     "scope_context_supported": True, "supports_preview": False, "preview_precondition": False}

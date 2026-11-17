@@ -18,13 +18,12 @@ PARALLEL_READS = frozenset({"ryn_file_read", "ryn_file_list", "ryn_file_search",
                           "ryn_list_node_apps", "ryn_craft_tools", "ryn_craft_read", "ryn_web_search"})
 
 
-def supports_parallel(name, metadata, arguments=None, *, permission_mode=None):
+def supports_parallel(name, metadata, arguments=None, *, permission_mode=None, workspace_root=None):
     """Use host capabilities, never a model's claimed effect or annotations."""
     if metadata.get("requires_explicit_approval") or metadata.get("computer_access"):
         return False
-    if metadata.get("effect") == "read" and (
-        name in PARALLEL_READS or metadata.get("supports_parallel") is True
-    ):
+    from .execution_policy import parallel_read
+    if parallel_read(name, arguments, metadata, workspace_root=workspace_root):
         return True
     server_hint_read = bool(
         metadata.get("server_hint_read")

@@ -15,7 +15,8 @@ import uuid
 from jsonschema import ValidationError, validate
 
 from . import budget, diagnostic_log, output_policy, results, verification
-from .execution_policy import classify_operation, decide
+from .execution_policy import classify_operation, decide, parallel_read
+from .read_reliability import check_shell_retry
 from .prompt import INTERNAL_NAMES
 from .protocol import digest, event, model_retry_authority, now, sanitized, sanitized_tool_result, task
 from .store import AgentError, AgentToolRejected, encoded
@@ -111,7 +112,8 @@ class StreamedReads:
         self.existing_ids = {call["id"] for message in selected.get("messages", [])
                              for call in message.get("tool_calls", [])}
         self.coordinator = StreamToolCoordinator(self._normalize, self._admit, self._run,
-            parallel_reads=parallel_reads, internal_names=INTERNAL_NAMES, cancelled=cancelled)
+            parallel_reads=parallel_reads, internal_names=INTERNAL_NAMES, cancelled=cancelled,
+            metadata=self.metadata, workspace_root=(self.stamp.get("local_execution") or {}).get("workspace_root"))
 
     def _event_context(self):
         return ({"source": "code_mode", "parent_operation_id": self.parent_operation_id}
@@ -140,7 +142,9 @@ class StreamedReads:
         if "extension_binding" in call and hasattr(self.runtime.tools, "verify_extension_binding"):
             self.runtime.tools.verify_extension_binding(call)
         meta = self.runtime.tools.metadata(call["name"])
-        if meta.get("effect") != "read" or meta.get("requires_explicit_approval"):
+        if meta.get("requires_explicit_approval") or (meta.get("effect") != "read" and not parallel_read(
+                call["name"], call["arguments"], meta,
+                workspace_root=(row.get("local_execution") or {}).get("workspace_root"))):
             return None
         if "extension_binding" in call and meta.get("extension_binding") != call["extension_binding"]:
             return None
@@ -154,6 +158,7 @@ class StreamedReads:
         assert_schema_unchanged(call, spec)
         validate(call["arguments"], spec["parameters"])
         self.runtime._validate_context(row, cheap_only=True, control_state=data)
+        check_shell_retry(row, call)
         if decide(call, meta, row, data["settings"]).action != "execute":
             return None
         if self.runtime._read_retries_exhausted(row, call):

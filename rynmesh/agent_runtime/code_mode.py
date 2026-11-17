@@ -1626,7 +1626,8 @@ class CodeModeRunner:
                     res = sanitized_tool_result(dispatch(raw_name, copy.deepcopy(raw_args), **exec_kwargs))
                 else:
                     # Standalone tool hosts retain the same admission policy.
-                    with self._dispatch_gate.enter(task_id, parallel=supports_parallel(raw_name, meta),
+                    with self._dispatch_gate.enter(task_id, parallel=supports_parallel(raw_name, meta, raw_args,
+                                                       workspace_root=(ctx.get("local_execution") or {}).get("workspace_root")),
                                                    cancelled=child_cancelled):
                         res = sanitized_tool_result(self.parent_tools.execute(raw_name, copy.deepcopy(raw_args), **exec_kwargs))
                 if child_ctx is not None and isinstance(child_ctx.get("_deferred_observed_files"), dict):

@@ -11,6 +11,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor, wait
 
 from . import output_policy
+from .execution_policy import parallel_read
 from .output_policy import MAX_RAW_RESPONSE_BYTES
 from .tool_dispatch import MAX_PARALLEL_TOOLS
 
@@ -33,11 +34,12 @@ def _identity(raw):
 
 class StreamToolCoordinator:
     def __init__(self, normalize, admit, run, *, parallel_reads, internal_names=(),
-                 cancelled=lambda: False, max_workers=MAX_PARALLEL_TOOLS):
+                 cancelled=lambda: False, max_workers=MAX_PARALLEL_TOOLS, metadata=None, workspace_root=None):
         if type(max_workers) is not int or not 1 <= max_workers <= MAX_PARALLEL_TOOLS:
             raise ValueError("invalid stream read worker limit")
         self.normalize, self.admit, self.run = normalize, admit, run
         self.parallel_reads, self.internal_names = frozenset(parallel_reads), frozenset(internal_names)
+        self.metadata, self.workspace_root = metadata, workspace_root
         self.cancelled, self.max_workers = cancelled, max_workers
         self.items, self.started = {}, {}
         self.proposal_bytes = 2
@@ -88,9 +90,12 @@ class StreamToolCoordinator:
             if not isinstance(call, dict):
                 raise ValueError("invalid normalized stream tool")
             name = call.get("name")
-            if (name not in self.parallel_reads or name in self.internal_names
-                    or call.get("internal") or call.get("effect") != "read"
-                    or call.get("error_result") is not None):
+            if name in self.internal_names or call.get("internal") or call.get("error_result") is not None:
+                self.blocked = True
+                return
+            meta = (self.metadata(name) if self.metadata is not None else
+                    {"effect": call.get("effect"), "supports_parallel": name in self.parallel_reads})
+            if not parallel_read(name, call.get("arguments"), meta, workspace_root=self.workspace_root):
                 self.blocked = True
                 return
             prepared = self.admit(index, copy.deepcopy(call))
