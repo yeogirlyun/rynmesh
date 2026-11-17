@@ -93,6 +93,9 @@ def install_offline_reading(app, *, home, messaging_key, consumption, imports, n
         if not item:
             raise HTTPException(404, detail='offline_image_unavailable')
         data, mime = await call(request, 'image', item['item_id'], index, job_id=job_id)
-        return Response(data, media_type=mime, headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+        return Response(data, media_type=mime, headers={
+            'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
+            'Content-Security-Policy': "sandbox; default-src 'none'",
+        })
 
     return service

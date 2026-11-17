@@ -56,6 +56,24 @@ BLOCKED_HOSTS = {
     "metadata",
 }
 ITEM_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_:.-]{0,255}$")
+UNTRUSTED_CONTENT_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "sandbox; default-src 'none'",
+}
+
+
+def _passive_attachment_type(mime: str) -> str:
+    if "\r" in mime or "\n" in mime:
+        return "application/octet-stream"
+    declared = mime.strip()
+    mime = declared.partition(";")[0].strip().lower()
+    if "javascript" in mime or "xml" in mime:
+        return "application/octet-stream"
+    if mime in {"image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf", "text/plain"}:
+        return declared
+    if re.fullmatch(r"(?:audio|video)/[a-z0-9.+-]+", mime):
+        return declared
+    return "application/octet-stream"
 
 
 def _desktop_lan_ip() -> str:
@@ -1279,14 +1297,18 @@ def create_app(store: RynmeshStore | None = None):
             data = active_store.get_local_preview_bytes(route_id(item_id))
         except (FileNotFoundError, StoreError) as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return Response(content=data, media_type="application/octet-stream")
+        return Response(content=data, media_type="application/octet-stream", headers={
+            **UNTRUSTED_CONTENT_HEADERS, "Content-Disposition": "attachment",
+        })
 
     def bytes_response(item_id: str):
         try:
             content_path = active_store.get_local_content_path(route_id(item_id))
         except (FileNotFoundError, StoreError) as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return FileResponse(content_path, media_type="application/octet-stream")
+        return FileResponse(content_path, media_type="application/octet-stream", headers={
+            **UNTRUSTED_CONTENT_HEADERS, "Content-Disposition": "attachment",
+        })
 
     @app.get("/health")
     def health() -> dict[str, Any]:
@@ -1719,7 +1741,7 @@ def create_app(store: RynmeshStore | None = None):
         raise HTTPException(status_code=404, detail="content_not_found")
 
     @app.get("/api/local/content/{content_id}/body")
-    def local_content_body(content_id: str, request: FastAPIRequest) -> dict[str, Any]:
+    def local_content_body(content_id: str, request: FastAPIRequest, response: Response) -> dict[str, Any]:
         local_control(request)
         content_id = route_id(content_id)
         try:
@@ -1747,6 +1769,7 @@ def create_app(store: RynmeshStore | None = None):
             text = data.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise HTTPException(status_code=415, detail="content_body_not_utf8") from exc
+        response.headers.update(UNTRUSTED_CONTENT_HEADERS)
         return {
             "ok": True,
             "content_id": content_id,
@@ -3037,7 +3060,11 @@ def create_app(store: RynmeshStore | None = None):
             data = _msg_store.load_attachment(msg_id)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="attachment not found") from exc
-        return Response(content=data, media_type=mime)
+        mime = _passive_attachment_type(mime)
+        headers = dict(UNTRUSTED_CONTENT_HEADERS)
+        if mime == "application/octet-stream":
+            headers["Content-Disposition"] = "attachment"
+        return Response(content=data, media_type=mime, headers=headers)
 
     @app.get("/api/local/messages")
     def local_history(peer_id: str, request: FastAPIRequest) -> list:
