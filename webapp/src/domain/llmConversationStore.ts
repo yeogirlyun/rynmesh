@@ -19,6 +19,7 @@ export interface LLMChatMessage {
   inputTokens?: number;
   outputTokens?: number;
   cost?: number;
+  finishReason?: string;
   contextIds?: string[];
   contextBytes?: number[];
   promptSha256?: string;

@@ -104,7 +104,13 @@ export interface LLMServiceRecord {
   };
 }
 
+export interface LLMOrderChat {
+  messages: { role: "system" | "user" | "assistant"; content: string }[];
+  max_tokens: number;
+}
+
 export interface LLMOrderResult {
+  finish_reason?: string;
   task_id: string;
   state: string;
   provider_peer_id?: string;
@@ -277,6 +283,10 @@ export interface NodeClient {
   ): Promise<Record<string, unknown>>;
   getTaskBalance(): Promise<TaskBalanceSummary>;
   submitLLMOrder(req: {
+    chat?: LLMOrderChat;
+    prompt_format?: string;
+    service_review_token?: string;
+    ai_permission?: { relationship_id: string; revision: number };
     response_mode?: "stream-v1" | "complete-v1";
     task_id?: string;
     idempotency_key?: string;

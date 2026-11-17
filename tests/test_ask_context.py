@@ -7,6 +7,7 @@ import pytest
 
 from rynmesh.ask_ryn.context import AskContextService
 from rynmesh.ask_ryn.store import ConversationError
+from rynmesh.llm_package.context_safety import estimate_context_safety_tokens
 from rynmesh.services.library_imports import LibraryImportStore
 
 
@@ -49,7 +50,7 @@ def test_long_chinese_article_and_history_fit_after_explicit_truncation(tmp_path
     result = service.preview(conversation, "保留这个完整的问题，不能默默截断问题。")
     assert result["sources"][0]["budget_truncated"]
     assert result["history_messages_omitted"] > 0
-    assert result["input_token_upper_estimate"] == len(result["prompt"].encode())
+    assert result["input_token_upper_estimate"] == estimate_context_safety_tokens(result["prompt"])
     assert result["input_token_upper_estimate"] + result["framing_reserve"] + result["max_output_tokens"] <= 4096
     assert "保留这个完整的问题，不能默默截断问题。" in result["prompt"]
     with pytest.raises(ConversationError, match="ask_question_too_large"):
@@ -76,7 +77,7 @@ def test_current_question_follows_archived_turns_and_is_budgeted(tmp_path):
     result = service.preview(conversation, question)
     assert result["prompt"].endswith("\n" + question)
     assert '"content":"5"' in result["prompt"]
-    assert result["input_token_upper_estimate"] == len(result["prompt"].encode())
+    assert result["input_token_upper_estimate"] == estimate_context_safety_tokens(result["prompt"])
 
 
 def test_missing_damaged_and_future_source_cannot_be_pretended_present(tmp_path):
@@ -103,7 +104,7 @@ def test_structured_provider_gets_roles_and_untrusted_material_as_data(tmp_path)
     assert "Ignore the user" not in messages[0]["content"]
     assert "Ignore the user" in messages[1]["content"]
     assert messages[-1] == {"role": "user", "content": "Multiply that by two."}
-    assert preview["input_token_upper_estimate"] == len(preview["prompt"].encode())
+    assert preview["input_token_upper_estimate"] == estimate_context_safety_tokens(preview["prompt"])
     assert preview["input_token_upper_estimate"] + preview["framing_reserve"] + preview["max_output_tokens"] <= 4096
 
 

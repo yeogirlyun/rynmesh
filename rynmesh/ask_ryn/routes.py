@@ -192,6 +192,14 @@ def install_ask_ryn(app: Any, *, store: Any, home: str | Path, workers: Any,
             raise HTTPException(409, detail="ask_revision_conflict")
         return await call("preview", conversation, value.get("question"), service="context")
 
+    @app.post("/api/local/ask/summary-preview")
+    async def summary_preview(request: Request):
+        value = await body(request)
+        conversation = await call("get", value.get("conversation_id"))
+        if conversation["revision"] != value.get("expected_revision"):
+            raise HTTPException(409, detail="ask_revision_conflict")
+        return await call("summary_preview", conversation, value.get("question"), service="context")
+
     @app.post("/api/local/ask/runs")
     async def begin_run(request: Request):
         return await call("begin", await body(request), service="runs")

@@ -30,7 +30,7 @@ MAX_SYNC_BYTES = 88 * 1024 * 1024
 MAX_SYNC_PLAINTEXT = 64 * 1024 * 1024
 _ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 FIELDS = ("id", "title", "serviceKey", "serviceName", "providerPeerId", "networkId", "createdAt", "updatedAt", "messages", "revision", "draft", "contextIds", "cliModel")
-MESSAGE_FIELDS = ("id", "role", "content", "createdAt", "status", "taskId", "inputTokens", "outputTokens", "cost", "contextIds", "contextBytes", "promptSha256")
+MESSAGE_FIELDS = ("id", "role", "content", "createdAt", "status", "taskId", "inputTokens", "outputTokens", "cost", "contextIds", "contextBytes", "promptSha256", "finishReason")
 
 
 class ConversationError(ValueError):
@@ -90,6 +90,8 @@ def clean_conversation(value: Mapping[str, Any]) -> dict[str, Any]:
         if not isinstance(row.get("content"), str) or len(row["content"].encode()) > 256 * 1024:
             raise ConversationError("ask_history_limit")
         row["createdAt"] = _timestamp(row.get("createdAt"))
+        if "finishReason" in row and (not isinstance(row["finishReason"], str) or len(row["finishReason"]) > 128):
+            raise ConversationError("ask_invalid_conversation")
         if "taskId" in row:
             _identity(row["taskId"])
         for key in ("inputTokens", "outputTokens", "cost"):
