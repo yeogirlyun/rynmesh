@@ -2708,7 +2708,8 @@ class AgentRuntime(AgentLoop):
         return self.store.transaction(update)
 
     def tool_catalog(self) -> list[dict]:
-        return [sanitized({"name": spec["function"]["name"], **self.tools.metadata(spec["function"]["name"])}) for spec in self.tools.specs()]
+        available = [sanitized({"name": spec["function"]["name"], **self.tools.metadata(spec["function"]["name"])}) for spec in self.tools.specs()]
+        return available + [sanitized(item) for item in getattr(self.tools, "unavailable_tools", lambda: [])()]
 
     def list_tasks(self, archived: bool = False) -> list[dict]:
         if archived:
