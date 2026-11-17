@@ -37,15 +37,16 @@ def test_terminal_checkpoint_is_not_enough_while_background_task_is_still_active
     order(store, 'task-one')
     pending = {'task-one': {'state': memory_state}}
     before = store._path('task-one').read_bytes()
-    with pytest.raises(TaskProtocolError, match='ask_cleanup_orders_active'):
-        erase_consumer_results(store, pending, threading.RLock(), ['task-one'])
+    result = erase_consumer_results(store, pending, threading.RLock(), ['task-one'])
+    assert result['skipped_active'] == ['task-one'] and result['results_removed'] == 0
     assert store._path('task-one').read_bytes() == before
 
 
-def test_disk_active_record_blocks_batch_before_any_other_result_is_erased(tmp_path):
+def test_disk_active_record_skips_itself_while_other_results_are_erased(tmp_path):
     store = TaskOrderStore(tmp_path)
     order(store, 'task-a')
     order(store, 'task-b', state='accepted')
-    with pytest.raises(TaskProtocolError, match='ask_cleanup_orders_active'):
-        erase_consumer_results(store, {}, threading.RLock(), ['task-a', 'task-b'])
-    assert 'encrypted_response' in store.get('task-a')
+    result = erase_consumer_results(store, {}, threading.RLock(), ['task-a', 'task-b'])
+    assert result['skipped_active'] == ['task-b'] and result['results_removed'] == 1
+    assert 'encrypted_response' not in store.get('task-a')
+    assert 'encrypted_response' in store.get('task-b')

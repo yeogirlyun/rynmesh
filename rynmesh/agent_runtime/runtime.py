@@ -13,6 +13,7 @@ import json
 import math
 import os
 import re
+import shutil
 import threading
 import time
 import uuid
@@ -2411,6 +2412,85 @@ class AgentRuntime(AgentLoop):
 
     def reset_memory(self, value: dict) -> dict:
         return memory_integration.reset_owner_memory(self, value)
+
+    def erase_owner_data(self, scopes) -> dict:
+        """Erase selected private records through the ordinary owner controls.
+
+        The scheduler gate prevents another step starting while stop drains the
+        existing calls. A still-running operation fails cleanup, rather than
+        deleting its cancellation state or claiming that erasure succeeded.
+        """
+        scopes = set(scopes) & {"agent_history", "agent_memory"}
+        if not scopes:
+            return {"erased": []}
+        with self._run_lock:
+            state = self.store.read()
+            for task_id in state["tasks"]:
+                self.action(task_id, {"action": "stop"})
+            local = getattr(self.tools, "local", self.tools)
+            processes = getattr(local, "processes", None)
+            if processes is not None:
+                for task_id in [*state["tasks"], *state.get("archives", {})]:
+                    stopped = processes.recover_operation(task_id)
+                    if not stopped.get("ok"):
+                        raise AgentError("agent_task_busy")
+            deadline = time.monotonic() + 30
+            while any(self._task_run(task_id) for task_id in state["tasks"]):
+                if time.monotonic() >= deadline:
+                    raise AgentError("agent_task_busy")
+                time.sleep(.02)
+            if "agent_memory" in scopes:
+                self.reset_memory({"expected_generation": self.memory_snapshot()["generation"],
+                                   "client_request_id": str(uuid.uuid4()), "scope": {"kind": "all"}})
+            if "agent_history" in scopes:
+                state = self.store.read()
+                rows = [lifecycle.find(self.store, state, task_id)
+                        for task_id in [*state["tasks"], *state.get("archives", {})]]
+                # Include children before a parent's cascading delete makes
+                # their attachment paths unreachable. Originals and project
+                # business outputs outside this managed directory remain.
+                for row in rows:
+                    workspace = Path(row["local_execution"]["workspace_root"]).resolve()
+                    attachment_dir = workspace / ".ryn" / "attachments" / row["id"]
+                    self._erase_private_directory(attachment_dir, workspace)
+                for row in rows:
+                    current = self.store.read()
+                    if row["id"] in current.get("deleted_tasks", {}):
+                        continue  # A parent's delete already removed this child.
+                    current_row = lifecycle.find(self.store, current, row["id"])
+                    result = self._lifecycle(row["id"], {
+                        "expected_control_revision": current_row["control_revision"],
+                        "client_request_id": str(uuid.uuid4()),
+                    }, "delete")
+                    if result.get("cleanup_pending"):
+                        raise AgentError("agent_task_cleanup_failed")
+                # Retry tombstones from an earlier partial attempt as well.
+                pending = [tid for tid, tomb in self.store.read().get("deleted_tasks", {}).items()
+                           if tomb.get("cleanup_pending")]
+                if pending and self._cleanup_deleted_tasks(pending):
+                    raise AgentError("agent_task_cleanup_failed")
+                # Private record stores only. Keep browser-profile (sign-ins),
+                # extensions_pkgs, skill libraries and the business dedup ledger.
+                for name in ("tasks", "archives", "results", "files", "quarantine", "baselines", "artifact-transfers",
+                             "browser", "render"):
+                    self._erase_private_directory(self.store.root / name, self.store.root)
+            # The previous root can retain a deleted task or reset memory. Keep
+            # the current root (settings, surviving memory, durable tombstones).
+            def clear_previous(_data):
+                self.store.prev_path.unlink(missing_ok=True)
+                self.store.purge_orphan_snapshots()
+            self.store.transaction(clear_previous)
+        return {"erased": sorted(scopes)}
+
+    @staticmethod
+    def _erase_private_directory(directory: Path, boundary: Path) -> None:
+        if not directory.exists() and not directory.is_symlink():
+            return
+        # A user-replaced directory must never expand a privacy erase outside
+        # its explicit storage/workspace boundary (including Windows junctions).
+        if directory.resolve() != boundary.resolve() / directory.relative_to(boundary):
+            raise AgentError("agent_task_cleanup_failed")
+        shutil.rmtree(directory)
 
     def list_automations(self) -> dict:
         return self.store.transaction(lambda data: automations.list_automations_in_tx(self.store, data))
