@@ -124,18 +124,22 @@ def test_t7_cache_hit_still_checks_provider_epoch_expiration_and_task(tmp_path):
         results.page(runtime.store, expired, ref["id"], max_bytes=19488, provider=True)
 
 
-def test_t8_mutually_exclusive_modes_rejected_by_real_tool_schema(tmp_path):
+def test_t8_mutually_exclusive_modes_rejected_by_real_tool_handler(tmp_path):
     runtime, model, row, ref = _result(tmp_path, {"text": "error\nnext"})
     out = _tool(runtime, model, row, ref, pattern="error", line_start=1)
     schema = next(s["function"]["parameters"] for s in prompt.INTERNAL_SPECS if s["function"]["name"] == "ryn_read_result")
     validate({"result_id": ref["id"], "pattern": "error"}, schema)
     validate({"result_id": ref["id"], "line_start": 1, "line_count": 400}, schema)
-    for invalid in ({"pattern": "error", "line_start": 1}, {"limit": 999}, {"limit": 65537},
+    # Cross-field exclusivity stays in the handler: strict transport schemas do not support `not`.
+    validate({"result_id": ref["id"], "pattern": "error", "line_start": 1}, schema)
+    with pytest.raises(AgentError, match="agent_invalid_cursor"):
+        results.lines(runtime.store, row, ref["id"], pattern="error", line_start=1)
+    for invalid in ({"limit": 999}, {"limit": 65537},
                     {"pattern": "x" * 201}, {"context_lines": 6}, {"line_start": 0}, {"line_count": 401}):
         with pytest.raises(ValidationError):
             validate({"result_id": ref["id"], **invalid}, schema)
-    assert out["error"] == "agent_invalid_control_proposal"
-    assert out["not_executed"] is True and out["no_mutation"] is True
+    assert out["error"] == "agent_invalid_cursor"
+    assert out["no_mutation"] is True
 
 
 def test_cache_is_lru_bounded_and_independent_of_read_value_mutation(tmp_path):
@@ -161,3 +165,17 @@ def test_line_output_is_byte_bounded_even_for_one_long_unicode_line(tmp_path):
     assert len(encoded(out)) <= 2000
     assert out["lines"][0]["line"] == 1 and out["lines"][0]["truncated"] is True
     assert out["next_line"] == 2
+
+
+def test_read_result_strict_parameters_and_whole_response_schema_keep_constraints():
+    from rynmesh.llm_package import codex_tools
+
+    tool = next(s["function"] for s in prompt.INTERNAL_SPECS if s["function"]["name"] == "ryn_read_result")
+    converted = codex_tools._strict_parameters(tool["parameters"])
+    assert converted["additionalProperties"] is False
+    assert set(converted["required"]) == set(tool["parameters"]["properties"])
+    assert converted["properties"]["limit"]["anyOf"][0]["maximum"] == 65536
+    response = codex_tools._response_schema({tool["name"]: tool}, strict=True)
+    variant = response["properties"]["tool_calls"]["items"]["anyOf"][0]
+    assert variant["properties"]["arguments"] == converted
+    assert variant["properties"]["name"]["enum"] == ["ryn_read_result"]
