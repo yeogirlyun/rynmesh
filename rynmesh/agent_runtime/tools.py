@@ -107,7 +107,15 @@ _SPECS = {
 
 def bounded_result(value, *, opaque_keys=(), strict=False, long_text_keys=None):
     """Whitelisted outputs plus defense in depth for remote display names."""
-    sensitive = re.compile(r"(?i)(?:api[_-]?key|authorization|password|secret|token|private[_-]?key|invitation)")
+    sensitive = {"api_key", "apikey", "authorization", "password", "passphrase", "secret", "client_secret",
+                 "private_key", "invitation", "invitation_code", "token", "access_token", "refresh_token",
+                 "id_token", "auth_token", "session_token", "bearer"}
+    suffixes = tuple(separator + name for name in sensitive if name != "token" for separator in ("_", "-"))
+
+    def sensitive_key(name):
+        name = name.lower()
+        return name in sensitive or name.endswith(suffixes)
+
     long_text_keys = long_text_keys or {}
     truncation = {"strings": 0, "lists": 0, "objects": 0, "depth": 0}
 
@@ -119,7 +127,7 @@ def bounded_result(value, *, opaque_keys=(), strict=False, long_text_keys=None):
             if len(item) > 100:
                 truncation["objects"] += 1
             return {str(k)[:100]: clean(v, depth + 1, str(k)) for k, v in list(item.items())[:100]
-                    if not sensitive.search(str(k))}
+                    if not sensitive_key(str(k))}
         if isinstance(item, list):
             if len(item) > 100:
                 truncation["lists"] += 1
