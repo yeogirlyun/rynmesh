@@ -10,8 +10,8 @@ from .store import AgentError, AgentToolRejected, encoded
 from .subagents import SUBAGENT_TOOL_NAMES
 
 NAME = "ryn_discover_tools"
-# Loads accumulate only with at least this much schema space; smaller windows
-# replace the loaded set, because every kept schema crowds out conversation.
+# Larger windows reserve more room for pinned/control schemas. Explicit loads
+# append at every capacity; eviction still enforces the actual window bound.
 ADDITIVE_CAPACITY = 48000
 # Windows up to this many request bytes keep plan/input/result schemas behind
 # discovery and send only the slimmest menu.
@@ -155,6 +155,21 @@ def release(state):
             "revision": state["revision"] + 1}
 
 
+def record_usage(row, names, *, epoch):
+    """Keep call recency outside schema state, including across step resets."""
+    if row.get("context_epoch", 0) != epoch:
+        return
+    usage = row.setdefault("tool_menu_usage", {})
+    step = max(row["steps"], max(usage.values(), default=-1) + 1)
+    usage.update({name: step for name in names})
+
+
+def _victim(loaded, requested, usage):
+    candidates = [name for name in reversed(loaded) if name not in requested]
+    unused = next((name for name in candidates if name not in usage), None)
+    return unused if unused is not None else min(candidates, key=lambda name: usage[name], default=None)
+
+
 def project(business_specs, internal_specs, state, *, max_context_bytes, authority_bytes, epoch, goal_revision,
             initial_names=(), pinned_names=()):
     """Return (schemas, durable state), without changing any caller-owned data.
@@ -204,9 +219,9 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
         and prior.get("lazy_controls") == lazy
     )
     same = same_epoch and prior.get("goal_revision") == goal_revision
-    # Normal/additive windows keep discovered tool schemas across owner follow-ups
+    # Medium/large windows keep discovered tool schemas across owner follow-ups
     # so the tools prefix at token 0 remains KV-cache stable across turns.
-    keep_loaded = same or (same_epoch and max_context_bytes >= ADDITIVE_CAPACITY)
+    keep_loaded = same or (same_epoch and max_context_bytes > SMALL_WINDOW_BYTES)
     if lazy:
         base = [directory_spec(catalog)]
     loaded = list(prior.get("loaded_names", [])) if keep_loaded and mode == "directory" else []
@@ -273,10 +288,13 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
         if mode == "full":
             return full_specs
         return [*base, *(by_name[name] for name in [*pinned, *names])]
-    # Loaded schemas are a reloadable cache: release the least recently loaded
-    # before refusing, as pinned core tools now share the same space.
+    # Trim the tail to retain the longest stable schema prefix. Initial tools
+    # requested for this projection are protected from ordinary cache eviction.
     while mode == "directory" and loaded and len(encoded(exposure(loaded))) > limit:
-        loaded = loaded[1:]
+        victim = next((name for name in reversed(loaded) if name not in initial_names), None)
+        if victim is None:
+            break
+        loaded.remove(victim)
     exposed = exposure(loaded)
     degraded = None
     if len(encoded(exposed)) > limit:
@@ -306,8 +324,9 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
     return copy.deepcopy(exposed), next_state
 
 
-def discover(business_specs, internal_specs, metadata, state, args, *, capacity_bytes):
-    """Paged catalog, BM25 query search, and exact load/replace, charged as an ordinary internal tool."""
+def discover(business_specs, internal_specs, metadata, state, args, *, capacity_bytes, usage=None):
+    """Paged catalog, BM25 search and append-only loads within the schema budget."""
+    usage = usage or {}
     internal_specs, _ = dedupe_specs(internal_specs, {NAME})
     business_specs, _ = dedupe_specs(business_specs, {NAME, *(s["function"]["name"] for s in internal_specs)})
     all_internal = [spec for spec in internal_specs if spec["function"]["name"] != NAME]
@@ -352,8 +371,6 @@ def discover(business_specs, internal_specs, metadata, state, args, *, capacity_
             raise AgentToolRejected("agent_unknown_tool")
         if "load" in args and not requested:
             loaded = []  # load [] clears every loaded (not pinned) schema.
-        elif "load" in args and capacity_bytes < ADDITIVE_CAPACITY:
-            loaded = [name for name in requested if name not in pinned]
         else:
             loaded = [name for name in next_state["loaded_names"] if name not in removed and name not in pinned]
             for name in requested:
@@ -362,7 +379,7 @@ def discover(business_specs, internal_specs, metadata, state, args, *, capacity_
         # Adding never silently drops what this call asked for: older loads
         # are released first, and an unloadable request is still refused.
         while size(loaded) > capacity_bytes:
-            victim = next((name for name in loaded if name not in requested), None)
+            victim = _victim(loaded, requested, usage)
             if victim is None:
                 raise AgentToolRejected("agent_tool_schema_limit")
             loaded.remove(victim)
@@ -371,22 +388,18 @@ def discover(business_specs, internal_specs, metadata, state, args, *, capacity_
             next_state["revision"] += 1
     elif has_query and matched_names:
         # Codex-aligned 1-step tool_search: automatically activate matched tools that fit capacity.
-        loaded = [] if capacity_bytes < ADDITIVE_CAPACITY else [
-            name for name in next_state["loaded_names"] if name not in pinned
-        ]
-        added: list[str] = []
+        loaded = [name for name in next_state["loaded_names"] if name not in pinned]
         for name in matched_names:
             if name in pinned or name in loaded:
                 continue
             candidate_loaded = [*loaded, name]
             while size(candidate_loaded) > capacity_bytes:
-                victim = next((n for n in candidate_loaded if n not in added and n != name), None)
+                victim = _victim(candidate_loaded, matched_names, usage)
                 if victim is None:
                     break
                 candidate_loaded.remove(victim)
             if size(candidate_loaded) <= capacity_bytes:
                 loaded = candidate_loaded
-                added.append(name)
         if next_state["loaded_names"] != loaded:
             next_state["loaded_names"] = loaded
             next_state["revision"] += 1

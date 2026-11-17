@@ -14,7 +14,7 @@ import uuid
 
 from jsonschema import ValidationError, validate
 
-from . import budget, diagnostic_log, output_policy, results, verification
+from . import budget, diagnostic_log, output_policy, results, tool_menu, verification
 from .execution_policy import classify_operation, decide, parallel_read
 from .read_reliability import check_shell_retry
 from .prompt import INTERNAL_NAMES
@@ -230,7 +230,7 @@ class StreamedReads:
             return {**copy.deepcopy(entry), "meta": copy.deepcopy(meta), "classification": classification}
         return self.runtime.store.transaction(admit)
 
-    def _complete_record(self, prepared, outcome, elapsed):
+    def _complete_record(self, prepared, outcome, elapsed, *, invoked=False):
         value = copy.deepcopy(outcome)
         if len(encoded(value["result"])) > self.selected["limits"]["max_output_chars"]:
             try:
@@ -263,6 +263,8 @@ class StreamedReads:
             if value["failed"]:
                 self.runtime._note_last_read_attempt(row, prepared["call"], value["result"])
             entry.update(value, state="complete")
+            if invoked:
+                tool_menu.record_usage(row, [prepared["call"]["name"]], epoch=self.stamp["context_epoch"])
             verification.record(row, prepared["call"], "failed" if value["failed"] else "confirmed", now(), result=value["result"])
             event(row, "tool_execution_completed", tool=prepared["call"]["name"], call_id=prepared["call"]["call_id"],
                   operation_id=prepared["call"]["operation_id"], result=value["result"],
@@ -275,6 +277,7 @@ class StreamedReads:
 
     def _run(self, prepared):
         started, deferred = time.monotonic(), {}
+        invoked = False
         call = prepared["call"]
         deadline = started + (min(self.selected["limits"]["max_seconds"], 600)
                               if self.parent_operation_id else prepared["reserved_seconds"])
@@ -301,6 +304,7 @@ class StreamedReads:
                     context["extension_binding"] = copy.deepcopy(call["extension_binding"])
                 options["context"] = context
             with diagnostic_log.context_scope(task_id=self.selected["id"], operation_id=call["operation_id"]):
+                invoked = True
                 result = sanitized_tool_result(self.runtime._execute_business_tool(self.selected, call["name"], copy.deepcopy(call["arguments"]), **options))
             outcome = {"result": result, "failed": False, "deferred": deferred,
                        "origin": copy.deepcopy(result.get("origin")) if isinstance(result, dict) and prepared["meta"].get("scope_context_supported") else None}
@@ -316,7 +320,7 @@ class StreamedReads:
             outcome["result"].update(extra)
         prepared["_outcome"] = outcome
         prepared["_elapsed"] = max(0.0, time.monotonic() - started)
-        self._complete_record(prepared, outcome, prepared["_elapsed"])
+        self._complete_record(prepared, outcome, prepared["_elapsed"], invoked=invoked)
         return outcome
 
     def on_event(self, item):

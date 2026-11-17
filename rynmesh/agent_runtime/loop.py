@@ -293,10 +293,13 @@ class AgentLoop:
                         notice.pop("collisions", None)
                         notice.pop("collision_note", None)
                     row["tool_menu_notice"] = notice
+                if (row.get("tool_menu") or {}).get("context_epoch") != menu_state["context_epoch"]:
+                    row["tool_menu_usage"] = {}
                 if row.get("tool_menu") != menu_state:
                     row["tool_menu"] = menu_state
                     event(row, "tool_menu_changed", menu=copy.deepcopy(menu_state), reason=menu_reason)
                 synced_state.update(
+                    tool_menu_usage=copy.deepcopy(row.get("tool_menu_usage", {})),
                     tool_menu_notice=copy.deepcopy(row.get("tool_menu_notice")),
                     context_epoch=row.get("context_epoch", 0),
                     context_checkpoint=copy.deepcopy(row.get("context_checkpoint")),
@@ -2397,6 +2400,7 @@ class AgentLoop:
                 row["in_flight"] = None
                 row["elapsed_seconds"] += time.monotonic() - started
                 self._apply_deferred_observed_files(row, selected, deferred_observed_files)
+                tool_menu.record_usage(row, [call["name"]], epoch=selected.get("context_epoch", 0))
                 # The receipt keeps the exact result; only the model-visible copy carries the budget notice.
                 notice = self._budget_notice(row)
                 shown = {**result, "server_note": notice} if notice and isinstance(result, dict) else result
@@ -2606,6 +2610,7 @@ class AgentLoop:
             row["in_flight"] = None
             row["elapsed_seconds"] += time.monotonic() - started
             self._apply_deferred_observed_files(row, selected, deferred_observed_files)
+            tool_menu.record_usage(row, [call["name"] for call in batch], epoch=selected.get("context_epoch", 0))
             notice = self._budget_notice(row)
             for index, (call, (result, failed, call_exec_seconds)) in enumerate(zip(batch, outcomes, strict=True)):
                 reference = references[index]
@@ -2744,7 +2749,8 @@ class AgentLoop:
                                 if item["function"]["name"] == call["name"]), None)
                 assert_schema_unchanged(call, current)
             discovery = tool_menu.discover(business_specs, self._internal_specs(selected), self._metadata,
-                menu_state, args, capacity_bytes=tool_menu.capacity(max_context_bytes, authority_bytes))
+                menu_state, args, capacity_bytes=tool_menu.capacity(max_context_bytes, authority_bytes),
+                usage=selected.get("tool_menu_usage", {}))
             # Tools of an unusable plugin are not in the catalog; say which plugin and how to restore it.
             unavailable = (self.extensions.unavailable_plugins(self._execution_context(selected))
                            if getattr(self, "extensions", None) is not None else [])
@@ -2969,6 +2975,7 @@ class AgentLoop:
                 message["resource_origin"] = copy.deepcopy(reference["resource_origin"])
             row["messages"].append(message)
             row["queue"].pop(0)
+            tool_menu.record_usage(row, [call["name"]], epoch=selected.get("context_epoch", 0))
             event(row, "tool_result", tool=call["name"], call_id=call["call_id"], operation_id=call["operation_id"], result=result, internal=True)
             row["in_flight"] = None
             row["elapsed_seconds"] += max(0.0, time.monotonic() - started)
