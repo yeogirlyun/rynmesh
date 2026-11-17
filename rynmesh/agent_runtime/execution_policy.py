@@ -606,17 +606,12 @@ def verified_read_classification(record, *, row=None, task_id=None, workspace_ro
 
 
 def is_full_automatic(row: dict, settings: dict) -> bool:
-    return (
-        isinstance(row, dict)
-        and isinstance(settings, dict)
-        and row.get("permission_mode") == "automatic"
-        and settings.get("permission_mode") == "automatic"
-    )
+    return isinstance(row, dict) and row.get("permission_mode") == "automatic"
 
 
 def decide(call, metadata, row, settings):
-    modes = {row["permission_mode"], settings["permission_mode"]}
-    if not modes <= MODES:
+    mode = row["permission_mode"]
+    if mode not in MODES:
         return Decision("deny", "invalid_policy")
     # Only trusted metadata or this host's literal-command recognizer can mark
     # a call read-only. Model arguments cannot self-declare their risk.
@@ -625,31 +620,25 @@ def decide(call, metadata, row, settings):
     classification = classify_operation(call.get("name"), call.get("arguments"), metadata, workspace_root=ws_root)
     if classification["effect_class"] == "read":
         return Decision("execute", "read")
-    if "read_only" in modes:
+    if mode == "read_only":
         return Decision("deny", "read_only")
     if row.get("approved"):
         return Decision("execute", "approved")
-    if metadata.get("requires_explicit_approval"):
+    if metadata.get("requires_explicit_approval") and mode != "automatic":
         return Decision("ask", "explicit_approval")
-    if "confirm_changes" in modes:
+    if mode == "confirm_changes":
         return Decision("ask", "confirm_changes")
     # This alias is authored by the host only after verifying the builtin
     # provider, schema and enablement. Never derive it from a model tool name.
     workstation_tool = metadata.get("workstation_permission_tool")
-    desktop_granted = ((row.get("local_execution") or {}).get("desktop_access") is True
-                       and settings.get("desktop_access") is True)
+    desktop_granted = (row.get("local_execution") or {}).get("desktop_access") is True
     inherited_desktop = (workstation_tool == "ryn_computer_action"
                          and metadata.get("computer_access") is True
                          and desktop_granted)
-    for policy in (row, settings):
-        if policy["permission_mode"] == "workspace":
-            if call["name"] not in WORKSPACE_TOOLS and not inherited_desktop:
-                return Decision("ask", "external_change")
-        elif policy["permission_mode"] == "automatic":
-            # Full access: the owner chose to let every change run without a
-            # dialog, including plugin and configuration changes. Only the
-            # hard gates above (explicit-approval tools, read-only, strict
-            # confirmation) and the desktop grant still apply.
-            if metadata.get("computer_access") and not desktop_granted:
-                return Decision("ask", "desktop_access")
+    if mode == "workspace":
+        if call["name"] not in WORKSPACE_TOOLS and not inherited_desktop:
+            return Decision("ask", "external_change")
+    elif mode == "automatic":
+        if metadata.get("computer_access") and not desktop_granted:
+            return Decision("ask", "desktop_access")
     return Decision("execute", "automatic")

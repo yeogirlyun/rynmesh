@@ -716,7 +716,7 @@ class LocalTools:
             return {
                 "settings": raw_data["settings"],
                 "projects": raw_data.get("projects", {}),
-                "tasks": {task_id: {"permission_mode": row.get("permission_mode")}} if isinstance(row, dict) else {},
+                "tasks": {task_id: {"permission_mode": row.get("permission_mode"), "local_execution": row.get("local_execution") or {}}} if isinstance(row, dict) else {},
             }
 
         data = state if state is not None else self.store.inspect(_project)
@@ -736,7 +736,6 @@ class LocalTools:
             current_root = current.get("workspace_root") or self.store.default_workspace()
         if bound.get("workspace_root", "") != current_root:
             raise AgentToolRejected("agent_workspace_changed_new_task_required")
-        settings_mode = current["permission_mode"] if current.get("permission_mode") in _PERMISSION_ORDER else "workspace"
         row_info = (data.get("tasks") or {}).get(task_id) if task_id else None
         if isinstance(row_info, dict):
             row_mode = row_info["permission_mode"] if row_info.get("permission_mode") in _PERMISSION_ORDER else "workspace"
@@ -744,14 +743,11 @@ class LocalTools:
             row_mode = context["permission_mode"]
         else:
             row_mode = "workspace"
-        modes = {settings_mode, row_mode}
-        if context.get("permission_mode") in _PERMISSION_ORDER:
-            modes.add(context["permission_mode"])
-        effective_mode = next((m for m in _PERMISSION_ORDER if m in modes), "workspace")
+        row_desktop = (row_info.get("local_execution") or {}).get("desktop_access") if isinstance(row_info, dict) else bound.get("desktop_access")
         return {
             "workspace_root": bound.get("workspace_root", ""),
-            "desktop_access": bool(bound.get("desktop_access") and current.get("desktop_access")),
-            "permission_mode": effective_mode,
+            "desktop_access": bool(bound.get("desktop_access") and row_desktop),
+            "permission_mode": row_mode,
         }
 
     def _shell_cwd(self, value, context, policy=None):
@@ -1072,7 +1068,7 @@ class LocalTools:
                 row
                 and current.get("enabled")
                 and row["status"] not in stopped_statuses
-                and (current.get("permission_mode") != "read_only" or authorized_read)
+                and (row.get("permission_mode") != "read_only" or authorized_read)
                 and workspace_ok
             )
             consecutive_errors = 0

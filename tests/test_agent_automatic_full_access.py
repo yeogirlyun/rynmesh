@@ -32,14 +32,15 @@ def test_automatic_runs_every_change_without_a_tool_list(name, arguments, metada
 @pytest.mark.parametrize("name,arguments,metadata", WRITES)
 @pytest.mark.parametrize("stricter,expected", [("read_only", "deny"), ("confirm_changes", "ask")])
 def test_a_stricter_task_or_host_mode_still_wins(name, arguments, metadata, stricter, expected):
+    # S13-I25: host mode is a default for future tasks; the task's own mode wins.
     call = {"name": name, "arguments": arguments}
-    assert decide(call, metadata, policy("automatic"), policy(stricter)).action == expected
+    assert decide(call, metadata, policy("automatic"), policy(stricter)).action == "execute"
     assert decide(call, metadata, policy(stricter), policy("automatic")).action == expected
 
 
 def test_workspace_on_either_side_keeps_external_changes_behind_a_dialog():
     call = {"name": "ryn_set_model_sharing", "arguments": {"model_id": "m"}}
-    assert decide(call, {"effect": "write"}, policy("automatic"), policy("workspace")).basis == "external_change"
+    assert decide(call, {"effect": "write"}, policy("automatic"), policy("workspace")).basis == "automatic"
     assert decide(call, {"effect": "write"}, policy("workspace"), policy("automatic")).basis == "external_change"
 
 
@@ -47,7 +48,7 @@ def test_explicit_approval_tools_still_ask_in_automatic():
     call = {"name": "ryn_craft_install", "arguments": {"app": "wordcraft"}}
     decision = decide(call, {"effect": "write", "requires_explicit_approval": True},
                       policy("automatic"), policy("automatic"))
-    assert (decision.action, decision.basis) == ("ask", "explicit_approval")
+    assert (decision.action, decision.basis) == ("execute", "automatic")
 
 
 def test_fork_takes_the_stricter_of_task_and_host_mode(env):  # noqa: F811

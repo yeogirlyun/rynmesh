@@ -774,9 +774,9 @@ class NativeComputerFacade:
         if settings is not None:
             if not settings.get("enabled", True):
                 raise AgentToolRejected("agent_disabled")
-            if not settings.get("desktop_access"):
+            if row is None and not settings.get("desktop_access"):
                 raise AgentToolRejected("agent_desktop_access_required")
-            if settings.get("permission_mode") == "read_only":
+            if (row or settings).get("permission_mode") == "read_only":
                 raise AgentToolRejected("agent_permission_denied")
 
         has_store_row = row is not None
@@ -920,9 +920,9 @@ class NativeComputerFacade:
         if settings is not None:
             if not settings.get("enabled", True):
                 raise AgentToolRejected("agent_disabled")
-            if not settings.get("desktop_access"):
+            if row is None and not settings.get("desktop_access"):
                 raise AgentToolRejected("agent_desktop_access_required")
-            if settings.get("permission_mode") == "read_only":
+            if (row or settings).get("permission_mode") == "read_only":
                 if stamp.permission_mode is not None and stamp.permission_mode != "read_only":
                     raise AgentToolRejected("agent_permission_revoked")
                 raise AgentToolRejected("agent_permission_denied")
