@@ -1319,7 +1319,7 @@ class RynmeshStore:
                 item["provider_peer_slug"] = str(peer_info.get("peer_slug", "") or "")
         return payload
 
-    def list_peer_content(self, endpoint: str, *, timeout_s: float = 20.0) -> dict[str, Any]:
+    def list_peer_content(self, endpoint: str, *, expected_peer_id: str = "", timeout_s: float = 20.0) -> dict[str, Any]:
         from .peer_http import HttpPeerClient
 
         client = HttpPeerClient(endpoint, timeout_s=timeout_s)
@@ -1331,7 +1331,7 @@ class RynmeshStore:
         for item in content:
             if isinstance(item, dict):
                 item["peer_endpoint"] = endpoint
-                item["provider_peer_id"] = str(peer_info.get("peer_id", "") or "")
+                item["provider_peer_id"] = expected_peer_id or str(peer_info.get("peer_id", "") or "")
                 item["provider_peer_slug"] = str(peer_info.get("peer_slug", "") or "")
         return payload
 
@@ -1446,6 +1446,7 @@ class RynmeshStore:
         timeout_s: float,
     ) -> dict[str, Any]:
         from .peer_http import HttpPeerClient
+        from .atomic_io import atomic_write_json, fs_path
 
         client = HttpPeerClient(endpoint, timeout_s=timeout_s)
         peer_info = self._validate_peer_endpoint(client, expected_peer_id=expected_peer_id)
@@ -1453,26 +1454,24 @@ class RynmeshStore:
             client.get_content_manifest(item_id) if use_content_api else client.get_manifest(item_id)
         )
         validation = self._validate_peer_manifest(manifest)
-        clip_dir = self._clip_dir(item_id)
-        clip_dir.mkdir(parents=True, exist_ok=True)
-        (clip_dir / "manifest.json").write_text(
-            json.dumps(manifest.to_dict(), indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        media_path = (
-            client.download_content(item_id, clip_dir / f"{_safe_id(item_id)}.media")
-            if use_content_api
-            else client.download_media(item_id, clip_dir / f"{_safe_id(item_id)}.media")
-        )
         if validation.manifest is None:
             raise StoreError("manifest_not_allowed")
-        media_hash = _file_sha256(media_path)
-        if media_hash != validation.manifest.asset.media_hash:
-            try:
-                media_path.unlink()
-            except OSError:
-                pass
-            raise StoreError("media_hash_mismatch")
+        clip_dir = self._clip_dir(item_id)
+        clip_dir.mkdir(parents=True, exist_ok=True)
+        media_path = clip_dir / f"{_safe_id(item_id)}.media"
+        part_path = fs_path(media_path.with_name(media_path.name + ".part"))
+        try:
+            if use_content_api:
+                client.download_content(item_id, part_path)
+            else:
+                client.download_media(item_id, part_path)
+            media_hash = _file_sha256(part_path)
+            if media_hash != validation.manifest.asset.media_hash:
+                raise StoreError("media_hash_mismatch")
+            part_path.replace(fs_path(media_path))
+            atomic_write_json(clip_dir / "manifest.json", manifest.to_dict(), indent=2)
+        finally:
+            part_path.unlink(missing_ok=True)
         credit = self.record_credit_event(
             kind="full_served",
             subject_peer_id=str(peer_info.get("peer_id", "") or ""),

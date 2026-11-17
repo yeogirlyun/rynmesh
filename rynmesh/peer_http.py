@@ -286,17 +286,18 @@ class HttpPeerClient:
             )
         except TransportError as exc:
             if exc.reason == "too_large":
-                raise PeerTransportError("peer_media_too_large") from exc
+                raise PeerTransportError("peer_media_too_large") from None
             if exc.reason == "unsupported_encoding":
-                raise PeerTransportError("peer_unsupported_encoding") from exc
-            raise PeerTransportError(f"peer_http_error: {exc}") from exc
+                raise PeerTransportError("peer_unsupported_encoding") from None
+            detail = f"http_{exc.status}" if exc.status else exc.reason
+            raise PeerTransportError(f"peer_http_error:{detail}") from None
 
     def _json(self, path: str) -> dict[str, Any]:
-        raw = self._bytes(path, max_bytes=MAX_JSON_BYTES).decode("utf-8")
         try:
+            raw = self._bytes(path, max_bytes=MAX_JSON_BYTES).decode("utf-8")
             payload = json.loads(raw or "{}")
-        except json.JSONDecodeError as exc:
-            raise PeerTransportError(f"peer_invalid_json: {exc}") from exc
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise PeerTransportError("peer_invalid_json") from None
         if not isinstance(payload, dict):
             raise PeerTransportError("peer_response_not_object")
         return payload
@@ -394,7 +395,7 @@ class HttpPeerClient:
                 timeout_s=self.timeout_s,
                 max_chunk_bytes=min(64 * 1024, max_event_bytes),
                 max_total_bytes=effective_total,
-                headers={"Content-Type": "application/json", "Accept": "application/x-ndjson"},
+                headers=stamp_network_key({"Content-Type": "application/json", "Accept": "application/x-ndjson"}),
             )
             for chunk in chunks:
                 buffered += decoder.decode(chunk)
@@ -430,10 +431,11 @@ class HttpPeerClient:
             )
         except TransportError as exc:
             if exc.reason == "too_large":
-                raise PeerTransportError("peer_response_too_large") from exc
+                raise PeerTransportError("peer_response_too_large") from None
             if exc.reason == "unsupported_encoding":
-                raise PeerTransportError("peer_unsupported_encoding") from exc
-            raise PeerTransportError(f"peer_http_error: {exc}") from exc
+                raise PeerTransportError("peer_unsupported_encoding") from None
+            detail = f"http_{exc.status}" if exc.status else exc.reason
+            raise PeerTransportError(f"peer_http_error:{detail}") from None
 
 
 MAX_NDJSON_STREAM_TOTAL_BYTES = 32 * 1024 * 1024
@@ -1062,7 +1064,7 @@ def create_app(store: RynmeshStore | None = None):
         raw: dict[str, Any], *, provider: dict[str, Any], fetched_ids: set[str]
     ) -> dict[str, Any]:
         content_id = str(raw.get("content_id") or raw.get("clip_id") or "")
-        provider_peer_id = str(raw.get("provider_peer_id") or provider.get("peer_id") or "")
+        provider_peer_id = str(provider.get("peer_id") or raw.get("provider_peer_id") or "")
         publisher_peer_id = str(
             raw.get("publisher_peer_id") or raw.get("source_peer_id") or provider_peer_id
         )
@@ -1117,15 +1119,18 @@ def create_app(store: RynmeshStore | None = None):
 
     content_scan_flight = _SingleFlight()
 
-    def network_content(network_id: str) -> list[dict[str, Any]]:
+    def network_content(network_id: str, *, with_errors: bool = False):
         """Local content plus every reachable device's listing.
 
         Home asks for content and recommendations together; concurrent callers
         share one scan, and each gets its own list.
         """
-        return list(content_scan_flight.run(network_id, lambda: scan_network_content(network_id)))
+        result = content_scan_flight.run(network_id, lambda: scan_network_content(network_id))
+        if with_errors:
+            return {"content": list(result["content"]), "scan_errors": list(result["scan_errors"])}
+        return list(result["content"])
 
-    def scan_network_content(network_id: str) -> list[dict[str, Any]]:
+    def scan_network_content(network_id: str) -> dict[str, Any]:
         fetched_ids = local_content_ids()
         items: list[dict[str, Any]] = []
         self_record = self_peer_record(network_id)
@@ -1150,32 +1155,43 @@ def create_app(store: RynmeshStore | None = None):
         # timeout once per device in a row.
         listing_timeout = min(_fetch_timeout(), CONTENT_LISTING_TIMEOUT_S)
 
-        def listing_of(target: tuple[dict[str, Any], str]) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        def listing_of(target):
             peer, endpoint = target
             try:
-                return peer, active_store.list_peer_content(endpoint, timeout_s=listing_timeout)
-            except (PeerTransportError, StoreError, OSError):
-                return peer, None
+                listing = active_store.list_peer_content(endpoint, expected_peer_id=peer["peer_id"], timeout_s=listing_timeout)
+                info = listing.get("peer", {})
+                if info.get("peer_id") != peer["peer_id"]:
+                    return [], {"peer_id": peer["peer_id"], "code": "peer_identity_mismatch"}
+                provider = dict(peer)
+                provider.update({key: info[key] for key in ("node_name", "machine_name") if key in info})
+                return [content_item(raw, provider=provider, fetched_ids=fetched_ids)
+                        for raw in listing.get("content", []) if isinstance(raw, dict)], None
+            except PeerTransportError as exc:
+                code = str(exc).split(":", 1)[0]
+                if not re.fullmatch(r"peer_[a-z_]+", code):
+                    code = "peer_scan_failed"
+            except (StoreError, OSError):
+                code = "peer_scan_failed"
+            except Exception:
+                code = "peer_scan_failed"
+            return [], {"peer_id": peer["peer_id"], "code": code}
 
-        results: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
+        results = []
         if targets:
             from concurrent.futures import ThreadPoolExecutor
 
             with ThreadPoolExecutor(max_workers=min(CONTENT_SCAN_PARALLELISM, len(targets)),
                                     thread_name_prefix="ryn-content-scan") as pool:
                 results = list(pool.map(listing_of, targets))
-        for peer, listing in results:
-            if listing is None:
-                continue
-            provider = dict(peer)
-            provider.update(dict(listing.get("peer", {})))
-            for raw in listing.get("content", []):
-                if isinstance(raw, dict):
-                    items.append(content_item(raw, provider=provider, fetched_ids=fetched_ids))
+        scan_errors = []
+        for content, error in results:
+            items.extend(content)
+            if error:
+                scan_errors.append(error)
         deduped: dict[tuple[str, str], dict[str, Any]] = {}
         for item in items:
             deduped[(item["content_id"], item["provider_peer_id"])] = item
-        return sorted(
+        content = sorted(
             deduped.values(),
             key=lambda item: (
                 float(item.get("distribution_weight", 0)),
@@ -1183,6 +1199,7 @@ def create_app(store: RynmeshStore | None = None):
             ),
             reverse=True,
         )
+        return {"content": content, "scan_errors": scan_errors}
 
     def filtered_peers(
         items: list[dict[str, Any]], request: FastAPIRequest
@@ -1752,9 +1769,13 @@ def create_app(store: RynmeshStore | None = None):
         return await run_in_threadpool(work)
 
     @app.get("/api/local/content")
-    def local_content(request: FastAPIRequest) -> list[dict[str, Any]]:
+    def local_content(request: FastAPIRequest) -> list[dict[str, Any]] | dict[str, Any]:
         local_control(request)
-        return filtered_content(network_content(control_network_id()), request)
+        scan = network_content(control_network_id(), with_errors=True)
+        content = filtered_content(scan["content"], request)
+        if request.query_params.get("include_scan_errors") == "1":
+            return {"content": content, "scan_errors": scan["scan_errors"]}
+        return content
 
     @app.get("/api/local/content/{content_id}")
     def local_content_detail(content_id: str, request: FastAPIRequest) -> dict[str, Any]:
@@ -2461,13 +2482,15 @@ def create_app(store: RynmeshStore | None = None):
             query = str(body.get("text", "")).strip()
             digest = _digest_service().last_digest() or {}
             provider = _model_provider()
-            content_items = network_content(control_network_id())
+            scan = network_content(control_network_id(), with_errors=True)
+            content_items = scan["content"]
             result = ask_service.answer(
                 query,
                 provider=provider,
                 digest_items=digest.get("items", []),
                 content_items=content_items,
             )
+            result["scan_errors"] = scan["scan_errors"]
             _audit().append(
                 "rec",
                 "Search & Ask completed" if provider is not None else "Search & Ask had no model",

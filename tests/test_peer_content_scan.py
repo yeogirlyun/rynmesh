@@ -36,7 +36,8 @@ def node(tmp_path, monkeypatch):
     lock = threading.Lock()
     delay = {"seconds": 1.5}
 
-    def slow_listing(endpoint, *, timeout_s):
+    def slow_listing(endpoint, *, timeout_s, expected_peer_id):
+        assert expected_peer_id
         with lock:
             calls.append((endpoint, timeout_s))
         time.sleep(delay["seconds"])
