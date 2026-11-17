@@ -128,32 +128,55 @@ def context_metadata(record, model=None, *, overrides=True):
     return {"context_window": FALLBACK_CONTEXT_WINDOW, "context_window_basis": "unknown_fallback", "context_window_known": False}
 
 
-def defaults(record, model=None):
-    model = model if model is not None else next(iter(record.get("models", [])), "")
-    window = context_metadata(record, model, overrides=False)["context_window"]
+def output_metadata(record, model, *, overrides=True):
+    manual = record.get("model_settings", {}).get(model, {}).get("overrides", {}) if overrides else {}
+    if "max_output_tokens" in manual:
+        return {"max_output_tokens": manual["max_output_tokens"], "max_output_tokens_known": True,
+                "max_output_basis": "model_override"}
+    window = context_metadata(record, model, overrides=overrides)["context_window"]
     metadata = record.get("model_metadata", {}).get(model, {})
     meta_output = metadata.get("max_output_tokens") if isinstance(metadata, dict) else None
     vendor_output = _known_vendor_max_output_tokens(model)
     source_output = record.get("max_output_tokens")
     explicit_output = record.get("max_output_tokens_explicit")
+    basis = "unknown_fallback"
     if explicit_output is True and type(source_output) is int:
         max_output = source_output
+        basis = "source_configuration"
     elif explicit_output is False:
         if type(meta_output) is int and 1 <= meta_output <= min(393216, window):
             max_output = meta_output
+            basis = "provider_model_metadata"
         elif vendor_output is not None and vendor_output <= window:
             max_output = vendor_output
+            basis = "vendor_family_default"
         else:
             max_output = source_output if type(source_output) is int else 4096
+            if type(source_output) is int and source_output != 4096:
+                basis = "legacy_source_configuration"
     else:
         if type(source_output) is int and source_output != 4096:
             max_output = source_output
+            basis = "legacy_source_configuration"
         elif type(meta_output) is int and 1 <= meta_output <= min(393216, window):
             max_output = meta_output
+            basis = "provider_model_metadata"
         elif vendor_output is not None and vendor_output <= window:
             max_output = vendor_output
+            basis = "vendor_family_default"
         else:
             max_output = source_output if type(source_output) is int else 4096
+    if basis == "unknown_fallback":
+        context = context_metadata(record, model, overrides=overrides)
+        max_output = min(16384, context["context_window"] // 4) if context["context_window_known"] else 8192
+    return {"max_output_tokens": max_output, "max_output_tokens_known": basis != "unknown_fallback",
+            "max_output_basis": basis}
+
+
+def defaults(record, model=None):
+    model = model if model is not None else next(iter(record.get("models", [])), "")
+    window = context_metadata(record, model, overrides=False)["context_window"]
+    max_output = output_metadata(record, model, overrides=False)["max_output_tokens"]
     source_idle = record.get("stream_idle_seconds")
     source_max_request = record.get("max_request_seconds")
     source_stream_retries = record.get("stream_max_retries")
@@ -235,7 +258,7 @@ def validate(values):
 def effective(record, model):
     row = record.get("model_settings", {}).get(model, {})
     overrides = row.get("overrides", {})
-    return {**defaults(record, model), **copy.deepcopy(overrides)}
+    return {**defaults(record, model), **copy.deepcopy(overrides), **output_metadata(record, model)}
 
 
 def reconcile(record, old):
@@ -248,12 +271,12 @@ def reconcile(record, old):
         prior = old.get("model_settings", {}).get(model, {})
         proposed = record.get("model_settings", {}).get(model, prior)
         overrides = validate(proposed.get("overrides", {}))
-        values = {**defaults(record, model), **overrides}
+        values = {key: value for key, value in effective(record, model).items() if key in FIELDS}
         # Existing source defaults may contain vendor-specific historical values.
         # Migration must not make the node unloadable; new per-model overrides
         # are strictly validated above and by the owner configuration endpoint.
         validate({k: v for k, v in values.items() if k != "request_defaults"})
-        prior_values = effective(old, model)
+        prior_values = {key: value for key, value in effective(old, model).items() if key in values}
         exists = model in old.get("models", [])
         inference_same = exists and common_same and all(values[k] == prior_values[k] for k in DESTINATION_FIELDS)
         rules_same = inference_same and values == prior_values and (model in record.get("shared_models", [])) == (model in old.get("shared_models", []))

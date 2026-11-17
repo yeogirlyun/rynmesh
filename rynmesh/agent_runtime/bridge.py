@@ -492,6 +492,7 @@ class AgentModelBridge:
 
         watcher = threading.Thread(target=watch, name="ryn-agent-inference-cancel", daemon=True)
         acquired = False
+        learned_output = None
         try:
             if manager:
                 wait_started = time.monotonic()
@@ -580,11 +581,28 @@ class AgentModelBridge:
                 if getattr(manager.adapter, "supports_conversation_scope", False) is True:
                     # This process is the authenticated requester of its own adapter.
                     options["conversation_scope"] = codex_threads.scope("local", window)
-                with internal_image_scope(image_profile), model_request_scope(restricted=restricted, before_dispatch=check_data_release):
-                    if expected_destination is not None and target["source"] == "local_service":
-                        result = manager.adapter.call_bound("chat", target["local_model_binding"], check_data_release, chat, **options)
-                    else:
-                        result = manager.adapter.chat(chat, **options)
+                for attempt in range(2):
+                    try:
+                        with internal_image_scope(image_profile), model_request_scope(restricted=restricted, before_dispatch=check_data_release):
+                            if expected_destination is not None and target["source"] == "local_service":
+                                result = manager.adapter.call_bound("chat", target["local_model_binding"], check_data_release, chat, **options)
+                            else:
+                                result = manager.adapter.chat(chat, **options)
+                        break
+                    except AdapterError as exc:
+                        diagnostics = exc.diagnostics
+                        if (attempt or target.get("max_output_tokens_known") is not False or maximum <= 4096
+                                or diagnostics.get("http_status") != 400 or diagnostics.get("output_tokens_too_large") is not True
+                                or cancelled() or expired()):
+                            raise
+                        check_data_release()
+                        learned_output = 4096
+                        policy = output_policy.select({**target, "max_output_tokens": 4096, "max_output_tokens_known": True},
+                                                      messages, tool_specs, request_cap=max_output_tokens)
+                        maximum = policy["effective_cap"]
+                        chat["max_tokens"] = maximum
+                        if request_deadline is not None:
+                            options["timeout_s"] = max(0.0, request_deadline - time.monotonic())
             else:
                 # execute_order seals the complete structured chat and uses the
                 # existing authenticated consumer transport and permission check.
@@ -642,6 +660,8 @@ class AgentModelBridge:
             except ModelEventError:
                 usage, finish = self._response_metadata(result, target)
                 raise AgentModelResponseError(usage, finish) from None
+            if learned_output is not None:
+                self.catalog.learn_output_limit(target, learned_output)
             return response
         except DataReleaseError as exc:
             raise AgentError(str(exc)) from None

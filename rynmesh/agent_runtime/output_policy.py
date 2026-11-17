@@ -73,7 +73,10 @@ def admission_bytes_per_token(model):
 
 
 def configured_output(model):
-    configured = model.get("max_output_tokens", 4096)
+    configured = model.get("max_output_tokens")
+    if model.get("max_output_tokens_known") is False or configured is None:
+        metadata = context_metadata(model)
+        return min(16384, metadata["context_window_tokens"] // 4) if metadata["context_window_known"] else 8192
     if type(configured) is not int or configured < 1:
         raise AgentError("agent_token_limit")
     return configured

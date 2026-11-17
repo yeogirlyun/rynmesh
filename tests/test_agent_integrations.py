@@ -378,6 +378,14 @@ def test_revalidated_changed_source_keeps_model_id_but_cannot_reuse_old_destinat
 def test_runtime_real_tools_preview_approval_change_and_verify(node, monkeypatch):
     app, store = node
     record, model_id = add_source(app, models=["model-a", "model-b"])
+    # This scripted scenario tests approval and verification, not checkpoint
+    # generation. Declare room for its two complete model-catalog receipts;
+    # unknown output now correctly reserves 8192 and compacts earlier.
+    sources = app.state.llm_agent_services["source_store"]
+    record.update(context_window=128000, context_window_mode="manual")
+    sources.save(record)
+    record.update(status="ready", tool_support=dict.fromkeys(record["models"], "supported"))
+    sources.save(record)
     store.personal_space.create("Integration space")
     store.personal_space.set_policy("space")
     model, tools, catalog = build_agent_integrations(app, store, store.home)

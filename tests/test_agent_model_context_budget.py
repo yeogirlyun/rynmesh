@@ -109,7 +109,8 @@ def test_unknown_window_uses_labelled_conservative_fallback(tmp_path, metadata):
     policy = runtime.settings()["context_budget_policy"]
     assert policy["context_window_tokens"] == 32768
     assert policy["context_window_known"] is False and policy["context_window_basis"] == "unknown_fallback"
-    assert runtime._context_limit({"model_id": "local:test", "limits": {"max_context_chars": None}}) == (32768 - 4096 - 512) * 3
+    reserve = 4096 if "max_output_tokens" in metadata else 8192
+    assert runtime._context_limit({"model_id": "local:test", "limits": {"max_context_chars": None}}) == (32768 - reserve - 512) * 3
     assert policy["effective_max_context_bytes"] < 120000
 
 

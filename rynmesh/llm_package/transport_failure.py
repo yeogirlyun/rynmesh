@@ -250,6 +250,11 @@ def describe(exc, phase="request", envelope=None):
         tokens = [t for t in (code, err_type) if t]
         tokens_l = [t.lower() for t in tokens]
 
+        if exc.code == 400 and any(name in (param + " " + msg).lower() for name in
+                                   ("max_tokens", "max_completion_tokens", "max_output_tokens")) and any(
+                marker in msg_l for marker in ("at most", "exceed", "too large", "less than", "maximum", "<=", "upper bound")):
+            result["output_tokens_too_large"] = True
+
         if (
             exc.code == 529
             or any(t in {"overloaded_error", "overloaded"} for t in tokens_l)
