@@ -268,6 +268,9 @@ class ModelCatalog:
                 "sharing": model in sources.shared_models(record), "share_scope": policy["effective"]["share_scope"],
                 "sharing_basis": "local_configuration", "sharing_configuration_known": True,
                 "destination_binding_supported": True}
+            rows[model_ref].update(reasoning_metadata(
+                policy["effective"].get("supported_reasoning_efforts"),
+                policy["effective"].get("request_defaults", {}).get("reasoning_effort")))
             rows[model_ref].update(catalog_image_fields(rows[model_ref], source_record=record))
         # CLI sources are containers; each upstream model keeps its identity and diagnostics.
         for row in list(rows.values()):

@@ -188,8 +188,8 @@ def test_unknown_usage_does_not_become_zero(protocol):
 
 @pytest.mark.parametrize("protocol,options", [
     (MESSAGES, {"thinking": {"type": "enabled", "budget_tokens": 2048}}),
-    (MESSAGES, {"enable_thinking": True}), (RESPONSES, {"enable_thinking": True}),
-    (MESSAGES, {"reasoning_effort": "low"}), (RESPONSES, {"stop": ["STOP"]}),
+    (MESSAGES, {"enable_thinking": "true"}), (RESPONSES, {"thinking": {"type": "enabled", "budget_tokens": 2048}}),
+    (MESSAGES, {"reasoning_effort": "invented"}), (RESPONSES, {"stop": ["STOP"]}),
     (RESPONSES, {"unknown_feature": True}),
 ])
 def test_unsupported_native_features_are_explicit(protocol, options):

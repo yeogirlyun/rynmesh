@@ -593,10 +593,26 @@ def make_request(
             enabled = template["enable_thinking"]
     if enabled is not None and type(enabled) is not bool:
         raise ValueError("invalid native thinking parameter")
+    native_thinking = None
     if thinking is not None and thinking is not False and thinking != {"type": "disabled"}:
-        raise ValueError("native thinking configuration is not supported")
-    if enabled is True:
-        raise ValueError("native thinking configuration is not supported")
+        if (protocol != MESSAGES or not isinstance(thinking, dict)
+                or set(thinking) != {"type", "budget_tokens"} or thinking["type"] != "enabled"
+                or type(thinking["budget_tokens"]) is not int
+                or not 1024 <= thinking["budget_tokens"] < maximum):
+            raise ValueError("native thinking configuration is not supported")
+        native_thinking = _copy(thinking)
+    if protocol == MESSAGES:
+        if "reasoning_effort" in body or (enabled is True and native_thinking is None):
+            from .reasoning import validate_effort
+            effort = validate_effort(body.get("reasoning_effort", "medium"))
+            if effort == "none":
+                native_thinking = {"type": "disabled"}
+            else:
+                requested = {"minimal": 2048, "low": 2048, "medium": 8192, "high": 16384}.get(effort, 32000)
+                budget_tokens = requested if requested < maximum else maximum - 1024
+                native_thinking = {"type": "enabled", "budget_tokens": budget_tokens} if budget_tokens >= 1024 else None
+        elif native_thinking is None and (thinking is not None or enabled is False):
+            native_thinking = {"type": "disabled"}
     active_profile = current_internal_image_profile()
     if active_profile is not None:
         verify_messages_against_profile(body.get("messages"), active_profile)
@@ -604,6 +620,8 @@ def make_request(
     result = {"model": model, "stream": body.get("stream", False), "max_output_tokens" if protocol == RESPONSES else "max_tokens": maximum}
     for key in ("temperature", "top_p"):
         if key in body:
+            if key == "temperature" and native_thinking and native_thinking["type"] == "enabled":
+                continue
             if key == "temperature":
                 temperature = body[key]
                 upper = 1 if protocol == MESSAGES else 2
@@ -627,13 +645,11 @@ def make_request(
         if eff_prompt_cache != "off" and "prompt_cache_key" in body:
             result["prompt_cache_key"] = body["prompt_cache_key"]
     else:
-        if "reasoning_effort" in body:
-            raise ValueError("native Messages reasoning effort is not supported")
         result["messages"] = items
         if system:
             result["system"] = system
-        if thinking is not None or enabled is False:
-            result["thinking"] = {"type": "disabled"}
+        if native_thinking is not None:
+            result["thinking"] = native_thinking
         if body.get("stop") is not None:
             stop = body["stop"]
             if not isinstance(stop, str) and not (isinstance(stop, list) and all(isinstance(item, str) for item in stop)):

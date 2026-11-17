@@ -80,8 +80,8 @@ def test_invalid_effort_rejected_without_creating_a_task(tmp_path, effort):
 
 
 @pytest.mark.parametrize("change", [
-    {"adapter": "openai_compatible", "source": "local_api"},
-    {"adapter": "antigravity_cli"},
+    {"adapter": "openai_compatible", "source": "local_api", "supported_reasoning_efforts": []},
+    {"adapter": "antigravity_cli", "supported_reasoning_efforts": []},
     {"supported_reasoning_efforts": ["medium"]},
     {"supported_reasoning_efforts": []},
 ])
@@ -97,8 +97,10 @@ def test_only_selected_codex_capabilities_authorize_effort(tmp_path, change):
     assert "reasoning_effort" not in calls[-1]
 
 
-def test_message_does_not_mutate_effort_of_an_inflight_request(tmp_path):
-    runtime, model, calls, _ = effort_runtime(tmp_path)
+@pytest.mark.parametrize("adapter", ["codex_cli", "openai_compatible"])
+def test_message_does_not_mutate_effort_of_an_inflight_request(tmp_path, adapter):
+    runtime, model, calls, rows = effort_runtime(tmp_path)
+    rows[0]["adapter"] = adapter
     entered, release = threading.Event(), threading.Event()
     def complete(*args, **kwargs):
         calls.append(copy.deepcopy(kwargs))
@@ -149,8 +151,8 @@ def test_changed_capabilities_reject_saved_effort_before_dispatch(tmp_path):
     created = runtime.create({"message": "hello", "reasoning_effort": "ultra"})
     rows[0]["supported_reasoning_efforts"] = ["low"]
     advance(runtime)
-    assert runtime.get(created["id"])["error"] == "agent_reasoning_effort_unsupported"
-    assert not calls
+    assert runtime.get(created["id"])["status"] == "completed"
+    assert calls[-1]["reasoning_effort"] == "low"
 
 
 def test_real_runtime_bridge_cli_proposal_path_sends_effort_to_turn_start(tmp_path, monkeypatch):

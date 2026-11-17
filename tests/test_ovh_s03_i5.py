@@ -356,7 +356,7 @@ def test_t10_compact_prompt_setting_overrides_body_and_keeps_hard_maximum_clause
 
 
 def test_t11_low_reasoning_override_only_sent_when_model_supports_low(tmp_path):
-    """T11: Compaction passes reasoning_effort='low' only when the model supports 'low', else keeps task effort."""
+    """T11: Explicit task effort wins; low remains a default only without an owner choice."""
     recorded_efforts: list[tuple[str, str | None]] = []
 
     class EffortModel:
@@ -407,9 +407,9 @@ def test_t11_low_reasoning_override_only_sent_when_model_supports_low(tmp_path):
         assert rt.get(t["id"])["status"] == "completed"
         return list(recorded_efforts)
 
-    # Case 1: Model supports 'low' while task requested 'high' -> compact uses 'low', main uses 'high'
+    # S12-I2: Both compaction and the main request honor an explicit high selection.
     efforts_with_low = run_case("supports_low", ["low", "medium", "high"], "high")
-    assert ("compact", "low") in efforts_with_low
+    assert ("compact", "high") in efforts_with_low
     assert ("main", "high") in efforts_with_low
 
     # Case 2: Model supports only ['medium', 'high'] (no 'low') -> compact keeps task's 'high'

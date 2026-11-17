@@ -6,7 +6,10 @@ import hashlib
 import json
 import uuid
 
+from .reasoning import EFFORTS
+
 FIELDS = {
+    "supported_reasoning_efforts",
     "context_window",
     "max_output_tokens",
     "request_defaults",
@@ -179,6 +182,12 @@ def defaults(record, model=None):
 def validate(values):
     if not isinstance(values, dict) or set(values) - FIELDS:
         raise ValueError("model_configuration_invalid")
+    if "supported_reasoning_efforts" in values:
+        levels = values["supported_reasoning_efforts"]
+        if (not isinstance(levels, list) or len(levels) > 8
+                or any(not isinstance(level, str) or level not in EFFORTS for level in levels)
+                or len(set(levels)) != len(levels)):
+            raise ValueError("model_supported_reasoning_efforts_invalid")
     for key, low, high in (
         ("context_window", 256, 2000000),
         ("max_output_tokens", 1, 393216),
@@ -209,10 +218,15 @@ def validate(values):
         raise ValueError("model_temperature_invalid")
     if "top_p" in request and (type(request["top_p"]) not in (int, float) or not 0 < request["top_p"] <= 1):
         raise ValueError("model_top_p_invalid")
-    if "reasoning_effort" in request and (not isinstance(request["reasoning_effort"], str) or request["reasoning_effort"] not in {"none", "minimal", "low", "medium", "high", "xhigh", "max"}):
+    if "reasoning_effort" in request and (not isinstance(request["reasoning_effort"], str) or request["reasoning_effort"] not in EFFORTS):
         raise ValueError("model_reasoning_effort_invalid")
-    if "thinking" in request and request["thinking"] not in ({"type": "enabled"}, {"type": "disabled"}):
-        raise ValueError("model_thinking_invalid")
+    if "thinking" in request:
+        thinking = request["thinking"]
+        if thinking not in ({"type": "enabled"}, {"type": "disabled"}):
+            if (not isinstance(thinking, dict) or set(thinking) != {"type", "budget_tokens"}
+                    or thinking["type"] != "enabled" or type(thinking["budget_tokens"]) is not int
+                    or not 1024 <= thinking["budget_tokens"] < values.get("max_output_tokens", 393216)):
+                raise ValueError("model_thinking_invalid")
     if values.get("max_output_tokens", 1) > values.get("context_window", 2000000):
         raise ValueError("model_output_exceeds_context")
     return copy.deepcopy(values)
