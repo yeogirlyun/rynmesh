@@ -44,8 +44,8 @@ def test_runtime_keeps_exact_refs_outside_summary_and_across_encrypted_restart(t
     short = checkpoint_refs.label(reference)
     runtime, model, _, key = make_runtime(tmp_path, assistant(f"Read {short}; no writes."), assistant("Observed only."))
     runtime.tools = ManyTools()
-    runtime.update_settings({"max_context_chars": 12000})
     row = runtime.create({"message": "Inspect only this document. Never modify anything."})
+    cap = fit_window(runtime, row["id"], 12000, small_window=True)  # historical 12000 plus prompt growth
     history = exchange(reference, content={"resource_ref": reference, "text": "e" * 8100})
     runtime.store.transaction(lambda data: data["tasks"][row["id"]]["messages"].extend(history))
     original = runtime.store.read()["tasks"][row["id"]]["messages"]
@@ -55,7 +55,7 @@ def test_runtime_keeps_exact_refs_outside_summary_and_across_encrypted_restart(t
     assert reference not in json.dumps(model.calls[0][1])
     assert reference in json.dumps(model.calls[-1][1])
     assert saved["messages"][:len(original)] == original
-    assert all(len(encoded(call[1])) + len(encoded(call[2])) <= 12000 for call in model.calls)
+    assert all(len(encoded(call[1])) + len(encoded(call[2])) <= cap for call in model.calls)
     restored = AgentRuntime(AgentStore(tmp_path, key), model, runtime.tools, runtime.catalog)
     assert reference in json.dumps(restored._context(restored.store.read()["tasks"][row["id"]]))
     assert reference not in (tmp_path / "sessions.json").read_text(encoding="utf-8")
@@ -77,8 +77,8 @@ def test_reference_map_cannot_grow_without_limit_or_silently_lose_values():
 def test_pinned_references_count_toward_hard_context_limit_before_inference(tmp_path):
     runtime, model, _, _ = make_runtime(tmp_path)
     runtime.tools = ManyTools()
-    runtime.update_settings({"max_context_chars": 12000})
     row = runtime.create({"message": "Inspect the documents without changing them."})
+    fit_window(runtime, row["id"], 12000, small_window=True)  # historical 12000 plus prompt growth
     history = exchange("gAAAA" + "A" * 4000, content={"entries": [
         {"resource_ref": "gAAAA" + character * 4000} for character in "ABCD"]})
     runtime.store.transaction(lambda data: data["tasks"][row["id"]]["messages"].extend(history))
@@ -96,7 +96,7 @@ def test_schema_cache_yields_to_exact_references_without_dropping_evidence(tmp_p
         assistant("Three authorized resources were observed; no mutation occurred."), assistant("Inspection recorded."))
     runtime.tools = tools
     row = runtime.create({"message": "Inspect the documents. Never share or modify them."})
-    cap = fit_window(runtime, row["id"], 12000, small_window=True)  # historical 12000 plus prompt growth
+    cap = fit_window(runtime, row["id"], 12000)  # historical 12000 plus prompt growth; no small-window clamp: the prompt alone is now ~10 KB
     advance(runtime, 2)
     # The credential-input contract also occupies the fixed 12 KB context.
     # Leave room for that immutable schema while still forcing cache release.

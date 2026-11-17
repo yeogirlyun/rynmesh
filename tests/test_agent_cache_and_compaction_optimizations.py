@@ -419,7 +419,7 @@ def test_proactive_soft_landing_wrap_up_stops_on_owner_budget_without_auto_renew
     )
 
     runtime, model, tools, _ = make_runtime(tmp_path, step1_resp, step2_resp, step3_resp)
-    row = runtime.create({"message": "Inspect services", "budget_limits": {"max_total_tokens": 25000}})
+    row = runtime.create({"message": "Inspect services", "budget_limits": {"max_total_tokens": 26000}})
     advance(runtime, 4)
     wrapped = runtime.get(row["id"])
     assert wrapped["status"] == "failed" and wrapped["error"] == "agent_token_budget_exhausted"
@@ -436,7 +436,7 @@ def test_proactive_soft_landing_wrap_up_stops_on_owner_budget_without_auto_renew
 
     # "继续" starts a new run inside the same owner budget; the limit is not raised.
     resumed = runtime.add_message(row["id"], {"message": "继续", "expected_revision": wrapped["revision"]})
-    assert resumed["budget"]["limits"]["max_total_tokens"] == 25000
+    assert resumed["budget"]["limits"]["max_total_tokens"] == 26000
     assert resumed["budget"]["lifetime"]["charged_tokens"] == 8600
     assert not any(ev.get("type") == "budget_auto_extended" for ev in resumed["events"])
     advance(runtime, 4)
@@ -444,7 +444,7 @@ def test_proactive_soft_landing_wrap_up_stops_on_owner_budget_without_auto_renew
     assert final["status"] == "completed"
     assert final["result"] == "Completed after user continuation."
     assert final["budget"]["lifetime"]["charged_tokens"] == 9700
-    assert final["budget"]["limits"]["max_total_tokens"] == 25000
+    assert final["budget"]["limits"]["max_total_tokens"] == 26000
 
 def test_code_mode_tab_ax_decorator_and_output_dedup(tmp_path):
     from types import SimpleNamespace
