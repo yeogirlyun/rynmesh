@@ -128,7 +128,7 @@ def test_t3_owner_followup_restores_normal_interactive_approval(tmp_path, before
 
 
 def test_t4_global_confirmation_does_not_block_automatic_cron_or_explicit_metadata(tmp_path):
-    runtime, model, tools, client, worker, seen = env(tmp_path, global_mode="confirm_changes", explicit=True)
+    runtime, model, tools, client, worker, seen = env(tmp_path, global_mode="confirm_changes")  # explicit-approval tools stay blocked in cron (card T1)
     task_id, run_id, auto_id = trigger(runtime, client)
     model.responses = [assistant(name="share_service", args={"service_id": "allowed"}), assistant("Shared")]
     assert finish(runtime, task_id)["status"] == "completed"
