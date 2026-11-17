@@ -170,14 +170,14 @@ class ResourceWrites:
         plugin = self.resources.nas
         with plugin.lock:
             gate = plugin.source_locks.setdefault(grant["connection_id"], threading.RLock())
-        # Match NAS lock order (source gate, then configuration lock). Keep the
-        # approved generation stable through this one bounded network request.
-        # A control change after dispatch cannot undo an already sent write.
-        with gate, plugin.lock:
+        # Serialize one connection's writes without blocking other connections
+        # or catalog access on the global configuration lock during network IO.
+        with gate:
             try:
-                self.resources.validate_context(context, cheap_only=True)
-                if cancelled():
-                    reject("agent_cancelled")
+                with plugin.lock:
+                    self.resources.validate_context(context, cheap_only=True)
+                    if cancelled():
+                        reject("agent_cancelled")
             except AgentToolRejected as exc:
                 self.ledger.update(operation_id, "not_executed", error=str(exc))
                 raise
@@ -193,6 +193,10 @@ class ResourceWrites:
                     self.ledger.update(operation_id, "not_executed", error=code)
                     reject(code)
                 raise  # Connection loss after a remote commit stays unknown.
+            with plugin.lock:
+                current = next((source for source in plugin.state["sources"] if source["id"] == grant["connection_id"]), None)
+                if current is None or self.resources._generation(current) != grant["connection_access_generation"]:
+                    result["generation_changed"] = True
         # This durable business receipt precedes the Agent task transaction.
         self.ledger.update(operation_id, "confirmed", result=result, confirmed_at=datetime.now(timezone.utc).isoformat())
         return result
