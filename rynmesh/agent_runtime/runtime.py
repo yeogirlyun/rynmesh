@@ -101,7 +101,7 @@ PUBLIC_FIELDS = ("fork", "id", "client_request_id", "title", "model_id", "reason
                  "model_destination", "local_execution", "project", "verification_evidence", "reconciliation", "archived", "result_refs", "file_artifact_revision",
                  "conversation_revision", "conversation_event_cursor", "source", "automation_id", "automation_run_id", "automation_kind",
                  "latest_turn_is_silent_heartbeat", "automation_notification", "parent_task_id", "subagent_ids",
-                 "limits_source", "execution_segment", "archive_reason", "continued_from", "continued_to", *PUBLIC_STATE_FIELDS)
+                 "limits_source", "execution_segment", "archive_reason", "continued_from", "continued_to", "context_exhausted", *PUBLIC_STATE_FIELDS)
 CONTINUATION_PREFIX = ("[Continued from an earlier conversation that grew too long. The summary below was "
                        "written by Ryn from that conversation; it is context, not a new instruction.]\n\n")
 CONTINUATION_SEPARATOR = "\n\n[The owner's new message follows.]\n\n"
@@ -152,6 +152,7 @@ def public_task(row: dict, *, summary: bool = False, settings: dict | None = Non
     result["completion_event_seq"] = next((item["seq"] for item in reversed(row.get("events", []))
                                            if item["type"] == "completed"), 0)
     result.setdefault("archived", False)
+    result.setdefault("context_exhausted", False)
     result["waiting_for_subagents"] = bool(row.get("subagent_wait") and row["status"] == "queued"
                                            and row.get("queue") and row["queue"][0]["call_id"] == row["subagent_wait"]["call_id"])
     result["skills"] = [{key: value for key, value in skill.items() if key != "content"} for skill in row.get("skills", [])]
@@ -2842,6 +2843,7 @@ class AgentRuntime(AgentLoop):
                 row["continuation_request_fingerprint"] = _continuation["fingerprint"]
                 row["continuation_root"] = source.get("continuation_root", source["id"])
                 source["continued_to"] = row["id"]
+                source["context_exhausted"] = False
                 event(source, "continued_in_new_task", task_id=row["id"])
                 event(row, "continued_from", task_id=source["id"])
             self._record_skill_events_in_tx(
@@ -2906,6 +2908,8 @@ class AgentRuntime(AgentLoop):
             check_version(row, value, goal=intent is not None and requested_intent != "auto")
             if not data["settings"]["enabled"]:
                 raise AgentError("agent_disabled")
+            if row.get("context_exhausted"):
+                raise ContinueInNewTask()
             if acknowledgeable(row):
                 if intent is not None and not allowed_actions(row, data["settings"])[intent]["enabled"]:
                     raise AgentError("agent_operation_unresolved")
@@ -3064,7 +3068,8 @@ class AgentRuntime(AgentLoop):
         """Whether this message, as the first message of a continued conversation, fits the model."""
         first_text = CONTINUATION_PREFIX + event_compaction.continuation_summary(row) + CONTINUATION_SEPARATOR + content
         first = {**message, "content": first_text if isinstance(message.get("content"), str) else message["content"]}
-        alone = {**prospective, "messages": [first], "goal": {**row["goal"], "text": first_text, "constraints": []}}
+        alone = {**prospective, "messages": [first], "context_checkpoint": None, "tool_menu": None,
+                 "goal": {**row["goal"], "text": first_text, "constraints": []}}
         try:
             (specs, _), authority_bytes = self._menu(alone)
         except AgentError:
@@ -3082,6 +3087,8 @@ class AgentRuntime(AgentLoop):
             if child.get("continuation_request_fingerprint") != fingerprint:
                 raise AgentError("agent_continuation_already_exists")
             return public_task(child, settings=data["settings"], data=data)
+        if old.get("context_exhausted") and not self._continuation_fits(old, old, {"role": "user", "content": content}, content):
+            raise AgentError("agent_context_limit")
         summary = event_compaction.continuation_summary(old)
         body = {"message": CONTINUATION_PREFIX + summary + CONTINUATION_SEPARATOR + content,
                 "model_id": old["model_id"],
@@ -3096,6 +3103,26 @@ class AgentRuntime(AgentLoop):
         if isinstance(old.get("project"), dict) and old["project"].get("id"):
             body["project_id"] = old["project"]["id"]
         return self.create(body, _continuation={"id": task_id, "revision": old["revision"], "fingerprint": fingerprint})
+
+    def _auto_continue_context_exhausted(self, task_id: str) -> None:
+        row = self.store.read().get("tasks", {}).get(task_id)
+        if (not row or row["status"] != "failed" or not row.get("context_exhausted")
+                or row.get("permission_mode") != "automatic"
+                or event_compaction.continuation_depth(row.get("title") or "") >= 5):
+            return
+        exhausted = next((item for item in reversed(row["events"]) if item["type"] == "context_exhausted"), None)
+        if exhausted is None:
+            return
+        content = ("Continue the unfinished work from the previous conversation.\n\n" + row["goal"]["text"])
+        content = content.encode("utf-8")[:4000].decode("utf-8", errors="ignore")
+        value = {"message": content, "client_request_id": str(uuid.uuid5(
+            uuid.NAMESPACE_URL, f"ryn-context-exhausted:{task_id}:{exhausted['seq']}"))}
+        try:
+            self._continue_in_new_task(task_id, value, content)
+        except AgentError:
+            # A full task quota, a changed owner decision or an oversized first
+            # message leaves the failed conversation available for the owner.
+            return
 
     def _edit_message(
         self,
@@ -4042,6 +4069,11 @@ class AgentRuntime(AgentLoop):
         error_details: str | None = None,
         diagnostics: dict | None = None,
     ) -> None:
+        context_metrics = None
+        if code == "agent_context_limit":
+            current = task(self.store.read(), task_id)
+            context_metrics = {"request_bytes": self._request_context_bytes(current),
+                               "capacity_bytes": self._effective_capacity(current)[0]}
         def fail(data):
             from .execution_policy import verified_read_classification
             row = task(data, task_id)
@@ -4123,6 +4155,9 @@ class AgentRuntime(AgentLoop):
                     safe_diag = diagnostic_log.safe_diagnostics(diagnostics)
                     if row.get("connection_recovery"):
                         retry_policy.reset(row)
+                    if context_metrics is not None:
+                        row["context_exhausted"] = True
+                        event(row, "context_exhausted", **context_metrics)
                     row.update(status="failed", error=code, approved=None)
                     event(
                         row,
@@ -4133,6 +4168,8 @@ class AgentRuntime(AgentLoop):
                     )
                 subagents.on_subagent_settled_in_tx(data, row)
         self.store.transaction(fail)
+        if context_metrics is not None:
+            self._auto_continue_context_exhausted(task_id)
 
     def _operation_error(
         self,
@@ -4179,7 +4216,7 @@ class AgentRuntime(AgentLoop):
         error_text: str | None = None,
     ) -> None:
         """Only proven no-side-effect failures may return to the correction loop."""
-        if selected.get("verification"):
+        if selected.get("verification") and code != "agent_context_limit":
             def verification_failed(data):
                 row = task(data, selected["id"])
                 flight = row.get("in_flight") or {}

@@ -235,6 +235,7 @@ export interface AgentTaskSummary {
   /** A conversation that grew too long continues in a linked new one. */
   continued_from?: string;
   continued_to?: string;
+  context_exhausted?: boolean;
   result_refs?: AgentResultRef[];
   file_artifact_revision?: number;
   budget?: AgentBudget;

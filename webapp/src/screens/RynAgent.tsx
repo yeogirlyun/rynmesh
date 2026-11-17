@@ -774,6 +774,19 @@ export default function RynAgent() {
       await rynAgent.task(task.id).then(acceptTask).catch(() => undefined);
     } finally { mutationRef.current = false; setBusy(false); }
   };
+  const continueExhausted = async () => {
+    if (!task || mutationRef.current || controlUncertain || !canUseAgentAction(task, "information", true)) return;
+    const originNavigation = navigationRef.current;
+    mutationRef.current = true; setBusy(true); setError("");
+    try {
+      const next = await submitControl({ task_id: task.id, route: "messages", body: agentMessageBody(task, "继续", "information") });
+      acceptTask(next);
+      if (originNavigation === navigationRef.current) { selectedRef.current = next.id; setSelected(next.id); }
+    } catch (reason) {
+      setError(mutationErrorKey(reason));
+      await rynAgent.task(task.id).then(acceptTask).catch(() => undefined);
+    } finally { mutationRef.current = false; setBusy(false); }
+  };
   const editMessage = async (messageIndex: number, text: string) => {
     if (!task || mutationRef.current || uncertain || controlUncertain || !canUseAgentAction(task, "edit_message")) return false;
     mutationRef.current = true; setBusy(true); setError("");
@@ -1307,7 +1320,9 @@ export default function RynAgent() {
                 const zh = i18n.language.startsWith("zh");
                 const help = agentErrorHelp(task.error!, zh);
                 const actions = help.actions.filter(kind => kind !== "switch_model" || canUseAgentAction(task, "model"));
-                return <section className="ra-task-error" role="alert"><strong>{t("error")}</strong><p>{budgetStopMessage(task, zh) ?? help.text}</p>
+                const full = task.status === "failed" && task.context_exhausted;
+                return <section className="ra-task-error" role="alert"><strong>{t("error")}</strong><p>{full ? zh ? "对话已满，回复任意内容会自动整理并转到新对话" : "This conversation is full. Reply with anything to summarize it and continue in a new conversation." : budgetStopMessage(task, zh) ?? help.text}</p>
+                  {full && <button type="button" disabled={busy || controlUncertain || !enabled} onClick={() => void continueExhausted()}>{zh ? "继续" : "Continue"}</button>}
                   <RynAgentOwnerStopExtendButton task={task} busy={busy || controlUncertain} onChange={acceptTask} />
                   {actions.length > 0 && <div className="ra-error-actions">{actions.map(kind => <button key={kind} type="button" disabled={busy} onClick={() => runErrorAction(kind)}>{agentErrorActionLabel(kind, zh)}</button>)}</div>}
                   <code>{task.error}</code></section>;
