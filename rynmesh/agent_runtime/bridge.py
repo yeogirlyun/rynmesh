@@ -276,6 +276,8 @@ class AgentModelBridge:
             flags["cache_creation_input_tokens"] = cache_created
         if isinstance(data.get("diagnostics"), dict) and data["diagnostics"]:
             flags["diagnostics"] = copy.deepcopy(data["diagnostics"])
+        if isinstance(data.get("server_model"), str) and data["server_model"]:
+            flags["server_model"] = data["server_model"][:160]
         return {"message": message, "finish_reason": finish, "usage": usage, "output_policy": policy, **flags}
 
     def complete(self, model_id, messages, tool_specs, cancelled, on_event=None, *, expected_destination=None, max_output_tokens=None, deadline=None, on_request_policy=None, reasoning_effort=None, conversation=None, cache_key=None, request_id=None, data_policy_state=None):
@@ -632,6 +634,9 @@ class AgentModelBridge:
                 raise err
             response = {**self._response(result, target, tool_specs, policy), "request_policy": request_policy, "request_id": task_id,
                         **({"shared_image_resize": shared_resize} if shared_resize and shared_resize.get("resized") else {})}
+            if response.get("server_model"):
+                response["requested_model"] = str(target.get("cli_model") or (
+                    getattr(manager.adapter, "model", "") if manager else target.get("model_id", "")))[:160]
             try:
                 model_events.finish(response)
             except ModelEventError:

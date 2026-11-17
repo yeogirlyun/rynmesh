@@ -22,6 +22,8 @@ from .adapters import (
     _openai_usage,
     _response_too_large,
     _set_response_timeout,
+    _server_model,
+    _header_server_model,
     cached_input_tokens,
 )
 from .data_release import DataReleaseError
@@ -193,6 +195,7 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
         last_byte = started
         is_sse = False
         received_usage = received_finish = received_cached = received_cache_creation = None
+        server_model = ""
         request_diagnostics: dict[str, int] = {}
         ignored_bad_frames = 0
         phase = "request"
@@ -294,6 +297,7 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                 break
             with resp_ctx as response:
                 phase = "read"
+                server_model = _header_server_model(response.headers)
                 last_byte = time.monotonic()
                 with self._lock:
                     self._active_responses[task_id] = response
@@ -305,6 +309,7 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                         raise _response_too_large(MAX_JSON_RESPONSE_BYTES)
                     decoded = json.loads(raw)
                     if isinstance(decoded, dict):
+                        server_model = server_model or _server_model(decoded.get("model"))
                         received_usage = _openai_usage(_usage(decoded.get("usage"), self.protocol))
                         received_cached = cached_input_tokens(decoded.get("usage"))
                         if self.protocol == "anthropic_messages" and isinstance(decoded.get("usage"), dict):
@@ -328,6 +333,7 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                     data = []
 
                     def frame():
+                        nonlocal server_model
                         nonlocal received_usage, received_finish, received_cached, received_cache_creation
                         nonlocal consecutive_bad_frames, ignored_bad_frames
                         value = "\n".join(data)
@@ -342,6 +348,10 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                                 raise
                             return
                         consecutive_bad_frames = 0
+                        if isinstance(event, dict):
+                            native = event.get("response") if isinstance(event.get("response"), dict) else event.get("message")
+                            if isinstance(native, dict):
+                                server_model = server_model or _server_model(native.get("model"))
                         chunks = decoder.feed(event)
                         received_usage = _openai_usage(decoder.usage)
                         received_cached = decoder.cached_tokens
@@ -410,6 +420,7 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
             return {"text": message.get("content") or "", "message": message,
                     "finish_reason": received_finish, **received_usage,
                     "reported_usage": received_usage,
+                    **({"server_model": server_model} if server_model else {}),
                     **({"cached_tokens": received_cached} if received_cached is not None else {}),
                     **({"cache_creation_input_tokens": received_cache_creation} if received_cache_creation is not None else {}),
                     **({"diagnostics": response_diagnostics} if response_diagnostics else {}),
