@@ -10,6 +10,7 @@ import uuid
 from collections import OrderedDict
 from contextlib import nullcontext
 from datetime import datetime, timezone
+from pathlib import Path
 
 from ..ai_access.store import AIAccessError
 from ..file_transactions import file_transaction
@@ -36,7 +37,7 @@ from .cli_sources import CLISources
 from .code_mode import NAME as CODE_MODE_NAME
 from .code_mode import SPEC as CODE_MODE_SPEC
 from .code_mode import CodeModeRunner
-from . import code_mode
+from . import code_mode, input_attachments
 from .tool_dispatch import PARALLEL_READS
 from .default_model import NAME as DEFAULT_MODEL_NAME
 from .default_model import DefaultModelTool
@@ -220,7 +221,9 @@ class RynTools:
     def recover_operation(self, task_id, operation_id=None, **kwargs):
         return self.local.recover_operation(task_id, operation_id, **kwargs)
 
-    def forget_task(self, task_id, *, operation_ids):
+    def forget_task(self, task_id, *, operation_ids, attachment_dirs=()):
+        input_attachments.forget_dirs([directory for directory in attachment_dirs
+                                       if Path(directory).name == task_id])
         cleanups = [
             ("artifacts", lambda: ArtifactTransfers(self.local.store).forget_task(task_id)),
             ("resource_writes", lambda: self.resource_writes.forget_task(task_id)),

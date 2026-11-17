@@ -2825,7 +2825,11 @@ class AgentRuntime(AgentLoop):
                 lifecycle.purge_archive(self.store, task_id)
                 self.store.transaction(lambda _data: self.store.purge_orphan_snapshots())
                 if hasattr(self.tools, "forget_task"):
-                    self.tools.forget_task(task_id, operation_ids=self.store.read()["deleted_tasks"][task_id].get("operation_ids", []))
+                    deleted = self.store.read()["deleted_tasks"][task_id]
+                    options = {"operation_ids": deleted.get("operation_ids", [])}
+                    if deleted.get("attachment_dirs"):
+                        options["attachment_dirs"] = deleted["attachment_dirs"]
+                    self.tools.forget_task(task_id, **options)
                 pending = False
             except Exception:
                 pass  # Tombstone wins; the same DELETE safely retries cleanup.
