@@ -2252,9 +2252,10 @@ class AgentLoop:
             reference = None
             result_size = len(encoded(result))
             if result_size > selected["limits"]["max_output_chars"]:
+                reference = results.seal(self.store, selected, call, result)
                 def save_result(data):
-                    task(data, selected["id"])  # A deleted/archived task cannot get a late blob.
-                    return results.save(self.store, selected, call, result)
+                    task(data, selected["id"])  # A deleted/archived task cannot register a late blob.
+                    return reference
                 t0 = time.monotonic()
                 reference = self.store.transaction(save_result)
                 post_persistence_seconds += max(0.0, time.monotonic() - t0)
@@ -2455,6 +2456,9 @@ class AgentLoop:
             post_persistence_seconds += max(0.0, time.monotonic() - t0)
 
         store_persistence_seconds = claim_persistence_seconds + prep_persistence_seconds + post_persistence_seconds
+        references = [results.seal(self.store, selected, call, result)
+                      if len(encoded(result)) > selected["limits"]["max_output_chars"] else None
+                      for call, (result, _failed, _seconds) in zip(batch, outcomes, strict=True)]
         lead_timing = {"scheduler_wait_seconds": round(float(selected.get("_scheduler_wait_seconds", 0.0)), 4),
                        "preparation_seconds": round(preparation_seconds, 4),
                        "tool_execution_seconds": round(tool_execution_seconds, 4),
@@ -2467,14 +2471,12 @@ class AgentLoop:
             self._apply_deferred_observed_files(row, selected, deferred_observed_files)
             notice = self._budget_notice(row)
             for index, (call, (result, failed, call_exec_seconds)) in enumerate(zip(batch, outcomes, strict=True)):
-                reference = None
+                reference = references[index]
                 if failed:
                     self._note_last_read_attempt(row, call, result)
                 origin = (copy.deepcopy(result.get("origin")) if metas[call["call_id"]].get("scope_context_supported")
                           and isinstance(result.get("origin"), dict) and "grant_id" in result["origin"] else None)
-                size = len(encoded(result))
-                if size > selected["limits"]["max_output_chars"]:
-                    reference = results.save(self.store, row, call, result)
+                if reference:
                     if origin:
                         reference["resource_origin"] = origin
                     row.setdefault("result_refs", []).append(reference)
