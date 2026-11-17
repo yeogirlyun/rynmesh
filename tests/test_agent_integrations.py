@@ -679,7 +679,7 @@ def test_cli_setup_uses_bridge_contract_without_implicit_tool_probe(node, monkey
     monkeypatch.setattr(CLIAgentAdapter, "health", lambda _: {"ok": True})
     monkeypatch.setattr(CLIAgentAdapter, "_command_path", lambda _: sys.executable)
     monkeypatch.setattr(CLIAgentAdapter, "chat", lambda *args, **kwargs: pytest.fail("setup must not run a tool probe"))
-    monkeypatch.setattr(cli_models, "list_models", lambda *args: [{"id": "untested", "name": "Untested", "default": True}])
+    monkeypatch.setattr(cli_models, "list_models", lambda *args, **kwargs: [{"id": "untested", "name": "Untested", "default": True}])
     monkeypatch.setattr(cli_models, "cached_models", cli_models.list_models)
     with TestClient(app) as client:
         result = client.post(f"/api/local/llm/cli-services/{kind}/setup")
@@ -691,6 +691,8 @@ def test_cli_setup_uses_bridge_contract_without_implicit_tool_probe(node, monkey
         # Older releases normalized this manifest before generating persistent
         # CLI bindings. Contract publication must not change that fingerprint.
         assert manager.manifest.capabilities == ["text-generation", "buffered-streaming"]
+    if kind != "claude_cli":
+        manager.adapter.refresh_inventory()
     binding = manager.adapter.binding_for_model("untested") if kind != "claude_cli" else None
     status = manager.public_status(cached_cli_models=True)
     assert ("client-tools" in status["service"]["capabilities"]) == (kind != "claude_cli")

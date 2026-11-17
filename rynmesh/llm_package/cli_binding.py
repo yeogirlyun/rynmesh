@@ -1,6 +1,7 @@
 """Bind shared CLI inference to a provider configuration and explicit upstream model."""
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import threading
@@ -22,6 +23,8 @@ class CLIModelDispatchAdapter:
         self.lock_path = Path(home) / ".cli-model-bindings.lock"
         self._cached_binding_row = None
         self._metadata_fingerprint = None
+        self._last_good = None
+        self.diagnostics = {"discovery_stale": False}
         self._metadata_lock = threading.Lock()
         self._display_refresh_lock = threading.Lock()
         self._display_refresh_running = False
@@ -50,7 +53,7 @@ class CLIModelDispatchAdapter:
         return str(command), fingerprint
 
     def current_models(self, *, refresh=False):
-        """Use the discovery TTL, never an indefinitely retained selected snapshot."""
+        """Refresh discovery, retaining a successful inventory for this configuration."""
         from .cli_models import list_models
         command, fingerprint = self._configuration()
         with self._metadata_lock:
@@ -59,12 +62,27 @@ class CLIModelDispatchAdapter:
                 with file_transaction(self.lock_path):
                     prior = read_json(self.path, max_bytes=256 * 1024).get(
                         self.manifest.package_id, {}).get("fingerprint")
+        try:
             models = list_models(self.inner.kind, command, **({"refresh": True} if refresh or prior and prior != fingerprint else {}))
+        except (AdapterError, OSError, TimeoutError):
+            models = []
+        with self._metadata_lock:
             if not models:
-                raise AdapterError("cli_model_unavailable", code="model_configuration_changed")
+                self.diagnostics["discovery_stale"] = True
+                return self.snapshot_models()
             self._observe_models(models, fingerprint)
             self._metadata_fingerprint = fingerprint
+            self._last_good = (copy.deepcopy(models), fingerprint)
+            self.diagnostics["discovery_stale"] = False
             return models
+
+    def snapshot_models(self):
+        """Admission never waits for a discovery subprocess or its metadata lock."""
+        _, fingerprint = self._configuration()
+        snapshot = self._last_good
+        if snapshot is None or snapshot[1] != fingerprint:
+            raise AdapterError("cli_model_discovery_failed", code="cli_model_discovery_failed")
+        return copy.deepcopy(snapshot[0])
 
     def refresh_inventory(self):
         from .cli_models import refresh_due
@@ -75,7 +93,7 @@ class CLIModelDispatchAdapter:
         return False
 
     def display_models(self):
-        """Passive UI metadata; admission always uses current_models instead.
+        """Passive UI metadata; admission uses the configuration-matched snapshot.
 
         The last observed inventory survives restarts in the binding record.
         It is only a display fallback, never a model binding or dispatch grant.
@@ -121,26 +139,32 @@ class CLIModelDispatchAdapter:
         validate_model(model)
         return context_metadata(self.current_models(), model, kind=self.inner.kind)
 
+    def snapshot_context_metadata_for_model(self, model=""):
+        from .cli_models import context_metadata, validate_model
+        validate_model(model)
+        models = self.snapshot_models()
+        if model and not any(item.get("id") == model for item in models):
+            raise AdapterError("cli_model_unavailable", code="cli_model_discovery_failed")
+        return context_metadata(models, model, kind=self.inner.kind)
+
     def binding_for_model(self, model=""):
         from .cli_models import validate_model
         validate_model(model)
-        models = self.current_models()
-        _, fingerprint = self._configuration()
-        return self._binding_for_models(model, models, fingerprint)
+        with self._metadata_lock:
+            models = self.snapshot_models()
+            _, fingerprint = self._configuration()
+            return self._binding_for_models(model, models, fingerprint)
 
     def cached_binding_for_model(self, model=""):
-        """Passive signed catalogs never start discovery or publish stale authority."""
-        from .cli_models import cached_models, validate_model
-        validate_model(model)
-        command, fingerprint = self._configuration()
-        if self._metadata_fingerprint != fingerprint:
+        """Passive catalogs read the same configuration-matched admission snapshot."""
+        try:
+            return self.binding_for_model(model)
+        except AdapterError:
             return None
-        models = cached_models(self.inner.kind, command)
-        return self._binding_for_models(model, models, fingerprint) if models else None
 
     def _binding_for_models(self, model, models, fingerprint):
         if model and not any(item.get("id") == model for item in models):
-            raise AdapterError("cli_model_unavailable", code="model_configuration_changed")
+            raise AdapterError("cli_model_unavailable", code="cli_model_discovery_failed")
         row = self._observe_models(models, fingerprint)
         generation = hashlib.sha256((row["generation"] + ":" + model + ":" + row["models"][model]["generation"]).encode()).hexdigest()[:32]
         return {"version": VERSION, "service_id": self.manifest.package_id, "model_generation": generation,
@@ -154,7 +178,10 @@ class CLIModelDispatchAdapter:
         for item in models:
             if isinstance(item.get("id"), str) and item["id"]:
                 selected.setdefault(item["id"], item)
-        observed = {model: {"model": item.get("id"), **{key: value for key, value in
+        observed = {model: {"model": item.get("id"), **{key: copy.deepcopy(item[key]) for key in (
+                    "supported_reasoning_efforts", "default_reasoning_effort", "max_output_tokens",
+                    "supports_image_input", "input_modalities", "capabilities", "agent_support") if key in item},
+                    **{key: value for key, value in
                     context_metadata([item], model, kind=self.inner.kind).items() if key != "context_window_basis"}}
                     for model, item in selected.items()}
 
@@ -226,4 +253,9 @@ class CLIDefaultModelBinding(CLIModelDispatchAdapter):
         with self._metadata_lock:
             self._observe_models(models, fingerprint)
             self._metadata_fingerprint = fingerprint
+            self._last_good = (models, fingerprint)
         return models
+
+    def binding_for_model(self, model=""):
+        self.current_models()
+        return super().binding_for_model(model)

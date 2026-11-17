@@ -979,8 +979,16 @@ def test_s01_i34_t12_provider_handle_execute_order_and_submit_order_default_max_
 
     monkeypatch.setattr(CLIAgentAdapter, "infer", fake_cli_infer)
 
+    # Inventory is refreshed by the existing background worker, never as part
+    # of a bound request. Keep this max-token contract test independent of a CLI.
+    from rynmesh.llm_package import cli_models
+    monkeypatch.setattr(CLIAgentAdapter, "_command_path", lambda _: __import__('sys').executable)
+    monkeypatch.setattr(cli_models, "list_models", lambda *a, **kw: [
+        {"id": "fixture-model", "name": "Fixture model", "default": True, "context_window": 8192}])
+
     with TestClient(app) as order_client:
         assert order_client.post("/api/local/llm/cli-services/codex_cli/setup").status_code == 200
+        app.state.llm_agent_services['provider_for']('codex-cli').adapter.refresh_inventory()
 
         sync_res = order_client.post(
             "/api/local/llm/orders",

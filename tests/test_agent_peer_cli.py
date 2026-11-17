@@ -93,9 +93,11 @@ def test_cli_binding_survives_restart_and_changes_with_model_or_executable(cli_p
     adapter = p.provider.adapter
     bound = adapter.binding_for_model('gemini-3.8-flash-medium')
     restarted = CLIModelDispatchAdapter(CLIAgentAdapter('antigravity_cli'), p.provider.manifest, p.root.store.home)
+    restarted.current_models()
     assert restarted.binding_for_model('gemini-3.8-flash-medium') == bound
     assert adapter.model_binding != bound
     p.command.write_bytes(b'fixture-updated-binary')
+    adapter.current_models()
     assert adapter.binding_for_model('gemini-3.8-flash-medium') != bound
     with pytest.raises(Exception, match='model_configuration_changed'):
         adapter.call_bound('chat', bound, lambda: None, {'messages': []}, model='gemini-3.8-flash-medium')
