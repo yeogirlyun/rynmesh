@@ -37,7 +37,7 @@ from .extensions.store import (
 from .extensions.store import (
     MAX_PLAINTEXT as EXT_MAX_PLAINTEXT,
 )
-from .store import AgentError
+from .store import AgentError, AgentStore, QUARANTINE_DIR
 
 SCHEMA_VERSION = 1
 
@@ -1879,6 +1879,23 @@ def _project_latest_observation(
     }
 
 
+def storage_health(runtime: Any) -> dict[str, Any]:
+    store = getattr(runtime, "store", None)
+    health = {"state": "ok", "damaged_tasks": 0, "quarantine_dir": None, "recovered_from_prev": False}
+    if not isinstance(store, AgentStore):
+        return health
+    health["quarantine_dir"] = str(store.root / QUARANTINE_DIR)
+    try:
+        saved = store.inspect(lambda data: {"damaged_tasks": len(data.get("damaged_tasks", {})),
+                                            "recovered_from_prev": bool(data.get("recovered_from_prev"))})
+    except (AgentError, OSError) as exc:
+        health["state"] = "damaged" if str(exc) == "agent_state_corrupt" else "unavailable"
+        return health
+    health.update(saved)
+    health["state"] = "damaged" if saved["damaged_tasks"] else "recovered" if saved["recovered_from_prev"] else "ok"
+    return health
+
+
 def build_computer_status_dto(app: Any, runtime: Any, requested_task_id: str | None = None) -> dict[str, Any]:
     startup_error = getattr(getattr(app, "state", None), "agent_startup_error", None)
     if startup_error is not None:
@@ -1950,6 +1967,7 @@ def build_computer_status_dto(app: Any, runtime: Any, requested_task_id: str | N
     latest_observation = _project_latest_observation(task_id, task_row, context_sec, current_route_dest)
 
     return {
+        "storage_health": storage_health(runtime),
         "schema_version": 1,
         "snapshot_id": f"snap_{uuid.uuid4().hex[:24]}",
         "generated_at": _utc_now_iso(),
@@ -1985,4 +2003,7 @@ async def get_computer_status_response(app: Any, runtime: Any, request: Request)
     except Exception as exc:
         status_code, detail_code = _error_status_and_code(exc)
         failure("api_computer_status", exc)
-        return JSONResponse({"detail": detail_code}, status_code=status_code, headers=_no_store_headers())
+        payload = {"detail": detail_code}
+        if status_code == 503:
+            payload["storage_health"] = await asyncio.to_thread(storage_health, runtime)
+        return JSONResponse(payload, status_code=status_code, headers=_no_store_headers())

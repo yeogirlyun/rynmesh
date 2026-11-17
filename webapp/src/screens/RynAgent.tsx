@@ -1,3 +1,5 @@
+import RynAgentStorageHealth from "./RynAgentStorageHealth";
+import { parseStorageHealth } from "../domain/agentStorageHealth";
 import RynAgentFork, { RynAgentForkSource } from "./RynAgentFork";
 import RynAgentFileChanges from "./RynAgentFileChanges";
 import RynAgentConnection, { hasConnectionRecovery } from "./RynAgentConnection";
@@ -228,6 +230,7 @@ export default function RynAgent() {
     return ws;
   });
   const [settings, setSettings] = useState<AgentSettings | null>(cachedWorkspace.settings);
+  const [storageHealth, setStorageHealth] = useState(() => parseStorageHealth(cachedWorkspace.settings?.storage_health));
   const [models, setModels] = useState<AgentModel[]>(cachedWorkspace.models);
   const [tasks, setTasks] = useState<AgentTaskSummary[]>(() => cachedAgentTaskList(taskCache.current));
   const [tasksReady, setTasksReady] = useState(false);
@@ -463,10 +466,15 @@ export default function RynAgent() {
         defaultModelRef.current = nextDefault;
         cachedSettingsRef.current = nextSettings;
         setSettings(nextSettings);
+        setStorageHealth(parseStorageHealth(nextSettings.storage_health));
         setModel(current => !current || current === previousDefault ? nextDefault || cachedModelsRef.current.find(canUseAgentModel)?.id || "" : current);
         setResourceErrors(current => ({ ...current, settings: "" }));
       }).catch(reason => {
         if (refreshID !== refreshRevision.current) return;
+        if (reason instanceof AgentAPIError) {
+          const health = parseStorageHealth(reason.details?.storage_health);
+          if (health) setStorageHealth(health);
+        }
         if (!cachedSettingsRef.current) {
           applyAgentAttachmentLimits(null);
           setResourceErrors(current => ({ ...current, settings: reason instanceof AgentAPIError && [404, 501].includes(reason.status) ? "unavailable" : "settingsLoadError" }));
@@ -1186,6 +1194,7 @@ export default function RynAgent() {
           <details className="ra-record-options"><summary>{t("manageRecords")}</summary><TaskRecords task={task} busy={busy || controlUncertain} onChange={changeRecord} onDelete={deleteRecord} /></details></>}</div></details><Link to="/services/sources">{t("models")}</Link><Link to="/settings/extensions">{t("extensions")}</Link><button className="ra-icon" aria-label={t("settings")} disabled={!settingsReady} onClick={() => setSettingsOpen(true)}><Settings size={18} /></button></div>
     </header>
     {taskMenu.dialogs}
+    <RynAgentStorageHealth health={storageHealth} zh={i18n.language.startsWith("zh")} onRefresh={reload} />
     {pendingMessage?.phase === "rejected" && <div className="ra-banner ra-unsent-message" role="alert"><CircleAlert size={17} /><details><summary>{t("unsentMessage")}</summary><p>{pendingMessage.message}</p></details><button className="ra-icon" aria-label={t("close")} onClick={() => setPendingMessage(null)}><X size={16} /></button></div>}
     {error && <div role="alert" className="ra-banner"><CircleAlert size={17} /><span>{(() => {
       if (error.startsWith("agentError:")) return agentErrorHelp(error.slice("agentError:".length), i18n.language.startsWith("zh")).text;

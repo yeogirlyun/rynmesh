@@ -1,3 +1,4 @@
+import type { AgentStorageHealth } from "./agentStorageHealth";
 import { nodeControlUrl } from "./nodeUrl";
 import { applyAgentAttachmentLimits, type AgentAttachmentInput, type AgentMessageAttachment, type ServerAttachmentLimits } from "./agentAttachments";
 import type { ModelTokenUsage } from "./aiSources";
@@ -79,6 +80,7 @@ export interface AgentContextBudgetPolicy {
   manual_max_context_bytes?: number | null;
 }
 export interface AgentSettings {
+  storage_health?: AgentStorageHealth;
   enabled: boolean;
   model_id: string;
   permission_mode: "workspace" | "read_only" | "confirm_changes" | "automatic";
@@ -468,7 +470,8 @@ async function request<T>(path: string, method = "GET", body?: unknown, signal?:
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
       const code = typeof data.detail === "string" ? data.detail : typeof data.error === "string" ? data.error : "agent_request_failed";
-      const details = data.details && typeof data.details === "object" ? (data.details as Record<string, unknown>) : undefined;
+      const originalDetails = data.details && typeof data.details === "object" ? data.details as Record<string, unknown> : undefined;
+      const details = data.storage_health ? { ...originalDetails, storage_health: data.storage_health } : originalDetails;
       throw new AgentAPIError(code, response.status, details);
     }
     return response.json() as Promise<T>;
@@ -493,6 +496,7 @@ async function fileContent(taskID: string, file: Pick<AgentFileArtifact, "id" | 
 
 /** Mutations are sent once. An uncertain response is reconciled by reading server state. */
 export const rynAgent = {
+  openStorageBackups: () => request<{ opened: boolean }>("/storage/backups/open", "POST"),
   projects: (signal?: AbortSignal) => request<{ projects: AgentProject[]; selected_project_id?: string }>("/projects", "GET", undefined, signal),
   selectProject: (project_id: string) => request<{ selected_project_id: string }>("/projects/selection", "POST", { project_id }),
   loadProject: (path: string) => request<AgentProject>("/projects", "POST", { path }),
