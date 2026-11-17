@@ -92,7 +92,7 @@ def test_s09_i2_skill_truncation_8000_bytes_continuation_and_multibyte_utf8_safe
     assert len(big_text.encode("utf-8")) > 20_000
     snap = {"id": "big-skill", "install_generation": 1, "content": big_text, "files": ["refs/spec.md"]}
     rendered = knowledge.messages({"skills": [snap]}, {"revision": 0, "items": []})
-    assert len(rendered) == 1
+    assert len(rendered) == 2  # Skill fragment followed by the JSON skill-usage guidance.
     assert rendered[0]["role"] == "user"
     assert rendered[0]["content"].startswith("<skill><name>big-skill</name><path>SKILL.md</path>\n")
     assert "用 ryn_read_skill_file 续读" in rendered[0]["content"]

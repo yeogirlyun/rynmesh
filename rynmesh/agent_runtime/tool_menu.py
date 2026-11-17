@@ -380,6 +380,11 @@ def discover(business_specs, internal_specs, metadata, state, args, *, capacity_
             result["always_available"] = avail
         result["query"] = query_text.strip()
         result["matches"] = matched_names or matched_internal
+        if not result["matches"]:
+            result["hint"] = (
+                "If the owner named a plugin that is not installed, tell them to install it from the Applications page "
+                "instead of substituting another tool."
+            )
     if has_query and not browse:
         page_limit = max(256, capacity_bytes // 12)
         for name in matched_names:

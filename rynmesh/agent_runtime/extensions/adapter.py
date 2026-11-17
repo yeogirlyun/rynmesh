@@ -901,6 +901,8 @@ class ExtensionToolAdapter:
             "For write actions that require owner approval, finish the draft and every check first so approval is the final step. "
             "When a plugin named by the owner is not installed and ryn_discover_tools finds no match, tell the owner which plugin to install on the Plugins page without suggesting adjacent plugins, and do not keep prompting if the owner leaves it uninstalled."
         )
+        if any(row["skills"] for row in rows):
+            header += " Before using a listed Skill, load and read it fully."
         lines, used, omitted = [header], len(header.encode("utf-8")), 0
         line_cap = self.PLUGIN_INDEX_LINE_CHARS
         for row in rows:
