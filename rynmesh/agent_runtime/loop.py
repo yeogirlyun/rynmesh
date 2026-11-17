@@ -306,8 +306,9 @@ class AgentLoop:
             # when the next step is projected to overflow the model's input
             # window (complete request incl. instructions and schemas, output
             # already reserved) and the checkpoint frees room for later steps.
-            request_bytes = self._request_context_bytes(selected, messages, specs)
-            pressure = self._compaction_pressure(selected, context_limit, request_bytes, specs)
+            analysis = self._request_context_analysis(selected, messages, specs)
+            request_bytes = self._request_context_bytes(selected, messages, specs, analysis=analysis)
+            pressure = self._compaction_pressure(selected, context_limit, request_bytes, specs, analysis=analysis)
             # One effective input capacity for every fit decision: the byte
             # limit, tightened when provider usage shows denser tokenization.
             capacity = pressure["capacity_bytes"]
@@ -318,6 +319,7 @@ class AgentLoop:
             if must_compact:
                 pressure = {**pressure, "compact": True, "capacity_bytes": capacity,
                             "reason": "upstream_overflow" if overflow else
+                                      "output_room" if pressure["reason"] == "output_room" else
                                       "hard_limit" if request_bytes > context_limit else "capacity_limit"}
             if pressure["compact"]:
                 try:
@@ -1057,10 +1059,14 @@ class AgentLoop:
         msgs = self._context(row) if messages is None else messages
         return image_capabilities.compact_native_observation_history(row, msgs), None
 
-    def _request_context_bytes(self, row: dict, messages: list[dict] | None = None, specs: list | None = None) -> int:
+    def _request_context_analysis(self, row: dict, messages: list[dict] | None = None, specs: list | None = None) -> dict:
         dispatch_msgs, _ = self._prepare_dispatch_messages(row, messages)
         active_specs = self._specs(row) if specs is None else specs
-        analysis = output_policy.analyze_request(dispatch_msgs, active_specs)
+        return output_policy.analyze_request(dispatch_msgs, active_specs)
+
+    def _request_context_bytes(self, row: dict, messages: list[dict] | None = None, specs: list | None = None,
+                               *, analysis: dict | None = None) -> int:
+        analysis = analysis if analysis is not None else self._request_context_analysis(row, messages, specs)
         used = analysis["projected_context_utf8_bytes"]
         if (row.get("limits") or {}).get("max_context_chars") is not None:
             used = max(used, analysis["raw_serialized_utf8_bytes"])
@@ -1488,7 +1494,7 @@ class AgentLoop:
         )
 
     def _effective_capacity(self, row: dict, context_limit: int | None = None,
-                            policy: dict | None = None) -> tuple[int, float | None]:
+                            policy: dict | None = None, *, cjk_share: float = 0.0) -> tuple[int, float | None]:
         """Request bytes that fit the model's input window, and the observed bytes/token ratio.
 
         The hard byte limit already reserves output and framing at the default
@@ -1503,30 +1509,41 @@ class AgentLoop:
         limit = context_limit if context_limit is not None else (
             policy["effective_max_context_bytes"] if policy else self._context_limit(row))
         ratio = context_compaction.observed_bytes_per_token(row)
-        return context_compaction.input_capacity(limit, policy, ratio, row.get("context_density_penalty", 1.0)), ratio
+        return context_compaction.input_capacity(limit, policy, ratio, row.get("context_density_penalty", 1.0), cjk_share=cjk_share), ratio
 
     def _effective_request_fit(self, row: dict, analysis: dict, policy: dict | None = None) -> tuple[int, int]:
         """(request size at the applied density, effective capacity) for an analyzed request."""
         if policy is None:
             policy_of = getattr(self, "_context_policy", None)
             policy = policy_of(row) if callable(policy_of) else None
-        capacity, ratio = self._effective_capacity(row, policy=policy)
-        density = context_compaction.applied_density(policy, ratio)
+        capacity, ratio = self._effective_capacity(row, policy=policy, cjk_share=analysis.get("cjk_share", 0.0))
+        density = context_compaction.applied_density(policy, ratio, analysis.get("cjk_share", 0.0))
         return context_compaction.request_bytes_at_density(analysis, density), capacity
 
-    def _compaction_pressure(self, selected: dict, context_limit: int, request_bytes: int, specs: list) -> dict:
+    def _compaction_pressure(self, selected: dict, context_limit: int, request_bytes: int, specs: list,
+                             *, analysis: dict | None = None) -> dict:
         """Decide proactive compaction from the complete request against the model window.
 
         Sizes are serialized UTF-8 request bytes; the window and provider usage
         are tokens, converted with the observed bytes/token ratio when known.
         """
-        capacity, ratio = self._effective_capacity(selected, context_limit)
+        analysis = analysis if analysis is not None else self._request_context_analysis(selected, specs=specs)
+        policy = self._context_policy(selected)
+        cjk_share = analysis.get("cjk_share", 0.0)
+        capacity, ratio = self._effective_capacity(selected, context_limit, policy, cjk_share=cjk_share)
+        density = context_compaction.applied_density(policy, ratio, cjk_share)
+        model = self._model_metadata(selected["model_id"]) or {}
+        room = output_policy.output_room(model, analysis)
+        low_output = room < min(output_policy.configured_output(model), output_policy.MIN_USEFUL_OUTPUT_TOKENS)
         messages = image_capabilities.compact_native_observation_history(selected, self._history(selected))
         result = context_compaction.assess(request_bytes=request_bytes, capacity_bytes=capacity,
                                            step_bytes=context_compaction.step_growth(messages[-64:]),
                                            calibrated=ratio is not None)
         result.update(hard_limit_bytes=context_limit, compact=False, reason="headroom",
-                      bytes_per_token=round(ratio if ratio is not None else context_compaction.DEFAULT_BYTES_PER_TOKEN, 3))
+                      output_room_tokens=room,
+                      bytes_per_token=round(density if density is not None else context_compaction.DEFAULT_BYTES_PER_TOKEN, 3))
+        if low_output:
+            result.update(near_limit=True, reason="output_room")
         if not result["near_limit"]:
             return result
         plan = self._compaction_plan(selected, messages, specs, context_limit, capacity)
@@ -1548,7 +1565,7 @@ class AgentLoop:
             # same attempt again until the history has grown by another step.
             result["reason"] = "recent_attempt_unfinished"
             return result
-        result.update(compact=True, reason="projected_overflow")
+        result.update(compact=True, reason="output_room" if low_output else "projected_overflow")
         return result
 
     def _compaction_plan(self, selected: dict, messages: list[dict], specs: list, context_limit: int,

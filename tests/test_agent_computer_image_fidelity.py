@@ -8,6 +8,7 @@ import copy
 import hashlib
 import io
 import json
+import math
 import random
 import time
 import uuid
@@ -692,8 +693,7 @@ def test_independent_budget_context_and_transport_gates_before_model_call(tmp_pa
         assert pol["raw_serialized_utf8_bytes"] > 4_000_000
         assert pol["text_projection_utf8_bytes"] < pol["raw_serialized_utf8_bytes"] - 4_000_000
         assert pol["estimated_text_tokens"] == (
-            (pol["text_projection_utf8_bytes"] + output_policy.ESTIMATED_BYTES_PER_TOKEN - 1)
-            // output_policy.ESTIMATED_BYTES_PER_TOKEN
+            math.ceil(pol["text_projection_utf8_bytes"] / (output_policy.ESTIMATED_BYTES_PER_TOKEN - pol["cjk_share"]))
             + output_policy.FRAMING_RESERVE_TOKENS
         )
         assert pol["estimated_image_tokens"] == 1621
