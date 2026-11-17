@@ -75,6 +75,11 @@ export function PeerProviderSettings({ plugin }: { plugin: ExtensionPlugin }) {
     <h3>{tx("节点提供方", "Peer provider")}</h3>
     <p>{tx("登录后连接此插件提供的节点和模型。发布本机模型需要单独选择。", "Connect to nodes and models from this plugin after signing in. Publishing local models requires a separate selection.")}</p>
     <p role="status">{!plugin.enabled ? tx("请先启用插件。", "Enable the plugin first.") : !status ? tx("正在读取状态…", "Loading status…") : connected ? status.bound ? tx("已登录，节点已绑定", "Signed in · node bound") : tx("已登录，节点未绑定", "Signed in · node not bound") : status.status === "pending" ? tx("等待浏览器完成登录", "Waiting for browser sign-in") : tx("未登录", "Signed out")}</p>
+    {!connected && status?.sign_in_error ? <p role="alert">{
+      ["peer_provider_companion_missing", "agent_mcp_oauth_server_disabled"].includes(status.sign_in_error)
+        ? tx("先启用公司工作台插件", "Enable the company workspace plugin first")
+        : tx("重新登录", "Sign in again")
+    }</p> : null}
     {error ? <p role="alert">{tx("操作未完成，请重试或重新登录。", "The operation could not be completed. Retry or sign in again.")}</p> : null}
     {notice ? <p role="status">{notice}</p> : null}
     <div className="ae-inline-actions">
