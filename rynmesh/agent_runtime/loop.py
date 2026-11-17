@@ -2605,6 +2605,8 @@ class AgentLoop:
         wait_elapsed = 0.0
         if call["name"] in subagents.SUBAGENT_TOOL_NAMES:
             subagent_norm_args = subagents.validate_subagent_tool(call["name"], args)
+            if call["name"] == "ryn_spawn_agent":
+                self._relieve_storage("spawn", need_tasks=1)
             if call["name"] == "ryn_wait_agent":
                 wait_steered, wait_elapsed = self._wait_for_subagents(selected, subagent_norm_args, started)
         if call["name"] == tool_menu.NAME:

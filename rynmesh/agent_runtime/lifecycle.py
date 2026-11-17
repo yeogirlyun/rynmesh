@@ -10,6 +10,7 @@ import copy
 import hashlib
 
 from ..file_transactions import file_transaction
+from . import subagents
 from .control import ambiguous, check_version, owner_removable, remember_request, request_replayed
 from .store import VERSION, AgentError, AgentStore
 
@@ -82,6 +83,41 @@ def eligible(row):
             and row["status"] in {"completed", "failed", "cancelled", "paused"})
 
 
+def _descendants(data, row):
+    """Return known descendants in child-before-parent order."""
+    rows = {**data.get("archives", {}), **data["tasks"]}
+    seen, ordered = {row["id"]}, []
+    def visit(current):
+        for child_id in current.get("subagent_ids", []):
+            if child_id in seen or child_id not in rows:
+                continue
+            seen.add(child_id)
+            visit(rows[child_id])
+            ordered.append(child_id)
+    visit(row)
+    return ordered
+
+
+def tree_rows(store, data, row):
+    """Load archived children too, including legacy indexes without tree fields."""
+    rows, pending = {row["id"]: row}, [row]
+    while pending:
+        for child_id in pending.pop().get("subagent_ids", []):
+            if child_id in rows or child_id in data.get("deleted_tasks", {}):
+                continue
+            if child_id not in data["tasks"] and child_id not in data.get("archives", {}):
+                continue
+            child = copy.deepcopy(find(store, data, child_id))
+            rows[child_id] = child
+            pending.append(child)
+    return [rows[key] for key in _descendants({"tasks": rows}, row)] + [row]
+
+
+def restore_rows(store, data, row):
+    return [child for child in tree_rows(store, data, row)
+            if child["id"] == row["id"] or (child.get("archived") and child.get("archive_reason") == "parent_archived")]
+
+
 def _archive_in_tx(store, data, row, emit, *, on_mutate=None, reason=None, remember=None):
     task_id = row["id"]
     row["archived"] = True
@@ -94,10 +130,53 @@ def _archive_in_tx(store, data, row, emit, *, on_mutate=None, reason=None, remem
     # Archive content is committed before the index that points at it.
     archive_store(store, task_id).transaction(lambda archived: archived.update(
         version=VERSION, schema_version=data["schema_version"], settings={}, tasks={task_id: row}))
-    data.setdefault("archives", {})[task_id] = {key: row.get(key) for key in ("id", "client_request_id", "request_fingerprint", "updated_at")}
+    data.setdefault("archives", {})[task_id] = {key: row.get(key) for key in (
+        "id", "client_request_id", "request_fingerprint", "updated_at", "parent_task_id", "subagent_ids", "archive_reason")}
     data["tasks"].pop(task_id)
     if callable(on_mutate):
         on_mutate(data, task_id, "archive")
+
+
+def _archive_tree(store, data, rows, emit, *, on_mutate=None, reason=None, remember=None):
+    root, done = rows[-1], []
+    for child in rows[:-1]:
+        if child.get("archived"):
+            continue
+        try:
+            _archive_in_tx(store, data, child, emit, on_mutate=on_mutate, reason="parent_archived")
+            done.append(child["id"])
+        except Exception:
+            emit(root, "archive_child_skipped", task_id=child["id"])
+    _archive_in_tx(store, data, root, emit, on_mutate=on_mutate, reason=reason, remember=remember)
+    return [*done, root["id"]]
+
+
+def delete_rows_in_tx(data, rows, stamp, *, on_mutate=None, keyed=None):
+    """Tombstone the whole tree in the caller's single active-store transaction."""
+    ids = [row["id"] for row in rows]
+    for row in rows:
+        task_id = row["id"]
+        tombstone = {key: row.get(key) for key in ("id", "client_request_id", "request_fingerprint")}
+        operation_ids = {receipt["operation_id"] for receipt in row.get("receipts", [])}
+        operation_ids.update(e["operation_id"] for e in row.get("events", []) if isinstance(e.get("operation_id"), str))
+        tombstone.update(deleted_at=stamp(), control_requests={}, control_revision=row["control_revision"],
+                         cleanup_pending=True, operation_ids=sorted(operation_ids))
+        if task_id == ids[-1]:
+            tombstone["descendant_ids"] = ids[:-1]
+            if keyed is not None:
+                remember_request(tombstone, keyed)
+        data.setdefault("deleted_tasks", {})[task_id] = tombstone
+        data["tasks"].pop(task_id, None)
+        data.get("archives", {}).pop(task_id, None)
+        if callable(on_mutate):
+            on_mutate(data, task_id, "delete")
+
+
+def _deleted_reply(task_id, tombstone):
+    reply = {"id": task_id, "deleted": True}
+    if tombstone.get("descendant_ids"):
+        reply["descendant_ids"] = tombstone["descendant_ids"]
+    return reply
 
 
 def archive_many(store, items, emit, *, on_mutate=None, reason=None):
@@ -114,10 +193,16 @@ def archive_many(store, items, emit, *, on_mutate=None, reason=None):
             if (row is None or row.get("archived") or row.get("control_revision") != item["control_revision"]
                     or not eligible(row)):
                 continue
-            if len(data.get("archives", {})) >= 10000:
+            tree_ids = [*_descendants({"tasks": data["tasks"]}, row), row["id"]]
+            if tree_ids != item.get("tree_ids", [row["id"]]):
+                continue
+            rows = [copy.deepcopy(data["tasks"][key]) for key in tree_ids]
+            revisions = item.get("tree_revisions", {})
+            if any(not eligible(child) or (child["id"] in revisions and child["control_revision"] != revisions[child["id"]]) for child in rows):
+                continue
+            if len(data.get("archives", {})) + len(rows) > 10000:
                 break
-            _archive_in_tx(store, data, row, emit, on_mutate=on_mutate, reason=reason)
-            done.append(row["id"])
+            done.extend(_archive_tree(store, data, rows, emit, on_mutate=on_mutate, reason=reason))
         return done
     return store.transaction(mutate)
 
@@ -131,10 +216,10 @@ def change(store, task_id, value, operation, emit, stamp, *, on_mutate=None, rea
         deleted = data.get("deleted_tasks", {}).get(task_id)
         if deleted and operation == "delete":
             if value.get("client_request_id") and request_replayed(deleted, keyed):
-                return {"id": task_id, "deleted": True}
+                return _deleted_reply(task_id, deleted)
             if not value.get("client_request_id"):
                 check_version(deleted, value)
-                return {"id": task_id, "deleted": True}
+                return _deleted_reply(task_id, deleted)
         row = copy.deepcopy(find(store, data, task_id))
         if request_replayed(row, keyed):
             return row
@@ -142,18 +227,20 @@ def change(store, task_id, value, operation, emit, stamp, *, on_mutate=None, rea
         if operation == "restore":
             if not row.get("archived"):
                 raise AgentError("agent_invalid_transition")
-            if len(data["tasks"]) >= 200:
+            rows = restore_rows(store, data, row)
+            if len(data["tasks"]) + len(rows) > 200:
                 raise AgentError("agent_task_limit")
-            row["archived"] = False
-            row.pop("archive_reason", None)
-            row.setdefault("local_execution", {})["desktop_access"] = bool(data.get("settings", {}).get("desktop_access", False))
-            row.update(approved=None, pending_approval=None)
-            emit(row, "restored")
+            for child in rows:
+                child["archived"] = False
+                child.pop("archive_reason", None)
+                child.setdefault("local_execution", {})["desktop_access"] = bool(data.get("settings", {}).get("desktop_access", False))
+                child.update(approved=None, pending_approval=None)
+                emit(child, "restored")
+                data["tasks"][child["id"]] = child
+                data["archives"].pop(child["id"])
+                if callable(on_mutate):
+                    on_mutate(data, child["id"], operation)
             remember_request(row, keyed)
-            data["tasks"][task_id] = row
-            data["archives"].pop(task_id)
-            if callable(on_mutate):
-                on_mutate(data, task_id, operation)
             # Stale encrypted copies are unreachable after the atomic index
             # update. Keeping one until next archive avoids cross-file rollback.
             return row
@@ -161,27 +248,27 @@ def change(store, task_id, value, operation, emit, stamp, *, on_mutate=None, rea
         # task that is not working right now, including an unconfirmed write.
         if not owner_removable(row):
             raise AgentError("agent_operation_unresolved" if ambiguous(row) else "agent_task_busy")
+        rows = tree_rows(store, data, row)
+        # cascade_stop clears in_flight: inspect the original descendants first.
+        if operation == "archive" and any(child.get("in_flight") or ambiguous(child) for child in rows[:-1]):
+            raise AgentError("agent_task_busy")
         if operation == "archive":
             if row.get("archived"):
                 raise AgentError("agent_invalid_transition")
-            if len(data.get("archives", {})) >= 10000:
+            if len(data.get("archives", {})) + sum(not child.get("archived") for child in rows) > 10000:
                 raise AgentError("agent_archive_limit")
-            _archive_in_tx(store, data, row, emit, on_mutate=on_mutate, reason=reason,
-                           remember=lambda current: remember_request(current, keyed))
+            subagents.cascade_stop_subagents_in_tx(data, row, close=True)
+            # Use the stopped rows, rather than the pre-cascade snapshots.
+            rows = tree_rows(store, data, row)
+            _archive_tree(store, data, rows, emit, on_mutate=on_mutate, reason=reason,
+                          remember=lambda current: remember_request(current, keyed))
             return row
         if operation != "delete":
             raise AgentError("agent_invalid_action")
-        if len(data.get("deleted_tasks", {})) >= 10000:
+        if any(child.get("in_flight") and not owner_removable(child) for child in rows[:-1]):
+            raise AgentError("agent_task_busy")
+        if len(data.get("deleted_tasks", {})) + len(rows) > 10000:
             raise AgentError("agent_archive_limit")
-        tombstone = {key: row.get(key) for key in ("id", "client_request_id", "request_fingerprint")}
-        operation_ids = {receipt["operation_id"] for receipt in row.get("receipts", [])}
-        operation_ids.update(e["operation_id"] for e in row.get("events", []) if isinstance(e.get("operation_id"), str))
-        tombstone.update(deleted_at=stamp(), control_requests={}, control_revision=row["control_revision"], cleanup_pending=True, operation_ids=sorted(operation_ids))
-        remember_request(tombstone, keyed)
-        data.setdefault("deleted_tasks", {})[task_id] = tombstone
-        data["tasks"].pop(task_id, None)
-        data.get("archives", {}).pop(task_id, None)
-        if callable(on_mutate):
-            on_mutate(data, task_id, operation)
-        return {"id": task_id, "deleted": True}
+        delete_rows_in_tx(data, rows, stamp, on_mutate=on_mutate, keyed=keyed)
+        return _deleted_reply(task_id, data["deleted_tasks"][task_id])
     return store.transaction(mutate)

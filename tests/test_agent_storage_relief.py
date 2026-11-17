@@ -97,7 +97,7 @@ def test_archived_task_restores_with_its_history(tmp_path, monkeypatch):
     assert [m["content"] for m in restored["messages"]] == [m["content"] for m in oldest["messages"]]
 
 
-def test_unfinished_automation_and_subagent_tasks_are_never_archived(tmp_path):
+def test_unfinished_automation_excluded_and_finished_subagent_tree_is_one_candidate(tmp_path):
     runtime, _, _, _ = make_runtime(tmp_path, assistant("template answer"))
     history = finished_history(runtime, 20)
     waiting, target, parent, child = history[:4]
@@ -110,8 +110,9 @@ def test_unfinished_automation_and_subagent_tasks_are_never_archived(tmp_path):
     runtime.store.transaction(mark)
     plan = runtime.store.inspect(lambda data: storage_relief.candidates(data, runtime.store.usage()["tasks"], {history[4]}))
     planned = [item["id"] for item in plan]
-    assert not {waiting, target, parent, child, history[4]} & set(planned)
-    assert planned == history[5:len(history) - storage_relief.KEEP_RECENT]
+    assert not {waiting, target, child, history[4]} & set(planned)
+    assert planned == [parent, *history[5:len(history) - storage_relief.KEEP_RECENT]]
+    assert plan[0]["tree_ids"] == [child, parent]
     assert all(type(item["bytes"]) is int and item["bytes"] > 0 for item in plan)
 
 

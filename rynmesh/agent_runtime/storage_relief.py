@@ -7,7 +7,7 @@ versions already list, open and restore these archives.
 """
 from __future__ import annotations
 
-from .lifecycle import eligible
+from .lifecycle import _descendants, eligible
 from .store import encoded
 
 # History bytes are limited by disk capacity, never by an archive watermark.
@@ -49,10 +49,13 @@ def candidates(data: dict, sizes: dict, exclude: set[str]) -> list[dict]:
     keep = _protected(data) | set(exclude) | {row["id"] for row in top_level[:KEEP_RECENT]}
     found = []
     for row in sorted(rows.values(), key=lambda row: row.get("updated_at") or ""):
-        if (row["id"] in keep or row.get("archived") or row.get("parent_task_id")
-                or row.get("subagent_ids") or not eligible(row)):
+        if row.get("parent_task_id"):
             continue
-        size = sizes.get(row["id"])
+        tree_ids = [*_descendants({"tasks": rows}, row), row["id"]]
+        if any(key in keep or rows[key].get("archived") or not eligible(rows[key]) for key in tree_ids):
+            continue
+        size = sum(sizes[key] if type(sizes.get(key)) is int else len(encoded(rows[key])) for key in tree_ids)
         found.append({"id": row["id"], "control_revision": row["control_revision"],
-                      "bytes": size if type(size) is int else len(encoded(row))})
+                      "bytes": size, "tree_ids": tree_ids,
+                      "tree_revisions": {key: rows[key]["control_revision"] for key in tree_ids}})
     return found
