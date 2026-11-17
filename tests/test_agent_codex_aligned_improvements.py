@@ -357,8 +357,10 @@ def test_step4_codex_tools_default_budget_and_strict_schema_for_new_tools(monkey
         task_id="t1",
         timeout_s=5,
     )
-    assert captured["body"]["max_tokens"] == 2048
-    assert "Reply within 2048 tokens." in captured["body"]["messages"][0]["content"]
+    # S01-I20: the fallback is the model's own output limit, no longer a fixed 2048.
+    limit = captured["body"]["max_tokens"]
+    assert limit >= 2048
+    assert f"Reply within {limit} tokens." in captured["body"]["messages"][0]["content"]
 
 
 def test_phase2_upgrade1_workstation_inline_head_tail_preview_with_result_ref():

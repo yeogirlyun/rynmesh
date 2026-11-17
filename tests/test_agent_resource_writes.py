@@ -30,7 +30,7 @@ def writable(tmp_path):
         nas.enable(True)
         source = nas.configure({"name": "Isolated writable DAV", "system": "generic", "protocol": "webdav", "url": server.url,
                                 "username": "fixture", "password": "fixture", "allow_ai": True, "writable": True})
-        app, store = SimpleNamespace(state=SimpleNamespace(nas_plugin=nas)), SimpleNamespace(home=home)
+        app, store = SimpleNamespace(state=SimpleNamespace(nas_plugin=nas)), SimpleNamespace(home=home, root=home)
         tools = RynTools(app, store, {}, None)
         destination = {"catalog_model_id": "fixture", "provider_peer_id": "local", "source_id": "fixture", "destination_revision": "rev1"}
         scope = tools.prepare_scope({"resources": [{"connection_id": source["id"], "root_path": "allowed", "recursive": True,
