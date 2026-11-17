@@ -2089,6 +2089,32 @@ class AgentLoop:
             subagents.check_subagent_tool_policy(selected, call["name"], call["arguments"])
             from .read_reliability import check_shell_retry
             check_shell_retry(selected, call)
+            if call["name"] == "ryn_shell_execute":
+                from .patch_intercept import extract_patch, patch_arguments
+                extracted = extract_patch(call["arguments"]["command"])
+                if extracted is not None:
+                    arguments = patch_arguments(extracted, call["arguments"],
+                        (selected.get("local_execution") or {}).get("workspace_root"))
+                    specs = self._business_specs(selected)
+                    rewritten = normalize_tool_calls([{"id": call["call_id"], "type": "function",
+                        "function": {"name": "ryn_apply_patch", "arguments": encoded(arguments).decode()}}],
+                        specs, metadata=self.tools.metadata)[0]
+                    if rewritten.get("error_result"):
+                        raise AgentToolRejected("agent_tool_unavailable")
+                    call.update(rewritten, intercepted_from="ryn_shell_execute")
+                    meta = self.tools.metadata(call["name"])
+                    spec = next(item["function"] for item in specs if item["function"]["name"] == call["name"])
+                    assert_schema_unchanged(call, spec)
+                    validate_tool_arguments(spec["parameters"], call["arguments"])
+                    subagents.check_subagent_tool_policy(selected, call["name"], call["arguments"])
+
+                    def persist_rewrite(data):
+                        row = task(data, selected["id"])
+                        for queued in row["queue"]:
+                            if queued["call_id"] == call["call_id"]:
+                                queued.update(copy.deepcopy(call))
+                                break
+                    self.store.transaction(persist_rewrite)
             preview = None
             if call["effect"] == "write" and hasattr(self.tools, "preview"):
                 preview_ctx = self._execution_context(selected, call["operation_id"]) if meta.get("scope_context_supported") else None
@@ -2287,6 +2313,8 @@ class AgentLoop:
             preparation_seconds = max(0.0, (exec_started - preparation_started) - prep_persistence_seconds)
             try:
                 result = sanitized_tool_result(self._execute_business_tool(selected, call["name"], copy.deepcopy(call["arguments"]), **execute_options))
+                if call.get("intercepted_from"):
+                    result["intercepted_from"] = call["intercepted_from"]
                 tool_execution_seconds = max(0.0, time.monotonic() - exec_started)
             finally:
                 t0 = time.monotonic()
