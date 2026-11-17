@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import mimetypes
 import os
 import stat
+import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 from ..atomic_io import atomic_write_bytes, atomic_write_json, read_json
@@ -243,7 +246,63 @@ class FileReview:
         self.manifest = self.directory / "review-v2.json"
         # Shared by ALL file tools/tasks and undo, including other node processes.
         self.lock = self.directory.parent / ".review.lock"
+        self.usage_path = self.directory.parent / "usage-v1.json"
         safe_path(self.directory.parent, str(self.lock))
+
+    def _read_usage(self):
+        safe_path(self.directory.parent, str(self.usage_path))
+        now = time.time()
+        try:
+            usage = read_json(self.usage_path)
+            if (type(usage["total_bytes"]) is not int or usage["total_bytes"] < 0
+                    or not isinstance(usage["tasks"], dict)
+                    or any(not isinstance(k, str) or type(v) is not int or v < 0 for k, v in usage["tasks"].items())
+                    or sum(usage["tasks"].values()) != usage["total_bytes"]
+                    or type(usage["verified_at"]) not in (int, float) or not math.isfinite(usage["verified_at"])
+                    or now - usage["verified_at"] > 600 or usage["total_bytes"] > MAX_HOME_BYTES * .9):
+                raise ValueError()
+        except (OSError, ValueError, KeyError, TypeError):
+            tasks = {}
+            for path in self.directory.parent.glob("*/*"):
+                if path.is_file():
+                    tasks[path.parent.name] = tasks.get(path.parent.name, 0) + path.stat().st_size
+            usage = {"total_bytes": sum(tasks.values()), "tasks": tasks, "verified_at": now}
+            atomic_write_json(self.usage_path, usage)
+        return usage
+
+    @contextmanager
+    def _usage_transaction(self):
+        # The caller holds the shared file lock. Nested blob/manifest writes
+        # reuse one snapshot, including a near-limit recount, for this operation.
+        if hasattr(self, "_usage"):
+            yield
+            return
+        self._usage = self._read_usage()
+        self._usage_changed = False
+        try:
+            yield
+        finally:
+            usage, changed = self._usage, self._usage_changed
+            del self._usage
+            del self._usage_changed
+            if changed:
+                safe_path(self.directory.parent, str(self.usage_path))
+                atomic_write_json(self.usage_path, usage)
+
+    def _total(self):
+        """Read under file_transaction(self.lock); no cross-operation memory cache."""
+        return (self._usage if hasattr(self, "_usage") else self._read_usage())["total_bytes"]
+
+    def _adjust_usage(self, delta):
+        usage = self._usage
+        task = self.directory.name
+        size = usage["tasks"].get(task, 0) + delta
+        if size:
+            usage["tasks"][task] = size
+        else:
+            usage["tasks"].pop(task, None)
+        usage["total_bytes"] += delta
+        self._usage_changed = True
 
     def load(self):
         try:
@@ -256,27 +315,32 @@ class FileReview:
             raise AgentError("agent_review_storage_unreadable") from None
 
     def save(self, state):
-        safe_path(self.directory.parent, str(self.manifest))
-        atomic_write_json(self.manifest, state)
+        with file_transaction(self.lock), self._usage_transaction():
+            safe_path(self.directory.parent, str(self.manifest))
+            old_size = self.manifest.stat().st_size if self.manifest.exists() else 0
+            atomic_write_json(self.manifest, state)
+            self._adjust_usage(self.manifest.stat().st_size - old_size)
 
     def reserve_progress(self, state):
         # Include manifest/history growth, not just blob bytes. Reserve room for
         # completion markers even when the task is close to its storage ceiling.
-        old_size = self.manifest.stat().st_size if self.manifest.exists() else 0
-        growth = len(json.dumps(state).encode()) - old_size + 16384
-        used = sum(p.stat().st_size for p in self.directory.glob("*") if p.is_file())
-        total = sum(p.stat().st_size for p in self.directory.parent.glob("*/*") if p.is_file())
-        if used + growth > MAX_BYTES or total + growth > MAX_HOME_BYTES:
-            raise AgentToolRejected("agent_review_storage_limit")
+        with file_transaction(self.lock), self._usage_transaction():
+            old_size = self.manifest.stat().st_size if self.manifest.exists() else 0
+            growth = len(json.dumps(state).encode()) - old_size + 16384
+            used = sum(p.stat().st_size for p in self.directory.glob("*") if p.is_file())
+            if used + growth > MAX_BYTES or self._total() + growth > MAX_HOME_BYTES:
+                raise AgentToolRejected("agent_review_storage_limit")
 
     def blob(self, data):
         if data is None:
             return {"sha256": None, "bytes": 0}
-        key = digest(data)
-        path = self.directory / (key + ".blob")
-        safe_path(self.directory, str(path))
-        if not path.exists():
-            atomic_write_bytes(path, data)
+        with file_transaction(self.lock), self._usage_transaction():
+            key = digest(data)
+            path = self.directory / (key + ".blob")
+            safe_path(self.directory, str(path))
+            if not path.exists():
+                atomic_write_bytes(path, data)
+                self._adjust_usage(len(data))
         return {"sha256": key, "bytes": len(data)}
 
     def content(self, version):
@@ -295,7 +359,7 @@ class FileReview:
 
     def apply(self, changes, *, operation_id=None, outside_ok=False):
         """changes: (path, exact before bytes, intended after bytes, rename group)."""
-        with file_transaction(self.lock):
+        with file_transaction(self.lock), self._usage_transaction():
             state = self.load()
             lex_root, real_root = _resolve_root(self.root)
             checked_changes = []
@@ -322,7 +386,7 @@ class FileReview:
                 if s.get("snapshot", True) is False
             }
             used = sum(p.stat().st_size for p in self.directory.glob("*") if p.is_file()) if self.directory.exists() else 0
-            total = sum(p.stat().st_size for p in self.directory.parent.glob("*/*") if p.is_file()) if self.directory.parent.exists() else 0
+            total = self._total()
             existing_blobs = {p.stem for p in self.directory.glob("*.blob") if p.is_file()} if self.directory.exists() else set()
 
             order_major = state.get("next_order", len(state["records"]))
@@ -622,7 +686,7 @@ class FileReview:
     def undo(self, ids, token, request_id):
         if not isinstance(request_id, str) or not 1 <= len(request_id) <= 80 or not isinstance(token, str):
             raise AgentError("agent_invalid_review_request")
-        with file_transaction(self.lock):
+        with file_transaction(self.lock), self._usage_transaction():
             state = self.load()
             self.recover(state)
             prior = next((u for u in state["undos"] if u["id"] == request_id), None)
