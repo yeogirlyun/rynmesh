@@ -20,6 +20,7 @@ export interface SpaceStatus {
   ai_access: "local" | "space";
   pending: { id: string; action: string }[];
   last_error: string;
+  name_rejected?: boolean;
   invitation: string;
   invites: {
     id: string;

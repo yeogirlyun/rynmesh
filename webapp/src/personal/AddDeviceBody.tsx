@@ -23,6 +23,7 @@ export function AddDeviceBody({ space, demo, busy, disabled, pending, error, cop
     <div className="rf-body rf-add">
       {demo && <p className="rf-callout"><Info size={15} aria-hidden="true" /><span>{t("personal.designPreviewInvitationsPermissionsAndRecoveryRequireALiveNode")}</span></p>}
       {(error || space.last_error) && <p className="rf-err" role="alert">{error || tr(space.last_error)}</p>}
+      {space.name_rejected && <p className="rf-callout" role="status">{tr("space_name_rejected")}</p>}
       {pending && <div className="rf-callout rf-callout-brand" role="status"><RefreshCw size={16} aria-hidden="true" />
         <div><b className="rf-h3">{t("personal.waitingForTheCoordinator")}</b>
           <p>{t("personal.keepRynRunningOnTheComputerThatCreatedYourSpaceYourRequestRetriesAutomatically")}</p></div></div>}

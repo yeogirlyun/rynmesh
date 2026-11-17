@@ -1423,6 +1423,8 @@
   "Could not reach the coordination service. Pending requests will retry.": "Could not reach the coordination service. Pending requests will retry.",
   "Request expired. The coordinator must be online; try again.": "Request expired. The coordinator must be online; try again.",
   "Use a name between 1 and 32 characters.": "Use a name between 1 and 32 characters.",
+  "space_name_invalid": "Use a name between 1 and 32 characters.",
+  "space_name_rejected": "Device name is too long to sync.",
   "Invalid invitation.": "Invalid invitation.",
   "Invalid space signature.": "Invalid space signature.",
   "Space authority does not match the invitation.": "Space authority does not match the invitation.",

@@ -129,6 +129,7 @@ export function SpaceControls({ compact = false }: { compact?: boolean }) {
           {error || tr(space.last_error)}
         </p>
       )}
+      {space.name_rejected && <p className="pf-space-notice" role="status">{tr("space_name_rejected")}</p>}
       {pending && (
         <div className="pf-space-notice" role="status">
           <RefreshCw size={18} />

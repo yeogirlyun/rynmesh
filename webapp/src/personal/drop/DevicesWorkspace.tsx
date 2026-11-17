@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { tr } from "../../uiI18n";
 import { CircleAlert, Info, Lock, Plus, RefreshCw, Search } from "lucide-react";
 import { PageHeading } from "../components";
 import { PairDevice } from "../Dialogs";
@@ -27,7 +28,7 @@ const TABS: Tab[] = ["network", "conversations", "transfers"];
 
 export function DevicesWorkspace() {
   const { t } = useTranslation();
-  const { error, refresh, demo, loading } = usePersonal();
+  const { error, refresh, demo, loading, space } = usePersonal();
   const drop = useDrop();
   const { list, byId } = useDropDevices();
   const [params, setParams] = useSearchParams();
@@ -155,6 +156,7 @@ export function DevicesWorkspace() {
     </div>
     {error && <Callout tone="err" role="alert" icon={<CircleAlert size={15} strokeWidth={1.8} />}
       action={<button type="button" className="rd-link" onClick={() => void refresh()}>{t("personal.retry")}</button>}>{error}</Callout>}
+    {space?.name_rejected && <Callout tone="warn" role="status" icon={<Info size={15} strokeWidth={1.7} />}>{tr("space_name_rejected")}</Callout>}
     {drop.status === "unavailable" && <Callout tone="warn" role="status" icon={<Info size={15} strokeWidth={1.7} />}>{t("drop.unavailable")}</Callout>}
     {demo && <Callout role="status" icon={<Info size={15} strokeWidth={1.7} />}>{t("drop.demoEmpty")}</Callout>}
 
