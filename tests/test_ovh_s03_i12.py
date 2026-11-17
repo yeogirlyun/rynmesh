@@ -166,7 +166,7 @@ def test_search_default_limit_is_twenty_and_parameter_limit_is_enforced(tmp_path
 
 def test_continuation_and_summary_explain_recovery_and_current_state(tmp_path):
     runtime, _, _, _ = make_runtime(tmp_path)
-    text = context_compaction.CHECKPOINT_CONTINUATION
+    text = context_compaction.CHECKPOINT_CONTINUATION + context_compaction.CHECKPOINT_RECOVERY
     assert "Use ryn_history_search/ryn_history_read to recover exact details the summary omitted." in text
     assert "Before relying on file or process state recorded here, read the current state again." in text
     instructions = runtime._summary_messages({"messages": []}, 4000)[0]["content"]
