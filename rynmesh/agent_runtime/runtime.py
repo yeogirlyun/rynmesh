@@ -2878,17 +2878,20 @@ class AgentRuntime(AgentLoop):
                 added_skills=added_skills,
                 skipped_skills=skipped_skills,
             )
-        intent = value.get("intent")
-        if intent not in {None, "steer", "information"}:
+        requested_intent = value.get("intent")
+        if requested_intent not in {None, "auto", "steer", "information"}:
             raise AgentError("agent_invalid_request")
 
         def add(data):
             row = task(data, task_id)
+            intent = requested_intent
+            if intent == "auto":
+                intent = "steer" if row["status"] in {"queued", "running", "waiting_approval", "waiting_input"} else None
             if row.get("continued_to"):
                 raise ContinueInNewTask()
             if request_replayed(row, value):
                 return public_task(row, settings=data["settings"])
-            check_version(row, value, goal=intent is not None)
+            check_version(row, value, goal=intent is not None and requested_intent != "auto")
             if not data["settings"]["enabled"]:
                 raise AgentError("agent_disabled")
             if acknowledgeable(row):
