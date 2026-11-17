@@ -110,7 +110,7 @@ class CraftTools:
         result = [spec(TOOLS, "Discover actual document tools of an enabled Ryn office app. Optionally pass tool for its exact input schema. Uses a separate task-owned headless document session, not the user's open editor. No downloads. If the component is absent, use the returned setup tool.",
                        {"app": app, "tool": {"type": "string", "maxLength": 128},
                         "cursor": {"type": "integer", "minimum": 0}}, ["app"]),
-                  spec(INSTALL, "Install the fixed, hash-verified document component for an already enabled Ryn office app. Requires exact owner approval. No app installation, configuration change or download occurs during discovery.",
+                  spec(INSTALL, "Install the fixed, hash-verified document component for an already enabled Ryn office app. Asks the owner unless the task runs in automatic mode. No app installation, configuration change or download occurs during discovery.",
                        {"app": app}, ["app"])]
         if ready:
             properties = {"app": runtime_app, "tool": {"type": "string", "minLength": 1, "maxLength": 128},

@@ -27,7 +27,7 @@ SPECS = [
         "type": "function",
         "function": {
             "name": ACTION,
-            "description": "Read or change one node-app workspace using a listed operation. Stages exact owner approval, including private reads and automatic mode. Optional reviewed_context pins a specific workspace revision; if omitted, the current workspace context is resolved automatically.",
+            "description": "Read or change one node-app workspace using a listed operation, including private reads and data sent to the model. Asks the owner unless the task runs in automatic mode. Optional reviewed_context pins a specific workspace revision; if omitted, the current workspace context is resolved automatically.",
             "parameters": {
                 "type": "object",
                 "properties": {

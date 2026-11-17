@@ -2315,7 +2315,8 @@ class AgentLoop:
                         row["approved"] = None
                         raise AgentError("agent_approval_preview_changed")
                     if automatic and not approved:
-                        event(row, "automatically_authorized", tool=call["name"], arguments_sha256=digest(call["arguments"]), preview=preview)
+                        event(row, "automatically_authorized", tool=call["name"], arguments_sha256=digest(call["arguments"]), preview=preview,
+                              **({"explicit_approval_bypassed": True} if meta.get("requires_explicit_approval") else {}))
                     if decision.basis == "task_grant" and not approved:
                         grant_proof = task_grant_proof(call, meta, row)
                         event(row, "task_grant_authorized", tool=call["name"], **grant_proof)

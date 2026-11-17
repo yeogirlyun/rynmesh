@@ -681,8 +681,20 @@ def owner_tool_key(call, metadata):
     return call["name"]
 
 
+def desktop_enabled(mode, flag):
+    return mode == "automatic" or bool(flag)
+
+
+def desktop_access_enabled(row, settings):
+    mode = row.get("permission_mode", "workspace")
+    modes = {mode, settings.get("permission_mode", mode)}
+    return modes == {"automatic"} or bool(
+        (row.get("local_execution") or {}).get("desktop_access") and settings.get("desktop_access"))
+
+
 def decide(call, metadata, row, settings):
     mode = row["permission_mode"]
+    modes = {mode, settings.get("permission_mode", mode)}
     if mode not in MODES:
         return Decision("deny", "invalid_policy")
     # Only trusted metadata or this host's literal-command recognizer can mark
@@ -701,7 +713,12 @@ def decide(call, metadata, row, settings):
     if row.get("approved"):
         return Decision("execute", "approved")
     if metadata.get("requires_explicit_approval"):
-        return Decision("ask", "explicit_approval")
+        if modes != {"automatic"}:
+            return Decision("ask", "explicit_approval")
+        return Decision("execute", "automatic")
+    desktop_granted = desktop_access_enabled(row, settings)
+    if metadata.get("computer_access") and not desktop_granted:
+        return Decision("ask", "desktop_access")
     if mode == "workspace":
         from .dangerous_commands import dangerous_shell
         if call["name"] == "ryn_shell_execute" and dangerous_shell(call.get("arguments") or {}):
@@ -715,14 +732,11 @@ def decide(call, metadata, row, settings):
     # This alias is authored by the host only after verifying the builtin
     # provider, schema and enablement. Never derive it from a model tool name.
     workstation_tool = metadata.get("workstation_permission_tool")
-    desktop_granted = (row.get("local_execution") or {}).get("desktop_access") is True
     inherited_desktop = (workstation_tool == "ryn_computer_action"
                          and metadata.get("computer_access") is True
                          and desktop_granted)
     if mode == "workspace":
         if call["name"] not in WORKSPACE_TOOLS and not inherited_desktop:
             return Decision("ask", "external_change")
-    elif mode == "automatic":
-        if metadata.get("computer_access") and not desktop_granted:
-            return Decision("ask", "desktop_access")
+    # When both sides are automatic, no approval or desktop gate remains.
     return Decision("execute", "automatic")
