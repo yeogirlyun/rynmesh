@@ -1,0 +1,46 @@
+{
+  "alg": "ed25519",
+  "public_key": "I5MZgVVYfRjhj37Jiv6p1tQCsXb/L+Y3V8DfYrVTHH4=",
+  "signature": "KKsD38Cf9OQ23FAPYAZzMcHF6y8tF022jtu1H4CIKM5ctKJM3CzAr8O0nf0DnNmOLV2VI8WNT4+uJ4uKo1i2Ag==",
+  "payload": {
+    "kind": "ryn.public-plugin-catalog",
+    "schema": 1,
+    "plugins": [
+      {
+        "id": "image-studio",
+        "name": "做图",
+        "description": "在自己的电脑上生成、修改图片，管理作品，并按需分享做图页面。",
+        "version": "1.0.0",
+        "runtime": "first-party-python",
+        "host_api": 1,
+        "entry": "ryn_image_studio/__init__.py",
+        "site_id": "image-studio",
+        "permissions": [
+          "local-code",
+          "codex-image",
+          "plugin-data",
+          "node-site"
+        ],
+        "source": "https://github.com/yeogirlyun/rynmesh/tree/develop/plugins/image-studio",
+        "notes": "首个独立版本：本机做图、作品记录、任务队列、按现有公司通道分享。需要支持公开插件的 Ryn；本机需安装并登录 Codex。",
+        "revision": "9e90324112dc27df150fa7ab502415411e960a8e",
+        "files": {
+          "plugin.json": "7d1a7e2ec45d7443770afa6b1e74eeeacd989fb9732232feb9dba8fb97c7e5e3",
+          "README.md": "91cb0fac38d6c0bec3c3ba54ce4f178b4611577fd4cd73d89e9604e256f4121d",
+          "ryn_image_studio/__init__.py": "4dee542c4bd1f870151dba7d739d9642d23cf0348a22e0b218d1590f612bac7b",
+          "ryn_image_studio/generator.py": "0555ca2eada4f7f8edcc39e5c0de266acdacd2d410853836b8279b1dccbb6ea2",
+          "ryn_image_studio/jobs.py": "457fa538c2415dee2f1d5719f4d2f5265eda2edf93e5aa7a12e37d6f0def38a7",
+          "ryn_image_studio/routes.py": "ea6290c6b1581ab55c5ecc93ae80057c73ffe082e2fb4771bb4f222e196c9e9c",
+          "ryn_image_studio/site.py": "33228dc34d7f1cd657469ba690aa21925ffd2341c75d56d3a713469030128222",
+          "ryn_image_studio/sizes.py": "2273fbc4e58b5e11bd32dc24b4ffcb99c448ab278f9797555310cd03bdc8624e",
+          "ryn_image_studio/web/app.css": "3291c6cd6fb661b38985833a2b38dd01b02b41b68083d8ed5b16c83c7ba19719",
+          "ryn_image_studio/web/app.js": "94672dba447d23e9e9ac37a3595cf848594bdbd6cdc4ea8206be5591a793b579",
+          "ryn_image_studio/web/index.html": "4f0a300d3d353e3303caf68b3dc6a71c5a5c044e7a13c9c6ef4346c6eec0956a"
+        },
+        "size": 27049,
+        "sha256": "4dac1eeb18e901aa214ac5704e5ef76f5fbe8f08f4aa3207cdab026a58b5942f",
+        "url": "https://github.com/yeogirlyun/rynmesh/releases/download/plugin-image-studio-v1.0.0/image-studio-1.0.0.zip"
+      }
+    ]
+  }
+}
