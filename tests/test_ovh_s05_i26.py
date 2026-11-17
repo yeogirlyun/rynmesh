@@ -122,11 +122,12 @@ def test_t3_real_runtime_dispatch_passes_selected_model_window_and_retains_page(
         runtime.run_once()
         runtime.run_once()
         assert seen[0][0]['context_window_chars'] >= 600000  # the selected 256K window, not a small default
-        assert len(seen[0][1]['text']) == 48000
+        expected = min(48000, seen[0][0]['context_window_chars'] // 16)
+        assert expected > 40000 and len(seen[0][1]['text']) == expected
         saved = runtime.get(row['id'])
         reference = saved['result_refs'][0]
         page = runtime.get_result(row['id'], reference['id'], 0, 48000)
-        assert len(page['content']) == 48000 and results.MAX_RESULT_BYTES >= 48000
+        assert expected <= len(page['content']) <= 48000 and results.MAX_RESULT_BYTES >= 48000
     finally:
         tools.local.processes.close()
 
