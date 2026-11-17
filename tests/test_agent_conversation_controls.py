@@ -310,6 +310,7 @@ def test_interrupted_restart_task_continues_with_followup_or_resume_and_exposes_
     runtime.store.transaction(lambda data: data["tasks"][row["id"]].update(
         status="running", steps=16, elapsed_seconds=180.0,
         in_flight={"kind": "model", "dispatched": True},
+        restart_auto_continued=data["tasks"][row["id"]]["goal"]["revision"],
     ))
     restarted = AgentRuntime(AgentStore(tmp_path, key), model, tools, runtime.catalog)
     restarted.reconcile()

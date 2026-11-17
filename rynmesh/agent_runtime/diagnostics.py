@@ -40,7 +40,7 @@ _ERROR_GUIDANCE = {
     "agent_model_busy": ("wait_for_capacity", "Wait for model capacity, then start an explicit retry.", "/agent"),
     "agent_step_limit": ("review_budget", "Review the task's step limit and narrow the request before starting another task.", "/agent"),
     "agent_time_limit": ("review_budget", "Review the task's time limit and narrow the request before starting another task.", "/agent"),
-    "agent_node_restarted": ("resume_if_allowed", "Review current state and use Resume only when the server permits it.", "/agent"),
+    "agent_node_restarted": ("resume_if_allowed", "能自动续跑的任务已续跑。Review current state and use Resume only when the server permits it.", "/agent"),
     "agent_write_outcome_unknown": ("reconcile_original_write", "Check the original operation receipt; do not repeat the write to guess its outcome.", "/agent"),
     "agent_scope_changed": ("review_scope", "Review current task data permissions and explicitly resume if appropriate.", "/agent"),
     "agent_permission_denied": ("review_permissions", "The recorded operation was rejected by permission enforcement. Review current task and Agent permissions; this code alone does not identify a hash mismatch or prove that approval was never staged. Do not retry a write without current authorization.", "/agent"),

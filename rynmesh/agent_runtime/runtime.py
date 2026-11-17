@@ -3297,10 +3297,10 @@ class AgentRuntime(AgentLoop):
                         outcome = "not_executed"
                         if flight.get("effect") == "write":
                             outcome = self._settle_interrupted_read(row, flight, err_code, recovery=recovery)
+                        may_continue = self._read_may_continue_after_restart(row, flight, data)
                         row["in_flight"] = None
                         row["approved"] = None
                         settle(row, event, data=data)
-                        may_continue = self._read_may_continue_after_restart(row, flight, data)
                         row["reconciliation"] = {
                             "state": "executed" if outcome == "confirmed" else "not_executed",
                             "attempts": attempts,
@@ -3601,17 +3601,13 @@ class AgentRuntime(AgentLoop):
         )
         return outcome
 
-    def _read_may_continue_after_restart(self, row: dict, flight: dict, data: dict) -> bool:
+    def _may_continue_after_restart(self, row: dict, data: dict) -> bool:
         if (
             not data["settings"].get("enabled")
-            or row.get("pending_control")
+            or row.get("status") in {"cancelled", "paused", "editing"}
+            or (row.get("pending_control") and row["pending_control"].get("kind") != "steer")
             or row.get("pending_input")
             or row.get("pending_approval")
-            or flight.get("control_revision") != row["control_revision"]
-            or flight.get("goal_revision") != row["goal"]["revision"]
-            or flight.get("scope_revision") != row["scope_revision"]
-            or flight.get("context_epoch", 0) != row.get("context_epoch", 0)
-            or flight.get("authority") != model_retry_authority(data["settings"])
             or write_permission_revoked(row, data["settings"])
             or budget.hard_run_limit(row)
             or budget.time_remaining(row) <= 0
@@ -3649,6 +3645,17 @@ class AgentRuntime(AgentLoop):
         except AgentError:
             return False
         return True
+
+    def _read_may_continue_after_restart(self, row: dict, flight: dict, data: dict) -> bool:
+        steer = (row.get("pending_control") or {}).get("kind") == "steer"
+        return bool(
+            self._may_continue_after_restart(row, data)
+            and (steer or (flight.get("control_revision") == row["control_revision"]
+                           and flight.get("goal_revision") == row["goal"]["revision"]))
+            and flight.get("scope_revision") == row["scope_revision"]
+            and flight.get("context_epoch", 0) == row.get("context_epoch", 0)
+            and flight.get("authority") == model_retry_authority(data["settings"])
+        )
 
     def adopt_shipped_permission_mode(self, mode: str) -> bool:
         """Record legacy mode provenance without changing a saved mode.
@@ -3689,8 +3696,9 @@ class AgentRuntime(AgentLoop):
                 flight = row.get("in_flight")
                 if flight or row["status"] == "running" or row.get("approved"):
                     was_cancelled = row["status"] == "cancelled" or (row.get("pending_control") or {}).get("kind") == "cancel"
-                    was_paused = row["status"] == "paused" or (row.get("pending_control") or {}).get("kind") == "pause"
+                    was_paused = row["status"] == "paused" or (row.get("pending_control") or {}).get("kind") in {"pause", "stop"}
                     was_editing = (row.get("pending_control") or {}).get("kind") == "edit_message"
+                    steer_pending = (row.get("pending_control") or {}).get("kind") in {"steer", "scope", "permissions"}
                     workspace_root = (row.get("local_execution") or {}).get("workspace_root", "")
                     is_verified_read = bool(
                         flight
@@ -3707,52 +3715,7 @@ class AgentRuntime(AgentLoop):
                     recovery = None
                     if is_verified_read or (flight and flight.get("effect") == "read" and flight.get("dispatched")):
                         cleanup_ok, recovery = self._recover_read_operation_details(row, flight, error="agent_node_restarted")
-                    if is_verified_read and flight.get("effect") == "write":
-                        if not cleanup_ok:
-                            row.update(
-                                status="cancelled" if was_cancelled else "interrupted",
-                                approved=None,
-                                error="agent_node_restarted",
-                            )
-                            event(
-                                row,
-                                "interrupted",
-                                ambiguous_write=False,
-                                continued=False,
-                                cleanup_confirmed=False,
-                            )
-                        else:
-                            may_continue = (
-                                not was_cancelled
-                                and not was_paused
-                                and self._read_may_continue_after_restart(row, flight, data)
-                            )
-                            settled_outcome = self._settle_interrupted_read(row, flight, "agent_node_restarted", recovery=recovery)
-                            row["in_flight"] = None
-                            row["approved"] = None
-                            settle(row, event, data=data)
-                            if was_editing:
-                                # The owner already committed the replacement turn.
-                                # Its old flight settled above; do not overwrite the
-                                # edited branch's queued/paused state with recovery.
-                                may_continue = row["status"] == "queued"
-                            elif was_cancelled:
-                                row.update(status="cancelled", error="agent_node_restarted")
-                            elif was_paused:
-                                row.update(status="paused", error="agent_node_restarted")
-                            elif may_continue:
-                                row.update(status="queued", error=None)
-                            else:
-                                row.update(status="interrupted", error="agent_node_restarted")
-                            event(
-                                row,
-                                "interrupted",
-                                ambiguous_write=False,
-                                continued=may_continue,
-                                cleanup_confirmed=True,
-                                ledger_outcome=settled_outcome,
-                            )
-                    elif (
+                    if (
                         ambiguous_write
                         and not was_cancelled
                         and not was_paused
@@ -3774,17 +3737,49 @@ class AgentRuntime(AgentLoop):
                             auto_acknowledged=True,
                         )
                     else:
-                        row.update(status="interrupted", approved=None, error="agent_write_outcome_unknown" if ambiguous_write else "agent_node_restarted")
                         if ambiguous_write:
+                            row.update(status="interrupted", approved=None, error="agent_write_outcome_unknown")
                             verification.record(row, flight, "unknown", now(), flight=flight)
                             self._schedule_reconciliation(row)
-                        if not ambiguous_write:
+                            event(row, "interrupted", ambiguous_write=True)
+                        else:
+                            read_flight = bool(flight and flight.get("dispatched") and (is_verified_read or flight.get("effect") == "read"))
+                            may_continue = (self._read_may_continue_after_restart(row, flight, data) if read_flight
+                                            else self._may_continue_after_restart(row, data))
+                            settled_outcome = None
                             if cleanup_ok:
+                                if read_flight:
+                                    settled_outcome = self._settle_interrupted_read(row, flight, "agent_node_restarted", recovery=recovery)
                                 row["in_flight"] = None
+                                row["approved"] = None
                                 settle(row, event, data=data)
-                            if not (was_editing and cleanup_ok):
-                                row["status"] = "cancelled" if was_cancelled else "interrupted"
-                        event(row, "interrupted", ambiguous_write=ambiguous_write)
+                            owner_continued = (cleanup_ok and steer_pending and row["status"] == "queued"
+                                               and not was_cancelled and not was_paused and not was_editing)
+                            auto_continued = (cleanup_ok and may_continue and not owner_continued
+                                              and not was_cancelled and not was_paused and not was_editing
+                                              and row.get("restart_auto_continued") != row["goal"]["revision"])
+                            if was_editing and cleanup_ok:
+                                continued = row["status"] == "queued"
+                            elif was_cancelled or was_paused:
+                                row.update(status="cancelled" if was_cancelled else "paused", error="agent_node_restarted")
+                                continued = False
+                            elif owner_continued or auto_continued:
+                                row.update(status="queued", error=None)
+                                continued = True
+                                if auto_continued:
+                                    row["restart_auto_continued"] = row["goal"]["revision"]
+                                    note = {"role": "assistant", "content": "Ryn 在任务运行中重启；从已记录历史继续，重复任何操作前先查状态。",
+                                            "context_epoch": row.get("context_epoch", 0), "ui": {"kind": "information", "hidden": True}}
+                                    messages = row["messages"]
+                                    index = len(messages) - 1 if row.get("queue") and messages[-1].get("tool_calls") else len(messages)
+                                    messages.insert(index, note)
+                            else:
+                                row.update(status="interrupted", approved=None, error="agent_node_restarted")
+                                continued = False
+                            event(row, "interrupted", ambiguous_write=False, continued=continued,
+                                  reason="owner_message_pending" if owner_continued else "node_restarted",
+                                  **({"cleanup_confirmed": cleanup_ok} if read_flight else {}),
+                                  **({"ledger_outcome": settled_outcome} if settled_outcome else {}))
                 if row.get("status") not in {"completed", "cancelled", "failed"}:
                     _note_lost_background_processes(row, boot_id)
         self.store.transaction(reconcile)
