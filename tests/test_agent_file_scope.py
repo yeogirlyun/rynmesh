@@ -50,6 +50,13 @@ def test_path_file_old_body_cannot_leave_after_version_or_type_change(resources,
         state["body"] += b" changed"
     else:
         state["name"] = "elsewhere.md"
+    if change == "content":
+        # Metadata-only validation reuses the file digest. A real read still
+        # hashes new bytes and must reject the changed content before output.
+        tools.validate_context(context)
+        with pytest.raises(AgentToolRejected, match="agent_resource_version_changed"):
+            read(tools, context)
+        return
     with pytest.raises(AgentToolRejected):
         tools.validate_context(context)
 
