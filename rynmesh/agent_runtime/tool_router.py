@@ -10,6 +10,7 @@ import copy
 import hashlib
 import json
 import re
+from pathlib import Path
 
 from ..llm_package.chat import validate_tool_arguments, validate_tool_schema
 from .output_policy import MAX_RAW_RESPONSE_BYTES, MAX_TOOL_CALL_ARGUMENT_BYTES
@@ -143,7 +144,8 @@ def _reject(call, code, message, *, details=None):
 def normalize_tool_calls(calls, specs, *, existing_call_ids=(), metadata=None,
                          internal_names=(),
                          max_argument_bytes=MAX_TOOL_CALL_ARGUMENT_BYTES,
-                         rewrite_ids_seed=None, index_offset=0, collisions=None):
+                         rewrite_ids_seed=None, index_offset=0, collisions=None,
+                         workspace_root=None):
     """Return request-ordered calls with deep-copied schemas or paired errors.
 
     Accepts normalized chat calls and Responses function_call items. Original
@@ -306,6 +308,29 @@ def normalize_tool_calls(calls, specs, *, existing_call_ids=(), metadata=None,
                 normalized.append(_reject(call, "agent_tool_arguments_invalid", message, details=details))
                 continue
         call["arguments"] = arguments
+        if name == "ryn_shell_execute" and "ryn_apply_patch" in catalog:
+            from .local_patch import rebase_paths, shell_patch
+            invocation = shell_patch(arguments["command"], arguments.get("shell", ""))
+            if invocation and invocation.get("error") == "implicit_patch":
+                rejected = _reject(call, "agent_patch_implicit_patch", "Use ryn_apply_patch for a raw patch.")
+                rejected["error_result"]["correction"] = "改用 ryn_apply_patch 工具，把补丁原文放在 patch 参数"
+                normalized.append(rejected)
+                continue
+            if invocation:
+                root = Path(workspace_root or Path.cwd()).resolve()
+                base = (root / arguments.get("cwd", ".") / (invocation["cd"] or ".")).resolve()
+                if base.is_relative_to(root):
+                    name = "ryn_apply_patch"
+                    arguments = {"patch": rebase_paths(invocation["patch"], base.relative_to(root).as_posix())}
+                    snapshot = catalog[name]
+                    rewritten_json = _json(arguments)
+                    call.update(name=name, arguments=arguments, arguments_json=rewritten_json,
+                                raw_arguments_json=rewritten_json,
+                                arguments_sha256=hashlib.sha256(rewritten_json.encode()).hexdigest(),
+                                schema_snapshot=copy.deepcopy(snapshot), schema_sha256=_schema_digest(snapshot),
+                                rewritten_from="ryn_shell_execute", intercepted_from="ryn_shell_execute")
+                else:
+                    call["shell_patch_outside_workspace"] = True
         if metadata is not None:
             try:
                 meta = metadata(name)

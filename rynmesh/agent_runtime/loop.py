@@ -716,7 +716,8 @@ class AgentLoop:
             # not a rejected response that could replay valid sibling calls.
             pending = normalize_tool_calls(automations.canonicalize_legacy_notification_calls(calls), router_specs, existing_call_ids=ids,
                                            metadata=request_metadata, internal_names=ALL_INTERNAL_NAMES,
-                                           rewrite_ids_seed=request_id)
+                                           rewrite_ids_seed=request_id,
+                                           workspace_root=(selected.get("local_execution") or {}).get("workspace_root"))
             for call in pending:
                 # The host ledger hashes parsed arguments, separately from the
                 # wire representation (whitespace must not alter permission proof).
@@ -2128,7 +2129,7 @@ class AgentLoop:
             subagents.check_subagent_tool_policy(selected, call["name"], call["arguments"])
             from .read_reliability import check_shell_retry
             check_shell_retry(selected, call)
-            if call["name"] == "ryn_shell_execute":
+            if call["name"] == "ryn_shell_execute" and not call.get("shell_patch_outside_workspace"):
                 from .patch_intercept import extract_patch, patch_arguments
                 extracted = extract_patch(call["arguments"]["command"])
                 if extracted is not None:
