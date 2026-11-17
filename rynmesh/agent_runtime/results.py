@@ -15,6 +15,7 @@ from . import diagnostic_log
 from .store import AgentError, AgentToolRejected, encoded
 
 MAX_RESULT_BYTES = 2 * 1024 * 1024
+MAX_PAGE_CHARS = 48000
 CHANNEL = b"rynmesh-agent-result-v1"
 WORKSTATION_INLINE_PREVIEW_FIELDS = {
     "ryn_file_read": "text",
@@ -348,7 +349,7 @@ def read(store, row, result_id, *, provider=False):
 
 
 def page(store, row, result_id, offset=0, limit=8192, *, provider=False):
-    if type(offset) is not int or offset < 0 or type(limit) is not int or not 64 <= limit <= 16384:
+    if type(offset) is not int or offset < 0 or type(limit) is not int or not 64 <= limit <= MAX_PAGE_CHARS:
         raise AgentError("agent_invalid_cursor")
     value, reference = read(store, row, result_id, provider=provider)
     text = encoded(value).decode()
