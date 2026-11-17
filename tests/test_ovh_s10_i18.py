@@ -376,3 +376,46 @@ def test_t14_invalid_integer_is_a_tool_error_and_does_not_abort_the_transaction(
     assert key in result['correction']
     assert not runtime.store.read()['automations']
     assert create(runtime, name='Still usable')['name'] == 'Still usable'
+
+
+@pytest.mark.parametrize('operation', ['create', 'edit'])
+def test_rework_hour_interval_ui_request_accepts_null_unused_minutes(env, operation):
+    _, runtime, _, client = env
+    payload = {'name': 'Hourly UI request', 'prompt': 'Observe', 'status': 'ACTIVE',
+        'desktop_access': True, 'kind': 'cron', 'target_task_id': '',
+        'notification_policy': 'all_runs', 'repeat': 'hourly',
+        'interval_hours': 2, 'interval_minutes': None}
+    if operation == 'create':
+        response = client.post('/api/local/agent/automations', json=payload)
+    else:
+        auto = create(runtime, repeat='hourly', interval_hours=1)
+        response = client.patch(f"/api/local/agent/automations/{auto['id']}", json=payload)
+    assert response.status_code == 200, response.text
+    saved = response.json()['automation']
+    assert saved['repeat'] == 'hourly' and saved['interval_hours'] == 2
+    assert 'FREQ=HOURLY;INTERVAL=2' in saved['rrule']
+
+
+@pytest.mark.parametrize('repeat', ['hourly', 'minutely', 'once'])
+def test_rework_null_numeric_schedule_fields_use_defaults_and_preserve_existing_schedule(env, repeat):
+    _, runtime, _, client = env
+    nulls = {'interval_hours': None, 'interval_minutes': None, 'delay_minutes': None}
+    response = client.post('/api/local/agent/automations', json={
+        'name': 'Null defaults', 'prompt': 'Observe', 'repeat': repeat, 'time': '10:30', **nulls})
+    assert response.status_code == 200, response.text
+    saved = response.json()['automation']
+    assert saved['repeat'] == repeat
+    if repeat == 'hourly':
+        assert saved['interval_hours'] == 1
+    elif repeat == 'minutely':
+        assert saved['interval_minutes'] == 15
+    else:
+        assert saved['time'] == '10:30' and 'COUNT=1' in saved['rrule']
+    existing = create(runtime, repeat=repeat, interval_hours=3, interval_minutes=20, time='11:45',
+        **({'delay_minutes': 5} if repeat == 'once' else {}))
+    updated = client.patch(f"/api/local/agent/automations/{existing['id']}", json=nulls)
+    assert updated.status_code == 200, updated.text
+    record = updated.json()['automation']
+    assert record['rrule'] == existing['rrule']
+    assert record['interval_hours'] == existing['interval_hours']
+    assert record['interval_minutes'] == existing['interval_minutes']

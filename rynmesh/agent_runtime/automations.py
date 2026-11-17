@@ -977,7 +977,7 @@ def normalize_automation_record(
             dedicated_chat = False
 
     has_schedule_change = any(
-        k in raw
+        raw.get(k) is not None
         for k in (
             "rrule",
             "repeat",
@@ -991,6 +991,8 @@ def normalize_automation_record(
     )
     if has_schedule_change or not base.get("rrule"):
         existing_parts = parse_rrule_parts(str(base.get("rrule") or ""))
+        interval_hours = raw.get("interval_hours")
+        interval_minutes = raw.get("interval_minutes")
         rrule_str = build_rrule(
             repeat=str(raw.get("repeat") or existing_parts["repeat"]),
             time_str=str(raw.get("time") or existing_parts["time"]),
@@ -1004,8 +1006,8 @@ def normalize_automation_record(
                     else None
                 )
             ),
-            interval_hours=_int_arg(raw.get("interval_hours", existing_parts["interval_hours"]), "interval_hours", 1, 24),
-            interval_minutes=_int_arg(raw.get("interval_minutes", existing_parts.get("interval_minutes", 5)), "interval_minutes", 1, 1440),
+            interval_hours=_int_arg(interval_hours if interval_hours is not None else existing_parts["interval_hours"], "interval_hours", 1, 24),
+            interval_minutes=_int_arg(interval_minutes if interval_minutes is not None else existing_parts.get("interval_minutes", 5), "interval_minutes", 1, 1440),
             delay_minutes=_int_arg(raw["delay_minutes"], "delay_minutes", 1, 525600) if raw.get("delay_minutes") is not None else None,
             raw_rrule=str(raw.get("rrule") or "") if "rrule" in raw else None,
         )
