@@ -25,7 +25,7 @@ from ..llm_package.image_input_profile import (
     prepare_internal_image_profile,
     shared_image_carrier_scope,
 )
-from . import data_policy, image_capabilities, output_policy, reasoning
+from . import data_policy, diagnostic_log, image_capabilities, output_policy, reasoning
 from .model_events import (
     ModelEventError,
     ModelEventStream,
@@ -83,9 +83,9 @@ _ADAPTER_ERROR_MAP = {
     "ai_permission_denied": "agent_model_destination_changed",
     "model_configuration_changed": "agent_model_destination_changed",
     "model_daily_quota_exhausted": "agent_model_quota_exhausted",
-    "model_not_ready": "agent_model_unavailable",
+    "model_not_ready": "agent_model_starting",
     "model_not_found": "agent_model_unavailable",
-    "runtime_unavailable": "agent_model_unavailable",
+    "runtime_unavailable": "agent_model_starting",
     "task_cancelled": "agent_cancelled",
 }
 MODEL_ERROR_CODES = frozenset({
@@ -129,8 +129,16 @@ class AgentModelBridge:
     supports_model_events = True
 
 
-    def __init__(self, services, catalog):
+    def __init__(self, services, catalog, *, local_model_status=None):
         self.services, self.catalog = services, catalog
+        self.local_model_status = local_model_status
+
+    def _local_model_starting(self, model_id):
+        if not model_id.startswith("local/") or self.local_model_status is None:
+            return False
+        status = self.local_model_status()
+        return (model_id == "local/" + status.get("id", "")
+                and status.get("state") in {"starting", "installing"})
 
     def _data_policy_context(self, target, expected_destination, manager=None):
         """Use host-owned records and the actual adapter, never display claims."""
@@ -278,7 +286,12 @@ class AgentModelBridge:
                 raise AgentError("agent_invalid_request_deadline")
             if time.monotonic() >= deadline:
                 raise AgentError("agent_inference_timeout")
-        target = self.catalog.resolve(model_id)
+        try:
+            target = self.catalog.resolve(model_id)
+        except ValueError as exc:
+            if str(exc) == "agent_model_unavailable" and self._local_model_starting(model_id):
+                raise ValueError("agent_model_starting") from None
+            raise
         restricted = data_policy.task_requires_model_restriction(data_policy_state)
         if restricted and expected_destination is None:
             raise AgentError("agent_extension_model_not_allowed")
@@ -381,6 +394,8 @@ class AgentModelBridge:
             chat["stream"] = True
         window = codex_threads.window_key(conversation)
         manager = self.services["provider_for"](target["service_id"]) if target["source"] != "peer" else None
+        if target["source"] != "peer" and manager is None:
+            raise ValueError("agent_model_starting" if self._local_model_starting(model_id) else "agent_model_unavailable")
         if expected_destination is not None and target["source"] == "local_api":
             # Bind the actual immutable provider instance to the authorized
             # source snapshot, not only an earlier catalog lookup.
@@ -402,9 +417,6 @@ class AgentModelBridge:
             if (manager is None or native_binding != actual_binding
                     or peer_binding.local_revision(native_binding, target["peer_id"]) != expected_destination["destination_revision"]):
                 raise AgentError("agent_model_destination_changed")
-        if target["source"] != "peer" and manager is None:
-            raise ValueError("agent_model_unavailable")
-
         def check_data_release():
             context = None
             if restricted:
@@ -463,8 +475,12 @@ class AgentModelBridge:
                     manager.adapter.cancel(task_id)
                 else:
                     self.services["cancel_order"](task_id)
-            except Exception:
-                pass
+            except Exception as exc:
+                diagnostic_log.failure("inference_cancel", exc)
+                request_policy["cancel_failed"] = True
+                if on_request_policy:
+                    with cleared_internal_image_scope():
+                        on_request_policy(request_policy)
 
         def watch():
             while not done.wait(0.1):
@@ -526,7 +542,6 @@ class AgentModelBridge:
                     raise err
                 with manager._lock:
                     manager._running += 1
-            watcher.start()
             if on_event:
                 safe_on_event({"type": "provider_selected", "model_id": model_id, "source": target["source"], "request_id": task_id})
             if cancelled():
@@ -540,6 +555,7 @@ class AgentModelBridge:
             if on_request_policy:
                 with cleared_internal_image_scope():
                     on_request_policy(request_policy)
+            watcher.start()
             if expired():
                 raise AgentError("agent_inference_timeout")
             check_data_release()
@@ -746,4 +762,6 @@ def build_agent_integrations(app, store, home):
     if services is None:
         raise ValueError("agent_inference_services_unavailable")
     catalog = ModelCatalog(services, store)
-    return AgentModelBridge(services, catalog), RynTools(app, store, services, catalog), catalog
+    native_model = getattr(app.state, "native_model", None)
+    return AgentModelBridge(services, catalog,
+                            local_model_status=native_model.status if native_model is not None else None), RynTools(app, store, services, catalog), catalog

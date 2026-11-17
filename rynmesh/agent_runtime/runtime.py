@@ -93,6 +93,7 @@ CONTINUE_SECONDS = 20.0
 # Completed streaming reads retain their receipts before inference retry. Writes
 # remain behind accepted responses. Retries are bounded by task and lifetime budgets.
 RETRYABLE_MODEL_ERRORS = {"agent_inference_timeout", "agent_model_connection_failed", "agent_model_busy",
+                          "agent_model_starting",
                           "agent_model_upstream_failed", "agent_model_stream_interrupted",
                           "agent_invalid_model_response", "agent_compaction_size_limit", "agent_compaction_incomplete"}
 PUBLIC_FIELDS = ("fork", "id", "client_request_id", "title", "model_id", "reasoning_effort", "status", "revision", "created_at", "updated_at",
@@ -4109,6 +4110,7 @@ class AgentRuntime(AgentLoop):
                 run_limit = budget.hard_run_limit(row)
                 error = ("agent_permission_denied" if authority != selected.get("_model_retry_authority") else
                          run_limit if run_limit else
+                         "agent_model_unavailable" if code == "agent_model_starting" and count >= maximum else
                          code if not network and maximum is not None and count >= maximum else None)
                 row.pop("pending_control", None)
                 extra_event = {
@@ -4123,6 +4125,8 @@ class AgentRuntime(AgentLoop):
                     subagents.on_subagent_settled_in_tx(data, row)
                     return True
                 if error:
+                    if code == "agent_model_starting" and error == "agent_model_unavailable":
+                        row.pop("connection_recovery", None)
                     row.update(status="failed", error=error)
                     event(row, "failed", error=error, **extra_event)
                     subagents.on_subagent_settled_in_tx(data, row)
@@ -4539,7 +4543,7 @@ class AgentRuntime(AgentLoop):
             # Only explicitly enumerated boundary codes may reach the owner.
             # Arbitrary provider exceptions can contain URLs or credentials.
             safe = {"agent_context_limit", "agent_inference_failed", "agent_invalid_model_response",
-                    "agent_model_busy", "agent_model_output_limit", "agent_model_unavailable",
+                    "agent_model_busy", "agent_model_output_limit", "agent_model_unavailable", "agent_model_starting",
                     "agent_model_tools_unsupported", "agent_output_truncated", "agent_tool_call_limit", "agent_unknown_tool",
                     "agent_approval_preview_changed", "agent_friend_inactive", "agent_friend_model_not_shareable",
                     "agent_model_not_shareable", "agent_model_uses_personal_space_access",

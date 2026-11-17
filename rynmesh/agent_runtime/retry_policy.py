@@ -2,7 +2,7 @@
 import random
 import time
 
-NETWORK_ERRORS = {"agent_inference_timeout", "agent_model_connection_failed", "agent_model_busy", "agent_model_upstream_failed", "agent_model_stream_interrupted", "agent_model_discovery_failed"}
+NETWORK_ERRORS = {"agent_inference_timeout", "agent_model_connection_failed", "agent_model_busy", "agent_model_upstream_failed", "agent_model_stream_interrupted", "agent_model_discovery_failed", "agent_model_starting"}
 CONNECTION_REASONS = frozenset({"reset", "refused", "connection", "dns_temporary", "timeout"})
 RETRYABLE_HTTP_STATUSES = frozenset({408, 429, 500, 502, 503, 504, 529})
 DEFAULT_STREAM_MAX_RETRIES = 5
@@ -22,6 +22,8 @@ def _stream_max_retries(diagnostics):
 
 def limit(code, diagnostics):
     diagnostics = diagnostics if isinstance(diagnostics, dict) else {}
+    if code == "agent_model_starting":
+        return 6
     if code == "agent_compaction_incomplete":
         return 2
     if code not in NETWORK_ERRORS:
@@ -45,6 +47,8 @@ def limit(code, diagnostics):
 
 
 def delay(count, diagnostics, code):
+    if code == "agent_model_starting":
+        return 5
     diagnostics = diagnostics if isinstance(diagnostics, dict) else {}
     unlimited = limit(code, diagnostics) is None
     overloaded = diagnostics.get("overloaded") is True

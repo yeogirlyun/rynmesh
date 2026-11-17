@@ -84,6 +84,9 @@ def safe_diagnostics(raw) -> dict:
         if isinstance(flag, bool):
             out[key] = flag
     stream_retries = raw.get("stream_max_retries")
+    reset_at = raw.get("reset_at")
+    if type(reset_at) is int and reset_at >= 0:
+        out["reset_at"] = reset_at
     if type(stream_retries) is int and 0 <= stream_retries <= 20:
         out["stream_max_retries"] = stream_retries
     from ..llm_package.transport_failure import REASONS
