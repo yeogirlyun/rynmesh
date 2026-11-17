@@ -1,5 +1,5 @@
 import type { AgentStorageHealth } from "./agentStorageHealth";
-import { nodeControlUrl } from "./nodeUrl";
+import { isTauriDesktop, localControlHeaders, nodeControlUrl } from "./nodeUrl";
 import { applyAgentAttachmentLimits, type AgentAttachmentInput, type AgentMessageAttachment, type ServerAttachmentLimits } from "./agentAttachments";
 import type { ModelTokenUsage } from "./aiSources";
 
@@ -464,7 +464,7 @@ async function request<T>(path: string, method = "GET", body?: unknown, signal?:
   const send = async (requestSignal?: AbortSignal): Promise<T> => {
     const response = await fetch(nodeControlUrl(`/agent${path}`), {
       method, credentials: "include", cache: "no-store", signal: requestSignal,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(isTauriDesktop() ? await localControlHeaders() : {}) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     if (!response.ok) {
@@ -484,7 +484,7 @@ export function agentFileUrl(taskID: string, file: Pick<AgentFileArtifact, "id" 
 }
 async function fileContent(taskID: string, file: Pick<AgentFileArtifact, "id" | "sha256" | "media_type">, signal?: AbortSignal): Promise<Blob> {
   return readWithRecovery(async requestSignal => {
-    const response = await fetch(agentFileUrl(taskID, file), { credentials: "include", cache: "no-store", signal: requestSignal });
+    const response = await fetch(agentFileUrl(taskID, file), { credentials: "include", cache: "no-store", signal: requestSignal, headers: isTauriDesktop() ? await localControlHeaders() : {} });
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
       throw new AgentAPIError(typeof data.detail === "string" ? data.detail : "agent_request_failed", response.status);

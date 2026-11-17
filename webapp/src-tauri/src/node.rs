@@ -7,8 +7,25 @@ use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
+
+static LOCAL_TOKEN: OnceLock<String> = OnceLock::new();
+
+#[tauri::command]
+pub fn local_token() -> String {
+    LOCAL_TOKEN.get_or_init(|| {
+        use base64::Engine;
+        let mut bytes = [0u8; 32];
+        rustls::crypto::ring::default_provider().secure_random.fill(&mut bytes)
+            .expect("OS random source unavailable");
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+    }).clone()
+}
+
+#[cfg(test)]
+#[path = "node_s13_i31_tests.rs"]
+mod s13_i31_tests;
 
 fn hidden_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
     let mut command = Command::new(program);
@@ -146,7 +163,7 @@ fn llama_runtime_dir() -> Option<PathBuf> {
 }
 
 /// RYNMESH_* defaults mirror launch_ryn_node_webapp.zsh; any value already in
-/// the process environment wins (operator override).
+/// the process environment wins, except for the shell-owned launch credential.
 fn node_env(port: u16) -> Vec<(String, String)> {
     let mname = machine_name();
     let ip = lan_ip();
@@ -154,6 +171,7 @@ fn node_env(port: u16) -> Vec<(String, String)> {
         "https://registry.rynmesh.ai".to_string()
     });
     let mut env: Vec<(String, String)> = vec![
+        ("RYNMESH_LOCAL_TOKEN".into(), local_token()),
         ("RYNMESH_NODE_NAME".into(), env_or("RYNMESH_NODE_NAME", || mname.clone())),
         ("RYNMESH_MACHINE_NAME".into(), env_or("RYNMESH_MACHINE_NAME", || mname.clone())),
         ("RYNMESH_MACHINE_IP".into(), env_or("RYNMESH_MACHINE_IP", || ip.clone())),
@@ -410,7 +428,7 @@ pub fn restart(state: &NodeState) -> std::io::Result<()> {
     start_inner(state)
 }
 
-/// Control requests stay on loopback and honor an operator-provided local token.
+/// Control requests stay on loopback and carry this shell's launch credential.
 pub fn request(port: u16, method: &str, path: &str, body: &str) -> Result<serde_json::Value, String> {
     request_within(port, method, path, body, Duration::from_secs(2))
 }
@@ -425,9 +443,7 @@ pub fn request_bounded(port: u16, method: &str, path: &str, body: &str, read_tim
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(600)).map_err(|_| "node_unavailable")?;
     let _ = stream.set_read_timeout(Some(read_timeout));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
-    let token = std::env::var("RYNMESH_LOCAL_TOKEN").unwrap_or_default();
-    if token.contains(['\r', '\n']) { return Err("invalid_local_token".into()); }
-    let auth = if token.is_empty() { String::new() } else { format!("X-Ryn-Local-Token: {token}\r\n") };
+    let auth = format!("X-Ryn-Local-Token: {}\r\n", local_token());
     let request = format!("{method} {path} HTTP/1.0\r\nHost: 127.0.0.1\r\n{auth}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
     stream.write_all(request.as_bytes()).map_err(|_| "node_unavailable")?;
     let mut buf = String::new();

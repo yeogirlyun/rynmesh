@@ -2,6 +2,8 @@ import { Lock, MessageSquare, Paperclip } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { uiLocale } from "../../uiI18n";
+import { useEffect, useState } from "react";
+import { isTauriDesktop, localControlHeaders } from "../../domain/nodeUrl";
 import { DeviceTile, deviceHue, type Hue } from "../../personal/drop/FamilyParts";
 import type { Device } from "../../personal/model";
 import type { Peer } from "../../domain/types";
@@ -115,13 +117,31 @@ export function LoadingConversation({ label }: { label: string }) {
 
 export function MessageBubble({ record, url, peerName }: { record: ChatRecord; url: string; peerName: string }) {
   const { t } = useTranslation();
+  const desktop = isTauriDesktop();
+  const [attachment, setAttachment] = useState({ source: "", blob: "" });
+  useEffect(() => {
+    if (!desktop || !url) return;
+    const controller = new AbortController();
+    let active = true, blobUrl = "";
+    void (async () => {
+      const response = await fetch(url, { credentials: "include", signal: controller.signal, headers: await localControlHeaders() });
+      if (!response.ok) throw new Error("attachment_unavailable");
+      const blob = await response.blob();
+      if (active) {
+        blobUrl = URL.createObjectURL(blob);
+        setAttachment({ source: url, blob: blobUrl });
+      }
+    })().catch(() => { if (active) setAttachment({ source: url, blob: "" }); });
+    return () => { active = false; controller.abort(); if (blobUrl) URL.revokeObjectURL(blobUrl); };
+  }, [desktop, url]);
+  const attachmentUrl = desktop ? (attachment.source === url ? attachment.blob : "") : url;
   const out = record.dir === "out";
   const att = record.attachment;
   return <div className={`rq-cmsg ${out ? "out" : "in"}`}>
     {record.text ? <div className="rq-cbubble">{record.text}</div> : null}
-    {att ? (record.kind === "image"
-      ? <img className="rq-cimg" src={url} alt={att.filename} />
-      : <a className="rf-btn rq-cfile" href={url} download={att.filename}><Paperclip size={14} strokeWidth={1.8} aria-hidden="true" /><span className="rf-ell">{att.filename}</span></a>) : null}
+    {att ? (attachmentUrl ? (record.kind === "image"
+      ? <img className="rq-cimg" src={attachmentUrl} alt={att.filename} />
+      : <a className="rf-btn rq-cfile" href={attachmentUrl} download={att.filename}><Paperclip size={14} strokeWidth={1.8} aria-hidden="true" /><span className="rf-ell">{att.filename}</span></a>) : <span>{att.filename}</span>) : null}
     <small className="rq-cmeta">
       {formatClock(record.ts)}
       {out && record.delivered ? <span className="rq-cstate rq-cstate-ok"> · <span>✓</span> {t("personal.messagesDelivered")}</span> : null}

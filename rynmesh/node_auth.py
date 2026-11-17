@@ -21,6 +21,7 @@ import hmac
 import json
 import os
 import secrets
+import threading
 import time
 import urllib.request
 from dataclasses import dataclass, field
@@ -55,12 +56,12 @@ _FORWARD_HEADERS = (
     "x-forwarded-proto",
 )
 
-_LOOPBACK = {"127.0.0.1", "::1", "localhost", "::ffff:127.0.0.1", "testclient"}
+_LOOPBACK = {"127.0.0.1", "::1", "localhost", "::ffff:127.0.0.1"}
 
 # Host header values a genuine local request can carry. A DNS rebinding attack
 # needs a *name* that resolves to 127.0.0.1, so names outside this set are
 # refused on the loopback-trust path while bare IP literals stay fine.
-_LOCAL_HOST_NAMES = {"localhost", "127.0.0.1", "::1", "[::1]", "testserver"}
+_LOCAL_HOST_NAMES = {"localhost", "127.0.0.1", "::1", "[::1]"}
 
 
 def is_loopback_addr(host: str) -> bool:
@@ -148,6 +149,10 @@ class NodeAuth:
     _jwks: dict[str, Any] = field(default_factory=dict, repr=False)
     _jwks_fetched_at: float = field(default=0.0, repr=False)
     _jwks_refetch_at: float = field(default=0.0, repr=False)
+    _token_cache_key: tuple[int, int] | None = field(default=None, repr=False)
+    _token_cache: str = field(default="", repr=False)
+    _token_lock: Any = field(default_factory=threading.RLock, repr=False)
+    _jwks_refresh_lock: Any = field(default_factory=threading.Lock, repr=False)
 
     # ---- device token ---------------------------------------------------
     @property
@@ -155,35 +160,47 @@ class NodeAuth:
         return Path(self.home).expanduser() / self.token_filename
 
     def token(self) -> str:
-        """The device token, created on first use with 0600 permissions."""
+        """Read/cache the device token; never replace an unreadable credential."""
+        with self._token_lock:
+            return self._read_token()
+
+    def _read_token(self) -> str:
         path = self.token_path
         try:
+            stat = path.stat()
+            cache_key = (stat.st_mtime_ns, stat.st_size)
+            if cache_key == self._token_cache_key:
+                return self._token_cache
             existing = path.read_text(encoding="utf-8").strip()
             if existing:
+                self._token_cache_key, self._token_cache = cache_key, existing
                 return existing
-        except (OSError, ValueError):
-            pass
+            path.unlink()  # An empty file has no device credential to preserve.
+        except FileNotFoundError:
+            self._token_cache_key, self._token_cache = None, ""
         created = secrets.token_urlsafe(32)
         path.parent.mkdir(parents=True, exist_ok=True)
-        # Create with restrictive permissions from the start rather than
-        # writing world-readable and chmod-ing after.
-        descriptor = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            descriptor = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            return self._read_token()
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             handle.write(created)
-        try:
-            os.chmod(path, 0o600)
-        except OSError:
-            pass
+        if os.name == "nt":
+            from .private_permissions import restrict_windows_acl
+            restrict_windows_acl(path)
+        stat = path.stat()
+        self._token_cache_key = (stat.st_mtime_ns, stat.st_size)
+        self._token_cache = created
         return created
 
     def rotate_token(self) -> str:
         """Invalidate the token and every session derived from it."""
-        try:
-            self.token_path.unlink()
-        except OSError:
-            pass
-        self._failures.clear()
-        return self.token()
+        with self._token_lock:
+            self.token_path.unlink(missing_ok=True)
+            self._token_cache_key, self._token_cache = None, ""
+            self._failures.clear()
+            return self.token()
 
     def _secret(self) -> bytes:
         return hashlib.sha256(("rynmesh.session:" + self.token()).encode("utf-8")).digest()
@@ -286,7 +303,7 @@ class NodeAuth:
             return list(self._jwks.get("keys", []))
         return list(self._jwks.get("keys", []))
 
-    def warm_access_keys(self) -> int:
+    def warm_access_keys(self, *, force: bool = False) -> int:
         """Fetch the JWKS ahead of time. Returns the number of keys held.
 
         Called at startup so the first real request doesn't pay a blocking
@@ -295,7 +312,19 @@ class NodeAuth:
         """
         if not (self.access_team_domain and self.access_audience):
             return 0
-        return len(self._access_keys(now=time.time()))
+        return len(self._access_keys(now=time.time(), force=force))
+
+    def _refresh_access_keys(self) -> None:
+        if time.time() - self._jwks_refetch_at < JWKS_MIN_REFETCH_S:
+            return
+        if not self._jwks_refresh_lock.acquire(blocking=False):
+            return
+        def refresh():
+            try:
+                self.warm_access_keys(force=True)
+            finally:
+                self._jwks_refresh_lock.release()
+        threading.Thread(target=refresh, name="ryn-access-jwks", daemon=True).start()
 
     @property
     def access_configured(self) -> bool:
@@ -327,7 +356,11 @@ class NodeAuth:
             return False
         if header.get("alg") != "RS256":
             return False
-        if float(payload.get("exp", 0)) < now:
+        try:
+            valid_time = float(payload.get("exp", 0)) >= now and float(payload.get("nbf", 0)) <= now + 60
+        except (ValueError, TypeError):
+            return False
+        if not valid_time or payload.get("iss") != f"https://{self.access_team_domain}":
             return False
         audience = payload.get("aud")
         audiences = audience if isinstance(audience, list) else [audience]
@@ -340,11 +373,9 @@ class NodeAuth:
         def find(keys: list[dict[str, Any]]) -> dict[str, Any] | None:
             return next((k for k in keys if k.get("kid") == kid), None)
 
-        key = find(self._access_keys(now=now))
-        if key is None:
-            # Cloudflare rotates signing keys. Without this refetch a rotation
-            # would break Access sign-in until the cache expired.
-            key = find(self._access_keys(now=now, force=True))
+        key = find(list(self._jwks.get("keys", [])))
+        if key is None or now - self._jwks_fetched_at >= JWKS_TTL_S:
+            self._refresh_access_keys()
         if key is None:
             return False
         return _rs256_verify(signed, signature, key)

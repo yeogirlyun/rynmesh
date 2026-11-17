@@ -248,7 +248,7 @@ def test_access_accepts_a_properly_signed_assertion(tmp_path):
     def seg(data: dict) -> str:
         return base64.urlsafe_b64encode(json.dumps(data).encode()).decode().rstrip("=")
 
-    signing_input = f"{seg({'alg': 'RS256', 'kid': 'k1'})}.{seg({'aud': 'aud1', 'exp': time.time() + 600})}"
+    signing_input = f"{seg({'alg': 'RS256', 'kid': 'k1'})}.{seg({'aud': 'aud1', 'exp': time.time() + 600, 'iss': 'https://team.cloudflareaccess.com'})}"
     signature = key.sign(signing_input.encode(), padding.PKCS1v15(), hashes.SHA256())
     token = signing_input + "." + base64.urlsafe_b64encode(signature).decode().rstrip("=")
 
@@ -391,7 +391,7 @@ def _signed_access_jwt(key, kid="k1", aud="aud1", exp_in=600):
     def seg(data):
         return base64.urlsafe_b64encode(json.dumps(data).encode()).decode().rstrip("=")
 
-    signing_input = f"{seg({'alg': 'RS256', 'kid': kid})}.{seg({'aud': aud, 'exp': time.time() + exp_in})}"
+    signing_input = f"{seg({'alg': 'RS256', 'kid': kid})}.{seg({'aud': aud, 'exp': time.time() + exp_in, 'iss': 'https://team.cloudflareaccess.com'})}"
     signature = key.sign(signing_input.encode(), padding.PKCS1v15(), hashes.SHA256())
     return signing_input + "." + base64.urlsafe_b64encode(signature).decode().rstrip("=")
 
@@ -454,6 +454,9 @@ def test_key_rotation_is_picked_up_without_waiting_for_the_cache(tmp_path, monke
     fake = _FakeJWKS([_jwk_for(old_key, "old"), _jwk_for(new_key, "new")])
     monkeypatch.setattr("rynmesh.node_auth.urllib.request.urlopen", fake)
 
+    assert not auth.verify_access_jwt(_signed_access_jwt(new_key, kid="new"))
+    assert auth._jwks_refresh_lock.acquire(timeout=5)
+    auth._jwks_refresh_lock.release()
     assert auth.verify_access_jwt(_signed_access_jwt(new_key, kid="new"))
     assert fake.calls == 1, "an unknown kid did not trigger a refetch"
 

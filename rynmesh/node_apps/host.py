@@ -152,9 +152,8 @@ def main():
     import uvicorn
 
     if os.environ.get("RYNMESH_ALLOW_REMOTE_CONTROL"):
-        raise SystemExit(
-            "Remove RYNMESH_ALLOW_REMOTE_CONTROL: app host requires owner authentication."
-        )
+        import logging
+        logging.getLogger(__name__).warning("RYNMESH_ALLOW_REMOTE_CONTROL 已不支持；app host 始终需要用户授权")
     app = create_host(args.home, args.endpoint, args.name, args.allow_loopback)
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning", access_log=False)
 

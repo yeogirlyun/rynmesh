@@ -1,4 +1,5 @@
 import { tr } from "../uiI18n";
+import { isTauriDesktop, localControlHeaders } from "./nodeUrl";
 import type { NodeClient } from "./nodeClient";
 import type { ConsumptionRecord } from "./digestClient";
 import { NodeClientError } from "./nodeClient";
@@ -32,8 +33,8 @@ async function sendJson<T>(path: string, init?: RequestInit, localizeDetail = fa
   const response = await fetch(path, {
     // Carry the session cookie when the node is reached through a tunnel.
     credentials: "include",
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
     ...init,
+    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}), ...(isTauriDesktop() ? await localControlHeaders() : {}) },
   });
   if (!response.ok) {
     let detail = "";

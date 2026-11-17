@@ -2410,6 +2410,7 @@ class LocalTools:
                 operation_id=operation_id or context.get("operation_id"),
                 tty=args.get("tty", False), rows=args.get("rows", 24), cols=args.get("cols", 80),
                 stdin_mode=stdin_mode,
+                permission_mode=self.policy(context)["permission_mode"],
             )
             item = self.processes.get(ident, task_id)
             if before is not None:

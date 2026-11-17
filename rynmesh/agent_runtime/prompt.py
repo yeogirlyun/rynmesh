@@ -217,8 +217,11 @@ def authority(row: dict) -> str:
     }
     context.update(local_date())
     port = os.environ.get("RYNMESH_PEER_PORT", "")
-    if 0 < len(port) <= 5 and port.isascii() and port.isdigit() and 0 < int(port) <= 65535:
-        context["local_control_api"] = {"origin": f"http://127.0.0.1:{int(port)}", "schema_path": "/openapi.json"}
+    if row.get("permission_mode") == "automatic" and 0 < len(port) <= 5 and port.isascii() and port.isdigit() and 0 < int(port) <= 65535:
+        context["local_control_api"] = {
+            "origin": f"http://127.0.0.1:{int(port)}", "schema_path": "/openapi.json",
+            "token_header": "X-Ryn-Local-Token", "token_environment": "RYN_LOCAL_CONTROL_TOKEN",
+        }
     context["file_output_policy"] = (
         "Create and edit text files in workspace_root with ryn_apply_patch (several files per patch); generate images with ryn_image_generate; download URLs or plugin fileRef values with ryn_download_file; other binary files may use shell. Confirm outputs via readback or workspace_files. "
         "Link final files as [name](absolute-path) with forward slashes, <paths with spaces>; embed images as ![description](absolute-path). "
@@ -241,8 +244,7 @@ def authority(row: dict) -> str:
             "automatic mode is full access: the host runs every change (including plugin/config) without dialog; "
             "only explicit-approval tools (installs, app ops) and desktop access keep gates. "
             "External configuration/access changes retain their host approval boundary in other modes. "
-            "When delegated setup needs only a missing secret in a popup, run a local program "
-            "(via local_control_api for Ryn) to collect/submit it locally out of model context; "
+            "When setup needs a missing secret, use the host's secure credential card to collect/submit it out of model context; "
             "use ryn_request_input kind=credential_ref only when full connection facts are also needed. "
             "Connected models with Agent tool bridge are ready; CLI sources need no HTTP credentials. "
             "Claims need matching subject/scope/time: unknown/missing is not no/never; local grants are not remote policy."

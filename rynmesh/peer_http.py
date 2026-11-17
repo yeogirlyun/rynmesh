@@ -11,6 +11,7 @@ from .transport import stamp_network_key
 import codecs
 import hashlib
 import json
+import logging
 import os
 import re
 import socket
@@ -762,6 +763,8 @@ def create_app(store: RynmeshStore | None = None):
     )
 
     _local_token = os.environ.get("RYNMESH_LOCAL_TOKEN", "").strip()
+    if os.environ.get("RYNMESH_ALLOW_REMOTE_CONTROL"):
+        logging.getLogger(__name__).warning("RYNMESH_ALLOW_REMOTE_CONTROL 已不支持；本机控制接口始终需要授权")
 
     # Device-token auth for the control surface. A loopback socket is only
     # trusted when nothing proxied the request — cloudflared dials the origin
@@ -815,32 +818,19 @@ def create_app(store: RynmeshStore | None = None):
         # except the two unauthenticated auth routes below, so a route added
         # later is private without anyone remembering to gate it.
         if path.startswith("/api/local") and path not in _auth_open_paths:
-            import hmac
-
+            # CORS validates preflight origins/headers; no control handler runs.
+            # Browsers cannot include the credential until that preflight succeeds.
+            if (request.method == "OPTIONS" and request.headers.get("origin")
+                    and request.headers.get("access-control-request-method")):
+                return await call_next(request)
             from fastapi.responses import JSONResponse
 
-            client_host = (request.client.host if request.client else "") or ""
-
-            if _local_token:
-                # Per-launch token injected by the desktop shell; when set it
-                # is the only accepted credential on this surface.
-                if not hmac.compare_digest(
-                    request.headers.get("x-ryn-local-token", ""), _local_token
-                ):
-                    return JSONResponse({"detail": "forbidden"}, status_code=403)
-            else:
-                decision = node_auth.authorize(
-                    client_host=client_host,
-                    headers=request.headers,
-                    cookie=request.cookies.get(node_auth_mod.COOKIE_NAME, ""),
-                )
-                if not decision.allowed:
-                    # 401, not 403: the client can fix this by unlocking, and
-                    # the webapp keys its unlock prompt off this status.
-                    return JSONResponse(
-                        {"detail": "unauthorized", "unlock_required": True},
-                        status_code=401,
-                    )
+            try:
+                local_control(request)
+            except HTTPException as exc:
+                return JSONResponse({"detail": exc.detail, "unlock_required": True}, status_code=exc.status_code)
+            except OSError:
+                return JSONResponse({"detail": "device_token_unreadable"}, status_code=503)
         return await call_next(request)
 
     def route_id(value: str) -> str:
@@ -855,26 +845,25 @@ def create_app(store: RynmeshStore | None = None):
             or "rynmesh-main"
         )
 
-    def local_control(request: FastAPIRequest) -> None:
+    def local_control(request: FastAPIRequest) -> node_auth_mod.AuthDecision:
         """Per-route re-check of the control gate.
 
         The middleware above is the real boundary; this is defense in depth for
         the ~60 routes that call it, so a change to the path prefix can't
         silently open them.
         """
-        if os.environ.get("RYNMESH_ALLOW_REMOTE_CONTROL", "").strip() in {"1", "true", "yes"}:
-            return
         if _local_token:
-            # Already verified by the middleware, which is the only thing that
-            # can accept this credential.
-            return
+            import hmac
+            if hmac.compare_digest(request.headers.get("x-ryn-local-token", ""), _local_token):
+                return node_auth_mod.AuthDecision(True, "launch_token", via="local")
         decision = node_auth.authorize(
-            client_host=(request.client.host if request.client else "") or "",
+            client_host="" if _local_token else (request.client.host if request.client else "") or "",
             headers=request.headers,
             cookie=request.cookies.get(node_auth_mod.COOKIE_NAME, ""),
         )
         if not decision.allowed:
-            raise HTTPException(status_code=401, detail="local_control_unauthorized")
+            raise HTTPException(status_code=403 if _local_token else 401, detail="local_control_unauthorized")
+        return decision
 
     from .nas import mount_nas
     mount_nas(app, active_store.home, local_control)
@@ -1338,11 +1327,13 @@ def create_app(store: RynmeshStore | None = None):
         Unauthenticated on purpose — it carries no secrets and the webapp needs
         it to decide whether to show the unlock prompt.
         """
-        decision = node_auth.authorize(
-            client_host=(request.client.host if request.client else "") or "",
-            headers=request.headers,
-            cookie=request.cookies.get(node_auth_mod.COOKIE_NAME, ""),
-        )
+        try:
+            node_auth.token()
+            decision = local_control(request)
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail="device_token_unreadable") from exc
+        except HTTPException:
+            decision = node_auth_mod.AuthDecision(False, "unauthenticated")
         return {
             "authorized": decision.allowed,
             "via": decision.via,
@@ -1360,9 +1351,10 @@ def create_app(store: RynmeshStore | None = None):
         client_host = (request.client.host if request.client else "") or ""
         # Rate-limit against the real caller when proxied, so one tunnel client
         # can't hide behind the proxy's address.
-        forwarded_for = request.headers.get("cf-connecting-ip") or request.headers.get(
-            "x-forwarded-for", ""
-        )
+        assertion = request.headers.get("cf-access-jwt-assertion", "")
+        forwarded_for = (
+            request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for", "")
+        ) if assertion and node_auth.verify_access_jwt(assertion) else ""
         client_key = (forwarded_for.split(",")[0].strip() or client_host) or "unknown"
 
         session = node_auth.unlock(str(body.get("token") or ""), client=client_key)
@@ -2996,6 +2988,7 @@ def create_app(store: RynmeshStore | None = None):
 
     @app.post("/api/local/messages/send")
     async def local_send(request: FastAPIRequest) -> dict:
+        local_control(request)
         body = await request.json()
         peer_id = str(body.get("peer_id", ""))
         att = body.get("attachment")
@@ -3012,7 +3005,8 @@ def create_app(store: RynmeshStore | None = None):
         return _messenger.send(peer_id, text=str(body.get("text", "")), attachment=att)
 
     @app.get("/api/local/messages/stream")
-    async def local_stream():
+    async def local_stream(request: FastAPIRequest):
+        local_control(request)
         from fastapi.responses import StreamingResponse
 
         q: _asyncio.Queue = _asyncio.Queue()
@@ -3029,7 +3023,8 @@ def create_app(store: RynmeshStore | None = None):
         return StreamingResponse(gen(), media_type="text/event-stream")
 
     @app.get("/api/local/messages/attachment/{msg_id}")
-    def local_attachment(msg_id: str, peer_id: str) -> Response:
+    def local_attachment(msg_id: str, peer_id: str, request: FastAPIRequest) -> Response:
+        local_control(request)
         # peer_id is a query param: base64 peer ids contain '/', '+', '=' which
         # break path routing. msg_id is a uuid hex — safe in the path.
         mime = "application/octet-stream"
@@ -3045,7 +3040,8 @@ def create_app(store: RynmeshStore | None = None):
         return Response(content=data, media_type=mime)
 
     @app.get("/api/local/messages")
-    def local_history(peer_id: str) -> list:
+    def local_history(peer_id: str, request: FastAPIRequest) -> list:
+        local_control(request)
         # peer_id is a query param (not a path segment): base64 peer ids contain
         # '/' which Starlette can't route in a path.
         return _messenger.history(peer_id)

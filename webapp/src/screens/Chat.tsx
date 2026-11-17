@@ -1,4 +1,5 @@
 import { useUILanguage } from "../uiI18n";
+import { localEventSource } from "../domain/localEventSource";
 import { useTranslation } from "react-i18next";
 import { Lock, Paperclip, SendHorizontal } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -87,7 +88,7 @@ export default function Chat() {
   // Subscribe once to the SSE stream; append records for the open peer.
   useEffect(() => {
     if (client.mode === "fixture") return;
-    const source = new EventSource(client.messagesStreamUrl());
+    const source = localEventSource(client.messagesStreamUrl());
     source.onmessage = (event) => {
       let record: ChatRecord;
       try {

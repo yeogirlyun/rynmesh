@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { localEventSource } from "../domain/localEventSource";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   dropApi, isIncomingRequest, newClientId,
@@ -263,7 +264,7 @@ export function DropProvider({ mode, children, notify }: {
         return;
       }
       if (disposed || typeof EventSource === "undefined") return;
-      source = new EventSource(dropApi.eventsUrl(dataRef.current.seq), { withCredentials: true });
+      source = localEventSource(dropApi.eventsUrl(dataRef.current.seq), { withCredentials: true });
       source.onmessage = message => {
         let event: DropEvent;
         try { event = JSON.parse(message.data) as DropEvent; } catch { return; }

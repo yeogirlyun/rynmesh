@@ -119,6 +119,7 @@ pub fn run() {
             }
             let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![preferences::get_desktop_preferences,
             preferences::set_desktop_preferences, preferences::desktop_node_port,
+            node::local_token,
             updates::desktop_update_status, updates::desktop_update_check, updates::desktop_update_download,
             updates::desktop_update_install, updates::desktop_update_cancel, updates::desktop_update_preferences,
             updates::desktop_update_acknowledge,
