@@ -3006,6 +3006,7 @@ class AgentRuntime(AgentLoop):
                 row["fork"]["awaiting_instruction"] = False
             row.setdefault("pending_user_messages", []).append(message)
             was_stopped = row.pop("turn_stopped", False)
+            row.pop("retired_writes", None)
             row["pending_control"] = {"kind": "steer", "remain_paused": row["status"] == "paused" and bool(row.get("in_flight")) and intent is not None and not was_stopped}
             if ended or intent is None or was_stopped or (row["status"] == "paused" and not row.get("in_flight")):
                 row.update(steps=0, elapsed_seconds=0.0)
