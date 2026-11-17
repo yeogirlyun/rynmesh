@@ -251,6 +251,9 @@ def analyze_request(
         "has_invalid_image_parts": bool(invalid_image_parts),
         "invalid_image_parts": invalid_image_parts,
         "transport_violations": transport_violations,
+        "limits": {"max_raw_request_bytes": max_raw_request_bytes, "max_images": max_images,
+                   "max_single_image_bytes": max_single_image_bytes, "max_total_image_bytes": max_total_image_bytes,
+                   "max_single_image_pixels": max_single_image_pixels, "max_total_image_pixels": max_total_image_pixels},
     }
 
 
@@ -287,18 +290,23 @@ def context_budget(model, manual_limit=None, *, provenance=None):
 
 
 def _enforce_analysis_bounds(analysis):
+    def reject(code, reason):
+        raise AgentError(code, details={"reason": reason, "limits": analysis["limits"]})
     if analysis["has_invalid_image_parts"]:
         for item in analysis["invalid_image_parts"]:
             reason = item.get("reason")
             if reason == "single_image_pixels_exceeded":
-                raise AgentError("agent_image_pixel_limit")
+                reject("agent_image_pixel_limit", reason)
             if reason == "single_image_decoded_bytes_exceeded":
-                raise AgentError("agent_context_limit")
+                reject("agent_image_too_large", reason)
         raise AgentError("agent_image_invalid")
     if analysis["transport_violations"]:
-        if "single_image_pixels_exceeded" in analysis["transport_violations"] or "total_image_pixels_exceeded" in analysis["transport_violations"]:
-            raise AgentError("agent_image_pixel_limit")
-        raise AgentError("agent_context_limit")
+        codes = {"single_image_pixels_exceeded": "agent_image_pixel_limit", "total_image_pixels_exceeded": "agent_image_pixel_limit",
+                 "single_image_decoded_bytes_exceeded": "agent_image_too_large", "total_image_decoded_bytes_exceeded": "agent_image_too_large",
+                 "max_request_images_exceeded": "agent_image_count_limit", "raw_request_utf8_bytes_exceeded": "agent_context_limit"}
+        for reason, code in codes.items():
+            if reason in analysis["transport_violations"]:
+                reject(code, reason)
 
 
 def admit_request_context(

@@ -283,6 +283,8 @@ class AgentLoop:
             caller_selected["_prep_persistence_seconds"] = prep_persistence_seconds
             selected = {**selected, **synced_state, "tool_menu": menu_state, "_request_id": request_id, "_attempt": attempt}
             messages = self._context(selected)
+            # Reject image limits before context pressure can trigger a summary.
+            messages = self._fit_image_history(selected, messages, specs)
             context_limit = self._context_limit(selected)
             # A summary is a paid model request that drops verbatim evidence.
             # Dispatch the complete history while it fits. Summarize early only

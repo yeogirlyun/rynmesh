@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from ..llm_package.model_settings import KNOWN_VENDOR_IMAGE_INPUT
-from .store import AgentToolRejected
+from .store import AgentError, AgentToolRejected
 
 VERIFIED_API_IMAGE_ADAPTERS = frozenset({
     "openai_compatible",
@@ -2975,6 +2975,19 @@ def _compress_image_bytes(raw: bytes, max_bytes: int) -> bytes:
     raise ValueError("image_compression_failed")
 
 
+SHARED_IMAGE_OMITTED_NOTE = "一张图片压缩后仍超过共享模型的上限，未发送"
+SHARED_IMAGE_TOTAL_OMITTED_NOTE = "一张图片因共享模型的图片总量超过上限，未发送；如需查看，请重新发送。"
+IMAGE_LIMIT_OMITTED_NOTE = "一张旧图片因本次图片数量或总大小超过上限，未发送；如需查看，请重新发送这张图片。"
+
+
+def _latest_owner_message(messages):
+    from .prompt import PROGRESS_TAIL_PREFIX
+    # The progress footer is carried as user-role host data, not an owner turn.
+    return max((index for index, message in enumerate(messages)
+                if isinstance(message, dict) and message.get("role") == "user"
+                and not (isinstance(message.get("content"), str) and message["content"].startswith(PROGRESS_TAIL_PREFIX))), default=-1)
+
+
 def fit_images_for_shared_route(messages: list[dict[str, Any]], carrier: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Keep shared-model images inside the agreed carrier, compressing only what does not fit.
 
@@ -2993,8 +3006,9 @@ def fit_images_for_shared_route(messages: list[dict[str, Any]], carrier: str) ->
     single = SHARED_V2_MAX_IMAGE_BYTES if v2 else LEGACY_PUBLIC_MAX_IMAGE_BYTES
     allowed = SHARED_V2_ALLOWED_MIMES if v2 else LEGACY_PUBLIC_ALLOWED_MIMES
     out = copy.deepcopy(messages)
-    found: list[tuple[dict[str, Any], str, bytes]] = []
-    for message in out:
+    found: list[tuple[dict[str, Any], str, bytes, int]] = []
+    latest_user = _latest_owner_message(out)
+    for message_index, message in enumerate(out):
         if not isinstance(message, dict) or message.get("role") != "user" or not isinstance(message.get("content"), list):
             continue
         for part in message["content"]:
@@ -3009,30 +3023,46 @@ def fit_images_for_shared_route(messages: list[dict[str, Any]], carrier: str) ->
                 raw = base64.b64decode(match.group(2), validate=True)
             except ValueError:
                 continue
-            found.append((part, mime, raw))
+            found.append((part, mime, raw, message_index))
     def replace(part: dict[str, Any], data: bytes) -> None:
         part["image_url"]["url"] = "data:image/jpeg;base64," + base64.b64encode(data).decode("ascii")
 
-    sizes = [len(raw) for _part, _mime, raw in found]
+    sizes = [len(raw) for _part, _mime, raw, _message in found]
     resized: set[int] = set()
-    for index, (part, mime, raw) in enumerate(found):
+    omitted: set[int] = set()
+    def omit(index, note=SHARED_IMAGE_OMITTED_NOTE):
+        part = found[index][0]
+        part.clear()
+        part.update(type="text", text=note)
+        sizes[index] = 0
+        omitted.add(index)
+        resized.discard(index)
+    for index, (part, mime, raw, _message) in enumerate(found):
         if mime in allowed and len(raw) <= single:
             continue
-        smaller = _compress_image_bytes(raw, single)
+        try:
+            smaller = _compress_image_bytes(raw, single)
+        except (ValueError, OSError):
+            omit(index)
+            continue
         replace(part, smaller)
         sizes[index] = len(smaller)
         resized.add(index)
     if v2 and found and sum(sizes) > SHARED_V2_MAX_TOTAL_IMAGE_BYTES:
-        target = SHARED_V2_MAX_TOTAL_IMAGE_BYTES // len(found)
-        for index, (part, _mime, _raw) in enumerate(found):
-            if sizes[index] <= target:
-                continue
-            current = base64.b64decode(part["image_url"]["url"].split(",", 1)[1])
-            smaller = _compress_image_bytes(current, target)
-            replace(part, smaller)
-            sizes[index] = len(smaller)
-            resized.add(index)
+        # Preserve each image's single-image target. Drop history oldest-first;
+        # only then, if necessary, drop earlier images within the latest message.
+        order = sorted(range(len(found)), key=lambda index: (found[index][3] == latest_user, found[index][3], index))
+        total = sum(sizes)
+        for index in order:
+            if total <= SHARED_V2_MAX_TOTAL_IMAGE_BYTES:
+                break
+            total -= sizes[index]
+            omit(index, SHARED_IMAGE_TOTAL_OMITTED_NOTE)
+    latest_images = {index for index, item in enumerate(found) if item[3] == latest_user}
+    if latest_images and latest_images <= omitted:
+        raise AgentError("agent_image_too_large")
     report = {"carrier": carrier, "images": len(found), "resized": len(resized),
+              "omitted": len(omitted), "omitted_old": sum(found[index][3] != latest_user for index in omitted),
               "original_bytes": sum(len(found[i][2]) for i in resized),
               "final_bytes": sum(sizes[i] for i in resized)}
     return out, report
@@ -3042,17 +3072,18 @@ OMITTED_IMAGE_NOTE = ("[An image attachment was not sent: the selected model can
                       "Its file name and local path, when it came from a file, are listed in this message.]")
 
 
-def omit_images(messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int, bool]:
+def omit_images(messages: list[dict[str, Any]], *, older_only=False, note=OMITTED_IMAGE_NOTE) -> tuple[list[dict[str, Any]], int, bool]:
     """Replace every image part with a short note, so old images never fail a text-only request.
 
     Returns (messages, omitted_count, latest_owner_message_had_images).
     """
     out = copy.deepcopy(messages)
     omitted = 0
-    latest_user = max((index for index, message in enumerate(out)
-                       if isinstance(message, dict) and message.get("role") == "user"), default=-1)
+    latest_user = _latest_owner_message(out)
     latest_had = False
     for index, message in enumerate(out):
+        if older_only and index == latest_user:
+            continue
         content = message.get("content") if isinstance(message, dict) else None
         if not isinstance(content, list):
             continue
@@ -3061,8 +3092,17 @@ def omit_images(messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], i
             if isinstance(part, dict) and (part.get("type") in {"image_url", "image", "input_image"} or "image_url" in part):
                 omitted += 1
                 latest_had = latest_had or index == latest_user
-                replaced.append({"type": "text", "text": OMITTED_IMAGE_NOTE})
+                replaced.append({"type": "text", "text": note})
             else:
                 replaced.append(part)
         message["content"] = replaced
     return out, omitted, latest_had
+
+
+def omit_old_images_for_limits(messages, error):
+    reason = (error.details or {}).get("reason")
+    if str(error) not in {"agent_image_too_large", "agent_image_count_limit"} or reason not in {
+            "total_image_decoded_bytes_exceeded", "max_request_images_exceeded"}:
+        return messages, 0
+    out, omitted, _ = omit_images(messages, older_only=True, note=IMAGE_LIMIT_OMITTED_NOTE)
+    return out, omitted

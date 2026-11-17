@@ -4,6 +4,10 @@ export type AgentErrorAction = "continue" | "retry" | "switch_model" | "new_task
 interface ErrorHelp { zh: string; en: string; actions: AgentErrorAction[] }
 
 const HELP: Record<string, ErrorHelp> = {
+  agent_image_too_large: {
+    zh: "图片太大，请压缩后重发。", en: "The image is too large. Compress it and send it again.", actions: ["retry"] },
+  agent_image_count_limit: {
+    zh: "图片太多，单次最多 4 张，请减少图片后重发。", en: "Too many images. Send no more than 4 images at a time.", actions: ["retry"] },
   agent_image_input_unsupported: {
     zh: "这次没能把图片交给当前模型。换一个带图片图标的模型，或者直接继续发文字。",
     en: "The image could not be given to the selected model. Pick a model with the image icon, or continue in text.",
