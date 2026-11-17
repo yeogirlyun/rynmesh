@@ -152,9 +152,9 @@ def test_actual_tool_registry_does_not_return_cached_body_after_revocation(resou
 
 def test_text_is_bounded_and_missing_context_rejected(resources):
     tools, _plugin, context, state = resources
-    state["body"] = b"x" * 3000
+    state["body"] = b"x" * 12000
     result = invoke(tools, context, "ryn_read_resource", file_ref(tools, context))
-    assert result["truncated"] and len(result["text"]) == 2000
+    assert result["truncated"] and len(result["text"]) == 8000
     with pytest.raises(AgentToolRejected):
         invoke(tools, None, "ryn_list_resource_roots")
 
@@ -195,7 +195,7 @@ def test_oversized_or_non_utf8_text_is_explicitly_rejected(resources, body, erro
 
 def test_text_continuation_reassembles_unicode_and_rejects_changed_file(resources):
     tools, _plugin, context, state = resources
-    value = "资料🙂abc" * 800
+    value = "资料🙂abc" * 3000
     state["body"] = value.encode()
     ref = file_ref(tools, context)
     first = tools.execute("ryn_read_resource", {"resource_ref": ref}, context=context, cancelled=lambda: False)
@@ -218,7 +218,7 @@ def test_live_directory_pages_cover_entries_without_leaking_provider_cursor(reso
 
     def page(_connection, action, path, cursor=""):
         assert action == "list_page"
-        start, end = (0, 25) if not cursor else (25, 31)
+        start, end = (0, 75) if not cursor else (75, 81)
         rows = [{"name": f"{i}.md", "path": f"{path}/{i}.md", "directory": False, "size": i} for i in range(start, end)]
         if state["change"]:
             rows[0]["size"] += 1
@@ -227,13 +227,15 @@ def test_live_directory_pages_cover_entries_without_leaking_provider_cursor(reso
     monkeypatch.setattr(plugin, "operate", page)
     root = invoke(tools, context, "ryn_list_resource_roots")["roots"][0]["resource_ref"]
     cursor, names, first_cursor = "", [], ""
-    for _ in range(4):
+    for _ in range(20):
         result = tools.execute("ryn_list_resources", {"resource_ref": root, "cursor": cursor}, context=context, cancelled=lambda: False)
         names.extend(e["name"] for e in result["entries"])
         cursor = result["next_cursor"]
         first_cursor = first_cursor or cursor
         assert "provider-private-cursor" not in str(result)
-    assert names == [f"{i}.md" for i in range(31)] and not cursor
+        if not cursor:
+            break
+    assert names == [f"{i}.md" for i in range(81)] and not cursor
     state["change"] = True
     with pytest.raises(AgentToolRejected, match="agent_resource_version_changed"):
         tools.execute("ryn_list_resources", {"resource_ref": root, "cursor": first_cursor}, context=context, cancelled=lambda: False)
@@ -242,7 +244,7 @@ def test_live_directory_pages_cover_entries_without_leaking_provider_cursor(reso
 @pytest.mark.parametrize("change", ["scope", "task", "reference", "tamper"])
 def test_continuation_is_bound_to_exact_task_scope_and_reference(resources, change):
     tools, _plugin, context, state = resources
-    state["body"] = b"x" * 4000
+    state["body"] = b"x" * 12000
     ref = file_ref(tools, context)
     cursor = invoke(tools, context, "ryn_read_resource", ref)["next_cursor"]
     changed = copy.deepcopy(context)
@@ -262,14 +264,14 @@ def test_real_pdf_subprocess_extraction_is_bounded_and_continuable(resources):
     pytest.importorskip("pypdf")
     from test_document_extract import _pdf_with_extractable_text
     tools, _plugin, context, state = resources
-    state.update(name="source.pdf", body=_pdf_with_extractable_text(200))
+    state.update(name="source.pdf", body=_pdf_with_extractable_text(500))
     ref = file_ref(tools, context)
     first = invoke(tools, context, "ryn_read_resource", ref)
-    assert first["format"] == "pdf-extracted-text" and first["characters_returned"] == 2000
+    assert first["format"] == "pdf-extracted-text" and first["characters_returned"] == 8000
     assert first["extraction_pages"] == {"total": 1, "processed": 1, "failed": 0, "without_text": 0}
     assert first["next_cursor"] and "Lorem ipsum" in first["text"]
     second = tools.execute("ryn_read_resource", {"resource_ref": ref, "cursor": first["next_cursor"]}, context=context, cancelled=lambda: False)
-    assert second["character_offset"] == 2000 and second["content_version"] == first["content_version"]
+    assert second["character_offset"] == 8000 and second["content_version"] == first["content_version"]
     assert "no OCR" in second["extraction_coverage"]
 
 
