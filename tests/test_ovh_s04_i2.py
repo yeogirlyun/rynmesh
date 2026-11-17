@@ -41,7 +41,7 @@ def test_T2_real_stream_accumulates_a_page_before_returning(tmp_path):
     script = "import sys,time\nfor i in range(15):\n sys.stdout.write('x'*100);sys.stdout.flush();time.sleep(.04)"
     ident = processes.start([sys.executable, "-u", "-c", script], tmp_path, "task", 10, lambda: True, lambda: False)
     try:
-        page = processes.read(ident, "task", wait_seconds=2, max_chars=1000)
+        page = processes.read(ident, "task", wait_seconds=2, max_chars=1000, fill_page=True)
         assert len(page["output"]) == 1000 and page["running"]
         assert page["next_offset"] in (None, 1000)
     finally:
@@ -52,10 +52,10 @@ def test_T2_short_output_waits_for_deadline_but_zero_wait_is_immediate(pending_p
     processes, _, item = pending_process
     _append_output(item, "ready")
     started = time.monotonic()
-    assert processes.read("process_test", "task", wait_seconds=.12)["output"] == "ready"
+    assert processes.read("process_test", "task", wait_seconds=.12, fill_page=True)["output"] == "ready"
     assert time.monotonic() - started >= .10
     started = time.monotonic()
-    assert processes.read("process_test", "task", wait_seconds=0)["output"] == "ready"
+    assert processes.read("process_test", "task", wait_seconds=0, fill_page=True)["output"] == "ready"
     assert time.monotonic() - started < .1
 
 
@@ -104,6 +104,28 @@ def test_T5_wait_uses_condition_and_wakes_on_exit_without_sleep_polling(pending_
     worker.join(.1)
     assert not worker.is_alive() and time.monotonic() - ended < .1
     assert result[0]["exit_code"] == 0 and slept == []
+
+
+def test_T2_rework_write_returns_short_interactive_reply_before_five_second_wait(tmp_path):
+    processes = Processes()
+    script = "import sys\nfor line in sys.stdin:\n print('ack:'+line.strip(), flush=True)"
+    ident = processes.start([sys.executable, "-u", "-c", script], tmp_path, "task", 15,
+                            lambda: True, lambda: False, stdin_mode="pipe")
+    try:
+        started = time.monotonic()
+        result = processes.write(ident, "task", "hello\n", wait_seconds=5)
+        assert time.monotonic() - started < 1.5
+        assert "ack:hello" in result["output"] and result["running"]
+    finally:
+        processes.close()
+
+
+def test_T2_rework_direct_reads_keep_first_output_behavior_by_default(pending_process):
+    processes, _, item = pending_process
+    _append_output(item, "short reply")
+    started = time.monotonic()
+    result = processes.read("process_test", "task", wait_seconds=5)
+    assert time.monotonic() - started < .2 and result["output"] == "short reply"
 
 
 @pytest.mark.parametrize("unit", ["x", "中", "\"\\\n\x01"])

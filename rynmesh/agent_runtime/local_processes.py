@@ -768,7 +768,7 @@ class Processes:
             return item
 
     def read(self, ident, task_id, offset=0, *, wait_seconds=DEFAULT_READ_WAIT, cancelled=None,
-             coalesce_empty_poll=False, tail=False, max_chars=PAGE_CHARS,
+             coalesce_empty_poll=False, tail=False, max_chars=PAGE_CHARS, fill_page=False,
              _wait_limit=MAX_READ_WAIT, _max_output_bytes=None):
         if type(max_chars) is not int:
             raise AgentToolRejected("agent_invalid_process_max_chars")
@@ -799,7 +799,7 @@ class Processes:
                 running = item["process"].poll() is None
                 remaining = deadline - time.monotonic()
                 has_unread = (total_chars > 0) if offset == -1 else (offset < total_chars)
-                page_full = has_unread and (total_chars - max(0, offset) >= max_chars)
+                page_full = has_unread and (not fill_page or total_chars - max(0, offset) >= max_chars)
                 if has_unread and _max_output_bytes is not None and not page_full:
                     text, _ = _output_page(item, offset, running, max_chars)
                     page_full = len(encoded(text)) >= _max_output_bytes
