@@ -101,8 +101,8 @@ def test_sizes_are_utf8_bytes_and_tokens_use_the_declared_window():
     assert hard == (32_000 - 4096 - output_policy.FRAMING_RESERVE_TOKENS) * output_policy.ESTIMATED_BYTES_PER_TOKEN
     # Denser tokenization (observed 2 bytes/token) leaves fewer request bytes.
     assert context_compaction.input_capacity(hard, policy, 2.0) == (32_000 - 4096 - 512) * 2
-    # Sparser text never raises capacity above the admitted request size.
-    assert context_compaction.input_capacity(hard, policy, 4.2) == hard
+    # S03-I8: calibrated sparse text may raise auto capacity, capped at 4 B/token.
+    assert context_compaction.input_capacity(hard, policy, 4.2) == int((32_000 - 4096 - 512) * 4 * (1 - context_compaction.ESTIMATE_ERROR))
     # Implausible ratios are bounded; unknown windows keep the hard limit.
     assert context_compaction.input_capacity(hard, policy, 0.2) == int((32_000 - 4096 - 512) * 1.5)
     unknown = output_policy.context_budget({})

@@ -330,6 +330,7 @@ def admit_request_context(
     manual_limit=None,
     provenance=None,
     context_policy=None,
+    capacity_bytes=None,
     max_raw_request_bytes: int = MAX_RAW_REQUEST_UTF8_BYTES,
     max_images: int = MAX_REQUEST_IMAGES,
     max_single_image_bytes: int = MAX_SINGLE_IMAGE_DECODED_BYTES,
@@ -355,15 +356,22 @@ def admit_request_context(
     if effective_manual is not None and analysis["raw_serialized_utf8_bytes"] > effective_manual:
         raise AgentError("agent_context_limit")
     _enforce_analysis_bounds(analysis)
-    if analysis["projected_context_utf8_bytes"] > policy["effective_max_context_bytes"]:
+    capacity = capacity_bytes if capacity_bytes is not None and policy.get("mode") == "auto" else policy["effective_max_context_bytes"]
+    if analysis["projected_context_utf8_bytes"] > capacity:
         raise AgentError("agent_context_limit")
     return analysis
 
 
-def output_room(model, analysis):
+def _input_tokens_at_density(analysis, bytes_per_token):
+    if bytes_per_token is None:
+        return analysis["estimated_input_tokens"]
+    return math.ceil(analysis["text_projection_utf8_bytes"] / bytes_per_token) + FRAMING_RESERVE_TOKENS + analysis["estimated_image_tokens"]
+
+
+def output_room(model, analysis, *, bytes_per_token=None):
     """Available window tokens without raising when the request overflows."""
     window = context_metadata(model)["context_window_tokens"]
-    room = window - analysis["estimated_input_tokens"]
+    room = window - _input_tokens_at_density(analysis, bytes_per_token)
     density = admission_bytes_per_token(model)
     if density != ESTIMATED_BYTES_PER_TOKEN:
         admitted = ((analysis["text_projection_utf8_bytes"] + density - 1) // density
@@ -372,7 +380,7 @@ def output_room(model, analysis):
     return room
 
 
-def select(model, messages, specs, *, request_cap=None):
+def select(model, messages, specs, *, request_cap=None, bytes_per_token=None):
     configured = configured_output(model)
     metadata = context_metadata(model)
     window = metadata["context_window_tokens"]
@@ -380,6 +388,10 @@ def select(model, messages, specs, *, request_cap=None):
         raise AgentError("agent_token_limit")
     analysis = analyze_request(messages, specs)
     _enforce_analysis_bounds(analysis)
+    analysis["estimated_input_tokens"] = _input_tokens_at_density(analysis, bytes_per_token)
+    if bytes_per_token is not None:
+        analysis["estimated_text_tokens"] = math.ceil(analysis["text_projection_utf8_bytes"] / bytes_per_token)
+        analysis["estimate_basis"] = "provider_usage_calibrated_text_density_plus_512_and_image_heuristic"
     estimate = {k: v for k, v in analysis.items() if k not in {"images", "invalid_image_parts"}}
     limits = {"configured": configured, "transport": TRANSPORT_MAX_TOKENS, "context": window - estimate["estimated_input_tokens"]}
     density = admission_bytes_per_token(model)

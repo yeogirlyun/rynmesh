@@ -29,6 +29,7 @@ DEFAULT_BYTES_PER_TOKEN = float(output_policy.ESTIMATED_BYTES_PER_TOKEN)
 # Byte-level tokenizers emit at most one token per byte. Much lower observed
 # ratios mostly reflect a provider-side hidden prompt, so bound the correction.
 MIN_BYTES_PER_TOKEN = 1.5
+MAX_BYTES_PER_TOKEN = 4.0
 # Small requests are dominated by framing and say little about text density.
 MIN_CALIBRATION_REQUEST_BYTES = 8192
 # Token counts are estimates; keep an allowance proportional to the estimate.
@@ -189,10 +190,14 @@ def applied_density(policy: dict | None, bytes_per_token: float | None, cjk_shar
     if (bytes_per_token is None and cjk_share > 0 and isinstance(policy, dict)
             and policy.get("admission_bytes_per_token", DEFAULT_BYTES_PER_TOKEN) == DEFAULT_BYTES_PER_TOKEN):
         return max(2.0, DEFAULT_BYTES_PER_TOKEN - cjk_share)
-    if (bytes_per_token is None or bytes_per_token >= DEFAULT_BYTES_PER_TOKEN
+    if (bytes_per_token is None
             or not isinstance(policy, dict) or not policy.get("context_window_known")):
         return None
-    return max(MIN_BYTES_PER_TOKEN, bytes_per_token)
+    if bytes_per_token > DEFAULT_BYTES_PER_TOKEN and (
+            policy.get("mode") != "auto"
+            or policy.get("admission_bytes_per_token", DEFAULT_BYTES_PER_TOKEN) < DEFAULT_BYTES_PER_TOKEN):
+        return None
+    return min(MAX_BYTES_PER_TOKEN, max(MIN_BYTES_PER_TOKEN, bytes_per_token))
 
 
 def input_capacity(hard_limit_bytes: int, policy: dict | None = None, bytes_per_token: float | None = None,
@@ -201,7 +206,8 @@ def input_capacity(hard_limit_bytes: int, policy: dict | None = None, bytes_per_
 
     The hard limit already reserves the configured output and framing tokens
     at the default ratio. Observed denser text (for example Chinese) lowers
-    the capacity; sparser text never raises it above the admission limit.
+    capacity; calibrated sparse text may raise it in automatic mode, with
+    an estimate margin and without exceeding an explicit owner ceiling.
     An upstream rejection adds a persistent penalty until fresh main usage calibrates it.
     """
     capacity = int(hard_limit_bytes)
@@ -209,7 +215,13 @@ def input_capacity(hard_limit_bytes: int, policy: dict | None = None, bytes_per_
     if density is not None:
         tokens = (int(policy.get("context_window_tokens") or 0) - int(policy.get("reserved_output_tokens") or 0)
                   - int(policy.get("framing_reserve_tokens") or 0))
-        capacity = max(0, min(capacity, int(tokens * density)))
+        if density > DEFAULT_BYTES_PER_TOKEN:
+            capacity = max(0, int(tokens * density * (1 - ESTIMATE_ERROR)))
+            manual = policy.get("manual_max_context_bytes")
+            if manual is not None:
+                capacity = min(capacity, manual)
+        else:
+            capacity = max(0, min(capacity, int(tokens * density)))
     return int(capacity * density_penalty)
 
 
