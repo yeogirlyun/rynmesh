@@ -326,8 +326,12 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
     return copy.deepcopy(exposed), next_state
 
 
-def discover(business_specs, internal_specs, metadata, state, args, *, capacity_bytes, usage=None):
-    """Paged catalog, BM25 search and append-only loads within the schema budget."""
+def discover(business_specs, internal_specs, metadata, state, args, *, capacity_bytes, usage=None, retain_bytes=None):
+    """Paged catalog, BM25 search and append-only loads within the schema budget.
+
+    ``retain_bytes`` bounds older loads only: past it they are released (unused,
+    then least recently used) while this call's requested schemas stay.
+    """
     usage = usage or {}
     internal_specs, _ = dedupe_specs(internal_specs, {NAME})
     business_specs, _ = dedupe_specs(business_specs, {NAME, *(s["function"]["name"] for s in internal_specs)})
@@ -351,6 +355,14 @@ def discover(business_specs, internal_specs, metadata, state, args, *, capacity_
     def size(selection):
         return len(encoded([*([] if state.get("lazy_controls") else internal), directory_spec(catalog),
                             *(names[name] for name in [*pinned, *selection])]))
+
+    def retain(loaded, protected):
+        while retain_bytes is not None and size(loaded) > retain_bytes:
+            victim = _victim(loaded, protected, usage)
+            if victim is None:
+                break
+            loaded.remove(victim)
+        return loaded
 
     query_text = args.get("query")
     has_query = isinstance(query_text, str) and bool(query_text.strip())
@@ -385,6 +397,7 @@ def discover(business_specs, internal_specs, metadata, state, args, *, capacity_
             if victim is None:
                 raise AgentToolRejected("agent_tool_schema_limit")
             loaded.remove(victim)
+        loaded = retain(loaded, requested)
         if next_state["loaded_names"] != loaded:
             next_state["loaded_names"] = loaded
             next_state["revision"] += 1
@@ -402,6 +415,7 @@ def discover(business_specs, internal_specs, metadata, state, args, *, capacity_
                 candidate_loaded.remove(victim)
             if size(candidate_loaded) <= capacity_bytes:
                 loaded = candidate_loaded
+        loaded = retain(loaded, matched_names)
         if next_state["loaded_names"] != loaded:
             next_state["loaded_names"] = loaded
             next_state["revision"] += 1

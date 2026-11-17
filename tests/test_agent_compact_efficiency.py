@@ -9,7 +9,7 @@ from test_agent_resource_writes import writable as writable_fixture
 from test_agent_runtime import advance, approve, assistant, fit_window, make_runtime
 from test_agent_tool_menu import ManyTools
 
-from rynmesh.agent_runtime import tool_menu
+from rynmesh.agent_runtime import projects, tool_menu
 from rynmesh.agent_runtime.control import MID_TURN_NOTES
 from rynmesh.agent_runtime.prompt import PROGRESS_TAIL_PREFIX
 from rynmesh.agent_runtime.runtime import AgentRuntime
@@ -80,8 +80,15 @@ def observed_state(history, previous=None):
     return state
 
 
-def test_real_resource_tools_reach_body_and_approved_artifact_under_pressure(writable, record_property):
+def test_real_resource_tools_reach_body_and_approved_artifact_under_pressure(writable, record_property, monkeypatch):
     tools, _, _, _, source, server, root, app, store = writable
+    # The 16KB window below is clamped at the small-window bound, so it cannot
+    # absorb prompt growth. S12-I11's non-project <environment_context> (~240 B
+    # here, sized by the pytest tmp cwd) takes the last room this scenario's
+    # history needs; it is covered by tests/test_ovh_s12_i11.py instead.
+    guidance = projects.guidance
+    monkeypatch.setattr(projects, "guidance", lambda row: guidance(row)
+                        if row.get("project") or row.get("workspace_instructions") else "")
     source_text = "\n".join(f"Amount={n}" for n in [17, 29, 43]) + "\n" + "Observation detail. " * 85
     (root / "allowed/observations.txt").write_bytes(source_text.encode("utf-8"))
     owners = ["Read observations.txt and create totals.md with the sum. Never modify the source.",
@@ -98,6 +105,15 @@ def test_real_resource_tools_reach_body_and_approved_artifact_under_pressure(wri
         def complete(self, model_id, messages, specs, cancelled, on_event, *, expected_destination):
             calls.append((copy.deepcopy(messages), copy.deepcopy(specs)))
             assert request_size(messages, specs) <= cap
+            # Since S03-I5 a summary may reuse the main prefix (tools included) and end with the compaction request.
+            if specs and str(messages[-1].get("content") or "").startswith("Server compaction request:"):
+                previous = {}
+                for m in messages:
+                    if str(m.get("content") or "").startswith("Historical checkpoint"):
+                        previous = json.loads(m["content"].split("\n", 1)[1].split("\nExact resource")[0]
+                                              .split("\nServer-recorded mutation")[0])
+                summary_sources.append({"history": messages[:-1]})
+                return assistant(json.dumps(observed_state(messages[:-1], previous)))
             if not specs:
                 payload = json.loads(messages[-1]["content"])
                 if "history" in payload:
@@ -107,7 +123,7 @@ def test_real_resource_tools_reach_body_and_approved_artifact_under_pressure(wri
                 return assistant(json.dumps({"status": "passed", "summary": "Created content was mechanically read back.",
                     "uncovered_requirements": [], "evidence_refs": [e["id"] for e in payload["evidence"]]}))
             assert [m["content"] for m in messages if m["role"] == "user"
-                    and not str(m.get("content") or "").startswith(PROGRESS_TAIL_PREFIX)
+                    and not str(m.get("content") or "").startswith((PROGRESS_TAIL_PREFIX, "<environment_context>"))
                     and m.get("content") not in MID_TURN_NOTES.values()] == owners
             state, references = {}, {}
             for m in messages:

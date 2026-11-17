@@ -2759,7 +2759,11 @@ class AgentLoop:
                 assert_schema_unchanged(call, current)
             discovery = tool_menu.discover(business_specs, self._internal_specs(selected), self._metadata,
                 menu_state, args, capacity_bytes=tool_menu.capacity(max_context_bytes, authority_bytes),
-                usage=selected.get("tool_menu_usage", {}))
+                usage=selected.get("tool_menu_usage", {}),
+                # A small window keeps older loads only within half of the room
+                # left after authority; the rest stays for history and checkpoints.
+                retain_bytes=((max_context_bytes - authority_bytes) // 2
+                              if max_context_bytes <= tool_menu.SMALL_WINDOW_BYTES else None))
             # Tools of an unusable plugin are not in the catalog; say which plugin and how to restore it.
             unavailable = (self.extensions.unavailable_plugins(self._execution_context(selected))
                            if getattr(self, "extensions", None) is not None else [])
