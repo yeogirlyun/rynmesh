@@ -1311,6 +1311,7 @@ class AgentRuntime(AgentLoop):
             manual_limit=row["limits"].get("max_context_chars"),
             provenance=row.get("context_budget_provenance"),
             context_policy=context_policy,
+            capacity_bytes=self._effective_capacity(row)[0],
         ))
         context = self._execution_context(row)
         options = {}
@@ -1387,6 +1388,7 @@ class AgentRuntime(AgentLoop):
                 manual_limit=row["limits"].get("max_context_chars"),
                 provenance=row.get("context_budget_provenance"),
                 context_policy=context_policy,
+                capacity_bytes=self._effective_capacity(row)[0],
             ))
         # An image the selected route cannot carry becomes a short note, so a
         # picture in the history never fails this or any later request. Only an
@@ -1399,7 +1401,9 @@ class AgentRuntime(AgentLoop):
                     self._note_images_omitted(row["id"], omitted, route_cap["image_capability_reason"], latest)
         if image_capabilities.message_has_image_input(dispatch_messages):
             image_capabilities.require_route_image_support(model, model_client=self.model)
-        policy = output_policy.select(model, dispatch_messages, specs, request_cap=output_cap)
+        density = context_compaction.applied_density(context_policy, self._effective_capacity(row)[1])
+        policy = output_policy.select(model, dispatch_messages, specs, request_cap=output_cap,
+                                      bytes_per_token=density if density is not None and density > context_compaction.DEFAULT_BYTES_PER_TOKEN else None)
         profile_record = model_profiles.request_record(model_profiles.for_task(self, row, model),
                                                        dispatch_messages, options)
         meter_row = {**row, "_request_id": active_request_id} if active_request_id else row

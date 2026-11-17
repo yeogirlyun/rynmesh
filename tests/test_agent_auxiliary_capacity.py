@@ -290,5 +290,5 @@ def test_image_tokens_use_the_density_instead_of_the_default_bytes():
     assert context_compaction.request_bytes_at_density(analysis, 1.8) == text + -(-tokens * 18 // 10)
     policy = output_policy.context_budget({"context_window": WINDOW, "max_output_tokens": OUTPUT})
     assert context_compaction.applied_density(policy, 1.8) == 1.8
-    assert context_compaction.applied_density(policy, 3.6) is None  # sparser text never loosens the limit
+    assert context_compaction.applied_density(policy, 3.6) == 3.6  # S03-I8: auto capacity may loosen after calibration.
     assert context_compaction.applied_density(output_policy.context_budget({}), 1.8) is None  # unknown window

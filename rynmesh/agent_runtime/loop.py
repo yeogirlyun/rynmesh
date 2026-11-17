@@ -325,7 +325,7 @@ class AgentLoop:
             request_bytes = self._request_context_bytes(selected, messages, specs, analysis=analysis)
             pressure = self._compaction_pressure(selected, context_limit, request_bytes, specs, analysis=analysis)
             # One effective input capacity for every fit decision: the byte
-            # limit, tightened when provider usage shows denser tokenization.
+            # limit, tightened or relaxed by calibrated provider tokenization.
             capacity = pressure["capacity_bytes"]
             overflow = selected.get("context_overflow")
             if overflow:
@@ -1479,7 +1479,7 @@ class AgentLoop:
         """Request bytes that fit the model's input window, and the observed bytes/token ratio.
 
         The hard byte limit already reserves output and framing at the default
-        estimate; provider-reported usage can only tighten it, never loosen it.
+        estimate; provider-reported usage can tighten it or relax it in auto mode.
         """
         if policy is None:
             policy_of = getattr(self, "_context_policy", None)
@@ -1514,7 +1514,8 @@ class AgentLoop:
         capacity, ratio = self._effective_capacity(selected, context_limit, policy, cjk_share=cjk_share)
         density = context_compaction.applied_density(policy, ratio, cjk_share)
         model = self._model_metadata(selected["model_id"]) or {}
-        room = output_policy.output_room(model, analysis)
+        room = output_policy.output_room(model, analysis, bytes_per_token=(
+            density if density is not None and density > context_compaction.DEFAULT_BYTES_PER_TOKEN else None))
         low_output = room < min(output_policy.configured_output(model), output_policy.MIN_USEFUL_OUTPUT_TOKENS)
         messages = image_capabilities.compact_native_observation_history(selected, self._history(selected))
         result = context_compaction.assess(request_bytes=request_bytes, capacity_bytes=capacity,
