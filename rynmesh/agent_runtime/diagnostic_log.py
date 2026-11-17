@@ -87,6 +87,9 @@ def safe_diagnostics(raw) -> dict:
     reset_at = raw.get("reset_at")
     if type(reset_at) is int and reset_at >= 0:
         out["reset_at"] = reset_at
+    upstream_id = raw.get("upstream_request_id")
+    if isinstance(upstream_id, str) and re.fullmatch(r"[A-Za-z0-9_:\-]{1,128}", upstream_id):
+        out["upstream_request_id"] = upstream_id
     if type(stream_retries) is int and 0 <= stream_retries <= 20:
         out["stream_max_retries"] = stream_retries
     from ..llm_package.transport_failure import REASONS

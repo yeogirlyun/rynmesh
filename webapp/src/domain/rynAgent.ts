@@ -186,7 +186,7 @@ export interface AgentConnectionRecovery {
   next_retry_at?: number;
   recovered_at?: number;
   error_code?: string;
-  diagnostics?: { network_reason?: string; network_phase?: string; http_status?: number; retry_after_seconds?: number; stream_max_retries?: number; overloaded?: boolean };
+  diagnostics?: { network_reason?: string; network_phase?: string; http_status?: number; retry_after_seconds?: number; reset_at?: number; upstream_request_id?: string; stream_max_retries?: number; overloaded?: boolean };
 }
 export interface AgentTaskSummary {
   fork?: { source_task_id: string; source_title: string; message_count: number; shared_workspace: boolean; awaiting_instruction: boolean };

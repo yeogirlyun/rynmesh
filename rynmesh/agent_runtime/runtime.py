@@ -1512,6 +1512,17 @@ class AgentRuntime(AgentLoop):
                 retryable_failure = True
             raise
         finally:
+            if isinstance(response, dict) and response.get("server_model") and response.get("requested_model"):
+                requested, served = response["requested_model"], response["server_model"]
+                def normalized(name):
+                    return re.sub(r"-\d{4}-?\d{2}-?\d{2}$", "", name.rsplit("/", 1)[-1].lower())
+                if normalized(requested) != normalized(served):
+                    def mismatch(data):
+                        row = data["tasks"].get(selected["id"])
+                        if row is not None and not row.get("model_mismatch_reported"):
+                            row["model_mismatch_reported"] = True
+                            event(row, "model_mismatch", requested_model=requested, server_model=served)
+                    self.store.transaction(mismatch)
             usage = response.get("reported_usage", response.get("usage")) if isinstance(response, dict) else None
             if isinstance(usage, dict) and isinstance(response, dict):
                 cached = response.get("cached_tokens")
