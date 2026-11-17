@@ -151,3 +151,33 @@ def test_t3_invalid_or_non_user_index_is_rejected(tmp_path, index):
     advance(runtime)
     with pytest.raises(AgentError, match="agent_invalid_message_index"):
         rollback(runtime, task["id"], index)
+
+
+@pytest.mark.parametrize("phase", ["admit", "deliver"])
+def test_t1_pending_rollback_rejects_js_callbacks_before_prefix_is_rewritten(tmp_path, phase):
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+    from test_agent_js_integration import _seed_task_row, HOST_METHOD_MAPPING, FakeCoordinatorPort
+    from rynmesh.agent_runtime.js_integration import plan_child_call, deliver_committed_token
+    from rynmesh.agent_runtime.js_runtime.protocol import PendingHostCallEnvelope, canonical_arguments_sha256
+    from rynmesh.agent_runtime.tool_delivery import stage_tool_completion
+    store = AgentStore(tmp_path, X25519PrivateKey.generate())
+    _, catalog = _seed_task_row(store)
+    env = PendingHostCallEnvelope(task_id="task_js_phase_a", session_id="sess_001", generation=1,
+        execution_id="exec_001", callback_id="cb_read_1", ordinal=0, method="list_windows",
+        effect="read", target_tool="computer_observe_windows", arguments={},
+        arguments_sha256=canonical_arguments_sha256({}))
+    if phase == "deliver":
+        child = store.transaction(lambda data: plan_child_call(data["tasks"]["task_js_phase_a"], env, catalog, HOST_METHOD_MAPPING))
+        token = store.transaction(lambda data: stage_tool_completion(data["tasks"]["task_js_phase_a"], child,
+            receipt_status="confirmed", result={"windows": []}))
+    store.transaction(lambda data: data["tasks"]["task_js_phase_a"].update(status="paused",
+        pending_control={"kind": "rollback", "message_index": 2}))
+    if phase == "admit":
+        with pytest.raises(AgentError, match="agent_js_authority_changed"):
+            store.transaction(lambda data: plan_child_call(data["tasks"]["task_js_phase_a"], env, catalog, HOST_METHOD_MAPPING))
+    else:
+        port = FakeCoordinatorPort()
+        outcome = deliver_committed_token(store.read()["tasks"]["task_js_phase_a"], token, port,
+            live_identity={"task_id": "task_js_phase_a", "session_id": "sess_001", "generation": 1,
+                           "execution_id": "exec_001", "alive": True})
+        assert outcome == "continuation_lost" and not port.resolved and not port.rejected

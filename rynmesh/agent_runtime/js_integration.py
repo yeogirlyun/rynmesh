@@ -314,7 +314,7 @@ def plan_child_call(
     if (
         not authority_matches_row(js_state["authority"], row)
         or row.get("status") in {"completed", "failed", "cancelled", "interrupted"}
-        or (row.get("pending_control") or {}).get("kind") in {"cancel", "stop", "steer", "scope", "permissions", "edit_message"}
+        or (row.get("pending_control") or {}).get("kind") in {"cancel", "stop", "steer", "scope", "permissions", "edit_message", "rollback"}
     ):
         raise AgentError("agent_js_authority_changed")
 
@@ -847,7 +847,7 @@ def select_delivery(
     if (
         not authority_matches_row(js_state["authority"], row)
         or row.get("status") in {"completed", "failed", "cancelled", "interrupted"}
-        or (row.get("pending_control") or {}).get("kind") in {"cancel", "stop", "steer", "scope", "permissions", "edit_message"}
+        or (row.get("pending_control") or {}).get("kind") in {"cancel", "stop", "steer", "scope", "permissions", "edit_message", "rollback"}
     ):
         return DeliveryPlan(
             action="continuation_lost",
