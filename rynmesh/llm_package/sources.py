@@ -211,10 +211,12 @@ class SourceStore:
             raise ValueError("上下文或输出上限不正确")
         provider_name = str(body.get("provider", old.get("provider", "custom")))[:80]
         default_context = 1048576 if provider_name == "deepseek" else model_settings.FALLBACK_CONTEXT_WINDOW
-        default_output = 393216 if provider_name == "deepseek" else 4096
+        # DeepSeek's documented thinking default is 64K; model discovery remains authoritative.
+        default_output = 65536 if provider_name == "deepseek" else None
         context = integer(body.get("context_window", old.get("context_window", default_context)))
-        output = integer(body.get("max_output_tokens", old.get("max_output_tokens", default_output)))
-        if not 256 <= context <= 2000000 or not 1 <= output <= 393216 or (mode == "manual" and output > context):
+        raw_output = body.get("max_output_tokens", old.get("max_output_tokens", default_output))
+        output = integer(raw_output) if raw_output is not None else None
+        if not 256 <= context <= 2000000 or (output is not None and (not 1 <= output <= 393216 or (mode == "manual" and output > context))):
             raise ValueError("上下文或输出上限不正确")
         defaults = body.get("request_defaults", old.get("request_defaults", {}))
         if not isinstance(defaults, dict) or set(defaults) - {"thinking", "reasoning_effort", "temperature", "top_p"}:
@@ -233,10 +235,14 @@ class SourceStore:
         # explicit flag or a different value marks the limit as owner-chosen.
         if isinstance(body.get("max_output_tokens_explicit"), bool):
             max_output_explicit = body["max_output_tokens_explicit"]
-        elif "max_output_tokens" in body and output != 4096:
+        elif "max_output_tokens" in body and output is not None and output != 4096:
             max_output_explicit = True
         else:
             max_output_explicit = bool(old.get("max_output_tokens_explicit", False))
+        if output is None:
+            max_output_explicit = False
+        elif output == 4096 and not max_output_explicit and provider_name != "deepseek":
+            output = None
         record = {"id": source_id or "src-" + uuid.uuid4().hex[:16], "kind": kind, "protocol": protocol,
                 "name": name, "provider": str(body.get("provider", old.get("provider", "custom")))[:80],
                 "base_url": base, "api_key": key.strip(), "models": models,

@@ -129,6 +129,8 @@ class AgentModelBridge:
     supports_conversation_key = True
     supports_cache_key = True
     supports_model_events = True
+    supports_limit_retry = True
+    supports_calibrated_capacity = True
 
 
     def __init__(self, services, catalog, *, local_model_status=None):
@@ -282,7 +284,7 @@ class AgentModelBridge:
             flags["server_model"] = data["server_model"][:160]
         return {"message": message, "finish_reason": finish, "usage": usage, "output_policy": policy, **flags}
 
-    def complete(self, model_id, messages, tool_specs, cancelled, on_event=None, *, expected_destination=None, max_output_tokens=None, deadline=None, on_request_policy=None, reasoning_effort=None, conversation=None, cache_key=None, request_id=None, data_policy_state=None):
+    def complete(self, model_id, messages, tool_specs, cancelled, on_event=None, *, expected_destination=None, max_output_tokens=None, deadline=None, on_request_policy=None, reasoning_effort=None, conversation=None, cache_key=None, request_id=None, data_policy_state=None, on_limit_retry=None, bytes_per_token=None):
         if cancelled():
             raise AgentError(cancellation_reason(cancelled))
         if deadline is not None:
@@ -329,12 +331,12 @@ class AgentModelBridge:
             else:
                 image_capabilities.require_route_image_support(target, model_client=self)
         try:
-            policy = output_policy.select(target, messages, tool_specs, request_cap=max_output_tokens)
+            policy = output_policy.select(target, messages, tool_specs, request_cap=max_output_tokens, bytes_per_token=bytes_per_token)
         except AgentError as exc:
             messages, omitted = image_capabilities.omit_old_images_for_limits(messages, exc)
             if not omitted:
                 raise
-            policy = output_policy.select(target, messages, tool_specs, request_cap=max_output_tokens)
+            policy = output_policy.select(target, messages, tool_specs, request_cap=max_output_tokens, bytes_per_token=bytes_per_token)
             shared_resize = {**(shared_resize or {"carrier": "local", "resized": 0}),
                 "omitted": (shared_resize or {}).get("omitted", 0) + omitted,
                 "omitted_old": (shared_resize or {}).get("omitted_old", 0) + omitted}
@@ -477,6 +479,7 @@ class AgentModelBridge:
 
         model_events = ModelEventStream(safe_on_event if on_event else None, stopped=lambda: cancelled() or expired())
         stream_event_seen = False
+        active_transport_id = task_id
 
         def emit(chunk):
             nonlocal stream_event_seen
@@ -491,7 +494,7 @@ class AgentModelBridge:
         def cancel_transport():
             try:
                 if manager:
-                    manager.adapter.cancel(task_id)
+                    manager.adapter.cancel(active_transport_id)
                 else:
                     self.services["cancel_order"](task_id)
             except Exception as exc:
@@ -510,6 +513,8 @@ class AgentModelBridge:
         watcher = threading.Thread(target=watch, name="ryn-agent-inference-cancel", daemon=True)
         acquired = False
         learned_output = None
+        learned_context = None
+        limit_retry_used = has_output_limit_feedback(messages)
         try:
             if manager:
                 wait_started = time.monotonic()
@@ -620,16 +625,75 @@ class AgentModelBridge:
                                 if request_deadline is not None:
                                     options["timeout_s"] = max(0.0, request_deadline - time.monotonic())
                                 continue
-                        if (learned_output is not None or target.get("max_output_tokens_known") is not False or maximum <= 4096
-                                or diagnostics.get("http_status") != 400 or diagnostics.get("output_tokens_too_large") is not True
-                                or cancelled() or expired()):
+                        if (limit_retry_used or cancelled() or expired() or model_events.text_chars or model_events.calls
+                                or model_events.completed):
+                            raise
+                        context_rejected = exc.code == "upstream_context_overflow" or diagnostics.get("network_reason") == "context_overflow"
+                        output_rejected = diagnostics.get("output_tokens_too_large") is True
+                        empty_length = exc.code in {"upstream_response_invalid", "upstream_output_limit_reached"} and exc.finish_reason == "length"
+                        if not (context_rejected or output_rejected or empty_length):
                             raise
                         check_data_release()
-                        learned_output = 4096
-                        policy = output_policy.select({**target, "max_output_tokens": 4096, "max_output_tokens_known": True},
-                                                      messages, tool_specs, request_cap=max_output_tokens)
+                        old_window = output_policy.context_metadata(target)["context_window_tokens"]
+                        next_target = dict(target)
+                        if context_rejected or output_rejected:
+                            next_cap = min(maximum, diagnostics.get("output_tokens_limit") or max(1024, maximum // 2))
+                            if context_rejected:
+                                learned_context = min(old_window, diagnostics.get("context_window_limit") or old_window // 2)
+                                next_target.update(context_window=learned_context, context_window_known=True,
+                                                   context_window_basis="upstream_rejection")
+                                next_cap = min(next_cap, max(1024, learned_context // 2))
+                                if diagnostics.get("context_window_limit"):
+                                    self.catalog.learn_context_limit(target, learned_context)
+                            learned_output = next_cap
+                            if diagnostics.get("output_tokens_limit"):
+                                self.catalog.learn_output_limit(target, next_cap)
+                            event_type = "model_limit_adjusted"
+                        else:
+                            upper = old_window // 2
+                            vendor = model_settings._known_vendor_max_output_tokens(target.get("model_id") or target.get("cli_model"))
+                            if vendor is not None:
+                                upper = min(upper, vendor)
+                            if target.get("max_output_tokens_known") is not False:
+                                upper = min(upper, output_policy.configured_output(target))
+                            next_cap = min(2 * maximum, upper)
+                            if next_cap <= maximum:
+                                raise
+                            event_type = "output_limit_raised"
+                        next_target.update(max_output_tokens=next_cap, max_output_tokens_known=True)
+                        try:
+                            next_policy = output_policy.select(next_target, messages, tool_specs, request_cap=next_cap, bytes_per_token=bytes_per_token)
+                        except AgentError:
+                            # A smaller real window may require S01-I5 compaction,
+                            # rather than replaying an input that cannot fit.
+                            if context_rejected:
+                                self.catalog.learn_context_limit(target, learned_context)
+                                self.catalog.learn_output_limit(target, next_cap)
+                                safe_on_event({"type": "model_limit_adjusted", "basis": "upstream_rejection",
+                                    "old_context_window": old_window, "new_context_window": learned_context,
+                                    "old_max_output_tokens": maximum, "new_max_output_tokens": next_cap,
+                                    "request_id": task_id})
+                            raise exc
+                        adjustment = {"type": event_type, "basis": "upstream_rejection" if event_type == "model_limit_adjusted" else "empty_length",
+                            "old_context_window": old_window, "new_context_window": learned_context or old_window,
+                            "old_max_output_tokens": maximum, "new_max_output_tokens": next_policy["effective_cap"], "request_id": task_id}
+                        if event_type == "model_limit_adjusted":
+                            safe_on_event(adjustment)
+                        if on_limit_retry is not None:
+                            allowed = on_limit_retry(next_policy, exc.reported_usage or {"input_tokens": 0, "output_tokens": 0},
+                                                     maximum + 1 if event_type == "output_limit_raised" else 1)
+                            next_policy = output_policy.budgeted(next_policy, allowed)
+                        if event_type == "output_limit_raised":
+                            safe_on_event({**adjustment, "new_max_output_tokens": next_policy["effective_cap"]})
+                        limit_retry_used = True
+                        policy = next_policy
                         maximum = policy["effective_cap"]
                         chat["max_tokens"] = maximum
+                        # Source quotas count each dispatched request; cancellation
+                        # follows the active attempt while task evidence keeps its request ID.
+                        active_transport_id = "agent_" + uuid.uuid4().hex
+                        options["task_id"] = active_transport_id
+                        model_events = ModelEventStream(safe_on_event if on_event else None, stopped=lambda: cancelled() or expired())
                         if request_deadline is not None:
                             options["timeout_s"] = max(0.0, request_deadline - time.monotonic())
             else:
@@ -691,6 +755,8 @@ class AgentModelBridge:
                 raise AgentModelResponseError(usage, finish) from None
             if learned_output is not None:
                 self.catalog.learn_output_limit(target, learned_output)
+            if learned_context is not None:
+                self.catalog.learn_context_limit(target, learned_context)
             return response
         except DataReleaseError as exc:
             raise AgentError(str(exc)) from None
@@ -757,7 +823,7 @@ class AgentModelBridge:
                 if diag:
                     err.diagnostics = diag
                 raise err from None
-            if exc.code == "upstream_output_limit_reached" and not cancelled() and not expired() and not has_output_limit_feedback(messages):
+            if exc.code == "upstream_output_limit_reached" and not cancelled() and not expired() and not limit_retry_used:
                 diag.setdefault("max_tokens", maximum)
                 rejected = AgentModelResponseError(exc.reported_usage, "length")
                 rejected.request_id = task_id

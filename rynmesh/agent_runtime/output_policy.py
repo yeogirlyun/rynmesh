@@ -77,6 +77,8 @@ def admission_bytes_per_token(model):
 
 def configured_output(model):
     configured = model.get("max_output_tokens")
+    if model.get("max_output_basis") == "vendor_family_guess" and type(configured) is int:
+        return min(configured, 16384)
     if model.get("max_output_tokens_known") is False or configured is None:
         metadata = context_metadata(model)
         return min(16384, metadata["context_window_tokens"] // 4) if metadata["context_window_known"] else 8192

@@ -245,6 +245,28 @@ def _header_retry_after(headers, now):
     return min(max(waits), 86400) if waits else None
 
 
+def _model_limit_details(envelope):
+    """Retain only numeric bounds and a closed refusal flag, never provider text."""
+    _, _, param, message = _extract_envelope_fields(envelope)
+    text = message.lower()
+    result = {}
+    if any(name in (param + " " + text).lower() for name in ("max_tokens", "max_completion_tokens", "max_output_tokens")) and any(
+            marker in text for marker in ("at most", "exceed", "too large", "less than", "maximum", "<=", "upper bound")):
+        result["output_tokens_too_large"] = True
+        match = re.search(r"(?:at most|<=|≤|less than(?: or equal to)?|maximum(?: allowed)?(?: value)?(?: is)?|upper bound(?: is)?)\s*[:=]?\s*(\d[\d,]*)", text)
+        if match:
+            value = int(match[1].replace(",", ""))
+            if match[0].startswith("less than") and not match[0].startswith("less than or equal to"):
+                value -= 1
+            if value > 0:
+                result["output_tokens_limit"] = value
+    if context_overflow(envelope):
+        match = re.search(r"(?:max(?:imum)? context (?:length|window)|context (?:length|window)(?: limit)?)\s*(?:is|of|:|=)?\s*(\d[\d,]*)", text)
+        if match and (value := int(match[1].replace(",", ""))) > 0:
+            result["context_window_limit"] = value
+    return result
+
+
 def describe(exc, phase="request", envelope=None):
     if isinstance(exc, HTTPError):
         result = {"network_reason": "http", "network_phase": phase, "http_status": exc.code}
@@ -256,10 +278,8 @@ def describe(exc, phase="request", envelope=None):
                 or ("stream" in msg_l and any(word in msg_l for word in _REFUSAL_WORDS))):
             result["streaming_unsupported"] = True
 
-        if exc.code == 400 and any(name in (param + " " + msg).lower() for name in
-                                   ("max_tokens", "max_completion_tokens", "max_output_tokens")) and any(
-                marker in msg_l for marker in ("at most", "exceed", "too large", "less than", "maximum", "<=", "upper bound")):
-            result["output_tokens_too_large"] = True
+        if exc.code in {400, 413, 422}:
+            result.update(_model_limit_details(envelope))
 
         if (
             exc.code == 529
@@ -385,9 +405,13 @@ def classify_stream_error(event, phase="read"):
     if any(t in _QUOTA_CODES for t in tokens):
         diagnostics["network_reason"] = "quota"
         return "upstream_request_rejected", diagnostics
+    diagnostics.update(_model_limit_details(envelope))
     if any(t in {"context_length_exceeded", "context_window_exceeded", "context_exceeded"} for t in tokens_l) or context_overflow(envelope):
         diagnostics["network_reason"] = "context_overflow"
         return "upstream_context_overflow", diagnostics
+    if diagnostics.get("output_tokens_too_large"):
+        diagnostics["network_reason"] = "request_rejected"
+        return "upstream_request_rejected", diagnostics
     if code_l == "generation_cancelled":
         return "inference_failed", diagnostics
     if any(t in {"overloaded_error", "overloaded"} for t in tokens_l) or (

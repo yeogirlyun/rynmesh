@@ -36,11 +36,14 @@ def _format_catalog_error(code: str) -> str:
 def _cli_output(row, upstream):
     value = upstream.get("max_output_tokens")
     basis = "provider_cli_model_metadata"
+    known = True
     if type(value) is not int:
-        value = model_settings._known_vendor_max_output_tokens(upstream.get("id", ""))
-        basis = "vendor_family_default"
+        vendor = model_settings.known_vendor_output_metadata(upstream.get("id", ""))
+        value = vendor["max_output_tokens"] if vendor else None
+        basis = vendor["max_output_basis"] if vendor else "unknown_fallback"
+        known = bool(vendor and vendor["max_output_tokens_known"])
     if type(value) is int and 0 < value <= row["context_window"]:
-        row.update(max_output_tokens=value, max_output_tokens_known=True, max_output_basis=basis)
+        row.update(max_output_tokens=value, max_output_tokens_known=known, max_output_basis=basis)
     else:
         row.update(max_output_tokens=4096, max_output_tokens_known=False, max_output_basis="unknown_fallback")
 
@@ -62,6 +65,7 @@ class ModelCatalog:
         self._cli_metadata = {}
         self._cli_metadata_lock = threading.Lock()
         self._learned_output_limits = {}
+        self._learned_context_limits = {}
         self._catalog_cache = {}
         self._catalog_lock = threading.RLock()
         self._diagnostics = {}
@@ -80,6 +84,12 @@ class ModelCatalog:
     def learn_output_limit(self, target, cap):
         with self._cli_metadata_lock:
             self._learned_output_limits[(target["id"], target.get("destination_revision", ""))] = cap
+        with self._catalog_lock:
+            self._catalog_cache.clear()
+
+    def learn_context_limit(self, target, cap):
+        with self._cli_metadata_lock:
+            self._learned_context_limits[(target["id"], target.get("destination_revision", ""))] = cap
         with self._catalog_lock:
             self._catalog_cache.clear()
 
@@ -209,26 +219,26 @@ class ModelCatalog:
                 if local_tool_support == "unsupported":
                     supported = False
             declared_claude_window = (
-                model_settings._known_vendor_context_window(manifest.get("model", ""))
+                model_settings.known_vendor_context_metadata(manifest.get("model", ""))
                 if adapter == "claude_cli" and manifest.get("model")
                 else None
             )
             inferred_window = (
-                model_settings.known_vendor_context_window(manifest.get("model_alias") or service_id)
+                model_settings.known_vendor_context_metadata(manifest.get("model_alias") or service_id)
                 if not is_cli and type(manifest.get("context_window")) is not int else None
             )
             window = manifest.get("context_window", 32768)
             if not is_cli and type(window) is not int:
                 window = 32768
             if declared_claude_window is not None:
-                window = declared_claude_window
+                window = declared_claude_window["context_window"]
             elif inferred_window is not None:
-                window = inferred_window
+                window = inferred_window["context_window"]
+            vendor_window = declared_claude_window or inferred_window
             cli_basis = manifest.get("context_window_basis") if isinstance(manifest.get("context_window_basis"), str) else ""
             window_known = (
-                (not is_cli and type(manifest.get("context_window")) is int)
-                or declared_claude_window is not None
-                or inferred_window is not None
+                (not is_cli and type(manifest.get("context_window")) is int and cli_basis not in {"vendor_family_guess", "unknown_fallback"})
+                or bool(vendor_window and vendor_window["context_window_known"])
             )
             row = {"id": model_ref, "name": manifest.get("model_alias", service_id),
                    "source": "local_service" if own else "peer", "source_name": value.get("node_name", ""),
@@ -244,8 +254,10 @@ class ModelCatalog:
                    "context_window": window,
                    "context_window_known": window_known,
                    "context_window_basis": (
-                       "vendor_family_default"
-                       if declared_claude_window is not None or inferred_window is not None
+                       vendor_window["context_window_basis"]
+                       if vendor_window is not None
+                       else cli_basis
+                       if cli_basis
                        else "provider_manifest"
                        if window_known
                        else (cli_basis or "unknown_fallback")
@@ -441,8 +453,11 @@ class ModelCatalog:
         for row in rows.values():
             with self._cli_metadata_lock:
                 learned = self._learned_output_limits.get((row["id"], row.get("destination_revision", "")))
-            if learned is not None and row.get("max_output_tokens_known") is False:
-                row.update(max_output_tokens=learned, max_output_tokens_known=True, max_output_basis="upstream_learned")
+                learned_context = self._learned_context_limits.get((row["id"], row.get("destination_revision", "")))
+            if learned is not None and learned < row.get("max_output_tokens", 4096):
+                row.update(max_output_tokens=learned, max_output_tokens_known=True, max_output_basis="upstream_rejection")
+            if learned_context is not None:
+                row.update(context_window=learned_context, context_window_known=True, context_window_basis="upstream_rejection")
             ms = row.get("model_settings")
             policy = (
                 ms.get("effective")

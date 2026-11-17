@@ -105,9 +105,12 @@ def test_native_protocol_failure_is_terminal_without_second_model_request(node, 
         assert row["status"] == "failed", row
         retries = [event for event in row["events"] if event["type"] == "model_retry_scheduled"]
         if failure == "truncated":
-            # S01-I18: an output-limit stop gets one retry with "write smaller" feedback;
+            # S12-I26: one bounded output raise shares the format-repair budget;
             # the truncated tool call itself is never executed.
-            assert len(requests) == 2 and len(retries) == 1
+            assert len(requests) == 2 and not retries
+            assert sum(e["type"] == "output_limit_raised" for e in row["events"]) == 1
+            output_key = "max_output_tokens" if protocol == "openai_responses" else "max_tokens"
+            assert [request["body"][output_key] for request in requests] == [8192, 16384]
             assert row["error"] == "agent_model_output_limit_reached"
         else:
             assert len(requests) == 1 and not retries

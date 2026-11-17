@@ -127,7 +127,7 @@ def test_empty_model_response_keeps_safe_usage_and_stop_reason_without_reasoning
     app, store = node
     _, model_id = add_source(app)
     bridge, tools, catalog = build_agent_integrations(app, store, store.home)
-    requests = fake_upstream(monkeypatch, [{"role": "assistant", "content": "", "reasoning_content": "PRIVATE_PROVIDER_THOUGHTS"}],
+    requests = fake_upstream(monkeypatch, [{"role": "assistant", "content": "", "reasoning_content": "PRIVATE_PROVIDER_THOUGHTS"}] * (2 if finish_reason == "length" else 1),
                              json_only=True, finish_reason=finish_reason)
     key = peer_box.load_or_create_messaging_key(store.home / "messaging.x25519")
     runtime = AgentRuntime(AgentStore(store.home / "empty-response-agent", key), bridge, tools, catalog)
@@ -135,11 +135,17 @@ def test_empty_model_response_keeps_safe_usage_and_stop_reason_without_reasoning
     task = runtime.create({"message": "Inspect model settings."})
     runtime.run_once()
     row = runtime.get(task["id"])
-    assert row["status"] == "queued" and len(requests) == 1, row.get("error")
+    assert row["status"] == ("failed" if finish_reason == "length" else "queued"), row.get("error")
+    assert len(requests) == (2 if finish_reason == "length" else 1)
+    if finish_reason == "length":
+        assert row["error"] == "agent_model_output_limit_reached"
+        assert [r["max_tokens"] for r in requests] == [8192, 16384]
+        assert sum(e["type"] == "output_limit_raised" for e in row["events"]) == 1
+        assert not any(e["type"] == "model_retry_scheduled" for e in row["events"])
     rejected = next(event for event in row["events"] if event["type"] == "model_response_rejected")
     assert rejected["finish_reason"] == ("length" if finish_reason == "length" else "unknown")
     assert rejected["usage"] == {"input_tokens": 20, "output_tokens": 10}
-    assert row["budget"]["lifetime"]["total_tokens"] == 30
+    assert row["budget"]["lifetime"]["total_tokens"] == (60 if finish_reason == "length" else 30)
     assert "PRIVATE_PROVIDER_THOUGHTS" not in json.dumps(row) and "private-upstream-stop" not in json.dumps(row)
 
 
