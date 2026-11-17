@@ -454,6 +454,10 @@ class AgentLoop:
                     return copy.deepcopy(metadata_snapshot[name])
                 return copy.deepcopy(self._metadata(name))
 
+            # Checkpointing and wrap-up notes may have changed the dispatched
+            # request since pressure was assessed. Persist its actual byte size.
+            usage_request_bytes = self._request_context_bytes(selected, messages, specs)
+
             def mark(data):
                 row = task(data, selected["id"])
                 if row["status"] != "running" or row["control_revision"] != selected["_run_control_revision"]:
@@ -464,6 +468,14 @@ class AgentLoop:
                 if row["steps"] >= row["limits"]["max_steps"] and budget.segment_is_hard(row, "max_steps"):
                     raise AgentError("agent_step_limit")
                 row["steps"] += 1
+                if (row.get("context_usage") or {}).get("context_epoch", 0) != row.get("context_epoch", 0):
+                    row["context_notice_level"] = 0
+                row["context_usage"] = {
+                    "request_bytes": usage_request_bytes,
+                    "capacity_bytes": pressure["capacity_bytes"],
+                    "bytes_per_token": pressure["bytes_per_token"],
+                    "step": row["steps"], "context_epoch": row.get("context_epoch", 0),
+                }
                 row["in_flight"]["dispatched"] = True
                 row["in_flight"]["request_id"] = request_id
                 row["in_flight"]["attempt"] = attempt
@@ -979,8 +991,15 @@ class AgentLoop:
 
     @staticmethod
     def _budget_notice(row: dict):
-        """Tell the model, once per threshold, how much of its step budget is gone."""
-        return budget.notice(row)
+        """Persist step/context notices together in the next tool result."""
+        usage = row.get("context_usage")
+        if usage and usage.get("context_epoch", 0) != row.get("context_epoch", 0):
+            row["context_notice_level"] = 0
+            row.pop("context_usage", None)
+            usage = None
+        context_note, level = context_compaction.remaining_notice(usage, row.get("context_notice_level", 0))
+        row["context_notice_level"] = level
+        return "\n".join(note for note in (budget.notice(row), context_note) if note) or None
 
     def _prepare_dispatch_messages(self, row: dict, messages: list[dict] | None = None) -> tuple[list[dict], dict | None]:
         msgs = self._context(row) if messages is None else messages
@@ -1846,6 +1865,8 @@ class AgentLoop:
                     and selected["elapsed_seconds"] + time.monotonic() - started >= row["limits"]["max_seconds"]):
                 raise AgentError("agent_time_limit")
             row["context_checkpoint"] = checkpoint
+            row["context_notice_level"] = 0
+            row.pop("context_usage", None)
             row["model_retry_count"] = 0
             row.pop("model_retry_authority", None)
             # The summary is settled; the pending main request has not been
