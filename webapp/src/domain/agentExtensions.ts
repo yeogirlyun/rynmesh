@@ -327,7 +327,15 @@ export interface ExtensionPlugin {
   updated_at?: string | null;
 }
 
+export interface ExtensionRecovery {
+  id?: string;
+  status: "recovered_from_prev" | "reset";
+  quarantine_path?: string;
+}
+
 export interface ExtensionOverview {
+  recovered_from_prev?: boolean;
+  recovery?: ExtensionRecovery;
   revision: number;
   generation?: number;
   updated_at?: string | null;
@@ -1066,7 +1074,12 @@ export function normalizeOverview(raw: Record<string, unknown>): ExtensionOvervi
           workspace_root: typeof item.workspace_root === "string" ? item.workspace_root : null,
         }))
     : undefined;
+  const recovery = raw.recovery as Record<string, unknown> | null | undefined;
   return {
+    recovered_from_prev: raw.recovered_from_prev === true,
+    ...(recovery && (recovery.status === "recovered_from_prev" || recovery.status === "reset")
+      ? { recovery: { status: recovery.status, ...(typeof recovery.id === "string" ? { id: recovery.id } : {}), ...(typeof recovery.quarantine_path === "string" ? { quarantine_path: recovery.quarantine_path } : {}) } as ExtensionRecovery }
+      : {}),
     revision,
     generation,
     updated_at: typeof raw.updated_at === "string" ? raw.updated_at : null,

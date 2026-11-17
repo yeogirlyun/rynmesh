@@ -21,7 +21,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from cryptography.exceptions import InvalidTag
 
-from ...atomic_io import atomic_write_json, read_json
+from ...atomic_io import atomic_write_bytes, atomic_write_json, read_json
 from ...file_transactions import file_transaction
 from ...services import peer_box
 from ..data_policy import normalize_policy
@@ -31,7 +31,7 @@ from ..knowledge import (
     SKILLS as BUILTIN_SKILLS,
     truncate_skill_content,
 )
-from ..store import AgentError, AgentToolRejected, encoded
+from ..store import QUARANTINE_DIR, AgentError, AgentToolRejected, encoded
 from .schema_normalize import normalize_mcp_input_schema
 from .views import normalize_views
 from .web_app import validate_web_app
@@ -40,6 +40,9 @@ EXTENSIONS_VERSION = "ryn.agent.extensions.v1"
 EXTENSIONS_CHANNEL = b"rynmesh-agent-extensions-v1"
 MAX_PLAINTEXT = 8 * 1024 * 1024
 MAX_BYTES = 12 * 1024 * 1024
+TOOLS_VERSION = "ryn.agent.extensions-tools.v1"
+TOOLS_CHANNEL = b"rynmesh-agent-extensions-tools-v1"
+MAX_TOOLS_BYTES = 128 * 1024 * 1024
 
 MAX_SKILL_PACKAGE_FILES = 128
 MAX_SKILL_FILE_BYTES = 512 * 1024
@@ -428,6 +431,8 @@ class ExtensionStore:
         self.root = base if base.name == "agent" else base / "agent"
         self.root.mkdir(parents=True, exist_ok=True)
         self.path = self.root / "extensions.json"
+        self.prev_path = self.root / "extensions.json.prev"
+        self.tools_path = self.root / "extensions-tools.json"
         self.lock = self.root / ".extensions.lock"
         self.pkgs_dir = self.root / "extensions_pkgs"
         self.pkgs_dir.mkdir(parents=True, exist_ok=True)
@@ -437,12 +442,12 @@ class ExtensionStore:
             else peer_box.load_or_create_messaging_key(self.root / "messaging.key")
         )
         self.pub = peer_box.public_key_b64(self.key)
-        self._cached_stamp: tuple[int, int] | None = None
+        self._cached_stamp: tuple[Any, ...] | None = None
         self._cached_state: dict[str, Any] | None = None
         self._agent_store: Any = None
         self._skill_roots_fingerprint_cache: dict[tuple[Any, ...], tuple[Any, list[str], list[dict[str, Any]]]] = {}
         with file_transaction(self.lock):
-            if not self.path.exists():
+            if not self.path.exists() and not self.prev_path.exists():
                 self._write(self._default_state())
 
     def _default_computer_use_tools(self) -> list[dict[str, Any]]:
@@ -550,42 +555,99 @@ class ExtensionStore:
             },
         }
 
-    def _read(self, *, borrow: bool = False) -> dict[str, Any]:
-        # Borrow only under file_transaction for read-only projections that copy
-        # their result. Mutators retain an independent state by default. Every
-        # read still stats the file, so other processes' changes invalidate it.
-        if not self.path.exists():
-            self._cached_stamp = None
-            self._cached_state = None
-            state = self._default_state()
-            self._write(state)
-            return state
+    @staticmethod
+    def _file_stamp(path: Path) -> tuple[int, int] | None:
         try:
-            st = self.path.stat()
-            stamp = (st.st_mtime_ns, st.st_size)
-            if self._cached_stamp == stamp and self._cached_state is not None:
-                return self._cached_state if borrow else copy.deepcopy(self._cached_state)
-            envelope = read_json(self.path, max_bytes=MAX_BYTES)
-            if not isinstance(envelope, dict) or envelope.get("version") != EXTENSIONS_VERSION:
+            st = path.stat()
+        except FileNotFoundError:
+            return None
+        return st.st_mtime_ns, st.st_size
+
+    def _stamp(self) -> tuple[Any, ...]:
+        return self._file_stamp(self.path), self._file_stamp(self.tools_path)
+
+    def _read_record(self, path: Path, *, tools: bool = False) -> dict[str, Any]:
+        try:
+            envelope = read_json(path, max_bytes=MAX_TOOLS_BYTES if tools else MAX_BYTES)
+            if not isinstance(envelope, dict) or envelope.get("version") != (TOOLS_VERSION if tools else EXTENSIONS_VERSION):
                 raise AgentError("agent_state_unreadable")
             plaintext = peer_box.open_sealed(
-                self.key,
-                self.pub,
-                envelope["nonce"],
-                envelope["ciphertext"],
-                info=EXTENSIONS_CHANNEL,
+                self.key, self.pub, envelope["nonce"], envelope["ciphertext"],
+                info=TOOLS_CHANNEL if tools else EXTENSIONS_CHANNEL,
             )
-            if len(plaintext) > MAX_PLAINTEXT:
-                raise AgentError("agent_storage_limit")
+            if not tools and len(plaintext) > MAX_PLAINTEXT:
+                raise AgentError("agent_extension_state_limit")
             state = json.loads(plaintext)
             if not isinstance(state, dict):
                 raise AgentError("agent_state_unreadable")
+            return state
         except AgentError:
             raise
         except (OSError, ValueError, KeyError, TypeError, InvalidTag):
             raise AgentError("agent_state_unreadable") from None
+
+    def _load_tools(self, state: dict[str, Any]) -> None:
+        catalog: dict[str, Any] = {}
+        if self.tools_path.exists():
+            try:
+                catalog = self._read_record(self.tools_path, tools=True).get("mcp_servers", {})
+                if not isinstance(catalog, dict):
+                    raise AgentError("agent_state_unreadable")
+            except AgentError:
+                self.tools_path.unlink(missing_ok=True)
+                catalog = {}
+        for sid, server in state.get("mcp_servers", {}).items():
+            # Legacy main files carry their own catalog until their next write.
+            if "discovered_tools" in server:
+                continue
+            cached = catalog.get(sid)
+            if (isinstance(cached, dict)
+                    and all(cached.get(k) == server.get(k) for k in ("instance_id", "config_generation", "discovery_revision"))
+                    and isinstance(cached.get("discovered_tools"), list)):
+                server["discovered_tools"] = cached["discovered_tools"]
+            else:
+                server["discovered_tools"] = []
+                if sid != COMPUTER_USE_SERVER_ID and server.get("status") in {"ready", "Ready", "connected", "Degraded"}:
+                    server["status"] = "NeedsTest"
+
+    def _read(self, *, borrow: bool = False) -> dict[str, Any]:
+        # Both files participate in invalidation: a running process must notice
+        # a damaged/deleted catalog instead of indefinitely serving its RAM copy.
+        stamp = self._stamp()
+        if stamp == self._cached_stamp and self._cached_state is not None:
+            return self._cached_state if borrow else copy.deepcopy(self._cached_state)
+        if stamp[0] is None and not self.prev_path.exists():
+            return self._write(self._default_state())
+        recovered = False
+        try:
+            state = self._read_record(self.path)
+        except AgentError as exc:
+            if str(exc) != "agent_state_unreadable":
+                raise
+            try:
+                state = self._read_record(self.prev_path)
+            except AgentError as previous_error:
+                if str(previous_error) != "agent_state_unreadable":
+                    raise
+                quarantine = self.root / QUARANTINE_DIR / f"extensions-{int(time.time())}-{uuid.uuid4().hex[:8]}"
+                quarantine.mkdir(parents=True)
+                for path in (self.path, self.prev_path):
+                    if path.exists():
+                        os.replace(path, quarantine / path.name)
+                state = self._default_state()
+                state["recovered_from_prev"] = False
+                state["recovery"] = {"status": "reset", "quarantine_path": str(quarantine)}
+            else:
+                state["recovered_from_prev"] = True
+                state["recovery"] = {"status": "recovered_from_prev"}
+            state["recovery"]["id"] = uuid.uuid4().hex
+            recovered = True
+        self._load_tools(state)
         normalized = self._normalize_state(state)
-        self._cached_stamp = stamp
+        if recovered:
+            # Never rotate the broken primary over the known-good previous file.
+            return self._write(normalized, backup=False)
+        self._cached_stamp = self._stamp()
         self._cached_state = copy.deepcopy(normalized)
         return normalized
 
@@ -653,24 +715,42 @@ class ExtensionStore:
 
         return state
 
-    def _write(self, state: dict[str, Any]) -> dict[str, Any]:
-        state["version"] = EXTENSIONS_VERSION
-        raw = encoded(state)
-        if len(raw) > MAX_PLAINTEXT:
-            raise AgentError("agent_storage_limit")
-        nonce, ciphertext = peer_box.seal(self.key, self.pub, raw, info=EXTENSIONS_CHANNEL)
-        atomic_write_json(
-            self.path,
-            {"version": EXTENSIONS_VERSION, "nonce": nonce, "ciphertext": ciphertext},
-            max_bytes=MAX_BYTES,
+    def _write_record(self, path: Path, raw: bytes, *, tools: bool = False) -> None:
+        nonce, ciphertext = peer_box.seal(
+            self.key, self.pub, raw, info=TOOLS_CHANNEL if tools else EXTENSIONS_CHANNEL,
         )
-        try:
-            st = self.path.stat()
-            self._cached_stamp = (st.st_mtime_ns, st.st_size)
-            self._cached_state = copy.deepcopy(state)
-        except OSError:
-            self._cached_stamp = None
-            self._cached_state = None
+        atomic_write_json(
+            path,
+            {"version": TOOLS_VERSION if tools else EXTENSIONS_VERSION, "nonce": nonce, "ciphertext": ciphertext},
+            max_bytes=MAX_TOOLS_BYTES if tools else MAX_BYTES,
+        )
+
+    @staticmethod
+    def _tool_catalog(state: dict[str, Any]) -> dict[str, Any]:
+        return {"mcp_servers": {
+            sid: {key: server.get(key) for key in
+                  ("instance_id", "config_generation", "discovery_revision", "discovered_tools")}
+            for sid, server in state.get("mcp_servers", {}).items()
+        }}
+
+    def _write(self, state: dict[str, Any], *, backup: bool = True) -> dict[str, Any]:
+        state["version"] = EXTENSIONS_VERSION
+        config = {**state, "mcp_servers": {
+            sid: {key: value for key, value in server.items() if key != "discovered_tools"}
+            for sid, server in state.get("mcp_servers", {}).items()
+        }}
+        raw = encoded(config)
+        if len(raw) > MAX_PLAINTEXT:
+            raise AgentError("agent_extension_state_limit")
+        catalog = self._tool_catalog(state)
+        if (not self.tools_path.exists() or self._cached_state is None
+                or catalog != self._tool_catalog(self._cached_state)):
+            self._write_record(self.tools_path, encoded(catalog), tools=True)
+        if backup and self.path.exists():
+            atomic_write_bytes(self.prev_path, self.path.read_bytes(), max_bytes=MAX_BYTES)
+        self._write_record(self.path, raw)
+        self._cached_stamp = self._stamp()
+        self._cached_state = copy.deepcopy(state)
         return state
 
     def revision(self) -> int:
@@ -1212,6 +1292,8 @@ class ExtensionStore:
             return {
                 "revision": rev,
                 "generation": rev,
+                "recovered_from_prev": bool(state.get("recovered_from_prev", False)),
+                "recovery": copy.deepcopy(state.get("recovery")),
                 "updated_at": state.get("updated_at"),
                 "desktop_access": bool(desktop_access),
                 "windows_supported": os.name == "nt",
