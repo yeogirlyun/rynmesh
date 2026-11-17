@@ -976,9 +976,14 @@ class AgentRuntime(AgentLoop):
                                             provenance=row.get("context_budget_provenance"))
 
     def _business_specs(self, row=None):
+        return self._business_catalog(row)[0]
+
+    def _business_catalog(self, row=None):
         if row is not None and getattr(self.tools, "supports_model_context", False) is True:
-            return self.tools.specs(context=self._execution_context(row))
-        return self.tools.specs()
+            specs = self.tools.specs(context=self._execution_context(row))
+        else:
+            specs = self.tools.specs()
+        return tool_menu.dedupe_specs(specs, reserved=ALL_INTERNAL_NAMES)
 
     def _policy_context(self, row):
         destination = copy.deepcopy(row.get("model_destination") or {})
@@ -1038,8 +1043,7 @@ class AgentRuntime(AgentLoop):
 
     def _menu(self, row, *, business_specs=None, max_context_bytes=None):
         business_specs = self._business_specs(row) if business_specs is None else business_specs
-        if any(spec["function"]["name"] in ALL_INTERNAL_NAMES for spec in business_specs):
-            raise AgentError("agent_tool_definition_changed")
+        business_specs, _ = tool_menu.dedupe_specs(business_specs, reserved=ALL_INTERNAL_NAMES)
         # Tool schemas share the calibrated input capacity used by dispatch and compaction.
         max_context_bytes = self._effective_capacity(row, max_context_bytes)[0]
         owners = [message for message in row["messages"] if message["role"] == "user"]

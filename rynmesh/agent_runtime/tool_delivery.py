@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -203,6 +204,25 @@ def _validate_router_raw_and_semantic_args(item: dict[str, Any]) -> tuple[dict[s
     has_raw_args_json = "raw_arguments_json" in item and item["raw_arguments_json"] is not None
     has_args_sha = "arguments_sha256" in item and item["arguments_sha256"] is not None
     err_res = item.get("error_result")
+
+    if item.get("oversize") is True:
+        # The router retains the original digest, but deliberately drops the body.
+        # Admission and durable-call checks below still bind this to that call.
+        omitted = re.fullmatch(r"<arguments omitted: ([0-9]+) bytes>", item.get("arguments_json", ""))
+        if (
+            item_args != {}
+            or not isinstance(err_res, dict)
+            or err_res.get("error") != "agent_model_output_limit"
+            or err_res.get("not_executed") is not True
+            or err_res.get("no_mutation") is not True
+            or omitted is None
+            or int(omitted.group(1)) <= ROUTER_MAX_ARGUMENT_BYTES
+            or item.get("raw_arguments_json") != item.get("arguments_json")
+            or not isinstance(item.get("arguments_sha256"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", item["arguments_sha256"]) is None
+        ):
+            raise AgentError("agent_js_callback_conflict")
+        return item_args, canonical_arg_bytes, canonical_arg_sha
 
     if has_args_json:
         if not isinstance(item["arguments_json"], str):
