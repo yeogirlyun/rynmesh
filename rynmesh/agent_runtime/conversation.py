@@ -11,6 +11,7 @@ from .state import record_goal_history
 from .store import AgentError, AgentStore, encoded
 
 BRANCH_METADATA_LIMIT = 20
+RETIRED_WRITE_LIMIT = 20
 _BRANCH_META_KEYS = (
     "revision",
     "message_index",
@@ -84,10 +85,24 @@ def rewrite(row: dict, control: dict, emit, *, data: dict | None = None, store: 
     """
     from . import memory, memory_integration
 
+    row.pop("retired_writes", None)
     index, replacement = control["message_index"], control.get("message")
     messages = row["messages"]
     previous_revision = row.get("conversation_revision", 0)
     retired_messages = copy.deepcopy(messages[index:])
+    retired_call_ids = {call["id"] for message in retired_messages for call in message.get("tool_calls", [])}
+    statuses = {receipt["operation_id"]: receipt["status"] for receipt in row.get("receipts", [])
+                if receipt.get("status") in {"confirmed", "unknown"}}
+    writes = {}
+    for item in row["events"]:
+        if (item["type"] == "tool_started" and item.get("effect") == "write"
+                and item.get("call_id") in retired_call_ids and item.get("operation_id") in statuses):
+            operation_id = item["operation_id"]
+            writes[operation_id] = {"tool": item["tool"], "operation_id": operation_id,
+                                    "status": statuses[operation_id]}
+    if writes:
+        row["retired_writes"] = {"items": list(writes.values())[-RETIRED_WRITE_LIMIT:],
+                                 "omitted": max(0, len(writes) - RETIRED_WRITE_LIMIT)}
     active_store = store if isinstance(store, AgentStore) else _enclosing_store()
     can_archive = active_store is not None and isinstance(row.get("id"), str) and bool(row["id"])
 

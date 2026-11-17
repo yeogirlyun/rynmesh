@@ -1147,6 +1147,15 @@ class AgentLoop:
         else:
             tail = ([{"role": "assistant", "content": "Server note about the previous response: "
                       + rejection + ". Continue with a valid tool call or a plain answer, using recorded results."}] if rejection else [])
+            retired_writes = row.get("retired_writes")
+            if retired_writes:
+                projection = {"items": [{"tool": item["tool"], "status": item["status"]}
+                                         for item in retired_writes["items"]],
+                              "omitted": retired_writes["omitted"]}
+                tail.append({"role": "assistant", "content":
+                    "Runtime note: 主人编辑了更早的一条消息。被丢弃的旧分支里已经执行过这些写操作（只列工具名与状态）："
+                    + encoded(projection).decode()
+                    + "。它们的效果仍然存在，不要不加检查地重复执行；先用只读工具确认当前状态。"})
             pending_subagent_messages = subagents.pending_for_request(row)
             tail.extend(pending_subagent_messages)
             if placement == "tail":
