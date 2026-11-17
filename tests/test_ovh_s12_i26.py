@@ -7,6 +7,7 @@ from urllib.error import HTTPError
 
 import pytest
 from test_agent_integrations import add_source, node  # noqa: F401
+from test_agent_source_drafts import setup as draft_setup  # noqa: F401
 
 from rynmesh.agent_runtime import output_policy
 from rynmesh.agent_runtime.bridge import build_agent_integrations
@@ -120,7 +121,9 @@ def script_http(monkeypatch, steps):
         assert len(requests) <= len(steps), "unbounded retry"
         step = steps[len(requests) - 1]
         if isinstance(step, dict):
-            raise HTTPError(request.full_url, 400, "Bad Request", {}, io.BytesIO(json.dumps({"error": step}).encode()))
+            status = step.get("_http_status", 400)
+            error = {key: value for key, value in step.items() if key != "_http_status"}
+            raise HTTPError(request.full_url, status, "Bad Request", {}, io.BytesIO(json.dumps({"error": error}).encode()))
         yield Response(*step)
     monkeypatch.setattr("urllib.request.urlopen", urlopen)
     return requests
@@ -144,6 +147,13 @@ def test_t5_real_http_adjusts_once_records_event_and_caches_destination_bound_li
     error = {"type": "invalid_request_error", "param": "max_tokens" if kind == "output" else "messages", "message": message + " PRIVATE_UPSTREAM_TEXT"}
     requests = script_http(monkeypatch, [error, ("Done", "stop")])
     events = []
+    if kind == "context" and not numeric:
+        with pytest.raises(AgentError, match="^agent_model_context_overflow$"):
+            bridge.complete(mid, [{"role": "user", "content": "same request"}], [], lambda: False, events.append)
+        assert len(requests) == 1 and not any(e["type"] == "model_limit_adjusted" for e in events)
+        assert catalog.resolve(mid)["context_window"] == 128000
+        assert catalog.resolve(mid)["max_output_tokens"] == 16384
+        return
     result = bridge.complete(mid, [{"role": "user", "content": "same request"}], [], lambda: False, events.append)
     assert result["message"]["content"] == "Done" and len(requests) == 2
     assert requests[0]["messages"] == requests[1]["messages"]
@@ -152,8 +162,9 @@ def test_t5_real_http_adjusts_once_records_event_and_caches_destination_bound_li
     assert adjustment["basis"] == "upstream_rejection" and adjustment["old_max_output_tokens"] == 16384
     assert adjustment["new_max_output_tokens"] == requests[1]["max_tokens"]
     learned = catalog.resolve(mid)
-    assert learned["max_output_tokens"] == requests[1]["max_tokens"]
-    assert learned["max_output_basis"] == "upstream_rejection"
+    assert learned["max_output_tokens"] == (6000 if kind == "output" and numeric else 16384)
+    if kind == "output" and numeric:
+        assert learned["max_output_basis"] == "upstream_rejection"
     if kind == "context":
         assert learned["context_window"] == (32768 if numeric else 64000)
         assert learned["context_window_known"] and learned["context_window_basis"] == "upstream_rejection"
@@ -194,7 +205,7 @@ def test_t5_smaller_window_that_cannot_fit_input_learns_then_defers_to_compactio
     with pytest.raises(AgentError, match="^agent_model_context_overflow$"):
         bridge.complete(mid, [{"role": "user", "content": "x" * 97000}], [], lambda: False, events.append)
     assert len(requests) == 1 and catalog.resolve(mid)["context_window"] == 8192
-    assert catalog.resolve(mid)["max_output_tokens"] == 4096
+    assert catalog.resolve(mid)["max_output_tokens"] == 16384
     assert next(e for e in events if e["type"] == "model_limit_adjusted")["new_context_window"] == 8192
 
 
@@ -345,3 +356,38 @@ def test_t5_real_bridge_keeps_the_runtime_calibrated_context_decision(node, monk
     response = runtime._complete(row, messages, [], lambda: False, None)
     assert response["message"]["content"] == "Done"
     assert len(requests) == 1 and requests[0]["messages"] == messages
+
+
+def test_rework_r1_unset_output_draft_passes_chat_tools_and_commit(draft_setup):
+    from test_agent_source_drafts import credential, draft, locator, run
+    tools, context, sources, config, requests = draft_setup
+    assert "max_output_tokens" not in config
+    credential(tools, context, config)
+    prepared = draft(tools, context, config)
+    tested = run(tools, context, "ryn_test_source_draft", {**locator(prepared), "test_tools": True}, "i26-r1-test")
+    assert tested["test"]["chat_passed"]
+    assert all(item["chat"] == "passed" and item["tool_support"] == "supported" for item in tested["test"]["models"])
+    committed = run(tools, context, "ryn_commit_source_draft", locator(prepared), "i26-r1-commit")
+    assert committed["ok"] and sources.read()[committed["source_id"]]["max_output_tokens"] is None
+    assert requests and all(type(item["body"]["max_tokens"]) is int and item["body"]["max_tokens"] <= 2048 for item in requests)
+
+
+@pytest.mark.parametrize("error", [
+    {"type": "invalid_request_error", "message": "prompt is too long: 90000 tokens > 32000 maximum"},
+    {"_http_status": 413, "message": "Request Entity Too Large (proxy body size limit)"},
+    {"code": "context_length_exceeded", "message": "Your input exceeds the context window of this model."},
+], ids=["anthropic_unparsed", "proxy_413", "responses_unparsed"])
+def test_rework_r2_unparsed_context_rejections_never_poison_catalog(node, monkeypatch, error):
+    bridge, _, catalog, mid = setup_bridge(node)
+    requests = script_http(monkeypatch, [error] * 4)
+    events, windows, outputs = [], [128000], [16384]
+    for _ in range(4):
+        current = catalog.resolve(mid)
+        messages = [{"role": "user", "content": "x" * int(current["context_window"] * 1.8)}]
+        with pytest.raises(AgentError, match="^agent_model_context_overflow$"):
+            bridge.complete(mid, messages, [], lambda: False, events.append)
+        current = catalog.resolve(mid)
+        windows.append(current["context_window"])
+        outputs.append(current["max_output_tokens"])
+    assert len(requests) == 4 and windows == [128000] * 5 and outputs == [16384] * 5
+    assert not any(event["type"] == "model_limit_adjusted" for event in events)

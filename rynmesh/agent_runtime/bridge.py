@@ -512,7 +512,6 @@ class AgentModelBridge:
 
         watcher = threading.Thread(target=watch, name="ryn-agent-inference-cancel", daemon=True)
         acquired = False
-        learned_output = None
         learned_context = None
         limit_retry_used = has_output_limit_feedback(messages)
         try:
@@ -633,21 +632,24 @@ class AgentModelBridge:
                         empty_length = exc.code in {"upstream_response_invalid", "upstream_output_limit_reached"} and exc.finish_reason == "length"
                         if not (context_rejected or output_rejected or empty_length):
                             raise
+                        if context_rejected and not diagnostics.get("context_window_limit"):
+                            # Unknown window failures belong to per-task compaction,
+                            # not the shared destination limit cache.
+                            raise
                         check_data_release()
                         old_window = output_policy.context_metadata(target)["context_window_tokens"]
                         next_target = dict(target)
                         if context_rejected or output_rejected:
                             next_cap = min(maximum, diagnostics.get("output_tokens_limit") or max(1024, maximum // 2))
                             if context_rejected:
-                                learned_context = min(old_window, diagnostics.get("context_window_limit") or old_window // 2)
+                                learned_context = min(old_window, diagnostics["context_window_limit"])
                                 next_target.update(context_window=learned_context, context_window_known=True,
                                                    context_window_basis="upstream_rejection")
                                 next_cap = min(next_cap, max(1024, learned_context // 2))
                                 if diagnostics.get("context_window_limit"):
                                     self.catalog.learn_context_limit(target, learned_context)
-                            learned_output = next_cap
                             if diagnostics.get("output_tokens_limit"):
-                                self.catalog.learn_output_limit(target, next_cap)
+                                self.catalog.learn_output_limit(target, min(maximum, diagnostics["output_tokens_limit"]))
                             event_type = "model_limit_adjusted"
                         else:
                             upper = old_window // 2
@@ -667,8 +669,6 @@ class AgentModelBridge:
                             # A smaller real window may require S01-I5 compaction,
                             # rather than replaying an input that cannot fit.
                             if context_rejected:
-                                self.catalog.learn_context_limit(target, learned_context)
-                                self.catalog.learn_output_limit(target, next_cap)
                                 safe_on_event({"type": "model_limit_adjusted", "basis": "upstream_rejection",
                                     "old_context_window": old_window, "new_context_window": learned_context,
                                     "old_max_output_tokens": maximum, "new_max_output_tokens": next_cap,
@@ -753,10 +753,6 @@ class AgentModelBridge:
             except ModelEventError:
                 usage, finish = self._response_metadata(result, target)
                 raise AgentModelResponseError(usage, finish) from None
-            if learned_output is not None:
-                self.catalog.learn_output_limit(target, learned_output)
-            if learned_context is not None:
-                self.catalog.learn_context_limit(target, learned_context)
             return response
         except DataReleaseError as exc:
             raise AgentError(str(exc)) from None

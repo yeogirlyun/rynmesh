@@ -306,17 +306,19 @@ class SourceDrafts:
                         reject("agent_cancelled")
                     return result
             bounded = BoundedAdapter(adapter, model)
+            from ..llm_package.model_settings import effective
+            probe_maximum = effective(record, model)["max_output_tokens"]
             item = {"model_id": model, "chat": "failed", "tool_support": "unknown", "checked_at": time.time(),
                     "streaming_support": "unknown", "streaming_checked_at": None}
             try:
                 response = bounded.chat({"messages": [{"role": "user", "content": "Reply briefly: OK"}],
-                                         "max_tokens": min(1024, record["max_output_tokens"])},
+                                         "max_tokens": min(1024, probe_maximum)},
                                         task_id="source-draft-test-" + uuid.uuid4().hex, timeout_s=15)
                 if not response.get("text"):
                     raise ValueError()
                 item["chat"] = "passed"
                 if test_tools:
-                    self.sources.probe_adapter_tools(bounded, min(2048, record["max_output_tokens"]))
+                    self.sources.probe_adapter_tools(bounded, min(2048, probe_maximum))
                     item["tool_support"] = "supported"
             except AgentError:
                 raise
