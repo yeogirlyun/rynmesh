@@ -335,7 +335,8 @@ def test_chat_tool_creates_automation_and_scheduler_executes(tmp_path: Path):
     assert final_state["runs"][0]["inbox_title"] == "微信已发送"
 
     mem_content = Path(final_state["items"][0]["memory_path"]).read_text(encoding="utf-8")
-    assert "已向张三发送：早点休息" in mem_content
+    assert "已向张三发送：早点休息" not in mem_content
+    assert f"(completed) run={spawned_task['automation_run_id']} decision=-" in mem_content
 
 
 def test_heartbeat_deferral_and_once_auto_pause(tmp_path: Path):

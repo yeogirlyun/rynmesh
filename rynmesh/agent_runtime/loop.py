@@ -669,7 +669,7 @@ class AgentLoop:
             ids = {call["id"] for msg in selected["messages"] for call in msg.get("tool_calls", [])}
             # A malformed argument or unknown function is a paired tool result,
             # not a rejected response that could replay valid sibling calls.
-            pending = normalize_tool_calls(calls, router_specs, existing_call_ids=ids,
+            pending = normalize_tool_calls(automations.canonicalize_legacy_notification_calls(calls), router_specs, existing_call_ids=ids,
                                            metadata=request_metadata, internal_names=ALL_INTERNAL_NAMES)
             for call in pending:
                 # The host ledger hashes parsed arguments, separately from the
@@ -1138,6 +1138,7 @@ class AgentLoop:
                                           project_guidance=projects.guidance(row),
                                           progress_placement=placement)
         guidance, memory_selection = memory_integration.select_guidance_and_memory(self, row)
+        guidance = [*guidance, *automations.automation_memory_messages(self.store, row)]
         # The retry after a structurally invalid response is told what was wrong, once, so that the
         # identical invalid call is not simply generated again (nothing in it was executed).
         rejection = row.get("rejected_response_note")
