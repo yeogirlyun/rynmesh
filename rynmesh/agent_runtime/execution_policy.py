@@ -636,6 +636,9 @@ def decide(call, metadata, row, settings):
                          and metadata.get("computer_access") is True
                          and desktop_granted)
     if mode == "workspace":
+        from .dangerous_commands import dangerous_shell
+        if call["name"] == "ryn_shell_execute" and dangerous_shell(call.get("arguments") or {}):
+            return Decision("ask", "dangerous_command")
         if call["name"] not in WORKSPACE_TOOLS and not inherited_desktop:
             return Decision("ask", "external_change")
     elif mode == "automatic":

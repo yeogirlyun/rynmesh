@@ -2176,11 +2176,15 @@ class AgentLoop:
                         if row.get("parent_task_id"):
                             raise AgentToolRejected(
                                 "agent_subagent_approval_blocked",
-                                correction="Subagents cannot open interactive owner approval dialogs; report required privileged operations to the parent agent.",
+                                correction="Subagents cannot open interactive owner approval dialogs; report required privileged operations to the parent agent"
+                                           + (", or use a non-forced form." if decision.basis == "dangerous_command" else "."),
                             )
                         approval = {"id": "approval_" + uuid.uuid4().hex, "tool": call["name"], "arguments": sanitized(call["arguments"]),
                                     "call_id": call["call_id"], "arguments_sha256": digest(call["arguments"]), "preview": preview,
                                     "preview_sha256": digest(bound_preview(preview)), "title": str(meta.get("title", call["name"]))}
+                        if decision.basis == "dangerous_command":
+                            from .dangerous_commands import dangerous_shell
+                            approval.update(reason="dangerous_command", dangerous_reason=dangerous_shell(call["arguments"]))
                         row.update(status="waiting_approval", pending_approval=approval, in_flight=None)
                         row["elapsed_seconds"] += time.monotonic() - started
                         event(row, "approval_requested", approval_id=approval["id"], tool=call["name"])

@@ -151,6 +151,8 @@ export interface AgentRunTiming {
   measurement: "live" | "recorded" | "pending" | "unknown";
 }
 export interface AgentApproval {
+  reason?: "dangerous_command";
+  dangerous_reason?: "forced_rm" | "force_delete" | "open_url" | "wrapper_depth";
   id: string;
   tool: string;
   arguments: Record<string, unknown>;
