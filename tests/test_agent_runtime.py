@@ -651,7 +651,7 @@ def test_read_failure_is_model_visible_and_can_be_corrected(tmp_path):
 def test_revocation_after_authorization_consumed_stops_write_under_business_lock(tmp_path, automatic, settings_change):
     runtime, _, tools, _ = make_runtime(tmp_path, assistant(name="share_service", args={"service_id": "A"}))
     if automatic:
-        runtime.update_settings({"permission_mode": "automatic", "allowed_write_tools": ["share_service"]})
+        runtime.update_settings({"permission_mode": "automatic", "allowed_write_tools": []})
     entered, release = threading.Event(), threading.Event()
     execute = tools.execute
 

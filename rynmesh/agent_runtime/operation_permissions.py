@@ -45,6 +45,8 @@ def projection(row, limit: int | None = DEFAULT_LIMIT):
                         fact.update(permission_basis="owner_approved", approval_id=decision["approval_id"], approved_at=accepted["at"])
                 elif basis == "automatic" and receipt["effect"] == "write":
                     fact["permission_basis"] = "automatic_policy"
+                elif basis == "owner_rule":
+                    fact["permission_basis"] = "owner_rule"
                 elif basis == "task_grant":
                     approval_ids = decision.get("approval_ids") or []
                     accepted = [event for event in row["events"] if event["type"] == "approved"

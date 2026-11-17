@@ -207,7 +207,7 @@ def revision(row: dict, expected: Any) -> None:
 
 
 def write_permission_revoked(row: dict, settings: dict) -> bool:
-    from .execution_policy import decide, task_grant_proof, verified_read_classification
+    from .execution_policy import decide, owner_tool_key, task_grant_proof, verified_read_classification
     flight = row.get("in_flight") or {}
     has_computer_access = (
         str(flight.get("name") or "").startswith(("ryn_browser_", "ryn_computer_"))
@@ -226,6 +226,11 @@ def write_permission_revoked(row: dict, settings: dict) -> bool:
         return False
     if row["permission_mode"] == "read_only":
         return True
+    owner_key = owner_tool_key(flight, {})
+    if owner_key in settings.get("denied_tools", []):
+        return True
+    if flight.get("authorization") == "owner_rule":
+        return owner_key not in row.get("allowed_write_tools", [])
     if flight.get("authorization") == "task_grant":
         return task_grant_proof(flight, {}, row) is None
     if flight.get("authorization") == "automatic":
@@ -2063,6 +2068,33 @@ class AgentRuntime(AgentLoop):
         return self._context_policy({"model_id": settings["model_id"], "limits": settings,
                                      "context_budget_provenance": provenance})
 
+    def _owner_rule_catalog(self):
+        from .execution_policy import owner_tool_key
+        result = {}
+        for row in self.tool_catalog():
+            if row["effect"] == "write":
+                key = owner_tool_key({"name": row["name"]}, row)
+                result[row["name"]] = result[key] = key
+        return result
+
+    @staticmethod
+    def _validate_owner_rules(values, settings, names):
+        for field in ("allowed_write_tools", "denied_tools"):
+            if field not in values:
+                continue
+            rules = values[field]
+            known = set(names.values()) | set(settings.get(field, []))
+            if not isinstance(rules, list) or any(not isinstance(rule, str) for rule in rules):
+                raise AgentError("agent_invalid_settings")
+            rules = [names.get(rule, rule) for rule in rules]
+            if any(rule not in known for rule in rules) or len(set(rules)) != len(rules):
+                raise AgentError("agent_invalid_settings")
+            values[field] = rules
+        allowed = values.get("allowed_write_tools", settings.get("allowed_write_tools", []))
+        denied = values.get("denied_tools", settings.get("denied_tools", []))
+        if set(allowed) & set(denied):
+            raise AgentError("agent_invalid_settings")
+
     def update_settings(self, values: dict) -> dict:
         if isinstance(values, dict) and set(values) == {"reset_operation_ledger"}:
             if values["reset_operation_ledger"] is not True:
@@ -2071,6 +2103,7 @@ class AgentRuntime(AgentLoop):
             return {**self.settings(), "operation_ledger_reset": reset_res}
         if not isinstance(values, dict) or set(values) - (set(DEFAULT_SETTINGS) | set(self._EXTRA_SETTINGS)):
             raise AgentError("agent_invalid_settings")
+        values = copy.deepcopy(values)
         if "project_doc_fallback_filenames" in values:
             names = values["project_doc_fallback_filenames"]
             if not isinstance(names, list) or any(not projects.valid_fallback_name(name) for name in names):
@@ -2090,11 +2123,7 @@ class AgentRuntime(AgentLoop):
             raise AgentError("agent_invalid_settings")
         if "permission_mode" in values and values["permission_mode"] not in PERMISSION_MODES:
             raise AgentError("agent_invalid_settings")
-        if "allowed_write_tools" in values:
-            allowed = values["allowed_write_tools"]
-            names = {row["name"] for row in self.tool_catalog() if row["effect"] == "write"}
-            if not isinstance(allowed, list) or any(not isinstance(name, str) or name not in names for name in allowed) or len(set(allowed)) != len(allowed):
-                raise AgentError("agent_invalid_settings")
+        rule_names = self._owner_rule_catalog() if {"allowed_write_tools", "denied_tools"} & values.keys() else {}
         if values.get("model_id"):
             selected_model = self._model_metadata(values["model_id"])
             if selected_model is None or not selected_model.get("available") or selected_model.get("agent_supported") is not True:
@@ -2126,14 +2155,18 @@ class AgentRuntime(AgentLoop):
                 raise AgentError("agent_invalid_settings") from None
 
         def update(data):
+            self._validate_owner_rules(values, data["settings"], rule_names)
             workspace_changed = "workspace_root" in values and values["workspace_root"] != data["settings"].get("workspace_root")
             if any(key in values and values[key] != data["settings"].get(key)
-                   for key in ("permission_mode", "allowed_write_tools", "workspace_root", "desktop_access")):
+                   for key in ("permission_mode", "allowed_write_tools", "denied_tools", "workspace_root", "desktop_access")):
                 for row in data["tasks"].values():
                     if row["status"] not in TERMINAL:
                         row.pop("task_grants", None)
+                        if "allowed_write_tools" in values:
+                            row["allowed_write_tools"] = [rule for rule in row.get("allowed_write_tools", [])
+                                                          if rule in values["allowed_write_tools"]]
             desktop_revoked = bool(data["settings"].get("desktop_access")) and values.get("desktop_access") is False
-            permission_changed = desktop_revoked or any(key in values and values[key] != data["settings"].get(key) for key in ("allowed_write_tools", "workspace_root"))
+            permission_changed = desktop_revoked or any(key in values and values[key] != data["settings"].get(key) for key in ("allowed_write_tools", "denied_tools", "workspace_root"))
             changed = any(data["settings"].get(key) != value for key, value in values.items())
             for key in budget.SEGMENT_LIMITS:
                 if key in values:
@@ -3355,8 +3388,9 @@ class AgentRuntime(AgentLoop):
         if set(value) - {"action", "permission_mode", "expected_revision", "expected_control_revision", "expected_goal_revision", "approval_id", "pending_input_id", "answers", "client_request_id", "subagent_id", "target", "message_index", "remember"}:
             raise AgentError("agent_invalid_request")
         action = value.get("action")
-        if value.get("remember") not in {None, "task"} or (value.get("remember") and action != "approve"):
+        if value.get("remember") not in {None, "task", "always"} or (value.get("remember") and action != "approve"):
             raise AgentError("agent_invalid_request")
+        rule_names = self._owner_rule_catalog() if value.get("remember") == "always" else {}
 
         def apply(data):
             row = task(data, task_id)
@@ -3530,6 +3564,16 @@ class AgentRuntime(AgentLoop):
                         raise AgentError("agent_permission_denied")
                     row["approved"] = {**approval, "revision": row["revision"]}
                     remembered = {}
+                    if value.get("remember") == "always":
+                        from .execution_policy import owner_tool_key
+                        rule = owner_tool_key(call, self.tools.metadata(call["name"]))
+                        allowed = list(dict.fromkeys([*data["settings"]["allowed_write_tools"], rule]))
+                        self._validate_owner_rules({"allowed_write_tools": allowed}, data["settings"], rule_names)
+                        if allowed != data["settings"]["allowed_write_tools"]:
+                            data["settings"]["allowed_write_tools"] = allowed
+                            data["settings_revision"] = data.get("settings_revision", 0) + 1
+                        row["allowed_write_tools"] = list(dict.fromkeys([*row.get("allowed_write_tools", []), rule]))
+                        remembered = {"remember": "always", "owner_rule": rule}
                     if value.get("remember") == "task":
                         from .execution_policy import approval_keys
                         keys = approval_keys(call, {**self.tools.metadata(call["name"]),
@@ -3795,11 +3839,12 @@ class AgentRuntime(AgentLoop):
         )
         if not is_hint_read_unknown and (
             row.get("permission_mode") != "automatic"
-            or flight.get("authorization") != "automatic"
+            or flight.get("authorization") not in {"automatic", "owner_rule"}
         ):
             return False
         if (
             not settings.get("enabled")
+            or write_permission_revoked(row, settings)
             or row.get("pending_control")
             or row.get("pending_approval")
             or row.get("pending_input")
@@ -4224,7 +4269,7 @@ class AgentRuntime(AgentLoop):
                 result["outcome"] == "executed" and context_valid
                 and row["status"] == "interrupted" and not row.get("pending_control")
                 and not row.get("pending_input") and not row.get("pending_approval")
-                and flight.get("authorization") in {"approved", "automatic", "task_grant"}
+                and flight.get("authorization") in {"approved", "automatic", "task_grant", "owner_rule"}
                 and flight.get("control_revision") == row["control_revision"]
                 and flight.get("goal_revision") == row["goal"]["revision"]
                 and flight.get("scope_revision") == row["scope_revision"]

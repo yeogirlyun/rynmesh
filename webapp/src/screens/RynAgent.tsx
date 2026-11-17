@@ -765,10 +765,13 @@ export default function RynAgent() {
       await rynAgent.task(task.id).then(acceptTask).catch(() => undefined);
     } finally { mutationRef.current = false; setBusy(false); }
   };
-  const action = async (kind: AgentAction) => {
+  const action = async (kind: AgentAction, remember?: "task" | "always") => {
     if (!task || mutationRef.current || (controlUncertain && !["pause", "stop", "cancel"].includes(kind)) || !canUseAgentAction(task, kind, true) || (resourceErrors.settings && !task.allowed_actions && !["pause", "stop", "cancel", "deny"].includes(kind))) return;
     mutationRef.current = true; setBusy(true); setError("");
-    try { acceptTask(task.allowed_actions && !controlUncertain ? await submitControl({ task_id: task.id, route: "actions", body: agentActionBody(task, kind) }) : await rynAgent.action(task, kind)); }
+    try {
+      acceptTask(task.allowed_actions && !controlUncertain ? await submitControl({ task_id: task.id, route: "actions", body: agentActionBody(task, kind, remember) }) : await rynAgent.action(task, kind, remember));
+      if (kind === "approve" && remember === "always") setSettings(await rynAgent.settings());
+    }
     catch (reason) {
       setError(mutationErrorKey(reason));
       await rynAgent.task(task.id).then(acceptTask).catch(() => undefined);
@@ -1409,9 +1412,9 @@ function record(value: unknown): Record<string, unknown> {
 
 function ApprovalCard({ approval, controlled, enabled, canDeny, busy, waiting, onAction }: {
   approval: AgentApproval; controlled: boolean; enabled: boolean; canDeny: boolean; busy: boolean; waiting: boolean;
-  onAction: (action: AgentAction) => Promise<void>;
+  onAction: (action: AgentAction, remember?: "task" | "always") => Promise<void>;
 }) {
-  const { t } = useTranslation("rynAgent");
+  const { t, i18n } = useTranslation("rynAgent");
   const preview = record(approval.preview);
   const servicePreview = record(preview.service_preview);
   const serviceFields = Array.isArray(servicePreview.fields) ? servicePreview.fields.map(record) : [];
@@ -1519,6 +1522,7 @@ function ApprovalCard({ approval, controlled, enabled, canDeny, busy, waiting, o
     <div className="ra-approval-actions">
       <button disabled={busy || !canDeny || !waiting} onClick={() => void onAction("deny")}><X size={15} />{t("deny")}</button>
       <button className="ra-primary" disabled={busy || !enabled || !waiting} onClick={() => void onAction("approve")}><Check size={15} />{t("approve")}</button>
+      <button disabled={busy || !enabled || !waiting} onClick={() => void onAction("approve", "always")}>{i18n.language.startsWith("zh") ? "永久允许" : "Always allow"}</button>
     </div>
   </section>;
 }
@@ -1529,6 +1533,12 @@ function AgentSettingsDialog({ settings, projects, currentProject, busy, onClose
   const [enabled, setEnabled] = useState(settings.enabled);
   const [workspace, setWorkspace] = useState(settings.workspace_root || "");
   const [desktopAccess, setDesktopAccess] = useState(settings.desktop_access || false);
+  const [allowed, setAllowed] = useState(settings.allowed_write_tools || []);
+  const [denied, setDenied] = useState(settings.denied_tools || []);
+  const ruleLabel = (rule: string) => rule.startsWith("mcp:") ? (JSON.parse(rule.slice(4)) as string[]).join(" / ") : rule;
+  const rulesChange = JSON.stringify([allowed, denied]) === JSON.stringify([settings.allowed_write_tools || [], settings.denied_tools || []])
+    ? {} : { allowed_write_tools: allowed, denied_tools: denied };
+
   const [contextMode, setContextMode] = useState(settings.max_context_chars == null ? "auto" : "manual");
   const [contextLimit, setContextLimit] = useState(String(settings.max_context_chars ?? 600000));
   const contextBytes = Number(contextLimit);
@@ -1551,7 +1561,14 @@ function AgentSettingsDialog({ settings, projects, currentProject, busy, onClose
     {contextPolicy && <p className="ra-model-context">{contextPolicy.context_window_known
       ? t("contextWindowKnown", { count: contextPolicy.context_window_tokens }) : t("contextWindowUnknown")}</p>}
     <h3 className="ra-settings-group-title">{zh ? "扩展与个性化" : "Extensions and personalization"}</h3><div className="ra-setting"><span>{t("extensions")}<small>{t("manageExtensions")}</small></span><Link className="ra-link" to="/settings/extensions" onClick={onClose}>{t("extensions")}</Link></div>
-    <PreferencesEditor /><MemoryEditor projects={projects} currentProject={currentProject} /><h3 className="ra-settings-group-title">{zh ? "操作权限" : "Operation permissions"}</h3><p>{t("modeHelp")}</p><div className="ra-settings-save"><button className="ra-primary" disabled={busy || !contextValid} onClick={() => void onSave({ enabled, workspace_root: workspace.trim(), desktop_access: desktopAccess, ...contextChange })}>{t(busy ? "saving" : "save")}</button></div></section></div>;
+    <PreferencesEditor /><MemoryEditor projects={projects} currentProject={currentProject} /><h3 className="ra-settings-group-title">{zh ? "操作权限" : "Operation permissions"}</h3><p>{t("modeHelp")}</p>
+    {([{ title: zh ? "已永久允许" : "Always allowed", rules: allowed, update: setAllowed },
+       { title: zh ? "已禁止" : "Denied tools", rules: denied, update: setDenied }]).map(group => <section key={group.title} aria-label={group.title}>
+      <h4>{group.title}</h4>{group.rules.length === 0 && <p>{zh ? "暂无" : "None"}</p>}
+      {group.rules.map(rule => <div className="ra-setting" key={rule}><span>{ruleLabel(rule)}</span>
+        <button disabled={busy} aria-label={`${zh ? "移除" : "Remove"} ${ruleLabel(rule)}`} onClick={() => group.update(group.rules.filter(item => item !== rule))}>{zh ? "移除" : "Remove"}</button></div>)}
+    </section>)}
+    <div className="ra-settings-save"><button className="ra-primary" disabled={busy || !contextValid} onClick={() => void onSave({ enabled, workspace_root: workspace.trim(), desktop_access: desktopAccess, ...contextChange, ...rulesChange })}>{t(busy ? "saving" : "save")}</button></div></section></div>;
 }
 
 function WorkspaceSetup({initial, busy, onBind}: {initial: string; busy: boolean; onBind: (path: string) => Promise<void>}) {
