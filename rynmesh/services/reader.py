@@ -11,6 +11,7 @@ with the most paragraph text, keep its block-level children, drop chrome.
 
 from __future__ import annotations
 
+import codecs
 import html as _html
 import json
 import re
@@ -23,13 +24,13 @@ from urllib.parse import urljoin
 
 from ..atomic_io import atomic_write_json
 
-__all__ = ["ReaderError", "extract_readable", "readable_url", "ReaderCache", "link_post_target"]
+__all__ = ["ReaderError", "decode_html", "extract_readable", "readable_url", "ReaderCache", "link_post_target"]
 
 MAX_BLOCKS = 400
 MIN_PARAGRAPH_CHARS = 25
 CACHE_TTL_S = 24 * 3600
 # Bump whenever extraction behaviour changes; older entries are then ignored.
-EXTRACTOR_VERSION = 3
+EXTRACTOR_VERSION = 4
 
 # Containers whose text is never article body.
 _SKIP_TAGS = {
@@ -237,12 +238,54 @@ class _Extractor(HTMLParser):
         return out
 
 
-def extract_readable(data: bytes, *, url: str = "") -> dict[str, Any]:
-    """HTML bytes -> {title, byline, lead_image, blocks[], word_count}."""
+_CHARSET_RE = re.compile(r'''\bcharset\s*=\s*["']?([^\s;"'<>]+)''', re.IGNORECASE)
+
+
+class _CharsetParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.charsets = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag != "meta":
+            return
+        attrs = dict(attrs)
+        if attrs.get("charset"):
+            self.charsets.append(attrs["charset"])
+        elif (attrs.get("http-equiv") or "").lower() == "content-type":
+            match = _CHARSET_RE.search(attrs.get("content") or "")
+            if match:
+                self.charsets.append(match[1])
+
+
+def decode_html(data: bytes, content_type: str = "") -> str:
+    """Decode web text using byte order, declared charset, then common fallbacks."""
+    # UTF-32 must precede UTF-16 because their little-endian BOMs overlap.
+    for marks, encoding in (
+        ((codecs.BOM_UTF8,), "utf-8-sig"),
+        ((codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE), "utf-32"),
+        ((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE), "utf-16"),
+    ):
+        if data.startswith(marks):
+            return data.decode(encoding, errors="replace")
+    header = _CHARSET_RE.search(content_type)
+    parser = _CharsetParser()
+    parser.feed(data[:4096].decode("latin-1"))
+    declared = ([header[1]] if header else []) + parser.charsets
+    for encoding in declared:
+        try:
+            return data.decode(encoding, errors="replace")
+        except (LookupError, ValueError):
+            continue  # An unusable charset declaration does not hide the next hint.
     try:
-        text = data.decode("utf-8", "replace")
-    except Exception as exc:  # pragma: no cover - decode never raises with replace
-        raise ReaderError(f"decode_failed: {exc}") from exc
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("gb18030", errors="replace")
+
+
+def extract_readable(data: bytes, *, url: str = "", content_type: str = "") -> dict[str, Any]:
+    """HTML bytes -> {title, byline, lead_image, blocks[], word_count}."""
+    text = decode_html(data, content_type)
     parser = _Extractor()
     try:
         parser.feed(text)
