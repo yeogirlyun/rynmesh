@@ -32,6 +32,7 @@ def _memory_lock(store: Any, automation_id: str):
 
 AUTOMATION_UPDATE_TOOL = "ryn_automation_update"
 AUTOMATION_TOOL_NAMES = {AUTOMATION_UPDATE_TOOL}
+WEEKDAY_ORDER = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
 
 
 def canonicalize_legacy_notification_calls(calls: list) -> list:
@@ -68,8 +69,8 @@ AUTOMATION_TOOL_SPECS: list[dict[str, Any]] = [
         "function": {
             "name": AUTOMATION_UPDATE_TOOL,
             "description": (
-                "Schedule tasks/reminders. "
-                "Default heartbeat: this chat; cron: new chat."
+                "Local 24h HH:MM. heartbeat prompts this chat; cron starts new chat/run. "
+                "repeat=once: delay_minutes or time today/next day; delete after firing."
             ),
             "parameters": {
                 "type": "object",
@@ -86,12 +87,14 @@ AUTOMATION_TOOL_SPECS: list[dict[str, Any]] = [
                     "repeat": {
                         "enum": ["daily", "weekdays", "weekly", "hourly", "minutely", "once"],
                     },
-                    "time": {"type": "string", "description": "Local 24h HH:MM"},
+                    "time": {"type": "string"},
                     "delay_minutes": {"type": "integer"},
                     "interval_minutes": {"type": "integer"},
                     "weekday": {
-                        "enum": ["MO", "TU", "WE", "TH", "FR", "SA", "SU"],
+                        "enum": WEEKDAY_ORDER,
                     },
+                    "weekdays": {"type": "array", "items": {"enum": WEEKDAY_ORDER}, "maxItems": 7},
+                    "status": {"enum": ["ACTIVE", "PAUSED"]},
                     "interval_hours": {"type": "integer"},
                     "rrule": {"type": "string"},
                     "desktop_access": {"type": "boolean"},
@@ -105,7 +108,6 @@ AUTOMATION_TOOL_SPECS: list[dict[str, Any]] = [
     }
 ]
 
-WEEKDAY_ORDER = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
 WEEKDAY_TO_INDEX = {code: idx for idx, code in enumerate(WEEKDAY_ORDER)}
 INDEX_TO_WEEKDAY = dict(enumerate(WEEKDAY_ORDER))
 
@@ -991,7 +993,8 @@ def normalize_automation_record(
         rrule_str = build_rrule(
             repeat=str(raw.get("repeat") or existing_parts["repeat"]),
             time_str=str(raw.get("time") or existing_parts["time"]),
-            weekday=str(raw.get("weekday") or existing_parts["weekday"]),
+            weekday=(str(raw.get("weekday") or existing_parts["weekday"])
+                     if "weekday" in raw or not isinstance(raw.get("weekdays"), list) else None),
             weekdays=(
                 raw.get("weekdays")
                 if isinstance(raw.get("weekdays"), list)
