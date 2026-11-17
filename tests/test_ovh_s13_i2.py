@@ -182,3 +182,19 @@ def test_owner_rule_keeps_automatic_unknown_outcome_continuation_without_replay(
     assert row["status"] == "queued" and row["in_flight"] is None
     assert calls == [1] and row["receipts"][-1]["status"] == "unknown"
     assert row["receipts"][-1]["authorization"] == "owner_rule"
+
+
+@pytest.mark.parametrize("shell,command", [("sh", "rm -rf sandbox"),
+    ("powershell", "Remove-Item sandbox -Recurse -Force"), ("powershell", "Start-Process https://example.com")])
+def test_rework_permanent_shell_allow_does_not_bypass_workspace_dangerous_approval(shell, command, monkeypatch):
+    if shell == "powershell":
+        from types import SimpleNamespace
+        from rynmesh.agent_runtime import dangerous_commands
+        monkeypatch.setattr(dangerous_commands, "os", SimpleNamespace(name="nt"))
+    row = {**target("workspace"), "allowed_write_tools": ["ryn_shell_execute"]}
+    call = {"name": "ryn_shell_execute", "arguments": {"command": command, "shell": shell}}
+    meta = {"effect": "write"}
+    assert policy.decide(call, meta, row, {}) == policy.Decision("ask", "dangerous_command")
+    ordinary = {**call, "arguments": {"command": "echo hello", "shell": shell}}
+    assert policy.decide(ordinary, meta, row, {}) == policy.Decision("execute", "owner_rule")
+    assert policy.decide(call, meta, row, {"denied_tools": ["ryn_shell_execute"]}) == policy.Decision("deny", "owner_rule")
