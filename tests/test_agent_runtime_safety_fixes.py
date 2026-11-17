@@ -209,7 +209,7 @@ def test_s04_i8_t1_git_status_and_git_diff_read_only_and_executes(tmp_path):
     else:
         prepared_sh = local_processes.literal_read_command({"command": "git status && git diff", "shell": "sh"})
         assert prepared_sh is not None
-        assert list(prepared_sh)[:2] == ["/bin/sh", "-c"]
+        assert list(prepared_sh)[:2] == [local_processes.detect_shell("sh")["path"], "-c"]
 
 
 def test_s04_i8_t2_git_status_semicolon_rm_rejected():

@@ -119,7 +119,7 @@ def test_t2_posix_pty_resize_updates_stty_size(sessions: Processes, tmp_path):
     args = prepare_shell_command(
         {"shell": "sh", "command": "echo READY_RESIZE; read _line; stty size", "tty": True}
     )
-    assert args == ["/bin/sh", "-c", "echo READY_RESIZE; read _line; stty size"]
+    assert args == [local_processes.detect_shell("sh")["path"], "-c", "echo READY_RESIZE; read _line; stty size"]
     ident = sessions.start(args, tmp_path, "task", 20, lambda: True, lambda: False, tty=True, rows=24, cols=80)
     _until_output(sessions, ident, "READY_RESIZE")
     write_res = sessions.write(ident, "task", "", rows=41, cols=116)
@@ -365,7 +365,11 @@ def simulated_posix_pty(monkeypatch):
         **{k: getattr(os, k) for k in dir(os) if not k.startswith("__")},
     )
     posix_os_proc.name = "posix"
+    posix_os_proc.environ = {**os.environ, "SHELL": "/bin/bash"}
     monkeypatch.setattr(local_processes, "os", posix_os_proc)
+    original_which = local_processes._which
+    monkeypatch.setattr(local_processes, "_which", lambda name, path=None: (
+        "/bin/bash" if name in {"bash", "/bin/bash"} else original_which(name, path)))
     return sim
 
 
@@ -377,10 +381,10 @@ def test_cross_platform_posix_pty_echo_eof_resize_stop_and_reader_done(simulated
     assert "Other platforms currently reject tty=true" not in shell_desc
     assert "Ctrl+D" in write_desc
 
-    # Item 2 & 5: check_pty_support passes on POSIX; shell_command keeps ['/bin/sh', '-c', command] for tty=True
+    # Item 2 & 5: tty keeps the selected POSIX shell and unchanged -c command.
     local_pty.check_pty_support()
-    assert shell_command("sh", "stty size", tty=True) == ["/bin/sh", "-c", "stty size"]
-    assert shell_command("sh", "stty size", tty=False) == ["/bin/sh", "-c", "stty size"]
+    assert shell_command("sh", "stty size", tty=True) == ["/bin/bash", "-c", "stty size"]
+    assert shell_command("sh", "stty size", tty=False) == ["/bin/bash", "-c", "stty size"]
 
     procs = Processes()
     try:

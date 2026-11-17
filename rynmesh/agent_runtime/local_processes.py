@@ -6,6 +6,7 @@ import codecs
 import collections
 import locale
 import math
+import ntpath
 import os
 import re
 import shlex
@@ -935,12 +936,81 @@ class Processes:
         return self.read(ident, task_id, wait_seconds=0)
 
 
+def _detect_shell(kind, host_os, host_platform, search_path, preferred, program_files, system_root):
+    if host_os != "nt":
+        if kind != "sh":
+            return None
+        candidates = ([preferred] if ntpath.basename(preferred) in {"bash", "zsh"} else [])
+        candidates += ["/bin/zsh", "bash"] if host_platform == "darwin" else ["bash", "zsh"]
+        for candidate in candidates:
+            executable = _which(candidate, path=search_path)
+            if executable:
+                return {"path": executable}
+        return {"path": "/bin/sh"}
+    if kind == "powershell":
+        candidates = [
+            _which("pwsh", path=search_path),
+            _which("powershell", path=search_path),
+            ntpath.join(system_root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+        ]
+        candidates = {ntpath.normcase(candidate): candidate for candidate in candidates if candidate}
+        for executable in candidates.values():
+            try:
+                result = subprocess.run(
+                    [executable, "-NoProfile", "-NonInteractive", "-Command",
+                     "$PSVersionTable.PSVersion.Major.ToString()+'.'+$PSVersionTable.PSVersion.Minor"],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=2, env=child_environment(),
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                continue
+            version = result.stdout.strip()
+            if result.returncode == 0 and re.fullmatch(r"\d+\.\d+", version):
+                return {"path": executable, "version": version}
+    elif kind == "bash":
+        git = _which("git", path=search_path)
+        candidates = ([ntpath.normpath(ntpath.join(ntpath.dirname(git), "..", "bin", "bash.exe"))] if git else [])
+        candidates += [ntpath.join(program_files, "Git", "bin", "bash.exe"), "bash.exe"]
+        wsl = ntpath.normcase(ntpath.join(system_root, "System32", "bash.exe"))
+        for candidate in candidates:
+            executable = _which(candidate, path=search_path)
+            if executable and ntpath.normcase(ntpath.normpath(executable)) != wsl:
+                return {"path": executable}
+    return None
+
+
+_SHELL_CACHE = {}
+
+
+def detect_shell(kind, path=None):
+    """Resolve a usable interpreter once per host/PATH configuration."""
+    search_path = path if path is not None else child_environment().get("PATH")
+    key = (kind, os.name, sys.platform, search_path, os.environ.get("SHELL", ""),
+           os.environ.get("ProgramFiles", r"C:\Program Files"), os.environ.get("SystemRoot", r"C:\Windows"))
+    if key not in _SHELL_CACHE:
+        detected = _detect_shell(*key)
+        if detected is not None:
+            _SHELL_CACHE[key] = detected
+        return detected
+    return _SHELL_CACHE[key]
+
+
+detect_shell.cache_clear = _SHELL_CACHE.clear
+
+
+def available_shells():
+    if os.name != "nt":
+        return ["sh"]
+    return ["powershell", "cmd", *(["bash"] if detect_shell("bash") else [])]
+
+
 def shell_command(shell, command, *, tty=False, login=True, env: Mapping[str, str] | None = None):
     if os.name == "nt":
         if shell == "powershell":
             search_path = (env if env is not None else child_environment()).get("PATH")
-            executable = _which("pwsh", path=search_path) or _which("powershell", path=search_path)
-            if executable:
+            detected = detect_shell("powershell", path=search_path)
+            if detected:
+                executable = detected["path"]
                 use_profile = bool(login) and not _POWERSHELL_PROFILE_DISABLED
                 prefix = "[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new(); $OutputEncoding=[Console]::OutputEncoding; "
                 argv = [
@@ -954,8 +1024,12 @@ def shell_command(shell, command, *, tty=False, login=True, env: Mapping[str, st
                 return PreparedCommand(argv, powershell_login_profile=True) if use_profile else argv
         elif shell == "cmd":
             return [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/s", "/c", "chcp 65001 >nul & " + command]
+        elif shell == "bash":
+            detected = detect_shell("bash", path=(env if env is not None else child_environment()).get("PATH"))
+            if detected:
+                return [detected["path"], "-c", command]
     elif shell == "sh":
-        return ["/bin/sh", "-c", command]
+        return [detect_shell("sh", path=(env if env is not None else child_environment()).get("PATH"))["path"], "-c", command]
     raise AgentToolRejected("agent_shell_unavailable")
 
 

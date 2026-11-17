@@ -11,6 +11,7 @@ import platform
 import re
 import shutil
 import threading
+import tempfile
 import time
 import uuid
 from collections import deque
@@ -2003,7 +2004,16 @@ class LocalTools:
                 else f" Selected route does not support image input ({cap.get('image_capability_reason')})."
                 if cap else ""
             )
-            return {"os": platform.system(), **self.policy(context), "shells": [s for s in ("powershell", "pwsh", "cmd", "sh") if shutil.which(s)],
+            shells = local_processes.available_shells()
+            powershell = local_processes.detect_shell("powershell") if "powershell" in shells else None
+            posix_shell = local_processes.detect_shell("sh") if "sh" in shells else None
+            powershell_version = powershell["version"] if powershell else None
+            return {"os": platform.system(), **self.policy(context), "shells": shells,
+                    "powershell_version": powershell_version,
+                    "posix_shell": posix_shell["path"] if posix_shell else None,
+                    "home": str(Path.home()), "temp_dir": tempfile.gettempdir(), "os_version": platform.version(),
+                    **({"powershell_notes": "Windows PowerShell 5.1: no && / || / ?? / ternary; use ; and if"}
+                       if powershell_version and powershell_version.startswith("5.") else {}),
                     "rg_available": bool(resolve_rg_executable()),
                     "browser_installed": bool(find_browser()),
                     **environment_computer_fields(self.store),
