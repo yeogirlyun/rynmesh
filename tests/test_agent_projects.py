@@ -504,7 +504,8 @@ def test_agents_md_32kib_budget_truncation_marker_and_task_event(tmp_path, size_
 
     instructions = row["project"]["instructions"]
     assert instructions["bytes"] == target_bytes
-    assert instructions["sha256"] == hashlib.sha256(raw_bytes).hexdigest()
+    assert instructions["sha256"] == hashlib.sha256(raw_bytes[:64 * 1024]).hexdigest()
+    assert instructions["sha256_scope"] == ("read_prefix" if expect_incomplete else "full_file")
     assert instructions["incomplete"] is expect_incomplete
 
     rendered = projects.guidance(row)
