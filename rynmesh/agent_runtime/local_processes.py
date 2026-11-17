@@ -28,7 +28,7 @@ from .git_safety import (
     SAFE_GIT_CONFIG,
     strip_rynmesh_env,
 )
-from .local_pty import COMPLETED, ConPtyProcess, PosixPtyProcess, check_pty_support, validate_size
+from .local_pty import COMPLETED, ConPtyProcess, PosixPtyProcess, check_pty_support, input_unconfirmed, validate_size
 from .local_pty import terminate_session as terminate
 from .store import AgentToolRejected
 
@@ -123,7 +123,7 @@ def _append_output(item: dict, text: str) -> None:
     item["total_chars"] += len(text)
     head_keep = HEAD_KEEP_CHARS
     tail_keep = TAIL_KEEP_CHARS
-    head_room = max(0, head_keep - len(item["head"]))
+    head_room = max(0, head_keep - len(item["head"])) if not item["dropped_chars"] else 0
     if head_room > 0:
         take = min(head_room, len(text))
         item["head"] += text[:take]
@@ -597,8 +597,14 @@ class Processes:
             try:
                 while chunk := (process.read_output() if tty else os.read(process.stdout.fileno(), 8192)):
                     text = item["decoder"].decode(chunk, final=False)
-                    if text:
+                    transport_dropped = getattr(process, "last_read_dropped_chars", 0) if tty else 0
+                    if text or transport_dropped:
                         with self.changed:
+                            if transport_dropped:
+                                item["total_chars"] += transport_dropped
+                                item["dropped_chars"] += transport_dropped + item["tail_chars"]
+                                item["tail"].clear()
+                                item["tail_chars"] = 0
                             _append_output(item, text)
                             self.changed.notify_all()
                 flushed = item["decoder"].decode(b"", final=True)
@@ -738,9 +744,9 @@ class Processes:
             return item
 
     def read(self, ident, task_id, offset=0, *, wait_seconds=DEFAULT_READ_WAIT, cancelled=None,
-             coalesce_empty_poll=False, tail=False):
+             coalesce_empty_poll=False, tail=False, _wait_limit=MAX_READ_WAIT):
         if (type(wait_seconds) not in {int, float} or not math.isfinite(wait_seconds)
-                or not 0 <= wait_seconds <= MAX_READ_WAIT):
+                or not 0 <= wait_seconds <= _wait_limit):
             raise AgentToolRejected("agent_invalid_process_wait")
         if type(tail) is not bool or type(offset) is not int:
             raise AgentToolRejected("agent_invalid_process_offset")
@@ -860,9 +866,16 @@ class Processes:
             item["cleanup_done"].wait(5)
         return self.read(ident, task_id, wait_seconds=0)
 
-    def write(self, ident, task_id, text, eof=False, *, control=None, rows=None, cols=None):
+    def write(self, ident, task_id, text, eof=False, *, control=None, rows=None, cols=None, wait_seconds=None):
         item = self.get(ident, task_id)
         process = item["process"]
+        if wait_seconds is None:
+            wait_seconds = 0.1 if item.get("tty") else 0.25
+        if (type(wait_seconds) not in {int, float} or not math.isfinite(wait_seconds)
+                or not 0 <= wait_seconds <= 30):
+            raise AgentToolRejected("agent_invalid_process_wait")
+        with self.lock:
+            offset = item["total_chars"]
         if control not in {None, "interrupt", "eof", "close_terminal"}:
             raise AgentToolRejected("agent_invalid_terminal_control")
         terminal_action = control is not None or rows is not None or cols is not None
@@ -887,14 +900,17 @@ class Processes:
             if rows is not None:
                 if text:
                     raise AgentToolRejected("agent_terminal_resize_requires_empty_text")
-                process.resize(rows, cols)
+                result = process.resize(rows, cols)
             else:
                 # Windows console EOF is Ctrl+Z followed by Enter; POSIX PTY EOF
                 # is Ctrl+D (\x04). Both are program-dependent and keep the PTY open.
                 eof_seq = "\x1a\r" if os.name == "nt" and getattr(process, "backend", None) != "posix_pty" else "\x04"
-                process.write_input({"interrupt": "\x03", "eof": eof_seq}.get(control, text))
+                result = process.write_input({"interrupt": "\x03", "eof": eof_seq}.get(control, text))
+            if isinstance(result, dict) and result.get("side_effects") == "unknown":
+                return {"process_id": ident, **result}
             return {"process_id": ident, "input_delivered": True, "eof": False,
-                    "control": control, "rows": process.rows, "cols": process.cols}
+                    "control": control, "rows": process.rows, "cols": process.cols,
+                    **self.read(ident, task_id, offset=offset, wait_seconds=wait_seconds, _wait_limit=30)}
         if process.poll() is not None:
             raise AgentToolRejected("agent_process_not_running")
         if item.get("stdin_closed") or process.stdin is None:
@@ -902,7 +918,12 @@ class Processes:
                 "agent_process_stdin_closed",
                 correction='Start the command with stdin="pipe" to write to it.',
             )
+        with self.lock:
+            if item.get("stdin_blocked") and not eof:
+                return {"process_id": ident, **input_unconfirmed(
+                    "The process is not reading its stdin; read its output or stop it.")}
         errors = []
+        sent = threading.Event()
 
         def send():
             try:
@@ -914,14 +935,21 @@ class Processes:
                         item["stdin_closed"] = True
             except (OSError, ValueError):
                 errors.append(True)
+            finally:
+                with self.lock:
+                    item["stdin_blocked"] = False
+                    sent.set()
         sender = threading.Thread(target=send, daemon=True)
         sender.start()
         sender.join(2)
-        if sender.is_alive() or errors:
-            # Input may have been partially delivered; it must not be replayed.
-            from .store import AgentError
-            raise AgentError("agent_process_input_unconfirmed")
-        return {"process_id": ident, "input_delivered": True, "eof": eof}
+        with self.lock:
+            blocked = sender.is_alive() and not sent.is_set()
+            if blocked:
+                item["stdin_blocked"] = True
+        if blocked or errors:
+            return {"process_id": ident, **input_unconfirmed()}
+        return {"process_id": ident, "input_delivered": True, "eof": eof,
+                **self.read(ident, task_id, offset=offset, wait_seconds=wait_seconds, _wait_limit=30)}
 
     def wait(self, ident, task_id, cancelled, *, yield_seconds=None):
         item = self.get(ident, task_id)

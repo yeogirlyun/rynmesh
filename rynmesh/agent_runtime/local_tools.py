@@ -2720,7 +2720,8 @@ class LocalTools:
             return self._command_artifacts(self.processes.stop(args["process_id"], task_id), task_id)
         if name == "ryn_process_write":
             return self.processes.write(args["process_id"], task_id, args["text"], args.get("eof", False),
-                                        control=args.get("control"), rows=args.get("rows"), cols=args.get("cols"))
+                                        control=args.get("control"), rows=args.get("rows"), cols=args.get("cols"),
+                                        wait_seconds=args.get("wait_seconds"))
         if name.startswith("ryn_browser_"):
             allowed = self.allowed(context)
             def browser_allowed():
