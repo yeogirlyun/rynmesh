@@ -11,6 +11,7 @@ from ..llm_package.model_usage import ModelUsageStore
 from ..llm_package.reasoning import metadata as reasoning_metadata
 from ..llm_package.tool_capabilities import client_tools_contract
 from .image_capabilities import catalog_image_fields
+from . import diagnostic_log
 
 _SPACE_CATALOG_ERROR_REASONS = {
     "space_catalog_unreachable": "无法连接设备（space_catalog_unreachable）",
@@ -386,10 +387,7 @@ class ModelCatalog:
         return sorted(rows.values(), key=lambda row: (row["source"] == "peer", row["name"], row["id"]))
 
     def get_model(self, model_id):
-        try:
-            rows = self.list_models(selected_model_id=model_id)
-        except TypeError:
-            rows = self.list_models()
+        rows = self.list_models(selected_model_id=model_id)
         return next((row for row in rows if row["id"] == model_id), None)
 
     def display_models(self):
@@ -401,7 +399,11 @@ class ModelCatalog:
 
     def refresh_destination(self, model_id):
         """Refresh metadata only; never send task text to repair discovery."""
-        records = self.services["discover"](self.network)
+        try:
+            records = self.services["discover"](self.network)
+        except Exception as exc:
+            diagnostic_log.failure("discovery_failed", exc)
+            raise ValueError("agent_model_unavailable") from None
         locator = next((row for row in records if row.get("peer_id")
             and model_id.startswith("peer/" + hashlib.sha256(row["peer_id"].encode()).hexdigest() + "/")
             and row.get("access_policy") == "personal_space"), None)

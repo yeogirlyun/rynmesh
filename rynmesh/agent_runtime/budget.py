@@ -120,6 +120,8 @@ def record_request_policy(row, policy):
     if not isinstance(policy, dict) or not isinstance(policy.get("enforcement"), str) or policy["enforcement"] not in modes:
         raise AgentError("agent_invalid_request_policy")
     safe = {"enforcement": policy["enforcement"], "measurement": "pre_admission_upper_bound"}
+    if policy.get("cancel_failed") is True:
+        safe["cancel_failed"] = True
     for key in ("provider_timeout_seconds", "effective_timeout_seconds"):
         value = policy.get(key)
         if value is not None and (type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= RANGES["max_total_seconds"][1]):

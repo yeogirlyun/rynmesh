@@ -29,7 +29,9 @@ _ERROR_GUIDANCE = {
     "agent_workspace_required": ("choose_workspace", "No working directory is bound to this task. The owner must select a working directory in task settings; a chat answer containing a path does not configure it.", "/agent"),
     "agent_workspace_changed_new_task_required": ("choose_workspace", "The working directory changed. The owner must explicitly rebind this task to the new directory before continuing.", "/agent"),
     "agent_invalid_control_proposal": ("correct_input_request", "Correct the control arguments. Credential requests accept only credential_ref fields; ordinary facts use a separate information/choice request. Never put a key in chat.", "/agent"),
-    "agent_model_unavailable": ("review_models", "Review the selected model's availability and explicitly select a usable model.", "/services/sources"),
+    "agent_model_unavailable": ("review_models", "检查本机模型服务是否已启动，并检查所选模型的来源连接或重新选择可用模型。", "/services/sources"),
+    "agent_model_starting": ("wait_for_model_start", "本机模型服务正在启动，将每 5 秒重试；若持续不可用，请检查本机模型服务是否已启动。", "/services/sources"),
+    "agent_model_peer_unreachable": ("review_peer_connection", "无法连接模型所在的设备，请检查对端在线状态和线路后重试；不会自动更换模型。", "/services/sources"),
     "agent_model_tools_unsupported": ("review_models", "This connection does not provide the Agent tool protocol. Select a connected model with Agent tool support.", "/services/sources"),
     "agent_inference_timeout": ("review_connection", "Check the source connection and model timeout; do not assume the model responded.", "/services/sources"),
     "agent_model_connection_failed": ("review_connection", "Check the source connection using its existing test action.", "/services/sources"),
@@ -59,8 +61,8 @@ _ERROR_GUIDANCE = {
     "agent_model_call_budget_exhausted": ("increase_budget", "任务模型调用次数预算已用完，请在任务预算设置中调高上限。", "/agent"),
     "agent_time_budget_exhausted": ("increase_budget", "任务运行时间预算已用完，请在任务预算设置中调高上限。", "/agent"),
     "agent_model_upstream_failed": ("review_connection", "上游模型 HTTP 或流式请求失败，请查看模型来源状态。", "/services/sources"),
-    "agent_model_image_rejected": ("review_models", "上游模型拒收图片输入，请去掉图片或切换到支持图片的模型。", "/services/sources"),
-    "agent_model_quota_exhausted": ("review_quota", "该模型当日额度已用完，请切换其他模型或等待额度恢复。", "/services/sources"),
+    "agent_model_image_rejected": ("review_models", "所选模型不接受图片：换支持图片的模型，或去掉图片后继续。", "/services/sources"),
+    "agent_model_quota_exhausted": ("review_quota", "该模型今日额度已用完：换一个模型继续，或等额度重置后继续。", "/services/sources"),
     "agent_model_destination_unverifiable": ("review_destination", "无法核实模型去向绑定，请复查模型来源配置。", "/services/sources"),
     "agent_model_stream_interrupted": ("review_connection", "上游模型流式传输中断，请检查连接稳定性后重试。", "/services/sources"),
     "agent_model_request_rejected": ("review_models", "上游服务商拒绝了本次模型请求参数或载荷，请检查模型配置或精简输入。", "/services/sources"),
@@ -237,6 +239,13 @@ class DiagnosticTools:
                 "suggestions": [{"id": key, "instruction": text, "owner_path": path, "executed": False} for key, text, path in guidance],
                 "evidence": {"kind": "current_task_runtime_record", "other_tasks_read": False},
                 "note": "All states and counters describe task_id only, not the diagnosing task. Error codes classify observed failures, not every underlying cause. Missing time/usage stays null. A finished turn is not proof of goal completion."}
+        if error == "agent_model_quota_exhausted":
+            last_failure = next((entry for entry in reversed(row.get("events", []))
+                                 if entry.get("type") == "failed" and entry.get("error") == error), {})
+            quota_diagnostics = diagnostic_log.safe_diagnostics(last_failure.get("diagnostics"))
+            if "reset_at" in quota_diagnostics:
+                result["reset_at"] = quota_diagnostics["reset_at"]
+                result["suggestions"][0]["reset_at"] = quota_diagnostics["reset_at"]
         # A recoverable tool rejection need not set row.error. The diagnosing
         # task needs the same bounded operation facts as an owner-selected task.
         result.update(self._operations(row))
