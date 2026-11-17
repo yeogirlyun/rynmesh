@@ -150,7 +150,8 @@ def test_cli_discovery_exports_bounded_reasoning_metadata_without_upstream_text(
     monkeypatch.setattr(codex_session, "_model_windows", lambda models, cache: models)
     result = codex_session.list_models("fixture")
     assert result == [{"id": "known", "name": "Known", "default": True,
-        "supported_reasoning_efforts": ["low", "ultra"], "default_reasoning_effort": "low"}]
+        "supported_reasoning_efforts": ["low", "ultra"], "ignored_reasoning_efforts": ["invented"],
+        "default_reasoning_effort": "low"}]
     assert "private-upstream-text" not in json.dumps(result)
 
 

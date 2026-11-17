@@ -635,6 +635,7 @@ def test_provider_derives_the_requester_from_the_signed_sender_not_the_body(code
     adapter = CLIAgentAdapter("codex_cli")
     provider = ProviderService(manifest=manifest, adapter=adapter, store=b, task_store=TaskOrderStore(tmp_path / "records"),
                                balance=TaskBalanceLedger(tmp_path / "balance.json"), messaging_key=bk)
+    provider.adapter.current_models()  # S01-I42: admission reads the discovery snapshot
     codex.replies.append(propose(path="a.txt"))
     key = codex_threads.window_key("task_alice")
     request = seal_task(body={"task_id": "order-1", "service_id": "codex-cli", "max_tokens": 64, "max_amount": 1,

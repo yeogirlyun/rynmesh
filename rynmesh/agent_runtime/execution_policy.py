@@ -624,7 +624,7 @@ def decide(call, metadata, row, settings):
         return Decision("deny", "read_only")
     if row.get("approved"):
         return Decision("execute", "approved")
-    if metadata.get("requires_explicit_approval") and mode != "automatic":
+    if metadata.get("requires_explicit_approval"):
         return Decision("ask", "explicit_approval")
     if mode == "confirm_changes":
         return Decision("ask", "confirm_changes")

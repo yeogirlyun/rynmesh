@@ -48,7 +48,7 @@ def test_explicit_approval_tools_still_ask_in_automatic():
     call = {"name": "ryn_craft_install", "arguments": {"app": "wordcraft"}}
     decision = decide(call, {"effect": "write", "requires_explicit_approval": True},
                       policy("automatic"), policy("automatic"))
-    assert (decision.action, decision.basis) == ("execute", "automatic")
+    assert (decision.action, decision.basis) == ("ask", "explicit_approval")
 
 
 def test_fork_takes_the_stricter_of_task_and_host_mode(env):  # noqa: F811

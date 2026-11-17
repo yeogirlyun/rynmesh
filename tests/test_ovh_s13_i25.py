@@ -164,7 +164,7 @@ def test_t6_global_desktop_revocation_updates_live_rows_and_rejects_stale_contex
 
 
 @pytest.mark.parametrize("mode,global_mode,expected", [
-    ("automatic", "read_only", ("execute", "automatic")),
+    ("automatic", "read_only", ("ask", "explicit_approval")),
     ("workspace", "automatic", ("ask", "explicit_approval")),
     ("read_only", "automatic", ("deny", "read_only")),
 ])
