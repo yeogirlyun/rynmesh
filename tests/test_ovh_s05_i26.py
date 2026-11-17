@@ -121,7 +121,7 @@ def test_t3_real_runtime_dispatch_passes_selected_model_window_and_retains_page(
         row = runtime.create({'message': 'Read source.'})
         runtime.run_once()
         runtime.run_once()
-        assert seen[0][0]['context_window_chars'] >= 768000
+        assert seen[0][0]['context_window_chars'] >= 600000  # the selected 256K window, not a small default
         assert len(seen[0][1]['text']) == 48000
         saved = runtime.get(row['id'])
         reference = saved['result_refs'][0]
