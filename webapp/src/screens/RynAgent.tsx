@@ -9,7 +9,7 @@ import { AGENT_TASKS_IN_MEMORY, agentTaskCache, agentTaskListCache, forgetAgentT
 import RynAgentProgress, { groupAgentMessages, RynAgentTurnDuration } from "./RynAgentProgress";
 import RynAgentReadOnlyHints from "./RynAgentReadOnlyHints";
 import { agentErrorActionLabel, agentErrorHelp, SEND_ERROR_CODES, type AgentErrorAction } from "./rynAgentErrors";
-import { Fragment, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate as useRouterNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ArrowUp, BookOpen, Clock3, CornerDownRight, LoaderCircle, MoreHorizontal, Pencil, Search, Square, Trash2, Check, CircleAlert, ListChecks, Monitor, PanelLeftClose, PanelLeftOpen, Pause, Play, Settings, SlidersHorizontal, Sparkles, SquarePen, X } from "lucide-react";
@@ -302,7 +302,12 @@ export default function RynAgent() {
     setFollowUpQueueModeState(mode);
     save(QUEUE_MODE_KEY, mode);
   }, []);
-  const [queuedByTask, setQueuedByTask] = useState<Record<string, QueuedFollowUpMessage[]>>({});
+  const queuedByTask = useMemo<Record<string, QueuedFollowUpMessage[]>>(() => task ? {
+    [task.id]: (task.queued_messages || []).map(item => ({
+      id: item.id, text: item.message, intent: item.intent, reasoningEffort: item.reasoning_effort,
+      createdAt: Date.parse(item.created_at), attachments: item.attachments, pausedReason: task.queued_messages_paused_reason,
+    })),
+  } : {}, [task]);
   const [editingQueued, setEditingQueued] = useState<{ taskID: string; itemID: string; text: string } | null>(null);
   const queueMigrationStarted = useRef(false);
   const queueRequest = useRef<{ key: string; id: string } | null>(null);
@@ -936,13 +941,6 @@ export default function RynAgent() {
     [ids[index - 1], ids[index]] = [ids[index], ids[index - 1]];
     await mutateQueue(() => rynAgent.reorderQueued(taskID, ids));
   };
-  useEffect(() => {
-    if (!task) return;
-    setQueuedByTask(current => ({ ...current, [task.id]: (task.queued_messages || []).map(item => ({
-      id: item.id, text: item.message, intent: item.intent, reasoningEffort: item.reasoning_effort,
-      createdAt: Date.parse(item.created_at), attachments: item.attachments, pausedReason: task.queued_messages_paused_reason,
-    })) }));
-  }, [task]);
   useEffect(() => {
     if (queueMigrationStarted.current) return;
     queueMigrationStarted.current = true;

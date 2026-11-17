@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { server } from "../test/server";
-import { AgentAPIError, rynAgent, type AgentTask } from "../domain/rynAgent";
+import { AgentAPIError, rynAgent, type AgentProject, type AgentTask } from "../domain/rynAgent";
 import { agentTaskCache } from "../domain/agentWorkspaceCache";
 import RynAgent from "./RynAgent";
 
@@ -148,4 +148,43 @@ it("T7 preserves a newer draft typed while the enqueue response is pending", asy
   }] }));
   await screen.findByText("Queued first");
   expect(input).toHaveValue("New unsent draft");
+});
+
+it("T7 keeps project drafts and selection while a legacy queue migration completes", async () => {
+  const backend = api(), user = userEvent.setup();
+  const projects: AgentProject[] = ["Alpha", "Beta"].map(name => ({
+    id: name.toLowerCase(), name, path: `D:\\code\\${name}`, generation: 1, entry_files: [], manifests: [], directories: [],
+  }));
+  backend.set({ ...backend.get(), project: projects[0] });
+  sessionStorage.setItem("ryn.agent.queued-messages", JSON.stringify({ "editable-task": [{
+    id: "b22fa4f7-699e-47e9-a413-b22d41a11ac2", text: "Previously queued", intent: "information", createdAt: Date.now(),
+  }] }));
+  let release!: (value: AgentTask) => void;
+  const migration = vi.spyOn(rynAgent, "queueMessage").mockImplementation(() => new Promise(resolve => { release = resolve; }));
+  server.use(
+    http.get("*/api/local/agent/projects", () => HttpResponse.json({ projects, selected_project_id: "alpha" })),
+    http.post("*/api/local/agent/projects/selection", async ({ request }) => HttpResponse.json(await request.json())),
+  );
+  render(<MemoryRouter><RynAgent /></MemoryRouter>);
+  await screen.findByText("Earlier reply");
+  await waitFor(() => expect(migration).toHaveBeenCalledTimes(1));
+  const sidebar = within(screen.getByRole("region", { name: "Projects" }));
+  await user.click(await sidebar.findByRole("button", { name: /^Alpha ·/ }));
+  await screen.findByRole("heading", { name: "What would you like to build in D:\\code\\Alpha?" });
+  await user.click(screen.getByRole("textbox")); await user.paste("Alpha draft kept");
+  await user.click(sidebar.getByRole("button", { name: /^Beta ·/ }));
+  await screen.findByRole("heading", { name: "What would you like to build in D:\\code\\Beta?" });
+  await user.click(screen.getByRole("textbox")); await user.paste("Beta draft kept");
+  const next: AgentTask = { ...backend.get(), revision: 13, queued_messages: [{
+    id: "b22fa4f7-699e-47e9-a413-b22d41a11ac2", seq: 1, message: "Previously queued", intent: "information", created_at: "2026-11-17T00:00:00Z",
+  }] };
+  backend.set(next);
+  await act(async () => release(next));
+  await waitFor(() => expect(sessionStorage.getItem("ryn.agent.queued-messages")).toBeFalsy());
+  expect(screen.getByRole("textbox")).toHaveValue("Beta draft kept");
+  expect(sidebar.getByRole("button", { name: /^Beta ·/ })).toHaveAttribute("aria-pressed", "true");
+  await user.click(sidebar.getByRole("button", { name: /^Alpha ·/ }));
+  await waitFor(() => expect(screen.getByRole("textbox")).toHaveValue("Alpha draft kept"));
+  await user.click(sidebar.getByRole("button", { name: "First request" }));
+  expect(await screen.findByText("Previously queued")).toBeInTheDocument();
 });
