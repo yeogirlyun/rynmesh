@@ -261,6 +261,22 @@ def test_t9_default_policy_alias_reads_as_all_runs_and_serializes_canonically(en
     assert automations.parse_automation_toml(text)['notification_policy'] == 'all_runs'
 
 
+@pytest.mark.parametrize('string_arguments', [False, True])
+def test_t9_real_model_tool_call_accepts_legacy_default_policy(env, string_arguments):
+    import json
+    _, runtime, model, _ = env
+    arguments = {'action': 'create', 'name': 'Legacy policy', 'prompt': 'Observe',
+        'kind': 'cron', 'notification_policy': 'default'}
+    model.responses.append({'message': {'role': 'assistant', 'content': '', 'tool_calls': [
+        {'id': 'legacy-policy', 'type': 'function', 'function': {'name': automations.AUTOMATION_UPDATE_TOOL,
+            'arguments': json.dumps(arguments) if string_arguments else arguments}}]},
+        'finish_reason': 'tool_calls', 'usage': {'input_tokens': 2, 'output_tokens': 2}})
+    task = runtime.create({'message': 'Create the legacy test schedule.'})
+    finish(runtime, task['id'])
+    records = runtime.list_automations()['items']
+    assert len(records) == 1 and records[0]['notification_policy'] == 'all_runs'
+
+
 def test_t10_failed_tool_write_preserves_business_fields_and_returns_error(env, monkeypatch):
     _, runtime, _, _ = env
     auto = create(runtime, prompt='Original prompt')

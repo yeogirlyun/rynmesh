@@ -663,7 +663,7 @@ class AgentLoop:
             ids = {call["id"] for msg in selected["messages"] for call in msg.get("tool_calls", [])}
             # A malformed argument or unknown function is a paired tool result,
             # not a rejected response that could replay valid sibling calls.
-            pending = normalize_tool_calls(calls, router_specs, existing_call_ids=ids,
+            pending = normalize_tool_calls(automations.canonicalize_legacy_notification_calls(calls), router_specs, existing_call_ids=ids,
                                            metadata=request_metadata, internal_names=ALL_INTERNAL_NAMES)
             for call in pending:
                 # The host ledger hashes parsed arguments, separately from the

@@ -18,6 +18,7 @@ except ImportError:  # pragma: no cover
 
 from .data_policy import memory_blocked, merge_state
 from .protocol import now as now_iso
+from .output_policy import MAX_TOOL_CALL_ARGUMENT_BYTES
 from ..atomic_io import atomic_write_bytes
 
 _memory_locks: dict[tuple[Path, str], Any] = {}
@@ -31,6 +32,34 @@ def _memory_lock(store: Any, automation_id: str):
 
 AUTOMATION_UPDATE_TOOL = "ryn_automation_update"
 AUTOMATION_TOOL_NAMES = {AUTOMATION_UPDATE_TOOL}
+
+
+def canonicalize_legacy_notification_calls(calls: list) -> list:
+    """Accept the old notification alias before the canonical tool schema runs."""
+    result = []
+    for call in calls:
+        function = (call if call.get("type") == "function_call" else call.get("function")) if isinstance(call, dict) else None
+        if not isinstance(function, dict) or function.get("name") != AUTOMATION_UPDATE_TOOL:
+            result.append(call)
+            continue
+        args = function.get("arguments")
+        is_json = isinstance(args, str)
+        if is_json:
+            if len(args.encode("utf-8")) > MAX_TOOL_CALL_ARGUMENT_BYTES:
+                result.append(call)  # Compatibility must not shrink a call past the wire limit.
+                continue
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError:
+                result.append(call)  # The ordinary router reports malformed JSON.
+                continue
+        if isinstance(args, dict) and args.get("notification_policy") == "default":
+            args = {**args, "notification_policy": "all_runs"}
+            function = {**function, "arguments": json.dumps(args, ensure_ascii=False) if is_json else args}
+            call = function if call.get("type") == "function_call" else {**call, "function": function}
+        result.append(call)
+    return result
+
 
 # Keep schema compact so ALL_INTERNAL_SPECS stays well under the 15000-byte pin floor in tests.
 AUTOMATION_TOOL_SPECS: list[dict[str, Any]] = [
