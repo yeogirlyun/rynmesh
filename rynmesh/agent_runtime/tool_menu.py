@@ -10,6 +10,7 @@ from .store import AgentError, AgentToolRejected, encoded
 from .subagents import SUBAGENT_TOOL_NAMES
 
 NAME = "ryn_discover_tools"
+MAX_EXPOSED_TOOLS = 120
 # Larger windows reserve more room for pinned/control schemas. Explicit loads
 # append at every capacity; eviction still enforces the actual window bound.
 ADDITIVE_CAPACITY = 48000
@@ -204,12 +205,12 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
     # picked full mode there and spent kilobytes the history needed.
     small_lazy_base = [directory_spec(all_specs)] if internal and max_context_bytes <= SMALL_WINDOW_BYTES else base
     directory_useful = len(encoded(all_specs)) > len(encoded(small_lazy_base))
-    mode = "directory" if (len(encoded(full_specs)) > limit or
+    mode = "directory" if (len(full_specs) > MAX_EXPOSED_TOOLS or len(encoded(full_specs)) > limit or
                            directory_useful and (len(encoded(full_specs)) > target or prior.get("mode") == "directory")) else "full"
     # In a small window, unused plan/input/result schemas can occupy more
     # space than all usable conversation. Keep them discoverable instead of
     # repeatedly summarizing or unloading necessary business schemas.
-    lazy = bool(internal) and mode == "directory" and (max_context_bytes <= SMALL_WINDOW_BYTES or len(encoded(base)) > limit)
+    lazy = bool(internal) and mode == "directory" and (max_context_bytes <= SMALL_WINDOW_BYTES or len(encoded(base)) > limit or len(base) > MAX_EXPOSED_TOOLS)
     catalog = [*business_specs, *internal] if lazy else business_specs
     revision = catalog_revision(catalog)
     binding = {"catalog_revision": revision, "context_epoch": epoch, "goal_revision": goal_revision, "lazy_controls": lazy}
@@ -226,8 +227,7 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
         base = [directory_spec(catalog)]
     loaded = list(prior.get("loaded_names", [])) if keep_loaded and mode == "directory" else []
     by_name = {spec["function"]["name"]: spec for spec in catalog}
-    if any(name not in by_name for name in loaded):
-        raise AgentError("agent_tool_definition_changed")
+    loaded = [name for name in loaded if name in by_name]
     requested_pins = [name for name in dict.fromkeys(pinned_names) if name in by_name]
     if "pinned_candidates" in prior:
         prior_candidates = list(prior.get("pinned_candidates") or [])
@@ -268,7 +268,7 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
         for name in requested_pins:
             if name not in pinned:
                 candidate = [*base, *(by_name[item] for item in [*pinned, name])]
-                if len(encoded(candidate)) <= pin_limit:
+                if len(candidate) <= MAX_EXPOSED_TOOLS and len(encoded(candidate)) <= pin_limit:
                     pinned.append(name)
         loaded = [name for name in loaded if name not in pinned]
     if mode == "directory" and (not prior.get("mode") or not same or (pins_changed and not released)):
@@ -288,6 +288,8 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
         if mode == "full":
             return full_specs
         return [*base, *(by_name[name] for name in [*pinned, *names])]
+    while mode == "directory" and loaded and len(exposure(loaded)) > MAX_EXPOSED_TOOLS:
+        loaded.pop(0)
     # Trim the tail to retain the longest stable schema prefix. Initial tools
     # requested for this projection are protected from ordinary cache eviction.
     while mode == "directory" and loaded and len(encoded(exposure(loaded))) > limit:

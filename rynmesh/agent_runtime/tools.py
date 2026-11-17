@@ -36,6 +36,7 @@ from .cli_sources import CLISources
 from .code_mode import NAME as CODE_MODE_NAME
 from .code_mode import SPEC as CODE_MODE_SPEC
 from .code_mode import CodeModeRunner
+from . import code_mode
 from .tool_dispatch import PARALLEL_READS
 from .default_model import NAME as DEFAULT_MODEL_NAME
 from .default_model import DefaultModelTool
@@ -403,12 +404,18 @@ class RynTools:
             self.spec_source_errors.pop(label, None)
         return value
 
+    def unavailable_tools(self):
+        if code_mode.node_available():
+            return []
+        return [{"name": CODE_MODE_NAME, "title": "Execute CodeMode JS", "effect": "read",
+                 "available": False, "reason": "node_missing"}]
+
     def specs(self, context=None):
         from .native_computer import filter_computer_tool_specs
         raw = (
             [{"type": "function", "function": {"name": name, "description": row[0], "parameters": copy.deepcopy(row[3])}}
              for name, row in {**_SPECS, **LOCAL_SPECS}.items()]
-            + [copy.deepcopy(CODE_MODE_SPEC)]
+            + ([copy.deepcopy(CODE_MODE_SPEC)] if code_mode.node_available() else [])
             + self._safe_specs("diagnostics", self.diagnostics.specs)
             + (copy.deepcopy(APP_SPECS) if getattr(self.app.state, "node_apps", None) else [])
             + self._safe_specs("craft_plugins", self.craft_plugins.specs)
@@ -422,7 +429,7 @@ class RynTools:
         if is_computer_control_tool_name(name) and not computer_platform_status(self.store)["supported"]:
             return None
         if name == CODE_MODE_NAME:
-            return copy.deepcopy(CODE_MODE_SPEC["function"])
+            return copy.deepcopy(CODE_MODE_SPEC["function"]) if code_mode.node_available() else None
         if self.extensions.handles(name):
             return {item["function"]["name"]: item["function"] for item in
                     self._safe_specs("extensions", lambda: self.extensions.specs(context))}.get(name)
@@ -445,6 +452,8 @@ class RynTools:
         return None
 
     def metadata(self, name):
+        if name == CODE_MODE_NAME and not code_mode.node_available():
+            return None
         record = self._metadata_record(name)
         record.setdefault("supports_parallel", record.get("effect") == "read" and name in (
             PARALLEL_READS | {"ryn_read_resource", "ryn_list_resources", "ryn_image_inspect"}))

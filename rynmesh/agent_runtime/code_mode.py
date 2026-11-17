@@ -45,6 +45,28 @@ from .store import AgentToolRejected, encoded
 from .tool_dispatch import MAX_PARALLEL_TOOLS, ToolDispatchGate, supports_parallel
 
 
+_NODE_AVAILABILITY_CACHE = (0.0, None)
+_NODE_AVAILABILITY_LOCK = threading.Lock()
+
+
+def node_available() -> str | None:
+    """Cache the current runtime path (including absence) for sixty seconds."""
+    global _NODE_AVAILABILITY_CACHE
+    with _NODE_AVAILABILITY_LOCK:
+        now = time.monotonic()
+        expires, path = _NODE_AVAILABILITY_CACHE
+        if now < expires:
+            return path
+        try:
+            path = _resolve_node_binary()
+        except AgentToolRejected as exc:
+            if str(exc) != "agent_code_exec_node_unavailable":
+                raise
+            path = None
+        _NODE_AVAILABILITY_CACHE = (now + 60, path)
+        return path
+
+
 def _resolve_node_binary() -> str:
     env_override = os.environ.get("RYN_NODE_EXECUTABLE") or os.environ.get("RYN_JS_NODE_EXECUTABLE")
     if isinstance(env_override, str) and env_override.strip() and Path(env_override.strip()).is_file():

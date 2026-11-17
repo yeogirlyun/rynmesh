@@ -296,6 +296,13 @@ class AgentLoop:
                 if (row.get("tool_menu") or {}).get("context_epoch") != menu_state["context_epoch"]:
                     row["tool_menu_usage"] = {}
                 if row.get("tool_menu") != menu_state:
+                    prior_menu = row.get("tool_menu") or {}
+                    catalog_names = {spec["function"]["name"] for spec in business_specs} | set(ALL_INTERNAL_NAMES)
+                    removed = [name for name in dict.fromkeys([*prior_menu.get("loaded_names", []), *prior_menu.get("pinned_names", [])])
+                               if name not in catalog_names]
+                    if removed:
+                        row["tool_menu_notice"] = {**(row.get("tool_menu_notice") or {}),
+                                                   "removed": removed, "revision": menu_state["revision"]}
                     row["tool_menu"] = menu_state
                     event(row, "tool_menu_changed", menu=copy.deepcopy(menu_state), reason=menu_reason)
                 synced_state.update(
