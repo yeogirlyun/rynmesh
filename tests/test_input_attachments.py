@@ -391,7 +391,9 @@ def test_s05_i8_t4_provider_content_labels_match_manifest_order(tmp_path: Path):
 
     parts = provider_content(msg)
     assert isinstance(parts, list) and len(parts) == 5
-    assert parts[0] == {"type": "text", "text": msg["content"]}
+    assert parts[0]["type"] == "text" and parts[0]["text"].startswith(msg["content"])
+    assert "first doc" not in msg["content"] and "first doc" in parts[0]["text"]
+    assert "a,b\n1,2\n" in parts[0]["text"]
     assert parts[1] == {"type": "text", "text": "[Image #1]"}
     assert parts[2] == {"type": "image_url", "image_url": {"url": msg["attachments"][1]["image_url"], "detail": "auto"}}
     assert parts[3] == {"type": "text", "text": "[Image #2]"}

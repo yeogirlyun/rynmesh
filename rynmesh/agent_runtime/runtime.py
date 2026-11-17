@@ -1055,6 +1055,8 @@ class AgentRuntime(AgentLoop):
                   "context_checkpoint": {"through": pinned_through, "content": ""},
                   "_exclude_optional_memory": True,
                   "_max_context_bytes_override": max_context_bytes}
+        # Provider projection keeps manifests pinned, omitting archived excerpts
+        # from compacted owners while retaining the unanswered owner's excerpt.
         authority_bytes = len(encoded(self._context(pinned)))
         desktop = tool_menu.BROWSER_TOOLS if (row.get("local_execution") or {}).get("desktop_access") else ()
         if desktop:

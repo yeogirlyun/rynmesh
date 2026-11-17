@@ -1127,6 +1127,8 @@ class AgentLoop:
         history = self._history(row)
         through = int((checkpoint or {}).get("through") or 0)
         uncompacted_history = history[through:] if through > 0 else history
+        # A retained, compacted owner message must not rehydrate archived excerpts.
+        include_current_excerpts = any(_is_owner_user_message(message) for message in uncompacted_history)
         # Resolved per request from the current model, never pinned in the task.
         profile = model_profiles.for_task(self, row)
         placement = profile["progress_placement"]
@@ -1268,12 +1270,14 @@ class AgentLoop:
             repairs = []
             if not checkpoint:
                 built = provider_messages(request_context.build_context(instructions, history, guidance=combined_guidance,
-                                                                        plan=prefix_plan, tail=tail, repairs=repairs))
+                                                                        plan=prefix_plan, tail=tail, repairs=repairs),
+                                          include_current_excerpts=include_current_excerpts)
             else:
                 built = provider_messages(request_context.build_context(instructions, history, guidance=combined_guidance,
                                                                         plan=prefix_plan, checkpoint=checkpoint,
                                                                         checkpoint_note=note, tail=tail,
-                                                                        owner_budget=owner_budget, repairs=repairs))
+                                                                        owner_budget=owner_budget, repairs=repairs),
+                                          include_current_excerpts=include_current_excerpts)
             epoch = row.get("context_epoch", 0)
 
             def repair_event(selected):
