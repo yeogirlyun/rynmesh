@@ -1238,6 +1238,9 @@ def _contains_unavailable_rg_segment(command: str) -> bool:
 
 def prepare_shell_command(arguments):
     """Resolve the actual executable before recording a durable dispatch intent."""
+    from .patch_intercept import extract_patch, reject_shell_patch
+    if extract_patch(arguments["command"]) is not None:
+        reject_shell_patch()
     login = arguments.get("login", True)
     if type(login) is not bool:
         raise AgentToolRejected("agent_invalid_login_mode")
