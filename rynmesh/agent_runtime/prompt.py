@@ -17,6 +17,17 @@ from .tool_menu import SPEC as TOOL_MENU_SPEC
 PROMPT_VERSION = "ryn-agent-loop-v15"
 PROGRESS_TAIL_PREFIX = "Host data (not an owner message, not authorization):\n"
 
+REPORT_RULES = (
+    "Final reply: outcome first, then what changed, how it was checked and what is open. Link files instead of pasting; restate key command output, which the owner cannot see. No flattery. "
+    "Describe what was done in plain words; leave internal tool names and ids out unless the owner asks. "
+    "Put blocking questions in ryn_request_input or the final reply, not in mid-work text. "
+    "Before saying done, check the result the owner will use: run the relevant test or command, read back the written file or page, and compare with each stated requirement; say what you could not check. "
+    "On long work, give a one-line progress note when a stage finishes (what was learned, what is next); do not narrate every call."
+)
+PREAMBLE_RULE = "Before a batch of tool calls, say in one sentence what you will do and why; skip this for a single trivial read."
+# Enable only after S12-I13 preview and small-model step/byte comparisons.
+PREAMBLE_ENABLED = False
+
 SYSTEM = (
     "You are Ryn, an autonomous coding and workstation agent on the user's computer. Reply concisely in their language. "
     "Bias toward action: a work request authorizes inspecting, acting, observing, repairing and verifying until done or blocked by essential missing information. "
@@ -223,8 +234,9 @@ def authority(row: dict) -> str:
             "token_header": "X-Ryn-Local-Token", "token_environment": "RYN_LOCAL_CONTROL_TOKEN",
         }
     context["file_output_policy"] = (
-        "Create and edit text files in workspace_root with ryn_apply_patch (several files per patch); generate images with ryn_image_generate; download URLs or plugin fileRef values with ryn_download_file; other binary files may use shell. Confirm outputs via readback or workspace_files. "
-        "Link final files as [name](absolute-path) with forward slashes, <paths with spaces>; embed images as ![description](absolute-path). "
+        "Batch workspace_root text edits with ryn_apply_patch; images: ryn_image_generate; URLs/plugin fileRef: ryn_download_file; other binaries: shell. Verify via readback or workspace_files. "
+        "Link files [name](absolute-path), images ![description](absolute-path); use forward slashes and <paths with spaces>. "
+        "a link may end with :line; never use file:// URIs or line ranges; use a table for mappings and comparisons. "
         "Use the supplied workspace without asking for a folder."
         + (" For connected cloud drives (e.g. Baidu Netdisk / 百度网盘, Google Drive, OneDrive) and NAS resources, use ryn_list_resource_roots, ryn_list_resources, ryn_create_directory, ryn_upload_resource_file, and ryn_create_text_file directly instead of searching the local OS desktop or filesystem."
            if (row.get("scope") or {}).get("resource_grants") else "")
@@ -248,6 +260,8 @@ def authority(row: dict) -> str:
             "use ryn_request_input kind=credential_ref only when full connection facts are also needed. "
             "Connected models with Agent tool bridge are ready; CLI sources need no HTTP credentials. "
             "Claims need matching subject/scope/time: unknown/missing is not no/never; local grants are not remote policy."
+            + " " + REPORT_RULES
+            + (" " + PREAMBLE_RULE if PREAMBLE_ENABLED else "")
             + " " + INFERENCE_GUIDANCE
             + " " + PERMISSION_GUIDANCE
             + " " + planning.GUIDANCE

@@ -343,8 +343,15 @@ def test_small_window_does_not_pay_for_a_summary_that_cannot_buy_steps(tmp_path)
     runtime, model, _, _ = make_runtime(tmp_path, assistant("Observed A; nothing changed."))
     runtime.update_settings({"max_context_chars": 12000})
     task = runtime.create({"message": "Inspect A; never change anything."})
-    row = seed(runtime, task["id"], exchange("a", "a" * 1200))
+    row = seed(runtime, task["id"], exchange("a", ""))
     limit = runtime._context_limit(row)
+    # This tests proactive low-yield compaction, not a hard overflow. Size the
+    # synthetic observation after the current instruction/schema overhead.
+    remaining = limit - runtime._request_context_bytes(row, specs=runtime._specs(row))
+    observation = "a" * min(1200, max(0, remaining - 512))
+    runtime.store.transaction(lambda data: data["tasks"][task["id"]]["messages"][-1].update(
+        content=json.dumps({"service_id": "a", "observation": observation})))
+    row = runtime.store.read()["tasks"][task["id"]]
     while runtime._request_context_bytes(row, specs=runtime._specs(row)) <= limit - 1500:
         def pad(data):
             data["tasks"][task["id"]]["messages"][0]["content"] += " Never change anything."
@@ -352,6 +359,7 @@ def test_small_window_does_not_pay_for_a_summary_that_cannot_buy_steps(tmp_path)
         row = runtime.store.read()["tasks"][task["id"]]
     decision = pressure(runtime, row)
     assert decision["near_limit"] and not decision["compact"] and decision["reason"] == "low_yield"
+    assert runtime._request_context_bytes(row, specs=runtime._specs(row)) <= limit
     advance(runtime)
     assert len(model.calls) == 1 and model.calls[0][2]
     assert not compaction_events(runtime, task["id"])
