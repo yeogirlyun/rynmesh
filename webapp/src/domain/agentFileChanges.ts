@@ -5,6 +5,7 @@ export interface FileChange {
   binary?: boolean; diff?: string; diff_truncated?: boolean; rename_group?: boolean; snapshot?: boolean;
   before_bytes: number; after_bytes: number; media_type: string;
   problem?: string; conflict?: string;
+  state?: string; restore_available?: boolean;
 }
 export interface SkippedUndoItem {
   path: string; reason: string; can_undo?: boolean;

@@ -2964,4 +2964,16 @@ class LocalTools:
         if isinstance(row.get("error_result"), dict):
             unknown_out["error"] = str(row.get("error") or row["error_result"].get("error") or "agent_write_outcome_unknown")
             unknown_out["diagnostic"] = copy.deepcopy(row["error_result"])
+        tool = operation.get("tool")
+        review_covered = tool in {"ryn_apply_patch", "ryn_file_write", "ryn_file_edit"} or (
+            tool == "ryn_file_manage" and "before_sha256" in (row.get("preview") or {}))
+        if row["status"] == "dispatched" and review_covered:
+            evidence = self.file_review(context["task_id"], self.policy(context)["workspace_root"]).record_outcome(operation_id)
+            if evidence["all_applied"] or evidence["none_applied"]:
+                result = ({"ok": True, "recovered_from_review_log": True} if evidence["all_applied"]
+                          else {"not_executed": True, "no_mutation": True})
+                result["files"] = evidence["files"]
+                return {"outcome": "executed" if evidence["all_applied"] else "not_executed", "receipt": {
+                    "operation_id": operation_id, "tool": tool, "arguments_sha256": operation["arguments_sha256"], "result": result}}
+            unknown_out.setdefault("diagnostic", {})["files"] = evidence["files"]
         return unknown_out

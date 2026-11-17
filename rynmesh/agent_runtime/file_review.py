@@ -2,10 +2,11 @@
 
 Stored beside the original task baselines, never derived from shell observations.
 Blobs are immutable and bounded; intent and per-path progress precede disk writes.
-An interrupted tool write is deliberately NOT promoted to confirmed ownership.
+Interrupted writes are reconciled read-only against their durable intent hashes.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import math
@@ -361,6 +362,7 @@ class FileReview:
         """changes: (path, exact before bytes, intended after bytes, rename group)."""
         with file_transaction(self.lock), self._usage_transaction():
             state = self.load()
+            original_state = copy.deepcopy(state)
             lex_root, real_root = _resolve_root(self.root)
             checked_changes = []
             for path, before, after, group in changes:
@@ -528,6 +530,7 @@ class FileReview:
                 self.save(state)  # Manifest durable BEFORE the first workspace mutation.
             except OSError:
                 raise AgentToolRejected("agent_review_storage_limit") from None
+            wrote = False
             try:
                 for step, expected_meta, expected_stamp, after_raw in mutation_plan:
                     step["state"] = "writing"
@@ -540,11 +543,15 @@ class FileReview:
                         raw_bytes=after_raw if step.get("snapshot", True) is False else _UNSET,
                         expected_stamp=expected_stamp,
                     )
+                    wrote = True
                     step["after_stamp"] = fingerprint(Path(step["path"]))
                     step["state"] = "applied"
                     self.save(state)
             except Exception as exc:
-                if isinstance(exc, AgentToolRejected):
+                if getattr(exc, "nothing_written", False) and not wrote:
+                    # Also preserve older history in the merged, hash-only summary.
+                    self.save(original_state)
+                elif isinstance(exc, AgentToolRejected):
                     exc.after_side_effect = True
                 raise
 
@@ -562,8 +569,33 @@ class FileReview:
         replace_checked(path, self.root, expected["sha256"], raw, step["mode"], stamp, outside_ok=eff_outside)
 
     def recover(self, state, *, outside_ok=False):
-        """Never resume writes on read/startup. Reconcile only an interrupted undo step."""
+        """Reconcile durable intent without resuming writes to workspace files."""
         changed = False
+        for record in state["records"]:
+            preceding_write = False
+            for step in record["steps"]:
+                if step["state"] in {"writing", "pending"}:
+                    try:
+                        path = safe_path(self.root, step["path"], outside_ok=outside_ok or bool(step.get("outside_workspace")))
+                        raw = read_file(path)
+                        current = digest(raw)
+                        if step["state"] == "pending":
+                            if not preceding_write or current == step["before"]["sha256"]:
+                                step["state"] = "not_applied"
+                                changed = True
+                        elif current == step["after"]["sha256"]:
+                            step.update(state="applied", after_stamp=fingerprint(path))
+                            changed = True
+                        elif current == step["before"]["sha256"]:
+                            step["state"] = "not_applied"
+                            changed = True
+                        else:
+                            # Hash-only operations remain non-restorable; never fabricate a before snapshot.
+                            step.update(state="partial_write", after=self.blob(raw) if step.get("snapshot", True) else _meta(raw), after_stamp=fingerprint(path))
+                            changed = True
+                    except (OSError, AgentError):
+                        pass  # Unreadable/oversize files retain unconfirmed intent.
+                preceding_write |= step["state"] in {"writing", "applied", "partial_write"}
         for undo in state["undos"]:
             if undo["status"] != "running" and not (undo["status"] == "interrupted" and any(i["state"] == "writing" for i in undo["items"])):
                 continue
@@ -582,6 +614,17 @@ class FileReview:
         if changed:
             self.save(state)
 
+    def record_outcome(self, operation_id):
+        with file_transaction(self.lock):
+            state = self.load()
+            self.recover(state)
+            record = next((r for r in state["records"] if r["id"] == operation_id and not r.get("overflow_summary")), None)
+            files = [{"path": _display_review_path(s, self.root, posix=True), "state": s["state"]} for s in record["steps"]] if record else []
+            # Merged overflow records no longer prove which operation owns each path.
+            absent = record is None and not any(r.get("overflow_summary") for r in state["records"])
+            return {"all_applied": bool(files) and all(f["state"] == "applied" for f in files),
+                    "none_applied": absent or bool(files) and all(f["state"] == "not_applied" for f in files), "files": files}
+
     @staticmethod
     def mark_undone(state, path, record_ids):
         for record in state["records"]:
@@ -595,13 +638,13 @@ class FileReview:
         groups = []
         for record in state["records"]:
             for step in record["steps"]:
-                if step.get("undone"):
+                if step.get("undone") or step["state"] in {"pending", "not_applied"}:
                     continue
                 is_skipped = step.get("snapshot", True) is False
                 step_view = (
                     {**step, "can_undo": False, "reason": "snapshot_skipped_limit"}
                     if is_skipped
-                    else {**step, "can_undo": step.get("state") == "applied"}
+                    else {**step, "can_undo": step.get("state") in {"applied", "partial_write"}}
                 )
                 touching = [g for g in groups if os.path.normcase(step["path"]) in g["paths"] or (step.get("group") and step["group"] in g["links"])]
                 group = {"paths": set(), "links": set(), "steps": []}
@@ -624,7 +667,9 @@ class FileReview:
         paths, problem = {}, None
         group_skipped = any(s.get("snapshot", True) is False for s in group["steps"])
         for step in sorted(group["steps"], key=lambda s: s.get("order", [0, 0])):
-            if step["state"] != "applied":
+            if step["state"] == "partial_write" and problem is None:
+                problem = "partial_write"
+            elif step["state"] not in {"applied", "partial_write"}:
                 problem = "interrupted_file_operation"
             key = os.path.normcase(step["path"])
             previous = paths.get(key)
@@ -658,7 +703,7 @@ class FileReview:
             net, problem = self.net(group)
             for item in net:
                 rel_path = _display_review_path(item, self.root)
-                if item.get("snapshot", True) is False and problem is None:
+                if item.get("snapshot", True) is False and problem in {None, "partial_write"}:
                     skipped.append({"path": rel_path, "can_undo": False, "reason": "snapshot_skipped_limit"})
                     if ids is not None:
                         conflicts.append({"path": rel_path, "reason": "snapshot_skipped_limit"})
@@ -667,7 +712,7 @@ class FileReview:
                     self.content(item["before"])
                     self.content(item["after"])
                     current = digest(read_file(safe_path(self.root, item["path"], outside_ok=bool(item.get("outside_workspace")))))
-                    reason = problem or ("file_changed" if current != item["after"]["sha256"] or fingerprint(Path(item["path"])) != item.get("after_stamp") else None)
+                    reason = (problem if problem != "partial_write" else None) or ("file_changed" if current != item["after"]["sha256"] or fingerprint(Path(item["path"])) != item.get("after_stamp") else None)
                 except (OSError, AgentError) as exc:
                     reason = str(exc) if isinstance(exc, AgentError) else "file_unavailable"
                 if reason:
@@ -731,10 +776,14 @@ class FileReview:
                     self.save(state)
                 undo["status"] = "completed"
                 self.save(state)
-            except Exception:
+            except Exception as exc:
                 # Disk may be full even when saving the failure. The prior durable
                 # 'writing' marker still prevents a misleading success on restart.
-                undo["status"] = "interrupted"
+                if str(exc) == "agent_local_file_in_use" and getattr(exc, "nothing_written", False):
+                    item.update(state="pending", problem="file_in_use")
+                    undo["status"] = "blocked_file_in_use"
+                else:
+                    undo["status"] = "interrupted"
                 try:
                     self.save(state)
                 except OSError:
@@ -744,7 +793,7 @@ class FileReview:
     def undo_result(self, undo):
         result = {"id": undo["id"], "status": undo["status"],
                   "completed": [_display_review_path(i, self.root) for i in undo["items"] if i["state"] in {"done", "recovered"}],
-                  "remaining": [{"path": _display_review_path(i, self.root), "state": i["state"]} for i in undo["items"] if i["state"] not in {"done", "recovered"}]}
+                  "remaining": [{"path": _display_review_path(i, self.root), "state": i.get("problem", i["state"])} for i in undo["items"] if i["state"] not in {"done", "recovered"}]}
         if "skipped" in undo:
             result["skipped"] = undo["skipped"]
         return result
@@ -773,10 +822,11 @@ class FileReview:
                         continue
                     relative = _display_review_path(step, self.root, posix=True)
                     before, after = step["before"], step["after"]
-                    eff_problem = problem or ("snapshot_skipped_limit" if is_skipped else None)
+                    eff_problem = "snapshot_skipped_limit" if is_skipped and problem in {None, "partial_write"} else problem
                     entry = {"id": group["id"], "path": relative, "status": "created" if before["sha256"] is None else "deleted" if after["sha256"] is None else "modified",
                              "existed_before": before["sha256"] is not None, "sha256": after["sha256"], "test_file": bool(TEST_PATH.search(relative)),
-                             "before_bytes": before["bytes"], "after_bytes": after["bytes"], "source": "file_tool", "can_undo": not eff_problem and not is_skipped,
+                             "before_bytes": before["bytes"], "after_bytes": after["bytes"], "source": "file_tool", "can_undo": eff_problem in {None, "partial_write"} and not is_skipped,
+                             "state": step["state"],
                              "rename_group": len(group["paths"]) > 1, "problem": eff_problem, "media_type": mimetypes.guess_type(relative)[0] or "application/octet-stream",
                              **({"snapshot": False} if is_skipped else {}),
                              **({"outside_workspace": True} if step.get("outside_workspace") else {})}
@@ -799,7 +849,20 @@ class FileReview:
                             entry["binary"] = True
                         except (OSError, AgentError):
                             entry.update(can_undo=False, problem="snapshot_missing")
+                    if step["state"] == "partial_write":
+                        entry["restore_available"] = entry["can_undo"]
                     files.append(entry)
+            represented = {f["path"] for f in files}
+            for record in state["records"]:
+                for step in record["steps"]:
+                    relative = _display_review_path(step, self.root, posix=True)
+                    if step.get("undone") or step["state"] not in {"pending", "not_applied"} or relative in represented:
+                        continue
+                    files.append({"id": digest(json.dumps([os.path.normcase(step["path"])]).encode())[:24],
+                                  "path": relative, "state": step["state"], "status": "modified", "source": "file_tool", "can_undo": False,
+                                  "before_bytes": step["before"]["bytes"], "after_bytes": step["after"]["bytes"],
+                                  "media_type": mimetypes.guess_type(relative)[0] or "application/octet-stream"})
+                    represented.add(relative)
             return {"files": files, "files_total": len(files), "snapshot_skipped": snapshot_skipped,
                     "digest": digest(json.dumps(files, sort_keys=True).encode()) if files else None,
                     "undo_operations": [self.undo_result(u) for u in state["undos"][-10:]],
