@@ -41,6 +41,53 @@ def inside_file(root, relative):
         return False
 
 
+def valid_fallback_name(name):
+    return isinstance(name, str) and bool(name) and name not in {".", ".."} and not any(char in name for char in "/\\:\0")
+
+
+def collect_instructions(root, *, fallback_names=("CLAUDE.md",), budget=64 * 1024):
+    """Collect one safe document per directory, repository root through cwd."""
+    root = Path(root).resolve()
+    repository = next((path for path in (root, *root.parents) if (path / ".git").exists()), root)
+    directories = [root]
+    while directories[-1] != repository:
+        directories.append(directories[-1].parent)
+    names = ("AGENTS.override.md", "AGENTS.md", *(name for name in fallback_names if valid_fallback_name(name)))
+    files, payload, read_bytes, incomplete = [], bytearray(), 0, False
+    for directory in reversed(directories):
+        chosen = next((directory / name for name in names
+                       if inside_file(repository, (directory / name).relative_to(repository))), None)
+        if chosen is None:
+            continue
+        relative = chosen.relative_to(repository).as_posix()
+        separator = f"\n\n--- {relative} ---\n\n".encode() if files else b""
+        available = max(0, min(budget - read_bytes, budget - len(payload) - len(separator)))
+        with chosen.open("rb") as stream:
+            size = chosen.stat().st_size
+            raw = stream.read(available)
+        read_bytes += len(raw)
+        text_bytes = raw.decode("utf-8-sig", errors="replace").encode("utf-8")
+        if len(text_bytes) > available:
+            text_bytes = text_bytes[:available].decode("utf-8", errors="ignore").encode("utf-8")
+            incomplete = True
+        if len(payload) + len(separator) <= budget:
+            payload.extend(separator)
+        else:
+            incomplete = True
+        start = len(payload)
+        payload.extend(text_bytes)
+        incomplete = incomplete or len(raw) < size
+        files.append({"path": relative, "bytes": size, "read_bytes": len(raw),
+                      "sha256": hashlib.sha256(raw).hexdigest(),
+                      "sha256_scope": "full_file" if len(raw) == size else "read_prefix",
+                      "start_byte": start, "end_byte": len(payload)})
+    text = payload.decode("utf-8")
+    return {"files": files, "text": text, "incomplete": incomplete, "root": str(repository),
+            "is_git": (repository / ".git").exists(), "bytes": sum(item["bytes"] for item in files),
+            "sha256": files[0]["sha256"] if len(files) == 1 else hashlib.sha256(payload).hexdigest(),
+            "sha256_scope": files[0]["sha256_scope"] if len(files) == 1 else "collected_text"}
+
+
 _KNOWN_FRAMEWORKS = (
     "typescript",
     "react",
@@ -143,27 +190,11 @@ def selected(data, ident, *, refresh=False):
         raise AgentError("agent_project_path_changed")
     result = {**value, **overview(root), "name": value["name"]} if refresh else dict(value)
     result["is_git"] = (root / ".git").exists()
-    if refresh and inside_file(root, "AGENTS.md"):
-        hasher = hashlib.sha256()
-        head = bytearray()
-        total_bytes = 0
-        with (root / "AGENTS.md").open("rb") as stream:
-            while True:
-                chunk = stream.read(64 * 1024)
-                if not chunk:
-                    break
-                total_bytes += len(chunk)
-                hasher.update(chunk)
-                if len(head) < 64 * 1024 + 1:
-                    head.extend(chunk[:64 * 1024 + 1 - len(head)])
-        raw = bytes(head)
-        result["instructions"] = {
-            "path": "AGENTS.md",
-            "text": raw[:64 * 1024].decode("utf-8-sig", errors="replace"),
-            "incomplete": len(raw) > 64 * 1024,
-            "bytes": total_bytes,
-            "sha256": hasher.hexdigest(),
-        }
+    if refresh:
+        collected = collect_instructions(root, fallback_names=data.get("settings", {}).get("project_doc_fallback_filenames", ["CLAUDE.md"]))
+        result["is_git"] = collected["is_git"]
+        if collected["files"]:
+            result["instructions"] = {**collected, "path": collected["files"][0]["path"]}
     return result
 
 
@@ -431,9 +462,7 @@ INSTRUCTIONS_MAX_BYTES = 32768
 
 def _instructions_slice(row):
     project = row.get("project")
-    if not project:
-        return None
-    instructions = project.get("instructions") or {}
+    instructions = (project.get("instructions") if project else row.get("workspace_instructions")) or {}
     if not instructions.get("text"):
         return None
     limit = row.get("limits", {}).get("max_context_chars")
@@ -448,6 +477,17 @@ def _instructions_slice(row):
     shown_bytes = len(text.encode("utf-8"))
     start_line = len(text.splitlines()) + 1
     total_bytes = instructions["bytes"] if type(instructions.get("bytes")) is int else len(raw)
+    resume_path = instructions.get("path", "AGENTS.md")
+    resume_line = start_line
+    for source in instructions.get("files", []):
+        if shown_bytes < source["end_byte"] or source["read_bytes"] < source["bytes"]:
+            resume_path = source["path"]
+            consumed = raw[source["start_byte"]:max(source["start_byte"], shown_bytes)]
+            resume_line = len(consumed.splitlines()) + 1
+            break
+    cwd = project.get("path") if project else (row.get("local_execution") or {}).get("workspace_root")
+    if instructions.get("root") and instructions["root"] != cwd:
+        resume_path = str(Path(instructions["root"]) / resume_path)
     return {
         "text": text,
         "raw_bytes": len(raw),
@@ -457,6 +497,7 @@ def _instructions_slice(row):
         "incomplete": incomplete,
         "truncated": truncated,
         "start_line": start_line,
+        "resume_path": resume_path, "resume_line": resume_line,
     }
 
 
@@ -508,22 +549,28 @@ def _project_is_git(project: dict) -> bool:
 
 def guidance(row):
     project = row.get("project")
-    if not project:
+    workspace = row.get("workspace_instructions")
+    if not project and not workspace:
         return ""
-    path = project.get("path") or ""
-    info = {key: project[key] for key in ("name", "path", "entry_files", "manifests", "directories") if key in project}
+    path = (project.get("path") if project else (row.get("local_execution") or {}).get("workspace_root")) or ""
+    info = {key: project[key] for key in ("name", "path", "entry_files", "manifests", "directories") if key in project} if project else None
+    project_block = f"  <project>{json.dumps(info, ensure_ascii=False, separators=(',', ':'))}</project>\n" if project else ""
     env_block = (
         "<environment_context>\n"
         f"  <cwd>{path}</cwd>\n"
-        f"  <project>{json.dumps(info, ensure_ascii=False, separators=(',', ':'))}</project>\n"
+        f"{project_block}"
         "</environment_context>"
     )
     rules = (
         [GIT_SAFETY_RULE, ENGINEERING_RULE, TEST_HYGIENE_RULE]
-        if _project_is_git(project)
+        if _project_is_git(project or workspace)
         else [ENGINEERING_RULE, TEST_HYGIENE_RULE]
     )
     prefix = f"{env_block}\n\n" + "\n".join(rules)
+    instructions = (project.get("instructions") if project else workspace) or {}
+    sources = instructions.get("files", [])
+    if len(sources) > 1 or (sources and sources[0]["path"] != "AGENTS.md"):
+        prefix += "\nInstruction sources (root " + instructions["root"] + "): " + ", ".join(source["path"] for source in sources)
     sliced = _instructions_slice(row)
     if sliced is None:
         return prefix
@@ -541,7 +588,7 @@ def guidance(row):
     total_display = ">64 KiB" if sliced["incomplete"] else f"{sliced['raw_bytes']} bytes"
     marker = (
         f"[AGENTS.md truncated: showing {sliced['shown_bytes']} of {total_display}; "
-        f"read the rest with ryn_file_read path=AGENTS.md start_line={sliced['start_line']}]"
+        f"read the rest with ryn_file_read path={sliced['resume_path']} start_line={sliced['resume_line']}]"
     )
     body = f"{text}\n{marker}" if text else marker
     return (

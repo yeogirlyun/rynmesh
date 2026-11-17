@@ -42,6 +42,7 @@ DEFAULT_SETTINGS = {
     "workspace_root": "", "desktop_access": False, "verify_text_responses": False,
     "interrupt_message_enabled": True,
     "default_subagent_model_id": "", "default_subagent_reasoning_effort": None,
+    "project_doc_fallback_filenames": ["CLAUDE.md"],
     # None follows the selected model's declared token window, reserving output
     # and framing. An integer remains an owner-selected UTF-8 request-byte cap.
     # The legacy field name is retained for saved sessions and API compatibility.

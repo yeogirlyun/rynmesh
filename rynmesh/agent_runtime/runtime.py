@@ -2018,6 +2018,10 @@ class AgentRuntime(AgentLoop):
             return {**self.settings(), "operation_ledger_reset": reset_res}
         if not isinstance(values, dict) or set(values) - (set(DEFAULT_SETTINGS) | set(self._EXTRA_SETTINGS)):
             raise AgentError("agent_invalid_settings")
+        if "project_doc_fallback_filenames" in values:
+            names = values["project_doc_fallback_filenames"]
+            if not isinstance(names, list) or any(not projects.valid_fallback_name(name) for name in names):
+                raise AgentError("agent_invalid_settings")
         if "compact_prompt" in values:
             cp = values["compact_prompt"]
             if not isinstance(cp, str) or len(cp.encode("utf-8")) > self.COMPACT_PROMPT_MAX_BYTES or "\x00" in cp:
@@ -2767,9 +2771,14 @@ class AgentRuntime(AgentLoop):
                 row["project"] = copy.deepcopy(projects.selected(data, value["project_id"], refresh=True))
                 row["local_execution"].update(workspace_root=row["project"]["path"],
                                               project_id=row["project"]["id"], project_generation=row["project"]["generation"])
-                truncation = projects.instructions_truncation(row)
-                if truncation is not None:
-                    event(row, "project_instructions_truncated", **truncation)
+            elif source is None:
+                collected = projects.collect_instructions(row["local_execution"]["workspace_root"],
+                    fallback_names=settings["project_doc_fallback_filenames"])
+                if collected["files"]:
+                    row["workspace_instructions"] = {**collected, "path": collected["files"][0]["path"]}
+            truncation = projects.instructions_truncation(row)
+            if truncation is not None:
+                event(row, "project_instructions_truncated", **truncation)
             if source is None:
                 merged_initial, dropped_skills = self._merge_task_skills([], skills)
                 row["skills"] = merged_initial
@@ -2807,7 +2816,7 @@ class AgentRuntime(AgentLoop):
                             "model_destination_confirmed", "scope", "scope_revision", "context_epoch",
                             "data_policy_state", "base_instructions", "prompt_version", "skills",
                             "dropped_skill_ids", "reasoning_effort", "response_language", "context_budget_provenance",
-                            "verify_text_responses"):
+                            "verify_text_responses", "workspace_instructions"):
                     if key in source:
                         row[key] = copy.deepcopy(source[key])
                 row["local_execution"]["desktop_access"] = bool(row["local_execution"].get("desktop_access") and settings.get("desktop_access"))

@@ -865,6 +865,8 @@ def spawn_agent_in_tx(data: dict, parent_row: dict, args: dict) -> dict:
     )
     if parent_row.get("project"):
         child_row["project"] = copy.deepcopy(parent_row["project"])
+    if parent_row.get("workspace_instructions"):
+        child_row["workspace_instructions"] = copy.deepcopy(parent_row["workspace_instructions"])
     child_row["skills"] = copy.deepcopy(parent_row.get("skills") or [])
     child_row["verify_text_responses"] = False
     child_row["response_language"] = parent_row.get("response_language") or "zh-CN"
