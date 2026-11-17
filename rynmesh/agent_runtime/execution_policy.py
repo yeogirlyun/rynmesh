@@ -620,7 +620,8 @@ def decide(call, metadata, row, settings):
     classification = classify_operation(call.get("name"), call.get("arguments"), metadata, workspace_root=ws_root)
     if classification["effect_class"] == "read":
         return Decision("execute", "read")
-    if mode == "read_only":
+    if mode == "read_only" or (row.get("automation_run_id") and row.get("automation_kind") != "heartbeat"
+                               and settings.get("permission_mode") == "read_only"):
         return Decision("deny", "read_only")
     if row.get("approved"):
         return Decision("execute", "approved")

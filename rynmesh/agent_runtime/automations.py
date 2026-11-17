@@ -1376,7 +1376,7 @@ def automation_developer_instructions(store: Any, row: dict[str, Any]) -> str:
             "# Heartbeat wakeups",
             "User messages wrapped in `<heartbeat>` tags are scheduled wakeups for this thread.",
             "Each `<heartbeat>` message includes `<automation_id>`, `<current_time_iso>`, and `<instructions>`.",
-            "The user is not interactively watching the screen right now. Execute the scheduled instructions or tools directly without asking for confirmation.",
+            "The user is not interactively watching the screen right now. An operation that requires approval will be rejected immediately; skip it, finish the remaining work, and report which operations need the owner's approval.",
             "Long-term memory is disabled for this task. Do not read or write automation memory files." if blocked else f"Persistent memory file across runs: {mem_path}",
             "",
             "# Stopping completed reminders or monitors",
@@ -1400,7 +1400,7 @@ def automation_developer_instructions(store: Any, row: dict[str, Any]) -> str:
     lines = [
         "<automation_context>",
         f"mode: Automation (automation_id={auto_id})",
-        "The user is not interactively watching the screen right now. Execute the scheduled instructions directly without asking for confirmation.",
+        "The user is not interactively watching the screen right now. An operation that requires approval will be rejected immediately; skip it, finish the remaining work, and report which operations need the owner's approval.",
         "Long-term memory is disabled for this task. Do not read or write automation memory files." if blocked else f"memory_file: {mem_path}",
         "" if blocked else "Before starting work, review the memory notes below to understand what happened on previous runs.",
         "" if blocked else "If you need to record state for the next scheduled run, update that memory.md file or include a concise summary.",
@@ -1677,8 +1677,8 @@ def settle_automation_turn_in_tx(store: Any, data: dict[str, Any], row: dict[str
             run_rec["status"] = "ARCHIVED" if is_silent else "ACCEPTED"
         else:
             run_rec["status"] = status.upper()
-        run_rec["decision"] = hb_decision if assistant_msg is not None else ""
-        run_rec["inbox_title"] = parsed["inbox_title"] or str(row.get("title") or "")
+        run_rec["decision"] = ("NOTIFY" if policy != "never" else "") if unattended_blocked else (hb_decision if assistant_msg is not None else "")
+        run_rec["inbox_title"] = "定时任务需要处理" if unattended_blocked else (parsed["inbox_title"] or str(row.get("title") or ""))
         run_rec["inbox_summary"] = summary
         if unattended_blocked:
             run_rec["blocked_operations"] = unattended_blocked

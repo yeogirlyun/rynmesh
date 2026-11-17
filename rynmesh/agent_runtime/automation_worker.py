@@ -446,7 +446,7 @@ def trigger_automation_in_tx(
             "result": "",
             "error": None,
             "limits": {key: settings[key] for key in DEFAULT_SETTINGS if key.startswith("max_")},
-            "permission_mode": "automatic",
+            "permission_mode": item.get("permission_mode", "automatic") if spawned_kind == "cron" else settings["permission_mode"],
             "allowed_write_tools": list(settings.get("allowed_write_tools") or []),
             "queue": [],
             "in_flight": None,

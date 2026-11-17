@@ -105,6 +105,14 @@ OWNER_TURN_EVENTS = frozenset({"created", "message_added", "information_added", 
                                "input_answered", "unknown_outcome_acknowledged", "message_edited"})
 
 
+def _unattended_approval_rejection(reason):
+    return AgentToolRejected(
+        "agent_unattended_approval_blocked",
+        correction="No one is watching this scheduled run; skip this operation, finish what you can and report what needs the owner's approval.",
+        details={"reason": reason},
+    )
+
+
 def _is_owner_user_message(message: dict) -> bool:
     return (
         isinstance(message, dict)
@@ -2083,6 +2091,8 @@ class AgentLoop:
                     or (call.get("extension_binding") or {}).get("computer_access")
                 ):
                     if not data["settings"].get("desktop_access") or not (row.get("local_execution") or {}).get("desktop_access"):
+                        if row.get("automation_run_id"):
+                            raise _unattended_approval_rejection("desktop_access")
                         raise AgentToolRejected("agent_desktop_access_required")
                 classification = classify_operation(
                     call["name"],
@@ -2179,6 +2189,8 @@ class AgentLoop:
                                 correction="Subagents cannot open interactive owner approval dialogs; report required privileged operations to the parent agent"
                                            + (", or use a non-forced form." if decision.basis == "dangerous_command" else "."),
                             )
+                        if row.get("automation_run_id"):
+                            raise _unattended_approval_rejection(decision.basis)
                         approval = {"id": "approval_" + uuid.uuid4().hex, "tool": call["name"], "arguments": sanitized(call["arguments"]),
                                     "call_id": call["call_id"], "arguments_sha256": digest(call["arguments"]), "preview": preview,
                                     "preview_sha256": digest(bound_preview(preview)), "title": str(meta.get("title", call["name"]))}
@@ -2776,6 +2788,11 @@ class AgentLoop:
                     raise AgentToolRejected(
                         "agent_subagent_input_blocked",
                         correction="Subagents cannot request interactive owner input; report questions or blockers to the parent agent.",
+                    )
+                if row.get("automation_run_id"):
+                    raise AgentToolRejected(
+                        "agent_unattended_input_blocked",
+                        correction="No one is watching this scheduled run; finish what you can and put questions for the owner in your final response.",
                     )
                 fields = args["fields"]
                 if len({field["id"] for field in fields}) != len(fields):

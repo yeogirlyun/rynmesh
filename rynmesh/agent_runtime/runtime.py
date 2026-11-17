@@ -2951,6 +2951,7 @@ class AgentRuntime(AgentLoop):
             # and post-turn automation settlement while keeping source/automation_id for UI provenance.
             row.update(approved=None, pending_approval=None, pending_input=None, result="",
                        latest_turn_is_silent_heartbeat=False, automation_run_id=None)
+            row.pop("unattended_blocked", None)
             if row.get("fork"):
                 row["fork"]["awaiting_instruction"] = False
             row.setdefault("pending_user_messages", []).append(message)
@@ -3094,6 +3095,7 @@ class AgentRuntime(AgentLoop):
             row.update(status="paused", approved=None, pending_approval=None, pending_input=None,
                        latest_turn_is_silent_heartbeat=False, automation_run_id=None,
                        pending_control={"kind": "edit_message", "message_index": index, "message": replacement})
+            row.pop("unattended_blocked", None)
             event(row, "message_edit_requested", message_index=index, operation_in_flight=bool(row["in_flight"]))
             close_queue(row, event, "agent_owner_changed")
             settle(row, event, data=data)
@@ -4300,6 +4302,11 @@ class AgentRuntime(AgentLoop):
             def reject(data):
                 nonlocal can_continue_cleanly
                 row = task(data, selected["id"])
+                if (code == "agent_unattended_approval_blocked" and row.get("automation_run_id")
+                        and row.get("automation_run_id") == selected.get("automation_run_id")):
+                    blocked = row.setdefault("unattended_blocked", [])
+                    if len(blocked) < 20:
+                        blocked.append({"tool": call["name"], "reason": details["reason"]})
                 row.update(in_flight=None, approved=None, pending_approval=None)
                 row["elapsed_seconds"] += time.monotonic() - started
                 consecutive_same_error = 0
