@@ -553,6 +553,11 @@ class FileReview:
                     self.save(original_state)
                 elif isinstance(exc, AgentToolRejected):
                     exc.after_side_effect = True
+                if not (getattr(exc, "nothing_written", False) and not wrote):
+                    exc.applied_paths = [_display_review_path(item, self.root, posix=True)
+                        for item, *_ in mutation_plan if item["state"] == "applied"]
+                    exc.failed_path = next((_display_review_path(item, self.root, posix=True)
+                        for item, *_ in mutation_plan if item["state"] == "writing"), None)
                 raise
 
     def replace(self, step, expected, target, *, outside_ok=False, raw_bytes=_UNSET, expected_stamp=_UNSET):

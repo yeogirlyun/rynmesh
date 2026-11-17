@@ -3952,7 +3952,9 @@ class AgentRuntime(AgentLoop):
         }
         if isinstance(hint, str) and hint:
             result["hint"] = hint
-        truncated_details = self._truncate_unknown_error_details(error_details)
+        truncated_details = flight.get("partial_file_details")
+        if not isinstance(truncated_details, dict):
+            truncated_details = self._truncate_unknown_error_details(error_details)
         if truncated_details is not None:
             result["details"] = truncated_details
         if repeated_unknown:
@@ -4355,6 +4357,7 @@ class AgentRuntime(AgentLoop):
         read_recovery: dict | None = None,
         error_details: str | None = None,
         diagnostics: dict | None = None,
+        operation_details: dict | None = None,
     ) -> None:
         context_metrics = None
         if code == "agent_context_limit":
@@ -4379,6 +4382,8 @@ class AgentRuntime(AgentLoop):
                 and not is_verified_read
             )
             if ambiguous_write:
+                if isinstance(operation_details, dict) and "applied_paths" in operation_details:
+                    flight["partial_file_details"] = sanitized(operation_details)
                 is_hint_read_unknown = (
                     code == "agent_mcp_outcome_unknown_reported" and _flight_has_server_hint_read(flight)
                 )
@@ -4832,6 +4837,7 @@ class AgentRuntime(AgentLoop):
                 read_recovery=read_recovery,
                 error_details=fail_details,
                 diagnostics=diagnostics,
+                operation_details=details,
             )
 
     def run_continuously(self, cancelled=None) -> WorkerRunResult:
