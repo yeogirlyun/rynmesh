@@ -38,7 +38,7 @@ _BLOB_NAME = re.compile(r"[a-f0-9]{24}\.json")
 # the actual admission limit is free space on the store's volume.
 MAX_BYTES = sys.maxsize
 DEFAULT_SETTINGS = {
-    "enabled": False, "model_id": "", "permission_mode": "workspace", "allowed_write_tools": [],
+    "enabled": False, "model_id": "", "permission_mode": "workspace", "allowed_write_tools": [], "denied_tools": [],
     "workspace_root": "", "desktop_access": False, "verify_text_responses": False,
     "interrupt_message_enabled": True,
     "default_subagent_model_id": "", "default_subagent_reasoning_effort": None,

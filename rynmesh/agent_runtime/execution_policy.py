@@ -64,6 +64,7 @@ PERMISSION_DENIED_CORRECTIONS = {
         "This task is read-only; shell commands with unsafe pipes, redirection or non-read programs count as changes. "
         "Use ryn_file_read / ryn_file_search."),
     "invalid_policy": PERMISSION_DENIED_CORRECTION,
+    "owner_rule": PERMISSION_DENIED_CORRECTION,
 }
 
 
@@ -672,6 +673,14 @@ def task_grant_proof(call, metadata, row):
     return {"approval_keys": keys, "approval_ids": list(dict.fromkeys(approvals)), "approval_id": approvals[0]}
 
 
+def owner_tool_key(call, metadata):
+    """Persist MCP identity independently of its current model-facing alias."""
+    binding = call.get("extension_binding") or metadata.get("extension_binding")
+    if binding:
+        return "mcp:" + encoded([binding["server_id"], binding["original_tool_name"]]).decode()
+    return call["name"]
+
+
 def decide(call, metadata, row, settings):
     mode = row["permission_mode"]
     if mode not in MODES:
@@ -683,6 +692,9 @@ def decide(call, metadata, row, settings):
     classification = classify_operation(call.get("name"), call.get("arguments"), metadata, workspace_root=ws_root)
     if classification["effect_class"] == "read":
         return Decision("execute", "read")
+    owner_key = owner_tool_key(call, metadata)
+    if owner_key in settings.get("denied_tools", []):
+        return Decision("deny", "owner_rule")
     if mode == "read_only" or (row.get("automation_run_id") and row.get("automation_kind") != "heartbeat"
                                and settings.get("permission_mode") == "read_only"):
         return Decision("deny", "read_only")
@@ -690,6 +702,12 @@ def decide(call, metadata, row, settings):
         return Decision("execute", "approved")
     if metadata.get("requires_explicit_approval"):
         return Decision("ask", "explicit_approval")
+    if mode == "workspace":
+        from .dangerous_commands import dangerous_shell
+        if call["name"] == "ryn_shell_execute" and dangerous_shell(call.get("arguments") or {}):
+            return Decision("ask", "dangerous_command")
+    if owner_key in row.get("allowed_write_tools", []):
+        return Decision("execute", "owner_rule")
     if mode in {"workspace", "confirm_changes"} and row.get("task_grants") and task_grant_proof(call, metadata, row):
         return Decision("execute", "task_grant")
     if mode == "confirm_changes":
@@ -702,9 +720,6 @@ def decide(call, metadata, row, settings):
                          and metadata.get("computer_access") is True
                          and desktop_granted)
     if mode == "workspace":
-        from .dangerous_commands import dangerous_shell
-        if call["name"] == "ryn_shell_execute" and dangerous_shell(call.get("arguments") or {}):
-            return Decision("ask", "dangerous_command")
         if call["name"] not in WORKSPACE_TOOLS and not inherited_desktop:
             return Decision("ask", "external_change")
     elif mode == "automatic":

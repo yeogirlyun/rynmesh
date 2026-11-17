@@ -1218,7 +1218,7 @@ class LocalTools:
                                 if r.get("operation_id") == context.get("operation_id")), {})
                 operation = {**{key: receipt[key] for key in (
                     "operation_id", "effect", "arguments", "arguments_sha256",
-                    "authorization", "operation_classification",
+                    "authorization", "operation_classification", "extension_binding",
                     "goal_revision", "scope_revision", "context_epoch", "control_revision"
                 ) if key in receipt}, "name": receipt.get("tool")}
             control = {key: row[key] for key in ("status", "permission_mode", "allowed_write_tools", "approved", "local_execution") if key in row}
@@ -1232,7 +1232,7 @@ class LocalTools:
             if cache_ttl > 0.0 and last_checked_at is not None and (now_mono - last_checked_at) < cache_ttl:
                 return last_result
             try:
-                from .execution_policy import decide, shell_read, verified_read_classification
+                from .execution_policy import decide, owner_tool_key, shell_read, verified_read_classification
                 # Process watchers poll exit every 50 ms, while authority checks run
                 # once per second (cached); browser checks run on demand. Project only
                 # authority rather than cloning every task transcript on each check.
@@ -1257,6 +1257,15 @@ class LocalTools:
                 and operation.get("authorization") == "read"
                 and shell_read(operation.get("arguments") or {})
             )
+            if operation.get("effect") == "write" and not authorized_read:
+                owner_key = owner_tool_key(operation, {})
+                if (owner_key in current.get("denied_tools", [])
+                        or (operation.get("authorization") == "owner_rule"
+                            and owner_key not in row.get("allowed_write_tools", []))):
+                    consecutive_errors = 0
+                    last_checked_at = now_mono
+                    last_result = False
+                    return False
             if operation.get("authorization") == "automatic":
                 if decide(operation, {"effect": operation.get("effect"),
                     "computer_access": operation.get("computer_access"),

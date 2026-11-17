@@ -147,4 +147,5 @@ def task(data: dict, task_id: str) -> dict:
 def model_retry_authority(settings: dict) -> dict:
     """A queued inference retry cannot outlive an owner permission change."""
     return {"permission_mode": settings["permission_mode"],
-            "allowed_write_tools": sorted(settings.get("allowed_write_tools", []))}
+            "allowed_write_tools": sorted(settings.get("allowed_write_tools", [])),
+            "denied_tools": sorted(settings.get("denied_tools", []))}
