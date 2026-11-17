@@ -144,6 +144,10 @@ def failure(stage, exc, *, elapsed_seconds=None, diagnostics=None, **context_fie
             chain[0]["diagnostics"] = diag
     with context_scope(**context_fields):
         ctx = _safe_context()
+    if stage == "tool_menu_source":
+        source = context_fields.get("source")
+        if isinstance(source, str) and _SAFE_ENUM.fullmatch(source):
+            ctx["source"] = source
     # stage is a host-authored route/tool phase, never a request argument.
     _log.warning("agent_failure at=%s pid=%s thread=%s stage=%s context=%s elapsed_seconds=%s causes=%s",
                  datetime.now(timezone.utc).isoformat(), os.getpid(), threading.current_thread().name[:48], stage,

@@ -71,10 +71,15 @@ def test_document_install_requires_installed_enabled_verified_inactive_plugin(ma
 
 
 def test_document_capability_requires_verified_runtime_and_supported_platform(manager, runtime_boundary, monkeypatch):
+    from rynmesh.node_apps import plugins
+    monotonic = plugins.time.monotonic
+    elapsed = [0]
+    monkeypatch.setattr(plugins.time, "monotonic", lambda: monotonic() + elapsed[0])
     manager.install("wordcraft")
     monkeypatch.setattr(craft_native, "runtime_status", lambda cache, slug: {
         "supported": slug in DEFAULT_PLUGINS, "platform_supported": False,
         "installed": True, "verified": True, "state": "unsupported"})
+    elapsed[0] += 31
     row = next(p for p in manager.catalog()["plugins"] if p["id"] == "wordcraft")
     assert not row["automation_supported"] and not row["editing_supported"]
     with pytest.raises(craft_host.CraftError, match="craft_agent_runtime_unsupported"):
@@ -83,6 +88,7 @@ def test_document_capability_requires_verified_runtime_and_supported_platform(ma
         "supported": slug in DEFAULT_PLUGINS, "platform_supported": True,
         "installed": True, "verified": False, "state": "unverified",
         "error": "craft_agent_runtime_not_verified"})
+    elapsed[0] += 31
     row = next(p for p in manager.catalog()["plugins"] if p["id"] == "wordcraft")
     assert row["automation_supported"] and row["automation_installed"] and not row["editing_supported"]
     assert row["automation_error"] == "craft_agent_runtime_not_verified"

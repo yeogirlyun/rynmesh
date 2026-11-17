@@ -120,7 +120,7 @@ def test_legacy_migration_uses_prior_activity_and_grants_once(mesh, tmp_path):
     restarted.close()
 
 
-def test_builtin_tampering_and_active_execution_fail_closed(unified):
+def test_builtin_tampering_and_active_execution_fail_closed(unified, monkeypatch):
     manager = unified.manager
     manager.install("resume")
     with manager.lease("resume"):
@@ -129,6 +129,10 @@ def test_builtin_tampering_and_active_execution_fail_closed(unified):
     (builtin.location(manager.cache, "resume") / "manifest.json").write_text('{"command":"evil"}')
     with pytest.raises(AppError, match="plugin_unavailable"):
         unified.service.preview("", "resume", "create_resume", {"name": "Tampered"})
+    # Invocation fails closed immediately; menu evidence expires within 30s.
+    from rynmesh.node_apps import plugins
+    monotonic = plugins.time.monotonic
+    monkeypatch.setattr(plugins.time, "monotonic", lambda: monotonic() + 31)
     assert not next(p for p in manager.catalog()["plugins"] if p["id"] == "resume")["enabled"]
     assert unified.service.call("", "catalog", {})["apps"] == []
 

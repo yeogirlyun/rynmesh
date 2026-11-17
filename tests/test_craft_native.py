@@ -219,7 +219,9 @@ def test_menu_verification_cache_saves_hashing_but_never_authorizes_startup(tmp_
 
 
 @pytest.mark.parametrize("change", ["tamper", "extra", "missing", "receipt"])
-def test_payload_and_receipt_changes_invalidate_menu_cache(tmp_path, release, change):
+def test_payload_and_receipt_changes_invalidate_menu_cache(tmp_path, release, change, monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr(native.time, "monotonic", lambda: clock[0])
     native.install_runtime(tmp_path, "wordcraft", download=release())
     executable = native.installed_runtime(tmp_path, "wordcraft")
     assert native.runtime_status(tmp_path, "wordcraft")["state"] == "ready"
@@ -235,10 +237,12 @@ def test_payload_and_receipt_changes_invalidate_menu_cache(tmp_path, release, ch
         value = json.loads(receipt.read_bytes())
         value["app"] = "gridcraft"
         receipt.write_text(json.dumps(value), encoding="utf-8")
-    status = native.runtime_status(tmp_path, "wordcraft")
-    assert status["state"] == "unverified" and not status["verified"] and not status["verification_cached"]
     with pytest.raises(native.CraftError, match="not_verified"):
         native.installed_runtime(tmp_path, "wordcraft")
+    # Menu evidence may lag; startup above must still reject immediately.
+    clock[0] += 31
+    status = native.runtime_status(tmp_path, "wordcraft")
+    assert status["state"] == "unverified" and not status["verified"] and not status["verification_cached"]
 
 
 def test_receipt_content_change_rehashes_and_explicit_repair_clears_cache(tmp_path, release, monkeypatch):
