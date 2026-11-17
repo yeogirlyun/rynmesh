@@ -292,6 +292,8 @@ def progress_state(row: dict) -> str:
     if row.get("plan", {}).get("track_execution"):
         state["planning_state"] = row.get("_current_planning_state") or planning.projection(row)
         state["plan_revision"] = state["planning_state"]["plan_revision"]
+    if row.get("tool_menu_notice"):
+        state["tool_menu_notice"] = row["tool_menu_notice"]
     permissions, permission_counts = permission_projection_with_counts(row)
     if permissions:
         state["operation_permissions"] = permissions

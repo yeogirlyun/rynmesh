@@ -271,7 +271,8 @@ class AgentLoop:
                     selected.pop(key, None)
             self._validate_context(selected)
             self._refresh_plugin_catalogs_at_turn_start(selected)
-            (specs, menu_state), _ = self._menu(selected)
+            business_specs, collisions = self._business_catalog(selected)
+            (specs, menu_state), _ = self._menu(selected, business_specs=business_specs)
             menu_reason = "projection"
             synced_state = {}
             def save_menu(data):
@@ -280,10 +281,23 @@ class AgentLoop:
                     raise AgentError("agent_cancelled")
                 memory_integration.apply_owner_turn_memory_in_tx(self, data, row)
                 memory_integration.sync_task_memory_watermark_in_tx(data, row)
+                collision_signature = digest(collisions)
+                if row.get("tool_name_collision_signature", digest([])) != collision_signature:
+                    row["tool_name_collision_signature"] = collision_signature
+                    notice = dict(row.get("tool_menu_notice") or {})
+                    if collisions:
+                        names = collisions[:16]
+                        event(row, "tool_name_collision", names=names)
+                        notice.update(collisions=names, collision_note="Duplicate tool names were ignored; the first definition is retained. Use ryn_discover_tools to check available tools.")
+                    else:
+                        notice.pop("collisions", None)
+                        notice.pop("collision_note", None)
+                    row["tool_menu_notice"] = notice
                 if row.get("tool_menu") != menu_state:
                     row["tool_menu"] = menu_state
                     event(row, "tool_menu_changed", menu=copy.deepcopy(menu_state), reason=menu_reason)
                 synced_state.update(
+                    tool_menu_notice=copy.deepcopy(row.get("tool_menu_notice")),
                     context_epoch=row.get("context_epoch", 0),
                     context_checkpoint=copy.deepcopy(row.get("context_checkpoint")),
                     memory_conversation_epoch=row.get("memory_conversation_epoch", 0),

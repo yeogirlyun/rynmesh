@@ -143,11 +143,12 @@ def _reject(call, code, message, *, details=None):
 def normalize_tool_calls(calls, specs, *, existing_call_ids=(), metadata=None,
                          internal_names=(),
                          max_argument_bytes=MAX_TOOL_CALL_ARGUMENT_BYTES,
-                         rewrite_ids_seed=None, index_offset=0):
+                         rewrite_ids_seed=None, index_offset=0, collisions=None):
     """Return request-ordered calls with deep-copied schemas or paired errors.
 
     Accepts normalized chat calls and Responses function_call items. Original
-    argument strings survive unchanged, even when malformed; arguments is an
+    argument strings survive unchanged unless oversized (then only a size
+    placeholder and the original digest survive); arguments is an
     empty dict on rejection and must never be executed when error_result exists.
     Schema validation reuses Ryn's shared validator. Permissions, effects,
     approval, operation ids and result accounting remain the host's authority.
@@ -189,19 +190,25 @@ def normalize_tool_calls(calls, specs, *, existing_call_ids=(), metadata=None,
         function = function if isinstance(function, dict) else {}
         arguments = function.get("arguments")
         arguments_json = arguments if isinstance(arguments, str) else _json(arguments)
-        if len(arguments_json.encode()) > max_argument_bytes:
-            raise ToolCallProtocolError("arguments_too_large", code="agent_model_output_limit")
-        entries.append((raw, function, call_id, arguments, arguments_json, needs_rewrite, provider_call_id))
+        argument_bytes = arguments_json.encode()
+        argument_sha = hashlib.sha256(argument_bytes).hexdigest()
+        oversize = len(argument_bytes) > max_argument_bytes
+        if oversize:
+            arguments_json = f"<arguments omitted: {len(argument_bytes)} bytes>"
+            arguments = None
+        entries.append((raw, function, call_id, arguments, arguments_json, needs_rewrite, provider_call_id, oversize, argument_sha))
 
+    from .tool_menu import dedupe_specs
+    specs, dropped = dedupe_specs(specs)
+    if collisions is not None:
+        collisions.extend(dropped)
     catalog = {}
     for spec in specs:
         function = _function_spec(spec)
-        if function["name"] in catalog:
-            raise AgentError("agent_tool_definition_changed")
         catalog[function["name"]] = copy.deepcopy(function)
     internal_names = frozenset(internal_names)
     normalized = []
-    for raw, function, call_id, original_arguments, arguments_json, rewritten, provider_call_id in entries:
+    for raw, function, call_id, original_arguments, arguments_json, rewritten, provider_call_id, oversize, argument_sha in entries:
         raw_name = function.get("name")
         valid_name = isinstance(raw_name, str) and bool(TOOL_NAME.fullmatch(raw_name))
         namespace = raw.get("namespace")
@@ -225,7 +232,7 @@ def normalize_tool_calls(calls, specs, *, existing_call_ids=(), metadata=None,
             snapshot = catalog.get(name) if valid_name else None
         call = {"call_id": call_id, "name": name, "arguments": {},
                 "arguments_json": arguments_json, "raw_arguments_json": arguments_json,
-                "arguments_sha256": hashlib.sha256(arguments_json.encode()).hexdigest(),
+                "arguments_sha256": argument_sha,
                 "schema_snapshot": copy.deepcopy(snapshot),
                 "schema_sha256": _schema_digest(snapshot) if snapshot is not None else None,
                 "effect": None, "error_result": None}
@@ -233,6 +240,11 @@ def normalize_tool_calls(calls, specs, *, existing_call_ids=(), metadata=None,
             call["provider_call_id"] = copy.deepcopy(provider_call_id)
         if raw.get("wire_kind") == "custom":
             call["wire_kind"] = "custom"
+        if oversize:
+            call["oversize"] = True
+            normalized.append(_reject(call, "agent_model_output_limit",
+                "Arguments exceed the byte limit; resend with smaller arguments (put large content in files)."))
+            continue
         if bad_type:
             normalized.append(_reject(call, "agent_unknown_tool", "This tool payload is not in the request's function catalog."))
             continue
@@ -295,9 +307,15 @@ def normalize_tool_calls(calls, specs, *, existing_call_ids=(), metadata=None,
                 continue
         call["arguments"] = arguments
         if metadata is not None:
-            meta = metadata(name)
-            if not isinstance(meta, dict) or meta.get("effect") not in {"read", "write"}:
-                raise AgentError("agent_tool_definition_changed")
+            try:
+                meta = metadata(name)
+            except Exception:
+                meta = None
+            if not isinstance(meta, dict) or meta.get("effect") not in ("read", "write"):
+                call["arguments"] = {}
+                normalized.append(_reject(call, "agent_tool_unavailable",
+                    "This tool is temporarily unavailable; call ryn_discover_tools and retry."))
+                continue
             call["effect"] = meta["effect"]
             if isinstance(meta.get("extension_binding"), dict):
                 call["extension_binding"] = copy.deepcopy(meta["extension_binding"])

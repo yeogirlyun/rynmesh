@@ -34,6 +34,25 @@ SPEC = {"type": "function", "function": {"name": NAME,
         "additionalProperties": False}}}
 
 
+def dedupe_specs(specs, reserved=()):
+    """Keep the first definition, excluding host-reserved tool names."""
+    seen, unique, dropped = set(reserved), [], []
+    for spec in specs:
+        try:
+            function = spec["function"] if spec.get("type") == "function" else spec
+            name = function["name"]
+            if not isinstance(name, str):
+                raise TypeError("invalid tool name")
+        except (KeyError, TypeError, AttributeError):
+            raise AgentError("agent_tool_definition_changed") from None
+        if name in seen:
+            dropped.append(name)
+        else:
+            seen.add(name)
+            unique.append(spec)
+    return unique, list(dict.fromkeys(dropped))
+
+
 def _tokenize(text: str) -> list[str]:
     text = text or ""
     # Keep exact identifiers searchable while also indexing their word boundaries.
@@ -144,6 +163,8 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
     they fit, so ordinary file/shell work never spends a model step on
     discovery. They are recomputed each projection and never count as loads.
     """
+    internal_specs, _ = dedupe_specs(internal_specs, {NAME})
+    business_specs, _ = dedupe_specs(business_specs, {NAME, *(s["function"]["name"] for s in internal_specs)})
     internal = [
         spec for spec in internal_specs
         if spec["function"]["name"] != NAME
@@ -190,8 +211,6 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
         base = [directory_spec(catalog)]
     loaded = list(prior.get("loaded_names", [])) if keep_loaded and mode == "directory" else []
     by_name = {spec["function"]["name"]: spec for spec in catalog}
-    if len(by_name) != len(catalog) or NAME in by_name:
-        raise AgentError("agent_tool_definition_changed")
     if any(name not in by_name for name in loaded):
         raise AgentError("agent_tool_definition_changed")
     requested_pins = [name for name in dict.fromkeys(pinned_names) if name in by_name]
@@ -289,6 +308,8 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
 
 def discover(business_specs, internal_specs, metadata, state, args, *, capacity_bytes):
     """Paged catalog, BM25 query search, and exact load/replace, charged as an ordinary internal tool."""
+    internal_specs, _ = dedupe_specs(internal_specs, {NAME})
+    business_specs, _ = dedupe_specs(business_specs, {NAME, *(s["function"]["name"] for s in internal_specs)})
     all_internal = [spec for spec in internal_specs if spec["function"]["name"] != NAME]
     no_subagent_internal = [spec for spec in all_internal if spec["function"]["name"] not in SUBAGENT_TOOL_NAMES]
     if state.get("lazy_controls"):
