@@ -241,6 +241,9 @@ def test_t5_shell_command_and_schema_login_parameter_controls_noprofile(monkeypa
     monkeypatch.setattr(local_processes, "_POWERSHELL_PROFILE_DISABLED", False, raising=False)
     monkeypatch.setattr(local_processes.os, "name", "nt", raising=False)
     monkeypatch.setattr(local_processes.shutil, "which", lambda name, path=None: r"C:\Program Files\PowerShell\7\pwsh.exe")
+    monkeypatch.setattr(local_processes, "child_environment", lambda: {"PATH": "fixture-path"})
+    monkeypatch.setattr(local_processes, "detect_shell", lambda kind, path=None: (
+        {"path": "/bin/bash"} if kind == "sh" else {"path": r"C:\Program Files\PowerShell\7\pwsh.exe", "version": "7.4"}))
 
     default_cmd = local_processes.prepare_shell_command({"command": "Write-Output 'hello'", "shell": "powershell"})
     assert "-NoLogo" in default_cmd
@@ -264,8 +267,8 @@ def test_t5_shell_command_and_schema_login_parameter_controls_noprofile(monkeypa
 
     # POSIX still uses -c even when login=True because login environment is captured once.
     monkeypatch.setattr(local_processes.os, "name", "posix", raising=False)
-    assert local_processes.shell_command("sh", "echo ok", login=True) == ["/bin/sh", "-c", "echo ok"]
-    assert local_processes.shell_command("sh", "echo ok", login=False) == ["/bin/sh", "-c", "echo ok"]
+    assert local_processes.shell_command("sh", "echo ok", login=True) == ["/bin/bash", "-c", "echo ok"]
+    assert local_processes.shell_command("sh", "echo ok", login=False) == ["/bin/bash", "-c", "echo ok"]
 
 
 def test_t6_literal_read_always_keeps_noprofile_and_uses_merged_path_in_which(monkeypatch):
@@ -289,6 +292,8 @@ def test_t6_literal_read_always_keeps_noprofile_and_uses_merged_path_in_which(mo
 
     monkeypatch.setattr(local_processes, "child_environment", lambda: {"PATH": r"C:\Ryn\bin;C:\MergedRegistryGit\cmd"})
     monkeypatch.setattr(local_processes.shutil, "which", spy_which)
+    monkeypatch.setattr(local_processes, "detect_shell", lambda kind, path=None: {
+        "path": r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe", "version": "5.1"})
 
     ps_read_argv = local_processes.prepare_shell_command(
         {"command": "Get-Location", "shell": "powershell", "login": True}
@@ -331,6 +336,8 @@ def test_t7_powershell_profile_pssecurity_exception_falls_back_to_noprofile_with
 
         monkeypatch.setattr(local_processes.os, "name", "nt", raising=False)
         monkeypatch.setattr(local_processes.shutil, "which", lambda name, path=None: r"C:\Program Files\PowerShell\7\pwsh.exe")
+        monkeypatch.setattr(local_processes, "detect_shell", lambda kind, path=None: {
+            "path": r"C:\Program Files\PowerShell\7\pwsh.exe", "version": "7.4"})
         next_cmd = local_processes.prepare_shell_command(
             {"command": "Write-Output 'after-fallback'", "shell": "powershell", "login": True}
         )

@@ -108,9 +108,11 @@ def test_long_powershell_retains_native_and_terminating_exit_semantics(tmp_path,
 
 
 def test_posix_launch_plan_keeps_original_command(monkeypatch):
-    monkeypatch.setattr(local_processes, "os", SimpleNamespace(name="posix"))
+    monkeypatch.setattr(local_processes, "os", SimpleNamespace(name="posix", environ={"SHELL": "/bin/bash"}))
+    monkeypatch.setattr(local_processes, "child_environment", lambda: {"PATH": "fixture-path"})
+    monkeypatch.setattr(local_processes, "_which", lambda name, path=None: "/bin/bash")
     command = "#" + "x" * 16000 + "\nprintf '中文 \"quote\"\\n'; exit 11"
-    assert shell_command("sh", command) == ["/bin/sh", "-c", command]
+    assert shell_command("sh", command) == ["/bin/bash", "-c", command]
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX host execution")
