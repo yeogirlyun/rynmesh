@@ -83,48 +83,8 @@ def _passive_attachment_type(mime: str) -> str:
 
 def _desktop_lan_ip() -> str:
     """Resolve a useful LAN address without requiring network access."""
-    if configured_ip := os.environ.get("RYNMESH_MACHINE_IP", "").strip():
-        return configured_ip
-    if sys.platform == "darwin":
-        try:
-            route = subprocess.run(
-                ["/sbin/route", "-n", "get", "default"],
-                capture_output=True,
-                check=False,
-                text=True,
-                timeout=2,
-            ).stdout
-            interface = next(
-                (
-                    line.split(":", 1)[1].strip()
-                    for line in route.splitlines()
-                    if "interface:" in line
-                ),
-                "",
-            )
-            if interface:
-                ip = subprocess.run(
-                    ["/usr/sbin/ipconfig", "getifaddr", interface],
-                    capture_output=True,
-                    check=False,
-                    text=True,
-                    timeout=2,
-                ).stdout.strip()
-                if ip:
-                    return ip
-        except (OSError, subprocess.SubprocessError):
-            pass
-        # Do not fall back to hostname/mDNS resolution on macOS: it can block
-        # startup for minutes when the local hostname has no usable DNS record.
-        from .store import _primary_lan_ip
-        return _primary_lan_ip() or "127.0.0.1"
-    try:
-        for family, _, _, _, sockaddr in socket.getaddrinfo(socket.gethostname(), None):
-            if family == socket.AF_INET and not sockaddr[0].startswith("127."):
-                return str(sockaddr[0])
-    except OSError:
-        pass
-    return "127.0.0.1"
+    from .store import _primary_lan_ip
+    return _primary_lan_ip()
 
 
 def _desktop_node_name() -> str:
