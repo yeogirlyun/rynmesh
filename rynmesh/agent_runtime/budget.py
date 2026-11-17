@@ -571,13 +571,20 @@ def segment_boundary(row):
     return None
 
 
+def _successful_tool_result(item):
+    result = item.get("result")
+    return (item.get("type") == "tool_result" and not item.get("internal")
+            and isinstance(result, dict) and not result.get("error") and not result.get("not_executed"))
+
+
 def _segment_successes(row, since_seq):
     count = 0
     for item in row.get("events", []):
-        if item.get("seq", 0) <= since_seq or item.get("type") != "tool_result" or item.get("internal"):
+        if item.get("seq", 0) <= since_seq:
             continue
-        result = item.get("result")
-        if isinstance(result, dict) and not result.get("error") and not result.get("not_executed"):
+        if item.get("type") == "turn_compacted":
+            count += sum(seq > since_seq for seq in item.get("successful_tool_result_seqs", []))
+        elif _successful_tool_result(item):
             count += 1
     return count
 

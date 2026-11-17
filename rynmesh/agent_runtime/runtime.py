@@ -3085,10 +3085,15 @@ class AgentRuntime(AgentLoop):
             if event_compaction.needs_compaction(row, size):
                 # Full goal copies from older builds go first: they repeat every earlier message.
                 shrunk = compact_goal_history(row)
-                if event_compaction.compact_until_small(row) or shrunk:
+                removed = event_compaction.compact_until_small(row)
+                if not lifecycle.eligible(row):
+                    removed += event_compaction.compact_in_turn(row)
+                if removed or shrunk:
                     size = len(encoded(row))
             if event_compaction.over_hard_limit(row, size, reserve_events=2 + len(skipped_skills) + 1):
-                raise ContinueInNewTask()
+                if lifecycle.eligible(row):
+                    raise ContinueInNewTask()
+                event_compaction.note_near_limit(row, size, reserve_events=2 + len(skipped_skills) + 1)
             effort = reasoning.validate(self._model_metadata(row["model_id"]), value["reasoning_effort"]) if "reasoning_effort" in value else None
             if row["status"] == "interrupted" and row["in_flight"]:
                 if not recoverable_read_in_flight(row) or ambiguous(row):
