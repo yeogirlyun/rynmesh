@@ -177,3 +177,11 @@ def test_rg_single_file_search_returns_absolute_path(local, rg):
     result = search(local, path="a.txt")
     assert result["engine"] == "rg"
     assert result["matches"] == [{"path": str(local[2] / "a.txt"), "line": 1, "text": "needle"}]
+
+
+def test_rg_searches_dotfiles_like_the_python_scan(local, rg):
+    (local[2] / ".github").mkdir()
+    (local[2] / ".github" / "ci.yml").write_text("needle\n", encoding="utf-8")
+    result = search(local)
+    assert result["engine"] == "rg"
+    assert [m["path"] for m in result["matches"]] == [str(local[2] / ".github" / "ci.yml")]

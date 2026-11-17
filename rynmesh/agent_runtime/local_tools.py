@@ -339,7 +339,8 @@ def _search_page(matches, per_file, offset, **coverage):
 def _rg_search(executable, path, args, cancelled, check_policy):
     """Read bounded rg JSON while keeping idle processes cancellable."""
     argv = [executable, "--json", "--line-number", "--max-columns", "300", "--max-count", "200",
-            "--max-filesize", "8M", "--sort", "path", "--no-require-git"]
+            "--max-filesize", "8M", "--sort", "path", "--no-require-git",
+            "--hidden"]  # the Python scan has always included dotfiles such as .github
     if not args.get("regex", False):
         argv.append("-F")
     if not args.get("case_sensitive", True):
