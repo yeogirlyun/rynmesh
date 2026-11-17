@@ -111,7 +111,9 @@ class StreamedReads:
         self.raw, self.records = {}, None
         self.existing_ids = {call["id"] for message in selected.get("messages", [])
                              for call in message.get("tool_calls", [])}
-        self.coordinator = StreamToolCoordinator(self._normalize, self._admit, self._run,
+        self.normalized_ids = set(self.existing_ids)
+        self.coordinator = StreamToolCoordinator(
+            lambda raw: self._normalize(raw, index=self.coordinator.next_index), self._admit, self._run,
             parallel_reads=parallel_reads, internal_names=INTERNAL_NAMES, cancelled=cancelled,
             metadata=self.metadata, workspace_root=(self.stamp.get("local_execution") or {}).get("workspace_root"))
 
@@ -119,9 +121,16 @@ class StreamedReads:
         return ({"source": "code_mode", "parent_operation_id": self.parent_operation_id}
                 if self.parent_operation_id else {"streamed": True})
 
-    def _normalize(self, raw):
-        call = normalize_tool_calls([raw], self.specs, existing_call_ids=self.existing_ids,
-                                    metadata=self.metadata, internal_names=INTERNAL_NAMES)[0]
+    def _normalize(self, raw, *, index=0):
+        call = normalize_tool_calls([raw], self.specs, existing_call_ids=self.normalized_ids,
+                                    metadata=self.metadata, internal_names=INTERNAL_NAMES,
+                                    rewrite_ids_seed=self.request_id, index_offset=index)[0]
+        self.normalized_ids.add(call["call_id"])
+        if "provider_call_id" in call:
+            # Keep the original wire item in the coordinator for reconciliation,
+            # but persist host ids for recovery of an interrupted read exchange.
+            self.raw[index] = {"id": call["call_id"], "type": "function",
+                               "function": {"name": call["name"], "arguments": call["arguments_json"]}}
         call["raw_arguments_sha256"] = call["arguments_sha256"]
         call["arguments_sha256"] = digest(call["arguments"])
         call.update(operation_id="op_" + uuid.uuid4().hex, internal=call["name"] in INTERNAL_NAMES,
@@ -211,6 +220,9 @@ class StreamedReads:
                 entry["parent_operation_id"] = self.parent_operation_id
                 flight.update(self._event_context())
             journal.append(entry)
+            if "provider_call_id" in call:
+                event(row, "tool_call_id_rewritten", call_id=call["call_id"],
+                      request_id=self.request_id, index=index, hidden=True)
             verification.record(row, call, "intent", now(), flight=flight)
             event(row, "tool_started", tool=call["name"], call_id=call["call_id"], operation_id=call["operation_id"],
                   effect="read", step=row["steps"], **self._event_context())

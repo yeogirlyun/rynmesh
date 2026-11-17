@@ -696,7 +696,8 @@ class AgentLoop:
             # A malformed argument or unknown function is a paired tool result,
             # not a rejected response that could replay valid sibling calls.
             pending = normalize_tool_calls(automations.canonicalize_legacy_notification_calls(calls), router_specs, existing_call_ids=ids,
-                                           metadata=request_metadata, internal_names=ALL_INTERNAL_NAMES)
+                                           metadata=request_metadata, internal_names=ALL_INTERNAL_NAMES,
+                                           rewrite_ids_seed=request_id)
             for call in pending:
                 # The host ledger hashes parsed arguments, separately from the
                 # wire representation (whitespace must not alter permission proof).
@@ -776,6 +777,11 @@ class AgentLoop:
                     row["memory_projection_watermark"] = memory_runtime.memory_projection_watermark(data, row).get("watermark", "")
                 event(row, "model_response_completed", step=step, request_id=request_id,
                       finish_reason=finish_reason, tool_count=len(pending))
+                streamed_ids = {record["call"]["call_id"] for record in streamed_results}
+                for index, call in enumerate(pending):
+                    if "provider_call_id" in call and call["call_id"] not in streamed_ids:
+                        event(row, "tool_call_id_rewritten", call_id=call["call_id"],
+                              request_id=request_id, index=index, hidden=True)
                 shown_notifs = _extract_pending_subagent_notifications(messages)
                 shown_ids = {
                     str(nid)
