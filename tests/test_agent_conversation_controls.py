@@ -101,8 +101,9 @@ def test_stop_cancels_live_inference_preserves_partial_and_can_continue(tmp_path
         assert entered.wait(5)
         paused = runtime.action(row["id"], {"action": "stop"})
         assert paused["status"] == "paused" and paused["run_state"] == "pausing"
-        assert paused["messages"][-1]["content"] == "A partial response."
-        assert paused["messages"][-1]["interrupted"] is True
+        assert paused["messages"][-2]["content"] == "A partial response."
+        assert paused["messages"][-2]["interrupted"] is True
+        assert paused["messages"][-1]["ui"]["kind"] == "turn_aborted"
     finally:
         stopped.set()
         worker.join(5)

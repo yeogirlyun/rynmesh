@@ -193,7 +193,8 @@ def rewrite(row: dict, control: dict, emit, *, data: dict | None = None, store: 
         memory_integration.apply_owner_turn_memory_in_tx(None, data, row)
     row["observed_files"] = {}
     record_goal_history(row)
-    owners = [message for message in row["messages"] if message["role"] == "user"]
+    owners = [message for message in row["messages"]
+              if message["role"] == "user" and not message.get("ui", {}).get("hidden")]
     revision = row["goal"]["revision"] + 1
     first = owners[0]
     old_constraints = {item.get("message_id") for item in row["goal"].get("constraints", [])}
