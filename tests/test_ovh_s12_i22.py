@@ -82,7 +82,8 @@ def test_T4_automation_schema_describes_real_fields_and_stays_under_existing_cap
     description = spec["description"].lower()
     for fact in ("local", "hh:mm", "heartbeat", "prompt", "this chat", "cron", "new chat", "repeat=once", "delay_minutes", "today", "next day", "delete", "firing"):
         assert fact in description
-    assert len(encoded(ALL_INTERNAL_SPECS)) <= 13840
+    # S06-I20 raised the shared internal-spec cap to 14240 (test_ovh_s10_i3).
+    assert len(encoded(ALL_INTERNAL_SPECS)) <= 14240
     for bad in ({"action": "create", "weekdays": ["XX"]},
                 {"action": "create", "weekdays": ["MO"] * 8},
                 {"action": "create", "status": "UNKNOWN"}):

@@ -76,7 +76,9 @@ def test_t1_authority_contains_seven_action_rules_and_preserves_system_migration
     repeat_sentence = "Batch independent final checks in one response; repeat only after changes, failure or unresolved uncertainty."
     assert repeat_sentence in proj_skill
 
-    assert projects.guidance(row) == ""
+    # S12-I11: non-project tasks get only the environment block, never the project rules.
+    plain = projects.guidance(row)
+    assert plain.startswith("<environment_context>") and "<project>" not in plain
     proj_root = project_folder(tmp_path / "proj")
     p_runtime, _, _, _ = project_runtime(tmp_path / "proj_state")
     selected = p_runtime.load_project({"path": str(proj_root)})
