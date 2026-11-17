@@ -13,6 +13,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from jsonschema import ValidationError, validate
@@ -2525,65 +2526,6 @@ class AgentLoop:
         self.store.transaction(finish)
         return True, prep_persistence_seconds
 
-    def _wait_for_subagents(self, selected: dict, norm_args: dict, started: float) -> tuple[bool, float]:
-        """Wait for targeted subagents without holding a worker slot or deadlocking single-threaded callers.
-
-        Returns (steered, wait_elapsed_seconds).
-        """
-        targets = norm_args.get("targets") or ["all"]
-        timeout_sec = float(norm_args.get("timeout_seconds") or 30.0)
-
-        def _check_wait_state(data: dict) -> dict:
-            parent_row = (data.get("tasks") or {}).get(selected["id"])
-            if not isinstance(parent_row, dict):
-                return {"done": True, "steered": False, "has_queued_child": False}
-            if parent_row.get("pending_user_messages"):
-                return {"done": True, "steered": True, "has_queued_child": False}
-            if (
-                not (data.get("settings") or {}).get("enabled")
-                or parent_row.get("status") != "running"
-                or parent_row.get("control_revision") != selected.get("_run_control_revision")
-                or parent_row.get("pending_control")
-            ):
-                return {"done": True, "steered": False, "has_queued_child": False}
-            children = subagents.resolve_subagent_targets(data, parent_row, targets)
-            if not children:
-                return {"done": True, "steered": False, "has_queued_child": False}
-            active = [c for c in children if c.get("status") in {"queued", "running"}]
-            if not active:
-                return {"done": True, "steered": False, "has_queued_child": False}
-            has_queued = any(c.get("status") == "queued" for c in active)
-            return {"done": False, "steered": False, "has_queued_child": has_queued}
-
-        # Validate targets immediately before releasing the slot.
-        initial = self.store.inspect(_check_wait_state)
-        if initial["done"]:
-            return bool(initial.get("steered")), 0.0
-
-        steered = False
-        wait_started = time.monotonic()
-        saved_active = self._active_run
-        saved_stream = getattr(self._step, "stream", None)
-        saved_clean = getattr(self._step, "clean", False)
-        self._run_slots.release()
-        try:
-            deadline = wait_started + timeout_sec
-            while time.monotonic() < deadline:
-                state = self.store.inspect(_check_wait_state)
-                if state["done"]:
-                    steered = bool(state.get("steered"))
-                    break
-                if state["has_queued_child"]:
-                    self.run_once()
-                else:
-                    time.sleep(0.05)
-        finally:
-            self._run_slots.acquire()
-            self._active_run = saved_active
-            self._step.stream = saved_stream
-            self._step.clean = saved_clean
-        return steered, max(0.0, time.monotonic() - wait_started)
-
     def _internal_tool(self, selected: dict, started: float) -> None:
         """Persist a bounded model proposal; never confer business authority."""
         call = selected["queue"][0]
@@ -2600,20 +2542,16 @@ class AgentLoop:
             ):
                 current = spec
             assert_schema_unchanged(call, current)
+        subagent_norm_args = None
+        if call["name"] in subagents.SUBAGENT_TOOL_NAMES:
+            subagent_norm_args = subagents.validate_subagent_tool(call["name"], args)
         try:
             validate(args, spec["parameters"])
         except ValidationError:
             raise AgentToolRejected("agent_invalid_control_proposal") from None
-        subagent_norm_args = None
-        wait_steered = False
-        wait_elapsed = 0.0
-        if call["name"] in subagents.SUBAGENT_TOOL_NAMES:
-            subagent_norm_args = subagents.validate_subagent_tool(call["name"], args)
-            if call["name"] == "ryn_spawn_agent":
-                subagent_norm_args = self._resolve_subagent_spawn(selected, subagent_norm_args)
-                self._relieve_storage("spawn", need_tasks=1)
-            if call["name"] == "ryn_wait_agent":
-                wait_steered, wait_elapsed = self._wait_for_subagents(selected, subagent_norm_args, started)
+        if call["name"] == "ryn_spawn_agent":
+            subagent_norm_args = self._resolve_subagent_spawn(selected, subagent_norm_args)
+            self._relieve_storage("spawn", need_tasks=1)
         if call["name"] == tool_menu.NAME:
             # Directory enumeration can refresh CLI models and extension catalogs.
             # Prepare one read-only projection before taking the shared state lock.
@@ -2647,7 +2585,7 @@ class AgentLoop:
             row = task(data, selected["id"])
             if row["status"] != "running" or not data["settings"]["enabled"] or row["control_revision"] != selected["_run_control_revision"]:
                 row["in_flight"] = None
-                row["elapsed_seconds"] += max(0.0, (time.monotonic() - started) - wait_elapsed)
+                row["elapsed_seconds"] += max(0.0, time.monotonic() - started)
                 memory_integration.settle_in_tx(data, row, event)
                 return
             if (
@@ -2713,7 +2651,23 @@ class AgentLoop:
                     if result.get("status") == "queued":
                         queued_child_id = result.get("agent_id")
                 elif call["name"] == "ryn_wait_agent":
-                    children = subagents.resolve_subagent_targets(data, row, nargs.get("targets") or ["all"])
+                    targets = nargs.get("targets") or ["all"]
+                    state = subagents._check_wait_state(data, row, targets)
+                    waiting = row.get("subagent_wait")
+                    current_time = datetime.now(timezone.utc)
+                    expired = bool(waiting and current_time >= datetime.fromisoformat(waiting["deadline"]))
+                    if not (state["done"] or expired or state["steered"] or row.get("pending_control")):
+                        if not waiting:
+                            row["subagent_wait"] = {
+                                "call_id": call["call_id"], "targets": targets,
+                                "started_at": current_time.isoformat(),
+                                "deadline": (current_time + timedelta(seconds=nargs["timeout_seconds"])).isoformat(),
+                            }
+                        row.update(status="queued", in_flight=None)
+                        row["elapsed_seconds"] += max(0.0, time.monotonic() - started)
+                        return
+                    row.pop("subagent_wait", None)
+                    children = state["children"]
                     child_ids = {c["id"] for c in children}
                     notifs = subagents.drain_subagent_notifications_in_tx(data, row, target_ids=child_ids)
                     summaries = [subagents.project_subagent_summary(c) for c in children]
@@ -2722,7 +2676,7 @@ class AgentLoop:
                         for c in children:
                             if c.get("status") in {"completed", "failed", "interrupted", "cancelled", "paused"}:
                                 settled_notif = subagents.on_subagent_settled_in_tx(data, c)
-                                if settled_notif:
+                                if settled_notif and not settled_notif.get("delivered"):
                                     settled_notif["delivered"] = True
                                     settled_id = settled_notif.get("id")
                                     if settled_id:
@@ -2732,10 +2686,14 @@ class AgentLoop:
                                             target_ids={str(settled_id)},
                                         )
                                     notifications_xml.append(subagents.format_notification_tag(settled_notif))
-                    steered_now = bool(wait_steered or row.get("pending_user_messages"))
+                    steered_now = state["steered"]
                     result = {
                         "ok": True,
                         "steered": steered_now,
+                        "timed_out": expired and not (state["done"] or steered_now or row.get("pending_control")),
+                        "timeout_note": nargs.get("timeout_note"),
+                        "still_running": [{"nickname": s["nickname"], "agent_path": s["agent_path"]}
+                                          for s in summaries if s["status"] in {"queued", "running"}],
                         "notifications": notifications_xml,
                         "agents": [
                             {
@@ -2754,6 +2712,8 @@ class AgentLoop:
                         ],
                         "all_settled": all(s["status"] not in {"queued", "running"} for s in summaries),
                     }
+                    if not children:
+                        result["message"] = "no subagents to wait for"
                 else:
                     raise AgentToolRejected("agent_unknown_internal_tool")
             elif call["name"] in memory_integration.MEMORY_TOOL_NAMES:
@@ -2808,8 +2768,10 @@ class AgentLoop:
             row["queue"].pop(0)
             event(row, "tool_result", tool=call["name"], call_id=call["call_id"], operation_id=call["operation_id"], result=result, internal=True)
             row["in_flight"] = None
-            row["elapsed_seconds"] += max(0.0, (time.monotonic() - started) - wait_elapsed)
+            row["elapsed_seconds"] += max(0.0, time.monotonic() - started)
             row["status"] = "waiting_input" if row["pending_input"] else "queued"
+            if call["name"] == "ryn_wait_agent" and row.get("pending_control"):
+                memory_integration.settle_in_tx(data, row, event)
             if row["pending_input"]:
                 # A model cannot precompute a mutation beyond unanswered input.
                 for queued in row["queue"]:

@@ -226,8 +226,9 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
         "function": {
             "name": "ryn_wait_agent",
             "description": (
-                "Wait for running subagents to complete or emit <subagent_notification> results. "
-                "Specify targets or omit to wait for any active subagent."
+                "Return when any target has an unread result or all targets have settled. "
+                "Omit targets to wait for direct children; no children returns immediately. "
+                "Timeout defaults to 30 seconds; effective range 10-3600 seconds."
             ),
             "parameters": {
                 "type": "object",
@@ -238,7 +239,7 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
                         "maxItems": 20,
                         "items": {"type": "string", "minLength": 1, "maxLength": 128},
                     },
-                    "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 120},
+                    "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 3600},
                 },
             },
         },
@@ -469,9 +470,13 @@ def validate_subagent_tool(name: str, arguments: dict) -> dict:
             else:
                 raise AgentToolRejected("agent_invalid_tool_arguments", correction="targets must be an array of strings.")
         timeout = arguments.get("timeout_seconds", 30)
-        if type(timeout) is not int or timeout < 1 or timeout > 120:
-            timeout = 30
-        return {"targets": targets, "timeout_seconds": timeout}
+        if type(timeout) is not int or not 1 <= timeout <= 3600:
+            raise AgentToolRejected(
+                "agent_invalid_tool_arguments",
+                correction="timeout_seconds must be an integer from 1 to 3600; values below 10 use 10 seconds.",
+            )
+        return {"targets": targets, "timeout_seconds": max(10, timeout),
+                "timeout_note": "timeout_seconds raised to 10 seconds." if timeout < 10 else None}
     if name in {"ryn_interrupt_agent", "ryn_close_agent"}:
         target = str(arguments.get("target") or "").strip()
         if not target:
@@ -589,9 +594,15 @@ def _collect_tree_subagents(data: dict, row: dict) -> list[dict]:
     meta = row.get("subagent_meta") or {}
     root_id = str(meta.get("root_task_id") or row.get("id") or "")
     root_row = tasks.get(root_id) if isinstance(tasks.get(root_id), dict) else row
+    return _collect_descendants(data, root_row)
+
+
+def _collect_descendants(data: dict, row: dict) -> list[dict]:
+    """Collect only agents below this caller, never siblings or ancestors."""
+    tasks = data.get("tasks") or {}
     collected: list[dict] = []
-    seen: set[str] = {str(root_row.get("id") or "")}
-    queue: list[dict] = [root_row]
+    seen: set[str] = {str(row.get("id") or "")}
+    queue: list[dict] = [row]
     while queue:
         cur = queue.pop(0)
         for cid in list(cur.get("subagent_ids") or []):
@@ -603,14 +614,16 @@ def _collect_tree_subagents(data: dict, row: dict) -> list[dict]:
     return collected
 
 
-def resolve_subagent_targets(data: dict, parent_row: dict, targets: list[str] | str) -> list[dict]:
+def resolve_subagent_targets(data: dict, parent_row: dict, targets: list[str] | str,
+                             *, scope: str = "tree") -> list[dict]:
     """Resolve one or more target specifiers (id, nickname, task_name, canonical agent_path, or 'all') to subagent rows."""
     tasks = data.get("tasks") or {}
     direct_ids = list(parent_row.get("subagent_ids") or [])
     direct_children = [tasks[cid] for cid in direct_ids if isinstance(tasks.get(cid), dict)]
-    tree_children = _collect_tree_subagents(data, parent_row)
+    tree_children = (_collect_descendants(data, parent_row) if scope == "descendants"
+                     else _collect_tree_subagents(data, parent_row))
     caller_id = str(parent_row.get("id") or "")
-    all_candidates = direct_children if direct_children else [c for c in tree_children if str(c.get("id")) != caller_id]
+    all_candidates = direct_children
 
     if isinstance(targets, str):
         if targets.strip().lower() == "all":
@@ -653,12 +666,36 @@ def resolve_subagent_targets(data: dict, parent_row: dict, targets: list[str] | 
         if found is None:
             raise AgentToolRejected(
                 "agent_subagent_not_found",
-                correction=f"Subagent '{raw}' was not found in the current root thread tree.",
+                correction=("只能关闭/中断自己的子代理" if scope == "descendants"
+                            else f"Subagent '{raw}' was not found in the current root thread tree."),
             )
         if found["id"] not in seen_ids:
             seen_ids.add(found["id"])
             matched.append(found)
     return matched
+
+
+def _check_wait_state(data: dict, row: dict, targets: list[str]) -> dict:
+    children = resolve_subagent_targets(data, row, targets)
+    child_ids = {child["id"] for child in children}
+    unread = any(item.get("agent_id") in child_ids and not item.get("delivered")
+                 for item in row.get("subagent_notifications") or [])
+    return {"children": children,
+            "done": unread or all(child.get("status") not in {"queued", "running"} for child in children),
+            "steered": bool(row.get("pending_user_messages"))}
+
+
+def wait_ready(data: dict, row: dict) -> bool:
+    """Scheduler gate for a persisted wait; wall-clock deadlines survive restarts."""
+    waiting = row.get("subagent_wait")
+    if not waiting:
+        return True
+    if (not row.get("queue") or row["queue"][0]["call_id"] != waiting["call_id"]
+            or row.get("pending_user_messages") or row.get("pending_control")):
+        return True
+    if datetime.now(timezone.utc) >= datetime.fromisoformat(waiting["deadline"]):
+        return True
+    return _check_wait_state(data, row, waiting["targets"])["done"]
 
 
 def _new_user_msg(content: str, *, kind: str = "message") -> dict:
@@ -977,7 +1014,7 @@ def _stop_child_in_tx(data, child, *, kind, close):
 
 
 def interrupt_agent_in_tx(data: dict, parent_row: dict, args: dict) -> dict:
-    targets = resolve_subagent_targets(data, parent_row, args["target"])
+    targets = resolve_subagent_targets(data, parent_row, args["target"], scope="descendants")
     interrupted: list[dict] = []
     now = now_iso()
     for child in targets:
@@ -997,7 +1034,7 @@ def interrupt_agent_in_tx(data: dict, parent_row: dict, args: dict) -> dict:
 
 
 def close_agent_in_tx(data: dict, parent_row: dict, args: dict) -> dict:
-    targets = resolve_subagent_targets(data, parent_row, args["target"])
+    targets = resolve_subagent_targets(data, parent_row, args["target"], scope="descendants")
     closed_list: list[dict] = []
     now = now_iso()
     for child in targets:
