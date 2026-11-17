@@ -4,6 +4,10 @@ export type AgentErrorAction = "continue" | "retry" | "switch_model" | "new_task
 interface ErrorHelp { zh: string; en: string; actions: AgentErrorAction[] }
 
 const HELP: Record<string, ErrorHelp> = {
+  agent_fork_too_large: {
+    zh: "这段对话太长，无法分叉；请从靠后的位置分叉",
+    en: "This conversation is too long to fork. Choose a later point to fork.",
+    actions: ["retry"] },
   agent_image_too_large: {
     zh: "图片太大，请压缩后重发。", en: "The image is too large. Compress it and send it again.", actions: ["retry"] },
   agent_image_count_limit: {
