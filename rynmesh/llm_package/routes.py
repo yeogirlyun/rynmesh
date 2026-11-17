@@ -33,6 +33,7 @@ from rynmesh.background_workers import (
     BackoffPolicy,
 )
 from rynmesh.crypto import SignedPayload, sign_payload, verify_signed_payload
+from rynmesh.diagnostic_events import record as record_diagnostic
 from rynmesh.peer_directory import FreshnessPolicy
 from rynmesh.store import RynmeshStore
 
@@ -1308,8 +1309,8 @@ def dispatch_settlement(store: RynmeshStore, *, task_id: str, provider_peer_id: 
                 **({"external": True} if external else {}),
             )
             return True
-        except Exception:
-            pass
+        except Exception as exc:
+            record_diagnostic("llm_settlement", "settlement_direct_failed", exc)
     try:
         store.submit_work_order(
             provider_peer_id=provider_peer_id, capability=CAPABILITY,
@@ -1318,8 +1319,49 @@ def dispatch_settlement(store: RynmeshStore, *, task_id: str, provider_peer_id: 
             idempotency_key="settle:" + task_id, expires_in_hours=1,
         )
         return True
-    except Exception:
+    except Exception as exc:
+        record_diagnostic("llm_settlement", "settlement_registry_failed", exc)
         return False
+
+
+def _consumer_retention_boundary() -> datetime:
+    return datetime.now(timezone.utc) - timedelta(
+        days=_positive_env("RYNMESH_LLM_CONSUMER_RETENTION_DAYS", 7))
+
+
+def _maintain_consumer_orders(consumer_orders: TaskOrderStore, store: RynmeshStore) -> bool:
+    now = time.time()
+    attempted = False
+    for order in consumer_orders.list():
+        if order.get("state") != "succeeded":
+            continue
+        history = list(order.get("history") or [])
+        if any(event.get("settlement_dispatched") for event in history):
+            continue
+        pending = next((event for event in reversed(history) if event.get("settlement_pending")), None)
+        if (not pending or pending.get("billing_pending_usage") or pending.get("amount") is None
+                or (pending.get("billing_basis") != "own_request"
+                    and any(value is None for value in actual_usage(pending).values()))):
+            continue
+        retry = next((event for event in reversed(history) if "settlement_retry_attempts" in event), {})
+        if float(retry.get("settlement_retry_at") or 0) > now:
+            continue
+        attempts = int(retry.get("settlement_retry_attempts") or 0) + 1
+        bindings = dict(order.get("bindings") or {})
+        delivered = dispatch_settlement(store, task_id=str(order["task_id"]),
+            provider_peer_id=str(pending.get("provider_peer_id") or bindings.get("provider_peer_id") or ""),
+            service_id=str(pending.get("service_id") or bindings.get("service_id") or ""),
+            amount=float(pending["amount"]), network_id=str(pending.get("network_id") or "rynmesh-main"),
+            endpoint=str(pending.get("settlement_endpoint") or ""),
+            external=bool(pending.get("settlement_external")))
+        metadata = {"settlement_retry_attempts": attempts,
+                    "settlement_retry_at": 0 if delivered else now + min(3600, 600 * 2 ** min(attempts - 1, 3))}
+        if delivered:
+            metadata["settlement_dispatched"] = True
+        consumer_orders.checkpoint(task_id=str(order["task_id"]), metadata=metadata)
+        attempted = True
+    removed = consumer_orders.prune_terminal(older_than=_consumer_retention_boundary(), skip_awaiting_archive=True)
+    return attempted or bool(removed)
 
 
 def _recover_consumer_orders(
@@ -1385,7 +1427,9 @@ def _recover_consumer_orders(
             history = list(record.get("history") or [])
         if state == "succeeded":
             dispatched = any(item.get("settlement_dispatched") for item in history)
-            if store is not None and pending and not dispatched:
+            retry = next((item for item in reversed(history) if "settlement_retry_at" in item), {})
+            if (store is not None and pending and not dispatched
+                    and float(retry.get("settlement_retry_at") or 0) <= time.time()):
                 bindings = dict(record.get("bindings") or {})
                 provider_peer_id = str(
                     pending.get("provider_peer_id") or bindings.get("provider_peer_id") or ""
@@ -1395,6 +1439,8 @@ def _recover_consumer_orders(
                     store, task_id=task_id, provider_peer_id=provider_peer_id,
                     service_id=service_id, amount=float(pending.get("amount") or 0),
                     network_id=str(pending.get("network_id") or "rynmesh-main"),
+                    endpoint=str(pending.get("settlement_endpoint") or ""),
+                    external=bool(pending.get("settlement_external")),
                 ):
                     consumer_orders.checkpoint(
                         task_id=task_id, metadata={"settlement_dispatched": True},
@@ -1444,7 +1490,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     )
     _recover_consumer_orders(consumer_orders, balance, store)
     consumer_orders.prune_terminal(
-        older_than=datetime.now(timezone.utc) - timedelta(days=7),
+        older_than=_consumer_retention_boundary(),
         skip_awaiting_archive=True,
     )
     manager: ProviderService | None = None
@@ -1490,6 +1536,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     from .tool_capabilities import ToolCapabilities
     store.llm_tool_capabilities = ToolCapabilities(home)
     source_managers: dict[str, ProviderService] = {}
+    source_managers_lock = threading.Lock()
+    source_manager_version = None
+    cached_source_managers: dict[str, ProviderService] = {}
     from .gguf_import import MAX_MODEL_BYTES, inspect_model
     from .native_model import NativeModel, NativeModelError
     native_model = NativeModel(home)
@@ -1607,10 +1656,16 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             raise HTTPException(400, "unsupported_file") from exc
 
     def active_source_managers() -> dict[str, ProviderService]:
+        with source_managers_lock:
+            return refresh_source_managers()
+
+    def refresh_source_managers() -> dict[str, ProviderService]:
         from . import model_settings
         from .model_dispatch import ModelDispatchAdapter
-        nonlocal native_service
-        records = source_store.read()
+        nonlocal native_service, source_manager_version, cached_source_managers
+        with source_store.lock:
+            version = source_store.version
+            records = source_store.read() if version != source_manager_version else None
         with native_model.lock:
             if native_service.manifest is not native_model.manifest:
                 native_service = ProviderService(manifest=native_model.manifest, adapter=native_model.adapter,
@@ -1618,40 +1673,45 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             native_service.accepting_orders = bool(native_model.config["sharing"] and native_model.adapter.health()["ok"])
             desired = {native_model.manifest.package_id: native_service} if native_model.config["installed"] else {}
         with manager_lock:
-            for record in records.values():
-                if not record.get("enabled") or record.get("status") != "ready":
-                    continue
-                for model in record["models"]:
-                    image_state = model_settings.image_input_state(record, model)
-                    revision = model_settings.fingerprint(record, model)
-                    policy = model_settings.effective(record, model)
-                    sid = source_store.model_service_id(record, model)
-                    current = source_managers.get(sid)
-                    # A new image test result changes what is published, not the destination.
-                    if (current is None or getattr(current, "_source_revision", "") != revision
-                            or getattr(current, "_image_state", None) != image_state):
-                        manifest = LLMPackageManifest(package_id=sid, mode="openai_compatible",
-                            public_model_alias=record["name"] + " · " + model, adapter="openai_compatible",
-                            model=model, base_url=record["base_url"], allow_non_loopback=record["kind"] == "api",
-                            context_window=policy["context_window"], max_output_tokens=policy["max_output_tokens"], max_concurrent=policy["max_concurrent"],
-                            timeout_seconds=policy["max_request_seconds"], capabilities=["text-generation", "streaming", "client-tools",
-                                "explicit-friends" if policy["share_scope"] == "friends" else "personal-space-only",
-                                *(["protocol:" + record["protocol"]] if record.get("protocol") in
-                                  {"openai_responses", "anthropic_messages"} else []),
-                                *({"supported": ["image-input"], "unsupported": ["image-unsupported"]}.get(image_state, [])),
-                                "image-carrier:" + SHARED_V2_CARRIER,
-                                CONTEXT_ESTIMATE_CAPABILITY])
-                        manifest.stream_idle_seconds = policy["stream_idle_seconds"]
-                        adapter = source_store.adapter(record, model)
-                        if model in record.get("model_settings", {}):
-                            adapter = ModelDispatchAdapter(source_store, record, model, adapter)
-                        current = ProviderService(manifest=manifest, adapter=adapter,
-                            store=store, task_store=provider_orders, balance=balance, messaging_key=messaging_key)
-                        current._source_revision = revision
-                        current._image_state = image_state
-                    current._source_tool_support = record.get("tool_support", {}).get(model, "unknown")
-                    current.accepting_orders = model in source_store.shared_models(record)
-                    desired[sid] = current
+            if records is not None:
+                configured = {}
+                for record in records.values():
+                    if not record.get("enabled") or record.get("status") != "ready":
+                        continue
+                    for model in record["models"]:
+                        image_state = model_settings.image_input_state(record, model)
+                        revision = model_settings.fingerprint(record, model)
+                        policy = model_settings.effective(record, model)
+                        sid = source_store.model_service_id(record, model)
+                        current = source_managers.get(sid)
+                        # A new image test result changes what is published, not the destination.
+                        if (current is None or getattr(current, "_source_revision", "") != revision
+                                or getattr(current, "_image_state", None) != image_state):
+                            manifest = LLMPackageManifest(package_id=sid, mode="openai_compatible",
+                                public_model_alias=record["name"] + " · " + model, adapter="openai_compatible",
+                                model=model, base_url=record["base_url"], allow_non_loopback=record["kind"] == "api",
+                                context_window=policy["context_window"], max_output_tokens=policy["max_output_tokens"], max_concurrent=policy["max_concurrent"],
+                                timeout_seconds=policy["max_request_seconds"], capabilities=["text-generation", "streaming", "client-tools",
+                                    "explicit-friends" if policy["share_scope"] == "friends" else "personal-space-only",
+                                    *(["protocol:" + record["protocol"]] if record.get("protocol") in
+                                      {"openai_responses", "anthropic_messages"} else []),
+                                    *({"supported": ["image-input"], "unsupported": ["image-unsupported"]}.get(image_state, [])),
+                                    "image-carrier:" + SHARED_V2_CARRIER,
+                                    CONTEXT_ESTIMATE_CAPABILITY])
+                            manifest.stream_idle_seconds = policy["stream_idle_seconds"]
+                            adapter = source_store.adapter(record, model)
+                            if model in record.get("model_settings", {}):
+                                adapter = ModelDispatchAdapter(source_store, record, model, adapter)
+                            current = ProviderService(manifest=manifest, adapter=adapter,
+                                store=store, task_store=provider_orders, balance=balance, messaging_key=messaging_key)
+                            current._source_revision = revision
+                            current._image_state = image_state
+                        current._source_tool_support = record.get("tool_support", {}).get(model, "unknown")
+                        current.accepting_orders = model in source_store.shared_models(record)
+                        configured[sid] = current
+                cached_source_managers = configured
+                source_manager_version = version
+            desired.update(cached_source_managers)
             source_managers.clear()
             source_managers.update(desired)
             return dict(source_managers)
@@ -2408,6 +2468,11 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         registry.register(BackgroundWorkerSpec(name="llm.external-presence", run_once=external_catalog.run_once,
             initial_delay_s=1.0, policy=BackoffPolicy.fixed(1.0)), replace=True)
     registry.register(BackgroundWorkerSpec(
+        name="llm.consumer-orders.maintenance",
+        run_once=lambda: _maintain_consumer_orders(consumer_orders, store),
+        initial_delay_s=600, policy=BackoffPolicy.fixed(600),
+    ))
+    registry.register(BackgroundWorkerSpec(
         name="llm.relay-poll",
         run_once=lambda: bool(relay_once()),
         initial_delay_s=1.0,
@@ -2430,6 +2495,16 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             changed = service.recheck_permissions() or changed
         return changed
 
+    def maintain_permissions_once():
+        changed = recheck_permissions_once()
+        with manager_lock:
+            values = ([manager] if manager else []) + list(source_managers.values())
+        for service in values:
+            with service._lock:
+                if service._active_permissions:
+                    return True
+        return changed
+
     if getattr(app.state, "ai_access", None):
         app.state.ai_access.recheck = recheck_permissions_once
         def own_service_status():
@@ -2439,9 +2514,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             return [{**service.public_status(), "network_id": read_provider_settings().get("network_id", "rynmesh-main"), "publication_enabled": bool(read_provider_settings().get("publication_enabled"))} for service in values]
         app.state.ai_access.provider = own_service_status
     registry.register(BackgroundWorkerSpec(
-        name="llm.friend-permissions", run_once=recheck_permissions_once,
+        name="llm.friend-permissions", run_once=maintain_permissions_once,
         initial_delay_s=1.0,
-        policy=BackoffPolicy(busy_delay_s=1, idle_initial_s=1, idle_multiplier=1, idle_max_s=1,
+        policy=BackoffPolicy(busy_delay_s=1, idle_initial_s=30, idle_multiplier=1, idle_max_s=30,
                              error_multiplier=2, error_max_s=10),
     ))
     registry.register(BackgroundWorkerSpec(
@@ -3344,7 +3419,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             raise HTTPException(status_code=500 if code == "task_balance_corrupt" else 409, detail=code) from exc
 
     @app.get("/api/local/llm/orders")
-    def local_llm_orders() -> dict[str, Any]:
+    def local_llm_orders(limit: int = 50, cursor: str = "") -> dict[str, Any]:
+        if not 1 <= limit <= 200:
+            raise HTTPException(400, "order_limit_invalid")
         consumer_orders.purge_expired_responses()
         summaries = []
         for record in consumer_orders.list():
@@ -3355,8 +3432,17 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 "history": list(record.get("history") or []),
                 **{key: value for key, value in final.items() if key not in {"at", "state"}},
             })
-        summaries.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
-        return {"orders": summaries}
+        def page_key(item):
+            return (str(item.get("updated_at") or ""), str(item.get("task_id") or ""))
+        summaries.sort(key=page_key, reverse=True)
+        if cursor:
+            if "|" not in cursor:
+                raise HTTPException(400, "order_cursor_invalid")
+            cursor_key = tuple(cursor.split("|", 1))
+            summaries = [item for item in summaries if page_key(item) < cursor_key]
+        page = summaries[:limit]
+        next_cursor = "|".join(page_key(page[-1])) if len(summaries) > limit else ""
+        return {"orders": page, "next_cursor": next_cursor}
 
     @app.get("/api/local/llm/privacy")
     def local_llm_privacy() -> dict[str, Any]:
@@ -3429,7 +3515,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         try:
             if consumer_orders._count >= 9000:
                 consumer_orders.prune_terminal(
-                    older_than=datetime.now(timezone.utc) - timedelta(days=7),
+                    older_than=_consumer_retention_boundary(),
                     skip_awaiting_archive=True,
                 )
             _, claimed = consumer_orders.claim(task_id=task_id, bindings=bindings)
@@ -3732,7 +3818,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         try:
             if consumer_orders._count >= 9000:
                 consumer_orders.prune_terminal(
-                    older_than=datetime.now(timezone.utc) - timedelta(days=7),
+                    older_than=_consumer_retention_boundary(),
                     skip_awaiting_archive=True,
                 )
             existing, claimed = consumer_orders.claim(task_id=task_id, bindings=bindings)
@@ -4274,6 +4360,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     result.update(amount=None, usage_complete=usage_complete, billing_status="pending_usage", billing_basis="pending_usage")
                 settlement_metadata = {
                     "provider_peer_id": provider_peer_id, "service_id": service_id,
+                    "settlement_endpoint": endpoint if transport_evidence.get("transport") == "peer_http_direct" else "",
+                    "settlement_external": bool(external_resource),
                     "network_id": network_id, "input_tokens": result["input_tokens"],
                     "output_tokens": result["output_tokens"], "duration_ms": result["duration_ms"],
                     "amount": result["amount"], "transport": result["transport"],
