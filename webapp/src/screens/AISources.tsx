@@ -33,6 +33,7 @@ export default function AISources() {
   const [device, setDevice] = useState(tr("本机"));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [storageWarning, setStorageWarning] = useState("");
   const [modal, setModal] = useState<"choose" | "source" | "cli" | "native" | "manage" | null>(null);
   const [native, setNative] = useState<NativeModelStatus | null>(null);
   const [nativeLoadError, setNativeLoadError] = useState("");
@@ -59,9 +60,10 @@ export default function AISources() {
   const refresh = useCallback(async () => {
     try {
       const [data, cliData, services] = await Promise.all([
-        sourceRequest<{ sources: AISource[]; node_name: string; peer_id: string }>(), client.getCLIServices(), client.listLLMServices(),
+        sourceRequest<{ sources: AISource[]; node_name: string; peer_id: string; storage_warning?: { backup: string } | null }>(), client.getCLIServices(), client.listLLMServices(),
       ]);
       setSources(data.sources); setDevice(data.node_name); setCLI(cliData);
+      setStorageWarning(data.storage_warning?.backup ?? "");
       setPeers(services.filter(s => s.peer_id !== data.peer_id)); setError("");
       return data.sources;
     } catch (e) { setError((e as Error).message); return []; }
@@ -107,6 +109,7 @@ export default function AISources() {
   const openCLI = () => { setKind("codex_cli"); setMessage(""); setModal("cli"); };
   const addSourceButton = <button className="rf-btn rf-btn-p" onClick={() => { setMessage(""); setModal("choose"); }}><Plus size={17} /> {tr("添加模型")}</button>;
   return <div className="ais-page rf rd-svc rd-models">
+    {storageWarning && <p className="ais-error" role="alert">{tr("模型来源配置无法读取，已备份到 {{path}}，请重新添加", { path: storageWarning })}</p>}
     <header className="sv-head ais-header"><div className="sv-head-text"><h1 className="sv-title">{tr("Models")}</h1><p className="sv-lead">{tr("接入一次，自己使用，也可以分享给其他设备。")}</p></div><div className="sv-head-actions ais-header-actions"><button className="rf-btn" onClick={() => setModal("manage")}>{tr("管理来源")}</button>{!isEmpty && addSourceButton}</div></header>
     {isEmpty && <section className="ais-onboarding" aria-labelledby="ais-connect-title">
       <div className="ais-onboarding-heading"><div>
