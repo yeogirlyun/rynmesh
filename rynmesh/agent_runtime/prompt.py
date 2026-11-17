@@ -172,6 +172,14 @@ def select_base_instructions(*, model_base=None, persisted_base=None, session_ba
     return SYSTEM
 
 
+PLAN_MODE_GUIDANCE = (
+    "This is a read-only planning task. Explore relevant code and evidence with read tools first. "
+    "Ask the owner only about choices that change the plan. Finish with one complete plan a worker can "
+    "execute without further decisions, covering files, steps, tests, and risks. "
+    "If the owner asks you to execute, explain that the task must leave read-only mode first and keep the plan ready. "
+    "Never request a mutation tool.")
+
+
 def instruction_layers(row: dict, *, model_base=None, persisted_base=None, session_base=None,
                        model_notes="", developer_instructions=None, project_guidance="",
                        progress_placement: str = "header") -> list[dict]:
@@ -190,9 +198,11 @@ def instruction_layers(row: dict, *, model_base=None, persisted_base=None, sessi
     if session_base is None and model_base is None and base in (_LEGACY_BATCH_SYSTEM, _PRE_IMAGE_SYSTEM, _PRE_IMAGE_BRIEF_SYSTEM, _PRE_PLUGIN_SYSTEM, _PRE_STRICT_PLUGIN_SYSTEM,
                                                                         _UNAVAILABLE_PLUGIN_RULE_SYSTEM):
         base = SYSTEM
-    policy = ("This task is read-only: inspect and explain a proposed plan, never request a mutation tool."
-              if row["permission_mode"] == "read_only" else
-              "This task may request changes; the server enforces current owner permissions for every call.")
+    if row["permission_mode"] == "read_only":
+        policy = ("This task is read-only: inspect and explain a proposed plan, never request a mutation tool."
+                  if isinstance(row.get("subagent_meta"), dict) else PLAN_MODE_GUIDANCE)
+    else:
+        policy = "This task may request changes; the server enforces current owner permissions for every call."
     if not isinstance(model_notes, str):
         raise ValueError("model notes must be text")
     authority_content = policy + authority(row)
