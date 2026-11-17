@@ -52,6 +52,9 @@ CONTENT_LISTING_TIMEOUT_S = 8.0
 MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_PREVIEW_BYTES = 32 * 1024 * 1024
 MAX_MEDIA_BYTES = 10 * 1024 * 1024 * 1024
+MAX_MESSAGE_ATTACHMENT_BYTES = 25 * 1024 * 1024
+MAX_PEER_MESSAGE_BYTES = 36 * 1024 * 1024
+MESSAGE_SUBSCRIBER_QUEUE_SIZE = 256
 BLOCKED_HOSTS = {
     "169.254.169.254",
     "metadata.google.internal",
@@ -2799,7 +2802,7 @@ def create_app(store: RynmeshStore | None = None):
     # --- peer messaging (1:1 chat) ---
     from .services import peer_box as _peer_box
     from .services.messaging_store import MessagingStore as _MsgStore
-    from .services.peer_messenger import PeerMessenger as _PeerMessenger
+    from .services.peer_messenger import PeerMessenger as _PeerMessenger, MAX_INLINE_BYTES
 
     # Beside the identity key, not $RYNMESH_HOME: the store owns the peer id
     # these messages are sealed to, and `register_node` advertises this key.
@@ -2815,7 +2818,8 @@ def create_app(store: RynmeshStore | None = None):
 
     def _resolve_endpoint(peer_id: str) -> str:
         discovered = (
-            active_store.discover_peers(network_id=control_network_id(), include_self=False) or {}
+            active_store.discover_peers(network_id=control_network_id(), include_self=False,
+                                       cache_only=True, use_cache_on_error=True) or {}
         )
         for rec in discovered.get("peers", []):
             if rec.get("peer_id") == peer_id:
@@ -2833,11 +2837,7 @@ def create_app(store: RynmeshStore | None = None):
         ep = _resolve_endpoint(peer_id)
         if not ep:
             raise RuntimeError(f"no endpoint for peer {peer_id}")
-        from .transport import network_key_header
-
-        req = _urlreq.Request(ep + "/api/peer/pubkey", headers=network_key_header())
-        with _urlreq.urlopen(req, timeout=10) as resp:
-            return str(json.load(resp)["x25519_pub"])
+        return str(HttpPeerClient(ep, timeout_s=10)._json("/api/peer/pubkey")["x25519_pub"])
 
     def _lookup_verified_pubkey(peer_id: str) -> str:
         return _mailbox_routes.with_registry_fallback(
@@ -2857,16 +2857,8 @@ def create_app(store: RynmeshStore | None = None):
         ep = _resolve_endpoint(peer_id)
         if not ep:
             return 0
-        from .transport import network_key_header
-
-        req = _urlreq.Request(
-            ep + "/api/peer/msg",
-            data=json.dumps(header).encode(),
-            headers={"Content-Type": "application/json", **network_key_header()},
-            method="POST",
-        )
-        with _urlreq.urlopen(req, timeout=15) as resp:
-            return resp.status
+        HttpPeerClient(ep, timeout_s=15).post_json("/api/peer/msg", header)
+        return 200
 
     _messenger = _PeerMessenger(
         my_peer_id=active_store.peer_id,
@@ -2883,6 +2875,19 @@ def create_app(store: RynmeshStore | None = None):
         resolve_pubkey=_resolve_pubkey, workers=app.state.background_workers,
         local_control=local_control,
     )
+
+    def _enqueue_message(q, record):
+        if q not in _msg_subscribers:
+            return
+        try:
+            q.put_nowait(record)
+        except _asyncio.QueueFull:
+            _msg_subscribers.remove(q)
+            # End the stream promptly instead of draining stale live events.
+            # The client reconnects and reloads the durable conversation history.
+            while not q.empty():
+                q.get_nowait()
+            q.put_nowait(None)
 
     def _publish(record: dict) -> None:
         """Fan one record out to every SSE subscriber, from any thread.
@@ -2904,9 +2909,9 @@ def create_app(store: RynmeshStore | None = None):
         for q in list(_msg_subscribers):
             try:
                 if on_loop or loop is None:
-                    q.put_nowait(record)
+                    _enqueue_message(q, record)
                 else:
-                    loop.call_soon_threadsafe(q.put_nowait, record)
+                    loop.call_soon_threadsafe(_enqueue_message, q, record)
             except Exception:
                 pass
 
@@ -3059,7 +3064,14 @@ def create_app(store: RynmeshStore | None = None):
 
     @app.post("/api/peer/msg")
     async def peer_msg(request: FastAPIRequest) -> dict:
-        header = await request.json()
+        if int(request.headers.get("content-length") or 0) > MAX_PEER_MESSAGE_BYTES:
+            raise HTTPException(status_code=413, detail="message_too_large")
+        raw = bytearray()
+        async for chunk in request.stream():
+            if len(raw) + len(chunk) > MAX_PEER_MESSAGE_BYTES:
+                raise HTTPException(status_code=413, detail="message_too_large")
+            raw.extend(chunk)
+        header = json.loads(raw)
         if not isinstance(header, dict):
             raise HTTPException(status_code=400, detail="invalid_payload")
         sender = str(header.get("from") or "")
@@ -3093,30 +3105,40 @@ def create_app(store: RynmeshStore | None = None):
         if att and att.get("bytes_b64"):
             import base64 as _b64
 
+            if len(att["bytes_b64"]) > 4 * ((MAX_MESSAGE_ATTACHMENT_BYTES + 2) // 3):
+                raise HTTPException(status_code=413, detail="attachment_too_large")
+            data = _b64.b64decode(att["bytes_b64"])
+            # The messenger's existing 5 MiB inline policy is stricter than the
+            # route's decode budget. Keep that policy and expose a useful error.
+            if len(data) > MAX_INLINE_BYTES:
+                raise HTTPException(status_code=413, detail="attachment_too_large")
             att = {
                 "filename": att.get("filename", "file"),
                 "mime": att.get("mime", "application/octet-stream"),
-                "bytes": _b64.b64decode(att["bytes_b64"]),
+                "bytes": data,
             }
         else:
             att = None
-        return _messenger.send(peer_id, text=str(body.get("text", "")), attachment=att)
+        return await run_in_threadpool(_messenger.send, peer_id, text=str(body.get("text", "")), attachment=att)
 
     @app.get("/api/local/messages/stream")
     async def local_stream(request: FastAPIRequest):
         local_control(request)
         from fastapi.responses import StreamingResponse
 
-        q: _asyncio.Queue = _asyncio.Queue()
+        q: _asyncio.Queue = _asyncio.Queue(maxsize=MESSAGE_SUBSCRIBER_QUEUE_SIZE)
         _msg_subscribers.append(q)
 
         async def gen():
             try:
                 while True:
                     rec = await q.get()
+                    if rec is None:
+                        return
                     yield f"data: {json.dumps(rec)}\n\n"
             finally:
-                _msg_subscribers.remove(q)
+                if q in _msg_subscribers:
+                    _msg_subscribers.remove(q)
 
         return StreamingResponse(gen(), media_type="text/event-stream")
 
