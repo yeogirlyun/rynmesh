@@ -461,14 +461,16 @@ def install_extension_routes(
         return await _run("restart_mcp_server", _op)
 
     @app.post("/api/local/agent/extensions/mcp/restart")
-    async def restart_all_mcp_servers():
+    async def restart_all_mcp_servers(request: Request):
+        local_control(request)
         return await _run(
             "restart_all_mcp_servers",
             lambda: extensions.manager.restart_all(desktop_access=_desktop_access()),
         )
 
     @app.post("/api/local/agent/extensions/mcp/apps/clear-data")
-    async def clear_mcp_app_data():
+    async def clear_mcp_app_data(request: Request):
+        local_control(request)
         return await _run(
             "clear_mcp_app_data",
             lambda: extensions.manager.clear_app_data(desktop_access=_desktop_access()),

@@ -373,12 +373,11 @@ def _set_env_case_aware(env: dict[str, str], key: str, value: str) -> None:
     env[key] = value
 
 
-def child_environment(*, task_id: str | None = None, tty: bool = False) -> dict[str, str]:
+def child_environment(*, task_id: str | None = None, tty: bool = False, permission_mode: str | None = None) -> dict[str, str]:
     """The node's own configuration and secrets must not reach model-driven commands.
 
-    RYNMESH_LOCAL_TOKEN/RYNMESH_NETWORK_KEY would hand node control to any command the model
-    runs, and RYNMESH_HOME & co. change how a project's own tests behave (a run reported five
-    false "pre-existing" failures because of them).
+    RYNMESH_* is always stripped. Only an automatic task receives the separate
+    RYN_LOCAL_CONTROL_TOKEN credential for its explicitly unrestricted shell.
     """
     env = strip_rynmesh_env(os.environ)
     if os.name != "nt":
@@ -390,6 +389,10 @@ def child_environment(*, task_id: str | None = None, tty: bool = False) -> dict[
                 env[key] = value
     else:
         _merge_windows_registry_path(env)
+
+    _pop_env_case_aware(env, "RYN_LOCAL_CONTROL_TOKEN")
+    if permission_mode == "automatic" and os.environ.get("RYNMESH_LOCAL_TOKEN"):
+        env["RYN_LOCAL_CONTROL_TOKEN"] = os.environ["RYNMESH_LOCAL_TOKEN"]
 
     # Fixed child overrides (applied after login/registry merge, before bundled rg PATH prepend).
     for fixed_key, fixed_val in (
@@ -496,7 +499,7 @@ class Processes:
             victim_id, _ = min(completed_all, key=_evict_key)
             self.items.pop(victim_id, None)
 
-    def start(self, args, cwd, task_id, timeout=None, allowed=lambda: True, cancelled=lambda: False, *, operation_id=None, tty=False, rows=24, cols=80, env_overrides=None, stdin_mode="pipe"):
+    def start(self, args, cwd, task_id, timeout=None, allowed=lambda: True, cancelled=lambda: False, *, operation_id=None, tty=False, rows=24, cols=80, env_overrides=None, stdin_mode="pipe", permission_mode=None):
         # Task-state callbacks can acquire the Agent store lock; never call one
         # while holding the process-table lock (preview takes them in reverse).
         if type(tty) is not bool:
@@ -534,11 +537,11 @@ class Processes:
                         "global_limit": MAX_GLOBAL_PROCESSES,
                     },
                 )
-            proc_env = child_environment(task_id=task_id, tty=tty)
+            proc_env = child_environment(task_id=task_id, tty=tty, permission_mode=permission_mode)
             for extra_env in (getattr(args, "env_overrides", None), env_overrides):
                 if isinstance(extra_env, Mapping):
                     for key, value in extra_env.items():
-                        if not str(key).upper().startswith("RYNMESH_"):
+                        if not str(key).upper().startswith("RYNMESH_") and str(key).upper() != "RYN_LOCAL_CONTROL_TOKEN":
                             proc_env[str(key)] = str(value)
             cmd_args = list(args)
             flags = 0x4 | 0x08000000 if os.name == "nt" else 0

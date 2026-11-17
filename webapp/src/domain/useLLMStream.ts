@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { nodeControlUrl } from "./nodeUrl";
+import { localEventSource } from "./localEventSource";
 
 const MAX_OUTPUT_BYTES = 128 * 1024;
 type StreamView = { taskId: string; text: string; interrupted: boolean };
@@ -33,7 +34,7 @@ export function useLLMStream(taskId: string | undefined) {
     const connect = () => {
       if (!active) return;
       try {
-        source = new EventSource(nodeControlUrl(`/llm/orders/${encodeURIComponent(taskId)}/events?after_sequence=${sequence}`), { withCredentials: true });
+        source = localEventSource(nodeControlUrl(`/llm/orders/${encodeURIComponent(taskId)}/events?after_sequence=${sequence}`), { withCredentials: true });
       } catch { failed(); return; }
       const current = source;
       const heartbeat = () => {

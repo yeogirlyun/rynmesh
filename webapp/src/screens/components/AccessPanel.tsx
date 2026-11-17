@@ -1,6 +1,8 @@
 import { tr, useUILanguage } from "../../uiI18n";
 import { KeyRound } from "lucide-react";
 import { useCallback, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { isTauriDesktop } from "../../domain/nodeUrl";
 
 // Shows the device token so the owner can pair a phone or a second machine
 // against a tunnelled node. Reachable only from an already-authorized session,
@@ -19,6 +21,7 @@ export default function AccessPanel() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [localCopied, setLocalCopied] = useState(false);
 
   const load = useCallback(async () => {
     setBusy(true);
@@ -59,6 +62,13 @@ export default function AccessPanel() {
 
   return (
     <div className="access-panel">
+      {isTauriDesktop() ? <button type="button" onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(await invoke<string>("local_token"));
+          setLocalCopied(true);
+          window.setTimeout(() => setLocalCopied(false), 1600);
+        } catch { setError(tr("Could not read the token from the local node.")); }
+      }}>{localCopied ? tr("Copied") : tr("Copy local token")}</button> : null}
       <div className="setting-row">
         <span>
           <b>{tr("Device token")}</b>
