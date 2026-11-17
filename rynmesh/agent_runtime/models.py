@@ -201,10 +201,22 @@ class ModelCatalog:
                 if adapter == "claude_cli" and manifest.get("model")
                 else None
             )
+            inferred_window = (
+                model_settings.known_vendor_context_window(manifest.get("model_alias") or service_id)
+                if not is_cli and type(manifest.get("context_window")) is not int else None
+            )
+            window = manifest.get("context_window", 32768)
+            if not is_cli and type(window) is not int:
+                window = 32768
+            if declared_claude_window is not None:
+                window = declared_claude_window
+            elif inferred_window is not None:
+                window = inferred_window
             cli_basis = manifest.get("context_window_basis") if isinstance(manifest.get("context_window_basis"), str) else ""
             window_known = (
                 (not is_cli and type(manifest.get("context_window")) is int)
                 or declared_claude_window is not None
+                or inferred_window is not None
             )
             row = {"id": model_ref, "name": manifest.get("model_alias", service_id),
                    "source": "local_service" if own else "peer", "source_name": value.get("node_name", ""),
@@ -217,11 +229,11 @@ class ModelCatalog:
                    "tool_support": local_tool_support,
                    "agent_support_basis": "adapter_contract" if own else "provider_protocol_contract",
                    **({"agent_support": "experimental"} if adapter == "antigravity_cli" else {}),
-                   "context_window": declared_claude_window if declared_claude_window is not None else manifest.get("context_window", 32768),
+                   "context_window": window,
                    "context_window_known": window_known,
                    "context_window_basis": (
                        "vendor_family_default"
-                       if declared_claude_window is not None
+                       if declared_claude_window is not None or inferred_window is not None
                        else "provider_manifest"
                        if window_known
                        else (cli_basis or "unknown_fallback")
