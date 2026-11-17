@@ -61,6 +61,7 @@ from .control import (
 from .input_attachments import attach_to_message, parse_attachments
 from .loop import ALL_INTERNAL_NAMES, ALL_INTERNAL_SPECS, OWNER_TURN_EVENTS, AgentLoop
 from .prompt import (
+    HISTORY_TOOL_NAMES,
     INTERNAL_NAMES,
     PROMPT_VERSION,
     select_base_instructions,
@@ -1031,7 +1032,7 @@ class AgentRuntime(AgentLoop):
             if plugin["enabled"] and selected_skill_ids.intersection(plugin["skill_ids"])
         }
         preloads = tool_menu.plugin_preloads(business_specs, self._metadata, selected_plugins) if selected_plugins else ()
-        return tool_menu.project(business_specs, ALL_INTERNAL_SPECS, row.get("tool_menu"),
+        return tool_menu.project(business_specs, self._internal_specs(row), row.get("tool_menu"),
             max_context_bytes=max_context_bytes, authority_bytes=authority_bytes,
             epoch=row.get("context_epoch", 0), goal_revision=row["goal"]["revision"],
             # Pins need room; in small windows the earlier seeds still apply.
@@ -1040,13 +1041,18 @@ class AgentRuntime(AgentLoop):
                            "ryn_shell_execute", "ryn_file_write", "ryn_file_list", "ryn_code_exec") if row.get("project") else
                           ("ryn_shell_execute", "ryn_file_read", "ryn_file_search", "ryn_code_exec")) + desktop + skill_tools + resource_tools), authority_bytes
 
+    @staticmethod
+    def _internal_specs(row):
+        return [spec for spec in ALL_INTERNAL_SPECS
+                if spec["function"]["name"] not in HISTORY_TOOL_NAMES or (row or {}).get("context_checkpoint")]
+
     def _specs(self, row=None) -> list:
         specs = self._business_specs(row)
         if any(spec["function"]["name"] in ALL_INTERNAL_NAMES for spec in specs):
             raise AgentError("agent_tool_definition_changed")
         if row is not None:
             return self._menu(row)[0][0]
-        return [*specs, *(copy.deepcopy(spec) for spec in ALL_INTERNAL_SPECS if spec["function"]["name"] != tool_menu.NAME)]
+        return [*specs, *(copy.deepcopy(spec) for spec in self._internal_specs(row) if spec["function"]["name"] != tool_menu.NAME)]
 
     def _metadata(self, name: str) -> dict:
         return {"effect": "read", "title": name, "internal": True} if name in ALL_INTERNAL_NAMES else self.tools.metadata(name)
