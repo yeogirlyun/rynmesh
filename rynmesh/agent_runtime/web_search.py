@@ -28,6 +28,7 @@ import os
 import re
 import socket
 import threading
+import tempfile
 import time
 import urllib.request
 from contextlib import ExitStack, contextmanager
@@ -40,6 +41,7 @@ from urllib.parse import parse_qs, quote_plus, unquote, urljoin, urlparse
 import httpx
 
 from ..atomic_io import atomic_write_json
+from ..services.document_extract import extract_document
 from ..services.reader import CACHE_TTL_S, ReaderCache, decode_html, extract_readable, readable_url
 from .protocol import sanitized
 from .store import AgentToolRejected
@@ -57,6 +59,37 @@ MAX_REDIRECTS = 5
 DEFAULT_TIMEOUT_S = 12.0
 MAX_TASK_REFS = 128
 _TRUNCATED_PAGE_NOTICE = "[Page truncated at 2 MiB]"
+_PDF_TEXT_UNAVAILABLE = (
+    "PDF text could not be extracted; download it with ryn_download_file and read it with document tools."
+)
+
+
+def _pdf_url(url):
+    return urlparse(url).path.lower().endswith(".pdf")
+
+
+def _pdf_article(data, url):
+    article = {"url": url, "title": unquote(urlparse(url).path.rsplit("/", 1)[-1]) or "PDF document",
+               "blocks": [], "pdf_text_unavailable": True}
+    # TemporaryDirectory removes the file in its finally path, including failures.
+    try:
+        with tempfile.TemporaryDirectory(prefix="ryn-web-pdf-") as folder:
+            target = Path(folder) / "source.pdf"
+            target.write_bytes(data)
+            os.chmod(target, 0o600)
+            result = extract_document(target, max_input_bytes=MAX_FETCH_BYTES, page_markers=True)
+    except OSError:
+        return article
+    coverage = result.get("pdf_pages")
+    if result["status"] not in {"parsed", "truncated"} or not coverage or (
+        coverage["processed"] <= coverage["failed"] + coverage["without_text"]
+    ) or not result["text"].strip():
+        return article
+    article.pop("pdf_text_unavailable")
+    article["pdf_pages"] = coverage
+    article["pdf_extraction_truncated"] = result["status"] == "truncated"
+    article["blocks"] = [{"type": "p", "text": line} for line in result["text"].splitlines() if line.strip()]
+    return article
 
 
 def _reject_binary_content_type(content_type):
@@ -536,6 +569,8 @@ class _BingHtmlParser(HTMLParser):
 
 def article_to_lines(article: dict[str, Any]) -> list[str]:
     """Convert a structured `extract_readable` article dict into clean, numbered-ready text lines."""
+    if article.get("pdf_text_unavailable"):
+        return [_PDF_TEXT_UNAVAILABLE]
     lines: list[str] = []
     title = _WHITESPACE_RE.sub(" ", str(article.get("title") or "")).strip()
     site = _WHITESPACE_RE.sub(" ", str(article.get("site_name") or "")).strip()
@@ -547,6 +582,9 @@ def article_to_lines(article: dict[str, Any]) -> list[str]:
     meta_parts = [p for p in (site, byline, url) if p]
     if meta_parts:
         lines.append("Source: " + " | ".join(meta_parts))
+    if article.get("pdf_pages"):
+        coverage = article["pdf_pages"]
+        lines.append(f"PDF pages: {coverage['total']}/{coverage['processed']}/{coverage['without_text']}")
 
     blocks = article.get("blocks")
     if isinstance(blocks, list):
@@ -592,6 +630,8 @@ def article_to_lines(article: dict[str, Any]) -> list[str]:
     if len(lines) <= 2 and excerpt:
         for chunk in _wrap_long_line(excerpt, width=160):
             lines.append(chunk)
+    if article.get("pdf_extraction_truncated"):
+        lines.append("[PDF text extraction truncated]")
     if article.get("fetch_truncated"):
         lines.append(_TRUNCATED_PAGE_NOTICE)
     return lines
@@ -1049,7 +1089,8 @@ class WebSearchEngine:
                 dns_resolver=self._dns_resolver,
                 proxy_active=self._proxy_active(final_url),
             )
-            _reject_binary_content_type(content_type)
+            if not (_pdf_url(final_url) and data.startswith(b"%PDF-")):
+                _reject_binary_content_type(content_type)
             return data[:MAX_FETCH_BYTES], final_url, content_type, len(data) >= MAX_FETCH_BYTES
 
         headers = {
@@ -1084,14 +1125,20 @@ class WebSearchEngine:
                             correction=f"HTTP {resp.status_code} when fetching '{current_url}'.",
                         )
                     content_type = str(resp.headers.get("content-type") or "text/html").lower()
-                    _reject_binary_content_type(content_type)
+                    pdf_candidate = _pdf_url(current_url)
+                    if not pdf_candidate:
+                        _reject_binary_content_type(content_type)
                     raw_bytes = bytearray()
                     for chunk in resp.iter_bytes():
                         check()
                         raw_bytes.extend(chunk[:MAX_FETCH_BYTES - len(raw_bytes)])
+                        if pdf_candidate and len(raw_bytes) >= 5 and not raw_bytes.startswith(b"%PDF-"):
+                            _reject_binary_content_type(content_type)
                         if len(raw_bytes) >= MAX_FETCH_BYTES:
                             break
                     check()
+                    if not raw_bytes.startswith(b"%PDF-"):
+                        _reject_binary_content_type(content_type)
                     return bytes(raw_bytes), current_url, content_type, len(raw_bytes) >= MAX_FETCH_BYTES
         raise AgentToolRejected(
             "agent_web_search_too_many_redirects",
@@ -1134,6 +1181,8 @@ class WebSearchEngine:
         cached_article = self.reader_cache.get(validated_url, now=stamp, allow_stale=(mode == "cached"))
         if cached_article is None and readable_url(validated_url) != validated_url:
             cached_article = self.reader_cache.get(readable_url(validated_url), now=stamp, allow_stale=(mode == "cached"))
+        if isinstance(cached_article, dict) and _pdf_url(validated_url) and not cached_article.get("pdf_checked"):
+            cached_article = None  # Old versions parsed these PDF bytes as HTML.
         if isinstance(cached_article, dict):
             lines = article_to_lines(cached_article)
             if lines:
@@ -1163,7 +1212,12 @@ class WebSearchEngine:
         raw_bytes, final_url, content_type, truncated = self._fetch_http_bytes(
             validated_url, allowed_domains, cancelled=cancelled,
         )
-        if any(ct in content_type for ct in ("text/plain", "text/markdown", "application/json")):
+        if content_type.partition(";")[0].strip().lower() == "application/pdf" or (
+            _pdf_url(final_url) and raw_bytes.startswith(b"%PDF-")
+        ):
+            article_obj = _pdf_article(raw_bytes, final_url)
+            lines = article_to_lines(article_obj)
+        elif any(ct in content_type for ct in ("text/plain", "text/markdown", "application/json")):
             text_body = decode_html(raw_bytes, content_type)
             raw_lines = [line.rstrip()[:300] for line in text_body.splitlines() if line.strip()]
             title = urlparse(final_url).path.rsplit("/", 1)[-1] or final_url
@@ -1194,7 +1248,9 @@ class WebSearchEngine:
 
         if truncated:
             article_obj["fetch_truncated"] = True
-            lines.append(_TRUNCATED_PAGE_NOTICE)
+            if not article_obj.get("pdf_text_unavailable"):
+                lines.append(_TRUNCATED_PAGE_NOTICE)
+        article_obj["pdf_checked"] = True
         article_obj["url"] = validated_url
         article_obj["fetched_at"] = int(time.time())
         try:

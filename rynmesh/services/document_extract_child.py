@@ -159,7 +159,7 @@ def pdf_available() -> bool:
     return True
 
 
-def _read_pdf(data: bytes, limit: int) -> tuple[str, dict]:
+def _read_pdf(data: bytes, limit: int, *, page_markers: bool = False) -> tuple[str, dict]:
     """Bounded text from the PDF bytes in ``data``. Raises on a malformed file."""
 
     from pypdf import PdfReader
@@ -168,7 +168,7 @@ def _read_pdf(data: bytes, limit: int) -> tuple[str, dict]:
     parts: list[str] = []
     total = 0
     coverage = {"total": len(reader.pages), "processed": 0, "failed": 0, "without_text": 0}
-    for page in reader.pages:
+    for number, page in enumerate(reader.pages, 1):
         coverage["processed"] += 1
         # A page's own extractor is the untrusted part; a failure on one page
         # must not discard the pages already read.
@@ -181,6 +181,8 @@ def _read_pdf(data: bytes, limit: int) -> tuple[str, dict]:
             continue
         if not piece.strip():
             coverage["without_text"] += 1
+        if page_markers:
+            piece = f"--- page {number} ---\n{piece}"
         parts.append(piece)
         total += len(piece)
         if total > limit:
@@ -209,7 +211,8 @@ def _extract(path: Path, kind: str) -> tuple[str, str, dict | None]:
     try:
         if kind == "office":
             return _read_office(data), "", None
-        text, coverage = _read_pdf(data, MAX_OUTPUT_CHARS)
+        text, coverage = _read_pdf(data, MAX_OUTPUT_CHARS,
+                                   page_markers=os.environ.get("RYNMESH_DOC_EXTRACT_PAGE_MARKERS") == "1")
         return text, "", coverage
     except OfficeLimitError:
         return "", FAILED_TOO_LARGE, None
