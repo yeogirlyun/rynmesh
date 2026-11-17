@@ -110,7 +110,8 @@ def test_t5_subagent_goal_tools_are_forbidden_even_with_inherited_data(tmp_path,
 def test_t6_specs_fit_pin_floor_and_describe_strict_creation_and_completion():
     specs = {s["function"]["name"]: s["function"] for s in ALL_INTERNAL_SPECS}
     assert NAMES <= specs.keys()
-    assert len(encoded(ALL_INTERNAL_SPECS)) <= 13840
+    # S06-I20 adds 391 bytes of optional result-read fields and query guidance.
+    assert len(encoded(ALL_INTERNAL_SPECS)) <= 14240
     assert "explicit" in specs["ryn_create_goal"]["description"].lower()
     assert "ordinary" in specs["ryn_create_goal"]["description"].lower()
     assert "token_budget" in specs["ryn_create_goal"]["description"]

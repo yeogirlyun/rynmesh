@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import copy
+from collections import OrderedDict
 import hashlib
 import json
 import re
 import uuid
+from threading import RLock
 
 from cryptography.exceptions import InvalidTag
 
@@ -15,7 +17,10 @@ from . import diagnostic_log
 from .store import AgentError, AgentToolRejected, encoded
 
 MAX_RESULT_BYTES = 2 * 1024 * 1024
-MAX_PAGE_CHARS = 48000
+MAX_PAGE_CHARS = 65536
+_TEXT_CACHE = OrderedDict()
+_TEXT_CACHE_LOCK = RLock()
+_TEXT_CACHE_MAX_CHARS = 8 * 1024 * 1024
 CHANNEL = b"rynmesh-agent-result-v1"
 WORKSTATION_INLINE_PREVIEW_FIELDS = {
     "ryn_file_read": "text",
@@ -325,22 +330,35 @@ def _read_compacted_entry(row: dict, result_id: str) -> tuple[object, dict]:
     raise AgentError("agent_result_not_found")
 
 
-def read(store, row, result_id, *, provider=False):
+def _result_text(store, row, result_id, *, provider=False):
     reference = next((ref for ref in row.get("result_refs", []) if ref["id"] == result_id), None)
     if reference is None:
         if provider and isinstance(result_id, str) and row.get("context_checkpoint"):
-            return _read_compacted_entry(row, result_id)
+            value, reference = _read_compacted_entry(row, result_id)
+            return encoded(value).decode(), reference
         raise AgentError("agent_result_not_found")
     if reference.get("expired"):
         raise AgentToolRejected("agent_result_expired", correction="This old result expired after the local storage limit was reached. Read the original source again if it is still authorized; this reference cannot be restored by retrying.")
     if provider and reference["context_epoch"] != row.get("context_epoch", 0):
         raise AgentError("agent_result_scope_changed")
+    cache_key = (row["id"], result_id, reference["sha256"])
+    with _TEXT_CACHE_LOCK:
+        cached = _TEXT_CACHE.get(cache_key)
+        if cached is not None:
+            _TEXT_CACHE.move_to_end(cache_key)
+            return cached, reference
     try:
         envelope = read_json(path(store, row["id"], result_id), max_bytes=3 * MAX_RESULT_BYTES)
         raw = peer_box.open_sealed(store.key, store.pub, envelope["nonce"], envelope["ciphertext"], info=CHANNEL)
         if len(raw) > MAX_RESULT_BYTES or hashlib.sha256(raw).hexdigest() != reference["sha256"]:
             raise ValueError
-        return json.loads(raw), reference
+        text = encoded(json.loads(raw)).decode()
+        with _TEXT_CACHE_LOCK:
+            _TEXT_CACHE[cache_key] = text
+            _TEXT_CACHE.move_to_end(cache_key)
+            while len(_TEXT_CACHE) > 4 or sum(map(len, _TEXT_CACHE.values())) > _TEXT_CACHE_MAX_CHARS:
+                _TEXT_CACHE.popitem(last=False)
+        return text, reference
     except (OSError, InvalidTag, ValueError, KeyError, TypeError) as exc:
         cause = exc.__cause__ or exc  # read_json wraps filesystem and JSON errors.
         if isinstance(cause, FileNotFoundError):
@@ -353,22 +371,101 @@ def read(store, row, result_id, *, provider=False):
         raise AgentError(code) from None
 
 
-def page(store, row, result_id, offset=0, limit=8192, *, provider=False):
+def read(store, row, result_id, *, provider=False):
+    text, reference = _result_text(store, row, result_id, provider=provider)
+    return json.loads(text), reference
+
+
+def page(store, row, result_id, offset=0, limit=8192, *, provider=False, max_bytes=None, return_reference=False):
     if type(offset) is not int or offset < 0 or type(limit) is not int or not 64 <= limit <= MAX_PAGE_CHARS:
         raise AgentError("agent_invalid_cursor")
-    value, reference = read(store, row, result_id, provider=provider)
-    text = encoded(value).decode()
+    text, reference = _result_text(store, row, result_id, provider=provider)
     if offset > len(text):
         raise AgentError("agent_invalid_cursor")
-    end = min(len(text), offset + limit)
+    budget = row["limits"]["max_output_chars"] - 512 if max_bytes is None else max_bytes
+    length = min(limit, budget * 3 // 4, len(text) - offset)
     out = {"id": result_id, "sha256": reference["sha256"], "bytes": reference["bytes"], "characters": len(text),
-           "offset": offset, "next_offset": end if end < len(text) else None, "content": text[offset:end]}
+           "offset": offset}
     if reference.get("truncated") is True:
         out["truncated"] = True
-    return out
+    while True:
+        end = offset + length
+        out.update(next_offset=end if end < len(text) else None, content=text[offset:end])
+        if len(encoded(out)) <= budget:
+            return (out, reference) if return_reference else out
+        if not length:
+            raise AgentError("agent_result_page_limit")
+        length = int(length * 0.8)
+
+
+def lines(store, row, result_id, *, pattern=None, context_lines=1, line_start=None, line_count=100,
+          provider=False, max_bytes=None, return_reference=False):
+    if (pattern is not None and line_start is not None
+            or pattern is not None and (not isinstance(pattern, str) or not 1 <= len(pattern) <= 200)
+            or type(context_lines) is not int or not 0 <= context_lines <= 5
+            or type(line_count) is not int or not 1 <= line_count <= 400
+            or line_start is not None and (type(line_start) is not int or line_start < 1)):
+        raise AgentError("agent_invalid_cursor")
+    text, reference = _result_text(store, row, result_id, provider=provider)
+    value = json.loads(text)
+    field = None
+    if isinstance(value, str):
+        text = value
+    elif isinstance(value, dict):
+        field = next((key for key in ("text", "output", "content") if isinstance(value.get(key), str)), None)
+        if field:
+            text = value[field]
+    source = text.split("\n")
+    total = len(source)
+    if pattern is not None:
+        hits = [i for i, line in enumerate(source) if pattern in line]
+        chosen_hits = set(hits[:40])
+        indices = sorted({i for hit in hits[:40]
+                          for i in range(max(0, hit - context_lines), min(total, hit + context_lines + 1))})
+        more = len(hits) > 40
+    else:
+        start = (line_start or 1) - 1
+        if start > total:
+            raise AgentError("agent_invalid_cursor")
+        indices = list(range(start, min(total, start + line_count)))
+        more = bool(indices and indices[-1] + 1 < total)
+        chosen_hits = set()
+    out = {"id": result_id, "sha256": reference["sha256"], "bytes": reference["bytes"],
+           "total_lines": total, "lines": [], "next_line": None}
+    if field:
+        out["field"] = field
+    budget = row["limits"]["max_output_chars"] - 512 if max_bytes is None else max_bytes
+    for index in indices:
+        item = {"line": index + 1, "text": source[index]}
+        if pattern is not None:
+            item["match"] = index in chosen_hits
+        candidate = {**out, "lines": [*out["lines"], item], "next_line": index + 2 if index + 1 < total else None}
+        if len(encoded(candidate)) > budget:
+            if out["lines"]:
+                out["next_line"] = index + 1
+                break
+            item["truncated"] = True
+            length = min(len(item["text"]), budget * 3 // 4)
+            while True:
+                item["text"] = source[index][:length]
+                if len(encoded(candidate)) <= budget:
+                    out = candidate
+                    break
+                if not length:
+                    raise AgentError("agent_result_page_limit")
+                length = int(length * 0.8)
+            break
+        out = candidate
+    else:
+        out["next_line"] = indices[-1] + 2 if more and indices else None
+    return (out, reference) if return_reference else out
 
 
 def purge(store, task_id):
+    with _TEXT_CACHE_LOCK:
+        for key in list(_TEXT_CACHE):
+            if key[0] == task_id:
+                del _TEXT_CACHE[key]
     root = (store.root / "results").resolve()
     directory = root / hashlib.sha256(task_id.encode()).hexdigest()
     if not directory.exists():
