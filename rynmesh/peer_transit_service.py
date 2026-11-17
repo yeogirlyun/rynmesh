@@ -86,15 +86,17 @@ def advertise_transit_capacity(
     network_id: str,
     roles: Iterable[str] = ("target", "transit"),
     max_concurrent: int = 8,
+    polling_interval_sec: int = int(DEFAULT_CAPACITY_REFRESH_S),
 ) -> dict[str, Any]:
     normalized_roles = sorted({str(role).strip() for role in roles if str(role).strip()})
     if not normalized_roles or any(role not in {"target", "transit"} for role in normalized_roles):
         raise PeerTransitError("transit capacity roles are invalid")
     return store.register_job_capacity(
+        owner="transit",
         network_id=network_id,
         capabilities=[TRANSIT_CAPABILITY],
         max_concurrent=max_concurrent,
-        polling_interval_sec=1,
+        polling_interval_sec=polling_interval_sec,
         metadata={
             "protocol_version": PROTOCOL_VERSION,
             "roles": normalized_roles,
@@ -671,6 +673,7 @@ class PeerTransitWorker:
             network_id=self.network_id,
             roles=roles,
             max_concurrent=self.max_concurrent,
+            polling_interval_sec=max(1, int(self.capacity_refresh_s)),
         )
 
     def serve_forever(self, *, poll_interval_s: float = 0.2, stop_event: Any | None = None) -> None:
@@ -683,51 +686,54 @@ class PeerTransitWorker:
         in_flight: dict[str, Future[None]] = {}
         last_error_message = ""
         last_error_logged_at = float("-inf")
-        with ThreadPoolExecutor(
-            max_workers=self.max_concurrent,
-            thread_name_prefix=f"rynmesh-{self.role}",
-        ) as pool:
-            while stop_event is None or not stop_event.is_set():
-                try:
-                    for order_id, future in list(in_flight.items()):
-                        if not future.done():
-                            continue
-                        try:
-                            future.result()
-                        finally:
-                            del in_flight[order_id]
-                    now = time.monotonic()
-                    if now >= next_capacity_refresh:
-                        self.register()
-                        next_capacity_refresh = now + self.capacity_refresh_s
-                    available = self.max_concurrent - len(in_flight)
-                    if available > 0:
-                        for order in self._pending_orders():
-                            order_id = str(order.get("work_order_id") or "")
-                            handler = self._handler_for_order(order)
-                            if not order_id or handler is None or order_id in in_flight:
+        try:
+            with ThreadPoolExecutor(
+                max_workers=self.max_concurrent,
+                thread_name_prefix=f"rynmesh-{self.role}",
+            ) as pool:
+                while stop_event is None or not stop_event.is_set():
+                    try:
+                        for order_id, future in list(in_flight.items()):
+                            if not future.done():
                                 continue
-                            in_flight[order_id] = pool.submit(self._run_order, order, handler)
-                            available -= 1
-                            if available == 0:
-                                break
-                except KeyboardInterrupt:
-                    raise
-                except Exception as exc:  # noqa: BLE001
-                    message = f"{type(exc).__name__}: {exc}"
-                    self._record_control_error(message)
-                    error_at = time.monotonic()
-                    if (
-                        message != last_error_message
-                        or error_at - last_error_logged_at >= WORKER_ERROR_LOG_INTERVAL_S
-                    ):
-                        print(f"[{TRANSIT_CAPABILITY}] worker error: {message}")
-                        last_error_message = message
-                        last_error_logged_at = error_at
-                if stop_event is None:
-                    time.sleep(poll_interval_s)
-                else:
-                    stop_event.wait(poll_interval_s)
+                            try:
+                                future.result()
+                            finally:
+                                del in_flight[order_id]
+                        now = time.monotonic()
+                        if now >= next_capacity_refresh:
+                            self.register()
+                            next_capacity_refresh = now + self.capacity_refresh_s
+                        available = self.max_concurrent - len(in_flight)
+                        if available > 0:
+                            for order in self._pending_orders():
+                                order_id = str(order.get("work_order_id") or "")
+                                handler = self._handler_for_order(order)
+                                if not order_id or handler is None or order_id in in_flight:
+                                    continue
+                                in_flight[order_id] = pool.submit(self._run_order, order, handler)
+                                available -= 1
+                                if available == 0:
+                                    break
+                    except KeyboardInterrupt:
+                        raise
+                    except Exception as exc:  # noqa: BLE001
+                        message = f"{type(exc).__name__}: {exc}"
+                        self._record_control_error(message)
+                        error_at = time.monotonic()
+                        if (
+                            message != last_error_message
+                            or error_at - last_error_logged_at >= WORKER_ERROR_LOG_INTERVAL_S
+                        ):
+                            print(f"[{TRANSIT_CAPABILITY}] worker error: {message}")
+                            last_error_message = message
+                            last_error_logged_at = error_at
+                    if stop_event is None:
+                        time.sleep(poll_interval_s)
+                    else:
+                        stop_event.wait(poll_interval_s)
+        finally:
+            self.store.withdraw_job_capacity("transit", self.network_id)
 
     def _pending_orders(self) -> list[dict[str, Any]]:
         return self.store.poll_work_orders(

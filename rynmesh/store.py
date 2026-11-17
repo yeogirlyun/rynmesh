@@ -15,6 +15,8 @@ import re
 import shutil
 import socket
 import sys
+import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -357,6 +359,7 @@ class RynmeshStore:
         # services on one node merge into the single per-peer capacity record
         # instead of overwriting each other. See register_job_capacity.
         self._advertised_capacity: dict[str, dict[str, Any]] = {}
+        self._capacity_lock = threading.RLock()
         self.credit_ledger = FileCreditLedger(
             self.network_dir / "credits",
             tier_resolver=self._resolve_identity_tier,
@@ -506,6 +509,7 @@ class RynmeshStore:
         self,
         *,
         capabilities: list[str] | tuple[str, ...],
+        owner: str = "default",
         network_id: str = "rynmesh-main",
         capacity_units: int = 1,
         max_concurrent: int = 1,
@@ -516,28 +520,52 @@ class RynmeshStore:
         cleaned_capabilities = tuple(str(item).strip() for item in capabilities if str(item).strip())
         if not cleaned_capabilities:
             raise ValueError("capabilities are required")
-        # The registry stores ONE capacity record per peer, replaced wholesale.
-        # Multiple services on one node (LLM provider, video, egress) each
-        # register their own capability list, and the LLM provider republishes
-        # every 30s — without merging, every publication wipes the others'
-        # capabilities out of discovery. Merge against what this process has
-        # already advertised: capabilities union, metadata/price update.
-        merged = self._advertised_capacity.setdefault(network_id, {
-            "capabilities": set(), "price_credits": {}, "metadata": {},
-        })
-        merged["capabilities"].update(cleaned_capabilities)
-        merged["price_credits"].update(dict(price_credits or {}))
-        merged["metadata"].update(dict(metadata or {}))
+        with self._capacity_lock:
+            self._advertised_capacity.setdefault(network_id, {})[owner] = {
+                "capabilities": cleaned_capabilities,
+                "price_credits": dict(price_credits or {}),
+                "metadata": dict(metadata or {}),
+                "refreshed_at": time.monotonic(),
+                "polling_interval_sec": max(1, int(polling_interval_sec or 30)),
+                "capacity_units": max(1, int(capacity_units or 1)),
+                "max_concurrent": max(1, int(max_concurrent or 1)),
+            }
+            return self._publish_job_capacity(network_id)
+
+    def withdraw_job_capacity(self, owner: str, network_id: str) -> dict[str, Any]:
+        with self._capacity_lock:
+            owners = self._advertised_capacity.get(network_id, {})
+            if not owners:
+                return {"withdrawn": False, "published": False}
+            withdrawn = owner in owners
+            owners.pop(owner, None)
+            return {**self._publish_job_capacity(network_id), "withdrawn": withdrawn}
+
+    def _publish_job_capacity(self, network_id: str) -> dict[str, Any]:
+        """Publish only live owners; caller holds _capacity_lock."""
+        now = time.monotonic()
+        owners = self._advertised_capacity.get(network_id, {})
+        for owner, value in list(owners.items()):
+            if now - value["refreshed_at"] > 3 * value["polling_interval_sec"]:
+                del owners[owner]
+        if not owners:
+            self._advertised_capacity.pop(network_id, None)
+            return {"published": False}
+        active = sorted(owners.values(), key=lambda value: value["refreshed_at"])
+        capabilities = sorted({cap for value in active for cap in value["capabilities"]})
+        prices = {key: price for value in active for key, price in value["price_credits"].items()}
+        metadata = {key: item for value in active for key, item in value["metadata"].items()}
+        latest = active[-1]
         record = JobCapacityRecord(
             peer_id=self.peer_id,
             node_name=self.node_name,
-            capabilities=tuple(sorted(merged["capabilities"])),
+            capabilities=tuple(capabilities),
             network_id=network_id,
-            capacity_units=max(1, int(capacity_units or 1)),
-            max_concurrent=max(1, int(max_concurrent or 1)),
-            price_credits=dict(merged["price_credits"]),
-            polling_interval_sec=max(1, int(polling_interval_sec or 30)),
-            metadata=dict(merged["metadata"]),
+            capacity_units=latest["capacity_units"],
+            max_concurrent=latest["max_concurrent"],
+            price_credits=prices,
+            polling_interval_sec=latest["polling_interval_sec"],
+            metadata=metadata,
         )
         signed = sign_job_capacity(record, private_key_bytes=self.private_key_bytes)
         result = self.registry.publish_job_capacity(signed)
@@ -549,7 +577,7 @@ class RynmeshStore:
             evidence_hash=signed.subject_hash,
             reason="node advertised polling job capacity",
             dedupe_key=f"job_capacity:{network_id}:{self.peer_id}",
-            metadata={"capabilities": list(cleaned_capabilities)},
+            metadata={"capabilities": capabilities},
         )
         result["record"] = record.to_dict()
         result["record_hash"] = signed.subject_hash

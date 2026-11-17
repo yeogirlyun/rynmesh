@@ -1463,6 +1463,7 @@ def create_app(store: RynmeshStore | None = None):
         local_control(request)
         body = await request.json()
         return active_store.register_job_capacity(
+            owner="manual",
             capabilities=tuple(str(item) for item in body.get("capabilities", []) if str(item)),
             network_id=control_network_id(body.get("network_id")),
             capacity_units=int(body.get("capacity_units") or 1),
