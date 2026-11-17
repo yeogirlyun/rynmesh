@@ -1067,6 +1067,8 @@ export default function RynAgent() {
   const imageWarning = selectedModel?.supports_image_input === false ? t("modelCannotReadImages", { model: selectedModel.name }) : undefined;
   const latestOwnerSeq = Math.max(0, ...(task?.events || []).filter(item => OWNER_TURN_EVENT_TYPES.has(item.type)).map(item => item.seq));
   const latestTurnEvents = (task?.events || []).filter(item => item.seq > latestOwnerSeq);
+  const imageLimitNotice = [...latestTurnEvents].reverse().find(item =>
+    (item.type === "images_resized_for_shared_route" || item.type === "images_omitted_for_limits") && typeof item.omitted === "number" && item.omitted > 0);
   const imageNotice = latestTurnEvents.some(item => item.type === "images_omitted") ? "imagesOmittedHelp"
     : latestTurnEvents.some(item => item.type === "images_resized_for_shared_route") ? "imagesResizedHelp" : "";
   const supportedEfforts = selectedModel?.supported_reasoning_efforts || [];
@@ -1276,7 +1278,8 @@ export default function RynAgent() {
             {task.status === "cancelled" && <p className="ra-turn-evidence">{t("cancelHelp")}</p>}
             {task.continued_from && <div className="ra-banner" role="note"><span>{t("continuedFromHelp")}</span><button type="button" onClick={() => chooseTask(task.continued_from!)}>{t("openOriginalConversation")}</button></div>}
             {task.continued_to && <div className="ra-banner" role="note"><span>{t("continuedToHelp")}</span><button type="button" onClick={() => chooseTask(task.continued_to!)}>{t("openContinuedConversation")}</button></div>}
-            {imageNotice && <p className="ra-turn-evidence" role="note">{t(imageNotice)}</p>}
+            {imageLimitNotice ? <p className="ra-turn-evidence" role="note">{t(imageLimitNotice.omitted_old === imageLimitNotice.omitted ? "oldImagesNotSent" : "imagesNotSent", { count: Number(imageLimitNotice.omitted) })}</p>
+              : imageNotice && <p className="ra-turn-evidence" role="note">{t(imageNotice)}</p>}
             {task.result && <section className="ra-result"><strong>{t("result")}</strong><ChatMarkdown fileLinks>{task.result}</ChatMarkdown></section>}
             <RynAgentFileChanges key={`changes/${task.id}`} taskId={task.id} changeKey={latestFileToolResultSeq(task)} />
             <TaskResultFiles key={`results/${task.id}`} task={task} />

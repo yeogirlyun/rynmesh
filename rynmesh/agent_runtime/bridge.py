@@ -320,11 +320,23 @@ class AgentModelBridge:
                 try:
                     messages, shared_resize = image_capabilities.fit_images_for_shared_route(
                         messages, shared_carrier or "inline-v1")
+                except AgentError:
+                    raise
                 except (ValueError, OSError):
                     raise AgentError("agent_image_invalid") from None
             else:
                 image_capabilities.require_route_image_support(target, model_client=self)
-        policy = output_policy.select(target, messages, tool_specs, request_cap=max_output_tokens)
+        try:
+            policy = output_policy.select(target, messages, tool_specs, request_cap=max_output_tokens)
+        except AgentError as exc:
+            messages, omitted = image_capabilities.omit_old_images_for_limits(messages, exc)
+            if not omitted:
+                raise
+            policy = output_policy.select(target, messages, tool_specs, request_cap=max_output_tokens)
+            shared_resize = {**(shared_resize or {"carrier": "local", "resized": 0}),
+                "omitted": (shared_resize or {}).get("omitted", 0) + omitted,
+                "omitted_old": (shared_resize or {}).get("omitted_old", 0) + omitted}
+        has_images = image_capabilities.message_has_image_input(messages)
         maximum = policy["effective_cap"]
         image_profile = None
         if has_images:
@@ -651,7 +663,7 @@ class AgentModelBridge:
                 err.request_id = task_id
                 raise err
             response = {**self._response(result, target, tool_specs, policy), "request_policy": request_policy, "request_id": task_id,
-                        **({"shared_image_resize": shared_resize} if shared_resize and shared_resize.get("resized") else {})}
+                        **({"shared_image_resize": shared_resize} if shared_resize and (shared_resize.get("resized") or shared_resize.get("omitted")) else {})}
             if response.get("server_model"):
                 response["requested_model"] = str(target.get("cli_model") or (
                     getattr(manager.adapter, "model", "") if manager else target.get("model_id", "")))[:160]

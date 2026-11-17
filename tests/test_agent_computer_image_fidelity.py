@@ -788,7 +788,7 @@ def test_independent_budget_context_and_transport_gates_before_model_call(tmp_pa
         assert bridge.calls == []
         assert (store.read()["tasks"][tb_id].get("image_request_links") or []) == []
 
-        # 5. Independent transport limits: >4 images rejected with agent_context_limit
+        # 5. Independent transport limits: >4 images rejected with agent_image_count_limit
         small_b64 = base64.b64encode(_make_png_bytes(64, 64)).decode("ascii")
         five_images_msg = [
             {
@@ -799,7 +799,7 @@ def test_independent_budget_context_and_transport_gates_before_model_call(tmp_pa
                 ],
             }
         ]
-        with pytest.raises(AgentError, match="agent_context_limit"):
+        with pytest.raises(AgentError, match="agent_image_count_limit"):
             output_policy.select(model_32k, five_images_msg, [])
 
         # 6. Real AgentModelBridge.complete preflight enforces route image support and output_policy bounds
@@ -817,7 +817,7 @@ def test_independent_budget_context_and_transport_gates_before_model_call(tmp_pa
 
         pos_catalog = StaticCatalog([model_32k])
         real_pos_bridge = AgentModelBridge({"provider_for": lambda _sid: None}, pos_catalog)
-        with pytest.raises(AgentError, match="agent_context_limit"):
+        with pytest.raises(AgentError, match="agent_image_count_limit"):
             real_pos_bridge.complete(model_32k["id"], five_images_msg, [], lambda: False)
     finally:
         tools.close()

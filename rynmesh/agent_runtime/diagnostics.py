@@ -10,7 +10,7 @@ import math
 import re
 from datetime import datetime
 
-from . import diagnostic_log, execution_policy, model_profiles
+from . import diagnostic_log, execution_policy, model_profiles, output_policy
 from .store import AgentError, AgentToolRejected
 
 _TITLES = {
@@ -26,6 +26,8 @@ _STATES = {"queued", "running", "paused", "waiting_input", "waiting_approval", "
 _RUN_STATES = _STATES | {"pausing", "reconciling", "ended"}
 _OUTCOMES = {"unverified", "verified", "partial", "not_achieved", "unknown", "budget_limited"}
 _ERROR_GUIDANCE = {
+    "agent_image_too_large": ("resize_images", "图片太大，请压缩后重发。", "/agent"),
+    "agent_image_count_limit": ("reduce_images", f"图片太多，单次最多 {output_policy.MAX_REQUEST_IMAGES} 张。", "/agent"),
     "agent_workspace_required": ("choose_workspace", "No working directory is bound to this task. The owner must select a working directory in task settings; a chat answer containing a path does not configure it.", "/agent"),
     "agent_workspace_changed_new_task_required": ("choose_workspace", "The working directory changed. The owner must explicitly rebind this task to the new directory before continuing.", "/agent"),
     "agent_invalid_control_proposal": ("correct_input_request", "Correct the control arguments. Credential requests accept only credential_ref fields; ordinary facts use a separate information/choice request. Never put a key in chat.", "/agent"),
@@ -240,6 +242,10 @@ class DiagnosticTools:
                 "suggestions": [{"id": key, "instruction": text, "owner_path": path, "executed": False} for key, text, path in guidance],
                 "evidence": {"kind": "current_task_runtime_record", "other_tasks_read": False},
                 "note": "All states and counters describe task_id only, not the diagnosing task. Error codes classify observed failures, not every underlying cause. Missing time/usage stays null. A finished turn is not proof of goal completion."}
+        if error in {"agent_image_too_large", "agent_image_count_limit"}:
+            result["image_limits"] = {"max_images": output_policy.MAX_REQUEST_IMAGES,
+                "max_single_image_bytes": output_policy.MAX_SINGLE_IMAGE_DECODED_BYTES,
+                "max_total_image_bytes": output_policy.MAX_TOTAL_IMAGE_DECODED_BYTES}
         if error == "agent_model_quota_exhausted":
             last_failure = next((entry for entry in reversed(row.get("events", []))
                                  if entry.get("type") == "failed" and entry.get("error") == error), {})

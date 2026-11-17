@@ -1,6 +1,8 @@
 import i18n from "../i18n";
 
 const en = {
+  oldImagesNotSent: "{{count}} old images were not sent. Ask to resend them if needed.",
+  imagesNotSent: "{{count}} images were not sent because they exceeded the image limits.",
   addAttachments: "Attach images or files", removeAttachment: "Remove {{name}}", dropAttachments: "Drop files to attach", preparingAttachments: "Preparing attachments…", attachments: "Attachments", attachmentLimit: "Attach up to {{count}} files, each up to {{fileMB}} MB and {{totalMB}} MB total; up to {{images}} images. Large files can be dragged in or chosen via the file dialog to reference by path.", attachmentLimit_count: "{{name}}: Attach up to {{max}} files.", attachmentLimit_images: "{{name}}: Attach up to {{max}} images.", attachmentLimit_file_bytes: "{{name}} exceeds the single-file limit ({{maxMB}} MB). Large files can be dragged in or chosen via the file dialog to reference by path.", attachmentLimit_total_bytes: "{{name}} exceeds the total attachment size limit ({{maxMB}} MB). Large files can be dragged in or chosen via the file dialog to reference by path.", attachmentDirectoryNotice: "Folders cannot be attached; the path was added to your message. Use Automatic permissions or an extra working directory to read files inside it.", attachmentDirectoryError: "Folders cannot be attached as files. Put the folder path in your message instead.", attachmentReadError: "Could not read the attachment. Try adding it again.", attachmentOnlyMessage: "Please read the attached files.",
   editMessage: "Edit message", editMessageText: "Edit previous message", editMessageHelp: "Continue from this message. Later replies will be regenerated.", cancelEditMessage: "Cancel", saveAndSend: "Save and send",
   unsentMessage: "A message in another chat was not sent. Your text is saved here.",
@@ -95,6 +97,8 @@ const en = {
   resumeQueue: "Resume queue", steeringInProgress: "Steering active turn…",
 };
 const zh: Record<keyof typeof en, string> = {
+  oldImagesNotSent: "{{count}} 张旧图片未发送，需要查看时请重新发送。",
+  imagesNotSent: "{{count}} 张图片超过图片上限，未发送。",
   addAttachments: "添加图片或文件", removeAttachment: "移除 {{name}}", dropAttachments: "松开以添加文件", preparingAttachments: "正在准备附件…", attachments: "附件", attachmentLimit: "最多添加 {{count}} 个文件、{{images}} 张图片；单个文件不超过 {{fileMB}} MB，总计不超过 {{totalMB}} MB。大文件可直接拖入或用文件对话框选择，按路径引用。", attachmentLimit_count: "“{{name}}”超出数量上限：最多添加 {{max}} 个文件。", attachmentLimit_images: "“{{name}}”超出图片数量上限：最多添加 {{max}} 张图片。", attachmentLimit_file_bytes: "“{{name}}”超出单文件上限（{{maxMB}} MB）。大文件可直接拖入或用文件对话框选择，按路径引用。", attachmentLimit_total_bytes: "“{{name}}”超出附件总大小上限（{{maxMB}} MB）。大文件可直接拖入或用文件对话框选择，按路径引用。", attachmentDirectoryNotice: "文件夹不能作为附件，已作为路径写入消息；需要读取其中文件请用自动处理档或额外工作目录", attachmentDirectoryError: "文件夹不能作为附件，请将文件夹路径直接写在消息中；需要读取其中文件请用自动处理档或额外工作目录。", attachmentReadError: "无法读取附件，请重新添加。", attachmentOnlyMessage: "请查看附件文件。",
   editMessage: "编辑消息", editMessageText: "修改之前的消息", editMessageHelp: "从这条消息继续，后续回复将重新生成。", cancelEditMessage: "取消", saveAndSend: "保存并发送",
   unsentMessage: "另一条聊天的消息未发送成功，原文已保留在这里。",

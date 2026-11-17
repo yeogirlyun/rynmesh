@@ -1238,6 +1238,7 @@ class AgentRuntime(AgentLoop):
         # escaping and validated inline image bounds, before reserving or dispatching inference.
         model = self._model_metadata(row["model_id"]) or {}
         context_policy = self._context_policy(row)
+        messages = self._fit_image_history(row, messages, specs)
 
         def admit_effective_capacity(analysis):
             # Every model request (main, summary, checker, image inspection)
@@ -1320,6 +1321,7 @@ class AgentRuntime(AgentLoop):
                 model_client=self.model,
                 native_artifact_loader=self._native_artifact_loader(),
             )
+            dispatch_messages = self._fit_image_history(row, dispatch_messages, specs)
             admit_effective_capacity(output_policy.admit_request_context(
                 model,
                 dispatch_messages,
@@ -1433,7 +1435,7 @@ class AgentRuntime(AgentLoop):
                     self._record_image_request_linkage(row, attempted_linkage)
             raise
         resize = response.get("shared_image_resize") if isinstance(response, dict) else None
-        if isinstance(resize, dict) and resize.get("resized") and not nested:
+        if isinstance(resize, dict) and (resize.get("resized") or resize.get("omitted")) and not nested:
             self._note_shared_image_resize(row["id"], resize)
         if image_report and image_report.get("has_candidate_artifacts"):
             dispatch_status = "submitted" if image_report.get("image_prepared") else "not_dispatched"
@@ -3444,12 +3446,23 @@ class AgentRuntime(AgentLoop):
         except AgentError:
             pass  # A notice must never fail the request itself.
 
+    def _fit_image_history(self, row, messages, specs):
+        try:
+            output_policy._enforce_analysis_bounds(output_policy.analyze_request(messages, specs))
+        except AgentError as exc:
+            messages, omitted = image_capabilities.omit_old_images_for_limits(messages, exc)
+            if not omitted:
+                raise
+            output_policy._enforce_analysis_bounds(output_policy.analyze_request(messages, specs))
+            self._note_shared_image_resize(row["id"], {"carrier": "local", "resized": 0, "omitted": omitted, "omitted_old": omitted})
+        return messages
+
     def _note_shared_image_resize(self, task_id: str, report: dict) -> None:
         def note(data):
             row = data["tasks"].get(task_id)
             if row is not None:
-                event(row, "images_resized_for_shared_route",
-                      **{key: report[key] for key in ("carrier", "images", "resized", "original_bytes", "final_bytes")
+                event(row, "images_omitted_for_limits" if report.get("carrier") == "local" else "images_resized_for_shared_route",
+                      **{key: report[key] for key in ("carrier", "images", "resized", "original_bytes", "final_bytes", "omitted", "omitted_old")
                          if type(report.get(key)) in (int, str)})
         try:
             self.store.transaction(note)
@@ -4644,7 +4657,7 @@ class AgentRuntime(AgentLoop):
         except ValueError as exc:
             # Only explicitly enumerated boundary codes may reach the owner.
             # Arbitrary provider exceptions can contain URLs or credentials.
-            safe = {"agent_context_limit", "agent_inference_failed", "agent_invalid_model_response",
+            safe = {"agent_context_limit", "agent_image_too_large", "agent_image_count_limit", "agent_inference_failed", "agent_invalid_model_response",
                     "agent_model_busy", "agent_model_output_limit", "agent_model_unavailable", "agent_model_starting",
                     "agent_model_tools_unsupported", "agent_output_truncated", "agent_tool_call_limit", "agent_unknown_tool",
                     "agent_approval_preview_changed", "agent_friend_inactive", "agent_friend_model_not_shareable",

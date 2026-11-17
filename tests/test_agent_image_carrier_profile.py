@@ -805,7 +805,7 @@ def test_carrier_profile_enforces_byte_count_pixel_raw_and_manual_caps_with_zero
     with patch("urllib.request.urlopen", capture):
         with pytest.raises(AgentError) as exc_info:
             bridge.complete(row["id"], _user_image_messages(over_8mib), [], lambda: False)
-    assert str(exc_info.value) == "agent_context_limit"
+    assert str(exc_info.value) == "agent_image_too_large"
     assert len(capture.calls) == 0
 
     # 2) Total decoded image bytes > 12 MiB across 2 valid ~6.5 MiB images (1800 x 1220 RGB = ~6.59 MiB each)
@@ -826,7 +826,7 @@ def test_carrier_profile_enforces_byte_count_pixel_raw_and_manual_caps_with_zero
     with patch("urllib.request.urlopen", capture):
         with pytest.raises(AgentError) as exc_info:
             bridge.complete(row["id"], two_6_5m_msgs, [], lambda: False)
-    assert str(exc_info.value) == "agent_context_limit"
+    assert str(exc_info.value) == "agent_image_too_large"
     assert len(capture.calls) == 0
 
     # 3) More than 4 images in request (5 small canonical images)
@@ -839,7 +839,7 @@ def test_carrier_profile_enforces_byte_count_pixel_raw_and_manual_caps_with_zero
     with patch("urllib.request.urlopen", capture):
         with pytest.raises(AgentError) as exc_info:
             bridge.complete(row["id"], five_images_msgs, [], lambda: False)
-    assert str(exc_info.value) == "agent_context_limit"
+    assert str(exc_info.value) == "agent_image_count_limit"
     assert len(capture.calls) == 0
 
     # 4) Single image > 16,000,000 pixels (4001 x 4000 solid PNG = 16,004,000 pixels, small byte size)
