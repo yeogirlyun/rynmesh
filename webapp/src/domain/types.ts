@@ -1,6 +1,6 @@
 export type IdentityTier = "unverified" | "attested" | "staked" | "proven";
-export type SafetyOutcome = "passed" | "pending" | "flagged" | "blocked" | "unscanned";
-export type ProvenanceStatus = "signed" | "partial" | "unsigned" | "broken";
+export type SafetyOutcome = "passed" | "pending" | "flagged" | "blocked" | "unscanned" | "not_applicable";
+export type ProvenanceStatus = "signed" | "partial" | "unsigned" | "broken" | "not_applicable";
 export type FetchStatus =
   | "local"
   | "local_draft"
@@ -52,7 +52,7 @@ export interface ContentItem {
   publisher_peer_id: string;
   provider_peer_id: string;
   source_peer_name?: string;
-  identity_tier?: IdentityTier;
+  identity_tier?: IdentityTier | "unknown";
   credit_score?: number;
   distribution_weight: number;
   safety_outcome: SafetyOutcome;
@@ -188,7 +188,7 @@ export interface NodeStatus {
   peer_count: number;
   local_items: number;
   fetched_items: number;
-  pending_recs: number;
+  pending_recs?: number;
   version: string;
   uptime_seconds: number;
 }
@@ -259,8 +259,8 @@ export interface NodeSettings {
   cloud_access: boolean;
   rank_default: "weight" | "newest" | "trusted" | "ai" | "novelty";
   publish_visibility: "network" | "trusted" | "local";
-  fetch_budget_mb: number;
-  fetch_used_mb: number;
+  fetch_budget_mb?: number;
+  fetch_used_mb?: number;
   fetch_timeout_s: number;
   onboarding_version: number;
   notifications_enabled: boolean;
