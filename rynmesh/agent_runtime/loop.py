@@ -526,6 +526,7 @@ class AgentLoop:
                 if row["steps"] >= row["limits"]["max_steps"] and budget.segment_is_hard(row, "max_steps"):
                     raise AgentError("agent_step_limit")
                 row["steps"] += 1
+                event_compaction.check_in_turn_limits(row)
                 if (row.get("context_usage") or {}).get("context_epoch", 0) != row.get("context_epoch", 0):
                     row["context_notice_level"] = 0
                 row["context_usage"] = {
@@ -1929,6 +1930,7 @@ class AgentLoop:
             # sent yet, so it must not be recorded or recovered as compaction.
             row["in_flight"] = self._main_flight(selected.get("in_flight")) or row.get("in_flight")
             event(row, "context_compacted", through=cut, source_sha256=checkpoint["source_sha256"])
+            event_compaction.compact_in_turn(row)
             return True
         return self.store.transaction(save)
 

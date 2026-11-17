@@ -10,6 +10,9 @@ import re
 from collections import Counter
 from typing import Any
 
+from . import budget
+from .output_policy import encoded
+
 _CONTINUED_SUFFIX = re.compile(r"\s*（续(?: (\d+))?）$")
 
 
@@ -61,13 +64,11 @@ def fold_stream_deltas(row: dict[str, Any]) -> int:
     return before - len(row["events"])
 
 
-def compact_old_turns(row: dict[str, Any], *, keep_turns: int = KEEP_RECENT_TURNS) -> int:
-    """Condense process events of all but the latest turns. Returns events removed."""
+def _compact_before(row: dict[str, Any], cutoff: int) -> int:
+    """Shared folding for an eligible prefix, retaining receipt/coverage sources."""
     events = row["events"]
-    starts = [index for index, item in enumerate(events) if item.get("type") in OWNER_TURN_TYPES]
-    if len(starts) <= keep_turns:
-        return 0
-    cutoff = starts[-keep_turns]
+    writes = {(item.get("context_epoch", 0), item["call_id"]) for item in events
+              if item.get("type") == "tool_started" and item.get("effect") == "write" and item.get("call_id")}
     kept: list[dict[str, Any]] = []
     pending: list[dict[str, Any]] = []
 
@@ -80,13 +81,20 @@ def compact_old_turns(row: dict[str, Any], *, keep_turns: int = KEEP_RECENT_TURN
         summary = {"seq": last["seq"], "type": "turn_compacted", "at": last.get("at"),
                    "context_epoch": last.get("context_epoch", 0), "events": len(pending),
                    "operations": sum(tools.values()), "tools": dict(tools.most_common(20))}
+        successes = [item["seq"] for item in pending if budget._successful_tool_result(item)]
+        if successes:
+            summary["successful_tool_result_seqs"] = successes
         if "run_elapsed_seconds" in last:
             summary["run_elapsed_seconds"] = last["run_elapsed_seconds"]
         kept.append(summary)
         pending.clear()
 
     for item in events[:cutoff]:
-        if item.get("type") in OWNER_TURN_TYPES:
+        kind = item.get("type")
+        evidence = (kind in {"tool_started", "tool_result"} and
+                    (item.get("effect") == "write" or (item.get("context_epoch", 0), item.get("call_id")) in writes))
+        evidence = evidence or (kind == "tool_result" and item.get("tool") == "ryn_file_read")
+        if evidence or kind in OWNER_TURN_TYPES:
             flush()
             kept.append(item)
         elif item.get("type") in CONDENSED_TYPES:
@@ -99,6 +107,44 @@ def compact_old_turns(row: dict[str, Any], *, keep_turns: int = KEEP_RECENT_TURN
     if removed > 0:
         row["events"] = kept + events[cutoff:]
     return max(0, removed)
+
+
+def compact_old_turns(row: dict[str, Any], *, keep_turns: int = KEEP_RECENT_TURNS) -> int:
+    """Condense process events of all but the latest turns. Returns events removed."""
+    starts = [index for index, item in enumerate(row["events"]) if item.get("type") in OWNER_TURN_TYPES]
+    return _compact_before(row, starts[-keep_turns]) if len(starts) > keep_turns else 0
+
+
+def compact_in_turn(row: dict[str, Any], *, keep_events: int = 150) -> int:
+    """Fold only checkpoint-covered events outside the recent display suffix."""
+    events = row["events"]
+    checkpoint = next((index for index in range(len(events) - 1, -1, -1)
+                       if events[index].get("type") == "context_compacted"), None)
+    if checkpoint is None:
+        return 0
+    return _compact_before(row, min(checkpoint, max(0, len(events) - keep_events)))
+
+
+def note_near_limit(row: dict[str, Any], size_bytes: int | None = None, *, reserve_events: int = 0) -> None:
+    """Warn once; a live task must still accept owner steering and finish work."""
+    if (over_hard_limit(row, size_bytes or 0, reserve_events=reserve_events)
+            and not any(item.get("type") == "event_log_near_limit" for item in row["events"])):
+        from .protocol import event
+        event(row, "event_log_near_limit", event_count=len(row["events"]),
+              **({"size_bytes": size_bytes} if size_bytes is not None else {}))
+
+
+def check_in_turn_limits(row: dict[str, Any]) -> None:
+    """Count every model step; measure full row bytes only every twenty steps."""
+    checked = len(row["events"]) >= EVENT_SOFT_LIMIT
+    if checked:
+        compact_in_turn(row)
+    size = None
+    if row["steps"] % 20 == 0:
+        size = len(encoded(row))
+        if size >= TASK_BYTES_SOFT_LIMIT and not checked and compact_in_turn(row):
+            size = len(encoded(row))
+    note_near_limit(row, size, reserve_events=1)
 
 
 def compact_until_small(row: dict[str, Any]) -> int:
