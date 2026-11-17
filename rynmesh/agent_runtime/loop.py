@@ -55,7 +55,7 @@ from .prompt import (
     progress_message,
     provider_messages,
 )
-from .protocol import bound_preview, digest, event, event_result, model_retry_authority, now, sanitized, task
+from .protocol import bound_preview, digest, event, event_result, model_retry_authority, now, sanitized, sanitized_tool_result, task
 from .store import (
     READ_FAILED_THREE_TIMES_CORRECTION,
     READ_FAILED_TWICE_CORRECTION,
@@ -2242,7 +2242,7 @@ class AgentLoop:
             exec_started = time.monotonic()
             preparation_seconds = max(0.0, (exec_started - preparation_started) - prep_persistence_seconds)
             try:
-                result = sanitized(self._execute_business_tool(selected, call["name"], copy.deepcopy(call["arguments"]), **execute_options))
+                result = sanitized_tool_result(self._execute_business_tool(selected, call["name"], copy.deepcopy(call["arguments"]), **execute_options))
                 tool_execution_seconds = max(0.0, time.monotonic() - exec_started)
             finally:
                 t0 = time.monotonic()
@@ -2429,7 +2429,7 @@ class AgentLoop:
                     ctx["_observed_files_snapshot"] = observed_snapshot
                     options["context"] = ctx
                 try:
-                    res = sanitized(self._execute_business_tool(selected, call["name"], copy.deepcopy(call["arguments"]), **options))
+                    res = sanitized_tool_result(self._execute_business_tool(selected, call["name"], copy.deepcopy(call["arguments"]), **options))
                     return res, False, max(0.0, time.monotonic() - call_started)
                 except AgentError as exc:
                     code = str(exc) if str(exc).startswith("agent_") else "agent_operation_failed"

@@ -54,6 +54,7 @@ from .sharing import FriendSharingTool
 from .source_drafts import NAMES as SOURCE_NAMES
 from .source_drafts import SourceDrafts
 from .store import AgentError, AgentToolRejected, encoded
+from . import results
 from .tool_router import schema_rejection_error
 
 
@@ -107,31 +108,47 @@ _SPECS = {
 def bounded_result(value, *, opaque_keys=(), strict=False):
     """Whitelisted outputs plus defense in depth for remote display names."""
     sensitive = re.compile(r"(?i)(?:api[_-]?key|authorization|password|secret|token|private[_-]?key|invitation)")
+    truncation = {"strings": 0, "lists": 0, "objects": 0, "depth": 0}
 
     def clean(item, depth=0, key=""):
         if depth > 12:
+            truncation["depth"] += 1
             return "[bounded]"
         if isinstance(item, dict):
+            if len(item) > 100:
+                truncation["objects"] += 1
             return {str(k)[:100]: clean(v, depth + 1, str(k)) for k, v in list(item.items())[:100]
                     if not sensitive.search(str(k))}
         if isinstance(item, list):
+            if len(item) > 100:
+                truncation["lists"] += 1
             return [clean(v, depth + 1) for v in item[:100]]
         if isinstance(item, str):
             if key in opaque_keys:
+                if len(item) > 4096:
+                    truncation["strings"] += 1
                 return item[:4096]
             item = re.sub(r"(?i)\bBearer\s+[^\s]+|\bsk-[A-Za-z0-9_-]{8,}", "[redacted]", item)
-            return item[:2048]
+            if len(item) > 2048:
+                truncation["strings"] += 1
+                return item[:2048] + f"…[+{len(item) - 2048} chars]"
+            return item
         return item if item is None or type(item) in (int, float, bool) else str(item)[:128]
 
     result = clean(value)
+    if isinstance(result, dict) and any(truncation.values()):
+        result["bounded_truncation"] = truncation
     encoded = json.dumps(result, ensure_ascii=False)
     if len(encoded.encode()) > 24 * 1024:
         if strict:
             # A body prefix without its complete origin would bypass later
             # scope/ancestry checks. Resource tools return no data on overflow.
             raise AgentToolRejected("agent_resource_output_limit")
+        # truncate_head_tail reserves 96 characters for its omission marker.
         return {"truncated": True, "summary": "Result exceeds tool output limit; narrow the request.",
-                "preview": encoded[:6000]}
+                "preview": results.truncate_head_tail(encoded, 6000),
+                "omitted_characters": len(encoded) - (6000 - 96),
+                **({"bounded_truncation": truncation} if any(truncation.values()) else {})}
     return result
 
 

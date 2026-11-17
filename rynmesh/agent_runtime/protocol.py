@@ -30,19 +30,37 @@ def bound_preview(preview: Any) -> Any:
     return copied
 
 
-def sanitized(value: Any, depth: int = 0) -> Any:
+def sanitized(value: Any, depth: int = 0, *, on_depth="raise", on_unsupported="raise", marks=None) -> Any:
     """Defense in depth; integrations must also expose only explicit safe fields."""
     if depth > 20:
+        if on_depth == "mark":
+            if marks is not None:
+                marks.append("depth_limit")
+            return "[depth limit: nested value omitted]"
         raise AgentError("agent_output_limit")
     if isinstance(value, dict):
-        return {str(key): "[redacted]" if SENSITIVE.fullmatch(str(key)) else sanitized(item, depth + 1) for key, item in value.items()}
-    if isinstance(value, list):
-        return [sanitized(item, depth + 1) for item in value]
+        return {str(key): "[redacted]" if SENSITIVE.fullmatch(str(key)) else sanitized(
+            item, depth + 1, on_depth=on_depth, on_unsupported=on_unsupported, marks=marks) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [sanitized(item, depth + 1, on_depth=on_depth, on_unsupported=on_unsupported, marks=marks) for item in value]
     if isinstance(value, str):
         return re.sub(r"(?i)\bBearer\s+[A-Za-z0-9._~+/-]+=*", "Bearer [redacted]", value)
     if value is None or type(value) in (int, float, bool):
         return value
+    if on_unsupported == "mark":
+        if marks is not None:
+            marks.append("unsupported_type")
+        return f"[unsupported:{type(value).__name__}]"
     raise AgentError("agent_invalid_output")
+
+
+def sanitized_tool_result(value):
+    """Only tool observations may retain safe partial data after sanitizing loss."""
+    marks = []
+    result = sanitized(value, on_depth="mark", on_unsupported="mark", marks=marks)
+    if isinstance(result, dict) and marks:
+        result["sanitized_partial"] = sorted(set(marks))
+    return result
 
 
 # A tool result is already kept verbatim on its operation's receipt. These
