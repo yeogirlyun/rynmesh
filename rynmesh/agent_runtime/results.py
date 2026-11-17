@@ -147,6 +147,36 @@ def format_reference_result(
                 char_limit = int(char_limit * 0.75) - 16
         if len(encoded(preview)) <= max_bytes:
             return preview
+        return base
+    if tool_name != "ryn_read_result" and isinstance(result, (dict, list, str)):
+        preview = {}
+        if isinstance(result, dict):
+            preview = {
+                key: value for key, value in result.items()
+                if key == "error" or (
+                    isinstance(value, (str, int, float, bool, type(None)))
+                    and (not isinstance(value, str) or len(value) <= 200)
+                )
+            }
+            remaining = {key: value for key, value in result.items() if key not in preview}
+            raw_preview = encoded(remaining).decode("utf-8")
+            preview_field = "structured_preview"
+        else:
+            raw_preview = result if isinstance(result, str) else encoded(result).decode("utf-8")
+            preview_field = "preview"
+        preview.update(base)
+        preview["truncated_inline"] = True
+        available_bytes = max_bytes - len(encoded({**preview, preview_field: ""})) - 64
+        if available_bytes >= 128:
+            char_limit = min(len(raw_preview), available_bytes)
+            while char_limit >= 64:
+                text = truncate_head_tail(raw_preview, char_limit, reference_id=reference["id"])
+                candidate = {**preview, preview_field: text}
+                if len(encoded(candidate)) <= max_bytes:
+                    return candidate
+                char_limit = int(char_limit * 0.75) - 16
+        if len(encoded(preview)) <= max_bytes:
+            return preview
     return base
 
 
