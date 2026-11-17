@@ -1283,7 +1283,8 @@ class AgentRuntime(AgentLoop):
             options["request_id"] = active_request_id
 
         override_effort = None
-        if reasoning_override is not None and getattr(self.model, "supports_reasoning_effort", False) is True:
+        if (reasoning_override is not None and "reasoning_effort" not in row
+                and getattr(self.model, "supports_reasoning_effort", False) is True):
             try:
                 override_effort = reasoning.validate(model, reasoning_override)
             except AgentError:
@@ -1291,7 +1292,7 @@ class AgentRuntime(AgentLoop):
         if override_effort is not None:
             options["reasoning_effort"] = override_effort
         elif "reasoning_effort" in row:
-            options["reasoning_effort"] = reasoning.validate(model, row["reasoning_effort"])
+            options["reasoning_effort"] = reasoning.resolve(model, row["reasoning_effort"])
             if getattr(self.model, "supports_reasoning_effort", False) is not True:
                 raise AgentError("agent_reasoning_effort_unsupported")
         # The window's own conversation may continue a provider thread across

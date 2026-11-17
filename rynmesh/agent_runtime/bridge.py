@@ -360,7 +360,7 @@ class AgentModelBridge:
         with internal_image_scope(image_profile), shared_image_carrier_scope(shared_carrier):
             chat = normalize({"messages": messages, "tools": tool_specs, "max_tokens": maximum}, "chat")
         if reasoning_effort is not None:
-            chat["reasoning_effort"] = reasoning.validate(target, reasoning_effort)
+            chat["reasoning_effort"] = reasoning.resolve(target, reasoning_effort)
         if isinstance(cache_key, str) and cache_key and target.get("source") != "peer":
             prompt_cache_mode = None
             if isinstance(target.get("model_settings"), dict):

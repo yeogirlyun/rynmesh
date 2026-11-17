@@ -35,7 +35,7 @@ Only differences with evidence get a profile or a note:
   is unknown, and every added byte is paid on every peer request.
 
 Reasoning effort stays governed by the existing metadata check
-(``reasoning.validate``: Codex CLI models with advertised levels). This module
+(``reasoning.validate``: models with declared supported levels). This module
 only records what was sent; it never adds a parameter.
 """
 from __future__ import annotations
