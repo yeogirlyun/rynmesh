@@ -21,6 +21,9 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
+
+from .lan_address import local_lan_ips, primary_lan_ip, private_lan_ip, usable_ipv4
 
 from .credits import GENERAL_CATEGORY, GLOBAL_CATEGORY, FileCreditLedger
 from .crypto import SignedPayload, b64, public_key_from_private, sha256_bytes, unb64
@@ -129,52 +132,15 @@ def _machine_name() -> str:
 
 
 def _local_ip_addresses() -> tuple[str, ...]:
-    addresses: set[str] = set()
-    configured = os.environ.get("RYNMESH_MACHINE_IP", "").strip()
-    if configured and os.environ.get("RYNMESH_AUTO_PEER_ENDPOINT", "").strip() != "1":
-        addresses.add(configured)
-    try:
-        if sys.platform == "darwin":
-            # A Mac's hostname may wait minutes for mDNS. Interface enumeration
-            # is local and must not hold up startup or the health endpoint.
-            import ifaddr
-            candidates = (ip.ip for adapter in ifaddr.get_adapters() for ip in adapter.ips
-                          if isinstance(ip.ip, str))
-        else:
-            candidates = (item[4][0] for item in
-                          socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET))
-        for address in candidates:
-            if address and not address.startswith("127."):
-                addresses.add(address)
-    except OSError:
-        pass
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.settimeout(0.2)
-            sock.connect(("1.1.1.1", 80))
-            address = sock.getsockname()[0]
-            if address and not address.startswith("127."):
-                addresses.add(address)
-    except OSError:
-        pass
+    addresses = set(local_lan_ips())
+    primary = _primary_lan_ip()
+    if usable_ipv4(primary):
+        addresses.add(primary)
     return tuple(sorted(addresses))
 
 
 def _primary_lan_ip() -> str:
-    if os.environ.get("RYNMESH_AUTO_PEER_ENDPOINT", "").strip() != "1":
-        addresses = _local_ip_addresses()
-        return addresses[0] if addresses else ""
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-            # Route lookup only; connect sends no UDP packet.
-            probe.connect(("1.1.1.1", 80))
-            address = str(probe.getsockname()[0])
-            if address and not address.startswith("127."):
-                return address
-    except OSError:
-        pass
-    addresses = _local_ip_addresses()
-    return addresses[0] if addresses else ""
+    return primary_lan_ip()
 
 
 def _is_unspecified_host(host: str) -> bool:
@@ -1727,7 +1693,16 @@ class RynmeshStore:
     def _default_registration_endpoints(self) -> tuple[str, ...]:
         peer_endpoint = self._default_peer_endpoint()
         if peer_endpoint:
-            return (peer_endpoint,)
+            endpoints = [peer_endpoint]
+            parsed = urlsplit(peer_endpoint)
+            if parsed.scheme in {"http", "https"} and parsed.hostname:
+                port = parsed.port or (443 if parsed.scheme == "https" else 80)
+                for address in _local_ip_addresses():
+                    if private_lan_ip(address) and address != parsed.hostname:
+                        endpoints.append(parsed._replace(netloc=f"{address}:{port}").geturl())
+                        if len(endpoints) == 4:
+                            break
+            return tuple(endpoints)
         return (f"file://{self.network_peer_dir}",)
 
     def _registry_info(self) -> dict[str, Any]:
