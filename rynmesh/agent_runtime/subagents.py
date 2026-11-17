@@ -139,22 +139,7 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
         "type": "function",
         "function": {
             "name": "ryn_spawn_agent",
-            "description": (
-                "Spawn a background subagent (returns agent_id, nickname, and agent_path immediately). "
-                "Keep critical-path work and anything blocking your immediate next step local. "
-                # The parent decides how much context a child gets, as in openai/codex
-                # rust-v0.167.0 multi-agent roles (Apache-2.0); wording is Ryn's.
-                "With fork_turns=none (default) the child sees only this prompt: state the concrete goal, "
-                "relevant paths, constraints, and what to report. "
-                "Assign disjoint write_scope sets across workers. "
-                "Do not redo work you already delegated; call ryn_wait_agent sparingly after completing non-overlapping local steps. "
-                "Only set model_id or reasoning_effort when the owner or active skill explicitly requests it.\n"
-                "Available roles:\n"
-                "- explorer: read-only fast codebase search and inspection that runs safely in parallel; trust its findings and reuse it.\n"
-                "- worker: scoped file implementation and verification; requires an explicit write_scope.\n"
-                "- awaiter: dedicated solely to monitoring long-running tests, builds, or background processes.\n"
-                "- default: general-purpose subtask execution when specialized constraints are unneeded."
-            ),
+            "description": "Spawn background subagent; returns agent_id/nickname/agent_path now. Keep critical-path work or anything blocking your immediate next step local. fork_turns=none (default) the child sees only this prompt: goal, paths, constraints, what to report. Assign disjoint write_scope; required for worker. Do not redo delegated work. Call ryn_wait_agent sparingly after independent work. Set model_id/reasoning_effort only if explicitly requested by owner/skill. Available roles: explorer: fast parallel read-only inspection/search, trust/reuse findings; worker: scoped edits/tests; awaiter: only monitor tests/builds/processes; default: general subtasks.",
             "parameters": {
                 "type": "object",
                 "additionalProperties": False,
@@ -163,14 +148,12 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
                     "task_name": {"type": "string", "minLength": 1, "maxLength": 64},
                     "prompt": {"type": "string", "minLength": 1, "maxLength": MAX_SUBAGENT_PROMPT_CHARS},
                     "role": {
-                        "type": "string",
                         "enum": ["default", "explorer", "worker", "awaiter"],
-                        "description": "Subagent role preset; omit when no specialized role is needed (defaults to 'default').",
+                        "description": "Role preset; omit for default when specialization is unnecessary.",
                     },
                     "fork_turns": {
-                        "type": "string",
                         "enum": ["none", "all"],
-                        "description": "Context mode: 'none' (default) shows only prompt; 'all' inherits parent conversation text.",
+                        "description": "none: prompt only (default); all: parent conversation text.",
                     },
                     "write_scope": {
                         "type": "array",
@@ -187,10 +170,7 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
         "type": "function",
         "function": {
             "name": "ryn_send_message",
-            "description": (
-                "Send supplemental context or a message to an existing subagent by nickname, task_name, agent_path, or agent_id. "
-                "Reuse an existing subagent instead of spawning a new one when follow-up work heavily depends on context it already holds."
-            ),
+            "description": "Send context via nickname/task_name/agent_path/agent_id. Reuse an existing subagent for its prior context.",
             "parameters": {
                 "type": "object",
                 "additionalProperties": False,
@@ -206,10 +186,7 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
         "type": "function",
         "function": {
             "name": "ryn_followup_task",
-            "description": (
-                "Assign a new follow-up task prompt to an existing non-closed subagent and trigger its execution. "
-                "Reuse an existing subagent instead of spawning a new one when follow-up work heavily depends on context it already holds."
-            ),
+            "description": "Run a non-closed agent with new prompt. Reuse an existing subagent for its prior context.",
             "parameters": {
                 "type": "object",
                 "additionalProperties": False,
@@ -225,11 +202,7 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
         "type": "function",
         "function": {
             "name": "ryn_wait_agent",
-            "description": (
-                "Return when any target has an unread result or all targets have settled. "
-                "Omit targets to wait for direct children; no children returns immediately. "
-                "Timeout defaults to 30 seconds; effective range 10-3600 seconds."
-            ),
+            "description": "Wait for unread result/all targets settled; omit targets: direct children; no children returns now. Default 30s; range 10-3600s.",
             "parameters": {
                 "type": "object",
                 "additionalProperties": False,
@@ -248,7 +221,7 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
         "type": "function",
         "function": {
             "name": "ryn_interrupt_agent",
-            "description": "Interrupt/pause a running subagent (or 'all') immediately.",
+            "description": "Immediately interrupt/pause running agent or all.",
             "parameters": {
                 "type": "object",
                 "additionalProperties": False,
@@ -263,7 +236,7 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
         "type": "function",
         "function": {
             "name": "ryn_close_agent",
-            "description": "Close a completed or running subagent (or 'all') and release its resources.",
+            "description": "Close agent/all; release resources.",
             "parameters": {
                 "type": "object",
                 "additionalProperties": False,
@@ -278,7 +251,7 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
         "type": "function",
         "function": {
             "name": "ryn_list_agents",
-            "description": "List live agents in the current root thread tree. Optionally filter by task-path prefix.",
+            "description": "List live agents in root tree; optional task-path prefix.",
             "parameters": {
                 "type": "object",
                 "additionalProperties": False,
@@ -293,7 +266,7 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
         "type": "function",
         "function": {
             "name": "ryn_resume_agent",
-            "description": "Resume a previously closed, paused, or interrupted agent by target so it can receive messages and tasks.",
+            "description": "Resume closed/paused/interrupted target for messages/tasks.",
             "parameters": {
                 "type": "object",
                 "additionalProperties": False,

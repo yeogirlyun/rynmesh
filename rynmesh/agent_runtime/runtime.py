@@ -29,6 +29,7 @@ from . import (
     data_policy,
     diagnostic_log,
     event_compaction,
+    goals,
     image_capabilities,
     knowledge,
     lifecycle,
@@ -1082,7 +1083,8 @@ class AgentRuntime(AgentLoop):
     @staticmethod
     def _internal_specs(row):
         return [spec for spec in ALL_INTERNAL_SPECS
-                if spec["function"]["name"] not in HISTORY_TOOL_NAMES or (row or {}).get("context_checkpoint")]
+                if (spec["function"]["name"] not in HISTORY_TOOL_NAMES or (row or {}).get("context_checkpoint"))
+                and (spec["function"]["name"] not in goals.TOOL_NAMES or goals.available(row))]
 
     def _specs(self, row=None) -> list:
         specs = self._business_specs(row)
@@ -2813,7 +2815,9 @@ class AgentRuntime(AgentLoop):
         return {"events": hydrated_events(row, [item for item in row["events"] if item["seq"] > after]), "cursor": row["event_cursor"], "status": row["status"], "revision": row["revision"], "control_revision": row["control_revision"]}
 
     def create(self, value: dict, *, _continuation=None) -> dict:
-        if set(value) - {"message", "model_id", "title", "client_request_id", "scope", "expected_destination_revision", "skill_ids", "budget_limits", "response_language", "project_id", "reasoning_effort", "attachments"}:
+        if set(value) - {"message", "model_id", "title", "client_request_id", "scope", "expected_destination_revision", "skill_ids", "budget_limits", "response_language", "project_id", "reasoning_effort", "attachments", "allow_model_goal_creation"}:
+            raise AgentError("agent_invalid_request")
+        if "allow_model_goal_creation" in value and type(value["allow_model_goal_creation"]) is not bool:
             raise AgentError("agent_invalid_request")
         if value.get("response_language") not in {None, "zh-CN", "en"}:
             raise AgentError("agent_invalid_request")
@@ -2920,6 +2924,8 @@ class AgentRuntime(AgentLoop):
             row["base_instructions"] = select_base_instructions()
             row["context_budget_provenance"] = data.get("settings_context_budget_provenance", "default_auto" if settings["max_context_chars"] is None else "legacy_ambiguous_manual")
             initialize(row)
+            if value.get("allow_model_goal_creation"):
+                row["allow_model_goal_creation"] = True
             if effort is not None:
                 row["reasoning_effort"] = effort
             row["local_execution"] = {"workspace_root": settings.get("workspace_root") or self.store.default_workspace(), "desktop_access": settings.get("desktop_access", False)}
@@ -4630,6 +4636,9 @@ class AgentRuntime(AgentLoop):
                 result.update(expected_goal_revision=current["goal"]["revision"],
                               expected_plan_revision=current["plan"]["revision"],
                               allowed_criterion_ids=[item["id"] for item in current["criteria"]])
+            if call["name"] in goals.TOOL_NAMES and code in goals.CORRECTIONS:
+                result.setdefault("correction", goals.CORRECTIONS[code])
+                result["expected_goal_id"] = (current.get("thread_goal") or {}).get("id")
             if call["effect"] == "read" and read_connection:
                 from .diagnostics import safe_label
                 result.update({key: safe_label(read_connection.get(key)) for key in ("connection_id", "connection_name")})
