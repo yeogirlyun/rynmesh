@@ -335,7 +335,9 @@ export interface AgentFileArtifact {
   goal_revisions: number[]; created_at?: string; updated_at?: string; mentioned_in_answer: boolean;
   render_inspected?: { at?: string; findings: number };
 }
-export interface AgentArtifactListing { artifacts: AgentArtifact[]; files?: AgentFileArtifact[]; unbacked_mentions?: string[]; pending_files?: boolean; }
+export interface AgentInventoryNotice { incomplete_inventory?: boolean; additional_changes?: number; }
+export interface AgentArtifactListing extends AgentInventoryNotice { artifacts: AgentArtifact[]; files?: AgentFileArtifact[]; unbacked_mentions?: string[]; pending_files?: boolean;
+  inventory_by_turn?: Record<string, AgentInventoryNotice>; }
 export type AgentRecordOperation = "archive" | "restore" | "delete";
 export interface AgentDeleteResult { id: string; deleted: true; cleanup_pending: boolean; }
 export interface AgentTask extends AgentTaskSummary {

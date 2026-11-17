@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, ChevronDown, Copy, Download, ExternalLink, FileText, FolderOpen, Image as ImageIcon, File as FileIcon, RefreshCw, Sheet, TriangleAlert } from "lucide-react";
-import { AgentAPIError, agentReadBackoff, isTransientAgentReadError, agentFileUrl, agentTaskState, isAgentActive, rynAgent, type AgentArtifact, type AgentArtifactListing, type AgentFileArtifact, type AgentTask } from "../domain/rynAgent";
+import { AgentAPIError, agentReadBackoff, isTransientAgentReadError, agentFileUrl, agentTaskState, isAgentActive, rynAgent, type AgentArtifact, type AgentArtifactListing, type AgentFileArtifact, type AgentInventoryNotice, type AgentTask } from "../domain/rynAgent";
 import { isTauriDesktop } from "../domain/nodeUrl";
 import { NasPreview } from "../personal/NasPreview";
 import { decodeAgentFileText, isOfficePreview, type OfficePreviewLoader, readAgentFilePreview } from "../domain/agentFilePreview";
@@ -48,6 +48,7 @@ const TaskTurnDeliverablesContext = createContext<{
   task: AgentTask;
   maxTurnIndex: number;
   deliverablesByTurn: Map<number, AgentFileArtifact[]>;
+  inventoryByTurn?: Record<string, AgentInventoryNotice>;
   openFile: (file: AgentFileArtifact) => void;
 } | null>(null);
 
@@ -156,15 +157,27 @@ function FileCard({ task, file, onOpen }: { task: AgentTask; file: AgentFileArti
   </div>;
 }
 
+function InventoryNotice({ notice }: { notice?: AgentInventoryNotice }) {
+  const { i18n } = useTranslation("rynAgent");
+  const zh = i18n.language.startsWith("zh");
+  if (!notice?.incomplete_inventory && !notice?.additional_changes) return null;
+  return <div className="ra-file-warning" role="status" aria-live="polite">
+    {notice.incomplete_inventory && <p>{zh ? "命令产生的文件可能未列全" : "Files produced by the command may be missing from this list"}</p>}
+    {!!notice.additional_changes && <p>{zh ? `另有 ${notice.additional_changes} 个文件变化` : `${notice.additional_changes} more file changes`}</p>}
+  </div>;
+}
+
 export function TurnDeliverables({ turnIndex }: { turnIndex: number }) {
   const ctx = useContext(TaskTurnDeliverablesContext);
   const { t } = useTranslation("rynAgent");
   if (!ctx || turnIndex >= ctx.maxTurnIndex) return null;
-  const turnFiles = ctx.deliverablesByTurn.get(turnIndex);
-  if (!turnFiles?.length) return null;
+  const turnFiles = ctx.deliverablesByTurn.get(turnIndex) || EMPTY_FILES;
+  const notice = ctx.inventoryByTurn?.[String(turnIndex)];
+  if (!turnFiles.length && !notice?.incomplete_inventory && !notice?.additional_changes) return null;
   const available = turnFiles.filter(f => f.status !== "missing").length;
   return <section className="ra-files ra-turn-files" aria-label={t("resultFiles")}>
-    {!available && <div className="ra-files-head"><span role="status" aria-live="polite"><TriangleAlert size={15} />{t("filesUnavailable", { count: 0 })}</span></div>}
+    <InventoryNotice notice={notice} />
+    {!!turnFiles.length && !available && <div className="ra-files-head"><span role="status" aria-live="polite"><TriangleAlert size={15} />{t("filesUnavailable", { count: 0 })}</span></div>}
     {turnFiles.map(item => <FileCard key={item.id} task={ctx.task} file={item} onOpen={ctx.openFile} />)}
   </section>;
 }
@@ -280,7 +293,8 @@ export function TaskArtifacts({ task, maxTurnIndex = 0, children }: { task: Agen
     }
     return map;
   }, [resultFiles, maxTurnIndex]);
-  const turnContext = useMemo(() => ({ task, maxTurnIndex, deliverablesByTurn, openFile }), [task, maxTurnIndex, deliverablesByTurn, openFile]);
+  const turnContext = useMemo(() => ({ task, maxTurnIndex, deliverablesByTurn, openFile, inventoryByTurn: listing?.inventory_by_turn }), [task, maxTurnIndex, deliverablesByTurn, openFile, listing?.inventory_by_turn]);
+  const currentInventory = listing?.inventory_by_turn ? listing.inventory_by_turn[String(maxTurnIndex)] : listing || undefined;
   const currentTurnFiles = resultFiles.filter(item => fileTurnIndex(item, maxTurnIndex) === maxTurnIndex);
   const deliverables = useMemo(() => deduplicateByName(currentTurnFiles.filter(item => item.role === "deliverable")), [currentTurnFiles]);
   const deliverableNames = useMemo(() => new Set(deliverables.map(item => item.name.trim().toLowerCase())), [deliverables]);
@@ -312,6 +326,7 @@ export function TaskArtifacts({ task, maxTurnIndex = 0, children }: { task: Agen
   }, [chosenFile, chosen]);
   return <AgentFileContext.Provider value={fileContext}><TaskTurnDeliverablesContext.Provider value={turnContext}>
     {children}
+    <InventoryNotice notice={currentInventory} />
     {showResultFiles && <section className="ra-files" aria-label={t(finished ? "resultFiles" : "filesSoFar")}>
       {error && items.length === 0 && <p role="alert">{t("artifactListError")} <button onClick={() => setReload(n => n + 1)}>{t("retry")}</button></p>}
       {(!finished || pendingFiles || (hasCurrentFiles && (!availableCount || partial))) && <div className="ra-files-head">
