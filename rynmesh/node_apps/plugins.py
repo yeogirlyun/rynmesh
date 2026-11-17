@@ -7,6 +7,7 @@ Agent adapters use a lease so uninstall/disable cannot race an active invocation
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import logging
@@ -93,6 +94,10 @@ class PluginManager:
         self.progress_state = {}
         self.tickets = {}
         self.closed = False
+        self._catalog_generation = 0
+        self._catalog_cache_key = None
+        self._catalog_value = None
+        self._catalog_valid_until = 0.0
         self.nas = nas
         self.migration_error = None
         if cache is None and self.state_path.exists():
@@ -239,7 +244,9 @@ class PluginManager:
             raise craft_host.CraftError("plugin_state_invalid") from None
 
     def _write(self, state):
-        atomic_write_json(self.state_path, state, max_bytes=65536)
+        with self.lock:
+            atomic_write_json(self.state_path, state, max_bytes=65536)
+            self._catalog_generation += 1
 
     def _row(self, slug):
         slug = builtin.normalize_slug(slug)
@@ -273,44 +280,77 @@ class PluginManager:
         }
         return item
 
+    def _catalog_key(self, selection):
+        try:
+            state = self.state_path.stat()
+            signature = (state.st_mtime_ns, state.st_size)
+        except FileNotFoundError:
+            signature = None
+        choices = hashlib.sha256(json.dumps(selection, separators=(",", ":")).encode()).digest()
+        return signature, self._catalog_generation, choices
+
+    def _catalog_view(self, value):
+        result = copy.deepcopy(value)
+        for item in result["plugins"]:
+            slug = item["id"]
+            item["running"] = slug in self.servers and self.servers[slug][1].is_alive()
+            item["busy"] = slug in self.mutating or bool(self.active.get(slug))
+        result["migration_error"] = self.migration_error
+        return result
+
     def catalog(self):
-        with self.lock, file_transaction(self.lock_path):
-            state = self._read()
+        with self.lock:
             selection = installer_selection()
-            items = []
-            for slug in CRAFT:
-                spec = self.specification(slug)
-                row = state["plugins"].get(slug, {})
-                present = row.get("version") == spec["tag"] and (self.cache / slug / spec["tag"] / "receipt.json").is_file()
-                enabled = bool(present and row.get("enabled"))
-                automation = craft_native.runtime_status(self.cache, slug)
-                automation_supported = bool(automation.get("supported") and automation.get("platform_supported"))
-                automation_ready = bool(automation_supported and automation.get("installed") and automation.get("verified") and automation.get("state") == "ready")
-                items.append({
-                    "id": slug, "name": spec["name"], "version": spec["tag"],
-                    "web": spec["web"], "group": GROUPS.get(slug, "media"),
-                    "formats": spec["formats"], "sha256": spec["web_sha256"],
-                    "source_url": row.get("update_source", {}).get("url") or f"https://github.com/storytold/{slug}/tree/{spec['tag']}",
-                    "installed": bool(present), "enabled": enabled,
-                    "running": slug in self.servers and self.servers[slug][1].is_alive(),
-                    "busy": slug in self.mutating or bool(self.active.get(slug)),
-                    "agent_tools": (["editor_info", "ryn_craft_read", "ryn_craft_action"] if automation_ready else ["editor_info"]) if enabled else [],
-                    "editing_supported": bool(enabled and automation_ready),
-                    "automation_supported": automation_supported,
-                    "automation_installed": bool(automation.get("installed")),
-                    **({"automation_error": automation.get("error", "craft_agent_runtime_not_verified")} if automation_supported and automation.get("state") == "unverified" else {}),
-                    "warning": WARNINGS.get(slug),
-                    "kind": "web_editor", "installable": spec["web"], "launch_path": None,
-                })
-            for slug in builtin.BUILTINS:
-                items.append(self._builtin_catalog_item(slug, state))
-            items.sort(key=lambda item: DEFAULT_PLUGINS.index(item["id"]) if item["id"] in DEFAULT_PLUGINS else len(DEFAULT_PLUGINS))
-            return {"node_id": self.peer_id, "plugins": items,
-                    "setup_completed": bool(state.get("setup_completed")),
-                    "defaults": list(DEFAULT_PLUGINS),
-                    "selection": selection if selection is not None else list(DEFAULT_PLUGINS),
-                    "setup_requested": selection is not None,
-                    "storage_path": str(self.cache), "migration_error": self.migration_error}
+            key = self._catalog_key(selection)
+            if (self._catalog_value is not None and self._catalog_cache_key == key
+                    and time.monotonic() < self._catalog_valid_until):
+                return self._catalog_view(self._catalog_value)
+            with file_transaction(self.lock_path):
+                state = self._read()
+                value, valid_until = self._build_catalog(state, selection)
+                self._catalog_value = copy.deepcopy(value)
+                self._catalog_cache_key = self._catalog_key(selection)
+                self._catalog_valid_until = valid_until
+                return self._catalog_view(self._catalog_value)
+
+    def _build_catalog(self, state, selection):
+        valid_until = time.monotonic() + 30
+        items = []
+        for slug in CRAFT:
+            spec = self.specification(slug)
+            row = state["plugins"].get(slug, {})
+            present = row.get("version") == spec["tag"] and (self.cache / slug / spec["tag"] / "receipt.json").is_file()
+            enabled = bool(present and row.get("enabled"))
+            automation = craft_native.runtime_status(self.cache, slug)
+            automation_supported = bool(automation.get("supported") and automation.get("platform_supported"))
+            automation_ready = bool(automation_supported and automation.get("installed") and automation.get("verified") and automation.get("state") == "ready")
+            if automation_ready:
+                valid_until = min(valid_until, craft_native._menu_valid_until(self.cache, slug))
+            items.append({
+                "id": slug, "name": spec["name"], "version": spec["tag"],
+                "web": spec["web"], "group": GROUPS.get(slug, "media"),
+                "formats": spec["formats"], "sha256": spec["web_sha256"],
+                "source_url": row.get("update_source", {}).get("url") or f"https://github.com/storytold/{slug}/tree/{spec['tag']}",
+                "installed": bool(present), "enabled": enabled,
+                "running": slug in self.servers and self.servers[slug][1].is_alive(),
+                "busy": slug in self.mutating or bool(self.active.get(slug)),
+                "agent_tools": (["editor_info", "ryn_craft_read", "ryn_craft_action"] if automation_ready else ["editor_info"]) if enabled else [],
+                "editing_supported": bool(enabled and automation_ready),
+                "automation_supported": automation_supported,
+                "automation_installed": bool(automation.get("installed")),
+                **({"automation_error": automation.get("error", "craft_agent_runtime_not_verified")} if automation_supported and automation.get("state") == "unverified" else {}),
+                "warning": WARNINGS.get(slug),
+                "kind": "web_editor", "installable": spec["web"], "launch_path": None,
+            })
+        for slug in builtin.BUILTINS:
+            items.append(self._builtin_catalog_item(slug, state))
+        items.sort(key=lambda item: DEFAULT_PLUGINS.index(item["id"]) if item["id"] in DEFAULT_PLUGINS else len(DEFAULT_PLUGINS))
+        return {"node_id": self.peer_id, "plugins": items,
+                "setup_completed": bool(state.get("setup_completed")),
+                "defaults": list(DEFAULT_PLUGINS),
+                "selection": selection if selection is not None else list(DEFAULT_PLUGINS),
+                "setup_requested": selection is not None,
+                "storage_path": str(self.cache), "migration_error": self.migration_error}, valid_until
 
     @contextmanager
     def _mutation(self, slug):
@@ -437,6 +477,8 @@ class PluginManager:
                 kwargs = {"download": self.download} if self.download else {}
                 with craft_host.track_progress(lambda fields: self._set_progress(slug, kind="automation", **fields)):
                     craft_native.install_runtime(self.cache, slug, **kwargs)
+                with self.lock:
+                    self._catalog_generation += 1
             finally:
                 with self.lock:
                     self.progress_state.pop(slug, None)

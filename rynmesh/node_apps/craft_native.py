@@ -42,6 +42,7 @@ PROTOCOL_VERSION = "2025-06-18"
 _VERSIONS = {PROTOCOL_VERSION, "2025-03-26", "2024-11-05"}
 _WINDOWS_RESERVED = re.compile(r"^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)", re.I)
 _STATUS_CACHE = OrderedDict()
+_STAMP_CACHE = OrderedDict()
 _STATUS_LOCK = threading.RLock()
 MAX_STATUS_CACHE = 64
 
@@ -245,8 +246,36 @@ def _status_stamp(root):
 
 def _invalidate_status(root):
     with _STATUS_LOCK:
-        for key in [key for key in _STATUS_CACHE if key[0] == os.path.normcase(str(root))]:
-            _STATUS_CACHE.pop(key, None)
+        for cache in (_STATUS_CACHE, _STAMP_CACHE):
+            for key in [key for key in cache if key[0] == os.path.normcase(str(root))]:
+                cache.pop(key, None)
+
+
+def _cached_status_stamp(root):
+    """Caller holds _STATUS_LOCK; this evidence only serves menu construction."""
+    key = (os.path.normcase(str(root)), (root / "payload").stat().st_mtime_ns,
+           (root / "receipt.json").stat().st_mtime_ns)
+    current = time.monotonic()
+    previous = _STAMP_CACHE.get(key)
+    if previous is not None and current - previous["at"] < 30:
+        _STAMP_CACHE.move_to_end(key)
+        return previous["stamp"], previous["at"] + 30
+    stamp = _status_stamp(root)
+    _STAMP_CACHE[key] = {"at": current, "stamp": stamp}
+    _STAMP_CACHE.move_to_end(key)
+    while len(_STAMP_CACHE) > MAX_STATUS_CACHE:
+        _STAMP_CACHE.popitem(last=False)
+    return stamp, current + 30
+
+
+def _menu_valid_until(cache, slug):
+    """Do not let a consuming catalog extend the underlying evidence lifetime."""
+    root = Path(cache).expanduser().resolve() / slug / CRAFT[slug]["tag"] / "agent" / PLATFORM
+    with _STATUS_LOCK:
+        for key, value in _STATUS_CACHE.items():
+            if key[0] == os.path.normcase(str(root)) and key[1] == slug:
+                return value["valid_until"]
+    return time.monotonic() + 30
 
 
 def _menu_runtime(cache, slug, root):
@@ -254,9 +283,10 @@ def _menu_runtime(cache, slug, root):
     key = (os.path.normcase(str(root)), slug, spec["sha256"], spec["payload_manifest_sha256"])
     with _STATUS_LOCK:
         try:
-            stamp = _status_stamp(root)
+            stamp, valid_until = _cached_status_stamp(root)
             previous = _STATUS_CACHE.get(key)
             if previous is not None and previous["stamp"] == stamp:
+                previous["valid_until"] = valid_until
                 _STATUS_CACHE.move_to_end(key)
                 return Path(previous["executable"]), True
             _STATUS_CACHE.pop(key, None)
@@ -265,18 +295,18 @@ def _menu_runtime(cache, slug, root):
             # the complete payload hashes were being checked.
             if stamp != _status_stamp(root):
                 raise CraftError("craft_agent_runtime_not_verified")
-            _STATUS_CACHE[key] = {"stamp": stamp, "executable": str(executable)}
+            _STATUS_CACHE[key] = {"stamp": stamp, "executable": str(executable), "valid_until": valid_until}
             _STATUS_CACHE.move_to_end(key)
             while len(_STATUS_CACHE) > MAX_STATUS_CACHE:
                 _STATUS_CACHE.popitem(last=False)
             return executable, False
         except BaseException:
-            _STATUS_CACHE.pop(key, None)
+            _invalidate_status(root)
             raise
 
 
 def runtime_status(cache, slug):
-    """No writes or network access; a damaged installation is never executable."""
+    """Menu evidence may be 30 seconds old; startup verifies separately in full."""
     result = {"app": slug, "platform": PLATFORM, "platform_supported": platform_supported(),
               "supported": False, "installed": False, "verified": False, "state": "unsupported",
               "verification_cached": False}

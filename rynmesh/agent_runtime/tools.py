@@ -171,6 +171,8 @@ class RynTools:
         self.craft_plugins = PluginTools(app)
         self.lock = threading.RLock()
         self.completed = OrderedDict()
+        self.spec_source_errors = {}
+        self.spec_source_lock = threading.Lock()
         self.peer_health = PeerHealthProbe(timeout_s=1.5, max_concurrency=8)
         self.peer_health_lock = threading.Lock()
         self.resources = ResourceTools(app)
@@ -386,17 +388,32 @@ class RynTools:
             return {"outcome": "executed", "receipt": {"operation_id": operation_id, "tool": tool,
                     "arguments_sha256": operation["arguments_sha256"], "result": copy.deepcopy(prior[1])}}
 
+    def _safe_specs(self, label, fn):
+        try:
+            value = fn()
+        except Exception as exc:
+            error = type(exc).__name__
+            with self.spec_source_lock:
+                changed = self.spec_source_errors.get(label) != error
+                self.spec_source_errors[label] = error
+            if changed:
+                diagnostic_log.failure("tool_menu_source", exc, source=label)
+            return []
+        with self.spec_source_lock:
+            self.spec_source_errors.pop(label, None)
+        return value
+
     def specs(self, context=None):
         from .native_computer import filter_computer_tool_specs
         raw = (
             [{"type": "function", "function": {"name": name, "description": row[0], "parameters": copy.deepcopy(row[3])}}
              for name, row in {**_SPECS, **LOCAL_SPECS}.items()]
             + [copy.deepcopy(CODE_MODE_SPEC)]
-            + self.diagnostics.specs()
+            + self._safe_specs("diagnostics", self.diagnostics.specs)
             + (copy.deepcopy(APP_SPECS) if getattr(self.app.state, "node_apps", None) else [])
-            + self.craft_plugins.specs()
-            + self.craft.specs()
-            + self.extensions.specs(context)
+            + self._safe_specs("craft_plugins", self.craft_plugins.specs)
+            + self._safe_specs("craft", self.craft.specs)
+            + self._safe_specs("extensions", lambda: self.extensions.specs(context))
         )
         return filter_computer_tool_specs(raw, store=self.store)
 
@@ -407,17 +424,21 @@ class RynTools:
         if name == CODE_MODE_NAME:
             return copy.deepcopy(CODE_MODE_SPEC["function"])
         if self.extensions.handles(name):
-            return next((item["function"] for item in self.extensions.specs(context) if item["function"]["name"] == name), None)
+            return {item["function"]["name"]: item["function"] for item in
+                    self._safe_specs("extensions", lambda: self.extensions.specs(context))}.get(name)
         if name in CRAFT_NAMES:
-            return next((item["function"] for item in self.craft.specs() if item["function"]["name"] == name), None)
+            return {item["function"]["name"]: item["function"] for item in
+                    self._safe_specs("craft", self.craft.specs)}.get(name)
         if name in PLUGIN_NAMES:
-            return next((item["function"] for item in self.craft_plugins.specs() if item["function"]["name"] == name), None)
+            return {item["function"]["name"]: item["function"] for item in
+                    self._safe_specs("craft_plugins", self.craft_plugins.specs)}.get(name)
         if name in APP_NAMES:
             if not getattr(self.app.state, "node_apps", None):
                 return None
             return next((copy.deepcopy(item["function"]) for item in APP_SPECS if item["function"]["name"] == name), None)
         if name in DIAGNOSTIC_NAMES:
-            return next((item["function"] for item in self.diagnostics.specs() if item["function"]["name"] == name), None)
+            return {item["function"]["name"]: item["function"] for item in
+                    self._safe_specs("diagnostics", self.diagnostics.specs)}.get(name)
         row = {**_SPECS, **LOCAL_SPECS}.get(name)
         if row is not None:
             return {"name": name, "description": row[0], "parameters": copy.deepcopy(row[3])}

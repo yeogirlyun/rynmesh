@@ -232,8 +232,11 @@ def test_discovery_edit_save_readback_and_artifact_follow_real_runtime(craft, mo
     assert sum(name == "save_document" for _, name, _ in craft.backend.calls) == 1
 
 
-def test_component_setup_always_requires_exact_approval_and_read_only_cannot_edit(craft):
+def test_component_setup_always_requires_exact_approval_and_read_only_cannot_edit(craft, monkeypatch):
     craft.backend.ready = False
+    from rynmesh.node_apps import plugins
+    monotonic = plugins.time.monotonic
+    monkeypatch.setattr(plugins.time, "monotonic", lambda: monotonic() + 31)
     runtime, model = craft.runtime(
         assistant(name=tool_menu.NAME, args={"load": [TOOLS, INSTALL]}),
         assistant(name=TOOLS, args={"app": "wordcraft"}, call_id="absent"),
