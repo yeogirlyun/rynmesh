@@ -120,20 +120,22 @@ def applied_density(policy: dict | None, bytes_per_token: float | None) -> float
     return max(MIN_BYTES_PER_TOKEN, bytes_per_token)
 
 
-def input_capacity(hard_limit_bytes: int, policy: dict | None = None, bytes_per_token: float | None = None) -> int:
+def input_capacity(hard_limit_bytes: int, policy: dict | None = None, bytes_per_token: float | None = None,
+                   density_penalty: float = 1.0) -> int:
     """Request bytes that fit the input side of the model window.
 
     The hard limit already reserves the configured output and framing tokens
     at the default ratio. Observed denser text (for example Chinese) lowers
     the capacity; sparser text never raises it above the admission limit.
+    An upstream rejection adds a persistent penalty until fresh main usage calibrates it.
     """
     capacity = int(hard_limit_bytes)
     density = applied_density(policy, bytes_per_token)
-    if density is None:
-        return capacity
-    tokens = (int(policy.get("context_window_tokens") or 0) - int(policy.get("reserved_output_tokens") or 0)
-              - int(policy.get("framing_reserve_tokens") or 0))
-    return max(0, min(capacity, int(tokens * density)))
+    if density is not None:
+        tokens = (int(policy.get("context_window_tokens") or 0) - int(policy.get("reserved_output_tokens") or 0)
+                  - int(policy.get("framing_reserve_tokens") or 0))
+        capacity = max(0, min(capacity, int(tokens * density)))
+    return int(capacity * density_penalty)
 
 
 def request_bytes_at_density(analysis: dict, density: float | None) -> int:

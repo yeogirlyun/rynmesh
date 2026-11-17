@@ -60,6 +60,7 @@ from .control import (
     settle,
 )
 from .input_attachments import attach_to_message, parse_attachments
+from . import context_compaction
 from .loop import ALL_INTERNAL_NAMES, ALL_INTERNAL_SPECS, OWNER_TURN_EVENTS, AgentLoop
 from .prompt import (
     HISTORY_TOOL_NAMES,
@@ -95,6 +96,7 @@ CONTINUE_SECONDS = 20.0
 # Completed streaming reads retain their receipts before inference retry. Writes
 # remain behind accepted responses. Retries are bounded by task and lifetime budgets.
 RETRYABLE_MODEL_ERRORS = {"agent_inference_timeout", "agent_model_connection_failed", "agent_model_busy",
+                          "agent_model_context_overflow",
                           "agent_model_starting",
                           "agent_model_upstream_failed", "agent_model_stream_interrupted",
                           "agent_invalid_model_response", "agent_compaction_size_limit", "agent_compaction_incomplete"}
@@ -1588,7 +1590,12 @@ class AgentRuntime(AgentLoop):
             row = data["tasks"].get(task_id)
             if row is not None:
                 weight = cached_input_weight if cached_input_weight is not None else self._cached_input_weight(row)
+                record = (next((item for item in row["budget"]["records"] if item["id"] == reservation_id), None)
+                          if "context_density_penalty" in row else None)
+                fresh = record is not None and record["status"] == "reserved"
                 budget.settle(row, reservation_id, usage=usage, elapsed_seconds=elapsed, cached_input_weight=weight, retryable_failure=retryable_failure, response_bytes=response_bytes)
+                if fresh and context_compaction.observed_bytes_per_token({**row, "budget": {"records": [record]}}) is not None:
+                    row.pop("context_density_penalty", None)
         self.store.transaction(finish)
 
     def _settle_usage_batch(self, task_id, reservation_ids, *, usage=None, elapsed=None, cached_input_weight=None):
@@ -4394,6 +4401,11 @@ class AgentRuntime(AgentLoop):
                 "store_persistence_seconds": round(claim_persist + prep_persist, 4),
             }
             safe_diag = diagnostic_log.safe_diagnostics(diagnostics)
+            overflow_bytes = overflow_base_capacity = None
+            if code == "agent_model_context_overflow":
+                overflow_row = task(self.store.read(), selected["id"])
+                overflow_bytes = overflow_row["context_usage"]["request_bytes"]
+                overflow_base_capacity = self._effective_capacity({**overflow_row, "context_density_penalty": 1.0})[0]
             req_id = selected.get("_request_id")
             attempt = selected.get("_attempt", int(selected.get("model_retry_count", 0)) + 1)
             diagnostic_log.failure(
@@ -4429,7 +4441,7 @@ class AgentRuntime(AgentLoop):
                 error = ("agent_permission_denied" if authority != selected.get("_model_retry_authority") else
                          run_limit if run_limit else
                          "agent_model_unavailable" if code == "agent_model_starting" and count >= maximum else
-                         code if not network and maximum is not None and count >= maximum else None)
+                         code if not network and code != "agent_model_context_overflow" and maximum is not None and count >= maximum else None)
                 row.pop("pending_control", None)
                 extra_event = {
                     "step": row["steps"],
@@ -4438,6 +4450,11 @@ class AgentRuntime(AgentLoop):
                     **({"request_id": req_id} if req_id else {}),
                     **({"diagnostics": safe_diag} if safe_diag else {}),
                 }
+                recovery_key = [row.get("context_epoch", 0), row["goal"]["revision"]]
+                # A checkpoint retires the trigger, not the one-shot recovery.
+                # Only an accepted main turn completes that recovery.
+                if code == "agent_model_context_overflow" and row.get("context_overflow_recovery") == recovery_key:
+                    error = error or "agent_context_limit"
                 if error in budget.LIMIT_CODES:
                     budget.stop_for_limit(row, error, **extra_event)
                     subagents.on_subagent_settled_in_tx(data, row)
@@ -4448,6 +4465,15 @@ class AgentRuntime(AgentLoop):
                     row.update(status="failed", error=error)
                     event(row, "failed", error=error, **extra_event)
                     subagents.on_subagent_settled_in_tx(data, row)
+                    return True
+                if code == "agent_model_context_overflow":
+                    row["context_overflow"] = {"step": row["steps"], "request_bytes": overflow_bytes}
+                    row["context_density_penalty"] = min(row.get("context_density_penalty", 1.0),
+                        int(.85 * overflow_bytes) / overflow_base_capacity)
+                    row["context_overflow_recovery"] = recovery_key
+                    row.pop("connection_recovery", None)
+                    row.update(status="queued", error=None, model_retry_authority=authority)
+                    event(row, "model_retry_scheduled", error=code, retry_count=count, **extra_event)
                     return True
                 waiting_for_network = network and maximum is None
                 if network:

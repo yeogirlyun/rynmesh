@@ -257,6 +257,16 @@ class AgentLoop:
             self._reserve_output(selected)
             prep_persistence_seconds += max(0.0, time.monotonic() - t0)
             caller_selected["_prep_persistence_seconds"] = prep_persistence_seconds
+            recovery = selected.get("context_overflow_recovery")
+            if recovery and recovery[0] != selected.get("context_epoch", 0):
+                keys = ("context_overflow", "context_density_penalty", "context_overflow_recovery")
+                def retire_overflow(data):
+                    row = task(data, selected["id"])
+                    for key in keys:
+                        row.pop(key, None)
+                self.store.transaction(retire_overflow)
+                for key in keys:
+                    selected.pop(key, None)
             self._validate_context(selected)
             self._refresh_plugin_catalogs_at_turn_start(selected)
             (specs, menu_state), _ = self._menu(selected)
@@ -300,16 +310,21 @@ class AgentLoop:
             # One effective input capacity for every fit decision: the byte
             # limit, tightened when provider usage shows denser tokenization.
             capacity = pressure["capacity_bytes"]
-            must_compact = request_bytes > capacity
+            overflow = selected.get("context_overflow")
+            if overflow:
+                capacity = min(capacity, int(.85 * overflow["request_bytes"]))
+            must_compact = bool(overflow) or request_bytes > capacity
             if must_compact:
-                pressure = {**pressure, "compact": True,
-                            "reason": "hard_limit" if request_bytes > context_limit else "capacity_limit"}
+                pressure = {**pressure, "compact": True, "capacity_bytes": capacity,
+                            "reason": "upstream_overflow" if overflow else
+                                      "hard_limit" if request_bytes > context_limit else "capacity_limit"}
             if pressure["compact"]:
                 try:
                     # Process-local decision data; _compact keeps its public signature.
                     if not self._compact({**selected, "_compaction_pressure": pressure}, cancelled, started):
                         return
                 except AgentError as exc:
+                    compaction_error = "agent_context_limit" if str(exc) == "agent_model_context_overflow" else str(exc)
                     # Only an optional checkpoint may be skipped: the original
                     # request still fits the effective capacity.
                     if not must_compact and str(exc) in {
@@ -322,8 +337,10 @@ class AgentLoop:
                         # main request the summary attempt replaced, then send it.
                         self.store.transaction(lambda data: task(data, selected["id"]).update(
                             in_flight=self._main_flight(selected.get("in_flight"))))
-                    elif (str(exc) != "agent_context_limit" or menu_state.get("mode") != "directory"
+                    elif (compaction_error != "agent_context_limit" or menu_state.get("mode") != "directory"
                             or not (menu_state.get("loaded_names") or menu_state.get("pinned_names"))):
+                        if str(exc) == "agent_model_context_overflow":
+                            raise AgentError("agent_context_limit") from None
                         raise
                     else:
                         # A schema selection is a cache, never permission or business
@@ -338,8 +355,17 @@ class AgentLoop:
                         caller_selected["_prep_persistence_seconds"] = prep_persistence_seconds
                         selected = {**selected, **synced_state, "tool_menu": menu_state}
                         specs = self._specs(selected)
-                        if not self._compact(selected, cancelled, started):
-                            return
+                        try:
+                            if not self._compact(selected, cancelled, started):
+                                return
+                        except AgentError as released_error:
+                            if str(released_error) == "agent_model_context_overflow":
+                                raise AgentError("agent_context_limit") from None
+                            raise
+                # Menu shedding can make an otherwise unsummarizable request
+                # fit too; retire the trigger after either successful path.
+                if overflow:
+                    self.store.transaction(lambda data: task(data, selected["id"]).pop("context_overflow", None))
                 # Reload durable context without restarting this tick's deadline.
                 selected = {**task(self.store.read(), selected["id"]),
                             **{key: selected[key] for key in ("_model_retry_authority", "_run_control_revision",
@@ -830,6 +856,7 @@ class AgentLoop:
                         row["queue"] = [call for call in row["queue"] if call["call_id"] not in consumed]
                 retry_policy.recovered(row)
                 row["model_retry_count"] = 0
+                row.pop("context_overflow_recovery", None)
                 row.pop("model_retry_authority", None)
                 row.pop("rejected_response_note", None)
                 subagents.drain_subagent_notifications_in_tx(data, row, target_ids=shown_ids)
@@ -1465,7 +1492,7 @@ class AgentLoop:
         limit = context_limit if context_limit is not None else (
             policy["effective_max_context_bytes"] if policy else self._context_limit(row))
         ratio = context_compaction.observed_bytes_per_token(row)
-        return context_compaction.input_capacity(limit, policy, ratio), ratio
+        return context_compaction.input_capacity(limit, policy, ratio, row.get("context_density_penalty", 1.0)), ratio
 
     def _effective_request_fit(self, row: dict, analysis: dict, policy: dict | None = None) -> tuple[int, int]:
         """(request size at the applied density, effective capacity) for an analyzed request."""

@@ -358,7 +358,9 @@ class OpenAICompatibleAdapter:
                 diagnostics, runtime_detail = read_http_failure(exc, phase, detail_codes=RUNTIME_ERROR_CODES)
             finally:
                 exc.close()
-            if classify_errors and diagnostics.get("image_rejected"):
+            if diagnostics.get("network_reason") == "context_overflow":
+                code = "upstream_context_overflow"
+            elif classify_errors and diagnostics.get("image_rejected"):
                 code = "upstream_image_rejected"  # The model refused the image, not the request.
             elif runtime_detail in RUNTIME_ERROR_CODES:
                 code = runtime_detail
@@ -791,7 +793,9 @@ class OpenAICompatibleAdapter:
         except urllib.error.HTTPError as exc:
             diagnostics = read_http_failure(exc, phase)
             exc.close()
-            if diagnostics.get("image_rejected"):
+            if diagnostics.get("network_reason") == "context_overflow":
+                err_code = "upstream_context_overflow"
+            elif diagnostics.get("image_rejected"):
                 err_code = "upstream_image_rejected"
             elif diagnostics.get("network_reason") in {"request_rejected", "auth_rejected"}:
                 err_code = "upstream_request_rejected"

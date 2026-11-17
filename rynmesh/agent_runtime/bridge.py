@@ -55,6 +55,7 @@ OUTPUT_LIMIT_REACHED_FEEDBACK = (
 OUTPUT_LIMIT_REACHED_MESSAGE = "模型把输出额度都用在思考上了，请调高该模型的输出上限或降低推理强度"
 
 _PEER_ERROR_MAP = {
+    "upstream_context_overflow": "agent_model_context_overflow",
     "cli_model_discovery_failed": "agent_model_discovery_failed",
     "model_configuration_changed": "agent_model_destination_changed",
     "ai_permission_denied": "agent_model_destination_changed",
@@ -68,6 +69,7 @@ _PEER_ERROR_MAP = {
     "task_cancelled": "agent_cancelled",
 }
 _ADAPTER_ERROR_MAP = {
+    "upstream_context_overflow": "agent_model_context_overflow",
     "cli_model_discovery_failed": "agent_model_discovery_failed",
     "inference_timeout": "agent_inference_timeout",
     "runtime_connection_failed": "agent_model_connection_failed",

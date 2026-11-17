@@ -65,6 +65,7 @@ _IMAGE_ERROR_CODES = frozenset({
 _CONTEXT_OVERFLOW_MARKERS = (
     "context_length_exceeded",
     "context_window_exceeded",
+    "contextwindowexceeded",
     "context_exceeded",
     "maximum context length",
     "prompt is too long",
@@ -154,6 +155,8 @@ def _is_client_rejection_token(token: str) -> bool:
 
 def context_overflow(envelope, status=None) -> bool:
     """True when a 4xx/stream error envelope indicates context length overflow. Keeps no text."""
+    if status is not None and not 400 <= status < 500:
+        return False
     if status == 413:
         return True
     if not isinstance(envelope, dict):
@@ -269,9 +272,11 @@ def describe(exc, phase="request", envelope=None):
             result["tools_unsupported"] = True
 
         headers = {name.lower(): value for name, value in (exc.headers or {}).items()}
-        if exc.code == 402 or any(t in _QUOTA_CODES for t in tokens):
+        if exc.code == 413:
+            result["network_reason"] = "context_overflow"
+        elif exc.code == 402 or any(t in _QUOTA_CODES for t in tokens):
             result["network_reason"] = "quota"
-        elif not result.get("image_rejected") and 400 <= exc.code < 500 and context_overflow(envelope, status=exc.code):
+        elif 400 <= exc.code < 500 and context_overflow(envelope, status=exc.code):
             result["network_reason"] = "context_overflow"
         elif exc.code == 403 and "blocked" in msg_l and (
                 "cloudflare" in headers.get("server", "").lower() or "cloudflare" in msg_l):
@@ -379,7 +384,7 @@ def classify_stream_error(event, phase="read"):
         return "upstream_request_rejected", diagnostics
     if any(t in {"context_length_exceeded", "context_window_exceeded", "context_exceeded"} for t in tokens_l) or context_overflow(envelope):
         diagnostics["network_reason"] = "context_overflow"
-        return "upstream_request_rejected", diagnostics
+        return "upstream_context_overflow", diagnostics
     if code_l == "generation_cancelled":
         return "inference_failed", diagnostics
     if any(t in {"overloaded_error", "overloaded"} for t in tokens_l) or (
