@@ -23,6 +23,12 @@ COMPLETED = threading.Event()
 COMPLETED.set()
 _RETIRED_LOCK = threading.RLock()
 
+
+def input_unconfirmed(correction=None):
+    return {"error": "agent_process_input_unconfirmed", "input_delivered": "unknown",
+            "side_effects": "unknown", "correction": correction or (
+                "Input may have been partly delivered; do not resend it. Read the process output first or stop the process.")}
+
 TERMINAL_QUERY_REPLIES = (
     ("\x1b[5n", "\x1b[0n"),
     ("\x1b[6n", "\x1b[1;1R"),
@@ -182,6 +188,9 @@ class ConPtyProcess:
         self._pending = {}
         self._sequence = 0
         self._output = queue.Queue(maxsize=64)
+        self.dropped_chars = 0
+        self.last_read_dropped_chars = 0
+        self._reported_dropped_chars = 0
         self._closed = threading.Event()
         self._events_done = threading.Event()
         self._returncode = None
@@ -237,12 +246,13 @@ class ConPtyProcess:
             while not self._closed.is_set():
                 event = self._connection.recv()
                 if event[0] == "output":
-                    while not self._closed.is_set():
+                    with self._lock:
                         try:
-                            self._output.put(event[1], timeout=0.1)
-                            break
+                            self._output.put_nowait(event[1])
                         except queue.Full:
-                            continue
+                            dropped = self._output.get_nowait()
+                            self.dropped_chars += len(dropped.decode("utf-8"))
+                            self._output.put_nowait(event[1])
                 elif event[0] == "ack":
                     with self._lock:
                         waiter = self._pending.get(event[1])
@@ -270,11 +280,18 @@ class ConPtyProcess:
 
     def read_output(self):
         while True:
-            try:
-                return self._output.get(timeout=0.1)
-            except queue.Empty:
+            with self._lock:
+                try:
+                    chunk = self._output.get_nowait()
+                except queue.Empty:
+                    chunk = None
+                if chunk is not None:
+                    self.last_read_dropped_chars = self.dropped_chars - self._reported_dropped_chars
+                    self._reported_dropped_chars = self.dropped_chars
+                    return chunk
                 if self._events_done.is_set():
                     return b""
+            self._events_done.wait(0.1)
 
     def release_buffers(self):
         """Retain status, not transport locks/queues, in the session history.
@@ -303,14 +320,10 @@ class ConPtyProcess:
             try:
                 self._connection.send((ident, action, value))
                 if not event.wait(2) or not result or not result[0]:
-                    raise AgentError("agent_process_input_unconfirmed")
+                    return input_unconfirmed()
             except (OSError, EOFError):
                 self.dispose()
-                raise AgentError("agent_process_input_unconfirmed") from None
-            except AgentError:
-                # Do not leave an unacknowledged input queued for later delivery.
-                self.dispose()
-                raise
+                return input_unconfirmed()
             finally:
                 with self._lock:
                     self._pending.pop(ident, None)
@@ -324,11 +337,13 @@ class ConPtyProcess:
             )
             if not normalized:
                 return
-            self._request("write", normalized)
+            return self._request("write", normalized)
 
     def resize(self, rows, cols):
         validate_size(rows, cols)
-        self._request("resize", (rows, cols))
+        result = self._request("resize", (rows, cols))
+        if result:
+            return result
         self.rows, self.cols = rows, cols
 
     def dispose(self):
@@ -514,13 +529,11 @@ class PosixPtyProcess:
             while view:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    self.dispose()
-                    raise AgentError("agent_process_input_unconfirmed")
+                    return input_unconfirmed()
                 try:
                     _, ready, _ = select.select([], [fd], [], remaining)
                     if not ready:
-                        self.dispose()
-                        raise AgentError("agent_process_input_unconfirmed")
+                        return input_unconfirmed()
                 except (OSError, ValueError, TypeError):
                     pass
                 try:
@@ -529,10 +542,10 @@ class PosixPtyProcess:
                     if exc.errno == errno.EINTR:
                         continue
                     self.dispose()
-                    raise AgentError("agent_process_input_unconfirmed") from None
+                    return input_unconfirmed()
                 if written <= 0:
                     self.dispose()
-                    raise AgentError("agent_process_input_unconfirmed")
+                    return input_unconfirmed()
                 view = view[written:]
 
     def resize(self, rows, cols):
