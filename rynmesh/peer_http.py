@@ -1741,7 +1741,8 @@ def create_app(store: RynmeshStore | None = None):
         ):
             raise HTTPException(status_code=415, detail="content_body_not_text")
         max_body_bytes = int(os.environ.get("RYNMESH_LOCAL_BODY_MAX_BYTES", str(1024 * 1024)))
-        data = content_path.read_bytes()[: max_body_bytes + 1]
+        with content_path.open("rb") as handle:
+            data = handle.read(max_body_bytes + 1)
         truncated = len(data) > max_body_bytes
         if truncated:
             data = data[:max_body_bytes]
