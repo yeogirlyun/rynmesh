@@ -98,6 +98,7 @@ class PluginManager:
         self._catalog_cache_key = None
         self._catalog_value = None
         self._catalog_valid_until = 0.0
+        self._verified = {}
         self.nas = nas
         self.migration_error = None
         if cache is None and self.state_path.exists():
@@ -562,15 +563,36 @@ class PluginManager:
                 raise craft_host.CraftError("plugin_disabled")
             if row.get("version") != self.version(slug):
                 raise craft_host.CraftError("plugin_not_installed")
-            self.verify(slug)
             if slug == "nas" and (not self.nas or not self.nas.state["enabled"]):
                 raise craft_host.CraftError("plugin_disabled")
+            spec = self.specification(slug)
+            signature = self._lease_signature(slug, spec)
+            needs_verification = self._verified.get(slug) != signature
             self.active[slug] = self.active.get(slug, 0) + 1
         try:
-            yield self.specification(slug)
+            if needs_verification:
+                self.verify(slug)
+                with self.lock:
+                    if self.closed or signature != self._lease_signature(slug, spec):
+                        raise craft_host.CraftError("plugin_busy")
+                    self._verified[slug] = signature
+            yield spec
         finally:
             with self.lock:
                 self.active[slug] -= 1
+
+    def _lease_signature(self, slug, spec):
+        root = builtin.location(self.cache, slug) if slug in builtin.ALL_BUILTINS else self.cache / slug / spec["tag"]
+        paths = [root / "receipt.json"]
+        if slug in builtin.ALL_BUILTINS:
+            paths.append(root / "manifest.json")
+        signature = [self._catalog_generation]
+        for path in paths:
+            try:
+                signature.append(path.stat().st_mtime_ns)
+            except FileNotFoundError:
+                signature.append(None)
+        return tuple(signature)
 
     @staticmethod
     def port(slug):
@@ -581,6 +603,9 @@ class PluginManager:
         slug = builtin.normalize_slug(slug)
         if slug in builtin.ALL_BUILTINS:
             raise craft_host.CraftError("plugin_internal_entry")
+        # Starting an editor requires fresh evidence, not an ordinary lease hit.
+        with self.lock:
+            self._verified.pop(slug, None)
         with self.lease(slug), self.lock:
             self.tickets = {key: value for key, value in self.tickets.items() if value[1] > time.monotonic()}
             if len(self.tickets) >= 64:
@@ -594,6 +619,8 @@ class PluginManager:
         slug = builtin.normalize_slug(slug)
         if slug in builtin.ALL_BUILTINS:
             raise craft_host.CraftError("plugin_internal_entry")
+        with self.lock:
+            self._verified.pop(slug, None)
         with self.lease(slug), self.lock:
             approved = self.tickets.pop(ticket, None)
             if not approved or approved[0] != slug or approved[1] <= time.monotonic():
