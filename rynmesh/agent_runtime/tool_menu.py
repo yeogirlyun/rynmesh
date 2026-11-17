@@ -118,11 +118,11 @@ def plugin_preloads(specs, metadata, plugin_ids):
     return tuple(selected)
 
 
-def directory_spec(business_specs, *, capacity_bytes=None):
+def directory_spec(business_specs):
     """A persistent name index belongs in the schema, not repeated page bodies."""
     spec = copy.deepcopy(SPEC)
     names = sorted(item["function"]["name"] for item in business_specs)
-    if len(encoded(names)) <= min(1500, capacity_bytes // 4 if capacity_bytes is not None else 1500):
+    if len(encoded(names)) <= 1500:
         spec["function"]["parameters"]["properties"]["load"]["items"]["enum"] = names
     return spec
 
@@ -160,13 +160,13 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
     )
     limit = capacity(max_context_bytes, authority_bytes)
     prior = state or {}
-    base = [*internal, directory_spec(business_specs, capacity_bytes=limit)]
+    base = [*internal, directory_spec(business_specs)]
     target = min(8192, max_context_bytes // 2, max_context_bytes - authority_bytes - 2048)
     # For small registries a discovery schema would cost more than all tools.
     # Small windows keep control schemas lazy (see below), so their directory
     # costs only the discovery schema; comparing with every control schema
     # picked full mode there and spent kilobytes the history needed.
-    small_lazy_base = [directory_spec(all_specs, capacity_bytes=limit)] if internal and max_context_bytes <= SMALL_WINDOW_BYTES else base
+    small_lazy_base = [directory_spec(all_specs)] if internal and max_context_bytes <= SMALL_WINDOW_BYTES else base
     directory_useful = len(encoded(all_specs)) > len(encoded(small_lazy_base))
     mode = "directory" if (len(encoded(full_specs)) > limit or
                            directory_useful and (len(encoded(full_specs)) > target or prior.get("mode") == "directory")) else "full"
@@ -187,7 +187,7 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
     # so the tools prefix at token 0 remains KV-cache stable across turns.
     keep_loaded = same or (same_epoch and max_context_bytes >= ADDITIVE_CAPACITY)
     if lazy:
-        base = [directory_spec(catalog, capacity_bytes=limit)]
+        base = [directory_spec(catalog)]
     loaded = list(prior.get("loaded_names", [])) if keep_loaded and mode == "directory" else []
     by_name = {spec["function"]["name"]: spec for spec in catalog}
     if len(by_name) != len(catalog) or NAME in by_name:
@@ -295,7 +295,7 @@ def discover(business_specs, internal_specs, metadata, state, args, *, capacity_
     pinned = [name for name in state.get("pinned_names", []) if name in names]
 
     def size(selection):
-        return len(encoded([*([] if state.get("lazy_controls") else internal), directory_spec(catalog, capacity_bytes=capacity_bytes),
+        return len(encoded([*([] if state.get("lazy_controls") else internal), directory_spec(catalog),
                             *(names[name] for name in [*pinned, *selection])]))
 
     query_text = args.get("query")

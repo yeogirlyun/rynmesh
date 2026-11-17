@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 
-from test_agent_runtime import advance, assistant, make_runtime
+from test_agent_runtime import advance, assistant, fit_window, make_runtime
 from rynmesh.agent_runtime import prompt
 
 
@@ -44,7 +44,9 @@ def test_t3_file_policy_has_single_line_links_and_tables(tmp_path):
     first = prompt.authority(row).splitlines()[1]
     context = json.loads(first.removeprefix("Server control state: "))
     policy = context["file_output_policy"]
-    assert "a link may end with :line" in policy
+    assert "Create and edit text files in workspace_root with ryn_apply_patch (several files per patch); generate images with ryn_image_generate; download URLs or plugin fileRef values with ryn_download_file; other binary files may use shell. Confirm outputs via readback or workspace_files. " in policy
+    assert "Link final files as [name](absolute-path) with forward slashes, <paths with spaces>; embed images as ![description](absolute-path). " in policy
+    assert "A link may end with :line" in policy
     assert "never use file:// URIs or line ranges" in policy
     assert "use a table for mappings and comparisons" in policy
 
@@ -84,6 +86,7 @@ def test_t1_reporting_rules_leave_twelve_k_tool_discovery_callable(tmp_path):
     runtime.tools = ManyTools()
     runtime.update_settings({"max_context_chars": 12000})
     task = runtime.create({"message": "Inspect the one service."})
+    fit_window(runtime, task["id"], 12000, small_window=True)
     advance(runtime, 5)
     assert runtime.get(task["id"])["status"] == "completed"
     assert [call[0] for call in runtime.tools.calls] == ["inspect_service"]
