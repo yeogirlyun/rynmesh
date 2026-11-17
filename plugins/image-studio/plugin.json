@@ -1,0 +1,13 @@
+{
+  "id": "image-studio",
+  "name": "做图",
+  "description": "在自己的电脑上生成、修改图片，管理作品，并按需分享做图页面。",
+  "version": "1.0.0",
+  "runtime": "first-party-python",
+  "host_api": 1,
+  "entry": "ryn_image_studio/__init__.py",
+  "site_id": "image-studio",
+  "permissions": ["local-code", "codex-image", "plugin-data", "node-site"],
+  "source": "https://github.com/yeogirlyun/rynmesh/tree/develop/plugins/image-studio",
+  "notes": "首个独立版本：本机做图、作品记录、任务队列、按现有公司通道分享。需要支持公开插件的 Ryn；本机需安装并登录 Codex。"
+}

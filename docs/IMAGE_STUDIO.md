@@ -6,9 +6,12 @@ signed-in Codex (native image generation, the same path as the agent's
 `ryn_image_generate`) and the images come back to them. No separate API key
 or server is involved. Offline means offline.
 
-It is built into Ryn and registered at startup as the in-process site
-`image-studio`, closed until the owner opens it (Shared pages, or step 5's
-owner page). The page itself is step 4; this document covers the service.
+Since 2026-11-17, its source lives in `plugins/image-studio/` and it is installed
+as an independent signed public plugin, rather than shipped inside the core.
+The plugin registers the in-process site `image-studio`; installation does not
+enable sharing. Existing image data is retained. See
+[public and private plugin instructions](PUBLIC_AND_PRIVATE_PLUGINS.md) for
+installation, updates, migration, and the current company-sharing boundary.
 
 ## Colleague API (through the node site)
 

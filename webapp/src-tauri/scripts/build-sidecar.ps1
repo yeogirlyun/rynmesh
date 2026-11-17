@@ -18,6 +18,7 @@ try {
     & $Python -m PyInstaller --onefile --noconfirm --clean `
         --name rynmesh-peer --paths $root `
         --collect-submodules uvicorn --collect-submodules rynmesh --collect-submodules anyio `
+        --collect-data rynmesh `
         --hidden-import uvicorn.lifespan.on --hidden-import uvicorn.loops.asyncio `
         --hidden-import uvicorn.protocols.http.h11_impl `
         --distpath $dist --workpath $work --specpath $spec `

@@ -36,7 +36,7 @@ class GenerationError(Exception):
 
 def readiness() -> dict[str, Any]:
     """Cheap local check: Codex present and a sign-in file exists. No network."""
-    from ..llm_package.cli_adapter import CLIAgentAdapter
+    from rynmesh.llm_package.cli_adapter import CLIAgentAdapter
 
     try:
         executable = CLIAgentAdapter("codex_cli")._command_path()
@@ -79,10 +79,10 @@ def generate(brief: str, *, references: list[bytes] | None = None,
              cancelled: Callable[[], bool] | None = None, timeout: int = GENERATION_TIMEOUT_S
              ) -> tuple[bytes, dict[str, Any]]:
     """One image as PNG bytes plus metadata; raises GenerationError with a stable code."""
-    from ..llm_package.adapters import AdapterError
-    from ..llm_package.cli_adapter import CLIAgentAdapter
-    from ..llm_package.codex_image import decode_image
-    from ..llm_package.codex_session import CodexRPC, _start_thread
+    from rynmesh.llm_package.adapters import AdapterError
+    from rynmesh.llm_package.cli_adapter import CLIAgentAdapter
+    from rynmesh.llm_package.codex_image import decode_image
+    from rynmesh.llm_package.codex_session import CodexRPC, _start_thread
 
     ready = readiness()
     if not ready["ready"]:

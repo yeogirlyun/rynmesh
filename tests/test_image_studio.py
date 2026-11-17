@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import io
 import json
+import sys
 import threading
 import time
+from pathlib import Path
 from urllib.parse import quote
 
 import pytest
@@ -13,9 +15,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from rynmesh.image_studio import generator, install_image_studio, sizes
-from rynmesh.image_studio.jobs import JobError, JobStore, Worker, compose_brief
-from rynmesh.image_studio.site import StudioSite
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "plugins/image-studio"))
+
+from ryn_image_studio import generator, install_image_studio, sizes
+from ryn_image_studio.jobs import JobError, JobStore, Worker, compose_brief
+from ryn_image_studio.site import StudioSite
 
 RESOURCE = "https://provider.test/connect"
 
@@ -138,7 +142,7 @@ def test_failures_are_classified_and_retry_requeues(studio):
     fake.fail = ["quota_exhausted"]
     job = submit(site)[0]
     worker.start()
-    row = wait_for(lambda: (r := store.job(None, job["id"]))["state"] == "failed" and r)
+    wait_for(lambda: (r := store.job(None, job["id"]))["state"] == "failed" and r)
     status, _, data = call(site, "GET", f"/api/jobs/{job['id']}")
     view = json.loads(data)
     assert view["failure"] == "quota_exhausted" and "额度" in view["failure_text"]
@@ -225,7 +229,7 @@ def test_restart_recovery_limits_and_prune(tmp_path):
 
 def test_static_shell_and_traversal(studio, tmp_path, monkeypatch):
     store, worker, site, fake = studio
-    from rynmesh.image_studio import site as site_mod
+    from ryn_image_studio import site as site_mod
     web = tmp_path / "web"
     (web / "assets").mkdir(parents=True)
     (web / "index.html").write_text("<!doctype html><title>做图</title>", encoding="utf-8")
@@ -284,7 +288,8 @@ def test_owner_routes(tmp_path, monkeypatch):
 
 def test_colleague_through_two_nodes(tmp_path, monkeypatch):
     """Opener -> gateway -> signed sealed request -> hosting node -> in-process studio -> back."""
-    from test_node_sites import RESOURCE as SITE_RESOURCE, Authority, SiteNode
+    from test_node_sites import RESOURCE as SITE_RESOURCE
+    from test_node_sites import Authority, SiteNode
 
     monkeypatch.setattr(generator, "readiness", lambda: {"ready": True, "code": ""})
     opener, hosting = SiteNode(tmp_path, "opener").start(), SiteNode(tmp_path, "hosting").start()
@@ -335,16 +340,13 @@ def test_colleague_through_two_nodes(tmp_path, monkeypatch):
 def test_shipped_page_has_no_inline_script_and_ships_its_assets():
     """The gateway CSP blocks inline scripts; every asset the page names must exist and be packaged."""
     import re
-    import tomllib
-    from pathlib import Path
 
-    from rynmesh.image_studio.site import WEB_ROOT
+    from ryn_image_studio.site import WEB_ROOT
     html = (WEB_ROOT / "index.html").read_text(encoding="utf-8")
     assert not re.search(r"<script(?![^>]*\bsrc=)[^>]*>", html), "inline script would be blocked"
     assert not re.search(r"\son[a-z]+=", html), "inline event handlers would be blocked"
     for asset in re.findall(r'(?:src|href)="/([^"?]+)', html):
         assert (WEB_ROOT / asset).is_file(), asset
-    data = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8"))
-    assert data["tool"]["setuptools"]["package-data"]["rynmesh.image_studio"] == ["web/*"]
+    assert WEB_ROOT.parent.parent.name == "image-studio"
     js = (WEB_ROOT / "app.js").read_text(encoding="utf-8")
     assert "innerHTML" not in js and "eval(" not in js and "http://" not in js and "https://" not in js

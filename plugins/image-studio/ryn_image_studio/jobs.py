@@ -367,7 +367,8 @@ class Worker:
 
     def run_one(self, job: dict[str, Any]) -> None:
         self.current = job["id"]
-        cancelled = lambda: self._stop.is_set() or self.store.cancel_requested(job["id"])
+        def cancelled():
+            return self._stop.is_set() or self.store.cancel_requested(job["id"])
         try:
             raw, info = self.generate(compose_brief(job), references=self.store.references(job), cancelled=cancelled)
             png = sizes.fit(raw, job["width"], job["height"])

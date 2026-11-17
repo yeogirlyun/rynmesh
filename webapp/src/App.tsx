@@ -86,6 +86,7 @@ import Settings from "./screens/Settings";
 import { APIAccessPage, AgentSharingPage, ModelMappingPage } from "./screens/AIWorkspacePages";
 import AISources from "./screens/AISources";
 import AgentExtensions from "./screens/AgentExtensions";
+import PublicPluginPage from "./screens/PublicPluginPage";
 import UnlockGate from "./screens/components/UnlockGate";
 const NasPage = lazy(() => import("./personal/Nas").then(m => ({ default: m.NasPage })));
 const DrivePreview = lazy(() => import("./personal/Drives").then(m => ({ default: m.DrivesPage })));
@@ -426,6 +427,7 @@ export function AppRoutes() {
           <Route path="nas" element={<Suspense fallback={<LoadingPanel />}><NasPage /></Suspense>} />
           <Route path="drives" element={<Suspense fallback={<LoadingPanel />}><DrivePreview /></Suspense>} />
           <Route path="settings/plugins" element={<Suspense fallback={<LoadingPanel />}><PluginsPage /></Suspense>} />
+          <Route path="apps/public-plugins/:pluginId" element={<PublicPluginPage />} />
           <Route path="settings/extensions" element={<AgentExtensions />} />
           <Route path="settings/extensions/:section" element={<AgentExtensions />} />
           <Route path="settings/desktop" element={<DesktopPage />} />

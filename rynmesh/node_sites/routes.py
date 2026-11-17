@@ -93,7 +93,8 @@ def install_node_sites(app: FastAPI, *, engine: DropEngine, home: Path,
     @app.get("/api/local/node-sites/mine")
     async def node_sites_mine(request: Request):
         local_control(request)
-        return {"sites": [SiteStore.public(sid, row) for sid, row in sorted(sites.store.sites().items())],
+        return {"sites": [SiteStore.public(sid, row) for sid, row in sorted(sites.store.sites().items())
+                          if not row.get("builtin") or sid in sites.host.builtins],
                 "members": await asyncio.to_thread(sites.members)}
 
     @app.post("/api/local/node-sites/mine")

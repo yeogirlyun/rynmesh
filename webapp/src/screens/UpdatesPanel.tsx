@@ -658,8 +658,9 @@ export function SoftwareUpdatesPage() {
   return <div className="pf-page ryn-updates-page">
     <PageHeading title={tx("软件更新", "Software updates")}
       description={hasServices
-        ? tx("Ryn 和已安装的插件都在后台下载新版本，不打断你。", "Ryn and your installed plugins download new versions in the background without interrupting you.")
+        ? tx("Ryn 与公司插件按各自的更新设置检查新版本。公开做图插件在插件页手动检查和更新。", "Ryn and company plugins follow their update settings. Check and update public Image Studio from the plugin page.")
         : tx("Ryn 在后台下载新版本；下好后点左上角「更新」即可。", "Ryn downloads new versions in the background; click Update next to the logo when one is ready.")} />
     {desktop ? <DesktopUpdatesPanel /> : <p>{tx("网页版随服务器更新，无需在这里操作。", "The web version updates with its server; nothing to do here.")}</p>}
+    <p><Link to="/settings/plugins">{tx("公开插件：查看已安装版本、检查更新", "Public plugins: installed versions and updates")}</Link></p>
   </div>;
 }

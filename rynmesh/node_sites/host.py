@@ -177,7 +177,8 @@ class SiteHost:
             "protocol", "type", "from", "to", "ts", "nonce", "provider_resource", "from_pub"})
         sites = [{"site_id": sid, "title": row["title"], "entry": row["entry"]}
                  for sid, row in sorted(self.store.sites().items())
-                 if row.get("enabled") and self._audience_allows(row, member)]
+                 if row.get("enabled") and (not row.get("builtin") or sid in self.builtins)
+                 and self._audience_allows(row, member)]
         secret = json.dumps({"sites": sites}).encode("utf-8")
         return self._reply(payload, codec.seal_for(self.engine.msg_priv, payload["from_pub"], secret, LIST_INFO))
 

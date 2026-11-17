@@ -6,6 +6,7 @@ import type { ExtensionOverview } from "../domain/agentExtensions";
 import type { CraftCatalog, CraftPlugin } from "../domain/craftPlugins";
 import { isTauriDesktop } from "../domain/nodeUrl";
 import CraftPluginIcon from "./CraftPluginIcon";
+import PublicPlugins from "./PublicPlugins";
 import "./craftPluginLibrary.css";
 
 type Props = {
@@ -70,6 +71,8 @@ export default function CraftPluginLibrary({ catalog, extensionOverview, busy, o
     </div>
 
     {view === "discover" && <nav className="craft-library-categories" aria-label={text("pluginCategories")}>{["all", "office", "workflow", "design", "media", "storage"].map(id => <button key={id} aria-pressed={category === id} onClick={() => setCategory(id)}>{text(id)}</button>)}</nav>}
+
+    {(category === "all" || category === "design" || view === "installed") && <PublicPlugins view={view} query={query} />}
 
     {filtered.length ? <div className="craft-library-grid">{filtered.map(app => {
       const label = text(app.id);

@@ -48,6 +48,7 @@ class SiteClient:
         self._auth: dict[tuple[str, str, str], float] = {}
         self._lists: dict[tuple[str, str], tuple[float, list[dict[str, Any]]]] = {}
         self._status_probes: dict[tuple[str, str], Future] = {}
+        self.local_fetch = None
 
     def _status_probe(self, resource: str, peer_id: str, *, fresh: bool):
         # NAT discovery may take a minute. Keep it running for eventual recovery,
@@ -219,6 +220,10 @@ class SiteClient:
         if row is None:
             raise SiteError("site_not_found", 404)
         resource, peer_id, sid = row["resource"], row["peer_id"], row["site_id"]
+        if resource == "local" and peer_id == self.engine.me:
+            if self.local_fetch is None:
+                raise SiteError("site_denied", 403)
+            return self.local_fetch(sid, method, request_path(path), body)
         member = self._member(resource, peer_id)
         if not self._authorized(resource, peer_id, sid):
             raise SiteError("site_denied", 403)
