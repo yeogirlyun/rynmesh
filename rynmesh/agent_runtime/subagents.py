@@ -670,6 +670,8 @@ def spawn_agent_in_tx(data: dict, parent_row: dict, args: dict) -> dict:
     from .prompt import PROMPT_VERSION, select_base_instructions
 
     tasks = data.setdefault("tasks", {})
+    if len(tasks) >= 200:
+        raise AgentToolRejected("agent_task_limit", correction="Close or archive old tasks before spawning another agent.")
     settings = {**DEFAULT_SETTINGS, **(data.get("settings") or {})}
     tree_agents = _collect_tree_subagents(data, parent_row)
 

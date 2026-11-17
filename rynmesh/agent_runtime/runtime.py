@@ -1687,14 +1687,14 @@ class AgentRuntime(AgentLoop):
                 if storage_relief.satisfied(total, count):
                     break
                 chosen.append(item)
-                total, count = total - item["bytes"], count - 1
+                total, count = total - item["bytes"], count - len(item["tree_ids"])
             if not chosen:
                 return 0
             # One commit for the whole batch: each commit re-copies the active
             # state, so archiving dozens of tasks one by one would stall a step.
             with contextlib.ExitStack() as gates:
-                for item in sorted(chosen, key=lambda item: item["id"]):
-                    gates.enter_context(credential_control.gate(self.store, item["id"]))
+                for task_id in sorted({key for item in chosen for key in item["tree_ids"]}):
+                    gates.enter_context(credential_control.gate(self.store, task_id))
                 archived = len(lifecycle.archive_many(self.store, chosen, event, reason="storage",
                                                       on_mutate=memory_integration.on_task_lifecycle_in_tx))
             if archived:
@@ -2479,7 +2479,16 @@ class AgentRuntime(AgentLoop):
                            active_run=self._task_run(task_id), monotonic_now=time.monotonic(), data=data)
 
     def lifecycle(self, task_id: str, value: dict, operation: str) -> dict:
-        with credential_control.gate(self.store, task_id):
+        data = self.store.read()
+        deleted = data.get("deleted_tasks", {}).get(task_id)
+        if deleted:
+            ids = [task_id, *deleted.get("descendant_ids", [])]
+        else:
+            row = lifecycle.find(self.store, data, task_id)
+            ids = [child["id"] for child in lifecycle.tree_rows(self.store, data, row)]
+        with contextlib.ExitStack() as gates:
+            for key in sorted(set(ids)):
+                gates.enter_context(credential_control.gate(self.store, key))
             return self._lifecycle(task_id, value, operation)
 
     def rename_task(self, task_id: str, value: dict) -> dict:
@@ -2514,10 +2523,19 @@ class AgentRuntime(AgentLoop):
             except AgentError:
                 archived = None  # change() reports the precise error.
             if archived is not None and archived.get("archived"):
-                self._relieve_storage("restore", exclude={task_id}, need_bytes=len(encoded(archived)), need_tasks=1)
+                rows = lifecycle.restore_rows(self.store, self.store.read(), archived)
+                self._relieve_storage("restore", exclude={child["id"] for child in rows},
+                                      need_bytes=sum(len(encoded(child)) for child in rows), need_tasks=len(rows))
         result = lifecycle.change(self.store, task_id, value, operation, event, now,
                                   on_mutate=memory_integration.on_task_lifecycle_in_tx)
         if result.get("deleted"):
+            ids = [*result.get("descendant_ids", []), task_id]
+            result["cleanup_pending"] = self._cleanup_deleted_tasks(ids)
+        return result if result.get("deleted") else public_task(result, settings=self.settings())
+
+    def _cleanup_deleted_tasks(self, ids):
+        any_pending = False
+        for task_id in ids:
             pending = True
             try:
                 results.purge(self.store, task_id)
@@ -2529,8 +2547,8 @@ class AgentRuntime(AgentLoop):
             except Exception:
                 pass  # Tombstone wins; the same DELETE safely retries cleanup.
             self.store.transaction(lambda data: data["deleted_tasks"][task_id].update(cleanup_pending=pending))
-            result["cleanup_pending"] = pending
-        return result if result.get("deleted") else public_task(result, settings=self.settings())
+            any_pending |= pending
+        return any_pending
 
     def get_result(self, task_id: str, result_id: str, offset=0, limit=8192) -> dict:
         row = lifecycle.find(self.store, self.store.read(), task_id)
@@ -3782,7 +3800,27 @@ class AgentRuntime(AgentLoop):
                                   **({"ledger_outcome": settled_outcome} if settled_outcome else {}))
                 if row.get("status") not in {"completed", "cancelled", "failed"}:
                     _note_lost_background_processes(row, boot_id)
-        self.store.transaction(reconcile)
+            deleted_ids = []
+            # Old releases removed only the parent. Repair only explicit children;
+            # top-level conversations must never be inferred to be orphans.
+            for row in list(data["tasks"].values()):
+                parent = row.get("parent_task_id")
+                if row["id"] not in data["tasks"] or not parent or parent in data["tasks"]:
+                    continue
+                rows = lifecycle.tree_rows(self.store, data, copy.deepcopy(row))
+                if parent in data.get("deleted_tasks", {}):
+                    lifecycle.delete_rows_in_tx(data, rows, now, on_mutate=memory_integration.on_task_lifecycle_in_tx)
+                    deleted_ids.extend(child["id"] for child in rows)
+                else:
+                    subagents.cascade_stop_subagents_in_tx(data, row, close=True)
+                    rows = lifecycle.tree_rows(self.store, data, copy.deepcopy(row))
+                    lifecycle._archive_tree(self.store, data, rows, event,
+                        on_mutate=memory_integration.on_task_lifecycle_in_tx,
+                        reason="parent_archived" if parent in data.get("archives", {}) else "orphan")
+            return deleted_ids
+        deleted_ids = self.store.transaction(reconcile)
+        if deleted_ids:
+            self._cleanup_deleted_tasks(deleted_ids)
 
     def _schedule_reconciliation(self, row):
         prior = row.get("reconciliation")
