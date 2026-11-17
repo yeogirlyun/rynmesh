@@ -30,6 +30,7 @@ _ERROR_GUIDANCE = {
     "agent_workspace_changed_new_task_required": ("choose_workspace", "The working directory changed. The owner must explicitly rebind this task to the new directory before continuing.", "/agent"),
     "agent_invalid_control_proposal": ("correct_input_request", "Correct the control arguments. Credential requests accept only credential_ref fields; ordinary facts use a separate information/choice request. Never put a key in chat.", "/agent"),
     "agent_model_unavailable": ("review_models", "检查本机模型服务是否已启动，并检查所选模型的来源连接或重新选择可用模型。", "/services/sources"),
+    "agent_model_discovery_failed": ("review_models", "暂时读不到命令行模型的模型列表，稍后会自动重试；若持续失败，请检查命令行工具是否已安装并登录。", "/services/sources"),
     "agent_model_starting": ("wait_for_model_start", "本机模型服务正在启动，将每 5 秒重试；若持续不可用，请检查本机模型服务是否已启动。", "/services/sources"),
     "agent_model_peer_unreachable": ("review_peer_connection", "无法连接模型所在的设备，请检查对端在线状态和线路后重试；不会自动更换模型。", "/services/sources"),
     "agent_model_tools_unsupported": ("review_models", "This connection does not provide the Agent tool protocol. Select a connected model with Agent tool support.", "/services/sources"),
