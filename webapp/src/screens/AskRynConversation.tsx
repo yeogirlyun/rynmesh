@@ -112,6 +112,8 @@ export default function PrivateAIChat() {
   const [historyReady, setHistoryReady] = useState(false);
   const [sending, setSending] = useState(false);
   const [reviewing, setReviewing] = useState(false);
+  const [reviewPreview, setReviewPreview] = useState<AskPreview | null>(null);
+  const [summaryBusy, setSummaryBusy] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState("");
   const [unconfirmed, setUnconfirmed] = useState<AskRunRequest | null>(null);
   const [error, setError] = useState("");
@@ -429,7 +431,7 @@ export default function PrivateAIChat() {
         provider_peer_id: selectedService.peer_id,
         service_id: selectedService.service.package_id,
         prompt: preview?.prompt ?? buildConversationPrompt(withUser.messages),
-        max_tokens: preview?.max_output_tokens ?? Math.min(selectedService.service.max_output_tokens || 256, 256),
+        max_tokens: preview?.max_output_tokens ?? selectedService.service.max_output_tokens,
         transport: "auto",
       });
       setActiveTaskId(result.task_id);
@@ -455,6 +457,7 @@ export default function PrivateAIChat() {
         inputTokens: result.input_tokens,
         outputTokens: result.output_tokens,
         cost: result.amount,
+        finishReason: result.finish_reason,
         ...(preview ? { contextIds: preview.sources.map((source) => source.library_id), contextBytes: preview.sources.map((source) => source.included_bytes ?? 0), promptSha256: preview.prompt_sha256 } : {}),
       };
       const completed = {
@@ -574,12 +577,58 @@ export default function PrivateAIChat() {
       const row = localModelCLI && selectedConversation.cliModel !== cliModel ? await replaceConversation({ ...selectedConversation, cliModel }, false) : selectedConversation;
       const preview = await askHistory.preview(row, question);
       if (row.id !== selectedConversationRef.current) return;
+      setReviewPreview(preview);
       confirm({ title: tr("Send to {{service}}?", { service: selectedService.service.model_alias }), risk: "medium", confirmLabel: tr("Send reviewed question"),
         body: tr("Recipient: {{peer}}. Conservative input estimate {{input}}, framing reserve {{framing}}, output reserve {{output}}, context window {{window}}. {{omitted}} older history messages omitted.", { peer: preview.provider_peer_id, input: preview.input_token_upper_estimate, framing: preview.framing_reserve, output: preview.max_output_tokens, window: preview.context_window, omitted: preview.history_messages_omitted }) + tr(preview.sources.length ? " Article text is treated as untrusted material." : " No article material is attached."),
         details: [{ label: tr("Question"), value: question }, { label: tr("Model and price"), value: `${preview.service_review.model_alias}: ${preview.service_review.pricing.input_per_1k} input / ${preview.service_review.pricing.output_per_1k} output per 1k tokens; minimum ${preview.service_review.pricing.minimum}, task maximum ${preview.service_review.pricing.maximum_per_task} ${preview.service_review.pricing.currency}` }, ...(preview.cli_model ? [{ label: tr("模型"), value: preview.cli_model }] : []), ...preview.sources.map((source) => ({ label: tr("Source {{number}}: {{title}}", { number: source.source_number, title: source.title }), value: `${source.nas ? `${source.nas.source_name} / ${source.nas.path}` : source.source_url || tr("Private local document")} · ${source.included_bytes}/${source.text_bytes} ${tr("bytes")}${source.budget_truncated || source.extraction_truncated ? ` · ${tr("TRUNCATED")}` : ""}` }))],
         onConfirm: () => runPrompt(question, preview),
       });
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not prepare the send review."); }
+    finally { setReviewing(false); }
+  };
+
+  const reviewSummary = async () => {
+    const original = selectedConversation;
+    if (!original || !selectedService || summaryBusy || reviewing || isSending || unconfirmed) return;
+    setReviewing(true); setError("");
+    try {
+      const preview = await askHistory.summaryPreview(original, input.trim());
+      if (original.id !== selectedConversationRef.current) return;
+      confirm({ title: tr("带摘要开新对话"), risk: "medium", confirmLabel: tr("生成摘要并新建"),
+        body: tr("将把已省略的最早 {{count}} 条消息发送给当前好友模型生成摘要。这是单独一次请求，将计入积分。成功后创建新对话；原对话会保留。", { count: preview.history_messages_omitted }),
+        details: [{ label: tr("Model and price"), value: `${preview.service_review.model_alias}: ${preview.service_review.pricing.input_per_1k} input / ${preview.service_review.pricing.output_per_1k} output per 1k tokens; minimum ${preview.service_review.pricing.minimum}, maximum ${preview.service_review.pricing.maximum_per_task} ${preview.service_review.pricing.currency}` },
+          { label: tr("Recipient"), value: preview.provider_peer_id }, { label: tr("Output reserve"), value: String(preview.max_output_tokens) }],
+        onConfirm: async () => {
+          if (original.id !== selectedConversationRef.current || original.revision !== conversationRef.current?.revision) {
+            setError(tr("对话已改变，请重新预览后生成摘要。")); return;
+          }
+          setSummaryBusy(true); setError("");
+          try {
+            const taskId = "task_" + crypto.randomUUID().replaceAll("-", "");
+            let result = await client.submitLLMOrder({ task_id: taskId, idempotency_key: taskId,
+              provider_peer_id: preview.provider_peer_id, service_id: preview.service_id, network_id: original.networkId,
+              prompt: preview.prompt, prompt_format: preview.chat ? "text" : preview.prompt_format, max_tokens: preview.max_output_tokens,
+              ...(preview.chat ? { chat: preview.chat } : {}),
+              service_review_token: preview.service_review.token, ...(preview.ai_permission ? { ai_permission: preview.ai_permission } : {}),
+              ...(preview.cli_model ? { cli_model: preview.cli_model } : {}), transport: "auto" });
+            const originalTaskId = result.task_id;
+            result = await fixtureOrder.awaitTerminal(result, () => client.getLLMOrder(originalTaskId));
+            if (result.state !== "succeeded" || !result.output || result.finish_reason === "length") {
+              throw new Error(result.finish_reason === "length" ? tr("摘要被长度上限截断，原对话已保留。") : resultMessage(result));
+            }
+            const fresh = createConversation({ serviceKey: original.serviceKey, serviceName: original.serviceName,
+              providerPeerId: original.providerPeerId, networkId: original.networkId });
+            await replaceConversation({ ...fresh, ...(original.cliModel ? { cliModel: original.cliModel } : {}), draft: input,
+              title: tr("对话摘要"), messages: [{ id: messageId(), role: "assistant", content: tr("上一段对话的摘要：") + "\n" + result.output,
+                status: "complete", createdAt: fresh.createdAt, taskId: result.task_id,
+                ...(result.amount != null ? { cost: result.amount } : {}),
+                ...(result.input_tokens != null ? { inputTokens: result.input_tokens } : {}),
+                ...(result.output_tokens != null ? { outputTokens: result.output_tokens } : {}) }] }, original.id === selectedConversationRef.current);
+            setReviewPreview(null);
+          } catch (cause) { setError(cause instanceof Error ? cause.message : tr("摘要失败，原对话已保留。")); }
+          finally { setSummaryBusy(false); }
+        } });
+    } catch (cause) { setError(cause instanceof Error ? cause.message : tr("无法准备摘要，原对话已保留。")); }
     finally { setReviewing(false); }
   };
 
@@ -591,7 +640,8 @@ export default function PrivateAIChat() {
       onConfirm: () => { const next = new URLSearchParams(searchParams); next.set("peer", service.peer_id); next.set("service", service.service.package_id); next.set("new", "1"); next.delete("conversation"); next.delete("material"); setSearchParams(next); } });
   };
   const services = discovery.data ?? [];
-  const blocked = isSending || reviewing || Boolean(unconfirmed) || materialBusy || savingModel;
+  const blocked = isSending || reviewing || summaryBusy || Boolean(unconfirmed) || materialBusy || savingModel;
+  const visiblePreview = reviewPreview?.conversation_id === selectedConversation?.id && reviewPreview?.revision === selectedConversation?.revision ? reviewPreview : null;
   const selectedStorage = client.mode === "live" ? "node" : "browser";
   const detailsPanel = <details className={`${styles.details} sv-ws-details`}><summary className={`${styles.detailsButton} sv-ws-detailsButton`}><ShieldCheck size={15} />{tr("会话详情")}<ChevronDown size={14} /></summary><div className={`${styles.detailsPanel} sv-ws-detailsPanel`}>
       <strong>{providerName}</strong><p>{tr("Requests go to the selected service. Node history and browser originals keep their separate storage locations.")}</p>
@@ -607,7 +657,7 @@ export default function PrivateAIChat() {
     <main className={`${styles.workspace} sv-ws-main`}><div className={`${styles.messages} sv-ws-messages sv-ws-unavailable`}>
       <span className="rf-tile rf-tile-lg rf-h-slate" aria-hidden="true"><SparkGlyph size={26} /></span>
       <h2>{tr("The selected provider is unavailable")}</h2><p>{tr("Your conversation remains bound to its original provider. Choose another service to start a separate conversation.")}</p>
-      <div className="sv-ws-unavailable-actions"><button type="button" className="rf-btn" onClick={() => void discovery.refresh()}>{tr("Retry")}</button><Link className="rf-btn" to={personalHref("/services/catalog", client.mode === "fixture")}>{tr("View services")}</Link><Link className="rf-btn" to={personalHref("/services/sources", client.mode === "fixture")}>{tr("AI 来源")}</Link></div>{selectedConversation?.messages.map(message => <div className={`${styles.messageBlock} sv-ws-messageBlock`} key={message.id}><div className={`${styles.messageBubble} sv-ws-messageBubble`}><ChatMarkdown>{message.content}</ChatMarkdown></div>{message.contextIds?.length ? <AskAnswerSources ids={message.contextIds} byteLimits={message.contextBytes} /> : null}</div>)}
+      <div className="sv-ws-unavailable-actions"><button type="button" className="rf-btn" onClick={() => void discovery.refresh()}>{tr("Retry")}</button><Link className="rf-btn" to={personalHref("/services/catalog", client.mode === "fixture")}>{tr("View services")}</Link><Link className="rf-btn" to={personalHref("/services/sources", client.mode === "fixture")}>{tr("AI 来源")}</Link></div>{selectedConversation?.messages.map(message => <div className={`${styles.messageBlock} sv-ws-messageBlock`} key={message.id}><div className={`${styles.messageBubble} sv-ws-messageBubble`}><ChatMarkdown>{message.content}</ChatMarkdown></div>{message.role === "assistant" && message.finishReason === "length" ? <p role="status">{tr("回答被长度上限截断")}</p> : null}{message.contextIds?.length ? <AskAnswerSources ids={message.contextIds} byteLimits={message.contextBytes} /> : null}</div>)}
       {error ? <p role="alert">{error}</p> : null}
     </div></main></div>;
 
@@ -636,6 +686,7 @@ export default function PrivateAIChat() {
         {!selectedConversation?.messages.length ? <div className={`${styles.welcome} sv-ws-welcome`}><span className="rf-tile rf-tile-xl rf-h-indigo" aria-hidden="true"><SparkGlyph size={30} /></span><h2>{tr("今天，想一起做些什么？")}</h2><p>{tr("想法、问题，或一段需要打磨的文字，都可以从这里开始。")}</p><div className={`${styles.suggestions} sv-ws-suggestions`}>{SUGGESTIONS.map(suggestion => <button type="button" key={suggestion} onClick={() => setInput(tr(suggestion))}>{tr(suggestion)}</button>)}</div></div> : selectedConversation.messages.map(message => <div className={`${styles.messageRow} sv-ws-messageRow${message.role === "user" ? ` ${styles.messageRowUser} sv-ws-messageRowUser` : ""}`} key={message.id}>
           {message.role === "assistant" ? <span className={`${styles.assistantAvatar} sv-ws-assistantAvatar`}><Tile hue="indigo" size="xs">{() => <SparkGlyph size={15} />}</Tile></span> : null}
           <div className={`${styles.messageBlock} sv-ws-messageBlock`}><div className={`${styles.messageBubble} sv-ws-messageBubble${message.status === "failed" ? ` ${styles.messageFailed} sv-ws-messageFailed` : ""}`}>{message.role === "assistant" ? <ChatMarkdown>{message.taskId === nodeTask && stream.text ? stream.text : message.content}</ChatMarkdown> : message.content}</div>
+            {message.role === "assistant" && message.finishReason === "length" ? <p role="status">{tr("回答被长度上限截断")}</p> : null}
             {message.role === "assistant" && message.taskId === nodeTask && stream.text ? <span className={`${styles.messageMeta} sv-ws-messageMeta`} role="status">{stream.interrupted ? "Live updates paused. This is a partial answer; checking the original task." : "Generating · partial answer"}</span> : null}
             <span className={`${styles.messageMeta} sv-ws-messageMeta`}>{formatTime(message.createdAt)}{message.cost !== undefined ? ` · ${message.cost} credits` : ""}</span>
             {message.role === "assistant" ? <div className={`${styles.messageActions} sv-ws-messageActions`}><button type="button" onClick={() => void navigator.clipboard?.writeText(message.taskId === nodeTask && stream.text ? stream.text : message.content)}><Copy size={12} />{tr("Copy")}</button><button type="button" onClick={() => setHelpfulMessages(current => new Set(current).add(message.id))}>{helpfulMessages.has(message.id) ? <Check size={12} /> : <ThumbsUp size={12} />}{tr(helpfulMessages.has(message.id) ? "Helpful" : "Good response")}</button>{message.status !== "complete" ? <button type="button" onClick={() => message.taskId ? void checkOriginal(message.taskId) : retryLast()}><RotateCcw size={12} />{tr("Check original task")}</button> : null}{message.status === "complete" && message.contextIds?.some(id => nasOrigins[id]) ? <button type="button" onClick={() => void saveToNas(message)}>{tr("Save to NAS")}</button> : null}</div> : null}
@@ -645,12 +696,16 @@ export default function PrivateAIChat() {
         {sending ? <div className={`${styles.messageRow} sv-ws-messageRow`}><span className={`${styles.assistantAvatar} sv-ws-assistantAvatar`}><Tile hue="indigo" size="xs">{() => <SparkGlyph size={15} />}</Tile></span><div className={`${styles.thinking} sv-ws-thinking`} aria-label="Private AI is thinking"><span /><span /><span /></div></div> : null}
       </div>
       <div className={`${styles.composerWrap} sv-ws-composerWrap`}>
+        {visiblePreview?.history_messages_omitted ? <div role="status"><strong>{tr("已省略最早的 {{count}} 条消息", { count: visiblePreview.history_messages_omitted })}</strong> <button type="button" disabled={blocked} onClick={() => void reviewSummary()}>{tr("带摘要开新对话")}</button></div> : null}
+        {visiblePreview?.sources.some(source => source.budget_truncated) ? <p role="status">{tr("文章只用了前一部分")}</p> : null}
+        {visiblePreview?.output_reserve_warning ? <p role="status">{visiblePreview.output_reserve_warning}</p> : null}
+        {summaryBusy ? <p role="status">{tr("正在生成摘要，原对话会保留。")}</p> : null}
         {nasHandoff ? <div className="ai-pending-nas"><FileText size={15} /><span>{nasHandoff.sourceName} / {nasHandoff.path}</span><button type="button" disabled={blocked} onClick={reviewNasHandoff}>{tr("Add materials")}</button><button type="button" onClick={() => { updateNasHandoff(null); setNasHandoff(null); }}>{tr("Remove document")}</button></div> : null}
         {selectedConversation?.contextIds?.length ? <AskMaterials ids={selectedConversation.contextIds} onRemove={async id => { if (blocked) throw new Error(tr("Wait for the current task before adding materials.")); await replaceConversation({ ...selectedConversation, contextIds: selectedConversation.contextIds?.filter(value => value !== id) }, false); }} /> : null}
         {error ? <div className={`${styles.error} sv-ws-error`} role="alert">{error}</div> : null}
         {historyReady && !selectedConversation ? <div role="alert">This conversation is no longer available. Your input has been kept; open its history or create a new conversation.</div> : null}
         {unconfirmed ? <div role="status">The node has not confirmed this reviewed request for conversation {unconfirmed.conversation_id}.<button type="button" disabled={sending} onClick={() => void checkOriginal(unconfirmed.task_id)}>Check original task</button><button type="button" disabled={sending} onClick={() => void submitReviewed(unconfirmed)}>Retry same reviewed request</button></div> : null}
-        <div className={`${styles.composer} sv-ws-composer`}><textarea aria-label={tr("Message Private AI")} value={input} onChange={event => setInput(event.target.value)} placeholder={tr("输入你的问题，让想法继续…")} rows={2} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void reviewAndSend(); } }} />
+        <div className={`${styles.composer} sv-ws-composer`}><textarea aria-label={tr("Message Private AI")} disabled={summaryBusy} value={input} onChange={event => { setInput(event.target.value); setReviewPreview(null); }} placeholder={tr("输入你的问题，让想法继续…")} rows={2} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void reviewAndSend(); } }} />
           <div className={`${styles.composerControls} sv-ws-composerControls`}><button className="ai-attach-button" type="button" disabled={blocked || !historyReady || client.mode !== "live"} onClick={() => setMaterialsOpen(true)}><Paperclip size={15} />{tr("Add materials")}</button><span className={`${styles.composerModel} sv-ws-composerModel`}>{localModelCLI ? (cliModel === "" ? tr("CLI 默认") : cliModels.find(model => model.id === cliModel)?.name) : selectedService.service.model_alias}</span><span className={`${styles.keyboardHint} sv-ws-keyboardHint`}>{tr("Enter 发送 · Shift + Enter 换行")}</span>{isSending ? <button className={`${styles.stopButton} sv-ws-stopButton`} type="button" aria-label={tr("Stop generating")} onClick={() => void stopGeneration()}><Square size={15} /></button> : <button className={`${styles.sendButton} sv-ws-sendButton`} type="button" aria-label={tr("Send message")} disabled={!input.trim() || !historyReady || blocked || (Boolean(localModelCLI) && !cliModels.some(model => model.id === cliModel))} onClick={() => void reviewAndSend()}><ArrowUp size={19} /></button>}</div>
         </div>
         <div className={`${styles.composerMeta} sv-ws-composerMeta`}><span><ShieldCheck size={12} />{tr(storageMode === "node-encrypted" ? "Encrypted history on your node" : storageMode === "encrypted" ? "Encrypted in this browser" : "History kept for this session")}</span><span>{tr("Processed by {{device}}", { device: providerName })}</span></div>
