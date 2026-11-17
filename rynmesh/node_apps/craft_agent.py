@@ -15,6 +15,8 @@ from contextlib import ExitStack
 from pathlib import Path
 
 from ..agent_runtime.store import AgentError, AgentToolRejected, encoded
+from ..agent_runtime.schema_compaction import compact_tool_schema
+from ..agent_runtime.tool_router import schema_rejection_error
 from . import craft_native
 from .craft_agent_policy import (
     ACTION_TOOLS,
@@ -105,7 +107,8 @@ class CraftTools:
         if not supported:
             return []
         result = [spec(TOOLS, "Discover actual document tools of an enabled Ryn office app. Optionally pass tool for its exact input schema. Uses a separate task-owned headless document session, not the user's open editor. No downloads. If the component is absent, use the returned setup tool.",
-                       {"app": app, "tool": {"type": "string", "maxLength": 128}}, ["app"]),
+                       {"app": app, "tool": {"type": "string", "maxLength": 128},
+                        "cursor": {"type": "integer", "minimum": 0}}, ["app"]),
                   spec(INSTALL, "Install the fixed, hash-verified document component for an already enabled Ryn office app. Requires exact owner approval. No app installation, configuration change or download occurs during discovery.",
                        {"app": app}, ["app"])]
         if ready:
@@ -201,18 +204,14 @@ class CraftTools:
     def _compact_schema(schema):
         if not isinstance(schema, dict):
             return {"type": "object", "properties": {}, "required": [], "additionalProperties": False}
-        props = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
-        compact_props = {
-            k: {pk: pv for pk, pv in v.items() if pk in ("type", "enum", "items", "required", "properties")}
-            if isinstance(v, dict) else {}
-            for k, v in props.items()
-        }
-        return {
-            "type": "object",
-            "properties": compact_props,
-            "required": list(schema.get("required") or []),
-            "additionalProperties": False,
-        }
+        result = copy.deepcopy(schema)
+        result.setdefault("properties", {})
+        result.setdefault("required", [])
+        result["additionalProperties"] = False
+        for prop in result["properties"].values():
+            if isinstance(prop, dict) and isinstance(prop.get("description"), str):
+                prop["description"] = prop["description"][:200]
+        return compact_tool_schema(result, max_bytes=5000)
 
     @staticmethod
     def _normalize_arg_keys(schema, args):
@@ -260,12 +259,13 @@ class CraftTools:
         args = self._normalize_arg_keys(schema, args)
         try:
             validate_tool_arguments(schema, args)
-        except ValueError:
+        except ValueError as exc:
             compact = self._compact_schema(schema)
+            error = schema_rejection_error(f"{app}.{tool}", exc)
             raise AgentToolRejected(
                 "agent_tool_arguments_invalid",
-                correction=f"Invalid arguments for '{app}.{tool}'. Expected inputSchema: {json.dumps(compact, ensure_ascii=False)[:1200]}",
-                details={"app": app, "tool": tool, "required": compact["required"], "properties": list(compact["properties"])},
+                correction=f"{error.correction} Expected inputSchema: {json.dumps(compact, ensure_ascii=False)[:3000]}",
+                details={**error.details, "app": app, "tool": tool, "required": compact["required"], "properties": list(compact["properties"])},
             ) from None
         args = copy.deepcopy(args)
         inputs, outputs, replace_targets = [], [], []
@@ -602,15 +602,42 @@ class CraftTools:
                                     )
                                 tools = [definitions[args["tool"]]]
                             else:
-                                tools = [{"name": item["name"], "description": item.get("description", "")[:180],
+                                tools = [{"name": item["name"], "description": item.get("description", ""),
                                           "execution_tool": READ if item["name"] in READ_TOOLS[app] else ACTION,
                                           "inputSchema": self._compact_schema(item.get("inputSchema"))}
                                          for item in definitions.values()]
-                            return {"app": app, "ready": True, "session_id": session["id"], "tools": tools,
+                            result = {"app": app, "ready": True, "session_id": session["id"], "tools": tools,
                                     "session_kind": "task_headless_document",
                                     "saves_require_new_path": self.local.policy(context)["permission_mode"] != "automatic",
                                     "overwrites_require_backup": True,
                                     "unsaved_editor_window_access": False}
+                            if not args.get("tool"):
+                                result["next_cursor"] = None
+                                for item in sorted(tools, key=lambda item: len(encoded(item["description"])), reverse=True):
+                                    if len(encoded(result)) <= 16 * 1024:
+                                        break
+                                    item["description"] = item["description"][:300]
+                                # Large definitions may not fit even after description trimming.
+                                # Page them rather than silently discard schemas or short descriptions.
+                                cursor = args.get("cursor", 0)
+                                if cursor > len(tools):
+                                    raise AgentToolRejected("agent_invalid_tool_cursor")
+                                result["tools"] = []
+                                result["next_cursor"] = None
+                                for index in range(cursor, len(tools)):
+                                    result["next_cursor"] = index + 1 if index + 1 < len(tools) else None
+                                    result["tools"].append(tools[index])
+                                    if len(encoded(result)) > 16 * 1024:
+                                        result["tools"].pop()
+                                        if not result["tools"]:
+                                            summary = {key: value for key, value in tools[index].items() if key != "inputSchema"}
+                                            summary["definition_query"] = {"app": app, "tool": tools[index]["name"]}
+                                            result["tools"].append(summary)
+                                            result["next_cursor"] = index + 1 if index + 1 < len(tools) else None
+                                            break
+                                        result["next_cursor"] = index
+                                        break
+                            return result
                         if args["tool"] not in READ_TOOLS[app]:
                             exec_tool = ACTION if args["tool"] in ACTION_TOOLS[app] else TOOLS
                             raise AgentToolRejected(

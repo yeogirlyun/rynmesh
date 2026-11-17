@@ -24,6 +24,7 @@ from ...services import peer_box
 from .. import data_policy, results
 from ..native_computer import NativeComputerFacade, bind_owner_native_computer
 from ..store import AgentError, AgentToolRejected, encoded
+from ..schema_compaction import compact_tool_schema
 from .imports import ExtensionImportManager
 from .mcp_transport import (
     ALLOWLISTED_MCP_RPC_ERROR_CODES,
@@ -726,6 +727,17 @@ class ExtensionToolAdapter:
             schema.pop("x-ryn-artifact", None)
             schema.pop("x-ryn-operation", None)
             schema.pop("x-ryn-result", None)
+            raw_schema = tool.get("input_schema")
+            simplified = len(encoded(schema)) > 5000
+            if isinstance(raw_schema, dict) and len(encoded(raw_schema)) > 5000:
+                # Older catalog caches may have compacted away parameter names.
+                # Normalize a copy without that budget, then use the shared stages.
+                schema = normalize_mcp_input_schema(raw_schema, max_bytes=2**31)
+                if schema is None:
+                    continue
+                simplified = len(encoded(schema)) > 5000
+            if simplified:
+                schema = compact_tool_schema(schema)
             try:
                 validate_tool_schema(schema)
             except ValueError:
@@ -737,7 +749,7 @@ class ExtensionToolAdapter:
                     "type": "function",
                     "function": {
                         "name": model_name,
-                        "description": (prefix + raw_desc)[:600],
+                        "description": (prefix + raw_desc)[:600] + (" (schema simplified)" if simplified else ""),
                         "parameters": schema,
                     },
                 }
