@@ -73,7 +73,7 @@ def test_switch_retains_goal_budget_audit_but_closes_old_projection_and_does_not
     assert stored["scope"]["resource_grants"] == stored["scope"]["egress_grants"] == []
     assert stored["scope"]["selection"]["resources"] == before["scope"]["selection"]["resources"]
     assert stored["scope"]["selection"]["allow_model_data"] is False
-    assert stored["plan_history"][-1] == before["plan"] and not stored["plan"]["steps"]
+    assert stored["plan_history"][-1] == {"steps": [{"title": "PLAN-PRIVATE", "status": "pending"}]} and not stored["plan"]["steps"]
     projected = json.dumps(runtime._context(stored))
     assert all(text not in projected for text in ("SOURCE-PRIVATE", "DERIVED-PRIVATE", "SUMMARY-PRIVATE", "PLAN-PRIVATE"))
     assert "SOURCE-PRIVATE" in json.dumps(stored)

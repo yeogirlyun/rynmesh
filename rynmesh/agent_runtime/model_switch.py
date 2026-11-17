@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 
-from . import projects, reasoning
+from . import projects, reasoning, results
 from .control import (
     acknowledgeable,
     ambiguous,
@@ -12,7 +13,20 @@ from .control import (
     remember_request,
     request_replayed,
 )
-from .store import AgentError
+from .store import AgentError, encoded
+
+def _plan_summary(plan):
+    return {"steps": [{"title": item.get("title", item.get("text", "")), "status": item.get("status", "pending")}
+                      for item in plan.get("steps", [])]}
+
+
+def _verification_summary(history):
+    if "evidence" in history:
+        evidence = history["evidence"]
+        return {"outcome": copy.deepcopy(history["outcome"]), "evidence_count": len(evidence),
+                "evidence_sha256": hashlib.sha256(encoded(evidence)).hexdigest()}
+    return {key: copy.deepcopy(history[key]) for key in ("outcome", "evidence_count", "evidence_sha256")}
+
 
 SAFE_STATES = {"paused", "completed", "failed", "waiting_input", "waiting_approval", "interrupted", "cancelled"}
 DATA_POLICY = {
@@ -137,10 +151,10 @@ def change(runtime, task_id, value):
                     "scope_revision": row["scope_revision"], "context_epoch": row.get("context_epoch", 0)}
         # Close protocol pairs in the old epoch before retiring that projection.
         close_queue(row, event, "agent_model_changed", keep_flight=False)
-        row.setdefault("model_history", []).append(previous)
-        row.setdefault("plan_history", []).append(copy.deepcopy(row["plan"]))
-        row.setdefault("verification_history", []).append({"outcome": copy.deepcopy(row["outcome"]),
-                                                            "evidence": copy.deepcopy(row.get("verification_evidence", []))})
+        row["model_history"] = [*row.get("model_history", []), previous][-8:]
+        row["plan_history"] = [_plan_summary(plan) for plan in [*row.get("plan_history", []), row["plan"]][-8:]]
+        history = {"outcome": row["outcome"], "evidence": row.get("verification_evidence", [])}
+        row["verification_history"] = [_verification_summary(item) for item in [*row.get("verification_history", []), history][-8:]]
         row.update(model_id=value["model_id"], model_destination=copy.deepcopy(destination), model_destination_confirmed=True,
                    status="paused", error=None, pending_approval=None, approved=None, pending_input=None, result="")
         if "reasoning_effort" in row:
@@ -173,6 +187,7 @@ def change(runtime, task_id, value):
                           "summary": "", "evidence_refs": [], "uncertainties": ["Model changed; resume explicitly and reauthorize any resource access."]}
         event(row, "model_changed", previous=previous, destination=destination, data_policy=DATA_POLICY,
               scope_revision=row["scope_revision"], resource_scope_transferred=prepared is not None, project_scope_transferred=bool(row.get("project")))
+        results.prune(runtime.store, row)
         remember_request(row, request)
         return public_task(row, settings=data["settings"])
     return runtime.store.transaction(apply)

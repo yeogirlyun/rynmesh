@@ -21,6 +21,7 @@ from .js_state import (
     _invalid_json_constant,
     plan_fatal_fence_js_state,
     validate_callback_status_transition,
+    validate_outbox_payload,
     validate_js_parent_stamp,
     validate_js_state,
     validate_phase_transition,
@@ -114,10 +115,24 @@ def derive_outbox_id(
     return "outbox_" + hashlib.sha256(raw).hexdigest()[:32]
 
 
-def _token_from_outbox_item(task_id: str, item: dict[str, Any], *, deliverable: bool | None = None) -> DeliveryToken:
+def outbox_payload(row, item):
+    if "payload" in item:
+        payload = item["payload"]
+    else:
+        receipt = next((receipt for receipt in row.get("receipts", [])
+                        if receipt.get("id") == item["receipt_id"] and receipt.get("operation_id") == item["operation_id"]), None)
+        if receipt is None or "result" not in receipt:
+            raise AgentError("agent_js_outbox_conflict")
+        payload = receipt["result"]
+    if hashlib.sha256(encoded(payload)).hexdigest() != item["payload_sha256"]:
+        raise AgentError("agent_js_outbox_conflict")
+    return copy.deepcopy(payload)
+
+
+def _token_from_outbox_item(row: dict, item: dict[str, Any], *, deliverable: bool | None = None) -> DeliveryToken:
     is_deliverable = (item["delivery_state"] == "staged") if deliverable is None else bool(deliverable)
     return DeliveryToken(
-        task_id=task_id,
+        task_id=row["id"],
         outbox_id=item["outbox_id"],
         parent_operation_id=item["parent_operation_id"],
         parent_call_id=item["parent_call_id"],
@@ -136,7 +151,7 @@ def _token_from_outbox_item(task_id: str, item: dict[str, Any], *, deliverable: 
         outcome=item["outcome"],
         not_executed=item["not_executed"],
         result_ref=item["result_ref"],
-        payload=copy.deepcopy(item["payload"]),
+        payload=outbox_payload(row, item),
         payload_sha256=item["payload_sha256"],
         delivery_state=item["delivery_state"],
         deliverable=is_deliverable,
@@ -698,6 +713,10 @@ def stage_child_completion(
         payload_bytes = encoded(payload)
     except (TypeError, ValueError):
         raise AgentError("agent_invalid_output") from None
+    try:
+        validate_outbox_payload(payload)
+    except JsStateValidationError as exc:
+        raise AgentError(exc.code) from None
     payload_sha256 = hashlib.sha256(payload_bytes).hexdigest()
 
     try:
@@ -768,7 +787,7 @@ def stage_child_completion(
             or existing_outbox["payload_sha256"] != payload_sha256
         ):
             raise AgentError("agent_js_outbox_conflict")
-        return _token_from_outbox_item(row["id"], existing_outbox)
+        return _token_from_outbox_item(row, existing_outbox)
 
     delivery_state = "staged" if js_state["phase"] not in TERMINAL_JS_PHASES else "lost"
     outbox_item: dict[str, Any] = {
@@ -790,11 +809,12 @@ def stage_child_completion(
         "outcome": outcome,
         "not_executed": not_executed,
         "result_ref": ref_id,
-        "payload": copy.deepcopy(payload),
         "payload_sha256": payload_sha256,
         "delivery_state": delivery_state,
         "recorded_at": timestamp,
     }
+    if not record_receipt:
+        outbox_item["payload"] = copy.deepcopy(payload)
     if ref_meta_sha256 is not None:
         outbox_item["result_ref_sha256"] = ref_meta_sha256
 
@@ -871,9 +891,11 @@ def stage_child_completion(
     }
     if isinstance(timing, dict):
         extra_event_fields["timing"] = copy.deepcopy(timing)
+    from .protocol import _receipt_backed
+    extra_event_fields = _receipt_backed(row, "tool_result", extra_event_fields)
     event_emitter(row, effective_event_kind, **extra_event_fields)
 
-    return _token_from_outbox_item(row["id"], outbox_item)
+    return _token_from_outbox_item(row, outbox_item)
 
 
 def stage_tool_completion(
