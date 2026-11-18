@@ -29,8 +29,8 @@ def test_t1_write_append_read_and_replace(tmp_path):
     assert not tools.calls
     specs = {s["function"]["name"]: s["function"] for s in model.calls[0][2]}
     for name in ("ryn_notes_write", "ryn_notes_read"):
-        assert "task-private" in specs[name]["description"]
-        assert "never authorize" in specs[name]["description"]
+        assert "task-private" in specs[name]["description"].lower()
+        assert "owner authority" in specs[name]["description"]
     advance(runtime, 2)
     assert stored(runtime, task_id)["notes"] == {"text": "Bearer [redacted]", "revision": 3, "context_epoch": 0}
 

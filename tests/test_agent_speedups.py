@@ -172,15 +172,16 @@ def test_ambiguous_old_ceiling_is_preserved_and_later_explicit_values_stay():
 
 def test_finished_command_output_shows_head_and_tail():
     processes = Processes()
-    script = "import sys; sys.stdout.write('H' * 3000 + 'M' * 9000 + 'FAILED summary at the end')"
+    script = f"import sys; sys.stdout.write('H' * {HEAD_CHARS + 1000} + 'M' * 9000 + 'FAILED summary at the end')"
     ident = processes.start([sys.executable, "-c", script], os.getcwd(), "t", 30, lambda: True, lambda: False)
     result = processes.wait(ident, "t", lambda: False)
-    processes.close()
     assert result["output"].startswith("H" * HEAD_CHARS) and result["output"].endswith("FAILED summary at the end")
     assert "characters omitted" in result["output"] and result["next_offset"] == HEAD_CHARS
     assert len(result["output"]) < PAGE_CHARS + 200
     page = processes.read(ident, "t", HEAD_CHARS)
-    assert page["output"] == ("H" * 1000 + "M" * 9000)[:PAGE_CHARS]
+    expected = "H" * 1000 + "M" * 9000 + "FAILED summary at the end"
+    assert page["output"] == expected[:PAGE_CHARS]
+    processes.close()
 
 
 def test_window_id_reaches_conversation_aware_models(tmp_path):
