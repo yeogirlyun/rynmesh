@@ -113,7 +113,9 @@ def test_t6_legacy_workspace_tasks_are_not_lazily_backfilled(tmp_path):
     root.mkdir()
     row = {"local_execution": {"workspace_root": str(root)}, "limits": {"max_context_chars": None}}
     (root / "AGENTS.md").write_text("new file on old task", encoding="utf-8")
-    assert projects.guidance(row) == ""
+    guidance = projects.guidance(row)
+    assert "<environment_context>" in guidance and f"<cwd>{root}</cwd>" in guidance
+    assert "new file on old task" not in guidance and "<project>" not in guidance
 
 
 def test_t7_shared_read_budget_bounds_all_file_reads_and_marks_prefix_hash(tmp_path, monkeypatch):
