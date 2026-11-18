@@ -311,7 +311,8 @@ it("separates active facts from pending candidates and requires explicit destina
   expect(within(savedList).getByText("Owner prefers TypeScript strict mode")).toBeInTheDocument();
   expect(within(savedList).getByText(/Chat task-42 · Message msg-2/)).toBeInTheDocument();
   expect(within(savedList).getByText(/Always enable strict TypeScript/)).toBeInTheDocument();
-  expect(within(savedList).getByText(/Store on this device; never send to models/)).toBeInTheDocument();
+  expect(within(savedList).getByText(/Store on this device only \(invisible to models\)/)).toBeInTheDocument();
+  expect(within(savedList).getByText("Invisible to model")).toBeInTheDocument();
   expect(within(savedSection).queryByText("Project uses Vitest for unit tests")).not.toBeInTheDocument();
   expect(within(candidateSection).getByText("Project uses Vitest for unit tests")).toBeInTheDocument();
   expect(within(candidateSection).getByText(/Local project: proj-alpha/)).toBeInTheDocument();
