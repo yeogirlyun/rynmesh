@@ -164,7 +164,7 @@ def delete_rows_in_tx(data, rows, stamp, *, on_mutate=None, keyed=None):
                          cleanup_pending=True, operation_ids=sorted(operation_ids))
         tombstone["attachment_dirs"] = list(dict.fromkeys(
             str(Path(file["path"]).parent)
-            for message in row.get("messages", [])
+            for message in [*row.get("messages", []), *row.get("queued_messages", [])]
             for file in message.get("attachments", []) if isinstance(file.get("path"), str)
         ))[:8]
         if task_id == ids[-1]:

@@ -1,6 +1,6 @@
 import type { AgentStorageHealth } from "./agentStorageHealth";
 import { isTauriDesktop, localControlHeaders, nodeControlUrl } from "./nodeUrl";
-import { applyAgentAttachmentLimits, type AgentAttachmentInput, type AgentMessageAttachment, type ServerAttachmentLimits } from "./agentAttachments";
+import { applyAgentAttachmentLimits, type AgentAttachmentInput, type AgentDraftAttachment, type AgentMessageAttachment, type ServerAttachmentLimits } from "./agentAttachments";
 import type { ModelTokenUsage } from "./aiSources";
 
 export type AgentStatus = "queued" | "running" | "waiting_approval" | "waiting_input" | "pausing" | "reconciling" | "paused" | "completed" | "cancelled" | "failed" | "interrupted";
@@ -349,6 +349,8 @@ export interface AgentArtifactListing extends AgentInventoryNotice { artifacts: 
 export type AgentRecordOperation = "archive" | "restore" | "delete";
 export interface AgentDeleteResult { id: string; deleted: true; cleanup_pending: boolean; }
 export interface AgentTask extends AgentTaskSummary {
+  queued_messages?: AgentQueuedMessage[];
+  queued_messages_paused_reason?: string | null;
   /** Live model text is projected from memory independently of durable checkpoints. */
   streaming?: { step: number; context_epoch: number; text: string } | null;
   messages: AgentMessage[];
@@ -505,7 +507,22 @@ async function fileContent(taskID: string, file: Pick<AgentFileArtifact, "id" | 
 }
 
 /** Mutations are sent once. An uncertain response is reconciled by reading server state. */
+export interface AgentQueuedMessage {
+  id: string;
+  seq: number;
+  message: string;
+  intent: AgentMessageIntent;
+  created_at: string;
+  reasoning_effort?: string;
+  attachments?: AgentDraftAttachment[];
+}
+
 export const rynAgent = {
+  queue: (id: string) => request<Pick<AgentTask, "queued_messages" | "queued_messages_paused_reason">>(`/tasks/${encodeURIComponent(id)}/queue`),
+  queueMessage: (id: string, body: Record<string, unknown>) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}/queue`, "POST", body),
+  updateQueued: (id: string, item: string, body: Record<string, unknown>) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}/queue/${encodeURIComponent(item)}`, "PATCH", body),
+  deleteQueued: (id: string, item: string) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}/queue/${encodeURIComponent(item)}`, "DELETE"),
+  reorderQueued: (id: string, ids: string[]) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}/queue/reorder`, "POST", { ids }),
   openStorageBackups: () => request<{ opened: boolean }>("/storage/backups/open", "POST"),
   projects: (signal?: AbortSignal) => request<{ projects: AgentProject[]; selected_project_id?: string }>("/projects", "GET", undefined, signal),
   selectProject: (project_id: string) => request<{ selected_project_id: string }>("/projects/selection", "POST", { project_id }),

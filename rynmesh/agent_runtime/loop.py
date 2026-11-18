@@ -1040,7 +1040,17 @@ class AgentLoop:
                         event(row, "completed")
                         automations.settle_automation_turn_in_tx(self.store, data, row)
                         subagents.on_subagent_settled_in_tx(data, row)
-            self.store.transaction(finish)
+                        return self._dispatch_queued_in_tx(data, row)
+            queued_continuation = self.store.transaction(finish)
+            if queued_continuation:
+                try:
+                    self._continue_queued(selected["id"], queued_continuation)
+                except AgentError as exc:
+                    def pause_queue(data):
+                        row = task(data, selected["id"])
+                        row["queued_messages_paused_reason"] = str(exc)
+                        event(row, "queued_messages_paused", reason=str(exc))
+                    self.store.transaction(pause_queue)
 
     def _store_oversized_answer_artifact(self, row: dict, full_answer: str) -> str:
         raw_bytes = full_answer.encode("utf-8")

@@ -9,7 +9,7 @@ import { AGENT_TASKS_IN_MEMORY, agentTaskCache, agentTaskListCache, forgetAgentT
 import RynAgentProgress, { groupAgentMessages, RynAgentTurnDuration } from "./RynAgentProgress";
 import RynAgentReadOnlyHints from "./RynAgentReadOnlyHints";
 import { agentErrorActionLabel, agentErrorHelp, SEND_ERROR_CODES, type AgentErrorAction } from "./rynAgentErrors";
-import { Fragment, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate as useRouterNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ArrowUp, BookOpen, Clock3, CornerDownRight, LoaderCircle, MoreHorizontal, Pencil, Search, Square, Trash2, Check, CircleAlert, ListChecks, Monitor, PanelLeftClose, PanelLeftOpen, Pause, Play, Settings, SlidersHorizontal, Sparkles, SquarePen, X } from "lucide-react";
@@ -302,16 +302,15 @@ export default function RynAgent() {
     setFollowUpQueueModeState(mode);
     save(QUEUE_MODE_KEY, mode);
   }, []);
-  const [queuedByTask, setQueuedByTaskState] = useState<Record<string, QueuedFollowUpMessage[]>>(readQueuedMessages);
-  const setQueuedByTask = useCallback((updater: (prev: Record<string, QueuedFollowUpMessage[]>) => Record<string, QueuedFollowUpMessage[]>) => {
-    setQueuedByTaskState(prev => {
-      const next = updater(prev);
-      const nonEmpty = Object.fromEntries(Object.entries(next).filter(([, list]) => list.length > 0));
-      save(QUEUED_MESSAGES_KEY, Object.keys(nonEmpty).length ? JSON.stringify(nonEmpty) : "");
-      return nonEmpty;
-    });
-  }, []);
-  const prevTaskStatusRef = useRef<Record<string, string>>({});
+  const queuedByTask = useMemo<Record<string, QueuedFollowUpMessage[]>>(() => task ? {
+    [task.id]: (task.queued_messages || []).map(item => ({
+      id: item.id, text: item.message, intent: item.intent, reasoningEffort: item.reasoning_effort,
+      createdAt: Date.parse(item.created_at), attachments: item.attachments, pausedReason: task.queued_messages_paused_reason,
+    })),
+  } : {}, [task]);
+  const [editingQueued, setEditingQueued] = useState<{ taskID: string; itemID: string; text: string } | null>(null);
+  const queueMigrationStarted = useRef(false);
+  const queueRequest = useRef<{ key: string; id: string } | null>(null);
   const [scopeDraft, setScopeDraft] = useState<ScopeDraft | null>(() => pluginEntry ? null : readScopeDraft());
   const [skillIDs, setSkillIDs] = useState<string[]>([]);
   const defaultModelRef = useRef(cachedWorkspace.settings?.model_id || "");
@@ -839,24 +838,22 @@ export default function RynAgent() {
     const legacyReady = settings?.enabled && !resourceErrors.settings && models.some(item => item.id === effectiveModel && canUseAgentModel(item));
     if ((!draft.trim() && !draftAttachments.length) || attachmentsBusy || mutationRef.current || uncertain || controlUncertain || (!selected && !newScopeReady)) return;
     if (selected ? !currentTask || (currentTask.allowed_actions ? !canUseAgentAction(currentTask, effectiveIntent) : !legacyReady || !canContinueAgentTask(currentTask)) : !legacyReady) return;
-    if (selected && currentTask && selectedExecuting && (modeOverride ?? followUpQueueMode) === "queue") {
-      const queuedMessage = draft.trim() || t("attachmentOnlyMessage");
-      const queuedAttachmentIDs = draftAttachments.map(file => file.id);
-      const queuedEffort = selectedModel?.supported_reasoning_efforts?.includes(effectiveEffort) ? effectiveEffort : undefined;
-      const queuedItem: QueuedFollowUpMessage = {
-        id: crypto.randomUUID(),
-        text: queuedMessage,
-        intent: effectiveIntent,
-        reasoningEffort: queuedEffort,
-        attachments: draftAttachments.length ? [...draftAttachments] : undefined,
-        createdAt: Date.now(),
-      };
-      setQueuedByTask(prev => ({
-        ...prev,
-        [currentTask.id]: [...(prev[currentTask.id] || []), queuedItem],
-      }));
-      setDrafts(current => ({ ...current, [draftKey]: "" }));
-      finishAttachments(draftKey, queuedAttachmentIDs);
+    if (currentTask && selectedExecuting && (modeOverride ?? followUpQueueMode) === "queue") {
+      mutationRef.current = true; setBusy(true); setError("");
+      const attachmentIDs = draftAttachments.map(file => file.id);
+      const body = { message: draft.trim() || t("attachmentOnlyMessage"), intent: effectiveIntent,
+        ...(selectedModel?.supported_reasoning_efforts?.includes(effectiveEffort) ? { reasoning_effort: effectiveEffort } : {}),
+        attachments: agentAttachmentInputs(draftAttachments) };
+      const key = JSON.stringify([currentTask.id, body]);
+      if (queueRequest.current?.key !== key) queueRequest.current = { key, id: crypto.randomUUID() };
+      try {
+        const next = await rynAgent.queueMessage(currentTask.id, { ...body, client_request_id: queueRequest.current.id });
+        queueRequest.current = null;
+        acceptTask(next);
+        setDrafts(current => current[draftKey] === draft ? { ...current, [draftKey]: "" } : current);
+        finishAttachments(draftKey, attachmentIDs);
+      } catch (reason) { setError(mutationErrorKey(reason)); }
+      finally { mutationRef.current = false; setBusy(false); }
       return;
     }
     mutationRef.current = true; setBusy(true); setError("");
@@ -911,101 +908,62 @@ export default function RynAgent() {
       void refresh().catch(() => undefined);
     } finally { mutationRef.current = false; setBusy(false); }
   };
-  const dispatchQueuedItem = useCallback(async (targetTask: AgentTask, item: QueuedFollowUpMessage) => {
-    if (mutationRef.current || uncertain || controlUncertain) return;
-    const itemAttachments = item.attachments ? agentAttachmentInputs(item.attachments) : [];
-    const attachmentIDs = item.attachments?.map(file => file.id) || [];
-    const attachmentArgs: [AgentAttachmentInput[]] | [] = itemAttachments.length ? [itemAttachments] : [];
-    const allowedIntents: AgentMessageIntent[] = targetTask.allowed_actions ? (["steer", "information"] as const).filter(i => canUseAgentAction(targetTask, i)) : [item.intent];
-    const sendIntent = allowedIntents.includes(item.intent) ? item.intent : allowedIntents[0] || "information";
-    if (targetTask.allowed_actions && !canUseAgentAction(targetTask, sendIntent)) return;
+  const mutateQueue = async (operation: () => Promise<AgentTask>) => {
+    if (mutationRef.current || uncertain || controlUncertain) return false;
     mutationRef.current = true; setBusy(true); setError("");
-    const sending: PendingMessage = { attachments: item.attachments, requestID: item.id, taskID: targetTask.id, draftKey: targetTask.id, message: item.text, baseMessageCount: targetTask.messages.length, navigationRevision: navigationRef.current, phase: "sending" };
-    setPendingMessage(sending);
-    try {
-      const next = targetTask.allowed_actions
-        ? await submitControl({ task_id: targetTask.id, route: "messages", attachment_ids: attachmentIDs, body: agentMessageBody(targetTask, item.text, sendIntent, item.reasoningEffort, itemAttachments) })
-        : await rynAgent.message(targetTask, item.text, sendIntent, item.id, item.reasoningEffort, ...attachmentArgs);
-      acceptTask(next);
-      setPendingMessage(current => current?.requestID === item.id ? null : current);
-    } catch (reason) {
-      const ambiguous = !(reason instanceof AgentAPIError) || reason.status >= 500;
-      if (ambiguous && targetTask.allowed_actions) {
-        setPendingMessage(current => current?.requestID === item.id ? { ...current, phase: "uncertain" } : current);
-      } else {
-        setPendingMessage(current => current?.requestID === item.id ? null : current);
-        setQueuedByTask(prev => ({ ...prev, [targetTask.id]: [{ ...item, pausedReason: "failed" }, ...(prev[targetTask.id] || [])] }));
-      }
-      setError(mutationErrorKey(reason));
-      void refresh().catch(() => undefined);
-    } finally {
-      mutationRef.current = false; setBusy(false);
-    }
-  }, [acceptTask, controlUncertain, refresh, setQueuedByTask, uncertain]);
+    try { acceptTask(await operation()); return true; }
+    catch (reason) { setError(mutationErrorKey(reason)); return false; }
+    finally { mutationRef.current = false; setBusy(false); }
+  };
   const sendQueuedMessageNow = async (taskID: string, itemID: string) => {
-    if (!task || task.id !== taskID || mutationRef.current || busy || uncertain || controlUncertain) return;
-    const item = (queuedByTask[taskID] || []).find(entry => entry.id === itemID);
-    if (!item) return;
-    setQueuedByTask(prev => ({
-      ...prev,
-      [taskID]: (prev[taskID] || []).filter(entry => entry.id !== itemID),
-    }));
-    await dispatchQueuedItem(task, { ...item, intent: isAgentActive(agentTaskState(task)) ? "steer" : "information", pausedReason: null });
+    await mutateQueue(() => rynAgent.updateQueued(taskID, itemID, { send_now: true }));
   };
   const editQueuedMessage = (taskID: string, itemID: string) => {
     const item = (queuedByTask[taskID] || []).find(entry => entry.id === itemID);
     if (!item) return;
-    setQueuedByTask(prev => ({
-      ...prev,
-      [taskID]: (prev[taskID] || []).filter(entry => entry.id !== itemID),
-    }));
-    setDrafts(current => ({ ...current, [taskID]: current[taskID] ? `${current[taskID]}\n${item.text}` : item.text }));
-    if (item.attachments?.length) {
-      setAttachmentsByDraft(current => ({ ...current, [taskID]: [...(current[taskID] || []), ...item.attachments!] }));
-    }
-    setTimeout(() => input.current?.focus(), 0);
+    setEditingQueued({ taskID, itemID, text: item.text });
   };
-  const deleteQueuedMessage = (taskID: string, itemID: string) => {
-    setQueuedByTask(prev => ({
-      ...prev,
-      [taskID]: (prev[taskID] || []).filter(entry => entry.id !== itemID),
-    }));
+  const saveQueuedEdit = async () => {
+    if (!editingQueued?.text.trim()) return;
+    const item = editingQueued;
+    if (await mutateQueue(() => rynAgent.updateQueued(item.taskID, item.itemID, { message: item.text }))) setEditingQueued(null);
+  };
+  const deleteQueuedMessage = async (taskID: string, itemID: string) => {
+    if (await mutateQueue(() => rynAgent.deleteQueued(taskID, itemID)) && editingQueued?.itemID === itemID) setEditingQueued(null);
   };
   const resumeQueue = async (taskID: string) => {
-    if (!task || task.id !== taskID || mutationRef.current || busy) return;
-    const list = queuedByTask[taskID] || [];
-    if (!list.length) return;
-    const [first, ...rest] = list.map(entry => ({ ...entry, pausedReason: null }));
-    setQueuedByTask(prev => ({ ...prev, [taskID]: rest }));
-    await dispatchQueuedItem(task, first);
+    const first = queuedByTask[taskID]?.[0];
+    if (first) await sendQueuedMessageNow(taskID, first.id);
+  };
+  const moveQueuedUp = async (taskID: string, itemID: string) => {
+    const ids = (queuedByTask[taskID] || []).map(item => item.id), index = ids.indexOf(itemID);
+    if (index <= 0) return;
+    [ids[index - 1], ids[index]] = [ids[index], ids[index - 1]];
+    await mutateQueue(() => rynAgent.reorderQueued(taskID, ids));
   };
   useEffect(() => {
-    if (!task) return;
-    const curr = agentTaskState(task);
-    const prev = prevTaskStatusRef.current[task.id];
-    prevTaskStatusRef.current[task.id] = curr;
-    const queue = queuedByTask[task.id] || [];
-    if (!queue.length) return;
-    if (prev && isAgentActive(prev as ReturnType<typeof agentTaskState>) && ["paused", "interrupted", "failed", "cancelled"].includes(curr)) {
-      if (queue.some(item => !item.pausedReason)) {
-        setQueuedByTask(prevMap => ({
-          ...prevMap,
-          [task.id]: (prevMap[task.id] || []).map(item => ({ ...item, pausedReason: curr })),
-        }));
+    if (queueMigrationStarted.current) return;
+    queueMigrationStarted.current = true;
+    void (async () => {
+      for (const [taskID, items] of Object.entries(readQueuedMessages())) {
+        let destinationTaskID = taskID;
+        for (const item of items) {
+          try {
+            const next = await rynAgent.queueMessage(destinationTaskID, { message: item.text, intent: item.intent,
+              client_request_id: item.id, ...(item.reasoningEffort ? { reasoning_effort: item.reasoningEffort } : {}),
+              ...(item.pausedReason ? { paused_reason: item.pausedReason } : {}),
+              ...(item.attachments?.length ? { attachments: agentAttachmentInputs(item.attachments) } : {}) });
+            acceptTask(next);
+            destinationTaskID = next.id;
+            const remaining = readQueuedMessages();
+            remaining[taskID] = (remaining[taskID] || []).filter(entry => entry.id !== item.id);
+            if (!remaining[taskID].length) delete remaining[taskID];
+            save(QUEUED_MESSAGES_KEY, Object.keys(remaining).length ? JSON.stringify(remaining) : "");
+          } catch (reason) { setError(mutationErrorKey(reason)); break; }
+        }
       }
-      return;
-    }
-    if (!isAgentActive(curr) && task.status === "completed" && !busy && !mutationRef.current && !uncertain && !controlUncertain) {
-      const first = queue[0];
-      if (first && !first.pausedReason) {
-        setQueuedByTask(prevMap => ({
-          ...prevMap,
-          [task.id]: (prevMap[task.id] || []).slice(1),
-        }));
-        void dispatchQueuedItem(task, { ...first, intent: "information" });
-      }
-    }
-  }, [task, queuedByTask, busy, uncertain, controlUncertain, dispatchQueuedItem, setQueuedByTask]);
+    })();
+  }, [acceptTask]);
   const recoverRequest = async () => {
     if (mutationRef.current) return;
     let pending: { client_request_id: string; message: string; model_id: string; draft_key?: string; scope?: AgentScopeSelection; expected_destination_revision?: string; skill_ids?: string[]; project_id?: string; response_language?: "zh-CN" | "en"; reasoning_effort?: string; navigation_revision?: number; attachments?: AgentAttachmentInput[]; attachment_ids?: string[] };
@@ -1178,14 +1136,17 @@ export default function RynAgent() {
         </div>
       )}
       <div className="ra-queued-items">
-        {currentQueuedMessages.map(item => (
+        {currentQueuedMessages.map((item, index) => (
           <div key={item.id} className="ra-queued-item">
             <div className="ra-queued-item-main">
               <CornerDownRight size={14} className="ra-queued-icon" />
-              <span className="ra-queued-text" title={item.text}>{item.text || `[${item.attachments?.length || 0}]`}</span>
+              {editingQueued?.itemID === item.id
+                ? <><textarea aria-label={t("editQueuedMessage")} value={editingQueued.text} onChange={event => setEditingQueued({ ...editingQueued, text: event.target.value })} /><button type="button" disabled={busy || !editingQueued.text.trim()} onClick={() => void saveQueuedEdit()}>{i18n.language.startsWith("zh") ? "保存消息" : "Save message"}</button><button type="button" onClick={() => setEditingQueued(null)}>{i18n.language.startsWith("zh") ? "取消编辑" : "Cancel edit"}</button></>
+                : <span className="ra-queued-text" title={item.text}>{item.text || `[${item.attachments?.length || 0}]`}</span>}
               <span className="ra-queued-badge">{t("queuedAfterTurn")}</span>
             </div>
             <div className="ra-queued-item-actions">
+              {index > 0 && <button type="button" className="ra-icon" aria-label={i18n.language.startsWith("zh") ? "上移排队消息" : "Move queued message up"} disabled={busy} onClick={() => void moveQueuedUp(task.id, item.id)}>↑</button>}
               <button type="button" className="ra-queued-steer-btn" aria-label={t("steerQueuedNow")} title={t("steerQueuedTooltip")} disabled={busy || uncertain || controlUncertain} onClick={() => void sendQueuedMessageNow(task.id, item.id)}>{t("steerNow")}</button>
               <button type="button" className="ra-icon" aria-label={t("editQueuedMessage")} title={t("editQueuedMessage")} disabled={busy} onClick={() => editQueuedMessage(task.id, item.id)}><Pencil size={14} /></button>
               <button type="button" className="ra-icon" aria-label={t("deleteQueuedMessage")} title={t("deleteQueuedMessage")} disabled={busy} onClick={() => deleteQueuedMessage(task.id, item.id)}><Trash2 size={14} /></button>
