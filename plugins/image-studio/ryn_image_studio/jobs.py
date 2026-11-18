@@ -148,8 +148,8 @@ class JobStore:
         except sizes.SizeError as exc:
             raise JobError(str(exc)) from None
         scene = scene or templates.PURPOSE_SCENES.get(purpose)
-        brief, words = body.get("brief"), body.get("words", "")
-        if not isinstance(brief, str) or not brief.strip() or len(brief) > MAX_BRIEF:
+        brief, words = body.get("brief", ""), body.get("words", "")
+        if not isinstance(brief, str) or len(brief) > MAX_BRIEF:
             raise JobError("image_bad_brief")
         if not isinstance(words, str) or len(words) > MAX_WORDS:
             raise JobError("image_bad_words")
@@ -168,6 +168,9 @@ class JobStore:
         source = body.get("source_job")
         if not isinstance(references, list) or len(references) + (source is not None) > MAX_REFERENCES:
             raise JobError("image_bad_references")
+        # A brief is optional once copy or images say what to make.
+        if not (brief.strip() or words.strip() or any(copy.values()) or references or source is not None):
+            raise JobError("image_bad_brief")
         refs = []
         for ref in references:
             if isinstance(ref, str):
