@@ -42,27 +42,27 @@ async function review() {
 
 it("T4/T7 visibly explains omitted history and clipped article above the composer", async () => {
   const { submit } = await review();
-  expect(screen.getByText("已省略最早的 1 条消息")).toBeInTheDocument();
-  expect(screen.getByText("文章只用了前一部分")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "带摘要开新对话" })).toBeEnabled();
+  expect(screen.getByText("Earlier messages omitted (1)")).toBeInTheDocument();
+  expect(screen.getByText("Only the beginning of the article was used")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Start a new conversation with a summary" })).toBeEnabled();
   expect(submit).not.toHaveBeenCalled();
 });
 
 it("shows the provider's length finish reason on the archived answer", async () => {
   setup();
-  expect(await screen.findByText("回答被长度上限截断")).toBeInTheDocument();
+  expect(await screen.findByText("The reply reached its length limit")).toBeInTheDocument();
 });
 
 it("keeps the length warning when the original provider is unavailable", async () => {
   setup(false);
   expect(await screen.findByText("Original history")).toBeInTheDocument();
-  expect(screen.getByText("回答被长度上限截断")).toBeInTheDocument();
+  expect(screen.getByText("The reply reached its length limit")).toBeInTheDocument();
 });
 
 it.each(["success", "network", "provider", "length"] as const)("T5 summary requires separate charge confirmation and preserves the original: %s", async outcome => {
   const state = await review();
   const before = structuredClone(state.row);
-  const button = await screen.findByRole("button", { name: "带摘要开新对话" });
+  const button = await screen.findByRole("button", { name: "Start a new conversation with a summary" });
   const summary = { ...state.preview, prompt: "Only omitted history", sources: [], prompt_format: "chat_messages_v1",
     chat: { messages: [{ role: "user" as const, content: "Original history" }], max_tokens: 2048 } };
   vi.spyOn(askHistory, "summaryPreview").mockResolvedValue(summary);
@@ -72,8 +72,8 @@ it.each(["success", "network", "provider", "length"] as const)("T5 summary requi
   await state.user.click(button);
   await waitFor(() => expect(state.confirm).toHaveBeenCalledTimes(2));
   const dialog = state.confirm.mock.calls[1][0];
-  expect(dialog.body).toContain("单独一次请求");
-  expect(dialog.body).toContain("积分");
+  expect(dialog.body).toContain("This separate request uses credits.");
+  expect(dialog.body).toContain("keeps the original");
   expect(state.submit).not.toHaveBeenCalled();
   await dialog.onConfirm();
   expect(state.submit).toHaveBeenCalledWith(expect.objectContaining({ provider_peer_id: state.row.providerPeerId,
@@ -81,7 +81,7 @@ it.each(["success", "network", "provider", "length"] as const)("T5 summary requi
     prompt_format: "text", chat: summary.chat }));
   expect(state.rows.get(state.row.id)).toEqual(before);
   if (outcome !== "success") {
-    expect(await screen.findByRole("alert")).toHaveTextContent(outcome === "length" ? "摘要被长度上限截断" : "Summary failed");
+    expect(await screen.findByRole("alert")).toHaveTextContent(outcome === "length" ? "The summary reached its length limit" : "Summary failed");
     expect(state.save).not.toHaveBeenCalled();
   } else {
     await waitFor(() => expect(state.save).toHaveBeenCalledTimes(1));

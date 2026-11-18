@@ -12,7 +12,7 @@
   "摘要失败，原对话已保留。": "The summary failed. The original conversation was kept.",
   "无法准备摘要，原对话已保留。": "The summary could not be prepared. The original conversation was kept.",
   "回答被长度上限截断": "The reply reached its length limit",
-  "已省略最早的 {{count}} 条消息": "The earliest {{count}} messages were omitted",
+  "已省略最早的 {{count}} 条消息": "Earlier messages omitted ({{count}})",
   "文章只用了前一部分": "Only the beginning of the article was used",
   "正在生成摘要，原对话会保留。": "Generating a summary. The original conversation will be kept.",
   "清除 Agent 历史？": "Clear Agent history?",
