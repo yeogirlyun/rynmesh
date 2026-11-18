@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ArrowRight, ArrowUpRight, Bot, CheckCircle2, Download, FileUser, FolderCheck, HardDrive, Headset, UsersRound } from "lucide-react";
@@ -34,7 +34,11 @@ function Paper({ app }: { app: CraftPlugin }) {
   return <span className="craft-paper" aria-hidden="true"><b>{short[app.id] || app.name.slice(0, 1)}</b><i /><i /><i /><i /></span>;
 }
 
+export const EmbeddedAppsHub = createContext(false);
+
 export default function CraftApps({ manage = false }: { manage?: boolean }) {
+  const inHub = useContext(EmbeddedAppsHub);
+  const embedded = inHub && !manage;
   const { t } = useTranslation();
   const text = (key: string, options?: Record<string, unknown>) => String(t(`craft.${key}`, options));
   const name = (app: CraftPlugin) => text(app.id);
@@ -275,7 +279,7 @@ export default function CraftApps({ manage = false }: { manage?: boolean }) {
     </label>;
   };
   const hasDownloads = selected.some(id => catalog?.plugins.some(app => app.id === id && app.web && !app.installed));
-  return <section className={`craft-center${manage ? " craft-manager" : " craft-apps-v2"}`} aria-busy={busy}>
+  return <section className={`craft-center${manage ? " craft-manager" : " craft-apps-v2"}`} aria-busy={busy} data-embedded-launcher={embedded && !setup || undefined}>
     {error && <div className="craft-error" role="alert"><span>{error}</span>{!catalog && <button onClick={() => void load()}>{text("retry")}</button>}</div>}
     {notice && <p className="craft-notice" role="status"><CheckCircle2 size={17} />{notice}</p>}
     {!catalog && !error && <p role="status">{text("loading")}</p>}
@@ -293,7 +297,7 @@ export default function CraftApps({ manage = false }: { manage?: boolean }) {
       {manage ? <CraftPluginLibrary catalog={catalog} extensionOverview={extensionOverview} busy={busy} onAdd={add} onOpen={app => void open(app)}
         onToggle={app => app.enabled ? setModal({ kind: "disable", app }) : void run(async () => { setCatalog(await craftPlugins.enable(app.id, true)); if (app.id === "nas") nasChanged(); setNotice(text("saved")); })}
         onDetails={app => setModal({ kind: "detail", app })} onAgent={app => setModal({ kind: "agent", app })}
-        onUninstall={app => { setClearPreferences(false); setModal({ kind: "uninstall", app }); }} /> : <AppsLauncher catalog={catalog} extensionOverview={extensionOverview} onRefreshExtensions={() => void loadExtensions()} busy={busy} filter={filter} onFilterChange={setFilter} text={text}
+        onUninstall={app => { setClearPreferences(false); setModal({ kind: "uninstall", app }); }} /> : <AppsLauncher embedded={embedded} catalog={catalog} extensionOverview={extensionOverview} onRefreshExtensions={() => void loadExtensions()} busy={busy} filter={filter} onFilterChange={setFilter} text={text}
         onOpen={app => void open(app)} onInstall={app => add([app.id])} onAgent={app => setModal({ kind: "agent", app })} />}
       {ready && <div className="craft-ready"><FolderCheck size={18} /><span>{name(ready.app)}</span><a href={ready.url} target="_blank" rel="noopener noreferrer" onClick={e => { if ("__TAURI_INTERNALS__" in window) { e.preventDefault(); void openCraftWindow(ready.app.id, ready.url).catch(failure); } }}>{text("openWindow")}<ArrowUpRight size={15} /></a></div>}
     </>)}
