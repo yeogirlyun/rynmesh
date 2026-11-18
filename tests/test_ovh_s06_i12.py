@@ -86,8 +86,8 @@ def test_T4_s06_i12_long_text_option_and_descriptions(resources):
     text = "a"*8000
     result = bounded_result({"text": text, "note": "b"*3000}, long_text_keys={"text": 8192})
     assert result["text"] == text and len(result["note"]) < 2100
-    assert "up to about 8000 characters per page (fewer for wide characters)" in SPECS["ryn_read_resource"][0]
-    assert "up to 50 entries per page" in SPECS["ryn_list_resources"][0]
+    assert "characters per page according to the task output limit" in SPECS["ryn_read_resource"][0]
+    assert "entries per page according to the task output limit" in SPECS["ryn_list_resources"][0]
 
 
 def test_T3_s06_i12_cloud_visible_children_are_all_verified(cloud, monkeypatch):
