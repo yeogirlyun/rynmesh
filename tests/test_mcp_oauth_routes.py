@@ -118,7 +118,8 @@ def host(tmp_path):
         if not auth.authorize(client_host=request.client.host, headers=request.headers, cookie=request.cookies.get("ryn_session", "")).allowed:
             raise HTTPException(401, "local_control_unauthorized")
 
-    runtime = SimpleNamespace(store=SimpleNamespace(inspect=lambda read: read({"settings": {}})))
+    runtime = SimpleNamespace(store=SimpleNamespace(
+        inspect=lambda read: read({"settings": {"workspace_root": str(tmp_path)}})))
     install_extension_routes(app, runtime=runtime, extensions=adapter, local_control=local_control)
     client = TestClient(app)
     value = SimpleNamespace(store=store, manager=manager, oauth=oauth, adapter=adapter, app=app, client=client)
@@ -365,6 +366,7 @@ def test_real_privacy_json_and_all_scope_zip_exports_exclude_local_oauth_file(tm
     monkeypatch.delenv("RYNMESH_ALLOW_REMOTE_CONTROL", raising=False)
     monkeypatch.delenv("RYNMESH_NETWORK_KEY", raising=False)
     monkeypatch.setattr("rynmesh.store._local_ip_addresses", lambda: ["192.0.2.10"])
+    monkeypatch.setattr("rynmesh.store._primary_lan_ip", lambda: "192.0.2.10")
     monkeypatch.setattr("rynmesh.llm_package.routes.warm_stun_choice", lambda: None)
     app = create_app(RynmeshStore(home=home, network_dir=tmp_path / "network"))
     path = home / "agent" / "mcp_oauth.json"
