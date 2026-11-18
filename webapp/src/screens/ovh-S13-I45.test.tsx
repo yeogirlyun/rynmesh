@@ -28,7 +28,7 @@ it("S13-I45 T3: Network settings renders proxy scope notice and saves manual out
   await user.click(networkNav);
 
   expect(
-    await screen.findByText(/代理只用于节点之间和注册中心的连接，不用于模型请求/),
+    await screen.findByText("The proxy applies only to connections between nodes and to the registry. Model requests use their own connection settings."),
   ).toBeInTheDocument();
 
   const modeSelect = screen.getByLabelText(/Outbound proxy|出站代理/);
