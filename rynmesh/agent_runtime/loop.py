@@ -46,6 +46,7 @@ from .execution_policy import (
     PERMISSION_DENIED_CORRECTIONS,
     classify_operation,
     decide,
+    desktop_access_enabled,
     is_full_automatic,
     parallel_read,
     task_grant_proof,
@@ -2197,7 +2198,7 @@ class AgentLoop:
                     or meta.get("computer_access")
                     or (call.get("extension_binding") or {}).get("computer_access")
                 ):
-                    if not data["settings"].get("desktop_access") or not (row.get("local_execution") or {}).get("desktop_access"):
+                    if not desktop_access_enabled(row, data["settings"]):
                         if row.get("automation_run_id"):
                             raise _unattended_approval_rejection("desktop_access")
                         raise AgentToolRejected("agent_desktop_access_required")

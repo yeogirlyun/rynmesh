@@ -152,6 +152,7 @@ def test_codex_chrome_control_multi_turn_workflow_via_cdp_pipe_bridge(
         test_url = f"http://127.0.0.1:{port}/"
 
         host, ws = _make_host_tools(tmp_path, headless=True)
+        host.local.store.transaction(lambda data: data["settings"].update(desktop_access=True))
         ctx = {
             "task_id": "task_codex_chrome_e2e",
             "context_epoch": 0,
@@ -268,6 +269,7 @@ def test_codex_chrome_control_live_extension_or_auto_fallback_discovery(
     monkeypatch.setenv("RYN_CHROME_HEADLESS", "1")
 
     host, ws = _make_host_tools(tmp_path, headless=True)
+    host.local.store.transaction(lambda data: data["settings"].update(desktop_access=True))
     ctx = {
         "task_id": "task_codex_chrome_auto",
         "context_epoch": 0,
