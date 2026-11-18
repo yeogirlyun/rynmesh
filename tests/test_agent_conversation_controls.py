@@ -13,6 +13,7 @@ from test_agent_runtime_model_switch import body as model_switch_body
 from test_agent_runtime_model_switch import scope_fixture
 from test_agent_runtime_model_switch import setup as model_switch_setup
 
+from rynmesh.agent_runtime.prompt import host_note
 from rynmesh.agent_runtime.runtime import AgentRuntime
 from rynmesh.agent_runtime.store import AgentError, AgentStore
 
@@ -416,7 +417,8 @@ def test_s02_i17_t1_background_process_triggers_running_work_reminder_before_rep
             f"Runtime note: processes or subagents this task started are still running ({proc_id}). "
             "Wait for the result you need, or stop them, before the final reply."
         )
-        assert any(m.get("content") == expected_note for m in mid["messages"])
+        assert any(m.get("role") == "user" and m.get("content") == host_note("running_work", expected_note)["content"]
+                   for m in mid["messages"])
         assert any(
             ev.get("type") == "turn_decision" and ev.get("reason") == "running_work"
             for ev in mid["events"]
@@ -512,7 +514,8 @@ def test_s02_i17_t4_running_subagent_triggers_running_work_reminder(tmp_path):
             f"Runtime note: processes or subagents this task started are still running ({child['id']}). "
             "Wait for the result you need, or stop them, before the final reply."
         )
-        assert any(m.get("content") == expected_note for m in mid["messages"])
+        assert any(m.get("role") == "user" and m.get("content") == host_note("running_work", expected_note)["content"]
+                   for m in mid["messages"])
         assert any(
             ev.get("type") == "turn_decision" and ev.get("reason") == "running_work"
             for ev in mid["events"]

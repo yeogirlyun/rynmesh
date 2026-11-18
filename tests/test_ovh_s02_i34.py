@@ -34,8 +34,12 @@ def test_t1_real_write_then_edit_reaches_next_model_without_arguments_or_results
     assert summary["items"] == [{"tool": "share_service", "operation_id": saved["receipts"][0]["operation_id"], "status": "confirmed"}]
     assert "retired_writes" not in runtime.get(task_id)
     advance(runtime)
-    notes = notice(model.calls[-1][1])
+    sent = model.calls[-1][1]
+    notes = notice(sent)
     assert len(notes) == 1 and "share_service" in notes[0] and "confirmed" in notes[0]
+    assert {"role": "user", "content": notes[0]} in sent
+    assert sent[-1]["role"] != "assistant"
+    assert notes[0].startswith('<host_note kind="retired_writes">')
     assert "只读工具确认当前状态" in notes[0] and "不要不加检查地重复执行" in notes[0]
     assert "PRIVATE_ARGUMENT_MARKER" not in json.dumps(model.calls[-1][1])
     assert "arguments" not in notes[0] and "result" not in notes[0]

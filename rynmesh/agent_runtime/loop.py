@@ -939,8 +939,9 @@ class AgentLoop:
                         effective_action = "complete"
                         effective_reason = "answer_total_limit"
                 if effective_action == "complete" and not wrap_up_reason and (reminder := planning.completion_reminder(row)):
-                    row["messages"].append({"role": "assistant", "content": reminder,
-                                            "context_epoch": row.get("context_epoch", 0)})
+                    row["messages"].append({**host_note("plan_reconciliation", reminder),
+                                            "context_epoch": row.get("context_epoch", 0),
+                                            "ui": {"kind": "information", "hidden": True}})
                     row.update(status="queued")
                     event(row, "turn_decision", action="continue", reason="plan_reconciliation", step=step)
                     return
@@ -967,12 +968,11 @@ class AgentLoop:
                     if running_ids:
                         row["running_work_reminder_goal"] = goal_revision
                         row["messages"].append({
-                            "role": "assistant",
-                            "content": (
+                            **host_note("running_work",
                                 f"Runtime note: processes or subagents this task started are still running ({', '.join(running_ids)}). "
-                                "Wait for the result you need, or stop them, before the final reply."
-                            ),
+                                "Wait for the result you need, or stop them, before the final reply."),
                             "context_epoch": row.get("context_epoch", 0),
+                            "ui": {"kind": "information", "hidden": True},
                         })
                         row.update(status="queued")
                         event(row, "turn_decision", action="continue", reason="running_work", step=step)
@@ -1274,10 +1274,10 @@ class AgentLoop:
                 projection = {"items": [{"tool": item["tool"], "status": item["status"]}
                                          for item in retired_writes["items"]],
                               "omitted": retired_writes["omitted"]}
-                tail.append({"role": "assistant", "content":
+                tail.append(host_note("retired_writes",
                     "Runtime note: 主人编辑了更早的一条消息。被丢弃的旧分支里已经执行过这些写操作（只列工具名与状态）："
                     + encoded(projection).decode()
-                    + "。它们的效果仍然存在，不要不加检查地重复执行；先用只读工具确认当前状态。"})
+                    + "。它们的效果仍然存在，不要不加检查地重复执行；先用只读工具确认当前状态。"))
             pending_subagent_messages = [{**item, **host_note("subagent_notification", item["content"])}
                                          for item in subagents.pending_for_request(row)]
             tail.extend(pending_subagent_messages)
@@ -1341,15 +1341,16 @@ class AgentLoop:
             prefix_plan = plan_message(prefix_row) if placement == "header" else ()
             repairs = []
             if not checkpoint:
-                built = provider_messages(request_context.build_context(instructions, history, guidance=combined_guidance,
-                                                                        plan=prefix_plan, tail=tail, repairs=repairs),
-                                          include_current_excerpts=include_current_excerpts)
+                context = request_context.build_context(instructions, history, guidance=combined_guidance,
+                                                        plan=prefix_plan, tail=tail, repairs=repairs)
             else:
-                built = provider_messages(request_context.build_context(instructions, history, guidance=combined_guidance,
-                                                                        plan=prefix_plan, checkpoint=checkpoint,
-                                                                        checkpoint_note=note, tail=tail,
-                                                                        owner_budget=owner_budget, repairs=repairs),
-                                          include_current_excerpts=include_current_excerpts)
+                context = request_context.build_context(instructions, history, guidance=combined_guidance,
+                                                        plan=prefix_plan, checkpoint=checkpoint,
+                                                        checkpoint_note=note, tail=tail,
+                                                        owner_budget=owner_budget, repairs=repairs)
+            if context and context[-1]["role"] == "assistant" and not row.get("_exclude_tail"):
+                context.append(host_note("continuation", "Continue from the recorded conversation."))
+            built = provider_messages(context, include_current_excerpts=include_current_excerpts)
             epoch = row.get("context_epoch", 0)
 
             def repair_event(selected):

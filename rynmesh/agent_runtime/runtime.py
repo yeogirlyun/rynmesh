@@ -321,8 +321,7 @@ def _note_lost_background_processes(row: dict, boot_id: str) -> None:
     )
     note_text = f"Ryn 节点已重启，以下后台进程已结束：{entries}。需要时重新启动命令，不要再读这些 id。"
     note_msg = {
-        "role": "assistant",
-        "content": note_text,
+        **host_note("lost_background_processes", note_text),
         "context_epoch": row.get("context_epoch", 0),
         "ui": {"kind": "lost_background_processes", "hidden": True},
     }
@@ -4552,7 +4551,7 @@ class AgentRuntime(AgentLoop):
                                 continued = True
                                 if auto_continued:
                                     row["restart_auto_continued"] = row["goal"]["revision"]
-                                    note = {"role": "assistant", "content": "Ryn 在任务运行中重启；从已记录历史继续，重复任何操作前先查状态。",
+                                    note = {**host_note("restart", "Ryn 在任务运行中重启；从已记录历史继续，重复任何操作前先查状态。"),
                                             "context_epoch": row.get("context_epoch", 0), "ui": {"kind": "information", "hidden": True}}
                                     messages = row["messages"]
                                     index = len(messages) - 1 if row.get("queue") and messages[-1].get("tool_calls") else len(messages)
