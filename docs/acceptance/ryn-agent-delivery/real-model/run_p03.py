@@ -139,11 +139,16 @@ def execute(runtime, world, owner_token):
                         grants_at_barrier=copy.deepcopy(world.grants.list()))
                     if not control["approval_consumed"]:
                         break
-                    response = client.put("/api/local/agent/settings", json={"permission_mode": "read_only"})
+                    # S13-I25 made the mode a default for new tasks. Revoke the
+                    # specific live tool as part of the owner's settings change.
+                    denied = list(dict.fromkeys([*runtime.settings()["denied_tools"], pending["tool"]]))
+                    response = client.put("/api/local/agent/settings",
+                                          json={"permission_mode": "read_only", "denied_tools": denied})
                     settings = client.get("/api/local/agent/settings").json()
                     control.update(read_only_saved=stamp(), settings_status=response.status_code,
                         settings_after=settings, prewrite_revocation_observed=response.status_code == 200
-                        and settings["permission_mode"] == "read_only" and not release.is_set()
+                        and settings["permission_mode"] == "read_only" and pending["tool"] in settings["denied_tools"]
+                        and not release.is_set()
                         and control["worker_thread_id"] != control["controller_thread_id"])
                     if not control["prewrite_revocation_observed"]:
                         control["error_code"] = "owner_read_only_not_persisted"
@@ -199,14 +204,13 @@ class FixturePlanner(R04FixturePlanner):
     def complete(self, model_id, messages, specs, cancelled, on_event=None, **options):
         from importlib import import_module
         helper = import_module("docs.acceptance.ryn-agent-delivery.real-model.planner_discovery")
-        business_history, discover = helper.business_history, helper.discover
-        discovery = discover(specs, ['ryn_list_models', 'ryn_list_devices', 'ryn_share_model_with_friend', 'ryn_inspect_services'])
-        if discovery:
-            return discovery
-        messages = business_history(messages)
         handoff = helper.checkpoint(messages, specs)
         if handoff:
             return handoff
+        discovery = helper.discover(specs, ['ryn_list_models', 'ryn_list_devices', 'ryn_share_model_with_friend', 'ryn_inspect_services'])
+        if discovery:
+            return discovery
+        messages = helper.business_history(messages)
         if not specs:
             refs = json.loads(messages[-1]["content"])["evidence"]
             message = {"role": "assistant", "content": json.dumps({"status": "failed",
