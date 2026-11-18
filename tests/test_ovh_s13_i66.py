@@ -202,7 +202,7 @@ def test_T6_s13_i66_success_publishes_hash_checked_media_then_atomic_manifest(fe
     result = fetched.store.fetch_peer_content_full('http://peer.test', fetched.id, expected_peer_id=fetched.publisher.peer_id)
     assert fetched.data['calls'][0].name.endswith('.media.part')
     published_media = atomic_io.fs_path(Path(result['media_path']))
-    assert published_media == fetched.data['calls'][-1].with_suffix('')
+    assert published_media.samefile(fetched.data['calls'][-1].with_suffix(''))
     assert published_media.read_bytes() == fetched.data['media']
     assert json.loads((fetched.directory/'manifest.json').read_text()) == fetched.data['manifest'].to_dict()
     assert len(writes) == 1
