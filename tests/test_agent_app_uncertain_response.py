@@ -25,7 +25,7 @@ def setup_runtime(apps, tmp_path, model=None):
     model = model or BusinessModel("desk", "create_ticket")
     runtime = AgentRuntime(AgentStore(tmp_path / "agent", apps.key), model, apps.tools, Catalog(),
                            consumer_node_id=apps.peer_id)
-    runtime.update_settings({"enabled": True, "model_id": "local:test", "permission_mode": "automatic",
+    runtime.update_settings({"enabled": True, "model_id": "local:test", "permission_mode": "confirm_changes",
                              "allowed_write_tools": [ACTION], "desktop_access": False})
     row = runtime.create({"message": "Create exactly one Desk ticket through the reviewed operation."})
     advance(runtime, 20)
