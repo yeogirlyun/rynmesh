@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from . import generator, prompts, sizes
+from . import generator, prompts, sizes, templates
 
 MAX_ACTIVE_PER_CALLER = 20
 MAX_BRIEF = 2000
@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   batch TEXT NOT NULL, purpose TEXT NOT NULL, width INTEGER NOT NULL, height INTEGER NOT NULL,
   brief TEXT NOT NULL, words TEXT NOT NULL, refs TEXT NOT NULL, source_job TEXT,
   state TEXT NOT NULL, failure TEXT, priority INTEGER NOT NULL DEFAULT 0, attempt INTEGER NOT NULL DEFAULT 0,
-  created_at REAL NOT NULL, started_at REAL, finished_at REAL, seconds REAL, model TEXT
+  created_at REAL NOT NULL, started_at REAL, finished_at REAL, seconds REAL, model TEXT,
+  scene TEXT, style TEXT, copy_json TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS jobs_caller ON jobs(caller, created_at);
 CREATE INDEX IF NOT EXISTS jobs_state ON jobs(state, priority, created_at);
@@ -76,6 +77,11 @@ class JobStore:
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.executescript(SCHEMA)
+        columns = {row["name"] for row in self._db.execute("PRAGMA table_info(jobs)")}
+        for name, definition in (("scene", "TEXT"), ("style", "TEXT"),
+                                 ("copy_json", "TEXT NOT NULL DEFAULT '{}'")):
+            if name not in columns:
+                self._db.execute(f"ALTER TABLE jobs ADD COLUMN {name} {definition}")
         self.changed = threading.Condition(self._lock)
 
     def close(self) -> None:
@@ -127,17 +133,34 @@ class JobStore:
     # ---- submitting -------------------------------------------------------------------
     def submit(self, caller: str, caller_name: str, caller_peer: str, body: Any) -> list[dict[str, Any]]:
         if not isinstance(body, dict) or set(body) - {"purpose", "width", "height", "brief", "words", "count",
-                                                       "references", "source_job"}:
+                                                       "references", "source_job", "scene", "style", "copy"}:
             raise JobError("image_bad_request")
+        scene, style = body.get("scene"), body.get("style")
+        if scene is not None and (not isinstance(scene, str) or scene not in templates.SCENES):
+            raise JobError("image_bad_scene")
+        if style is not None and (not isinstance(style, str) or style not in templates.STYLES):
+            raise JobError("image_bad_style")
+        purpose = body.get("purpose")
+        if purpose is None and scene is not None:
+            purpose = templates.SCENES[scene]["purpose"]
         try:
-            purpose, width, height = sizes.resolve(body.get("purpose"), body.get("width"), body.get("height"))
+            purpose, width, height = sizes.resolve(purpose, body.get("width"), body.get("height"))
         except sizes.SizeError as exc:
             raise JobError(str(exc)) from None
+        scene = scene or templates.PURPOSE_SCENES.get(purpose)
         brief, words = body.get("brief"), body.get("words", "")
         if not isinstance(brief, str) or not brief.strip() or len(brief) > MAX_BRIEF:
             raise JobError("image_bad_brief")
         if not isinstance(words, str) or len(words) > MAX_WORDS:
             raise JobError("image_bad_words")
+        copy = body.get("copy", {})
+        if not isinstance(copy, dict) or any(
+            field not in templates.COPY_FIELDS or not isinstance(value, str)
+            or len(value) > templates.COPY_FIELDS[field][1]
+            for field, value in copy.items()
+        ):
+            raise JobError("image_bad_copy")
+        copy_json = json.dumps({field: value.strip() for field, value in copy.items()}, ensure_ascii=False)
         count = body.get("count", 1)
         if count not in (1, 2, 4):
             raise JobError("image_bad_count")
@@ -167,9 +190,10 @@ class JobStore:
             for index in range(count):
                 job_id = secrets.token_hex(12)
                 self._exec("""INSERT INTO jobs(id, caller, caller_name, caller_peer, batch, purpose, width, height, brief,
-                              words, refs, source_job, state, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'queued', ?)""",
+                              words, refs, source_job, scene, style, copy_json, state, created_at)
+                              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'queued', ?)""",
                            (job_id, caller, caller_name[:80], caller_peer, batch, purpose, width, height, brief.strip(),
-                            words.strip(), json.dumps(refs), source, now + index * 1e-6))
+                            words.strip(), json.dumps(refs), source, scene, style, copy_json, now + index * 1e-6))
                 ids.append(job_id)
             self.changed.notify_all()
         return [self.view(self.job(caller, job_id)) for job_id in ids]
@@ -201,7 +225,8 @@ class JobStore:
                "failure": row["failure"], "failure_text": generator.FAILURES.get(row["failure"] or "", None),
                "created_at": row["created_at"], "started_at": row["started_at"], "finished_at": row["finished_at"],
                "seconds": row["seconds"], "references": len(roles), "reference_roles": roles,
-               "source_job": row["source_job"]}
+               "source_job": row["source_job"], "scene": templates.job_scene(row), "style": row["style"],
+               "copy": templates.job_copy(row)}
         if row["state"] == "queued":
             queue = self.queue() if queue is None else queue
             average = self.average_seconds() if average is None else average

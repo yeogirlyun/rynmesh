@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from . import generator, sizes
+from . import generator, sizes, templates
 from .jobs import MAX_UPLOAD_BYTES, JobError, JobStore, caller_key
 
 SITE_ID = "image-studio"
@@ -70,6 +70,10 @@ class StudioSite:
             return _json(200, {"name": name, "model": generator.readiness(), "queue_length": len(queue),
                                "now": self.store.clock(),
                                "average_seconds": round(self.store.average_seconds()),
+                               "scenes": {k: {"label": v["label"], "purpose": v["purpose"],
+                                              "width": v["size"][0], "height": v["size"][1]}
+                                          for k, v in templates.SCENES.items()},
+                               "styles": {k: {"label": v["label"]} for k, v in templates.STYLES.items()},
                                "purposes": {k: {"label": v["label"], "ratio": v["ratio"], "width": v["size"][0],
                                                 "height": v["size"][1]} for k, v in sizes.PURPOSES.items()}})
         if path == "/api/uploads" and method == "POST":
