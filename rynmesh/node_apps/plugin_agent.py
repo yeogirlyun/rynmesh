@@ -40,7 +40,7 @@ SPECS = [
 SPECS += [
     {"type": "function", "function": {
         "name": ALL_LIST,
-        "description": "Discover the user's apps on the Ryn Applications page: enabled plugins and their actual Agent capabilities, including Craft editors, Resume, Recruit, Desk and NAS. This is the Ryn app inventory, separate from OS-installed software. App operations keep their approval boundary; NAS keeps resource permissions. No installation or launch.",
+        "description": "Discover the user's apps on the Ryn Applications page: enabled plugins and their actual Agent capabilities, including Craft editors, Resume, Recruit, Desk and NAS. This is the Ryn app inventory, separate from OS-installed software. Outside automatic mode an App operation asks the owner first; in automatic mode it runs directly. NAS keeps resource permissions. No installation or launch.",
         "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
     }},
     {"type": "function", "function": {
@@ -138,7 +138,7 @@ class PluginTools:
                             raise AgentToolRejected("agent_node_apps_unavailable")
                         info.update(operations=copy.deepcopy(CATALOG[row["id"]]["operations"]),
                                     workspace_context=service.call("", "context", {"app": row["id"]}),
-                                    operation_guidance="Load ryn_node_app_action if absent. Choose an operation and arguments from operations; pass workspace_context into reviewed_context (or omit reviewed_context for automatic current context) and use this app. The runtime stages exact owner approval, including private reads and model data release. Fetch this info again after a write or apps_review_changed; never invent or reuse stale context.")
+                                    operation_guidance="Load ryn_node_app_action if absent. Choose an operation and arguments from operations; pass workspace_context into reviewed_context (or omit reviewed_context for automatic current context) and use this app. Outside automatic mode the runtime stages exact owner approval (including private reads and model data release); in automatic mode it runs directly. Fetch this info again after a write or apps_review_changed; never invent or reuse stale context.")
                     else:
                         info.update(execution_tools=copy.deepcopy(row["agent_tools"]),
                                     scope_guidance="Load and call ryn_list_resource_roots first. Only returned task-authorized resource_ref values grant access. If roots is empty, ask the owner to select NAS files or directories in the Agent resource scope and allow data release to the selected model. Use ryn_list_resources, ryn_read_resource and ryn_search_resource within those grants; create tools additionally require a writable create grant and operation approval. Enabling NAS alone grants no resource access.")
