@@ -193,6 +193,8 @@ def test_credential_idempotency_expiry_revoke_and_task_deletion(setup, monkeypat
         **{k: context[k] for k in ("owner_id", "consumer_node_id", "goal_revision")})
     with pytest.raises(AgentToolRejected, match="agent_source_owner_credential_required"):
         tools.preview("ryn_test_source_draft", locator(row), context=context)
+    key = peer_box.load_or_create_messaging_key(tools.store.home / "messaging.x25519")
+    tools.local.store = AgentStore(tools.store.home / "agent", key)
     tools.forget_task(context["task_id"], operation_ids=["op-prepare"])
     state = tools.source_drafts._read()
     assert not state["credentials"] and not state["drafts"] and not state["requests"]
