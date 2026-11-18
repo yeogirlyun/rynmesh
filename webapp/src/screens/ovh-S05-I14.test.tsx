@@ -169,6 +169,7 @@ describe("S05-I14 attachment pre-validation, path picker, dynamic limits, and fo
     expect(alert.textContent).toContain("20");
     expect(onAttachmentsChange).not.toHaveBeenCalled();
     view.unmount();
+    delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
 
     // Also verify RynAgent banner renders offending filename and limit when backend rejects with details.
     server.use(
