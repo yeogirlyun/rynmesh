@@ -54,7 +54,10 @@ not-allowed sites all answer the same 403.
 (offline devices are listed as offline). `POST /api/local/node-sites/open` with
 `provider_resource`, `peer_id` and `site_id` returns a stable key and the URL
 `http://<key>.site.localhost:<gateway-port><entry>`. The Ryn page
-`/apps/sites` lists sites; `/apps/sites/open/<key>` shows one in a sandboxed
+`/apps?tab=shared` (Apps › Shared by colleagues) groups apps by site.
+The old `/apps/sites` address redirects there. Owners manage a public app's
+audience under Share with colleagues in its app detail.
+`/apps/sites/open/<key>` shows one in a sandboxed
 frame (`allow-scripts allow-forms allow-same-origin allow-downloads`, no
 referrer) under a bar Ryn draws with the owner and online state, or an offline
 screen. Status is checked every 15 seconds and the page reloads when the device

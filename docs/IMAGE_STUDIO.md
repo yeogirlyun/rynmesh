@@ -1,7 +1,7 @@
 # Image studio
 
 The image studio is the first [node site](NODE_SITES.md). Colleagues open it
-from **Shared pages** in their own Ryn; requests run on the hosting computer's
+from **Apps › Shared by colleagues** in their own Ryn. Requests run on the hosting computer's
 signed-in Codex (native image generation, the same path as the agent's
 `ryn_image_generate`) and the images come back to them. No separate API key
 or server is involved. Offline means offline.
@@ -12,6 +12,9 @@ The plugin registers the in-process site `image-studio`; installation does not
 enable sharing. Existing image data is retained. See
 [public and private plugin instructions](PUBLIC_AND_PRIVATE_PLUGINS.md) for
 installation, updates, migration, and the current company-sharing boundary.
+
+Install from **Apps › Discover**. Open the Image Studio app detail to use it,
+manage its sharing and queue, or review versions and updates.
 
 ## Colleague API (through the node site)
 

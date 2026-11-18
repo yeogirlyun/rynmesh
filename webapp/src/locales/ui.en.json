@@ -1,4 +1,6 @@
 {
+  "对方版本更新，有 {{count}} 项新权限本机不支持": "Your colleague’s version includes {{count}} new permissions this device can’t use.",
+  "已自动清理 {{count}} 张旧卡片": "Automatically removed {{count}} old cards.",
   "自动使用已发现的模型上下文窗口": "Automatically use discovered model context windows",
   "按模型分别读取": "Read separately for each model",
   "读取模型列表后保存以应用容量。来源未提供容量时按未知处理并保守回退，可取消自动后手动填写。": "Save after reading the model list to apply its context windows. If the source provides no capacity, it remains unknown and uses a conservative fallback. Turn off automatic discovery to enter a value manually.",

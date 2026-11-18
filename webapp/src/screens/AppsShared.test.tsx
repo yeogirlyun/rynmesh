@@ -1,11 +1,12 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, useLocation } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, expect, it, vi } from "vitest";
 import { getPins, recentShared, sharedApps, togglePin, type Pin, type SharedAppProvider, type SharedAppsResult } from "../domain/apps";
 import { nodeSites } from "../domain/nodeSites";
 import { setLanguagePreference } from "../i18n";
 import AppsShared from "./AppsShared";
+import AppsHub from "./AppsHub";
 
 vi.mock("../domain/apps", async importOriginal => ({
   ...await importOriginal<typeof import("../domain/apps")>(),
@@ -43,7 +44,13 @@ function Destination() {
 }
 
 async function mount() {
-  render(<MemoryRouter initialEntries={["/apps?tab=shared"]}><AppsShared /><Destination /></MemoryRouter>);
+  render(<MemoryRouter initialEntries={["/apps?tab=shared"]}>
+    <Routes>
+      <Route path="/apps" element={<AppsHub />} />
+      <Route path="/apps/sites/open/:key" element={null} />
+    </Routes>
+    <Destination />
+  </MemoryRouter>);
   await screen.findByText("Of 9 colleagues, 3 have shared 2 apps.");
   return userEvent.setup();
 }
@@ -113,6 +120,6 @@ it("toggles the chosen provider pin and opens the selected app while saving a re
 
 it("explains the empty state when nobody has shared any apps", async () => {
   vi.mocked(sharedApps).mockResolvedValue({ ...payload, sharing_total: 0, apps: [] });
-  render(<MemoryRouter><AppsShared /></MemoryRouter>);
+  render(<MemoryRouter><AppsShared query="" /></MemoryRouter>);
   expect(await screen.findByText("Apps your colleagues share will appear here.")).toBeInTheDocument();
 });

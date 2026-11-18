@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { RefreshCw, Search, Star } from "lucide-react";
+import { RefreshCw, Star } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import {
@@ -15,13 +15,12 @@ const providerKey = (siteId: string, provider: SharedAppProvider) =>
   `shared:${provider.provider_resource}|${provider.peer_id}|${siteId}`;
 const filterButtonStyle = { borderRadius: 999 };
 
-export default function AppsShared() {
+export default function AppsShared({ query }: { query: string }) {
   const { t, i18n } = useTranslation("apps");
   const navigate = useNavigate();
   const [data, setData] = useState<SharedAppsResult | null>(null);
   const [pins, setPins] = useState<Pin[] | null>(null);
   const [filter, setFilter] = useState<typeof filters[number]>("all");
-  const [query, setQuery] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [pending, setPending] = useState("");
   const [error, setError] = useState<"load" | "pins" | "pin" | "open" | null>(null);
@@ -107,11 +106,6 @@ export default function AppsShared() {
           disabled={item === "pinned" && pins === null} onClick={() => setFilter(item)}>
           {t(`sharedList.filters.${item}`)}
         </button>)}
-        <label className="apps-hub-search">
-          <Search size={16} aria-hidden="true" />
-          <input type="search" aria-label={t("search")} placeholder={t("searchPlaceholder")}
-            value={query} onChange={event => setQuery(event.target.value)} />
-        </label>
         <button type="button" className="apps-hub-button" disabled={refreshing || (!data && error !== "load")}
           onClick={() => void refresh()}>
           <RefreshCw size={16} aria-hidden="true" />{t(refreshing ? "sharedList.refreshing" : "sharedList.refresh")}

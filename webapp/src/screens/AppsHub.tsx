@@ -7,6 +7,7 @@ import {
   type MyApp, type Pin, type RecentSharedApp, type SharedApp,
 } from "../domain/apps";
 import { nodeSites } from "../domain/nodeSites";
+import { InstalledAppControls } from "./AppsLauncher";
 import AppsDiscover from "./AppsDiscover";
 import AppsShared from "./AppsShared";
 import CraftApps from "./CraftApps";
@@ -29,7 +30,7 @@ export default function AppsHub() {
         <label className="apps-hub-search">
           <Search size={16} aria-hidden="true" />
           <input type="search" aria-label={t("search")} placeholder={t("searchPlaceholder")}
-            value={query} disabled={tab !== "mine"} onChange={event => setQuery(event.target.value)} />
+            value={query} disabled={tab === "discover"} onChange={event => setQuery(event.target.value)} />
         </label>
         <Link className="apps-hub-button apps-hub-primary" to={tabPath("discover")}>
           <Plus size={16} aria-hidden="true" />{t("add")}
@@ -40,7 +41,7 @@ export default function AppsHub() {
       {tabs.map(item => <Link to={tabPath(item)} key={item} aria-current={tab === item ? "page" : undefined}>{t(item)}</Link>)}
     </nav>
     {tab === "mine" && <MyApps query={query.trim().toLocaleLowerCase()} />}
-    {tab === "shared" && <AppsShared />}
+    {tab === "shared" && <AppsShared query={query} />}
     {tab === "discover" && <AppsDiscover />}
   </main>;
 }
@@ -123,8 +124,8 @@ function MyApps({ query }: { query: string }) {
     };
   };
 
-  const localCard = (app: MyApp, pin?: Pin): Card => {
-    const openPath = app.kind === "public" ? `/apps/public-plugins/${encodeURIComponent(app.id)}` : app.openPath;
+  const localCard = (app: MyApp, pin?: Extract<Pin, { kind: "local" }>): Card => {
+    const openPath = pin?.open_path ?? app.openPath;
     return {
       key: app.key, title: pin?.title ?? app.title, openPath, shared: app.shared === true,
       subtitle: app.version ? t("installedVersion", { version: app.version }) : t("installed"),
@@ -154,7 +155,7 @@ function MyApps({ query }: { query: string }) {
           <p className={card.online ? "apps-hub-online" : "apps-hub-muted"}>{card.subtitle}</p>
         </div>
         {card.pin && <button className="apps-hub-star" type="button" disabled={changing}
-          aria-label={t(card.pinned ? "unpin" : "pin", { title: card.title })}
+          aria-label={t(card.pinned ? "unpin" : "pin", { title: card.title })} aria-pressed={Boolean(card.pinned)}
           onClick={() => void changePin(card.pin!)}>
           <Star size={17} fill={card.pinned ? "currentColor" : "none"} aria-hidden="true" />
         </button>}
@@ -179,7 +180,9 @@ function MyApps({ query }: { query: string }) {
     <section aria-labelledby="apps-installed-heading">
       <h2 id="apps-installed-heading">{t("installed")}</h2>
       {cards(publicApps)}
-      <CraftApps />
+      <InstalledAppControls.Provider value={{ query, pins, changing, changePin }}>
+        <CraftApps />
+      </InstalledAppControls.Provider>
     </section>
     <section aria-labelledby="apps-recent-heading">
       <div className="apps-hub-section-heading">

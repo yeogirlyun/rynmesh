@@ -1,9 +1,11 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useSearchParams } from "react-router-dom";
 import { beforeEach, expect, it, vi } from "vitest";
-import NodeSites from "./NodeSites";
+import LegacyNodeSites from "./NodeSites";
 import NodeSiteWindow from "./NodeSiteWindow";
+import AppsShared from "./AppsShared";
+import { getPins, sharedApps } from "../domain/apps";
 import { nodeSites, type OpenedSiteStatus } from "../domain/nodeSites";
 
 vi.mock("../domain/nodeSites", async (original) => {
@@ -11,6 +13,11 @@ vi.mock("../domain/nodeSites", async (original) => {
   return { ...actual, nodeSites: { remote: vi.fn(), open: vi.fn(), status: vi.fn(), mine: vi.fn(), update: vi.fn() } };
 });
 const api = vi.mocked(nodeSites);
+vi.mock("../domain/apps", async original => ({
+  ...await original<typeof import("../domain/apps")>(),
+  getPins: vi.fn(),
+  sharedApps: vi.fn(),
+}));
 const KEY = "0123456789abcdef0123456789abcdef";
 const ORIGIN = `http://${KEY}.site.localhost:18797`;
 
@@ -31,6 +38,8 @@ function renderWindow(path: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   api.mine.mockResolvedValue({ sites: [], members: [] });
+  vi.mocked(getPins).mockResolvedValue({ seeded: true, pins: [] });
+  vi.mocked(sharedApps).mockResolvedValue({ colleagues_total: 0, sharing_total: 0, apps: [] });
 });
 
 it("polls without overlapping a slow check and reloads after recovery", async () => {
@@ -87,30 +96,32 @@ it("shows an offline screen instead of the page, and never a foreign origin or e
   await waitFor(() => expect(third.container.querySelector("iframe")?.getAttribute("src")).toBe(`${ORIGIN}/?lang=en`));
 });
 
-it("lists colleagues' pages, opens one, and toggles a hosted page", async () => {
-  api.remote.mockResolvedValue([
-    { provider_resource: "https://p.test/connect", peer_id: "peer-b", member_name: "Ziling", device_name: "ZL-PC",
-      online: true, sites: [{ site_id: "image-studio", title: "Image studio", entry: "/" }] },
-    { provider_resource: "https://p.test/connect", peer_id: "peer-c", member_name: "Bai", device_name: "BF",
-      online: false, sites: [] },
-  ]);
+function SharedDestination() {
+  const [params] = useSearchParams();
+  return params.get("tab") === "shared" ? <AppsShared query="" /> : null;
+}
+
+it("redirects the old list to Shared by colleagues and opens a colleague's app", async () => {
+  vi.mocked(sharedApps).mockResolvedValue({ colleagues_total: 2, sharing_total: 2, apps: [{
+    site_id: "image-studio", title: "Image studio", providers: [
+      { provider_resource: "https://p.test/connect", peer_id: "peer-b", member_name: "Ziling", device_name: "ZL-PC",
+        online: true, last_seen: null, summary: null },
+      { provider_resource: "https://p.test/connect", peer_id: "peer-c", member_name: "Bai", device_name: "BF",
+        online: false, last_seen: null, summary: null },
+    ],
+  }] });
   api.open.mockResolvedValue({ key: KEY, url: `${ORIGIN}/`, entry: "/", title: "Image studio", peer_id: "peer-b",
     provider_resource: "https://p.test/connect", member_name: "Ziling", device_name: "ZL-PC" });
-  const hosted = { site_id: "image-studio", title: "Image studio", port: 18150, entry: "/", enabled: false,
-    audience: { mode: "all" as const, members: [] }, updated_at: "" };
-  api.mine.mockResolvedValue({ sites: [hosted], members: [] });
-  api.update.mockResolvedValue({ ...hosted, enabled: true });
   render(<MemoryRouter initialEntries={["/apps/sites"]}>
     <Routes>
-      <Route path="/apps/sites" element={<NodeSites />} />
+      <Route path="/apps/sites" element={<LegacyNodeSites />} />
+      <Route path="/apps" element={<SharedDestination />} />
       <Route path="/apps/sites/open/:key" element={<p>window for {KEY}</p>} />
     </Routes>
   </MemoryRouter>);
-  expect(await screen.findByText("1 shared page")).toBeInTheDocument();
+  expect(await screen.findByRole("region", { name: "Image studio" })).toBeInTheDocument();
   expect(screen.getByText("Offline")).toBeInTheDocument();
-  await userEvent.click(screen.getByRole("checkbox", { name: "Open to colleagues" }));
-  expect(api.update).toHaveBeenCalledWith("image-studio", { enabled: true });
-  await userEvent.click(screen.getByRole("button", { name: "Open" }));
+  await userEvent.click(screen.getAllByRole("button", { name: "Open" })[0]);
   expect(api.open).toHaveBeenCalledWith(expect.objectContaining({ peer_id: "peer-b" }), "image-studio");
   expect(await screen.findByText(`window for ${KEY}`)).toBeInTheDocument();
 });
