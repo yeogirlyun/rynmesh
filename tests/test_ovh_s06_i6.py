@@ -84,8 +84,11 @@ def skill_env(ext_env, tmp_path, monkeypatch):
     for key in ("CODEX_HOME", "RYN_HOME", "USERPROFILE", "HOME"):
         monkeypatch.setenv(key, str(tmp_path / "isolated-home"))
     runtime, _, tools, workspace, _ = ext_env
+    store = tools.extensions.store
+    for skill in store.enabled_skills_catalog(workspace_root=workspace):
+        store.set_skill_enabled(skill["id"], False)
     tid = runtime.create({"message": "Use tools without selecting a skill"})["id"]
-    return runtime, tools.extensions.store, tid
+    return runtime, store, tid
 
 
 def pins(runtime, tid):
