@@ -6,7 +6,7 @@ import pytest
 
 from test_agent_memory_runtime_helpers import _make_store, _seed_task, _dest
 from test_agent_runtime import make_runtime, assistant, advance
-from rynmesh.agent_runtime import memory, memory_runtime as mr
+from rynmesh.agent_runtime import memory, memory_runtime as mr, memory_integration
 from rynmesh.agent_runtime.store import AgentToolRejected
 
 
@@ -97,7 +97,8 @@ def test_t1_schema_and_description_expose_recent_message_selection():
     from jsonschema import Draft202012Validator
     spec = next(s["function"] for s in mr.MEMORY_TOOL_SPECS if s["function"]["name"] == mr.MEMORY_PROPOSE_TOOL)
     assert spec["parameters"]["properties"]["message_id"] == {"type": "string", "maxLength": 200}
-    assert "message_id" in spec["description"] and "earlier" in spec["description"]
+    assert "message_id" in spec["description"] and "earlier" in spec["description"].lower()
+    assert "rejection" in spec["description"]
     validator = Draft202012Validator(spec["parameters"])
     assert not list(validator.iter_errors({"operation": "remember", "message_id": "earlier"}))
     assert list(validator.iter_errors({"operation": "remember", "message_id": "x" * 201}))
@@ -212,4 +213,76 @@ def test_t6_same_budget_selects_more_than_provenance_heavy_projection(tmp_path):
                 old_count += 1
         assert len(selected["selected"]) > old_count
         assert selected["used_bytes"] <= 1800
+    store.transaction(exercise)
+
+
+def test_rework_earlier_save_claim_survives_owner_turn_processing_but_not_next_turn(tmp_path):
+    store, _ = _make_store(tmp_path)
+    def exercise(data):
+        memory.update_memory_settings(data, {"default_exposure": {"mode": "selected_models", "allowed_destinations": [_dest()]}})
+        row = _seed_task(data, text="I use Vim", message_id="earlier")
+        row["messages"].append(owner("current", "Continue"))
+        receipt = propose(data, row, message_id="earlier")
+        assert receipt["saved"] and receipt["turn_message_id"] == "current"
+        memory_integration.apply_owner_turn_memory_in_tx(None, data, row)
+        claim = "已记住你使用 Vim。"
+        assert mr.guard_false_memory_save_claim(row, claim) == claim
+        assert mr._turn_called_memory_propose(row, mr.latest_authentic_owner_message(row))
+        row["messages"].append(owner("next", "Next question"))
+        assert "本轮没有成功保存记忆" in mr.guard_false_memory_save_claim(row, claim)
+        assert not mr._turn_called_memory_propose(row, mr.latest_authentic_owner_message(row))
+    store.transaction(exercise)
+
+
+def test_rework_real_model_retries_using_only_ids_and_previews_in_rejection(tmp_path, monkeypatch):
+    runtime, model, _, _ = make_runtime(tmp_path)
+    task = runtime.create({"message": "I use Vim"})
+    runtime.store.transaction(lambda data: data["tasks"][task["id"]]["messages"].append(owner("current", "Continue")))
+    seen = []
+    def complete(model_id, messages, tool_specs, cancelled, on_event):
+        model.calls.append((model_id, messages, tool_specs))
+        receipts = [json.loads(m["content"]) for m in messages if m["role"] == "tool"]
+        if not receipts:
+            return assistant(name=mr.MEMORY_PROPOSE_TOOL, args={"operation": "remember", "text": "I use Vim"})
+        if not receipts[-1].get("saved"):
+            refusal = receipts[-1]
+            assert refusal["reason"] == "proposal_not_grounded_in_owner_message"
+            choices = refusal["recent_owner_messages"]
+            seen.extend(choices)
+            earlier = next(m["message_id"] for m in choices if "I use Vim" in m["preview"])
+            return assistant(name=mr.MEMORY_PROPOSE_TOOL,
+                args={"operation": "remember", "text": "I use Vim", "message_id": earlier})
+        return assistant("已记住你使用 Vim。")
+    monkeypatch.setattr(model, "complete", complete)
+    advance(runtime, 8)
+    done = runtime.get(task["id"])
+    assert done["status"] == "completed", done.get("error")
+    assert seen and "已记住你使用 Vim" in done["result"]
+    assert "本轮没有成功保存记忆" not in done["result"]
+    assert len(runtime.store.read()["memory"]["entries"]) == 1
+
+
+def test_rework_rejection_previews_are_recent_authentic_and_short(tmp_path):
+    store, _ = _make_store(tmp_path)
+    def exercise(data):
+        row = _seed_task(data, text="I use Vim", message_id="old")
+        row["messages"].extend(owner(str(i), "Long owner statement " * 20) for i in range(6))
+        row["messages"].append(owner("host-note", "External tool text", synthetic=True))
+        result = propose(data, row)
+        assert result["reason"] == "proposal_not_grounded_in_owner_message"
+        assert [m["message_id"] for m in result["recent_owner_messages"]] == ["5", "4", "3", "2", "1"]
+        assert all(len(m["preview"]) <= 80 for m in result["recent_owner_messages"])
+    store.transaction(exercise)
+
+
+@pytest.mark.parametrize("meta", [{"agent_path": "/root/child"}, {}])
+def test_rework_subagent_cannot_select_a_message_id(tmp_path, meta):
+    store, _ = _make_store(tmp_path)
+    def exercise(data):
+        row = _seed_task(data, text="I use Vim", message_id="parent-authored")
+        row["subagent_meta"] = meta
+        row["messages"].append(owner("latest", "Continue"))
+        with pytest.raises(AgentToolRejected, match="agent_invalid_tool_arguments"):
+            propose(data, row, message_id="parent-authored")
+        assert not memory.ensure_memory_state(data)["entries"]
     store.transaction(exercise)

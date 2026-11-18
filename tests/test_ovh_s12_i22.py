@@ -127,8 +127,8 @@ def test_T5_memory_description_limits_text_to_owner_words():
     description = memory_spec()["description"]
     assert "(in any language)" not in description
     assert "owner" in description.lower() and "language" in description
-    assert "text must reuse" in description and "selected owner words" in description
-    assert "message_id" in description and "last 5 owner messages" in description
+    assert "text must reuse" in description and "owner words" in description
+    assert "message_id" in description and "last 5 owner previews" in description and "rejection" in description
     assert "do not translate, paraphrase or normalize" in description
     owner = "记住我的编辑器是VSCode"
     assert memory_runtime.verify_proposal_grounding_in_owner_message("我的编辑器是VSCode", owner)
