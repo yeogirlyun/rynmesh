@@ -2185,6 +2185,19 @@ class AgentRuntime(AgentLoop):
         if not isinstance(values, dict) or set(values) - (set(DEFAULT_SETTINGS) | set(self._EXTRA_SETTINGS)):
             raise AgentError("agent_invalid_settings")
         values = copy.deepcopy(values)
+        if "shell_allow_prefixes" in values:
+            from .execution_policy import normalize_shell_prefix
+            prefixes = values["shell_allow_prefixes"]
+            if not isinstance(prefixes, list):
+                raise AgentError("agent_invalid_settings")
+            normalized = []
+            for prefix in prefixes:
+                rule = normalize_shell_prefix(prefix)
+                if rule is None:
+                    raise AgentError("agent_invalid_settings")
+                if rule not in normalized:
+                    normalized.append(rule)
+            values["shell_allow_prefixes"] = normalized
         if "project_doc_fallback_filenames" in values:
             names = values["project_doc_fallback_filenames"]
             if not isinstance(names, list) or any(not projects.valid_fallback_name(name) for name in names):
@@ -2262,6 +2275,12 @@ class AgentRuntime(AgentLoop):
 
         def update(data):
             self._validate_owner_rules(values, data["settings"], rule_names)
+            if "shell_allow_prefixes" in values:
+                old_prefixes = data["settings"].get("shell_allow_prefixes", [])
+                pending = [prefix for prefix in data.get("pending_shell_prefix_notices", [])
+                           if prefix in values["shell_allow_prefixes"]]
+                pending.extend(prefix for prefix in values["shell_allow_prefixes"] if prefix not in old_prefixes)
+                data["pending_shell_prefix_notices"] = pending
             workspace_changed = "workspace_root" in values and values["workspace_root"] != data["settings"].get("workspace_root")
             if any(key in values and values[key] != data["settings"].get(key)
                    for key in ("permission_mode", "allowed_write_tools", "denied_tools", "workspace_root", "desktop_access")):
@@ -2273,6 +2292,7 @@ class AgentRuntime(AgentLoop):
                                                           if rule in values["allowed_write_tools"]]
             desktop_revoked = bool(data["settings"].get("desktop_access")) and values.get("desktop_access") is False
             permission_changed = desktop_revoked or any(key in values and values[key] != data["settings"].get(key) for key in ("allowed_write_tools", "denied_tools", "workspace_root"))
+            prefix_changed = "shell_allow_prefixes" in values and values["shell_allow_prefixes"] != data["settings"].get("shell_allow_prefixes", [])
             changed = any(data["settings"].get(key) != value for key, value in values.items())
             for key in budget.SEGMENT_LIMITS:
                 if key in values:
@@ -2302,9 +2322,9 @@ class AgentRuntime(AgentLoop):
                 for row in data["tasks"].values():
                     bound = row.setdefault("local_execution", {})
                     bound.update(restrict_web_policy(bound, data["settings"]))
-            if permission_changed:
+            if permission_changed or prefix_changed:
                 for row in data["tasks"].values():
-                    if row["status"] not in TERMINAL:
+                    if row["status"] not in TERMINAL and (permission_changed or row["permission_mode"] == "confirm_changes"):
                         previous_updated_at = row["updated_at"]
                         preserve_activity = row["status"] in {"paused", "waiting_approval", "waiting_input"}
                         row.update(approved=None, pending_approval=None)
@@ -3715,9 +3735,11 @@ class AgentRuntime(AgentLoop):
         return self.store.transaction(edit)
 
     def action(self, task_id: str, value: dict) -> dict:
-        if set(value) - {"action", "permission_mode", "expected_revision", "expected_control_revision", "expected_goal_revision", "approval_id", "pending_input_id", "answers", "client_request_id", "subagent_id", "target", "message_index", "remember"}:
+        if set(value) - {"action", "permission_mode", "expected_revision", "expected_control_revision", "expected_goal_revision", "approval_id", "pending_input_id", "answers", "client_request_id", "subagent_id", "target", "message_index", "remember", "remember_prefix"}:
             raise AgentError("agent_invalid_request")
         action = value.get("action")
+        if "remember_prefix" in value and (type(value["remember_prefix"]) is not bool or action != "approve" or value.get("remember")):
+            raise AgentError("agent_invalid_request")
         if value.get("remember") not in {None, "task", "always"} or (value.get("remember") and action != "approve"):
             raise AgentError("agent_invalid_request")
         rule_names = self._owner_rule_catalog() if value.get("remember") == "always" else {}
@@ -3905,6 +3927,17 @@ class AgentRuntime(AgentLoop):
                         raise AgentError("agent_permission_denied")
                     row["approved"] = {**approval, "revision": row["revision"]}
                     remembered = {}
+                    if value.get("remember_prefix"):
+                        from .execution_policy import shell_prefix_candidate
+                        prefix = shell_prefix_candidate(call["arguments"]) if call["name"] == "ryn_shell_execute" else None
+                        if prefix is None:
+                            raise AgentError("agent_shell_prefix_invalid")
+                        prefixes = data["settings"].setdefault("shell_allow_prefixes", [])
+                        if prefix not in prefixes:
+                            prefixes.append(prefix)
+                            data["settings_revision"] = data.get("settings_revision", 0) + 1
+                            data.setdefault("pending_shell_prefix_notices", []).append(prefix)
+                            event(row, "prefix_allowed", prefix=prefix)
                     if value.get("remember") == "always":
                         from .execution_policy import owner_tool_key
                         rule = owner_tool_key(call, self.tools.metadata(call["name"]))

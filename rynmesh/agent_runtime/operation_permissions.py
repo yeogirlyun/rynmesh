@@ -47,6 +47,8 @@ def projection(row, limit: int | None = DEFAULT_LIMIT):
                     fact["permission_basis"] = "automatic_policy"
                 elif basis == "owner_rule":
                     fact["permission_basis"] = "owner_rule"
+                elif basis == "prefix_allow":
+                    fact["permission_basis"] = "owner_prefix_rule"
                 elif basis == "task_grant":
                     approval_ids = decision.get("approval_ids") or []
                     accepted = [event for event in row["events"] if event["type"] == "approved"

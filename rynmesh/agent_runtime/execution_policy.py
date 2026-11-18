@@ -692,6 +692,41 @@ def desktop_access_enabled(row, settings):
         (row.get("local_execution") or {}).get("desktop_access") and settings.get("desktop_access"))
 
 
+SHELL_BROAD_PREFIXES = frozenset({"sh", "bash", "zsh", "cmd", "powershell", "pwsh", "python", "node", "npx", "rm", "del", "remove-item"})
+SHELL_PREFIX_META = re.compile(r"[\r\n\x00;&|<>`$(){}#*?\[\]%!'\"]")
+
+
+def normalize_shell_prefix(prefix):
+    """Validate owner-authored literal words, normalizing only the executable."""
+    if (not isinstance(prefix, list) or not 1 <= len(prefix) <= 3
+            or any(not isinstance(word, str) or not word.strip() or SHELL_PREFIX_META.search(word) for word in prefix)):
+        return None
+    normalized = [executable_key(prefix[0]), *prefix[1:]]
+    if not normalized[0] or normalized[0] in SHELL_BROAD_PREFIXES:
+        return None
+    if normalized[0] == "git" and (len(normalized) != 2 or normalized[1].startswith("-")):
+        return None
+    return normalized
+
+
+def shell_prefix_candidate(arguments):
+    shell = arguments.get("shell", "powershell" if os.name == "nt" else "sh")
+    words = literal_command(arguments.get("command"), shell)
+    return normalize_shell_prefix(words[:2]) if words else None
+
+
+def matching_shell_prefix(arguments, settings):
+    shell = arguments.get("shell", "powershell" if os.name == "nt" else "sh")
+    words = literal_command(arguments.get("command"), shell)
+    if not words:
+        return None
+    words = [executable_key(words[0]), *words[1:]]
+    for prefix in sorted(settings.get("shell_allow_prefixes", []), key=len, reverse=True):
+        if words[:len(prefix)] == prefix:
+            return prefix
+    return None
+
+
 def decide(call, metadata, row, settings):
     mode = row["permission_mode"]
     modes = {mode, settings.get("permission_mode", mode)}
@@ -728,6 +763,8 @@ def decide(call, metadata, row, settings):
     if mode in {"workspace", "confirm_changes"} and row.get("task_grants") and task_grant_proof(call, metadata, row):
         return Decision("execute", "task_grant")
     if mode == "confirm_changes":
+        if call["name"] == "ryn_shell_execute" and matching_shell_prefix(call.get("arguments") or {}, settings):
+            return Decision("execute", "prefix_allow")
         return Decision("ask", "confirm_changes")
     # This alias is authored by the host only after verifying the builtin
     # provider, schema and enablement. Never derive it from a model tool name.

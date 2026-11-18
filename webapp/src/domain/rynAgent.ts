@@ -88,6 +88,7 @@ export interface AgentSettings {
   default_subagent_reasoning_effort?: string | null;
   permission_mode: "workspace" | "read_only" | "confirm_changes" | "automatic";
   allowed_write_tools: string[];
+  shell_allow_prefixes?: string[][];
   denied_tools?: string[];
   workspace_root?: string;
   desktop_access?: boolean;
@@ -155,6 +156,7 @@ export interface AgentRunTiming {
   measurement: "live" | "recorded" | "pending" | "unknown";
 }
 export interface AgentApproval {
+  remember_prefix_candidate?: string[];
   reason?: "dangerous_command";
   dangerous_reason?: "forced_rm" | "force_delete" | "open_url" | "wrapper_depth";
   id: string;
@@ -556,9 +558,9 @@ export const rynAgent = {
   message: (task: AgentTask, message: string, intent: AgentMessageIntent = "information", client_request_id: string = crypto.randomUUID(), reasoning_effort?: string, attachments?: AgentAttachmentInput[], skill_ids?: string[]) => request<AgentTask>(`/tasks/${encodeURIComponent(task.id)}/messages`, "POST", task.allowed_actions ? {
     message, intent, expected_goal_revision: task.goal?.revision, expected_control_revision: task.control_revision, client_request_id, ...(reasoning_effort ? { reasoning_effort } : {}), ...(attachments?.length ? { attachments } : {}), ...(skill_ids?.length ? { skill_ids } : {}),
   } : { message, expected_revision: task.revision, ...(reasoning_effort ? { reasoning_effort } : {}), ...(attachments?.length ? { attachments } : {}), ...(skill_ids?.length ? { skill_ids } : {}) }),
-  action: (task: AgentTask, action: AgentAction, remember?: "task" | "always") => request<AgentTask>(`/tasks/${encodeURIComponent(task.id)}/actions`, "POST", {
+  action: (task: AgentTask, action: AgentAction, remember?: "task" | "always" | "prefix") => request<AgentTask>(`/tasks/${encodeURIComponent(task.id)}/actions`, "POST", {
     action, ...(task.allowed_actions ? { expected_control_revision: task.control_revision, client_request_id: crypto.randomUUID() } : { expected_revision: task.revision }),
-    ...(action === "approve" && remember ? { remember } : {}),
+    ...(action === "approve" && remember ? remember === "prefix" ? { remember_prefix: true } : { remember } : {}),
     ...((action === "approve" || action === "deny") && task.pending_approval ? { approval_id: task.pending_approval.id } : {}),
   }),
   compact: (task: AgentTask) => request<AgentTask>(`/tasks/${encodeURIComponent(task.id)}/compact`, "POST", task.allowed_actions
@@ -590,9 +592,9 @@ export const rynAgent = {
 export function agentMessageBody(task: AgentTask, message: string, intent: AgentMessageIntent, reasoning_effort?: string, attachments?: AgentAttachmentInput[], skill_ids?: string[]): Record<string, unknown> {
   return { message, intent, expected_goal_revision: task.goal?.revision, expected_control_revision: task.control_revision, client_request_id: crypto.randomUUID(), ...(reasoning_effort ? { reasoning_effort } : {}), ...(attachments?.length ? { attachments } : {}), ...(skill_ids?.length ? { skill_ids } : {}) };
 }
-export function agentActionBody(task: AgentTask, action: AgentAction, remember?: "task" | "always"): Record<string, unknown> {
+export function agentActionBody(task: AgentTask, action: AgentAction, remember?: "task" | "always" | "prefix"): Record<string, unknown> {
   return { action, expected_control_revision: task.control_revision, client_request_id: crypto.randomUUID(),
-    ...(action === "approve" && remember ? { remember } : {}),
+    ...(action === "approve" && remember ? remember === "prefix" ? { remember_prefix: true } : { remember } : {}),
     ...((action === "approve" || action === "deny") && task.pending_approval ? { approval_id: task.pending_approval.id } : {}) };
 }
 export function agentAnswerBody(task: AgentTask, answers: Record<string, string>, question = task.pending_input): Record<string, unknown> {
