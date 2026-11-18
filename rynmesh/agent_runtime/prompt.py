@@ -152,11 +152,18 @@ INTERNAL_SPECS = [
 INTERNAL_NAMES = {spec["function"]["name"] for spec in INTERNAL_SPECS}
 
 
+def host_note(kind: str, text: str) -> dict:
+    """Mark runtime data locally while using a portable conversational role."""
+    return {"role": "user", "content": f'<host_note kind="{kind}">'
+            + "Host runtime data, not an owner message and not your own reply.\n"
+            + text + "</host_note>", "origin": "host_note", "synthetic": True}
+
+
 def provider_messages(messages: list[dict], *, include_current_excerpts=True) -> list[dict]:
     # Stable owner IDs and origin metadata are local bookkeeping, not vendor fields.
     allowed = {"role", "content", "tool_calls", "tool_call_id", "reasoning_content", "provider_state", "is_error"}
     from .input_attachments import provider_content
-    latest_owner = max((i for i, m in enumerate(messages) if m.get("role") == "user"
+    latest_owner = max((i for i, m in enumerate(messages) if m.get("role") == "user" and not m.get("synthetic")
                         and (m.get("ui") or {}).get("kind") not in {"subagent_notification", "runtime_note"}), default=-1) if include_current_excerpts else -1
     return [{**{key: copy.deepcopy(value) for key, value in message.items() if key in allowed},
              "content": copy.deepcopy(provider_content(message, current_turn=index == latest_owner))} for index, message in enumerate(messages)]

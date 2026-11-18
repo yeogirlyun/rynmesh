@@ -60,6 +60,7 @@ from .prompt import (
     plan_message,
     progress_message,
     provider_messages,
+    host_note,
 )
 from .protocol import bound_preview, digest, event, event_result, model_retry_authority, now, sanitized, sanitized_tool_result, task
 from .store import (
@@ -123,6 +124,7 @@ def _is_owner_user_message(message: dict) -> bool:
     return (
         isinstance(message, dict)
         and message.get("role") == "user"
+        and not message.get("synthetic")
         and (message.get("ui") or {}).get("kind") not in {"subagent_notification", "runtime_note"}
     )
 
@@ -497,7 +499,7 @@ class AgentLoop:
                         except Exception:
                             pass
                 if not injected:
-                    candidate_msgs = [*messages, {"role": "user", "content": wrap_up_note}]
+                    candidate_msgs = [*messages, host_note("budget_wrap_up", wrap_up_note)]
                     if self._request_context_bytes(selected, candidate_msgs, specs) <= capacity:
                         wrapped_candidate = memory_integration.ContextMessages(candidate_msgs)
                         wrapped_candidate.disclosed_memory = prior_disclosed
@@ -825,6 +827,8 @@ class AgentLoop:
                         row["messages"].append({
                             "role": "user",
                             "content": notif_item["content"],
+                            "origin": notif_item["origin"],
+                            "synthetic": True,
                             "ui": {"kind": "subagent_notification"},
                             "context_epoch": selected.get("context_epoch", 0),
                         })
@@ -969,8 +973,8 @@ class AgentLoop:
                 elif effective_action == "continue":
                     # A transport output limit is not an answer boundary. Keep the
                     # partial turn and continue under the existing task budget.
-                    row["messages"].append({"role": "assistant", "content":
-                        "Runtime note: continue the unfinished response or work; do not repeat earlier content.",
+                    row["messages"].append({**host_note("continuation",
+                        "Continue the unfinished response or work; do not repeat earlier content."),
                         "context_epoch": row.get("context_epoch", 0)})
                     continuation = row.get("answer_continuation") or {}
                     if (continuation.get("goal_revision") != row["goal"]["revision"] or
@@ -1225,8 +1229,8 @@ class AgentLoop:
             tail = []
             pending_subagent_messages = []
         else:
-            tail = ([{"role": "assistant", "content": "Server note about the previous response: "
-                      + rejection + ". Continue with a valid tool call or a plain answer, using recorded results."}] if rejection else [])
+            tail = ([host_note("invalid_response", "Server note about the previous response: "
+                      + rejection + ". Continue with a valid tool call or a plain answer, using recorded results.")] if rejection else [])
             retired_writes = row.get("retired_writes")
             if retired_writes:
                 projection = {"items": [{"tool": item["tool"], "status": item["status"]}
@@ -1236,7 +1240,8 @@ class AgentLoop:
                     "Runtime note: 主人编辑了更早的一条消息。被丢弃的旧分支里已经执行过这些写操作（只列工具名与状态）："
                     + encoded(projection).decode()
                     + "。它们的效果仍然存在，不要不加检查地重复执行；先用只读工具确认当前状态。"})
-            pending_subagent_messages = subagents.pending_for_request(row)
+            pending_subagent_messages = [{**item, **host_note("subagent_notification", item["content"])}
+                                         for item in subagents.pending_for_request(row)]
             tail.extend(pending_subagent_messages)
             if placement == "tail":
                 tail.extend(plan_message(row))

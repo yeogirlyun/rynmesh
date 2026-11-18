@@ -112,6 +112,7 @@ def _select_compacted_owner_messages(
     keep_latest_images: bool = True,
 ) -> list[dict]:
     owners = [copy.deepcopy(message) for message in messages if message.get("role") == "user"
+              and not message.get("synthetic")
               and (message.get("ui") or {}).get("kind") != "runtime_note"]
     if not owners or max_bytes <= 0:
         return []
@@ -223,6 +224,7 @@ def build_context(instructions, history, *, guidance=(), plan=(), checkpoint=Non
     suffix_has_owner = any(
         isinstance(m, dict)
         and m.get("role") == "user"
+        and not m.get("synthetic")
         and (m.get("ui") or {}).get("kind") not in {"subagent_notification", "runtime_note"}
         for m in history[through:]
     )
