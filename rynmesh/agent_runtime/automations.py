@@ -1086,6 +1086,8 @@ def normalize_automation_record(
         "schedule_label_en": labels["schedule_label_en"],
         "desktop_access": desktop_access,
         "workspace_root": workspace_root,
+        **({"workspace_source": "task"} if base.get("workspace_source") == "task"
+           and workspace_root == base.get("workspace_root") else {}),
         "target_task_id": target_task_id,
         "dedicated_chat": dedicated_chat,
         "execution_environment": execution_environment,
@@ -1559,6 +1561,8 @@ def _execute_automation_tool_call_in_tx(
         if key in args and args[key] is not None:
             payload[key] = args[key]
 
+    inherited_task_workspace = ("workspace_root" not in args and bool(default_workspace)
+                                and local_exec.get("workspace_source") == "task")
     if "workspace_root" not in payload and default_workspace:
         payload["workspace_root"] = default_workspace
     if "desktop_access" not in payload:
@@ -1579,6 +1583,11 @@ def _execute_automation_tool_call_in_tx(
         automation_id=target_id if is_update else None,
         source_row=row,
     )
+    record = data["automations"][saved["id"]]
+    if inherited_task_workspace:
+        record["workspace_source"] = "task"
+    else:
+        record.pop("workspace_source", None)
     return {
         "ok": True,
         "action": "update" if is_update else "create",

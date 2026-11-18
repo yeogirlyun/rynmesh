@@ -464,6 +464,8 @@ def trigger_automation_in_tx(
             "desktop_access": desktop_access,
             **restrict_web_policy({}, settings),
         }
+        if item.get("workspace_source") == "task" and workspace_root == item.get("workspace_root"):
+            spawned_row["local_execution"]["workspace_source"] = "task"
         spawned_row["skills"] = []
         spawned_row["verify_text_responses"] = False
         spawned_row["response_language"] = "zh-CN"

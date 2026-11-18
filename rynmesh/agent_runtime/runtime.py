@@ -1149,6 +1149,14 @@ class AgentRuntime(AgentLoop):
         epoch = row.get("context_epoch", 0)
         return [message for message in row["messages"] if _is_owner_user_message(message) or message.get("context_epoch", 0) == epoch]
 
+    def _task_workspace_root(self, row: dict) -> str:
+        bound = row.get("local_execution") or {}
+        root = bound.get("workspace_root", "")
+        if not root and row.get("permission_mode") == "automatic" and not bound.get("project_id"):
+            root = (self.store.inspect(lambda data: data["settings"].get("workspace_root"))
+                    or self.store.default_workspace())
+        return root
+
     def _execution_context(self, row: dict, operation_id=None, *, cheap_only=False) -> dict:
         origins = {}
         inherited = row.get("continuation_resource_origins") or {}
@@ -1184,11 +1192,7 @@ class AgentRuntime(AgentLoop):
         # every stream chunk. Full checks still run at each dispatch boundary.
         policy_context = ({"consumer_node_id": self.consumer_node_id, "model_destination": model_destination,
                            "model_destination_verified": False} if cheap_only else self._policy_context(row))
-        workspace_root = (row.get("local_execution") or {}).get("workspace_root", "")
-        if (not workspace_root and row.get("permission_mode") == "automatic"
-                and not (row.get("local_execution") or {}).get("project_id")):
-            workspace_root = (self.store.inspect(lambda data: data["settings"].get("workspace_root"))
-                              or self.store.default_workspace())
+        workspace_root = self._task_workspace_root(row)
         return {**policy_context,
                 "_admit_extension_policy": _ExtensionPolicyAdmitter(self, row),
                 "task_id": row["id"], "operation_id": operation_id, "owner_id": self.owner_id,
@@ -5467,7 +5471,7 @@ class AgentRuntime(AgentLoop):
     def _change_review(self, row: dict):
         """Net file changes this task made through file tools, or None when there is nothing to review."""
         tool = getattr(self.tools, "change_review", None)
-        root = (row.get("local_execution") or {}).get("workspace_root", "")
+        root = self._task_workspace_root(row)
         goal = row["goal"]["revision"]
         if tool is None or not root or not any(
                 r.get("effect") == "write" and r.get("status") == "confirmed" and r.get("goal_revision") == goal

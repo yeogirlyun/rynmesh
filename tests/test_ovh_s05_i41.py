@@ -1,5 +1,6 @@
 """S05-I41 task directory grants and automatic legacy workspace fallback."""
 import copy
+import json
 import uuid
 from pathlib import Path
 
@@ -8,6 +9,12 @@ import pytest
 from test_agent_local_tools import local, execute
 from test_agent_runtime import make_runtime
 from test_agent_projects import project_runtime
+from test_agent_integrations import node, add_source, fake_upstream, call
+from rynmesh.agent_runtime import automations, automation_worker
+from rynmesh.agent_runtime.bridge import build_agent_integrations
+from rynmesh.agent_runtime.runtime import AgentRuntime
+from rynmesh.agent_runtime.store import AgentStore
+from rynmesh.services import peer_box
 from test_agent_resource_writes import writable, execute as resource_execute
 from rynmesh.agent_runtime.store import AgentError, AgentToolRejected
 
@@ -156,3 +163,100 @@ def test_t5_task_directory_can_continue_after_restart_with_different_global_root
     runtime.update_settings({"workspace_root": str(second)})
     data = runtime.store.read()
     assert runtime._may_continue_after_restart(data["tasks"][task["id"]], data)
+
+
+@pytest.mark.parametrize("tool", ["ryn_file_write", "ryn_shell_execute"])
+def test_rework_automatic_legacy_write_runs_through_actual_loop(node, monkeypatch, tool):
+    app, owner = node
+    _, model_id = add_source(app)
+    bridge, tools, catalog = build_agent_integrations(app, owner, owner.home)
+    runtime = AgentRuntime(AgentStore(owner.home / "legacy-agent", peer_box.load_or_create_messaging_key(owner.home / "messaging.x25519")), bridge, tools, catalog)
+    runtime.update_settings({"enabled": True, "model_id": model_id, "permission_mode": "automatic", "verify_text_responses": False})
+    args = ({"path": "loop.txt", "content": "actual loop output"} if tool == "ryn_file_write" else
+            {"command": "Set-Content -LiteralPath loop.txt -Value 'actual loop output'", "shell": "powershell", "timeout_seconds": 30})
+    fake_upstream(monkeypatch, [call("ryn_discover_tools", json.dumps({"load": [tool]}), "discover"),
+        call(tool, json.dumps(args), "write"), {"role": "assistant", "content": "Output created."}])
+    created = runtime.create({"message": "Write loop.txt"})
+    legacy(runtime.store, created["id"])
+    for _ in range(12):
+        runtime.run_once()
+        current = runtime.get(created["id"])
+        if current["status"] in {"completed", "failed", "waiting_approval"}:
+            break
+    try:
+        target = Path(runtime.store.default_workspace()) / "loop.txt"
+        assert target.is_file(), current
+        assert target.read_text(encoding="utf-8-sig").strip() == "actual loop output"
+        assert current["status"] == "completed", current.get("error")
+        assert not any("agent_invalid_operation_classification" in m.get("content", "") for m in current["messages"])
+    finally:
+        tools.local.close()
+
+
+def test_rework_change_review_uses_effective_legacy_root(local, tmp_path):
+    tools, context, _, store = local
+    legacy(store, "task")
+    context["local_execution"]["workspace_root"] = ""
+    execute(tools, context, "ryn_file_write", {"path": "code.py", "content": "print('review me')"})
+    runtime, _, _, _ = make_runtime(tmp_path / "runtime")
+    runtime.store, runtime.tools = store, tools
+    row = store.read()["tasks"]["task"]
+    row["receipts"] = [{"effect": "write", "status": "confirmed", "goal_revision": row["goal"]["revision"], "tool": "ryn_file_write"}]
+    assert runtime._change_review(row) is not None
+
+
+def test_rework_rebinding_after_fallback_write_isolates_undo_records(local, tmp_path):
+    tools, context, _, store = local
+    legacy(store, "task")
+    context["local_execution"]["workspace_root"] = ""
+    old_root = Path(store.default_workspace())
+    execute(tools, context, "ryn_file_write", {"path": "old.txt", "content": "old"}, "old-write")
+    old_review = tools.file_review("task", str(old_root))
+    old_plan = old_review.preview()
+    runtime, _, _, _ = make_runtime(tmp_path / "runtime")
+    runtime.store, runtime.tools = store, tools
+    store.transaction(lambda data: data["tasks"]["task"].update(status="failed"))
+    new_root = tmp_path / "new-root"; new_root.mkdir()
+    bound = runtime.bind_workspace("task", {"workspace_root": str(new_root), "expected_control_revision": runtime.get("task")["control_revision"], "client_request_id": str(uuid.uuid4())})
+    new_context = {"task_id": "task", "local_execution": bound["local_execution"]}
+    execute(tools, new_context, "ryn_file_write", {"path": "new.txt", "content": "new"}, "new-write")
+    new_review = tools.file_review("task", str(new_root))
+    assert not any(r["id"] == "old-write" for r in new_review.load()["records"])
+    assert old_review.load()["records"]
+    with pytest.raises(AgentError):
+        new_review.undo(None, old_plan["token"], "old-token")
+    plan = new_review.preview()
+    new_review.undo(None, plan["token"], "new-token")
+    assert not (new_root / "new.txt").exists() and (old_root / "old.txt").read_text() == "old"
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_rework_automation_only_inherits_owner_task_workspace_authority(local, tmp_path, explicit):
+    tools, _, _, store = local
+    runtime, _, _, _ = project_runtime(tmp_path / "runtime")
+    runtime.store = store
+    root = tmp_path / "owner-root"; root.mkdir()
+    task = runtime.create({"message": "Schedule work", "workspace_root": str(root)})
+    args = {"action": "create", "name": "Scheduled task", "prompt": "Write report", "kind": "cron", "repeat": "daily", "time": "22:00"}
+    if explicit:
+        args["workspace_root"] = str(root)
+    def create(data):
+        return automations.execute_automation_tool_call_in_tx(store, data, data["tasks"][task["id"]], args)
+    saved = store.transaction(create)
+    automation_id = saved["automation"]["id"]
+    store.transaction(lambda data: automations.sync_automations_from_disk_in_tx(store, data))
+    triggered = store.transaction(lambda data: automation_worker.trigger_automation_in_tx(runtime, data, automation_id, force=True))
+    spawned = store.read()["tasks"][triggered["task_id"]]
+    context = {"task_id": spawned["id"], "local_execution": spawned["local_execution"]}
+    if explicit:
+        assert spawned["local_execution"].get("workspace_source") != "task"
+        with pytest.raises(AgentToolRejected, match="agent_workspace_changed_new_task_required"):
+            tools.policy(context)
+    else:
+        assert spawned["local_execution"]["workspace_source"] == "task"
+        assert tools.policy(context)["workspace_root"] == str(root)
+    # Updating with an explicit path must revoke any previously inherited flag.
+    if not explicit:
+        store.transaction(lambda data: automations.execute_automation_tool_call_in_tx(store, data, data["tasks"][task["id"]],
+            {"action": "update", "id": automation_id, "workspace_root": str(root)}))
+        assert store.read()["automations"][automation_id].get("workspace_source") != "task"

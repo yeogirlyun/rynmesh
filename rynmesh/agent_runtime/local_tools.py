@@ -1687,7 +1687,7 @@ class LocalTools:
             {"effect": SPECS[name][1]},
             operation_id=operation_id,
             task_id=context["task_id"],
-            workspace_root=policy["workspace_root"],
+            workspace_root=context["local_execution"].get("workspace_root", ""),
             goal_revision=context.get("goal_revision"),
             scope_revision=context.get("scope_revision"),
             context_epoch=context.get("context_epoch"),
@@ -1704,7 +1704,7 @@ class LocalTools:
             and verified_read_classification(
                 {"operation_classification": host_classification},
                 task_id=context["task_id"],
-                workspace_root=policy["workspace_root"],
+                workspace_root=context["local_execution"].get("workspace_root", ""),
                 operation_id=operation_id,
                 tool=name,
                 arguments=args,
