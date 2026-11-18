@@ -5,8 +5,6 @@ import ipaddress
 import os
 import socket
 
-import ifaddr
-
 VIRTUAL_ADAPTER_NAMES = ("vethernet", "wsl", "hyper-v", "vmware", "virtualbox")
 PRIVATE_NETWORKS = tuple(ipaddress.ip_network(value) for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
 
@@ -28,6 +26,8 @@ def private_lan_ip(value: str) -> bool:
 
 def local_lan_ips() -> tuple[str, ...]:
     """Prefer local interface enumeration; hostname resolution is last resort."""
+    import ifaddr
+
     addresses = []
     excluded = set()
     try:
