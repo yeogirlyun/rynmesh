@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowRight, ArrowUpRight, Bot, Building2, Check, Info, Pin, PinOff, Plus } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Bot, Building2, Check, Info, Pin, PinOff, Plus, Star } from "lucide-react";
 import type { ExtensionOverview } from "../domain/agentExtensions";
 import type { CraftCatalog, CraftPlugin } from "../domain/craftPlugins";
+import type { Pin as AppPin } from "../domain/apps";
 import { tr } from "../uiI18n";
 import AppIcon, { appTone } from "./appIcons";
 import { pinnedPluginWorkspaces, PIN_CHANGE_EVENT, pluginWorkspacePath, setPluginWorkspacePinned } from "./pluginWorkspaceNavigation";
@@ -13,6 +14,13 @@ const groups = ["office", "workflow", "design", "media", "storage"] as const;
 export type AppsFilter = "all" | (typeof groups)[number];
 const isBuiltin = (app: CraftPlugin) => app.kind === "builtin_adapter";
 const canInstall = (app: CraftPlugin) => app.installable ?? app.web;
+
+export const InstalledAppControls = createContext<{
+  query: string;
+  pins: AppPin[];
+  changing: boolean;
+  changePin: (pin: AppPin) => Promise<void>;
+} | null>(null);
 
 type Props = {
   embedded?: boolean;
@@ -33,6 +41,7 @@ type Props = {
 /** The Apps page: what is installed is one click from opening, what is not is one click from installing. */
 export default function AppsLauncher({ embedded = false, catalog, extensionOverview, busy, filter, onFilterChange, text, onOpen, onInstall, onAgent }: Props) {
   const { t, i18n } = useTranslation();
+  const controls = useContext(InstalledAppControls);
   const navigate = useNavigate();
   const [pinnedPlugins, setPinnedPlugins] = useState(pinnedPluginWorkspaces);
   useEffect(() => {
@@ -46,10 +55,14 @@ export default function AppsLauncher({ embedded = false, catalog, extensionOverv
   }, []);
   const isZh = (i18n.resolvedLanguage || i18n.language || "en").toLowerCase().startsWith("zh");
   const tx = (zh: string, en: string) => (isZh ? zh : en);
+  const search = controls?.query ?? "";
+  const matches = (...values: string[]) => values.some(value => value.toLocaleLowerCase().includes(search));
   const extensionPlugins = (extensionOverview?.plugins ?? []).filter(
-    (p) => !p.builtin || (p.views?.length ?? 0) > 0,
+    p => (!p.builtin || (p.views?.length ?? 0) > 0) && matches(p.title, p.id),
   );
-  const craftCatalogPlugins = embedded ? catalog.plugins.filter(app => app.installed) : catalog.plugins;
+  const craftCatalogPlugins = embedded
+    ? catalog.plugins.filter(app => app.installed && matches(text(app.id), app.name, app.id))
+    : catalog.plugins;
   const showFilters = !embedded || craftCatalogPlugins.length + extensionPlugins.length >= 8;
   const selectedFilter = showFilters ? filter : "all";
   const showExtensionPlugins =
@@ -65,6 +78,16 @@ export default function AppsLauncher({ embedded = false, catalog, extensionOverv
   const count = (id: AppsFilter) => craftCatalogPlugins.filter(app => id === "all" || app.group === id).length
     + (embedded && (id === "all" || id === "workflow") ? extensionPlugins.length : 0);
   const installedTotal = craftCatalogPlugins.filter((app) => app.installed).length;
+  const star = (id: string, title: string, openPath: string) => {
+    if (!controls) return null;
+    const key = `local:${id}`;
+    const pinned = controls.pins.some(pin => pin.key === key);
+    return <button className="apps-hub-star" type="button" disabled={controls.changing} aria-pressed={pinned}
+      aria-label={t(pinned ? "apps:unpin" : "apps:pin", { title })}
+      onClick={() => void controls.changePin({ key, app_id: id, title, open_path: openPath, kind: "local" })}>
+      <Star size={17} fill={pinned ? "currentColor" : "none"} aria-hidden="true" />
+    </button>;
+  };
   // Office apps have their own Agent note when this build carries it; otherwise the general one.
   const info =
     (filter === "all" || filter === "office") && i18n.exists("craft.officeAgentInfo") ? "officeAgentInfo" : "enableInfo";
@@ -143,12 +166,12 @@ export default function AppsLauncher({ embedded = false, catalog, extensionOverv
                       </button>
                       {embedded && <h3>{plugin.title}</h3>}
                       {!plugin.enabled && <span className="ra-chip">{text("disabled")}</span>}
-                      <button type="button" className="ra-btn ghost sm" aria-pressed={pinned}
+                      {controls ? star(plugin.id, plugin.title, appPath) : <button type="button" className="ra-btn ghost sm" aria-pressed={pinned}
                         title={pinned ? tx("取消固定", "Unpin") : tx("固定到侧栏", "Pin to sidebar")}
                         aria-label={`${pinned ? tx("取消固定", "Unpin") : tx("固定到侧栏", "Pin to sidebar")} ${plugin.title}`}
                         onClick={() => setPluginWorkspacePinned({ id: plugin.id, title: plugin.title }, !pinned)}>
                         {pinned ? <PinOff size={16} aria-hidden="true" /> : <Pin size={16} aria-hidden="true" />}
-                      </button>
+                      </button>}
                     </div>
                     {!embedded && <div>
                       <h3>{plugin.title}</h3>
@@ -214,6 +237,7 @@ export default function AppsLauncher({ embedded = false, catalog, extensionOverv
                   </button>
                   {embedded && <h3>{name(app)}</h3>}
                   {(limit(app) || !app.enabled) && <span className="ra-chip">{limit(app) || text("disabled")}</span>}
+                  {star(app.id, name(app), `/apps?open=${encodeURIComponent(app.id)}`)}
                 </div>
                 {!embedded && <div>
                   <h3>{name(app)}</h3>

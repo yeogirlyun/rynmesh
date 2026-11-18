@@ -1,26 +1,11 @@
 {
-  "title": "开放的页面",
-  "subtitle": "同事电脑上开放给你的页面，打开后在对方电脑上运行。",
-  "remoteHeading": "同事开放的页面",
-  "mineHeading": "我开放的页面",
-  "refresh": "刷新",
-  "loading": "正在查找同事的电脑…",
-  "noDevices": "还没有连接公司或团队，暂时没有同事的电脑。",
+  "loading": "正在打开同事共享的应用…",
   "online": "在线",
   "offline": "离线",
-  "noSites": "没有开放页面",
-  "siteCount": "开放了 {{count}} 个页面",
-  "open": "打开",
-  "opening": "正在打开…",
   "deviceOf": "{{name}}的电脑",
-  "mineEmpty": "这台电脑还没有可以开放的页面。",
-  "openToColleagues": "开放给同事",
-  "openState": "已开放",
-  "closedState": "未开放",
   "audienceAll": "全部同事",
   "audienceMembers": "只给指定的人",
   "chooseMembers": "选择能打开的人",
-  "saving": "正在保存…",
   "frameNote": "页面由「{{name}}」提供，在对方电脑上运行",
   "offlineTitle": "{{name}}现在离线",
   "offlineBody": "这个页面在{{name}}上运行。对方开机并打开 Ryn 后，这里会自动恢复。",
@@ -33,15 +18,13 @@
   "switchFailed": "暂时打不开这台电脑，请试试其它电脑。",
   "back": "返回",
   "errors": {
-    "site_denied": "你没有打开这个页面的权限，或者对方已关闭开放。",
+    "site_denied": "你没有使用此应用的权限，或对方已关闭共享。",
     "site_not_found": "这个页面已经不存在了。",
     "site_offline": "对方电脑离线。",
     "site_rate_limited": "请求太频繁，稍后再试。",
     "site_unavailable": "现在打不开，稍后再试。"
   },
   "studio": {
-    "eyebrow": "开放的页面",
-    "title": "我的做图服务",
     "openHelp": "打开后，同事可以从「应用 › 同事共享」使用你的做图。图片在你的电脑上生成，使用你的 GPT 额度。",
     "notPublisher": "公司没有把你设为发布人，同事现在打不开这台电脑上的页面。请让管理员把你加入发布人名单。",
     "notConnected": "这台电脑还没连接公司，同事看不到这个页面。先在公司插件里登录。",
@@ -86,6 +69,5 @@
       "image_not_queued": "这个任务已经开始了，不能提前。"
     },
     "modelName": "Codex · GPT"
-  },
-  "manage": "管理"
+  }
 }

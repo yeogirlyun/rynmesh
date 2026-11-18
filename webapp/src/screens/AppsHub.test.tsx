@@ -84,7 +84,7 @@ it("shows public plugins in the installed section and filters recent shared apps
   const installed = within(screen.getByRole("region", { name: "Installed on this device" }));
   expect(await installed.findByRole("heading", { name: "Image Studio" })).toBeInTheDocument();
   expect(installed.getByText("Shared with colleagues")).toBeInTheDocument();
-  expect(installed.getByRole("link", { name: "Open" })).toHaveAttribute("href", "/apps/public-plugins/studio");
+  expect(installed.getByRole("link", { name: "Open" })).toHaveAttribute("href", "/apps/app/public/studio");
   const recent = within(screen.getByRole("region", { name: "Recently used shared apps" }));
   expect(recent.getByRole("link", { name: "View all shared apps" })).toHaveAttribute("href", "/apps?tab=shared");
   await user.type(screen.getByRole("searchbox"), "Alex");
