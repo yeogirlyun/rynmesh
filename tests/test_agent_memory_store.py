@@ -1526,6 +1526,3 @@ def test_s09_i25_lifecycle_hooks_never_block_task_delete_archive_or_branch_rewri
     assert "personal.photo.strobe" not in selected_keys
     settings_snap = memory.get_memory_settings_snapshot(after_edit)
     assert settings_snap["memory_ledger_degraded"]["operation"] == "branch_rewrite"
-
-
-

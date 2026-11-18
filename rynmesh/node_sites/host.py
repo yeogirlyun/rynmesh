@@ -95,6 +95,7 @@ class SiteHost:
         self._active: dict[str, int] = {}
         self._recent: dict[str, deque[float]] = {}
         # In-process sites: site id -> fn(method, path, headers, body) -> (status, headers, body).
+        self.summaries: dict[str, Callable[[], dict[str, Any]]] = {}
         self.builtins: dict[str, ForwardHandler] = {}
 
     # ---- shared checks ---------------------------------------------------------
@@ -177,7 +178,15 @@ class SiteHost:
             "protocol", "type", "from", "to", "ts", "nonce", "provider_resource", "from_pub"})
         sites = [{"site_id": sid, "title": row["title"], "entry": row["entry"]}
                  for sid, row in sorted(self.store.sites().items())
-                 if row.get("enabled") and self._audience_allows(row, member)]
+                 if row.get("enabled") and (not row.get("builtin") or sid in self.builtins)
+                 and self._audience_allows(row, member)]
+        for site in sites:
+            summary = self.summaries.get(site["site_id"])
+            if summary is not None:
+                try:
+                    site["summary"] = summary()
+                except Exception:
+                    continue
         secret = json.dumps({"sites": sites}).encode("utf-8")
         return self._reply(payload, codec.seal_for(self.engine.msg_priv, payload["from_pub"], secret, LIST_INFO))
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeout
 from typing import Any, Callable
 
 from ..drop import codec
@@ -35,6 +35,19 @@ from .store import SiteStore
 
 AUTH_TTL_S = 60.0
 LIST_TTL_S = 60.0
+STATUS_TIMEOUT_S = 4.0
+MAX_STATUS_PROBES = 8
+
+
+def _listed_site(value: dict[str, Any]) -> dict[str, Any]:
+    site = {"site_id": site_id(value["site_id"]), "title": str(value["title"])[:80],
+            "entry": request_path(value["entry"])}
+    summary = value.get("summary")
+    fields = ("queue_length", "eta_seconds")
+    if (isinstance(summary, dict) and summary.get("state") in ("idle", "busy")
+            and all(type(summary.get(k)) is int and 0 <= summary[k] <= 2**31 - 1 for k in fields)):
+        site["summary"] = {key: summary[key] for key in ("state", *fields)}
+    return site
 
 
 class SiteClient:
@@ -45,6 +58,40 @@ class SiteClient:
         self._lock = threading.Lock()
         self._auth: dict[tuple[str, str, str], float] = {}
         self._lists: dict[tuple[str, str], tuple[float, list[dict[str, Any]]]] = {}
+        self._status_probes: dict[tuple[str, str], Future] = {}
+        self.local_fetch = None
+
+    def _status_probe(self, resource: str, peer_id: str, *, fresh: bool):
+        # NAT discovery may take a minute. Keep it running for eventual recovery,
+        # but never hold the trusted frame's offline indicator behind that work.
+        # One worker per peer also prevents overlapping polls queuing fresh probes.
+        key = (resource, peer_id)
+        with self._lock:
+            future = self._status_probes.get(key)
+            if future is None:
+                if len(self._status_probes) >= MAX_STATUS_PROBES:
+                    self._status_probes = {k: f for k, f in self._status_probes.items() if not f.done()}
+                if len(self._status_probes) >= MAX_STATUS_PROBES:
+                    raise SiteError("site_offline", 502)
+                future = Future()
+                self._status_probes[key] = future
+
+                def run():
+                    try:
+                        future.set_result(self._probe(resource, peer_id, fresh=fresh))
+                    except Exception as exc:
+                        future.set_exception(exc)
+
+                threading.Thread(target=run, name="site-status-probe", daemon=True).start()
+        try:
+            return future.result(timeout=STATUS_TIMEOUT_S)
+        except FutureTimeout:
+            raise SiteError("site_offline", 502) from None
+        finally:
+            if future.done():
+                with self._lock:
+                    if self._status_probes.get(key) is future:
+                        self._status_probes.pop(key, None)
 
     # ---- helpers ---------------------------------------------------------------
     def _member(self, resource: str, peer_id: str) -> dict[str, Any]:
@@ -104,11 +151,11 @@ class SiteClient:
         try:
             value = json.loads(codec.open_from(self.engine.msg_priv, member["messaging_pub"],
                                                response["sealed"], LIST_INFO))
-            sites = [{"site_id": site_id(s["site_id"]), "title": str(s["title"])[:80],
-                      "entry": request_path(s["entry"])} for s in value["sites"][:32]]
+            sites = [_listed_site(s) for s in value["sites"][:32]]
         except (DropProtocolError, KeyError, TypeError, ValueError, SiteError):
             raise SiteError("site_bad_response", 502) from None
         with self._lock:
+            self.store.cache_remote(resource, peer_id, sites)
             self._lists[key] = (self.clock() + LIST_TTL_S, sites)
         return list(sites)
 
@@ -135,6 +182,50 @@ class SiteClient:
             return []
         with ThreadPoolExecutor(max_workers=min(8, len(rows))) as pool:
             return list(pool.map(one, rows))
+
+    def shared_apps(self, *, refresh: bool = False, members: set[tuple[str, str]] | None = None) -> dict[str, Any]:
+        rows = self.engine.provider_members()
+
+        def member(row):
+            return row["provider_resource"], row["member_id"]
+
+        if members is None:
+            members = {member(row) for row in rows}
+        devices = [row for row in rows if row["peer_id"] != self.engine.me]
+
+        def lookup(row):
+            resource, peer_id = row["provider_resource"], row["peer_id"]
+            try:
+                self._probe(resource, peer_id, fresh=refresh)
+                sites = self.list_sites(resource, peer_id, refresh=refresh)
+                online = True
+            except SiteError as exc:
+                if exc.code != "site_offline":
+                    return row, []
+                online = False
+                sites = self.store.cached_remote(resource, peer_id)
+            provider = {"provider_resource": resource, "peer_id": peer_id,
+                        "member_name": str(row.get("member_name") or ""),
+                        "device_name": str(row.get("name") or row.get("display_name") or ""),
+                        "online": online, "last_seen": self.engine.provider_directory(resource).last_seen(peer_id)}
+            return row, [(site, {**provider, "summary": site.get("summary")}) for site in sites]
+
+        groups = {}
+        sharing = set()
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for row, listings in pool.map(lookup, devices):
+                for site, provider in listings:
+                    sharing.add(member(row))
+                    sid = site["site_id"]
+                    group = groups.setdefault(sid, {"site_id": sid, "title": site["title"], "providers": []})
+                    if provider["online"]:
+                        group["title"] = site["title"]
+                    group["providers"].append(provider)
+        for group in groups.values():
+            group["providers"].sort(key=lambda p: (not p["online"], p["member_name"], p["device_name"], p["peer_id"]))
+        apps = sorted(groups.values(), key=lambda g: (not g["providers"][0]["online"], g["title"], g["site_id"]))
+        return {"apps": apps, "colleagues_total": len(members),
+                "sharing_total": len(sharing & members)}
 
     # ---- opening -------------------------------------------------------------------
     def open(self, resource: Any, peer_id: Any, sid: Any) -> dict[str, Any]:
@@ -167,7 +258,7 @@ class SiteClient:
         member = self._member(row["resource"], row["peer_id"])
         online, route = False, None
         try:
-            probe = self._probe(row["resource"], row["peer_id"], fresh=fresh)
+            probe = self._status_probe(row["resource"], row["peer_id"], fresh=fresh)
             online, route = True, probe.route
         except SiteError as exc:
             if exc.code != "site_offline":
@@ -184,6 +275,10 @@ class SiteClient:
         if row is None:
             raise SiteError("site_not_found", 404)
         resource, peer_id, sid = row["resource"], row["peer_id"], row["site_id"]
+        if resource == "local" and peer_id == self.engine.me:
+            if self.local_fetch is None:
+                raise SiteError("site_denied", 403)
+            return self.local_fetch(sid, method, request_path(path), body)
         member = self._member(resource, peer_id)
         if not self._authorized(resource, peer_id, sid):
             raise SiteError("site_denied", 403)

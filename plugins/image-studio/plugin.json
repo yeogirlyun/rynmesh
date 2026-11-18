@@ -1,0 +1,13 @@
+{
+  "id": "image-studio",
+  "name": "做图",
+  "description": "在自己的电脑上生成、修改图片，管理作品，并按需分享做图页面。",
+  "version": "1.1.0",
+  "runtime": "first-party-python",
+  "host_api": 1,
+  "entry": "ryn_image_studio/__init__.py",
+  "site_id": "image-studio",
+  "permissions": ["local-code", "codex-image", "plugin-data", "node-site"],
+  "source": "https://github.com/yeogirlyun/rynmesh/tree/develop/plugins/image-studio",
+  "notes": "新增场景模板、分栏文案和常用尺寸。可分别指定商品素材与风格参考，将图片存入个人或公共素材库。从成品可生成多种尺寸、只换背景、只改文字或换个角度，也可以生成透明底 PNG。"
+}

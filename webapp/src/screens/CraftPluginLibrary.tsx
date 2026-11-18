@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { createContext, useContext, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ArrowRight, ArrowUpRight, Bot, Check, ChevronRight, Ellipsis, Info, Layers3, Plus, Search, ShieldCheck, Trash2, X } from "lucide-react";
@@ -7,6 +7,7 @@ import type { CraftCatalog, CraftPlugin } from "../domain/craftPlugins";
 import { isTauriDesktop } from "../domain/nodeUrl";
 import CraftPluginIcon from "./CraftPluginIcon";
 import "./craftPluginLibrary.css";
+import "./apps.css";
 
 type Props = {
   catalog: CraftCatalog; extensionOverview?: ExtensionOverview | null; busy: boolean;
@@ -15,18 +16,21 @@ type Props = {
   onUninstall: (app: CraftPlugin) => void; onAgent: (app: CraftPlugin) => void;
 };
 
+export const PublicInstalledCount = createContext(0);
+
 export default function CraftPluginLibrary({ catalog, extensionOverview, busy, onAdd, onOpen, onToggle, onDetails, onUninstall, onAgent }: Props) {
   const { t, i18n } = useTranslation();
   const isZh = (i18n.resolvedLanguage || i18n.language || "en").toLowerCase().startsWith("zh");
   const tx = (zh: string, en: string) => (isZh ? zh : en);
-  const rawExtPlugins = extensionOverview?.plugins ?? [];
-  const extPlugins = rawExtPlugins.filter(p => !p.builtin || (p.views?.length ?? 0) > 0);
+  const companyApps = (extensionOverview?.plugins ?? []).filter(p => !p.builtin && (p.web_app || p.views?.length || p.peer_provider));
+  const publicCount = useContext(PublicInstalledCount);
   const text = (key: string, options?: Record<string, unknown>) => String(t(`craft.${key}`, options));
   const [view, setView] = useState<"installed" | "discover">("installed");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("all");
   const craftCatalogPlugins = catalog.plugins;
   const installed = craftCatalogPlugins.filter(app => app.installed);
+  const installedCount = installed.length + publicCount;
   const available = craftCatalogPlugins.filter(app => !app.installed);
   const search = query.trim().toLocaleLowerCase();
   const filtered = (view === "installed" ? installed : available).filter(app =>
@@ -35,35 +39,33 @@ export default function CraftPluginLibrary({ catalog, extensionOverview, busy, o
   const browse = () => { setView("discover"); setQuery(""); setCategory("all"); };
 
   return <div className="craft-library">
-    <header className="craft-library-heading">
-      <div><div className="craft-library-eyebrow"><Layers3 size={14} />{text("yourToolkit")}</div><h1>{text("plugins")}</h1><p>{text("libraryIntro")}</p></div>
+    {companyApps.length > 0 && <section style={{ marginBottom: 20 }} aria-label={tx("公司应用", "Company apps")}>
+      <div className="apps-hub-section-heading">
+        <div><h2 style={{ fontSize: 16 }}>{tx("公司应用", "Company apps")}</h2>
+          <p className="apps-hub-muted">{tx("由公司内部提供，使用公司账号更新。", "Provided by your company and updated with your company account.")}</p></div>
+        <Link to="/settings/updates">{tx("软件更新", "Software updates")}</Link>
+      </div>
+      <div className="apps-hub-card" style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center" }}>
+        <div className="apps-hub-card-heading">
+          <span className="apps-hub-icon" aria-hidden="true">{Array.from(companyApps[0].title)[0]}</span>
+          <div className="apps-hub-card-text">
+            <strong>{companyApps.map(app => app.title).join(" · ")}</strong>
+            <p className="apps-hub-muted">{tx("公司应用不在公开目录里。", "Company apps are outside the public catalog.")}</p>
+          </div>
+        </div>
+        <span style={{ color: "var(--accent-green)" }}>{tx("已安装 · 自动更新", "Installed · Automatic updates")}</span>
+      </div>
+    </section>}
+
+    <header className="apps-hub-section-heading">
+      <h2 style={{ fontSize: 16 }}>{tx("办公和其他应用", "Office and other apps")}</h2>
       <button className="craft-library-add" disabled={busy} onClick={() => onAdd()}><Plus size={17} />{text("add")}</button>
     </header>
 
-    {extPlugins.length > 0 && (
-      <section className="craft-library-ext-banner" aria-label={tx("Agent 扩展插件", "Agent extension plugins")}>
-        {extPlugins.map(plugin => (
-          <div key={plugin.id} className="craft-library-ext-row">
-            <div>
-              <strong>{plugin.title} · v{plugin.version}</strong>
-              <p>{plugin.description}</p>
-            </div>
-            <div className="craft-library-ext-actions">
-              <Link className="craft-library-open" to={plugin.web_app ? `/apps/extensions/${encodeURIComponent(plugin.id)}` : "/apps"}>
-                {tx("在应用中打开报表", "Open in Apps")}<ArrowUpRight size={15} />
-              </Link>
-              <Link className="craft-library-open" to={`/settings/extensions/plugins?plugin=${encodeURIComponent(plugin.id)}`}>
-                {tx("管理插件与连接", "Manage plugin & connection")}<ArrowRight size={15} />
-              </Link>
-            </div>
-          </div>
-        ))}
-      </section>
-    )}
-
     <div className="craft-library-toolbar">
       <nav className="craft-library-tabs" aria-label={text("pluginViews")}>
-        <button aria-pressed={view === "installed"} onClick={() => setView("installed")}>{text("installed")}<span>{installed.length}</span></button>
+        <button aria-pressed={view === "installed"} aria-label={`${text("installed")} ${installedCount}`}
+          onClick={() => setView("installed")}>{text("installed")}<span>{installedCount}</span></button>
         <button aria-pressed={view === "discover"} onClick={() => setView("discover")}>{text("discover")}<span>{available.length}</span></button>
       </nav>
       <div className="craft-library-search"><Search size={16} /><input type="search" aria-label={text("searchPlugins")} placeholder={text("searchPlaceholder")} value={query} onChange={e => setQuery(e.target.value)} />{query && <button aria-label={text("clearSearch")} onClick={() => setQuery("")}><X size={14} /></button>}</div>
@@ -86,7 +88,12 @@ export default function CraftPluginLibrary({ catalog, extensionOverview, busy, o
           <label className="craft-library-toggle"><span>{text(app.busy ? "busy" : app.enabled ? "enabled" : "disabled")}</span><input role="switch" type="checkbox" aria-label={`${text(app.enabled ? "disable" : "enable")} ${label}`} checked={app.enabled} disabled={busy || app.busy} onChange={() => onToggle(app)} /></label>
         </> : <><span className="craft-library-install-note">{builtin ? <><Check size={13} />{text("noDownload")}</> : installable ? text("onDemand") : text("nativeUnavailable")}</span><button className="craft-library-install" disabled={busy || app.busy} onClick={() => installable ? onAdd([app.id]) : onDetails(app)}>{text(installable ? "install" : "details")}<span>{installable ? <Plus size={15} /> : <ChevronRight size={15} />}</span></button></>}</footer>
       </article>;
-    })}</div> : <div className="craft-library-empty"><div><Layers3 size={32} strokeWidth={1.3} /></div><h2>{text(search ? "noMatches" : view === "installed" ? "noPlugins" : "allInstalled")}</h2><p>{text(search ? "searchHelp" : view === "installed" ? "emptyHelp" : "allInstalledHelp")}</p><button className="craft-button" onClick={search ? () => setQuery("") : browse}>{text(search ? "clearSearch" : "discover")}<ArrowRight size={15} /></button></div>}
+    })}</div> : <div className="craft-library-empty"><div><Layers3 size={32} strokeWidth={1.3} /></div>
+      <h2>{!search && view === "installed" && publicCount
+        ? tx("尚未安装办公或其他应用", "No office or other apps installed")
+        : text(search ? "noMatches" : view === "installed" ? "noPlugins" : "allInstalled")}</h2>
+      <p>{text(search ? "searchHelp" : view === "installed" ? "emptyHelp" : "allInstalledHelp")}</p>
+      <button className="craft-button" onClick={search ? () => setQuery("") : browse}>{text(search ? "clearSearch" : "discover")}<ArrowRight size={15} /></button></div>}
 
     {view === "installed" && installed.length > 0 && !search && available.some(app => app.installable ?? app.web) && <button className="craft-library-discover" onClick={browse}><span className="craft-library-mini-icons">{catalog.plugins.filter(app => !app.installed && (app.installable ?? app.web)).slice(0, 3).map(app => <CraftPluginIcon key={app.id} app={app} />)}</span><span><strong>{text("discoverMore")}</strong><small>{text("discoverHelp")}</small></span><ArrowRight size={19} /></button>}
 

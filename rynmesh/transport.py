@@ -1369,4 +1369,3 @@ def check_status(status: int, *, strict: bool) -> None:
     """
     if (strict and not 200 <= status < 300) or (not strict and status >= 400):
         raise TransportError(f"http status {status}", reason="http_error", status=status)
-

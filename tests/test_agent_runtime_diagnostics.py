@@ -402,4 +402,3 @@ def test_s02_i28_t7_malformed_error_values_report_agent_unknown_error(bad_error)
     assert res["error"] == "agent_unknown_error"
     assert "secret-key" not in json.dumps(res)
     assert res["suggestions"][0]["id"] == "review_task"
-

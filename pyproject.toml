@@ -124,8 +124,8 @@ include = ["rynmesh*"]
 # own UI. Absent in a source checkout — the daemon simply skips the mount.
 "rynmesh" = ["webui/**/*", "locales/*.json", "bin/*"]
 "rynmesh.friends" = ["invitation.html", "invitation.js"]
-# The image studio page, served to colleagues through node sites.
-"rynmesh.image_studio" = ["web/*"]
+# Public plugin trust and discovery bootstrap (plugin code ships separately).
+"rynmesh.public_plugins" = ["*.json"]
 
 [tool.ruff]
 line-length = 100

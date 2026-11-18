@@ -2035,7 +2035,8 @@ class LocalTools:
             source = self.path(args["source_path"], context)
             return summary(validate(self.raw(source), source.suffix, args["rules"], cancelled))
         if name in {"ryn_table_calculate", "ryn_table_export"}:
-            from .table_work import calculate, export_bytes, summary
+            from .table_work import calculate, export_bytes, export_summary, summary
+            calculation_receipt_id = args.get("calculation_receipt_id")
             if name == "ryn_table_export":
                 args = self._table_export_arguments(args, context)
             source = self.path(args["source_path"], context)
@@ -2061,8 +2062,13 @@ class LocalTools:
                     written = output.read(8 * 1024 * 1024 + 1)
             if written != raw:
                 raise AgentError("agent_table_export_readback_failed")
-            return {"written": True, "path": str(path), "sha256": sha(written), "bytes": len(written),
-                    "calculation": summary(report), "readback_verified": True}
+            result = {"written": True, "path": str(path), "sha256": sha(written), "bytes": len(written),
+                      "calculation": export_summary(report) if calculation_receipt_id else summary(report),
+                      "readback_verified": True}
+            if calculation_receipt_id:
+                result.update(calculation_receipt_id=calculation_receipt_id,
+                              calculation_details="Full calculation and check details remain in the original calculation receipt; the file retains its existing format. This export recomputed the same fingerprint and verified written bytes.")
+            return result
         if name == "ryn_download_file":
             from .downloads import save
             return save(self, args["source"], context, cancelled)

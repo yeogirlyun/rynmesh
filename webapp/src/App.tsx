@@ -58,11 +58,11 @@ import AskRyn from "./screens/AskRyn";
 import AIWorkspace from "./screens/AIWorkspace";
 import RynAgent from "./screens/RynAgent";
 import NodeApps from "./screens/NodeApps";
-import NodeSites from "./screens/NodeSites";
+import LegacyNodeSites from "./screens/NodeSites";
 import NodeSiteWindow from "./screens/NodeSiteWindow";
-import ImageStudioOwner from "./screens/ImageStudioOwner";
 import ExtensionWebApp from "./screens/ExtensionWebApp";
-import CraftApps from "./screens/CraftApps";
+import { EmbeddedAppsHub } from "./screens/CraftApps";
+import AppsHub from "./screens/AppsHub";
 import PluginWorkspace from "./screens/PluginWorkspace";
 import { KeptPluginPages, KeptPluginPagesProvider } from "./screens/KeptPluginPages";
 import { craftPlugins } from "./domain/craftPlugins";
@@ -86,10 +86,11 @@ import Settings from "./screens/Settings";
 import { APIAccessPage, AgentSharingPage, ModelMappingPage } from "./screens/AIWorkspacePages";
 import AISources from "./screens/AISources";
 import AgentExtensions from "./screens/AgentExtensions";
+import PublicPluginPage, { LegacyImageStudioRedirect } from "./screens/PublicPluginPage";
+import AppDetail from "./screens/AppDetail";
 import UnlockGate from "./screens/components/UnlockGate";
 const NasPage = lazy(() => import("./personal/Nas").then(m => ({ default: m.NasPage })));
 const DrivePreview = lazy(() => import("./personal/Drives").then(m => ({ default: m.DrivesPage })));
-const PluginsPage = lazy(() => import("./screens/CraftPlugins"));
 
 // Shell-wide background reads. Each runs one request at a time (see domain/polling.ts).
 const DISCOVERY_POLL_MS = 5000;
@@ -409,13 +410,13 @@ export function AppRoutes() {
           <Route path="agent" element={<RynAgent />} />
           <Route path="agent/extensions" element={<AgentExtensions />} />
           <Route path="agent/extensions/:section" element={<AgentExtensions />} />
-          <Route path="apps" element={<CraftApps />} />
+          <Route path="apps" element={<EmbeddedAppsHub.Provider value><AppsHub /></EmbeddedAppsHub.Provider>} />
           <Route path="apps/plugins/:pluginId" element={<PluginWorkspace />} />
           <Route path="apps/extensions/:pluginId" element={<ExtensionWebApp />} />
           <Route path="apps/workspaces" element={<NodeApps />} />
-          <Route path="apps/sites" element={<NodeSites />} />
+          <Route path="apps/sites" element={<LegacyNodeSites />} />
           <Route path="apps/sites/open/:key" element={<NodeSiteWindow />} />
-          <Route path="apps/sites/image-studio" element={<ImageStudioOwner />} />
+          <Route path="apps/sites/image-studio" element={<LegacyImageStudioRedirect />} />
           <Route path="ask" element={<LegacyAgentRedirect />} />
           <Route path="ask/history" element={<AskRyn />} />
           <Route path="friends" element={<Friends />} />
@@ -425,7 +426,9 @@ export function AppRoutes() {
           <Route path="settings" element={<PersonalSettings />} />
           <Route path="nas" element={<Suspense fallback={<LoadingPanel />}><NasPage /></Suspense>} />
           <Route path="drives" element={<Suspense fallback={<LoadingPanel />}><DrivePreview /></Suspense>} />
-          <Route path="settings/plugins" element={<Suspense fallback={<LoadingPanel />}><PluginsPage /></Suspense>} />
+          <Route path="settings/plugins" element={<Navigate replace to="/apps?tab=discover" />} />
+          <Route path="apps/public-plugins/:pluginId" element={<PublicPluginPage />} />
+          <Route path="apps/app/public/:id" element={<AppDetail />} />
           <Route path="settings/extensions" element={<AgentExtensions />} />
           <Route path="settings/extensions/:section" element={<AgentExtensions />} />
           <Route path="settings/desktop" element={<DesktopPage />} />

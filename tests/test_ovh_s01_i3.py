@@ -549,4 +549,3 @@ def test_rework_unknown_reason_connection_failure_is_finite_and_delay_requires_c
     assert reset_snap["status"] == "queued"
     assert reset_snap["connection_recovery"]["max_retries"] is None
     assert reset_snap["connection_recovery"]["next_retry_at"] == pytest.approx(fake_clock[0] + 5)
-

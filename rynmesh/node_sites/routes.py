@@ -93,7 +93,8 @@ def install_node_sites(app: FastAPI, *, engine: DropEngine, home: Path,
     @app.get("/api/local/node-sites/mine")
     async def node_sites_mine(request: Request):
         local_control(request)
-        return {"sites": [SiteStore.public(sid, row) for sid, row in sorted(sites.store.sites().items())],
+        return {"sites": [SiteStore.public(sid, row) for sid, row in sorted(sites.store.sites().items())
+                          if not row.get("builtin") or sid in sites.host.builtins],
                 "members": await asyncio.to_thread(sites.members)}
 
     @app.post("/api/local/node-sites/mine")
@@ -143,6 +144,21 @@ def install_node_sites(app: FastAPI, *, engine: DropEngine, home: Path,
     async def node_sites_remote(request: Request, refresh: bool = False):
         local_control(request)
         return await run(lambda: {"devices": sites.client.remote(refresh=refresh)})
+
+    @app.get("/api/local/node-sites/shared-apps")
+    async def node_sites_shared_apps(request: Request, refresh: bool = False):
+        local_control(request)
+        def grouped():
+            directory = getattr(app.state, "peer_providers", None)
+            members = None
+            if directory is not None:
+                # Device rows alone omit colleagues who have no registered device.
+                members = {(d["resource"], m["id"])
+                           for _, d in directory._cached() for m in d["members"]
+                           if m["id"] != (d.get("self") or {}).get("member_id")
+                           and all(device["peer_id"] != engine.me for device in m["devices"])}
+            return sites.client.shared_apps(refresh=refresh, members=members)
+        return await run(grouped)
 
     @app.post("/api/local/node-sites/open")
     async def node_sites_open(request: Request):

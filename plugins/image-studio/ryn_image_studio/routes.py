@@ -31,6 +31,34 @@ class ImageStudio:
 
     def close(self) -> None:
         self.worker.stop()
+        if not self.worker._thread or not self.worker._thread.is_alive():
+            self.store.close()
+
+    def busy(self) -> bool:
+        return bool(self.store.queue()) or self.worker.current is not None
+
+    def owner(self, method: str, path: str, body: bytes):
+        """Host-authenticated management API; never exposed to remote visitors."""
+        from .site import _error, _json
+        try:
+            if method == "GET" and path == "/status":
+                return _json(200, self.status())
+            if method == "GET" and path == "/queue":
+                return _json(200, {"jobs": self.queue()})
+            if method == "GET" and path == "/usage":
+                return _json(200, {"rows": self.store.usage(day_start=self.day_start())})
+            parts = path.strip("/").split("/")
+            if method == "GET" and len(parts) == 2 and parts[0] == "jobs":
+                return _json(200, self.store.view(self.store.job(None, parts[1]), owner=True))
+            if method == "POST" and len(parts) == 3 and parts[0] == "jobs":
+                if parts[2] == "cancel":
+                    self.store.cancel(None, parts[1])
+                    return _json(200, self.store.view(self.store.job(None, parts[1]), owner=True))
+                if parts[2] == "prioritize":
+                    return _json(200, self.store.prioritize(parts[1]))
+            return _error("image_not_found", 404)
+        except JobError as exc:
+            return _error(exc.code, exc.status)
 
     @staticmethod
     def day_start() -> float:
@@ -45,6 +73,11 @@ class ImageStudio:
                 "audience": site.get("audience") or {"mode": "all", "members": []},
                 "queue_length": len(queue), "running": next((q["id"] for q in queue if q["state"] == "running"), None),
                 "today": sum(row["today"] for row in usage), "average_seconds": round(self.store.average_seconds())}
+
+    def summary(self) -> dict[str, Any]:
+        length = len(self.store.queue())
+        return {"state": "busy" if length else "idle", "queue_length": length,
+                "eta_seconds": round(length * self.store.average_seconds()) if length else 0}
 
     def queue(self) -> list[dict[str, Any]]:
         queue = self.store.queue()
@@ -71,6 +104,10 @@ def install_image_studio(app: FastAPI, *, home: Path, sites: Any, local_control:
     @app.get("/api/local/image-studio/queue")
     async def image_studio_queue(request: Request):
         return await run(request, lambda: {"jobs": studio.queue()})
+
+    @app.get("/api/local/image-studio/jobs/{job_id}")
+    async def image_studio_job(job_id: str, request: Request):
+        return await run(request, lambda: studio.store.view(studio.store.job(None, job_id), owner=True))
 
     @app.get("/api/local/image-studio/usage")
     async def image_studio_usage(request: Request):

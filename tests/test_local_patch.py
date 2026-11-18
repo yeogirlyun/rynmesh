@@ -356,5 +356,3 @@ def test_s05_i3_t1_lenient_envelope_unwraps_heredocs_and_code_fences_and_rejects
         with pytest.raises(AgentToolRejected, match="agent_patch_invalid_envelope") as exc_short:
             local_patch.parse(short)
         assert "heredoc" in exc_short.value.correction.lower() or "```" in exc_short.value.correction
-
-

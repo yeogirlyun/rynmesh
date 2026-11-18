@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 
+import pytest
 from cryptography.fernet import Fernet
 
 from rynmesh import os_secret
@@ -208,3 +210,79 @@ def test_normal_state_roundtrip_unchanged(tmp_path):
     assert len(restored_status["sources"]) == 1
     assert restored_status["sources"][0]["name"] == "Home NAS"
     assert restored_status["sources"][0]["share"] == "documents"
+
+
+def test_transient_key_or_state_lock_retries_without_reset(tmp_path, monkeypatch):
+    original = _make_configured_plugin(tmp_path)
+    for name in ('key.protected', 'state.enc'):
+        target = original.directory / name
+        before = {p.name: p.read_bytes() for p in original.directory.iterdir() if p.is_file()}
+        real = Path.read_bytes
+        failures = []
+        def locked_once(path, *, target=target, failures=failures, real=real):
+            if path == target and not failures:
+                failures.append(True)
+                raise PermissionError('temporary file sharing violation')
+            return real(path)
+        with monkeypatch.context() as patch:
+            patch.setattr(Path, 'read_bytes', locked_once)
+            restored = NasPlugin(tmp_path)
+        assert restored.status()['enabled'] is True
+        assert len(restored.status()['sources']) == 1
+        assert 'recovered_from_corruption' not in restored.status()
+        assert {p.name: p.read_bytes() for p in original.directory.iterdir() if p.is_file()} == before
+
+
+def test_persistent_read_errors_never_quarantine_valid_state_or_key(tmp_path, monkeypatch):
+    original = _make_configured_plugin(tmp_path)
+    before = {p.name: p.read_bytes() for p in original.directory.iterdir() if p.is_file()}
+    real = Path.read_bytes
+    for name in ('key.protected', 'state.enc'):
+        target = original.directory / name
+        calls = []
+        def locked(path, *, target=target, calls=calls):
+            if path == target:
+                calls.append(True)
+                raise PermissionError('still in use')
+            return real(path)
+        with monkeypatch.context() as patch:
+            patch.setattr(Path, 'read_bytes', locked)
+            with pytest.raises(PermissionError):
+                NasPlugin(tmp_path)
+        assert 1 <= len(calls) <= 3
+        assert {p.name: p.read_bytes() for p in original.directory.iterdir() if p.is_file()} == before
+    assert len(NasPlugin(tmp_path).status()['sources']) == 1
+
+
+def test_save_key_access_error_preserves_key_and_existing_state(tmp_path, monkeypatch):
+    original = _make_configured_plugin(tmp_path)
+    before = {p.name: p.read_bytes() for p in original.directory.iterdir() if p.is_file()}
+    original.cipher = None
+    real = Path.read_bytes
+    def locked(path):
+        if path == original.directory / 'key.protected':
+            raise PermissionError('key temporarily inaccessible')
+        return real(path)
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, 'read_bytes', locked)
+        with pytest.raises(PermissionError):
+            original.save()
+    assert {p.name: p.read_bytes() for p in original.directory.iterdir() if p.is_file()} == before
+
+
+def test_failed_quarantine_cannot_enable_replacing_the_original(tmp_path, monkeypatch):
+    original = _make_configured_plugin(tmp_path)
+    target = original.directory / 'state.enc'
+    target.write_bytes(b'damaged envelope to preserve')
+    key = (original.directory / 'key.protected').read_bytes()
+    real = Path.rename
+    def blocked(path, destination):
+        if path == target:
+            raise PermissionError('cannot quarantine')
+        return real(path, destination)
+    monkeypatch.setattr(Path, 'rename', blocked)
+    with pytest.raises(PermissionError):
+        NasPlugin(tmp_path)
+    assert target.read_bytes() == b'damaged envelope to preserve'
+    assert (original.directory / 'key.protected').read_bytes() == key
+    assert not list(original.directory.glob('*.corrupt-*'))

@@ -8,14 +8,14 @@ last receipt, so a file changed by something else is flagged, never silently pas
 """
 from __future__ import annotations
 
-from collections import OrderedDict
 import copy
 import hashlib
 import os
-from pathlib import Path
 import re
 import threading
 import time
+from collections import OrderedDict
+from pathlib import Path
 
 from .store import AgentError
 

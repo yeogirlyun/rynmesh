@@ -17,7 +17,7 @@ try {
   } finally { Pop-Location }
   $candidate = Join-Path $workspace 'release/windows'
   $bundle = Join-Path $workspace 'build/windows-dist/Ryn'
-  & $Python -m PyInstaller --noconfirm --clean --onedir --windowed --name Ryn --paths $workspace --collect-submodules rynmesh --collect-submodules uvicorn --collect-submodules anyio --collect-all pypdf --copy-metadata rynmesh --add-data "${workspace}/webapp/dist:rynmesh/webui" --add-data "${workspace}/rynmesh/friends/invitation.html:rynmesh/friends" --add-data "${workspace}/rynmesh/friends/invitation.js:rynmesh/friends" --distpath build/windows-dist --workpath build/pyinstaller --specpath build scripts/windows_entry.py
+  & $Python -m PyInstaller --noconfirm --clean --onedir --windowed --name Ryn --paths $workspace --collect-submodules rynmesh --collect-data rynmesh --collect-submodules uvicorn --collect-submodules anyio --collect-all pypdf --copy-metadata rynmesh --add-data "${workspace}/webapp/dist:rynmesh/webui" --add-data "${workspace}/rynmesh/friends/invitation.html:rynmesh/friends" --add-data "${workspace}/rynmesh/friends/invitation.js:rynmesh/friends" --distpath build/windows-dist --workpath build/pyinstaller --specpath build scripts/windows_entry.py
   if ($LASTEXITCODE) { throw 'Frozen application build failed' }
   & $InnoCompiler "/DBundleDir=$bundle" "/DOutputDir=$candidate" deploy/windows/ryn.iss
   if ($LASTEXITCODE) { throw 'Windows installer build failed' }

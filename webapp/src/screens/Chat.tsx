@@ -102,7 +102,7 @@ export default function Chat() {
         const warningText = record.warning || "对方身份密钥与记录不一致";
         setMismatchPeers((prev) => ({ ...prev, [record.from]: warningText }));
         if (selectedRef.current?.id === record.from) {
-          notify("warning", warningText);
+          notify("warn", warningText);
         }
         return;
       }

@@ -724,4 +724,3 @@ def test_t5_real_protocol_adapter_and_agent_runtime_custom_patch_round_trip(tmp_
     }
     assert replay_out["call_id"] == "call_e2e_patch_1"
     assert json.loads(replay_out["output"])["applied"] is True
-

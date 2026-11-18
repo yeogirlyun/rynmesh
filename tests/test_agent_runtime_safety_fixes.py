@@ -404,5 +404,3 @@ def test_s04_i8_t10_rg_zip_decompression_flags_rejected():
 def test_s04_i8_t11_rg_case_insensitive_still_read_only():
     assert shell_read({"command": "rg -i x", "shell": "powershell"}) is True
     assert shell_read({"command": "rg -i x", "shell": "sh"}) is True
-
-

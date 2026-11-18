@@ -342,7 +342,7 @@ def test_medium_window_long_task_leaves_several_steps_between_summaries(tmp_path
 
 def test_small_window_does_not_pay_for_a_summary_that_cannot_buy_steps(tmp_path):
     runtime, model, _, _ = make_runtime(tmp_path, assistant("Observed A; nothing changed."))
-    runtime.update_settings({"max_context_chars": 12000})
+    runtime.update_settings({"max_context_chars": 16000})
     task = runtime.create({"message": "Inspect A; never change anything."})
     row = seed(runtime, task["id"], exchange("a", ""))
     limit = runtime._context_limit(row)
@@ -359,6 +359,7 @@ def test_small_window_does_not_pay_for_a_summary_that_cannot_buy_steps(tmp_path)
         runtime.store.transaction(pad)
         row = runtime.store.read()["tasks"][task["id"]]
     decision = pressure(runtime, row)
+    assert decision["request_bytes"] <= limit  # Exercise proactive pressure, not a hard overflow.
     assert decision["near_limit"] and not decision["compact"] and decision["reason"] == "low_yield"
     assert runtime._request_context_bytes(row, specs=runtime._specs(row)) <= limit
     advance(runtime)

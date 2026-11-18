@@ -49,6 +49,28 @@ export class NodeSiteError extends Error {
   constructor(readonly code: string, readonly status: number) { super(code); }
 }
 
+// Bound the entire browser request (including its body), not just the peer
+// probe on the node. A stalled request must not hold the polling lock forever.
+async function statusRequest(key: string, fresh: boolean): Promise<OpenedSiteStatus> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout>;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new NodeSiteError("site_unavailable", 0));
+    }, 6_000);
+  });
+  try {
+    return await Promise.race([
+      call<OpenedSiteStatus>(`/opened/${encodeURIComponent(key)}${fresh ? "?fresh=true" : ""}`,
+        { signal: controller.signal }),
+      deadline,
+    ]);
+  } finally {
+    clearTimeout(timer!);
+  }
+}
+
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(nodeControlUrl(`/node-sites${path}`), {
     credentials: "include",
@@ -73,7 +95,7 @@ export const nodeSites = {
     call<OpenedSite>("/open", { method: "POST", body: JSON.stringify({
       provider_resource: device.provider_resource, peer_id: device.peer_id, site_id: siteId }) }),
   status: (key: string, fresh = false) =>
-    call<OpenedSiteStatus>(`/opened/${encodeURIComponent(key)}${fresh ? "?fresh=true" : ""}`),
+    statusRequest(key, fresh),
   mine: () => call<{ sites: HostedSite[]; members: SiteMember[] }>("/mine"),
   update: (siteId: string, changes: Partial<Pick<HostedSite, "enabled" | "audience" | "title">>) =>
     call<{ site: HostedSite }>(`/mine/${encodeURIComponent(siteId)}`, { method: "PATCH", body: JSON.stringify(changes) })

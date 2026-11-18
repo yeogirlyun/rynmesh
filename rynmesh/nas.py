@@ -570,7 +570,7 @@ class NasPlugin:
             try:
                 cipher = self._load_cipher()
                 key_loaded = True
-                loaded = json.loads(cipher.decrypt(state_path.read_bytes()))
+                loaded = json.loads(cipher.decrypt(self._read_config_file(state_path)))
                 if (
                     not isinstance(loaded, dict)
                     or not isinstance(loaded.get("enabled"), bool)
@@ -586,7 +586,9 @@ class NasPlugin:
                     raise ValueError("invalid_nas_state")
                 self.cipher = cipher
                 self.state = loaded
-            except (OSError, ValueError, InvalidToken, json.JSONDecodeError) as exc:
+            except (FileNotFoundError, ValueError, InvalidToken) as exc:
+                if isinstance(exc, FileNotFoundError) and key_loaded:
+                    raise  # A disappearing state file is not proof that the key is corrupt.
                 ts = int(time.time())
                 self._quarantine_file(state_path, ts)
                 if not key_loaded:
@@ -648,14 +650,14 @@ class NasPlugin:
         protected_path = self.directory / "key.protected"
         legacy_path = self.directory / "key"
         if protected_path.exists() or protected_path.is_symlink():
-            raw = os_secret.unprotect(protected_path.read_bytes())
+            raw = os_secret.unprotect(self._read_config_file(protected_path))
             cipher = Fernet(raw)
             ensure_private_file_acl(protected_path, track_key_status=True, logger=logger)
             if legacy_path.exists() or legacy_path.is_symlink():
                 self._backup_legacy_key(legacy_path, int(time.time()))
             return cipher
         if legacy_path.exists() or legacy_path.is_symlink():
-            raw = legacy_path.read_bytes()
+            raw = self._read_config_file(legacy_path)
             cipher = Fernet(raw)
             self._write_private(protected_path, os_secret.protect(raw))
             self._backup_legacy_key(legacy_path, int(time.time()))
@@ -677,6 +679,20 @@ class NasPlugin:
             logger.warning("Failed to rename migrated NAS legacy key (%s)", type(exc).__name__)
 
     @staticmethod
+    def _read_config_file(path):
+        # Antivirus/scanners can briefly lock valid files, especially on Windows.
+        # Bounded foreground retries never turn an I/O error into a corruption reset.
+        for attempt in range(3):
+            try:
+                return path.read_bytes()
+            except FileNotFoundError:
+                raise
+            except OSError:
+                if attempt == 2:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
+
+    @staticmethod
     def _quarantine_file(path: Path, ts: int) -> None:
         if not path.exists() and not path.is_symlink():
             return
@@ -689,6 +705,7 @@ class NasPlugin:
             path.rename(target)
         except OSError as exc:
             logger.warning("Failed to isolate corrupt NAS file %s (%s)", path.name, type(exc).__name__)
+            raise  # Preserve the source rather than allowing a later save to overwrite it.
 
     @staticmethod
     def public_source(source):
@@ -727,7 +744,7 @@ class NasPlugin:
             ):
                 try:
                     self.cipher = self._load_cipher()
-                except (OSError, ValueError) as exc:
+                except ValueError as exc:
                     ts = int(time.time())
                     self._quarantine_file(protected_path, ts)
                     self._quarantine_file(legacy_path, ts)

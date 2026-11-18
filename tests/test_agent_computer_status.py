@@ -1543,4 +1543,3 @@ def test_observation_requires_correlated_receipts_and_tracks_selection_epoch(tmp
         assert obs_after["selection_epoch"] == orig_obs_epoch
         assert obs_after["matches_current_selection"] is False
         assert obs_after["selection_epoch"] != r_switched["context"]["selection_epoch"]
-

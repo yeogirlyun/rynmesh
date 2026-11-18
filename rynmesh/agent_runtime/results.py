@@ -30,6 +30,23 @@ WORKSTATION_INLINE_PREVIEW_FIELDS = {
 }
 
 
+def model_projection(tool_name: str, result: object) -> object:
+    """Omit an exact MCP text duplicate only from the model-visible copy."""
+    if not tool_name.startswith("mcp__") or not isinstance(result, dict):
+        return result
+    text, blocks = result.get("text"), result.get("content")
+    if not isinstance(text, str) or not text or not isinstance(blocks, list) or not blocks:
+        return result
+    if not all(isinstance(block, dict) and block.get("type") == "text"
+               and isinstance(block.get("text"), str) for block in blocks):
+        return result
+    if text != "\n".join(block["text"] for block in blocks):
+        return result
+    # Keep content blocks (including annotations), structured data, errors and
+    # provenance. Durable receipts and result references retain both originals.
+    return {key: value for key, value in result.items() if key != "text"}
+
+
 def truncate_head_tail(text: str, max_chars: int, *, reference_id: str | None = None) -> str:
     """Codex truncate.rs-aligned head + tail string truncation."""
     if not isinstance(text, str) or len(text) <= max_chars or max_chars <= 0:

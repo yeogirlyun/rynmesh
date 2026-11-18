@@ -26,7 +26,9 @@ def _write_fake_codex_script(tmp_path: Path, body: str) -> Path:
     script.write_text(textwrap.dedent(body), encoding="utf-8")
     wrapper = tmp_path / ("fake_codex.cmd" if os.name == "nt" else "fake_codex.sh")
     if os.name == "nt":
-        wrapper.write_text(f'@"{sys.executable}" -u "{script}" %*\r\n', encoding="utf-8")
+        # CREATE_NO_WINDOW starts cmd with its own code page. Match the UTF-8
+        # batch file so fixtures also launch from non-ASCII user/temp paths.
+        wrapper.write_text(f'@chcp 65001 >nul\r\n@"{sys.executable}" -u "{script}" %*\r\n', encoding="utf-8")
     else:
         wrapper.write_text(f'#!/bin/sh\nexec "{sys.executable}" -u "{script}" "$@"\n', encoding="utf-8")
         wrapper.chmod(0o755)

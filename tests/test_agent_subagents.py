@@ -1175,6 +1175,3 @@ def test_s07_i1_t5_wait_agent_marks_settled_parent_notification_delivered(tmp_pa
     parent_notifs = after_wait.get("subagent_notifications") or []
     assert len(parent_notifs) == 1
     assert parent_notifs[0]["delivered"] is True
-
-
-

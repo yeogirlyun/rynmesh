@@ -2942,13 +2942,34 @@ def create_app(store: RynmeshStore | None = None):
                                       personal_space=personal_space, network_id=control_network_id,
                                       local_control=local_control, peer_providers=peer_providers)
 
+    from .app_pins import AppPinsStore
+
+    app_pins = AppPinsStore(active_store.home)
+
+    @app.get("/api/local/apps/pins")
+    def local_app_pins(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        return app_pins.read()
+
+    @app.put("/api/local/apps/pins")
+    async def local_app_pins_replace(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise HTTPException(status_code=400, detail="invalid JSON body") from exc
+        try:
+            return app_pins.replace(body.get("pins") if isinstance(body, dict) else None)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     from .node_sites import install_node_sites
 
     node_sites = install_node_sites(app, engine=drop_engine, home=active_store.home, local_control=local_control)
 
-    from .image_studio import install_image_studio
+    from .public_plugins import install_public_plugins
 
-    install_image_studio(app, home=active_store.home, sites=node_sites, local_control=local_control)
+    install_public_plugins(app, home=active_store.home, sites=node_sites, local_control=local_control)
 
     from .exchange.routes import install_exchange
 

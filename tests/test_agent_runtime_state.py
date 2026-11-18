@@ -208,4 +208,3 @@ def test_control_requests_bounded_eviction_replay_and_legacy_strings(tmp_path):
     with pytest.raises(AgentError) as legacy_conflict:
         runtime.add_message(current["id"], {**legacy_req, "message": "Tampered legacy"})
     assert str(legacy_conflict.value) == "agent_request_conflict"
-

@@ -59,6 +59,20 @@ class SiteStore:
         self.root.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
 
+    def cache_remote(self, resource: str, peer_id: str, sites: list[dict[str, Any]]) -> None:
+        with self._lock:
+            path = self.root / "remote-cache.json"
+            data = read_json(path, default={})
+            peers = data.setdefault(resource, {})
+            if peers.get(peer_id) != sites:
+                peers[peer_id] = sites
+                atomic_write_json(path, data)
+
+    def cached_remote(self, resource: str, peer_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            data = read_json(self.root / "remote-cache.json", default={})
+            return data.get(resource, {}).get(peer_id, [])
+
     # ---- hosted sites -------------------------------------------------------
     def _sites(self) -> dict[str, Any]:
         data = read_json(self.root / "sites.json", default={"version": 1, "sites": {}})

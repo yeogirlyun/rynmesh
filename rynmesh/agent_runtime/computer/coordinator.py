@@ -1970,4 +1970,3 @@ def reconfigure_node_native_bridge(
         handshake_timeout=handshake_timeout,
     )
     return existing_to_reconfigure
-

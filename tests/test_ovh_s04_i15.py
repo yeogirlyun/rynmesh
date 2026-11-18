@@ -158,4 +158,3 @@ def test_trailing_incomplete_utf8_at_eof_emits_replacement_without_switching(mon
     single = local_processes.OutputDecoder()
     assert single.decode("🚀世界".encode("utf-8") + b"\xe4\xbd", final=True) == "🚀世界\ufffd"
     assert single.encoding == "utf-8"
-

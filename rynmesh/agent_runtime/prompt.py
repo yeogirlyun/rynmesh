@@ -273,7 +273,7 @@ def authority(row: dict) -> str:
             "token_header": "X-Ryn-Local-Token", "token_environment": "RYN_LOCAL_CONTROL_TOKEN",
         }
     context["file_output_policy"] = (
-        "Create and edit text files in workspace_root with ryn_apply_patch (several files per patch); generate images with ryn_image_generate; download URLs or plugin fileRef values with ryn_download_file; other binary files may use shell. Confirm outputs via readback or workspace_files. "
+        "Use supplied workspace file tools directly; discover a capability only when it is absent from the current tool menu. Create new text files with ryn_file_write when supplied; read existing files before editing with ryn_file_edit or ryn_apply_patch (several files per patch). Generate images with ryn_image_generate; download URLs or plugin fileRef values with ryn_download_file; other binary files may use shell. Confirm outputs via readback or workspace_files. "
         "Link final files as [name](absolute-path) with forward slashes, <paths with spaces>; embed images as ![description](absolute-path). "
         "A link may end with :line; never use file:// URIs or line ranges; use a table for mappings and comparisons. "
         "Use the supplied workspace without asking for a folder."

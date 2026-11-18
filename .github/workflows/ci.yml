@@ -25,13 +25,21 @@ jobs:
           tests/test_agent_unknown_outcome_continue.py
           tests/test_agent_read_retry_limit.py
           tests/test_agent_read_reliability.py
+          tests/test_agent_runtime_results.py
           tests/test_agent_table_work.py
           tests/test_agent_workspace_artifacts.py
           tests/test_agent_runtime_model_switch.py
           tests/test_agent_budget_dispatch.py
           tests/test_agent_task_planning.py
+          tests/test_agent_request_context_layers.py
           tests/test_agent_schedule_work.py
           tests/test_codex_object_protocol.py
+          tests/test_ovh_s01_i1.py
+          tests/test_native_protocol_transport.py
+          tests/test_agent_connection_recovery.py
+          tests/test_nas_state_recovery.py
+          tests/test_nas.py
+          tests/test_cloud_drives.py
       - name: Lint reliability implementation
         run: >-
           python -m ruff check
@@ -47,11 +55,15 @@ jobs:
           rynmesh/agent_runtime/schedule_work.py
           rynmesh/agent_runtime/prompt.py
           rynmesh/agent_runtime/read_reliability.py
+          rynmesh/agent_runtime/results.py
           rynmesh/agent_runtime/runtime.py
           rynmesh/agent_runtime/table_work.py
           rynmesh/agent_runtime/workspace_artifacts.py
+          rynmesh/nas.py
+          tests/test_nas_state_recovery.py
           tests/test_agent_continuation_state.py
           tests/test_agent_read_reliability.py
+          tests/test_agent_runtime_results.py
           tests/test_agent_table_work.py
           tests/test_agent_schedule_work.py
           tests/test_agent_workspace_artifacts.py

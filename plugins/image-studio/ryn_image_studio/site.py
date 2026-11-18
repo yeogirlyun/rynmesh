@@ -15,13 +15,16 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from . import generator, sizes
+from . import generator, sizes, templates
+from .assets import AssetError
 from .jobs import MAX_UPLOAD_BYTES, JobError, JobStore, caller_key
 
 SITE_ID = "image-studio"
 TITLE = "做图"
 WEB_ROOT = Path(__file__).resolve().parent / "web"
-JOB_PATH = re.compile(r"^/api/jobs/([0-9a-f]{24})(?:/(cancel|retry|image|thumb))?$")
+JOB_PATH = re.compile(r"^/api/jobs/([0-9a-f]{24})(?:/(cancel|retry|derive|image|thumb))?$")
+
+ASSET_PATH = re.compile(r"^/api/assets/([0-9a-f]{24})(/thumb)?$")
 
 Response = tuple[int, list[list[str]], bytes]
 
@@ -56,7 +59,7 @@ class StudioSite:
     def __call__(self, method: str, path: str, headers: dict[str, str], body: bytes) -> Response:
         try:
             return self.handle(method, path, headers, body)
-        except JobError as exc:
+        except (JobError, AssetError) as exc:
             return _error(exc.code, exc.status)
 
     def handle(self, method: str, target: str, headers: dict[str, str], body: bytes) -> Response:
@@ -65,13 +68,38 @@ class StudioSite:
         if not path.startswith("/api/"):
             return self.static(method, path, versioned=bool(query.get("v")))
         caller, name, peer = self.identity(headers)
+        # The public-plugin manager sends local|owner with an empty site token
+        # for local opens. Colleague opens carry the site's host-issued token.
+        is_owner = caller == "local|owner" and not _header(headers, "X-Ryn-Site-Token")
         if path == "/api/me" and method == "GET":
             queue = self.store.queue()
-            return _json(200, {"name": name, "model": generator.readiness(), "queue_length": len(queue),
+            return _json(200, {"name": name, "is_owner": is_owner, "model": generator.readiness(), "queue_length": len(queue),
                                "now": self.store.clock(),
                                "average_seconds": round(self.store.average_seconds()),
+                               "scenes": {k: {"label": v["label"], "purpose": v["purpose"],
+                                              "width": v["size"][0], "height": v["size"][1], "sizes": v["sizes"]}
+                                          for k, v in templates.SCENES.items()},
+                               "styles": {k: {"label": v["label"]} for k, v in templates.STYLES.items()},
                                "purposes": {k: {"label": v["label"], "ratio": v["ratio"], "width": v["size"][0],
                                                 "height": v["size"][1]} for k, v in sizes.PURPOSES.items()}})
+        if path == "/api/assets":
+            if method == "GET":
+                return _json(200, self.store.assets.list(caller))
+            if method == "POST":
+                asset = self.store.assets.add(
+                    caller, name=query.get("name", [""])[0], kind=query.get("kind", [""])[0],
+                    raw=body, public=query.get("public") == ["1"], is_owner=is_owner,
+                )
+                return _json(200, asset)
+        asset_match = ASSET_PATH.fullmatch(path)
+        if asset_match:
+            asset_id, thumb = asset_match.groups()
+            if thumb and method == "GET":
+                data = self.store.assets.thumbnail(caller, asset_id)
+                return 200, [["content-type", "image/jpeg"], ["cache-control", "no-store"]], data
+            if not thumb and method == "DELETE":
+                self.store.assets.delete(caller, asset_id, is_owner=is_owner)
+                return _json(200, {"ok": True})
         if path == "/api/uploads" and method == "POST":
             if len(body) > MAX_UPLOAD_BYTES:
                 return _error("image_upload_too_large", 413)
@@ -100,6 +128,12 @@ class StudioSite:
                 return _json(200, self.store.cancel(caller, job_id))
             if action == "retry" and method == "POST":
                 return _json(200, self.store.retry(caller, job_id))
+            if action == "derive" and method == "POST":
+                try:
+                    value = json.loads(body)
+                except ValueError:
+                    return _error("image_bad_request", 400)
+                return _json(200, {"jobs": self.store.derive(caller, name, peer, job_id, value)})
             if action in ("image", "thumb") and method in ("GET", "HEAD"):
                 row = self.store.job(caller, job_id)
                 if row["state"] != "succeeded":

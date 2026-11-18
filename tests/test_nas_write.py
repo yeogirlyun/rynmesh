@@ -196,4 +196,3 @@ def test_t10_one_shot_webdav_connectors_do_not_reload_ssl_ca_bundle_per_read(mon
         assert https_conn.url("allowed/source.md") == "https://dav.example.test/dav/shared/allowed/source.md"
         https_conn.close()
     assert ca_load_calls == 1
-

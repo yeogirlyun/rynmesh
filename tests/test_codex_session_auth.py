@@ -429,4 +429,3 @@ def test_t6_pooled_session_releases_auth_lock_writes_back_and_deletes_replica_be
         assert json.loads(auth_file.read_text(encoding="utf-8")) == {"refresh_token": "ref_turn_2"}
     finally:
         adapter.close_sessions()
-

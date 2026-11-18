@@ -614,4 +614,3 @@ def test_s05_i15_t6_100001_rows_and_wide_recipe_limits_report_cap_and_guidance()
             },
         )
     assert "64" in der_exc.value.correction and "先筛选或分表" in der_exc.value.correction
-

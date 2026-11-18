@@ -324,4 +324,3 @@ def test_t3_execution_guidance_clarifies_only_outcome_changing_choices_and_qa_av
         assert (workspace / "test_calc.py").read_text(encoding="utf-8") == "def test_add():\n    assert 2 + 3 == 6\n"
     finally:
         runtime.tools.local.processes.close()
-

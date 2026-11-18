@@ -446,5 +446,3 @@ def test_s05_i8_t6_legacy_attachment_record_without_meta_still_renders_manifest(
     assert "ryn_image_inspect" in updated["content"]
     parts = provider_content(updated)
     assert parts[1] == {"type": "text", "text": "[Image #1]"}
-
-

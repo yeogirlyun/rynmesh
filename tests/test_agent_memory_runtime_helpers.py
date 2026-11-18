@@ -726,5 +726,3 @@ def test_guard_false_memory_save_claim_preserves_explanations_and_replaces_sente
         assert "（主机注：本轮没有成功保存记忆，原因：" in guarded_mixed
 
     store.transaction(run_guard_checks)
-
-

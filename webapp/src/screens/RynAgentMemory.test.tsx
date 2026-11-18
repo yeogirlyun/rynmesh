@@ -1421,6 +1421,3 @@ it("shows near-capacity suppression notice and ledger degraded notice in memory 
     await i18nMod.default.changeLanguage(prevLang);
   }
 });
-
-
-

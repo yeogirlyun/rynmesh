@@ -342,4 +342,3 @@ def test_s03_i10_t2_128k_window_with_four_1280_images_does_not_trigger_compactio
     record = row["budget"]["records"][0]
     assert record["output_policy"]["image_count"] == 4
     assert record["output_policy"]["estimated_image_tokens"] == 4 * 2270
-

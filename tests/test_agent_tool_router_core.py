@@ -346,4 +346,3 @@ def test_loop_secondary_validation_rejects_legacy_queued_call_with_field_details
     assert exc_info.value.args[0] == "agent_tool_arguments_invalid"
     assert "path" in (exc_info.value.correction or "") and "required" in (exc_info.value.correction or "")
     assert exc_info.value.details == {"tool": "read", "field_path": "<root>", "validator": "required"}
-

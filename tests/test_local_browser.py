@@ -1115,4 +1115,3 @@ def test_s02_i41_t1_browser_preview_separates_stable_binding_and_volatile_displa
         server.shutdown()
         server.server_close()
         browser.close()
-

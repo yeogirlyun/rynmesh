@@ -199,6 +199,8 @@ def test_t2_hundred_k_text_paginated_completely_via_ryn_read_result_and_oversize
     collected_pages: list[str] = []
 
     def _next_step(_model_id, messages, _specs, *_rest, **_kw):
+        if not _specs or str(messages[-1].get("content") or "").startswith("Server compaction request:"):
+            return _assistant_done("Compacted progress while reading result pages.")
         last_tool_msgs = [m for m in messages if m.get("role") == "tool"]
         if not last_tool_msgs:
             # Context compaction summary request during multi-page read
