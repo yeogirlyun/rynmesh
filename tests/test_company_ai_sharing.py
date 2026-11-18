@@ -136,6 +136,7 @@ def company(tmp_path, monkeypatch):
                                      services=app.state.llm_agent_services))
     p, c = nodes
     manager = configure_cli(p, tmp_path, "codex_cli", "codex-cli", "Codex")
+    manager.adapter.current_models()
     # The owner ticks "company colleagues": the real candidate list, then the
     # same record the company directory would hand to a colleague.
     published = next(row for row in p.authority.model_status() if row["service"]["package_id"] == "codex-cli")

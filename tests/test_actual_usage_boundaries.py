@@ -158,6 +158,7 @@ def test_local_order_response_terminal_metadata_retry_and_restart_preserve_actua
     app, _ = install()
     with TestClient(app) as client:
         assert client.post("/api/local/llm/cli-services/codex_cli/setup").status_code == 200
+        app.state.llm_agent_services["active_cli_managers"]()["codex_cli"].adapter.current_models()
         assert client.put("/api/local/llm/privacy", json={"result_retention_seconds": 3600}).status_code == 200
         body = {"task_id": "local-actual", "provider_peer_id": node.peer_id, "service_id": "codex-cli",
                 "prompt": "Authored fixture", "max_tokens": 8}
