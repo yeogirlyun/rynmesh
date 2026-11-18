@@ -191,18 +191,16 @@ def test_T1_settings_added_rule_notifies_only_its_first_matching_result(tmp_path
 def test_T1_real_local_shell_writes_only_after_approval_then_prefix_reuse(ext_env):
     runtime, model, _, workspace, _ = ext_env
     shell = "powershell" if os.name == "nt" else "sh"
-    (workspace / "prefix-source.txt").write_text("synthetic source", encoding="utf-8")
-    commands = [f"Copy-Item prefix-source.txt {name}" if os.name == "nt" else f"cp prefix-source.txt {name}"
-                for name in ("prefix-one.txt", "prefix-two.txt")]
+    commands = [f"mkdir {name}" for name in ("prefix-one", "prefix-two")]
     model.responses = [assistant(name="ryn_shell_execute", args={"command": command, "shell": shell}) for command in commands] + [assistant("done")]
-    tid = runtime.create({"message": "Create the two requested empty files"})["id"]
+    tid = runtime.create({"message": "Create the two requested directories"})["id"]
     advance(runtime, 2)
     assert runtime.get(tid)["status"] == "waiting_approval"
-    assert not (workspace / "prefix-one.txt").exists()
+    assert not (workspace / "prefix-one").exists()
     approve_prefix(runtime, tid)
     advance(runtime, 5)
-    assert (workspace / "prefix-one.txt").is_file()
-    assert (workspace / "prefix-two.txt").is_file()
+    assert (workspace / "prefix-one").is_dir()
+    assert (workspace / "prefix-two").is_dir()
     assert [r["authorization"] for r in raw(runtime, tid)["receipts"]] == ["approved", "prefix_allow"]
 
 
@@ -450,3 +448,61 @@ def test_rework2_unsafe_git_option_abbreviations_are_not_classified_as_reads(com
 def test_rework2_safe_git_search_option_values_keep_read_classification(tmp_path, command):
     from rynmesh.agent_runtime.execution_policy import shell_read
     assert shell_read({"command": command, "shell": "sh", "cwd": str(tmp_path)}, workspace_root=str(tmp_path))
+
+
+@pytest.mark.parametrize("command", [
+    "ssh -V", "awk -F, '{print $1}' d.csv", "stdbuf -oL ls", "docker --version", "cargo --version",
+    "pythonw literal payload", "sqlite3 database.db", "pipx run package", "uv tool run package", "npm init project",
+    "npm create project", "robocopy source target", "kubectl get pods", "pip install package",
+])
+def test_rework3_unlisted_programs_or_missing_subcommands_have_no_candidate(command):
+    assert shell_prefix_candidate({"command": command, "shell": "sh"}) is None
+
+
+@pytest.mark.parametrize("program", ["ssh", "awk", "pythonw", "stdbuf", "sqlite3", "pipx", "uv", "robocopy", "docker", "kubectl", "pip"])
+def test_rework3_unlisted_programs_cannot_match_an_old_stored_rule(program):
+    assert prefix_decision(f"{program} literal payload", [program, "literal"], shell="sh").action == "ask"
+
+
+@pytest.mark.parametrize("command,other,prefix,options", [
+    ("npm test", "npm test package", ["npm", "test"], []),
+    ("pytest -q tests/a", "pytest -q tests/b", ["pytest"], ["-q"]),
+    ("git commit -m x", "git commit -m y", ["git", "commit"], ["-m"]),
+    ("cargo test", "cargo test package", ["cargo", "test"], []),
+    ("make build", "make check", ["make"], []),
+    ("mkdir a", "mkdir b", ["mkdir"], []),
+])
+def test_rework3_whitelisted_programs_generate_and_reuse_precise_rules(command, other, prefix, options):
+    rule = shell_prefix_candidate({"command": command, "shell": "sh"})
+    assert rule == {"prefix": prefix, "options": options}
+    decision = decide({"name": "ryn_shell_execute", "arguments": {"command": other, "shell": "sh"}},
+                      {"effect": "write"}, {"permission_mode": "confirm_changes"},
+                      {"permission_mode": "confirm_changes", "shell_allow_prefixes": [rule]})
+    assert decision.action == "execute" and decision.basis == "prefix_allow"
+
+
+@pytest.mark.parametrize("command,prefix", [
+    ('git push \'origin" --force main --repo "x y\'', ["git", "push"]),
+    ('git push \'origin" --delete feature --repo "x y\'', ["git", "push"]),
+    ('git fetch \'../origin.git" --upload-pack "touch M;\'', ["git", "fetch"]),
+    (r"git commit -m 'a b\' 'c --amend --only'", ["git", "commit"]),
+])
+def test_rework3_powershell_native_quote_splitting_cannot_hide_options(command, prefix):
+    assert shell_prefix_candidate({"command": command, "shell": "powershell"}) is None
+    rule = {"prefix": prefix, "options": ["-m"] if prefix[-1] == "commit" else []}
+    assert prefix_decision(command, rule, shell="powershell").action == "ask"
+
+
+def test_rework3_powershell_slash_options_require_recorded_whole_words():
+    rule = {"prefix": ["pytest"], "options": []}
+    assert prefix_decision("pytest tests/a /unknown", rule, shell="powershell").action == "ask"
+    approved = shell_prefix_candidate({"command": "pytest /quiet tests/a", "shell": "powershell"})
+    assert approved == {"prefix": ["pytest"], "options": ["/quiet"]}
+    assert prefix_decision("pytest /quiet tests/b", approved, shell="powershell").basis == "prefix_allow"
+    assert prefix_decision("pytest /changed tests/b", approved, shell="powershell").action == "ask"
+
+
+@pytest.mark.parametrize("command", ['git diff \'file" --ext-diff "x y\'', 'rg \'file" --pre evil "x y\''])
+def test_rework3_powershell_quote_boundary_is_also_enforced_before_static_reads(tmp_path, command):
+    from rynmesh.agent_runtime.execution_policy import shell_read
+    assert not shell_read({"command": command, "shell": "powershell", "cwd": str(tmp_path)}, workspace_root=str(tmp_path))

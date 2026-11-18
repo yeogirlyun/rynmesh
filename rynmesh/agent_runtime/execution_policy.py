@@ -166,6 +166,14 @@ def literal_command(command, shell):
     return words or None
 
 
+def _powershell_arguments_safe(words, shell):
+    """PowerShell 5.1 can split embedded native quotes and trailing backslashes."""
+    return shell != "powershell" or not any(
+        '"' in word or (word.endswith("\\") and any(char.isspace() for char in word))
+        for word in words[1:]
+    )
+
+
 def _scan_literal_segments(command, shell) -> list[tuple[str | None, list[str]]] | None:
     """Scan literal segments separated by unquoted `|`, `;`, `&&`, or `||`."""
     if not isinstance(command, str) or shell not in {"powershell", "sh"}:
@@ -409,6 +417,8 @@ def _powershell_read_ok(words: list[str], *, in_pipe: bool = False) -> bool:
 def _segment_read_ok(words: list[str], shell: str, *, in_pipe: bool = False) -> bool:
     prog = executable_key(words[0])
     prog_low = prog.lower()
+    if prog_low in {"git", "git.exe", "rg", "rg.exe"} and not _powershell_arguments_safe(words, shell):
+        return False
     if shell == "sh":
         if in_pipe and prog not in POSIX_PIPE_FILTER_PROGRAMS:
             return False
@@ -696,17 +706,15 @@ def desktop_access_enabled(row, settings):
         (row.get("local_execution") or {}).get("desktop_access") and settings.get("desktop_access"))
 
 
-SHELL_BROAD_PREFIXES = frozenset({
-    "sh", "bash", "zsh", "cmd", "powershell", "pwsh", "python", "node", "npx", "rm", "del", "remove-item",
-    "env", "sudo", "doas", "timeout", "nice", "nohup", "time", "xargs", "exec", "eval", "command", "busybox", "wsl",
-    "py", "perl", "ruby", "php", "lua", "deno", "bun", "dash", "ksh", "fish", "csh", "tcsh", "osascript",
-    "cscript", "wscript", "mshta", "iex", "invoke-expression", "ri", "rd", "rmdir", "erase",
-    "tar", "sed",
-})
-GIT_PREFIX_SUBCOMMANDS = frozenset({"add", "commit", "fetch", "pull", "push", "status", "diff", "log", "show"})
+SHELL_PREFIX_PROGRAMS = {
+    "git": frozenset({"add", "commit", "fetch", "pull", "push", "status", "diff", "log", "show"}),
+    **dict.fromkeys(("npm", "pnpm", "yarn"), frozenset({"test", "run", "build", "ci", "install"})),
+    "cargo": frozenset({"build", "test", "check", "fmt", "clippy"}),
+    "go": frozenset({"build", "test", "vet", "fmt"}),
+    "dotnet": frozenset({"build", "test"}),
+    "pytest": None, "make": None, "mkdir": None,
+}
 GIT_PUSH_UNSAFE_FLAGS = ("--force", "--force-with-lease", "--mirror", "--delete")
-RUNNER_EXEC_FORMS = {"npm": {"exec", "x"}, "pnpm": {"exec", "dlx"}, "yarn": {"exec", "dlx"},
-                     "uv": {"run"}, "poetry": {"run"}, "pipenv": {"run"}, "conda": {"run"}}
 SHELL_PREFIX_META = re.compile(r"[\r\n\x00;&|<>`$(){}#*?\[\]%!'\"]")
 
 
@@ -715,17 +723,16 @@ def normalize_shell_prefix(prefix):
     if (not isinstance(prefix, list) or not 1 <= len(prefix) <= 3
             or any(not isinstance(word, str) or not word.strip() or "=" in word or SHELL_PREFIX_META.search(word) for word in prefix)):
         return None
-    if ("/" in prefix[0] or "\\" in prefix[0] or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", prefix[0])
-            or (len(prefix) >= 2 and prefix[1].startswith(("-", "/")))):
+    if "/" in prefix[0] or "\\" in prefix[0] or any(word.startswith(("-", "/")) for word in prefix[1:]):
         return None
     normalized = [executable_key(prefix[0]), *prefix[1:]]
     program = normalized[0].lower()
-    if (not program or program in SHELL_BROAD_PREFIXES
-            or re.fullmatch(r"python3(?:\.\d+)*", program)):
+    if program not in SHELL_PREFIX_PROGRAMS:
         return None
-    if program == "git" and (len(normalized) != 2 or normalized[1].lower() not in GIT_PREFIX_SUBCOMMANDS):
-        return None
-    if program in RUNNER_EXEC_FORMS and (len(normalized) < 2 or normalized[1].lower() in RUNNER_EXEC_FORMS[program]):
+    subcommands = SHELL_PREFIX_PROGRAMS[program]
+    if subcommands is None:
+        return normalized if len(normalized) == 1 else None
+    if len(normalized) < 2 or normalized[1].lower() not in subcommands or (program == "git" and len(normalized) != 2):
         return None
     return normalized
 
@@ -758,7 +765,7 @@ def normalize_shell_prefix_rule(value):
     prefix = normalize_shell_prefix(rule.get("prefix"))
     options = rule.get("options", [])
     if (prefix is None or not isinstance(options, list)
-            or any(not isinstance(word, str) or not word.startswith("-") or word == "--" or "=" in word
+            or any(not isinstance(word, str) or not word.startswith(("-", "/")) or word == "--" or "=" in word
                    or SHELL_PREFIX_META.search(word) for word in options)):
         return None
     if _unsafe_git_prefix_words([*prefix, *options]):
@@ -782,12 +789,21 @@ def normalize_shell_prefix_rules(values):
     return rules
 
 
+def _command_prefix_words(words):
+    program = executable_key(words[0]).lower()
+    return words[:1] if SHELL_PREFIX_PROGRAMS.get(program) is None else words[:2]
+
+
+def _shell_option_word(word, shell):
+    return word.startswith(("-", "/")) if shell == "powershell" else word.startswith("-")
+
+
 def _shell_prefix_words(arguments):
     shell = arguments.get("shell", "powershell" if os.name == "nt" else "sh")
     words = literal_command(arguments.get("command"), shell)
-    if not words or (len(words) > 1 and words[1].startswith("/")):
+    if not words or not _powershell_arguments_safe(words, shell):
         return None
-    prefix = words[:1] if len(words) > 1 and words[1].startswith("-") else words[:2]
+    prefix = _command_prefix_words(words)
     if normalize_shell_prefix(prefix) is None:
         return None
     if any("=" in word or word.startswith(("+", ":")) or word == "--" for word in words[1:]):
@@ -805,8 +821,9 @@ def shell_prefix_candidate(arguments):
     words = _shell_prefix_words(arguments)
     if not words:
         return None
-    prefix = words[:1] if len(words) > 1 and words[1].startswith("-") else words[:2]
-    return normalize_shell_prefix_rule({"prefix": prefix, "options": [word for word in words[len(prefix):] if word.startswith("-")]})
+    prefix = _command_prefix_words(words)
+    shell = arguments.get("shell", "powershell" if os.name == "nt" else "sh")
+    return normalize_shell_prefix_rule({"prefix": prefix, "options": [word for word in words[len(prefix):] if _shell_option_word(word, shell)]})
 
 
 def matching_shell_prefix(arguments, settings):
@@ -814,10 +831,11 @@ def matching_shell_prefix(arguments, settings):
     if not words:
         return None
     rules = [rule for value in settings.get("shell_allow_prefixes", []) if (rule := normalize_shell_prefix_rule(value)) is not None]
+    shell = arguments.get("shell", "powershell" if os.name == "nt" else "sh")
     for rule in sorted(rules, key=lambda rule: len(rule["prefix"]), reverse=True):
         prefix = rule["prefix"]
         if (words[:len(prefix)] == prefix
-                and all(word in rule["options"] for word in words[len(prefix):] if word.startswith("-"))):
+                and all(word in rule["options"] for word in words[len(prefix):] if _shell_option_word(word, shell))):
             return rule
     return None
 
