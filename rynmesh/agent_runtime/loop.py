@@ -1440,11 +1440,17 @@ class AgentLoop:
                 row["_context_disclosed_memory"] = disclosed
             return wrapped
 
-        memory_msgs = memory_runtime.format_memory_context_messages(memory_selection)
+        if not memory_selection:
+            return tag(build([]), has_memory=False)
+        context_limit = self._effective_capacity(row)[0]
+        def memory_messages(selection):
+            return memory_runtime.format_memory_context_messages(
+                selection, compact=context_limit <= tool_menu.SMALL_WINDOW_BYTES)
+
+        memory_msgs = memory_messages(memory_selection)
         if not memory_msgs:
             return tag(build([]), has_memory=False)
         # Optional memory must fit the same effective capacity as dispatch.
-        context_limit = self._effective_capacity(row)[0]
         active_specs = self._specs({**row, "_exclude_optional_memory": True})
         baseline = build([])
         remaining = context_limit - self._request_context_bytes(row, baseline, active_specs)
@@ -1462,7 +1468,7 @@ class AgentLoop:
             low, high, kept, memory_msgs = 0, len(selected_items), 0, []
             while low <= high:
                 count = (low + high) // 2
-                trial = memory_runtime.format_memory_context_messages({**no_nav, "selected": selected_items[:count]})
+                trial = memory_messages({**no_nav, "selected": selected_items[:count]})
                 if memory_bytes(trial) <= remaining:
                     kept, memory_msgs = count, trial
                     low = count + 1
@@ -1475,7 +1481,7 @@ class AgentLoop:
             # Provider projections may cost more than the cheap estimate. One
             # halved retry is enough; remaining capacity is checked again.
             kept //= 2
-            retry = memory_runtime.format_memory_context_messages({**no_nav, "selected": selected_items[:kept]})
+            retry = memory_messages({**no_nav, "selected": selected_items[:kept]})
             if retry:
                 candidate = build(retry)
                 if self._request_context_bytes(row, candidate, active_specs) <= context_limit:

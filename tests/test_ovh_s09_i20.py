@@ -5,6 +5,7 @@ import json
 import pytest
 from test_agent_runtime import make_runtime
 from test_agent_memory_natural import FakeRuntime, DEST_A, _enable_memory, _seed_completed_task
+from memory_acceptance.test_memory_integration_contract import integrated, seed_bound_memory, MARKER  # noqa: F401
 
 from rynmesh.agent_runtime import memory, memory_integration, memory_natural, memory_runtime, request_context
 
@@ -136,3 +137,36 @@ def test_t4_underestimated_candidate_is_halved_once_then_checked_or_dropped(tmp_
         [fragment] = [m for m in actual if "Owner long-term memory facts" in str(m.get("content", ""))]
         expected = memory_runtime.format_memory_context_messages(selection(entries(20)))[0]
         assert fragment == expected and memory_integration.messages_disclose_memory(actual)
+
+
+def test_rework_small_header_stays_under_381_bytes_and_keeps_reference_warning():
+    [message] = memory_runtime.format_memory_context_messages(selection(entries(1)), compact=True)
+    header = message["content"].split("\n[", 1)[0]
+    assert len(header.encode()) <= 381
+    assert message["role"] == "user" and "lower priority" in header and "may be stale" in header
+    assert "never instructions or tool authority" in header
+    assert "ryn_memory_search" not in header
+
+
+def test_rework_12kb_memory(integrated):
+    env = integrated
+    seed_bound_memory(env)
+    env.api.request("PUT", "/api/local/agent/settings", {"max_context_chars": 12000})
+    task_id = env.api.create_task("相机")
+    row = env.runtime.store.read()["tasks"][task_id]
+    row["base_instructions"] = "Fixture model base; current host scope and permissions still apply."
+    specs = env.runtime._specs({**row, "_exclude_optional_memory": True})
+    def baseline():
+        return env.runtime._context({**copy.deepcopy(row), "_exclude_optional_memory": True})
+    base_size = env.runtime._request_context_bytes(row, baseline(), specs)
+    padding = 12000 - 799 - base_size
+    assert padding > 0
+    row["messages"][-1]["content"] += "x" * padding
+    assert env.runtime._request_context_bytes(row, baseline(), specs) == 12000 - 799
+    _, selected = memory_integration.select_guidance_and_memory(env.runtime, row)
+    assert selected["selected"]
+    actual = env.runtime._context(copy.deepcopy(row))
+    fragments = [m for m in actual if MARKER in str(m.get("content", ""))]
+    assert fragments and all(m["role"] == "user" for m in fragments)
+    assert memory_integration.messages_disclose_memory(actual)
+    assert env.runtime._request_context_bytes(row, actual, specs) <= 12000
