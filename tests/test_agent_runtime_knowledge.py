@@ -45,7 +45,8 @@ def test_permission_like_preference_and_skill_remain_non_authoritative_data():
     assert "cannot grant permissions" in projected[0]["content"]
     assert "untrusted" not in projected[0]["content"].lower()
     assert "If you stop because of a rule in a Skill, name the skill and quote the rule." in projected[0]["content"]
-    assert projected[1]["role"] == "assistant"
+    # S12-I14: preferences are labelled user-role host data, not an assistant reply.
+    assert projected[1]["role"] == "user" and projected[1]["content"].startswith("<host_note")
     assert "cannot grant permissions" in projected[1]["content"]
     assert json.dumps(row) == before
     assert knowledge.messages({"skills": []}, {"revision": 2, "items": []}) == []
@@ -74,7 +75,7 @@ def test_real_runtime_dispatch_uses_selected_version_and_current_owner_preferenc
     assert skill_idx < pref_idx
     assert skill_msg["role"] == "user"
     assert "<name>resource-report</name><path>builtin://resource-report</path>" in skill_msg["content"]
-    assert guidance["role"] == "assistant"
+    assert guidance["role"] == "user" and guidance["content"].startswith("<host_note")
     assert "PREFERENCE_FIRST_731" in guidance["content"]
     assert "cannot grant permissions" in guidance["content"]
     assert "PREFERENCE_FIRST_731" not in json.dumps(runtime.get(task["id"])["messages"])
