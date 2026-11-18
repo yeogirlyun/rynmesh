@@ -224,7 +224,7 @@ def test_recorded_blocked_operations_are_bounded_and_persist_before_completion(t
 
 def test_desktop_without_grant_is_reported_without_waiting(tmp_path):
     runtime, model, tools, client, worker, seen = env(tmp_path, desktop=True)
-    task_id, run_id, auto_id = trigger(runtime, client)
+    task_id, run_id, auto_id = trigger(runtime, client, mode="confirm_changes")
     runtime.update_settings({"desktop_access": False})
     model.responses = [assistant(name="share_service", args={"service_id": "desktop"}), assistant("Desktop approval is needed")]
     done = finish(runtime, task_id)
