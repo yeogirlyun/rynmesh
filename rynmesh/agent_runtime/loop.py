@@ -1141,8 +1141,13 @@ class AgentLoop:
         extensions = getattr(self, "extensions", None)
         if extensions is None:
             return ""
+        capacity = self._effective_capacity(row, row.get("_max_context_bytes_override"))[0]
+        if capacity <= tool_menu.SMALL_WINDOW_BYTES:
+            return ""
         policy = self._context_policy(row)
-        size = min(40000, int(self._effective_capacity(row)[0] * .02)) if policy.get("context_window_known") else 8000
+        size = min(40000, int(capacity * .02))
+        if not policy.get("context_window_known"):
+            size = min(8000, size)
         return extensions.skills_context_note(self._execution_context(row), budget_bytes=size,
             selected_skill_ids=[skill["id"] for skill in row.get("skills") or []])
 

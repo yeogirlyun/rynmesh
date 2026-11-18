@@ -1090,11 +1090,13 @@ class AgentRuntime(AgentLoop):
             computer_use = tuple(spec["function"]["name"] for spec in business_specs
                                  if spec["function"]["name"].startswith("mcp__computer_use__computer_"))
             desktop = computer_use + desktop
-        has_skill_files = any(isinstance(s, dict) and s.get("files") for s in (row.get("skills") or []))
-        if not has_skill_files and self.extensions is not None:
-            has_skill_files = bool(self.extensions.store.enabled_skills_catalog(
-                workspace_root=(row.get("local_execution") or {}).get("workspace_root")))
-        skill_tools = ("ryn_read_skill_file",) if has_skill_files else ()
+        skill_tools = ()
+        if max_context_bytes > tool_menu.SMALL_WINDOW_BYTES:
+            has_skill_files = any(isinstance(s, dict) and s.get("files") for s in (row.get("skills") or []))
+            if not has_skill_files and self.extensions is not None:
+                has_skill_files = bool(self.extensions.store.enabled_skills_catalog(
+                    workspace_root=(row.get("local_execution") or {}).get("workspace_root")))
+            skill_tools = ("ryn_read_skill_file",) if has_skill_files else ()
         resource_tools = (
             ("ryn_list_resource_roots", "ryn_list_resources", "ryn_create_directory", "ryn_upload_resource_file", "ryn_create_text_file")
             if (not row["scope"].get("resource_grants") and "selection" not in row["scope"]

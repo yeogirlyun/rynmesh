@@ -31,8 +31,10 @@ it.each(["legacy", "control", "queue"])("T5 existing task selector sends selecte
     http.get("*/api/local/agent/models", () => HttpResponse.json({ models: [{ id: "model", name: "Model", available: true, agent_supported: true }] })),
     http.get("*/api/local/agent/tools", () => HttpResponse.json({ tools: [] })),
     http.get("*/api/local/agent/resources", () => HttpResponse.json({ connections: [], supported_formats: [], create_scope_supported: false })),
-    http.get("*/api/local/agent/tasks", () => HttpResponse.json({ tasks: [task] })),
+    http.get("*/api/local/agent/tasks", () => HttpResponse.json({ tasks: [task, { ...task, id: "other", title: "Other task" }] })),
     http.get("*/api/local/agent/tasks/existing", () => HttpResponse.json(task)),
+    http.get("*/api/local/agent/tasks/other", () => HttpResponse.json({ ...task, id: "other", title: "Other task" })),
+    http.get("*/api/local/agent/tasks/other/artifacts", () => HttpResponse.json({ artifacts: [] })),
     http.get("*/api/local/agent/tasks/existing/artifacts", () => HttpResponse.json({ artifacts: [] })),
     http.get("*/api/local/agent/skills", () => HttpResponse.json({ skills: [skill] })),
     http.post("*/api/local/agent/tasks/existing/messages", async ({ request }) => { received(await request.json()); return HttpResponse.json(task); }),
@@ -47,6 +49,15 @@ it.each(["legacy", "control", "queue"])("T5 existing task selector sends selecte
   await user.type(screen.getByRole("textbox"), "Use this workflow");
   await user.click(screen.getByRole("button", { name: mode === "queue" ? "Queue follow-up" : /Send information|Send message|Send follow-up/ }));
   await waitFor(() => expect(received).toHaveBeenCalledWith(expect.objectContaining({ message: "Use this workflow", skill_ids: ["demo-skill"] })));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Skills · optional" })).toBeInTheDocument());
+  const remaining = screen.queryByRole("checkbox", { name: /Demo workflow/ });
+  if (remaining) expect(remaining).not.toBeChecked();
+  await user.click(screen.getByRole("button", { name: "Skills · optional" }));
+  // If the prior selector survived the send it just closed; open it again.
+  if (!screen.queryByRole("checkbox", { name: /Demo workflow/ })) await user.click(screen.getByRole("button", { name: "Skills · optional" }));
+  await user.click(await screen.findByRole("checkbox", { name: /Demo workflow/ }));
+  await user.click(screen.getByRole("button", { name: "Other task" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Skills · optional" })).toBeInTheDocument());
 });
 
 it("message API and reliable-control builder carry optional skill_ids", async () => {

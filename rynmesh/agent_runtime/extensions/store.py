@@ -1343,7 +1343,7 @@ class ExtensionStore:
     ) -> list[dict[str, Any]]:
         """Return enabled built-in and workspace-visible imported skills matching knowledge.catalog() shape."""
         with file_transaction(self.lock):
-            state = self._read()
+            state = self._read(borrow=True)
             builtin_enabled = state.get("builtin_skills_enabled", {})
             out: list[dict[str, Any]] = []
             for skill_id, skill in BUILTIN_SKILLS.items():
@@ -1371,7 +1371,7 @@ class ExtensionStore:
 
     def skills_settings(self) -> dict[str, bool]:
         with file_transaction(self.lock):
-            return {"skills_catalog_in_context": self._read()["skills_catalog_in_context"]}
+            return {"skills_catalog_in_context": self._read(borrow=True)["skills_catalog_in_context"]}
 
     def update_skills_settings(self, payload: dict[str, Any]) -> dict[str, bool]:
         value = payload.get("skills_catalog_in_context")

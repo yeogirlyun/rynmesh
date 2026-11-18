@@ -275,6 +275,7 @@ export default function RynAgent() {
   const navigationRef = useRef(navigationRevision);
   const initialNavigationRef = useRef(navigationRevision - (pluginEntry ? 1 : 0));
   const navigate = () => {
+    setSkillIDs([]);
     const revision = ++navigationRef.current;
     setNavigationRevision(revision); save(NAVIGATION_KEY, String(revision));
     setShowAutomationsView(false);
@@ -330,9 +331,7 @@ export default function RynAgent() {
     setTask(null);
     const targetKey = pluginDraftKey || newDraftKey(projectID);
     setDrafts(current => ({ ...current, [targetKey]: pendingPrefill.prompt }));
-    if (pendingPrefill.skillId) {
-      setSkillIDs(current => (current.includes(pendingPrefill.skillId!) ? current : [...current, pendingPrefill.skillId!]));
-    }
+    setSkillIDs(pendingPrefill.skillId ? [pendingPrefill.skillId] : []);
     setTimeout(() => input.current?.focus(), 0);
   }, [location.key]);
   const finishAttachments = (key: string, ids: string[], nextKey?: string) => setAttachmentsByDraft(current => {
@@ -435,6 +434,7 @@ export default function RynAgent() {
       if (confirmedCreateRequests.current.size > 32) confirmedCreateRequests.current.delete(confirmedCreateRequests.current.values().next().value!);
       const optimistic = readPendingMessage()?.requestID === pendingID;
       const ownsDraft = (originNavigation ?? initialNavigationRef.current) === navigationRef.current;
+      if (ownsDraft) setSkillIDs([]);
       if (ownsDraft && !selectedRef.current) { selectedRef.current = recovered.id; setSelected(recovered.id); }
       finishAttachments(pendingDraftKey || newDraftKey(pendingProject), pendingAttachmentIDs, ownsDraft ? recovered.id : undefined);
       save(PENDING_KEY, ""); setUncertain(false);
@@ -693,7 +693,7 @@ export default function RynAgent() {
     forgetAgentTask(id);
     setTasks(current => current.filter(item => item.id !== id)); setRecordsRevision(current => current + 1);
     setDrafts(current => { const next = { ...current }; delete next[id]; return next; });
-    if (selectedRef.current === id) { selectedRef.current = ""; setSelected(""); setTask(null); setResourceErrors(current => ({ ...current, detail: "" })); }
+    if (selectedRef.current === id) { setSkillIDs([]); selectedRef.current = ""; setSelected(""); setTask(null); setResourceErrors(current => ({ ...current, detail: "" })); }
   };
   const chooseGeneralProject = () => {
     chooseProject("");
@@ -839,6 +839,7 @@ export default function RynAgent() {
     if ((!draft.trim() && !draftAttachments.length) || attachmentsBusy || mutationRef.current || uncertain || controlUncertain || (!selected && !newScopeReady)) return;
     if (selected ? !currentTask || (currentTask.allowed_actions ? !canUseAgentAction(currentTask, effectiveIntent) : !legacyReady || !canContinueAgentTask(currentTask)) : !legacyReady) return;
     if (currentTask && selectedExecuting && (modeOverride ?? followUpQueueMode) === "queue") {
+      const originNavigation = navigationRef.current;
       mutationRef.current = true; setBusy(true); setError("");
       const attachmentIDs = draftAttachments.map(file => file.id);
       const body = { message: draft.trim() || t("attachmentOnlyMessage"), intent: effectiveIntent,
@@ -851,6 +852,7 @@ export default function RynAgent() {
         const next = await rynAgent.queueMessage(currentTask.id, { ...body, client_request_id: queueRequest.current.id });
         queueRequest.current = null;
         acceptTask(next);
+        if (originNavigation === navigationRef.current) setSkillIDs([]);
         setDrafts(current => current[draftKey] === draft ? { ...current, [draftKey]: "" } : current);
         finishAttachments(draftKey, attachmentIDs);
       } catch (reason) { setError(mutationErrorKey(reason)); }
@@ -892,7 +894,8 @@ export default function RynAgent() {
       });
       setPendingMessage(current => current?.requestID === requestID ? null : current);
       save(PENDING_KEY, ""); setUncertain(false);
-      if (!currentTask && ownsDraft) { setScopeDraft(null); setSkillIDs([]); }
+      if (ownsDraft) setSkillIDs([]);
+      if (!currentTask && ownsDraft) setScopeDraft(null);
     } catch (reason) {
       // A polled server record is a receipt even if the original HTTP response fails later.
       if (!currentTask && confirmedCreateRequests.current.has(requestID)) return;
@@ -1253,7 +1256,7 @@ export default function RynAgent() {
       </aside>
       <div className="ra-chat">
         <RynAgentNodeRecoveryBanner />
-        {showSkillsView ? <CodexSkillsView embeddedInAgent onTrySkillPrompt={(prefillPrompt, skillId) => { setShowSkillsView(false); setShowAutomationsView(false); selectedRef.current = ""; setSelected(""); setTask(null); const targetKey = pluginDraftKey || newDraftKey(projectID); setDrafts(current => ({ ...current, [targetKey]: prefillPrompt })); if (skillId) { setSkillIDs(current => (current.includes(skillId) ? current : [...current, skillId])); } setTimeout(() => input.current?.focus(), 0); }} /> : showAutomationsView ? <AutomationsPanel automations={automationsList} runs={automationRuns} tasks={tasks} activeTaskId={selected} zh={i18n.language.startsWith("zh")} onRefresh={refreshAutomations} onCreateNew={() => { setEditingAutomation({ kind: selected ? "heartbeat" : "cron", target_task_id: selected || "", repeat: "daily", time: "09:00", status: "ACTIVE" }); setAutomationDialogOpen(true); }} onEdit={item => { setEditingAutomation(item); setAutomationDialogOpen(true); }} onSelectTask={id => { setShowAutomationsView(false); chooseTask(id); }} /> : <>
+        {showSkillsView ? <CodexSkillsView embeddedInAgent onTrySkillPrompt={(prefillPrompt, skillId) => { setShowSkillsView(false); setShowAutomationsView(false); selectedRef.current = ""; setSelected(""); setTask(null); const targetKey = pluginDraftKey || newDraftKey(projectID); setDrafts(current => ({ ...current, [targetKey]: prefillPrompt })); setSkillIDs(skillId ? [skillId] : []); setTimeout(() => input.current?.focus(), 0); }} /> : showAutomationsView ? <AutomationsPanel automations={automationsList} runs={automationRuns} tasks={tasks} activeTaskId={selected} zh={i18n.language.startsWith("zh")} onRefresh={refreshAutomations} onCreateNew={() => { setEditingAutomation({ kind: selected ? "heartbeat" : "cron", target_task_id: selected || "", repeat: "daily", time: "09:00", status: "ACTIVE" }); setAutomationDialogOpen(true); }} onEdit={item => { setEditingAutomation(item); setAutomationDialogOpen(true); }} onSelectTask={id => { setShowAutomationsView(false); chooseTask(id); }} /> : <>
 
         {settingsReady && !enabled && task && <div className="ra-disabled-banner"><span>{t("historyDisabled")}</span><button disabled={busy} onClick={() => void updateSettings({ enabled: true, ...(model ? { model_id: model } : {}) })}>{t("enable")}</button></div>}
         {!detailLoading && task && <RynAgentTurnRail turns={turnRailItems} scrollRef={scroll} />}
