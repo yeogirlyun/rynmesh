@@ -89,3 +89,15 @@ button.thumb { padding: 0; background: #fff; }
 .info dd { margin: 0; overflow-wrap: anywhere; }
 .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--text); color: #fff; padding: 10px 18px; border-radius: 999px; font-size: 13px; max-width: calc(100% - 32px); }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+.form fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.form legend { margin-bottom: 7px; padding: 0; }
+.form [hidden] { display: none; }
+.copy-input { display: grid; grid-template-columns: 6em 1fr; align-items: center; font-size: 13px; }
+.attachment { display: grid; gap: 4px; }
+.attachment select { font: inherit; font-size: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 3px; }
+#add { align-self: flex-start; }
+#scenes .chip { border-radius: 8px; }
+.job-fields { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 2px 8px; margin: 0; font-size: 12px; }
+.job-fields dt { color: var(--muted); }
+.job-fields dd { margin: 0; overflow-wrap: anywhere; }
