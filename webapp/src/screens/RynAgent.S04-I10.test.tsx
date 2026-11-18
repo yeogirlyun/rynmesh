@@ -14,15 +14,15 @@ vi.mock("../personal/model", async original => ({ ...(await original<Record<stri
 function setup(control = false) {
   sessionStorage.clear(); localStorage.clear(); agentTaskCache().clear();
   const approval = { id: "approval", call_id: "call", arguments_sha256: "sha", tool: "ryn_shell_execute",
-    arguments: { command: "npm test -- --run", cwd: "D:/synthetic-project", shell: "powershell", timeout_seconds: 120 },
-    remember_prefix_candidate: ["npm", "test"] };
+    arguments: { command: "npm test", cwd: "D:/synthetic-project", shell: "powershell", timeout_seconds: 120 },
+    remember_prefix_candidate: { prefix: ["npm", "test"], options: [] } };
   const task = { id: "stage", title: "Stage files", model_id: "model", status: "waiting_approval", revision: 1,
     created_at: 1, updated_at: 1, messages: [{ role: "user", content: "Run tests" }], events: [],
     pending_approval: approval, steps: 1, result: "", error: null, limits: {}, permission_mode: "confirm_changes", allowed_write_tools: [],
     ...(control ? { schema_version: 2, control_revision: 2, run_state: "waiting_approval", goal: { revision: 1, text: "Run tests", constraints: [] },
       allowed_actions: { approve: { enabled: true, requires_control_revision: true }, deny: { enabled: true }, information: { enabled: true } } } : {}) } as AgentTask;
   let settings = { enabled: true, model_id: "model", permission_mode: "confirm_changes", allowed_write_tools: [],
-    shell_allow_prefixes: [["npm", "test"], ["git", "add"]], workspace_root: "D:/synthetic-project", desktop_access: false };
+    shell_allow_prefixes: [{ prefix: ["npm", "test"], options: [] }, { prefix: ["git", "add"], options: [] }], workspace_root: "D:/synthetic-project", desktop_access: false };
   const actions = vi.fn(), updates = vi.fn();
   server.use(
     http.get("*/api/local/agent/projects", () => HttpResponse.json({ projects: [] })),
@@ -47,7 +47,7 @@ it.each([false, true])("S04-I10 shell details and prefix approval send remember_
   const user = userEvent.setup(); render(<MemoryRouter><RynAgent /></MemoryRouter>);
   await user.click(await screen.findByRole("button", { name: "Stage files" }));
   const card = await screen.findByRole("region", { name: "Change awaiting approval" });
-  expect(within(card).getByText("npm test -- --run")).toBeInTheDocument();
+  expect(within(card).getByText("npm test")).toBeInTheDocument();
   expect(within(card).getByText("D:/synthetic-project")).toBeInTheDocument();
   expect(within(card).getByText("powershell")).toBeInTheDocument();
   expect(within(card).getByText("120s")).toBeInTheDocument();
@@ -65,7 +65,7 @@ it("S04-I10 settings list permits deleting one precise prefix", async () => {
   expect(within(group).getByText("git add")).toBeInTheDocument();
   await user.click(within(group).getByRole("button", { name: "Remove prefix npm test" }));
   await user.click(within(dialog).getByRole("button", { name: "Save settings" }));
-  await waitFor(() => expect(updates).toHaveBeenCalledWith(expect.objectContaining({ shell_allow_prefixes: [["git", "add"]] })));
+  await waitFor(() => expect(updates).toHaveBeenCalledWith(expect.objectContaining({ shell_allow_prefixes: [{ prefix: ["git", "add"], options: [] }] })));
 });
 
 it("S04-I10 both action clients use the boolean field instead of broad tool remembrance", async () => {
@@ -74,4 +74,46 @@ it("S04-I10 both action clients use the boolean field instead of broad tool reme
   expect(agentActionBody(task, "approve", "prefix")).not.toHaveProperty("remember");
   await rynAgent.action(task, "approve", "prefix");
   expect(actions).toHaveBeenCalledWith(expect.objectContaining({ remember_prefix: true }));
+});
+
+it("S04-I10 rework2 settings show recorded option words and preserve the remaining rule", async () => {
+  const { updates } = setup(); const user = userEvent.setup();
+  server.use(http.get("*/api/local/agent/settings", () => HttpResponse.json({ enabled: true, model_id: "model",
+    permission_mode: "confirm_changes", allowed_write_tools: [], shell_allow_prefixes: [
+      { prefix: ["pytest"], options: ["-q"] }, { prefix: ["git", "commit"], options: ["-m"] },
+    ] })));
+  render(<MemoryRouter><RynAgent /></MemoryRouter>);
+  await user.click(await screen.findByRole("button", { name: "Agent settings" }));
+  const dialog = screen.getByRole("dialog", { name: "Agent settings" });
+  expect(within(dialog).getByText("Options: -q")).toBeInTheDocument();
+  expect(within(dialog).getByText("Options: -m")).toBeInTheDocument();
+  await user.click(within(dialog).getByRole("button", { name: "Remove prefix pytest" }));
+  await user.click(within(dialog).getByRole("button", { name: "Save settings" }));
+  await waitFor(() => expect(updates).toHaveBeenCalledWith(expect.objectContaining({
+    shell_allow_prefixes: [{ prefix: ["git", "commit"], options: ["-m"] }],
+  })));
+});
+
+it("S04-I10 rework2 approval button names the prefix and recorded options", async () => {
+  const { task, actions } = setup(); const user = userEvent.setup();
+  server.use(http.get("*/api/local/agent/tasks/stage", () => HttpResponse.json({ ...task, pending_approval: {
+    ...task.pending_approval, arguments: { command: "pytest -q tests/a", shell: "powershell" },
+    remember_prefix_candidate: { prefix: ["pytest"], options: ["-q"] },
+  } })));
+  render(<MemoryRouter><RynAgent /></MemoryRouter>);
+  await user.click(await screen.findByRole("button", { name: "Stage files" }));
+  await user.click(await screen.findByRole("button", { name: "Allow similar commands in future: pytest (options: -q)" }));
+  await waitFor(() => expect(actions).toHaveBeenCalledWith(expect.objectContaining({ remember_prefix: true })));
+});
+
+it("S04-I10 rework2 legacy candidate without option data retains one-time approval", async () => {
+  const { task } = setup(); const user = userEvent.setup();
+  server.use(http.get("*/api/local/agent/tasks/stage", () => HttpResponse.json({ ...task, pending_approval: {
+    ...task.pending_approval, remember_prefix_candidate: ["npm", "test"],
+  } })));
+  render(<MemoryRouter><RynAgent /></MemoryRouter>);
+  await user.click(await screen.findByRole("button", { name: "Stage files" }));
+  const card = await screen.findByRole("region", { name: "Change awaiting approval" });
+  expect(within(card).queryByRole("button", { name: /Allow similar commands in future/ })).not.toBeInTheDocument();
+  expect(within(card).getByRole("button", { name: "Approve exact change" })).toBeEnabled();
 });

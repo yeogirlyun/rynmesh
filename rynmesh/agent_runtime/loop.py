@@ -2410,11 +2410,14 @@ class AgentLoop:
                 matched_prefix = None
                 if authorization == "prefix_allow":
                     from .execution_policy import matching_shell_prefix
-                    matched_prefix = matching_shell_prefix(call["arguments"], data["settings"])
+                    matched_rule = matching_shell_prefix(call["arguments"], data["settings"])
+                    matched_prefix = matched_rule["prefix"]
                     pending_notices = data.get("pending_shell_prefix_notices", [])
                     if matched_prefix in pending_notices:
                         pending_notices.remove(matched_prefix)
                         prefix_notice = "已按您允许的命令前缀放行：" + " ".join(matched_prefix)
+                        if matched_rule["options"]:
+                            prefix_notice += "（选项：" + " ".join(matched_rule["options"]) + "）"
                 authorized_classification = classification
                 row["in_flight"] = {**call, "kind": "tool", "dispatched": True, "authorization": authorization,
                                     "workstation_permission_tool": meta.get("workstation_permission_tool"),
@@ -2428,7 +2431,7 @@ class AgentLoop:
                     "scope_revision": row["scope_revision"], "context_epoch": row.get("context_epoch", 0),
                     "control_revision": row["control_revision"],
                     **({"approval_id": approved["id"]} if authorization == "approved" else {}),
-                    **({"shell_prefix": matched_prefix} if matched_prefix else {}),
+                    **({"shell_prefix": matched_prefix, "shell_prefix_options": matched_rule["options"]} if matched_prefix else {}),
                     **(grant_proof or {})}
                 verification.record(row, call, "intent", now(), flight=row["in_flight"])
                 row["approved"] = None  # One-shot capability, consumed durably before execution.

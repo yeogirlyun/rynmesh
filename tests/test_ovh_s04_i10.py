@@ -55,9 +55,9 @@ def test_T1_remembered_prefix_runs_in_same_and_new_task_and_notifies_once(tmp_pa
     advance(runtime, 2)
     assert not tools.calls
     pending = runtime.get(task_id)["pending_approval"]
-    assert pending["remember_prefix_candidate"] == ["git", "add"]
+    assert pending["remember_prefix_candidate"] == {"prefix": ["git", "add"], "options": []}
     approve_prefix(runtime, task_id)
-    assert runtime.settings()["shell_allow_prefixes"] == [["git", "add"]]
+    assert runtime.settings()["shell_allow_prefixes"] == [{"prefix": ["git", "add"], "options": []}]
     assert any(e["type"] == "prefix_allowed" and e["prefix"] == ["git", "add"] for e in runtime.get(task_id)["events"])
     advance(runtime, 5)
     row = raw(runtime, task_id)
@@ -108,7 +108,7 @@ def test_T3_prefix_normalization_deduplication_and_wrong_action_input(tmp_path):
     runtime, _, _, _ = shell_runtime(tmp_path, "python -c 'print(1)'")
     assert runtime.settings()["shell_allow_prefixes"] == []
     runtime.update_settings({"shell_allow_prefixes": [["GIT.EXE" if os.name == "nt" else "git", "add"], ["git", "add"], ["npm", "run", "test"]]})
-    assert runtime.settings()["shell_allow_prefixes"] == [["git", "add"], ["npm", "run", "test"]]
+    assert runtime.settings()["shell_allow_prefixes"] == [{"prefix": ["git", "add"], "options": []}, {"prefix": ["npm", "run", "test"], "options": []}]
     tid = runtime.create({"message": "Run the requested script"})["id"]
     advance(runtime, 2)
     with pytest.raises(AgentError, match="agent_shell_prefix_invalid"):
@@ -170,13 +170,13 @@ def test_T1_two_pending_approvals_deduplicate_transactional_prefix_append(tmp_pa
     advance(runtime, 4)
     approve_prefix(runtime, first)
     approve_prefix(runtime, second)
-    assert runtime.settings()["shell_allow_prefixes"] == [["git", "add"]]
+    assert runtime.settings()["shell_allow_prefixes"] == [{"prefix": ["git", "add"], "options": []}]
     events = [e for tid in (first, second) for e in runtime.get(tid)["events"] if e["type"] == "prefix_allowed"]
     assert len(events) == 1
 
 
 def test_T1_settings_added_rule_notifies_only_its_first_matching_result(tmp_path):
-    runtime, _, _, _ = shell_runtime(tmp_path, "git add a", "npm test", "npm test -- --run", "git add b")
+    runtime, _, _, _ = shell_runtime(tmp_path, "git add a", "npm test", "npm test another-case", "git add b")
     runtime.update_settings({"shell_allow_prefixes": [["git", "add"]]})
     tid = runtime.create({"message": "Stage and test"})["id"]
     advance(runtime, 2)
@@ -330,3 +330,123 @@ def test_rework_action_rejects_nonconfirmation_task_mode(tmp_path):
     runtime.store.transaction(mode)
     with pytest.raises(AgentError, match="agent_shell_prefix_invalid"):
         approve_prefix(runtime, tid)
+
+
+@pytest.mark.parametrize("command,prefix", [
+    ("git fetch --upload-pa='touch M;' ../o.git", ["git", "fetch"]),
+    ("git rebase --exe 'touch M' HEAD~1", ["git", "rebase"]),
+    ("git clone -u 'touch M' remote", ["git", "clone"]),
+    ("git clone --config core.sshCommand=evil remote", ["git", "clone"]),
+    ("git push origin +main", ["git", "push"]),
+    ("git push origin :feature", ["git", "push"]),
+    ("git push --dele origin feature", ["git", "push"]),
+    ("git push --mirro origin", ["git", "push"]),
+    ("git clean -fd", ["git", "clean"]),
+    ("git branch -D x", ["git", "branch"]),
+    ("git stash clear", ["git", "stash"]),
+    ("git reset --hard HEAD~1", ["git", "reset"]),
+    ("git checkout -- .", ["git", "checkout"]),
+    ("npm test --node-options=evil", ["npm", "test"]),
+    ("npm test --script-shell=evil", ["npm", "test"]),
+    ("npm exec -c 'touch M'", ["npm", "exec"]),
+    ("tar tf a.tar --checkpoint-action=exec=evil", ["tar", "tf"]),
+    ("tar tf a.tar --to-command=evil", ["tar", "tf"]),
+    ("sed s/a/b/ f -e '1e touch M'", ["sed", "s/a/b/"]),
+])
+def test_rework2_changed_options_and_execution_forms_do_not_expand_old_grants(command, prefix):
+    assert prefix_decision(command, prefix, shell="sh").action == "ask"
+
+
+@pytest.mark.parametrize("command", [
+    "git clean -n", "git branch -a", "git stash list", "git reset HEAD f", "git checkout main",
+    "git rebase main", "git clone remote", "git grep needle", "git ls-remote origin", "tar tf a.tar",
+    "sed s/a/b/ f", "npm exec eslint", "npm x eslint", "pnpm exec eslint", "pnpm dlx eslint",
+    "yarn exec eslint", "yarn dlx eslint", "uv run pytest", "poetry run pytest", "pipenv run pytest",
+    "conda run pytest", "SUDO rm file",
+])
+def test_rework2_only_fixed_git_subcommands_and_nonrunner_programs_have_candidates(command):
+    assert shell_prefix_candidate({"command": command, "shell": "sh"}) is None
+
+
+@pytest.mark.parametrize("approved,reused,changed,prefix,options", [
+    ("pytest -q tests/a", "pytest -q tests/b", "pytest -x tests/b", ["pytest"], ["-q"]),
+    ("git commit -m x", "git commit -m y", "git commit --amend -m y", ["git", "commit"], ["-m"]),
+])
+def test_rework2_approved_option_words_are_saved_and_enforced(tmp_path, approved, reused, changed, prefix, options):
+    runtime, _, tools, _ = shell_runtime(tmp_path, approved, reused, changed)
+    tid = runtime.create({"message": "Run these requested operations"})["id"]
+    advance(runtime, 2)
+    candidate = runtime.get(tid)["pending_approval"]["remember_prefix_candidate"]
+    assert candidate == {"prefix": prefix, "options": options}
+    approve_prefix(runtime, tid)
+    assert runtime.settings()["shell_allow_prefixes"] == [{"prefix": prefix, "options": options}]
+    advance(runtime, 5)
+    assert len(tools.calls) == 2
+    assert raw(runtime, tid)["receipts"][1]["authorization"] == "prefix_allow"
+    assert runtime.get(tid)["status"] == "waiting_approval"
+
+
+@pytest.mark.parametrize("tail", ["--", "SHELL=evil", "+main", ":feature", "--unknown"])
+def test_rework2_tail_syntax_and_unrecorded_options_always_ask(tail):
+    assert prefix_decision(f"git add {tail}", ["git", "add"], shell="sh").action == "ask"
+
+
+@pytest.mark.parametrize("command,prefix,option", [
+    ("git fetch --upload-pa 'touch M' ../o.git", ["git", "fetch"], "--upload-pa"),
+    ("git rebase --exe 'touch M' HEAD~1", ["git", "rebase"], "--exe"),
+    ("git push --dele origin feature", ["git", "push"], "--dele"),
+    ("git push --mirro origin", ["git", "push"], "--mirro"),
+])
+def test_rework2_known_unsafe_option_abbreviations_cannot_be_registered(tmp_path, command, prefix, option):
+    runtime, _, _, _ = shell_runtime(tmp_path)
+    assert shell_prefix_candidate({"command": command, "shell": "sh"}) is None
+    with pytest.raises(AgentError, match="agent_invalid_settings"):
+        runtime.update_settings({"shell_allow_prefixes": [{"prefix": prefix, "options": [option]}]})
+
+
+def test_rework2_two_approved_option_sets_merge_without_broadening_other_flags(tmp_path):
+    runtime, _, tools, _ = shell_runtime(tmp_path, "pytest -q tests/a", "pytest -x tests/b")
+    first = runtime.create({"message": "First test run"})["id"]
+    second = runtime.create({"message": "Second test run"})["id"]
+    advance(runtime, 4)
+    approve_prefix(runtime, first)
+    approve_prefix(runtime, second)
+    advance(runtime, 2)
+    assert len(tools.calls) == 2
+    rules = runtime.settings()["shell_allow_prefixes"]
+    assert rules == [{"prefix": ["pytest"], "options": ["-q", "-x"]}]
+    row = raw(runtime, first)
+    for command, expected in [("pytest -q tests/b", "execute"), ("pytest -x tests/a", "execute"), ("pytest -v tests/a", "ask")]:
+        assert decide({"name": "ryn_shell_execute", "arguments": {"command": command, "shell": "powershell"}},
+                      tools.metadata("ryn_shell_execute"), row, runtime.settings()).action == expected
+
+
+def test_rework2_legacy_saved_words_have_no_implicit_option_allowance(tmp_path):
+    runtime, _, tools, _ = shell_runtime(tmp_path)
+    runtime.store.transaction(lambda data: data["settings"].update(shell_allow_prefixes=[["git", "add"]]))
+    assert runtime.settings()["shell_allow_prefixes"] == [{"prefix": ["git", "add"], "options": []}]
+    tid = runtime.create({"message": "Stage one file"})["id"]
+    for command, expected in [("git add file.txt", "execute"), ("git add -A", "ask")]:
+        assert decide({"name": "ryn_shell_execute", "arguments": {"command": command, "shell": "powershell"}},
+                      tools.metadata("ryn_shell_execute"), raw(runtime, tid), runtime.settings()).action == expected
+
+
+@pytest.mark.parametrize("options", [["--"], ["--node-options=evil"], ["q"], "-q", [None]])
+def test_rework2_option_schema_rejects_nonliteral_or_nonoption_words(tmp_path, options):
+    runtime, _, _, _ = shell_runtime(tmp_path)
+    with pytest.raises(AgentError, match="agent_invalid_settings"):
+        runtime.update_settings({"shell_allow_prefixes": [{"prefix": ["pytest"], "options": options}]})
+
+
+@pytest.mark.parametrize("command,prefix", [
+    ("git diff --ext-di file.txt", ["git", "diff"]),
+    ("git log --out=unsafe.txt", ["git", "log"]),
+])
+def test_rework2_unsafe_git_option_abbreviations_are_not_classified_as_reads(command, prefix):
+    assert prefix_decision(command, prefix, shell="sh").action == "ask"
+
+
+@pytest.mark.parametrize("command", ["git log -Gfoo", "git log -Sfox"])
+def test_rework2_safe_git_search_option_values_keep_read_classification(tmp_path, command):
+    from rynmesh.agent_runtime.execution_policy import shell_read
+    assert shell_read({"command": command, "shell": "sh", "cwd": str(tmp_path)}, workspace_root=str(tmp_path))

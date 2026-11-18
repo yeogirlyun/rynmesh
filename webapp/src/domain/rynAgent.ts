@@ -80,6 +80,7 @@ export interface AgentContextBudgetPolicy {
   token_count_is_estimate?: boolean;
   manual_max_context_bytes?: number | null;
 }
+export interface AgentShellPrefixRule { prefix: string[]; options: string[] }
 export interface AgentSettings {
   storage_health?: AgentStorageHealth;
   enabled: boolean;
@@ -88,7 +89,7 @@ export interface AgentSettings {
   default_subagent_reasoning_effort?: string | null;
   permission_mode: "workspace" | "read_only" | "confirm_changes" | "automatic";
   allowed_write_tools: string[];
-  shell_allow_prefixes?: string[][];
+  shell_allow_prefixes?: AgentShellPrefixRule[];
   denied_tools?: string[];
   workspace_root?: string;
   desktop_access?: boolean;
@@ -156,7 +157,7 @@ export interface AgentRunTiming {
   measurement: "live" | "recorded" | "pending" | "unknown";
 }
 export interface AgentApproval {
-  remember_prefix_candidate?: string[];
+  remember_prefix_candidate?: AgentShellPrefixRule;
   reason?: "dangerous_command";
   dangerous_reason?: "forced_rm" | "force_delete" | "open_url" | "wrapper_depth";
   id: string;

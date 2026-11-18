@@ -1394,6 +1394,7 @@ function ApprovalCard({ approval, controlled, enabled, canDeny, busy, waiting, o
   const localFile = approval.tool.startsWith("ryn_file_") && typeof preview.path === "string";
   const shell = approval.tool === "ryn_shell_execute";
   const shellArgs = approval.arguments;
+  const prefixRule = Array.isArray(approval.remember_prefix_candidate) ? undefined : approval.remember_prefix_candidate;
   const dangerLabels = {
     forced_rm: tr("Forced removal"), force_delete: tr("Forced deletion"),
     open_url: tr("Opens an external URL"), wrapper_depth: tr("Command nesting exceeds inspection depth"),
@@ -1488,7 +1489,7 @@ function ApprovalCard({ approval, controlled, enabled, canDeny, busy, waiting, o
     <div className="ra-approval-actions">
       <button disabled={busy || !canDeny || !waiting} onClick={() => void onAction("deny")}><X size={15} />{t("deny")}</button>
       <button className="ra-primary" disabled={busy || !enabled || !waiting} onClick={() => void onAction("approve")}><Check size={15} />{t("approve")}</button>
-      {shell && approval.remember_prefix_candidate?.length ? <button disabled={busy || !enabled || !waiting} onClick={() => void onAction("approve", "prefix")}>{i18n.language.startsWith("zh") ? "以后此类命令都允许：" : "Allow similar commands in future: "}{approval.remember_prefix_candidate.join(" ")}</button> : null}
+      {shell && prefixRule ? <button disabled={busy || !enabled || !waiting} onClick={() => void onAction("approve", "prefix")}>{i18n.language.startsWith("zh") ? "以后此类命令都允许：" : "Allow similar commands in future: "}{prefixRule.prefix.join(" ")}{prefixRule.options.length ? ` (${i18n.language.startsWith("zh") ? "选项" : "options"}: ${prefixRule.options.join(" ")})` : ""}</button> : null}
       <button disabled={busy || !enabled || !waiting} onClick={() => void onAction("approve", "always")}>{i18n.language.startsWith("zh") ? "永久允许" : "Always allow"}</button>
     </div>
   </section>;
@@ -1540,8 +1541,8 @@ function AgentSettingsDialog({ settings, projects, currentProject, busy, onClose
     <section aria-label={zh ? "已允许的命令前缀" : "Allowed command prefixes"}>
       <h4>{zh ? "已允许的命令前缀" : "Allowed command prefixes"}</h4>
       {prefixes.length === 0 && <p>{zh ? "暂无" : "None"}</p>}
-      {prefixes.map((prefix, index) => <div className="ra-setting" key={JSON.stringify(prefix)}><code>{prefix.join(" ")}</code>
-        <button disabled={busy} aria-label={`${zh ? "移除前缀" : "Remove prefix"} ${prefix.join(" ")}`} onClick={() => setPrefixes(prefixes.filter((_, item) => item !== index))}>{zh ? "移除" : "Remove"}</button></div>)}
+      {prefixes.map((rule, index) => <div className="ra-setting" key={JSON.stringify(rule.prefix)}><code>{rule.prefix.join(" ")}</code><small>{zh ? "选项" : "Options"}: {rule.options.length ? rule.options.join(" ") : zh ? "无" : "None"}</small>
+        <button disabled={busy} aria-label={`${zh ? "移除前缀" : "Remove prefix"} ${rule.prefix.join(" ")}`} onClick={() => setPrefixes(prefixes.filter((_, item) => item !== index))}>{zh ? "移除" : "Remove"}</button></div>)}
     </section>
     <div className="ra-settings-save"><button className="ra-primary" disabled={busy || !contextValid} onClick={() => void onSave({ enabled, workspace_root: workspace.trim(), desktop_access: desktopAccess, ...contextChange, ...rulesChange, ...prefixChange })}>{t(busy ? "saving" : "save")}</button></div></section></div>;
 }

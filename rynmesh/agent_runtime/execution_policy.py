@@ -272,7 +272,7 @@ def _rg_read_ok(words: list[str]) -> bool:
 def _git_read_ok(words: list[str]) -> bool:
     if len(words) < 2 or words[1].lower() not in GIT_SAFE_SUBCOMMANDS:
         return False
-    return not any(word.lower().startswith(GIT_UNSAFE_FLAGS) for word in words[2:])
+    return not _unsafe_git_prefix_words([executable_key(words[0]), *words[1:]])
 
 
 def _sed_read_ok(words: list[str]) -> bool:
@@ -701,60 +701,124 @@ SHELL_BROAD_PREFIXES = frozenset({
     "env", "sudo", "doas", "timeout", "nice", "nohup", "time", "xargs", "exec", "eval", "command", "busybox", "wsl",
     "py", "perl", "ruby", "php", "lua", "deno", "bun", "dash", "ksh", "fish", "csh", "tcsh", "osascript",
     "cscript", "wscript", "mshta", "iex", "invoke-expression", "ri", "rd", "rmdir", "erase",
+    "tar", "sed",
 })
-GIT_PREFIX_EXEC_SUBCOMMANDS = frozenset({"config", "submodule", "bisect", "filter-branch", "difftool", "mergetool"})
+GIT_PREFIX_SUBCOMMANDS = frozenset({"add", "commit", "fetch", "pull", "push", "status", "diff", "log", "show"})
+GIT_PUSH_UNSAFE_FLAGS = ("--force", "--force-with-lease", "--mirror", "--delete")
+RUNNER_EXEC_FORMS = {"npm": {"exec", "x"}, "pnpm": {"exec", "dlx"}, "yarn": {"exec", "dlx"},
+                     "uv": {"run"}, "poetry": {"run"}, "pipenv": {"run"}, "conda": {"run"}}
 SHELL_PREFIX_META = re.compile(r"[\r\n\x00;&|<>`$(){}#*?\[\]%!'\"]")
 
 
 def normalize_shell_prefix(prefix):
     """Validate owner-authored literal words, normalizing only the executable."""
     if (not isinstance(prefix, list) or not 1 <= len(prefix) <= 3
-            or any(not isinstance(word, str) or not word.strip() or SHELL_PREFIX_META.search(word) for word in prefix)):
+            or any(not isinstance(word, str) or not word.strip() or "=" in word or SHELL_PREFIX_META.search(word) for word in prefix)):
         return None
     if ("/" in prefix[0] or "\\" in prefix[0] or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", prefix[0])
             or (len(prefix) >= 2 and prefix[1].startswith(("-", "/")))):
         return None
     normalized = [executable_key(prefix[0]), *prefix[1:]]
-    if (not normalized[0] or normalized[0] in SHELL_BROAD_PREFIXES
-            or re.fullmatch(r"python3(?:\.\d+)*", normalized[0])):
+    program = normalized[0].lower()
+    if (not program or program in SHELL_BROAD_PREFIXES
+            or re.fullmatch(r"python3(?:\.\d+)*", program)):
         return None
-    if normalized[0] == "git" and (len(normalized) != 2 or normalized[1].lower() in GIT_PREFIX_EXEC_SUBCOMMANDS):
+    if program == "git" and (len(normalized) != 2 or normalized[1].lower() not in GIT_PREFIX_SUBCOMMANDS):
+        return None
+    if program in RUNNER_EXEC_FORMS and (len(normalized) < 2 or normalized[1].lower() in RUNNER_EXEC_FORMS[program]):
         return None
     return normalized
+
+
+def shell_prefix_rule(value):
+    """Read the original word-list format as a rule with no approved options."""
+    return {"prefix": value, "options": []} if isinstance(value, list) else value
+
+
+def _unsafe_git_prefix_words(words):
+    if words[0].lower() != "git":
+        return False
+    for word in words[2:]:
+        short = word.startswith("-") and not word.startswith("--")
+        option = word.lower().split("=", 1)[0]
+        unsafe_long = word.startswith("--") and any(flag.startswith(option) for flag in GIT_UNSAFE_FLAGS if flag.startswith("--"))
+        if unsafe_long or word.lower().startswith(GIT_UNSAFE_FLAGS):
+            return True
+        if words[1].lower() == "push" and (word.startswith(GIT_PUSH_UNSAFE_FLAGS)
+                                         or (word.startswith("--") and any(flag.startswith(option) for flag in GIT_PUSH_UNSAFE_FLAGS))
+                                         or (short and any(flag in word[1:] for flag in "fd"))):
+            return True
+    return False
+
+
+def normalize_shell_prefix_rule(value):
+    rule = shell_prefix_rule(value)
+    if not isinstance(rule, dict) or set(rule) - {"prefix", "options"}:
+        return None
+    prefix = normalize_shell_prefix(rule.get("prefix"))
+    options = rule.get("options", [])
+    if (prefix is None or not isinstance(options, list)
+            or any(not isinstance(word, str) or not word.startswith("-") or word == "--" or "=" in word
+                   or SHELL_PREFIX_META.search(word) for word in options)):
+        return None
+    if _unsafe_git_prefix_words([*prefix, *options]):
+        return None
+    return {"prefix": prefix, "options": list(dict.fromkeys(options))}
+
+
+def normalize_shell_prefix_rules(values):
+    if not isinstance(values, list):
+        return None
+    rules = []
+    for value in values:
+        rule = normalize_shell_prefix_rule(value)
+        if rule is None:
+            return None
+        prior = next((item for item in rules if item["prefix"] == rule["prefix"]), None)
+        if prior is None:
+            rules.append(rule)
+        else:
+            prior["options"] = list(dict.fromkeys([*prior["options"], *rule["options"]]))
+    return rules
 
 
 def _shell_prefix_words(arguments):
     shell = arguments.get("shell", "powershell" if os.name == "nt" else "sh")
     words = literal_command(arguments.get("command"), shell)
-    if not words or normalize_shell_prefix(words[:2]) is None:
+    if not words or (len(words) > 1 and words[1].startswith("/")):
+        return None
+    prefix = words[:1] if len(words) > 1 and words[1].startswith("-") else words[:2]
+    if normalize_shell_prefix(prefix) is None:
+        return None
+    if any("=" in word or word.startswith(("+", ":")) or word == "--" for word in words[1:]):
         return None
     words = [executable_key(words[0]), *words[1:]]
     from .dangerous_commands import dangerous_shell
     if dangerous_shell(arguments):
         return None
-    if words[0] == "git":
-        for word in words[2:]:
-            short = word.startswith("-") and not word.startswith("--")
-            if word.lower().startswith(GIT_UNSAFE_FLAGS) or (short and any(flag in word[1:] for flag in "xOo")):
-                return None
-            if words[1].lower() == "push" and (word.startswith(("--force", "--mirror", "--delete"))
-                                      or (short and any(flag in word[1:] for flag in "fd"))):
-                return None
+    if _unsafe_git_prefix_words(words):
+        return None
     return words
 
 
 def shell_prefix_candidate(arguments):
     words = _shell_prefix_words(arguments)
-    return words[:2] if words else None
+    if not words:
+        return None
+    prefix = words[:1] if len(words) > 1 and words[1].startswith("-") else words[:2]
+    return normalize_shell_prefix_rule({"prefix": prefix, "options": [word for word in words[len(prefix):] if word.startswith("-")]})
 
 
 def matching_shell_prefix(arguments, settings):
     words = _shell_prefix_words(arguments)
     if not words:
         return None
-    for prefix in sorted(settings.get("shell_allow_prefixes", []), key=len, reverse=True):
-        if normalize_shell_prefix(prefix) is not None and words[:len(prefix)] == prefix:
-            return prefix
+    rules = [rule for value in settings.get("shell_allow_prefixes", []) if (rule := normalize_shell_prefix_rule(value)) is not None]
+    for rule in sorted(rules, key=lambda rule: len(rule["prefix"]), reverse=True):
+        prefix = rule["prefix"]
+        if (words[:len(prefix)] == prefix
+                and all(word in rule["options"] for word in words[len(prefix):] if word.startswith("-"))):
+            return rule
     return None
 
 

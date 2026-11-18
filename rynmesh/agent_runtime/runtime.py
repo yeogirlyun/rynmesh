@@ -49,7 +49,7 @@ from . import (
     verification,
 )
 from .web_search import normalize_domains, restrict_web_policy
-from .execution_policy import desktop_access_enabled, desktop_enabled
+from .execution_policy import desktop_access_enabled, desktop_enabled, shell_prefix_rule
 from .control import (
     acknowledgeable,
     allowed_actions,
@@ -2137,6 +2137,7 @@ class AgentRuntime(AgentLoop):
         data = self.store.inspect(lambda state: {key: state[key] for key in
             ("settings", "settings_revision", "settings_context_budget_provenance") if key in state})
         settings = {**DEFAULT_SETTINGS, **self._EXTRA_SETTINGS, **data["settings"]}
+        settings["shell_allow_prefixes"] = [shell_prefix_rule(rule) for rule in settings["shell_allow_prefixes"]]
         policy = self._settings_context_policy(settings, data.get("settings_context_budget_provenance"),
                                                display_only=display_only)
         return {"settings": settings, "settings_revision": data.get("settings_revision", 0), "context_budget_policy": policy}
@@ -2186,17 +2187,10 @@ class AgentRuntime(AgentLoop):
             raise AgentError("agent_invalid_settings")
         values = copy.deepcopy(values)
         if "shell_allow_prefixes" in values:
-            from .execution_policy import normalize_shell_prefix
-            prefixes = values["shell_allow_prefixes"]
-            if not isinstance(prefixes, list):
+            from .execution_policy import normalize_shell_prefix_rules
+            normalized = normalize_shell_prefix_rules(values["shell_allow_prefixes"])
+            if normalized is None:
                 raise AgentError("agent_invalid_settings")
-            normalized = []
-            for prefix in prefixes:
-                rule = normalize_shell_prefix(prefix)
-                if rule is None:
-                    raise AgentError("agent_invalid_settings")
-                if rule not in normalized:
-                    normalized.append(rule)
             values["shell_allow_prefixes"] = normalized
         if "project_doc_fallback_filenames" in values:
             names = values["project_doc_fallback_filenames"]
@@ -2276,10 +2270,14 @@ class AgentRuntime(AgentLoop):
         def update(data):
             self._validate_owner_rules(values, data["settings"], rule_names)
             if "shell_allow_prefixes" in values:
-                old_prefixes = data["settings"].get("shell_allow_prefixes", [])
+                old_rules = [shell_prefix_rule(rule) for rule in data["settings"].get("shell_allow_prefixes", [])]
+                rules = values["shell_allow_prefixes"]
                 pending = [prefix for prefix in data.get("pending_shell_prefix_notices", [])
-                           if prefix in values["shell_allow_prefixes"]]
-                pending.extend(prefix for prefix in values["shell_allow_prefixes"] if prefix not in old_prefixes)
+                           if any(rule["prefix"] == prefix for rule in rules)]
+                for rule in rules:
+                    old = next((item for item in old_rules if item["prefix"] == rule["prefix"]), None)
+                    if (old is None or set(rule["options"]) - set(old["options"])) and rule["prefix"] not in pending:
+                        pending.append(rule["prefix"])
                 data["pending_shell_prefix_notices"] = pending
             workspace_changed = "workspace_root" in values and values["workspace_root"] != data["settings"].get("workspace_root")
             if any(key in values and values[key] != data["settings"].get(key)
@@ -2360,6 +2358,7 @@ class AgentRuntime(AgentLoop):
         # Display metadata must not hold the encrypted state lock or refresh
         # providers. Task admission still resolves its current model separately.
         settings = {**DEFAULT_SETTINGS, **self._EXTRA_SETTINGS, **saved["settings"]}
+        settings["shell_allow_prefixes"] = [shell_prefix_rule(rule) for rule in settings["shell_allow_prefixes"]]
         policy = self._settings_context_policy(settings, saved["provenance"], display_only=True)
         return {
             **settings,
@@ -3931,15 +3930,23 @@ class AgentRuntime(AgentLoop):
                         if row["permission_mode"] != "confirm_changes" or approval.get("approval_basis") != "confirm_changes":
                             raise AgentError("agent_shell_prefix_invalid")
                         from .execution_policy import shell_prefix_candidate
-                        prefix = shell_prefix_candidate(call["arguments"]) if call["name"] == "ryn_shell_execute" else None
-                        if prefix is None:
+                        rule = shell_prefix_candidate(call["arguments"]) if call["name"] == "ryn_shell_execute" else None
+                        if rule is None:
                             raise AgentError("agent_shell_prefix_invalid")
-                        prefixes = data["settings"].setdefault("shell_allow_prefixes", [])
-                        if prefix not in prefixes:
-                            prefixes.append(prefix)
+                        rules = [shell_prefix_rule(item) for item in data["settings"].get("shell_allow_prefixes", [])]
+                        prior = next((item for item in rules if item["prefix"] == rule["prefix"]), None)
+                        added = prior is None or bool(set(rule["options"]) - set(prior["options"]))
+                        if prior is None:
+                            rules.append(rule)
+                        else:
+                            prior["options"] = list(dict.fromkeys([*prior["options"], *rule["options"]]))
+                        data["settings"]["shell_allow_prefixes"] = rules
+                        if added:
                             data["settings_revision"] = data.get("settings_revision", 0) + 1
-                            data.setdefault("pending_shell_prefix_notices", []).append(prefix)
-                            event(row, "prefix_allowed", prefix=prefix)
+                            pending = data.setdefault("pending_shell_prefix_notices", [])
+                            if rule["prefix"] not in pending:
+                                pending.append(rule["prefix"])
+                            event(row, "prefix_allowed", prefix=rule["prefix"], options=rule["options"])
                     if value.get("remember") == "always":
                         from .execution_policy import owner_tool_key
                         rule = owner_tool_key(call, self.tools.metadata(call["name"]))
